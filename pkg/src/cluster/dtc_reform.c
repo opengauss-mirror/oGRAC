@@ -1,0 +1,1267 @@
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * dtc_reform.c
+ *
+ *
+ * IDENTIFICATION
+ * src/cluster/dtc_reform.c
+ *
+ * -------------------------------------------------------------------------
+ */
+#include "knl_cluster_module.h"
+#include "dtc_reform.h"
+#include "dtc_context.h"
+#include "dtc_drc.h"
+#include "dtc_recovery.h"
+#include "dtc_tran.h"
+#include "dtc_dls.h"
+#include "dtc_dc.h"
+#include "dtc_database.h"
+#include "dtc_ckpt.h"
+#include "cm_malloc.h"
+#include "knl_ckpt.h"
+#include "dtc_dcs.h"
+#include "rc_reform.h"
+#include "dtc_backup.h"
+#include "repl_log_replay.h"
+status_t init_dtc_rc(void)
+{
+    knl_session_t *session;
+    OG_RETURN_IFERR(g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&session));
+
+    reform_init_t init_st;
+    init_st.session = (void*)session;
+    init_st.self_id = session->kernel->dtc_attr.inst_id;
+    errno_t ret;
+    ret = sprintf_s((char*)(&init_st.res_type), CMS_MAX_RES_TYPE_LEN, CMS_RES_TYPE_DB);
+    PRTS_RETURN_IFERR(ret);
+    init_st.callback.start_new_reform = (rc_cb_start_new_reform)rc_start_new_reform;
+    init_st.callback.lock = NULL;
+    init_st.callback.unlock = NULL;
+    init_st.callback.build_channel = (rc_cb_build_channel)rc_build_channel;
+    init_st.callback.release_channel = (rc_cb_release_channel)rc_release_channel;
+    init_st.callback.finished = (rc_cb_finished)rc_finished;
+    init_st.callback.stop_cur_reform = (rc_cb_stop_cur_reform)rc_stop_cur_reform;
+    init_st.callback.rc_reform_cancled = (rc_cb_reform_canceled)rc_reform_cancled;
+    init_st.callback.rc_start_lrpl_proc = (rc_cb_start_lrpl_proc)rc_start_lrpl_proc;
+    init_st.callback.rc_notify_reform_status = (rc_cb_notify_reform_stat)rc_notify_reform_status;
+
+    return init_cms_rc(&g_dtc->rf_ctx, &init_st);
+}
+
+void free_dtc_rc(void)
+{
+    // TODO: complete shutdown normal function later
+    // shutdown_context_t *ogx = &g_instance->shutdown_ctx;
+    // bool32 is_shutdown_abort = (ogx->phase == SHUTDOWN_PHASE_INPROGRESS && ogx->mode == SHUTDOWN_MODE_ABORT);
+
+    cm_close_thread(&g_drc_res_ctx.gc_thread);
+
+    if (g_rc_ctx == NULL || g_rc_ctx->started == OG_FALSE) {
+        return;
+    }
+
+    // free_cms_rc(is_shutdown_abort);
+    free_cms_rc(OG_TRUE);
+
+    g_knl_callback.release_knl_session(g_rc_ctx->session);
+
+    // release all pages owned by self, should be do this after remaster is done
+    // release edp, notify owner do page clean
+    // clean DDL resource
+}
+
+bool32 rc_instance_accessible(uint8 id)
+{
+    reform_role_t role;
+
+    if (g_rc_ctx->status >= REFORM_OPEN) {
+        return OG_TRUE;
+    }
+
+    /** instance in reform list */
+    role = rc_get_role(&g_rc_ctx->info, id);
+    return (role == REFORM_ROLE_STAY);
+}
+
+static void rc_get_tx_deposit_inst_list(instance_list_t * deposit_list, instance_list_t * deposit_free_list)
+{
+    rc_init_inst_list(deposit_list);
+    rc_init_inst_list(deposit_free_list);
+
+    uint64 inst_count = ((knl_session_t*)g_rc_ctx->session)->kernel->db.ctrl.core.node_count;
+    CM_ASSERT(inst_count <= OG_MAX_INSTANCES);
+
+    if (g_rc_ctx->info.master_changed) {
+        instance_list_t *after = &RC_REFORM_LIST(&g_rc_ctx->info, REFORM_LIST_AFTER);
+        for (uint8 inst_id = 0; inst_id < inst_count; inst_id++) {
+                if (!check_id_in_list(inst_id, after)) {
+                add_id_to_list(inst_id, deposit_list);
+            }
+        }
+    } else {
+        instance_list_t *abort = &RC_REFORM_LIST(&g_rc_ctx->info, REFORM_LIST_ABORT);
+        for (uint8 i = 0; i < abort->inst_id_count; i++) {
+            add_id_to_list(abort->inst_id_list[i], deposit_list);
+        }
+
+        instance_list_t *leave = &RC_REFORM_LIST(&g_rc_ctx->info, REFORM_LIST_LEAVE);
+        for (uint8 i = 0; i < leave->inst_id_count; i++) {
+            add_id_to_list(leave->inst_id_list[i], deposit_list);
+        }
+
+        instance_list_t *fail = &RC_REFORM_LIST(&g_rc_ctx->info, REFORM_LIST_FAIL);
+        for (uint8 i = 0; i < fail->inst_id_count; i++) {
+            add_id_to_list(fail->inst_id_list[i], deposit_list);
+        }
+
+        // do abort first, join next time
+        instance_list_t *join = &RC_REFORM_LIST(&g_rc_ctx->info, REFORM_LIST_JOIN);
+        for (uint8 i = 0; i < join->inst_id_count; i++) {
+            if (!check_id_in_list(join->inst_id_list[i], abort)) {
+                add_id_to_list(join->inst_id_list[i], deposit_free_list);
+            }
+        }
+    }
+}
+
+status_t rc_tx_area_init(instance_list_t *list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        if (dtc_tx_area_init(g_rc_ctx->session, list->inst_id_list[i]) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to init tx area");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t rc_undo_init(instance_list_t *list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        dtc_undo_init(g_rc_ctx->session, list->inst_id_list[i]);
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t rc_tx_area_load(instance_list_t *list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        dtc_tx_area_load(g_rc_ctx->session, list->inst_id_list[i]);
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t rc_rollback_close(instance_list_t *list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        dtc_rollback_close(g_rc_ctx->session, list->inst_id_list[i]);
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t rc_undo_release(instance_list_t * list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        dtc_undo_release(g_rc_ctx->session, list->inst_id_list[i]);
+    }
+
+    return OG_SUCCESS;
+}
+
+static void accumulate_recovery_stat(void)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    dtc_rcy_stat_t *stat = &dtc_rcy->rcy_stat;
+    reform_detail_t *rf_detail = &g_rc_ctx->reform_detail;
+
+    stat->accum_rcy_log_size += stat->last_rcy_log_size;
+    stat->accum_rcy_set_num += stat->last_rcy_set_num;
+    stat->accum_rcy_set_create_elapsed += rf_detail->recovery_set_create_elapsed.cost_time;
+    stat->accum_rcy_set_revise_elapsed += rf_detail->recovery_set_revise_elapsed.cost_time;
+    stat->accum_rcy_replay_elapsed += rf_detail->recovery_replay_elapsed.cost_time;
+    stat->accum_rcy_elapsed += rf_detail->recovery_elapsed.cost_time;
+    stat->accum_rcy_times++;
+}
+
+status_t dtc_partial_recovery(instance_list_t *recover_list)
+{
+    OG_LOG_RUN_INF("[RC][partial restart] start redo replay, session->kernel->lsn=%llu,"
+                   " g_rc_ctx->status=%u",
+                   ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+    if (dtc_start_recovery(g_rc_ctx->session, recover_list, OG_FALSE) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to start dtc recovery, session->kernel->lsn=%llu,"
+                       "g_rc_ctx->status=%u",
+                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        g_rc_ctx->status = REFORM_PREPARE;
+        return OG_ERROR;
+    }
+
+    // wait recovery finish here
+    while (dtc_recovery_in_progress()) {
+        cm_sleep(DTC_REFORM_WAIT_TIME);
+    }
+    OG_LOG_RUN_INF("[RC][partial restart] finish redo replay, session->kernel->lsn=%llu,"
+                   "g_rc_ctx->status=%u",
+                   ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+
+    if (dtc_recovery_failed()) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to do dtc recovery, session->kernel->lsn=%llu,"
+                       " g_rc_ctx->status=%u",
+                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        CM_ABORT(0, "[RC] DTC RCY failed");
+    }
+    cm_close_thread(&DTC_RCY_CONTEXT->thread);
+    return OG_SUCCESS;
+}
+
+status_t dtc_slave_load_my_undo(void)
+{
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    core_ctrl_t *core_ctrl = DB_CORE_CTRL(session);
+    undo_set_t *undo_set = MY_UNDO_SET(session);
+    undo_init_impl(session, undo_set, 0, core_ctrl->undo_segments);
+
+    if (tx_area_init_impl(session, undo_set, 0, core_ctrl->undo_segments, OG_FALSE) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to do tx area init, g_rc_ctx->status=%u", g_rc_ctx->status);
+        return OG_ERROR;
+    }
+
+    tx_area_release_impl(session, 0, core_ctrl->undo_segments, session->kernel->id);
+
+    return OG_SUCCESS;
+}
+
+static status_t dtc_standby_partial_recovery(void)
+{
+    if (g_rc_ctx->info.master_changed) {
+        knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+        instance_list_t *rcy_list = (instance_list_t *)cm_push(session->stack, sizeof(instance_list_t));
+        rcy_list->inst_id_count = session->kernel->db.ctrl.core.node_count;
+        for (uint8 i = 0; i < rcy_list->inst_id_count; i++) {
+            rcy_list->inst_id_list[i] = i;
+        }
+        OG_LOG_RUN_INF("standby start to partial recovery");
+        if (dtc_partial_recovery(rcy_list) != OG_SUCCESS) {
+            cm_pop(session->stack);
+            OG_LOG_RUN_ERR("[RC] failed to do partial recovery");
+            return OG_ERROR;
+        }
+        cm_pop(session->stack);
+    } else {
+        if (rc_set_redo_replay_done(g_rc_ctx->session, &(g_rc_ctx->info), OG_FALSE) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC][partial restart] failed to broadcast reform status g_rc_ctx->status=%u",
+                           g_rc_ctx->status);
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t dtc_rollback_node(void)
+{
+    // init deposit undo && transaction for abort or leave instances
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    OG_LOG_RUN_INF("[RC] start process undo, session->kernel->lsn=%llu, g_rc_ctx->status=%u",
+        session->kernel->lsn, g_rc_ctx->status);
+
+    // init deposit transaction for abort or leave instances
+    instance_list_t deposit_list;
+    instance_list_t deposit_free_list;
+    rc_get_tx_deposit_inst_list(&deposit_list, &deposit_free_list);
+    rc_log_instance_list(&deposit_list, "deposit");
+    rc_log_instance_list(&deposit_free_list, "deposit free");
+
+    if (rc_undo_init(&deposit_list) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] failed to rc_undo_init");
+        return OG_ERROR;
+    }
+
+    if (rc_tx_area_init(&deposit_list) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to do tx area init, g_rc_ctx->status=%u", g_rc_ctx->status);
+        return OG_ERROR;
+    }
+
+    if (!DB_IS_PRIMARY(&session->kernel->db)) {
+        core_ctrl_t *core_ctrl = DB_CORE_CTRL(session);
+        for (uint8 i = 0; i < deposit_list.inst_id_count; i++) {
+            tx_area_release_impl(session, 0, core_ctrl->undo_segments, deposit_list.inst_id_list[i]);
+        }
+        g_rc_ctx->info.standby_get_txn = OG_TRUE;
+        g_rc_ctx->status = REFORM_OPEN;
+        return OG_SUCCESS;
+    }
+
+    if (g_instance->kernel.db.open_status == DB_OPEN_STATUS_MAX_FIX) {
+        g_instance->kernel.db.is_readonly = OG_TRUE;
+    }
+
+    if (rc_tx_area_load(&deposit_list) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to do tx area load, session->kernel->lsn=%llu, "
+                       "g_rc_ctx->status=%u",
+                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        return OG_ERROR;
+    }
+
+    g_rc_ctx->status = REFORM_OPEN;
+
+    while (DB_IN_BG_ROLLBACK((knl_session_t *)g_rc_ctx->session)) {
+        cm_sleep(DTC_REFORM_WAIT_TIME);
+    }
+    OG_LOG_RUN_INF("[RC] finish undo_rollback, session->kernel->lsn=%llu, g_rc_ctx->status=%u",
+                   ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+
+    if (rc_rollback_close(&deposit_list) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to rc_tx_area_release, session->kernel->lsn=%llu, "
+                       "g_rc_ctx->status=%u",
+                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        return OG_ERROR;
+    }
+
+    /*            if (rc_undo_release(&deposit_free_list) != OG_SUCCESS) {
+                    OG_LOG_RUN_ERR("[RC] failed to rc_undo_release");
+                    g_rc_ctx->status = REFORM_DONE;
+                    return OG_ERROR;
+                }
+    */
+    return OG_SUCCESS;
+}
+
+static void rc_reform_init(reform_info_t *reform_info)
+{
+    dtc_remaster_init(reform_info);
+}
+
+static status_t rc_follower_reform(reform_mode_t mode, reform_detail_t *detail)
+{
+    OG_LOG_RUN_INF("[RC] reform for partial restart as follower.");
+    if (!DB_IS_PRIMARY(&g_instance->kernel.db)) {
+        ckpt_disable(g_rc_ctx->session);
+        OG_LOG_RUN_INF("ckpt disabled");
+    }
+
+    // step 2 drc_remaster
+    RC_STEP_BEGIN(detail->remaster_elapsed);
+    drc_start_remaster(&g_rc_ctx->info);
+   // wait remaster finish here
+    while (drc_remaster_in_progress()) {
+        cm_sleep(DTC_REFORM_WAIT_TIME);
+    }
+    if (drc_get_remaster_status() == REMASTER_FAIL) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to partial restart as follower, session->kernel->lsn=%llu,"
+                       " g_rc_ctx->status=%u", ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        RC_STEP_END(detail->remaster_elapsed, RC_STEP_FAILED);
+        return OG_ERROR;
+    }
+    RC_STEP_END(detail->remaster_elapsed, RC_STEP_FINISH);
+
+    // wait redo finish here
+    RC_STEP_BEGIN(detail->recovery_elapsed);
+    while (g_rc_ctx->status < REFORM_RECOVER_DONE) {
+        OG_RETVALUE_IFTRUE(rc_reform_cancled(), OG_ERROR);
+        cm_sleep(DTC_REFORM_WAIT_TIME);
+    }
+    RC_STEP_END(detail->recovery_elapsed, RC_STEP_FINISH);
+
+    OG_RETURN_IFERR(drc_clean_remaster_res());
+
+    if (rc_need_archive_log() == OG_TRUE) {
+        arch_proc_context_t arch_proc_ctx[DTC_MAX_NODE_COUNT] = { 0 };
+        if (rc_archive_log(arch_proc_ctx) != OG_SUCCESS) {
+            rc_end_archive_log(arch_proc_ctx);
+            return OG_ERROR;
+        }
+        if (rc_wait_archive_log_finish(arch_proc_ctx) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC][partial restart] wait arch finish in reform failed");
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t rc_master_clean_ddl_op(reform_detail_t *detail)
+{
+    RC_STEP_BEGIN(detail->clean_ddp_elapsed);
+    if (knl_begin_auton_rm(g_rc_ctx->session) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] failed to begin kernel auto rm, session->kernel->lsn=%llu, "
+                       "g_rc_ctx->status=%u",
+                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        RC_STEP_END(detail->clean_ddp_elapsed, RC_STEP_FAILED);
+        OG_LOG_RUN_INF("[RC][partial restart] master clean ddl op failed");
+        return OG_ERROR;
+    }
+    status_t status = db_clean_ddl_op(g_rc_ctx->session, DDL_REFORM_REPLAY);
+    if (status != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] failed to do clean ddl operation, session->kernel->lsn=%llu, "
+                       "g_rc_ctx->status=%u",
+                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        knl_end_auton_rm(g_rc_ctx->session, status);
+        RC_STEP_END(detail->clean_ddp_elapsed, RC_STEP_FAILED);
+        OG_LOG_RUN_INF("[RC][partial restart] master clean ddl op failed");
+        return OG_ERROR;
+    }
+    knl_end_auton_rm(g_rc_ctx->session, status);
+    OG_LOG_RUN_INF("[RC] finish to complete ddl operations, session->kernel->lsn=%llu, "
+                   "g_rc_ctx->status=%u",
+                   ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+    RC_STEP_END(detail->clean_ddp_elapsed, RC_STEP_FINISH);
+    return OG_SUCCESS;
+}
+
+status_t rc_master_start_remaster(reform_detail_t *detail)
+{
+    RC_STEP_BEGIN(detail->remaster_elapsed);
+    drc_start_remaster(&g_rc_ctx->info);
+    OG_LOG_RUN_INF("[RC] reform for partial restart as master, g_rc_ctx->status=%u", g_rc_ctx->status);
+    // wait remaster finish here
+    while (drc_remaster_in_progress()) {
+        cm_sleep(DTC_REFORM_WAIT_TIME);
+    }
+    if (drc_get_remaster_status() == REMASTER_FAIL) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to partial restart as master, session->kernel->lsn=%llu,"
+                       " g_rc_ctx->status=%u", ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        RC_STEP_END(detail->remaster_elapsed, RC_STEP_FAILED);
+        OG_LOG_RUN_ERR("[RC][partial restart] remaster failed");
+        return OG_ERROR;
+    }
+    drc_close_remaster_proc();
+    RC_STEP_END(detail->remaster_elapsed, RC_STEP_FINISH);
+    OG_LOG_RUN_INF("[RC][partial restart] finish remaster, g_rc_ctx->status=%u", g_rc_ctx->status);
+    return OG_SUCCESS;
+}
+
+status_t rc_master_partial_recovery(reform_mode_t mode, reform_detail_t *detail)
+{
+    RC_STEP_BEGIN(detail->recovery_elapsed);
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    if (mode == REFORM_MODE_OUT_OF_PLAN) {
+        if (!DB_IS_PRIMARY(&session->kernel->db)) {
+            if (dtc_standby_partial_recovery() != OG_SUCCESS) {
+                g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+                RC_STEP_END(detail->recovery_elapsed, RC_STEP_FAILED);
+                OG_LOG_RUN_ERR("[RC][partial restart] recovery failed");
+                return OG_ERROR;
+            }
+            RC_STEP_END(detail->recovery_elapsed, RC_STEP_FINISH);
+            return OG_SUCCESS;
+        }
+        if (dtc_partial_recovery(&g_rc_ctx->info.reform_list[REFORM_LIST_ABORT]) != OG_SUCCESS) {
+            g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+            RC_STEP_END(detail->recovery_elapsed, RC_STEP_FAILED);
+            OG_LOG_RUN_ERR("[RC] failed to do partial recovery");
+            OG_LOG_RUN_ERR("[RC][partial restart] recovery failed");
+            return OG_ERROR;
+        }
+    } else {
+        SYNC_POINT_GLOBAL_START(OGRAC_BCAST_RECOVERY_DONE_OTHER_ABORT, (int32 *)g_rc_ctx->session, 0);
+        SYNC_POINT_GLOBAL_END;
+        if (rc_set_redo_replay_done(g_rc_ctx->session, &(g_rc_ctx->info), OG_FALSE) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC][partial restart] failed to broadcast reform status g_rc_ctx->status=%u",
+                           g_rc_ctx->status);
+            g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+            RC_STEP_END(detail->recovery_elapsed, RC_STEP_FAILED);
+            OG_LOG_RUN_ERR("[RC][partial restart] recovery failed");
+            return OG_ERROR;
+        }
+    }
+    RC_STEP_END(detail->recovery_elapsed, RC_STEP_FINISH);
+    return OG_SUCCESS;
+}
+
+status_t rc_master_rollback_node(reform_detail_t *detail)
+{
+    RC_STEP_BEGIN(detail->deposit_elapsed);
+    reform_mode_t mode = rc_get_change_mode();
+    if (!DB_IS_PRIMARY(&((knl_session_t*)g_rc_ctx->session)->kernel->db) && mode == REFORM_MODE_OUT_OF_PLAN &&
+        g_rc_ctx->info.master_changed == OG_FALSE) {
+        RC_STEP_END(detail->deposit_elapsed, RC_STEP_FINISH);
+        return OG_SUCCESS;
+    }
+    if (!DB_IS_PRIMARY(&((knl_session_t*)g_rc_ctx->session)->kernel->db) && mode == REFORM_MODE_OUT_OF_PLAN &&
+        g_rc_ctx->info.master_changed) {
+        if (dtc_slave_load_my_undo() != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC] slave load undo failed g_rc_ctx->status=%u", g_rc_ctx->status);
+            return OG_ERROR;
+        }
+    }
+    if (dtc_rollback_node() != OG_SUCCESS) {
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        RC_STEP_END(detail->deposit_elapsed, RC_STEP_FAILED);
+        OG_LOG_RUN_ERR("[RC] failed to do undo rollback");
+        OG_LOG_RUN_ERR("[RC][partial restart] rollback failed");
+        return OG_ERROR;
+    }
+    RC_STEP_END(detail->deposit_elapsed, RC_STEP_FINISH);
+    return OG_SUCCESS;
+}
+
+status_t rc_master_wait_ckpt_finish(reform_mode_t mode)
+{
+    if (mode == REFORM_MODE_OUT_OF_PLAN && dtc_update_ckpt_log_point()) {
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        OG_LOG_RUN_ERR("[RC] failed to do ckpt in reform");
+        OG_LOG_RUN_ERR("[RC][partial restart] wait ckpt finish failed");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t rc_reform_build_channel(reform_detail_t *detail)
+{
+    status_t ret;
+    RC_STEP_BEGIN(detail->build_channel_elapsed);
+    SYNC_POINT_GLOBAL_START(OGRAC_REFORM_BUILD_CHANNEL_FAIL, &ret, OG_ERROR);
+    ret = rc_build_channel(&g_rc_ctx->info);
+    SYNC_POINT_GLOBAL_END;
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] failed to rc_build_channel, g_rc_ctx->status=%u", g_rc_ctx->status);
+        g_rc_ctx->info.failed_reform_status = g_rc_ctx->status;
+        RC_STEP_END(detail->build_channel_elapsed, RC_STEP_FAILED);
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_INF("[RC] build channel successfully, g_rc_ctx->status=%u", g_rc_ctx->status);
+    SYNC_POINT_GLOBAL_START(OGRAC_REFORM_BUILD_CHANNEL_ABORT, NULL, 0);
+    SYNC_POINT_GLOBAL_END;
+    rc_release_abort_channel(&g_rc_ctx->info);
+    OG_LOG_RUN_INF("[RC] release channel successfully, g_rc_ctx->status=%u", g_rc_ctx->status);
+    RC_STEP_END(detail->build_channel_elapsed, RC_STEP_FINISH);
+    return OG_SUCCESS;
+}
+
+static void rc_init_redo_ctx(arch_proc_context_t *proc_ctx, dtc_node_ctrl_t *node_ctrl, log_file_t *logfile, uint32 node_id)
+{
+    logfile_set_t *file_set = LOGFILE_SET(proc_ctx->session, node_id);
+    log_context_t *redo_ctx = &proc_ctx->session->kernel->redo_ctx;
+    redo_ctx->logfile_hwm = file_set->logfile_hwm;
+    redo_ctx->files = &file_set->items[0];
+    redo_ctx->curr_file = node_ctrl->log_last;
+    redo_ctx->active_file = node_ctrl->log_first;
+    redo_ctx->flush_lock = 0;
+
+    int32 size = CM_CALC_ALIGN(sizeof(log_file_head_t), logfile->ctrl->block_size);
+    redo_ctx->logwr_head_buf = (char *)cm_malloc(size);
+    if (redo_ctx->logwr_head_buf == NULL) {
+        CM_ABORT(0, "[LOG] ABORT INFO: flush redo file:%s, offset:%u, size:%lu failed.", logfile->ctrl->name, 0,
+            sizeof(log_file_head_t));
+    }
+
+    errno_t ret = memset_sp(redo_ctx->logwr_head_buf, logfile->ctrl->block_size, 0, logfile->ctrl->block_size);
+    knl_securec_check(ret);
+
+    for (int i = 0; i < file_set->log_count; ++i) {
+        file_set->items[i].handle = OG_INVALID_HANDLE;
+        status_t ret = cm_open_device(file_set->items[i].ctrl->name, file_set->items[i].ctrl->type,
+                                      knl_redo_io_flag(proc_ctx->session), &file_set->items[i].handle);
+        if (ret != OG_SUCCESS || file_set->items[i].handle == -1) {
+            OG_LOG_RUN_ERR("[BACKUP] failed to open %s ", file_set->items[i].ctrl->name);
+            return;
+        }
+    }
+    OG_LOG_RUN_INF("[RC_ARCH] arch init redo ogx success");
+}
+
+static status_t rc_arch_init_session(arch_proc_context_t *proc_ctx, knl_session_t *session, uint32 node_id)
+{
+    errno_t ret;
+    proc_ctx->session = (knl_session_t *)cm_malloc(sizeof(knl_session_t));
+    ret = memcpy_s((char*)proc_ctx->session, sizeof(knl_session_t), (char*)session, sizeof(knl_session_t));
+    knl_securec_check(ret);
+
+    proc_ctx->session->kernel = (knl_instance_t *)cm_malloc(sizeof(knl_instance_t));
+    ret = memcpy_s((char*)proc_ctx->session->kernel, sizeof(knl_instance_t), (char*)session->kernel,
+                   sizeof(knl_instance_t));
+    knl_securec_check(ret);
+
+    proc_ctx->session->kernel->id = node_id;
+    proc_ctx->session->kernel->db.ctrl_lock = 0;
+    proc_ctx->session->kernel->arch_ctx.record_lock = 0;
+    return OG_SUCCESS;
+}
+
+static void rc_arch_set_last_file_id(arch_proc_context_t *proc_ctx, uint32 node_id)
+{
+    logfile_set_t *file_set = LOGFILE_SET(proc_ctx->session, node_id);
+    log_context_t *redo_ctx = &proc_ctx->session->kernel->redo_ctx;
+    uint32 last_file_id = OG_INVALID_ID32;
+    if (redo_ctx->active_file == 0) {
+        last_file_id = file_set->log_count - 1;
+    } else {
+        last_file_id = redo_ctx->active_file - 1;
+    }
+    proc_ctx->last_file_id = last_file_id;
+}
+
+static status_t flush_curr_file_head(arch_proc_context_t *proc_ctx, dtc_node_ctrl_t *node_ctrl, uint32 node_id)
+{
+    log_file_head_t head;
+    log_context_t *ogx = &proc_ctx->session->kernel->redo_ctx;
+    logfile_set_t *file_set = LOGFILE_SET(proc_ctx->session, node_id);
+    log_file_t *file = &file_set->items[ogx->curr_file];
+    log_point_t *lrp_point = &node_ctrl->lrp_point;
+
+    if (cm_read_device(file->ctrl->type, file->handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+        cm_close_device(file->ctrl->type, &file->handle);
+        OG_LOG_RUN_ERR("[RC_ARCH] failed to read %s", file->ctrl->name);
+        return OG_ERROR;
+    }
+
+    head.write_pos = lrp_point->block_id * file->ctrl->block_size;
+    head.last = node_ctrl->scn;
+    log_calc_head_checksum(proc_ctx->session, &head);
+
+    file->head.write_pos = head.write_pos;
+    file->head.last = head.last;
+    file->head.checksum = head.checksum;
+
+    *(log_file_head_t *)ogx->logwr_head_buf = head;
+    int32 size = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+    if (cm_write_device(file->ctrl->type, file->handle, 0, ogx->logwr_head_buf, size) != OG_SUCCESS) {
+        OG_LOG_ALARM(WARN_FLUSHREDO, "'file-name':'%s'}", file->ctrl->name);
+        CM_ABORT(0, "[RC_ARCH] ABORT INFO: flush redo file:%s, offset:%u, size:%lu failed.", file->ctrl->name, 0,
+                 sizeof(log_file_head_t));
+    }
+    OG_LOG_DEBUG_INF("[RC_ARCH] Flush log[%u] head with asn %u status %d", file->ctrl->file_id, file->head.asn,
+                     file->ctrl->status);
+    return OG_SUCCESS;
+}
+
+static uint64 get_curr_file_size(arch_proc_context_t *proc_ctx, uint32 node_id)
+{
+    log_file_head_t head;
+    log_context_t *ogx = &proc_ctx->session->kernel->redo_ctx;
+    logfile_set_t *file_set = LOGFILE_SET(proc_ctx->session, node_id);
+    log_file_t *file = &file_set->items[ogx->curr_file];
+
+    if (cm_read_device(file->ctrl->type, file->handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+        cm_close_device(file->ctrl->type, &file->handle);
+        OG_LOG_RUN_ERR("[RC_ARCH] failed to read %s", file->ctrl->name);
+        return OG_ERROR;
+    }
+
+    return head.write_pos;
+}
+
+static void switch_log_file(arch_proc_context_t *proc_ctx)
+{
+    errno_t ret;
+    knl_session_t *rc_session = (knl_session_t *)(g_rc_ctx->session);
+    knl_session_t *session = proc_ctx->session;
+    cm_spin_lock(&rc_session->kernel->db.ctrl_lock, NULL);
+    ret = memcpy_s(&session->kernel->db.ctrlfiles, sizeof(ctrlfile_set_t), &rc_session->kernel->db.ctrlfiles,
+                   sizeof(ctrlfile_set_t));
+    knl_securec_check(ret);
+    log_switch_file(proc_ctx->session);
+    ret = memcpy_s(&rc_session->kernel->db.ctrlfiles, sizeof(ctrlfile_set_t), &session->kernel->db.ctrlfiles,
+                   sizeof(ctrlfile_set_t));
+    knl_securec_check(ret);
+    cm_spin_unlock(&rc_session->kernel->db.ctrl_lock);
+}
+
+static void rc_arch_get_cur_size(arch_proc_context_t *proc_ctx, dtc_node_ctrl_t *node_ctrl, uint32 node_id, uint32 arch_num)
+{
+    knl_session_t *session = proc_ctx->session;
+    arch_ctrl_t *arch_ctrl = NULL;
+    for (uint32 i = 0; i < arch_num; i++) {
+        uint32 arch_locator = (node_ctrl->archived_start + i) % OG_MAX_ARCH_NUM;
+        arch_ctrl = db_get_arch_ctrl(session, arch_locator, node_id);
+        if (arch_ctrl == NULL || arch_ctrl->recid == 0) {
+            OG_LOG_RUN_WAR("[RC_ARCH] invalid recid %u, asn %u", arch_ctrl->recid, arch_ctrl->asn);
+            continue;
+        }
+        proc_ctx->curr_arch_size += arch_get_ctrl_real_size(arch_ctrl);
+    }
+    OG_LOG_RUN_INF("[RC_ARCH] the total current arch size %llu", proc_ctx->curr_arch_size);
+    return;
+}
+
+static status_t rc_init_arch_proc_ctx(arch_proc_context_t *proc_ctx, log_file_t *logfile, dtc_node_ctrl_t *node_ctrl,
+                               uint32 arch_num, uint32 node_id)
+{
+    knl_session_t *session = proc_ctx->session;
+    if (cm_dbs_is_enable_dbs() != OG_TRUE) {
+        proc_ctx->arch_id = ARCH_DEFAULT_DEST;
+    } else {
+        proc_ctx->arch_id = node_id;
+    }
+    proc_ctx->last_archived_log_record.rst_id = session->kernel->db.ctrl.core.resetlogs.rst_id;
+    proc_ctx->last_archived_log_record.offset = CM_CALC_ALIGN(sizeof(log_file_head_t), logfile->ctrl->block_size);
+    proc_ctx->write_failed = OG_FALSE;
+    proc_ctx->read_failed = OG_FALSE;
+    proc_ctx->enabled = OG_TRUE;
+    proc_ctx->tmp_file_handle = OG_INVALID_HANDLE;
+    proc_ctx->data_type = cm_dbs_is_enable_dbs() == OG_TRUE ? ARCH_DATA_TYPE_DBSTOR : ARCH_DATA_TYPE_FILE;
+    
+    if (cm_dbs_is_enable_dbs() != OG_TRUE) {
+        log_context_t *ogx = &proc_ctx->session->kernel->redo_ctx;
+        rc_init_redo_ctx(proc_ctx, node_ctrl, logfile, node_id);
+        if (get_curr_file_size(proc_ctx, node_id) > CM_CALC_ALIGN(sizeof(log_file_head_t), logfile->ctrl->block_size)) {
+            if (flush_curr_file_head(proc_ctx, node_ctrl, node_id) != OG_SUCCESS) {
+                free(ogx->logwr_head_buf);
+                return OG_ERROR;
+            }
+            switch_log_file(proc_ctx);
+        }
+        free(ogx->logwr_head_buf);
+        rc_arch_set_last_file_id(proc_ctx, node_id);
+    }
+
+    arch_ctrl_t *arch_ctrl = NULL;
+    if (arch_num != 0) {
+        rc_arch_get_cur_size(proc_ctx, node_ctrl, node_id, arch_num);
+        arch_ctrl = db_get_arch_ctrl(session, node_ctrl->archived_end - 1, node_id);
+        proc_ctx->last_archived_log_record.asn = arch_ctrl->asn + 1;
+        proc_ctx->last_archived_log_record.start_lsn = arch_ctrl->end_lsn;
+        proc_ctx->last_archived_log_record.end_lsn = arch_ctrl->end_lsn;
+        proc_ctx->last_archived_log_record.cur_lsn = arch_ctrl->end_lsn;
+    } else {
+        proc_ctx->curr_arch_size = 0;
+        proc_ctx->last_archived_log_record.asn = 1;
+    }
+    return OG_SUCCESS;
+}
+
+status_t rc_arch_init_proc_ctx(arch_proc_context_t *proc_ctx, uint32 node_id)
+{
+    OG_LOG_RUN_INF("[RC_ARCH] rc init arch proc ogx params and resource, node id %u", node_id);
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    dtc_node_ctrl_t *node_ctrl = dtc_get_ctrl(session, node_id);
+    log_file_t *logfile = &proc_ctx->logfile;
+    logfile->handle = OG_INVALID_HANDLE;
+    status_t ret = OG_ERROR;
+    SYNC_POINT_GLOBAL_START(OGRAC_REFORM_ARCHIVE_INIT_ARCH_CTX_FAIL, &ret, OG_ERROR);
+    ret = arch_open_logfile_dbstor(session, logfile, node_id);
+    SYNC_POINT_GLOBAL_END;
+    if (ret != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    uint32 arch_num = (node_ctrl->archived_end - node_ctrl->archived_start + OG_MAX_ARCH_NUM) % OG_MAX_ARCH_NUM;
+    ret = strcpy_s(proc_ctx->arch_dest, OG_FILE_NAME_BUFFER_SIZE,
+                   session->kernel->arch_ctx.arch_proc[ARCH_DEFAULT_DEST - 1].arch_dest);
+    knl_securec_check(ret);
+ 
+    proc_ctx->session = session;
+    if (cm_dbs_is_enable_dbs() != OG_TRUE && rc_arch_init_session(proc_ctx, session, node_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (rc_init_arch_proc_ctx(proc_ctx, logfile, node_ctrl, arch_num, node_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    
+    OG_LOG_RUN_INF("[RC_ARCH] cur arch num %u, next asn %u, next start lsn %llu", arch_num,
+                   proc_ctx->last_archived_log_record.asn, proc_ctx->last_archived_log_record.end_lsn);
+
+    uint32 redo_log_filesize = 0;
+    if (cm_dbs_is_enable_dbs() == OG_TRUE) {
+        status_t status = cm_device_get_used_cap(logfile->ctrl->type, logfile->handle,
+                                                 proc_ctx->last_archived_log_record.start_lsn + 1, &redo_log_filesize);
+        if (status != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC_ARCH] failed to fetch redolog size from DBStor");
+            return OG_ERROR;
+        }
+        proc_ctx->redo_log_filesize = SIZE_K_U64(redo_log_filesize);
+    }
+   
+    OG_LOG_RUN_INF("[RC_ARCH] finish to init proc ogx, redo left size %llu", proc_ctx->redo_log_filesize);
+    return OG_SUCCESS;
+}
+
+status_t rc_archive_log_offline_node(arch_proc_context_t *proc_ctx, uint32 node_id)
+{
+    if (arch_update_arch_ctrl(node_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (rc_arch_init_proc_ctx(proc_ctx, node_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (cm_dbs_is_enable_dbs() == OG_TRUE && proc_ctx->redo_log_filesize == 0) {
+        OG_LOG_RUN_INF("[RC_ARCH] no left redo log to fetch from DBStor, node id %u", node_id);
+        return OG_SUCCESS;
+    }
+
+    int64 buffer_size = proc_ctx->session->kernel->attr.lgwr_buf_size;
+    int64 arch_rw_buf_num = cm_dbs_is_enable_dbs() == true ? DBSTOR_ARCH_RW_BUF_NUM : ARCH_RW_BUF_NUM;
+    if (arch_init_rw_buf(&proc_ctx->arch_rw_buf, buffer_size * arch_rw_buf_num, "ARCH") != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    proc_ctx->arch_execute = OG_TRUE;
+    if (cm_dbs_is_enable_dbs() == true) {
+        if (arch_handle_tmp_file(proc_ctx, node_id) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (cm_dbs_get_deploy_mode() != DBSTOR_DEPLOY_MODE_NO_NAS) {
+            if (cm_create_thread(rc_arch_dbstor_read_proc, 0, proc_ctx, &proc_ctx->read_thread) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+            if (cm_create_thread(arch_write_proc_dbstor, 0, proc_ctx, &proc_ctx->write_thread) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+        } else {
+            if (cm_create_thread(rc_arch_dbstor_ulog_proc, 0, proc_ctx, &proc_ctx->read_thread) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+        }
+    } else {
+        if (cm_create_thread(rc_arch_proc, 0, proc_ctx, &proc_ctx->write_thread) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+bool32 rc_need_archive_log(void)
+{
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    if (session->kernel->db.ctrl.core.log_mode != ARCHIVE_LOG_ON || !DB_IS_PRIMARY(&session->kernel->db)) {
+        return OG_FALSE;
+    }
+    if (session->kernel->db.ctrl.core.lrep_mode != LOG_REPLICATION_ON) {
+        return OG_FALSE;
+    }
+    knl_panic_log(g_dtc->profile.node_count < DTC_MAX_NODE_COUNT, "not support node count");
+    return OG_TRUE;
+}
+
+status_t rc_archive_log(arch_proc_context_t *arch_proc_ctx)
+{
+    OG_LOG_RUN_INF("[RC_ARCH] start to archive redo log for all offline nodes");
+    for (uint32 i = 0; i < g_dtc->profile.node_count; i++) {
+        if (i == g_dtc->profile.inst_id) {
+            continue;
+        }
+        if (rc_get_current_stat()->inst_list[i].stat == CMS_RES_ONLINE &&
+            rc_get_target_stat()->inst_list[i].stat == CMS_RES_OFFLINE) {
+            if (rc_archive_log_offline_node(arch_proc_ctx + i, i) != OG_SUCCESS) {
+                OG_LOG_RUN_INF("[RC_ARCH] init archive proc ogx for offline node %u failed", i);
+                return OG_ERROR;
+            }
+        }
+    }
+    return OG_SUCCESS;
+}
+
+void rc_end_archive_log(arch_proc_context_t *arch_proc_ctx)
+{
+    OG_LOG_RUN_INF("[RC_ARCH] release all arch proc ogx resource");
+    for (uint32 i = 0; i < DTC_MAX_NODE_COUNT; i++) {
+        cm_close_thread(&arch_proc_ctx[i].write_thread);
+        if (cm_dbs_is_enable_dbs() == OG_TRUE) {
+            cm_close_thread(&arch_proc_ctx[i].read_thread);
+        }
+
+        if (arch_proc_ctx[i].arch_rw_buf.aligned_buf.alloc_buf != NULL) {
+            arch_release_rw_buf(&arch_proc_ctx[i].arch_rw_buf, "RC_ARCH");
+        }
+
+        if (arch_proc_ctx[i].tmp_file_name[0] != '\0' && arch_proc_ctx[i].tmp_file_handle != OG_INVALID_HANDLE) {
+            device_type_t arch_file_type = arch_get_device_type(arch_proc_ctx[i].arch_dest);
+            cm_close_device(arch_file_type, &arch_proc_ctx[i].tmp_file_handle);
+        }
+        if (arch_proc_ctx[i].logfile.ctrl != NULL && arch_proc_ctx[i].logfile.handle != OG_INVALID_HANDLE) {
+            cm_close_device(arch_proc_ctx[i].logfile.ctrl->type, &arch_proc_ctx[i].logfile.handle);
+        }
+    }
+}
+
+status_t rc_wait_archive_log_finish(arch_proc_context_t *arch_proc_ctx)
+{
+    status_t arch_stat = OG_SUCCESS;
+    OG_LOG_RUN_INF("[RC_ARCH] wait all arch procs to complete");
+    for (uint32 i = 0; i < DTC_MAX_NODE_COUNT;) {
+        if (arch_proc_ctx[i].read_failed || arch_proc_ctx[i].write_failed) {
+            arch_stat = OG_ERROR;
+            break;
+        }
+        if (arch_proc_ctx[i].arch_execute == OG_TRUE) {
+            cm_sleep(DTC_REFORM_WAIT_ARCH_LOG);
+            continue;
+        }
+        i++;
+    }
+    OG_LOG_RUN_INF("[RC_ARCH] end all arch procs, arch stat: %s", arch_stat == OG_SUCCESS ? "SUCCESS" : "ERROR");
+    rc_end_archive_log(arch_proc_ctx);
+    return arch_stat;
+}
+
+status_t rc_master_reform(reform_mode_t mode, reform_detail_t *detail)
+{
+    bool32 is_full_restart = rc_is_full_restart();
+    if (is_full_restart) {
+        OG_LOG_RUN_INF("[RC] reform for full restart as master, g_rc_ctx->status=%u", g_rc_ctx->status);
+
+        drc_start_one_master();
+        g_rc_ctx->status = REFORM_MOUNTING;
+
+        // in case of full restart, recover in main thread, wait recovery finish here
+        while (((knl_session_t*)g_rc_ctx->session)->kernel->db.status <= DB_STATUS_RECOVERY ||
+            dtc_recovery_in_progress()) {
+            OG_RETVALUE_IFTRUE(rc_reform_cancled(), OG_ERROR);
+            cm_sleep(DTC_REFORM_WAIT_TIME);
+        }
+    } else {
+        OG_LOG_RUN_INF("[RC] reform for partial restart as master, g_rc_ctx->status=%u", g_rc_ctx->status);
+        g_rc_ctx->status = REFORM_RECOVERING;
+
+        // step 2 drc_remaster
+        if (rc_master_start_remaster(detail) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        // step 3 roll forward
+        if (rc_master_partial_recovery(mode, detail) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    // recovery finish, trigger ckpt
+    RC_STEP_BEGIN(detail->ckpt_elapsed);
+
+    OG_RETURN_IFERR(drc_clean_remaster_res());
+
+    bool32 need_arch = rc_need_archive_log();
+    arch_proc_context_t arch_proc_ctx[DTC_MAX_NODE_COUNT] = { 0 };
+    if (need_arch == OG_TRUE && rc_archive_log(arch_proc_ctx) != OG_SUCCESS) {
+        rc_end_archive_log(arch_proc_ctx);
+        return OG_ERROR;
+    }
+
+    // step 4 rollback
+    if (rc_master_rollback_node(detail) != OG_SUCCESS) {
+        RC_STEP_END(detail->ckpt_elapsed, RC_STEP_FAILED);
+        if (need_arch == OG_TRUE) {
+            rc_end_archive_log(arch_proc_ctx);
+        }
+        return OG_ERROR;
+    }
+
+    /* checkpoint and update log point after reform_open, in order for dtc_get_txn_info to move on and release ctrl */
+    /* latch */
+    if (rc_master_wait_ckpt_finish(mode) != OG_SUCCESS) {
+        RC_STEP_END(detail->ckpt_elapsed, RC_STEP_FAILED);
+        if (need_arch == OG_TRUE) {
+            rc_end_archive_log(arch_proc_ctx);
+        }
+        return OG_ERROR;
+    }
+    RC_STEP_END(detail->ckpt_elapsed, RC_STEP_FINISH);
+
+    if (need_arch == OG_TRUE && rc_wait_archive_log_finish(arch_proc_ctx) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] wait arch finish in reform failed");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t rc_start_new_reform(reform_mode_t mode)
+{
+    reform_detail_t *detail = &g_rc_ctx->reform_detail;
+
+    // step 0 freeze reform cluster
+    OG_LOG_RUN_INF("[RC] change g_rc_ctx->status=%u", g_rc_ctx->status);
+    g_rc_ctx->status = REFORM_FROZEN;
+    rc_reform_init(&g_rc_ctx->info);
+    OG_LOG_RUN_INF("[RC] new reform init successfully, g_rc_ctx->status=%u", g_rc_ctx->status);
+    SYNC_POINT_GLOBAL_START(OGRAC_REFORM_BUILD_CHANNEL_DELAY, NULL, 1000); // delay 1000ms
+    SYNC_POINT_GLOBAL_END;
+    // step 1 rebuild mes channel
+    if (rc_reform_build_channel(detail) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] build channel step failed");
+        return OG_ERROR;
+    }
+
+    if (rc_is_master() == OG_TRUE) {
+        if (rc_master_reform(mode, detail) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC] master reform failed");
+            return OG_ERROR;
+        }
+    } else {
+        if (rc_follower_reform(mode, detail) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC][partial restart] follower reform failed");
+            return OG_ERROR;
+        }
+    }
+    if (arch_init_proc_standby() != OG_SUCCESS) {
+        arch_deinit_proc_standby();
+        OG_LOG_RUN_ERR("[RC] init standby master node arch proc failed");
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_INF("[RC] finish reform, g_rc_ctx->status=%u", g_rc_ctx->status);
+    OG_LOG_RUN_INF("[RC] there are (%d) flying page request", page_req_count);
+    page_req_count = 0;
+    accumulate_recovery_stat();
+
+    return OG_SUCCESS;
+}
+
+static status_t rc_mes_connect(uint8 inst_id)
+{
+    int32 err_code;
+    const char *error_msg = NULL;
+    if (mes_connect(inst_id, g_dtc->profile.nodes[inst_id], g_dtc->profile.ports[inst_id]) != OG_SUCCESS) {
+        cm_get_error(&err_code, &error_msg, NULL);
+        if (err_code != ERR_MES_ALREADY_CONNECT) {
+            OG_LOG_RUN_ERR("[RC] failed to create mes channel to instance %u", inst_id);
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t rc_mes_connection_ready(uint8 inst_id)
+{
+    uint32 wait_time = 0;
+    while (!mes_connection_ready(inst_id)) {
+        cm_sleep(DTC_REFORM_WAIT_TIME);
+        wait_time += DTC_REFORM_WAIT_TIME;
+        if (wait_time > DTC_REFORM_MES_CONNECT_TIMEOUT) {
+            OG_LOG_RUN_ERR("[RC] connect to instance %u time out, wait_time %u.", inst_id, wait_time);
+            return OG_ERROR;
+        }
+    }
+    
+    if (drc_mes_check_full_connection(inst_id) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] connect to instance %u failed, full connection not ready.", inst_id);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t rc_build_channel_join(reform_info_t *info)
+{
+    uint8 inst_id;
+    for (uint8 i = 0; i < info->reform_list[REFORM_LIST_AFTER].inst_id_count; i++) {
+        inst_id = info->reform_list[REFORM_LIST_AFTER].inst_id_list[i];
+        if (g_rc_ctx->self_id != inst_id && rc_mes_connect(inst_id) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+    }
+
+    for (uint8 i = 0; i < info->reform_list[REFORM_LIST_AFTER].inst_id_count; i++) {
+        inst_id = info->reform_list[REFORM_LIST_AFTER].inst_id_list[i];
+        if (g_rc_ctx->self_id != inst_id && rc_mes_connection_ready(inst_id) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t rc_build_channel_stay(reform_info_t *info)
+{
+    uint8 inst_id;
+    for (uint8 i = 0; i < info->reform_list[REFORM_LIST_JOIN].inst_id_count; i++) {
+        inst_id = info->reform_list[REFORM_LIST_JOIN].inst_id_list[i];
+        if (g_rc_ctx->self_id != inst_id && rc_mes_connect(inst_id) != OG_SUCCESS) {
+                return OG_ERROR;
+        }
+    }
+
+    for (uint8 i = 0; i < info->reform_list[REFORM_LIST_JOIN].inst_id_count; i++) {
+        inst_id = info->reform_list[REFORM_LIST_JOIN].inst_id_list[i];
+        if (g_rc_ctx->self_id != inst_id && rc_mes_connection_ready(inst_id) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t rc_build_channel(reform_info_t *info)
+{
+    switch (info->role) {
+        case REFORM_ROLE_JOIN:
+            if (rc_build_channel_join(info) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+            break;
+
+        case REFORM_ROLE_STAY:
+            if (rc_build_channel_stay(info) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+            break;
+
+        default:
+            break;
+    }
+    return OG_SUCCESS;
+}
+
+
+void rc_release_abort_channel(reform_info_t *info)
+{
+    uint8  inst_id;
+    uint32 released = 0;
+
+    switch (info->role) {
+        case REFORM_ROLE_STAY:
+            for (uint8 i = 0; i < info->reform_list[REFORM_LIST_ABORT].inst_id_count; i++) {
+                inst_id = info->reform_list[REFORM_LIST_ABORT].inst_id_list[i];
+                if (g_rc_ctx->self_id != inst_id) {
+                    mes_disconnect(inst_id, OG_FALSE);
+                    released++;
+                }
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    if (released > 0) {
+        mes_wakeup_rooms();
+    }
+
+    return;
+}
+
+
+void rc_release_channel(reform_info_t *info)
+{
+    uint8  inst_id;
+    uint32 released = 0;
+
+    switch (info->role) {
+        case REFORM_ROLE_LEAVE:
+            for (uint8 i = 0; i < info->reform_list[REFORM_LIST_BEFORE].inst_id_count; i++) {
+                inst_id = info->reform_list[REFORM_LIST_BEFORE].inst_id_list[i];
+                if (g_rc_ctx->self_id != inst_id) {
+                    mes_disconnect(inst_id, OG_TRUE);
+                    released++;
+                }
+            }
+            break;
+
+        case REFORM_ROLE_STAY:
+            for (uint8 i = 0; i < info->reform_list[REFORM_LIST_LEAVE].inst_id_count; i++) {
+                inst_id = info->reform_list[REFORM_LIST_LEAVE].inst_id_list[i];
+                if (g_rc_ctx->self_id != inst_id) {
+                    mes_disconnect(inst_id, OG_TRUE);
+                    released++;
+                }
+            }
+
+            for (uint8 i = 0; i < info->reform_list[REFORM_LIST_ABORT].inst_id_count; i++) {
+                inst_id = info->reform_list[REFORM_LIST_ABORT].inst_id_list[i];
+                if (g_rc_ctx->self_id != inst_id) {
+                    mes_disconnect(inst_id, OG_TRUE);
+                    released++;
+                }
+            }
+
+            for (uint8 i = 0; i < info->reform_list[REFORM_LIST_FAIL].inst_id_count; i++) {
+                inst_id = info->reform_list[REFORM_LIST_FAIL].inst_id_list[i];
+                if (g_rc_ctx->self_id != inst_id) {
+                    mes_disconnect(inst_id, OG_TRUE);
+                    released++;
+                }
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    if (released > 0) {
+        mes_wakeup_rooms();
+    }
+
+    return;
+}
+
+bool32 rc_finished(void)
+{
+    if (drc_remaster_in_progress()) {
+        return OG_FALSE;
+    }
+
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    if (!DB_IS_PRIMARY(&session->kernel->db)) {
+        OG_LOG_RUN_INF("standby cluster no need check recovery");
+        return OG_TRUE;
+    }
+
+    if (dtc_recovery_in_progress()) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+void rc_stop_cur_reform(void)
+{
+    OG_LOG_RUN_INF("[RC] start stop current reform, reform failed status(%u), remaster need stop(%u), recovery need "
+                   "stop(%u), recovery failed(%u)", g_rc_ctx->info.failed_reform_status, drc_remaster_need_stop(),
+                   dtc_recovery_need_stop(), dtc_recovery_failed());
+    g_rc_ctx->status = REFORM_PREPARE;
+    if (drc_remaster_need_stop()) {
+        if (drc_stop_remaster() != OG_SUCCESS) {
+            CM_ABORT_REASONABLE(0, "ABORT INFO: stop remaster failed");
+        }
+    }
+ 
+    if (dtc_recovery_need_stop()) {
+        dtc_stop_recovery();
+    }
+    // current reform failed after remaster done, exit
+    reform_mode_t mode = rc_get_change_mode();
+    if (mode == REFORM_MODE_OUT_OF_PLAN && g_rc_ctx->info.failed_reform_status > REFORM_RECOVERING &&
+        g_rc_ctx->info.failed_reform_status < REFORM_DONE) {
+        CM_ABORT_REASONABLE(0, "ABORT INFO: current reform failed and cannot reentrant, exit");
+    }
+    OG_LOG_RUN_INF("[RC] finish stop current reform");
+}
+
+bool32 rc_reform_cancled(void)
+{
+    if (g_instance->shutdown_ctx.mode == SHUTDOWN_MODE_ABORT || g_instance->shutdown_ctx.mode == SHUTDOWN_MODE_SIGNAL) {
+        return OG_TRUE;
+    }
+    return OG_FALSE;
+}
+
+status_t rc_start_lrpl_proc(knl_session_t *session)
+{
+    lrpl_context_t *lrpl = &session->kernel->lrpl_ctx;
+    if (g_rc_ctx->mode == REFORM_MODE_OUT_OF_PLAN && g_rc_ctx->info.master_changed && rc_is_master()) {
+        if (cm_create_thread(lrpl_proc, 0, session, &lrpl->thread) != OG_SUCCESS) {
+            CM_ABORT_REASONABLE(0, "[RC] refomer start lrpl proc failed");
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t rc_notify_reform_status(knl_session_t *session, reform_info_t *rc_info, uint32 status)
+{
+    knl_panic(status <= REFORM_DONE);
+    if (status == REFORM_DONE)
+    {
+        SYNC_POINT_GLOBAL_START(OGRAC_BCAST_REFORM_DONE_OTHER_ABORT, (int32 *)g_rc_ctx->session, 0);
+        SYNC_POINT_GLOBAL_END;
+    }
+
+    status_t ret = rc_broadcast_change_status((knl_session_t*)session, rc_info, status);
+    OG_LOG_RUN_INF("[RC] drc_broadcast_change_status ret=%d, curr=%u, notify=%u", ret, g_rc_ctx->status, status);
+    return ret;
+}

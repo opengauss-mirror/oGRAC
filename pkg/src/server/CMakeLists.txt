@@ -1,0 +1,64 @@
+include_directories(
+    "${OGRACDB_SRC}/cms/interface"
+	"${OGRACDB_SRC}/cluster"
+	"${OGRACDB_SRC}/rc"
+	"${OGRACDB_SRC}/zenfs"
+	"${OGRACDB_SRC}/ogsql/gdv"
+    "${OGRACDB_SRC}/upgrade_check"
+    "${OGRACDB_SRC}/fdsa"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/params"
+)
+
+link_directories(${OGRACDB_LIB} "${OGRACDB_LIBRARY}/protobuf/lib" ${PCRE_LIB_PATH})
+
+aux_source_directory(. SERVER_SRC)
+aux_source_directory(./params SERVER_PARAMS_SRC)
+aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard SHARD_SRC)
+aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/rebalance SHD_REBALANCE_SRC)
+aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/ddl SHD_DDL_SRC)
+aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/dml SHD_DML_SRC)
+aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/route SHD_ROUTE_SRC)
+aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/adapter SHD_ADAPTER_SRC)
+set(SHARD_TOTAL_SRC ${SHARD_SRC} ${SHD_REBALANCE_SRC} ${SHD_DDL_SRC} ${SHD_DML_SRC} ${SHD_ROUTE_SRC} ${SHD_ADAPTER_SRC})
+
+add_library(zeserver STATIC ${SERVER_SRC} ${SERVER_PARAMS_SRC}  ${SHARD_TOTAL_SRC})
+if (USE_FUZZASAN)
+target_link_libraries(zeserver PRIVATE zecluster zecms Secodefuzz zesql zemes)
+else ()
+target_link_libraries(zeserver PRIVATE zecluster zecms)
+endif(USE_FUZZASAN)
+
+add_library(oGRAC SHARED ${SERVER_SRC} ${SERVER_PARAMS_SRC} ${SHARED_TOTAL_SRC} ${VERSION_SRC})
+set_target_properties(oGRAC PROPERTIES OUTPUT_NAME ograc)
+
+#### oGRACd ####
+# Precompiled options
+option(USE_FUZZASAN OFF)
+if (USE_FUZZASAN)
+    add_definitions(-DBUILD_SRV_MAIN)
+    add_compile_options(-fsanitize-coverage=trace-pc)
+    ADD_EXECUTABLE(ogracd ${VERSION_SRC})
+    target_link_libraries(ogracd PRIVATE
+                          -Wl,--start-group
+                          zeserver zesql zekernel zemes zeprotocol zecommon zeclient
+                          zecluster zecms zerc m rt pthread dl z zstd lz4 Secodefuzz
+                          -Wl,--end-group)
+else ()
+    add_definitions(-DBUILD_SRV_MAIN)
+    ADD_EXECUTABLE(ogracd ${VERSION_SRC})
+    target_link_libraries(ogracd PRIVATE
+                          -Wl,--start-group
+                          zeserver zesql zekernel zemes zeprotocol zecommon zeclient
+                          zecluster zecms zerc m rt pthread dl z zstd lz4
+                          -Wl,--end-group)         
+    target_link_libraries(oGRAC PRIVATE
+                          -Wl,--start-group
+                          zeserver zesql zekernel zemes zeprotocol zecommon zeclient
+                          zecluster zecms zerc m rt pthread dl z zstd lz4
+                          -Wl,--end-group)
+endif(USE_FUZZASAN)
+target_compile_definitions(ogracd PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})
+target_compile_definitions(ogracd PRIVATE -DGETDBVERSION=${DD_GETDBVERSION})
+target_compile_definitions(oGRAC PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})
+target_compile_definitions(oGRAC PRIVATE -DGETDBVERSION=${DD_GETDBVERSION})

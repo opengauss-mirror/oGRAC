@@ -1,0 +1,163 @@
+[
+  {
+    "type": "file",
+    "size": "2",
+    "dir": "/opt/ograc/log/og_om/exporter.log",
+    "tar_name": "ograc_exporter.log.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "2",
+    "dir": "/opt/ograc/og_om/service/ogmgr/ogmgr_log/ogmgr_audit.log",
+    "tar_name": "ogmgr_audit.log.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "2",
+    "dir": "/opt/ograc/og_om/service/ogmgr/ogmgr_log/ogmgr_deploy.log",
+    "tar_name": "ogmgr_deploy.log.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "2",
+    "dir": "/opt/ograc/og_om/service/ogmgr/ogmgr_log/ogmgr_logs_collection.log",
+    "tar_name": "ogmgr_logs_collection.log.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "2",
+    "dir": "/opt/ograc/og_om/service/ogmgr/ogmgr_log/ogmgr_task.log",
+    "tar_name": "ogmgr_task.log.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "4",
+    "dir": "/opt/ograc/log/dbstor/install.log",
+    "tar_name": "dbstor_install.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "4",
+    "dir": "/opt/ograc/log/dbstor/uninstall.log",
+    "tar_name": "dbstor_uninstall.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "4",
+    "dir": "/opt/ograc/log/dbstor/backup.log",
+    "tar_name": "dbstor_backup.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "4",
+    "dir": "/opt/ograc/log/dbstor/update.log",
+    "tar_name": "dbstor_update.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "dir": "/opt/ograc/log/ograc/ograc_deploy.log",
+    "tar_name": "ograc_deploy.log.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "dir": "/opt/ograc/log/ograc/run/ogracd.rlog",
+    "tar_name": "ogracd.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "dir": "/mnt/dbdata/local/ograc/tmp/data/log/ogracstatus.log",
+    "tar_name": "ogracstatus.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "dir": "/opt/ograc/log/cms/run/cms_adm.rlog",
+    "tar_name": "cms_adm.rlog.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "dir": "/opt/ograc/log/cms/run/cms_srv.rlog",
+    "tar_name": "cms_srv.rlog.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "dir": "/opt/ograc/log/cms/cms_deploy.log",
+    "tar_name": "cms_deploy.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "30",
+    "is_repeat_generate": true,
+    "dir": "/opt/ograc/log/dbstor/run/*dsware_*_0.log*",
+    "tar_name": "dsware_run.tar.gz",
+    "generate_type": "task generated"
+  },
+
+  {
+    "type": "file",
+    "size": "150",
+    "is_repeat_generate": false,
+    "dir": "/opt/ograc/log/dbstor/bak/*dsware_cms_0.log*",
+    "tar_name": "dsware_cms_bak.tar.gz",
+    "generate_type": "script generated",
+    "script_type": "sh",
+    "script_path": "-c 'cd %s;ls -t %s | xargs tar -zcf %s'"
+  },
+
+  {
+    "type": "file",
+    "size": "150",
+    "is_repeat_generate": false,
+    "dir": "/opt/ograc/log/dbstor/bak/*dsware_ogracd_0.log*",
+    "tar_name": "dsware_ogracd_bak.tar.gz",
+    "generate_type": "script generated",
+    "script_type": "sh",
+    "script_path": "-c 'cd %s;ls -t %s | xargs tar -zcf %s'"
+  },
+
+  {
+    "type": "file",
+    "size": "150",
+    "is_repeat_generate": false,
+    "dir": "/opt/ograc/log/dbstor/bak/*dsware_dbstor_0.log*",
+    "tar_name": "dsware_dbstor_bak.tar.gz",
+    "generate_type": "script generated",
+    "script_type": "sh",
+    "script_path": "-c 'cd %s;ls -t %s | xargs tar -zcf %s'"
+  }
+]

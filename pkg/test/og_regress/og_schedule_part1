@@ -1,0 +1,11 @@
+test: og_json_1
+test: og_resource_manager
+test: og_stat
+test: og_withas og_newpage og_colsep_long
+test: og_alter_session
+test: og_expression og_rownum
+test: og_decimal og_number
+test: og_json_3 og_json_4 og_json_5
+test: og_jsonb_1 og_jsonb_2 og_jsonb_table
+test: og_having
+test: og_union_all og_union og_datatype
