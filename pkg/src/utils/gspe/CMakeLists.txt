@@ -1,0 +1,10 @@
+#### ogencrypt ####
+aux_source_directory(. OGENCRYPT_SRC)
+add_executable(ogencrypt ${OGENCRYPT_SRC} ${VERSION_SRC})
+if (USE_FUZZASAN)
+    target_link_libraries(ogencrypt PRIVATE zecommon Secodefuzz)
+else()
+    target_link_libraries(ogencrypt PRIVATE zecommon)
+endif(USE_FUZZASAN)
+target_compile_definitions(ogencrypt PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})
+target_compile_definitions(ogencrypt PRIVATE -DGETDBVERSION=${DD_GETENCRYVERSION})

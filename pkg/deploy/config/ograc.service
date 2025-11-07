@@ -1,0 +1,7 @@
+[Unit]
+Description=ograc daemon service
+
+[Service]
+Type=simple
+KillMode=process
+ExecStart=/bin/bash /opt/ograc/common/script/ograc_service.sh start

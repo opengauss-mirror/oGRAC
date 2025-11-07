@@ -1,0 +1,34 @@
+{
+  "log query": {
+    "handler": "log",
+    "checkFunc": "",
+    "description": ""
+  },
+  "collection logs": {
+    "handler": "log_py",
+    "checkFunc": "collection_logs_checker.LogEnumCheck",
+    "paramCheck": {
+      "type": {
+        "required": true,
+        "type": "string",
+        "enum": "recent|all"
+      },
+      "log_dir": {
+        "required": true
+      }
+    },
+    "filePath": "/opt/ograc/og_om/service/ogmgr/logs_collection/execute.py",
+    "py_input": "-p ${log_dir} -t ${type}",
+    "description": ""
+  },
+  "inspection": {
+    "handler": "inspection_py",
+    "checkFunc": "",
+    "description": ""
+  },
+  "logs progress query": {
+  "handler": "log_progress",
+  "checkFunc": "",
+  "description": ""
+  }
+}

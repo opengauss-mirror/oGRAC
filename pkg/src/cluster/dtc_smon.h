@@ -1,0 +1,105 @@
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * dtc_smon.h
+ *
+ *
+ * IDENTIFICATION
+ * src/cluster/dtc_smon.h
+ *
+ * -------------------------------------------------------------------------
+ */
+#ifndef DTC_SMON_H
+#define DTC_SMON_H
+
+#include "cm_types.h"
+#include "cm_defs.h"
+#include "cm_thread.h"
+#include "knl_session.h"
+#include "knl_dlock_stack.h"
+#include "mes_func.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// dtc txn lock check
+#pragma pack(4)
+typedef struct st_dtc_dead_lock {
+    uint64 curr_lsn;
+    xid_t wxid;
+    uint16 wsid;
+    uint16 wrmid;
+} dtc_dlock;
+#pragma pack()
+
+// dtc table lock check
+#pragma pack(4)
+typedef struct st_dtc_table_lock_wait {
+    uint8 inst_id; // wait table lock instance id
+    uint8 unused;
+    uint16 sid;
+    uint16 rmid;
+    uint16 wrmid;
+    lock_twait_t wtid;
+} dtc_tlock;
+#pragma pack()
+
+// dtc itl lock check
+#pragma pack(4)
+typedef struct st_dtc_itl_lock_wait {
+    uint16 sid;
+    uint8 unused[2];
+    xid_t xid;
+    xid_t wxid;     // wait node id in transaction table
+    page_id_t wpid; // wait on page itls
+    knl_session_status_t status;
+} dtc_ilock;
+#pragma pack()
+
+status_t dtc_smon_init_lock_stack(knl_session_t *session);
+void dtc_smon_uninit_lock_stack(knl_session_t *session);
+
+EXTER_ATTACK void dtc_smon_process_get_sid(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_txn_dlock(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_get_wrid(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_wait_tlocks_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_wait_tlock_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_check_tlock_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_get_tlock_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_wait_event_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_get_ilock_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_check_se_msg(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dtc_smon_process_deadlock_sql(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK status_t dtc_smon_get_txn_dlock(knl_handle_t session, uint8 instid, uint16 rmid, dtc_dlock *dlock);
+EXTER_ATTACK rowid_t dtc_smon_get_rm_wrid(knl_session_t *session, uint8 dst_inst, uint16 rmid);
+EXTER_ATTACK bool32 dtc_smon_check_wait_event(knl_session_t *session, uint8 inst_id, uint16 sid);
+EXTER_ATTACK bool32 dtc_smon_check_table_status(knl_session_t *session, dtc_tlock* tlock);
+EXTER_ATTACK void dtc_smon_wait_rm_msg(knl_session_t *session, uint16 wsid, uint16 rmid, dtc_tlock *tlock);
+EXTER_ATTACK bool32 dtc_smon_push_tlock(knl_session_t *session, uint8 *w_marks, dtc_dlock_stack_t *stack_lock,
+                                        uint32 inst_id, uint64 table_id);
+
+void dtc_smon_detect_dead_lock_in_cluster(knl_session_t *session, uint8 *wait_marks, uint16 session_id,
+    bool32 record_sql);
+bool32 dtc_smon_check_lock_waits_in_cluster(knl_session_t *session, knl_session_t *se, bool32 record_sql);
+bool32 dtc_smon_check_itl_waits_in_cluster(knl_session_t *session, knl_session_t *start_session, bool32 record_sql);
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

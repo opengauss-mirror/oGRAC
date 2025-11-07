@@ -1,0 +1,8 @@
+add_compile_options(-Werror)
+option(USE_FUZZASAN OFF)
+if (USE_FUZZASAN)
+    add_compile_options(-fsanitize-coverage=trace-pc)
+endif(USE_FUZZASAN)
+add_subdirectory(gspe)
+add_subdirectory(ogsql)
+add_subdirectory(ogbackup)

@@ -1,0 +1,886 @@
+#!/bin/bash
+set +x
+CURRENT_PATH=$(dirname $(readlink -f $0))
+SCRIPT_NAME=${PARENT_DIR_NAME}/$(basename $0)
+INSTALL_TYPE=$1
+CONFIG_FILE=""
+FS_CONFIG_FILE=""
+PRE_INSTALL_PY_PATH=${CURRENT_PATH}/pre_install.py
+FILE_MOD_FILE=${CURRENT_PATH}/file_mod.sh
+CONFIG_PATH=${CURRENT_PATH}/../config
+ENV_FILE=${CURRENT_PATH}/env.sh
+UPDATE_CONFIG_FILE_PATH="${CURRENT_PATH}"/update_config.py
+DBSTOR_CHECK_FILE=${CURRENT_PATH}/dbstor/check_dbstor_compat.sh
+DEPLOY_MODE_DBSTOR_UNIFY_FLAG=/opt/ograc/log/deploy/.dbstor_unify_flag
+config_install_type="override"
+pass_check='true'
+add_group_user_ceck='true'
+mount_nfs_check='true'
+auto_create_fs='false'
+dbstor_user=''
+dbstor_pwd_first=''
+unix_sys_pwd_first=''
+unix_sys_pwd_second=''
+dm_login_pwd=''
+cert_encrypt_pwd=''
+storage_share_fs=''
+storage_archive_fs=''
+storage_metadata_fs=''
+deploy_mode=''
+deploy_user=''
+deploy_group=''
+ograc_in_container=''
+NFS_TIMEO=50
+
+source ${CURRENT_PATH}/log4sh.sh
+source ${FILE_MOD_FILE}
+
+declare -A use_dorado
+use_dorado=(["combined"]=1 ["dbstor"]=1)
+use_file=(["file"]=1)
+use_dss=(["dss"]=1)
+
+# 适配欧拉系统，nologin用户没有执行ping命令的权限
+chmod u+s /bin/ping
+
+if [ -f ${INSTALL_TYPE} ]; then  # 默认override，接收第一个参数文件为配置文件路径
+    CONFIG_FILE=${INSTALL_TYPE}
+    FS_CONFIG_FILE=$2
+    INSTALL_TYPE='override'
+elif [[ ${INSTALL_TYPE} == "override" ]]; then  # 指定override，接收第二个参数为配置文件路径
+    CONFIG_FILE=$2
+    FS_CONFIG_FILE=$3
+    if [ ! -f ${CONFIG_FILE} ]; then
+        logAndEchoError "file: ${CONFIG_FILE} not exist"
+        exit 1
+    fi
+elif [[ ${INSTALL_TYPE} == "reserve" ]]; then  # 指定reserve，无配置文件路径接收
+    cp /opt/ograc/config/deploy_param.json ${CURRENT_PATH}
+    CONFIG_FILE=${CURRENT_PATH}/deploy_param.json
+else  # 参数输入格式有误
+    logAndEchoError "input params error"
+    exit 1
+fi
+
+# 接收第三个参数为文件系统配置文件路径
+if [ -f "${FS_CONFIG_FILE}" ];then
+    auto_create_fs="true"
+fi
+
+# 查看当前系统语言和SElonux的enforcement的状态
+seccomp_status=$(getenforce)
+language=$(localectl | grep "System Locale" |awk -F"=" '{print $2}')
+if [[ ${seccomp_status} == "Enforcing" ]]; then
+    logAndEchoWarn "The current system selinux is Enforcing. Please check whether the cms ip and port can be accessed."
+fi
+if [[ ${language} == "zh_CN.UTF-8" ]]; then
+    logAndEchoError "The current system language is Chinese. Please switch to English and reinstall."
+    exit 1
+fi
+
+function correct_files_mod() {
+    for file_path in "${!FILE_MODE_MAP[@]}"; do
+        if [ ! -e ${file_path} ]; then
+            continue
+        fi
+
+        chmod ${FILE_MODE_MAP[$file_path]} $file_path
+        if [ $? -ne 0 ]; then
+            logAndEchoError "chmod ${FILE_MODE_MAP[$file_path]} ${file_path} failed"
+            exit 1
+        fi
+    done
+}
+
+# 获取用户输入用户名密码
+function enter_pwd() {
+    if [[ ${use_dorado["${deploy_mode}"]} ]];then
+        read -p "please enter dbstor_user: " dbstor_user
+        echo "dbstor_user is: ${dbstor_user}"
+
+        read -s -p "please enter dbstor_pwd: " dbstor_pwd_first
+        echo ''
+        echo "${dbstor_pwd_first}" | python3 ${CURRENT_PATH}/implement/check_pwd.py
+        if [ $? -ne 0 ]; then
+            logAndEchoError 'dbstor_pwd not available'
+            exit 1
+        fi
+    fi
+
+    read -s -p "please enter ograc_sys_pwd: " unix_sys_pwd_first
+    echo ''
+    echo "${unix_sys_pwd_first}" | python3 ${CURRENT_PATH}/implement/check_pwd.py
+    if [ $? -ne 0 ]; then
+        logAndEchoError 'ograc_sys_pwd not available'
+        exit 1
+    fi
+
+    read -s -p "please enter ograc_sys_pwd again: " unix_sys_pwd_second
+    echo ''
+    if [[ ${unix_sys_pwd_first} != ${unix_sys_pwd_second} ]]; then
+        logAndEchoError "two ograc_sys_pwd are different"
+        exit 1
+    fi
+    if [[ ${mes_ssl_switch} == "True" ]];then
+        read -s -p "please enter private key encryption password:" cert_encrypt_pwd
+        echo ''
+    fi
+}
+
+# 检查用户用户组是否创建成功
+function checkGroupUserAdd() {
+    check_item=$1
+    if [[ ${check_item} != '0' ]]; then
+        add_group_user_ceck='false'
+    fi
+}
+
+# 检查NFS是否挂载成功
+function checkMountNFS() {
+    check_item=$1
+    if [[ ${check_item} != '0' ]]; then
+        mount_nfs_check='false'
+    fi
+}
+
+# 配置ogmgruser sudo权限
+function config_sudo() {
+    ograc_sudo="ograc ALL=(root) NOPASSWD:/usr/bin/chrt,/opt/ograc/action/docker/get_pod_ip_info.py,/usr/sbin/setcap"
+    cat /etc/sudoers | grep "ograc ALL"
+    if [[ -n $? ]];then
+        sed -i '/^ograc*/d' /etc/sudoers
+    fi
+    echo "${ograc_sudo}" >> /etc/sudoers
+
+    deploy_user_sudo="${deploy_user} ALL=(root) NOPASSWD:/usr/sbin/setcap"
+    cat /etc/sudoers | grep "${deploy_user_sudo} ALL"
+    if [[ -n $? ]];then
+        sed -i "/^${deploy_user}*/d" /etc/sudoers
+    fi
+    echo "${deploy_user_sudo}" >> /etc/sudoers
+
+    SERVICE_NAME=$(printenv SERVICE_NAME)
+    cat /etc/sudoers | grep SERVICE_NAME
+    if [[ $? -ne 0 ]];then
+      if [[ "${ograc_in_container}" != "0" ]]; then
+          sed -i '$a\Defaults    env_keep += "SERVICE_NAME"' /etc/sudoers
+          echo "export SERVICE_NAME=${SERVICE_NAME}" >> /home/ograc/.bashrc
+      fi
+    fi
+    
+    local chmod_script="/opt/ograc/action/change_log_priority.sh"
+    ogmgruser_sudo="ogmgruser ALL=(root) NOPASSWD:${chmod_script}"
+    cat /etc/sudoers | grep ogmgruser
+    if [[ -n $? ]];then
+        sed -i '/ogmgruser*/d' /etc/sudoers
+    fi
+    echo "${ogmgruser_sudo}" >> /etc/sudoers
+}
+
+# 创建用户用户组
+function initUserAndGroup() {
+    # 删除残留用户和用户组
+    userdel ograc > /dev/null 2>&1
+    userdel ogmgruser > /dev/null 2>&1
+    groupdel ogracgroup > /dev/null 2>&1
+    if [ -f /etc/uid_list ];then
+        sed -i '/6004/d' /etc/uid_list
+        sed -i '/6000/d' /etc/uid_list
+    fi
+    # 创建用户组
+    groupadd ogracgroup -g 1100
+    useradd ograc -s /sbin/nologin -u 6000
+    useradd ogmgruser -s /sbin/nologin -u 6004
+    # 增加用户到用户组
+    usermod -a -G ogracgroup ${deploy_user}
+    usermod -a -G ogracgroup ograc
+    usermod -a -G ogracgroup ogmgruser
+    usermod -a -G ${deploy_group} ograc
+    config_sudo
+}
+
+# 检查ntp服务示范开启
+function check_ntp_active() {
+    chrony_status=`systemctl is-active chronyd`
+    ntp_status=`systemctl is-active ntpd`
+    logAndEchoInfo "ntp status is: ${ntp_status}, chrony status is: ${chrony_status}"
+    if [[ ${ntp_status} != "active" ]] && [[ ${chrony_status} != "active" ]]; then
+        echo "ntp and chrony service is inactive, please active it before install"
+        logAndEchoError "ntp and chrony service is inactive"
+        exit 1
+    fi
+}
+
+# 根据性能要求配置/etc/security/limits.conf，进程内线程优先级提升开关
+function config_security_limits() {
+  local security_limits=/etc/security/limits.conf
+  grep "\* soft memlock unlimited" "${security_limits}"
+  if [ $? -ne 0 ];then
+    echo "* soft memlock unlimited" >> "${security_limits}"
+  fi
+  grep "\* hard memlock unlimited" "${security_limits}"
+  if [ $? -ne 0 ];then
+    echo "* hard memlock unlimited" >> "${security_limits}"
+  fi
+  grep "${ograc_user} hard nice -20" "${security_limits}"
+  if [ $? -ne 0 ];then
+    echo "${ograc_user} hard nice -20" >> "${security_limits}"
+  fi
+  grep "${ograc_user} soft nice -20" "${security_limits}"
+  if [ $? -ne 0 ];then
+    echo "${ograc_user} soft nice -20" >> "${security_limits}"
+  fi
+  grep "${ograc_user} soft nice -20" "${security_limits}" && grep "${ograc_user} hard nice -20" "${security_limits}"
+  if [ $? -ne 0 ];then
+    logAndEchoInfo "config security limits failed"
+    exit 1
+  fi
+  logAndEchoInfo "config security limits success"
+}
+
+
+function check_port() {
+  # nfs4.0协议挂载固定监听端口，不指定端口该监听会随机指定端口不符合安全要求。指定前检查若该端口被非nfs进程占用则报错
+  # 端口范围36729~36738: 起始端口36729， 通过循环每次递增1，检查端口是否被暂用，如果10个端口都被暂用，报错退出；
+  #                     检测到有未被占用端口，退出循环，使用当前未被占用端口进行文件系统挂载
+  for ((i=0; i<10; i++))
+  do
+    local port=$(("${NFS_PORT}" + "${i}"))
+    listen_port=$(netstat -tunpl 2>/dev/null | grep "${port}" | awk '{print $4}' | awk -F':' '{print $NF}')
+    occupied_proc_name=$(netstat -tunpl 2>/dev/null | grep "${port}" | awk '{print $7}' | awk 'NR==1 { print }')
+    if [[ -n "${listen_port}" && ${occupied_proc_name} != "-" ]];then
+      logAndEchoError "Port ${port} has been temporarily used by a non-nfs process"
+      continue
+    else
+      logAndEchoInfo "Port[${port}] is available"
+      NFS_PORT=${port}
+      return
+    fi
+  done
+  logAndEchoError "Port 36729~36738 has been temporarily used by a non-nfs process, please modify env.sh file in the current path, Change the value of NFS_PORT to an unused port"
+  sh "${CURRENT_PATH}"/uninstall.sh ${config_install_type}
+  exit 1
+}
+
+function rpm_check() {
+    local count=2
+    if [[ ${use_dorado["${deploy_mode}"]} ]];then
+      count=3
+    fi
+    rpm_pkg_count=$(ls "${CURRENT_PATH}"/../repo | wc -l)
+    rpm_pkg_info=$(ls -l "${CURRENT_PATH}"/../repo)
+    logAndEchoInfo "There are ${rpm_pkg_count} packages in repo dir, which detail is: ${rpm_pkg_info}"
+    if [ ${rpm_pkg_count} -ne ${count} ]; then
+        logAndEchoError "We have to have only ${count} rpm package,please check"
+        exit 1
+    fi
+}
+
+function copy_certificate() {
+    if [[ "${ograc_in_container}" != "0" ]]; then
+        return 0
+    fi
+
+    local certificate_dir="/opt/ograc/common/config/certificates"
+    if [ -d "${certificate_dir}" ];then
+        rm -rf "${certificate_dir}"
+    fi
+    mkdir -m 700 -p  "${certificate_dir}"
+    local ca_path
+    ca_path=$(python3 "${CURRENT_PATH}"/get_config_info.py "ca_path")
+    local crt_path
+    crt_path=$(python3 "${CURRENT_PATH}"/get_config_info.py "crt_path")
+    local key_path
+    key_path=$(python3 "${CURRENT_PATH}"/get_config_info.py "key_path")
+    cp -arf "${ca_path}" "${certificate_dir}"/ca.crt
+    cp -arf "${crt_path}" "${certificate_dir}"/mes.crt
+    cp -arf "${key_path}" "${certificate_dir}"/mes.key 
+    chown -hR "${ograc_user}":"${ograc_group}" "${certificate_dir}"
+    su -s /bin/bash - "${ograc_user}" -c "chmod 600 ${certificate_dir}/*"
+    echo -e "${cert_encrypt_pwd}" | python3 -B "${CURRENT_PATH}"/implement/check_pwd.py "check_cert_pwd"
+    if [ $? -ne 0 ];then
+        logAndEchoError "Cert file or passwd check failed."
+        uninstall
+        exit 1
+    fi
+}
+
+function uninstall() {
+    if [[ ${auto_create_fs} == "true" && ${node_id} == "0" ]];then
+        echo -e "${dm_login_ip}\n${dm_login_user}\n${dm_login_pwd}" | sh "${CURRENT_PATH}"/uninstall.sh "${config_install_type}" delete_fs
+    else
+        sh ${CURRENT_PATH}/uninstall.sh ${config_install_type}
+    fi
+}
+
+function install_dbstor() {
+    local arrch=$(uname -p)
+    local dbstor_path="${CURRENT_PATH}"/../repo
+    local dbstor_package_file=$(ls "${dbstor_path}"/DBStor_Client*_"${arrch}"*.tgz)
+    if [ ! -f "${dbstor_package_file}" ];then
+        logAndEchoError "DBstor client package is not exist, \
+        please check  the current system architecture is compatible with ${arrch}"
+        return 1
+    fi
+
+    dbstor_file_path=${CURRENT_PATH}/dbstor_file_path
+    if [ -d "${dbstor_file_path}" ];then
+        rm -rf "${dbstor_file_path}"
+    fi
+    mkdir -p "${dbstor_file_path}"
+    tar -zxf "${dbstor_package_file}" -C "${dbstor_file_path}"
+
+    local dbstor_test_file=$(ls "${dbstor_file_path}"/Dbstor_Client_Test*-"${arrch}"*-dbstor*.tgz)
+    local dbstor_client_file=$(ls "${dbstor_file_path}"/dbstor_client*-"${arrch}"*-dbstor*.tgz)
+    if [ ! -f "${dbstor_test_file}" ];then
+        logAndEchoError "${dbstor_test_file} is not exist."
+        return 1
+    fi
+    if [ ! -f "${dbstor_client_file}" ];then
+        logAndEchoError "${dbstor_client_file} is not exist."
+        return 1
+    fi
+
+    mkdir -p "${dbstor_file_path}"/client
+    mkdir -p "${dbstor_file_path}"/client_test
+    tar -zxf "${dbstor_test_file}" -C "${dbstor_file_path}"/client_test
+    tar -zxf "${dbstor_client_file}" -C "${dbstor_file_path}"/client
+    cp -arf "${dbstor_file_path}"/client/lib/* "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/add-ons/
+    cp -arf "${dbstor_file_path}"/client_test "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit
+    if [ ! -d "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared ];then
+        mkdir -p "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+        cd "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared || exit 1
+        so_name=("libkmc.so.23.0.0" "libkmcext.so.23.0.0" "libsdp.so.23.0.0" "libsecurec.so" "libcrypto.so.1.1")
+        link_name1=("libkmc.so.23" "libkmcext.so.23" "libsdp.so.23" "libcrypto.so.1.1")
+        link_name2=("libkmc.so" "libkmcext.so" "libsdp.so" "libcrypto.so")
+        ls -l "${dbstor_file_path}"/client/lib/kmc_shared
+        for i in {0..2};do
+            cp -f "${dbstor_file_path}"/client/lib/kmc_shared/"${so_name[$i]}" "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+            ln -s "${so_name[$i]}" "${link_name1[$i]}"
+            ln -s "${link_name1[$i]}" "${link_name2[$i]}"
+        done
+        cp -f "${dbstor_file_path}"/client/lib/kmc_shared/"${so_name[4]}" "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+        ln -s "${link_name1[3]}" "${link_name2[3]}"
+        cp -f "${dbstor_file_path}"/client/lib/kmc_shared/libsecurec.so "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+        cd - || exit 1
+    fi
+    rm -rf "${dbstor_file_path}"
+    return 0
+}
+
+function install_rpm() {
+    RPM_PATH=${CURRENT_PATH}/../repo/ograc-*.rpm
+    RPM_UNPACK_PATH_FILE="/opt/ograc/image/ograc_connector/ogracKernel/oGRAC-DATABASE-CENTOS-64bit"
+    RPM_PACK_ORG_PATH="/opt/ograc/image"
+
+    if [ ! -f  "${CURRENT_PATH}"/../repo/ograc-*.rpm ]; then
+        echo "ograc.rpm is not exist."
+        exit 1
+    fi
+
+    rpm -ivh --replacepkgs ${RPM_PATH} --nodeps --force
+
+    tar -zxf ${RPM_UNPACK_PATH_FILE}/oGRAC-RUN-CENTOS-64bit.tar.gz -C ${RPM_PACK_ORG_PATH}
+    if [[ ${use_dorado["${deploy_mode}"]} ]];then
+        install_dbstor
+        if [ $? -ne 0 ];then
+            sh ${CURRENT_PATH}/uninstall.sh ${config_install_type}
+            exit 1
+        fi
+    fi
+    chmod -R 750 ${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit
+    chown ${ograc_user}:${ograc_group} -hR ${RPM_PACK_ORG_PATH}/
+    chown root:root ${RPM_PACK_ORG_PATH}
+    if [[ ${deploy_mode} == "dss" ]];then
+        cp  ${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit/lib/* /usr/lib64/
+        chown ${ograc_user}:${ograc_group} -hR /usr/lib64/libze*
+    fi
+}
+
+function show_ograc_version() {
+    sn=$(dmidecode -s system-uuid)
+    name=$(cat /etc/hostname)
+    version=$(grep -E "Version:" /opt/ograc/versions.yml | awk '{print $2}' | sed 's/\([0-9]*\.[0-9]*\)\(\.[0-9]*\)\?\.[A-Z].*/\1\2/')
+
+    cat <<EOF > /usr/local/bin/show
+#!/bin/bash
+echo "SN : ${sn}"
+echo "System Name : ${name}"
+echo "Product Model : ograc"
+echo "Product Version : ${version}"
+EOF
+
+    chmod 550 /usr/local/bin/show
+}
+
+# 检查dbstor的user与pwd是否正确
+function check_dbstor_usr_passwd() {
+    logAndEchoInfo "check username and password of dbstor. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    su -s /bin/bash - "${ograc_user}" -c "sh ${CURRENT_PATH}/dbstor/check_usr_pwd.sh"
+    install_result=$?
+    if [ ${install_result} -ne 0 ]; then
+        logAndEchoError "check dbstor passwd failed, possible reasons:
+            1 username or password of dbstor storage service is incorrect.
+            2 cgw create link failed.
+            3 ip address of dbstor storage service is incorrect.
+            please contact the engineer to solve. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        uninstall
+        exit 1
+    else
+        logAndEchoInfo "user and password of dbstor check pass. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    fi
+}
+
+function check_dbstor_client_compatibility() {
+    logAndEchoInfo "begin to check dbstor client compatibility."
+    if [ ! -f "${DBSTOR_CHECK_FILE}" ];then
+        logAndEchoError "${DBSTOR_CHECK_FILE} file is not exists."
+        uninstall
+        exit 1
+    fi
+    su -s /bin/bash - "${ograc_user}" -c "sh ${DBSTOR_CHECK_FILE}"
+    if [[ $? -ne 0 ]];then
+        logAndEchoError "dbstor client compatibility check failed."
+        uninstall
+        exit 1
+    fi
+    logAndEchoInfo "dbstor client compatibility check success."
+}
+
+function mount_fs() {
+    mkdir -m 750 -p /mnt/dbdata/remote/share_${storage_share_fs}
+    chown ${ograc_user}:${ograc_group} /mnt/dbdata/remote/share_${storage_share_fs}
+    mkdir -m 750 -p /mnt/dbdata/remote/archive_${storage_archive_fs}
+    chown ${ograc_user}:${ograc_group} /mnt/dbdata/remote/archive_${storage_archive_fs}
+    mkdir -m 755 -p /mnt/dbdata/remote/metadata_${storage_metadata_fs}
+    chmod 755 /mnt/dbdata/remote
+    chmod 755 /mnt/dbdata/remote/metadata_${storage_metadata_fs}
+    if [ -d /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id} ];then
+        rm -rf /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
+    fi
+    mkdir -m 770 -p /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
+    chown ${deploy_user}:${ograc_common_group} /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
+    if [[ "${ograc_in_container}" != "0" ]] || [[ x"${deploy_mode}" == x"dbstor" ]] || [[ x"${deploy_mode}" == x"dss" ]]; then
+        return 0
+    fi
+
+    # 获取nfs挂载的ip
+    if [[ ${storage_archive_fs} != '' ]]; then
+        archive_logic_ip=`python3 ${CURRENT_PATH}/get_config_info.py "archive_logic_ip"`
+        if [[ ${archive_logic_ip} = '' ]]; then
+            logAndEchoInfo "please check archive_logic_ip"
+        fi
+    fi
+    metadata_logic_ip=`python3 ${CURRENT_PATH}/get_config_info.py "metadata_logic_ip"`
+
+    if [[ ${use_dorado["${deploy_mode}"]} ]]; then
+        kerberos_type=`python3 ${CURRENT_PATH}/get_config_info.py "kerberos_key"`
+        mount -t nfs -o sec="${kerberos_type}",timeo=${NFS_TIMEO},nosuid,nodev ${metadata_logic_ip}:/${storage_metadata_fs} /mnt/dbdata/remote/metadata_${storage_metadata_fs}
+    else
+        mount -t nfs -o timeo=${NFS_TIMEO},nosuid,nodev ${metadata_logic_ip}:/${storage_metadata_fs} /mnt/dbdata/remote/metadata_${storage_metadata_fs}
+    fi
+
+    metadata_result=$?
+    if [ ${metadata_result} -ne 0 ]; then
+        logAndEchoError "mount metadata nfs failed"
+    fi
+
+    # 检查36729~36728是否有可用端口
+    check_port
+    sysctl fs.nfs.nfs_callback_tcpport="${NFS_PORT}" > /dev/null 2>&1
+    if [[ ${storage_archive_fs} != '' ]]; then
+        if [[ ${use_dorado["${deploy_mode}"]} ]]; then
+            mount -t nfs -o sec="${kerberos_type}",timeo=${NFS_TIMEO},nosuid,nodev ${archive_logic_ip}:/${storage_archive_fs} /mnt/dbdata/remote/archive_${storage_archive_fs}
+            archive_result=$?
+        else
+            mount -t nfs -o timeo=${NFS_TIMEO},nosuid,nodev ${archive_logic_ip}:/${storage_archive_fs} /mnt/dbdata/remote/archive_${storage_archive_fs}
+            archive_result=$?
+        fi
+        if [ ${archive_result} -ne 0 ]; then
+            logAndEchoError "mount archive nfs failed"
+        fi
+
+        checkMountNFS ${archive_result}
+        chmod 750 /mnt/dbdata/remote/archive_${storage_archive_fs}
+        chown -hR "${ograc_user}":"${deploy_group}" /mnt/dbdata/remote/archive_${storage_archive_fs} > /dev/null 2>&1
+        # 修改备份nfs路径属主属组
+    fi
+    checkMountNFS ${metadata_result}
+
+    if [[ x"${deploy_mode}" == x"file" ]]; then
+        storage_dbstor_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_dbstor_fs"`
+        storage_logic_ip=`python3 ${CURRENT_PATH}/get_config_info.py "storage_logic_ip"`
+        mkdir -m 750 -p /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"
+        chown "${ograc_user}":"${ograc_user}" /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"
+        mount -t nfs -o vers=4.0,timeo=${NFS_TIMEO},nosuid,nodev "${storage_logic_ip}":/"${storage_dbstor_fs}" /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"
+        checkMountNFS $?
+        chown "${ograc_user}":"${ograc_user}" /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"
+        mkdir -m 750 -p /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"/data
+        mkdir -m 750 -p /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"/share_data
+        chown ${ograc_user}:${ograc_user} /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"/data
+        chown ${ograc_user}:${ograc_user} /mnt/dbdata/remote/storage_"${storage_dbstor_fs}"/share_data
+    fi
+    if [[ x"${deploy_mode}" == x"file" ]] || [[ -f /opt/ograc/youmai_demo ]];then
+        # nas模式才挂载share nfs
+        share_logic_ip=`python3 ${CURRENT_PATH}/get_config_info.py "share_logic_ip"`
+        mount -t nfs -o vers=4.0,timeo=${NFS_TIMEO},nosuid,nodev ${share_logic_ip}:/${storage_share_fs} /mnt/dbdata/remote/share_${storage_share_fs}
+        share_result=$?
+        if [ ${share_result} -ne 0 ]; then
+            logAndEchoError "mount share nfs failed"
+        fi
+        chown -hR "${ograc_user}":"${ograc_group}" /mnt/dbdata/remote/share_${storage_share_fs} > /dev/null 2>&1
+        checkMountNFS ${share_result}
+    fi
+
+    # 检查nfs是否都挂载成功
+    if [[ ${mount_nfs_check} != 'true' ]]; then
+        logAndEchoInfo "mount nfs failed"
+        uninstall
+        exit 1
+    fi
+    remoteInfo=`ls -l /mnt/dbdata/remote`
+    logAndEchoInfo "/mnt/dbdata/remote detail is: ${remoteInfo}"
+    # 目录权限最小化
+    if [[ x"${deploy_mode}" != x"dbstor" ]]; then
+        chmod 750 /mnt/dbdata/remote/share_${storage_share_fs}
+    fi
+    chmod 755 /mnt/dbdata/remote/metadata_${storage_metadata_fs}
+    if [ -d /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id} ];then
+        rm_info=$(rm -rf /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id} 2>&1)
+        logAndEchoInfo "Failed to delete, rm error info: ${rm_info}"
+    fi
+    mkdir -m 770 -p /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
+    chown ${deploy_user}:${ograc_common_group} /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
+}
+
+# 容器内无需ntp服务检查、参数预检查
+if [ ! -f /.dockerenv ]; then
+    check_ntp_active
+fi
+
+if [[ -r "${CONFIG_FILE}" ]]; then
+    ograc_in_container=`cat ${CONFIG_FILE} | grep -oP '(?<="ograc_in_container": ")[^"]*'`
+fi
+
+if [[ "${ograc_in_container}" != "1" && "${ograc_in_container}" != "2" ]]; then
+    python3 ${PRE_INSTALL_PY_PATH} ${INSTALL_TYPE} ${CONFIG_FILE}
+    if [ $? -ne 0 ]; then
+        logAndEchoError "over all pre_install failed. For details, see the /opt/ograc/log/og_om/om_deploy.log"
+        exit 1
+    fi
+else
+    cp -arf ${CURRENT_PATH}/${CONFIG_FILE} ${CURRENT_PATH}/deploy_param.json
+fi
+
+# 把生成的deploy_param.json移到config路径下
+mv -f ${CURRENT_PATH}/deploy_param.json ${CONFIG_PATH}
+python3 ${CURRENT_PATH}/write_config.py "install_type" ${INSTALL_TYPE}
+
+deploy_mode=`python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode"`
+if [[ x"${deploy_mode}" == x"dss" ]]; then
+    cp -arf ${CURRENT_PATH}/ograc_common/env_lun.sh ${CURRENT_PATH}/env.sh
+fi
+ograc_in_container=`python3 ${CURRENT_PATH}/get_config_info.py "ograc_in_container"`
+# 公共预安装检查
+rpm_check
+
+# 获取deploy_user和deploy_group，输入文档中的deploy_user关键字
+deploy_user=`python3 ${CURRENT_PATH}/get_config_info.py "deploy_user"`
+exit_deploy_user_name=`ls /home | grep "^${deploy_user}$"`
+if [[ ${exit_deploy_user_name} = '' ]]; then
+    logAndEchoError "deploy_user ${deploy_user} not exist"
+    exit 1
+fi
+
+deploy_group=`python3 ${CURRENT_PATH}/get_config_info.py "deploy_group"`
+less /etc/group | grep "^${deploy_group}:"
+if [ $? -ne 0 ]; then
+    logAndEchoError "deploy_group ${deploy_group} not exist"
+    exit 1
+fi
+
+if [[ ${use_dorado["${deploy_mode}"]} -ne 1 ]];then
+    python3 "${CURRENT_PATH}"/modify_env.py
+    if [  $? -ne 0 ];then
+        echo "Current deploy mode is ${deploy_mode}, modify env.sh failed."
+    fi
+fi
+
+source ${CURRENT_PATH}/env.sh
+
+correct_files_mod
+
+# 创建用户用户组
+initUserAndGroup
+
+
+if [ -d /opt/ograc/backup ]; then
+    chown -hR ${ograc_user}:${ograc_group} /opt/ograc/backup
+    if [ $? -eq 0 ]; then
+        logAndEchoInfo "changed /opt/ograc/backup owner success"
+    else
+        logAndEchoInfo "changed /opt/ograc/backup owner failed"
+        exit 1
+    fi
+fi
+
+# 提前创建/opt/ograc/action路径，方便各模块pre_install的时候移动模块代码到该路径下
+config_install_type=`python3 ${CURRENT_PATH}/get_config_info.py "install_type"`
+if [[ ${config_install_type} = 'override' ]]; then
+    mkdir -p /opt/ograc/action
+fi
+
+chmod 755 /opt/ograc/action
+chmod 755 /opt/ograc/
+if [ $? -eq 0 ]; then
+    logAndEchoInfo "changed /opt/ograc/action mod success"
+else
+    logAndEchoInfo "changed /opt/ograc/action mod failed"
+    exit 1
+fi
+
+# 去root后安装卸载，如果卸载前未去root权限需要修改各模块残留配置权限
+for dir_name in "${DIR_LIST[@]}"
+do
+    if [ -d "${dir_name}" ];then
+        chown -hR "${ograc_user}":"${ograc_group}" "${dir_name}"
+    fi
+done
+
+# 修改公共模块文件权限
+correct_files_mod
+chmod 400 "${CURRENT_PATH}"/../repo/*
+chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/obtains_lsid.py
+chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/implement/update_ograc_passwd.py
+chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/implement/check_deploy_param.py
+chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/update_config.py
+chown -hR "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/ograc_common
+
+
+# 预安装各模块，有一个模块失败pass_check设为false
+for lib_name in "${PRE_INSTALL_ORDER[@]}"
+do
+    logAndEchoInfo "pre_install ${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    sh ${CURRENT_PATH}/${lib_name}/appctl.sh pre_install ${config_install_type} >> ${OM_DEPLOY_LOG_FILE} 2>&1
+    single_result=$?
+    if [ ${single_result} -ne 0 ]; then
+        logAndEchoError "[error] pre_install ${lib_name} failed"
+        logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        pass_check='false'
+    fi
+    logAndEchoInfo "pre_install ${lib_name} result is ${single_result}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+done
+chmod 755 /mnt/dbdata/local
+
+# 存在预校验模块失败，卸载
+if [[ ${pass_check} = 'false' ]]; then
+    logAndEchoError "pre_install failed."
+    exit 1
+fi
+
+# 获取install_type 如果install_type为override 执行以下操作
+mes_ssl_switch=$(python3 ${CURRENT_PATH}/get_config_info.py "mes_ssl_switch")
+config_install_type=$(python3 ${CURRENT_PATH}/get_config_info.py "install_type")
+node_id=$(python3 ${CURRENT_PATH}/get_config_info.py "node_id")
+echo "install_type in deploy_param.json is: ${config_install_type}"
+if [[ ${config_install_type} = 'override' ]]; then
+  # 用户输入密码
+  if [[ "${ograc_in_container}" == "0" ]]; then
+      enter_pwd
+  else
+      dbstor_user=""
+      dbstor_pwd_first=""
+      unix_sys_pwd_first=""
+  fi
+
+  if [[ "${ograc_in_container}" == "0" && ${auto_create_fs} == "true" && ${node_id} == "0" ]];then
+      if [ ! -f "${FS_CONFIG_FILE}" ];then
+          logAndEchoError "Auto create fs config file is not exist, please check"
+          exit 1
+      fi
+      read -p "please input DM login ip:" dm_login_ip
+      if [[ x"${dm_login_ip}" == x"" ]];then
+          logAndEchoError "Enter a correct IP address, not None"
+          exit 1
+      fi
+      echo "please input DM login ip:${dm_login_ip}"
+
+      read -s -p "please input DM login user:" dm_login_user
+      if [[ x"${dm_login_user}" == x"" ]];then
+          logAndEchoError "Enter a correct user, not None."
+          exit 1
+      fi
+      echo "please input DM login user:${dm_login_user}"
+
+      read -s -p "please input DM login passwd:" dm_login_pwd
+      if [[ x"${dm_login_pwd}" == x"" ]];then
+          logAndEchoError "Enter a correct passwd, not None."
+          exit 1
+      fi
+      echo ""
+
+      cp ${FS_CONFIG_FILE} ${CONFIG_PATH}/file_system_info.json
+      logAndEchoInfo "Auto create fs start"
+      echo -e "${dm_login_user}\n${dm_login_pwd}" | python3 -B "${CURRENT_PATH}"/storage_operate/create_file_system.py --action="pre_check" --ip="${dm_login_ip}" >> ${OM_DEPLOY_LOG_FILE} 2>&1
+      if [ $? -ne 0 ];then
+          logAndEchoError "Auto create fs pre check failed, for details see the /opt/ograc/log/deploy/om_deploy/rest_request.log"
+          exit 1
+      fi
+      echo -e "${dm_login_user}\n${dm_login_pwd}" | python3 -B "${CURRENT_PATH}"/storage_operate/create_file_system.py --action="create" --ip="${dm_login_ip}" >> ${OM_DEPLOY_LOG_FILE} 2>&1
+      if [ $? -ne 0 ];then
+          logAndEchoError "Auto create fs failed, for details see the /opt/ograc/log/deploy/om_deploy/rest_request.log"
+          uninstall
+          exit 1
+      fi
+      logAndEchoInfo "Auto create fs success"
+  fi
+
+
+  # 获取要创建路径的路径名
+  storage_share_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_share_fs"`
+  storage_archive_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_archive_fs"`
+  storage_metadata_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_metadata_fs"`
+  mkdir -m 750 -p /mnt/dbdata/remote/share_${storage_share_fs}
+  chown ${ograc_user}:${ograc_group} /mnt/dbdata/remote/share_${storage_share_fs}
+
+  # 创建公共路径
+  mkdir -m 755 -p /opt/ograc/image
+  mkdir -m 750 -p /opt/ograc/common/data
+  mkdir -m 755 -p /opt/ograc/common/socket
+  mkdir -m 755 -p /opt/ograc/common/config # 秘钥配置文件
+  
+  mkdir -m 755 -p /mnt/dbdata/local
+  chmod 755 /mnt/dbdata /mnt/dbdata/local
+
+  chown ${ograc_user}:${ograc_group} /opt/ograc/common/data
+  if [ $? -ne 0 ]; then
+      logAndEchoError "change /opt/ograc/common/data to ${ograc_user}:${ograc_group} failed"
+      uninstall
+      exit 1
+  else
+      logAndEchoInfo "change /opt/ograc/common/data to ${ograc_user}:${ograc_group} sucess"
+  fi
+
+  # 创建dbstor需要的key
+  if [ ! -f /opt/ograc/common/config/primary_keystore.ks ]; then
+      touch /opt/ograc/common/config/primary_keystore.ks
+      chmod 600 /opt/ograc/common/config/primary_keystore.ks
+  fi
+
+  if [ ! -f /opt/ograc/common/config/standby_keystore.ks ]; then
+      touch /opt/ograc/common/config/standby_keystore.ks
+      chmod 600 /opt/ograc/common/config/standby_keystore.ks
+  fi
+
+  # 挂载文件系统
+  mount_fs
+
+  if [[ ${mes_ssl_switch} == "True" ]];then
+      copy_certificate
+  fi
+fi
+
+# 修改ks权限和存放ks的目录的权限
+chmod 700 /opt/ograc/common/config
+chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/common/config
+if [[ x"${deploy_mode}" != x"dbstor" ]]; then
+    chown -hR "${ograc_user}":"${ograc_group}" /mnt/dbdata/remote/share_${storage_share_fs} > /dev/null 2>&1
+fi
+chown -hR "${ograc_user}":"${deploy_group}" /mnt/dbdata/remote/archive_${storage_archive_fs} > /dev/null 2>&1
+# 修改日志定期清理执行脚本权限
+chown -h "${ograc_user}":"${ograc_group}" ${CURRENT_PATH}/../common/script/logs_handler/do_compress_and_archive.py
+
+cp -fp ${CURRENT_PATH}/../config/ograc.service /etc/systemd/system/
+cp -fp ${CURRENT_PATH}/../config/ograc.timer /etc/systemd/system/
+cp -fp ${CURRENT_PATH}/../config/ograc_logs_handler.service /etc/systemd/system/
+cp -fp ${CURRENT_PATH}/../config/ograc_logs_handler.timer /etc/systemd/system/
+
+cp -fp ${CURRENT_PATH}/* /opt/ograc/action > /dev/null 2>&1
+cp -rfp ${CURRENT_PATH}/inspection /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/implement /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/ograc_common /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/docker /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/logic /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/storage_operate /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/utils /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/../config /opt/ograc/
+cp -rfp ${CURRENT_PATH}/../common /opt/ograc/
+cp -rfp ${CURRENT_PATH}/wsr_report /opt/ograc/action
+cp -rfp ${CURRENT_PATH}/dbstor /opt/ograc/action
+
+# 适配开源场景，使用file，不使用dbstor，提前安装ogracrpm包
+install_rpm
+
+if [[ x"${deploy_mode}" == x"dss" ]];then
+    chown "${ograc_user}":"${ograc_group}" /dev/*-disk*
+fi
+
+# 调用各模块安装脚本，如果有模块安装失败直接退出，不继续安装接下来的模块
+logAndEchoInfo "Begin to install. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+for lib_name in "${INSTALL_ORDER[@]}"
+do
+    logAndEchoInfo "install ${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    if [[ ${lib_name} = 'ograc' ]]; then
+        echo -e "${unix_sys_pwd_first}\n${cert_encrypt_pwd}" | sh ${CURRENT_PATH}/${lib_name}/appctl.sh install >> ${OM_DEPLOY_LOG_FILE} 2>&1
+        install_result=$?
+        logAndEchoInfo "install ${lib_name} result is ${install_result}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        if [ ${install_result} -ne 0 ]; then
+            logAndEchoError "ograc install failed."
+            logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+            uninstall
+            exit 1
+        fi
+    elif [[ ${lib_name} = 'dbstor' ]]; then
+        echo -e "${dbstor_user}\n${dbstor_pwd_first}" | sh ${CURRENT_PATH}/${lib_name}/appctl.sh install >> ${OM_DEPLOY_LOG_FILE} 2>&1
+        install_result=$?
+        logAndEchoInfo "install ${lib_name} result is ${install_result}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        if [ ${install_result} -ne 0 ]; then
+            if [ ${install_result} -eq 2 ]; then
+                logAndEchoWarn "Failed to ping some remote ip, for details, see the /opt/ograc/log/${lib_name}."
+            else
+                logAndEchoError "dbstor install failed"
+                logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+                uninstall
+                exit 1
+            fi
+        fi
+        if [[ "${ograc_in_container}" == "0" ]] && [[ ${use_dorado["${deploy_mode}"]} ]]; then
+            check_dbstor_usr_passwd
+            # 检查dbstor client 与server端是否兼容
+            check_dbstor_client_compatibility
+        fi
+    else
+        sh ${CURRENT_PATH}/${lib_name}/appctl.sh install >> ${OM_DEPLOY_LOG_FILE} 2>&1
+        install_result=$?
+        logAndEchoInfo "install ${lib_name} result is ${install_result}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        if [ ${install_result} -ne 0 ]; then
+            logAndEchoError "${lib_name} install failed"
+            logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+            uninstall
+            exit 1
+        fi
+    fi
+done
+
+# 把升级备份相关路径拷贝到/opt/ograc
+cp -rfp ${CURRENT_PATH}/../repo /opt/ograc/
+cp -rfp ${CURRENT_PATH}/../versions.yml /opt/ograc/
+source ${CURRENT_PATH}/docker/dbstor_tool_opt_common.sh
+update_version_yml_by_dbstor
+
+config_security_limits > /dev/null 2>&1
+
+# 修改/home/regress/action目录下ograc, ograc_exporter, cms, dbstor权限，防止复写造成提权
+for module in "${INSTALL_ORDER[@]}"
+do
+    chown -h root:root ${CURRENT_PATH}/${module}
+    chmod 755 ${CURRENT_PATH}/${module}
+    chown -h root:root /opt/ograc/action/${module}
+    chmod 755 /opt/ograc/action/${module}
+done
+
+# 修改巡检相关脚本为deploy_user
+chown -hR ${ograc_user}:${ograc_group} /opt/ograc/action/inspection
+show_ograc_version
+logAndEchoInfo "install success"
+exit 0

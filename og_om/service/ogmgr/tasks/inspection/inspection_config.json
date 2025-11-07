@@ -1,0 +1,9 @@
+{
+  "ograc_fetch": {
+    "inspection_file_path": "/opt/ograc/ograc/server/admin/scripts/fetch_cls_stat.py",
+    "component": "ograc",
+    "description_zn": "",
+    "description_en": "",
+    "input_param": ""
+  }
+}
