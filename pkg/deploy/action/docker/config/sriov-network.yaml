@@ -1,0 +1,81 @@
+---
+# 网卡一
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: rdma-sriov-net1
+  namespace: kube-system
+spec:
+  ipam: |-
+    {
+     "type": "whereabouts",
+     "range": "77.77.77.0/24",
+      "exclude": [
+         "77.77.77.10/32",
+         "77.77.77.11/32"
+      ]
+    }
+  resourceName: rdma1
+  vlanQoS: 3
+  maxTxRate: 25000
+  vlan: 1004
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-net1
+  namespace: kube-system
+spec:
+  deviceType: netdevice
+  isRdma: true
+  mtu: 5500
+  linkType: ETH
+  nicSelector:
+    pfNames:
+    - enp4s0f1np1
+    - enp132s0f1np1
+  nodeSelector:
+    sriov: enabled
+  numVfs: 8
+  priority: 99
+  resourceName: rdma1
+---
+# 网卡二
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: rdma-sriov-net2
+  namespace: kube-system
+spec:
+  ipam: |-
+    {
+     "type": "whereabouts",
+     "range": "66.66.66.0/24",
+     "exclude": [
+         "66.66.66.10/31"
+     ]
+    }
+  resourceName: rdma2
+  vlanQoS: 3
+  maxTxRate: 25000
+  vlan: 1003
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-net2
+  namespace: kube-system
+spec:
+  deviceType: netdevice
+  isRdma: true
+  mtu: 5500
+  linkType: ETH
+  nicSelector:
+    pfNames:
+    - enp4s0f0np0
+    - enp132s0f0np0
+  nodeSelector:
+    sriov: enabled
+  numVfs: 8
+  priority: 99
+  resourceName: rdma2

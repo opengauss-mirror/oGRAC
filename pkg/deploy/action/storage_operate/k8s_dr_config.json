@@ -1,0 +1,37 @@
+{
+  "domain_name": "",
+  "dm_ip": "",
+  "dm_user": "",
+  "server": {
+    "ip1": [
+      {
+        "ograc_yaml": "ograc_yaml_path",
+        "config_yaml": "config_yaml_path"
+      },
+      {
+        "ograc_yaml": "ograc_yaml_path",
+        "config_yaml": "config_yaml_path"
+      }
+    ],
+    "ip2": [
+      {
+        "ograc_yaml": "ograc_yaml_path",
+        "config_yaml": "config_yaml_path"
+      },
+      {
+        "ograc_yaml": "ograc_yaml_path",
+        "config_yaml": "config_yaml_path"
+      }
+    ],
+    "ip3": [
+      {
+        "ograc_yaml": "ograc_yaml_path",
+        "config_yaml": "config_yaml_path"
+      },
+      {
+        "ograc_yaml": "ograc_yaml_path",
+        "config_yaml": "config_yaml_path"
+      }
+    ]
+  }
+}

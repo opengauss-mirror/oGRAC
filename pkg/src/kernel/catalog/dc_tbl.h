@@ -1,0 +1,74 @@
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * dc_tbl.h
+ *
+ *
+ * IDENTIFICATION
+ * src/kernel/catalog/dc_tbl.h
+ *
+ * -------------------------------------------------------------------------
+ */
+#ifndef __KNL_DC_TBL_H__
+#define __KNL_DC_TBL_H__
+
+#include "knl_dc.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define ENTRY_IS_LOADING_INTERVAL 5  // unit: ms
+#define ENTRY_IS_LOADING_DDL_INTERVAL (ENTRY_IS_LOADING_INTERVAL * 2)  // unit: ms
+
+status_t dc_load_systables(knl_session_t *session, dc_context_t *ogx);
+status_t dc_load_table(knl_session_t *session, knl_cursor_t *cursor, dc_user_t *user, uint32 oid,
+                       dc_entity_t *entity);
+status_t dc_load_columns(knl_session_t *session, knl_cursor_t *cursor, dc_entity_t *entity);
+status_t dc_load_ddm(knl_session_t *session, knl_cursor_t *cursor, dc_entity_t *entity);
+status_t dc_load_trigger_by_table_id(knl_session_t *session, uint32 obj_uid, uint64 base_obj,
+                                     trig_set_t *trig_set);
+status_t dc_load_indexes(knl_session_t *session, knl_cursor_t *cursor, dc_entity_t *entity);
+status_t dc_load_lobs(knl_session_t *session, knl_cursor_t *cursor, dc_entity_t *entity);
+status_t dc_load_cons(knl_session_t *session, knl_cursor_t *cursor, dc_entity_t *entity);
+status_t dc_load_policies(knl_session_t *session, knl_cursor_t *cursor, dc_user_t *user,
+    uint32 oid, dc_entity_t *entity);
+status_t dc_load_view(knl_session_t *session, knl_cursor_t *cursor, dc_user_t *user, text_t *name,
+                      dc_entity_t *entity);
+status_t dc_load_entity(knl_session_t *session, dc_user_t *user, uint32 oid, dc_entry_t *entry, knl_dictionary_t *dc);
+status_t dc_load_view_entity(knl_session_t *session, dc_user_t *user, uint32 oid, dc_entity_t *entity);
+status_t dc_load_table_entity(knl_session_t *session, dc_user_t *user, uint32 oid, dc_entity_t *entity);
+status_t dc_load_distribute_rule(knl_session_t *session, dc_context_t *ogx);
+status_t dc_open_table_or_view(knl_session_t *session, dc_user_t *user, dc_entry_t *entry, knl_dictionary_t *dc);
+status_t dc_open_table_directly(knl_session_t *session, uint32 uid, uint32 oid, knl_dictionary_t *dc);
+status_t dc_init_table_entries(knl_session_t *session, dc_context_t *ogx, uint32 uid);
+status_t dc_init_view_entries(knl_session_t *session, dc_context_t *ogx, uint32 uid);
+status_t dc_init_synonym_entries(knl_session_t *session, dc_context_t *ogx, uint32 uid);
+status_t dc_create_synonym_entry(knl_session_t *session, dc_user_t *user, knl_synonym_t *synonym);
+status_t dc_convert_distribute_rule_desc(knl_cursor_t *cursor, knl_table_desc_t *rule, dc_entity_t *entity,
+    knl_session_t *session);
+void dc_convert_column_list(uint32 col_count, text_t *column_list, uint16 *cols);
+void dc_segment_recycle(dc_context_t *ogx, dc_entity_t *entity);
+void dc_fk_indexable(knl_session_t *session, table_t *table, cons_dep_t *dep);
+void estimate_row_len(table_t *table, knl_column_t *column);
+void dc_release_segment_dls(knl_session_t *session, dc_entity_t *entity);
+void dc_wait_till_load_finish(knl_session_t *session, dc_entry_t *entry);
+void dc_wait_till_load_finish_standby(knl_session_t *session, dc_entry_t *entry);
+void dc_cal_index_maxtrans(knl_session_t *session, dc_entity_t *entity, index_t *index);
+#ifdef __cplusplus
+}
+#endif
+
+#endif

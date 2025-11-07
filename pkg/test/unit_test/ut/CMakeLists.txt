@@ -1,0 +1,6 @@
+add_subdirectory(kernel)
+add_subdirectory(mes)
+add_subdirectory(cms)
+add_subdirectory(server)
+add_subdirectory(common)
+add_subdirectory(ogbackup)
