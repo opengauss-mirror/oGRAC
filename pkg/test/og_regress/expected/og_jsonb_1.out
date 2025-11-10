@@ -2899,7 +2899,7 @@ JSONB_SET(A, '$.AUTO', '{"JDD":15}')
 
 SQL> select jsonb_set(a, '$.tags[8]', '["GaussDB", "oGRAC", "openGauss"]') from jsonb_set_tbl where b = 3;
 
-JSONB_SET(A, '$.TAGS[8]', '["GAUSSDB", "oGRAC", "OPENGAUSS"]') 
+JSONB_SET(A, '$.TAGS[8]', '["GAUSSDB", "OGRAC", "OPENGAUSS"]') 
 ----------------------------------------------------------------
 {"avatar":"avatar_url","nickname":"gs","tags":["python","golang","db",["GaussDB","oGRAC","openGauss"]]}
 
