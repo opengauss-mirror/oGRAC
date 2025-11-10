@@ -23,7 +23,7 @@ function collect_core() {
 	sh ${collect_script} ${CORE_DIR} ${TEMP_DIR} ${ROOT_PATH} ${TEST_DATA_DIR}/data  ${RUN_TEST_USER}
 }
 
-function run_ct_regress() {
+function run_og_regress() {
 	echo "========================= Run Regression ======================="
 	cd ${ROOT_PATH}
 	# git clean -nf |grep "pkg/test/og_regress/*.*"|xargs rm -f
@@ -148,7 +148,7 @@ function compile_code() {
     cd ${ROOT_PATH}/build
     source ./common.sh
     cd ${ROOT_PATH}/build/pkg/test/og_regress
-    strip -N main ${ROOT_PATH}/output/lib/libzeserver.a
+    strip -N main ${ROOT_PATH}/output/lib/libogserver.a
     make -sj 8 | tee -a ${COMPILE_LOG}
 #    error_num=`cat ${COMPILE_LOG} |grep 'error:'|wc -l`
 #    if [ $error_num -ne 0 ];then
@@ -294,7 +294,7 @@ main() {
     fi
     install_ogracdb
 
-    run_ct_regress
+    run_og_regress
     uninstall_ogracdb
 }
 

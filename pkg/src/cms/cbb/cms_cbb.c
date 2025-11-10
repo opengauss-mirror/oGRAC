@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <string.h>
 #include "cm_defs.h"
 #include "cms_cbb.h"
 #include "cbb_disklock.h"
@@ -30,6 +31,9 @@
 #define CM_MAX_RES_NAME_LENGTH 32
 #define CM_MAX_INST_COUNTS 64
 #define MAX_EXIT_STATUS 128
+#define DSS_STAT_MAX_LEN 13
+#define JSON_DATA_MAX_LEN 2000
+#define NODE_DATA_MAX_LEN 100
 
 #define DSS_RES_DATA_LOCK_PATH "/dev/gcc-disk"
 #define DSS_RES_DATA_LOCK_POS (1073741824)
@@ -48,42 +52,124 @@ int CmInit(unsigned int instance_id, const char *res_name, cm_notify_func_t func
     return OG_SUCCESS;
 }
 
-char *CmGetResStats(void)
+static status_t GetDssStat(dss_res_data *dss_res)
 {
-    const char *json_data = "{"
-                            "\"res_name\": \"example\","
-                            "\"version\": 0,"
-                            "\"inst_count\": 2,"
-                            "\"inst_status\": ["
-                            "{"
-                            "\"node_id\": 0,"
-                            "\"res_instance_id\": 0,"
-                            "\"is_work_member\": 1,"
-                            "\"status\": 1"
-                            "},"
-                            "{"
-                            "\"node_id\": 1,"
-                            "\"res_instance_id\": 1,"
-                            "\"is_work_member\": 1,"
-                            "\"status\": 1"
-                            "}"
-                            "]"
-                            "}";
+    FILE *fp = NULL;
+    char line[DSS_STAT_MAX_LEN];
+    char cmd_cms_stat[OG_MAX_CMD_LEN] = "cms stat -res dss | awk '{print $1, $3, $6}' | grep -v 'NODE_ID'";
+    char status[8];
+    int node_id;
+    int is_work_member;
+    fp = popen(cmd_cms_stat, "r");
+    if (fp == NULL) {
+        LOG("Fail to get dss stat.");
+        return OG_ERROR;
+    }
+    dss_res->inst_count = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        int result = sscanf_s(line, "%d %7s %d", &node_id, status, (unsigned int)sizeof(status), &is_work_member);
+        if (result == SSCANF_ERROR) {
+            LOG("Fail to scan dss stat.");
+            return OG_ERROR;
+        }
+        dss_res->node[dss_res->inst_count].is_work_member = is_work_member;
+        if (strcmp(status, "UNKNOWN") == 0) {
+            dss_res->node[dss_res->inst_count].status = DSS_OFFLINE;
+        } else if (strcmp(status, "ONLINE") == 0) {
+            dss_res->node[dss_res->inst_count].status = DSS_ONLINE;
+        } else if (strcmp(status, "OFFLINE") == 0) {
+            dss_res->node[dss_res->inst_count].status = DSS_OFFLINE;
+        }
+        dss_res->inst_count++;
+    }
+    pclose(fp);
+    return OG_SUCCESS;
+}
 
-    char *result = (char *)malloc(strlen(json_data) + 1);
-    if (result == NULL) {
+static status_t GetNodeData(dss_res_data *dss_res, char json_data[JSON_DATA_MAX_LEN])
+{
+    for (uint i = 0; i < dss_res->inst_count; i++) {
+        char node_data[NODE_DATA_MAX_LEN];
+        int result = snprintf_s(node_data, NODE_DATA_MAX_LEN, NODE_DATA_MAX_LEN, "{"
+                                "\"node_id\": %u,"
+                                "\"res_instance_id\": %u,"
+                                "\"is_work_member\": %u,"
+                                "\"status\": %u"
+                                "}", i, i, dss_res->node[i].is_work_member, dss_res->node[i].status);
+        if (result == SSPRINTF_ERROR) {
+            LOG("Fail to use snprintf_s on node_data.");
+            return OG_ERROR;
+        }
+        errno_t error = strcat_s(json_data, JSON_DATA_MAX_LEN, node_data);
+        if (error != STRCAT_SUCCESS) {
+            LOG("Fail to use strcat_s on json_data.");
+            return OG_ERROR;
+        }
+        if (i < dss_res->inst_count - 1) {
+            errno_t error = strcat_s(json_data, JSON_DATA_MAX_LEN, ",");
+            if (error != STRCAT_SUCCESS) {
+                LOG("Fail to use strcat_s on json_data.");
+                return OG_ERROR;
+            }
+        }
+    }
+
+    errno_t error = strcat_s(json_data, JSON_DATA_MAX_LEN, "]}");
+    if (error != STRCAT_SUCCESS) {
+        LOG("Fail to use strcat_s on json_data.");
+        return OG_ERROR;
+    }
+    
+    return OG_SUCCESS;
+}
+
+char* CmGetResStats(void)
+{
+    dss_res_data *dss_res = (dss_res_data*)malloc(sizeof(dss_res_data));
+    if (dss_res == NULL) {
+        LOG("Here is no dss node.");
+        return NULL;
+    }
+    memset_s(dss_res, sizeof(dss_res_data), 0, sizeof(dss_res_data));
+    if (GetDssStat(dss_res) != OG_SUCCESS) {
+        free(dss_res);
+        return NULL;
+    }
+    char json_data[JSON_DATA_MAX_LEN];
+    int result = snprintf_s(json_data, JSON_DATA_MAX_LEN, JSON_DATA_MAX_LEN - 1, "{"
+                            "\"res_name\": \"dss\","
+                            "\"version\": 0,"
+                            "\"inst_count\": %u,"
+                            "\"inst_status\": [", dss_res->inst_count);
+    if (result == SSPRINTF_ERROR) {
+        LOG("Fail to use snprintf_s on json_data.");
+        free(dss_res);
+        return NULL;
+    }
+    
+    if (GetNodeData(dss_res, json_data) != OG_SUCCESS) {
+        LOG("Fail to use GetNodeData for json_data.");
+        free(dss_res);
+        return NULL;
+    }
+    free(dss_res);
+
+    char *malloc_result = (char *)malloc(strlen(json_data) + 1);
+    if (malloc_result == NULL) {
         LOG("Memory allocation failed in CmGetResStats");
         return NULL;
     }
-
-    strcpy_sp(result, strlen(json_data) + 1, json_data);
+    memset_s(malloc_result, strlen(json_data) + 1, 0, strlen(json_data) + 1);
+    
+    strcpy_s(malloc_result, strlen(json_data) + 1, json_data);
     LOG("CmGetResStats completed, JSON data allocated.");
-    return result;
+    return malloc_result;
 }
 
 void CmFreeResStats(char *res_stat)
 {
     if (res_stat != NULL) {
+        free(res_stat);
         res_stat = NULL;
         LOG("res_stat memory freed.");
     }

@@ -572,6 +572,25 @@ typedef struct st_cols_used {
         (result)->v_date = (stmt)->v_sysdate;              \
     } while (0)
 
+static inline bool32 chk_if_reserved_word_constant(reserved_wid_t type)
+{
+    switch (type) {
+        case RES_WORD_SYSDATE:
+        case RES_WORD_SYSTIMESTAMP:
+        case RES_WORD_CURDATE:
+        case RES_WORD_CURTIMESTAMP:
+        case RES_WORD_LOCALTIMESTAMP:
+        case RES_WORD_UTCTIMESTAMP:
+        case RES_WORD_NULL:
+        case RES_WORD_TRUE:
+        case RES_WORD_FALSE:
+        case RES_WORD_DATABASETZ:
+        case RES_WORD_SESSIONTZ:
+            return OG_TRUE;
+        default:
+            return OG_FALSE;
+    }
+}
 
 #define VA_EXCL_NONE 0x00000000
 #define VA_EXCL_PRIOR 0x00000001
@@ -608,7 +627,6 @@ typedef struct st_cols_used {
 #define HAS_PRNT_OR_ANCSTR_COLS(flags) (HAS_PARENT_COLS(flags) || HAS_ANCESTOR_COLS(flags))
 #define HAS_PRNT_AND_ANCSTR_COLS(flags) (HAS_PARENT_COLS(flags) && HAS_ANCESTOR_COLS(flags))
 #define HAS_NOT_ONLY_SELF_COLS(flags) (HAS_SELF_COLS(flags) && (HAS_ANCESTOR_COLS(flags) || HAS_PARENT_COLS(flags)))
-
 #define HAS_DIFF_TABS(cols_used, idx) ((cols_used)->level_flags[idx] & LEVEL_HAS_DIFF_TABS)
 #define HAS_ROWID_COLUMN(cols_used, idx) ((cols_used)->level_flags[idx] & LEVEL_HAS_ROWID)
 #define HAS_ROWNODEID_COLUMN(cols_used, idx) ((cols_used)->level_flags[idx] & LEVEL_HAS_ROWNODEID)

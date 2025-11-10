@@ -61,7 +61,7 @@ static inline status_t sql_check_node_pending(sql_cursor_t *parent_cursor, uint3
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t sql_get_parent_remote_table_id(sql_cursor_t *parent_cursor, uint32 tab_id, uint32 *remote_id)
 {
     sql_table_cursor_t *table_cur = NULL;
@@ -1230,7 +1230,7 @@ status_t sql_execute_query_plan(sql_stmt_t *stmt, sql_cursor_t *cur, plan_node_t
             status = sql_execute_filter(stmt, cur, plan);
             break;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         case PLAN_NODE_REMOTE_SCAN:
 	    knl_panic(0);
             break;
@@ -1419,6 +1419,14 @@ status_t sql_execute_select_plan(sql_stmt_t *stmt, sql_cursor_t *cur, plan_node_
             break;
     }
     CM_TRACE_END(stmt, plan->plan_id);
+
+    // For SQL like "select distinct(union subquery + limit 0) from xxx" that scan no data,
+    // @sql_get_select_value would encounter cursor->eof && row = 0. In this case, all columns will set be NULL.
+    // To prevent null pointer dereference, set cursor->columns to select_ctx->rs_columns if it is NULL.
+    if (cur->eof && cur->columns == NULL) {
+        cur->columns = cur->select_ctx->rs_columns;
+    }
+    
     SQL_CURSOR_POP(stmt);
     return status;
 }
@@ -1428,6 +1436,7 @@ status_t sql_execute_select(sql_stmt_t *stmt)
     sql_select_t *select = NULL;
     sql_cursor_t *cursor = NULL;
     sql_set_ssn(stmt);
+    ogsql_assign_transaction_id(stmt, NULL);
     CM_TRACE_BEGIN;
 
     select = (sql_select_t *)stmt->context->entry;

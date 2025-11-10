@@ -905,7 +905,7 @@ static status_t sql_set_jsonb_value(sql_stmt_t *stmt, knl_column_t *column, vari
 status_t sql_set_table_value(sql_stmt_t *stmt, knl_cursor_t *knl_cur, row_assist_t *row_ass, knl_column_t *column,
     variant_t *value)
 {
-    if (value->is_null) {
+    if (value->is_null && knl_cur->vnc_column == NULL) {
         if (!column->nullable) {
             knl_cur->vnc_column = column->name;
         }
@@ -934,9 +934,8 @@ static status_t sql_update_serial_value(sql_stmt_t *stmt, knl_handle_t entity, k
     }
 
     if (value->is_null) {
-        value->is_null = OG_FALSE;
-        value->v_bigint = 0;
-        value->type = OG_TYPE_BIGINT;
+        OG_THROW_ERROR(ERR_COLUMN_NOT_NULL, column->name);
+        return OG_ERROR;
     }
 
     if (value->type != column->datatype) {
@@ -1820,7 +1819,7 @@ static status_t sql_execute_update_core(sql_stmt_t *stmt)
         // new update_info need push memory from stack if execute update statement in trigger,
         // and save the old update_info address.
         knl_update_info_t update_info;
-        if (stmt->is_sub_stmt && (stmt->pl_exec != NULL && ((pl_executor_t *)stmt->pl_exec)->trig_exec != NULL)) {
+        if (stmt->is_sub_stmt && stmt->session->if_in_triggers) {
             uint16 col_cnt = KNL_SESSION(stmt)->kernel->attr.max_column_count;
             OG_BREAK_IF_ERROR(sql_push(stmt, col_cnt * sizeof(uint16), (void **)&update_info.columns));
             OG_BREAK_IF_ERROR(sql_push(stmt, col_cnt * sizeof(uint16), (void **)&update_info.offsets));

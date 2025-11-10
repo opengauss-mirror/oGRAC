@@ -66,6 +66,7 @@ function ograc_install()
 
     cp -rf ${RPM_UNPACK_PATH}/add-ons /opt/ograc/ograc/server/
     cp -rf ${RPM_UNPACK_PATH}/bin /opt/ograc/ograc/server/
+    rm -rf /opt/ograc/ograc/server/bin/cms
     cp -rf ${RPM_UNPACK_PATH}/lib /opt/ograc/ograc/server/
     cp -rf ${RPM_UNPACK_PATH}/admin /opt/ograc/ograc/server/
     cp -rf ${RPM_UNPACK_PATH}/cfg /opt/ograc/ograc/server/

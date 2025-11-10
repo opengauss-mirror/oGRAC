@@ -17,6 +17,7 @@ UPGRADE_SUCCESS_FLAG=/opt/ograc/pre_upgrade_${UPGRADE_MODE}.success
 EXEC_SQL_FILE="${CURRENT_PATH}/ograc_common/exec_sql.py"
 DV_LRPL_DETAIL="select DATABASE_ROLE from DV_LRPL_DETAIL;"
 UPGRADE_MODE_LIS=("offline" "rollup")
+OFFLINES_MODES=("dbstor" "dss")
 dorado_user=""
 dorado_pwd=""
 node_id=""
@@ -46,12 +47,16 @@ if [[ x"${deploy_mode}" == x"file" ]];then
     fi
 fi
 
+if [[ x"${deploy_mode}" == x"dss" ]]; then
+    cp -arf ${CURRENT_PATH}/ograc_common/env_lun.sh ${CURRENT_PATH}/env.sh
+fi
+
 source ${CURRENT_PATH}/docker/dbstor_tool_opt_common.sh
 source ${CURRENT_PATH}/env.sh
 
 function rpm_check(){
     local count=2
-    if [ x"${deploy_mode}" != x"file" ];then
+    if [ x"${deploy_mode}" != x"file" ] && [ x"${deploy_mode}" != x"dss" ];then
       count=3
     fi
     rpm_pkg_count=$(ls "${CURRENT_PATH}"/../repo | wc -l)
@@ -75,7 +80,7 @@ function input_params_check() {
     fi
 
     # 离线升级需要检查阵列侧ip
-    if [ "${UPGRADE_MODE}" == "offline" ]; then
+    if [[ "${UPGRADE_MODE}" == "offline" ]] && [[ x"${deploy_mode}" != x"dss" ]]; then
         if [ -z "${DORADO_IP}" ]; then
             logAndEchoError "storage array ip must be provided"
             exit 1
@@ -384,7 +389,7 @@ function install_rpm()
     rpm -ivh --replacepkgs ${RPM_PATH} --nodeps --force
 
     tar -zxf ${RPM_UNPACK_PATH_FILE}/oGRAC-RUN-CENTOS-64bit.tar.gz -C ${RPM_PACK_ORG_PATH}
-    if [ x"${deploy_mode}" != x"file" ];then
+    if [ x"${deploy_mode}" != x"file" ] && [ x"${deploy_mode}" != x"dss" ];then
         echo  "start replace rpm package"
         install_dbstor
         if [ $? -ne 0 ];then
@@ -801,8 +806,8 @@ function call_ogbackup_tool() {
     fi
     rollup_user_input
     # 创建备份目录
-    cur_ct_backup_path="${og_backup_main_path}/bak_$(date +"%Y%m%d%H%M%S")"
-    mkdir -m 750 -p "${cur_ct_backup_path}" && chown -hR "${ograc_user}:${ograc_common_group}" ${cur_ct_backup_path}
+    cur_og_backup_path="${og_backup_main_path}/bak_$(date +"%Y%m%d%H%M%S")"
+    mkdir -m 750 -p "${cur_og_backup_path}" && chown -hR "${ograc_user}:${ograc_common_group}" ${cur_og_backup_path}
     if [ $? -ne 0 ]; then
         logAndEchoError "create backup directory for calling og_backup_tool failed"
         exit 1
@@ -812,7 +817,7 @@ function call_ogbackup_tool() {
     clear_sem_id
 
     # 调用ograc在线备份工具
-    su -s /bin/bash - "${ograc_user}" -c "ogbackup --backup --target-dir=${cur_ct_backup_path}
+    su -s /bin/bash - "${ograc_user}" -c "ogbackup --backup --target-dir=${cur_og_backup_path}
     if [ $? -ne 0 ]; then
         logAndEchoError "call ogbackup tool failed"
         exit 1
@@ -853,7 +858,12 @@ function do_rollup_upgrade() {
 
     stop_ograc
     stop_cms
-
+    if [[ "${deploy_mode}" == "dss" ]]; then
+        sh /opt/ograc/action/cms/appctl.sh start
+        sh /opt/ograc/action/dss/appctl.sh start
+        sh /opt/ograc/action/cms/appctl.sh stop
+        sleep 10
+    fi
     # 生成调用og_backup成功的标记文件，避免重入调用时失败
     touch "${storage_metadata_fs_path}/call_ctback_tool.success" && chmod 600 "${storage_metadata_fs_path}/call_ctback_tool.success"
     if [ $? -ne 0 ]; then
@@ -921,6 +931,14 @@ function post_upgrade_nodes_status() {
 
     # step1: 统计节点拉起情况
     start_array=()
+    if [[ "${deploy_mode}" == "dss" ]]; then
+        cms_res=$(su -s /bin/bash - "${ograc_user}" -c "cms stat | grep dss")
+        readarray -t start_array <<< "$(echo "${cms_res}" | awk '{print $3}')"
+    else
+        cms_res=$(su -s /bin/bash - "${ograc_user}" -c "cms stat")
+        readarray -t start_array <<< "$(echo "${cms_res}" | awk '{print $3}' | tail -n +$"2")"
+    fi
+    
     readarray -t start_array <<< "$(echo "${cms_res}" | awk '{print $3}' | tail -n +$"2")"
     if [ ${#start_array[@]} != "${node_count}" ]; then
         logAndEchoError "only ${#start_array[@]} nodes were detected, totals:${node_count}" && exit 1
@@ -962,7 +980,7 @@ function get_back_version() {
 function offline_upgrade() {
     ograc_status_check
     do_backup
-    if [[ ${node_id} == '0' ]] && [[ ${deploy_mode} != "file" ]]; then
+    if [[ ${node_id} == '0' ]] && [[ ${deploy_mode} != "file" ]] && [[ ${deploy_mode} != "dss" ]]; then
         creat_snapshot
     fi
     get_back_version
@@ -981,7 +999,7 @@ function offline_upgrade() {
     if [ -f ${UPGRADE_SUCCESS_FLAG} ]; then
         rm -f ${UPGRADE_SUCCESS_FLAG}
     fi
-    if [[ "${deploy_mode}" == "dbstor" ]] && [[ -d /mnt/dbdata/remote/metadata_${storage_metadata_fs}/upgrade ]];then
+    if [[ " ${OFFLINES_MODES[*]} " == *" ${deploy_mode} "* ]] && [[ -d /mnt/dbdata/remote/metadata_${storage_metadata_fs}/upgrade ]];then
         rm -rf /mnt/dbdata/remote/metadata_${storage_metadata_fs}/upgrade/*
     fi
 
@@ -997,7 +1015,7 @@ function rollup_upgrade() {
     modify_cluster_or_node_status "${cluster_status_flag}" "rollup" "cluster"
     local_node_upgrade_status_check
     call_ogbackup_tool
-    # step2：节点升级 todo：当前节点升级状态检查；停止升级启动流程；升级后验证；检查ddl文件，更新系统表接口预留
+    # step2：节点升级
     if [ "${local_node_status}" != "rollup_success" ]; then
         do_rollup_upgrade
         modify_sys_tables
@@ -1049,6 +1067,9 @@ function main() {
     # 升级成功后更新版本信息
     show_ograc_version
     cp -fp ${CURRENT_PATH}/../versions.yml /opt/ograc
+    if [[ ${node_id} != '0' ]]; then
+        rm -rf /mnt/dbdata/remote/metadata_${storage_metadata_fs}/upgrade/upgrade_node*
+    fi
     logAndEchoInfo ">>>>> ${UPGRADE_MODE} upgrade performed successfully <<<<<"
     return 0
 }

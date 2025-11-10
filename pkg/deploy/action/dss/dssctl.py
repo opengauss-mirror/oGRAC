@@ -7,6 +7,7 @@ import subprocess
 import shutil
 import stat
 import time
+import json
 from logging import handlers
 import sys
 from config import INST_CONFIG, VG_CONFIG
@@ -14,6 +15,7 @@ from pathlib import Path
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+from dss.config import INST_CONFIG, VG_CONFIG
 from ograc_common.exec_sql import exec_popen
 from ograc_common.get_config_info import get_value
 
@@ -27,8 +29,14 @@ CMS_HOME = "/opt/ograc/cms/service"
 DSS_CFG = "/opt/ograc/dss/cfg"
 BACKUP_NAME = "/opt/ograc/backup/files/dss"
 SCRIPTS_DIR = "/opt/ograc/action/dss"
-DSS_CTRL_SCRIPTS = "%s/bin/dss_contrl.sh" % DSS_HOME
+DSS_CTRL_SCRIPTS = "%s/dss_contrl.sh" % SCRIPTS_DIR
+INSTALL_FILE = "/opt/ograc/config/deploy_param.json"
 RETRY_TIMES = 20
+TIMEOUT = 60
+INIT_DSS_TIMEOUT = 300
+
+CAP_WIO = "CAP_SYS_RAWIO"
+CAP_ADM = "CAP_SYS_ADMIN"
 
 
 # 日志组件
@@ -86,7 +94,7 @@ class DssCtl(object):
         self.ca_path = get_value("ca_path")
         self.crt_path = get_value("crt_path")
         self.key_path = get_value("key_path")
-        self.log_file = os.path.join(DSS_HOME, "log/run/dssinstance.rlog")
+        self.log_file = os.path.join(DSS_LOG, "run/dssinstance.rlog")
         self.begin_time = None
 
     @staticmethod
@@ -123,7 +131,7 @@ class DssCtl(object):
 
     @staticmethod
     def kill_cmd(cmd: str) -> None:
-        return_code, stdout, stderr = exec_popen(cmd, timeout=60)
+        return_code, stdout, stderr = exec_popen(cmd, timeout=TIMEOUT)
         if return_code:
             output = stdout + stderr
             err_msg = "Dssserver is offline: %s" % str(output)
@@ -132,7 +140,7 @@ class DssCtl(object):
             LOG.info("dss server pid is[%s].", stdout)
             for line in re.split(r'\n\s', stdout):
                 kill_cmd = "kill -9 %s" % line.strip()
-                return_code, stdout, stderr = exec_popen(kill_cmd, timeout=60)
+                return_code, stdout, stderr = exec_popen(kill_cmd, timeout=TIMEOUT)
                 if return_code:
                     output = stdout + stderr
                     err_msg = "Exec kill cmd[%s] failed, details: %s" % (cmd, str(output))
@@ -176,7 +184,7 @@ class DssCtl(object):
             LOG.info("Start to exec dsscmd cv.")
             dsscmd = "source ~/.bashrc && dsscmd cv -g %s -v %s"
             for key, value in VG_CONFIG.items():
-                return_code, stdout, stderr = exec_popen(dsscmd % (key, value), timeout=60)
+                return_code, stdout, stderr = exec_popen(dsscmd % (key, value), timeout=TIMEOUT)
                 if return_code:
                     output = stdout + stderr
                     err_msg = "Dsscmd cv cmd[%s] exec failed, details: %s" % (dsscmd % (key, value), str(output))
@@ -192,14 +200,14 @@ class DssCtl(object):
         """
         if self.node_id == "0":
             LOG.info("start to init lun.")
-            init_cmd = "dd if=/dev/zero of=%s bs=1M count=1 conv=notrunc"
+            init_cmd = "dd if=/dev/zero of=%s bs=2048 count=1000 conv=notrunc"
             for key, value in VG_CONFIG.items():
-                return_code, stdout, stderr = exec_popen(init_cmd % value, timeout=60)
+                return_code, stdout, stderr = exec_popen(init_cmd % value, timeout=INIT_DSS_TIMEOUT)
                 if return_code:
                     output = stdout + stderr
                     err_msg = "Init lun cmd[%s] exec failed, details: %s" % (init_cmd % value, str(output))
                     raise Exception(err_msg)
-                LOG.info("Init lun cmd[] exec success.", init_cmd)
+                LOG.info("Init lun cmd[%s] exec success.", init_cmd % value)
             LOG.info("Success to init lun.")
         else:
             LOG.info("No need to init lun for node[%s].", self.node_id)
@@ -218,6 +226,7 @@ class DssCtl(object):
         INST_CONFIG["DSS_NODES_LIST"] = "0:{}:1811,1:{}:1811".format(self.cms_ip.split(";")[0], self.cms_ip.split(";")[1])
         INST_CONFIG["LSNR_PATH"] = DSS_HOME
         INST_CONFIG["LOG_HOME"] = DSS_LOG
+        INST_CONFIG["STORAGE_MODE"] = "SHARE_DISK"
         ComOpt.write_ini(self.dss_inst_cfg, INST_CONFIG)
 
     def prepare_source(self) -> None:
@@ -239,16 +248,21 @@ class DssCtl(object):
         add dss res for cms
         :return:
         """
+        os.chmod(DSS_CTRL_SCRIPTS, 0o700)
+        dss_contrl_path = os.path.join(DSS_HOME, "dss_contrl.sh")
+        shutil.copyfile(DSS_CTRL_SCRIPTS, dss_contrl_path)
+        os.chmod(dss_contrl_path, 0o700)
         if self.node_id == "0":
             LOG.info("Start to add dss res.")
             cmd = ("source ~/.bashrc && %s/bin/cms res -add dss -type dss -attr \"script=%s\""
-                   % (CMS_HOME, DSS_CTRL_SCRIPTS))
-            return_code, stdout, stderr = exec_popen(cmd, timeout=60)
+                   % (CMS_HOME, dss_contrl_path))
+            return_code, stdout, stderr = exec_popen(cmd, timeout=TIMEOUT)
             if return_code:
                 output = stdout + stderr
                 err_msg = "Failed to add dss res, details: %s" % (str(output))
                 raise Exception(err_msg)
             LOG.info("Success to add dss res.")
+        LOG.info("Success to copy dss control script.")
 
     def config_perctrl_permission(self) -> None:
         """
@@ -257,13 +271,14 @@ class DssCtl(object):
         """
         sudo_cmds = ["RAWIO", "ADMIN"]
         LOG.info("Start to config perctrl permission.")
-        for _cmd in sudo_cmds:
-            exec_cmd = "sudo setcap CAP_SYS_%s+ep %s/bin/perctrl" % (_cmd, DSS_HOME)
-            return_code, stdout, stderr = exec_popen(exec_cmd, timeout=60)
-            if return_code:
-                output = stdout + stderr
-                err_msg = "Failed to config perctl permission, details: %s" % (str(output))
-                raise Exception(err_msg)
+        cap_mode = f"{CAP_ADM},{CAP_WIO}"
+        path = f"{DSS_HOME}/bin/perctrl"
+        cmd = f'sudo setcap {cap_mode}+ep {path}'
+        return_code, stdout, stderr = exec_popen(cmd, timeout=TIMEOUT)
+        if return_code:
+            output = stdout + stderr
+            err_msg = "Failed to config perctl permission, details: %s" % (str(output))
+            raise Exception(err_msg)
         LOG.info("Success to config perctrl permission.")
 
     def check_is_reg(self) -> bool:
@@ -272,7 +287,7 @@ class DssCtl(object):
         :return:
         """
         kick_cmd = "source ~/.bashrc && %s/bin/dsscmd inq_reg -i %s -D %s" % (DSS_HOME, self.node_id, DSS_HOME)
-        return_code, stdout, stderr = exec_popen(kick_cmd, timeout=60)
+        return_code, stdout, stderr = exec_popen(kick_cmd, timeout=TIMEOUT)
         if return_code:
             output = stdout + stderr
             err_msg = "Failed to inq_reg disk, details: %s" % (str(output))
@@ -286,7 +301,7 @@ class DssCtl(object):
         """
         LOG.info("Start to kick node.")
         kick_cmd = "source ~/.bashrc && %s/bin/dsscmd unreghl -D %s" % (DSS_HOME, DSS_HOME)
-        return_code, stdout, stderr = exec_popen(kick_cmd, timeout=60)
+        return_code, stdout, stderr = exec_popen(kick_cmd, timeout=TIMEOUT)
         if return_code:
             output = stdout + stderr
             err_msg = "Kick node cmd[%s] exec failed, details:%s" % (kick_cmd, output)
@@ -302,12 +317,27 @@ class DssCtl(object):
         if self.check_is_reg():
             self.kick_node()
         reg_cmd = "source ~/.bashrc && %s/bin/dsscmd reghl -D %s" % (DSS_HOME, DSS_HOME)
-        return_code, stdout, stderr = exec_popen(reg_cmd, timeout=60)
+        return_code, stdout, stderr = exec_popen(reg_cmd, timeout=TIMEOUT)
         if return_code:
             output = stdout + stderr
             err_msg = "Reghl node cmd[%s] exec failed, details:%s" % (reg_cmd, output)
             raise Exception(err_msg)
         LOG.info("Success to reghl disk.")
+
+    def clean_shm(self):
+        """
+        clean share memmory of ograc user
+        :return:
+        """
+        LOG.info("Start to clean share memmory.")
+        clean_shm_cmd = "ipcrm -a"
+        return_code, stdout, stderr = exec_popen(clean_shm_cmd, timeout=TIMEOUT)
+	
+        if return_code:
+            output = stdout + stderr
+            err_msg = "failed to clean share memmory, details: %s" % (str(output))
+            raise Exception(err_msg)
+        LOG.info("Success to clean share memmory.")
 
     def clean_soft(self):
         """
@@ -319,8 +349,8 @@ class DssCtl(object):
             shutil.rmtree(os.path.join(DSS_HOME, "lib"))
         if os.path.exists(os.path.join(DSS_HOME, "bin")):
             shutil.rmtree(os.path.join(DSS_HOME, "bin"))
-        if os.path.exists(os.path.join(DSS_HOME, "cfg")):
-            shutil.rmtree(os.path.join(DSS_HOME, "cfg"))
+        if os.path.exists(DSS_CFG):
+            shutil.rmtree(DSS_CFG)
         LOG.info("Success to clean soft.")
 
     def pre_install(self, *args) -> None:
@@ -347,11 +377,19 @@ class DssCtl(object):
         self.modify_env(action="add")
         self.prepare_cfg()
         self.prepare_source()
-        #self.cms_add_dss_res()
+        self.cms_add_dss_res()
         self.config_perctrl_permission()
-        self.prepare_dss_dick()
-        self.reghl_dss_disk()
-        self.dss_cmd_add_vg()
+        with open(INSTALL_FILE, encoding="utf-8") as f:
+            _tmp = f.read()
+            info = json.loads(_tmp)
+            dss_install_type = info.get("install_type", "")
+        
+        LOG.info("dss_install_type is %s", dss_install_type)
+        
+        if dss_install_type != "reserve":
+            self.prepare_dss_dick()
+            self.reghl_dss_disk()
+            self.dss_cmd_add_vg()
 
     def backup(self, *args) -> None:
         LOG.info("Start backup.")
@@ -375,12 +413,14 @@ class DssCtl(object):
         :return:
         """
         self.modify_env(action="delete")
+        self.clean_shm()
         self.clean_soft()
 
     def start(self, *args) -> None:
         """
         start dss server:
              - check dss server status
+             - register dss disk
              - start dss server
         :param args:
         :return:
@@ -388,6 +428,7 @@ class DssCtl(object):
         LOG.info("Start dss server.")
         if self.check_status():
             return
+        self.reghl_dss_disk()
         self.begin_time = str(datetime.datetime.now()).split(".")[0]
         dssserver_cmd = "source ~/.bashrc && nohup dssserver -D %s &" % DSS_HOME
         subprocess.Popen(dssserver_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -418,7 +459,7 @@ class DssCtl(object):
     def check_status(self, *args) -> bool:
         LOG.info("Start check status start")
         check_cmd = "ps -ef | grep dssserver | grep -v grep | grep %s" % DSS_HOME
-        _, stdout, stderr = exec_popen(check_cmd, timeout=60)
+        _, stdout, stderr = exec_popen(check_cmd, timeout=TIMEOUT)
         if stdout:
             LOG.info("dssserver is online, status: %s" % stdout)
             return True
@@ -426,12 +467,15 @@ class DssCtl(object):
             LOG.info("dssserver is offline.")
             return False
 
+    def upgrade_backup(self, *args) -> None:
+        LOG.info("Start to upgrade_backup dss.")
+        LOG.info("Success to upgrade_backup dss.")
 
 def main():
     parse = argparse.ArgumentParser()
     parse.add_argument("--action", type=str,
                        choices=["install", "uninstall", "start", "stop", "pre_install",
-                                "upgrade", "rollback", "pre_upgrade"])
+                                "upgrade", "rollback", "pre_upgrade", "check_status", "upgrade_backup"])
     parse.add_argument("--mode", required=False, dest="mode", default="")
     arg = parse.parse_args()
     act = arg.action

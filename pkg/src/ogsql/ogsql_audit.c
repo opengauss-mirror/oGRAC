@@ -219,7 +219,7 @@ static inline void sql_get_dml_text(session_t *session, text_t *sql, vmc_t *vmc)
         return;
     }
 
-#if ((defined DB_DEBUG_VERSION) || (defined GS_OGRACD_PARAM_LOG))
+#if ((defined DB_DEBUG_VERSION) || (defined OG_OGRACD_PARAM_LOG))
     if (stmt != NULL && stmt->lang_type == LANG_PL && stmt->context != NULL) {
         pl_entity_t *entity = stmt->pl_context;
         pl_line_ctrl_t *line = (pl_line_ctrl_t *)entity->anonymous->body;

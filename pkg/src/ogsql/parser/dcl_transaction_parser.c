@@ -223,7 +223,7 @@ status_t sql_parse_commit(sql_stmt_t *stmt)
             status = sql_parse_commit_phase2(stmt, &word);
             break;
         case KEY_WORD_FORCE:
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
             if (IS_COORDINATOR) {
                 OG_THROW_ERROR_EX(ERR_CAPABILITY_NOT_SUPPORT, "COMMIT FORCE xid on coordinator");
                 status = OG_ERROR;

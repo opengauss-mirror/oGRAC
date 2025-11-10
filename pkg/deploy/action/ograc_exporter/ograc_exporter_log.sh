@@ -6,7 +6,7 @@ OM_DEPLOY_LOG_FILE=/opt/ograc/log/ograc_exporter/ograc_exporter.log
 CURRENT_PATH=$(dirname $(readlink -f $0))
 SCRIPT_NAME=${CURRENT_PATH}/$(basename $0)
 
-init_ct_om_sh()
+init_og_om_sh()
 {
     if [ ! -d ${OM_DEPLOY_LOG_PATH} ]; then
         mkdir -m 750 -p ${OM_DEPLOY_LOG_PATH}
@@ -34,4 +34,4 @@ logAndEchoInfo() { _logInfo "$@"; echo -ne "[INFO ] $@\n"; }
 logAndEchoWarn() { _logWarn "$@"; echo -ne "[WARN ] $@\n"; }
 logAndEchoError() { _logError "$@"; echo -ne "[ERROR] $@\n"; }
 
-init_ct_om_sh
+init_og_om_sh

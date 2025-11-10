@@ -1800,7 +1800,7 @@ status_t undo_switch_space(knl_session_t *session, uint32 space_id)
     space_t *new_undo_space = NULL;
     undo_set_t *undo_set = MY_UNDO_SET(session);
 
-    knl_panic(0);  // TODO: need to design
+    knl_panic(0);
 
     session->kernel->undo_ctx.is_switching = OG_TRUE;
     undo_invalid_segments(session);

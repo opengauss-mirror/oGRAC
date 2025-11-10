@@ -165,10 +165,11 @@ status_t opr_unary(variant_t *right, variant_t *result)
         case OG_TYPE_IMAGE:
         case OG_TYPE_CURSOR:
         case OG_TYPE_COLUMN:
-        case OG_TYPE_BOOLEAN:
         case OG_TYPE_TIMESTAMP_TZ_FAKE:
         case OG_TYPE_TIMESTAMP_TZ:
         case OG_TYPE_TIMESTAMP_LTZ:
+            return OG_SUCCESS;
+        case OG_TYPE_BOOLEAN:
         default:
             break;
     }

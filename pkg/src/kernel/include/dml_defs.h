@@ -481,7 +481,7 @@ typedef struct st_knl_index_desc {
     bool8  part_idx_invalid;
     bool8 is_dsc; // true for dsc index
 
-    index_profile_t profile;  // TODO: to be deleted
+    index_profile_t profile;
 } knl_index_desc_t;
 
 void knl_init_key(knl_index_desc_t *desc, char *buf, rowid_t *rid);

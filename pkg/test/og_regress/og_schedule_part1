@@ -8,4 +8,11 @@ test: og_decimal og_number
 test: og_json_3 og_json_4 og_json_5
 test: og_jsonb_1 og_jsonb_2 og_jsonb_table
 test: og_having
+test: og_parser og_as_table og_tbl_func
+test: og_subqry_rewrite
 test: og_union_all og_union og_datatype
+test: og_index_cluster
+test: og_function
+test: og_order_by_eliminate
+test: og_exp_imp
+test: og_auto_increment

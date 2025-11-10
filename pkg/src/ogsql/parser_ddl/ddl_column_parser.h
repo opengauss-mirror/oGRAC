@@ -49,7 +49,7 @@ extern "C" {
     ((id) == KEY_WORD_CONSTRAINT || (id) == KEY_WORD_PRIMARY || (id) == KEY_WORD_UNIQUE || (id) == KEY_WORD_FOREIGN || \
         (id) == KEY_WORD_CHECK || (id) == KEY_WORD_PARTITION || (id) == KEY_WORD_LOGICAL)
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #define SHARDING_NOT_SUPPORT_ERROR(loc, error_no, err_msg)       \
     do {                                                         \
         if (IS_COORDINATOR) {                                    \
@@ -59,7 +59,7 @@ extern "C" {
     } while (0)
 #endif
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #define SHARDING_NOT_SUPPORT_ERROR_EX(loc, error_no, err_msg, text)      \
     do {                                                                 \
         if (IS_COORDINATOR) {                                            \

@@ -41,7 +41,7 @@ typedef enum en_timer_status {
     TIMER_STATUS_PAUSED,
 } timer_status_t;
 
-typedef struct st_ct_timer {
+typedef struct st_og_timer {
     volatile date_detail_t detail;  // detail of date, yyyy-mm-dd hh24:mi:ss
     volatile date_t now;
     volatile date_t monotonic_now;  // not affected by user change

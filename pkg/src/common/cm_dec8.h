@@ -27,7 +27,7 @@
 #include "cm_dec4.h"
 
 /* The number of cells (an uint32) used to store the decimal type. */
-#define DEC8_CELL_SIZE (uint8)9
+#define DEC8_CELL_SIZE (uint8)7
 #define DEC8_MAX_LEN (uint8)(DEC8_CELL_SIZE + 1)
 
 /* The number of digits that an element of an int256, i.e., an uint32
@@ -234,12 +234,6 @@ static inline void cm_dec8_copy(dec8_t *dst, const dec8_t *src)
      * to handle abnormal case, which reduces an IF statement.
      */
     switch (GET_CELLS8_SIZE(src)) {
-        case 9:
-            dst->cells[8] = src->cells[8];
-            /* fall-through */
-        case 8:
-            dst->cells[7] = src->cells[7];
-            /* fall-through */
         case 7:
             dst->cells[6] = src->cells[6];
             /* fall-through */

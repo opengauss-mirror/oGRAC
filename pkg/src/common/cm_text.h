@@ -52,7 +52,7 @@ typedef struct st_text {
 } text_t;
 #pragma pack()
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef struct st_long_text {
     char *text_addr;
     uint32 text_size;

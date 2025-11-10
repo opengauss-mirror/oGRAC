@@ -28,6 +28,7 @@
 #include "ogsql_plan_defs.h"
 #include "plan_join.h"
 #include "plan_rbo.h"
+#include "ogsql_join_path.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -613,7 +614,7 @@ static inline bool32 check_hash_join_ability(sql_join_node_t *join_node)
         }                                                               \
     } while (0)
 
-static bool32 check_and_get_join_column(cmp_node_t *cmp_node, cols_used_t *l_cols_used, cols_used_t *r_cols_used)
+bool32 check_and_get_join_column(cmp_node_t *cmp_node, cols_used_t *l_cols_used, cols_used_t *r_cols_used)
 {
     expr_tree_t *left = cmp_node->left;
     expr_tree_t *right = cmp_node->right;
@@ -944,7 +945,6 @@ static inline status_t can_find_table_hash_join_cond(uint32 tab_id, cond_tree_t 
     return can_find_hash_join_cond(tab_id, join_node->root, stmt, result, tables);
 }
 
-static status_t sql_adjust_mix_join_plan(plan_assist_t *plan_ass, sql_join_node_t *join_node);
 static status_t choose_full_join_drive_table_index(plan_assist_t *pa, sql_table_t *drive_table,
     sql_join_node_t *drive_node, sql_join_node_t *parent_node)
 {
@@ -1055,11 +1055,6 @@ bool32 check_nl_full_rowid_mtrl_available(cond_tree_t *join_cond)
         return OG_FALSE;
     }
     return visit_ass.result0;
-}
-
-static status_t sql_adjust_mix_join_plan(plan_assist_t *plan_ass, sql_join_node_t *join_node)
-{
-    return OG_SUCCESS;
 }
 
 typedef struct st_sql_join_node_queue {
@@ -1196,7 +1191,7 @@ static status_t sql_build_inner_join_tree(sql_stmt_t *stmt, plan_assist_t *plan_
         plan_ass->cond = (*inner_join_root)->join_cond;
     }
     OG_RETURN_IFERR(
-        sql_get_table_join_cond(plan_ass->stmt, &plan_ass->query->tables, &plan_ass->query->tables,
+        og_get_join_cond_from_table_cond(plan_ass->stmt, &plan_ass->query->tables, &plan_ass->query->tables,
                                 plan_ass->cond, &plan_ass->join_conds));
     OG_RETURN_IFERR(sql_create_join_tree(stmt, plan_ass, &join_ass, &new_join_root));
 
@@ -1242,65 +1237,15 @@ static inline status_t sql_build_mix_join_tree(sql_stmt_t *stmt, plan_assist_t *
     }
 }
 
-static status_t sql_adjust_query_filter_cond(plan_assist_t *plan_ass, sql_join_node_t *join_node)
-{
-    sql_stmt_t *stmt = plan_ass->stmt;
-    sql_query_t *query = plan_ass->query;
-
-    if (!plan_ass->is_final_plan || plan_ass->is_subqry_cost || query->filter_cond == NULL) {
-        return OG_SUCCESS;
-    }
-
-    // s_query: must push filter_cond down to join_node->filter
-    // query:  when connect by exists, it cannot be put on join_node->filter
-    //         when rownum exists, it is necessary to use rownum to adjust the cost,so it cannot be put on
-    //         join_node->filter
-    if (!query->is_s_query && (!IS_INNER_JOIN(join_node) || IS_COND_FALSE(query->filter_cond) ||
-        query->connect_by_cond != NULL || query->filter_cond->rownum_upper != OG_INFINITE32)) {
-        return OG_SUCCESS;
-    }
-
-    if (join_node->filter == NULL) {
-        join_node->filter = query->filter_cond;
-    } else {
-        cond_tree_t *new_cond = NULL;
-        OG_RETURN_IFERR(sql_create_cond_tree(stmt->context, &new_cond));
-        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&new_cond->root));
-        new_cond->root->type = COND_NODE_AND;
-        new_cond->root->left = join_node->filter->root;
-        new_cond->root->right = query->filter_cond->root;
-        join_node->filter = new_cond;
-    }
-    query->filter_cond = NULL;
-    query->has_filter_opt = OG_TRUE;
-    return OG_SUCCESS;
-}
-
 status_t sql_build_join_tree(sql_stmt_t *stmt, plan_assist_t *plan_ass, sql_join_node_t **join_root)
 {
+    OG_RETURN_IFERR(sql_stack_safe(stmt));
     OGSQL_SAVE_STACK(stmt);
     SET_NODE_STACK_CURR_QUERY(stmt, plan_ass->query);
-    if (plan_ass->join_assist->outer_node_count > 0) {
-        {
-            OG_RETURN_IFERR(sql_reorganise_join_tree(stmt, plan_ass->join_assist->join_node));
-            OG_RETURN_IFERR(sql_build_mix_join_tree(stmt, plan_ass, &plan_ass->join_assist->join_node, NULL));
-            OG_RETURN_IFERR(sql_adjust_mix_join_plan(plan_ass, plan_ass->join_assist->join_node));
-            *join_root = plan_ass->join_assist->join_node;
-        }
-        OG_RETURN_IFERR(sql_adjust_query_filter_cond(plan_ass, *join_root));
-    } else {
-        join_assist_t join_ass = { 0 };
-        sql_generate_join_assist(plan_ass, plan_ass->join_assist->join_node, &join_ass);
-        OG_RETURN_IFERR(
-            sql_get_table_join_cond(plan_ass->stmt, &plan_ass->query->tables, &plan_ass->query->tables,
-                                    plan_ass->cond, &plan_ass->join_conds));
-        {
-            OG_RETURN_IFERR(sql_create_join_tree(stmt, plan_ass, &join_ass, join_root));
-        }
-    }
+    status_t ret = sql_build_join_tree_cost(stmt, plan_ass, join_root);
     SQL_RESTORE_NODE_STACK(stmt);
     OGSQL_RESTORE_STACK(stmt);
-    return OG_SUCCESS;
+    return ret;
 }
 
 static status_t sql_create_base_join_plan(sql_stmt_t *stmt, plan_assist_t *plan_ass, sql_join_node_t *join_node,
@@ -1447,8 +1392,8 @@ static status_t sql_create_nl_join_plan(sql_stmt_t *stmt, plan_assist_t *plan_as
 
     cond_node_t *cond = NULL;
     if (plan_ass->query->connect_by_cond == NULL && !plan_ass->query->is_s_query) {
-        if (plan->join_p.filter != NULL) {
-            cond = plan->join_p.filter->root;
+        if (join_node->filter != NULL) {
+            cond = join_node->filter->root;
         } else if (plan_ass->cond != NULL) {
             cond = plan_ass->cond->root;
         }
@@ -1523,7 +1468,6 @@ static inline void sql_reset_join_table_scan_flag(sql_join_node_t *join_node)
     sql_reset_table_scan_flag(join_node->right);
 }
 
-#define HASH_MIN_BUCKETS_LIMIT (int64)10000
 static inline join_oper_t get_hash_right_join_oper(join_oper_t oper)
 {
     switch (oper) {
@@ -1560,6 +1504,131 @@ static inline void hint_get_hash_table(sql_table_t *table, bool32 l_table, bool3
     if (HAS_SPEC_TYPE_HINT(table->hint_info, JOIN_HINT, HINT_KEY_WORD_NO_HASH_TABLE)) {
         *hash_left = !l_table;
     }
+}
+
+static status_t sql_fill_join_cond(sql_stmt_t *stmt, join_plan_t *join_plan, expr_tree_t *left_node,
+    expr_tree_t *right_node, cmp_type_t type)
+{
+    if (join_plan->oper != JOIN_OPER_MERGE) {
+        OG_RETURN_IFERR(cm_galist_insert(join_plan->left_hash.key_items, left_node));
+        OG_RETURN_IFERR(cm_galist_insert(join_plan->right_hash.key_items, right_node));
+    }
+
+    cmp_node_t *tmp_cmp = NULL;
+    OG_RETURN_IFERR(cm_galist_new(join_plan->cmp_list, sizeof(cmp_node_t), (void **)&tmp_cmp));
+    tmp_cmp->type = type;
+    tmp_cmp->left = left_node;
+    tmp_cmp->right = right_node;
+    return OG_SUCCESS;
+}
+
+static status_t sql_plan_extract_join_cmp(sql_stmt_t *stmt, join_plan_t *join_plan, cmp_node_t *cond_node, bool *found)
+{
+    uint16 l_table_id;
+    uint16 r_table_id;
+    if ((join_plan->cmp_list->count > 0 && join_plan->oper == JOIN_OPER_MERGE) ||
+        !sql_get_cmp_join_tab_id(cond_node, &l_table_id, &r_table_id, join_plan->oper)) {
+        return OG_SUCCESS;
+    }
+
+    sql_array_t *l_tables = &(join_plan->left_hash.rs_tables);
+    sql_array_t *r_tables = &(join_plan->right_hash.rs_tables);
+    if (sql_table_in_list(l_tables, l_table_id) && sql_table_in_list(r_tables, r_table_id)) {
+        *found = true;
+        return sql_fill_join_cond(stmt, join_plan, cond_node->left, cond_node->right, cond_node->type);
+    }
+
+    if (sql_table_in_list(l_tables, r_table_id) && sql_table_in_list(r_tables, l_table_id)) {
+        *found = true;
+        return sql_fill_join_cond(stmt, join_plan, cond_node->right, cond_node->left,
+            sql_reverse_cmp(cond_node->type));
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t sql_plan_extract_join_cond(sql_stmt_t *stmt, join_plan_t *join_plan, cond_node_t *cond_node)
+{
+    bool found = false;
+    switch (cond_node->type) {
+        case COND_NODE_AND:
+            OG_RETURN_IFERR(sql_plan_extract_join_cond(stmt, join_plan, cond_node->left));
+            OG_RETURN_IFERR(sql_plan_extract_join_cond(stmt, join_plan, cond_node->right));
+            try_eval_logic_and(cond_node);
+            break;
+        case COND_NODE_COMPARE:
+            OG_RETURN_IFERR(sql_plan_extract_join_cmp(stmt, join_plan, cond_node->cmp, &found));
+            if (found) {
+                cond_node->type = COND_NODE_TRUE;
+            }
+            break;
+        default:
+            break;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_plan_extract_join_filter(sql_stmt_t *stmt, join_plan_t *join_plan, cond_node_t *cond_node)
+{
+    OG_RETURN_IFERR(sql_extract_filter_cond(stmt, &join_plan->left_merge.rs_tables, &join_plan->left_merge.filter_cond,
+        cond_node));
+    return sql_extract_filter_cond(stmt, &join_plan->right_merge.rs_tables, &join_plan->right_merge.filter_cond,
+        cond_node);
+}
+
+static status_t sql_plan_extract_cond(sql_stmt_t *stmt, join_plan_t *join_plan, sql_join_node_t *join_node)
+{
+    if (join_node->oper == JOIN_OPER_HASH_LEFT || join_node->oper == JOIN_OPER_HASH_FULL) {
+        // use join_cond as cond
+        OG_RETURN_IFERR(sql_plan_extract_join_cond(stmt, join_plan, join_node->join_cond->root));
+    } else {
+        // use filter as cond
+        if (join_node->filter == NULL) {
+            return OG_SUCCESS;
+        }
+
+        OG_RETURN_IFERR(sql_plan_extract_join_cond(stmt, join_plan, join_node->filter->root));
+        return sql_plan_extract_join_filter(stmt, join_plan, join_node->filter->root);
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_fill_join_info(sql_stmt_t *stmt, join_plan_t *join_plan, sql_join_node_t *join_node)
+{
+    sql_array_t *left_rs_tables = &(join_plan->left_hash.rs_tables);
+    sql_array_t *right_rs_tables = &(join_plan->right_hash.rs_tables);
+    OG_RETURN_IFERR(sql_create_array(stmt->context, left_rs_tables, "LEFT RS TBLS", OG_MAX_JOIN_TABLES));
+    OG_RETURN_IFERR(sql_array_concat(left_rs_tables, &(join_node->left->tables)));
+    OG_RETURN_IFERR(sql_create_list(stmt, &(join_plan->left_hash.key_items)));
+    OG_RETURN_IFERR(sql_create_array(stmt->context, right_rs_tables, "RIGHT RS TBLS", OG_MAX_JOIN_TABLES));
+    OG_RETURN_IFERR(sql_array_concat(right_rs_tables, &(join_node->right->tables)));
+    return sql_create_list(stmt, &(join_plan->right_hash.key_items));
+}
+
+static int64 sql_get_join_node_card(sql_join_node_t *join_node)
+{
+    if (join_node->type == JOIN_TYPE_NONE) {
+        return (TABLE_OF_JOIN_LEAF(join_node)->card);
+    }
+
+    return join_node->cost.card;
+}
+
+static void sql_plan_fill_card(plan_assist_t *plan_ass, sql_join_node_t *join_node, plan_node_t *plan)
+{
+    plan->join_p.rows = (int64)OG_HASH_JOIN_COUNT;
+    plan->join_p.hash_left = join_node->hash_left;
+
+    if (join_node->cost.cost <= CBO_MIN_COST) {
+        return;
+    }
+
+    if (join_node->oper == JOIN_OPER_HASH_LEFT) {
+        plan->join_p.rows = sql_get_join_node_card(join_node->right);
+    } else if (join_node->oper == JOIN_OPER_HASH) {
+        plan->join_p.rows = MIN(sql_get_join_node_card(join_node->left), sql_get_join_node_card(join_node->right));
+    }
+    plan->join_p.rows = MAX(plan->join_p.rows, HASH_MIN_BUCKETS_LIMIT);
 }
 
 static inline status_t check_hash_keys_count_valid(join_plan_t *join_p)
@@ -1711,6 +1780,44 @@ static status_t sql_create_full_join_plan(sql_stmt_t *stmt, plan_assist_t *pa, s
     return sql_create_nl_full_join_plan(stmt, pa, join_node, plan);
 }
 
+static status_t sql_create_hash_join_plan(sql_stmt_t *stmt, plan_assist_t *plan_ass, sql_join_node_t *join_node,
+    plan_node_t *plan)
+{
+    join_plan_t *jplan = &plan->join_p;
+    jplan->hj_pos = plan_ass->hj_pos++;
+    sql_join_node_t *hash_node = join_node->hash_left ? join_node->left : join_node->right;
+    if (hash_node->type == JOIN_TYPE_NONE && hash_node->tables.count > 0) {
+        sql_table_t *tbl = (sql_table_t *)sql_array_get(&hash_node->tables, 0);
+        CM_CLEAN_FLAG(tbl->scan_flag, RBO_INDEX_SORT_FLAG);
+        /* function-index dose not support hash mtrl, so index only is disabled. */
+        if (tbl->scan_mode == SCAN_MODE_INDEX && tbl->index->is_func && INDEX_ONLY_SCAN(tbl->scan_flag)) {
+            CM_CLEAN_FLAG(tbl->scan_flag, RBO_INDEX_ONLY_FLAG);
+            if (tbl->index_full_scan) {
+                tbl->scan_mode = SCAN_MODE_TABLE_FULL;
+                tbl->index = NULL;
+                tbl->index_full_scan = OG_FALSE;
+            }
+        }
+    }
+    OG_RETURN_IFERR(sql_create_base_join_plan(stmt, plan_ass, join_node, &jplan->left, &jplan->right));
+    OG_RETURN_IFERR(sql_fill_join_info(stmt, jplan, join_node));
+    OG_RETURN_IFERR(sql_create_list(stmt, &(jplan->cmp_list)));
+
+    if (join_node != NULL && join_node->oper == JOIN_OPER_HASH_LEFT) {
+        if (jplan != NULL && jplan->filter != NULL && jplan->filter->root != NULL) {
+            OG_RETURN_IFERR(sql_extract_filter_cond(stmt, &jplan->left_hash.rs_tables, &jplan->left_hash.filter_cond,
+                join_node->filter->root));
+        }
+
+        OG_RETURN_IFERR(sql_extract_filter_cond(stmt, &jplan->right_hash.rs_tables, &jplan->right_hash.filter_cond,
+            join_node->join_cond->root));
+    }
+    OG_RETURN_IFERR(sql_plan_extract_cond(stmt, jplan, join_node));
+
+    sql_plan_fill_card(plan_ass, join_node, plan);
+    return check_hash_keys_count_valid(jplan);
+}
+
 status_t sql_create_join_plan(sql_stmt_t *stmt, plan_assist_t *pa, sql_join_node_t *join_node, cond_tree_t *cond,
     plan_node_t **plan)
 {
@@ -1732,13 +1839,19 @@ status_t sql_create_join_plan(sql_stmt_t *stmt, plan_assist_t *pa, sql_join_node
                 break;
 
             case JOIN_OPER_MERGE:
+                OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "merge join not support");
+                return OG_ERROR;
+
             case JOIN_OPER_HASH:
             case JOIN_OPER_HASH_LEFT:
             case JOIN_OPER_HASH_SEMI:
             case JOIN_OPER_HASH_ANTI:
             case JOIN_OPER_HASH_ANTI_NA:
             case JOIN_OPER_HASH_FULL:
-		knl_panic(0);
+            case JOIN_OPER_HASH_RIGHT_SEMI:
+            case JOIN_OPER_HASH_RIGHT_ANTI:
+            case JOIN_OPER_HASH_RIGHT_ANTI_NA:
+                OG_RETURN_IFERR(sql_create_hash_join_plan(stmt, pa, join_node, plan_node));
                 break;
 
             case JOIN_OPER_NL_FULL:
@@ -1756,7 +1869,11 @@ status_t sql_create_join_plan(sql_stmt_t *stmt, plan_assist_t *pa, sql_join_node
         return sql_adjust_join_plan_with_cnct(pa, plan);
     }
 
-    return sql_create_table_scan_plan(stmt, pa, cond, TABLE_OF_JOIN_LEAF(join_node), plan);
+    cond_tree_t *save_pa_cond = pa->cond;
+    OG_RETURN_IFERR(sql_create_table_scan_plan(stmt, pa, cond, TABLE_OF_JOIN_LEAF(join_node), plan));
+    pa->cond = save_pa_cond;
+
+    return OG_SUCCESS;
 }
 
 #ifdef __cplusplus

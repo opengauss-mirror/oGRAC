@@ -753,10 +753,12 @@ status_t sql_func_power(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     arg1 = func->argument;
     CM_POINTER(arg1);
     SQL_EXEC_FUNC_ARG_EX(arg1, &base, res);
+    sql_keep_stack_variant(stmt, &base);
 
     arg2 = arg1->next;
     CM_POINTER(arg2);
     SQL_EXEC_FUNC_ARG_EX(arg2, &expn, res);
+    sql_keep_stack_variant(stmt, &expn);
 
     if (if_power_as_shift(&base, &expn)) {
         res->v_int = 1 << expn.v_int;

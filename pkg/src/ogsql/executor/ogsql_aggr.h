@@ -91,6 +91,11 @@ static inline status_t sql_aggr_calc_value(aggr_assist_t *ass, aggr_var_t *aggr_
     return (&g_aggr_func_tab[ass->aggr_type])->calc(ass, aggr_var);
 }
 
+static inline bool32 is_ancestor_res_rowid(expr_node_t *exprn)
+{
+    return NODE_IS_RES_ROWID(exprn) && ROWID_NODE_ANCESTOR(exprn) > 0;
+}
+
 #define SQL_INIT_AGGR_ASSIST(ass, _stmt_, _cursor_) \
     do {                                           \
         (ass)->stmt = (sql_stmt_t *)(_stmt_);       \
@@ -110,6 +115,7 @@ status_t sql_init_aggr_values(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_
 status_t sql_fetch_aggr(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, bool32 *eof);
 status_t sql_exec_aggr(sql_stmt_t *stmt, sql_cursor_t *cursor, galist_t *aggrs, plan_node_t *plan);
 status_t sql_exec_aggr_extra(sql_stmt_t *stmt, sql_cursor_t *cursor, galist_t *aggrs, plan_node_t *plan);
+status_t sql_compare_sort_row_for_rank(sql_stmt_t *ogsql_stmt, expr_node_t *aggr_node, bool32 *flag);
 
 static inline aggr_var_t *sql_get_aggr_addr(sql_cursor_t *cursor, uint32 id)
 {

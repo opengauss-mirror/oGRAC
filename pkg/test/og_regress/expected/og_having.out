@@ -200,9 +200,8 @@ SQL> SELECT avg(f_int2) FROM T_HAVING_1 HAVING AVG(F_INT2) > 3;
 
 AVG(F_INT2)                             
 ----------------------------------------
-3                                       
 
-1 rows fetched.
+0 rows fetched.
 
 SQL> SELECT max(f_int2) FROM T_HAVING_1 HAVING MAX(F_INT2) < 4;
 

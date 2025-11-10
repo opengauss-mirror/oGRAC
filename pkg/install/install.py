@@ -3085,7 +3085,6 @@ class Installer:
         self.__kill_process("cms")
         if g_opts.use_gss:
             self.__kill_process("gssd")
-        # TODO add back when install completely success
         log("Roll back: process killed.")
 
         # Delete program
@@ -3882,7 +3881,7 @@ class Installer:
         self.checkDIR()
         self.checkSHA256()
         self.generateSslCert()
-        self.decompressBin()    #TODO shiyi check CMS, GSS bin when compile success
+        self.decompressBin()
         self.setUserEnv()
         self.prepareDataDir()
         self.InitDbInstance() # init db config, including ogracd, cms, gss, ssl

@@ -1492,6 +1492,10 @@ static status_t sql_verify_query_column(sql_verifier_t *verif, query_column_t *c
 
     OG_BIT_RESET(verif->incl_flags, SQL_INCL_ROWNUM);
     OG_RETURN_IFERR(sql_verify_expr(verif, column->expr));
+    if (IS_COMPLEX_TYPE(TREE_DATATYPE(column->expr))) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "rs column does not support complex data types");
+        return OG_ERROR;
+    }
     OG_RETURN_IFERR(sql_gen_column_z_alias(verif->stmt, column, query->rs_columns->count));
 
     OG_RETURN_IFERR(cm_galist_new(query->rs_columns, sizeof(rs_column_t), (pointer_t *)&rs_col));
@@ -1628,6 +1632,7 @@ status_t sql_verify_query_columns(sql_verifier_t *verif, sql_query_t *query)
     if (is_true) {
         // not ok: select f1, count(f2) from t1
         // not ok: select substr(f1, count(f2)), case when 1=1 then f1 else count(f2) end, f1+count(f2), 123 from t1
+        // not ok: select (select tbl.f1 XXX) + count(tbl.f1) from tbl
         // ok:     select 1, :p1, 1+:p2, count(f1) from t1
         OG_THROW_ERROR(ERR_EXPR_NOT_IN_GROUP_LIST);
         return OG_ERROR;

@@ -44,7 +44,7 @@
 #include "dtc_dc.h"
 #include "srv_instance.h"
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t db_insert_distribute_strategy_inner(knl_session_t *session, knl_cursor_t *cursor,
                                                     knl_table_desc_t *desc);
 status_t db_insert_distribute_strategy(knl_session_t *session, table_t *table);
@@ -290,7 +290,7 @@ static status_t db_init_table_desc_by_def(knl_session_t *session, knl_table_desc
         desc->cr_mode = CR_PAGE;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     desc->distribute_type = def->distribute_type;
     desc->distribute_data = def->distribute_data;
     desc->distribute_text = def->distribute_text;
@@ -1845,7 +1845,7 @@ static status_t db_prepare_idx_cols(knl_session_t *session, knl_index_def_t *def
         desc->columns[i] = knl_get_column_id(dc, &index_col->name);
 
         if (desc->columns[i] == OG_INVALID_ID16) {
-            OG_THROW_ERROR(ERR_COLUMN_NOT_EXIST, T2S(&def->user), T2S_EX(&index_col->name));
+            OG_THROW_ERROR(ERR_COLUMN_NOT_EXIST, T2S(&def->table), T2S_EX(&index_col->name));
             return OG_ERROR;
         }
         column = dc_get_column(entity, desc->columns[i]);
@@ -1872,7 +1872,7 @@ static status_t db_prepare_idx_cols(knl_session_t *session, knl_index_def_t *def
             desc->columns[i] = knl_get_column_id(dc, &index_col->name);
 
             if (desc->columns[i] == OG_INVALID_ID16) {
-                OG_THROW_ERROR(ERR_COLUMN_NOT_EXIST, T2S(&def->user), T2S_EX(&index_col->name));
+                OG_THROW_ERROR(ERR_COLUMN_NOT_EXIST, T2S(&def->table), T2S_EX(&index_col->name));
                 return OG_ERROR;
             }
 
@@ -2107,6 +2107,12 @@ static status_t db_chk_idx_def(knl_session_t *session, knl_dictionary_t *dc, tab
 
     if (!DB_IS_SINGLE(session) && idx_def->nologging) {
         OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "creating an index with nologging in HA mode");
+        return OG_ERROR;
+    }
+
+    if ((dc->type == DICT_TYPE_TEMP_TABLE_SESSION || dc->type == DICT_TYPE_TEMP_TABLE_TRANS) &&
+        idx_def->cr_mode == CR_PAGE) {
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "creating a page CR_MODE index on a temporary table");
         return OG_ERROR;
     }
 
@@ -2775,7 +2781,7 @@ static status_t db_load_sys_dc(knl_session_t *session, knl_table_def_t *def, tab
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t db_query_consis_hash_strategy(knl_session_t *session, uint32 *slice_count, uint32 *group_count,
     knl_cursor_t *cursor, bool32 *is_found)
 {
@@ -3141,7 +3147,7 @@ status_t db_create_table(knl_session_t *session, knl_table_def_t *def, table_t *
         }
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (db_insert_consis_hash_strategy(session, table) != OG_SUCCESS ||
         db_insert_distribute_strategy(session, table) != OG_SUCCESS) {
         dc_free_broken_entry(session, table->desc.uid, table->desc.id);
@@ -3590,6 +3596,7 @@ status_t db_drop_ltt(knl_session_t *session, knl_dictionary_t *dc)
     knl_temp_cache_t *temp_table = NULL;
 
     // release temp segments
+    cm_spin_lock(&session->temp_cache_lock, NULL);
     temp_table = knl_get_temp_cache(session, dc->uid, dc->oid);
     if (temp_table != NULL) {
         knl_panic_log(temp_table->org_scn == table->desc.org_scn, "temp_table's org_scn is not equal to "
@@ -3598,6 +3605,7 @@ status_t db_drop_ltt(knl_session_t *session, knl_dictionary_t *dc)
         knl_free_temp_vm(session, temp_table);
     }
 
+    cm_spin_unlock(&session->temp_cache_lock);
     // release dc memory
     uint32 slot = table->desc.id - OG_LTT_ID_OFFSET;
     dc_entity_t *entity = DC_ENTITY(dc);
@@ -5532,6 +5540,7 @@ status_t db_truncate_table_prepare(knl_session_t *session, knl_dictionary_t *dc,
     }
 
     if (table->desc.type == TABLE_TYPE_TRANS_TEMP || table->desc.type == TABLE_TYPE_SESSION_TEMP) {
+        cm_spin_lock(&session->temp_cache_lock, NULL);
         temp_table = knl_get_temp_cache(session, dc->uid, dc->oid);
         if (temp_table != NULL) {
             knl_panic_log(temp_table->org_scn == table->desc.org_scn, "the temp_table's org_scn is not equal to "
@@ -5539,6 +5548,7 @@ status_t db_truncate_table_prepare(knl_session_t *session, knl_dictionary_t *dc,
                 table->desc.name, temp_table->org_scn, table->desc.org_scn);
             knl_free_temp_vm(session, temp_table);
         }
+        cm_spin_unlock(&session->temp_cache_lock);
     } else {
         for (uint32 i = 0; i < table->index_set.total_count; i++) {
             index = table->index_set.items[i];
@@ -6426,7 +6436,11 @@ status_t db_fill_multi_indexes_paral(knl_session_t *session, knl_dictionary_t *d
     idx_paral_sort_ctx_t *paral_ctx = (idx_paral_sort_ctx_t*)cm_push(session->stack, sizeof(idx_paral_sort_ctx_t));
     errno_t err = memset_sp(paral_ctx, sizeof(idx_paral_sort_ctx_t), 0, sizeof(idx_paral_sort_ctx_t));
     knl_securec_check(err);
-    paral_ctx->build_count = paral_cnt;
+    if (index_cnt > 0 && index_cnt * paral_cnt >= OG_MAX_INDEX_PARALLELISM) {
+        paral_ctx->build_count = OG_MAX_INDEX_PARALLELISM / index_cnt;
+    } else {
+        paral_ctx->build_count = paral_cnt;
+    }
     paral_ctx->nologging = nologging;
 
     // initial
@@ -7934,7 +7948,7 @@ static status_t db_set_serial_value(knl_session_t *session, void *stmt, row_assi
                                     knl_cursor_t *cursor, knl_column_t *column)
 {
     uint64 value;
-    if (knl_get_serial_value(session, entity, &value) != OG_SUCCESS) {
+    if (knl_get_serial_value(session, entity, &value, KNL_SERIAL_INC_STEP, KNL_SERIAL_INC_OFFSET) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -15519,20 +15533,6 @@ static status_t db_alter_tmptable_auto_increment(knl_session_t *session, knl_dic
     return OG_SUCCESS;
 }
 
-static void db_altable_update_heap_serial(knl_session_t *session, uint64 serial_start, dc_entity_t *entity)
-{
-    if (serial_start >= OG_INVALID_ID64 - OG_SERIAL_CACHE_COUNT) {
-        if (OG_INVALID_ID64 != entity->table.heap.segment->serial) {
-            heap_update_serial(session, &entity->table.heap, OG_INVALID_ID64);
-        }
-    } else if (serial_start < (entity->table.heap.segment->serial - entity->table.desc.serial_start + serial_start)) {
-        heap_update_serial(session, &entity->table.heap,
-            entity->table.heap.segment->serial - entity->table.desc.serial_start + serial_start);
-    } else {
-        heap_update_serial(session, &entity->table.heap, serial_start + OG_SERIAL_CACHE_COUNT);
-    }
-}
-
 status_t db_altable_auto_increment(knl_session_t *session, knl_dictionary_t *dc, uint64 serial_start)
 {
     dc_entity_t *entity = DC_ENTITY(dc);
@@ -15542,40 +15542,22 @@ status_t db_altable_auto_increment(knl_session_t *session, knl_dictionary_t *dc,
         return db_alter_tmptable_auto_increment(session, dc, serial_start);
     }
 
-    if (entity->table.heap.segment == NULL) {
-        if (heap_create_entry(session, &entity->table.heap) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-    }
     dls_spin_lock(session, &entry->serial_lock, NULL);
 
-    // scenario: 1,create table without any insert,no need load dc, entry'serial_value is 0,here table desc can be set
-    // scenario: 2,restart entry'serial_value is 0, need to know is there any insert, need verify init stat
-
-    if ((HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial !=
-            entity->table.desc.serial_start) &&
-        (entry->serial_value == 0)) {
-        entry->serial_value = entity->table.heap.segment->serial;
-    }
     if (serial_start <= entry->serial_value) {
         dls_spin_unlock(session, &entry->serial_lock);
         return OG_SUCCESS;
     }
 
-    if (entry->serial_value == 0) {
-        entry->serial_value = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial;
-
-        if (entry->serial_value == 0) {
-            entry->serial_value = 1;
-        }
-    }
     if (db_update_table_increment_start(session, &entity->table.desc, serial_start) != OG_SUCCESS) {
         dls_spin_unlock(session, &entry->serial_lock);
         return OG_ERROR;
     }
 
-    db_altable_update_heap_serial(session, serial_start, entity);
-    entry->serial_value = serial_start;
+    if (!IS_INVALID_PAGID(entity->table.heap.entry) && serial_start > entity->table.heap.segment->serial) {
+        heap_update_serial(session, &entity->table.heap, serial_start);
+    }
+
     entity->table.desc.serial_start = serial_start;
     dls_spin_unlock(session, &entry->serial_lock);
     return OG_SUCCESS;
@@ -18027,10 +18009,12 @@ static status_t db_delete_table_segments(knl_session_t *session, knl_cursor_t *c
     table_t *table = DC_TABLE(dc);
 
     if (dc->type == DICT_TYPE_TEMP_TABLE_SESSION || dc->type == DICT_TYPE_TEMP_TABLE_TRANS) {
+        cm_spin_lock(&session->temp_cache_lock, NULL);
         knl_temp_cache_t *temp_table = knl_get_temp_cache(session, dc->uid, dc->oid);
         if (temp_table != NULL) {
             knl_free_temp_vm(session, temp_table);
         }
+        cm_spin_unlock(&session->temp_cache_lock);
     } else if (dc->type == DICT_TYPE_TABLE_EXTERNAL) {
         if (db_drop_external_table(session, cursor, table) != OG_SUCCESS) {
             return OG_ERROR;
@@ -18135,7 +18119,7 @@ status_t db_drop_table(knl_session_t *session, knl_handle_t stmt, knl_dictionary
         return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     (void)db_delete_distribute_strategy(session, table);
 #endif
 

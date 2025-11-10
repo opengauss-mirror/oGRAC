@@ -381,7 +381,7 @@ status_t sql_create_pivot(sql_stmt_t *stmt, sql_query_t *query, word_t *word)
     pivot_items_t *pivot_items = NULL;
     sql_table_t *query_table = NULL;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         OG_SRC_THROW_ERROR(word->loc, ERR_CAPABILITY_NOT_SUPPORT, "pivot at CN");
         return OG_ERROR;
@@ -563,7 +563,7 @@ status_t sql_create_unpivot(sql_stmt_t *stmt, sql_query_t *query, word_t *word)
 {
     pivot_items_t *pivot_items = NULL;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         OG_SRC_THROW_ERROR(word->loc, ERR_CAPABILITY_NOT_SUPPORT, "unpivot at CN");
         return OG_ERROR;
@@ -628,7 +628,7 @@ status_t sql_try_create_pivot_unpivot_table(sql_stmt_t *stmt, sql_table_t *query
         return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         OG_SRC_THROW_ERROR(word->loc, ERR_CAPABILITY_NOT_SUPPORT, "pivot or unpivot at CN");
         return OG_ERROR;

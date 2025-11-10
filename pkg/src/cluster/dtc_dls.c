@@ -561,8 +561,7 @@ status_t dls_process_ask_master_for_latch(knl_session_t *session, mes_message_t 
                 ret = dls_process_release_ownership(session, lock_id, req_info.req_mode, req_version,
                                                     lock_req.release_timeout_ticks);
             } else {
-                // somebody is the owner,
-                // todo: batch operate need for performmance
+                // somebody is the owner
                 ret = dls_request_lock_msg(session, lock_id, i, MES_CMD_RELEASE_LOCK, &req_info, DLS_REQ_LOCK,
                                            req_version);
             }
@@ -843,7 +842,6 @@ static status_t dls_request_lock(knl_session_t *session, drid_t *lock_id, drc_re
                                                req_version);
                     SYNC_POINT_GLOBAL_END;
                     if (ret != OG_SUCCESS) {
-                        // todo: tell master lock failed and go next, not claim
                         drc_cancel_lock_owner_request(self_id, lock_id);
                         DTC_DRC_DEBUG_ERR(
                             "[DLS] dls request master ask owner(%u) to release lock(%u/%u/%u/%u/%u) failed", i,
@@ -1015,7 +1013,6 @@ static status_t dls_try_request_lock(knl_session_t *session, drid_t *lock_id, wa
                         DTC_DLS_DEBUG_ERR(
                             "[DLS] dls request master ask owner(%u) to release lock(%u/%u/%u/%u/%u) failed, errcode(%u)",
                             i, lock_id->type, lock_id->uid, lock_id->id, lock_id->idx, lock_id->part, ret);
-                        // todo: tell master lock failed and go next
                         drc_cancel_lock_owner_request(self_id, lock_id);
                         return ret;
                     }
@@ -1042,8 +1039,6 @@ static status_t dls_try_request_lock(knl_session_t *session, drid_t *lock_id, wa
             // OG_THROW_ERROR(ret, lock_id->type, lock_id->id);
             DTC_DLS_DEBUG_ERR("[DLS] dls request lock(%u/%u/%u/%u/%u) owner from master(%u) failed, errcode(%u)",
                               lock_id->type, lock_id->uid, lock_id->id, lock_id->idx, lock_id->part, master_id, ret);
-            // todo: if the cancle message failed, master will always do converting, maybe master should suppory
-            // re-enter (void)dls_send_lock_msg(session, lock_id, master_id, MES_CMD_CANCLE_LOCK);
         }
     }
 
@@ -1720,8 +1715,8 @@ bool32 dls_latch_timed_s(knl_session_t *session, drlatch_t *dlatch, uint32 ticks
     }
 }
 
-bool32 dls_latch_timed_x(knl_session_t *session, drlatch_t *dlatch, uint32 ticks_for_wait, bool32 is_force,
-                         latch_statis_t *stat, uint32 release_timeout_ticks)
+bool32 dls_latch_timed_x(knl_session_t *session, drlatch_t *dlatch, uint32 ticks_for_wait, latch_statis_t *stat,
+    uint32 release_timeout_ticks)
 {
     uint32 count = 0;
     uint32 ticks = 0;
@@ -1787,7 +1782,7 @@ bool32 dls_latch_timed_x(knl_session_t *session, drlatch_t *dlatch, uint32 ticks
             }
         }
     } else {
-        return cm_latch_timed_x(&dlatch->latch, wait_ticks, is_force, stat);
+        return cm_latch_timed_x(&dlatch->latch, session->id, wait_ticks, stat);
     }
 }
 

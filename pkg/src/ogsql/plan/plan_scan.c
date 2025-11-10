@@ -30,11 +30,12 @@
 #include "ogsql_table_func.h"
 #include "plan_rbo.h"
 #include "plan_range.h"
+#include "ogsql_scan.h"
+#include "ogsql_cbo_cost.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 
 static inline status_t sql_set_mapped_table_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table)
 {
@@ -54,41 +55,6 @@ static inline status_t sql_set_mapped_table_cost(sql_stmt_t *stmt, plan_assist_t
     return OG_SUCCESS;
 }
 
-static inline status_t sql_add_sub_table(sql_stmt_t *stmt, galist_t *sub_tables, sql_table_t *table, cond_node_t *cond)
-{
-    sql_table_t *element = NULL;
-
-    OG_RETURN_IFERR(cm_galist_new(sub_tables, sizeof(sql_table_t), (void **)&element));
-    *element = *table;
-    element->is_sub_table = OG_TRUE;
-
-    if (INDEX_ONLY_SCAN(element->scan_flag)) {
-        OG_RETURN_IFERR(sql_make_index_col_map(NULL, stmt, element));
-    }
-    return sql_union_cond_node(stmt->context, (cond_tree_t **)&element->cond, cond);
-}
-
-static inline status_t sql_try_add_sub_table(sql_stmt_t *stmt, sql_table_t *parent, sql_table_t *sub_table,
-    cond_node_t *cond)
-{
-    if (sub_table->index->id == parent->index->id) {
-        return sql_union_cond_node(stmt->context, (cond_tree_t **)&parent->cond, cond);
-    }
-
-    if (parent->sub_tables == NULL) {
-        OG_RETURN_IFERR(sql_create_list(stmt, &parent->sub_tables));
-        return sql_add_sub_table(stmt, parent->sub_tables, sub_table, cond);
-    }
-
-    for (uint32 i = 0; i < parent->sub_tables->count; i++) {
-        sql_table_t *element = (sql_table_t *)cm_galist_get(parent->sub_tables, i);
-        if (element->index->id == sub_table->index->id) {
-            return sql_union_cond_node(stmt->context, (cond_tree_t **)&element->cond, cond);
-        }
-    }
-    return sql_add_sub_table(stmt, parent->sub_tables, sub_table, cond);
-}
-
 static inline status_t sql_get_index_cond(sql_stmt_t *stmt, cond_tree_t *and_cond, cond_node_t *cond_node,
     cond_node_t **index_cond)
 {
@@ -104,30 +70,6 @@ static inline status_t sql_get_index_cond(sql_stmt_t *stmt, cond_tree_t *and_con
     (*index_cond)->left = and_cond->root;
     (*index_cond)->right = cond_node;
     return OG_SUCCESS;
-}
-
-static inline status_t sql_collect_or_cond(sql_stmt_t *stmt, cond_node_t *src_cond, cond_tree_t **and_cond,
-    galist_t *or_list)
-{
-    OG_RETURN_IFERR(sql_stack_safe(stmt));
-    switch (src_cond->type) {
-        case COND_NODE_AND:
-            OG_RETURN_IFERR(sql_collect_or_cond(stmt, src_cond->left, and_cond, or_list));
-            return sql_collect_or_cond(stmt, src_cond->right, and_cond, or_list);
-
-        case COND_NODE_OR:
-            return cm_galist_insert(or_list, src_cond);
-
-        case COND_NODE_COMPARE:
-            if (*and_cond == NULL) {
-                OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(cond_tree_t), (void **)and_cond));
-                sql_init_cond_tree(stmt, *and_cond, sql_stack_alloc);
-            }
-            return sql_merge_cond_tree_shallow(*and_cond, src_cond);
-
-        default:
-            return OG_SUCCESS;
-    }
 }
 
 static inline bool32 judge_sort_items(plan_assist_t *pa)
@@ -173,6 +115,50 @@ status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_tabl
     OG_RETSUC_IFTRUE(table->remote_type != REMOTE_TYPE_LOCAL);
 
     sql_init_table_indexable(table, NULL);
+
+    dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
+    pa->cond = cond;
+
+    if (!is_analyzed_table(stmt, table) || entity->cbo_table_stats == NULL ||
+        !entity->cbo_table_stats->global_stats_exist) {
+        return OG_SUCCESS;
+    }
+        
+    OG_RETURN_IFERR(sql_init_table_scan_partition_info(stmt, pa, table));
+    table->card = sql_estimate_table_card(pa, entity, table, cond);
+    for (uint32 idx_id = 0; idx_id < entity->table.desc.index_count; idx_id++) {
+        index_t *index = DC_TABLE_INDEX(&entity->table, idx_id);
+        OG_CONTINUE_IFTRUE(index->desc.is_invalid);
+        cbo_try_choose_index(stmt, pa, table, index);
+    }
+
+    /* try multi index scan */
+    cbo_try_choose_multi_index(stmt, pa, table, false);
+
+    /* try seq scan */
+    double seq_cost = sql_seq_scan_cost(stmt, entity, table);
+    sql_debug_scan_cost_info(stmt, table, "SEQ", NULL, seq_cost, NULL, NULL);
+    /*
+     * If no index is selected, a seqscan is chosen.
+     * Otherwise, compares the cost of index scan versus seqscan, selecting
+     * the cheaper one, unless index is a unique index with full equality
+     * predicates, in which case the index scan is prioritized regardless
+     * of cost estimation.
+     */
+    if (table->index == NULL || prefer_table_scan(stmt, pa, table, seq_cost)) {
+        sql_init_table_indexable(table, NULL);
+        table->cost = seq_cost;
+    }
+
+    if (table->index != NULL && table->sub_tables == NULL) {
+        /* for create proper scan range for index scan */
+        table->cond = cond;
+    }
+
+    if (INDEX_ONLY_SCAN(table->scan_flag)) {
+        OG_RETURN_IFERR(sql_make_index_col_map(pa, stmt, table));
+    }
+
     return OG_SUCCESS;
 }
 

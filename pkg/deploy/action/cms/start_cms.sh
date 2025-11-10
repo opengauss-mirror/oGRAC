@@ -72,7 +72,7 @@ function prepare_cms_gcc() {
       chmod 600 ${GCC_HOME}
     elif [[ ${DEPLOY_MODE} == "dss" ]]; then
       log "zeroing ${GCC_HOME} on node ${NODE_ID}"
-      dd if=/dev/zero of=${GCC_HOME} bs=1M count=1024
+      dd if=/dev/zero of=${GCC_HOME} bs=1M count=1025
       chmod 600 ${GCC_HOME}
     else
       cms gcc -create
@@ -194,6 +194,10 @@ function start_cms() {
   if [ ! -f ${STATUS_LOG} ];then
       touch ${STATUS_LOG}
       chmod 640 ${STATUS_LOG}
+  fi
+  if [[ ${DEPLOY_MODE} == "dss" ]]; then
+    export LD_LIBRARY_PATH=${DSS_HOME}/lib:$LD_LIBRARY_PATH
+    dsscmd reghl -D $DSS_HOME
   fi
   set +e
   ${CMS_INSTALL_PATH}/bin/cms server -start >> ${STATUS_LOG} 2>&1 &

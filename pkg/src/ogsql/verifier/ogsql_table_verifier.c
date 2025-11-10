@@ -95,6 +95,11 @@ status_t sql_verify_view_insteadof_trig(sql_stmt_t *stmt, sql_table_t *table, tr
         return OG_ERROR;
     }
 
+    if (dc_entity->contain_lob) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "insert, update or delete views does not support lob or array type");
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 
@@ -409,7 +414,9 @@ static status_t sql_verify_specify_part_info(sql_verifier_t *verif, sql_table_t 
         }
 
         excl_flags = verif->excl_flags;
-        verif->excl_flags = SQL_EXCL_AGGR | SQL_EXCL_SEQUENCE | SQL_EXCL_STAR | SQL_EXCL_PRIOR;
+        verif->excl_flags = SQL_EXCL_AGGR | SQL_EXCL_COLUMN | SQL_EXCL_STAR | SQL_EXCL_SEQUENCE |
+            SQL_EXCL_JOIN | SQL_EXCL_ROWNUM | SQL_EXCL_ROWID | SQL_EXCL_DEFAULT | SQL_EXCL_PRIOR |
+            SQL_EXCL_WIN_SORT | SQL_EXCL_ROWSCN | SQL_EXCL_GROUPING | SQL_EXCL_ROWNODEID;
 
         for (uint32 i = 0; i < count; i++) {
             expr = (expr_tree_t *)cm_galist_get(table->part_info.values, i);
@@ -905,7 +912,7 @@ static inline status_t sql_verify_func_as_table(sql_verifier_t *verif, sql_query
 {
     uint32 saved_flags = verif->excl_flags;
     verif->verify_tables = OG_TRUE;
-    OG_BIT_SET(verif->excl_flags, SQL_EXCL_ROWID | SQL_EXCL_ROWNODEID | SQL_EXCL_ROWSCN);
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_TBL_FUNC_EXPR);
     if (sql_describe_table_func(verif, table, tab_id) != OG_SUCCESS) {
         verif->verify_tables = OG_FALSE;
         return OG_ERROR;

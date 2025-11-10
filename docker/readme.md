@@ -21,14 +21,6 @@ drwxr-xr-x  4 root root      4096 Sep 25 18:11 ograc_data // ograc 数据文件�
 ### 下载最新docker镜像
 
 ```shell
-# x86版本
-docker pull ykfnxx/cantian_dev:0.1.0
-# arm版本
-docker pull ykfnxx/cantian_dev:0.1.1
-# x决定是arm/x86版本
-docker tag ykfnxx/cantian_dev:0.1.[x] cantian_dev:latest
-```
-
 ### 准备代码
 
 ```shell
@@ -68,7 +60,7 @@ sh docker/container.sh enternode [1]
 
 以下命令在容器内使用。若为双节点，则只需在其中一个节点执行一次。为方便描述，后续双节点仅需在一个节点的操作默认在node0进行
 ```shell
-cd /home/regress/oGRACKernel/build
+cd /home/regress/ogracKernel/build
 export local_build=true
 # 若此前编译过第三方依赖，可以修改Makefile.sh文件中func_all函数，将func_prepare_dependency注释掉，避免重复编译三方依赖。
 # debug
@@ -88,7 +80,7 @@ sed -i '/ogracdba/d' /home/ogracdba/.bashrc
 
 #### 单节点oGRAC部署
 ```shell
-cd /home/regress/oGRACKernel/oGRAC-DATABASE-CENTOS-64bit
+cd /home/regress/ogracKernel/oGRAC-DATABASE-CENTOS-64bit
 mkdir -p /home/ogracdba/logs
 # -Z SESSIONS=1000方便调试，需运行MTR时需要去掉此参数
 python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ogracdba/data -l /home/ogracdba/logs/install.log -Z _LOG_LEVEL=255 -g withoutroot -d -M ogracd -c -Z _SYS_PASSWORD=Huawei@123 -Z SESSIONS=1000
@@ -97,14 +89,14 @@ python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ograc
 节点0，在容器内执行以下命令
 ```shell
 # -Z SESSIONS=1000方便调试，需运行MTR时需要去掉此参数
-cd /home/regress/oGRACKernel/oGRAC-DATABASE-CENTOS-64bit
+cd /home/regress/ogracKernel/oGRAC-DATABASE-CENTOS-64bit
 mkdir -p /home/ogracdba/logs
 python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ogracdba/data -l /home/ogracdba/logs/install.log -M ogracd_in_cluster -Z _LOG_LEVEL=255 -N 0 -W 192.168.0.1 -g withoutroot -d -c -Z _SYS_PASSWORD=Huawei@123 -Z SESSIONS=1000
 ```
 节点1，在容器内执行以下命令
 ```shell
 #节点1，在容器内执行以下命令
-cd /home/regress/oGRACKernel/oGRAC-DATABASE-CENTOS-64bit
+cd /home/regress/ogracKernel/oGRAC-DATABASE-CENTOS-64bit
 mkdir -p /home/ogracdba/logs
 python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ogracdba/data -l /home/ogracdba/logs/install.log -M ogracd_in_cluster -Z _LOG_LEVEL=255 -N 1 -W 192.168.0.1 -g withoutroot -d -c -Z _SYS_PASSWORD=Huawei@123 -Z SESSIONS=1000
 ```
@@ -140,7 +132,7 @@ ulimit -c unlimited
 
 ```Bash
 解ogracd
-gdb /home/regress/oGRACKernel/output/bin/ogracd /home/core/core文件名
+gdb /home/regress/ogracKernel/output/bin/ogracd /home/core/core文件名
 ```
 
 ### 分析日志
@@ -175,8 +167,8 @@ sh CI/script/Dev_unit_test.sh
 ```
 3. 查看测试结果
 ```Bash
-oGRACKernel/output/bin  # UT二进制bin文件所在目录
-oGRACKernel/gtest_run.log  # 运行日志
-oGRACKernel/lcov_output    # 代码覆盖率测试结果(需要安装lcov)
-oGRACKernel/gtest_result   # 每个UT用例的xml结果
+ogracKernel/output/bin  # UT二进制bin文件所在目录
+ogracKernel/gtest_run.log  # 运行日志
+ogracKernel/lcov_output    # 代码覆盖率测试结果(需要安装lcov)
+ogracKernel/gtest_result   # 每个UT用例的xml结果
 ```

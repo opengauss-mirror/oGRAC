@@ -191,7 +191,7 @@ static status_t cms_get_gcc_home_type(const char *gcc_home, cms_dev_type_t *type
     if (S_ISREG(stat_buf.st_mode)) {
         *type = CMS_DEV_TYPE_FILE;
     } else if (S_ISBLK(stat_buf.st_mode)) {
-        *type = CMS_DEV_TYPE_SD;
+        *type = CMS_DEV_TYPE_LUN;
     } else if (S_ISLNK(stat_buf.st_mode)) {
         char path[CMS_FILE_NAME_BUFFER_SIZE];
         ssize_t nbytes = readlink(gcc_home, path, CMS_MAX_FILE_NAME_LEN);
@@ -355,8 +355,9 @@ status_t cms_get_dbstor_config_value(config_t *cfg)
         return ret;
     }
 
-    if (cm_strcmpi(gcc_type, "SD") == 0 && cm_strcmpi(use_dbs_value, "FALSE") == 0) {
-        CMS_LOG_INF("DBStor disabled for SD");
+    if ((cm_strcmpi(gcc_type, "SD") == 0 || cm_strcmpi(gcc_type, "LUN") == 0) &&
+        cm_strcmpi(use_dbs_value, "FALSE") == 0) {
+        CMS_LOG_INF("DBStor disabled for SD or LUN");
         ret = cm_dbs_set_cfg(OG_FALSE, dataPgSize, OG_DFLT_CTRL_BLOCK_SIZE, namespace_value, 0, OG_FALSE, 0);
         return ret;
     }
@@ -460,6 +461,8 @@ status_t cms_load_param(int64 *time_stamp)
     } else {
         if (cm_strcmpi(value, "SD") == 0) {
             g_param.gcc_type = CMS_DEV_TYPE_SD;
+        } else if (cm_strcmpi(value, "LUN") == 0) {
+            g_param.gcc_type = CMS_DEV_TYPE_LUN;
         } else if (cm_strcmpi(value, "FILE") == 0) {
             g_param.gcc_type = CMS_DEV_TYPE_FILE;
         } else if (cm_strcmpi(value, "NFS") == 0) {
@@ -599,9 +602,10 @@ status_t cms_load_param(int64 *time_stamp)
     } else if (cm_strcmpi(gcc_type, "NFS") == 0 && cm_strcmpi(value, "FALSE") == 0) {
         enable = OG_FALSE;
         CMS_LOG_INF("DBStor disabled for NFS");
-    } else if (cm_strcmpi(gcc_type, "SD") == 0 && cm_strcmpi(value, "FALSE") == 0) {
+    } else if ((cm_strcmpi(gcc_type, "SD") == 0 || cm_strcmpi(gcc_type, "LUN") == 0) &&
+               cm_strcmpi(value, "FALSE") == 0) {
         enable = OG_FALSE;
-        CMS_LOG_INF("DBStor not enabled for SD");
+        CMS_LOG_INF("DBStor not enabled for SD or LUN");
     } else {
         CMS_LOG_ERR("Invalid parameters for '_USE_DBSTOR': gcc_type=%s, value=%s", gcc_type, value);
         return OG_ERROR;

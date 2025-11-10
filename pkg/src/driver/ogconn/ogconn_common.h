@@ -43,7 +43,7 @@ typedef enum en_cli_stmt_status {
     CLI_STMT_PREPARED = 2,
     CLI_STMT_EXECUTED = 3,
     CLI_STMT_FETCHING = 4,
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     CLI_STMT_PRE_PARAMS = 5, // preprocessed params in CN
 #endif
     CLI_STMT_DESCRIBLE = 6
@@ -212,7 +212,7 @@ typedef struct st_clt_stmt {
     cli_buf_ctrl_t *ctrl;            /* for trans code */
     char *ori_row;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     uint64 gts_scn;             /* paramset GTS's SCN for sharding mode */
     uint32 offset;              /* paramset offset */
     uint32 max_batch_buf_size;  /* max batch buffer size of batch_curr_ptr */

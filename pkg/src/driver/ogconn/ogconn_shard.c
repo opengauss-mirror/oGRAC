@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t ogconn_fetch_raw(ogconn_stmt_t pstmt)
 {
     clt_stmt_t *stmt = (clt_stmt_t *)pstmt;

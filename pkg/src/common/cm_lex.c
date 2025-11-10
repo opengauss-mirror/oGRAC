@@ -60,7 +60,7 @@ static const char g_char_map[] = {
 #define IS_NUM(c) (g_char_map[(uint8)(c)] == NAMABLE_CHAR)
 /** [int|bigint]size_indicator */
 #define IS_SIZE_INDICATOR(c) \
-    ((c) == 'B' || (c) == 'K' || (c) == 'M' || (c) == 'G' || (c) == 'T' || (c) == 'P' || (c) == 'E' || (c) == 'S')
+    ((c) == 'B' || (c) == 'K' || (c) == 'M' || (c) == 'G' || (c) == 'T' || (c) == 'P' || (c) == 'E')
 #define IS_MICROSECOND(c) ((c) == 'M')
 #define IS_VARIANT_HEAD(c) (g_char_map[(uint8)(c)] == VARIANT_HEAD_CHAR)
 
@@ -147,10 +147,12 @@ static word_type_t lex_diagnose_word_type(lex_t *lex)
             return WORD_TYPE_HEXADECIMAL;
         }
 
+        // There must be at least one space between the CONNECT_BY_ROOT operator and the column name.
         if ((c1 == 'C' || c1 == 'c') &&
             (c2 == 'O' || c2 == 'o') &&
-            lex->curr_text->len >= sizeof("CONNECT_BY_ROOT") - 1 &&
-            cm_strcmpni(lex->curr_text->str, "CONNECT_BY_ROOT", sizeof("CONNECT_BY_ROOT") - 1) == 0) {
+            lex->curr_text->len >= sizeof("CONNECT_BY_ROOT") &&
+            cm_strcmpni(lex->curr_text->str, "CONNECT_BY_ROOT", sizeof("CONNECT_BY_ROOT") - 1) == 0 &&
+            IS_SPLITTER(lex->curr_text->str[sizeof("CONNECT_BY_ROOT") - 1])) {
             return WORD_TYPE_OPERATOR;
         }
 
@@ -254,7 +256,7 @@ static inline bool32 lex_diag_num_word(word_t *word, text_t *text, num_part_t *n
         c = UPPER(c);
         second2last = UPPER(second2last);
 
-        if (IS_SIZE_INDICATOR(c)) {
+        if (IS_SIZE_INDICATOR(c) || IS_SECOND_INDICATOR(c)) {
             if (np->is_neg || np->has_dot || np->has_expn ||
                 word->text.len < 2) {  // the SIZE must be positive, no dot and its length GEQ 2
                 return OG_FALSE;
@@ -1719,7 +1721,7 @@ status_t lex_expected_fetch_1ofn(lex_t *lex, uint32 *matched_id, int num, ...)
     return OG_ERROR;
 }
 
-static inline num_errno_t lex_parse_size(lex_t *lex, word_t *word, int64 *size)
+static num_errno_t lex_parse_size(lex_t *lex, word_t *word, int64 *size, bool32 is_pool_size)
 {
     num_errno_t err_no;
 
@@ -1737,14 +1739,21 @@ static inline num_errno_t lex_parse_size(lex_t *lex, word_t *word, int64 *size)
 
     if (word->type == WORD_TYPE_NUMBER) {
         return cm_numpart2bigint(&word->np, size);
-    } else if (word->type == WORD_TYPE_SIZE) {
+    }
+
+    if (word->type == WORD_TYPE_SIZE) {
+        if (is_pool_size &&
+            IS_SIZE_INDICATOR(UPPER(word->np.sz_indicator)) &&
+            word->text.len > word->np.digit_text.len + 1) {
+            return NERR_UNEXPECTED_CHAR;
+        }
         return cm_numpart2size(&word->np, size);
     }
 
     return NERR_ERROR;
 }
 
-status_t lex_expected_fetch_size(lex_t *lex, int64 *size, int64 min_size, int64 max_size)
+status_t lex_expected_fetch_size_impl(lex_t *lex, int64 *size, int64 min_size, int64 max_size, bool32 is_pool_size)
 {
     word_t word;
     num_errno_t err_no;
@@ -1759,7 +1768,7 @@ status_t lex_expected_fetch_size(lex_t *lex, int64 *size, int64 min_size, int64 
         return OG_ERROR;
     }
 
-    err_no = lex_parse_size(lex, &word, size);
+    err_no = lex_parse_size(lex, &word, size, is_pool_size);
     if (err_no != NERR_SUCCESS) {
         OG_SRC_THROW_ERROR(word.loc, ERR_SQL_SYNTAX_ERROR, "size must be a positive long integer");
         return OG_ERROR;
@@ -1780,6 +1789,16 @@ status_t lex_expected_fetch_size(lex_t *lex, int64 *size, int64 min_size, int64 
     }
 
     return OG_SUCCESS;
+}
+
+status_t lex_expected_fetch_size(lex_t *lex, int64 *size, int64 min_size, int64 max_size)
+{
+    return lex_expected_fetch_size_impl(lex, size, min_size, max_size, OG_FALSE);
+}
+
+status_t lex_parse_and_valid_pool_size(lex_t *lex, int64 *size, int64 min_size, int64 max_size)
+{
+    return lex_expected_fetch_size_impl(lex, size, min_size, max_size, OG_TRUE);
 }
 
 status_t lex_expected_fetch_int32(lex_t *lex, int32 *size)
@@ -1916,7 +1935,7 @@ status_t lex_expected_fetch_dec(lex_t *lex, dec8_t *dec)
 /**
 * To fetch a sequence value, The currently implementation require the
 * value of a sequence to be between in OG_MIN_INT64 and OG_MAX_INT64.
-* For the values that out of the range is a TODO word in future.
+* For the values that out of the range is a word add in future.
 
 */
 status_t lex_expected_fetch_seqval(lex_t *lex, int64 *val)

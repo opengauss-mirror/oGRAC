@@ -151,7 +151,7 @@ typedef struct st_knl_sequence_def {
     bool32 nominval;
     bool32 nomaxval;
     bool32 is_order;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     galist_t distribute_groups;
     binary_t dist_data;
 #endif

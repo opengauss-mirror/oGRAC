@@ -555,7 +555,7 @@ static status_t sql_verify_winsort_sum(sql_verifier_t *verif, expr_node_t *winso
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func_node = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_func_node(verif, func_node, 1, 1, OG_INVALID_ID32));
 
@@ -1059,16 +1059,17 @@ static status_t sql_func_winsort_ntile_core(sql_stmt_t *stmt, sql_cursor_t *curs
         OG_RETURN_IFERR(
             mtrl_fetch_winsort_rid(&stmt->mtrl, &cursor->mtrl.cursor, WINSORT_PART, &grp_changed, &ord_changed));
 
-        if (need_verify) {
-            OG_RETURN_IFERR(sql_win_aggr_verify_ntile_bucket(stmt, arg, &bucket));
-            need_verify = OG_FALSE;
-        }
-
         if (cursor->mtrl.cursor.eof) {
             OG_RETURN_IFERR(
                 sql_win_aggr_ntile_set(stmt, &rid_group, &group, &bucket, query_cursor->mtrl.winsort_aggr.sid));
             break;
         }
+
+        if (need_verify) {
+            OG_RETURN_IFERR(sql_win_aggr_verify_ntile_bucket(stmt, arg, &bucket));
+            need_verify = OG_FALSE;
+        }
+
         row = &cursor->mtrl.cursor.row;
         if (row->lens[rs_col_id] != sizeof(mtrl_rowid_t)) {
             OG_THROW_ERROR_EX(ERR_ASSERT_ERROR, "row->lens[rs_col_id](%u) == sizeof(mtrl_rowid_t)",
@@ -1154,7 +1155,7 @@ static status_t sql_verify_winsort_covar_or_corr(sql_verifier_t *verif, expr_nod
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func_node = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_func_node(verif, func_node, 2, 2, OG_INVALID_ID32));
     if (func_node->dis_info.need_distinct) {
@@ -1175,7 +1176,7 @@ static status_t sql_verify_winsort_min_max(sql_verifier_t *verif, expr_node_t *w
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func_node = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_func_node(verif, func_node, 1, 1, OG_INVALID_ID32));
 
@@ -1218,7 +1219,7 @@ static status_t sql_verify_winsort_listagg(sql_verifier_t *verif, expr_node_t *w
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
     OG_RETURN_IFERR(sql_verify_listagg(verif, func));
     if (winsort->win_args->sort_items != NULL) {
         OG_SRC_THROW_ERROR_EX(func->argument->loc, ERR_SQL_SYNTAX_ERROR, " over of %s does not allow order by ",
@@ -1252,7 +1253,8 @@ static status_t sql_verify_winsort_lag_row(sql_verifier_t *verif, expr_node_t *w
         OG_SRC_THROW_ERROR(func_node->loc, ERR_UNSUPPORT_FUNC, "Windowing clause is", "in function LEAD or LAG");
         return OG_ERROR;
     }
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
     OG_RETURN_IFERR(sql_verify_func_node(verif, func_node, 1, 3, OG_INVALID_ID32));
 
     verif->excl_flags = excl_flags;
@@ -1316,7 +1318,7 @@ static status_t sql_verify_winsort_ntile(sql_verifier_t *verif, expr_node_t *win
         return OG_ERROR;
     }
 
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR | SQL_EXCL_ROWID | SQL_EXCL_ROWSCN | SQL_EXCL_ARRAY;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR | SQL_EXCL_ROWID | SQL_EXCL_ROWSCN | SQL_EXCL_ARRAY);
     if (sql_verify_func_node(verif, func_node, 1, 1, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -1553,7 +1555,7 @@ static status_t sql_verify_winsort_avg(sql_verifier_t *verif, expr_node_t *winso
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func_node = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_avg(verif, func_node));
 
@@ -1571,7 +1573,8 @@ static status_t sql_verify_winsort_cume_dist(sql_verifier_t *verif, expr_node_t 
         OG_SRC_THROW_ERROR(func_node->loc, ERR_UNSUPPORT_FUNC, "Windowing clause is", "in function CUME_DIST");
         return OG_ERROR;
     }
-    verif->excl_flags = excl_flags | SQL_EXCL_AGGR;
+
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
     OG_RETURN_IFERR(sql_verify_func_node(verif, func_node, 0, 0, OG_INVALID_ID32));
 
     winsort->datatype = OG_TYPE_REAL;
@@ -1595,7 +1598,7 @@ static status_t sql_verify_winsort_stddev(sql_verifier_t *verif, expr_node_t *wi
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func_node = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_func_node(verif, func_node, 1, 1, OG_INVALID_ID32));
 
@@ -1615,7 +1618,7 @@ static status_t sql_verify_winsort_count(sql_verifier_t *verif, expr_node_t *win
     uint32 excl_flags = verif->excl_flags;
     expr_node_t *func_node = winsort->argument->root;
 
-    verif->excl_flags = excl_flags | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_count(verif, func_node));
 
@@ -1698,7 +1701,7 @@ status_t sql_fetch_winsort(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *
     if (mtrl_fetch_sort(&stmt->mtrl, &cursor->mtrl.cursor) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    cursor->mtrl.cursor.type = MTRL_CURSOR_OTHERS;
+    cursor->mtrl.cursor.type = MTRL_CURSOR_WINSORT;
     *eof = cursor->mtrl.cursor.eof;
     return OG_SUCCESS;
 }
@@ -2005,6 +2008,7 @@ status_t sql_execute_winsort(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t
     }
 
     OG_RETURN_IFERR(mtrl_open_cursor(&stmt->mtrl, cursor->mtrl.winsort_sort.sid, &cursor->mtrl.cursor));
+    cursor->mtrl.cursor.type = MTRL_CURSOR_WINSORT;
     cursor->winsort_ready = OG_TRUE;
     return OG_SUCCESS;
 }

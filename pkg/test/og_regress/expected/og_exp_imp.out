@@ -1,0 +1,42 @@
+SQL> exp -h;
+The syntax of logic export is: 
+
+     Format:  EXP KEYWORD=value or KEYWORD=value1,value2,...,valueN;
+     Example: EXP TABLES=EMP,DEPT,MGR;
+               or EXP USERS=USER_A,USER_B;
+Keyword                 Description (Default)
+---------------------------------------------------------------------------------------------------------------------------
+USERS                   List of schema names. Specify a percent sign (%) to export all users.
+TABLES                  List of table names. Specify a percent sign (%) to export all tables.
+FILE                    Output file (EXPDAT.DMP) 
+LOG                     Log file of screen output
+CONTENT                 Specifies data to unload where the valid keyword, values are: (ALL), DATA_ONLY, and METADATA_ONLY. 
+FEEDBACK                Feedback row count, feedback once if set 0 (10000)
+CREATE_USER          Export user definition(N),Used in conjunction with USERS.
+GRANT                Grant role and permission to USER (N),Used in conjunction with USERS and ROLE.
+
+SQL> imp -h;
+The syntax of logic import is: 
+
+     Format:  IMP KEYWORD=value or KEYWORD=value1,value2,...,valueN;
+     Example: IMP TABLES=EMP,DEPT,MGR;
+               or IMP USERS=USER_A,USER_B;
+
+Keyword                 Description (Default)
+---------------------------------------------------------------------------------------------------------------------------
+USERS                   List of schema names, use % to import all users
+TABLES                  List of table names, use % to import all tables
+FILE                    Input file (EXPDAT.DMP) 
+LOG                     Log file of screen output
+FEEDBACK                Feedback row count, feedback once if set 0 (10000)
+CONTENT                 Specifies data to load where the valid keyword, values are: (ALL), DATA_ONLY, and METADATA_ONLY. 
+CREATE_USER          Import user definition (N). 
+
+SQL> 
+SQL> 
+SQL> --test no export types
+SQL> exp file='/home/ogracdba/backup/test';Parsing export options ... 
+Verify options ...
+
+OG-00601, Sql syntax error: Too few export types have been provided, must input USERS or TABLES
+Logical export failed.

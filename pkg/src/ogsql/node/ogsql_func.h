@@ -142,7 +142,6 @@ typedef enum en_function_item_id {
     ID_FUNC_ITEM_GROUPING_ID,
     ID_FUNC_ITEM_GROUP_CONCAT,
     ID_FUNC_ITEM_GSCN2DATE,
-    ID_FUNC_ITEM_CT_HASH,
     ID_FUNC_ITEM_HASH,
     ID_FUNC_ITEM_HEX,
     ID_FUNC_ITEM_HEX2BIN,
@@ -198,6 +197,7 @@ typedef enum en_function_item_id {
     ID_FUNC_ITEM_NVL,
     ID_FUNC_ITEM_NVL2,
     ID_FUNC_ITEM_OBJECT_ID,
+    ID_FUNC_ITEM_OG_HASH,
     ID_FUNC_ITEM_PAGE_MASTERID,
     ID_FUNC_ITEM_PI,
     ID_FUNC_ITEM_POWER,
@@ -365,29 +365,6 @@ typedef struct st_fmt_dot_pos {
         }                                                    \
     } while (0)
 
-#define SQL_EXEC_FUNC_ARG_SUBSTR(arg_expr, arg_var, res_var, stmt)                                                    \
-    do {                                                                                                              \
-        if (sql_exec_expr((stmt), (arg_expr), (arg_var)) != OG_SUCCESS) {                                             \
-            return OG_ERROR;                                                                                          \
-        }                                                                                                             \
-        SQL_CHECK_COLUMN_VAR((arg_var), (res_var));                                                                   \
-        if (OG_IS_LOB_TYPE((arg_var)->type) && !(arg_var)->is_null) {                                                 \
-            if (((lob_locator_t *)(arg_var)->v_lob.knl_lob.bytes)->head.size > g_instance->attr.lob_max_exec_size) {  \
-                ((lob_locator_t *)(arg_var)->v_lob.knl_lob.bytes)->head.size = OG_LOB_LOCATOR_BUF_SIZE;               \
-            }                                                                                                         \
-            OG_RETURN_IFERR(sql_get_lob_value((stmt), (arg_var)));                                                    \
-        }                                                                                                             \
-    } while (0)
-
-#define SQL_EXEC_FUNC_ARG_EX_SUBSTR(arg_expr, arg_var, res_var)                       \
-    do {                                                                              \
-        SQL_EXEC_FUNC_ARG_SUBSTR((arg_expr), (arg_var), (res_var), stmt);             \
-        if ((arg_var)->is_null) {                                                     \
-            SQL_SET_NULL_VAR(res_var);                                                \
-            return OG_SUCCESS;                                                        \
-        }                                                                             \
-    } while (0)
-
 #define SQL_EXEC_FUNC_ARG_EX2(arg_expr, arg_var, res_var)          \
     do {                                                           \
         SQL_EXEC_FUNC_ARG((arg_expr), (arg_var), (res_var), stmt); \
@@ -523,6 +500,12 @@ static inline sql_func_t *sql_get_func(var_func_t *v)
     }
 
     return sql_get_pack_func(v);
+}
+
+static inline bool32 chk_has_aggr_sort(uint32 func_id, galist_t *sort_lst)
+{
+    return sort_lst != NULL &&
+        (func_id == ID_FUNC_ITEM_GROUP_CONCAT || func_id == ID_FUNC_ITEM_LISTAGG || func_id == ID_FUNC_ITEM_DENSE_RANK);
 }
 
 status_t sql_invoke_func(sql_stmt_t *stmt, expr_node_t *node, variant_t *result);

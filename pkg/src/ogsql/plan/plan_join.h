@@ -26,14 +26,8 @@
 #define __PLAN_JOIN_H__
 
 #include "ogsql_plan.h"
-
-typedef struct st_join_assist {
-    uint32 count;
-    uint32 total;
-    sql_join_node_t *maps[OG_MAX_JOIN_TABLES];
-    sql_join_node_t *nodes[OG_MAX_JOIN_TABLES];
-    sql_join_node_t *selected_nodes[OG_MAX_JOIN_TABLES];
-} join_assist_t;
+#include "cbo_base.h"
+#include "ogsql_join_path.h"
 
 bool32 need_adjust_hash_order(sql_join_node_t *join_root);
 status_t sql_build_join_tree(sql_stmt_t *stmt, plan_assist_t *plan_ass, sql_join_node_t **join_root);
@@ -43,5 +37,7 @@ void sql_generate_join_assist(plan_assist_t *pa, sql_join_node_t *join_node, joi
 bool32 sql_cmp_can_used_by_hash(cmp_node_t *cmp_node);
 bool32 sql_get_cmp_join_column(cmp_node_t *cmp_node, expr_node_t **left_column, expr_node_t **right_column);
 bool32 sql_check_hash_join(cmp_node_t *cmp_node, double base, double *rate);
+bool32 check_and_get_join_column(cmp_node_t *cmp_node, cols_used_t *l_cols_used, cols_used_t *r_cols_used);
+bool32 sql_get_cmp_join_tab_id(cmp_node_t *cmp_node, uint16 *l_tab_id, uint16 *r_tab_id, join_oper_t oper);
 
 #endif

@@ -179,7 +179,7 @@ typedef enum en_vw_version_content {
     VW_VERSION_BOTTOM
 } vw_version_content_t;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef enum en_global_dynview_id {
     /* GLOBAL DYNAMIC VIEWS */
     GLOBAL_DYN_VIEW_SESSION,

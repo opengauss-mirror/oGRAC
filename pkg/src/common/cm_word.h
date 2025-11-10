@@ -210,6 +210,10 @@ typedef enum en_word_flag {
     (HINT_KEY_WORD_INDEX | HINT_KEY_WORD_INDEX_ASC | HINT_KEY_WORD_INDEX_DESC | HINT_KEY_WORD_INDEX_FFS |   \
     HINT_KEY_WORD_INDEX_SS))
 
+#define TABLE_HAS_INDEX_SORT_HINT(table)                                                                    \
+    ((table)->hint_info != NULL && (table)->hint_info->mask[INDEX_HINT] &                                   \
+    (HINT_KEY_WORD_INDEX_DESC | HINT_KEY_WORD_INDEX_ASC))
+
 #define TABLE_HAS_ACCESS_METHOD_HINT(table)   \
     ((table)->hint_info != NULL && (table)->hint_info->mask[INDEX_HINT] != 0)
 

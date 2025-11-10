@@ -27,5 +27,5 @@ set(CMAKE_C_FLAGS "-D__LINUX_USR__")
 aux_source_directory(. FDSA_SRC)
 link_directories(${OGRACDB_LIB} "${OGRACDB_LIBRARY}/protobuf/lib")
 # generate static library
-add_library(zefdsa STATIC ${FDSA_SRC})
-target_link_libraries(zefdsa PRIVATE zecommon)
+add_library(ogfdsa STATIC ${FDSA_SRC})
+target_link_libraries(ogfdsa PRIVATE ogcommon)

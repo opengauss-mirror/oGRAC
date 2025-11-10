@@ -29,18 +29,18 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "securec.h"
-#include "cm_defs.h"
+#include "cm_error.h"
 #include "cbb_disklock.h"
 #include "cbb_test_log.h"
+#include "cm_date.h"
 
 #define CM_BLOCK_SIZE (512)
-#define CM_ALIGN_SIZE (8192)
+#define CM_ALIGN_SIZE (512)
+#define DISK_LOCK_BODY_LEN (128)
 #define CM_LOCK_FULL_SIZE (CM_BLOCK_SIZE * (CM_MAX_INST_COUNT + 1))
 #define CM_DL_MAGIC (0xFEDCBA9801234567ULL)
 #define CM_DL_PROC_VER (1)
 #define CM_MAX_RETRY_WAIT_TIME_MS (200)
-#define NANOSECS_PER_SECOND_LL (1000)
-#define NANOSECS_PER_MILLISECS_LL (1000000)
 
 typedef enum e_lockstatus { LS_NO_LOCK = 0, LS_PRE_LOCK = 1, LS_LOCKED = 2 } lockstatus_t;
 typedef enum e_locktype { LT_NORMAL = 0, LT_LEASE = 1} locktype_t;
@@ -56,8 +56,9 @@ typedef union u_dl_stat {
         unsigned long long proc_ver;
         unsigned long long inst_id;
         unsigned long long locked;
-        unsigned long long lock_time;
-        unsigned long long unlock_time;
+        date_t lock_time;
+        date_t unlock_time;
+        char data[DISK_LOCK_BODY_LEN];
     };
     struct {
         char placeholder[CM_BLOCK_SIZE];
@@ -65,8 +66,8 @@ typedef union u_dl_stat {
 } dl_stat_t;
 
 typedef struct st_dl_stat {
-    unsigned long long peer_lock_time;
-    unsigned long long lock_hb_time;
+    date_t peer_lock_time;
+    date_t lock_hb_time;
 } dl_hb_t;
 
 typedef struct st_dl_lock {
@@ -78,6 +79,7 @@ typedef struct st_dl_lock {
     locktype_t type;
     dl_stat_t *lock_stat;
     dl_hb_t *hb;
+    char data[DISK_LOCK_BODY_LEN];
 } cm_dl_t;
 
 typedef struct st_dl_ctx {
@@ -88,13 +90,6 @@ typedef struct st_dl_ctx {
 static dl_ctx_t g_dl_ctx;
 
 static int cm_dl_unlock_inner(unsigned int lock_id, unsigned long long inst_id);
-
-static inline unsigned long long cm_dl_now_ns()
-{
-    struct timespec tv;
-    (void)clock_gettime(CLOCK_MONOTONIC, &tv);
-    return (unsigned long long)tv.tv_sec * NANOSECS_PER_SECOND_LL + (unsigned long long)tv.tv_nsec;
-}
 
 unsigned int cm_dl_alloc(const char *path, unsigned long long offset, unsigned long long inst_id)
 {
@@ -143,10 +138,10 @@ unsigned int cm_dl_alloc(const char *path, unsigned long long offset, unsigned l
     }
 
     int fd = open(path, O_RDWR | O_DIRECT | O_SYNC);
-    if (fd <= 0) {
-        (void)close(fd);
+    if (fd < 0) {
         g_dl_ctx.lock_info[id].fd = 0;
         LOG("DL:open path failed:%d,%s.", errno, strerror(errno));
+        (void)close(fd);
         return CM_INVALID_LOCK_ID;
     }
 
@@ -256,16 +251,16 @@ static int cm_dl_check_lock(unsigned int lock_id, checkperiod_t checkperiod)
             LOG("DL:lock_time=%lld,peer_lock_time=%lld.", lock_stat->lock_time, hb->peer_lock_time);
             if (lock_stat->lock_time != hb->peer_lock_time) {
                 hb->peer_lock_time = lock_stat->lock_time;
-                hb->lock_hb_time = cm_dl_now_ns();
+                hb->lock_hb_time = cm_now();
                 LOG("DL:update hb:peer_lock_time=%lld,lock_hb_time=%lld", hb->peer_lock_time, hb->lock_hb_time);
             }
 
             LOG("DL:now=%lld,lock_hb_time=%lld,lease_ns=%lld.", 
-                cm_dl_now_ns(),
+                cm_now(),
                 hb->lock_hb_time, 
-                lock_info->lease_sec * NANOSECS_PER_SECOND_LL);
+                lock_info->lease_sec * MICROSECS_PER_SECOND);
 
-            if (cm_dl_now_ns() - hb->lock_hb_time > lock_info->lease_sec * NANOSECS_PER_SECOND_LL) {
+            if (cm_now() - hb->lock_hb_time > lock_info->lease_sec * MICROSECS_PER_SECOND) {
                 LOG("DL:release lock,inst_id=%llu", inst_id);
                 cm_dl_unlock_inner(lock_id, inst_id);
             } else {
@@ -293,9 +288,9 @@ static int cm_dl_lock_inner(unsigned int lock_id)
     lock_stat->magic = CM_DL_MAGIC;
     lock_stat->proc_ver = CM_DL_PROC_VER;
     lock_stat->inst_id = lock_info->inst_id;
-    lock_stat->lock_time = cm_dl_now_ns();
+    lock_stat->lock_time = cm_now();
     lock_stat->locked = LS_PRE_LOCK;
-
+    MEMS_RETURN_IFERR(memcpy_s(lock_stat->data, DISK_LOCK_BODY_LEN, lock_info->data, DISK_LOCK_BODY_LEN));
     ssize_t size = pwrite(
         lock_info->fd, lock_stat, CM_BLOCK_SIZE, (off_t)(lock_info->offset + CM_BLOCK_SIZE * (lock_info->inst_id + 1)));
     if (size != CM_BLOCK_SIZE) {
@@ -318,6 +313,7 @@ static int cm_dl_lock_inner(unsigned int lock_id)
         return CM_DL_ERR_IO;
     }
 
+    LOG("DL:lock sucess inst_id:%llu, lock_id:%u.", lock_stat->inst_id, lock_id);
     return OG_SUCCESS;
 }
 
@@ -336,16 +332,16 @@ int cm_dl_lock(unsigned int lock_id, int timeout_ms)
         return CM_DL_ERR_INVALID_LOCK_ID;
     }
 
-    unsigned long long start = cm_dl_now_ns();
+    unsigned long long start = cm_now();
     do {
         ret = cm_dl_lock_inner(lock_id);
         if (ret != CM_DL_ERR_OCCUPIED) {
             break;
         }
 
-        unsigned long long now = cm_dl_now_ns();
+        unsigned long long now = cm_now();
         if (timeout_ms >= 0) {
-            if (now - start > (unsigned long long)timeout_ms * NANOSECS_PER_MILLISECS_LL) {
+            if (now - start > (unsigned long long)timeout_ms * MICROSECS_PER_MILLISEC) {
                 return CM_DL_ERR_TIMEOUT;
             }
         }
@@ -373,7 +369,7 @@ static int cm_dl_unlock_inner(unsigned int lock_id, unsigned long long inst_id)
     lock_stat->magic = CM_DL_MAGIC;
     lock_stat->proc_ver = CM_DL_PROC_VER;
     lock_stat->inst_id = inst_id;
-    lock_stat->unlock_time = cm_dl_now_ns();
+    lock_stat->unlock_time = cm_now();
     lock_stat->locked = LS_NO_LOCK;
 
     ssize_t size = 
@@ -468,6 +464,47 @@ int cm_dl_getowner(unsigned int lock_id, unsigned long long *inst_id)
         *inst_id = lock_stat->inst_id;
     }
 
+    return OG_SUCCESS;
+}
+
+int cm_dl_set_data(unsigned int lock_id, char* data, uint32 size)
+{
+    cm_dl_t *lock_info = &g_dl_ctx.lock_info[lock_id];
+    if (lock_info->fd <= 0) {
+        LOG("DL:invalid lock not ready,lock_id:%u.", lock_id);
+        return CM_DL_ERR_INVALID_LOCK_ID;
+    }
+    MEMS_RETURN_IFERR(memcpy_s(lock_info->data, size, data, MIN(size, DISK_LOCK_BODY_LEN)));
+    return OG_SUCCESS;
+}
+
+int cm_dl_get_data(unsigned int lock_id, char* data, uint32 size)
+{
+    dl_stat_t *lock_stat = NULL;
+    int ret = cm_dl_getlockstat(lock_id, &lock_stat);
+    if (ret != OG_SUCCESS) {
+        return ret;
+    }
+    
+    if (lock_stat == NULL) {
+        LOG("DL:Get lock data, the lock is unlocked, lock_id:%u.", lock_id);
+        MEMS_RETURN_IFERR(memset_s(data, size, 0, size));
+        return OG_SUCCESS;
+    }
+    cm_dl_t *lock_info = &g_dl_ctx.lock_info[lock_id];
+    unsigned long long lock_time;
+    if (lock_info->type == LT_LEASE) {
+        lock_time = cm_now() - lock_stat->lock_time;
+        if (lock_time > lock_info->lease_sec * MICROSECS_PER_SECOND) {
+            LOG("DL:Get lock data, the lock is timeout, lock_time:%llu, release_sec:%u, lock_id:%u.",
+                lock_time, lock_info->lease_sec, lock_id);
+            MEMS_RETURN_IFERR(memset_s(data, size, 0, size));
+            return OG_SUCCESS;
+        }
+    }
+    
+    MEMS_RETURN_IFERR(memcpy_s(data, size, lock_stat->data, MIN(size, DISK_LOCK_BODY_LEN)));
+    LOG("DL:Get lock data success, lock_id:%u.", lock_id);
     return OG_SUCCESS;
 }
 

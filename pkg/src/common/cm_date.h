@@ -343,68 +343,6 @@ extern uint16 g_month_days[2][12];  // 12 months in leap year and 12 months in n
         }                                                                   \
     } while (0)
 
-#define cm_get_num_and_check(part_len, start, end, date_text, num_value)         \
-    do {                                                                         \
-        uint16 item_len = cm_get_num_len_in_str(date_text, part_len, OG_FALSE);  \
-        if (item_len == 0) {                                                     \
-            return OG_ERROR;                                                     \
-        }                                                                        \
-                                                                                 \
-        if (cm_check_number(date_text, item_len, start, end, &(num_value)) != 0) { \
-            return OG_ERROR;                                                     \
-        }                                                                        \
-                                                                                 \
-        (date_text)->len -= item_len;                                            \
-        (date_text)->str += item_len;                                            \
-    } while (0)
-
-#define cm_get_num_and_check_with_sign(part_len, start, end, date_text, num_value_with_sign)         \
-    do {                                                                                             \
-        uint16 item_len = cm_get_num_len_in_str(date_text, part_len, OG_TRUE);                       \
-        if (item_len == 0) {                                                                         \
-            return OG_ERROR;                                                                         \
-        }                                                                                            \
-                                                                                                     \
-        if (cm_check_number_with_sign(date_text, item_len, start, end, &(num_value_with_sign)) != 0) { \
-            return OG_ERROR;                                                                         \
-        }                                                                                            \
-                                                                                                     \
-        (date_text)->len -= item_len;                                                                \
-        (date_text)->str += item_len;                                                                \
-    } while (0)
-
-#define cm_check_mask(mask_id, mask)          \
-    do {                                      \
-        if ((*(mask) & (mask_id)) != 0) {     \
-            return OG_ERROR;                  \
-        }                                     \
-                                              \
-        *(mask) |= (mask_id);                 \
-    } while (0)
-
-#define cm_check_time_autofilled(mask_id, part_len, start, end, date_text, mask, num_value) \
-    do {                                                                                    \
-        if ((date_text)->len > 0) {                                                         \
-            cm_get_num_and_check(part_len, start, end, date_text, num_value);               \
-        } else {                                                                            \
-            num_value = start;                                                              \
-        }                                                                                   \
-                                                                                            \
-        cm_check_mask(mask_id, mask);                                                       \
-    } while (0)
-
-#define cm_check_time(mask_id, part_len, start, end, date_text, mask, num_value) \
-    do {                                                                         \
-        cm_get_num_and_check(part_len, start, end, date_text, num_value);        \
-        cm_check_mask(mask_id, mask);                                            \
-    } while (0)
-
-#define cm_check_time_with_sign(mask_id, part_len, start, end, date_text, mask, num_value_with_sign)  \
-    do {                                                                                              \
-        cm_get_num_and_check_with_sign(part_len, start, end, date_text, num_value_with_sign);         \
-        cm_check_mask(mask_id, mask);                                                                 \
-    } while (0)
-
 #define cm_int2_to_binary(ptr, i)                    \
     do {                                           \
         uint temp = (uint)(i);                     \
@@ -495,7 +433,7 @@ status_t cm_text2date(const text_t *text, const text_t *fmt, date_t *date);
 status_t cm_str2time(char *date, const text_t *fmt, time_t *time_stamp);
 status_t cm_check_tstz_is_valid(timestamp_tz_t *tstz);
 status_t cm_text2timestamp_tz(const text_t *text, const text_t *fmt, timezone_info_t default_tz, timestamp_tz_t *tstz);
-status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date);
+status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date, bool32 is_date_fmt);
 status_t cm_fetch_date_field(text_t *text, uint32 minval, uint32 maxval, char spilt_char, uint32 *field_val);
 status_t cm_text2date_def(const text_t *text, date_t *date);
 status_t cm_text2timestamp_def(const text_t *text, date_t *date);

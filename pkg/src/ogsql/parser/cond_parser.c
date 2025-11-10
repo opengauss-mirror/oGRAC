@@ -405,11 +405,9 @@ static status_t sql_parse_group_compare_right(sql_stmt_t *stmt, cmp_node_t *cmp_
     }
 }
 
-cmp_node_t *sql_get_last_comp_node(sql_stmt_t *stmt, cond_tree_t *cond, word_t *word)
+static cmp_node_t *sql_get_last_comp_node(sql_stmt_t *stmt, cond_tree_t *cond)
 {
     cond_node_t *last_cond_node = NULL;
-    CM_POINTER(word);
-
     if (cond->chain.count == 0) {
         if (sql_create_cmp_node(stmt, cond) != OG_SUCCESS) {
             return NULL;
@@ -631,7 +629,7 @@ static status_t sql_parse_compare_right(sql_stmt_t *stmt, cmp_node_t *cmp_node, 
 static status_t sql_parse_compare(sql_stmt_t *stmt, cond_tree_t *cond, word_t *word)
 {
     cond_node_t *last_cond_node = cond->chain.last;
-    cmp_node_t *cmp_node = sql_get_last_comp_node(stmt, cond, word);
+    cmp_node_t *cmp_node = sql_get_last_comp_node(stmt, cond);
     if (cmp_node == NULL) {
         return OG_ERROR;
     }
@@ -719,7 +717,7 @@ static status_t sql_try_parse_bracket(sql_stmt_t *stmt, cond_tree_t *cond, word_
             return OG_ERROR;
         }
     } else {
-        cmp_node = sql_get_last_comp_node(stmt, cond, word);
+        cmp_node = sql_get_last_comp_node(stmt, cond);
         OG_RETVALUE_IFTRUE(cmp_node == NULL, OG_ERROR);
         cmp_node->type = type;
 
@@ -759,6 +757,10 @@ static status_t sql_add_cond_words(sql_stmt_t *stmt, word_t *word, cond_tree_t *
     bool32 is_logical;
 
     if (word->type == WORD_TYPE_BRACKET) {
+        if (cond->chain.count != 0 && !IS_LOGICAL_NODE(cond->chain.last)) {
+            OG_SRC_THROW_ERROR_EX(word->text.loc, ERR_SQL_SYNTAX_ERROR, "invalid word '(%s)' found", W2S(word));
+            return OG_ERROR;
+        }
         return sql_try_parse_bracket(stmt, cond, word);
     }
 

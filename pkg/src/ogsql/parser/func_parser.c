@@ -382,7 +382,10 @@ static status_t sql_build_func_args_extract(sql_stmt_t *stmt, word_t *word, expr
     OG_RETURN_IFERR(sql_create_expr_until(stmt, &arg_expr, word));
     func_node->argument->next = arg_expr;
 
-    OG_RETURN_IFERR(lex_expected_end(lex));
+    if (word->type != WORD_TYPE_EOF) {
+        OG_SRC_THROW_ERROR_EX(LEX_LOC, ERR_SQL_SYNTAX_ERROR, "expected end but %s found", W2S(word));
+        return OG_ERROR;
+    }
 
     return OG_SUCCESS;
 }

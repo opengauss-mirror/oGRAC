@@ -20,25 +20,25 @@ add_compile_definitions(GET_DRIVER_VERSION=${DD_CT_LIB_VER_APINAME})
 add_compile_options(-Wl,-z,now)
 
 # generate static library
-add_library(zeclient_static STATIC ${CLIENT_SRC})
+add_library(ogclient_static STATIC ${CLIENT_SRC})
 # generate dynamic library
-add_library(zeclient SHARED ${CLIENT_SRC})
+add_library(ogclient SHARED ${CLIENT_SRC})
 
-set_target_properties(zeclient PROPERTIES OUTPUT_NAME zeclient
+set_target_properties(ogclient PROPERTIES OUTPUT_NAME ogclient
         CLEAN_DIRECT_OUTPUT 1
         ARCHIVE_OUTPUT_DIRECTORY ${OGRACDB_LIB}
         )
-set_target_properties(zeclient_static PROPERTIES OUTPUT_NAME zeclient
+set_target_properties(ogclient_static PROPERTIES OUTPUT_NAME ogclient
         CLEAN_DIRECT_OUTPUT 1
         ARCHIVE_OUTPUT_DIRECTORY ${OGRACDB_LIB}
         )
 
 if (USE32BIT)
     MESSAGE(STATUS "Build Libclient in 32 bits")
-    set_target_properties(zeclient PROPERTIES
+    set_target_properties(ogclient PROPERTIES
             COMPILE_FLAGS "-m32" LINK_FLAGS "-m32"
             )
-    set_target_properties(zeclient_static PROPERTIES
+    set_target_properties(ogclient_static PROPERTIES
             COMPILE_FLAGS "-m32" LINK_FLAGS "-m32"
             )
 else ()
@@ -47,7 +47,7 @@ endif (USE32BIT)
 
 option(USE_FUZZASAN OFF)
 if (USE_FUZZASAN)
-    target_link_libraries(zeclient PRIVATE zecommon -Wl,--version-script=${M_EXP_SCRIPT} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 Secodefuzz)
+    target_link_libraries(ogclient PRIVATE ogcommon -Wl,--version-script=${M_EXP_SCRIPT} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 Secodefuzz)
 else ()
-    target_link_libraries(zeclient PRIVATE zecommon -Wl,--version-script=${M_EXP_SCRIPT} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8)
+    target_link_libraries(ogclient PRIVATE ogcommon -Wl,--version-script=${M_EXP_SCRIPT} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8)
 endif(USE_FUZZASAN)

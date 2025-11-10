@@ -388,7 +388,7 @@ GCC_TYPE = {
     "dbstor": "DBS",
     "combined": "DBS",
     "file": "file",
-    "dss": "SD"
+    "dss": "LUN"
 }
 
 GCC_HOME = {
@@ -672,7 +672,7 @@ class CmsCtl(object):
         gcc_dir = self.gcc_dir
         
         # gcc_home is lun, gcc_home:/dev/sda
-        if self.gcc_type != "SD":
+        if self.gcc_type not in ["SD", "LUN"]:
             gcc_dir = gcc_home
             gcc_home = os.path.join(gcc_home, "gcc_file")
         if 'LD_LIBRARY_PATH' in os.environ:
@@ -1401,7 +1401,7 @@ class CmsCtl(object):
         删除gcc_home失败时，打印出当前暂用文件的进程
         :return:
         """
-        if deploy_mode in USE_DBSTOR:
+        if deploy_mode in USE_DBSTOR or deploy_mode in USE_DSS:
             return
         gcc_home_path = "/mnt/dbdata/remote/share_%s/gcc_home/" % self.storage_share_fs
         remain_files = os.listdir(gcc_home_path)
@@ -1451,7 +1451,7 @@ class CmsCtl(object):
                           % (self.storage_share_fs, self.storage_archive_fs)
                 ret_code = 0
             if deploy_mode in USE_DSS:
-                str_cmd = "dd if=/dev/zero of=/dev/gcc-disk bs=1M count=1 conv=notrunc"
+                str_cmd = "dd if=/dev/zero of=/dev/gcc-disk bs=1M count=1024 conv=notrunc"
                 ret_code = 0
             if ret_code == 0:
                 LOGGER.info("clean gcc home cmd : %s" % str_cmd)

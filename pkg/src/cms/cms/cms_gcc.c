@@ -44,7 +44,7 @@ static cms_rwlock_t g_gcc_rwlock = CMS_RWLOCK_INITIALIZER;
 static cms_sync_t  gcc_loader_sync;
 
 #define CMS_RLOCK_GCC_LOCK_START        0
-#define CMS_RLOCK_GCC_LOCK_LEN          (sizeof(cms_gcc_storage_t) - CMS_BLOCK_SIZE)
+#define CMS_RLOCK_GCC_LOCK_LEN          (sizeof(cms_gcc_storage_t) - CMS_DISK_LOCK_BLOCKS_SIZE)
 #define CMS_GCC_LOCK_POS                (OFFSET_OF(cms_gcc_storage_t, gcc_lock))
 #define CMS_VALID_GCC_OFFSET(gcc_id)    ((size_t)&(((cms_gcc_storage_t*)NULL)->gcc[gcc_id]))
 #define CMS_GCC_READ_OFFSET(gcc_id)     (CMS_VALID_GCC_OFFSET(gcc_id))
@@ -476,7 +476,8 @@ status_t cms_reset_gcc(void)
         return OG_ERROR;
     }
  
-    if (cms_write_gcc_info(ogx, 0, (char *)gcc_stor, sizeof(cms_gcc_storage_t) - CMS_BLOCK_SIZE) != OG_SUCCESS) {
+    if (cms_write_gcc_info(ogx, 0, (char *)gcc_stor,
+                           sizeof(cms_gcc_storage_t) - CMS_DISK_LOCK_BLOCKS_SIZE) != OG_SUCCESS) {
         cms_unlock_gcc_disk();
         CM_FREE_PTR(gcc_stor);
         return OG_ERROR;
@@ -1161,13 +1162,11 @@ static const cms_res_t* cms_find_res_type(const cms_gcc_t* gcc, const char* res_
         if (gcc->res[res_id].magic == CMS_GCC_RES_MAGIC &&
            cm_strcmpi(gcc->res[res_id].type, res_type) == 0) {
             res = &gcc->res[res_id];
-            break;
+            return res;
         }
-        CMS_LOG_WAR("res type is not found, res_id = %u, res[res_id].magic = %llu, CMS_GCC_RES_MAGIC = "
-            "%llu,res[res_id].type = %s, ",
-            res_id, gcc->res[res_id].magic, CMS_GCC_RES_MAGIC, gcc->res[res_id].type);
+        CMS_LOG_WAR("res type [%s] is not found", res_type);
     }
-
+    CMS_LOG_WAR("res type [%s] is not found", res_type);
     return res;
 }
 

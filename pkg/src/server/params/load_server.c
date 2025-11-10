@@ -790,7 +790,7 @@ status_t srv_load_server_params(void)
     bool32 enable_dss = OG_FALSE;
     OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_DSS", &enable_dss));
     if (enable_dss) {
-        g_instance->attr.enable_dss = enable_dss;
+        g_instance->kernel.attr.enable_dss = enable_dss;
         OG_RETURN_IFERR(srv_load_dss_path());
         OG_RETURN_IFERR(srv_device_init(g_instance->kernel.dtc_attr.ogstore_inst_path));
     }

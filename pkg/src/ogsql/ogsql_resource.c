@@ -516,12 +516,12 @@ status_t rsrc_attach_group(knl_handle_t session, rsrc_plan_t *plan)
     if (plan->type == PLAN_TYPE_USER) { // match by db user
         cm_str2text((char *)"db_user", &key);
         cm_str2text(sess->db_user, &value);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         if (IS_DATANODE && IS_COORD_CONN(sess) && sess->curr_user2[0] != '\0') {
             // for datanode use curr_user2
             cm_str2text(sess->curr_user2, &value);
         }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
     } else { // match by db tenant
         cm_str2text((char *)"tenant", &key);
         cm_str2text(sess->curr_tenant, &value);

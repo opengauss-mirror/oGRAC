@@ -78,8 +78,8 @@ static inline status_t sql_match_distinct_cond_node(sql_stmt_t *stmt, sql_query_
 
     switch (cond->type) {
         case COND_NODE_COMPARE:
-            OG_RETURN_IFERR(sql_match_distinct_expr(stmt, query, &cond->cmp->left, OG_FALSE));
-            OG_RETURN_IFERR(sql_match_distinct_expr(stmt, query, &cond->cmp->right, OG_FALSE));
+            OG_RETURN_IFERR(sql_match_distinct_expr(stmt, query, cond->cmp->left));
+            OG_RETURN_IFERR(sql_match_distinct_expr(stmt, query, cond->cmp->right));
             break;
         case COND_NODE_TRUE:
         case COND_NODE_FALSE:
@@ -148,18 +148,13 @@ static inline status_t sql_try_match_distinct_node(sql_stmt_t *stmt, sql_query_t
     }
 }
 
-status_t sql_match_distinct_expr(sql_stmt_t *stmt, sql_query_t *query, expr_tree_t **expr, bool32 need_clone)
+status_t sql_match_distinct_expr(sql_stmt_t *statement, sql_query_t *sql_qry, expr_tree_t *exprtr)
 {
-    expr_tree_t *clone_expr = NULL;
-
-    if (need_clone) {
-        OG_RETURN_IFERR(sql_clone_expr_tree((*expr)->owner, *expr, &clone_expr, sql_alloc_mem));
-        *expr = clone_expr;
-    }
-
-    if (sql_try_match_distinct_node(stmt, query, (*expr)->root) != OG_SUCCESS) {
-        OG_SRC_THROW_ERROR((*expr)->loc, ERR_SQL_SYNTAX_ERROR, "expression not in distinct list");
-        return OG_ERROR;
+    for (; exprtr != NULL; exprtr = exprtr->next) {
+        if (sql_try_match_distinct_node(statement, sql_qry, exprtr->root) != OG_SUCCESS) {
+            OG_SRC_THROW_ERROR(exprtr->loc, ERR_SQL_SYNTAX_ERROR, "expression not in distinct list");
+            return OG_ERROR;
+        }
     }
     return OG_SUCCESS;
 }
@@ -1071,17 +1066,39 @@ static status_t sql_verify_select_node(sql_verifier_t *verif, select_node_t *nod
     }
 }
 
+// Compare two array_col is equal
+static inline bool32 og_array_col_is_equal(const var_column_t *col1, const var_column_t *col2)
+{
+    CM_POINTER2(col1, col2);
+    OG_RETVALUE_IFTRUE(col1->is_array != col2->is_array, OG_FALSE);
+    OG_RETVALUE_IFTRUE(col1->is_array,
+        col1->ss_start == col2->ss_start && col1->ss_end == col2->ss_end);
+    OG_RETVALUE_IFTRUE(VAR_COL_IS_ARRAY_ELEMENT(col1) && VAR_COL_IS_ARRAY_ELEMENT(col2),
+        col1->ss_start == col2->ss_start);
+    return OG_TRUE;
+}
+
 static bool32 sql_rs_col_equal_sort_col(sql_stmt_t *stmt, rs_column_t *rs_col, sort_item_t *sort_item)
 {
     expr_node_t *sort_expr_node = NULL;
 
     if (rs_col->type == RS_COL_COLUMN) {
         sort_expr_node = sort_item->expr->root;
+        if (sort_expr_node->unary == UNARY_OPER_ROOT) {
+            return OG_FALSE;
+        }
         if (sort_expr_node->type == EXPR_NODE_COLUMN && rs_col->v_col.tab == VAR_TAB(&sort_expr_node->value) &&
-            rs_col->v_col.col == VAR_COL(&sort_expr_node->value)) {
+            rs_col->v_col.col == VAR_COL(&sort_expr_node->value) &&
+            og_array_col_is_equal(&rs_col->v_col, &sort_expr_node->value.v_col)) {
             return OG_TRUE;
         }
     } else if (rs_col->type == RS_COL_CALC) {
+        if (rs_col->expr->root->unary == UNARY_OPER_ROOT && sort_item->expr->root->unary != UNARY_OPER_ROOT) {
+            return OG_FALSE;
+        }
+        if (rs_col->expr->root->unary != UNARY_OPER_ROOT && sort_item->expr->root->unary == UNARY_OPER_ROOT) {
+            return OG_FALSE;
+        }
         if (sql_expr_node_equal(stmt, rs_col->expr->root, sort_item->expr->root, NULL)) {
             return OG_TRUE;
         }
@@ -1262,7 +1279,7 @@ status_t sql_verify_sub_select(sql_stmt_t *stmt, sql_select_t *select_ctx, sql_v
     verif.excl_flags = SQL_EXCL_DEFAULT;
     verif.do_expr_optmz = OG_TRUE;
     verif.parent = parent;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     OG_RETURN_IFERR(shd_verfity_excl_user_function(&verif, stmt));
 #endif
 
@@ -1282,7 +1299,7 @@ status_t sql_verify_select(sql_stmt_t *stmt, sql_select_t *select_ctx)
     verif.do_expr_optmz = OG_TRUE;
     verif.parent = NULL;
     plc_get_verify_obj(stmt, &verif);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     OG_RETURN_IFERR(shd_verfity_excl_user_function(&verif, stmt));
 #endif
 

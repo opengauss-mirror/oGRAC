@@ -310,7 +310,7 @@ static void smon_check_undo_usage(knl_session_t *session, space_t *space, uint64
 static inline void smon_usage_alarm_log(knl_session_t *session, space_t *space, uint32 usage_alarm_threshold,
     warn_name_t warn_name)
 {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (session->kernel->is_coordinator) {
         OG_LOG_ALARM_CN(warn_name, "'space-name':'%s', 'alarm-threshold':'%d'}",
             space->ctrl->name, usage_alarm_threshold);
@@ -326,7 +326,7 @@ static inline void smon_usage_alarm_log(knl_session_t *session, space_t *space, 
 static inline void smon_usage_recovery_log(knl_session_t *session, space_t *space, uint32 usage_alarm_threshold,
     warn_name_t warn_name)
 {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         if (session->kernel->is_coordinator) {
             OG_LOG_ALARM_RECOVER_CN(warn_name, "'space-name':'%s', 'alarm-threshold':'%d'}",
                 space->ctrl->name, usage_alarm_threshold);
@@ -345,7 +345,7 @@ static inline void smon_usage_recovery_log(knl_session_t *session, space_t *spac
  */
 static void smon_check_space_usage(knl_session_t *session)
 {
-    return;  // todo: renable
+    return;
     space_t *space = NULL;
     uint64 max_size;
     uint64 used_pages;

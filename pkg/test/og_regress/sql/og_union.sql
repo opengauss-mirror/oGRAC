@@ -242,3 +242,14 @@ select min(x), max(x), count(x) from (select true X from dual connect by rownum 
 select max(false) from dual union select count(sysdate) from dual;
 select max(false) from dual union select count(1) from dual;
 
+drop table if exists t_lob_order_1;
+
+drop table if exists t_union_limit;
+create table t_union_limit(a decimal(20));
+insert into t_union_limit values (1),(2),(3);
+select distinct(select count(*) from t_union_limit limit 0) from t_union_limit;
+select distinct(select count(*) from t_union_limit union all select count(*) from t_union_limit limit 0) from t_union_limit;
+select distinct(select count(*) from t_union_limit union all select count(*) from t_union_limit) from t_union_limit;
+select distinct(select count(*) from t_union_limit union all select count(*) from t_union_limit limit 2) from t_union_limit;
+drop table if exists t_union_limit;
+

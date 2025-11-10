@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static inline void lnk_entry_inc_ref(dc_entry_t *entry)
 {
     cm_spin_lock(&entry->ref_lock, NULL);

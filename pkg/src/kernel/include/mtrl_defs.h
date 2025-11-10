@@ -160,6 +160,7 @@ typedef enum en_mtrl_cursor_type {
     MTRL_CURSOR_SORT_GROUP,
     MTRL_CURSOR_HASH_GROUP,
     MTRL_CURSOR_HASH_DISTINCT,
+    MTRL_CURSOR_WINSORT,
 } mtrl_cursor_type_t;
 
 typedef struct st_mtrl_cursor {

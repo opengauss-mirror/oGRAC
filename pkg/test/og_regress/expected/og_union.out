@@ -606,7 +606,7 @@ SQL> desc -q select 'asdasdasd' X from dual union select NULL from dual union se
 
 Name                                Null?    Type                                
 ----------------------------------- -------- ------------------------------------
-X                                            VARCHAR(72 BYTE)                    
+X                                            VARCHAR(40 BYTE)                    
 
 SQL> create or replace view UNION_VIEW_TEST1 as select NULL c from dual union select NULL from dual order by 1;
 
@@ -1328,6 +1328,50 @@ TRUE
 FALSE     
 
 2 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_lob_order_1;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists t_union_limit;
+
+Succeed.
+
+SQL> create table t_union_limit(a decimal(20));
+
+Succeed.
+
+SQL> insert into t_union_limit values (1),(2),(3);
+
+3 rows affected.
+
+SQL> select distinct(select count(*) from t_union_limit limit 0) from t_union_limit;
+
+(SELECT COUNT(*) FROM T_UNION_LIMIT LIMIT 0)
+--------------------------------------------
+                                            
+
+1 rows fetched.
+
+SQL> select distinct(select count(*) from t_union_limit union all select count(*) from t_union_limit limit 0) from t_union_limit;
+
+(SELECT COUNT(*) FROM T_UNION_LIMIT UNION ALL SELECT COUNT(*) FR
+----------------------------------------------------------------
+                                                                
+
+1 rows fetched.
+
+SQL> select distinct(select count(*) from t_union_limit union all select count(*) from t_union_limit) from t_union_limit;
+
+OG-00915, More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+SQL> select distinct(select count(*) from t_union_limit union all select count(*) from t_union_limit limit 2) from t_union_limit;
+
+OG-00915, More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+SQL> drop table if exists t_union_limit;
+
+Succeed.
 
 SQL> 
 SQL> 

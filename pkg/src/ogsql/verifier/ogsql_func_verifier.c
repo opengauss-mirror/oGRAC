@@ -250,7 +250,9 @@ status_t sql_verify_func(sql_verifier_t *verif, expr_node_t *node)
     bool32 is_found = OG_FALSE;
     verif->excl_flags |= SQL_EXCL_METH_PROC;
     uint32 save_excl_flags = verif->excl_flags;
-    verif->excl_flags &= (~SQL_EXCL_ARRAY);
+    OG_BIT_RESET(verif->excl_flags, SQL_EXCL_ARRAY);
+    // exclude all star in function unless function verifier explictly allow use of star.
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_STAR);
     status_t status = sql_try_verify_func(verif, node, &is_found);
     verif->excl_flags = save_excl_flags;
     OG_RETURN_IFERR(status);
@@ -259,6 +261,11 @@ status_t sql_verify_func(sql_verifier_t *verif, expr_node_t *node)
     }
     if ((node->type == EXPR_NODE_PROC || node->type == EXPR_NODE_USER_PROC) && (verif->excl_flags & SQL_EXCL_PL_PROC)) {
         OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "procedure is not allowed here.");
+        return OG_ERROR;
+    }
+    if (verif->create_table_define &&
+        (node->type == EXPR_NODE_PROC || node->type == EXPR_NODE_USER_PROC || node->type == EXPR_NODE_USER_FUNC)) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_UNSUPPORT_FUNC, "procedure, function, package, or type", "here");
         return OG_ERROR;
     }
     return OG_SUCCESS;

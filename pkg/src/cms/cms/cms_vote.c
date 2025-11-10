@@ -75,7 +75,7 @@ static status_t cms_set_vote_data_inner(uint16 node_id, uint32 slot_id, char *da
     }
 
     uint64 offset = cms_get_vote_data_offset(node_id, slot_id);
-    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         offset += CMS_VOTE_DATA_GCC_OFFSET;
     }
     uint32 write_size = data_size + OFFSET_OF(cms_vote_data_t, data);
@@ -154,7 +154,7 @@ status_t cms_get_vote_data_inner(uint16 node_id, uint32 slot_id, char *data, uin
     }
 
     uint64 offset = cms_get_vote_data_offset(node_id, slot_id);
-    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         offset += CMS_VOTE_DATA_GCC_OFFSET;
     }
 
@@ -226,7 +226,7 @@ status_t cms_set_vote_result(vote_result_ctx_t *vote_result)
         return OG_ERROR;
     }
     uint64 offset = 0;
-    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         offset += CMS_VOTE_DATA_GCC_OFFSET;
     }
 
@@ -281,7 +281,7 @@ status_t cms_get_vote_result(vote_result_ctx_t *vote_result)
     }
     
     uint64 offset = 0;
-    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         offset += CMS_VOTE_DATA_GCC_OFFSET;
     }
     CMS_LOG_DEBUG_INF("cms result offset = %llu, sizeof(result) = %lu", offset, sizeof(vote_result_ctx_t));
@@ -948,6 +948,7 @@ status_t cms_refresh_new_cluster_info(vote_result_ctx_t *vote_result)
                 cms_res_offline_broadcast(i);
                 CMS_SYNC_POINT_GLOBAL_START(CMS_AFTER_BROADCAST_OFFLINE_ABORT, NULL, 0);
                 CMS_SYNC_POINT_GLOBAL_END;
+                OG_RETURN_IFERR(cms_release_dss_master(i));
             }
         }
     }
@@ -1097,7 +1098,7 @@ static void cms_init_vote_result(vote_result_ctx_t *vote_result)
 status_t cms_init_cluster_vote_info(void)
 {
     uint64 offset = 0;
-    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         offset += CMS_VOTE_DATA_GCC_OFFSET;
     }
 

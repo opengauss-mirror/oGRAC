@@ -11162,8 +11162,16 @@ static void stats_set_colunm_updata_info(knl_session_t *session, knl_cursor_t *c
     row_init(&ra, cursor->update_info.data, HEAP_MAX_ROW_SIZE(session), UPDATE_COLUMN_COUNT_SIX);
     (void)row_put_int32(&ra, MIN(OG_MAX_INT32, col_stats->nullnum));
     (void)row_put_int64(&ra, OG_INVALID_ID64);
-    (void)row_put_text(&ra, &col_stats->min_value);
-    (void)row_put_text(&ra, &col_stats->max_value);
+    if (col_stats->min_value.len == OG_NULL_VALUE_LEN) {
+        (void)row_put_null(&ra);
+    } else {
+        (void)row_put_text(&ra, &col_stats->min_value);
+    }
+    if (col_stats->max_value.len == OG_NULL_VALUE_LEN) {
+        (void)row_put_null(&ra);
+    } else {
+        (void)row_put_text(&ra, &col_stats->max_value);
+    }
     (void)row_put_int32(&ra, MIN(OG_MAX_INT32, col_stats->distnum));
     (void)row_put_real(&ra, col_stats->density);
 
@@ -11197,7 +11205,8 @@ static void stats_verfiy_colunm_stats(knl_cursor_t *cursor, knl_column_set_stats
     col_stats->nullnum = (col_stats->nullnum == OG_INVALID_ID32) ? sys_stats.nullnum : col_stats->nullnum;
     col_stats->distnum = (col_stats->distnum == OG_INVALID_ID32) ? sys_stats.distnum : col_stats->distnum;
     col_stats->density = (col_stats->density == OG_INVALID_ID64) ? sys_stats.density : col_stats->density;
-    if (col_stats->max_value.len == OG_NULL_VALUE_LEN) {
+    
+    if (col_stats->max_value.len == OG_NULL_VALUE_LEN && sys_stats.max_value.len != OG_NULL_VALUE_LEN) {
         ret = memcpy_sp(col_stats->max_value.str, STATS_MAX_BUCKET_SIZE,
             sys_stats.max_value.str, sys_stats.max_value.len);
         knl_securec_check(ret);
@@ -11205,7 +11214,7 @@ static void stats_verfiy_colunm_stats(knl_cursor_t *cursor, knl_column_set_stats
         col_stats->max_value.len = sys_stats.max_value.len;
     }
 
-    if (col_stats->min_value.len == OG_NULL_VALUE_LEN) {
+    if (col_stats->min_value.len == OG_NULL_VALUE_LEN && sys_stats.min_value.len != OG_NULL_VALUE_LEN) {
         ret = memcpy_sp(col_stats->min_value.str, STATS_MAX_BUCKET_SIZE,
             sys_stats.min_value.str, sys_stats.min_value.len);
         knl_securec_check(ret);

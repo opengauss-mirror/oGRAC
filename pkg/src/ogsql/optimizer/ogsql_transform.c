@@ -30,316 +30,362 @@
 #include "ogsql_func.h"
 #include "srv_instance.h"
 #include "ogsql_cond_rewrite.h"
-#include "plan_rbo.h"
-#include "plan_join.h"
+#include "ogsql_plan.h"
+#include "ogsql_subquery_rewrite.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef status_t (*sql_optimizer_func_t)(sql_stmt_t *stmt, sql_query_t *query);
-
-typedef struct st_sql_optimizer {
-    text_t name;
-    sql_optimizer_func_t optimizer;
-} sql_optimizer_t;
-
-status_t create_new_table_4_rewrite(sql_stmt_t *stmt, sql_query_t *query, sql_select_t *subslct)
-{
-    sql_table_t *table = NULL;
-
-    OG_RETURN_IFERR(sql_init_join_assist(stmt, &query->join_assist));
-    OG_RETURN_IFERR(sql_create_array(stmt->context, &query->tables, "JOINS TABLES", OG_MAX_JOIN_TABLES));
-    OG_RETURN_IFERR(sql_array_new(&query->tables, sizeof(sql_table_t), (void **)&table));
-    table->id = 0;
-    table->type = SUBSELECT_AS_TABLE;
-    table->select_ctx = subslct;
-    OG_RETURN_IFERR(sql_copy_text(stmt->context, &query->block_info->origin_name, &table->qb_name));
-    TABLE_CBO_ATTR_OWNER(table) = query->vmc;
-    cm_bilist_init(&table->func_expr);
-    return OG_SUCCESS;
-}
-
-static inline status_t sql_add_sort_group(sql_query_t *query, sort_item_t *item)
-{
-    btree_sort_key_t *btree_sort_key = NULL;
-    OG_RETURN_IFERR(cm_galist_new(query->sort_groups, sizeof(btree_sort_key_t), (void **)&btree_sort_key));
-    btree_sort_key->group_id = VALUE_PTR(var_vm_col_t, &item->expr->root->value)->id;
-    btree_sort_key->sort_mode = item->sort_mode;
-    return OG_SUCCESS;
-}
-
-static inline bool32 chk_aggr_4_sort_group(sql_aggr_type_t aggr_type)
-{
-    const sql_aggr_type_t sg_aggrs[] = {
-        AGGR_TYPE_AVG, AGGR_TYPE_SUM, AGGR_TYPE_MIN, AGGR_TYPE_MAX,
-        AGGR_TYPE_COUNT, AGGR_TYPE_MEDIAN, AGGR_TYPE_DENSE_RANK
+static transform_sql_t g_transformers[] = {
+    { OGSQL_TYPE_NONE,    ogsql_transform_dummy        },
+    { OGSQL_TYPE_SELECT,  ogsql_optimize_logic_select  },
+    { OGSQL_TYPE_UPDATE,  ogsql_optimize_logic_update  },
+    { OGSQL_TYPE_INSERT,  ogsql_optimize_logic_insert  },
+    { OGSQL_TYPE_DELETE,  ogsql_optimize_logic_delete  },
+    { OGSQL_TYPE_MERGE,   ogsql_optimize_logic_merge   },
+    { OGSQL_TYPE_REPLACE, ogsql_optimize_logic_replace },
     };
-    for (uint32 i = 0; i < ARRAY_NUM(sg_aggrs); ++i) {
-        if (aggr_type == sg_aggrs[i]) {
-            return OG_TRUE;
-        }
-    }
-    return OG_FALSE;
-}
 
-static inline bool32 sql_is_grouping_func(expr_node_t *node)
+static status_t ogsql_optimize_logic_select_node_p1(sql_stmt_t *statement, select_node_t *node);
+static status_t ogsql_optimize_logic_select_node_p2(sql_stmt_t *statement, select_node_t *node);
+
+status_t ogsql_transform_dummy(sql_stmt_t *statement, void *entry)
 {
-    sql_func_t *func = NULL;
-    if (node->type != EXPR_NODE_FUNC) {
-        return OG_FALSE;
+    text_t *ogsql = (text_t *)&statement->session->lex->text;
+    if (ogsql) {
+        OG_LOG_DEBUG_INF("transfrom sql nothing to do, SQL is %s.", T2S(ogsql));
     }
-    func = sql_get_func(&node->value.v_func);
-    if (func->builtin_func_id == ID_FUNC_ITEM_GROUPING) {
-        return OG_TRUE;
-    }
-    return OG_FALSE;
+
+    return OG_SUCCESS;
 }
 
-bool32 check_query_has_json_table(sql_query_t *query)
+status_t og_create_sqltable(sql_stmt_t *statement, sql_query_t *qry, sql_select_t *select)
 {
-    sql_table_t *table = NULL;
+    sql_table_t *sql_tab = NULL;
 
-    for (uint32 i = 0; i < query->tables.count; i++) {
-        table = (sql_table_t *)sql_array_get(&query->tables, i);
-        if (table->type == JSON_TABLE) {
-            return OG_TRUE;
+    (void)sql_init_join_assist(statement, &qry->join_assist);
+    OG_RETURN_IFERR(sql_create_array(statement->context, &qry->tables, "JOINS TABLES", OG_MAX_JOIN_TABLES));
+    OG_RETURN_IFERR(sql_array_new(&qry->tables, sizeof(sql_table_t), (void **)&sql_tab));
+    sql_tab->id = 0;
+    sql_tab->type = SUBSELECT_AS_TABLE;
+    sql_tab->select_ctx = select;
+    OG_RETURN_IFERR(sql_copy_text(statement->context, &qry->block_info->origin_name, &sql_tab->qb_name));
+    TABLE_CBO_ATTR_OWNER(sql_tab) = qry->vmc;
+
+    sql_query_t *subqry = sql_tab->select_ctx->first_query;
+    cm_bilist_init(&(sql_tab)->query_fields);
+    uint32 i = 0;
+    while (i < subqry->rs_columns->count) {
+        rs_column_t *col = (rs_column_t *)cm_galist_get(subqry->rs_columns, i);
+        query_field_t field;
+        SQL_SET_QUERY_FIELD_INFO(&field, col->datatype, i, col->v_col.is_array, col->v_col.ss_start, col->v_col.ss_end);
+        if (sql_table_cache_query_field(statement, sql_tab, &field) != OG_SUCCESS) {
+            return OG_ERROR;
         }
+        i++;
     }
-    return OG_FALSE;
+
+    cm_bilist_init(&sql_tab->func_expr);
+    return OG_SUCCESS;
 }
 
-status_t sql_get_table_join_cond(sql_stmt_t *stmt, sql_array_t *l_tables, sql_array_t *r_tables, cond_tree_t *cond,
-    bilist_t *join_conds)
+status_t og_get_join_cond_from_table_cond(sql_stmt_t *statement, sql_array_t *l_tbls, sql_array_t *r_tbls,
+                                          cond_tree_t *ctree, bilist_t *jcond_blst)
 {
     bool32 has_join_cond = OG_FALSE;
-    join_cond_t *join_cond = NULL;
-    sql_table_t *left_table = NULL;
-    sql_table_t *right_table = NULL;
-    cm_bilist_init(join_conds);
-
-    if (cond == NULL) {
+    join_cond_t *jcond = NULL;
+    sql_table_t *left_tbl = NULL;
+    sql_table_t *right_tbl = NULL;
+    uint32 m = 0;
+    uint32 n = 0;
+    uint32 left_count = l_tbls->count;
+    uint32 right_count = r_tbls->count;
+    bool32 is_same_array = (l_tbls == r_tbls);
+    
+    if (ctree == NULL) {
+        cm_bilist_init(jcond_blst);
         return OG_SUCCESS;
     }
 
-    OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(join_cond_t), (void **)&join_cond));
-    cm_galist_init(&join_cond->cmp_nodes, stmt, sql_stack_alloc);
+    cm_bilist_init(jcond_blst);
+    OG_RETURN_IFERR(sql_stack_alloc(statement, sizeof(join_cond_t), (void **)&jcond));
+    cm_galist_init(&jcond->cmp_nodes, statement, sql_stack_alloc);
 
-    for (uint32 i = 0; i < l_tables->count; i++) {
-        for (uint32 j = 0; j < r_tables->count; j++) {
-            left_table = (sql_table_t *)sql_array_get(l_tables, i);
-            right_table = (sql_table_t *)sql_array_get(r_tables, j);
-            if (l_tables == r_tables && left_table->id <= right_table->id) {
+    while (m < left_count) {
+        n = 0;
+        left_tbl = (sql_table_t *)sql_array_get(l_tbls, m);
+        while (n < right_count) {
+            right_tbl = (sql_table_t *)sql_array_get(r_tbls, n);
+            if (is_same_array && left_tbl->id <= right_tbl->id) {
+                n++;
                 continue;
             }
             has_join_cond = OG_FALSE;
-            OG_RETURN_IFERR(sql_extract_join_from_cond(cond->root,
-                                                       left_table->id, right_table->id, &join_cond->cmp_nodes,
-                &has_join_cond));
+            OG_RETURN_IFERR(sql_extract_join_from_cond(ctree->root, left_tbl->id, right_tbl->id,
+                                                       &jcond->cmp_nodes, &has_join_cond));
             if (has_join_cond) {
-                join_cond->table1 = left_table->id;
-                join_cond->table2 = right_table->id;
-                cm_bilist_add_tail(&join_cond->bilist_node, join_conds);
-                OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(join_cond_t), (void **)&join_cond));
-                cm_galist_init(&join_cond->cmp_nodes, stmt, sql_stack_alloc);
+                jcond->table1 = left_tbl->id;
+                jcond->table2 = right_tbl->id;
+                cm_bilist_add_tail(&jcond->bilist_node, jcond_blst);
+                OG_RETURN_IFERR(sql_stack_alloc(statement, sizeof(join_cond_t), (void **)&jcond));
+                cm_galist_init(&jcond->cmp_nodes, statement, sql_stack_alloc);
             }
+            n++;
         }
+        m++;
     }
+    
     return OG_SUCCESS;
 }
 
-static status_t sql_get_join_filter_cond(sql_stmt_t *stmt, cond_node_t *cond, sql_join_node_t *join_node,
-    bool32 is_right_node, bool32 *not_null, bool32 is_outer_right)
+status_t ogsql_optimize_logically(sql_stmt_t *statement)
 {
-    bool32 l_not_null = OG_FALSE;
-    bool32 r_not_null = OG_FALSE;
-    OG_RETURN_IFERR(sql_stack_safe(stmt));
-    switch (cond->type) {
-        case COND_NODE_AND:
-            OG_RETURN_IFERR(
-                sql_get_join_filter_cond(stmt, cond->left, join_node, is_right_node, &l_not_null, is_outer_right));
-            OG_RETURN_IFERR(
-                sql_get_join_filter_cond(stmt, cond->right, join_node, is_right_node, &r_not_null, is_outer_right));
-            *not_null = (bool32)(l_not_null || r_not_null);
-            try_eval_logic_and(cond);
-            break;
+    uint32 count = sizeof(g_transformers) / sizeof(transform_sql_t) - 1;
+    uint32 index = (uint32)statement->context->type;
+    SAVE_AND_RESET_NODE_STACK(statement);
 
-        case COND_NODE_OR:
-        case COND_NODE_COMPARE:
-            if (!sql_chk_cond_degrade_join(cond, join_node, is_right_node, is_outer_right, not_null)) {
-                return OG_SUCCESS;
-            }
-
-            *not_null = OG_TRUE;
-
-            if (join_node->filter == NULL) {
-                OG_RETURN_IFERR(sql_create_cond_tree(stmt->context, &join_node->filter));
-            }
-            OG_RETURN_IFERR(sql_merge_cond_tree_shallow(join_node->filter, cond));
-            cond->type = COND_NODE_TRUE;
-            break;
-
-        default:
-            break;
-    }
-    return OG_SUCCESS;
-}
-
-static status_t sql_process_mix_join_filter(sql_stmt_t *stmt, cond_tree_t *src, sql_join_node_t *join_node,
-    sql_join_assist_t *join_ass, bool32 is_out_right)
-{
-    if (join_node->type == JOIN_TYPE_NONE) {
-        return OG_SUCCESS;
-    }
-
-    bool32 l_not_null = OG_FALSE;
-    bool32 r_not_null = OG_FALSE;
-    bool32 l_is_out_right = join_node->type == JOIN_TYPE_FULL ? OG_TRUE : is_out_right;
-    bool32 r_is_out_right = join_node->type >= JOIN_TYPE_LEFT ? OG_TRUE : is_out_right;
-
-    if (src != NULL) {
-        OG_RETURN_IFERR(sql_get_join_filter_cond(stmt, src->root, join_node, OG_FALSE, &l_not_null, l_is_out_right));
-
-        OG_RETURN_IFERR(sql_get_join_filter_cond(stmt, src->root, join_node, OG_TRUE, &r_not_null, r_is_out_right));
-    }
-
-    if (l_not_null) {
-        sql_convert_to_left_join(join_node);
-    }
-
-    if (r_not_null) {
-        sql_convert_to_left_or_inner_join(join_node, join_ass);
-    }
-
-    if (join_node->type >= JOIN_TYPE_LEFT || join_node->join_cond == NULL) {
-        return OG_SUCCESS;
-    }
-
-    if (join_node->filter == NULL) {
-        OG_RETURN_IFERR(sql_create_cond_tree(stmt->context, &join_node->filter));
-    }
-
-    OG_RETURN_IFERR(sql_add_cond_node(join_node->filter, join_node->join_cond->root));
-    join_node->join_cond = NULL;
-    return OG_SUCCESS;
-}
-
-static status_t sql_preprocess_mix_join_cond(sql_stmt_t *stmt, galist_t *conds_list, sql_join_node_t *join_node,
-    sql_join_assist_t *join_ass, bool32 is_out_right)
-{
-    if (join_node->type == JOIN_TYPE_NONE) {
-        return OG_SUCCESS;
-    }
-
-    uint32 filter_pos = OG_INVALID_ID32;
-
-    for (uint32 i = 0; i < conds_list->count; i++) {
-        cond_tree_t *filter = (cond_tree_t *)cm_galist_get(conds_list, i);
-        OG_RETURN_IFERR(sql_process_mix_join_filter(stmt, filter, join_node, join_ass, is_out_right));
-    }
-
-    if (join_node->type < JOIN_TYPE_LEFT && join_node->join_cond != NULL) {
-        if (join_node->filter == NULL) {
-            OG_RETURN_IFERR(sql_create_cond_tree(stmt->context, &join_node->filter));
-        }
-        OG_RETURN_IFERR(sql_add_cond_node(join_node->filter, join_node->join_cond->root));
-        join_node->join_cond = NULL;
-    }
-
-    if (join_node->filter != NULL) {
-        filter_pos = conds_list->count;
-        OG_RETURN_IFERR(cm_galist_insert(conds_list, join_node->filter));
-    }
-
-    bool32 l_is_out_right = join_node->type == JOIN_TYPE_FULL ? OG_TRUE : is_out_right;
-    bool32 r_is_out_right = join_node->type >= JOIN_TYPE_LEFT ? OG_TRUE : is_out_right;
-
-    OG_RETURN_IFERR(sql_preprocess_mix_join_cond(stmt, conds_list, join_node->left, join_ass, l_is_out_right));
-    OG_RETURN_IFERR(sql_preprocess_mix_join_cond(stmt, conds_list, join_node->right, join_ass, r_is_out_right));
-    if (filter_pos != OG_INVALID_ID32) {
-        cm_galist_delete(conds_list, filter_pos);
-    }
-    return OG_SUCCESS;
-}
-
-status_t sql_preprocess_mix_join(sql_stmt_t *stmt, cond_tree_t *cond, sql_join_node_t *join_node,
-    sql_join_assist_t *join_ass)
-{
-    galist_t conds_list;
-    cm_galist_init(&conds_list, stmt->session->stack, cm_stack_alloc);
-    OGSQL_SAVE_STACK(stmt);
-    if (cond != NULL && cond->root->type != COND_NODE_TRUE) {
-        cm_galist_insert(&conds_list, cond);
-    }
-    if (sql_preprocess_mix_join_cond(stmt, &conds_list, join_node, join_ass, OG_FALSE) != OG_SUCCESS) {
-        OGSQL_RESTORE_STACK(stmt);
+    // first optmize logically with as sql.
+    if (ogsql_optimize_logic_withas(statement, statement->context->withas_entry)) {
         return OG_ERROR;
     }
-    OGSQL_RESTORE_STACK(stmt);
-    return OG_SUCCESS;
-}
 
-void sql_reset_ancestor_level(sql_select_t *select_ctx, uint32 temp_level)
-{
-    uint32 level = temp_level;
-    sql_select_t *curr_ctx = select_ctx;
-
-    while (level > 0 && curr_ctx != NULL) {
-        RESET_ANCESTOR_LEVEL(curr_ctx, level);
-        curr_ctx = (curr_ctx->parent != NULL) ? curr_ctx->parent->owner : NULL;
-        level--;
+    if (index <= count) {
+        OG_RETURN_IFERR(g_transformers[index].tranform(statement, statement->context->entry));
     }
-}
 
-static new_qb_info_t g_qb_info_tab[] = {
-    { QUERY_TYPE_OR_EXPAND, { (char *)"_ORE", 4 } },
-    { QUERY_TYPE_SUBQRY_TO_TAB, { (char *)"_SQ", 3 } },
-    { QUERY_TYPE_WINMAGIC, { (char *)"_WMR", 4 } },
-    { QUERY_TYPE_UPDATE_SET, { (char *)"_UUS", 4 } },
-    { QUERY_TYPE_SEMI_TO_INNER, { (char *)"_STI", 4 } },
-};
-
-status_t sql_set_new_query_block_name(sql_stmt_t *stmt, sql_query_t *query, new_query_type_t type)
-{
-    text_t suffix = g_qb_info_tab[type].suffix;
-    char id_str[OG_MAX_INT32_STRLEN + 1] = { 0 };
-    int32 len = snprintf_s(id_str, OG_MAX_INT32_STRLEN + 1, OG_MAX_INT32_STRLEN, PRINT_FMT_UINT32,
-        query->block_info->origin_id);
-    PRTS_RETURN_IFERR(len);
-    text_t origin_id_text = {
-        .str = id_str,
-        .len = len
-    };
-    uint32 qb_name_buf = origin_id_text.len + suffix.len + SEL_QUERY_BLOCK_PREFIX_LEN;
-
-    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, qb_name_buf, (void **)&query->block_info->changed_name.str));
-    OG_RETURN_IFERR(cm_concat_string(&query->block_info->changed_name, qb_name_buf, SEL_QUERY_BLOCK_PREFIX));
-    cm_concat_text(&query->block_info->changed_name, qb_name_buf, &origin_id_text);
-    cm_concat_text(&query->block_info->changed_name, qb_name_buf, &suffix);
+    SQL_RESTORE_NODE_STACK(statement);
     return OG_SUCCESS;
 }
 
-status_t sql_set_old_query_block_name(sql_stmt_t *stmt, sql_query_t *query, new_query_type_t query_type)
+status_t ogsql_transform_one_rule(sql_stmt_t *statement, sql_query_t *query, const char *rule_name,
+                                  sql_tranform_rule_func_t proc)
 {
-    text_t suffix = g_qb_info_tab[query_type].suffix;
-    text_t changed_name = { 0 };
-    uint32 qb_name_len;
+    if (proc(statement, query) == OG_SUCCESS) {
+        OG_LOG_DEBUG_INF("Succeed to transform rule:%s", rule_name);
+        return OG_SUCCESS;
+    }
+    return OG_ERROR;
+}
 
-    if (query->block_info->transformed) {
-        qb_name_len = query->block_info->changed_name.len + suffix.len;
-        OG_RETURN_IFERR(sql_push(stmt, qb_name_len, (void **)&changed_name.str));
-        cm_concat_text(&changed_name, qb_name_len, &query->block_info->changed_name);
-        cm_concat_text(&changed_name, qb_name_len, &suffix);
-        OG_RETURN_IFERR(sql_copy_text(stmt->context, &changed_name, &query->block_info->changed_name));
-        OGSQL_POP(stmt);
+static status_t ogsql_apply_rule_set_1(sql_stmt_t *statement, sql_query_t *qry)
+{
+    return OG_SUCCESS;
+}
+
+static status_t ogsql_tranf_table_type(sql_stmt_t *statement, sql_query_t *query)
+{
+    sql_table_t *table = (sql_table_t *)sql_array_get(&query->tables, 0);
+    if (table->type != FUNC_AS_TABLE) {
+        return OG_SUCCESS;
+    }
+    if (table->func.desc->method == TFM_MEMORY) {
+        return OG_SUCCESS;
+    }
+    OG_RETURN_IFERR(sql_regist_table(statement, table));
+    OG_RETURN_IFERR(sql_init_table_dc(statement, table));
+    table->type = NORMAL_TABLE;
+    table->tf_scan_flag = table->func.desc->get_scan_flag ? table->func.desc->get_scan_flag(&table->func)
+                                                          : SEQ_SQL_SCAN;
+    if (table->func.desc->method == TFM_TABLE_ROW) {
+        query->owner->rs_type = RS_TYPE_ROW;
+        statement->rs_type = RS_TYPE_ROW;
+    }
+    return OG_SUCCESS;
+}
+
+status_t ogsql_apply_rule_set_2(sql_stmt_t *statement, sql_query_t *qry)
+{
+    OG_RETURN_IFERR(ogsql_tranf_table_type(statement, qry));
+    // transform sub-select to table
+    OGSQL_RETURN_IF_APPLY_RULE_ERR(statement, qry, og_transf_subquery_rewrite);
+    return OG_SUCCESS;
+}
+
+static status_t ogsql_tranform_subselect_in_expr(sql_stmt_t *statement, sql_query_t *query, bool32 is_phase_1)
+{
+    sql_array_t *ssa = &query->ssa;
+    sql_select_t *select = NULL;
+    uint32 index = 0;
+    while (index < ssa->count) {
+        select = (sql_select_t *)sql_array_get(ssa, index++);
+        if (is_phase_1) {
+            OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p1(statement, select->root));
+        } else {
+            OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p2(statement, select->root));
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static inline bool32 ogsql_check_subselect_if_as_table(sql_table_t *table)
+{
+    if ((table->type == SUBSELECT_AS_TABLE || table->type == VIEW_AS_TABLE) &&
+        table->subslct_tab_usage == SUBSELECT_4_NORMAL_JOIN) {
+        return OG_TRUE;
+    }
+
+    return OG_FALSE;
+}
+
+static status_t ogsql_tranform_subselect_as_table(sql_stmt_t *statement, sql_query_t *query, bool32 is_phase_1)
+{
+    sql_array_t *tables = &query->tables;
+    sql_table_t *tab = NULL;
+    uint32 index = 0;
+    while (index < tables->count) {
+        tab = (sql_table_t *)sql_array_get(tables, index++);
+        if (ogsql_check_subselect_if_as_table(tab)) {
+            if (is_phase_1) {
+                OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p1(statement, tab->select_ctx->root));
+            } else {
+                // the phase 2 apply all rule for subtable.
+                OG_RETURN_IFERR(ogsql_optimize_logic_select(statement, tab->select_ctx));
+            }
+            continue;
+        }
+        // continue to optimize after subquery rewrite to table.
+        if ((is_phase_1 == OG_FALSE) && (tab->type == SUBSELECT_AS_TABLE)) {
+            OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p2(statement, tab->select_ctx->root));
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t ogsql_transform_query(sql_stmt_t *statement, sql_query_t *query, bool32 is_phase_1)
+{
+    SET_NODE_STACK_CURR_QUERY(statement, query);
+    if (is_phase_1) {
+        if (ogsql_apply_rule_set_1(statement, query) != OG_SUCCESS) {
+            OG_LOG_DEBUG_ERR("Failed to apply rule set1.");
+            return OG_ERROR;
+        }
     } else {
-        qb_name_len = query->block_info->origin_name.len + suffix.len;
-        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, qb_name_len, (void **)&query->block_info->changed_name.str));
-        cm_concat_text(&query->block_info->changed_name, qb_name_len, &query->block_info->origin_name);
-        cm_concat_text(&query->block_info->changed_name, qb_name_len, &suffix);
-        query->block_info->transformed = OG_TRUE;
+        if (ogsql_apply_rule_set_2(statement, query) != OG_SUCCESS) {
+            OG_LOG_DEBUG_ERR("Failed to apply rule set2.");
+            return OG_ERROR;
+        }
+
+        if (query->is_s_query) {
+            SQL_RESTORE_NODE_STACK(statement);
+            return OG_SUCCESS;
+        }
     }
 
+    // transform subselect in expressions.
+    OG_RETURN_IFERR(ogsql_tranform_subselect_in_expr(statement, query, is_phase_1));
+    // transform subselect in 'from table'.
+    OG_RETURN_IFERR(ogsql_tranform_subselect_as_table(statement, query, is_phase_1));
+    SQL_RESTORE_NODE_STACK(statement);
+
+    return OG_SUCCESS;
+}
+
+// the first phase
+static status_t ogsql_optimize_logic_select_node_p1(sql_stmt_t *statement, select_node_t *node)
+{
+    if (node->type == SELECT_NODE_QUERY) {
+        return ogsql_transform_query(statement, node->query, OG_TRUE);
+    }
+    OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p1(statement, node->left));
+    return ogsql_optimize_logic_select_node_p1(statement, node->right);
+}
+
+// the last phase
+static status_t ogsql_optimize_logic_select_node_p2(sql_stmt_t *statement, select_node_t *node)
+{
+    if (node->type == SELECT_NODE_QUERY) {
+        return ogsql_transform_query(statement, node->query, OG_FALSE);
+    }
+    OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p2(statement, node->left));
+    return ogsql_optimize_logic_select_node_p2(statement, node->right);
+}
+
+status_t ogsql_optimize_logic_select(sql_stmt_t *statement, void *entry)
+{
+    select_node_t *node = ((sql_select_t *)entry)->root;
+    OG_RETURN_IFERR(ogsql_optimize_logic_select_node_p1(statement, node));
+    return ogsql_optimize_logic_select_node_p2(statement, node);
+}
+
+status_t ogsql_optimize_logic_insert(sql_stmt_t *statement, void *entry)
+{
+    sql_insert_t *insert = (sql_insert_t *)entry;
+    if (insert->select_ctx) {
+        return ogsql_optimize_logic_select(statement, insert->select_ctx);
+    }
+    return OG_SUCCESS;
+}
+
+status_t ogsql_optimize_logic_replace(sql_stmt_t *statement, void *entry)
+{
+    sql_replace_t *replace = (sql_replace_t *)entry;
+    return ogsql_optimize_logic_insert(statement, &replace->insert_ctx);
+}
+
+status_t ogsql_optimize_logic_delete(sql_stmt_t *statement, void *entry)
+{
+    sql_delete_t *delete = (sql_delete_t *)entry;
+    OG_RETURN_IFERR(ogsql_transform_query(statement, delete->query, OG_TRUE));
+    return ogsql_transform_query(statement, delete->query, OG_FALSE);
+}
+
+status_t ogsql_optimize_logic_update(sql_stmt_t *statement, void *entry)
+{
+    sql_update_t *update = (sql_update_t *)entry;
+    if (ogsql_transform_query(statement, update->query, OG_TRUE)) {
+        OG_LOG_DEBUG_ERR("Failed to transform update sql in phase 1.");
+        return OG_ERROR;
+    }
+
+    if (ogsql_transform_query(statement, update->query, OG_FALSE)) {
+        OG_LOG_DEBUG_ERR("Failed to transform update sql in phase 2.");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t ogsql_optimize_logic_merge(sql_stmt_t *statement, void *entry)
+{
+    sql_merge_t *merge = (sql_merge_t *)entry;
+    // transform subselect in expressions.
+    if (ogsql_tranform_subselect_in_expr(statement, merge->query, OG_TRUE)) {
+        OG_LOG_DEBUG_ERR("Failed to transform merge sql in expr in phase 1.");
+        return OG_ERROR;
+    }
+
+    // transform subselect in expressions.
+    if (ogsql_tranform_subselect_in_expr(statement, merge->query, OG_FALSE)) {
+        OG_LOG_DEBUG_ERR("Failed to transform merge sql in expr in phase 2.");
+        return OG_ERROR;
+    }
+
+    // transform subselect in 'from table', apply all rules.
+    if (ogsql_tranform_subselect_as_table(statement, merge->query, OG_FALSE)) {
+        OG_LOG_DEBUG_ERR("Failed to transform merge sql in subtable.");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t ogsql_optimize_logic_withas(sql_stmt_t *statement, void *entry)
+{
+    sql_withas_t *withas = (sql_withas_t *)entry;
+    uint32 i = 0;
+    if (!withas) {
+        return OG_SUCCESS;
+    }
+
+    while (i < withas->withas_factors->count) {
+        sql_withas_factor_t *item = (sql_withas_factor_t *)cm_galist_get(withas->withas_factors, i++);
+        if (ogsql_optimize_logic_select(statement, item->subquery_ctx)) {
+            return OG_ERROR;
+        }
+    }
     return OG_SUCCESS;
 }
 

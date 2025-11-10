@@ -328,7 +328,7 @@ static status_t sql_parse_dblink(sql_stmt_t *stmt, word_t *word, sql_text_t *dbl
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t sql_regist_distribute_rule(sql_stmt_t *stmt, sql_text_t *name, sql_table_entry_t **rule)
 {
     text_t curr_user = stmt->session->curr_user;
@@ -426,7 +426,7 @@ static status_t sql_convert_normal_table(sql_stmt_t *stmt, word_t *word, sql_tab
         return OG_SUCCESS;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (table->is_distribute_rule) {
         if (sql_regist_distribute_rule(stmt, &table->name, &table->entry) != OG_SUCCESS) {
             cm_set_error_loc(word->loc);
@@ -503,7 +503,7 @@ static status_t sql_try_parse_table_partition(sql_stmt_t *stmt, word_t *word, sq
     OG_RETURN_IFERR(lex_try_fetch(lex, "FOR", &result));
     query_table->part_info.type = result ? SPECIFY_PART_VALUE : SPECIFY_PART_NAME;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session) && query_table->part_info.type == SPECIFY_PART_VALUE) {
         OG_SRC_THROW_ERROR(word->text.loc, ERR_CAPABILITY_NOT_SUPPORT, "select from partition for");
         return OG_ERROR;
@@ -958,37 +958,64 @@ static status_t sql_parse_table_with_join(sql_stmt_t *stmt, sql_array_t *tables,
     return OG_SUCCESS;
 }
 
+static status_t og_parse_json_table_in_bracket(sql_stmt_t *statement, lex_t *lex,
+    word_t *current_word, word_t *next_word, sql_table_t *tbl, bool32 *is_early_return)
+{
+    OG_RETURN_IFERR(sql_parse_table_without_join(statement, tbl, lex, current_word, next_word));
+    if (is_eof_word(next_word)) {
+        *is_early_return = OG_TRUE;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_general_table_in_bracket(sql_stmt_t *statement, word_t *word, sql_table_t *tbl)
+{
+    OG_RETURN_IFERR(sql_func_as_query_table(statement, word, tbl));
+    bool32 pivot_tbl = OG_FALSE;
+    if (tbl->alias.len > 0) {
+        return OG_ERROR;
+    }
+    return sql_try_parse_table_attribute(statement, word, tbl, &pivot_tbl);
+}
+
 static status_t sql_create_query_table_in_bracket(sql_stmt_t *stmt, sql_array_t *tables, sql_join_assist_t *join_assist,
     sql_table_t *query_table, word_t *word)
 {
     lex_t *lex = stmt->session->lex;
-    word_t first_word;
-    word_t second_word;
+    word_t current_word;
+    word_t next_word;
     OG_RETURN_IFERR(lex_push(lex, &word->text));
-    OG_RETURN_IFERR(lex_fetch(lex, &first_word));
-    bool32 result = (first_word.id == KEY_WORD_SELECT || first_word.id == KEY_WORD_WITH);
-    if (!result && sql_is_subquery_table(stmt, word, &result) != OG_SUCCESS) {
-        lex_pop(lex);
-        return OG_ERROR;
+    OG_RETURN_IFERR(lex_fetch(lex, &current_word));
+    bool32 is_select_with = is_slct_with_word(&current_word);
+    if (!is_select_with) {
+        if (sql_is_subquery_table(stmt, word, &is_select_with) != OG_SUCCESS) {
+            lex_pop(lex);
+            return OG_ERROR;
+        }
     }
-
-    if (result) {
+    if (is_select_with) {
         lex_pop(lex);
         return sql_bracket_as_query_table(stmt, word, query_table);
-    } else {
-        if (IS_VARIANT(&first_word) || first_word.id == KEY_WORD_JSON_TABLE) {
-            if (sql_parse_table_without_join(stmt, query_table, lex, &first_word, &second_word) != OG_SUCCESS) {
-                lex_pop(lex);
-                return OG_ERROR;
-            }
-            if (second_word.type == WORD_TYPE_EOF) {
-                lex_pop(lex);
-                return OG_SUCCESS;
-            }
-        }
-        lex_pop(lex);
-        return sql_parse_table_with_join(stmt, tables, query_table, word, join_assist);
     }
+    
+    bool32 is_early_return = OG_FALSE;
+    status_t ret = OG_SUCCESS;
+    if (IS_VARIANT(&current_word) || is_json_table_word(&current_word)) {
+        ret = og_parse_json_table_in_bracket(stmt, lex, &current_word, &next_word, query_table, &is_early_return);
+        if (ret != OG_SUCCESS || is_early_return) {
+            lex_pop(lex);
+            return ret;
+        }
+    }
+
+    if (is_table_word(&current_word)) {
+        ret = og_parse_general_table_in_bracket(stmt, &current_word, query_table);
+        lex_pop(lex);
+        return ret;
+    }
+
+    lex_pop(lex);
+    return sql_parse_table_with_join(stmt, tables, query_table, word, join_assist);
 }
 
 static void sql_init_json_table_info(sql_stmt_t *stmt, json_table_info_t *json_info)
@@ -1096,7 +1123,7 @@ static status_t sql_try_parse_table_version(sql_stmt_t *stmt, sql_table_snapshot
         return OG_SUCCESS;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_SRC_THROW_ERROR(word->text.loc, ERR_CAPABILITY_NOT_SUPPORT, "AS OF");
         return OG_ERROR;
@@ -1430,7 +1457,7 @@ status_t sql_parse_query_tables(sql_stmt_t *stmt, sql_query_t *sql_query, word_t
         table->id = sql_query->tables.count - 1;
         table->rs_nullable = OG_FALSE;
         table->ineliminable = OG_FALSE;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         table->is_ancestor = 0;
 #endif
 

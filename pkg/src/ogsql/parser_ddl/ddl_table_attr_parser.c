@@ -909,6 +909,12 @@ status_t sql_parse_table_attrs(sql_stmt_t *stmt, lex_t *lex, knl_table_def_t *ta
 
             case KEY_WORD_CRMODE:
                 status = sql_parse_crmode(lex, word, &table_def->cr_mode);
+                if ((table_def->type == TABLE_TYPE_SESSION_TEMP || table_def->type == TABLE_TYPE_TRANS_TEMP)
+                    && table_def->cr_mode == CR_PAGE) {
+                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+                        "Temporary tables do not support page CR_MODE");
+                    return OG_ERROR;
+                }
                 break;
 
             case KEY_WORD_FORMAT:

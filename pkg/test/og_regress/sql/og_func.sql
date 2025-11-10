@@ -1,0 +1,10 @@
+SELECT TIMESTAMPADD (WEEK, 2, '2025-11-25');
+SELECT TIMESTAMPADD (DAY, MOD(1,20), '2025-11-25 14:14:14');
+SELECT CURRENT_TIMESTAMP(-1);
+SELECT TO_NUMBER('10E+128');
+SELECT IF(concat_ws('-', 'a', 'b', 'c'), 'cond is true', 'cond is false');
+SELECT IF(concat_ws('-', 'a', 'b', 'c') = 'a-b-c', 'cond is true', 'cond is false');
+drop table if exists t_null_if;
+create table t_null_if(a int, b blob, c clob);
+select nullif(b, to_blob('')) from t_null_if;
+drop table if exists t_null_if;

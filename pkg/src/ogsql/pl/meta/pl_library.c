@@ -170,13 +170,6 @@ static status_t pl_drop_library_internal(knl_session_t *session, text_t *owner, 
     cursor = knl_push_cursor(session);
     cursor->row = (row_head_t *)cursor->buf;
 
-    // todo: re-compile pl_clear_sym_cache
-    /*    if (pl_clear_sym_cache((knl_handle_t)session, library->uid, library->name, library->path) != OG_SUCCESS) {
-            CM_RESTORE_STACK(session->stack);
-            return OG_ERROR;
-        }
-    */
-
     if (db_drop_object_privs(session, library->uid, library->name, OBJ_TYPE_LIBRARY) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);
         return OG_ERROR;

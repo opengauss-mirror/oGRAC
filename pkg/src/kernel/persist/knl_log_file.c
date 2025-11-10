@@ -235,11 +235,6 @@ status_t db_alter_add_logfile(knl_session_t *session, knl_alterdb_def_t *def)
         dtc_my_ctrl(session)->log_hwm += change_num;
         logfile_set->log_count++;
         logfile_set->logfile_hwm += change_num;
-        if (kernel->attr.clustered) {
-            dtc_node_ctrl_t *ctrl = dtc_get_ctrl(session, kernel->id);
-            ctrl->log_count++;
-            ctrl->log_hwm++;
-        }
 
         LOG_SET_DROPPED(logfile->ctrl->flg);
 

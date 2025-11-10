@@ -138,7 +138,7 @@ Negative numbers from -1 x 10^-130 to 9.999999 x 10^125 with up to 38 significan
 Considering that 40-bit significant numbers, exponential adjustment and Newton iteration accuracy,
 DEC2_CELL_SIZE define 22
 */
-#define DEC2_CELL_SIZE (uint8)36
+#define DEC2_CELL_SIZE (uint8)25
 #define DEC2_MAX_EXP_OFFSET DEC2_CELL_SIZE
 #define DEC2_MAX_LEN (uint8)(DEC2_CELL_SIZE + 1)
 
@@ -218,39 +218,6 @@ static inline void cm_dec2_copy_payload(payload_t *dst, const payload_t *src, ui
     int nums = len - 1; // len is greater than 1
 
     switch (nums) {
-        case 36: /* = DEC2_CELL_SIZE */
-            dst->cells[35] = src->cells[35];
-            /* fall-through */
-        case 35:
-            dst->cells[34] = src->cells[34];
-            /* fall-through */
-        case 34:
-            dst->cells[33] = src->cells[33];
-            /* fall-through */
-        case 33:
-            dst->cells[32] = src->cells[32];
-            /* fall-through */
-        case 32:
-            dst->cells[31] = src->cells[31];
-            /* fall-through */
-        case 31:
-            dst->cells[30] = src->cells[30];
-            /* fall-through */
-        case 30:
-            dst->cells[29] = src->cells[29];
-            /* fall-through */
-        case 29:
-            dst->cells[28] = src->cells[28];
-            /* fall-through */
-        case 28:
-            dst->cells[27] = src->cells[27];
-            /* fall-through */
-        case 27:
-            dst->cells[26] = src->cells[26];
-            /* fall-through */
-        case 26:
-            dst->cells[25] = src->cells[25];
-            /* fall-through */
         case 25:
             dst->cells[24] = src->cells[24];
             /* fall-through */

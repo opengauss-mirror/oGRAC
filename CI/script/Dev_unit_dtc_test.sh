@@ -18,7 +18,7 @@ kill_ogracdb()
     sleep 2
 }
 
-init_ct_regress()
+init_og_regress()
 {
     echo "=============== Initialize the Regression Program =============="
     kill_ogracdb
@@ -109,9 +109,9 @@ cp_ograc_bin()
 cp_ograc_lib()
 {
     mkdir -p $1/lib
-    cp ${code_path}/output/lib/libzeclient.so $1/lib/
-    cp ${code_path}/output/lib/libzecommon.so $1/lib/
-    cp ${code_path}/output/lib/libzeprotocol.so $1/lib/
+    cp ${code_path}/output/lib/libogclient.so $1/lib/
+    cp ${code_path}/output/lib/libogcommon.so $1/lib/
+    cp ${code_path}/output/lib/libogprotocol.so $1/lib/
 }
 
 install_ogracdb()
@@ -189,7 +189,7 @@ make_code()
     cd ${code_path}/build
     source ./common.sh
     cd ${code_path}/build/pkg/test/unit_test/testcase/
-    strip -N main ${OGRACDB_LIB}/libzeserver.a 2>&1
+    strip -N main ${OGRACDB_LIB}/libogserver.a 2>&1
     make -sj 8 2>&1 
     cd ${code_path}/build/pkg/test/unit_test/ut/mes
     make -sj 8 >> ${GRUN_LOG} 2>&1
@@ -250,7 +250,7 @@ main()
         fi
     done
 
-    init_ct_regress
+    init_og_regress
     make_code
     install_ogracdb
     run_dtc_test

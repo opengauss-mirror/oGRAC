@@ -195,7 +195,6 @@ static status_t sql_parse_auto_extend_on(device_type_t type, sql_stmt_t *stmt, k
     if (next_sized == OG_TRUE) {
         OG_RETURN_IFERR(
             lex_expected_fetch_size(lex, (int64 *)(&tmp_next_size), OG_MIN_AUTOEXTEND_SIZE, OG_INVALID_INT64));
-        OG_RETURN_IFERR(cm_check_device_size(type, tmp_next_size));
     } else {
         /* "NEXTSIZE" not specified, set 0, and knl_datafile will init this value by DEFALUD VAULE */
         tmp_next_size = 0;
@@ -209,7 +208,6 @@ static status_t sql_parse_auto_extend_on(device_type_t type, sql_stmt_t *stmt, k
         if (max_ulimited != OG_TRUE) {
             OG_RETURN_IFERR(
                 lex_expected_fetch_size(lex, (int64 *)(&tmp_max_size), OG_MIN_AUTOEXTEND_SIZE, OG_INVALID_INT64));
-            OG_RETURN_IFERR(cm_check_device_size(type, tmp_max_size));
             if (tmp_max_size > ((int64)OG_MAX_DATAFILE_PAGES * page_size)) {
                 OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
                     "\"MAXSIZE\" specified in autoextend clause cannot "
@@ -307,7 +305,6 @@ status_t sql_parse_datafile(sql_stmt_t *stmt, knl_device_def_t *dev_def, word_t 
     OG_RETURN_IFERR(status);
 
     device_type_t type = cm_device_type(dev_def->name.str);
-    OG_RETURN_IFERR(cm_check_device_size(type, dev_def->size));
 
     OG_RETURN_IFERR(lex_try_fetch(lex, "REUSE", &reuse_specified));
     if (reuse_specified == OG_TRUE) {
@@ -317,6 +314,13 @@ status_t sql_parse_datafile(sql_stmt_t *stmt, knl_device_def_t *dev_def, word_t 
     }
 
     OG_RETURN_IFERR(lex_try_fetch(lex, "COMPRESS", &dev_def->compress));
+    
+    // not allowed COMPRESS datafile for now
+    if (dev_def->compress) {
+        OG_SRC_THROW_ERROR_EX(word->text.loc, ERR_SQL_SYNTAX_ERROR,
+                              "not allowed build compress datafile in cluster mode");
+        return OG_ERROR;
+    }
 
     /*
      * read the next word.

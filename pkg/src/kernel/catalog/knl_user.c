@@ -184,7 +184,7 @@ static status_t user_check_def_space(knl_session_t *session, knl_user_def_t *def
         }
 
         if (IS_SWAP_SPACE(space)) {
-            OG_THROW_ERROR(ERR_DEFAULT_SPACE_TYPE_INVALID);
+            OG_THROW_ERROR(ERR_DEFAULT_SPACE_TYPE_INVALID, T2S(&space_name));
             return OG_ERROR;
         }
 
@@ -977,7 +977,7 @@ static status_t user_prepare_alter(knl_session_t *session, knl_user_def_t *def, 
         }
 
         if (!SPACE_IS_LOGGING(space)) {
-            OG_THROW_ERROR(ERR_DEFAULT_SPACE_TYPE_INVALID);
+            OG_THROW_ERROR(ERR_DEFAULT_SPACE_TYPE_INVALID, T2S(&space_name));
             return OG_ERROR;
         }
 
@@ -1097,7 +1097,7 @@ static status_t user_prepare_alter(knl_session_t *session, knl_user_def_t *def, 
 
     return OG_SUCCESS;
 }
-static status_t db_check_ddm_by_user(knl_session_t *session, uint32 uid)
+static status_t db_check_ddm_by_user(knl_session_t *session, uint32 uid, bool32 purge)
 {
     knl_cursor_t *cursor = NULL;
     CM_SAVE_STACK(session->stack);
@@ -1105,7 +1105,7 @@ static status_t db_check_ddm_by_user(knl_session_t *session, uint32 uid)
     knl_scan_key_t *l_key = NULL;
     knl_scan_key_t *r_key = NULL;
 
-    knl_open_sys_cursor(session, cursor, CURSOR_ACTION_SELECT, SYS_DDM_ID, IX_SYS_DDM_001_ID);
+    knl_open_sys_cursor(session, cursor, CURSOR_ACTION_DELETE, SYS_DDM_ID, IX_SYS_DDM_001_ID);
     knl_init_index_scan(cursor, OG_FALSE);
     l_key = &cursor->scan_range.l_key;
     knl_set_scan_key(INDEX_DESC(cursor->index), l_key, OG_TYPE_INTEGER, &uid, sizeof(uint32),
@@ -1122,10 +1122,20 @@ static status_t db_check_ddm_by_user(knl_session_t *session, uint32 uid)
         CM_RESTORE_STACK(session->stack);
         return OG_ERROR;
     }
-    if (cursor->eof == OG_FALSE) {
+    if (cursor->eof == OG_FALSE && !purge) {
         CM_RESTORE_STACK(session->stack);
         OG_THROW_ERROR_EX(ERR_INVALID_OPERATION, ", the user has rule, please drop rule firstly.");
         return OG_ERROR;
+    }
+    while (cursor->eof == OG_FALSE) {
+        if (knl_internal_delete(session, cursor) != OG_SUCCESS) {
+            CM_RESTORE_STACK(session->stack);
+            return OG_ERROR;
+        }
+        if (knl_fetch(session, cursor) != OG_SUCCESS) {
+            CM_RESTORE_STACK(session->stack);
+            return OG_ERROR;
+        }
     }
     CM_RESTORE_STACK(session->stack);
     return OG_SUCCESS;
@@ -1161,7 +1171,7 @@ status_t user_drop_core(knl_session_t *session, dc_user_t *user, bool32 purge)
     OG_LOG_RUN_INF("[DB] Drop user lock user success.");
     // if user has ddm policy, please drop policy first
     cm_str2text(user->desc.name, &username);
-    if (db_check_ddm_by_user(session, uid) != OG_SUCCESS) {
+    if (db_check_ddm_by_user(session, uid, purge) != OG_SUCCESS) {
         dc_unlock_user(session, &username);
         return OG_ERROR;
     }

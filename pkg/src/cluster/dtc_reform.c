@@ -65,10 +65,6 @@ status_t init_dtc_rc(void)
 
 void free_dtc_rc(void)
 {
-    // TODO: complete shutdown normal function later
-    // shutdown_context_t *ogx = &g_instance->shutdown_ctx;
-    // bool32 is_shutdown_abort = (ogx->phase == SHUTDOWN_PHASE_INPROGRESS && ogx->mode == SHUTDOWN_MODE_ABORT);
-
     cm_close_thread(&g_drc_res_ctx.gc_thread);
 
     if (g_rc_ctx == NULL || g_rc_ctx->started == OG_FALSE) {

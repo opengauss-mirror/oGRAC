@@ -91,6 +91,7 @@ void srv_reset_session(session_t *session, cs_pipe_t *pipe)
     session->knl_session.interactive_altpwd = OG_FALSE;
     cm_init_session_nlsparams(&(session->nls_params));
     session->triggers_disable = OG_FALSE;
+    session->if_in_triggers = OG_FALSE;
     session->switched_schema = OG_FALSE;
     session->nologging_enable = OG_FALSE;
     session->optinfo_enable = OG_FALSE;
@@ -394,7 +395,7 @@ static void srv_init_new_session(cs_pipe_t *pipe, session_t *session)
     session->interactive_info.response_time = 0;
     OG_INIT_SPIN_LOCK(session->map_lock);
     cm_oamap_init_mem(&session->cursor_map);
-    cm_oamap_init(&session->cursor_map, 0, cm_oamap_ptr_compare);
+    cm_oamap_init(&session->cursor_map, 0, cm_oamap_ptr_compare, NULL, NULL);
     session->total_cursor_num = 0;
     session->query_id = OG_INVALID_INT64;
 
@@ -414,6 +415,7 @@ static void srv_init_new_session(cs_pipe_t *pipe, session_t *session)
     session->stmts_cnt = 0;
     session->active_stmts_cnt = 0;
     session->triggers_disable = OG_FALSE;
+    session->if_in_triggers = OG_FALSE;
     session->switched_schema = OG_FALSE;
     session->nologging_enable = OG_FALSE;
     session->optinfo_enable = OG_FALSE;

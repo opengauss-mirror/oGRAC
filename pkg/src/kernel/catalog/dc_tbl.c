@@ -468,7 +468,7 @@ static status_t dc_load_external_table(knl_session_t *session, knl_cursor_t *cur
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 static status_t dc_convert_table_distribute_strategy(knl_session_t *session, knl_cursor_t *cursor, dc_entity_t *entity)
 {
@@ -603,7 +603,7 @@ static bool32 dc_nologging_is_ready(knl_session_t *session, dc_user_t *user, knl
     return OG_TRUE;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t dc_load_distribute_rule_entity_ex(knl_session_t *session, knl_cursor_t *cursor, uint32 uid,
     uint32 oid, dc_entity_t *entity)
 {
@@ -832,7 +832,7 @@ dc_entity_t *dc_alloc_entity_internal(knl_session_t *session, dc_user_t *user, u
 static status_t dc_load_entity_internal(knl_session_t *session, dc_user_t *user, uint32 oid, dc_entity_t *entity, dc_entry_t
     *entry)
 {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (entry->type == DICT_TYPE_DISTRIBUTE_RULE) {
         if (dc_load_distribute_rule_entity(session, user, oid, entity) != OG_SUCCESS) {
             mctx_destroy(entity->memory);
@@ -1367,7 +1367,7 @@ status_t dc_load_table_entity(knl_session_t *session, dc_user_t *user, uint32 oi
         return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (dc_convert_table_distribute_strategy(session, cursor, entity) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);
         return OG_ERROR;
@@ -3813,7 +3813,7 @@ status_t dc_init_synonym_entries(knl_session_t *session, dc_context_t *ogx, uint
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t dc_convert_distribute_rule_desc(knl_cursor_t *cursor, knl_table_desc_t *rule, dc_entity_t *entity,
     knl_session_t *session)
 {

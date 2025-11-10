@@ -1,0 +1,39 @@
+
+
+SQL> create or replace type def_og_number is table of number;
+  2 /
+
+Succeed.
+
+SQL> select * from table(cast(null::int[] as def_og_number));
+
+COLUMN_VALUE                            
+----------------------------------------
+
+0 rows fetched.
+
+SQL> select * from table(cast(null as def_og_number));
+
+OG-00606, Inconsistent datatypes, expected PLSQL INDEX TABLE - got VARCHAR
+SQL> create or replace type def_og_integer is table of Integer;
+  2 /
+
+Succeed.
+
+SQL> select * from table (cast(null::int[] as def_og_integer));
+
+COLUMN_VALUE
+------------
+
+0 rows fetched.
+
+SQL> drop type def_og_number;
+
+Succeed.
+
+SQL> drop type def_og_integer;
+Succeed.
+
+
+
+

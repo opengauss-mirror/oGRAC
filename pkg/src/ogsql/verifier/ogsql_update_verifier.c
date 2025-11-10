@@ -272,6 +272,13 @@ status_t sql_verify_upd_object_pairs(sql_verifier_t *verif, sql_update_t *update
 
     for (uint32 i = 0; i < update_ctx->objects->count; i++) {
         upd_ob = (upd_object_t *)cm_galist_get(update_ctx->objects, i);
+        for (uint32 j = 0; j < i; j++) {
+            upd_object_t *prev_upd_obj = (upd_object_t *)cm_galist_get(update_ctx->objects, j);
+            if (DC_ENTITY(&upd_ob->table->entry->dc) == DC_ENTITY(&prev_upd_obj->table->entry->dc)) {
+                OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "multi update", "same table");
+                return OG_ERROR;
+            }
+        }
         if (sql_update_column_value_pairs(verif->stmt, upd_ob->table, upd_ob->pairs) != OG_SUCCESS) {
             return OG_ERROR;
         }

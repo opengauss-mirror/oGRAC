@@ -628,6 +628,41 @@ def gen_reg_string(text):
     return reg_string
 
 
+#Exec dss cms
+def exec_dsscmd(cmd):
+    return_code, stdout, stderr = exec_popen(reg_cmd, timeout=TIMEOUT)
+    if return_code:
+        output = stdout + stderr
+        err_msg = "Reghl node cmd[%s] exec failed, details:%s" % (reg_cmd, output)
+        LOGGER.error(err_msg)
+
+
+#Unreg dss LUN
+def unreg_nodes(json_data_deploy):
+    """
+    unreg all nodes by dss
+    input: NA
+    output: NA
+    """
+
+    deploy_mode = json_data_deploy.get('deploy_mode', '')
+    if deploy_mode != "dss":
+        return
+    
+    node_id = json_data_deploy.get('node_id', '').strip()
+    if deploy_mode != "0":
+        return
+    LOGGER.info("Unreg all nodes by dss")
+    reg_cmd = "source ~/.bashrc && %s/bin/dsscmd reghl -D %s" % (DSS_HOME, DSS_HOME)
+    unreg_cmd = "source ~/.bashrc && %s/bin/dsscmd unreghl -D %s" % (DSS_HOME, DSS_HOME)
+    kick_1_cmd = "source ~/.bashrc && %s/bin/dsscmd kickh -i 1 -D %s" % (DSS_HOME, DSS_HOME)
+    LOGGER.info("reg current node by dss")
+    exec_dsscmd(reg_cmd)
+    LOGGER.info("kick other nodes by dss")
+    exec_dsscmd(kick_1_cmd)
+    LOGGER.info("unreg current nodes by dss")
+    exec_dsscmd(unreg_cmd)
+
 # Clear environment variables
 
 
@@ -1083,18 +1118,20 @@ class oGRAC(object):
         LOGGER.info("uninstall step 1")
         parse_parameter()
         LOGGER.info("uninstall step 2")
-        clean_environment()
+        unreg_nodes(json_data_deploy)
         LOGGER.info("uninstall step 3")
-        clean_archive_dir(json_data_deploy)
+        clean_environment()
         LOGGER.info("uninstall step 4")
+        clean_archive_dir(json_data_deploy)
+        LOGGER.info("uninstall step 5")
 
         start_parameters = {'start_status': 'default', 'db_create_status': 'default'}
         flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
         with os.fdopen(os.open(OGRAC_START_STATUS_FILE, flags, modes), 'w') as load_fp:
             json.dump(start_parameters, load_fp)
-        LOGGER.info("uninstall step 5")
-        clean_install_path()
         LOGGER.info("uninstall step 6")
+        clean_install_path()
+        LOGGER.info("uninstall step 7")
         log("oGRACd was successfully removed from your computer, "
             "for more message please see %s." % g_opts.log_file)
 

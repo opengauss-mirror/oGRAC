@@ -85,7 +85,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 cc_library (
-    name = "zetms",
+    name = "ogtms",
     srcs = [
         "tms_monitor.c",
         "tms_sig_calltrace.c",

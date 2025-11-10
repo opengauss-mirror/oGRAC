@@ -195,25 +195,25 @@ status_t sql_parse_primary_unique_cons(sql_stmt_t *stmt, lex_t *lex, constraint_
     return OG_ERROR;
 }
 
-static status_t sql_fetch_column_in_expr(sql_stmt_t *stmt, expr_node_t *node, void *context)
+static status_t sql_fetch_column_in_expr(visit_assist_t *va, expr_node_t **node)
 {
-    sql_walker_t *walker = (sql_walker_t *)context;
-    text_t *new_col = NULL;
-    text_t *col = NULL;
-
-    if (node->type != EXPR_NODE_COLUMN && node->type != EXPR_NODE_DIRECT_COLUMN) {
+    if ((*node)->type != EXPR_NODE_COLUMN && (*node)->type != EXPR_NODE_DIRECT_COLUMN) {
         return OG_SUCCESS;
     }
 
+    sql_walker_t *walker = (sql_walker_t *)va->param0;
+    text_t *new_col = NULL;
+    text_t *col = NULL;
+
     for (uint32 i = 0; i < walker->columns->count; i++) {
         col = (text_t *)cm_galist_get(walker->columns, i);
-        if (!cm_compare_text(col, &node->word.column.name.value)) {
+        if (!cm_compare_text(col, &(*node)->word.column.name.value)) {
             return OG_SUCCESS;
         }
     }
 
     OG_RETURN_IFERR(cm_galist_new(walker->columns, sizeof(text_t), (void **)&new_col));
-    *new_col = node->word.column.name.value;
+    *new_col = (*node)->word.column.name.value;
 
     return OG_SUCCESS;
 }
@@ -229,6 +229,7 @@ static status_t sql_verify_outline_check(sql_stmt_t *stmt, knl_table_def_t *verf
     verf.stmt = stmt;
     verf.is_check_cons = OG_TRUE;
     verf.table_def = verf_data;
+    verf.create_table_define = OG_TRUE;
 
     verf.excl_flags = SQL_EXCL_AGGR | SQL_EXCL_STAR | SQL_EXCL_PRIOR | SQL_EXCL_SUBSELECT | SQL_EXCL_JOIN |
         SQL_EXCL_BIND_PARAM | SQL_EXCL_ROWNUM | SQL_EXCL_ROWID | SQL_EXCL_LOB_COL | SQL_EXCL_SEQUENCE | SQL_EXCL_CASE |
@@ -248,7 +249,10 @@ static status_t sql_verify_outline_check(sql_stmt_t *stmt, knl_table_def_t *verf
     walker.context = stmt->context;
     walker.stmt = stmt;
     walker.columns = &cons_def->columns;
-    OG_RETURN_IFERR(sql_cond_tree_walker(stmt, cond, sql_fetch_column_in_expr, (void *)&walker));
+    visit_assist_t v_ast = { 0 };
+    sql_init_visit_assist(&v_ast, stmt, NULL);
+    v_ast.param0 = (void*) &walker;
+    OG_RETURN_IFERR(visit_cond_node(&v_ast, cond->root, sql_fetch_column_in_expr));
     save_check_text = check->text;
     return sql_copy_text(stmt->context, &save_check_text, &check->text);
 }
@@ -262,6 +266,7 @@ static status_t sql_verify_inline_check(sql_stmt_t *stmt, knl_column_def_t *def,
     verf.table_def = (knl_table_def_t *)def->table;
     verf.column = def;
     verf.is_check_cons = OG_TRUE;
+    verf.create_table_define = OG_TRUE;
 
     verf.excl_flags = SQL_EXCL_AGGR | SQL_EXCL_STAR | SQL_EXCL_PRIOR | SQL_EXCL_SUBSELECT | SQL_EXCL_JOIN |
         SQL_EXCL_BIND_PARAM | SQL_EXCL_ROWNUM | SQL_EXCL_ROWID | SQL_EXCL_LOB_COL | SQL_EXCL_SEQUENCE | SQL_EXCL_CASE |

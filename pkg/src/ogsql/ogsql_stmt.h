@@ -42,7 +42,7 @@
 #include "cm_log.h"
 #include "cm_error.h"
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 // for online update
 typedef enum en_stmt_check_status {
     STMT_CHECK_STATUS_ERR = 0,
@@ -82,7 +82,7 @@ typedef enum en_stmt_status {
     STMT_STATUS_EXECUTED,
     STMT_STATUS_FETCHING,
     STMT_STATUS_FETCHED,
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     STMT_STATUS_PRE_PARAMS, // preprocessed params in CN
 #endif
 } stmt_status_t;
@@ -109,7 +109,7 @@ typedef struct st_sql_lob_info1 {
     uint8 reversed[3];
 } sql_lob_info_ex_t;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef struct st_shd_lob_info {
     uint32 size;
     uint32 offset;
@@ -212,6 +212,7 @@ typedef struct st_sql_stmt {
     date_t last_sql_active_time; // last execute sql return result time of stmt
     knl_scn_t query_scn;         // query scn for current stmt
     uint64 ssn;                  // sql sequence number in session used for temporary table visibility judgment.
+    uint64 xid;
     uint32 xact_ssn;             // sql sequence number in transaction, in sub-stmt we force increase this whether
     knl_scn_t gts_scn;
     knl_scn_t sync_scn;
@@ -330,9 +331,11 @@ typedef enum en_cursor_type {
 
 #define OGSQL_ROOT_CURSOR(stmt) ((struct st_sql_cursor *)(stmt)->cursor_stack.items[0])
 #define OGSQL_CURR_CURSOR(stmt)                                                                                 \
-    (((struct st_sql_cursor *)OBJ_STACK_CURR(&(stmt)->cursor_stack))->connect_data.cur_level_cursor == NULL ? \
+    (((struct st_sql_cursor *)OBJ_STACK_CURR(&(stmt)->cursor_stack))->is_group_insert ||                        \
+     ((struct st_sql_cursor *)OBJ_STACK_CURR(&(stmt)->cursor_stack))->connect_data.cur_level_cursor == NULL ? \
         (struct st_sql_cursor *)OBJ_STACK_CURR(&(stmt)->cursor_stack) :                                       \
         ((struct st_sql_cursor *)OBJ_STACK_CURR(&(stmt)->cursor_stack))->connect_data.cur_level_cursor)
+
 #define SQL_CURSOR_PUSH(stmt, cursor) obj_stack_push(&(stmt)->cursor_stack, cursor)
 #define SQL_CURSOR_POP(stmt) (void)obj_stack_pop(&(stmt)->cursor_stack)
 
@@ -558,6 +561,7 @@ status_t sql_alloc_stmt(session_t *session, sql_stmt_t **statement);
 void sql_free_stmt(sql_stmt_t *stmt);
 void sql_set_scn(sql_stmt_t *stmt);
 void sql_set_ssn(sql_stmt_t *stmt); // SSN = SQL SEQUENCE NUMBER
+void ogsql_assign_transaction_id(sql_stmt_t *stmt, uint64 *xid);
 status_t sql_parse_job(sql_stmt_t *stmt, text_t *sql, source_location_t *loc);
 status_t sql_reparse(sql_stmt_t *stmt);
 status_t sql_prepare(sql_stmt_t *stmt);

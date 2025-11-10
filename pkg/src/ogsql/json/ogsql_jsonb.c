@@ -390,14 +390,15 @@ status_t sql_valiate_jsonb_format(sql_stmt_t *stmt, variant_t *value)
 {
     json_assist_t json_ass;
     CM_POINTER2(stmt, value);
+    variant_t va = *value;
 
     JSON_ASSIST_INIT(&json_ass, stmt);
 
     /* 1. flatten data into a continues memory */
-    OG_RETURN_IFERR(sql_exec_flatten_to_binary(&json_ass, value));
+    OG_RETURN_IFERR(sql_exec_flatten_to_binary(&json_ass, &va));
 
     /* valiate the format */
-    OG_RETURN_IFERR(jsonb_format_valiate_core(&json_ass, value));
+    OG_RETURN_IFERR(jsonb_format_valiate_core(&json_ass, &va));
 
     JSON_ASSIST_DESTORY(&json_ass);
 

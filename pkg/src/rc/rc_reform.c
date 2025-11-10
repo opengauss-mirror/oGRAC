@@ -295,7 +295,6 @@ static bool32 rc_master_stat_changed(void)
         rc_refresh_cms_abort_ref_map(g_rc_ctx->info.alive_bitmap);
     }
 
-    // TODO:  cluster is quiet, but not steady
     if (g_rc_ctx->info.have_error ||
         (RC_REFORM_NOT_IN_PROGRESS && !g_rc_ctx->info.cluster_steady && g_rc_ctx->info.fetch_cms_time == 0)) {
         OG_LOG_RUN_INF("[RC] cluster stat changed, have_error(%u), reform status(%u), cluster_steady(%u), "
@@ -362,7 +361,6 @@ static void rc_refresh_cluster_info(void)
 
     // refresh master info from cms, instead of master_node(which maybe gone)
     for (;;) {
-        // TODO: optimise with CMS, reduce the traffic load
         if (cms_get_res_stat_list1(g_rc_ctx->res_type, &tmp_current_stat)) {
             cm_sleep(10);
             continue;
@@ -629,7 +627,6 @@ void free_cms_rc(bool32 force)
     }
 
     if (!force) {
-        // TODO another node abort when current node shutdown normal
         uint64_t current_version = g_rc_ctx->info.next_version;
         RC_RETRY_IF_ERROR(cms_set_res_work_stat(RC_LEAVING));
 

@@ -47,7 +47,7 @@
 #include "ogsql_delete_parser.h"
 #include "ogsql_replace_parser.h"
 #include "ogsql_merge_parser.h"
-
+#include "ogsql_cache.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -115,7 +115,7 @@ static status_t sql_create_dml(sql_stmt_t *stmt, sql_text_t *sql, key_wid_t key_
     OG_RETURN_IFERR(sql_create_dml_context(stmt, sql, key_wid));
     OG_RETURN_IFERR(sql_verify(stmt));
     check_table_stats(stmt);
-
+    OG_RETURN_IFERR(ogsql_optimize_logically(stmt));
     return sql_create_dml_plan(stmt);
 }
 
@@ -220,27 +220,6 @@ void sql_parse_set_context_procinfo(sql_stmt_t *stmt)
     }
 }
 
-static void sql_enrich_context_for_uncached(sql_stmt_t *stmt, timeval_t *timeval_begin)
-{
-    timeval_t timeval_end;
-    sql_init_context_stat(&stmt->context->stat);
-    stmt->context->stat.parse_calls = 1;
-    stmt->session->stat.hard_parses++;
-
-    stmt->context->stat.last_load_time = g_timer()->now;
-    (void)cm_gettimeofday(&timeval_end);
-    stmt->context->stat.parse_time = (uint64)TIMEVAL_DIFF_US(timeval_begin, &timeval_end);
-    stmt->context->stat.last_active_time = stmt->context->stat.last_load_time;
-    stmt->context->module_kind = SESSION_CLIENT_KIND(stmt->session);
-    stmt->context->ctrl.ref_count = 0;
-    sql_parse_set_context_procinfo(stmt);
-    if (stmt->context->ctrl.memory != NULL) {
-        cm_atomic_add(&g_instance->library_cache_info[stmt->lang_type].pins,
-            (int64)stmt->context->ctrl.memory->pages.count);
-        cm_atomic_inc(&g_instance->library_cache_info[stmt->lang_type].reloads);
-    }
-}
-
 status_t sql_parse_dml_directly(sql_stmt_t *stmt, key_wid_t key_wid, sql_text_t *sql_text)
 {
     OG_RETURN_IFERR(sql_alloc_context(stmt));
@@ -254,7 +233,7 @@ status_t sql_parse_dml_directly(sql_stmt_t *stmt, key_wid_t key_wid, sql_text_t 
 
     OG_RETURN_IFERR(sql_create_dml_currently(stmt, sql_text, key_wid));
 
-    sql_enrich_context_for_uncached(stmt, &timeval_begin);
+    og_update_context_stat_uncached(stmt, &timeval_begin);
     return OG_SUCCESS;
 }
 
@@ -332,7 +311,7 @@ status_t sql_parse_anonymous_directly(sql_stmt_t *stmt, word_t *leader, sql_text
     stmt->context->ctrl.ref_count = 0;
     if (stmt->context->ctrl.memory != NULL) {
         cm_atomic_add(&g_instance->library_cache_info[stmt->lang_type].pins,
-            (int64)stmt->context->ctrl.memory->pages.count);
+                      (int64)stmt->context->ctrl.memory->pages.count);
         cm_atomic_inc(&g_instance->library_cache_info[stmt->lang_type].reloads);
     }
     return OG_SUCCESS;
@@ -347,7 +326,11 @@ status_t sql_parse_dml(sql_stmt_t *stmt, key_wid_t key_wid)
 
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
     uint32 special_word = sql_has_special_word(stmt, &stmt->session->lex->text.value);
-    OG_RETURN_IFERR(sql_parse_dml_directly(stmt, key_wid, &stmt->session->lex->text));
+    if (SQL_HAS_NONE != special_word || stmt->session->disable_soft_parse) {
+        OG_RETURN_IFERR(sql_parse_dml_directly(stmt, key_wid, &stmt->session->lex->text));
+    } else {
+        OG_RETURN_IFERR(og_find_then_parse_dml(stmt, key_wid, special_word));
+    }
     stmt->context->has_ltt = (special_word & SQL_HAS_LTT);
 
     return OG_SUCCESS;
@@ -415,7 +398,7 @@ status_t sql_parse_view_subselect(sql_stmt_t *stmt, text_t *sql, sql_select_t **
  * set the stmt schema info
  */
 status_t sql_set_schema(sql_stmt_t *stmt, text_t *set_schema, uint32 set_schema_id, char *save_schema,
-    uint32 save_schema_maxlen, uint32 *save_schema_id)
+                        uint32 save_schema_maxlen, uint32 *save_schema_id)
 {
     uint32 len;
 
@@ -438,7 +421,6 @@ status_t sql_set_schema(sql_stmt_t *stmt, text_t *set_schema, uint32 set_schema_
     return OG_SUCCESS;
 }
 
-
 static bool32 sql_get_view_object_addr(object_address_t *depended, knl_dictionary_t *view_dc, text_t *name)
 {
     depended->uid = view_dc->uid;
@@ -456,7 +438,7 @@ static bool32 sql_get_view_object_addr(object_address_t *depended, knl_dictionar
 
 /* update the dependency info of this view in sys_dependency table */
 static void sql_update_view_dependencies(sql_stmt_t *stmt, knl_dictionary_t *view_dc, galist_t *ref_list,
-    object_address_t depender, bool32 *is_valid)
+                                         object_address_t depender, bool32 *is_valid)
 {
     bool32 is_successed = OG_FALSE;
     knl_session_t *session = KNL_SESSION(stmt);
@@ -527,7 +509,7 @@ bool32 sql_compile_view_sql(sql_stmt_t *stmt, knl_dictionary_t *view_dc, text_t 
  * This function is used to recompile a view.
  */
 static bool32 sql_compile_view(sql_stmt_t *stmt, text_t *owner, text_t *name, knl_dictionary_t *view_dc,
-    bool32 update_dep)
+                               bool32 update_dep)
 {
     bool32 is_valid;
     object_address_t depender;
@@ -563,7 +545,7 @@ static bool32 sql_compile_view(sql_stmt_t *stmt, text_t *owner, text_t *name, kn
 }
 
 static object_status_t sql_check_synonym_object_valid(sql_stmt_t *stmt, text_t *owner_name, text_t *table_name,
-    object_address_t *p_obj)
+                                                      object_address_t *p_obj)
 {
     object_status_t obj_status = OBJ_STATUS_VALID;
     knl_dictionary_t dc;
@@ -599,7 +581,7 @@ static object_status_t sql_check_synonym_object_valid(sql_stmt_t *stmt, text_t *
 }
 
 static object_status_t sql_check_pl_synonym_object_valid(sql_stmt_t *stmt, text_t *owner_name, text_t *table_name,
-    object_address_t *obj_addr, object_type_t syn_type)
+                                                         object_address_t *obj_addr, object_type_t syn_type)
 {
     object_status_t obj_status = OBJ_STATUS_VALID;
     pl_dc_t dc = { 0 };
@@ -658,7 +640,7 @@ static status_t sql_make_object_address(knl_cursor_t *cursor, object_address_t *
 }
 
 static status_t sql_check_current_synonym(sql_stmt_t *stmt, knl_session_t *session, knl_cursor_t *cursor,
-    bool32 compile_all, uint32 uid)
+                                          bool32 compile_all, uint32 uid)
 {
     object_address_t d_obj;
     object_address_t p_obj;

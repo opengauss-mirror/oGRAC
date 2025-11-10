@@ -211,7 +211,6 @@ void dtc_process_ckpt_trigger(void *sess, mes_message_t * receive_msg)
     }
     msg_ckpt_trigger_t *ckpt = (msg_ckpt_trigger_t *)(receive_msg->buffer + sizeof(mes_message_head_t));
     knl_session_t *session = (knl_session_t *)sess;
-    // todo trigger arch file
     status_t s = OG_SUCCESS;
     uint32 ret = DTC_BAK_SUCCESS;
     dtc_update_lsn(session, ckpt->lsn);

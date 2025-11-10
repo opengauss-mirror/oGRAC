@@ -14,7 +14,6 @@ UPGRADE_MODE_LIS=("offline" "rollup")
 UPDATESYS_FLAG=/opt/ograc/updatesys.true
 upgrade_module_correct=false
 
-
 source ${CURRENT_PATH}/log4sh.sh
 source ${CURRENT_PATH}/env.sh
 
@@ -87,6 +86,10 @@ function prepare_env() {
     ograc_in_container=$(python3 ${CURRENT_PATH}/get_config_info.py "ograc_in_container")
     if [[ ${node_id} == '0' ]]; then
         update_share_config
+    fi
+    deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
+    if [[ x"${deploy_mode}" == x"dss" ]]; then
+        cp -arf ${CURRENT_PATH}/ograc_common/env_lun.sh ${CURRENT_PATH}/env.sh
     fi
 }
 
@@ -257,8 +260,7 @@ function gen_upgrade_plan() {
 }
 
 function check_dbstor_client_compatibility() {
-    deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
-    if [[ x"${deploy_mode}" == x"file" || "${source_version}" == "2.0.0"* ]]; then
+    if [[ x"${deploy_mode}" == x"file" || x"${deploy_mode}" == x"dss" ]]; then
         return 0
     fi
     logAndEchoInfo "begin to check dbstor client compatibility."
@@ -369,6 +371,9 @@ function main() {
     update_local_status_file_path_by_dbstor
     version_check
     check_upgrade_flag
+    if [[ x"${deploy_mode}" == x"dss" ]]; then
+        rm -rf /mnt/dbdata/remote/metadata_${storage_metadata_fs}/upgrade/cluster_and_node_status
+    fi
     if [ ${UPGRADE_MODE} == "offline" ]; then
         offline_upgrade
     elif [ ${UPGRADE_MODE} == "rollup" ]; then

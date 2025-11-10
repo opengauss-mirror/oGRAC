@@ -278,10 +278,8 @@ typedef struct st_table_part {
     knl_table_part_desc_t desc;
     list_item_t *lnext;
     uint32 pnext;
-    union {
-        struct st_heap heap;
-        uint32 *subparts;
-    };
+    struct st_heap heap;
+    uint32 *subparts;
     stats_table_mon_t table_smon;
     bool32 is_ready; // stand for whether the dc is loading completely and this table part is ready to access
 } table_part_t;
@@ -293,10 +291,8 @@ typedef struct st_index_part {
     uint32 global_partno;    // part no in the global array consisted of all subparts
     knl_index_part_desc_t desc;
     uint32 pnext;
-    union {
-        struct st_btree btree;
-        uint32 *subparts;
-    };
+    struct st_btree btree;
+    uint32 *subparts;
 } index_part_t;
 
 /* lob partition entity */
@@ -305,10 +301,8 @@ typedef struct st_lob_part {
     uint32 parent_partno;
     uint32 global_partno;    // part no in the global array consisted of all subparts
     knl_lob_part_desc_t desc;
-    union {
-        struct st_lob_entity lob_entity;
-        uint32 *subparts;
-    };
+    struct st_lob_entity lob_entity;
+    uint32 *subparts;
 } lob_part_t;
 
 /* partition group structure */

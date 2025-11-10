@@ -88,7 +88,7 @@ typedef struct st_core_ctrl {
     raft_point_t raft_flush_point;
     log_point_t lrep_point;   // log point when logic replication is turned on.
     uint32 max_column_count;  // column count: 1024, 2048,3072, 4096
-    bool32 open_inconsistency;  // todo delete
+    bool32 open_inconsistency;
     uint32 charset_id; // database charset :0 - UTF8,1 - GBK
 
     uint32 dw_file_id; // dw file id

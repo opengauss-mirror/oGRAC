@@ -227,7 +227,7 @@ static status_t mtrl_recreate_segment(mtrl_context_t *ogx, mtrl_segment_t *curr_
     segment->cmp_items = curr_seg->cmp_items;
     segment->type = curr_seg->type;
     segment->level = 0;
-    segment->pending_type_buf = NULL;
+    segment->pending_type_buf = curr_seg->pending_type_buf;
     return OG_SUCCESS;
 }
 

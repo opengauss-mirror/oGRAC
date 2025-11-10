@@ -35,6 +35,7 @@
 #include "dtc_drc.h"
 #include "cm_dbs_intf.h"
 #include "cm_file_iofence.h"
+#include "cm_dss_iofence.h"
 #include "srv_view.h"
 
 #ifdef __cplusplus
@@ -132,7 +133,7 @@ knl_scn_t db_inc_scn(knl_session_t *session)
     area = &session->kernel->tran_ctx;
     init_time = DB_INIT_TIME(session);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (TX_XA_CONSISTENCY(session)) {
         knl_scn_t gts_scn;
         status_t status = gts_get_lcl_timestamp(&gts_scn);
@@ -163,7 +164,7 @@ knl_scn_t db_next_scn(knl_session_t *session)
     init_time = DB_INIT_TIME(session);
     curr_scn = (int64)DB_CURR_SCN(session);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     knl_scn_t gts_scn;
     if (TX_XA_CONSISTENCY(session)) {
         status_t status = gts_get_lcl_timestamp(&gts_scn);
@@ -623,12 +624,21 @@ static status_t db_register_iof(knl_instance_t *kernel)
             OG_LOG_RUN_ERR("failed to iof reg dbstor namespace, inst id %u", kernel->id);
             return OG_ERROR;
         }
-    } else {
-        if (kernel->file_iof_thd.id == 0) {
-            if (cm_file_iof_register(kernel->id, &kernel->file_iof_thd) != OG_SUCCESS) {
-                OG_LOG_RUN_ERR("failed to iof reg file, inst id %u", kernel->id);
-                return OG_ERROR;
-            }
+        return OG_SUCCESS;
+    }
+
+    if (kernel->attr.enable_dss) {
+        if (cm_dss_iof_register() != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("failed to iof reg dss, inst id %u", kernel->id);
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
+    
+    if (kernel->file_iof_thd.id == 0) {
+        if (cm_file_iof_register(kernel->id, &kernel->file_iof_thd) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("failed to iof reg file, inst id %u", kernel->id);
+            return OG_ERROR;
         }
     }
     return OG_SUCCESS;
@@ -929,7 +939,7 @@ status_t db_callback_function(knl_session_t *session)
         return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (g_knl_callback.init_shard_resource(session) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DB]: callback function init shard resource failed.");
         return OG_ERROR;
@@ -2493,23 +2503,7 @@ static status_t dump_rebuild_ctrl_datafile_list(database_ctrl_t *ctrl, cm_dump_t
 
 static status_t dump_rebuild_ctrl_logfile_list(database_ctrl_t *ctrl, cm_dump_t *dump)
 {
-    knl_panic(0);  // todo: design to print new log ctrl
-    /*
-        log_file_ctrl_t *logfile = NULL;
-
-        for (uint32 i = 0; i < ctrl->core.log_count; i++) {
-            logfile = (log_file_ctrl_t *)db_get_ctrl_item(ctrl->pages, i, sizeof(log_file_ctrl_t), ctrl->log_segment);
-            if (!LOG_IS_DROPPED(logfile->flg) && !LOG_IS_ALARMED(logfile->flg)) {
-                if (i == ctrl->core.log_count - 1) {
-                    cm_dump(dump, "'%s'\n", logfile->name);
-                } else {
-                    cm_dump(dump, "'%s',\n", logfile->name);
-                }
-                CM_DUMP_WRITE_FILE(dump);
-            }
-        }
-    */
-
+    knl_panic(0);
     return OG_SUCCESS;
 }
 

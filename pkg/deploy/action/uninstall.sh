@@ -330,7 +330,5 @@ if [[ ${uninstall_type} = 'override' ]]; then
   rm -rf /usr/local/bin/show
 fi
 
-# 清理共享内存
-ipcrm -a
 logAndEchoInfo "uninstall finished"
 exit 0

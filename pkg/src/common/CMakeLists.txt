@@ -24,22 +24,22 @@ if (USE_FUZZASAN)
     add_compile_options(-fsanitize-coverage=trace-pc)
 endif(USE_FUZZASAN)
 # generate static library
-add_library(zecommon_static STATIC ${COMMON_ALL_SRC})
+add_library(ogcommon_static STATIC ${COMMON_ALL_SRC})
 # generate dynamic library
-add_library(zecommon SHARED ${COMMON_ALL_SRC})
+add_library(ogcommon SHARED ${COMMON_ALL_SRC})
 # dynamic libraries and static libraries exist at the same time
-set_target_properties(zecommon PROPERTIES OUTPUT_NAME zecommon
+set_target_properties(ogcommon PROPERTIES OUTPUT_NAME ogcommon
         CLEAN_DIRECT_OUTPUT 1
         ARCHIVE_OUTPUT_DIRECTORY ${OGRACDB_LIB}
         )
-set_target_properties(zecommon_static PROPERTIES OUTPUT_NAME zecommon
+set_target_properties(ogcommon_static PROPERTIES OUTPUT_NAME ogcommon
         CLEAN_DIRECT_OUTPUT 1
         ARCHIVE_OUTPUT_DIRECTORY ${OGRACDB_LIB}
         )
 if (USE_FUZZASAN)
-    target_link_libraries(zecommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 Secodefuzz)
+    target_link_libraries(ogcommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 Secodefuzz)
 else ()
-target_link_libraries(zecommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8)
+target_link_libraries(ogcommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8)
 endif(USE_FUZZASAN)
-target_link_libraries(zecommon PUBLIC
+target_link_libraries(ogcommon PUBLIC
     ${vpp_libsecurec})

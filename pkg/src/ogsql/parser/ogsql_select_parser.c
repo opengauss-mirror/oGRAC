@@ -28,7 +28,6 @@
 #include "ogsql_verifier.h"
 #include "table_parser.h"
 #include "pivot_parser.h"
-#include "hint_parser.h"
 #include "cond_parser.h"
 
 #ifdef __cplusplus
@@ -563,7 +562,7 @@ status_t sql_parse_order_by_items(sql_stmt_t *stmt, galist_t *sort_items, word_t
         if (word->id == KEY_WORD_NULLS) {
             OG_RETURN_IFERR(lex_expected_fetch_1of2(stmt->session->lex, "FIRST", "LAST", &nulls_postion));
             item->nulls_pos = (nulls_postion == 0) ? SORT_NULLS_FIRST : SORT_NULLS_LAST;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
             if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
                 OG_SRC_THROW_ERROR(word->text.loc, ERR_CAPABILITY_NOT_SUPPORT, "NULLS FIRST/LAST");
                 return OG_ERROR;
@@ -692,7 +691,7 @@ status_t sql_verify_limit_offset(sql_stmt_t *stmt, limit_item_t *limit_item)
     verf.context = stmt->context;
     verf.stmt = stmt;
     verf.excl_flags = SQL_LIMIT_EXCL;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     OG_RETURN_IFERR(shd_verfity_excl_user_function(&verf, stmt));
 #endif
 
@@ -861,7 +860,7 @@ static inline status_t sql_calc_found_rows_needed(sql_stmt_t *stmt, sql_select_t
         OG_RETURN_IFERR(lex_try_fetch(stmt->session->lex, "sql_calc_found_rows", found_rows_needed));
 
         if (*found_rows_needed) {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
             if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
                 OG_SRC_THROW_ERROR(stmt->session->lex->loc, ERR_CAPABILITY_NOT_SUPPORT, "SQL_CALC_FOUND_ROWS");
                 return OG_ERROR;
@@ -1137,7 +1136,7 @@ status_t sql_alloc_select_context(sql_stmt_t *stmt, select_type_t type, sql_sele
     (*select_ctx)->type = type;
     (*select_ctx)->for_update = OG_FALSE;
     (*select_ctx)->pending_col_count = 0;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     (*select_ctx)->sub_select_sinkall = OG_FALSE;
 #endif
 

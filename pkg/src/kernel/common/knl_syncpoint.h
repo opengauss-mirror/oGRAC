@@ -268,6 +268,7 @@ typedef enum {
     COLLECT_STATISTICS_INDEX_FAIL,
     COLLECT_STATISTICS_PERSISTENCE_THROUGH_RESULT_FAIL,
 
+    CTC_SQL_ALLOC_CONTEXT_FAIL,
 } knl_syncpoint_id;
 
 typedef void (*syncpoint_callback)(int32 *param, int32 ret);

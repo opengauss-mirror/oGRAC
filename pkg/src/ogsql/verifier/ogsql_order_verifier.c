@@ -356,6 +356,7 @@ static inline status_t sql_search_func_expr_in_rs_col_alias(sql_verifier_t *veri
     expr_node_t **node, bool32 *is_aggr, bool32 *is_found, bool32 *exist_alias)
 {
     uint32 func_id = sql_get_func_id((text_t *)&(*node)->word.func.name);
+    bool32 tmp_aggr = *is_aggr;
     if (func_id != OG_INVALID_ID32 && g_func_tab[func_id].aggr_type != AGGR_TYPE_NONE) {
         *is_aggr = OG_TRUE;
     } else if ((func_id == ID_FUNC_ITEM_IF || func_id == ID_FUNC_ITEM_LNNVL) && (*node)->cond_arg != NULL) {
@@ -364,7 +365,7 @@ static inline status_t sql_search_func_expr_in_rs_col_alias(sql_verifier_t *veri
     }
     OG_RETURN_IFERR(
         sql_search_arg_list_in_rs_col_alias(verif, query, (*node)->argument, is_aggr, is_found, exist_alias));
-    *is_aggr = OG_FALSE;
+    *is_aggr = tmp_aggr;
     return OG_SUCCESS;
 }
 
@@ -504,20 +505,30 @@ static status_t sql_verify_sort_item(sql_verifier_t *verif, sql_query_t *query, 
     }
 
     if (query->has_distinct) {
-        OG_RETURN_IFERR(sql_match_distinct_expr(verif->stmt, query, &item->expr, OG_FALSE));
+        OG_RETURN_IFERR(sql_match_distinct_expr(verif->stmt, query, item->expr));
     }
-
-#ifdef Z_SHARDING
-    if (IS_COORDINATOR) {
-        if (item->expr->root->type == EXPR_NODE_SELECT) {
-            OG_SRC_THROW_ERROR(item->expr->root->loc, ERR_SQL_SYNTAX_ERROR, "unexpected select expression");
-            return OG_ERROR;
-        }
-    }
-#endif
 
     return OG_SUCCESS;
 }
+
+static inline bool32 if_query_order_can_eliminate(sql_query_t *sql_qry, uint32 old_aggr_count)
+{
+    // Has aggr func but no group, order can be eliminated
+    if (old_aggr_count > 0 && sql_qry->group_sets->count == 0) {
+        return OG_TRUE;
+    }
+
+    bool32 has_limit = LIMIT_CLAUSE_OCCUR(&sql_qry->limit);
+    if (sql_qry->owner == NULL) {
+        return OG_FALSE;
+    }
+    select_node_type_t parent_type = sql_qry->owner->root->type;
+    // If parent is not SELECT or UNION ALL, and no LIMIT clause exists,
+    // order can be eliminated
+    return !has_limit &&
+        parent_type != SELECT_NODE_QUERY && parent_type != SELECT_NODE_UNION_ALL;
+}
+
 
 status_t sql_verify_query_order(sql_verifier_t *verif, sql_query_t *query, galist_t *sort_items, bool32 is_query)
 {
@@ -555,11 +566,11 @@ status_t sql_verify_query_order(sql_verifier_t *verif, sql_query_t *query, galis
 
     verif->aggr_flags = 0;
 
-    bool32 has_limit = LIMIT_CLAUSE_OCCUR(&query->limit);
-    if (is_query && ((old_aggr_count > 0 && query->group_sets->count == 0) ||
-        (query->owner != NULL && query->owner->root->type != SELECT_NODE_QUERY && !has_limit))) {
+    bool32 order_eliminate = if_query_order_can_eliminate(query, old_aggr_count);
+    if (is_query && order_eliminate) {
         cm_galist_reset(sort_items);
     }
+
     return OG_SUCCESS;
 }
 

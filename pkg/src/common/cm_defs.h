@@ -169,6 +169,7 @@ typedef enum en_cs_distribute_type {
 #define OG_REDO_LOG_NUM 16
 #define OG_XID_NUM 10
 #define CARRY_FACTOR 10
+#define FILE_BLOCK_SIZE 512
 
 /* buf */
 #define OG_DB_NAME_LEN (uint32)32
@@ -329,8 +330,8 @@ typedef enum en_cs_distribute_type {
 
 /* sql engine */
 #define OG_MAX_INVALID_CHARSTR_LEN (uint32)1024
-#define OG_SQL_BUCKETS (uint32) SIZE_K(128)
-#define OG_CONTEXT_MAP_SIZE (uint32) SIZE_K(512)
+#define OG_SQL_BUCKETS (uint32)SIZE_K(128)
+#define OG_CONTEXT_MAP_SIZE (uint32)SIZE_K(512)
 #define OG_STRING_BUFFER_SIZE (uint32)32768
 #define OG_MAX_STRING_LEN (uint32)(OG_STRING_BUFFER_SIZE - 1)
 #define OG_MAX_JOIN_TABLES (uint32)128
@@ -342,6 +343,7 @@ typedef enum en_cs_distribute_type {
 /* less than 0xFFFFFFFF/sizeof(knl_temp_cache_t) 9761289 */
 #define OG_MAX_TEMP_TABLES (uint32)(8192)
 #define OG_MAX_LINK_TABLES (uint32)(1024)
+#define OG_MAX_JOIN_JTABLES (uint32)512         /* base table + join table */
 
 #define OG_MAX_MTRL_OPEN_PAGES (uint32)256
 #define OG_RBO_MAX_HASH_COUNT (uint32)200000
@@ -712,7 +714,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_VERSION_LEN 256
 #define OG_MAX_ACTION_LEN 128
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 #define OG_DISTRIBUTE_BUFFER_SIZE (uint32)1024
 #define OG_DISTRIBUTE_COLUMN_COUNT (uint32)10
@@ -826,7 +828,7 @@ typedef enum en_cs_distribute_type {
  * CAUTION!!!: if add new type or modify old type's order,
  * please modify ogsql_func.c/g_col_type_tab synchronously
  */
-typedef enum en_ct_type {
+typedef enum en_og_type {
     OG_TYPE_UNKNOWN = -1,
     OG_TYPE_BASE = 20000,
     OG_TYPE_INTEGER = OG_TYPE_BASE + 1,    /* native 32 bits integer */
@@ -1395,7 +1397,7 @@ typedef source_location_t src_loc_t;
 #define KEY_BS 8L
 #define KEY_BS_LNX 127L
 
-typedef enum en_ct_param_direction_t {
+typedef enum en_og_param_direction_t {
     OG_INTERNAL_PARAM = 0,
     OG_INPUT_PARAM = 1,
     OG_OUTPUT_PARAM = 2,

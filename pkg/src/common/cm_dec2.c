@@ -25,6 +25,7 @@
 #include "cm_dec2.h"
 #include "cm_text.h"
 #include "cm_binary.h"
+#include "var_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1447,7 +1448,7 @@ static status_t cm_real_to_dec2_inexac(double real, dec2_t *dec)
         OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
         return OG_ERROR;
     }
-    if (r == 0.0) {
+    if (cm_compare_double(r, 0) == 0) {
         cm_zero_dec2(dec);
         return OG_SUCCESS;
     }
@@ -1483,7 +1484,7 @@ static status_t cm_real_to_dec2_inexac(double real, dec2_t *dec)
     }
  
     while (index < DEC2_TO_REAL_MAX_CELLS) {
-        if (r == 0) {
+        if (cm_compare_double(r, 0) == 0) {
             break;
         }
         r = modf(r * (double)DEC2_CELL_MASK, &int_r);

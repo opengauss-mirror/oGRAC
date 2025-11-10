@@ -4346,6 +4346,7 @@ static inline void reset_cursor_before_return(sql_stmt_t *stmt, sql_stmt_t *curs
     cursor_stmt->is_sub_stmt = OG_FALSE;
     cursor_stmt->parent_stmt = NULL;
     cursor_stmt->pl_ref_entry = NULL;
+    cursor_stmt->pl_exec = NULL;
 }
 
 /*
@@ -5829,9 +5830,9 @@ static inline status_t sql_pre_exec_resource_manager(sql_stmt_t *stmt)
     sql_set_scn(stmt);
     sql_set_ssn(stmt);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     OG_RETURN_IFERR(shd_pre_execute_ddl(stmt, OG_FALSE, OG_FALSE));
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
 
     return OG_SUCCESS;
 }
@@ -5920,11 +5921,11 @@ static status_t sql_create_cgroup(sql_stmt_t *stmt, expr_node_t *func, variant_t
     }
     SQL_SET_NULL_VAR(result);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_RETURN_IFERR(sql_pre_exec_create_cgroup(stmt, &rsrc_group));
     }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
     status = knl_create_control_group(KNL_SESSION(stmt), &rsrc_group);
     return sql_after_exec_resource_manager(stmt, status);
 }
@@ -5985,11 +5986,11 @@ static status_t sql_delete_cgroup(sql_stmt_t *stmt, expr_node_t *func, variant_t
     }
     SQL_SET_NULL_VAR(result);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_RETURN_IFERR(sql_pre_exec_delete_cgroup(stmt, &name.v_text));
     }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
     status = knl_delete_control_group(KNL_SESSION(stmt), &name.v_text);
     return sql_after_exec_resource_manager(stmt, status);
 }
@@ -6030,11 +6031,11 @@ static status_t sql_update_cgroup(sql_stmt_t *stmt, expr_node_t *func, variant_t
     }
     SQL_SET_NULL_VAR(result);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_RETURN_IFERR(sql_pre_exec_update_cgroup(stmt, &rsrc_group));
     }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
     status = knl_update_control_group(KNL_SESSION(stmt), &rsrc_group);
     return sql_after_exec_resource_manager(stmt, status);
 }
@@ -6114,11 +6115,11 @@ static status_t sql_create_rsrc_plan(sql_stmt_t *stmt, expr_node_t *func, varian
     SQL_SET_NULL_VAR(result);
     knl_plan.num_rules = 0;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_RETURN_IFERR(sql_pre_exec_create_rsrc_plan(stmt, &knl_plan));
     }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
 
     status = knl_create_rsrc_plan(KNL_SESSION(stmt), &knl_plan);
     return sql_after_exec_resource_manager(stmt, status);
@@ -6195,11 +6196,11 @@ static status_t sql_update_rsrc_plan(sql_stmt_t *stmt, expr_node_t *func, varian
     }
     SQL_SET_NULL_VAR(result);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_RETURN_IFERR(sql_pre_exec_update_rsrc_plan(stmt, &knl_plan));
     }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
     status = knl_update_rsrc_plan(KNL_SESSION(stmt), &knl_plan);
     return sql_after_exec_resource_manager(stmt, status);
 }
@@ -6430,11 +6431,11 @@ static status_t sql_remove_plan_rule(sql_stmt_t *stmt, expr_node_t *func, varian
     sql_keep_stack_variant(stmt, &group_name);
     SQL_SET_NULL_VAR(result);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_RETURN_IFERR(sql_pre_exec_remove_plan_rule(stmt, &plan_name.v_text, &group_name.v_text));
     }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
 
     status = knl_delete_rsrc_plan_rule(KNL_SESSION(stmt), &plan_name.v_text, &group_name.v_text);
     return sql_after_exec_resource_manager(stmt, status);

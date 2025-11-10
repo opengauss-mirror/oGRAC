@@ -45,7 +45,7 @@ typedef struct st_sql_hash_group_row_attr {
 #define AGGR_BUF_SIZE_FACTOR 2
 
 status_t sql_aggregate_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan);
-status_t group_hash_i_oper_func(void *callback_ctx, const char *new_buf, uint32 new_size, const char *old_buf,
+status_t hash_group_i_operation_func(void *callback_ctx, const char *new_buf, uint32 new_size, const char *old_buf,
     uint32 old_size, bool32 found);
 status_t group_hash_q_oper_func(void *callback_ctx, const char *new_buf, uint32 new_size, const char *old_buf,
     uint32 old_size, bool32 found);
@@ -66,7 +66,8 @@ status_t sql_group_mtrl_record_types(sql_cursor_t *cursor, plan_node_t *plan, ch
 status_t sql_group_re_calu_aggr(group_ctx_t *group_ctx, galist_t *aggrs);
 status_t sql_hash_group_convert_rowid_to_str_row(group_ctx_t *ogx, sql_stmt_t *stmt, sql_cursor_t *cursor,
     galist_t *aggrs);
-status_t sql_hash_group_make_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node, row_assist_t *ra, variant_t *value);
+status_t sql_hash_group_make_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node, row_assist_t *ra,
+    char *type_buf, variant_t *value, sql_cursor_t *);
 status_t sql_hash_group_mtrl_insert_row(sql_stmt_t *stmt, uint32 sort_seg, expr_node_t *aggr_node, aggr_var_t *var,
     char *row);
 status_t sql_hash_group_calc_listagg(sql_stmt_t *stmt, sql_cursor_t *cursor, expr_node_t *aggr_node,
@@ -79,13 +80,11 @@ status_t sql_hash_group_calc_median(sql_stmt_t *stmt, sql_cursor_t *cursor, expr
 static inline og_type_t sql_group_pending_type(sql_cursor_t *cursor, uint32 id)
 {
     mtrl_cursor_t *mtrl_cursor = &cursor->mtrl.cursor;
-    char *pending_buf = (mtrl_cursor->type == MTRL_CURSOR_HASH_GROUP || mtrl_cursor->type == MTRL_CURSOR_SORT_GROUP) ?
-        cursor->mtrl.group.buf :
-        cursor->mtrl.rs.buf;
-    if (mtrl_cursor->sort.segment != NULL && mtrl_cursor->sort.segment->type == MTRL_SEGMENT_WINSORT) {
-        pending_buf = cursor->mtrl.winsort_rs.buf;
+    char *pending_buf = cursor->mtrl.rs.buf;
+    if (mtrl_cursor->type == MTRL_CURSOR_HASH_GROUP || mtrl_cursor->type == MTRL_CURSOR_SORT_GROUP) {
+        pending_buf = cursor->mtrl.group.buf;
     }
-    if (pending_buf != NULL && id < cursor->columns->count) {
+    if (mtrl_cursor->type == MTRL_CURSOR_WINSORT) {
         return ((og_type_t *)(pending_buf + PENDING_HEAD_SIZE))[id];
     }
     return OG_TYPE_VARCHAR;

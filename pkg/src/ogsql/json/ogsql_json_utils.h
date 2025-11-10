@@ -320,7 +320,6 @@ typedef struct st_json_analyse {
     uint32 odd_elems_count;    // odd count of array elements or object elements.
 
     uint64 string_number_len; // total len of string and number.
-    uint64 last_elem_len;     // the len of last string and number.
 } json_analyse_t;
 
 status_t json_unescape_string(text_t *src, text_buf_t *unescaped_buf);

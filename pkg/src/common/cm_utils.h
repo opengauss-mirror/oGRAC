@@ -140,6 +140,35 @@ static inline void cm_aligned_free(aligned_buf_t *buf)
     buf->aligned_buf = NULL;
 }
 
+static inline void cm_aligned_array_free(aligned_buf_t *buf_array, int64 count)
+{
+    if (buf_array == NULL || count <= 0) {
+        return;
+    }
+
+    for (int64 i = 0; i < count; ++i) {
+        cm_aligned_free(&buf_array[i]);
+    }
+}
+
+static inline status_t cm_aligned_array_malloc(aligned_buf_t *buf_array,
+                                               int64 count,
+                                               int64 size,
+                                               const char *tag)
+{
+    if (buf_array == NULL || count <= 0) {
+        return OG_ERROR;
+    }
+
+    for (int64 i = 0; i < count; ++i) {
+        if (cm_aligned_malloc(size, tag, &buf_array[i]) != OG_SUCCESS) {
+            cm_aligned_array_free(buf_array, i);
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
 status_t cm_load_symbol(void *lib_handle, char *symbol, void **sym_lib_handle);
 status_t cm_open_dl(void **lib_handle, char *symbol);
 void cm_close_dl(void *lib_handle);

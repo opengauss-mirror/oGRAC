@@ -535,7 +535,7 @@ static status_t ogsql_bind_one_param(ogconn_stmt_t stmt, uint32 param_count)
 
         cm_str2text_safe(confirm, (uint32)strlen(confirm), &confirm_text);
         if (confirm_text.len >= OG_MAX_PARAM_LEN) {
-            ogsql_printf("Bind params[%u] failed, ErrMsg = %s.\n", i + 1, "BindVaule len must less than 128");
+            ogsql_printf("Bind params[%u] failed, ErrMsg = %s.\n", i + 1, "BindValue len must less than 128");
             return OG_ERROR;
         }
 
@@ -544,7 +544,7 @@ static status_t ogsql_bind_one_param(ogconn_stmt_t stmt, uint32 param_count)
             confirm_text.str[confirm_text.len] = '\0';
         }
         if (confirm_text.len == 0) {
-            ogsql_printf("Bind params[%u] failed, ErrMsg = %s.\n", i + 1, "BindVaule len must more than 1");
+            ogsql_printf("Bind params[%u] failed, ErrMsg = %s.\n", i + 1, "BindValue len must more than 1");
             return OG_ERROR;
         }
 

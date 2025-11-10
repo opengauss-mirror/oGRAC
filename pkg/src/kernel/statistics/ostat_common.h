@@ -78,7 +78,7 @@ static inline void set_cbo_col_map(cbo_stats_table_t *stats_table, uint32 col_id
 
 static inline uint32 get_cbo_col_map(cbo_stats_table_t *stats_table, uint32 col_id)
 {
-    if (stats_table->col_map == NULL) {
+    if (stats_table == NULL || stats_table->col_map == NULL) {
         return CBO_INVALID_COLUMN_ID;
     }
     return stats_table->col_map[col_id / CBO_LIST_COUNT][col_id % CBO_LIST_COUNT];

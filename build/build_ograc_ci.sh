@@ -7,7 +7,7 @@ source "${CURRENT_PATH}"/common.sh
 
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="oGRAC 1.0.0"
+BUILD_PACK_NAME="openGauss_oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
@@ -31,7 +31,7 @@ function packageTarget() {
 }
 
 function buildCtOmPackage() {
-  bash "${CURRENT_PATH}"/build_ct_om.sh
+  bash "${CURRENT_PATH}"/build_ograc_om.sh
   bash "${CURRENT_PATH}"/rpm_build_ct_om.sh
   if [ $? -ne 0 ]; then
       echo "build og_om fail"
@@ -85,7 +85,7 @@ function newPackageTarget() {
   cp -arf "${OGDB_CODE_PATH}"/dss/* ${pkg_real_path}/dss/
   echo "目录内容:"
   ls -la ${OGDB_CODE_PATH}/pkg/src/zlogicrep/build/
-  cp -rf ${OGDB_CODE_PATH}/pkg/src/zlogicrep/build/Cantian_PKG/file/* ${pkg_real_path}/zlogicrep/build/oGRAC_PKG/file/
+  cp -rf ${OGDB_CODE_PATH}/pkg/src/zlogicrep/build/oGRAC_PKG/file/* ${pkg_real_path}/zlogicrep/build/oGRAC_PKG/file/
 
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_usr_pwd.sh
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_dbstor_compat.sh

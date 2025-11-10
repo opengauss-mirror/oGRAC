@@ -53,7 +53,6 @@ status_t sql_create_list(sql_stmt_t *stmt, galist_t **list);
 status_t sql_parse_dml(sql_stmt_t *stmt, key_wid_t key_wid);
 status_t sql_parse_view_subselect(sql_stmt_t *stmt, text_t *sql, sql_select_t **select_ctx, source_location_t *loc);
 bool32 sql_has_ltt(sql_stmt_t *stmt, text_t *sql_text);
-bool32 sql_check_ctx(sql_stmt_t *stmt, sql_context_t *ogx);
 bool32 sql_check_procedures(sql_stmt_t *stmt, galist_t *dc_lst);
 status_t sql_compile_synonym_by_user(sql_stmt_t *stmt, text_t *schema_name, bool32 compile_all);
 status_t sql_compile_view_by_user(sql_stmt_t *stmt, text_t *schema_name, bool32 compile_all);
@@ -75,17 +74,13 @@ bool32 sql_check_equal_join_cond(join_cond_t *join_cond);
         OGSQL_RESTORE_STACK(stmt);                   \
     } while (0)
 
-#ifdef Z_SHARDING
-status_t shd_duplicate_origin_sql(sql_stmt_t *stmt, const text_t *origin_sql);
-#endif
-
 status_t sql_create_rowid_rs_column(sql_stmt_t *stmt, uint32 id, sql_table_type_t type, galist_t *list);
 
-status_t sql_cache_context(sql_stmt_t *stmt, context_bucket_t *bucket, sql_text_t *sql, uint32 hash_value);
 status_t sql_create_dml_currently(sql_stmt_t *stmt, sql_text_t *sql_text, key_wid_t key_wid);
 void sql_prepare_context_ctrl(sql_stmt_t *stmt, uint32 hash_value, context_bucket_t *bucket);
 void sql_parse_set_context_procinfo(sql_stmt_t *stmt);
 uint32 sql_has_special_word(sql_stmt_t *stmt, text_t *sql_text);
+
 #ifdef __cplusplus
 }
 #endif

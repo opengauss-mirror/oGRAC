@@ -75,7 +75,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 filegroup(
-    name = "zecommon_srcs",
+    name = "ogcommon_srcs",
     srcs = [
         "cm_array.c",
         "cm_bilist.c",
@@ -180,9 +180,9 @@ filegroup(
 )
 
 cc_binary(
-    name = "libzecommon.so",
+    name = "libogcommon.so",
     srcs = [
-        ":zecommon_srcs",
+        ":ogcommon_srcs",
     ],
     local_defines =  COMMON_LOCAL_DEFINES,
     copts = ["-Ipkg/src/upgrade_check",] + COMMON_COPTS,
@@ -239,9 +239,9 @@ cc_binary(
 )
 
 cc_library (
-    name = "zecommon",
+    name = "ogcommon",
     srcs = [
-        ":zecommon_srcs",
+        ":ogcommon_srcs",
     ],
     linkstatic = True,
     local_defines = COMMON_LOCAL_DEFINES,

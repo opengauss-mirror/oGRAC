@@ -247,6 +247,11 @@ status_t cms_uds_cli_request(cms_packet_head_t *req, cms_packet_head_t *res, uin
 {
     status_t ret = OG_SUCCESS;
     cm_thread_lock(&g_cli_req_map_lock);
+    if (g_cli_req_map.num == 0) {
+        OG_LOG_RUN_ERR("g_cli_req_map has not been initialized, cannot send request.");
+        cm_thread_unlock(&g_cli_req_map_lock);
+        return OG_ERROR;
+    }
     OG_LOG_DEBUG_INF("begin cms cli uds request, msg type %u, msg seq %llu", req->msg_type, req->msg_seq);
     ret = cms_uds_cli_save_req(req);
     if (ret != OG_SUCCESS) {
@@ -357,7 +362,7 @@ status_t cms_uds_cli_init(uint16 node_id, const char* cms_home)
         return ret;
     }
 
-    ret = cm_oamap_init(&g_cli_req_map, CMS_CLI_SEND_MSG_HASH_SIZE, cms_uds_cli_seq_compare);
+    ret = cm_oamap_init(&g_cli_req_map, CMS_CLI_SEND_MSG_HASH_SIZE, cms_uds_cli_seq_compare, NULL, NULL);
     if (ret != OG_SUCCESS) {
         cm_destroy_thread_lock(&g_cli_send_lock);
         cm_destroy_thread_lock(&g_cli_req_map_lock);
@@ -369,16 +374,10 @@ status_t cms_uds_cli_init(uint16 node_id, const char* cms_home)
     return OG_SUCCESS;
 }
 
-static void cms_uds_cli_destory_oamap(void)
-{
-    // TODO: free objs in req map
-}
-
 void cms_uds_cli_destory(void)
 {
     if (g_cli_node_id != CMS_CLI_INVALID_NODE_ID) {
         g_cli_node_id = CMS_CLI_INVALID_NODE_ID;
-        cms_uds_cli_destory_oamap();
         cms_uds_cli_sock_close();
         cm_destroy_thread_lock(&g_cli_send_lock);
         cm_destroy_thread_lock(&g_cli_req_map_lock);

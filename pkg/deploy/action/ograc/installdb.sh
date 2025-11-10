@@ -71,6 +71,12 @@ function wait_node0_online() {
   wait_for_success 5400 is_db0_online_by_cms
 }
 
+function dss_reghl() {
+  log "start register node ${NODE_ID} by dss"
+  dsscmd reghl -D ${DSS_HOME} >> /dev/null 2>&1
+  if [ $? != 0 ]; then err "failed to register node ${NODE_ID} by dss"; fi
+}
+
 function start_ogracd() {
   log "================ start ogracd ${NODE_ID} ================"
   ever_started=`python3 ${CURRENT_PATH}/get_config_info.py "OGRAC_EVER_START"`
@@ -90,13 +96,15 @@ function start_ogracd() {
     fi
   fi
   set -e
-  ever_started=`python3 ${CURRENT_PATH}/get_config_info.py "OGRAC_EVER_START"`
   if [ "${NODE_ID}" != 0 ] && [ "${ever_started}" != "True" ]; then
     wait_node0_online || err "timeout waiting for node0"
     sleep 60
   fi
 
   log "Start ogracd with mode=${START_MODE}, OGDB_HOME=${OGDB_HOME}, RUN_MODE=${RUN_MODE}"
+  if [ ${deploy_mode} == "dss" ]; then
+    dss_reghl
+  fi
 
   # 如果ograc被cms抢占拉起，等待此ograc拉起完成，并跳过安装部署的启动ograc进程命令
   ogracd_pid=$(ps -ef | grep -v grep | grep ogracd | grep -w 'ogracd -D /mnt/dbdata/local/ograc/tmp/data' | awk '{print $2}')

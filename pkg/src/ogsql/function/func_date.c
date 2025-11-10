@@ -151,14 +151,14 @@ status_t sql_verify_current_timestamp(sql_verifier_t *verif, expr_node_t *func)
         if (OG_IS_INTEGER_TYPE(TREE_DATATYPE(arg)) && TREE_IS_CONST(arg)) {
             precision = VALUE(int32, &arg->root->value);
             if (precision < OG_MIN_DATETIME_PRECISION || precision > OG_MAX_DATETIME_PRECISION) {
-                OG_SRC_THROW_ERROR_EX(func->loc, ERR_SQL_SYNTAX_ERROR, "fraction must between %d and %d. ",
+                OG_SRC_THROW_ERROR_EX(arg->loc, ERR_SQL_SYNTAX_ERROR, "fraction must between %d and %d. ",
                     OG_MIN_DATETIME_PRECISION, OG_MAX_DATETIME_PRECISION);
                 return OG_ERROR;
             }
         } else if (OG_IS_UNKNOWN_TYPE(TREE_DATATYPE(arg)) && TREE_IS_BINDING_PARAM(arg)) {
             precision = OG_DEFAULT_DATETIME_PRECISION;
         } else {
-            OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_FUNC_PARAMS, "integer argument required");
+            OG_SRC_THROW_ERROR(arg->loc, ERR_INVALID_FUNC_PARAMS, "integer argument required");
             return OG_ERROR;
         }
     }
@@ -196,7 +196,7 @@ status_t sql_func_current_timestamp(sql_stmt_t *stmt, expr_node_t *func, variant
     }
 
     if (prec < OG_MIN_DATETIME_PRECISION || prec > OG_MAX_DATETIME_PRECISION) {
-        OG_SRC_THROW_ERROR_EX(func->loc, ERR_SQL_SYNTAX_ERROR, "fraction must between %d and %d. ",
+        OG_SRC_THROW_ERROR_EX(arg->loc, ERR_SQL_SYNTAX_ERROR, "fraction must between %d and %d. ",
             OG_MIN_DATETIME_PRECISION, OG_MAX_DATETIME_PRECISION);
         return OG_ERROR;
     }
@@ -405,8 +405,8 @@ status_t sql_func_from_tz(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     SQL_CHECK_COLUMN_VAR(&date_var, res);
 
     if (date_var.is_null) {
-        OG_SET_ERROR_MISMATCH(OG_TYPE_TIMESTAMP, date_var.type);
-        return OG_ERROR;
+        SQL_SET_NULL_VAR(res);
+        return OG_SUCCESS;
     }
     sql_keep_stack_variant(stmt, &date_var);
     if (date_var.type != OG_TYPE_TIMESTAMP) {
@@ -593,18 +593,20 @@ status_t sql_verify_localtimestamp(sql_verifier_t *verf, expr_node_t *func)
 {
     int32 precision = OG_DEFAULT_DATETIME_PRECISION;
     CM_POINTER2(verf, func);
+    OG_RETURN_IFERR(sql_verify_func_node(verf, func, 0, 1, OG_INVALID_ID32));
 
     expr_tree_t *arg = func->argument;
     if (arg != NULL) {
         if (OG_IS_INTEGER_TYPE(arg->root->value.type) && TREE_IS_CONST(arg)) {
             precision = VALUE(int32, &arg->root->value);
+        } else if (OG_IS_UNKNOWN_TYPE(TREE_DATATYPE(arg)) && TREE_IS_BINDING_PARAM(arg)) {
+            precision = OG_DEFAULT_DATETIME_PRECISION;
         } else {
             OG_SRC_THROW_ERROR(arg->loc, ERR_INVALID_FUNC_PARAMS, "integer argument required");
             return OG_ERROR;
         }
     }
 
-    OG_RETURN_IFERR(sql_verify_func_node(verf, func, 0, 1, OG_INVALID_ID32));
     verf->stmt->context->unsinkable = OG_TRUE;
     func->datatype = OG_TYPE_TIMESTAMP;
     func->size = OG_TIMESTAMP_SIZE;
@@ -1040,8 +1042,8 @@ static status_t sql_func_to_date_core(sql_stmt_t *stmt, expr_node_t *func, varia
     result->is_null = OG_FALSE;
     result->type = OG_TYPE_DATE;
 
-    if (cm_text2date_fixed(&var1.v_text, &fmt_var.v_text, &result->v_date) != OG_SUCCESS) {
-        cm_set_error_loc(func->loc);
+    if (cm_text2date_fixed(&var1.v_text, &fmt_var.v_text, &result->v_date, is_to_date) != OG_SUCCESS) {
+        cm_set_error_loc(arg1->loc);
         return OG_ERROR;
     }
 

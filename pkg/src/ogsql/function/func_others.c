@@ -361,7 +361,7 @@ status_t sql_func_hash(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     return OG_SUCCESS;
 }
 
-status_t sql_func_ct_hash(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+status_t sql_func_og_hash(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 {
     variant_t var_data;
     variant_t var_max_bucket;
@@ -395,7 +395,7 @@ status_t sql_func_ct_hash(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     return OG_SUCCESS;
 }
 
-status_t sql_verify_ct_hash(sql_verifier_t *verifier, expr_node_t *func)
+status_t sql_verify_og_hash(sql_verifier_t *verifier, expr_node_t *func)
 {
     OG_RETURN_IFERR(sql_verify_func_node(verifier, func, 1, 2, OG_INVALID_ID32));
 
@@ -541,34 +541,43 @@ status_t sql_func_updating(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 
 static status_t sql_get_endian_arg(sql_stmt_t *stmt, expr_node_t *func, bool32 is_least, variant_t *res)
 {
-    expr_tree_t *arg = NULL;
-    variant_t var;
-    int32 cmp_code;
-    char *addr = NULL;
-    text_buf_t buffer;
+    variant_t param_var = { 0 };
+    int32 cmp_code = { 0 };
+    char *temp_addr = NULL;
+    char *res_addr = NULL;
+    text_buf_t tmp_conv_buf = { 0 };
+    text_buf_t res_buf = { 0 };
 
-    arg = func->argument;
-
-    if (OG_IS_VARLEN_TYPE(func->datatype)) {
-        OG_RETURN_IFERR(sql_push(stmt, OG_STRING_BUFFER_SIZE, (void **)&addr));
-        CM_INIT_TEXTBUF(&buffer, OG_STRING_BUFFER_SIZE, addr);
-    } else {
-        CM_INIT_TEXTBUF(&buffer, 0, NULL);
-    }
-
+    // Initialize the first argument param variant,
+    // the subsequent compare use this datatype
+    expr_tree_t *arg = func->argument;
     SQL_EXEC_FUNC_ARG_EX(arg, res, res);
     sql_keep_stack_variant(stmt, res);
 
+    if (OG_IS_VARLEN_TYPE(res->type)) {
+        OG_RETURN_IFERR(sql_push(stmt, OG_STRING_BUFFER_SIZE, (void **)&temp_addr));
+        CM_INIT_TEXTBUF(&tmp_conv_buf, OG_STRING_BUFFER_SIZE, temp_addr);
+        OG_RETURN_IFERR(sql_push(stmt, OG_STRING_BUFFER_SIZE, (void **)&res_addr));
+        CM_INIT_TEXTBUF(&res_buf, OG_STRING_BUFFER_SIZE, res_addr);
+    } else {
+        CM_INIT_TEXTBUF(&tmp_conv_buf, 0, NULL);
+        CM_INIT_TEXTBUF(&res_buf, 0, NULL);
+    }
+
     arg = arg->next;
     while (arg != NULL) {
-        SQL_EXEC_FUNC_ARG_EX(arg, &var, res);
+        SQL_EXEC_FUNC_ARG_EX(arg, &param_var, res);
 
-        if (var_convert(SESSION_NLS(stmt), &var, res->type, &buffer) != OG_SUCCESS) {
+        // Subsequent arguments are all converted to the type of the first argument.
+        if (var_convert(SESSION_NLS(stmt), &param_var, res->type, &tmp_conv_buf) != OG_SUCCESS) {
+            OG_LOG_RUN_WAR("[FUNC]: func %s convert argument failed.", is_least ? "least" : "greatest");
             cm_set_error_loc(arg->loc);
             return OG_ERROR;
         }
 
-        if (sql_compare_variant(stmt, &var, res, &cmp_code) != OG_SUCCESS) {
+        // Compare the current argument with the result
+        if (sql_compare_variant(stmt, &param_var, res, &cmp_code) != OG_SUCCESS) {
+            OG_LOG_RUN_WAR("[FUNC]: func %s compare argument failed.", is_least ? "least" : "greatest");
             cm_set_error_loc(arg->loc);
             return OG_ERROR;
         }
@@ -578,12 +587,19 @@ static status_t sql_get_endian_arg(sql_stmt_t *stmt, expr_node_t *func, bool32 i
             continue;
         }
 
+        /**
+         * Swapping ensures that in the next iteration, 
+         * tmp_conv_buf can be reused for conversion, while res_buf holds
+         * the valid string data of the current result.
+         */
         if (is_least) {
             if (cmp_code < 0) {
-                var_copy(&var, res);
+                var_copy(&param_var, res);
+                SWAP(text_buf_t, tmp_conv_buf, res_buf);
             }
         } else if (cmp_code > 0) {
-            var_copy(&var, res);
+            var_copy(&param_var, res);
+            SWAP(text_buf_t, tmp_conv_buf, res_buf);
         }
 
         arg = arg->next;
@@ -1552,10 +1568,19 @@ status_t sql_func_serial_lastval(sql_stmt_t *stmt, expr_node_t *func, variant_t 
 
     arg_schema = func->argument;
     SQL_EXEC_FUNC_ARG_EX(arg_schema, &v_schema, res);
+    if (!OG_IS_STRING_TYPE(v_schema.type)) {
+        OG_SRC_ERROR_REQUIRE_STRING(arg_schema->loc, v_schema.type);
+        return OG_ERROR;
+    }
     sql_keep_stack_variant(stmt, &v_schema);
 
     arg_tbl = arg_schema->next;
     SQL_EXEC_FUNC_ARG_EX(arg_tbl, &v_table, res);
+    if (!OG_IS_STRING_TYPE(v_table.type)) {
+        OG_SRC_ERROR_REQUIRE_STRING(arg_tbl->loc, v_table.type);
+        return OG_ERROR;
+    }
+    
     OG_RETURN_IFERR(sql_get_serial_cached_value(stmt, &v_schema.v_text, &v_table.v_text, &res->v_bigint));
 
     res->type = OG_TYPE_BIGINT;

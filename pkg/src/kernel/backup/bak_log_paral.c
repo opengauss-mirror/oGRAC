@@ -162,7 +162,6 @@ status_t bak_set_archived_log_ctrl(knl_session_t *session, bak_process_t *proces
     knl_securec_check(ret);
     *block_size = (uint32)arch_ctrl->block_size;
     *compressed = arch_is_compressed(arch_ctrl);
-    // todo xjl
     bak_record_new_file(bak, BACKUP_ARCH_FILE, asn, 0, rst_id,
                         is_paral_log_proc, arch_ctrl->start_lsn,
                         arch_ctrl->end_lsn);

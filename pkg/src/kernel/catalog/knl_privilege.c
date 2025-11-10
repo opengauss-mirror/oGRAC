@@ -2747,7 +2747,7 @@ static void dc_grant_role_to_role(knl_handle_t session, void *def, void *privs, 
 
     role1 = (dc_role_t *)g->handle;
     role2 = (dc_role_t *)h->handle;
-    dls_spin_lock(sess, &role1->lock, NULL);  // TODO: check dls
+    dls_spin_lock(sess, &role1->lock, NULL);
     dls_spin_lock(sess, &role2->lock, NULL);
 
     /* check if already granted role1 to role2 */

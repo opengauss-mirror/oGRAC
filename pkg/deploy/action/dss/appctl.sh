@@ -63,13 +63,16 @@ function do_deploy()
 function permission_opt() {
     chmod 500 "${DSS_SOURCE}"/bin/*
     chown -hR "${ograc_user}":"${ograc_group}" "${DSS_SOURCE}"
-    chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/*
+    chown -hR "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/*
     chown root:root "${CURRENT_PATH}"/appctl.sh
-    mkdir -p /opt/ograc/dss/log
-    touch /opt/ograc/dss/log/dss_deploy.log
+    mkdir -p /opt/ograc/log/dss
+    touch /opt/ograc/log/dss/dss_deploy.log
+    chmod -R 750 /opt/ograc/log/dss/
+    chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/log/dss/
+    mkdir -m 750 -p /opt/ograc/dss/
     chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/dss/
 }
-
+pkg/src/server/srv_instance.hpkg/src/server/srv_instance.hpkg/src/server/srv_instance.h
 function copy_dss_scripts()
 {
     echo "copying the cms scripts"
@@ -123,6 +126,9 @@ function main()
             permission_opt
             do_deploy "--action=${ACTION} --mode=${START_MODE}"
             exit $?
+            ;;
+        backup)
+            exit 0
             ;;
         pre_upgrade)
             do_deploy "--action=${ACTION}"

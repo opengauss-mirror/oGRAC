@@ -105,7 +105,7 @@ init_and_start_cms2()
     nohup su - ogracdba -c 'cms server -start' >> $report_file  2>&1 &
 }
 
-init_ct_regress()
+init_og_regress()
 {
     log "=============== Initialize the Regression Program =============="
     kill_ogracdb
@@ -170,7 +170,7 @@ make_code()
     cd ${code_path}/build
     source ./common.sh
     cd ${code_path}/build/pkg/test/cluster_test
-    strip -N main ${OGRACDB_LIB}/libzeserver.a
+    strip -N main ${OGRACDB_LIB}/libogserver.a
     make -sj 8
     if [ "$?" != "0" ]; then
         echo "make test error!"
@@ -209,9 +209,9 @@ cp_ograc_bin()
 cp_ograc_lib()
 {
     mkdir -p $1/lib
-    cp ${code_path}/output/lib/libzeclient.so $1/lib/
-    cp ${code_path}/output/lib/libzecommon.so $1/lib/
-    cp ${code_path}/output/lib/libzeprotocol.so $1/lib/
+    cp ${code_path}/output/lib/libogclient.so $1/lib/
+    cp ${code_path}/output/lib/libogcommon.so $1/lib/
+    cp ${code_path}/output/lib/libogprotocol.so $1/lib/
 }
 
 install_ogracdb()
@@ -431,7 +431,7 @@ main()
 
     echo "test_list is ${test_list}"
 
-    init_ct_regress
+    init_og_regress
     make_code
     install_ogracdb
     #run_ogbox_test

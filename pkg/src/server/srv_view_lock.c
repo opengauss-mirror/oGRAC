@@ -524,24 +524,43 @@ static bool8 vw_shared_lock_loop(knl_cursor_t *cursor, alck_item_pool_t *pool)
 static status_t vw_sess_shared_alocks_fetch(knl_handle_t session, knl_cursor_t *cursor)
 {
     row_assist_t ra;
+    alck_ctx_spec_t *ctx = &((knl_session_t *)session)->kernel->alck_ctx.se_ctx;
     alck_item_pool_t *pool = &((knl_session_t *)session)->kernel->alck_ctx.se_ctx.item_pool;
+    while (OG_TRUE) {
+        if (cursor->rowid.vmid >= pool->count) {
+            cursor->eof = OG_TRUE;
+            return OG_SUCCESS;
+        }
 
-    bool8 is_continue = vw_shared_lock_loop(cursor, pool);
-    if (is_continue == OG_FALSE) {
+        alck_item_t *alck_item = ALCK_ITEM_PTR(pool, (uint32)cursor->rowid.vmid);
+        while (alck_item->lock_mode != ALCK_MODE_S || alck_item->lock_times == 0) {
+            cursor->rowid.vmid++;
+            if (cursor->rowid.vmid >= pool->count) {
+                cursor->eof = OG_TRUE;
+                return OG_SUCCESS;
+            }
+            alck_item = ALCK_ITEM_PTR(pool, (uint32)cursor->rowid.vmid);
+        }
+
+        cm_spin_lock(&alck_item->lock, NULL);
+        if (alck_item->lock_mode != ALCK_MODE_S || alck_item->lock_times == 0) {
+            cm_spin_unlock(&alck_item->lock);
+            cursor->rowid.vmid++;
+            continue;
+        }
+
+        alck_map_t *alck_map = ALCK_MAP_PTR(&ctx->map_pool, alck_item->first_map);
+
+        row_init(&ra, (char *)cursor->row, ((knl_session_t *)session)->kernel->attr.max_row_size, SESS_SHARED_ALOCKS);
+        (void)row_put_str(&ra, alck_item->name);
+        (void)row_put_int32(&ra, (int32)alck_map->idx);
+        (void)row_put_int32(&ra, (int32)alck_item->lock_times);
+        cm_spin_unlock(&alck_item->lock);
+        cursor->rowid.vmid++;
         return OG_SUCCESS;
     }
 
-    alck_item_t *alck_item = ALCK_ITEM_PTR(pool, (uint32)cursor->rowid.vmid);
-    row_init(&ra, (char *)cursor->row, ((knl_session_t *)session)->kernel->attr.max_row_size, SESS_SHARED_ALOCKS);
-    (void)row_put_str(&ra, alck_item->name);
-    (void)row_put_int32(&ra, 0);
-    (void)row_put_int32(&ra, alck_item->lock_times);
-    cm_spin_unlock(&alck_item->lock);
-
-    cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
-
-    cursor->rowid.vmid++;
-    return OG_SUCCESS;
+    return OG_ERROR;
 }
 
 static status_t vw_xact_locks_fetch(knl_handle_t session, knl_cursor_t *cursor)

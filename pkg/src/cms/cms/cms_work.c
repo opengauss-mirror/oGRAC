@@ -253,8 +253,17 @@ status_t cms_start_res_cluster(cms_packet_head_t* msg, char* err_info, uint32 er
     return OG_SUCCESS;
 }
 
-static status_t cms_create_res_disable()
+static status_t cms_create_res_disable(uint32 res_id)
 {
+    cms_res_t res;
+    if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (cm_strcmpi(res.name, CMS_RES_TYPE_DB) != 0) {
+        return OG_SUCCESS;
+    }
+    
     int32 handle = OG_INVALID_HANDLE;
     char res_disable_file[CMS_PATH_BUFFER_SIZE] = { 0 };
     errno_t err = sprintf_s(res_disable_file, CMS_PATH_BUFFER_SIZE, "%s/%s", g_cms_param->cms_home, "res_disable");
@@ -268,8 +277,16 @@ static status_t cms_create_res_disable()
     return OG_SUCCESS;
 }
 
-static status_t cms_remove_res_disable()
+static status_t cms_remove_res_disable(uint32 res_id)
 {
+    cms_res_t res;
+    if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (cm_strcmpi(res.name, CMS_RES_TYPE_DB) != 0) {
+        return OG_SUCCESS;
+    }
     char res_disable_file[CMS_PATH_BUFFER_SIZE] = { 0 };
     errno_t err = sprintf_s(res_disable_file, CMS_PATH_BUFFER_SIZE, "%s/%s", g_cms_param->cms_home, "res_disable");
     PRTS_RETURN_IFERR(err);
@@ -297,7 +314,7 @@ static status_t cms_start_res_local(uint32 res_id, uint32 timeout, char* err_inf
         return ret;
     }
 
-    ret = cms_remove_res_disable();
+    ret = cms_remove_res_disable(res_id);
     if (ret != OG_SUCCESS) {
         err = strcpy_s(err_info, CMS_INFO_BUFFER_SIZE, "remove res disable file failed");
         if (SECUREC_UNLIKELY(err != EOK)) {
@@ -580,7 +597,7 @@ static status_t cms_stop_res_local_force(uint32 res_id, char* err_info)
         return ret;
     }
 
-    ret = cms_create_res_disable();
+    ret = cms_create_res_disable(res_id);
     if (ret != OG_SUCCESS) {
         err = strcpy_s(err_info, CMS_INFO_BUFFER_SIZE, "create res disable file failed");
         if (SECUREC_UNLIKELY(err != EOK)) {
@@ -621,7 +638,7 @@ static status_t cms_check_res_status(uint32 res_id, char* err_info)
         }
         
         if (res_status == OG_EAGAIN) {
-            err = strcpy_s(err_info, CMS_INFO_BUFFER_SIZE, "More than one resource is running.");
+            err = strcpy_s(err_info, CMS_INFO_BUFFER_SIZE, "resource work stat is abnormal");
             if (SECUREC_UNLIKELY(err != EOK)) {
                 OG_THROW_ERROR(ERR_SYSTEM_CALL, err);
                 return OG_ERROR;
@@ -681,7 +698,7 @@ static status_t cms_stop_res_local(uint32 res_id, char* err_info)
         return ret;
     }
 
-    ret = cms_create_res_disable();
+    ret = cms_create_res_disable(res_id);
     if (ret != OG_SUCCESS) {
         err = strcpy_s(err_info, CMS_INFO_BUFFER_SIZE, "create res disable file failed");
         if (SECUREC_UNLIKELY(err != EOK)) {
@@ -4178,6 +4195,10 @@ void cms_res_check_timer_entry(thread_t* thread)
             min_interval = MAX(max_interval, min_interval);
 
             get_cur_res_stat(i, &stat);
+            if (cm_strcmpi(res.name, CMS_RES_TYPE_DSS) == 0 && cms_check_dss_stat(res, stat) == OG_SUCCESS) {
+                cms_res_detect_online(i, &stat);
+                continue;
+            }
             now_time = cm_now(); // cluster time
             cms_detect_osclock_abnormal(now_time, last_refresh_time);
             last_refresh_time = now_time;

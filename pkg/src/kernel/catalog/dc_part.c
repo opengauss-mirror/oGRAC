@@ -1154,7 +1154,7 @@ static status_t dc_load_index_part(knl_session_t *session, knl_cursor_t *cursor,
         part_index->desc.not_ready_partcnt++;
     }
 
-    if (!IS_SYS_TABLE(table) && !IS_PARENT_IDXPART(&desc)) {
+    if (!IS_SYS_TABLE(table) && !IS_PARENT_IDXPART(desc)) {
         if (stats_seg_load_entity(session, desc->org_scn, &part->btree.stat) != OG_SUCCESS) {
             OG_LOG_RUN_INF("segment statistic failed, there might be some statitics loss.");
         }

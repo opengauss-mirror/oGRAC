@@ -899,6 +899,5 @@ set termout off
 set feedback off
 alter system set cbo = on;
 @@core_adjust_plan_id.sql
-alter system set cbo = off;
 set termout on
 set feedback on

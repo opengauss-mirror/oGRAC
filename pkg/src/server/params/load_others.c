@@ -213,6 +213,10 @@ status_t srv_load_optim_params(void)
     OG_RETURN_IFERR(srv_get_param_bool32("_OPTIM_INDEX_COND_PRUNING", &sql->enable_index_cond_pruning));
     OG_RETURN_IFERR(srv_get_param_bool32("_OPTIM_SIMPLIFY_EXISTS_SUBQ", &sql->enable_exists_transform));
     OG_RETURN_IFERR(srv_get_param_bool32("_OPTIM_ADAPTIVE_FULL_OUTER_JOIN", &sql->enable_nl_full_opt));
+    OG_RETURN_IFERR(srv_get_param_bool32("_OPTIM_SUBQUERY_REWRITE", &sql->enable_subquery_rewrite));
+    OG_RETURN_IFERR(srv_get_param_bool32("_OPTIM_SEMI2INNER", &sql->enable_semi2inner));
+    OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_NESTLOOP_JOIN", &sql->enable_nestloop_join));
+    OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_HASH_JOIN", &sql->enable_hash_join));
     OG_RETURN_IFERR(srv_get_param_bool32("CBO_HINT_ENABLED", &g_instance->sql.enable_cbo_hint));
     OG_RETURN_IFERR(srv_get_cbo_param(sql));
     OG_RETURN_IFERR(srv_get_withas_subquery_param(sql));

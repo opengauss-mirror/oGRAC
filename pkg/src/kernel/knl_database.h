@@ -271,8 +271,7 @@ knl_scn_t db_time_scn(knl_session_t *session, uint32 second, uint32 msecond);
 #endif
 
 #define DB_CURR_LSN(session) \
-    DB_GET_LSN(&(session)->kernel->lsn)  // TODO:  #define DB_CURR_LSN(session)
-                                         // DB_GET_LSN(&(session)->kernel->db.ctrl.core.lsn)
+    DB_GET_LSN(&(session)->kernel->lsn)
 #define DB_INC_LSN(session) cm_atomic_inc(&(session)->kernel->lsn)
 
 #define DB_INIT_TIME(session) ((session)->kernel->db.ctrl.core.init_time)

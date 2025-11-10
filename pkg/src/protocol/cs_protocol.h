@@ -51,7 +51,7 @@
 #define CS_CMD_XA_PREPARE    (uint8)15
 #define CS_CMD_XA_COMMIT     (uint8)16
 #define CS_CMD_XA_ROLLBACK   (uint8)17
-#define CS_CMD_GTS           (uint8)18 /* added for z_sharding */
+#define CS_CMD_GTS           (uint8)18 /* added for OG_RAC_ING */
 #define CS_CMD_HANDSHAKE     (uint8)19 /* process before login, added since v2.0; for SSL only since v9.0 */
 #define CS_CMD_REP_LOGIN     (uint8)20
 #define CS_CMD_AUTH_INIT     (uint8)21 /* request for user auth info, added since v9.0 */
@@ -60,7 +60,7 @@
 #define CS_CMD_XA_END        (uint8)23
 #define CS_CMD_XA_STATUS     (uint8)24
 
-#define CS_CMD_SEQUENCE      (uint8)25 /* added for z_sharding */
+#define CS_CMD_SEQUENCE      (uint8)25 /* added for OG_RAC_ING */
 #define CS_CMD_AUTH_CHECK    (uint8)26 /* REPL_AUTH for primary and standby must be same */
 #define CS_CMD_REPAUTH_LOGIN (uint8)27 /* check cipher when replication login */
 #define CS_CMD_LOAD          (uint8)28

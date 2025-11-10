@@ -32,7 +32,6 @@
 #include "ogsql_table_func.h"
 #include "cond_parser.h"
 #include "func_convert.h"
-#include "ogsql_hint_verifier.h"
 #include "ogsql_select_parser.h"
 
 status_t clone_tables_4_subqry(sql_stmt_t *stmt, sql_query_t *query, sql_query_t *sub_query)

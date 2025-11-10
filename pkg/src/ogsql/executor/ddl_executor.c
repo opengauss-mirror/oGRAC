@@ -534,19 +534,9 @@ static status_t sql_execute_create_synonym(sql_stmt_t *ogsql_stmt)
         return OG_ERROR;
     }
 
-    /* IF found the synonym and  SYNONYM_IS_REPLACE ,According to the synonym type,drop it first */
-    if (found_object) {
-        if (SYNONYM_IS_REPLACE & def->flags) {
-            if (!IS_PL_SYN(synonym.type)) {
-                knl_drop_def_t *drop_def = (knl_drop_def_t *)ogsql_stmt->context->entry;
-                if (knl_drop_synonym(KNL_SESSION(ogsql_stmt), NULL, drop_def) != OG_SUCCESS) {
-                    return OG_ERROR;
-                }
-            }
-        } else {
-            OG_THROW_ERROR(ERR_OBJECT_EXISTS, T2S(&def->owner), T2S_EX(&def->name));
-            return OG_ERROR;
-        }
+    if ((found_object) && !(SYNONYM_IS_REPLACE & def->flags)) {
+        OG_THROW_ERROR(ERR_OBJECT_EXISTS, T2S(&def->owner), T2S_EX(&def->name));
+        return OG_ERROR;
     }
 
     if (def->is_knl_syn) {

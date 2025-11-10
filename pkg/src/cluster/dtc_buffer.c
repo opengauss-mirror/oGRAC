@@ -212,10 +212,6 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
             break;
         }
 
-        /*
-         * TODO: need to check edp ensure CR.
-         */
-
         if (dtc_buf_give_up_try(session, ra, ctrl)) {
             return OG_SUCCESS;
         }

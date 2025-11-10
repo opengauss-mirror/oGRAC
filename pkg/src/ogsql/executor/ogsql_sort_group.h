@@ -32,5 +32,7 @@ status_t sql_fetch_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_
 
 status_t sql_execute_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan);
 status_t sql_fetch_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, bool32 *eof);
-
+status_t sql_sort_group_calc(void *callback_ctx, const char *new_buf, uint32 new_size,
+                             const char *old_buf, uint32 old_size, bool32 found);
+status_t sql_sort_group_cmp(int32 *result, void *callback_ctx, char *l_buf, uint32 lsize, char *r_buf, uint32 rsize);
 #endif

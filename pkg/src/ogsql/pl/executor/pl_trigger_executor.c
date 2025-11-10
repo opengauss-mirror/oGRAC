@@ -385,6 +385,7 @@ status_t ple_exec_trigger(sql_stmt_t *stmt, void *context, uint32 trig_event, vo
     var_udo_t obj;
     saved_schema_t schema;
     ple_line_assist_t line_assist;
+    bool32 save_trigger_flag = OG_FALSE;
 
     OG_RETURN_IFERR(sql_stack_safe(stmt));
     OG_RETURN_IFERR(sql_check_trigger_priv(stmt, context));
@@ -404,30 +405,17 @@ status_t ple_exec_trigger(sql_stmt_t *stmt, void *context, uint32 trig_event, vo
     }
     status = OG_ERROR;
 
+    save_trigger_flag = stmt->session->if_in_triggers;
     do {
-        OG_BREAK_IF_ERROR(sql_push(stmt, sizeof(sql_stmt_t), (void **)&sub_stmt));
-
-        errno_t errcode = memset_s(sub_stmt, sizeof(sql_stmt_t), 0, sizeof(sql_stmt_t));
-        if (errcode != EOK) {
-            OG_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
-            break;
-        }
-        sql_init_stmt(stmt->session, sub_stmt, stmt->id);
+        OG_BREAK_IF_ERROR(ple_fork_stmt(stmt, &sub_stmt));
         OG_BREAK_IF_ERROR(sql_push(stmt, sizeof(trig_executor_t), (void **)&exec.trig_exec));
         sub_stmt->pl_exec = &exec;
         if (trig_context->is_auton_trans) {
             OG_BREAK_IF_ERROR(ple_begin_auton_rm(sub_stmt->session));
         }
-        sub_stmt->is_srvoutput_on = stmt->is_srvoutput_on;
-        sub_stmt->status = stmt->status;
         sub_stmt->pl_context = trig_context;
-        sub_stmt->session->sender = &g_instance->sql.pl_sender;
         save_sender = sub_stmt->session->sender;
-        sub_stmt->session->current_stmt = sub_stmt;
-        sub_stmt->is_sub_stmt = OG_TRUE;
-        sub_stmt->pl_ref_entry = stmt->pl_ref_entry;
-        sub_stmt->parent_stmt = stmt;
-        sub_stmt->cursor_info.type = PL_FORK_CURSOR;
+        stmt->session->if_in_triggers = OG_TRUE;
         sub_stmt->v_sysdate = SQL_UNINITIALIZED_DATE;
         sub_stmt->v_systimestamp = SQL_UNINITIALIZED_TSTAMP;
         OG_BREAK_IF_ERROR(pl_init_sequence(sub_stmt));
@@ -482,6 +470,8 @@ status_t ple_exec_trigger(sql_stmt_t *stmt, void *context, uint32 trig_event, vo
             sub_stmt->stat = NULL;
         }
     }
+
+    sub_stmt->session->if_in_triggers = save_trigger_flag;
 
     /* release the stack resource here */
     PLE_RESTORE_STMT(stmt);

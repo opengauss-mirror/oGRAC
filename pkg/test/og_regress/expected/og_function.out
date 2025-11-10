@@ -1,0 +1,215 @@
+
+
+SQL> drop table if exists tbl_time_zone_1;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists tbl_part_1;
+
+Succeed.
+
+SQL> drop table if exists tbl_part_2;
+
+Succeed.
+
+SQL> create table tbl_part_1(f1 int, f2 int);
+
+Succeed.
+
+SQL> insert into tbl_part_1 values (1,2),(3,4),(5,6),(7,8),(9,10);
+
+5 rows affected.
+
+SQL> create table tbl_part_2(f1 int, f2 int);
+
+Succeed.
+
+SQL> insert into tbl_part_1 values (1,2),(3,4),(5,6),(7,8),(9,10);
+
+5 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> -- except error not in group list
+SQL> select count(f1) + f1 from tbl_part_1;
+
+OG-00609, Expression not in group list
+SQL> select count(f1) + f2 from tbl_part_1;
+
+OG-00609, Expression not in group list
+SQL> select count(f1) + (select f1) from tbl_part_1;
+
+OG-00609, Expression not in group list
+SQL> select count(f1) + (select f2) from tbl_part_1;
+
+OG-00609, Expression not in group list
+SQL> select count(f1) + connect_by_root f1 from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+OG-00609, Expression not in group list
+SQL> select count(f1) + connect_by_root (select f1) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+OG-00609, Expression not in group list
+SQL> 
+SQL> -- select aggr + connect_by_root(subqry with group list column) excepted error more than one value
+SQL> select count(f1) + connect_by_root (select f1 from tbl_part_1) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+OG-00915, More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+SQL> -- select aggr + connect_by_root(subqry without group list column) excepted success with null
+SQL> select count(f1) + connect_by_root (select f1 from tbl_part_2) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+COUNT(F1) + CONNECT_BY_ROOT (SELECT F1 FROM TBL_PART_2)
+-------------------------------------------------------
+                                                       
+
+1 rows fetched.
+
+SQL> 
+SQL> -- select aggr + connect_by_root(subqry with group list column limit 1) excepted success
+SQL> select count(f1) + connect_by_root (select f1 from tbl_part_1 limit 1) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+COUNT(F1) + CONNECT_BY_ROOT (SELECT F1 FROM TBL_PART_1 LIMIT 1)
+---------------------------------------------------------------
+3                                                              
+
+1 rows fetched.
+
+SQL> -- select aggr + connect_by_root(subqry without group list column limit 1) excepted success
+SQL> select count(f1) + connect_by_root (select f1 from tbl_part_1 limit 1) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+COUNT(F1) + CONNECT_BY_ROOT (SELECT F1 FROM TBL_PART_1 LIMIT 1)
+---------------------------------------------------------------
+3                                                              
+
+1 rows fetched.
+
+SQL> 
+SQL> -- select aggr + (subqry with group list column) excepted error more than one value
+SQL> select count(t1.f1) + (select t1.f1 from tbl_part_1 t1) from tbl_part_1 t1;
+
+OG-00915, More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+SQL> -- select aggr + (subqry without group list column) excepted success with null
+SQL> select count(t1.f1) + (select t2.f1 from tbl_part_2 t2) from tbl_part_1 t1;
+
+COUNT(T1.F1) + (SELECT T2.F1 FROM TBL_PART_2 T2)
+------------------------------------------------
+                                                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- except success
+SQL> select count(f1) + connect_by_root 99 as c1 from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+C1                  
+--------------------
+101                 
+
+1 rows fetched.
+
+SQL> select count(f1) + connect_by_root null as c1 from tbl_part_1 start with f1 = 3 connect by f1 = f2;
+
+C1                                      
+----------------------------------------
+                                        
+
+1 rows fetched.
+
+SQL> drop table if exists tbl_part_1;
+
+Succeed.
+
+SQL> drop table if exists tbl_part_2;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists t_lag_1;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists t_base_rank_1;
+
+Succeed.
+
+SQL> create table t_base_rank_1(id int,c_int int,c_vchar varchar(100),c_clob clob,c_blob blob,c_date date);
+
+Succeed.
+
+SQL> insert into t_base_rank_1 values(1,1000,'abc123',lpad('123abc',50,'abc'),lpad('11100011',50,'1100'),to_timestamp(to_char('2023-05-01 10:51:47'),'yyyy-mm-dd hh24:mi:ss'));
+
+1 rows affected.
+
+SQL> CREATE or replace procedure proc_insert(tname varchar,startall int,endall int) as
+  2 sqlst varchar(500);
+  3 BEGIN
+  4   FOR i IN startall..endall LOOP
+  5                 sqlst := 'insert into ' || tname ||' select id+'||i||',c_int+'||i||',c_vchar||'||i||',c_clob||'||i||',c_blob'||',c_date from '||tname|| ' where id=1';
+  6         execute immediate sqlst;
+  7   END LOOP;
+  8 END;
+  9 /
+
+Succeed.
+
+SQL> exec proc_insert('t_base_rank_1',1,5000);
+
+PL/SQL procedure successfully completed.
+
+SQL> insert into t_base_rank_1 select * from t_base_rank_1;
+
+5001 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> create index idx_t_base_rank_1_1 on t_base_rank_1(id);
+
+Succeed.
+
+SQL> create index idx_t_base_rank_1_2 on t_base_rank_1(id,c_int);
+
+Succeed.
+
+SQL> create index idx_t_base_rank_1_3 on t_base_rank_1(upper(c_vchar));
+
+Succeed.
+
+SQL> analyze table t_base_rank_1 compute statistics;
+
+Succeed.
+
+SQL> 
+SQL> ---set autotrace on;
+SQL> select sum(distinct c1), sum(distinct c2), sum(distinct c3) from
+  2 (select approx_count_distinct(id) c1, count(distinct c_vchar) c2, 
+  3 rank(444400) within group (order by id) c3 from t_base_rank_1 group by c_int) group by 1;
+
+SUM(DISTINCT C1)                         SUM(DISTINCT C2)                         SUM(DISTINCT C3)    
+---------------------------------------- ---------------------------------------- --------------------
+1                                        1                                        3                   
+
+1 rows fetched.
+
+SQL> 
+SQL> select sum(distinct c1), sum(distinct c2), sum(distinct c3) from
+  2 (select approx_count_distinct(id) c1, count(distinct c_vchar) c2, 
+  3 dense_rank(444400) within group (order by id) c3 from t_base_rank_1 group by c_int) group by 1;
+
+SUM(DISTINCT C1)                         SUM(DISTINCT C2)                         SUM(DISTINCT C3)    
+---------------------------------------- ---------------------------------------- --------------------
+1                                        1                                        2                   
+
+1 rows fetched.
+
+SQL> ---set autotrace off;
+SQL> drop table if exists t_base_rank_1;
+Succeed.
+
+
+
+

@@ -68,4 +68,6 @@ status_t cm_typmode2str(const typmode_t *typmod, unsigned char is_array, char *b
 void     cm_adjust_typmode(typmode_t *typmod);
 status_t cm_combine_typmode(typmode_t tm1, bool32 is_null1, typmode_t tm2, bool32 is_null2, typmode_t *tmr);
 
+/* for typmode of NULL from view, its datatype is OG_TYPE_VARCHAR and size is zero  */
+bool cm_is_null_typmode(const typmode_t typmode);
 #endif

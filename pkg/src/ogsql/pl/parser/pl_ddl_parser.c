@@ -86,7 +86,7 @@ static status_t pl_diag_pacakge_type(sql_stmt_t *stmt, word_t *word, uint32 *typ
 {
     bool32 is_body = OG_FALSE;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "create package");
         return OG_ERROR;
@@ -109,7 +109,7 @@ static status_t pl_diag_pacakge_type(sql_stmt_t *stmt, word_t *word, uint32 *typ
 static status_t pl_diag_udt_type(sql_stmt_t *stmt, word_t *word, uint32 *type)
 {
     bool32 is_body = OG_FALSE;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "create type");
         return OG_ERROR;
@@ -717,7 +717,7 @@ static status_t plc_parse_for_each_row(sql_stmt_t *stmt, word_t *word, trig_desc
             return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         OG_SRC_THROW_ERROR(word->loc, ERR_CAPABILITY_NOT_SUPPORT, "'FOR EACH ROW' on coordinator is");
         return OG_ERROR;

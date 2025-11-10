@@ -144,7 +144,7 @@ static status_t plc_compile_returning(pl_compiler_t *compiler, text_t *sql, word
                 "missing INTO or BULK keyword");
             return OG_ERROR;
         }
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         if (IS_COORDINATOR && word->id == KEY_WORD_BULK) {
             OG_SRC_THROW_ERROR(word->loc, ERR_CAPABILITY_NOT_SUPPORT, "'bulk collect' on coordinator is");
             return OG_ERROR;
@@ -296,7 +296,7 @@ static status_t pl_compile_current_of(pl_compiler_t *compiler, text_t *sql, word
     bool32 is_of = OG_FALSE;
     lex_t *lex = compiler->stmt->session->lex;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(compiler->stmt->session)) {
         OG_SRC_THROW_ERROR(word->loc, ERR_PL_SYNTAX_ERROR_FMT, "CURRENT OF is not supported at CN.");
         return OG_ERROR;

@@ -49,15 +49,15 @@ status_t ogx_pool_create(context_pool_profile_t *profile, context_pool_t **pool)
     }
 
     /* initialize ogx_pool memory object */
-    ogx_pool->memory = (memory_pool_t *)((char*)ogx_pool + pool_size);
+    ogx_pool->memory = (memory_pool_t *)((char *)ogx_pool + pool_size);
 
     /* initialize ogx_pool ogx_map */
-    ogx_pool->map = (context_map_t *)((char*)ogx_pool + pool_size + sizeof(memory_pool_t));
+    ogx_pool->map = (context_map_t *)((char *)ogx_pool + pool_size + sizeof(memory_pool_t));
     ogx_pool->map->map_size = profile->optimize_pages;
     ogx_pool->map->free_items.first = OG_INVALID_ID32;
 
     /* initialize ogx_pool lru_list */
-    ogx_pool->lru_list = (lru_list_t *)((char*)ogx_pool + pool_size + sizeof(memory_pool_t) + map_size);
+    ogx_pool->lru_list = (lru_list_t *)((char *)ogx_pool + pool_size + sizeof(memory_pool_t) + map_size);
     ogx_pool->lru_list_cnt = OG_LRU_LIST_CNT;
 
     if (mpool_create(profile->area, profile->name,
@@ -212,7 +212,7 @@ static bool32 ogx_pool_try_remove(context_pool_t *pool, context_ctrl_t *ctrl)
     cm_spin_lock(&pool->lock, NULL);
     ogx_map_remove(pool, ctrl);
     cm_spin_unlock(&pool->lock);
-    
+
     lru_list = &pool->lru_list[ctrl->hash_value % pool->lru_list_cnt];
     ogx_lru_remove(lru_list, ctrl);
 
@@ -296,7 +296,7 @@ bool32 ogx_recycle_internal_core(context_pool_t *pool)
     bool32 removed = OG_FALSE;
     uint32 idx = pool->lru_list_idx++ % pool->lru_list_cnt;
 
-    for (uint32 i = 0 ; i < pool->lru_list_cnt; i++) {
+    for (uint32 i = 0; i < pool->lru_list_cnt; i++) {
         lru_list = &pool->lru_list[(idx + i) % pool->lru_list_cnt];
 
         cm_spin_lock(&lru_list->lock, NULL);
@@ -491,8 +491,7 @@ static inline void ogx_ctrl_dec_ref(context_ctrl_t *ctrl)
 }
 
 #ifndef TEST_MEM
-static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 hash_value, text_t *text, uint32 uid,
-                          uint32 remote_conn_type, bool32 is_direct_route)
+static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 hash_value, text_t *text, uint32 uid)
 {
     text_t piece;
     text_t sub_text;
@@ -502,8 +501,7 @@ static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 has
 
     /* firstly check: hash value,sql length,valid,etc */
     cm_spin_lock(&ctrl->lock, NULL);
-    bool32 cond = (ctrl->hash_value != hash_value || text->len != ctrl->text_size || !ctrl->valid || ctrl->uid != uid ||
-                   ctrl->remote_conn_type != remote_conn_type || ctrl->is_direct_route != is_direct_route);
+    bool32 cond = (ctrl->hash_value != hash_value || text->len != ctrl->text_size || !ctrl->valid || ctrl->uid != uid);
     if (cond) {
         cm_spin_unlock(&ctrl->lock);
         return OG_FALSE;
@@ -550,20 +548,15 @@ static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 has
         ogx_ctrl_dec_ref(ctrl);
         return OG_FALSE;
     }
-    
+
     return OG_TRUE;
 }
 #else
-static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 hash_value, text_t *text, uint32 uid,
-                          uint32 remote_conn_type, bool32 is_direct_route)
+static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 hash_value, text_t *text, uint32 uid)
 {
     /* firstly check: hash value,sql length,valid,etc */
     cm_spin_lock(&ctrl->lock, NULL);
-    if (ctrl->hash_value != hash_value
-        || text->len != ctrl->text_size || !ctrl->valid
-        || ctrl->uid != uid
-        || ctrl->remote_conn_type != remote_conn_type
-        || ctrl->is_direct_route != is_direct_route) {
+    if (ctrl->hash_value != hash_value || text->len != ctrl->text_size || !ctrl->valid || ctrl->uid != uid) {
         cm_spin_unlock(&ctrl->lock);
         return OG_FALSE;
     }
@@ -581,8 +574,7 @@ static bool32 ogx_matched(context_pool_t *pool, context_ctrl_t *ctrl, uint32 has
 }
 #endif  // TEST_MEM
 
-void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint32 uid, uint32 remote_conn_type,
-                    bool32 is_direct_route)
+void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint32 uid)
 {
     context_bucket_t *bucket = NULL;
     context_ctrl_t *ctrl = NULL;
@@ -593,7 +585,7 @@ void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint3
     ctrl = bucket->first;
 
     while (ctrl != NULL) {
-        if (ogx_matched(pool, ctrl, hash_value, text, uid, remote_conn_type, is_direct_route)) {
+        if (ogx_matched(pool, ctrl, hash_value, text, uid)) {
             cm_spin_unlock(&bucket->enque_lock);
             return ctrl;
         }

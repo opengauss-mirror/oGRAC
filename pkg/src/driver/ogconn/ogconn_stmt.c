@@ -203,7 +203,7 @@ void clt_free_stmt(clt_stmt_t *stmt)
     clt_destory_serveroutput(&stmt->serveroutput);
     clt_destory_resultset(stmt, &stmt->resultset);
     clt_destory_batch_errs(stmt);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     CM_FREE_PTR(stmt->batch_bnd_ptr);
 #endif
     clt_recycle_stmt_pack(stmt);
@@ -259,7 +259,7 @@ status_t clt_alloc_stmt(clt_conn_t *conn, clt_stmt_t **stmt)
     cm_create_list(&statement->resultset.ids, sizeof(uint32));
     cm_create_list(&statement->batch_errs.err_list, sizeof(clt_batch_error_t));
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     statement->batch_bnd_ptr = NULL;
 #endif
 
@@ -343,7 +343,7 @@ static status_t clt_set_stmt_attr(clt_stmt_t *stmt, int attr, const void *data, 
         case OGCONN_ATTR_PARAMSET_SIZE:
             stmt->paramset_size = *(uint32 *)data;
             break;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         case OGCONN_ATTR_PARAM_COUNT:
             stmt->param_count = *(uint32 *)data;
             break;
@@ -875,7 +875,7 @@ static status_t clt_write_large_str_param_value(clt_stmt_t *stmt, uint32 pos, ui
     return status;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 /* put params efficiently:
 types | total_len flags param ... param | ... | total_len flags param ... param
 */
@@ -1120,7 +1120,7 @@ static status_t clt_put_params_eff(clt_stmt_t *stmt, uint32 offset, bool32 add_t
 // cs_packet_head_t + cs_execute_req_t + total_len(4) + clt_param_t + ... + clt_param_t
 status_t clt_put_params(clt_stmt_t *stmt, uint32 offset, bool32 add_types)
 {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     // for CN do batch insert
     if (stmt->batch_bnd_ptr != NULL) {
         return clt_put_params_batch(stmt, offset, add_types);

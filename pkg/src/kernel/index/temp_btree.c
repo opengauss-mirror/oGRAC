@@ -165,10 +165,12 @@ status_t temp_btree_create_segment(knl_session_t *session, index_t *index, knl_t
     knl_panic_log(temp_table->table_segid != OG_INVALID_ID32,
                   "the temp_table's table_segid is invalid, panic info: index %s", index->desc.name);
 
+    cm_spin_lock(&session->temp_cache_lock, NULL);
     index_segid = temp_table->index_segid;
     if (index_segid == OG_INVALID_ID32) {
         if (temp_create_segment(session, &index_segid) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("Fail to create btree segment in btree create segment.");
+            cm_spin_unlock(&session->temp_cache_lock);
             return OG_ERROR;
         }
         temp_table->index_segid = index_segid;
@@ -176,6 +178,7 @@ status_t temp_btree_create_segment(knl_session_t *session, index_t *index, knl_t
     } else {
         segment = session->temp_mtrl->segments[index_segid];
     }
+    cm_spin_unlock(&session->temp_cache_lock);
 
     if (temp_btree_alloc_page(session, index, index_segid, &vmid, 0, OG_TRUE) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("Fail to alloc btree page in btree create segment.");

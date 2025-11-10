@@ -126,6 +126,8 @@ extern "C" {
 #define CBO_LARGE_TABLE_ROWS (uint32)100000
 #define CBO_SAMPLE_TABLE_ROWS (uint32)1000000 // 100w
 
+#define HASH_MIN_BUCKETS_LIMIT (int64)10000
+
 // this part_no means: 1. non-partition table, or 2. use global statistics of all parts
 #define CBO_GLOBAL_PART_NO OG_INVALID_ID32
 #define CBO_GLOBAL_SUBPART_NO OG_INVALID_ID32
@@ -199,6 +201,7 @@ extern "C" {
     (bool32)((oper) == JOIN_OPER_HASH || (oper) == JOIN_OPER_HASH_LEFT || (oper) == JOIN_OPER_HASH_FULL || \
         (oper) == JOIN_OPER_HASH_RIGHT_LEFT)
 #define IS_SEMI_OPER(oper) (bool32)((oper) >= JOIN_OPER_HASH_SEMI)
+#define INDEX_CONTAIN_UNIQUE_COLS(index, idx_equal_to) (IS_INDEX_UNIQUE(index) && index->column_count == idx_equal_to)
 
 // return expect if ret == expect
 #define CBO_RETURN_IF_RES(ret, expect) \

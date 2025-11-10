@@ -131,7 +131,6 @@ class DefaultConfigValue(object):
         "LARGE_POOL_SIZE": "1G",
         "JOB_QUEUE_PROCESSES": 100,
         "MAX_COLUMN_COUNT": 4096,
-        "UPPER_CASE_TABLE_NAMES": "FALSE",
         "INSTANCE_ID": 0,
         "INTERCONNECT_PORT": "1601",
         "LSNR_PORT": 1611,
@@ -149,7 +148,7 @@ class DefaultConfigValue(object):
         "LSNR_ADDR": "", #input by user in command line parameter
         "SHARED_PATH": "+vg1",
         "ENABLE_IDX_KEY_LEN_CHECK": "FALSE",
-        "EMPTY_STRING_AS_NULL": "FALSE",
+        "EMPTY_STRING_AS_NULL": "TRUE",
         "OG_CLUSTER_STRICT_CHECK": "TRUE"
     }
     
@@ -233,7 +232,6 @@ class DefaultConfigValue(object):
         "LARGE_POOL_SIZE": "2G",
         "JOB_QUEUE_PROCESSES": 100,
         "MAX_COLUMN_COUNT": 4096,
-        "UPPER_CASE_TABLE_NAMES": "FALSE",
         "INSTANCE_ID": 0,
         "INTERCONNECT_PORT": "1601",
         "LSNR_PORT": 1611,
@@ -251,7 +249,7 @@ class DefaultConfigValue(object):
         "LOG_HOME": "", #generate by installer
         "_SYS_PASSWORD": "", #input by user in command line parameter or from shell command interactively
         "ENABLE_IDX_KEY_LEN_CHECK": "FALSE",
-        "EMPTY_STRING_AS_NULL": "FALSE",
+        "EMPTY_STRING_AS_NULL": "TRUE",
         "OG_CLUSTER_STRICT_CHECK": "TRUE"
     }
 

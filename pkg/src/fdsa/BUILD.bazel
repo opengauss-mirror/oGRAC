@@ -62,7 +62,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 cc_library (
-    name = "zefdsa",
+    name = "ogfdsa",
     srcs = [
         "ograc_fdsa.c",
         "//pkg/src/fdsa:fdsa_hdrs",
@@ -104,7 +104,7 @@ cc_library (
         "//:open_source/lz4/include",
         "//pkg/src/protocol:protocol_hdrs",
         "//library:xnet/include",
-        "//pkg/src/common:libzecommon.so",
+        "//pkg/src/common:libogcommon.so",
         "//library:dbstor/include/infrastructure/product_dep_tmp/fdsa",
         "//library:dbstor/include/infrastructure/infrastructure/iod",
     ],

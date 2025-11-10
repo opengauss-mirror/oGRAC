@@ -3007,7 +3007,7 @@ void ckpt_remove_df_page(knl_session_t *session, datafile_t *df, bool32 need_dis
         next = curr->ckpt_next;
         if (curr->page_id.file == df->ctrl->id) {
             ckpt_pop_page(session, ogx, curr);
-            curr->is_dirty = 0;  // todo: notify other nodes
+            curr->is_dirty = 0;
             curr->is_remote_dirty = 0;
             curr->is_edp = 0;
             buf_expire_page(session, curr->page_id);

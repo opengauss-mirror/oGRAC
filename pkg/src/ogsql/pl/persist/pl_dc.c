@@ -1136,11 +1136,11 @@ static status_t pl_verify_func_not_support_sharding(sql_verifier_t *verif, expr_
                 break;
             }
                 /*
-                 * group_concat is not ready for z_sharding.
+                 * group_concat is not ready for OG_RAC_ING.
                  * object_id() & connection_id() returns the node-related info.
                  * however, if a built-in function appears in the WHERE clause,
                  * it would be pushed to the remote node and lost its meaning.
-                 * so currently we cannot support the node-related built-in function for z_sharding
+                 * so currently we cannot support the node-related built-in function for OG_RAC_ING
                  */
                 /*
                  * in the future, considering the distribute database usage,
@@ -1250,7 +1250,7 @@ static status_t pl_generate_aggr(sql_verifier_t *verif, expr_node_t *node, uint3
         }
     }
 
-    if ((func_id == ID_FUNC_ITEM_LISTAGG || func_id == ID_FUNC_ITEM_GROUP_CONCAT) && aggr_node->sort_items != NULL) {
+    if (chk_has_aggr_sort(func_id, aggr_node->sort_items)) {
         verif->curr_query->has_aggr_sort = OG_TRUE;
     }
 
@@ -1331,7 +1331,7 @@ status_t pl_try_verify_builtin_func(sql_verifier_t *verif, expr_node_t *node, va
 
     /*
      * The avg_collect() does not support input from original sql.
-     * It only used for transform of z_sharding.
+     * It only used for transform of OG_RAC_ING.
      */
     if (vf.func_id != OG_INVALID_ID32) {
         *is_found = OG_TRUE;

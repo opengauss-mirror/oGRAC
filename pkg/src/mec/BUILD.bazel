@@ -85,7 +85,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 cc_library (
-    name = "zemes",
+    name = "ogmes",
     srcs = [
         "mes_config.c",
         "mes_func.c",
@@ -166,8 +166,8 @@ cc_library (
     ] + COMMON_COPTS,
     linkopts = COMMON_LINKOPTS,
     deps = [
-        "//pkg/src/rc:zerc",
-        "//pkg/src/tms:zetms",
+        "//pkg/src/rc:ogrc",
+        "//pkg/src/tms:ogtms",
     ],
 )
 

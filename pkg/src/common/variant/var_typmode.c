@@ -27,6 +27,11 @@
 #include "cm_decimal.h"
 #include "var_inc.h"
 
+inline bool cm_is_null_typmode(const typmode_t typmode)
+{
+    return typmode.datatype == OG_TYPE_VARCHAR && typmode.size == 0;
+}
+
 status_t cm_typmode2text(const typmode_t *typmod, text_t *txt, uint32 max_len)
 {
     switch (typmod->datatype) {
@@ -193,9 +198,6 @@ static inline void cm_combine_datetime_typmode(const typmode_t *tm1, const typmo
     tmr->precision = MAX(tm1->precision, tm2->precision);
 }
 
-/* for typmode of NULL from view, its datatype is OG_TYPE_VARCHAR and size is zero  */
-#define OG_IS_NULL_TYPMODE(tm) ((tm).datatype == OG_TYPE_VARCHAR && (tm).size == 0)
-
 /**
 * This function can combine two typemodes, when performing UNION [ALL], INTERSECT
 * and MINUS operators, and inferring the datatype of CASE..WHEN, NVL and DECODE
@@ -204,12 +206,12 @@ static inline void cm_combine_datetime_typmode(const typmode_t *tm1, const typmo
 */
 status_t cm_combine_typmode(typmode_t tm1, bool32 is_null1, typmode_t tm2, bool32 is_null2, typmode_t *tmr)
 {
-    if (is_null1 || OG_IS_NULL_TYPMODE(tm1) || OG_IS_UNKNOWN_TYPE(tm1.datatype)) {
+    if (is_null1 || cm_is_null_typmode(tm1) || OG_IS_UNKNOWN_TYPE(tm1.datatype)) {
         *tmr = tm2;
         return OG_SUCCESS;
     }
 
-    if (is_null2 || OG_IS_NULL_TYPMODE(tm2) || OG_IS_UNKNOWN_TYPE(tm2.datatype)) {
+    if (is_null2 || cm_is_null_typmode(tm2) || OG_IS_UNKNOWN_TYPE(tm2.datatype)) {
         *tmr = tm1;
         return OG_SUCCESS;
     }

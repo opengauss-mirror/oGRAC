@@ -96,6 +96,7 @@ typedef struct st_cms_instance {
     cms_disk_lock_t         res_start_lock;
     cms_disk_lock_t         vote_info_lock;
     cms_disk_lock_t         res_stat_lock[CMS_MAX_NODE_COUNT][CMS_RES_STAT_MAX_RESOURCE_COUNT];
+    cms_disk_lock_t         dss_master_lock;
     bool32                  is_server;
     cms_gcc_auto_bak_t      gcc_auto_bak;
     bool32                  server_loop;

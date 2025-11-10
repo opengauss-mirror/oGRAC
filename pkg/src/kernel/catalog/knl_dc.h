@@ -109,7 +109,7 @@ typedef struct st_sequence_desc {
     knl_scn_t org_scn;
     knl_scn_t chg_scn;
     int64 lastval;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     binary_t dist_data;
 #endif
 } sequence_desc_t;
@@ -779,7 +779,7 @@ dc_entity_t *dc_get_entity_from_lru(knl_session_t *session, uint32 pos, bool32 *
 bool32 dc_replication_enabled(knl_session_t *session, dc_entity_t *entity, knl_part_locate_t part_loc);
 void dc_recycle_table_dls(knl_session_t *session, dc_entry_t *entry);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t dc_create_distribute_rule_entry(knl_session_t *session, knl_table_desc_t *desc);
 typedef struct st_distribute_strategy_desc {
     uint32 user_id;

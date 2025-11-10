@@ -2079,7 +2079,7 @@ static status_t sql_parse_altable_set_interval_part(sql_stmt_t *stmt, lex_t *lex
     uint16 col_id;
     knl_column_t *knl_col = NULL;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if ((IS_COORDINATOR || IS_DATANODE) && def->action == ALTABLE_SET_INTERVAL_PART) {
         OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "alter table set interval");
         return OG_ERROR;

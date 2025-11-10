@@ -93,7 +93,7 @@ static inline void sql_init_scan_assist(char *row_buf, hash_scan_assist_t *sa)
     sa->size = row_head->size;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 int32 sql_compare_data_ex(void *data1, uint16 size1, void *data2, uint16 size2, og_type_t type);
 #endif
 

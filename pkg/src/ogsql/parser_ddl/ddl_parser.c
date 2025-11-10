@@ -42,7 +42,7 @@
 #include "cm_defs.h"
 #include "pl_ddl_parser.h"
 #include "srv_param_common.h"
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #include "shd_parser.h"
 #include "shd_longsql.h"
 #include "shd_ddl_executor.h"
@@ -151,7 +151,7 @@ status_t sql_parse_create_directory(sql_stmt_t *stmt, bool32 is_replace)
     knl_directory_def_t *dir_def = NULL;
     lex_t *lex = stmt->session->lex;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "Create directory");
         return OG_ERROR;
@@ -440,7 +440,7 @@ static status_t sql_parse_drop_directory(sql_stmt_t *stmt)
     knl_drop_def_t *def = NULL;
     lex_t *lex = stmt->session->lex;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
         OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "Create directory");
         return OG_ERROR;

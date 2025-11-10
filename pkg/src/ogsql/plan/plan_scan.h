@@ -25,7 +25,9 @@
 #ifndef __PLAN_SCAN_H__
 #define __PLAN_SCAN_H__
 
+#include "ogsql_scan.h"
 #include "ogsql_plan.h"
+#include "ogsql_cbo_cost.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +35,7 @@ extern "C" {
 
 status_t sql_create_query_scan_plan(sql_stmt_t *stmt, plan_assist_t *plan_ass, plan_node_t **plan);
 bool32 sql_has_hash_join_oper(sql_join_node_t *join_node);
+
 #ifdef __cplusplus
 }
 #endif

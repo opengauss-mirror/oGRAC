@@ -28,6 +28,7 @@
 #include "ogsql_cond_rewrite.h"
 #include "func_parser.h"
 #include "ogsql_mtrl.h"
+#include "ogsql_aggr.h"
 
 /* ******************************************************************************
 Function       : count aggregate function
@@ -116,7 +117,7 @@ static status_t sql_verify_avg_median_core(expr_node_t *func, bool32 is_avg)
             break;
     }
 
-    OG_THROW_ERROR(ERR_TYPE_MISMATCH, "NUMERIC", get_datatype_name_str(arg_type));
+    OG_THROW_ERROR(ERR_TYPE_MISMATCH, is_avg ? "NUMERIC" : "NUMERIC OR DATETIME", get_datatype_name_str(arg_type));
     return OG_ERROR;
 }
 
@@ -138,10 +139,9 @@ status_t sql_verify_avg(sql_verifier_t *verif, expr_node_t *func)
 
 status_t sql_verify_covar_or_corr(sql_verifier_t *verif, expr_node_t *func)
 {
-    uint32 excl_flags;
     CM_POINTER2(verif, func);
-    excl_flags = verif->excl_flags;
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    uint32 excl_flags = verif->excl_flags;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_func_node(verif, func, 2, 2, OG_INVALID_ID32));
     if (func->dis_info.need_distinct) {
@@ -207,6 +207,9 @@ status_t sql_func_count(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 status_t sql_verify_count(sql_verifier_t *verif, expr_node_t *func)
 {
     CM_POINTER2(verif, func);
+    // explicit allow count(*) usage
+    uint32 excl_flags = verif->excl_flags;
+    OG_BIT_RESET(verif->excl_flags, SQL_EXCL_STAR);
 
     if (func->argument == NULL || func->argument->next != NULL) {
         OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_FUNC_PARAM_COUNT, T2S(&func->word.func.name), 1, 1);
@@ -239,6 +242,7 @@ status_t sql_verify_count(sql_verifier_t *verif, expr_node_t *func)
 
     func->datatype = OG_TYPE_BIGINT;
     func->size = OG_BIGINT_SIZE;
+    verif->excl_flags = excl_flags;
     return OG_SUCCESS;
 }
 
@@ -257,10 +261,7 @@ static status_t sql_calc_cume_dist_satisfy(sql_stmt_t *stmt, expr_tree_t *arg_ex
 
     OG_RETURN_IFERR(sql_exec_expr(stmt, arg_expr, &constant));
     OG_RETURN_IFERR(sql_exec_expr(stmt, item->expr, &val_order));
-    if (!(OG_IS_NUMERIC_TYPE(val_order.type))) {
-        OG_RETURN_IFERR(sql_convert_variant2(stmt, &constant, &val_order));
-    }
-
+    
     if (constant.is_null && val_order.is_null) {
         *satisfy = OG_TRUE;
         *continus = OG_TRUE;
@@ -273,6 +274,9 @@ static status_t sql_calc_cume_dist_satisfy(sql_stmt_t *stmt, expr_tree_t *arg_ex
             *satisfy = OG_TRUE;
         }
     } else {
+        if (!(OG_IS_NUMERIC_TYPE(val_order.type))) {
+            OG_RETURN_IFERR(sql_convert_variant2(stmt, &constant, &val_order));
+        }
         OG_RETURN_IFERR(var_compare(SESSION_NLS(stmt), &constant, &val_order, &result));
         if (item->direction == SORT_MODE_ASC || item->direction == SORT_MODE_NONE) {
             if (result >= 0) {
@@ -358,8 +362,8 @@ static status_t sql_verify_sort_param(sql_verifier_t *verif, expr_node_t *func)
     CM_POINTER2(verif, func);
 
     uint32 ori_excl_flags = verif->excl_flags;
-    verif->excl_flags = verif->excl_flags | SQL_EXCL_WIN_SORT | SQL_EXCL_AGGR | SQL_EXCL_STAR | SQL_EXCL_SEQUENCE |
-        SQL_EXCL_ROWID | SQL_EXCL_LOB_COL | SQL_EXCL_ARRAY | SQL_EXCL_UNNEST;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_WIN_SORT | SQL_EXCL_AGGR | SQL_EXCL_SEQUENCE |
+        SQL_EXCL_ROWID | SQL_EXCL_LOB_COL | SQL_EXCL_ARRAY | SQL_EXCL_UNNEST);
     if (sql_verify_func_node(verif, func, 1, OG_MAX_FUNC_ARGUMENTS, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -415,10 +419,26 @@ status_t sql_verify_cume_dist(sql_verifier_t *verif, expr_node_t *func)
     return OG_SUCCESS;
 }
 
-status_t sql_func_dense_rank(sql_stmt_t *stmt, expr_node_t *func, variant_t *result)
+status_t ogsql_func_rank(sql_stmt_t *statement, expr_node_t *exprn, variant_t *var)
 {
-    result->type = OG_TYPE_UNKNOWN;
-    result->is_null = OG_TRUE;
+    CM_POINTER3(statement, exprn, var);
+    bool32 cmp_great = OG_TRUE;
+    var_set_not_null(var, OG_TYPE_INTEGER);
+    OGSQL_SAVE_STACK(statement);
+    if (OG_SUCCESS != sql_compare_sort_row_for_rank(statement, exprn, &cmp_great)) {
+        OGSQL_RESTORE_STACK(statement);
+        return OG_ERROR;
+    }
+    var->v_int = cmp_great ? 1 : 0;
+    OGSQL_RESTORE_STACK(statement);
+    return OG_SUCCESS;
+}
+
+status_t sql_func_dense_rank(sql_stmt_t *statement, expr_node_t *exprn, variant_t *var)
+{
+    CM_POINTER(var);
+    var_set_not_null(var, OG_TYPE_INTEGER);
+    var->v_int = 0;
     return OG_SUCCESS;
 }
 
@@ -468,12 +488,9 @@ status_t sql_verify_listagg(sql_verifier_t *verif, expr_node_t *func)
 
 status_t sql_verify_min_max(sql_verifier_t *verif, expr_node_t *func)
 {
-    uint32 excl_flags;
-
     CM_POINTER2(verif, func);
-
-    excl_flags = verif->excl_flags;
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    uint32 excl_flags = verif->excl_flags;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     if (sql_verify_func_node(verif, func, 1, 1, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
@@ -509,10 +526,9 @@ status_t sql_verify_median(sql_verifier_t *verif, expr_node_t *func)
 
 status_t sql_verify_stddev_intern(sql_verifier_t *verif, expr_node_t *func)
 {
-    uint32 excl_flags;
     CM_POINTER2(verif, func);
-    excl_flags = verif->excl_flags;
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    uint32 excl_flags = verif->excl_flags;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     OG_RETURN_IFERR(sql_verify_func_node(verif, func, 1, 1, OG_INVALID_ID32));
 
@@ -531,8 +547,6 @@ status_t sql_verify_sum(sql_verifier_t *verif, expr_node_t *func)
 {
     CM_POINTER2(verif, func);
 
-    verif->excl_flags = verif->excl_flags | SQL_EXCL_STAR;
-
     if (sql_verify_func_node(verif, func, 1, 1, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -543,7 +557,7 @@ status_t sql_verify_sum(sql_verifier_t *verif, expr_node_t *func)
 status_t sql_verify_approx_count_distinct(sql_verifier_t *verif, expr_node_t *func)
 {
     uint32 excl_flags = verif->excl_flags;
-    verif->excl_flags = excl_flags | SQL_EXCL_STAR | SQL_EXCL_AGGR;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_AGGR);
 
     if (sql_verify_func_node(verif, func, 1, 1, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;

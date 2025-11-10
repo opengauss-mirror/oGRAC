@@ -132,7 +132,7 @@ knl_column_t g_dba_free_space_columns[] = {
 ARRAY_IN_DEF(g_dba_free_space_columns)
 
 static knl_column_t g_cast_columns[] = {
-    { 0, "COLUMN_VALUE", 0, 0, OG_TYPE_UNKNOWN, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 0, "COLUMN_VALUE", 0, 0, OG_TYPE_UNKNOWN, sizeof(uint32), 0, 0, OG_TRUE, 0, { 0 } },
 };
 
 static knl_column_t g_pending_trans_session_columns[] = {

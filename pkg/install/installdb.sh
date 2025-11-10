@@ -61,7 +61,7 @@ function err() {
 function wait_node1_online() {
 
   function is_db1_online_by_cms() {
-    ${OGDB_HOME}/bin/cms stat -res db | grep -E "^1[[:blank:]]+db[[:blank:]]+ONLINE"
+    cms stat -res db | grep -E "^1[[:blank:]]+db[[:blank:]]+ONLINE"
   }
 
   function is_db1_online_by_query() {
@@ -73,7 +73,7 @@ function wait_node1_online() {
 
 function wait_node0_online() {
   function is_db0_online_by_cms() {
-    ${OGDB_HOME}/bin/cms stat -res db | awk '{print $1, $3, $6}' | grep "0 ONLINE 1"
+    cms stat -res db | awk '{print $1, $3, $6}' | grep "0 ONLINE 1"
   }
   wait_for_success 5400 is_db0_online_by_cms
 }
@@ -99,7 +99,7 @@ function start_ogracd() {
 
 function wait_for_node1_in_cluster() {
   function is_node1_joined_cluster() {
-    ${OGDB_HOME}/bin/cms node -list | grep -q node1
+    cms node -list | grep -q node1
   }
   wait_for_success 60 is_node1_joined_cluster
 }
@@ -108,21 +108,21 @@ function start_cms() {
   log "=========== start cms ${NODE_ID} ================"
   if [ ${NODE_ID} == 0 ]; then
     if [ ${CLUSTER_SIZE} == 1 ]; then
-      ${OGDB_HOME}/bin/cms node -add 0 node0 127.0.0.1 ${CMS_PORT[0]}
+      cms node -add 0 node0 127.0.0.1 ${CMS_PORT[0]}
     else
       for ((i = 0; i < ${CLUSTER_SIZE}; i++)); do
-        ${OGDB_HOME}/bin/cms node -add ${i} node${i} ${NODE_IP[$i]} ${CMS_PORT[$i]}
+        cms node -add ${i} node${i} ${NODE_IP[$i]} ${CMS_PORT[$i]}
       done
     fi
 
-    ${OGDB_HOME}/bin/cms res -add db -type db -attr "script=${OGDB_HOME}/bin/cluster.sh"
+    cms res -add db -type db -attr "script=${OGDB_HOME}/bin/cluster.sh"
   elif [ ${NODE_ID} == 1 ]; then
     wait_for_node1_in_cluster
   fi
 
-  ${OGDB_HOME}/bin/cms node -list
-  ${OGDB_HOME}/bin/cms res -list
-  ${OGDB_HOME}/bin/cms server -start >> ${STATUS_LOG} 2>&1 &
+  cms node -list
+  cms res -list
+  cms server -start >> ${STATUS_LOG} 2>&1 &
 }
 
 function prepare_cms_gcc() {
@@ -132,7 +132,7 @@ function prepare_cms_gcc() {
   if [ "${NODE_ID}" == 0 ]; then
     log "zeroing ${GCC_HOME} on node ${NODE_ID}"
     dd if=/dev/zero of=${GCC_HOME} bs=1M count=1024
-    ${OGDB_HOME}/bin/cms gcc -reset -f
+    cms gcc -reset -f
   fi
 }
 
@@ -229,7 +229,31 @@ function check_ogracd_status() {
   return 0
 }
 
+start_dss() {
+    num=`ps -ef | grep -w dssserver | grep -v grep | grep -v defunct | wc -l`
+    if [ $num -gt 0 ];then
+        echo "dss is still running."
+        dsscmd reghl -D $DSS_HOME
+        if [ $? != 0 ]; then 
+            err "failed to reghl by dss"
+            exit 1
+        fi
+        return 0
+    fi
+
+    cms res -start dss -node "${NODE_ID}"
+    if [ $? != 0 ]; then 
+        err "failed to start dss"
+        exit 1
+    fi
+    echo "start dss success."
+    return 0
+}
+
 function temp_start_ogracd() {
+  if [[ ${USE_GSS} == "True" ]]; then
+      start_dss
+  fi
   nohup ${OGDB_HOME}/bin/ogracd nomount -D ${OGDB_DATA} >> ${STATUS_LOG} 2>&1 &
   sleep 3
   num=`ps -ef | grep -w ogracd | grep -v grep | grep -v defunct | wc -l`
@@ -242,7 +266,7 @@ function temp_start_ogracd() {
 
 function stop_ogracd() {
   node_id=$(cat ${CMS_HOME}/cfg/cms.ini  | grep NODE_ID | awk '{print $3}')
-  ${OGDB_HOME}/bin/cms res -stop db -node $node_id -f
+  cms res -stop db -node $node_id -f
   set +e
   pid=`pidof ogracd`
   if [[ ! -z ${pid} ]]; then

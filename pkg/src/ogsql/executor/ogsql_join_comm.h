@@ -116,6 +116,16 @@ static inline void sql_init_row_addr(sql_stmt_t *stmt, sql_cursor_t *cursor, cha
     row_addrs[id].rownodeid = rownodeid;
 }
 
+static inline status_t og_match_outerjoin_condition(sql_stmt_t *statement, cond_tree_t *join_cond, bool32 *match_found)
+{
+    CM_POINTER2(statement, match_found);
+    if (join_cond == NULL) {
+        *match_found = OG_TRUE;
+        return OG_SUCCESS;
+    }
+    return sql_match_cond_node(statement, join_cond->root, match_found);
+}
+
 status_t sql_mtrl_alloc_cursor(sql_stmt_t *stmt, sql_cursor_t *parent, sql_cursor_t **sql_cursor,
                                join_info_t *join_join, plan_node_t *plan);
 status_t sql_mtrl_fetch_tables_row(mtrl_context_t *ogx, mtrl_cursor_t *mtrl_cursor, row_addr_t *row_addrs,

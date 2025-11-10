@@ -76,7 +76,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 filegroup(
-    name = "zeprotocol_srcs",
+    name = "ogprotocol_srcs",
     srcs = [
         "cs_ipc.c",
         "cs_listener.c",
@@ -97,10 +97,10 @@ filegroup(
 )
 
 cc_binary(
-    name = "libzeprotocol.so",
+    name = "libogprotocol.so",
     srcs = [
-        ":zeprotocol_srcs",
-        "//pkg/src/common:libzecommon.so",
+        ":ogprotocol_srcs",
+        "//pkg/src/common:libogcommon.so",
     ],
     local_defines = COMMON_LOCAL_DEFINES,
     copts = COMMON_COPTS,
@@ -153,9 +153,9 @@ cc_binary(
 )
 
 cc_library (
-    name = "zeprotocol",
+    name = "ogprotocol",
     srcs = [
-        ":zeprotocol_srcs",
+        ":ogprotocol_srcs",
     ],
     linkstatic = True,
     local_defines = COMMON_LOCAL_DEFINES,

@@ -14,34 +14,33 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * ogsql_hint_verifier.c
+ * ogsql_cache.h
  *
  *
  * IDENTIFICATION
- * src/ogsql/verifier/ogsql_hint_verifier.c
+ * src/ogsql/parser/ogsql_cache.h
  *
  * -------------------------------------------------------------------------
  */
-#include "ogsql_hint_verifier.h"
-#include "dml_parser.h"
-#include "hint_parser.h"
-#include "srv_instance.h"
-#include "ogsql_plan.h"
-#include "cbo_base.h"
+#ifndef __SQL_OGSQL_CACHE_H__
+#define __SQL_OGSQL_CACHE_H__
+#include "cm_defs.h"
+#include "ogsql_stmt.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-uint32 get_dynamic_sampling_level(sql_stmt_t *stmt)
-{
-    if (stmt->context->hint_info == NULL || stmt->context->hint_info->opt_params == NULL ||
-        stmt->context->hint_info->opt_params->dynamic_sampling == OG_INVALID_ID32) {
-        return g_instance->sql.cbo_dyn_sampling;
-    }
-    return stmt->context->hint_info->opt_params->dynamic_sampling;
-}
+bool32 og_check_sql_ctx_valid(sql_stmt_t *statement, sql_context_t *ogx);
+status_t og_cache_sql_context(sql_stmt_t *statement, context_bucket_t *ctx_bucket, sql_text_t *ogsql, uint32 hash_val);
+status_t og_get_context_from_cache(sql_stmt_t *statement, text_t *ogsql, uint32 *ogsql_id, context_bucket_t **bucketid,
+                                      ogx_stat_t *stat);
+void og_update_context_stat_uncached(sql_stmt_t *statement, timeval_t *timeval_begin);
+status_t og_find_then_parse_dml(sql_stmt_t *statement, key_wid_t key_wid, uint32 special_word);
+void og_update_context_stat_cached(sql_stmt_t *statement, timeval_t *tv_beg, ogx_stat_t *old_stat);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif

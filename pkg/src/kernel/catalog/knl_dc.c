@@ -1785,7 +1785,7 @@ void dc_close(knl_dictionary_t *dc)
     dc_entity_t *entity = DC_ENTITY(dc);
 
     if (entity != NULL) {
-        if (DC_TABLE_IS_TEMP(entity->type)) {
+        if (DC_TABLE_IS_TEMP(entity->type) && IS_LTT_BY_NAME(entity->table.desc.name)) {
             return;
         }
 
@@ -2238,7 +2238,7 @@ static status_t dc_load_dynamic_views(knl_session_t *session, db_status_t status
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t dc_load_shd_dynamic_views(knl_session_t *session, db_status_t status)
 {
     uint32 i;
@@ -2433,7 +2433,7 @@ static status_t dc_init_extral_entries(knl_session_t *session, dc_context_t *ogx
         return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (dc_load_distribute_rule(session, ogx) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -2449,7 +2449,7 @@ static status_t dc_init_extral_entries(knl_session_t *session, dc_context_t *ogx
         return OG_ERROR;
     }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (knl_load_dblinks(session) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -2895,7 +2895,7 @@ btree_t *dc_get_btree(knl_session_t *session, page_id_t entry, knl_part_locate_t
         knl_panic_log(index != NULL, "the index is NULL, panic info: page %u-%u", page_id.file, page_id.page);
     }
 
-    if (!IS_PART_INDEX(index)) {  // todo: if global heap for partition table, such as serial?
+    if (!IS_PART_INDEX(index)) {
         return &index->btree;
     } else {
         knl_panic_log(part_loc.part_no != OG_INVALID_ID32, "the part_no is invalid, panic info: page %u-%u index %s",
@@ -3065,7 +3065,7 @@ void dc_load_child_entity(knl_session_t *session, cons_dep_t *dep, knl_dictionar
 }
 
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 status_t dc_create_distribute_rule_entry(knl_session_t *session, knl_table_desc_t *desc)
 {

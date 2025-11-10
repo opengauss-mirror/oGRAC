@@ -27,9 +27,6 @@
 
 #define LOG(format, ...) write_log_to_file(__FILE__, __LINE__, format, ##__VA_ARGS__)
 
-#ifdef TEST_LOG_ENABLED
-void get_current_time(char *buffer, size_t size);
-#endif
 void write_log_to_file(const char *file, int line, const char *format, ...);
 
 #endif

@@ -29,7 +29,7 @@
 #include "pl_memory.h"
 
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t shd_pre_execute_ddl(sql_stmt_t *stmt, bool32 multi_ddl, bool32 need_encrypt);
 status_t shd_trigger_check_for_rebalance(sql_stmt_t *stmt, text_t *user, text_t *tab);
 #endif

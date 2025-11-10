@@ -63,7 +63,7 @@ set(SQL_ALL_SRC
 
 link_directories(${OGRACDB_LIB} ${PCRE_LIB_PATH} ${VPP_LIB_PATH} ${Z_LIB_PATH})
 
-add_library(zesql STATIC ${SQL_ALL_SRC} ${PL_TOTAL_SRC})
+add_library(ogracsql STATIC ${SQL_ALL_SRC} ${PL_TOTAL_SRC})
 if (USE_FUZZASAN)
-target_link_libraries(zesql PRIVATE zekernel)
+target_link_libraries(ogracsql PRIVATE ogkernel)
 endif(USE_FUZZASAN)

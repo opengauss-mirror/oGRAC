@@ -570,7 +570,7 @@ static key_word_t g_hint_key_words[] = {
     { (uint32)ID_HINT_PARALLEL,         OG_FALSE, { (char *)"parallel", 8 } },
     { (uint32)ID_HINT_RULE,             OG_FALSE, { (char *)"rule", 4 } },
     { (uint32)ID_HINT_SEMI_TO_INNER,    OG_FALSE, { (char *)"semi_to_inner", 13 } },
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     { (uint32)ID_HINT_SHD_READ_MASTER,  OG_FALSE, { (char *)"shd_read_master", 15 } },
     { (uint32)ID_HINT_SQL_WHITELIST,    OG_FALSE, { (char *)"sql_whitelist", 13 } },
 #endif

@@ -232,6 +232,7 @@ static status_t sql_verify_cast_default_expr(sql_stmt_t *stmt, knl_column_def_t 
     verf.stmt = stmt;
     verf.column = column;
     verf.excl_flags = SQL_DEFAULT_EXCL;
+    verf.create_table_define = OG_TRUE;
 
     if (OG_SUCCESS != sql_build_cast_expr(stmt, TREE_LOC(*expr), *expr, &column->typmod, expr)) {
         OG_SRC_THROW_ERROR(TREE_LOC(*expr), ERR_CAST_TO_COLUMN, "default value", T2S(&column->name));
@@ -815,6 +816,7 @@ static status_t sql_verify_cols_with_specific(sql_stmt_t *stmt, knl_table_def_t 
         }
         if (def_col->datatype == OG_TYPE_UNKNOWN) {
             def_col->typmod = rs_col->typmod;
+            cm_adjust_typmode(&def_col->typmod);
         } else {
             OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "may not specify column datatypes in CREATE TABLE");
             return OG_ERROR;

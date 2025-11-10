@@ -2387,8 +2387,7 @@ status_t srv_shutdown(session_t *session, shutdown_mode_t mode)
     }
 
     if (DB_IS_CLUSTER(&(session->knl_session)) && !DB_CLUSTER_NO_CMS) {
-        if (!dls_latch_timed_x(&(session->knl_session), &(ogx->shutdown_latch), session->knl_session.id, 1, NULL,
-            OG_INVALID_ID32)) {
+        if (!dls_latch_timed_x(&(session->knl_session), &(ogx->shutdown_latch), 1, NULL, OG_INVALID_ID32)) {
             OG_LOG_RUN_WAR("sql get shutdown lock failed, other node in shutdown progress");
             OG_THROW_ERROR(ERR_SHUTDOWN_IN_PROGRESS, session->knl_session.id);
             return OG_ERROR;

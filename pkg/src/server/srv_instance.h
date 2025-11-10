@@ -145,7 +145,7 @@ typedef struct st_instance_attr {
     bool32 view_access_dc;
     // for CN only
     uint64 xa_fmt_id;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     uint32 sequence_cache_size;
     bool32 shard_restricted_feature;
     bool32 shard_error_force_rollback;
@@ -157,7 +157,6 @@ typedef struct st_instance_attr {
     bool32 disable_var_peek;
     bool32 enable_cursor_sharing;
     bool32 enable_use_spm;
-    bool32 enable_dss;
 } instance_attr_t;
 
 typedef struct st_os_run_desc {

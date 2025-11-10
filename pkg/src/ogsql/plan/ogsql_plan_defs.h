@@ -338,6 +338,7 @@ typedef struct st_delete_plan {
 } delete_plan_t;
 
 typedef struct st_merge_plan {
+    struct st_plan_node *next;
     sql_table_t *merge_into_table;
     sql_table_t *using_table;
     struct st_plan_node *merge_into_scan_p;
@@ -391,6 +392,7 @@ typedef struct st_connect_by_mtrl_plan {
 typedef struct st_plan_node {
     plan_node_type_t type;
     double cost;
+    double start_cost;
     int64 rows;
     uint32 plan_id;
 
@@ -497,6 +499,7 @@ typedef struct st_plan_assist {
     uint32 scan_part_cnt; // only use part table
     plan_node_t **filter_node_pptr;
     pointer_t join_card_map;
+    galist_t *outer_rels_list;
 } plan_assist_t;
 
 typedef enum en_column_match_mode {

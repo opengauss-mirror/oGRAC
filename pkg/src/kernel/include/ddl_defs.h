@@ -306,7 +306,7 @@ typedef struct st_knl_alt_part {
         knl_alt_part_prop_t part_prop;          // for modify partition
         knl_alt_part_interval_t part_interval;  // for set interval
         bool32 global_index_option;             // for update global index
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         bool32 is_sys_interval_part;           // for drop interval partition
 #endif
         knl_storage_def_t storage_def;
@@ -511,7 +511,7 @@ typedef struct st_knl_table_def {
     compress_type_t compress_type;
     compress_algo_e compress_algo;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     bool32 is_distribute_rule_def;  // use for create distribute rule
     uint32 distribute_type;
     galist_t distribute_groups;

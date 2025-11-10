@@ -111,7 +111,7 @@ extern "C" {
 
 /* The number of cells (an uint32) used to store the decimal type.
 The int256 is used to represent a decimal, thus the size is 8 */
-#define DEC4_CELL_SIZE (uint8)18
+#define DEC4_CELL_SIZE (uint8)13
 
 /* The number of digits that an element of an int256, i.e., an uint32
 can encode. This indicates each uint32 can record at most DEC_ELEM_DIGIT
@@ -227,21 +227,6 @@ static inline void cm_dec4_copy(dec4_t *dst, const dec4_t *src)
      * to handle abnormal case, which reduces an IF statement.
      */
     switch (src->ncells) {
-        case 18:
-            dst->cells[17] = src->cells[17];
-            /* fall-through */
-        case 17:
-            dst->cells[16] = src->cells[16];
-            /* fall-through */
-        case 16:
-            dst->cells[15] = src->cells[15];
-            /* fall-through */
-        case 15:
-            dst->cells[14] = src->cells[14];
-            /* fall-through */
-        case 14:
-            dst->cells[13] = src->cells[13];
-            /* fall-through */
         case 13: /* = DEC_CELL_SIZE */
             dst->cells[12] = src->cells[12];
             /* fall-through */

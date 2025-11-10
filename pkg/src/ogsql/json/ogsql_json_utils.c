@@ -4009,7 +4009,6 @@ status_t json_analyse(json_assist_t *json_ass, json_value_t *json_val, json_anal
         case JSON_VAL_STRING:
         case JSON_VAL_NUMBER:
             if (analyse != NULL) {
-                analyse->last_elem_len = json_val->string.len;
                 analyse->string_number_len += json_val->string.len;
             }
             break;

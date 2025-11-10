@@ -140,7 +140,6 @@ class DefaultConfigValue(object):
         "LARGE_POOL_SIZE": "1G",
         "JOB_QUEUE_PROCESSES": 100,
         "MAX_COLUMN_COUNT": 4096,
-        "UPPER_CASE_TABLE_NAMES": "FALSE",
         "INSTANCE_ID": 0,
         "INTERCONNECT_PORT": "1601",
         "LSNR_PORT": 1611,
@@ -161,11 +160,12 @@ class DefaultConfigValue(object):
         "MAX_ARCH_FILES_SIZE" : "300G",
         "PAGE_CLEAN_MODE" : "ALL",
         "ENABLE_IDX_KEY_LEN_CHECK": "FALSE",
-        "EMPTY_STRING_AS_NULL": "FALSE",
+        "EMPTY_STRING_AS_NULL": "TRUE",
         "_CHECKPOINT_MERGE_IO": "FALSE",
         "ENABLE_DBSTOR_BATCH_FLUSH": "TRUE",
         "CLUSTER_ID": "",
-        "_BUFFER_PAGE_CLEAN_WAIT_TIMEOUT": "1"
+        "_BUFFER_PAGE_CLEAN_WAIT_TIMEOUT": "1",
+        "_OPTIM_SUBQUERY_REWRITE": "TRUE"
     }
     
     OGRACD_DBG_CONFIG = {
@@ -208,7 +208,6 @@ class DefaultConfigValue(object):
         "LARGE_POOL_SIZE": "2G",
         "JOB_QUEUE_PROCESSES": 100,
         "MAX_COLUMN_COUNT": 4096,
-        "UPPER_CASE_TABLE_NAMES": "FALSE",
         "INSTANCE_ID": 0,
         "INTERCONNECT_PORT": "1601",
         "LSNR_PORT": 1611,
@@ -226,7 +225,7 @@ class DefaultConfigValue(object):
         "LOG_HOME": "",  # generate by installer
         "_SYS_PASSWORD": "",  # input by user in command line parameter or from shell command interactively
         "ENABLE_IDX_KEY_LEN_CHECK": "FALSE",
-        "EMPTY_STRING_AS_NULL": "FALSE",
+        "EMPTY_STRING_AS_NULL": "TRUE",
         "_CHECKPOINT_MERGE_IO": "FALSE",
         "MES_SSL_SWITCH": "TRUE",
         "MES_SSL_KEY_PWD": None,

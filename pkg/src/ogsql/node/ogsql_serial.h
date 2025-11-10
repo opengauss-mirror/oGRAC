@@ -213,7 +213,7 @@ status_t sr_decode_variant(char *sr_data, uint32 temp_offset, variant_t *var);
 status_t sr_encode_expr_node(sql_stmt_t *stmt, serializer_t *sr, expr_node_t *node, uint32 *offset);
 status_t sr_decode_expr_node(memory_context_t *mem_ctx, char *sr_data, uint32 offset, expr_node_t **node);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t sr_decode_expr_node_shard(void *ogx, char *sr_data, uint32 offset, expr_node_t **node);
 status_t sr_decode_expr_shard(void *ogx, void *data, void **expr);
 #endif

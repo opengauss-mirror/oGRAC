@@ -189,6 +189,5 @@ status_t sql_create_range_list(sql_stmt_t *stmt, plan_assist_t *pa, expr_node_t 
     cond_node_t *node, plan_range_list_t **list, bool32 index_reverse, bool32 index_first_col);
 status_t sql_finalize_range_list(sql_stmt_t *stmt, plan_range_list_t *plan_list, scan_range_list_t *scan_range_list,
                                  uint32 *list_flag, calc_mode_t calc_mode, uint32 *is_optm);
-bool32 sql_cmp_range_usable(plan_assist_t *pa, cmp_node_t *node, expr_node_t *match_node);
 
 #endif

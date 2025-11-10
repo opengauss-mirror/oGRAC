@@ -32,6 +32,7 @@
 #include "cm_thread.h"
 #include "cms_gcc.h"
 #include "cms_detect_error.h"
+#include "cbb_disklock.h"
 
 #define CMS_LOCK_TRY_INTERVAL 100
 #define CMS_MASTER_INFO_MAGIC         (*((uint64*)"CMS_MASTER_INFO"))
@@ -75,6 +76,8 @@ typedef struct _st_cms_disk_lock_t {
     thread_lock_t       tlock; // used in disk_try_lock and disk_unlock
     thread_lock_t       slock; // protect seek&read(reopen) or seek&write(reopen) as atomic operation
     uint32              flag;
+    // the count of lock should not be larger than CM_MAX_DISKLOCK_COUNT when type is CMS_DEV_TYPE_LUN
+    uint32              lock_id; // only used when type is CMS_DEV_TYPE_LUN
     char                dev_name[CMS_FILE_NAME_BUFFER_SIZE];
     object_id_t*        dbs_fd; // only used when type is CMS_DEV_TYPE_DBSTOR
     int                 fd_len; // only used when type is CMS_DEV_TYPE_DBSTOR
@@ -96,7 +99,7 @@ typedef union u_cms_master_info_t {
 
 #define CMS_STAT_LOCK_MAGIC   (*((uint64*)"CMS_LOCK"))
 #define CMS_DISK_LOCK_TIMEOUT 10
-#define CMS_DISK_LOCK_SD_RELEASE_TIME 4
+#define CMS_DISK_LOCK_LUN_TIMEOUT_MS 1000
 #define CMS_EXIT_NUM 128
 #define CMS_EXIT_COUNT_MAX 20
 

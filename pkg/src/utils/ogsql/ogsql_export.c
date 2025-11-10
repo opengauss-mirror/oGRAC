@@ -64,41 +64,28 @@ typedef enum {
 #define MAX_EXP_LOB_BUFF_SIZE SIZE_M(4)
 #define MAX_PARALLEL_VALUE    16
 
-#define EXP_INDENT             "  "
-#define EXP_INDENT2            "    "
-#define EXP_INDENT3            "      "
-#define EXP_TABLES_AGENT       "DB_TABLES"
-#define EXP_TAB_COLS_AGENT     "DB_TAB_COLS"
-#define EXP_TAB_COMMENTS_AGENT "DB_TAB_COMMENTS"
-#define EXP_COL_COMMENTS_AGENT "DB_COL_COMMENTS"
-/* INDEX AND CONSTRAINT SUPPORT SAME NAME BETWEEN DIFFERENT TABLE, SO ENABLE_IDX_CONFS_NAME_DUPL = TRUE, SHOULD DECODE
-  INDEX OR CONSTRAINT NAME */
-#define EXP_INDEXES_AGENT      "DB_INDEXES"
-#define EXP_CONSTRAINTS_AGENT  "DB_CONSTRAINTS"
-#define EXP_VIEWS_AGENT        "DB_VIEWS"
-#define EXP_DEPENDENCIES_AGENT "DB_DEPENDENCIES"
-#define EXP_VIEW_DEPENDENCIES_AGENT "DB_VIEW_DEPENDENCIES"
-#define EXP_VIEW_COLS_AGENT    "DB_VIEW_COLUMNS"
-#define EXP_PROCS_AGENT        "ADM_PROCEDURES"
-#define EXP_MY_PROCS_AGENT     "MY_PROCEDURES"
-#define EXP_USERS_AGENT        "DB_USERS"
-#define EXP_SELF_USERS_AGENT   "MY_USERS"
-#define EXP_SEQUENCE_AGENT     "DB_SEQUENCES"
-#define EXP_SESSION_NLS_AGENT  "NLS_SESSION_PARAMETERS"
-#define EXP_PARTITIONS_AGENT   "DB_TAB_PARTITIONS"
-#define EXP_PARTTAB_AGENT      "DB_PART_TABLES"
-#define EXP_DISTRIBUTE_AGENT   "DB_TAB_DISTRIBUTE"
-#define EXP_DISTRIBUTE_RULE_AGENT   "DB_DISTRIBUTE_RULES"
-#define EXP_DISTRIBUTE_RULE_COLS_AGENT   "DB_DIST_RULE_COLS"
-#define EXP_TABLESPACES_DATAFILE_AGENT   "ADM_DATA_FILES"
-#define EXP_DV_TABLESPACES               "DV_TABLESPACES"
-#define EXP_TAB_AUTO_INCRE_AGENT     "DB_TAB_COLUMNS"
-#define EXP_TRIGGERS_AGENT             "DB_TRIGGERS"
-#define EXP_DATA_NODE_AGENT             "SYS_DATA_NODES"
-#define EXP_DV_PARAM_AGENT             "DV_PARAMETERS"
+#define EXP_INDENT                     "  "
+#define EXP_INDENT2                    "    "
+#define EXP_INDENT3                    "      "
+#define EXP_TABLES_AGENT               "SYS.DB_TABLES"
+#define EXP_VIEW_COLS_AGENT            "SYS.DB_VIEW_COLUMNS"
+#define EXP_PROCS_AGENT                "SYS.ADM_PROCEDURES"
+#define EXP_MY_PROCS_AGENT             "SYS.MY_PROCEDURES"
+#define EXP_DB_USERS_AGENT             "SYS.DB_USERS"
+#define EXP_SELF_USERS_AGENT           "SYS.MY_USERS"
+#define EXP_SESSION_NLS_AGENT          "SYS.NLS_SESSION_PARAMETERS"
+#define EXP_DISTRIBUTE_RULE_AGENT      "SYS.DB_DISTRIBUTE_RULES"
+#define EXP_DISTRIBUTE_RULE_COLS_AGENT "SYS.DB_DIST_RULE_COLS"
+#define EXP_TABLESPACES_DATAFILE_AGENT "SYS.ADM_DATA_FILES"
+#define EXP_DV_TABLESPACES             "SYS.DV_TABLESPACES"
+#define EXP_TRIGGERS_AGENT             "SYS.DB_TRIGGERS"
+#define EXP_DATA_NODE_AGENT            "SYS.SYS_DATA_NODES"
+#define EXP_DV_PARAM_AGENT             "SYS.DV_PARAMETERS"
 #define EXP_DV_TENANT_TABLESPACES      "DV_TENANT_TABLESPACES"
-#define EXP_DV_DATA_FILES_AGENT        "DV_DATA_FILES"
-#define EXP_LOB_AGENT           "MY_LOBS"
+#define EXP_DV_DATA_FILES_AGENT        "SYS.DV_DATA_FILES"
+#define EXP_ROLE_SYS_PRIVS_AGENT       "SYS.ROLE_SYS_PRIVS"
+#define EXP_ADM_ROLE_PRIVS_AGENT       "SYS.ADM_ROLE_PRIVS"
+#define EXP_ADM_SYS_PRIVS_AGENT        "SYS.ADM_SYS_PRIVS"
 
 #define EXP_MAX_FILE_BUF     SIZE_M(1)
 #define EXP_MAX_LOB_FILE_BUF SIZE_M(16)
@@ -459,29 +446,29 @@ typedef struct st_exp_tabagent {
 } exp_tabagent_t;
 
 exp_tabagent_t g_exp_tabagents[EXP_TABAGENT_TYPE_MAX] = {
-    { EXP_TABAGENT_DB_SEQUENCES,             "DB_SEQUENCES" },
-    { EXP_TABAGENT_MY_LOBS,                  "MY_LOBS" },
-    { EXP_TABAGENT_DB_TABLES,                "DB_TABLES" },
+    { EXP_TABAGENT_DB_SEQUENCES,             "SYS.DB_SEQUENCES" },
+    { EXP_TABAGENT_MY_LOBS,                  "SYS.MY_LOBS" },
+    { EXP_TABAGENT_DB_TABLES,                "SYS.DB_TABLES" },
     { EXP_TABAGENT_SYS_TABLES,               "SYS.SYS_TABLES" },
-    { EXP_TABAGENT_DB_PART_KEY_COLUMNS,      "DB_PART_KEY_COLUMNS" },
-    { EXP_TABAGENT_DB_SUBPART_KEY_COLUMNS,   "DB_SUBPART_KEY_COLUMNS" },
-    { EXP_TABAGENT_DB_PART_STORE,            "DB_PART_STORE" },
-    { EXP_TABAGENT_DB_PART_TABLES,           "DB_PART_TABLES" },
-    { EXP_TABAGENT_DB_TAB_PARTITIONS,        "DB_TAB_PARTITIONS" },
-    { EXP_TABAGENT_DB_TAB_SUBPARTITIONS,     "DB_TAB_SUBPARTITIONS" },
-    { EXP_TABAGENT_DB_TAB_DISTRIBUTE,        "DB_TAB_DISTRIBUTE" },
-    { EXP_TABAGENT_DB_TAB_COMMENTS,          "DB_TAB_COMMENTS" },
-    { EXP_TABAGENT_DB_INDEXES,               "DB_INDEXES" },
-    { EXP_TABAGENT_DB_IND_COLUMNS,           "DB_IND_COLUMNS" },
-    { EXP_TABAGENT_DB_IND_PARTITIONS,        "DB_IND_PARTITIONS" },
-    { EXP_TABAGENT_DB_IND_SUBPARTITIONS,     "DB_IND_SUBPARTITIONS" },
-    { EXP_TABAGENT_DB_TAB_COLS,              "DB_TAB_COLS" },
-    { EXP_TABAGENT_DB_TAB_COLUMNS,           "DB_TAB_COLUMNS" },
-    { EXP_TABAGENT_DB_COL_COMMENTS,          "DB_COL_COMMENTS" },
-    { EXP_TABAGENT_DB_CONSTRAINTS,           "DB_CONSTRAINTS" },
-    { EXP_TABAGENT_DB_VIEW_DEPENDENCIES,     "DB_VIEW_DEPENDENCIES" },
-    { EXP_TABAGENT_DB_VIEWS,                 "DB_VIEWS" },
-    { EXP_TABAGENT_DB_VIEW_COLUMNS,          "DB_VIEW_COLUMNS" },
+    { EXP_TABAGENT_DB_PART_KEY_COLUMNS,      "SYS.DB_PART_KEY_COLUMNS" },
+    { EXP_TABAGENT_DB_SUBPART_KEY_COLUMNS,   "SYS.DB_SUBPART_KEY_COLUMNS" },
+    { EXP_TABAGENT_DB_PART_STORE,            "SYS.DB_PART_STORE" },
+    { EXP_TABAGENT_DB_PART_TABLES,           "SYS.DB_PART_TABLES" },
+    { EXP_TABAGENT_DB_TAB_PARTITIONS,        "SYS.DB_TAB_PARTITIONS" },
+    { EXP_TABAGENT_DB_TAB_SUBPARTITIONS,     "SYS.DB_TAB_SUBPARTITIONS" },
+    { EXP_TABAGENT_DB_TAB_DISTRIBUTE,        "SYS.DB_TAB_DISTRIBUTE" },
+    { EXP_TABAGENT_DB_TAB_COMMENTS,          "SYS.DB_TAB_COMMENTS" },
+    { EXP_TABAGENT_DB_INDEXES,               "SYS.DB_INDEXES" },
+    { EXP_TABAGENT_DB_IND_COLUMNS,           "SYS.DB_IND_COLUMNS" },
+    { EXP_TABAGENT_DB_IND_PARTITIONS,        "SYS.DB_IND_PARTITIONS" },
+    { EXP_TABAGENT_DB_IND_SUBPARTITIONS,     "SYS.DB_IND_SUBPARTITIONS" },
+    { EXP_TABAGENT_DB_TAB_COLS,              "SYS.DB_TAB_COLS" },
+    { EXP_TABAGENT_DB_TAB_COLUMNS,           "SYS.DB_TAB_COLUMNS" },
+    { EXP_TABAGENT_DB_COL_COMMENTS,          "SYS.DB_COL_COMMENTS" },
+    { EXP_TABAGENT_DB_CONSTRAINTS,           "SYS.DB_CONSTRAINTS" },
+    { EXP_TABAGENT_DB_VIEW_DEPENDENCIES,     "SYS.DB_VIEW_DEPENDENCIES" },
+    { EXP_TABAGENT_DB_VIEWS,                 "SYS.DB_VIEWS" },
+    { EXP_TABAGENT_DB_VIEW_COLUMNS,          "SYS.DB_VIEW_COLUMNS" },
 };
 
 static char* exp_tabname(bool32 consistent, exp_tabagent_type_t type)
@@ -1127,19 +1114,21 @@ static status_t exp_get_roles_sql(char *sql_buffer, uint32 buff_size, exp_prepar
     if (get_roles_param->exp_opts->exp_type == EXP_ALL_SCHEMAS) {
         PRTS_RETURN_IFERR(sprintf_s(sql_buffer, buff_size,
             "SELECT 'CREATE ROLE \"' || NAME || '\"' || IF(LENGTH(PASSWORD) = 0 ,'', ' IDENTIFIED BY ''' || PASSWORD || '''' || ' ENCRYPTED') || ';' FROM SYS.SYS_ROLES "
-            "WHERE NAME IN (SELECT GRANTED_ROLE FROM ADM_ROLE_PRIVS WHERE GRANTEE in (SELECT USERNAME FROM DB_USERS WHERE USERNAME <> 'SYS' AND USERNAME <> 'PUBLIC') "
+            "WHERE NAME IN (SELECT GRANTED_ROLE FROM " EXP_ADM_ROLE_PRIVS_AGENT " WHERE GRANTEE in "
+            "(SELECT USERNAME FROM " EXP_DB_USERS_AGENT " WHERE USERNAME <> 'SYS' AND USERNAME <> 'PUBLIC') "
             "AND GRANTED_ROLE NOT IN ('DBA','RESOURCE','CONNECT')) OR "
-            "OWNER_UID IN (SELECT USER_ID FROM DB_USERS WHERE USERNAME NOT IN('SYS','PUBLIC')) ORDER BY NAME "));
+            "OWNER_UID IN (SELECT USER_ID FROM " EXP_DB_USERS_AGENT " WHERE "
+            "USERNAME NOT IN('SYS','PUBLIC')) ORDER BY NAME "));
     } else {
         PRTS_RETURN_IFERR(sprintf_s(sql_buffer, buff_size,
             "SELECT 'CREATE ROLE \"' || NAME || '\"' || IF(LENGTH(PASSWORD) = 0 ,'', ' IDENTIFIED BY ''' || PASSWORD || '''' || ' ENCRYPTED') || ';' FROM SYS.SYS_ROLES "
-            "WHERE NAME IN (SELECT GRANTED_ROLE FROM ADM_ROLE_PRIVS WHERE GRANTEE in ("));
+            "WHERE NAME IN (SELECT GRANTED_ROLE FROM " EXP_ADM_ROLE_PRIVS_AGENT " WHERE GRANTEE in ("));
 
         OG_RETURN_IFERR(exp_append_users(sql_buffer, buff_size, &get_roles_param->exp_opts->obj_list));
 
         MEMS_RETURN_IFERR(strcat_s(sql_buffer, buff_size,
             ")  AND GRANTED_ROLE NOT IN ('DBA','RESOURCE','CONNECT')) OR "
-            "OWNER_UID IN(SELECT USER_ID FROM DB_USERS WHERE USERNAME IN("));
+            "OWNER_UID IN(SELECT USER_ID FROM " EXP_DB_USERS_AGENT " WHERE USERNAME IN("));
         
         OG_RETURN_IFERR(exp_append_users(sql_buffer, buff_size, &get_roles_param->exp_opts->obj_list));
 
@@ -1155,7 +1144,7 @@ static status_t exp_get_user_synonyms_sql(char *sql_buffer, uint32 buff_size, ex
 
     PRTS_RETURN_IFERR(sprintf_s(sql_buffer, buff_size,
         "(SELECT 'CREATE OR REPLACE SYNONYM \"' || SYNONYM_NAME || '\" FOR \"' || TABLE_NAME || '\"' FROM "
-        "DB_SYNONYMS WHERE OWNER = '%s' AND TABLE_OWNER = '%s' ORDER BY SYNONYM_NAME) ",
+        "SYS.DB_SYNONYMS WHERE OWNER = '%s' AND TABLE_OWNER = '%s' ORDER BY SYNONYM_NAME) ",
         get_synonym_param->user_name, get_synonym_param->user_name));
 
     return OG_SUCCESS;
@@ -1168,7 +1157,7 @@ static status_t exp_get_user_profile_sql(char *sql_buffer, uint32 buff_size, exp
     PRTS_RETURN_IFERR(sprintf_s(sql_buffer, buff_size,
         "SELECT 'CREATE OR REPLACE PROFILE \"' || PROFILE || '\" LIMIT ' || "
         "GROUP_CONCAT(CONCAT_WS(' ', RESOURCE_NAME, THRESHOLD) "
-        "ORDER BY RESOURCE_NAME SEPARATOR ' ') FROM DB_PROFILES WHERE OWNER = '%s' "
+        "ORDER BY RESOURCE_NAME SEPARATOR ' ') FROM SYS.DB_PROFILES WHERE OWNER = '%s' "
         "AND PROFILE NOT IN ('DEFAULT','SHARDING_DBA') GROUP BY PROFILE",
         get_profile_param->user_name));
 
@@ -1180,12 +1169,12 @@ static status_t exp_get_user_package_sql(char *sql_buffer, uint32 buff_size, exp
     exp_get_package_param_t *get_package_param = (exp_get_package_param_t *)(&param->get_package_param);
     PRTS_RETURN_IFERR(sprintf_s(sql_buffer, buff_size,
         "(SELECT 'CREATE OR REPLACE PACKAGE \"' || P.OBJECT_NAME || '\" ' || P.SOURCE "
-        "FROM DB_PROCEDURES P, DB_OBJECTS O "
+        "FROM SYS.DB_PROCEDURES P, SYS.DB_OBJECTS O "
         "WHERE P.OWNER = '%s' AND P.OBJECT_TYPE = 'PACKAGE SPEC' AND P.OBJECT_NAME = O.OBJECT_NAME AND "
         "P.OBJECT_TYPE = O.OBJECT_TYPE AND P.OWNER = O.OWNER ORDER BY O.CREATED ASC, P.OBJECT_NAME ASC) "
         "UNION ALL "
         "(SELECT 'CREATE OR REPLACE PACKAGE BODY \"' || P.OBJECT_NAME || '\" ' || P.SOURCE "
-        "FROM DB_PROCEDURES P, DB_OBJECTS O "
+        "FROM SYS.DB_PROCEDURES P, SYS.DB_OBJECTS O "
         "WHERE P.OWNER = '%s' AND P.OBJECT_TYPE = 'PACKAGE BODY' AND P.OBJECT_NAME = O.OBJECT_NAME "
         "AND P.OBJECT_TYPE = O.OBJECT_TYPE AND P.OWNER = O.OWNER ORDER BY O.CREATED ASC, P.OBJECT_NAME ASC) ",
         get_package_param->user_name, get_package_param->user_name));
@@ -1198,7 +1187,7 @@ static status_t exp_get_user_type_sql(char *sql_buffer, uint32 buff_size, exp_pr
     exp_get_type_param_t *get_type_param = (exp_get_type_param_t *)(&param->get_type_param);
     PRTS_RETURN_IFERR(sprintf_s(sql_buffer, buff_size,
         "SELECT 'CREATE OR REPLACE TYPE \"' || P.OBJECT_NAME || '\" FORCE ' || P.SOURCE "
-        "FROM DB_PROCEDURES P, DB_OBJECTS O "
+        "FROM SYS.DB_PROCEDURES P, SYS.DB_OBJECTS O "
         "WHERE P.OWNER = '%s' AND P.OBJECT_TYPE = 'TYPE SPEC' AND P.OBJECT_NAME = O.OBJECT_NAME "
         "AND P.OBJECT_TYPE = O.OBJECT_TYPE AND P.OWNER = O.OWNER "
         "ORDER BY O.CREATED ASC, P.OBJECT_NAME ASC ", get_type_param->user_name));
@@ -2078,41 +2067,17 @@ static void ogsql_display_export_usage(void)
     ogsql_printf("     Format:  EXP KEYWORD=value or KEYWORD=value1,value2,...,valueN;\n");
     ogsql_printf("     Example: EXP TABLES=EMP,DEPT,MGR;\n");
     ogsql_printf("               or EXP USERS=USER_A,USER_B;\n");
-    ogsql_printf("               or EXP DIST_RULES=RULE_1,RULE_2;\n\n");
     ogsql_printf("Keyword                 Description (Default)\n");
     ogsql_printf("---------------------------------------------------------------------------------------------------------------------------\n");
     ogsql_printf("USERS                   List of schema names. Specify a percent sign (%%) to export all users.\n");
     ogsql_printf("TABLES                  List of table names. Specify a percent sign (%%) to export all tables.\n");
-    ogsql_printf("DIST_RULES              List of distribute rule names. Specify a percent sign (%%) to export all distribution rules. Supported only for sharding.\n");
-    ogsql_printf("TABLESPACE_FILTER       List of tablespace names, the data or objects in these tablespaces will be exported. Case-sensitive words enclosed by '`' or '\"'.\n");
     ogsql_printf("FILE                    Output file (EXPDAT.DMP) \n");
-    ogsql_printf("FILETYPE                Output file type: (TXT), BIN\n");
     ogsql_printf("LOG                     Log file of screen output\n");
-    ogsql_printf("COMPRESS                Compress output file (0), only for FILETYPE=BIN, value range: 0-9, the smaller the value, the faster the speed, 0: no compression.\n");
     ogsql_printf("CONTENT                 Specifies data to unload where the valid keyword, values are: (ALL), DATA_ONLY, and METADATA_ONLY. \n");
-    ogsql_printf("QUERY                   Predicate clause used to export a subset of a table, eg. \"where rownum <= 10\" \n");
-    ogsql_printf("SKIP_COMMENTS           Do not add comments to dump file. (N)\n");
-    ogsql_printf("FORCE                   Continue even if an SQL error occurs during a table dump. (N)\n");
-    ogsql_printf("SKIP_ADD_DROP_TABLE     Do not add a DROP TABLE statement before each CREATE TABLE statement. (N)\n");
-    ogsql_printf("SKIP_TRIGGERS           Do not dump triggers. (N)\n");
-    ogsql_printf("QUOTE_NAMES             Quote identifiers. (Y)\n");
-    ogsql_printf("TABLESPACE              Default transport all tablespaces except for system reserved. (N)\n");
-    ogsql_printf("COMMIT_BATCH            Batch commit rows, commit once if set 0. (1000)\n");
-    ogsql_printf("INSERT_BATCH            Batch insert rows. (1)\n");
     ogsql_printf("FEEDBACK                Feedback row count, feedback once if set 0 (10000)\n");
-    ogsql_printf("PARALLEL                Table data export parallelism settings, range 2~16, The default value is 0\n");
-    ogsql_printf("CONSISTENT              Cross - table consistency(N)\n");
     ogsql_printf("CREATE_USER             Export user definition(N),Used in conjunction with USERS.\n");
-    ogsql_printf("ROLE                    Export user roles expect system preset roles (N),Used in conjunction with USERS.\n");
-    ogsql_printf("GRANT                   Grant role and permission to USER (N),Used in conjunction with USERS and ROLE.\n");
-    ogsql_printf("WITH_CR_MODE            Export tables and indexes with CR_MODE options (N)\n");
-    ogsql_printf("WITH_FORMAT_CSF         Export tables and part tables with FORMAT CSF option (Y)\n");
-    ogsql_printf("ENCRYPT                 Export files will be encrypted.\n");
-    ogsql_printf("REMAP_TABLES            Table's name will remapped to another tablename.\n");
-    ogsql_printf("PARTITIONS              Export tables's data within the input partition.\n");
-    ogsql_printf("EXCLUDE                 Export exclude objects.\n");
-    ogsql_printf("INDEX_PARTITIONS        Export index's partition informations (N).\n");
-
+    ogsql_printf("GRANT                   Grant role and permission to USER (N),"\
+                 "Used in conjunction with USERS and ROLE.\n");
     ogsql_printf("\n");
 }
 
@@ -3546,7 +3511,7 @@ static int exp_verify_schema(list_t *user_list)
 {
     static const char *usr_exist_sql =
         "SELECT 1 "
-        "FROM " EXP_USERS_AGENT " "
+        "FROM " EXP_DB_USERS_AGENT " "
         "WHERE USERNAME = UPPER(:u) LIMIT 1";
 
     OG_RETURN_IFERR(ogconn_prepare(STMT, usr_exist_sql));
@@ -3719,12 +3684,8 @@ static int exp_verify_opts(export_options_t *exp_opts)
     }
     OG_RETURN_IFERR(exp_verify_partitions_opts(exp_opts));
     if (exp_opts->exp_type == EXP_NONE) {
-        text_t curr_user;
-
-        exp_log(EXP_INDENT "default to export current schema: %s\n", USER_NAME);
-        exp_opts->exp_type = EXP_SCHEMA;
-        cm_str2text(USER_NAME, &curr_user);
-        OG_RETURN_IFERR(ogsql_insert_export_obj(exp_opts, &curr_user, OG_TRUE));
+        EXP_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "Too few export types have been provided, must input USERS or TABLES");
+        return OG_ERROR;
     } else if (exp_opts->exp_type == EXP_TABLE) {
         /* 'show create table' option suppresses irrelevant info display */
         if (!g_export_opts.show_create_table) {
@@ -5848,7 +5809,7 @@ static int exp_table_auto_increment(const char *user, const char *table, exp_cac
     OG_RETURN_IFERR(exp_cache_append_str(table_cache, " AUTO_INCREMENT"));
     OG_RETURN_IFERR(exp_cache_append_str(table_cache, ";\n"));
     PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
-        "SELECT  SERIAL_LASTVAL(UPPER(:USER),:TABLE) FROM SYS_DUMMY"));
+        "SELECT  SERIAL_LASTVAL(UPPER(:USER),:TABLE) FROM SYS.SYS_DUMMY"));
     OG_RETURN_IFERR(ogconn_prepare(STMT, (const char *)cmd_buf));
     OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, user, (int32)strlen(user), NULL));
     OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 1, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
@@ -6056,7 +6017,7 @@ static inline int exp_get_users(export_options_t *exp_opts)
 
     iret_sprintf = sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
                              "SELECT USERNAME "
-                             "FROM " EXP_USERS_AGENT " "
+                             "FROM " EXP_DB_USERS_AGENT " "
                              "WHERE USERNAME <> 'SYS' AND USERNAME <> 'PUBLIC' ORDER BY USERNAME");
     if (iret_sprintf == -1) {
         EXP_THROW_ERROR(ERR_SYSTEM_CALL, iret_sprintf);
@@ -6797,7 +6758,7 @@ static status_t reverse_index_available(ogconn_stmt_t stmt, bool32 *reverse_inde
     }
 
     int iret_sprintf = sprintf_s(get_par_sql, OGSQL_MAX_TEMP_SQL,
-        "SELECT COLUMN_NAME FROM DB_VIEW_COLUMNS WHERE VIEW_NAME='DB_INDEXES' AND COLUMN_NAME='IS_REVERSED'");
+        "SELECT COLUMN_NAME FROM " EXP_VIEW_COLS_AGENT " WHERE VIEW_NAME='DB_INDEXES' AND COLUMN_NAME='IS_REVERSED'");
     if (iret_sprintf == -1) {
         CM_FREE_PTR(get_par_sql);
         EXP_THROW_ERROR(ERR_SYSTEM_CALL, iret_sprintf);
@@ -7345,7 +7306,7 @@ static inline int exp_grant_role(export_options_t *exp_opts, const char *schema_
 
     iret_sprintf = sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
                              "SELECT 'GRANT ' || GRANTED_ROLE || ' TO \"'|| GRANTEE || '\"' || IF(ADMIN_OPTION = 'YES', ' WITH ADMIN OPTION;', ';') "
-                             "FROM ADM_ROLE_PRIVS WHERE GRANTEE = UPPER(:o) ORDER BY GRANTED_ROLE");
+                             "FROM " EXP_ADM_ROLE_PRIVS_AGENT " WHERE GRANTEE = UPPER(:o) ORDER BY GRANTED_ROLE");
     if (iret_sprintf == -1) {
         EXP_THROW_ERROR(ERR_SYSTEM_CALL, iret_sprintf);
         return OG_ERROR;
@@ -7378,9 +7339,9 @@ static inline int exp_grant_privilege2role(export_options_t *exp_opts)
     if (exp_opts->exp_type == EXP_ALL_SCHEMAS) {
         iret_sprintf = sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
             "SELECT 'GRANT ' || PRIVILEGE || ' TO \"'|| ROLE || '\"' ||"
-            " IF(ADMIN_OPTION = 'YES', ' WITH ADMIN OPTION;', ';') FROM ROLE_SYS_PRIVS WHERE ROLE IN "
-            "(SELECT GRANTED_ROLE FROM ADM_ROLE_PRIVS WHERE GRANTEE in "
-            "(SELECT USERNAME FROM DB_USERS WHERE USERNAME <> 'SYS' AND USERNAME <> 'PUBLIC') "
+            " IF(ADMIN_OPTION = 'YES', ' WITH ADMIN OPTION;', ';') FROM " EXP_ROLE_SYS_PRIVS_AGENT " WHERE ROLE IN "
+            "(SELECT GRANTED_ROLE FROM " EXP_ADM_ROLE_PRIVS_AGENT " WHERE GRANTEE in "
+            "(SELECT USERNAME FROM " EXP_DB_USERS_AGENT " WHERE USERNAME <> 'SYS' AND USERNAME <> 'PUBLIC') "
             "AND GRANTED_ROLE NOT IN ('DBA','RESOURCE','CONNECT') ORDER BY GRANTED_ROLE) ORDER BY PRIVILEGE");
         if (iret_sprintf == -1) {
             EXP_THROW_ERROR(ERR_SYSTEM_CALL, iret_sprintf);
@@ -7390,7 +7351,8 @@ static inline int exp_grant_privilege2role(export_options_t *exp_opts)
         iret_sprintf = sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
             "SELECT 'GRANT ' || PRIVILEGE || ' TO \"'|| ROLE || '\"' ||"
             " IF(ADMIN_OPTION = 'YES', ' WITH ADMIN OPTION;', ';') "
-            "FROM ROLE_SYS_PRIVS WHERE ROLE IN (SELECT GRANTED_ROLE FROM ADM_ROLE_PRIVS WHERE GRANTEE in (");
+            "FROM " EXP_ROLE_SYS_PRIVS_AGENT " WHERE ROLE IN (SELECT GRANTED_ROLE "
+            "FROM " EXP_ADM_ROLE_PRIVS_AGENT " WHERE GRANTEE in (");
         if (iret_sprintf == -1) {
             EXP_THROW_ERROR(ERR_SYSTEM_CALL, iret_sprintf);
             return OG_ERROR;
@@ -7434,7 +7396,7 @@ static inline int exp_grant_privilege2user(export_options_t *exp_opts, const cha
 
     iret_sprintf = sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
                              "SELECT 'GRANT ' || PRIVILEGE || ' TO \"'|| GRANTEE || '\"' || IF(ADMIN_OPTION = 'YES', ' WITH ADMIN OPTION;', ';') "
-                             "FROM ADM_SYS_PRIVS WHERE GRANTEE = UPPER(:o) ORDER BY PRIVILEGE");
+                             "FROM " EXP_ADM_SYS_PRIVS_AGENT " WHERE GRANTEE = UPPER(:o) ORDER BY PRIVILEGE");
     if (iret_sprintf == -1) {
         EXP_THROW_ERROR(ERR_SYSTEM_CALL, iret_sprintf);
         return OG_ERROR;

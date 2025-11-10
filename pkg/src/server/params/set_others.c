@@ -660,6 +660,22 @@ status_t sql_notify_als_merge_sort_batch_size(void *se, void *item, char *value)
     return cm_str2uint32(value, &g_instance->attr.merge_sort_batch_size);
 }
 
+status_t sql_notify_als_enable_nestloop_join(void *se, void *item, char *value)
+{
+    g_instance->sql.enable_nestloop_join = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_enable_hash_join(void *se, void *item, char *value)
+{
+    if ((bool32)value[0] != OG_FALSE) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "ENABLE_HASH_JOIN");
+        return OG_ERROR;
+    }
+    g_instance->sql.enable_hash_join = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
+}
+
 status_t sql_verify_als_convert(void *se, void *lex, void *def)
 {
     word_t word;
@@ -959,6 +975,18 @@ status_t sql_notify_als_enable_right_leftjoin(void *se, void *item, char *value)
 status_t sql_notify_als_simplify_exists_subq(void *se, void *item, char *value)
 {
     g_instance->sql.enable_exists_transform = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_subquery_rewrite(void *se, void *item, char *value)
+{
+    g_instance->sql.enable_subquery_rewrite = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_semi2inner(void *se, void *item, char *value)
+{
+    g_instance->sql.enable_semi2inner = (bool32)value[0];
     return sql_notify_als_bool(se, item, value);
 }
 

@@ -110,15 +110,16 @@ static int32 oamap_rehash(cm_oamap_t *map, uint32 new_capacity)
         OG_LOG_DEBUG_ERR("Invalid capacity value specified for rehashing map.");
         return ERR_CTSTORE_INVALID_PARAM;
     }
-    // if (map->mem_ctx != NULL)
-    //{
-    //     //new_buckets = (cm_oamap_bucket_t *)memctx_alloc(map->mem_ctx, (uint32)size);
-    //     return ERR_CTSTORE_INVALID_PARAM;
-    // }
-    // else
-    {
+
+    if (map->owner != NULL && map->alloc_func != NULL) {
+        if (map->alloc_func(map->owner, size, (void **)&new_buckets) != OG_SUCCESS) {
+            OG_LOG_DEBUG_ERR("Alloc Func failed");
+            return ERR_ALLOC_MEMORY;
+        }
+    } else {
         new_buckets = (cm_oamap_bucket_t *)cm_malloc((uint32)size);
     }
+
     if (new_buckets == NULL) {
         OG_LOG_DEBUG_ERR("Malloc failed");
         return ERR_ALLOC_MEMORY;
@@ -139,7 +140,6 @@ static int32 oamap_rehash(cm_oamap_t *map, uint32 new_capacity)
         if (src_bucket->state != (uint32)USED) {
             continue;
         }
-        // TODO:PERF
         start = src_bucket->hash % new_capacity;
         found = OG_FALSE;
         for (j = start; j < new_capacity; j++) {
@@ -168,10 +168,11 @@ static int32 oamap_rehash(cm_oamap_t *map, uint32 new_capacity)
             }
         }
     }
-    // if (map->mem_ctx == NULL)
-    {
+
+    if (map->owner == NULL || map->alloc_func == NULL) {
         cm_free(map->buckets);
     }
+
     map->buckets = new_buckets;
     map->key = new_key;
     map->value = new_value;
@@ -194,12 +195,13 @@ void cm_oamap_init_mem(cm_oamap_t *map)
     map->num = 0;
     map->used = 0;
     map->deleted = 0;
-    // map->mem_ctx = NULL;
     map->compare_func = NULL;
+    map->owner = NULL;
+    map->alloc_func = NULL;
 }
 
-int32 cm_oamap_init(cm_oamap_t *map, uint32 init_capacity,
-                    cm_oamap_compare_t compare_func /*, memory_context_t *mem_ctx*/)
+int32 cm_oamap_init(cm_oamap_t *map, uint32 init_capacity, cm_oamap_compare_t compare_func, void *owner,
+                    cm_oamap_alloc_t alloc_func /*, memory_context_t *mem_ctx */)
 {
     uint64 size;
     uint32 i;
@@ -220,14 +222,15 @@ int32 cm_oamap_init(cm_oamap_t *map, uint32 init_capacity,
         return ERR_CTSTORE_INVALID_PARAM;
     }
     map->compare_func = compare_func;
-    // map->mem_ctx = mem_ctx;
-    // if (mem_ctx != NULL)
-    //{
-    //     //map->buckets = (cm_oamap_bucket_t *)memctx_alloc(mem_ctx, (uint32)size);
-    //     return ERR_CTSTORE_INVALID_PARAM;
-    // }
-    // else
-    {
+    map->owner = owner;
+    map->alloc_func = alloc_func;
+
+    if (map->owner != NULL && map->alloc_func != NULL) {
+        if (map->alloc_func(map->owner, size, (void **)&map->buckets) != OG_SUCCESS) {
+            OG_LOG_DEBUG_ERR("Alloc Func failed");
+            return ERR_ALLOC_MEMORY;
+        }
+    } else {
         map->buckets = (cm_oamap_bucket_t *)cm_malloc((uint32)size);
     }
     if (map->buckets == NULL) {
@@ -254,17 +257,17 @@ void cm_oamap_destroy(cm_oamap_t *map)
     map->num = 0;
     map->deleted = 0;
     map->used = 0;
-    // if (map->mem_ctx == NULL)
-    {
+
+    if (map->owner == NULL || map->alloc_func == NULL) {
         if (NULL != map->buckets) {
             cm_free(map->buckets);
             map->buckets = NULL;
         }
+    } else {
+        map->owner = NULL;
+        map->alloc_func = NULL;
     }
-    /*else
-    {
-        map->mem_ctx = NULL;
-    }*/
+
     map->compare_func = NULL;
 }
 
@@ -296,7 +299,6 @@ int32 cm_oamap_insert(cm_oamap_t *map, uint32 hash_input, void *key, void *value
         }
     }
     hash = hash & HASH_MASK;
-    // TODO:PERF
     start = hash % map->num;
     found_free = OG_FALSE;
     found_pos = OG_FALSE;
@@ -383,7 +385,6 @@ void *cm_oamap_lookup(cm_oamap_t *map, uint32 hash_input, void *key)
     }
 
     hash = hash & HASH_MASK;
-    // TODO:PERF
     start = hash % map->num;
 
     for (i = start; i < map->num; i++) {
@@ -432,7 +433,6 @@ void *cm_oamap_remove(cm_oamap_t *map, uint32 hash_input, void *key)
     }
 
     hash = hash & HASH_MASK;
-    // TODO:PERF
     start = hash % map->num;
     for (i = start; i < map->num; i++) {
         bucket = &(map->buckets[i]);
