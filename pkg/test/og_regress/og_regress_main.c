@@ -523,6 +523,18 @@ static void print_opts(const option_t* opts, int sz)
             case OPT_MAX_CONN:
                 gr_printf("% 12s : %u\n", opts[i].name + 2, opts[i].ival);
                 break;
+            case OPT_USER:
+                {
+                    char *slash_pos = strchr(opts[i].value, '/');
+                    if (slash_pos) {
+                        *slash_pos = '\0';
+                    }
+                    gr_printf("% 12s : %s\n", opts[i].name + 2, opts[i].value);
+                    if (slash_pos) {
+                        *slash_pos = '/';
+                    }
+                }
+                break;
             default:
                 gr_printf("% 12s : %s\n", opts[i].name + 2, opts[i].value);
                 break;
