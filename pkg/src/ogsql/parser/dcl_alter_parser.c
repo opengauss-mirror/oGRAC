@@ -1250,13 +1250,11 @@ static status_t sql_parse_set_plan_display_format(sql_stmt_t *stmt, lex_t *lex, 
     uint32 format_index = OG_INVALID_ID32;
     // 3 is PLAN_DISPLAY_OPTION_COUNT
     bool32 option_flag[3] = { OG_FALSE };
-    uint32 flag_count = ELEMENT_COUNT(option_flag);
     char str[OG_PARAM_BUFFER_SIZE];
 
-    OG_RETURN_IFERR(sql_get_plan_display_format_info(lex, &format_index, option_flag, flag_count));
+    OG_RETURN_IFERR(sql_get_plan_display_format_info(lex, &format_index, option_flag));
 
-    OG_RETURN_IFERR(
-        sql_normalize_plan_display_format_value(str, OG_PARAM_BUFFER_SIZE, format_index, option_flag, flag_count));
+    OG_RETURN_IFERR(sql_normalize_plan_display_format_value(str, format_index, option_flag));
 
     sql_set_plan_display_format(str, &value);
 

@@ -305,7 +305,7 @@ typedef struct st_plan_exec_data {
     union_all_data_t *union_all;
     minus_data_t minus;
     uint32 unpivot_row;
-    uint32 *explain_col_max_size;
+    uint32 *expl_col_max_size;  // array, record the max-format-size of each column when explaining.
     uint32 *qb_col_max_size;
     outer_join_data_t *outer_join;
     inner_join_data_t *inner_join;

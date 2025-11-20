@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-status_t sql_parse_dcl(sql_stmt_t *stmt, key_wid_t key_wid);
+status_t sql_parse_dcl(sql_stmt_t *stmt, word_t *leader_word);
 
 #ifdef __cplusplus
 }

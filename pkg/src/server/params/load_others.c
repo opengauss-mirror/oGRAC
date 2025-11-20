@@ -227,6 +227,7 @@ status_t srv_load_optim_params(void)
     OG_RETURN_IFERR(srv_verf_param_uint64("SEGMENT_PAGES_HOLD", sql->segment_pages_hold, 0, OG_MAX_SEGMENT_PAGES_HOLD));
     OG_RETURN_IFERR(srv_get_param_uint32("HASH_TABLE_PAGES_HOLD", &sql->hash_pages_hold));
     OG_RETURN_IFERR(srv_verf_param_uint64("HASH_TABLE_PAGES_HOLD", sql->hash_pages_hold, 0, OG_MAX_HASH_PAGES_HOLD));
+    OG_RETURN_IFERR(srv_apply_param_plan_display_format(sql));
 
     return OG_SUCCESS;
 }

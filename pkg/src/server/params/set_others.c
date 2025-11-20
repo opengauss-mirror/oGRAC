@@ -756,9 +756,9 @@ status_t sql_notify_als_predicate(void *se, void *item, char *value)
 {
     g_instance->sql.enable_predicate = (bool32)value[0];
     if (g_instance->sql.enable_predicate) {
-        OG_BIT_SET(g_instance->sql.plan_display_format, PLAN_FORMAT_PREDICATE);
+        OG_BIT_SET(g_instance->sql.plan_display_format, FORMAT_MASK_PREDICATE);
     } else {
-        OG_BIT_RESET(g_instance->sql.plan_display_format, PLAN_FORMAT_PREDICATE);
+        OG_BIT_RESET(g_instance->sql.plan_display_format, FORMAT_MASK_PREDICATE);
     }
     return sql_notify_als_bool(se, item, value);
 }

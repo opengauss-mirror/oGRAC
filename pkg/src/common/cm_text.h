@@ -52,6 +52,15 @@ typedef struct st_text {
 } text_t;
 #pragma pack()
 
+
+#pragma pack(4)
+typedef struct st_var_text {
+    char *str;
+    uint32 len;
+    uint32 cap;
+} var_text_t;
+#pragma pack()
+
 #ifdef OG_RAC_ING
 typedef struct st_long_text {
     char *text_addr;
@@ -478,6 +487,25 @@ static inline status_t cm_concat_n_string(text_t *text, uint32 maxsize, const ch
 {
     if (size != 0) {
         MEMS_RETURN_IFERR(memcpy_sp(text->str + text->len, maxsize - text->len, part, size));
+        text->len += size;
+    }
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_concat_var_string(var_text_t *text, const char *part)
+{
+    uint32 len = (uint32)strlen(part);
+    if (len != 0 && len <= (text->cap - text->len)) {
+        MEMS_RETURN_IFERR(memcpy_sp(text->str + text->len, text->cap - text->len, part, len));
+        text->len += len;
+    }
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_concat_n_var_string(var_text_t *text, const char *part, uint32 size)
+{
+    if (size != 0) {
+        MEMS_RETURN_IFERR(memcpy_sp(text->str + text->len, text->cap - text->len, part, size));
         text->len += size;
     }
     return OG_SUCCESS;
@@ -1107,6 +1135,8 @@ bool32 cm_fetch_line(text_t *text, text_t *line, bool32 eof);
 
 void cm_str_upper(char *str);
 void cm_str_lower(char *str);
+void cm_str_to_upper(char *src, char *dst);
+void cm_str_to_lower(char *src, char *dst);
 void cm_text_upper(text_t *text);
 void cm_text_lower(text_t *text);
 void cm_text_upper_self_name(text_t *name);

@@ -68,7 +68,6 @@ static status_t sql_execute_create_space(sql_stmt_t *ogsql_stmt)
     return knl_create_space(&ogsql_stmt->session->knl_session, ogsql_stmt, def);
 }
 
-static status_t sql_init_select_vmc(sql_stmt_t *ogsql_stmt, select_node_t *select_node);
 static status_t sql_init_query_vmc(sql_stmt_t *ogsql_stmt, sql_query_t *query)
 {
     OG_RETURN_IFERR(vmc_alloc_mem(&ogsql_stmt->vmc, sizeof(vmc_t), (void **)&query->vmc));
@@ -93,7 +92,7 @@ static status_t sql_init_query_vmc(sql_stmt_t *ogsql_stmt, sql_query_t *query)
     return OG_SUCCESS;
 }
 
-static status_t sql_init_select_vmc(sql_stmt_t *ogsql_stmt, select_node_t *select_node)
+status_t sql_init_select_vmc(sql_stmt_t *ogsql_stmt, select_node_t *select_node)
 {
     if (select_node->type == SELECT_NODE_QUERY) {
         return sql_init_query_vmc(ogsql_stmt, select_node->query);
@@ -102,7 +101,7 @@ static status_t sql_init_select_vmc(sql_stmt_t *ogsql_stmt, select_node_t *selec
     return sql_init_select_vmc(ogsql_stmt, select_node->right);
 }
 
-static status_t sql_init_withas_vmc(sql_stmt_t *ogsql_stmt, sql_withas_t *withas_ctx)
+status_t sql_init_withas_vmc(sql_stmt_t *ogsql_stmt, sql_withas_t *withas_ctx)
 {
     sql_withas_factor_t *factor = NULL;
     sql_select_t *select_ctx = NULL;

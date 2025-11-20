@@ -379,6 +379,7 @@ static void sql_tx_statinfo_accumulate(sql_stmt_t *stmt, ogx_stat_t *context_sta
 
 static void sql_baseinfo_accumulate(sql_stmt_t *stmt, uint64 elapsed_time, ogx_stat_t *stat)
 {
+    OG_RETVOID_IFTRUE(stmt->is_explain);
     ogx_prev_stat_t *context_pre_stat = &stmt->session->ogx_prev_stat;
     knl_stat_t *knl_stat = stmt->session->knl_session.stat;
     int64 io_time = (int64)(knl_stat->disk_read_time - context_pre_stat->io_wait_time);
@@ -403,7 +404,7 @@ static void sql_context_accumulate(sql_stmt_t *stmt, uint64 passed_time)
     ogx_stat_t *context_stat = &stmt->context->stat;
 
     /* parallel session is binded to main session, count is added by main session */
-    if (stmt->session->type != SESSION_TYPE_SQL_PAR) {
+    if (stmt->session->type != SESSION_TYPE_SQL_PAR && !stmt->is_explain) {
         cm_atomic_add(&context_stat->executions, (int64)stmt->param_info.paramset_size);
     }
 
@@ -502,7 +503,7 @@ void sql_end_ctx_stat(void *handle)
     if (stmt->context->type != OGSQL_TYPE_ANONYMOUS_BLOCK) {
         // Total number of rows processed on behalf of this SQL statement, accumulate total_rows of stmt.
         KNL_SESSION(stmt)->stat->processed_rows +=
-            (stmt->is_explain || stmt->context->type == OGSQL_TYPE_SELECT) ? stmt->batch_rows : stmt->total_rows;
+            (stmt->context->type == OGSQL_TYPE_SELECT) ? stmt->batch_rows : stmt->total_rows;
     }
     sql_context_accumulate(stmt, passed_time);
 

@@ -1,0 +1,219 @@
+
+
+SQL> drop table if exists t_expl_0;
+
+Succeed.
+
+SQL> create table t_expl_0(f_int1 int, f_int2 int);
+
+Succeed.
+
+SQL> insert into t_expl_0(f_int1, f_int2) values(1, 11);
+
+1 rows affected.
+
+SQL> explain plan for select * from t_expl_0;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name     | Rows | Cost  | Bytes | Remark |
+---------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |          | 0    | 0     |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T_EXPL_0 | 0    | 10000 |       |        |
+---------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> explain plan for xselect * from t_expl_0;
+
+OG-00601, [1:18]Sql syntax error: missing keyword
+SQL> drop table if exists t_expl_0;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> drop table if exists t2;
+
+Succeed.
+
+SQL> create table t1(id int, location int);
+
+Succeed.
+
+SQL> create table t2(id int, revenue int);
+
+Succeed.
+
+SQL> explain select t2.id, sum(revenue) from t1, t2 where t2.id = t1.id group by t2.id having sum(revenue) >=2;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |      | 0    | 0     |       |        |
+| 1  |   HAVING                    |       |      | 0    | 0     |       |        |
+| 2  |     HASH GROUP BY           |       |      | 0    | 0     |       |        |
+| 3  |       NESTED LOOPS          |       |      | 0    | 20000 |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | T2   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: SUM(REVENUE) >= 2                               
+    5 - filter: T2.ID = T1.ID                                   
+
+14 rows fetched.
+
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> drop table if exists t2;
+
+Succeed.
+
+SQL> 
+SQL> --- test explain const node
+SQL> create table t1(c1 varchar(20));
+
+Succeed.
+
+SQL> explain select * from t1 where c1 in (lpad('1',4090,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 0     |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',101,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 0     |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',100,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 0     |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',99,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 0     |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',0,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 0     |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 =                                            
+
+9 rows fetched.
+
+SQL> drop table t1;
+
+Succeed.
+
+SQL> 
+SQL> --- test explain connect by
+SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS squared FROM SYS_DUMMY CONNECT BY level <= 10;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 0    | 0     |       |        |
+| 1  |   START WITH            |       |           | 0    | 0     |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+| 3  |   CONNECT BY            |       |           | 0    | 0     |       |        |
+| 4  |       TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    3 - filter: LEVEL <= 10                                     
+
+12 rows fetched.
+
+SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS squared FROM 
+  2     (SELECT 1 AS seed FROM SYS_DUMMY) START WITH seed = 1 CONNECT BY PRIOR seed = seed AND LEVEL <= 10;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name      | Rows | Cost  | Bytes | Remark |
+----------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |           | 0    | 0     |       |        |
+| 1  |   START WITH                |       |           | 0    | 0     |       |        |
+| 2  |       SUBSELECT             | SYS   |           | 0    | 0     |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+| 4  |   CONNECT BY                |       |           | 0    | 0     |       |        |
+| 5  |       SUBSELECT             | SYS   |           | 0    | 0     |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+----------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: SEED = 1                                        
+    2 - filter: SEED = 1                                        
+    4 - filter: PRIOR SEED = SEED AND LEVEL <= 10               
+
+16 rows fetched.
+
+SQL> 
+SQL> 
+
+

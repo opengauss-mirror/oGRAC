@@ -49,6 +49,8 @@
 #include "ogsql_merge_parser.h"
 #include "ogsql_cache.h"
 #include "gramparse.h"
+#include "ddl_parser.h"
+#include "expl_executor.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -649,8 +651,55 @@ status_t sql_parse_anonymous_directly(sql_stmt_t *stmt, word_t *leader, sql_text
     return OG_SUCCESS;
 }
 
-status_t sql_parse_dml(sql_stmt_t *stmt, key_wid_t key_wid)
+
+static status_t sql_fetch_expl_plan_for_tokens(lex_t *lex)
 {
+    bool32 is_plan_for = OG_FALSE;
+    if (lex_try_fetch(lex, "PLAN", &is_plan_for) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (is_plan_for && lex_expected_fetch_word(lex, "FOR") != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
+{
+    lex_t *lex = stmt->session->lex;
+    sql_text_t *sql = lex->curr_text;
+    lang_type_t lang_type = LANG_INVALID;
+
+    if (sql_fetch_expl_plan_for_tokens(lex) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(lex_skip_comments(lex, NULL));
+
+    source_location_t loc = sql->loc;
+    lang_type = sql_diag_lang_type(stmt, sql, leader_word);
+    if (lang_type == LANG_DML) {
+        OG_RETURN_IFERR(sql_parse_dml(stmt, leader_word));
+    } else if (lang_type == LANG_DDL && leader_word->id == KEY_WORD_CREATE) {
+        loc = lex->loc;
+        OG_RETURN_IFERR(sql_parse_ddl(stmt, leader_word));
+        if (is_explain_create_type(stmt) == OG_FALSE) {
+            OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
+            return OG_ERROR;
+        }
+    } else {
+        OG_LOG_DEBUG_ERR("the type: %d can not explain", (uint8_t)lang_type);
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
+        return OG_ERROR;
+    }
+    stmt->is_explain = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_dml(sql_stmt_t *stmt, word_t *leader_word)
+{
+    key_wid_t key_wid = leader_word->id;
     OG_LOG_DEBUG_INF("Begin parse DML, SQL = %s", T2S(&stmt->session->lex->text.value));
     cm_atomic_inc(&g_instance->library_cache_info[stmt->lang_type].hits);
     // maybe need load entity from proc$

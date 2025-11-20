@@ -916,9 +916,10 @@ static status_t sql_parse_route(sql_stmt_t *stmt)
 }
 #endif
 
-status_t sql_parse_dcl(sql_stmt_t *stmt, key_wid_t key_wid)
+status_t sql_parse_dcl(sql_stmt_t *stmt, word_t *leader_word)
 {
     status_t status;
+    key_wid_t key_wid = leader_word->id;
 
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DCL;
     status = sql_alloc_context(stmt);

@@ -642,11 +642,9 @@ static status_t sql_execute_alter_session_set_timezone(sql_stmt_t *ogsql_stmt, a
 
 static inline void sql_execute_alter_session_set_explain_predicate(sql_stmt_t *ogsql_stmt, altset_def_t *def)
 {
-    if (def->on_off) {
-        OG_BIT_SET(ogsql_stmt->session->plan_display_format, PLAN_FORMAT_TYPICAL);
-    } else {
-        OG_BIT_SET(ogsql_stmt->session->plan_display_format, PLAN_FORMAT_BASIC);
-        OG_BIT_RESET(ogsql_stmt->session->plan_display_format, PLAN_FORMAT_PREDICATE);
+    OG_BIT_SET(ogsql_stmt->session->plan_display_format, FORMAT_MASK_TYPICAL);
+    if (!def->on_off) {
+        OG_BIT_RESET(ogsql_stmt->session->plan_display_format, FORMAT_MASK_PREDICATE);
     }
 }
 

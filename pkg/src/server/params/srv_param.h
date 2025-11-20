@@ -50,7 +50,7 @@ status_t sql_verify_als_cpu_inf_str(void *se, void *lex, void *def);
 status_t verify_uds_file_path(const char *path);
 status_t verify_file_path(const char *path);
 status_t verify_uds_file_permission(uint16 permission);
-status_t srv_get_plan_display_format_param(sql_instance_t *sql);
+status_t srv_apply_param_plan_display_format(sql_instance_t *sql);
 status_t sql_verify_als_plan_display_format(void *se, void *lex, void *def);
 status_t sql_notify_als_plan_display_format(void *se, void *item, char *value);
 status_t sql_verify_rcy_read_buf_size(void *se, void *lex, void *def);
@@ -59,18 +59,31 @@ status_t sql_verify_dtc_rcy_paral_buf_list_size(void *se, void *lex, void *def);
 void srv_get_config_info(config_item_t **params, uint32 *count);
 void init_runtime_params(void);
 void sql_set_plan_display_format(char *str, uint32 *value);
-status_t sql_normalize_plan_display_format_value(char *value, uint32 max_szie, uint32 format_index, bool32 *option_flag,
-    uint32 flag_count);
-status_t sql_get_plan_display_format_info(void *lex_in, uint32 *format_index, bool32 *option_flag, uint32 flag_count);
+status_t sql_normalize_plan_display_format_value(char *value, uint32 format_index, bool32 *option_flag);
+status_t sql_get_plan_display_format_info(void *lex_in, uint32 *format_index, bool32 *option_flag);
 #define IS_DEADLOCK_INTERVAL_PARAM_VALID(num) ((num) == 1 || (num) == 10 || (num) == 100 || (num) == 1000)
+
 typedef enum en_plan_format_mask {
-    PLAN_FORMAT_BASIC = 0x00000001,
-    PLAN_FORMAT_PREDICATE = 0x0000002,
-    PLAN_FORMAT_TYPICAL = PLAN_FORMAT_BASIC | PLAN_FORMAT_PREDICATE,
-    PLAN_FORMAT_QUERY_BLOCK = 0x00000004,
-    PLAN_FORMAT_OUTLINE = 0x00000008,
-    PLAN_FORMAT_ALL = PLAN_FORMAT_TYPICAL | PLAN_FORMAT_QUERY_BLOCK | PLAN_FORMAT_OUTLINE,
+    FORMAT_MASK_ID = 0x00000001,
+    FORMAT_MASK_OPERATION = 0x00000002,
+    FORMAT_MASK_OWNER = 0x00000004,
+    FORMAT_MASK_TABLE = 0x00000008,
+    FORMAT_MASK_ROWS = 0x00000010,
+    FORMAT_MASK_COST = 0x00000020,
+    FORMAT_MASK_BYTES = 0x00000040,
+    FORMAT_MASK_REMARK = 0x00000080,
+
+    FORMAT_MASK_PREDICATE = 0x00000100,
+    FORMAT_MASK_QUERY_BLOCK = 0x00000200,
+    FORMAT_MASK_OUTLINE = 0x00000400,
 } plan_format_mask_t;
+
+#define FORMAT_MASK_CBO (FORMAT_MASK_ROWS | FORMAT_MASK_COST)
+#define FORMAT_MASK_SIMPLE (FORMAT_MASK_ID | FORMAT_MASK_OPERATION | FORMAT_MASK_TABLE)
+#define FORMAT_MASK_BASIC (FORMAT_MASK_SIMPLE | FORMAT_MASK_OWNER | FORMAT_MASK_BYTES | FORMAT_MASK_REMARK | \
+    FORMAT_MASK_CBO)
+#define FORMAT_MASK_TYPICAL (FORMAT_MASK_BASIC | FORMAT_MASK_PREDICATE)
+#define FORMAT_MASK_ALL (FORMAT_MASK_TYPICAL | FORMAT_MASK_QUERY_BLOCK | FORMAT_MASK_OUTLINE)
 
 typedef struct st_plan_format {
     text_t text;
