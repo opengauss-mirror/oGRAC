@@ -1,0 +1,97 @@
+#!/bin/bash
+set +x
+CURRENT_PATH=$(dirname $(readlink -f $0))
+SCRIPT_NAME=${PARENT_DIR_NAME}/$(basename $0)
+source ${CURRENT_PATH}/env.sh
+source ${CURRENT_PATH}/log4sh.sh
+
+
+allOnlineFlag=0
+allOfflineFlag=0
+
+logAndEchoInfo "-------Begin to check process and systemd------- [Line:${LINENO}, File:${SCRIPT_NAME}]"
+for lib_name in "${START_ORDER[@]}"
+do
+    if [[ ${lib_name} == "logicrep" ]] && [ ! -f /opt/software/tools/logicrep/start.success ];then
+        continue
+    fi
+
+    sh ${CURRENT_PATH}/${lib_name}/appctl.sh check_status >> ${OM_DEPLOY_LOG_FILE} 2>&1
+    if [ $? -eq 0 ]; then
+        logAndEchoInfo "${lib_name} is online. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        allOfflineFlag=1
+    else
+        logAndEchoError "${lib_name} is offline. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        allOnlineFlag=1
+    fi
+done
+
+# 检查守护进程
+logAndEchoInfo "-------Begin to check ograc_daemon------- [Line:${LINENO}, File:${SCRIPT_NAME}]"
+daemonPid=`ps -ef | grep -v grep | grep "sh /opt/ograc/common/script/ograc_daemon.sh" | awk '{print $2}'`
+if [ -n "${daemonPid}" ];then
+    logAndEchoInfo "ograc_daemon is online, pid is ${daemonPid}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOfflineFlag=1
+else
+    logAndEchoError "ograc_daemon is offline, pid is ${daemonPid}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOnlineFlag=1
+fi
+
+logAndEchoInfo "-------Begin to check ograc.timer------- [Line:${LINENO}, File:${SCRIPT_NAME}]"
+systemctl daemon-reload >> ${OM_DEPLOY_LOG_FILE} 2>&1
+systemctl status ograc.timer >> ${OM_DEPLOY_LOG_FILE} 2>&1
+
+systemctl is-active ograc.timer >> ${OM_DEPLOY_LOG_FILE} 2>&1
+if [ $? -eq 0 ];then
+    logAndEchoInfo "ograc.timer is active. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOfflineFlag=1
+else
+    logAndEchoError "ograc.timer is inactive. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOnlineFlag=1
+fi
+
+systemctl is-enabled ograc.timer >> ${OM_DEPLOY_LOG_FILE} 2>&1
+if [ $? -eq 0 ];then
+    logAndEchoInfo "ograc.timer is enabled. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOfflineFlag=1
+else
+    logAndEchoError "ograc.timer is disabled. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOnlineFlag=1
+fi
+
+logAndEchoInfo "-------Begin to check ograc_logs_handler.timer------- [Line:${LINENO}, File:${SCRIPT_NAME}]"
+systemctl status ograc_logs_handler.timer >> ${OM_DEPLOY_LOG_FILE} 2>&1
+
+systemctl is-active ograc_logs_handler.timer >> ${OM_DEPLOY_LOG_FILE} 2>&1
+if [ $? -eq 0 ];then
+    logAndEchoInfo "ograc_logs_handler.timer is active. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOfflineFlag=1
+else
+    logAndEchoError "ograc_logs_handler.timer is inactive. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOnlineFlag=1
+fi
+
+systemctl is-enabled ograc_logs_handler.timer >> ${OM_DEPLOY_LOG_FILE} 2>&1
+if [ $? -eq 0 ];then
+    logAndEchoInfo "ograc_logs_handler.timer is enabled. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOfflineFlag=1
+else
+    logAndEchoError "ograc_logs_handler.timer is disabled. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    allOnlineFlag=1
+fi
+
+logAndEchoInfo "-------allOnlineFlag is ${allOnlineFlag}, allOfflineFlag is ${allOfflineFlag}------- [Line:${LINENO}, File:${SCRIPT_NAME}]"
+
+if [ ${allOnlineFlag} -eq 0 ]; then
+    logAndEchoInfo "process and systemd is all online. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    exit 0
+fi
+
+if [ ${allOfflineFlag} -eq 0 ]; then
+    logAndEchoError "process and systemd is all offline. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    exit 1
+fi
+
+logAndEchoInfo "process and systemd is partial online. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+
+exit 2

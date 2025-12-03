@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node0-config-1
+  namespace: ograc
+data:
+  deploy_param.json: |
+    {
+      "deploy_policy": "ModeB",
+      "deploy_user": "ogdba:ogdba",
+      "cluster_id": "0",
+      "cluster_name": "cluster123",
+      "remote_cluster_name": "cluster123",
+      "node_id": "0",
+      "ograc_vlan_ip": "net1|net2",
+      "storage_vlan_ip": "66.66.66.10;66.66.66.11|77.77.77.10;77.77.77.11",
+      "cms_ip": "ograc-1-node0.ograc-svc-1.ograc.svc.cluster.local;ograc-1-node1.ograc-svc-1.ograc.svc.cluster.local",
+      "storage_dbstor_fs": "foo",
+      "storage_dbstor_page_fs": "foo_page",
+      "storage_share_fs": "share",
+      "storage_archive_fs": "archive",
+      "dbstor_fs_vstore_id": "0",
+      "mes_type": "UC",
+      "mes_ssl_switch": true,
+      "MAX_ARCH_FILES_SIZE": "300G",
+      "dr_deploy": {
+        "dr_setup": false,
+        "domain_name": "",
+        "role": "",
+        "active": {
+          "dm_ip": "",
+          "dm_user": "",
+          "esn": "",
+          "sync_speed": "medium"
+        },
+        "standby": {
+          "dm_ip": "",
+          "dm_user": "",
+          "esn": "",
+          "pool_id": "",
+          "dbstor_fs_vstore_id": ""
+        }
+      }
+    }
+  mem_spec: "1"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node1-config-1
+  namespace: ograc
+data:
+  deploy_param.json: |
+    {
+      "deploy_policy": "ModeB",
+      "deploy_user": "ogdba:ogdba",
+      "cluster_id": "0",
+      "cluster_name": "cluster123",
+      "remote_cluster_name": "cluster123",
+      "node_id": "1",
+      "ograc_vlan_ip": "net1|net2",
+      "storage_vlan_ip": "66.66.66.10;66.66.66.11|77.77.77.10;77.77.77.11",
+      "cms_ip": "ograc-1-node0.ograc-svc-1.ograc.svc.cluster.local;ograc-1-node1.ograc-svc-1.ograc.svc.cluster.local",
+      "storage_dbstor_fs": "foo",
+      "storage_dbstor_page_fs": "foo_page",
+      "storage_share_fs": "share",
+      "storage_archive_fs": "archive",
+      "dbstor_fs_vstore_id": "0",
+      "mes_type": "UC",
+      "mes_ssl_switch": true,
+      "MAX_ARCH_FILES_SIZE": "300G",
+      "dr_deploy": {
+        "dr_setup": false,
+        "domain_name": "",
+        "role": "",
+        "active": {
+          "dm_ip": "",
+          "dm_user": "",
+          "esn": "",
+          "sync_speed": "medium"
+        },
+        "standby": {
+          "dm_ip": "",
+          "dm_user": "",
+          "esn": "",
+          "pool_id": "",
+          "dbstor_fs_vstore_id": ""
+        }
+      }
+    }
+  mem_spec: "1"
