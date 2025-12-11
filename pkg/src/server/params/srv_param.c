@@ -631,9 +631,9 @@ config_item_t g_parameters[] = {
     { "INTERACTIVE_TIMEOUT", OG_TRUE, ATTR_NONE, "1800", NULL, NULL, "-", "[1,4294967295]", "OG_TYPE_UINT32", NULL,
       PARAM_INTERACTIVE_TIMEOUT, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_interactive_timeout,
       sql_notify_als_interactive_timeout, NULL, NULL },
-    { "LONGSQL_TIMEOUT", OG_TRUE, ATTR_NONE, "10", NULL, NULL, "-", "[0s,(2^32-1)s]", "OG_TYPE_INTEGER", NULL,
-      PARAM_LONGSQL_TIMEOUT, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_longsql_timeout,
-      sql_notify_als_longsql_timeout, NULL, NULL },
+    { "SQL_STAGE_THRESHOLD", OG_TRUE, ATTR_NONE, "10", NULL, NULL, "-", "[0,4294967295]", "OG_TYPE_INTEGER", NULL,
+      PARAM_SQL_STAGE_THRESHOLD, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_sql_stage_threshold,
+      sql_notify_als_sql_stage_threshold, NULL, NULL },
     /* ssl */
     { "SSL_CA", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL, PARAM_SSL_CA, EFFECT_REBOOT,
       CFG_INS, sql_verify_als_ssl_file, NULL, NULL, NULL },
@@ -846,6 +846,10 @@ config_item_t g_parameters[] = {
     { "_MAX_JSON_DYNAMIC_BUFFER_SIZE", OG_TRUE, ATTR_NONE, "1G", NULL, NULL, "-", "[1M,32T]", "OG_TYPE_INTEGER", NULL,
       PARAM_MAX_JSON_DYNAMIC_BUFFER_SIZE, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_json_dyn_buf_size,
       sql_notify_json_dyn_buf_size, NULL, NULL },
+    // slow sql stats print or not
+    { "SLOWSQL_STATS_ENABLE", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "[FALSE,TRUE]", "OG_TYPE_BOOLEAN", NULL,
+      PARAM_SLOWSQL_STATS_ENABLE, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_enable_slowsql_stats,
+      sql_notify_als_bool, NULL },
     { "STATS_PARALL_THREADS", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", "[2,8]", "OG_TYPE_INTEGER", NULL,
       PARAM_STATS_PARALL_THREADS, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_stats_parall_threads,
       sql_notify_als_stats_parall_threads, NULL, NULL },

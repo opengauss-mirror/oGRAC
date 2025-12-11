@@ -96,7 +96,7 @@ static void ogsql_display_wsr_monitor_session(void)
     ogsql_printf("                            Sessions: %s\n", g_wsritemdesc[WSR_ITEM_SESSIONS]);
     ogsql_printf("                            ActiveSess: %s\n", g_wsritemdesc[WSR_ITEM_ACTIVE_SESSIONS]);
     ogsql_printf("                            Trans: %s\n", g_wsritemdesc[WSR_ITEM_TRANSACTIONS]);
-    ogsql_printf("                            LongSQL: %s\n", g_wsritemdesc[WSR_ITEM_LONG_SQL]);
+    ogsql_printf("                            Slowsql: %s\n", g_wsritemdesc[WSR_ITEM_SLOW_SQL]);
     ogsql_printf("                            LongTrans: %s\n", g_wsritemdesc[WSR_ITEM_LONG_TRANS]);
 }
 
@@ -279,7 +279,7 @@ static int monitor_parse_opts(lex_t *lex, monitor_options_t *monitor_opts)
 static status_t monitor_get_head(monitor_options_t *monitor_opts, char* data_head)
 {
     char host[OG_MONITOR_LINE_LEN] = "        %%user      %%system      %%iowait        %%idle";
-    char session[OG_MONITOR_LINE_LEN] = "     Sessions   ActiveSess        Trans      LongSQL    LongTrans";
+    char session[OG_MONITOR_LINE_LEN] = "     Sessions   ActiveSess        Trans      Slowsql    LongTrans";
     char memory[OG_MONITOR_LINE_LEN] = "    DataDirty      DataPin     DataFree     TempFree      TempHWM     TempSwap";
     char app[OG_MONITOR_LINE_LEN] = "     Physical      Logical       Commit     Rollback     RedoSize      Execute"
         "        Fetch        Login    HardParse    DBWRPages     DBWRTime";

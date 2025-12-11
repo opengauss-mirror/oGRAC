@@ -415,7 +415,7 @@ static void sql_context_accumulate(sql_stmt_t *stmt, uint64 passed_time)
     sql_tempspace_statinfo_accumulate(stmt, context_stat);
     sql_tx_statinfo_accumulate(stmt, context_stat);
 
-    if (!cm_log_param_instance()->longsql_print_enable || stmt->stat == NULL) {
+    if (!cm_log_param_instance()->slowsql_print_enable || stmt->stat == NULL) {
         return;
     }
 

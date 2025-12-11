@@ -29,7 +29,8 @@
 #include "knl_dc.h"
 
 #define LOG_LEVEL_MODE_VIEW 1
-#define LOG_MODE_PARAMETER_COUNT 1
+#define SLOWSQL_LOG_MODE_VIEW 2
+#define LOG_MODE_PARAMETER_COUNT 2
 typedef enum en_dynview_id {
     DYN_VIEW_LOGFILE,
     DYN_VIEW_LIBRARYCACHE,
@@ -80,6 +81,7 @@ typedef enum en_dynview_id {
     DYN_VIEW_COLUMN,
     DYN_VIEW_USER_PARAMETER,
     DYN_VIEW_FREE_SPACE,
+    DYN_VIEW_SLOW_SQL,
     DYN_VIEW_CONTROLFILE,
     DYN_VIEW_SGASTAT,
     DYN_VIEW_HBA,
@@ -113,6 +115,7 @@ typedef enum en_dynview_id {
     DYN_VIEW_TEMP_COLUMN_STATS,
     DYN_VIEW_TEMP_INDEX_STATS,
     DYN_VIEW_SESSION_EX,
+    DYN_VIEW_SQL_EXECUTION_PLAN,
     DYN_VIEW_DATAFILE_LAST_TABLE,
     DYN_STATS_RESOURCE,
     DYN_VIEW_TENANT_TABLESPACES,
@@ -164,7 +167,7 @@ typedef enum en_dynview_id {
 
 #define VW_DECL static dynview_desc_t
 
-#define VW_LONGSQL_ELAPSED_MS_SCALE 2 /* VW_LONGSQL_ELAPSED_MS_SCALE used for dv_longsql */
+#define VW_SLOWSQL_ELAPSED_MS_SCALE 2 /* VW_SLOWSQL_ELAPSED_MS_SCALE used for dv_slowsql */
 
 extern knl_dynview_t g_dynamic_views[];
 

@@ -19,3 +19,4 @@ test: bison_parser
 test: og_auto_increment
 test: og_index_unique
 test: og_explain
+test: og_slowsql

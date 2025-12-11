@@ -226,7 +226,7 @@ typedef struct st_clt_stmt {
     bool8 can_read_ack;
     uint32 shard_dml_id; /* used for shard statement-level rollback */
     uint64 scn;
-    bool8 is_log_longsql;
+    bool8 is_log_slowsql;
     cs_prepare_req_t *req;
 #endif
 } clt_stmt_t;

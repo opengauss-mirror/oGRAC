@@ -126,7 +126,7 @@ typedef enum en_errno {
     ERR_DATAFILE_FDATASYNC = 52,
     ERR_DATAFILE_EXTEND_PARTIALLY = 53,
     ERR_SYSTEM_TIME = 54,
-    ERR_READ_LONGSQL_FILE = 55,
+    ERR_READ_SLOWSQL_FILE = 55,
 
     // 60 - 70 buddy memory error
     ERR_MEM_ZONE_INIT = 60,

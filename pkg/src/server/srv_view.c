@@ -35,6 +35,7 @@
 #include "srv_view_lock.h"
 #include "srv_instance.h"
 #include "dml_executor.h"
+#include "ogsql_slowsql.h"
 #include "knl_xa.h"
 #include "ostat_load.h"
 #include "srv_view_lock.h"
@@ -560,6 +561,28 @@ static knl_column_t g_pl_mngr_columns[] = {
     { 12, "PACKAGE_NAME",  0, 0, OG_TYPE_VARCHAR, OG_MAX_NAME_LEN, 0, 0, OG_TRUE,  0, { 0 } },
 };
 
+static knl_column_t g_slowsql_view_columns[] = {
+    { 0, "TENANT_ID",     0, 0, OG_TYPE_INTEGER, sizeof(uint32),      0, 0, OG_FALSE, 0, { 0 } },
+    { 1, "CTIME",   0, 0, OG_TYPE_VARCHAR, OG_MAX_TIME_STRLEN,  0, 0, OG_FALSE, 0, { 0 } },
+    { 2, "STAGE",    0, 0, OG_TYPE_VARCHAR, 12,                  0, 0, OG_FALSE, 0, { 0 } },
+    { 3, "SID",    0, 0, OG_TYPE_BIGINT,  sizeof(uint64),      0, 0, OG_FALSE, 0, { 0 } },
+    { 4, "CLIENT_IP",     0, 0, OG_TYPE_VARCHAR, CM_MAX_IP_LEN,       0, 0, OG_FALSE, 0, { 0 } },
+    { 5, "ELAPSED_TIME",   0, 0, OG_TYPE_NUMBER,  MAX_DEC_BYTE_BY_PREC(OG_MAX_NUM_PRECISION),
+                          OG_MAX_NUM_PRECISION,  VW_SLOWSQL_ELAPSED_MS_SCALE, OG_FALSE, 0, { 0 } },
+    { 6, "PARAMS",   0, 0, OG_TYPE_VARCHAR, 4096,                0, 0, OG_FALSE, 0, { 0 } },
+    { 7, "SQL_ID",      0, 0, OG_TYPE_VARCHAR, 32,                  0, 0, OG_FALSE, 0, { 0 } },
+    { 8, "EXPLAIN_ID",     0, 0, OG_TYPE_VARCHAR, 32,                  0, 0, OG_FALSE, 0, { 0 } },
+    { 9, "SQL_TEXT",      0, 0, OG_TYPE_VARCHAR, MAX_STR_DISPLAY_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 10, "EXPLAIN_TEXT", 0, 0, OG_TYPE_VARCHAR, MAX_STR_DISPLAY_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+};
+
+/* decimal 0.001(1/1000) */
+static const dec8_t MILLISECOND_SCALE_FACTOR = {
+    .len = (uint8)2,
+    .head = CONVERT_D8EXPN(-DEC8_CELL_DIGIT, OG_FALSE),
+    .cells = { 100000 }
+};
+
 #define VW_CONTROLFILE_COL_STATUS_LEN (uint32)16
 #define VW_CONTROLFILE_COL_ISRECOVER_LEN (uint32)4
 
@@ -869,6 +892,7 @@ static knl_column_t g_lrpl_detail_columns[] = {
 #define NLS_PARAMS_COLS (ELEMENT_COUNT(g_nls_session_param_columns))
 #define FREE_SPACE_COLS (sizeof(g_free_space_columns) / sizeof(knl_column_t))
 #define PL_MNGR_COLS (ELEMENT_COUNT(g_pl_mngr_columns))
+#define SLOWSQL_VIEW_COLS (ELEMENT_COUNT(g_slowsql_view_columns))
 #define HBA_COLS (ELEMENT_COUNT(g_hba_columns))
 #define PBL_COLS (ELEMENT_COUNT(g_pbl_columns))
 #define WHITELIST_COLS (ELEMENT_COUNT(g_whitelist_columns))
@@ -1604,6 +1628,9 @@ static status_t vw_param_put_name(row_assist_t *ra, knl_cursor_t *cursor, const 
             case LOG_LEVEL_MODE_VIEW:
                 OG_RETURN_IFERR(row_put_str(ra, "_LOG_LEVEL_MODE"));
                 break;
+            case SLOWSQL_LOG_MODE_VIEW:
+                OG_RETURN_IFERR(row_put_str(ra, "SLOWSQL_LOG_MODE"));
+                break;
             default:
                 OG_RETURN_IFERR(row_put_str(ra, "_LOG_LEVEL"));
                 break;
@@ -1642,6 +1669,16 @@ static status_t vw_param_put_log_mode(row_assist_t *ra, uint32 log_level_value_i
     return OG_SUCCESS;
 }
 
+static status_t vw_param_put_slowsql_log_mode(row_assist_t *ra, uint32 log_level_value_int)
+{
+    if (SLOWSQL_LOG_ON(log_level_value_int)) {
+        OG_RETURN_IFERR(row_put_str(ra, "ON"));
+    } else {
+        OG_RETURN_IFERR(row_put_str(ra, "OFF"));
+    }
+    return OG_SUCCESS;
+}
+
 static status_t vw_param_put_value(row_assist_t *ra, knl_cursor_t *cursor, config_item_t *item, const char *name,
     const char *value, bool32 is_default_value)
 {
@@ -1651,6 +1688,9 @@ static status_t vw_param_put_value(row_assist_t *ra, knl_cursor_t *cursor, confi
         switch (cursor->rowid.vm_slot) {
             case LOG_LEVEL_MODE_VIEW:
                 OG_RETURN_IFERR(vw_param_put_log_mode(ra, log_level_value_int));
+                break;
+            case SLOWSQL_LOG_MODE_VIEW:
+                OG_RETURN_IFERR(vw_param_put_slowsql_log_mode(ra, log_level_value_int));
                 break;
             default:
                 return OG_ERROR;
@@ -1671,6 +1711,9 @@ static status_t vw_param_put_range(row_assist_t *ra, knl_cursor_t *cursor, confi
             case LOG_LEVEL_MODE_VIEW:
                 OG_RETURN_IFERR(row_put_str(ra, "FATAL,DEBUG,ERROR,WARN,RUN,USER_DEFINE"));
                 break;
+            case SLOWSQL_LOG_MODE_VIEW:
+                OG_RETURN_IFERR(row_put_str(ra, "ON,OFF"));
+                break;
             default:
                 return OG_ERROR;
         }
@@ -1685,6 +1728,7 @@ static status_t vw_param_put_datatype(row_assist_t *ra, knl_cursor_t *cursor, co
     if (IS_LOG_LEVEL(item->name) && cursor->rowid.vm_slot != 0) {
         switch (cursor->rowid.vm_slot) {
             case LOG_LEVEL_MODE_VIEW:
+            case SLOWSQL_LOG_MODE_VIEW:
                 OG_RETURN_IFERR(row_put_str(ra, "OG_TYPE_VARCHAR"));
                 break;
             default:
@@ -4615,6 +4659,27 @@ static status_t vw_pl_mngr_fetch(knl_handle_t se, knl_cursor_t *cursor)
     return vw_fetch_for_tenant(vw_pl_mngr_fetch_core, se, cursor);
 }
 
+static inline void ogsql_slowsql_helper_init(slowsql_record_helper_t *helper)
+{
+    helper->count = 0;
+    helper->index = 0;
+    helper->out_pos = 0;
+    helper->in_pos = 0;
+    helper->in_size = 0;
+}
+
+static status_t vw_slowsql_open(knl_handle_t session, knl_cursor_t *cursor)
+{
+    slowsql_record_helper_t *helper = (slowsql_record_helper_t *)cursor->page_buf;
+    ogsql_slowsql_helper_init(helper);
+
+    log_param_t *log_param = cm_log_param_instance();
+    PRTS_RETURN_IFERR(snprintf_s(helper->path, OG_MAX_PATH_BUFFER_SIZE, OG_MAX_PATH_BUFFER_SIZE - 1, "%s/slowsql",
+                                 log_param->log_home));
+
+    return ogsql_slowsql_load_files(helper);
+}
+
 static inline bool32 vw_tryfind_sql_text(const char *buffer, uint32 buf_len, uint32 *endPos, const char flag)
 {
     for (uint32 i = 0; i < buf_len; i++) {
@@ -4625,6 +4690,179 @@ static inline bool32 vw_tryfind_sql_text(const char *buffer, uint32 buf_len, uin
     }
 
     return OG_FALSE;
+}
+
+static status_t vw_alloc_select_view(sql_stmt_t *stmt, sql_cursor_t *sql_cursor, knl_cursor_t *cursor)
+{
+    // Allocate memory for select view if not exists
+    if (sql_cursor->exec_data.select_view == NULL) {
+        if (vmc_alloc(&sql_cursor->vmc, OG_MAX_ROW_SIZE, (void **)&sql_cursor->exec_data.select_view) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("Failed to allocate %u bytes for select view.", OG_MAX_ROW_SIZE);
+            return OG_ERROR;
+        }
+        OG_LOG_DEBUG_INF("Allocated select view buffer at %p.", sql_cursor->exec_data.select_view);
+    }
+
+    cursor->row = (row_head_t *)sql_cursor->exec_data.select_view;
+    return OG_SUCCESS;
+}
+
+static inline bool32 ogsql_slowsql_row_invalid(const char *row_ptr, uint32 buf_size)
+{
+    return (buf_size == 0 || row_ptr == NULL || row_ptr[0] != (char)SLOWSQL_HEAD ||
+            row_ptr[buf_size - 1] != (char)SLOWSQL_TAIL);
+}
+
+static status_t vw_slowsql_handle_integer_column(row_assist_t *builder, text_t *value, knl_column_t *col)
+{
+    int32 int_val;
+    OG_RETURN_IFERR(cm_text2int(value, &int_val));
+    col->scale = int_val;
+    return row_put_int32(builder, int_val);
+}
+
+static status_t vw_slowsql_handle_bigint_column(row_assist_t *builder, text_t *value)
+{
+    int64 bigint_val;
+    OG_RETURN_IFERR(cm_text2bigint(value, &bigint_val));
+    return row_put_int64(builder, bigint_val);
+}
+
+static status_t vw_slowsql_handle_numeric_column(row_assist_t *builder, text_t *value)
+{
+    /* Process microsecond duration to millisecond decimal */
+    dec8_t elapsed;
+    OG_RETURN_IFERR(cm_text_to_dec(value, &elapsed));
+
+    /* Convert microseconds to milliseconds (divide by 1000) */
+    dec8_t elapsed_ms;
+    OG_RETURN_IFERR(cm_dec_mul(&elapsed, &MILLISECOND_SCALE_FACTOR, &elapsed_ms));
+
+    /* Adjust decimal scale to 3 for millisecond precision */
+    OG_RETURN_IFERR(cm_dec_scale(&elapsed_ms, VW_SLOWSQL_ELAPSED_MS_SCALE, ROUND_HALF_UP));
+    return row_put_dec4(builder, &elapsed_ms);
+}
+
+static status_t vw_process_slowsql_sql_text(uint32 *pos, char *buffer, uint32 buf_size, row_assist_t *row)
+{
+    (*pos)++;  // Skip column separator
+    text_t sql_text = {
+        .str = buffer + *pos,
+        .len = buf_size - *pos - 1  // Reserve terminator space
+    };
+
+    // Find SQL_TEXT terminator (0x1E character)
+    uint32 end_pos;
+    if (!vw_tryfind_sql_text(sql_text.str, sql_text.len, &end_pos, SLOWSQL_STR_SPLIT)) {
+        return OG_ERROR;
+    }
+
+    sql_text.len = MIN(end_pos, MAX_STR_DISPLAY_LEN);
+    OG_RETURN_IFERR(row_put_text(row, &sql_text));
+    *pos += end_pos + 1;  // Move past SQL_TEXT and terminator
+
+    return OG_SUCCESS;
+}
+
+static status_t vw_process_slowsql_explain_text(uint32 *pos, char *buffer, uint32 buf_size, row_assist_t *row)
+{
+    text_t plan_text = {
+        .str = buffer + *pos,
+        .len = buf_size - *pos - 1  // Exclude final 0xFF terminator
+    };
+
+    plan_text.len = MIN(plan_text.len, MAX_STR_DISPLAY_LEN);
+    return row_put_text(row, &plan_text);
+}
+
+static status_t vw_build_slowsql_row_data(char *buffer, uint32 buffer_size, knl_cursor_t *cursor)
+{
+    row_assist_t row;
+    row_init(&row, (char *)cursor->row, OG_MAX_ROW_SIZE, SLOWSQL_VIEW_COLS);
+
+    /* Process standard columns (excluding SQL_TEXT and EXPLAN_TEXT) */
+    uint32 current_pos = 0;
+    uint32 col_idx = 0;
+    while (col_idx < STANDARD_SLOWSQL_COLS) {
+        current_pos++;  // Skip field separator
+
+        /* Extract column value from buffer */
+        text_t column_text;
+        OG_RETVALUE_IFTRUE(!ogsql_slowsql_get_value(&current_pos, buffer, buffer_size, &column_text), OG_ERROR);
+
+        knl_column_t *column = &g_slowsql_view_columns[col_idx];
+        switch (column->datatype) {
+            case OG_TYPE_INTEGER:
+                OG_RETURN_IFERR(vw_slowsql_handle_integer_column(&row, &column_text, column));
+                break;
+            case OG_TYPE_BIGINT:
+                OG_RETURN_IFERR(vw_slowsql_handle_bigint_column(&row, &column_text));
+                break;
+            case OG_TYPE_NUMBER:
+                OG_RETURN_IFERR(vw_slowsql_handle_numeric_column(&row, &column_text));
+                break;
+            case OG_TYPE_VARCHAR:
+                OG_RETURN_IFERR(row_put_text(&row, &column_text));
+                break;
+            default:
+                OG_LOG_RUN_ERR("unexpected datatype \"%s\" for the column[%u] in DV_SLOW_SQL",
+                               get_datatype_name_str(column->datatype), col_idx);
+
+                OG_RETURN_IFERR(row_put_null(&row));
+        }
+        col_idx++;
+    }
+
+    cursor->tenant_id = g_slowsql_view_columns[0].scale;
+
+    /* Process SQL_TEXT field */
+    OG_RETURN_IFERR(vw_process_slowsql_sql_text(&current_pos, buffer, buffer_size, &row));
+
+    /* Process EXPLAN_TEXT field */
+    OG_RETURN_IFERR(vw_process_slowsql_explain_text(&current_pos, buffer, buffer_size, &row));
+
+    return OG_SUCCESS;
+}
+
+static status_t vw_fetch_slowsql_records(knl_handle_t session, knl_cursor_t *cursor)
+{
+    sql_stmt_t *curr_stmt = cursor->stmt;
+    if (curr_stmt == NULL) {
+        return OG_ERROR;
+    }
+    sql_cursor_t *sql_cursor = OGSQL_CURR_CURSOR(curr_stmt);
+    OG_RETURN_IFERR(vw_alloc_select_view(curr_stmt, sql_cursor, cursor));
+
+    char row_data[OG_LOG_SLOWSQL_LENGTH_16K + 1];
+    slowsql_record_helper_t *helper = (slowsql_record_helper_t *)cursor->page_buf;
+    for (;;) {
+        uint32 row_size = 0;
+        if (ogsql_slowsql_fetch_file(helper, row_data, &row_size, cursor) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        if (cursor->eof) {
+            return OG_SUCCESS;
+        }
+
+        if (ogsql_slowsql_row_invalid(row_data, row_size)) {
+            OG_LOG_DEBUG_WAR("invalid slowsql row %s", row_data + 1);
+            continue;
+        }
+
+        if (vw_build_slowsql_row_data(row_data, row_size, cursor) != OG_SUCCESS) {
+            OG_LOG_DEBUG_WAR("invalid slowsql row %s", row_data + 1);
+            continue;
+        }
+
+        cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+        return OG_SUCCESS;
+    }
+}
+
+static status_t vw_slowsql_fetch(knl_handle_t session, knl_cursor_t *cursor)
+{
+    return vw_fetch_for_tenant(vw_fetch_slowsql_records, session, cursor);
 }
 
 static void vm_make_uwl_entry_string(list_t *cidrs_l, char *cidrs_str, size_t size)
@@ -6360,6 +6598,8 @@ VW_DECL dv_free_space = {
     "SYS", "DV_FREE_SPACE", FREE_SPACE_COLS, g_free_space_columns, vw_free_space_open, vw_free_space_fetch
 };
 VW_DECL dv_pl_mngr = { "SYS", "DV_PL_MANAGER", PL_MNGR_COLS, g_pl_mngr_columns, vw_common_open, vw_pl_mngr_fetch };
+VW_DECL dv_slowsql_view = { "SYS",           "DV_SLOW_SQL",   SLOWSQL_VIEW_COLS, g_slowsql_view_columns,
+                            vw_slowsql_open, vw_slowsql_fetch };
 VW_DECL dv_controlfile = { "SYS",          "DV_CONTROL_FILES",  CONTROLFILE_COLS, g_controlfile_columns,
                            vw_common_open, vw_controlfile_fetch };
 VW_DECL dv_hba = { "SYS", "DV_HBA", HBA_COLS, g_hba_columns, vw_common_open, vw_hba_fetch };
@@ -6545,6 +6785,10 @@ dynview_desc_t *vw_describe_local(uint32 id)
 
         case DYN_VIEW_FREE_SPACE:
             return &dv_free_space;
+
+        case DYN_VIEW_SLOW_SQL:
+            return &dv_slowsql_view;
+
         case DYN_VIEW_HBA:
             return &dv_hba;
 
@@ -6684,6 +6928,7 @@ knl_dynview_t g_dynamic_views[] = {
     { DYN_VIEW_COLUMN, vw_describe_local },
     { DYN_VIEW_USER_PARAMETER, vw_describe_local },
     { DYN_VIEW_FREE_SPACE, vw_describe_local },
+    { DYN_VIEW_SLOW_SQL, vw_describe_local },
     { DYN_VIEW_CONTROLFILE, vw_describe_local },
     { DYN_VIEW_SGASTAT, vw_describe_sga },
     { DYN_VIEW_HBA, vw_describe_local },
@@ -6717,6 +6962,7 @@ knl_dynview_t g_dynamic_views[] = {
     { DYN_VIEW_TEMP_COLUMN_STATS, vw_describe_local },
     { DYN_VIEW_TEMP_INDEX_STATS, vw_describe_local },
     { DYN_VIEW_SESSION_EX, vw_describe_session },
+    { DYN_VIEW_SQL_EXECUTION_PLAN, vw_describe_sga },
     { DYN_VIEW_DATAFILE_LAST_TABLE, vw_describe_local },
     { DYN_STATS_RESOURCE, vw_describe_stat },
     { DYN_VIEW_TENANT_TABLESPACES, vw_describe_local },

@@ -4,6 +4,7 @@ include_directories(
 	"${OGRACDB_SRC}/rc"
 	"${OGRACDB_SRC}/zenfs"
 	"${OGRACDB_SRC}/ogsql/gdv"
+    "${OGRACDB_SRC}/ogsql/executor/explain"
     "${OGRACDB_SRC}/upgrade_check"
     "${OGRACDB_SRC}/fdsa"
     "${CMAKE_CURRENT_SOURCE_DIR}"

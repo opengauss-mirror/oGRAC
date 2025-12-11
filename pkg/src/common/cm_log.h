@@ -47,7 +47,7 @@ typedef enum en_log_id {
     LOG_ALARM,
     LOG_AUDIT,
     LOG_RAFT,
-    LOG_LONGSQL,
+    LOG_SLOWSQL,
     LOG_OPER,
     LOG_CTENCRYPT_OPER,
     LOG_TRACE,
@@ -116,11 +116,11 @@ typedef struct st_log_param {
     uint64 max_log_file_size;
     uint64 max_audit_file_size;
     uint64 max_pbl_file_size;
-    uint64 longsql_timeout;
+    uint64 sql_stage_threshold;
     char instance_name[OG_MAX_NAME_LEN];
     audit_log_param_t audit_param;
     bool8 log_instance_startup;
-    bool8 longsql_print_enable;
+    bool8 slowsql_print_enable;
     uint8 reserved[2];
 } log_param_t;
 
@@ -138,7 +138,7 @@ typedef struct st_log_param {
 #define LOG_DEBUG_ERR_ON (cm_log_param_instance()->log_level & (LOG_DEBUG_ERR_LEVEL))
 #define LOG_DEBUG_WAR_ON (cm_log_param_instance()->log_level & (LOG_DEBUG_WAR_LEVEL))
 #define LOG_DEBUG_INF_ON (cm_log_param_instance()->log_level & (LOG_DEBUG_INF_LEVEL))
-#define LOG_LONGSQL_ON (cm_log_param_instance()->log_level & (LOG_LONGSQL_LEVEL))
+#define LOG_SLOWSQL_ON (cm_log_param_instance()->log_level & (LOG_SLOWSQL_LEVEL))
 #define LOG_OPER_ON (cm_log_param_instance()->log_level & (LOG_OPER_LEVEL))
 #define LOG_ODBC_ERR_ON (cm_log_param_instance()->log_level & (LOG_ODBC_ERR_LEVEL))
 #define LOG_ODBC_WAR_ON (cm_log_param_instance()->log_level & (LOG_ODBC_WAR_LEVEL))
@@ -170,7 +170,7 @@ typedef void (*cm_log_write_func_t)(log_file_handle_t *log_file_handle, char *bu
 #define OG_MAX_LOG_FILE_SIZE ((uint64)SIZE_M(1024) * 4)  // this value can not be larger than 4G
 #define OG_MAX_LOG_FILE_COUNT 128                        // this value can not be larger than 128
 #define OG_MAX_LOG_CONTENT_LENGTH OG_MESSAGE_BUFFER_SIZE
-#define OG_LOG_LONGSQL_LENGTH_16K SIZE_K(16)
+#define OG_LOG_SLOWSQL_LENGTH_16K SIZE_K(16)
 #define OG_MAX_LOG_HEAD_LENGTH 100          // UTC+8 2019-01-16 22:40:15.292|OGRACD|00000|140084283451136|INFO> 65
 #define OG_MAX_LOG_NEW_BUFFER_SIZE 1048576  // (1024 * 1024)
 #define OG_MAX_LOG_PERMISSIONS 777
@@ -178,7 +178,7 @@ typedef void (*cm_log_write_func_t)(log_file_handle_t *log_file_handle, char *bu
 #define OG_DEF_LOG_FILE_PERMISSIONS 600
 #define OG_DEF_LOG_PATH_PERMISSIONS_750 750
 #define OG_DEF_LOG_FILE_PERMISSIONS_640 640
-#define OG_MAX_LOG_LONGSQL_LENGTH 1056768
+#define OG_MAX_LOG_SLOWSQL_LENGTH 1056768
 #define OG_MAX_LOG_USER_PERMISSION 7
 
 log_file_handle_t *cm_log_logger_file(uint32 log_count);
@@ -192,8 +192,8 @@ status_t cm_log_get_bak_file_list(char *backup_file_name[OG_MAX_LOG_FILE_COUNT],
                                   const char *log_file);
 
 void cm_write_optinfo_log(const char *format, ...) OG_CHECK_FMT(1, 2);
-void cm_write_longsql_log(const char *format, ...) OG_CHECK_FMT(1, 2);
-void cm_write_max_longsql_log(const char *format, ...) OG_CHECK_FMT(1, 2);
+void cm_write_slowsql_log(const char *format, ...) OG_CHECK_FMT(1, 2);
+void cm_write_max_slowsql_log(const char *format, ...) OG_CHECK_FMT(1, 2);
 void cm_write_audit_log(const char *format, ...) OG_CHECK_FMT(1, 2);
 void cm_write_alarm_log(uint32 warn_id, const char *format, ...) OG_CHECK_FMT(2, 3);
 void cm_write_alarm_log_cn(uint32 warn_id, const char *format, ...) OG_CHECK_FMT(2, 3);
@@ -305,12 +305,12 @@ uint64_t cm_print_memory_usage(void);
                                 ##__VA_ARGS__);                                                                       \
         }                                                                                                             \
     } while (0)
-#define OG_LOG_LONGSQL(sql_length, format, ...)              \
+#define OG_LOG_SLOWSQL(sql_length, format, ...)              \
     do {                                                     \
         if (sql_length < 8192) {                             \
-            cm_write_longsql_log(format, ##__VA_ARGS__);     \
+            cm_write_slowsql_log(format, ##__VA_ARGS__);     \
         } else {                                             \
-            cm_write_max_longsql_log(format, ##__VA_ARGS__); \
+            cm_write_max_slowsql_log(format, ##__VA_ARGS__); \
         }                                                    \
     } while (0)
 

@@ -689,7 +689,7 @@ status_t sql_trace_dml_and_send(sql_stmt_t *stmt);
 status_t sql_init_stmt_plan_time(sql_stmt_t *stmt);
 void srv_increase_session_shard_dml_id(sql_stmt_t *stmt);
 void srv_unlock_session_shard_dml_id(sql_stmt_t *stmt);
-status_t sql_alloc_for_longsql_stat(sql_stmt_t *stmt);
+status_t sql_alloc_for_slowsql_stat(sql_stmt_t *stmt);
 status_t sql_alloc_context(sql_stmt_t *stmt);
 status_t sql_send_parsed_stmt_normal(sql_stmt_t *stmt, uint16 columnCount);
 

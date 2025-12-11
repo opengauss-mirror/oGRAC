@@ -44,7 +44,7 @@
 #include "srv_param_common.h"
 #ifdef OG_RAC_ING
 #include "shd_parser.h"
-#include "shd_longsql.h"
+#include "shd_slowsql.h"
 #include "shd_ddl_executor.h"
 #include "shd_transform.h"
 

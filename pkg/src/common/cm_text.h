@@ -66,7 +66,7 @@ typedef struct st_long_text {
     char *text_addr;
     uint32 text_size;
     uint32 first_page_id;
-    bool32 is_long_sql;
+    bool32 is_slow_sql;
 } long_text_t;
 #endif
 

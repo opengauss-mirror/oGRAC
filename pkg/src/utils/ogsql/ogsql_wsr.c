@@ -556,7 +556,7 @@ static int wsr_build_report(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, char 
 
     if (wsr_opts->input_snap_id) {
         OG_RETURN_IFERR(wsr_build_sql_elapsed(wsr_opts, wsr_info));
-        OG_RETURN_IFERR(wsr_build_longsql_time(wsr_opts, wsr_info));
+        OG_RETURN_IFERR(wsr_build_slowsql_time(wsr_opts, wsr_info));
         OG_RETURN_IFERR(wsr_build_cpu_time(wsr_opts, wsr_info));
         OG_RETURN_IFERR(wsr_build_io_wait(wsr_opts, wsr_info));
         OG_RETURN_IFERR(wsr_build_sql_gets(wsr_opts, wsr_info));
@@ -568,8 +568,8 @@ static int wsr_build_report(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, char 
         OG_RETURN_IFERR(wsr_build_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_15));
         OG_RETURN_IFERR(wsr_build_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_20));
         OG_RETURN_IFERR(wsr_build_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_30));
-        OG_RETURN_IFERR(wsr_build_long_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_15));
-        OG_RETURN_IFERR(wsr_build_long_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_30));
+        OG_RETURN_IFERR(wsr_build_slow_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_15));
+        OG_RETURN_IFERR(wsr_build_slow_sql_first_letters(wsr_opts, wsr_info, OG_WSR_SQL_PREFIX_30));
     }
     OG_RETURN_IFERR(wsr_build_sql_content(wsr_opts, wsr_info));
 

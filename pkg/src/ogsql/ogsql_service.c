@@ -63,7 +63,7 @@ status_t sql_get_stmt(session_t *session, uint32 stmt_id)
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(sql_alloc_for_longsql_stat(session->current_stmt));
+    OG_RETURN_IFERR(sql_alloc_for_slowsql_stat(session->current_stmt));
 
     array_set_handle((void *)&session->knl_session, session->knl_session.temp_mtrl->pool,
         (void *)session->knl_session.stack);

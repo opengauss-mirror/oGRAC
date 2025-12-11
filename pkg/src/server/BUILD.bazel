@@ -169,7 +169,7 @@ cc_library (
         "//pkg/src/shard:shd_hash_pool.c",
         "//pkg/src/shard:shd_interface.c",
         "//pkg/src/shard:shd_join.c",
-        "//pkg/src/shard:shd_longsql.c",
+        "//pkg/src/shard:shd_slowsql.c",
         "//pkg/src/shard:shd_parser.c",
         "//pkg/src/shard:shd_parser_rule.c",
         "//pkg/src/shard:shd_parser_verify.c",

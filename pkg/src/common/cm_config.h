@@ -34,24 +34,24 @@ extern "C" {
 
 #define OG_CONFIG_HASH_BUCKETS                 512
 #define OG_CONFIG_ALIAS_HASH_BUCKETS           30
-#define LOG_LONGSQL_VALUE_ON(value)           ((value) & 0x00000100)
 #define LOG_FATAL_ON(value)                   (!((value) ^ 0xFFFFFFFF))
 #define LOG_DEBUG_ON(value)                   (((value) & 0x00000077) == 0x00000077)
 #define LOG_WARN_ON(value)                    (((value) & 0x00000037) == 0x00000037)
 #define LOG_ERROR_ON(value)                   (((value) & 0x00000017) == 0x00000017)
 #define LOG_RUN_ON(value)                     (((value) & 0x00000007) == 0x00000007)
-#define SET_LOG_LONGSQL_VALUE_ON(value)       ((value) |= 0x00000100)
-#define SET_LOG_LONGSQL_VALUE_OFF(value)      ((value) &= (~0x00000100))
+#define SLOWSQL_LOG_ON(value)                 (((value) & 0x00000100) == 0x00000100)
+#define SET_LOG_SLOWSQL_VALUE_ON(value)       ((value) |= 0x00000100)
+#define SET_LOG_SLOWSQL_VALUE_OFF(value)      ((value) &= (~0x00000100))
 #define SET_LOG_FATAL_ON(value)               ((value) |= 0xFFFFFFFF)
 #define SET_LOG_DEBUG_ON(value)               ((value) = ((value) & 0x000000FF) | 0x00000077)
 #define SET_LOG_WARN_ON(value)                ((value) = ((value) & 0x000000BF) | 0x00000037)
 #define SET_LOG_ERROR_ON(value)               ((value) = ((value) & 0x0000009F) | 0x00000017)
 #define SET_LOG_RUN_ON(value)                 ((value) = ((value) & 0x0000008F) | 0x00000007)
 #define IS_LOG_LEVEL_MODE(name)               (strcmp(name, "_LOG_LEVEL_MODE") == 0)
-#define IS_LONGSQL_LOG_MODE(name)             (strcmp(name, "LONGSQL_LOG_MODE") == 0)
+#define IS_SLOWSQL_LOG_MODE(name)             (strcmp(name, "SLOWSQL_LOG_MODE") == 0)
 #define IS_LOG_LEVEL(name)                    (strcmp(name, "_LOG_LEVEL") == 0)
 #define IS_LOG_MODE(name)                     (IS_LOG_LEVEL_MODE(name)  || \
-                                               IS_LONGSQL_LOG_MODE(name))
+                                               IS_SLOWSQL_LOG_MODE(name))
 #define LOG_MODE_MAP_LENGTH                   (sizeof(g_log_map_set) / sizeof(log_mode_map_t))
 
 typedef status_t (*config_verify_t)(void *se, void *lex, void *def);

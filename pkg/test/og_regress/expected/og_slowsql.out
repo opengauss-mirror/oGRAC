@@ -1,0 +1,37 @@
+
+
+SQL> alter system set SLOWSQL_LOG_MODE=ON;
+
+Succeed.
+
+SQL> alter system set SQL_STAGE_THRESHOLD=5;
+
+Succeed.
+
+SQL> alter system set SLOWSQL_STATS_ENABLE=TRUE;
+
+Succeed.
+
+SQL> show parameter SLOWSQL_LOG_MODE;
+
+NAME                                                             DATATYPE             VALUE                                                            RUNTIME_VALUE                                                    EFFECTIVE           
+---------------------------------------------------------------- -------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- --------------------
+SLOWSQL_LOG_MODE                                                 OG_TYPE_VARCHAR      ON                                                               ON                                                               immediately         
+
+
+SQL> show parameter SQL_STAGE_THRESHOLD;
+
+NAME                                                             DATATYPE             VALUE                                                            RUNTIME_VALUE                                                    EFFECTIVE           
+---------------------------------------------------------------- -------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- --------------------
+SQL_STAGE_THRESHOLD                                              OG_TYPE_INTEGER      5                                                                5                                                                immediately
+
+
+SQL> show parameter SLOWSQL_STATS_ENABLE;
+NAME                                                             DATATYPE             VALUE                                                            RUNTIME_VALUE                                                    EFFECTIVE           
+---------------------------------------------------------------- -------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- --------------------
+SLOWSQL_STATS_ENABLE                                             OG_TYPE_BOOLEAN      TRUE                                                             TRUE                                                             immediately         
+
+
+
+
+
