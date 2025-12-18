@@ -30,6 +30,7 @@
 #include "base_compiler.h"
 #include "cond_parser.h"
 #include "ogsql_privilege.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -232,6 +233,9 @@ status_t sql_verify_merge(sql_stmt_t *stmt, sql_merge_t *merge_ctx)
     if (sql_verify_merge_insert(stmt, merge_ctx) != OG_SUCCESS) {
         return OG_ERROR;
     }
+
+    merge_ctx->hint_info = stmt->context->hint_info;
+    og_hint_verify(verif.stmt, OGSQL_TYPE_MERGE, (void *)merge_ctx);
 
     return OG_SUCCESS;
 }

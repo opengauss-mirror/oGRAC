@@ -1843,7 +1843,7 @@ status_t sql_verify_als_cbo_dyn_sampling(void *se, void *lex, void *def)
         return OG_ERROR;
     }
     if (value > CBO_MAX_DYN_SAMPLING_LEVEL) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_DYNAMIC_SAMPLING", (int64)CBO_MAX_DYN_SAMPLING_LEVEL);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_OPT_CBO_STAT_SAMPLING_LEVEL", (int64)CBO_MAX_DYN_SAMPLING_LEVEL);
         return OG_ERROR;
     }
     return OG_SUCCESS;

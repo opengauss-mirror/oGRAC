@@ -29,6 +29,7 @@
 #include "plan_join.h"
 #include "plan_rbo.h"
 #include "ogsql_join_path.h"
+#include "plan_hint.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -741,9 +742,17 @@ static inline status_t sql_check_nl_join_ability(sql_stmt_t *stmt, sql_table_t *
 
 // all join in query are inner, when build join tree, this function will be invoked
 static status_t sql_set_join_oper(sql_stmt_t *stmt, plan_assist_t *pa, sql_join_node_t *join_node,
-    join_cond_t *join_cond, bool32 is_select)
+                                  join_cond_t *join_cond, bool32 is_select)
 {
+    if (og_hint_choose_join_way(join_node, join_cond, is_select, &join_node->oper)) {
+        return OG_SUCCESS;
+    }
+
     try_choose_better_join_oper(stmt, join_node, join_cond);
+    if (join_node->oper == JOIN_OPER_NONE) {
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 

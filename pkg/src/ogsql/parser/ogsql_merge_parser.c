@@ -29,6 +29,7 @@
 #include "table_parser.h"
 #include "ogsql_select_parser.h"
 #include "cond_parser.h"
+#include "ogsql_hint_parser.h"
 
 #ifdef __cplusplus
 extern "C" {

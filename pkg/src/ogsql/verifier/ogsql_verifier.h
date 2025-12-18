@@ -267,6 +267,11 @@ typedef struct st_sql_hint_verifier {
     sql_hint_conflict_t conflicts;
 } sql_hint_verifier_t;
 
+hint_id_t get_hint_id_4_index(index_hint_key_wid_t access_hint);
+bool32 index_skip_in_hints(sql_table_t *table, uint32 index_id);
+bool32 is_hint_specified_index(sql_table_t *t, hint_id_t hint_id, uint32 idx_id);
+bool32 if_index_in_hint(sql_table_t *t, hint_id_t hint_id, uint32 idx_id);
+
 void set_ddm_attr(sql_verifier_t *verif, var_column_t *v_col, knl_column_t *knl_col);
 
 void sql_add_first_exec_node(sql_verifier_t *verif, expr_node_t *node);

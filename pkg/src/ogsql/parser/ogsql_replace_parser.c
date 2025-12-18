@@ -25,6 +25,7 @@
 
 #include "ogsql_replace_parser.h"
 #include "ogsql_insert_parser.h"
+#include "ogsql_hint_parser.h"
 #include "expr_parser.h"
 #include "table_parser.h"
 

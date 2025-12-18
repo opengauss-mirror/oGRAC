@@ -92,11 +92,9 @@ typedef enum en_outline_hint_key_wid {
     HINT_KEY_WORD_OPTIM_MODE = 0x00000004
 } outline_hint_key_wid_t;
 
-    // the value must be the same as the sequence of g_hints.
+// the value must be the same as the sequence of g_hints.
 typedef enum en_hint_id {
-    ID_HINT_DB_VERSION = 0,
-    ID_HINT_FEATURES_ENABLE,
-    ID_HINT_FULL,
+    ID_HINT_FULL = 0,
     ID_HINT_INDEX,
     ID_HINT_INDEX_ASC,
     ID_HINT_INDEX_DESC,
@@ -133,16 +131,18 @@ typedef enum en_hint_id {
     ID_HINT_ROWID,
     ID_HINT_RULE,              // the max number of hint with parameters
     ID_HINT_SEMI_TO_INNER,
-#ifdef OG_RAC_ING
+    #ifdef OG_RAC_ING
     ID_HINT_SHD_READ_MASTER,
     ID_HINT_SQL_WHITELIST,
-#endif
+    #endif
     ID_HINT_THROW_DUPLICATE,
     ID_HINT_UNNEST,
     ID_HINT_USE_CONCAT,
     ID_HINT_USE_HASH,
     ID_HINT_USE_MERGE,
     ID_HINT_USE_NL,
+    ID_HINT_DB_VERSION,
+    ID_HINT_FEATURES_ENABLE,
 } hint_id_t;
 
 typedef enum en_hint_type {

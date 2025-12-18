@@ -25,6 +25,7 @@
 #include "ogsql_replace_verifier.h"
 #include "ogsql_insert_verifier.h"
 #include "base_compiler.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -119,6 +120,9 @@ static status_t sql_verify_replace_context(sql_verifier_t *verif, sql_replace_t 
     } else {
         OG_RETURN_IFERR(sql_verify_replace_into_values(verif, replace_ctx));
     }
+
+    replace_ctx->insert_ctx.hint_info = verif->stmt->context->hint_info;
+    og_hint_verify(verif->stmt, OGSQL_TYPE_REPLACE, (void *)insert_ctx);
 
     return OG_SUCCESS;
 }

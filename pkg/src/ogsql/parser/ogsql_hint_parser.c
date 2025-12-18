@@ -46,10 +46,6 @@ static status_t og_parse_opt_param_comment(sql_stmt_t *statement, hint_info_t **
         hint = (hint_item_t *)cm_galist_get(hint_lst, i - 1);
         i--;
 
-        if (hint->id != ID_HINT_OPT_PARAM) {
-            continue;
-        }
-
         if (statement->context->hint_info == NULL) {
             OG_RETURN_IFERR(og_alloc_hint(statement, &statement->context->hint_info));
             OG_RETURN_IFERR(sql_create_list(statement, &statement->context->hint_info->items));

@@ -22,7 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
-#include "dml_parser.h"
+#include "gramparse.h"
 #include "cm_hash.h"
 #include "ogsql_context.h"
 #include "srv_instance.h"
@@ -48,9 +48,9 @@
 #include "ogsql_replace_parser.h"
 #include "ogsql_merge_parser.h"
 #include "ogsql_cache.h"
-#include "gramparse.h"
 #include "ddl_parser.h"
 #include "expl_executor.h"
+#include "dml_parser.h"
 
 #ifdef __cplusplus
 extern "C" {

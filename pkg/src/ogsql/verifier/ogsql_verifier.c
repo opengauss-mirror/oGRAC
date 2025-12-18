@@ -32,6 +32,7 @@
 #include "dml_parser.h"
 #include "ogsql_func.h"
 #include "ogsql_winsort.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -936,6 +937,9 @@ status_t sql_verify(sql_stmt_t *stmt)
         OG_THROW_ERROR(ERR_TOO_MANY_BIND, stmt->context->params->count, OG_MAX_SQL_PARAM_COUNT);
         return OG_ERROR;
     }
+
+    og_hint_verify(stmt, OG_INVALID_ID32, NULL);
+
     SAVE_AND_RESET_NODE_STACK(stmt);
     if (stmt->context->type == OGSQL_TYPE_SELECT) {
         OG_RETURN_IFERR(sql_verify_select(stmt, (sql_select_t *)entry));

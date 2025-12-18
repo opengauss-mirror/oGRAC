@@ -149,9 +149,9 @@ static status_t srv_get_cbo_param(sql_instance_t *sql)
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(srv_get_param_uint32("CBO_DYNAMIC_SAMPLING", &sql->cbo_dyn_sampling));
+    OG_RETURN_IFERR(srv_get_param_uint32("_OPT_CBO_STAT_SAMPLING_LEVEL", &sql->cbo_dyn_sampling));
     if (sql->cbo_dyn_sampling > CBO_MAX_DYN_SAMPLING_LEVEL) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_DYNAMIC_SAMPLING", (int64)CBO_MAX_DYN_SAMPLING_LEVEL);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_OPT_CBO_STAT_SAMPLING_LEVEL", (int64)CBO_MAX_DYN_SAMPLING_LEVEL);
         return OG_ERROR;
     }
 

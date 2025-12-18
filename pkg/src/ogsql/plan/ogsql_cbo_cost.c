@@ -43,6 +43,7 @@ static double compute_or_conds_ff(plan_assist_t *pa, dc_entity_t *entity, sql_ta
     cbo_stats_info_t* stats_info);
 static double compute_and_conds_ff(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, cond_node_t *cond,
     cbo_stats_info_t* stats_info);
+static inline sort_direction_t apply_hint_index_sort_scan_direction(sql_table_t *table, knl_index_desc_t *index);
 
 inline static double sql_normalize_ff(double ff)
 {
@@ -3133,10 +3134,16 @@ static inline bool32 match_index_after_equal_to_rs_col(sql_table_t *table, knl_i
 static void determined_sort_flag(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, cbo_index_choose_assist_t *ca)
 {
     uint8 index_dsc = 0;
+    sort_direction_t index_sort_dir = apply_hint_index_sort_scan_direction(table, ca->index);
 
     // In once condition which neither order by nor hint sort index were used, return strightly.
     // In twice condition which only hint sort index was used, return after set flag.
     if ((pa->sort_items == NULL || pa->sort_items->count == 0)) {
+        if (TABLE_HAS_INDEX_SORT_HINT(table)) {
+            index_dsc = (index_sort_dir == SORT_MODE_DESC);
+            ca->scan_flag |= RBO_INDEX_SORT_FLAG;
+            ca->index_dsc = index_dsc;
+        }
         return;
     }
 
@@ -3158,6 +3165,14 @@ static void determined_sort_flag(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_
     for (pos = 0; pos < sort_items->count; pos++) {
         sort_item_t *sort_item = (sort_item_t *)cm_galist_get(sort_items, pos);
 
+        /*
+         * hint sort conflict with sort_item, for example: index_asc(t0) and (order by column desc)
+         * is conflict. so return strightly not to do sort. sort_dir = SORT_MODE_NONE indicates that
+         * it have no index_asc or index_desc. so  no need to check confilct.
+         */
+        if (index_sort_dir != SORT_MODE_NONE && index_sort_dir != sort_item->direction) {
+            return;
+        }
         /* currently, index only support asc and nulls last */
         if (pos == 0) {
             index_dsc = sort_item->direction == SORT_MODE_DESC;
@@ -3176,7 +3191,7 @@ static void determined_sort_flag(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_
 
         /* check if sort_item matches to strict_equal_cnt + after_idx_equal_to of index columns */
         if (!match_index_after_equal_to_col(stmt, table, ca->index, sort_item->expr,
-            ca->strict_equal_cnt + after_idx_equal_to)) {
+                                            ca->strict_equal_cnt + after_idx_equal_to)) {
             return;
         }
         after_idx_equal_to++;
@@ -3687,6 +3702,11 @@ void cbo_try_choose_multi_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t
     }
 
     OGSQL_RESTORE_STACK(stmt);
+}
+
+static inline sort_direction_t apply_hint_index_sort_scan_direction(sql_table_t *table, knl_index_desc_t *index)
+{
+    return SORT_MODE_NONE;
 }
 
 #ifdef __cplusplus

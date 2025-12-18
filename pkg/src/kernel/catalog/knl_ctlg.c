@@ -1345,8 +1345,8 @@ status_t db_analyze_schema(knl_session_t *session, knl_analyze_schema_def_t *def
             }
 
             oid = *(uint32 *)CURSOR_COLUMN_DATA(cursor, TABLE_TABLE_ID);
-            tab.name.str = CURSOR_COLUMN_DATA(cursor, TABLE_NAME);
-            tab.name.len = CURSOR_COLUMN_SIZE(cursor, TABLE_NAME);
+            tab.name.str = CURSOR_COLUMN_DATA(cursor, TABLE_NAME_STR);
+            tab.name.len = CURSOR_COLUMN_SIZE(cursor, TABLE_NAME_STR);
             is_recycled = *(uint32 *)CURSOR_COLUMN_DATA(cursor, TABLE_RECYCLED);
             /* recycled table will not be analyzed. */
             if (!is_recycled) {
