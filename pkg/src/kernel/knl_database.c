@@ -706,7 +706,7 @@ status_t db_mount(knl_session_t *session)
     db->status = DB_STATUS_MOUNT;
 
     cm_spin_unlock(&kernel->lock);
-    OG_LOG_RUN_INF("sucessfully alter database MOUNT, memory usage=%lu", cm_print_memory_usage());
+    OG_LOG_RUN_INF("successfully alter database MOUNT, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }
 

@@ -561,7 +561,7 @@ static void ckpt_assign_trigger_task(knl_session_t *session, trigger_task_t *tas
                 snap_num = ogx->trigger_finish_num;
                 ogx->trigger_task = task_desc->mode;
                 cm_spin_unlock(&ogx->lock);
-                break; // sucess
+                break; // success
             }
         }
         cm_spin_unlock(&ogx->lock);
@@ -575,7 +575,7 @@ static void ckpt_assign_trigger_task(knl_session_t *session, trigger_task_t *tas
             return;
         }
         
-        /* We will try again until sucess.
+        /* We will try again until success.
          * Doing the next try when contition satisfied to decrease lock competition.
          */
         while (ogx->trigger_task != CKPT_MODE_IDLE || !ogx->ckpt_enabled) {

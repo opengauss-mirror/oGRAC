@@ -411,7 +411,7 @@ status_t reactor_add_epoll_session(session_t *session)
 
     session->is_reg = OG_TRUE;
     OG_LOG_DEBUG_INF(
-        "[reactor] register session %u[private [%u]] to reactor %lu sucessfully, current session count %ld",
+        "[reactor] register session %u[private [%u]] to reactor %lu successfully, current session count %ld",
         session->knl_session.id, (uint32)session->priv, reactor->thread.id, (long)reactor->session_count);
 
     return OG_SUCCESS;

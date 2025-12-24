@@ -222,7 +222,7 @@ EOF
     done
 
     if [ "${pid_info_a}" != "${pid_info_b}" ];then
-        echo "$proc_name shutdown sucessfully"
+        echo "$proc_name shutdown successfully"
     else
         # stop failed, record pid info
         echo "ogracd process info: ${pid_info_b}"

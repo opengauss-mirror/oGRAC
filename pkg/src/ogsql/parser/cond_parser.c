@@ -907,7 +907,7 @@ status_t sql_create_cond_until(sql_stmt_t *stmt, cond_tree_t **cond, word_t *wor
         return OG_ERROR;
     }
     cond_text.len = (uint32)(word->text.str - cond_text.str);
-    OG_LOG_DEBUG_INF("parse condition text\"%s\" sucessfully", T2S((text_t *)&cond_text));
+    OG_LOG_DEBUG_INF("parse condition text\"%s\" successfully", T2S((text_t *)&cond_text));
 
     return OG_SUCCESS;
 }
