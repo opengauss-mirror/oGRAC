@@ -721,7 +721,7 @@ uint16 knl_get_rm_sid(knl_handle_t session, uint16 rmid)
     knl_rm_t *rm = NULL;
 
     if (rmid >= OG_MAX_RMS) {
-        OG_LOG_RUN_ERR("knl_get_rm_sid failed, invalid rmid %u", rmid);
+        OG_LOG_RUN_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_10, "knl_get_rm_sid failed, invalid rmid %u", rmid);
         return OG_INVALID_ID16;
     }
 
