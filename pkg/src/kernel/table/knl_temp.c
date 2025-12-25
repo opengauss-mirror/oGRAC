@@ -237,6 +237,8 @@ status_t buf_enter_temp_page_nolock(knl_session_t *session, uint32 vmid)
     }
 
     if (mtrl_open_page(session->temp_mtrl, vmid, &vm_page) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("buf_enter_temp_page_nolock: "
+                       "mtrl_open_page failed for vmid: %u, error code: %d", vmid, cm_get_error_code());
         return OG_ERROR;
     }
     buf_push_temp_page(session, vm_page);
@@ -320,7 +322,7 @@ status_t temp_create_segment(knl_session_t *session, uint32 *id)
         ogx->seg_count++;
         OG_RETURN_IFERR(vmc_alloc_mem(&ogx->vmc, sizeof(mtrl_segment_t), (void **)&ogx->segments[i]));
     }
-    
+
     segment = ogx->segments[i];
     segment->vm_list.count = 0;
     segment->cmp_items = NULL;
@@ -609,7 +611,8 @@ static status_t temp_heap_fetch_by_page(knl_session_t *session, knl_cursor_t *cu
     *is_found = OG_FALSE;
 
     if (buf_enter_temp_page_nolock(session, (uint32)cursor->rowid.vmid) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("Fail to open heap fetch vm page (%u).", cursor->rowid.vmid);
+        OG_LOG_RUN_ERR("Fail to open heap fetch vm page (%u), "
+                       "error code: %d.", cursor->rowid.vmid, cm_get_error_code());
         return OG_ERROR;
     }
     page = TEMP_HEAP_CURR_PAGE(session);
@@ -642,7 +645,8 @@ static status_t temp_heap_try_lock_row(knl_session_t *session, knl_cursor_t *cur
     temp_heap_page_t *page = NULL;
 
     if (buf_enter_temp_page_nolock(session, (uint32)cursor->rowid.vmid) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("Fail to open heap fetch vm page (%u).", cursor->rowid.vmid);
+        OG_LOG_RUN_ERR("Fail to open heap fetch vm page (%u), "
+                       "error code: %d.", cursor->rowid.vmid, cm_get_error_code());
         return OG_ERROR;
     }
     page = TEMP_HEAP_CURR_PAGE(session);
@@ -1232,6 +1236,7 @@ status_t temp_undo_enter_page(knl_session_t *session, uint32 vmid)
         }
 
         if (cm_get_error_code() != ERR_NO_FREE_VMEM) {
+            OG_LOG_RUN_ERR("temp_undo_enter_page failed with error code: %d", cm_get_error_code());
             status = OG_ERROR;
             break;
         }
@@ -1261,6 +1266,8 @@ void temp_heap_undo_insert(knl_session_t *session, undo_row_t *ud_row, undo_page
     }
 
     if (temp_undo_enter_page(session, (uint32)rid.vmid) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("temp heap undo insert enter link vmid %u "
+                       "failed with error code: %d", (uint32)rid.vmid, cm_get_error_code());
         knl_panic_log(0, "temp heap undo insert enter link vmid %u failed.", (uint32)rid.vmid);
         return;
     }
