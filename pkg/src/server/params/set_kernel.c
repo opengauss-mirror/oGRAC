@@ -1772,6 +1772,10 @@ status_t sql_notify_als_upper_case_table_names(void *se, void *item, char *value
 
 status_t sql_notify_als_cbo(void *se, void *item, char *value)
 {
+    if ((bool32)value[0] != OG_TRUE) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "RBO");
+        return OG_ERROR;
+    }
     return sql_notify_als_onoff(se, item, value);
 }
 

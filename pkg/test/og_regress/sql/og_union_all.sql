@@ -210,3 +210,14 @@ order by ref_2.c1, ref_2.c2, ref_2.c3, ref_2.c4, subq_1.c5
 drop table sort_pending_t1;
 drop table sort_pending_t2;
 drop table sort_pending_t3;
+
+-- test the subqry of union all has order clause, the order can not be eliminated
+drop table if exists t_union_all_order_eliminate_test;
+create table t_union_all_order_eliminate_test(id decimal(5,2));
+create index index_test on t_union_all_order_eliminate_test(id);
+insert into t_union_all_order_eliminate_test values (999.99),(999.99),(-999.99),(null),(0),(2),(2),(3),(4);
+commit;
+(select power(id,2) as pwr from t_union_all_order_eliminate_test order by id)
+union all
+(select power(id,2) from t_union_all_order_eliminate_test order by id);
+drop table t_union_all_order_eliminate_test;

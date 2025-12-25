@@ -224,7 +224,7 @@ TO_TIMESTAMP('08-JAN-2018 12:17:18','DD-MON-YYYY HH12:MI:SS')
 
 SQL> SELECT TO_TIMESTAMP('08-JAN-2018 00:17:18','DD-MON-YYYY HH12:MI:SS') FROM DUAL;
 
-OG-00105, [1:8]Invalid format of datetime
+OG-00146, [1:21]HOUR should be from 1 to 12
 SQL> SELECT TO_TIMESTAMP('08-JAN-2018 01:17:18','DD-MON-YYYY HH12:MI:SS') FROM DUAL;
 
 TO_TIMESTAMP('08-JAN-2018 01:17:18','DD-MON-YYYY HH12:MI:SS')
@@ -235,7 +235,7 @@ TO_TIMESTAMP('08-JAN-2018 01:17:18','DD-MON-YYYY HH12:MI:SS')
 
 SQL> SELECT TO_TIMESTAMP('08-JAN-2018 23:17:18','DD-MON-YYYY HH12:MI:SS') FROM DUAL;
 
-OG-00105, [1:8]Invalid format of datetime
+OG-00146, [1:21]HOUR should be from 1 to 12
 SQL> UPDATE test_temp_t1 SET f2 = 2.2;
 
 OG-00606, [1:30]Inconsistent datatypes, expected DATE - got NUMBER
@@ -3783,7 +3783,7 @@ TO_CLOB(A+1)
 
 SQL> select to_date(a,'YYYY-MM-DD HH24:MI:SS:FF') from test_uint32 order by a;
 
-OG-00105, [1:8]Invalid format of datetime
+OG-00146, [1:16]MONTH should be from 1 to 12
 SQL> select to_number(a,'0000000000') from test_uint32 where a = 4294967295;
 
 TO_NUMBER(A,'0000000000')               

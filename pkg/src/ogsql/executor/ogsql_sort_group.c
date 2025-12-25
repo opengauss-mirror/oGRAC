@@ -54,7 +54,7 @@ static inline int32 sql_sort_group_cmp_i(sql_cursor_t *cursor, mtrl_row_t *row1,
         MT_CSIZE(row2, col_id), datatype);
 }
 
-static status_t sql_sort_group_cmp(int32 *result, void *callback_ctx, char *l_buf, uint32 lsize, char *r_buf,
+status_t sql_sort_group_cmp(int32 *result, void *callback_ctx, char *l_buf, uint32 lsize, char *r_buf,
     uint32 rsize)
 {
     sql_cursor_t *cur = (sql_cursor_t *)callback_ctx;
@@ -103,68 +103,11 @@ static status_t sql_sort_group_cmp(int32 *result, void *callback_ctx, char *l_bu
     return OG_SUCCESS;
 }
 
-static inline status_t sql_sort_group_calc(void *callback_ctx, const char *new_buf, uint32 new_size,
+status_t sql_sort_group_calc(void *callback_ctx, const char *new_buf, uint32 new_size,
     const char *old_buf, uint32 old_size, bool32 found)
 {
     sql_cursor_t *cur = (sql_cursor_t *)callback_ctx;
-    return group_hash_i_oper_func(cur->group_ctx, new_buf, new_size, old_buf, old_size, found);
-}
-
-static status_t sql_alloc_sort_group_ctx(sql_stmt_t *stmt, sql_cursor_t *cursor, group_plan_t *group_p,
-    group_ctx_t **group_ctx)
-{
-    uint32 vmid;
-    uint32 offset;
-    vm_page_t *vm_page = NULL;
-    knl_session_t *knl_session = KNL_SESSION(stmt);
-
-    OG_RETURN_IFERR(sql_init_group_exec_data(stmt, cursor, group_p));
-    OG_RETURN_IFERR(vm_alloc(knl_session, knl_session->temp_pool, &vmid));
-
-    if (vm_open(knl_session, knl_session->temp_pool, vmid, &vm_page) != OG_SUCCESS) {
-        vm_free(knl_session, knl_session->temp_pool, vmid);
-        return OG_ERROR;
-    }
-
-    *group_ctx = (group_ctx_t *)vm_page->data;
-    (*group_ctx)->type = SORT_GROUP_TYPE;
-    (*group_ctx)->vm_id = vmid;
-    (*group_ctx)->cursor = cursor;
-    (*group_ctx)->stmt = stmt;
-    (*group_ctx)->group_p = group_p;
-    (*group_ctx)->str_aggr_page_count = 0;
-    (*group_ctx)->group_by_phase = GROUP_BY_INIT;
-    (*group_ctx)->hash_tables = NULL;
-    (*group_ctx)->iters = NULL;
-    (*group_ctx)->hash_dist_tables = NULL;
-    (*group_ctx)->listagg_page = OG_INVALID_ID32;
-    CM_INIT_TEXTBUF(&(*group_ctx)->concat_data, 0, NULL);
-    (*group_ctx)->concat_typebuf = NULL;
-
-    offset = sizeof(group_ctx_t);
-
-    // buf for aggr_pages
-    (*group_ctx)->str_aggr_pages = (uint32 *)((char *)vm_page->data + offset);
-    offset += sizeof(uint32) * group_p->aggrs->count;
-
-    // buf for aggr_value
-    (*group_ctx)->str_aggr_val = (variant_t *)(vm_page->data + offset);
-    offset += sizeof(variant_t) * (FO_VAL_MAX - 1);
-
-    // buf for row_buf
-    (*group_ctx)->row_buf = (char *)vm_page->data + offset;
-    (*group_ctx)->row_buf_len = 0;
-
-    mtrl_init_segment(&(*group_ctx)->extra_data, MTRL_SEGMENT_EXTRA_DATA, NULL);
-
-    if (OG_VMEM_PAGE_SIZE - OG_MAX_ROW_SIZE < offset) {
-        OG_THROW_ERROR(ERR_TOO_MANY_ARRG);
-        return OG_ERROR;
-    }
-
-    OG_RETURN_IFERR(sql_cache_aggr_node(&stmt->vmc, *group_ctx));
-    return sql_btree_init(&(*group_ctx)->btree_seg, stmt->session, knl_session->temp_pool, cursor, sql_sort_group_cmp,
-        sql_sort_group_calc);
+    return hash_group_i_operation_func(cur->group_ctx, new_buf, new_size, old_buf, old_size, found);
 }
 
 static status_t sql_mtrl_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan)
@@ -221,7 +164,7 @@ status_t sql_execute_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_nod
     }
 
     CM_ASSERT(cursor->group_ctx == NULL);
-    OG_RETURN_IFERR(sql_alloc_sort_group_ctx(stmt, cursor, &plan->group, &cursor->group_ctx));
+    OG_RETURN_IFERR(sql_alloc_hash_group_ctx(stmt, cursor, plan, SORT_GROUP_TYPE, 0));
 
     if (cursor->select_ctx != NULL && cursor->select_ctx->pending_col_count > 0) {
         OG_RETURN_IFERR(sql_group_mtrl_record_types(cursor, plan, &cursor->mtrl.group.buf));
@@ -260,20 +203,19 @@ status_t sql_fetch_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_
     return sql_group_re_calu_aggr(cursor->group_ctx, plan->group.aggrs);
 }
 
-static status_t sql_mtrl_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan)
+static status_t sql_mtrl_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, sql_cursor_t *query_cursor,
+    plan_node_t *plan)
 {
     bool32 eof = OG_FALSE;
     char *buf = NULL;
     mtrl_rowid_t rid;
     status_t status;
 
-    OG_RETURN_IFERR(SQL_CURSOR_PUSH(stmt, cursor));
-
     OG_RETURN_IFERR(sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&buf));
 
     OGSQL_SAVE_STACK(stmt);
     for (;;) {
-        if (sql_fetch_query(stmt, cursor, plan->group.next, &eof) != OG_SUCCESS) {
+        if (sql_fetch_query(stmt, query_cursor, plan->group.next, &eof) != OG_SUCCESS) {
             OGSQL_RESTORE_STACK(stmt);
             status = OG_ERROR;
             break;
@@ -300,18 +242,22 @@ static status_t sql_mtrl_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor
         OGSQL_RESTORE_STACK(stmt);
     }
     OGSQL_POP(stmt);
-    SQL_CURSOR_POP(stmt);
     return status;
 }
 
 status_t sql_execute_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan)
 {
     status_t status = OG_ERROR;
+    sql_cursor_t *query_cursor = NULL;
     OG_RETURN_IFERR(sql_init_group_exec_data(stmt, cursor, &plan->group));
+    OG_RETURN_IFERR(sql_alloc_cursor(stmt, &query_cursor));
+    OG_RETURN_IFERR(sql_open_cursors(stmt, query_cursor, cursor->query, CURSOR_ACTION_SELECT, OG_TRUE));
+    OG_RETURN_IFERR(SQL_CURSOR_PUSH(stmt, query_cursor));
 
     do {
-        OG_BREAK_IF_ERROR(sql_execute_query_plan(stmt, cursor, plan->group.next));
-        if (cursor->eof) {
+        OG_BREAK_IF_ERROR(sql_execute_query_plan(stmt, query_cursor, plan->group.next));
+        if (query_cursor->eof) {
+            cursor->eof = OG_TRUE;
             status = OG_SUCCESS;
             break;
         }
@@ -335,7 +281,7 @@ status_t sql_execute_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, pl
             break;
         }
 
-        if (sql_mtrl_merge_sort_group(stmt, cursor, plan) != OG_SUCCESS) {
+        if (sql_mtrl_merge_sort_group(stmt, cursor, query_cursor, plan) != OG_SUCCESS) {
             mtrl_close_segment(&stmt->mtrl, cursor->mtrl.aggr);
             mtrl_release_segment(&stmt->mtrl, cursor->mtrl.aggr);
             cursor->mtrl.aggr = OG_INVALID_ID32;
@@ -345,10 +291,6 @@ status_t sql_execute_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, pl
 
         mtrl_close_segment(&stmt->mtrl, cursor->mtrl.group.sid);
 
-        if (cursor->eof) {
-            status = OG_SUCCESS;
-            break;
-        }
         OG_RETURN_IFERR(mtrl_sort_segment(&stmt->mtrl, cursor->mtrl.group.sid));
 
         if (mtrl_open_cursor(&stmt->mtrl, cursor->mtrl.group.sid, &cursor->mtrl.cursor) != OG_SUCCESS) {
@@ -360,7 +302,9 @@ status_t sql_execute_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, pl
         status = OG_SUCCESS;
     } while (0);
 
-    OG_RETURN_IFERR(sql_free_query_mtrl(stmt, cursor, plan->group.next));
+    SQL_CURSOR_POP(stmt);
+    sql_free_cursor(stmt, query_cursor);
+    cursor->last_table = OG_INVALID_ID32;
     return status;
 }
 
@@ -399,5 +343,5 @@ status_t sql_fetch_merge_sort_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan
     }
 
     *eof = cursor->mtrl.cursor.eof;
-    return OG_SUCCESS;
+    return sql_exec_aggr_extra(stmt, cursor, plan->group.aggrs, plan);
 }

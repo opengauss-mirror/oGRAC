@@ -220,7 +220,6 @@ status_t dtc_rcy_set_item_update_need_replay(rcy_set_bucket_t *bucket, page_id_t
     uint64 curr_page_lsn = OG_INVALID_ID64;
     knl_session_t *session = g_instance->kernel.sessions[SESSION_ID_KERNEL];
     if (!DB_IS_PRIMARY(&session->kernel->db)) {
-        // TODO: this is only for 2 nodes cluster, need change
         buf_bucket_t *buf_bucket = buf_find_bucket(session, page_id);
         cm_spin_lock(&buf_bucket->lock, NULL);
         buf_ctrl_t *ctrl = buf_find_from_bucket(buf_bucket, page_id);
@@ -1757,6 +1756,7 @@ static status_t dtc_rcy_load_archfile(knl_session_t *session, uint32 idx, arch_f
         }
     }
 
+    type = arch_get_device_type(file->name);
     if (cm_open_device(file->name, type, knl_io_flag(session), &file->handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DTC RCY] failed to open archived redo log file %s", file->name);
         return OG_ERROR;
@@ -2332,7 +2332,6 @@ static status_t dtc_read_node_log(dtc_rcy_context_t *dtc_rcy, knl_session_t *ses
 
 bool32 dtc_log_need_reload(knl_session_t *session, uint32 node_id, bool32 batch_loaded)
 {
-    // TODO:multi node
     lrpl_context_t *lrpl_ctx = &session->kernel->lrpl_ctx;
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     if (DB_IS_PRIMARY(&session->kernel->db) || (DB_NOT_READY(session) || !dtc_rcy->full_recovery) || node_id == 0) {
@@ -2750,7 +2749,6 @@ status_t dtc_update_ckpt_log_point(void)
                    "g_rc_ctx->status=%u",
                    ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
 
-    // TODO: multi node crash
     return dtc_rcy_update_ckpt_log_point(g_rc_ctx->session);
 }
 

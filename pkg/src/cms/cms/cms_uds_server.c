@@ -166,7 +166,7 @@ status_t cms_uds_srv_init(void)
 
     // 初始化线程锁
     cm_init_thread_lock(&g_srv_req_map_lock);
-    ret = cm_oamap_init(&g_srv_req_map, CMS_SRV_SEND_MSG_HASH_SIZE, cms_uds_srv_seq_compare);
+    ret = cm_oamap_init(&g_srv_req_map, CMS_SRV_SEND_MSG_HASH_SIZE, cms_uds_srv_seq_compare, NULL, NULL);
     if (ret != OG_SUCCESS) {
         cm_destroy_thread_lock(&g_srv_req_map_lock);
         CMS_LOG_ERR("init srv send map failed, ret %d", ret);

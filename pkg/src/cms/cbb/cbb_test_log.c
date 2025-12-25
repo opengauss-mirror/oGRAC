@@ -24,32 +24,24 @@
  */
 #include <stdio.h>
 #include <stdarg.h>
-#include <time.h>
 #include <pthread.h>
+#include "cm_timer.h"
+#include "cms_param.h"
 #include "cbb_test_log.h"
 
-#ifdef TEST_LOG_ENABLED
-#define LOG_FILE "/opt/ograc/dss/test.log"
+#define LOG_FILE "/opt/ograc/log/cms/run/cbb_lock.log"
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void get_current_time(char *buffer, size_t size) {
-    time_t raw_time;
-    struct tm *time_info;
-
-    (void)time(&raw_time);
-    time_info = localtime(&raw_time);
-    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", time_info);
-}
-#endif
-
 void write_log_to_file(const char *file, int line, const char *format, ...) {
-#ifdef TEST_LOG_ENABLED
+    if (!LOG_OPER_ON) {
+        return;
+    }
     pthread_mutex_lock(&log_mutex);
 
     FILE *log_file = fopen(LOG_FILE, "a");
     if (log_file != NULL) {
-        char time_str[20];
-        get_current_time(time_str, sizeof(time_str));
+        char time_str[OG_MAX_TIME_STRLEN] = { 0 };
+        (void)cm_date2str(g_timer()->now, "yyyy-mm-dd hh24:mi:ss.ff3", time_str, OG_MAX_TIME_STRLEN);
 
         fprintf(log_file, "[%s] (%s:%d) ", time_str, file, line);
 
@@ -65,5 +57,4 @@ void write_log_to_file(const char *file, int line, const char *format, ...) {
     }
 
     pthread_mutex_unlock(&log_mutex);
-#endif
 }

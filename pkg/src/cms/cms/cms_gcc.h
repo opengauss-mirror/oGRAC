@@ -132,7 +132,7 @@ typedef struct st_gcc_storage {
         char        placeholder[CMS_BLOCK_SIZE];
     };
     cms_gcc_t       gcc[CMS_GCC_STORAGE_NUM];
-    char            gcc_lock[CMS_BLOCK_SIZE];
+    char            gcc_lock[CMS_DISK_LOCK_BLOCKS_SIZE];
 }cms_gcc_storage_t;
 
 typedef struct st_gcc_auto_bak {

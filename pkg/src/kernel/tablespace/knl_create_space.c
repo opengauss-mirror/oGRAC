@@ -108,8 +108,13 @@ static status_t spc_create_datafile_precheck(knl_session_t *session, space_t *sp
     char buf[OG_MAX_FILE_NAME_LEN];
 
     (void)cm_text2str(&def->name, buf, OG_MAX_FILE_NAME_LEN - 1);
+    device_type_t type = cm_device_type(buf);
+    if (!cm_dbs_is_enable_dbs() && (type == DEV_TYPE_PGPOOL || type == DEV_TYPE_ULOG)) {
+        OG_THROW_ERROR(ERR_SPACE_NAME_INVALID, "name cannot start with - or * using non-dbstore mode");
+        return OG_ERROR;
+    }
 
-    if (cm_exist_device(cm_device_type(buf), buf)) {
+    if (cm_exist_device(type, buf)) {
         OG_THROW_ERROR(ERR_DATAFILE_ALREADY_EXIST, buf);
         return OG_ERROR;
     }

@@ -88,7 +88,7 @@ struct st_pl_entity {
     galist_t sequences;
     galist_t ref_list; // All dependencies only for write table
     galist_t knl_list; // direct dependent tables or views
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     // flag used in execution phase
     bool32 has_sharding_tab : 1;
     bool32 unused : 31;

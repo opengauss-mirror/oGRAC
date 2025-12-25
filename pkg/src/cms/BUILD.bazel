@@ -51,7 +51,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
     "-Wtrampolines",
     "-freg-struct-return",
     "-pipe",
-    #"-Werror",  #TODO
+    #"-Werror",
     "-Wno-psabi",
     "-Wno-stringop-overflow",
 ]
@@ -94,8 +94,8 @@ cc_binary (
         "//pkg/src/mec:mec_hdrs",
         "//pkg/src/kernel:common",
         "//pkg/src/kernel:include",
-        "//pkg/src/common:libzecommon.so",
-        "//pkg/src/protocol:libzeprotocol.so",
+        "//pkg/src/common:libogcommon.so",
+        "//pkg/src/protocol:libogprotocol.so",
     ],
     linkstatic = True,
     local_defines = [
@@ -137,9 +137,9 @@ cc_binary (
         "-ldl",
     ] + COMMON_LINKOPTS,
     deps = [
-        "//pkg/src/rc:zerc",
-        "//pkg/src/mec:zemes",
-        ":zecms",
+        "//pkg/src/rc:ogrc",
+        "//pkg/src/mec:ogmes",
+        ":ogcms",
         "//library:z",
         "//library:cgw_client",
         "//library:dbstorClient",
@@ -178,7 +178,7 @@ cc_binary (
 )
 
 cc_library (
-    name = "zecms",
+    name = "ogcms",
     srcs = [
         "interface/cms_comm.c",
         "interface/cms_interface.c",
@@ -211,7 +211,7 @@ cc_library (
 )
 
 cc_library (
-    name = "zecmssrc",
+    name = "ogcmssrc",
     srcs = [
         "cms/cms_blackbox.c",
         "cms/cms_cmd_imp.c",

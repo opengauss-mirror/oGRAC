@@ -192,12 +192,18 @@ static status_t sql_verify_index_expr(visit_assist_t *va, expr_node_t **node)
 {
     text_t *col_name = NULL;
     reserved_wid_t word;
+    bool32 allow_lob = va->result1;
     CM_ASSERT((*node)->type != EXPR_NODE_COLUMN);
     if ((*node)->type == EXPR_NODE_DIRECT_COLUMN) {
         col_name = &(*node)->word.column.name.value;
         // e.g. nvl2("F1", "f1", 100) indexed on 2 different columns.
         if (va->result0 == OG_TRUE && !cm_text_equal((text_t *)va->param0, col_name)) {
             OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "multiple columns found in function index");
+            return OG_ERROR;
+        }
+
+        if (OG_IS_LOB_TYPE((*node)->datatype) && !allow_lob) {
+            OG_SRC_THROW_ERROR(NODE_LOC(*node), ERR_CREATE_INDEX_ON_TYPE, "functional", "oversize row");
             return OG_ERROR;
         }
 
@@ -218,12 +224,13 @@ static status_t sql_verify_index_expr(visit_assist_t *va, expr_node_t **node)
     return OG_SUCCESS;
 }
 
-static status_t sql_verify_index_column(sql_stmt_t *stmt, expr_tree_t *expr, text_t *column_name)
+static status_t sql_verify_index_column(sql_stmt_t *stmt, expr_tree_t *expr, text_t *column_name, bool32 allow_lob)
 {
     visit_assist_t va;
     sql_init_visit_assist(&va, stmt, NULL);
     va.param0 = column_name;
     va.result0 = OG_FALSE;
+    va.result1 = allow_lob;
     OG_RETURN_IFERR(visit_expr_tree(&va, expr, sql_verify_index_expr));
 
     if (va.result0 == OG_FALSE) {
@@ -238,14 +245,19 @@ static status_t sql_verify_index_column_func(sql_stmt_t *stmt, expr_tree_t *func
 {
     var_func_t *v = &func_expr->root->value.v_func;
     sql_func_t *func = sql_get_func(v);
+    bool32 allow_lob = OG_FALSE;
 
     if (!func->indexable) {
         OG_THROW_ERROR_EX(ERR_FUNCTION_NOT_INDEXABLE, T2S(&func->name));
         return OG_ERROR;
     }
 
+    if (v->func_id == ID_FUNC_ITEM_JSONB_VALUE || v->func_id == ID_FUNC_ITEM_JSON_VALUE) {
+        allow_lob = OG_TRUE;
+    }
+
     // check argument
-    return sql_verify_index_column(stmt, func_expr->root->argument, column_name);
+    return sql_verify_index_column(stmt, func_expr->root->argument, column_name, allow_lob);
 }
 
 static status_t sql_verify_func_index_datatype(expr_node_t *node)
@@ -298,7 +310,7 @@ static status_t sql_verify_index_column_expr(sql_stmt_t *stmt, knl_index_col_def
             break;
 
         case EXPR_NODE_CASE:
-            OG_RETURN_IFERR(sql_verify_index_column(stmt, expr, &def->name));
+            OG_RETURN_IFERR(sql_verify_index_column(stmt, expr, &def->name, OG_FALSE));
             break;
 
         default:

@@ -318,9 +318,9 @@ status_t temp_create_segment(knl_session_t *session, uint32 *id)
 
     if (i >= ogx->seg_count) {
         ogx->seg_count++;
+        OG_RETURN_IFERR(vmc_alloc_mem(&ogx->vmc, sizeof(mtrl_segment_t), (void **)&ogx->segments[i]));
     }
-
-    OG_RETURN_IFERR(vmc_alloc_mem(&ogx->vmc, sizeof(mtrl_segment_t), (void **)&ogx->segments[i]));
+    
     segment = ogx->segments[i];
     segment->vm_list.count = 0;
     segment->cmp_items = NULL;
@@ -463,7 +463,6 @@ static status_t temp_heap_get_row(knl_session_t *session, knl_cursor_t *cursor, 
     }
 
     *is_found = !row->is_deleted;
-    cursor->eof = *is_found ? 0 : 1;
     if (*is_found) {
         HEAP_COPY_ROW(session, cursor, row);
     }

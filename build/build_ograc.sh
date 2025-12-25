@@ -7,7 +7,7 @@ source "${CURRENT_PATH}"/common.sh
 
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="oGRAC 1.0.0"
+BUILD_PACK_NAME="openGauss_oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
@@ -40,7 +40,7 @@ function packageTarget() {
 }
 
 function buildCtOmPackage() {
-  bash "${CURRENT_PATH}"/build_ct_om.sh
+  bash "${CURRENT_PATH}"/build_ograc_om.sh
   bash "${CURRENT_PATH}"/rpm_build_ct_om.sh
   if [ $? -ne 0 ]; then
       echo "build og_om fail"

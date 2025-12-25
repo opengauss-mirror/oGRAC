@@ -30,6 +30,9 @@
 #define BINODE_NEXT(node) (node)->next
 #define BINODE_PREV(node) (node)->prev
 #define BILIST_NODE_OF(type, node, field) ((type *)((char *)(node) - OFFSET_OF(type, field)))
+#define BILIST_FOREACH(p_node, t_list)                          \
+    for ((p_node) = (t_list).head; (p_node) != NULL; (p_node) = BINODE_NEXT((p_node)))
+
 #define BILIST_SEARCH(list, type, node, field, cond)            \
     do {                                                        \
         bilist_node_t *_tmp_ = (list)->head;                    \

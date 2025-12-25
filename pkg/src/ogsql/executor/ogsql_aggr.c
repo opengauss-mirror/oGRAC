@@ -31,10 +31,10 @@
 #include "ogsql_scan.h"
 #include "ogsql_sort.h"
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #include "srv_instance.h"
 #include "shd_group.h"
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
 
 static status_t sql_mtrl_aggr_page_alloc(sql_stmt_t *stmt, sql_cursor_t *cursor, uint32 size, void **result);
 
@@ -372,8 +372,10 @@ static status_t sql_aggr_listagg_sort(aggr_assist_t *ogsql_stmt, aggr_var_t *agg
 
     do {
         // make sort rows
-        OG_BREAK_IF_ERROR(sql_hash_group_make_sort_row(ogsql_stmt->stmt, ogsql_stmt->aggr_node, &ra, value));
         aggr_group_concat_t *aggr_group = GET_AGGR_VAR_GROUPCONCAT(aggr_var);
+        char* type_buf = aggr_group->type_buf;
+        OG_BREAK_IF_ERROR(sql_hash_group_make_sort_row(ogsql_stmt->stmt, ogsql_stmt->aggr_node, &ra,
+                                                       type_buf, value, ogsql_stmt->cursor));
 
         // the separator is stored in aggr_var->extra
         if (aggr_group->total_len != 0 && !aggr_group->extra.is_null) {
@@ -440,7 +442,54 @@ static status_t sql_aggr_listagg(aggr_assist_t *ass, aggr_var_t *aggr_var, varia
     return status;
 }
 
-static status_t sql_compare_sort_row_for_rank(sql_stmt_t *ogsql_stmt, expr_node_t *aggr_node, bool32 *flag)
+static status_t sql_get_compare_res4rank(sql_stmt_t *sql_statement, sort_item_t *sort_item, variant_t *cst_var,
+                                         variant_t *sort_var, int32 *compare_res)
+{
+    bool32 nvl_first = sort_item->nulls_pos == SORT_NULLS_FIRST || sort_item->nulls_pos == SORT_NULLS_DEFAULT;
+
+    if (cst_var->is_null && sort_var->is_null) {
+        *compare_res = 0;
+        return OG_SUCCESS;
+    }
+
+    if (cst_var->is_null) {
+        *compare_res = nvl_first ? -1 : 1;
+        return OG_SUCCESS;
+    }
+
+    if (sort_var->is_null) {
+        *compare_res = -1;
+        if (nvl_first) {
+            *compare_res = 1;
+        }
+        return OG_SUCCESS;
+    }
+
+    status_t status;
+
+    if (!OG_IS_NUMERIC_TYPE(sort_var->type)) {
+        status = sql_convert_variant(sql_statement, cst_var, sort_var->type);
+        if (status != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("func:%s revoke func:%s failed.", "sql_get_compare_res4rank", "sql_convert_variant");
+            return status;
+        }
+        sql_keep_stack_variant(sql_statement, cst_var);
+    }
+
+    status = sql_compare_variant(sql_statement, cst_var, sort_var, compare_res);
+    if (status != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("func:%s revoke func:%s failed.", "sql_get_compare_res4rank", "sql_compare_variant");
+        return status;
+    }
+
+    if (sort_item->direction == SORT_MODE_DESC) {
+        *compare_res *= -1;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_compare_sort_row_for_rank(sql_stmt_t *ogsql_stmt, expr_node_t *aggr_node, bool32 *flag)
 {
     int32 cmp_result = 0;
     variant_t sort_var;
@@ -458,24 +507,8 @@ static status_t sql_compare_sort_row_for_rank(sql_stmt_t *ogsql_stmt, expr_node_
         sql_keep_stack_variant(ogsql_stmt, &sort_var);
         OG_RETURN_IFERR(sql_exec_expr(ogsql_stmt, arg, &constant));
         sql_keep_stack_variant(ogsql_stmt, &constant);
-        if (!(OG_IS_NUMERIC_TYPE(sort_var.type))) {
-            OG_RETURN_IFERR(sql_convert_variant(ogsql_stmt, &constant, sort_var.type));
-            sql_keep_stack_variant(ogsql_stmt, &constant);
-        }
-
-        OG_RETURN_IFERR(var_compare(SESSION_NLS(ogsql_stmt), &constant, &sort_var, &cmp_result));
-
-        if (constant.is_null && sort_var.is_null) {
-            cmp_result = 0;
-        } else if (constant.is_null || sort_var.is_null) {
-            if (sort_item->nulls_pos == SORT_NULLS_FIRST || sort_item->nulls_pos == SORT_NULLS_DEFAULT) {
-                cmp_result = -cmp_result;
-            }
-        } else {
-            if (sort_item->direction == SORT_MODE_DESC) {
-                cmp_result = -cmp_result;
-            }
-        }
+        
+        OG_RETURN_IFERR(sql_get_compare_res4rank(ogsql_stmt, sort_item, &constant, &sort_var, &cmp_result));
 
         if (cmp_result < 0) {
             *flag = OG_FALSE;
@@ -505,55 +538,63 @@ static status_t sql_aggr_make_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node,
     return OG_SUCCESS;
 }
 
-static status_t sql_aggr_dense_rank(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var, variant_t *value)
+static status_t sql_aggr_init_hash_tbl(aggr_assist_t *aggr_ass, aggr_var_t *aggr_var,
+    aggr_dense_rank_t *aggr_dense_rank)
 {
-    status_t status = OG_ERROR;
-    char *buf = NULL;
-    row_assist_t ra;
-    bool32 flag = OG_TRUE;
-    bool32 row_exist = OG_FALSE;
-    aggr_dense_rank_t *aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
-    if (aggr_var->var.is_null) {
-        aggr_var->var.is_null = OG_FALSE;
-    }
-
-    OGSQL_SAVE_STACK(ogsql_stmt->stmt);
-    if (sql_push(ogsql_stmt->stmt, OG_MAX_ROW_SIZE, (void **)&buf) != OG_SUCCESS) {
-        OGSQL_RESTORE_STACK(ogsql_stmt->stmt);
-        return OG_ERROR;
-    }
-    row_init(&ra, buf, OG_MAX_ROW_SIZE, ogsql_stmt->aggr_node->sort_items->count);
-
-    do {
-        OG_BREAK_IF_ERROR(sql_compare_sort_row_for_rank(ogsql_stmt->stmt, ogsql_stmt->aggr_node, &flag));
-        if (flag) {
-            // make row for sorting
-            OG_BREAK_IF_ERROR(sql_aggr_make_sort_row(ogsql_stmt->stmt, ogsql_stmt->aggr_node, &ra));
-            OG_BREAK_IF_ERROR(vm_hash_table_insert2(&row_exist, &aggr_dense_rank->hash_segment,
-                &aggr_dense_rank->table_entry, buf, ra.head->size));
-        }
-        status = OG_SUCCESS;
-    } while (0);
-
-    OGSQL_RESTORE_STACK(ogsql_stmt->stmt);
-    return status;
+    CM_POINTER3(aggr_ass, aggr_var, aggr_dense_rank);
+    aggr_var->var.is_null = OG_FALSE;
+    vm_hash_segment_init(KNL_SESSION(aggr_ass->stmt), aggr_ass->stmt->mtrl.pool,
+        &aggr_dense_rank->hash_segment, PMA_POOL, HASH_PAGES_HOLD, HASH_AREA_SIZE);
+    OG_RETURN_IFERR(vm_hash_table_alloc(&aggr_dense_rank->table_entry, &aggr_dense_rank->hash_segment, 0));
+    return vm_hash_table_init(&aggr_dense_rank->hash_segment, &aggr_dense_rank->table_entry,
+        NULL, NULL, NULL);
 }
 
-static status_t sql_aggr_rank(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var, variant_t *value)
+// For DENSE_RANK func, same value has same rank, and the next value has next rank
+static status_t sql_aggr_dense_rank(aggr_assist_t *aggr_ast, aggr_var_t *aggr_var, variant_t *var)
 {
-    bool32 flag = OG_TRUE;
+    char *row_buf = NULL;
+    row_assist_t row_asst = {0};
+    bool32 match_found = OG_FALSE;
+    aggr_dense_rank_t *aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
     if (aggr_var->var.is_null) {
-        aggr_var->var.is_null = OG_FALSE;
+        // Initialize the hash table
+        OG_RETURN_IFERR(sql_aggr_init_hash_tbl(aggr_ast, aggr_var, aggr_dense_rank));
     }
-    OGSQL_SAVE_STACK(ogsql_stmt->stmt);
-    if (sql_compare_sort_row_for_rank(ogsql_stmt->stmt, ogsql_stmt->aggr_node, &flag) != OG_SUCCESS) {
-        OGSQL_RESTORE_STACK(ogsql_stmt->stmt);
+
+    OG_RETURN_IFERR(ogsql_func_rank(aggr_ast->stmt, aggr_ast->aggr_node, var));
+    // 0 represetns none rank update
+    OG_RETSUC_IFTRUE(var->v_int == 0);
+    // Construct the row data
+    OGSQL_SAVE_STACK(aggr_ast->stmt);
+    OG_RETURN_IFERR(sql_push(aggr_ast->stmt, OG_MAX_ROW_SIZE, (void **)&row_buf));
+    row_init(&row_asst, row_buf, OG_MAX_ROW_SIZE, aggr_ast->aggr_node->sort_items->count);
+    status_t ret = OG_ERROR;
+    do {
+        OG_BREAK_IF_ERROR(sql_aggr_make_sort_row(aggr_ast->stmt, aggr_ast->aggr_node, &row_asst));
+        // If current row not in hash table, Rank + 1
+        OG_BREAK_IF_ERROR(vm_hash_table_insert2(&match_found, &aggr_dense_rank->hash_segment,
+        &aggr_dense_rank->table_entry, row_buf, row_asst.head->size));
+        ret = OG_SUCCESS;
+    } while (OG_FALSE);
+    if (ret != OG_SUCCESS) {
+        OGSQL_RESTORE_STACK(aggr_ast->stmt);
         return OG_ERROR;
     }
-    if (flag) {
-        VALUE(uint32, &aggr_var->var) += 1;
+    if (match_found == OG_FALSE) {
+        VALUE(uint32, &aggr_var->var) += VALUE(uint32, var);
     }
-    OGSQL_RESTORE_STACK(ogsql_stmt->stmt);
+    OGSQL_RESTORE_STACK(aggr_ast->stmt);
+    return OG_SUCCESS;
+}
+
+// For RANK func, same value has same rank, but the next value has skip rank
+static status_t sql_aggr_rank(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_val, variant_t *var)
+{
+    aggr_val->var.is_null = OG_FALSE;
+    // For RANK func, no need hash table for unique operator,
+    // it accumulates the count of rows (including duplicates) as the rank result
+    VALUE(uint32, &aggr_val->var) += VALUE(uint32, var);
     return OG_SUCCESS;
 }
 
@@ -578,7 +619,7 @@ static status_t sql_aggr_median(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var,
     }
     if (aggr_var->var.is_null) {
         if (!OG_IS_NUMERIC_TYPE(value->type) && !OG_IS_DATETIME_TYPE(value->type)) {
-            OG_THROW_ERROR(ERR_TYPE_MISMATCH, "NUMERIC", get_datatype_name_str(value->type));
+            OG_THROW_ERROR(ERR_TYPE_MISMATCH, "NUMERIC OR DATETIME", get_datatype_name_str(value->type));
             return OG_ERROR;
         }
         var_copy(value, &aggr_var->var);
@@ -788,38 +829,42 @@ static status_t sql_aggr_distinct_value(aggr_assist_t *ass, variant_t *value, bo
 }
 
 
-status_t sql_aggr_value(aggr_assist_t *ogsql_stmt, uint32 id, variant_t *value)
+status_t sql_aggr_value(aggr_assist_t *aggr_ass, uint32 aggr_idx, variant_t *value)
 {
     aggr_var_t *aggr_var = NULL;
-    if (value->is_null && value->type != OG_TYPE_ARRAY && ogsql_stmt->aggr_type != AGGR_TYPE_DENSE_RANK &&
-        ogsql_stmt->aggr_type != AGGR_TYPE_RANK) {
-        if (ogsql_stmt->aggr_node->nullaware && (ogsql_stmt->aggr_type == AGGR_TYPE_MIN || ogsql_stmt->aggr_type ==
-            AGGR_TYPE_MAX)) {
-            aggr_var = sql_get_aggr_addr(ogsql_stmt->cursor, id);
+    if (value->is_null && value->type != OG_TYPE_ARRAY) {
+        // MIN or MAX func && nullaware, the result is NULL
+        if (aggr_ass->aggr_node->nullaware &&
+           (aggr_ass->aggr_type == AGGR_TYPE_MIN || aggr_ass->aggr_type == AGGR_TYPE_MAX)) {
+            aggr_var = sql_get_aggr_addr(aggr_ass->cursor, aggr_idx);
             aggr_var->var.is_null = OG_TRUE;
-            ogsql_stmt->cursor->eof = OG_TRUE;
+            aggr_ass->cursor->eof = OG_TRUE;
         }
-        return OG_SUCCESS;
+
+        if (aggr_ass->aggr_type != AGGR_TYPE_ARRAY_AGG) {
+            return OG_SUCCESS;
+        }
     }
 
-    if (ogsql_stmt->aggr_node->dis_info.need_distinct) {
+    if (aggr_ass->aggr_node->dis_info.need_distinct) {
         bool32 var_exist = OG_FALSE;
-        OG_RETURN_IFERR(sql_aggr_distinct_value(ogsql_stmt, value, &var_exist));
+        OG_RETURN_IFERR(sql_aggr_distinct_value(aggr_ass, value, &var_exist));
         if (var_exist) {
             return OG_SUCCESS;
         }
 
-        if (ogsql_stmt->aggr_type == AGGR_TYPE_COUNT) {
+        if (aggr_ass->aggr_type == AGGR_TYPE_COUNT) {
             value->type = OG_TYPE_BIGINT;
             value->v_bigint = 1;
         }
     }
-    aggr_var = sql_get_aggr_addr(ogsql_stmt->cursor, id);
-    if (ogsql_stmt->aggr_type == AGGR_TYPE_SUM && SECUREC_LIKELY(!aggr_var->var.is_null) &&
-        VAR_IS_NUMBERIC_ZERO(value)) {
+
+    aggr_var = sql_get_aggr_addr(aggr_ass->cursor, aggr_idx);
+    if (aggr_ass->aggr_type == AGGR_TYPE_SUM &&
+        SECUREC_LIKELY(!aggr_var->var.is_null) && VAR_IS_NUMBERIC_ZERO(value)) {
         return OG_SUCCESS;
     }
-    return sql_get_aggr_func(ogsql_stmt->aggr_type)->invoke(ogsql_stmt, aggr_var, value);
+    return sql_get_aggr_func(aggr_ass->aggr_type)->invoke(aggr_ass, aggr_var, value);
 }
 
 static inline status_t sql_aggr_calc_none(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var)
@@ -847,15 +892,6 @@ static inline status_t sql_aggr_calc_cume_dist(aggr_assist_t *ogsql_stmt, aggr_v
     OG_RETURN_IFERR(var_as_bigint(&aggr_var->var));
     aggr_var->var.v_bigint += 1;
     return opr_exec(OPER_TYPE_DIV, SESSION_NLS(ogsql_stmt->stmt), &aggr_var->var, &v_rows, &aggr_var->var);
-}
-
-static inline status_t sql_aggr_calc_dense_rank(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var)
-{
-    uint32 rnums;
-    aggr_dense_rank_t *aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
-    OG_RETURN_IFERR(vm_hash_table_get_rows(&rnums, &aggr_dense_rank->hash_segment, &aggr_dense_rank->table_entry));
-    VALUE(uint32, &aggr_var->var) += rnums;
-    return OG_SUCCESS;
 }
 
 static inline status_t sql_aggr_calc_listagg(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var)
@@ -996,6 +1032,10 @@ static status_t sql_aggr_calc_corr(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_v
         &tmp_result_1)); // 1/N * sum(Xi)^2
     OG_RETURN_IFERR(opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), &aggr_corr->extra[CORR_VAR_SUM_XX], &tmp_result_1,
         &aggr_var->var)); // (sum(Xi^2) - 1/N * sum(Xi)^2)
+    if (IS_DEC8_NEG(&aggr_var->var.v_dec)) { // Negative number loose precision
+        aggr_var->var.is_null = OG_TRUE;
+        return OG_SUCCESS;
+    }
     OG_RETURN_IFERR(opr_exec(OPER_TYPE_DIV, SESSION_NLS(stmt), &aggr_var->var, &v_rows, &aggr_var->var));
     OG_RETURN_IFERR(cm_dec_sqrt(&aggr_var->var.v_dec, &tmp_result_1.v_dec));
 
@@ -1006,6 +1046,10 @@ static status_t sql_aggr_calc_corr(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_v
         &tmp_result_2)); // 1/N * sum(Yi)^2
     OG_RETURN_IFERR(opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), &aggr_corr->extra[CORR_VAR_SUM_YY], &tmp_result_2,
         &aggr_var->var)); // (sum(Yi^2) - 1/N * sum(Yi)^2)
+    if (IS_DEC8_NEG(&aggr_var->var.v_dec)) {
+        aggr_var->var.is_null = OG_TRUE;
+        return OG_SUCCESS;
+    }
     OG_RETURN_IFERR(opr_exec(OPER_TYPE_DIV, SESSION_NLS(stmt), &aggr_var->var, &v_rows, &aggr_var->var));
     OG_RETURN_IFERR(cm_dec_sqrt(&aggr_var->var.v_dec, &tmp_result_2.v_dec));
 
@@ -1100,7 +1144,7 @@ status_t sql_exec_aggr(sql_stmt_t *stmt, sql_cursor_t *cursor, galist_t *aggrs, 
     for (uint32 i = 0; i < aggrs->count; i++) {
         ogsql_stmt.aggr_node = (expr_node_t *)cm_galist_get(aggrs, i);
         func = GET_AGGR_FUNC(ogsql_stmt.aggr_node);
-        /* modified by Z_SHARDING, add AGGR_TYPE_AVG_COLLECT for sharding */
+        /* modified by OG_RAC_ING, add AGGR_TYPE_AVG_COLLECT for sharding */
         if (func->aggr_type == AGGR_TYPE_SUM || func->aggr_type == AGGR_TYPE_COUNT ||
             func->aggr_type == AGGR_TYPE_MIN || func->aggr_type == AGGR_TYPE_MAX ||
             func->aggr_type == AGGR_TYPE_ARRAY_AGG || func->aggr_type == AGGR_TYPE_RANK) {
@@ -1133,10 +1177,12 @@ status_t sql_exec_aggr_extra(sql_stmt_t *stmt, sql_cursor_t *cursor, galist_t *a
 
         switch (func_type) {
             case AGGR_TYPE_DENSE_RANK:
-                aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
-                vm_hash_segment_deinit(&aggr_dense_rank->hash_segment);
-                aggr_dense_rank->table_entry.vmid = OG_INVALID_ID32;
-                aggr_dense_rank->table_entry.offset = OG_INVALID_ID32;
+                if (!aggr_var->var.is_null) {
+                    aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
+                    vm_hash_segment_deinit(&aggr_dense_rank->hash_segment);
+                    aggr_dense_rank->table_entry.vmid = OG_INVALID_ID32;
+                    aggr_dense_rank->table_entry.offset = OG_INVALID_ID32;
+                }
             /* fall-through */
             case AGGR_TYPE_RANK:
             case AGGR_TYPE_CUME_DIST:
@@ -1469,6 +1515,14 @@ static inline status_t sql_aggr_init_count(aggr_assist_t *ogsql_stmt, aggr_var_t
     return OG_SUCCESS;
 }
 
+static status_t ogsql_aggr_init_type_buf(vmc_t *vmc, galist_t *sort_items, char **type_buf)
+{
+    if (sort_items == NULL || *type_buf != NULL) {
+        return OG_SUCCESS;
+    }
+    return sql_sort_mtrl_record_types(vmc, MTRL_SEGMENT_CONCAT_SORT, sort_items, type_buf);
+}
+
 static inline status_t sql_aggr_init_median(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var)
 {
     aggr_var->var.is_null = OG_TRUE;
@@ -1477,28 +1531,16 @@ static inline status_t sql_aggr_init_median(aggr_assist_t *ogsql_stmt, aggr_var_
     GET_AGGR_VAR_MEDIAN(aggr_var)->sort_rid.vmid = OG_INVALID_ID32;
     GET_AGGR_VAR_MEDIAN(aggr_var)->sort_rid.slot = OG_INVALID_ID32;
     ogsql_stmt->avg_count++;
-    return OG_SUCCESS;
+    return ogsql_aggr_init_type_buf(&ogsql_stmt->cursor->vmc, ogsql_stmt->aggr_node->sort_items,
+        &(GET_AGGR_VAR_MEDIAN(aggr_var)->type_buf));
 }
 
 // for rank/dense_rank
-static status_t sql_aggr_init_rank(aggr_assist_t *ogsql_stmt, aggr_var_t *aggr_var)
+static status_t sql_aggr_init_rank(aggr_assist_t *aggr_ass, aggr_var_t *aggr_var)
 {
-    aggr_dense_rank_t *aggr_dense_rank = NULL;
-    if (ogsql_stmt->aggr_type == AGGR_TYPE_DENSE_RANK) {
-        aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
-        vm_hash_segment_init(KNL_SESSION(ogsql_stmt->stmt), ogsql_stmt->stmt->mtrl.pool,
-            &aggr_dense_rank->hash_segment, PMA_POOL,
-            HASH_PAGES_HOLD, HASH_AREA_SIZE);
-        aggr_dense_rank->table_entry.vmid = OG_INVALID_ID32;
-        aggr_dense_rank->table_entry.offset = OG_INVALID_ID32;
-        OG_RETURN_IFERR(vm_hash_table_alloc(&aggr_dense_rank->table_entry, &aggr_dense_rank->hash_segment, 0));
-        OG_RETURN_IFERR(
-            vm_hash_table_init(&aggr_dense_rank->hash_segment, &aggr_dense_rank->table_entry, NULL, NULL, NULL));
-    }
     aggr_var->var.is_null = OG_TRUE;
     aggr_var->var.type = OG_TYPE_INTEGER;
     VALUE(uint32, &aggr_var->var) = 1;
-    ogsql_stmt->avg_count++;
     return OG_SUCCESS;
 }
 
@@ -1530,6 +1572,7 @@ static status_t sql_aggr_init_listagg(aggr_assist_t *ass, aggr_var_t *aggr_var)
     if (ass->aggr_node->sort_items != NULL) {
         ass->avg_count++;
     }
+    OG_RETURN_IFERR(ogsql_aggr_init_type_buf(&ass->cursor->vmc, ass->aggr_node->sort_items, &aggr_group->type_buf));
     return sql_aggr_init_gc_sort_data(ass->cursor);
 }
 
@@ -1611,7 +1654,7 @@ static status_t sql_aggr_init_default(aggr_assist_t *ass, aggr_var_t *aggr_var)
     } else {
         aggr_var->var.type = aggr_node->datatype;
         aggr_var->var.is_null = OG_TRUE;
-        /* modified by Z_SHARDING, add AGGR_TYPE_AVG_COLLECT for sharding */
+        /* modified by OG_RAC_ING, add AGGR_TYPE_AVG_COLLECT for sharding */
         if (ass->aggr_type == AGGR_TYPE_AVG || ass->aggr_type == AGGR_TYPE_AVG_COLLECT) {
             GET_AGGR_VAR_AVG(aggr_var)->ex_avg_count = 0;
             ass->avg_count++;
@@ -1741,6 +1784,29 @@ static bool32 sql_judge_func_arg_type(sql_stmt_t *stmt, expr_node_t *aggr_node, 
     return OG_SUCCESS;
 }
 
+static status_t if_sepvar_exprn_is_certain(visit_assist_t *v_ast, expr_node_t **exprn)
+{
+    expr_node_t *ori_exprn = sql_get_origin_ref(*exprn);
+    
+    if (ori_exprn->type == EXPR_NODE_RESERVED) {
+        // Non-const reserved words and ROWID not from the curr-query level are not allowed as separator.
+        if (!(chk_if_reserved_word_constant(ori_exprn->value.v_res.res_id) || is_ancestor_res_rowid(ori_exprn))) {
+            v_ast->result0 = OG_FALSE;
+        }
+        return OG_SUCCESS;
+    }
+
+    if (ori_exprn->type == EXPR_NODE_COLUMN || ori_exprn->type == EXPR_NODE_TRANS_COLUMN) {
+        // Column or trans-column from the ancestor-query level are not allowed as separator.
+        if (NODE_ANCESTOR(ori_exprn) == 0) {
+            v_ast->result0 = OG_FALSE;
+        }
+        return OG_SUCCESS;
+    }
+
+    return OG_SUCCESS;
+}
+
 static status_t sql_init_group_concat_sepvar(sql_stmt_t *stmt, sql_cursor_t *cursor, expr_node_t *aggr_node,
     aggr_group_concat_t *aggr_group)
 {
@@ -1748,7 +1814,7 @@ static status_t sql_init_group_concat_sepvar(sql_stmt_t *stmt, sql_cursor_t *cur
     variant_t sep_val;
     variant_t *sep_cpy = NULL;
 
-    // the first argument is separator
+    // the first argument is separator, in a SQL, which must be certain value
     sep = aggr_node->argument; /* get the optional argument "separator" */
     sep_cpy = &aggr_group->extra;
     if (sep != NULL) {
@@ -1758,6 +1824,15 @@ static status_t sql_init_group_concat_sepvar(sql_stmt_t *stmt, sql_cursor_t *cur
         sep_cpy->type = sep_val.type;
         sep_cpy->is_null = sep_val.is_null;
         if (sep_cpy->is_null == OG_FALSE) {
+            expr_node_t *sepvar_exprn = sep->root;
+            visit_assist_t v_ast = {0};
+            sql_init_visit_assist(&v_ast, NULL, NULL);
+            v_ast.result0 = OG_TRUE;
+            OG_RETURN_IFERR(visit_expr_node(&v_ast, &sepvar_exprn, if_sepvar_exprn_is_certain));
+            if (v_ast.result0 == OG_FALSE) {
+                OG_SRC_THROW_ERROR(sep->loc, ERR_SQL_SYNTAX_ERROR, "Argument should be constant.");
+                return OG_ERROR;
+            }
             /* make the buffer for storing separator in mtrl page, too */
             OG_RETURN_IFERR(sql_mtrl_aggr_page_alloc(stmt, cursor, sep_val.v_text.len, (void **)&sep_cpy->v_text.str));
             sep_cpy->v_text.len = sep_val.v_text.len;
@@ -1787,10 +1862,6 @@ static status_t sql_init_sort_4_listagg(sql_stmt_t *stmt, sql_cursor_t *cursor, 
         OG_RETURN_IFERR(mtrl_open_segment(&stmt->mtrl, cursor->mtrl.sort_seg));
     }
 
-    if (aggr_node->sort_items != NULL && aggr_group->type_buf == NULL) {
-        OG_RETURN_IFERR(sql_sort_mtrl_record_types(&cursor->vmc, MTRL_SEGMENT_CONCAT_SORT, aggr_node->sort_items,
-            &aggr_group->type_buf));
-    }
     return OG_SUCCESS;
 }
 
@@ -1802,11 +1873,6 @@ static status_t sql_init_sort_4_median(sql_stmt_t *stmt, sql_cursor_t *cursor, e
         OG_RETURN_IFERR(mtrl_open_segment(&stmt->mtrl, cursor->mtrl.sort_seg));
     }
 
-    aggr_median_t *aggr_median = GET_AGGR_VAR_MEDIAN(aggr_var);
-    if (aggr_node->sort_items != NULL && aggr_median->type_buf == NULL) {
-        OG_RETURN_IFERR(sql_sort_mtrl_record_types(&cursor->vmc, MTRL_SEGMENT_CONCAT_SORT, aggr_node->sort_items,
-            &aggr_median->type_buf));
-    }
     return OG_SUCCESS;
 }
 
@@ -2118,7 +2184,7 @@ aggr_func_t g_aggr_func_tab[] = {
         sql_aggr_calc_covar },
     { AGGR_TYPE_CORR, sql_aggr_alloc_corr, sql_aggr_init_corr, sql_aggr_reset_corr, sql_aggr_corr, sql_aggr_calc_corr },
     { AGGR_TYPE_DENSE_RANK, sql_aggr_alloc_dense_rank, sql_aggr_init_rank, sql_aggr_reset_rank, sql_aggr_dense_rank,
-        sql_aggr_calc_dense_rank },
+        sql_aggr_calc_none },
     { AGGR_TYPE_FIRST_VALUE, sql_aggr_alloc_default, sql_aggr_init_default, sql_aggr_reset_default, sql_aggr_none,
         sql_aggr_calc_none },
     { AGGR_TYPE_LAST_VALUE, sql_aggr_alloc_default, sql_aggr_init_default, sql_aggr_reset_default, sql_aggr_none,

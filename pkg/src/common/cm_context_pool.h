@@ -130,8 +130,7 @@ void ogx_insert(context_pool_t *pool, context_ctrl_t *ctrl);
 void ogx_bucket_insert(context_bucket_t *bucket, context_ctrl_t *ctrl);
 status_t ogx_write_text(context_ctrl_t *ctrl, text_t *text);
 status_t ogx_read_text(context_pool_t *pool, context_ctrl_t *ctrl, text_t *text, bool32 is_cut);
-void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint32 uid, uint32 remote_conn_type,
-                    bool32 is_direct_route);
+void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint32 uid);
 void ogx_dec_ref(context_pool_t *pool, context_ctrl_t *ctrl);
 void ogx_dec_exec(context_ctrl_t *ctrl);
 void ogx_pool_lru_move_to_head(context_pool_t *pool, context_ctrl_t *ctrl);

@@ -328,7 +328,7 @@ status_t sql_verify_pool_size(void *lex, void *def, int64 min_size, int64 max_si
     }
 
     OG_RETURN_IFERR(lex_push(lex, &word.text));
-    if (lex_expected_fetch_size(lex, &size, min_size, max_size) != OG_SUCCESS) {
+    if (lex_parse_and_valid_pool_size(lex, &size, min_size, max_size) != OG_SUCCESS) {
         lex_pop(lex);
         return OG_ERROR;
     }

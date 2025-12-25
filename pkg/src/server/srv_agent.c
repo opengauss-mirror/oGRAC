@@ -193,7 +193,9 @@ static inline void srv_session_bind_cpu(session_t *session)
         }
     } else {
         if (!rsrc_cpuset_is_equal(&agent->cpuset, &GET_RSRC_MGR->cpuset)) {
-            (void)rsrc_thread_bind_cpu(&agent->thread, &GET_RSRC_MGR->cpuset);
+            cpu_set_t cpuset = GET_RSRC_MGR->cpuset;
+            knl_get_cpu_set_from_conf(&cpuset);
+            (void)rsrc_thread_bind_cpu(&agent->thread, &cpuset);
             agent->cpuset = GET_RSRC_MGR->cpuset;
         }
     }

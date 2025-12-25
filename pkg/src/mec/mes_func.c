@@ -1390,7 +1390,6 @@ void mes_process_broadcast_ack(void *session, mes_message_t *msg)
 
     cm_spin_lock(&room->lock, NULL);
     if (room->rsn == msg->head->rsn) {
-        // TODO: multi nodes, deal with the ret_code in acks
         if (msg->head->status != OG_SUCCESS) {
             room->err_code = msg->head->status;
         }
@@ -1479,7 +1478,6 @@ void mes_broadcast(uint32 sid, uint64 inst_bits, const void *msg_data, uint64 *s
             if (mes_send_data(msg_data) != OG_SUCCESS) {
                 (void)cm_atomic32_dec(&room->req_count);
                 MES_LOGGING_WAR(MES_LOGGING_BROADCAST, "[mes]: multicast to instance %d failed", i);
-                // TODO when database is remastering, need cancel current multicasting
                 continue;
             }
 

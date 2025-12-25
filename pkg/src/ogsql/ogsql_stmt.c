@@ -94,7 +94,8 @@ void sql_init_stmt(session_t *session, sql_stmt_t *stmt, uint32 stmt_id)
     stmt->trace_disabled = OG_FALSE;
     stmt->context_refered = OG_FALSE;
     stmt->hash_mtrl_ctx_list = NULL;
-    array_set_handle((void *)&session->knl_session, (void *)session->knl_session.temp_pool);
+    array_set_handle((void *)&session->knl_session, session->knl_session.temp_mtrl->pool,
+        (void *)session->knl_session.stack);
 
     (void)sql_alloc_for_longsql_stat(stmt);
 }
@@ -162,6 +163,14 @@ void sql_set_ssn(sql_stmt_t *stmt)
     knl_inc_session_ssn(&stmt->session->knl_session);
     stmt->ssn = stmt->session->knl_session.ssn;
     stmt->xact_ssn = stmt->session->knl_session.rm->ssn;
+}
+
+void ogsql_assign_transaction_id(sql_stmt_t *stmt, uint64 *xid)
+{
+    stmt->xid = stmt->session->knl_session.rm->xid.value;
+    if (xid != NULL) {
+        *xid = stmt->xid;
+    }
 }
 
 static void do_release_context(sql_stmt_t *stmt, sql_context_t *sql_ctx)
@@ -2101,7 +2110,7 @@ status_t sql_verify_default_from_text(knl_handle_t handle, knl_handle_t column_h
                                                 &expr_update_tree_src, parse_text);
         if (status != OG_SUCCESS) {
             cm_reset_error();
-            OG_THROW_ERROR(ERR_INVALID_EXPRESSION, "for default value");
+            OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
         }
         OG_BREAK_IF_ERROR(status);
         sql_verifier_t verif = { 0 };
@@ -2114,7 +2123,7 @@ status_t sql_verify_default_from_text(knl_handle_t handle, knl_handle_t column_h
         status = sql_verify_column_expr_tree(&verif, column, expr_tree_src, expr_update_tree_src);
         if (status != OG_SUCCESS) {
             cm_reset_error();
-            OG_THROW_ERROR(ERR_INVALID_EXPRESSION, "for default value");
+            OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
         }
         OG_BREAK_IF_ERROR(status);
     } while (0);
@@ -2444,6 +2453,7 @@ static status_t sql_decode_params_eff(sql_stmt_t *stmt, char *param_buf, uint32 
 static status_t sql_decode_plsql_params(sql_stmt_t *stmt)
 {
     variant_t src;
+    MEMS_RETURN_IFERR(memset_s(&src, sizeof(variant_t), 0, sizeof(variant_t)));
     sql_stmt_t *parent = NULL;
     pl_using_expr_t *using_expr = NULL;
     sql_param_mark_t *param_mark = NULL;
@@ -5337,6 +5347,7 @@ status_t sql_var_as_array(sql_stmt_t *stmt, variant_t *v, typmode_t *mode)
     status_t status;
     vm_lob_t *vlob = NULL;
     variant_t tmp_val;
+    MEMS_RETURN_IFERR(memset_s(&tmp_val, sizeof(variant_t), 0, sizeof(variant_t)));
     bool32 last = OG_FALSE;
     array_assist_t aa;
     text_t element_str = { NULL, 0 };
@@ -5531,6 +5542,7 @@ static status_t array_convert_datatype(const nlsparams_t *nls, array_assist_t *a
     array_head_t *head = NULL;
     array_assist_t dst_aa;
     variant_t var;
+    MEMS_RETURN_IFERR(memset_s(&var, sizeof(variant_t), 0, sizeof(variant_t)));
     char *val = NULL;
 
     OG_RETURN_IFERR(array_init(&dst_aa, aa->session, aa->pool, aa->list, dst));
@@ -6137,6 +6149,7 @@ status_t sql_stmt_clone(sql_stmt_t *src, sql_stmt_t *sql_dest)
     sql_dest->query_scn = src->query_scn;
     sql_dest->gts_scn = src->gts_scn;
     sql_dest->ssn = src->ssn;
+    sql_dest->xid = src->xid;
     sql_dest->xact_ssn = src->xact_ssn;
     sql_dest->rs_plan = src->rs_plan;
     sql_dest->rs_type = src->rs_type;

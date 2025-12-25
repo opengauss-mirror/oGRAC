@@ -323,7 +323,7 @@ void mes_destory_buf_pool(message_pool_t *pool)
 char *mes_alloc_pool_buf(message_pool_t *pool)
 {
     char *msg_buf;
-    uint32 id = pool->get_no % pool->size;  // TODO: id can protect by lock
+    uint32 id = pool->get_no % pool->size;
 
     cm_spin_lock(&pool->lock, NULL);
     while (pool->items[id] == NULL) {

@@ -521,6 +521,8 @@ knl_global_syncpoint_def g_knl_syncpoint[] = {
     { COLLECT_STATISTICS_PERSISTENCE_THROUGH_RESULT_FAIL, OG_FALSE,
       "COLLECT_STATISTICS_PERSISTENCE_THROUGH_RESULT_FAIL", 0,  //
       knl_syncpoint_inject_errcode, 0 },
+    { CTC_SQL_ALLOC_CONTEXT_FAIL, OG_FALSE, "CTC_SQL_ALLOC_CONTEXT_FAIL", 0,
+      knl_syncpoint_inject_errcode, 0 },
 };
 
 #define KNL_SYNCPOINT_COUNT (sizeof(g_knl_syncpoint) / sizeof(g_knl_syncpoint[0]))

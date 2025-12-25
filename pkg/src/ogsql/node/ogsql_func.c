@@ -49,7 +49,7 @@ extern "C" {
 /*
  * **NOTE:**
  * 1. The function must be arranged by alphabetical ascending order.
- * 2. An enum stands for function index was added in ogsql_func.h for z_sharding.
+ * 2. An enum stands for function index was added in ogsql_func.h for OG_RAC_ING.
  * if any built-in function added or removed from the following array,
  * please modify the enum definition, too.
  * 3. add function should add the define id in en_function_item_id at ogsql_func.h.
@@ -78,8 +78,10 @@ sql_func_t g_func_tab[] = {
     { { (char *)"char_length", 11 }, sql_func_length, sql_verify_length, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_CHAR_LENGTH, FO_USUAL, OG_FALSE },
     { { (char *)"chr", 3 }, sql_func_chr, sql_verify_chr, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_CHR, FO_USUAL, OG_FALSE },
     { { (char *)"coalesce", 8 }, sql_func_coalesce, sql_verify_coalesce, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_COALESCE, FO_USUAL, OG_FALSE },
-    { { (char *)"concat", 6 }, sql_func_concat, sql_verify_concat, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_CONCAT, FO_USUAL, OG_FALSE },
-    { { (char *)"concat_ws", 9 }, sql_func_concat_ws, sql_verify_concat_ws, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_CONCAT_WS, FO_USUAL, OG_FALSE },
+    { { (char *)"concat", 6 }, sql_func_concat, sql_verify_concat, AGGR_TYPE_NONE,
+    FO_NORMAL, ID_FUNC_ITEM_CONCAT, FO_USUAL, OG_FALSE },
+    { { (char *)"concat_ws", 9 }, sql_func_concat_ws, sql_verify_concat_ws, AGGR_TYPE_NONE,
+    FO_NORMAL, ID_FUNC_ITEM_CONCAT_WS, FO_USUAL, OG_FALSE },
     { { (char *)"connection_id", 13 }, sql_func_connection_id, sql_verify_connection_id, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_CONNECTION_ID, FO_USUAL, OG_FALSE },
     { { (char *)"convert", 7 }, sql_func_cast, sql_verify_cast, AGGR_TYPE_NONE, FO_SPECIAL, ID_FUNC_ITEM_CONVERT, FO_USUAL, OG_FALSE },
     { { (char *)"corr", 4 }, sql_func_covar_or_corr, sql_verify_covar_or_corr, AGGR_TYPE_CORR, FO_NONE, ID_FUNC_ITEM_CORR, FO_COVAR, OG_FALSE },
@@ -110,7 +112,6 @@ sql_func_t g_func_tab[] = {
     { { (char *)"grouping_id", 11 }, sql_func_grouping_id, sql_verify_grouping_id, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GROUPING_ID, FO_USUAL, OG_FALSE },
     { { (char *)"group_concat", 12 }, sql_func_group_concat, sql_verify_group_concat, AGGR_TYPE_GROUP_CONCAT, FO_NONE, ID_FUNC_ITEM_GROUP_CONCAT, FO_USUAL, OG_FALSE },
     { { (char *)"gscn2date", 9 }, sql_func_gscn2date, sql_verify_gscn2date, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_GSCN2DATE, FO_USUAL, OG_FALSE },
-    { { (char *)"og_hash", 7 }, sql_func_ct_hash, sql_verify_ct_hash, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_CT_HASH, FO_USUAL, OG_FALSE },
     { { (char *)"hash", 4 }, sql_func_hash, sql_verify_hash, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_HASH, FO_USUAL, OG_FALSE },
     { { (char *)"hex", 3 }, sql_func_hex, sql_verify_hex, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_HEX, FO_USUAL, OG_FALSE },
     { { (char *)"hex2bin", 7 }, sql_func_hex2bin, sql_verify_hex2bin, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_HEX2BIN, FO_USUAL, OG_FALSE },
@@ -166,12 +167,15 @@ sql_func_t g_func_tab[] = {
     { { (char *)"nvl", 3 }, sql_func_nvl, sql_verify_nvl, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_NVL, FO_USUAL, OG_TRUE },
     { { (char *)"nvl2", 4 }, sql_func_nvl2, sql_verify_nvl2, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_NVL2, FO_USUAL, OG_TRUE },
     { { (char *)"object_id", 9 }, sql_func_object_id, sql_verify_object_id, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_OBJECT_ID, FO_USUAL, OG_FALSE },
+    { { (char *)"og_hash", 7 }, sql_func_og_hash, sql_verify_og_hash,
+    AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_OG_HASH, FO_USUAL, OG_FALSE },
     { { (char *)"page_masterid", 13 }, sql_func_page2masterid, sql_verify_page2masterid, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_PAGE_MASTERID },
     { { (char *)"pi", 2 }, sql_func_pi, sql_verify_pi, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_PI, FO_USUAL, OG_FALSE },
     { { (char *)"power", 5 }, sql_func_power, sql_verify_power, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_POWER, FO_USUAL, OG_FALSE },
     { { (char *)"radians", 7 }, sql_func_radians, sql_verify_radians, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_RADIANS, FO_USUAL, OG_TRUE },
     { { (char *)"rand", 4 }, sql_func_rand, sql_verify_rand, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_RAND, FO_USUAL, OG_FALSE },
-    { { (char *)"rank", 4 }, sql_func_dense_rank, sql_verify_dense_rank, AGGR_TYPE_RANK, FO_NONE, ID_FUNC_ITEM_RANK, FO_USUAL, OG_FALSE },
+    { { (char *)"rank", 4 }, ogsql_func_rank, sql_verify_dense_rank,
+    AGGR_TYPE_RANK, FO_NONE, ID_FUNC_ITEM_RANK, FO_USUAL, OG_FALSE },
     { { (char *)"rawtohex", 8 }, sql_func_rawtohex, sql_verify_rawtohex, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_RAWTOHEX, FO_USUAL, OG_FALSE },
     { { (char *)"regexp_count", 12 }, sql_func_regexp_count, sql_verify_regexp_count, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_REGEXP_COUNT, FO_USUAL, OG_FALSE },
     { { (char *)"regexp_instr", 12 }, sql_func_regexp_instr, sql_verify_regexp_instr, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_REGEXP_INSTR, FO_USUAL, OG_TRUE },
@@ -179,7 +183,8 @@ sql_func_t g_func_tab[] = {
     { { (char *)"regexp_substr", 13 }, sql_func_regexp_substr, sql_verify_regexp_substr, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_REGEXP_SUBSTR, FO_USUAL, OG_TRUE },
     { { (char *)"release_lock", 12 }, sql_func_release_lock, sql_verify_alck_name, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_RELEASE_LOCK, FO_USUAL, OG_FALSE },
     { { (char *)"release_shared_lock", 19 }, sql_func_release_shared_lock, sql_verify_alck_name, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_RELEASE_SHARED_LOCK, FO_USUAL, OG_FALSE },
-    { { (char *)"repeat", 6 }, sql_func_repeat, sql_verify_repeat, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_PEPEAT, FO_USUAL, OG_FALSE },
+    { { (char *)"repeat", 6 }, sql_func_repeat, sql_verify_repeat, AGGR_TYPE_NONE,
+    FO_NORMAL, ID_FUNC_ITEM_PEPEAT, FO_USUAL, OG_FALSE },
     { { (char *)"replace", 7 }, sql_func_replace, sql_verify_replace, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_REPLACE, FO_USUAL, OG_FALSE },
     { { (char *)"reverse", 7 }, sql_func_reverse, sql_verify_reverse, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_REVERSE, FO_USUAL, OG_TRUE },
     { { (char *)"right", 5 }, sql_func_right, sql_verify_right, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_RIGHT, FO_USUAL, OG_FALSE },
@@ -201,7 +206,8 @@ sql_func_t g_func_tab[] = {
     { { (char *)"substr", 6 }, sql_func_substr, sql_verify_substr, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_SUBSTR, FO_USUAL, OG_TRUE },
     { { (char *)"substrb", 7 }, sql_func_substrb, sql_verify_substr, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_SUBSTRB, FO_USUAL, OG_TRUE },
     { { (char *)"substring", 9 }, sql_func_substr, sql_verify_substr, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_SUBSTRING, FO_USUAL, OG_FALSE },
-    { { (char *)"substring_index", 15 }, sql_func_substring_index, sql_verify_substring_index, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_SUBSTRING_INDEX, FO_USUAL, OG_FALSE },
+    { { (char *)"substring_index", 15 }, sql_func_substring_index, sql_verify_substring_index,
+    AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_SUBSTRING_INDEX, FO_USUAL, OG_FALSE },
     { { (char *)"sum", 3 }, sql_func_normal_aggr, sql_verify_sum, AGGR_TYPE_SUM, FO_NONE, ID_FUNC_ITEM_SUM, FO_USUAL, OG_FALSE },
     { { (char *)"systimestamp", 12 }, sql_func_sys_timestamp, sql_verify_current_timestamp, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_SYSTIMESTAMP, FO_USUAL, OG_FALSE },
     { { (char *)"sys_connect_by_path", 19 }, sql_func_sys_connect_by_path, sql_verify_sys_connect_by_path, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_SYS_CONNECT_BY_PATH, FO_USUAL, OG_FALSE },

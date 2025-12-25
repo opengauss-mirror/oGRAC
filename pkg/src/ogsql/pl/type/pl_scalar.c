@@ -63,7 +63,7 @@ static status_t udt_check_varlen_type_size(typmode_t *cmode, variant_t *pvar)
     return OG_SUCCESS;
 }
 
-static status_t udt_adjust_scalar_by_type(sql_verifier_t *verf, typmode_t *cmode, expr_tree_t *tree, variant_t *pvar)
+static status_t udt_adjust_scalar_by_type(typmode_t *cmode, variant_t *pvar)
 {
     status_t status = OG_SUCCESS;
     switch (cmode->datatype) {
@@ -114,7 +114,7 @@ static status_t udt_adjust_scalar_by_type(sql_verifier_t *verf, typmode_t *cmode
             return OG_SUCCESS;
 
         default:
-            OG_SRC_THROW_ERROR(TREE_LOC(tree), ERR_VALUE_ERROR, "the data type of column is not supported");
+            OG_THROW_ERROR(ERR_VALUE_ERROR, "the data type of column is not supported");
             return OG_ERROR;
     }
     return status;
@@ -150,7 +150,7 @@ status_t udt_verify_scalar(sql_verifier_t *verf, typmode_t *cmode, expr_tree_t *
         text_t text_bak = pvar->v_text;
         OG_RETURN_IFERR(sql_copy_text(verf->stmt->context, &text_bak, &pvar->v_text));
     }
-    status = udt_adjust_scalar_by_type(verf, cmode, tree, pvar);
+    status = udt_adjust_scalar_by_type(cmode, pvar);
     if (status != OG_SUCCESS) {
         cm_set_error_loc(TREE_LOC(tree));
     }
@@ -418,7 +418,7 @@ status_t udt_copy_scalar_element(sql_stmt_t *stmt, typmode_t dst_typmode, varian
     if (result->type == OG_TYPE_CHAR) {
         OG_RETURN_IFERR(udt_scalar_copy_char(stmt, dst_typmode, right, result));
     } else {
-        OG_RETURN_IFERR(udt_check_varlen_type_size(&dst_typmode, right));
+        OG_RETURN_IFERR(udt_adjust_scalar_by_type(&dst_typmode, right));
         sql_keep_stack_variant(stmt, right);
         var_copy(right, result);
     }

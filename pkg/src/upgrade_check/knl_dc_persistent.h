@@ -110,7 +110,7 @@ typedef struct st_rd_refresh_dc {
     uint32 parent_part_id;
 } rd_refresh_dc_t;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef struct st_rd_distribute_rule {
     uint32 op_type;
     uint32 uid;

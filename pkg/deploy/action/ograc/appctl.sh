@@ -368,6 +368,14 @@ function safety_upgrade_backup()
         return 1
     fi
 
+    deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
+    if [[ ${deploy_mode} == "dss" ]]; then
+        rm -rf /mnt/dbdata/local/ograc/tmp/data/data
+        mkdir -p /mnt/dbdata/local/ograc/tmp/data/data
+        chmod 750 /mnt/dbdata/local/ograc/tmp/data/data
+        chown ${ograc_user} /mnt/dbdata/local/ograc/tmp/data/data
+    fi
+
     echo "create bak dir for ograc : ${backup_dir}/ograc"
     mkdir -m 755 ${backup_dir}/ograc
 
@@ -399,7 +407,7 @@ function safety_upgrade_backup()
 
 function copy_ograc_dbstor_cfg()
 {
-    if [[ x"${deploy_mode}" == x"file" ]]; then
+    if [[ x"${deploy_mode}" == x"file" ]] || [[ ${deploy_mode} == "dss" ]]; then
         return 0
     fi
     echo "update the ograc local config files for dbstor in ${ograc_local}"
@@ -446,7 +454,8 @@ function update_ograc_server()
     cp -arf ${ograc_pkg_file}/add-ons ${ograc_pkg_file}/admin ${ograc_pkg_file}/bin \
        ${ograc_pkg_file}/cfg ${ograc_pkg_file}/lib ${ograc_pkg_file}/package.xml ${ograc_home}/server
 
-    if [[ x"${deploy_mode}" == x"file" ]]; then
+    rm -rf ${ograc_home}/server/bin/cms
+    if [[ x"${deploy_mode}" == x"file" ]] || [[ x"${deploy_mode}" == x"dss" ]]; then
         return 0
     fi
 
@@ -462,6 +471,7 @@ function update_ograc_server()
         echo "link_type is rdma_1823"
     fi
     cp -arf ${ograc_home}/server/add-ons/kmc_shared/lib* ${ograc_home}/server/add-ons/
+    rm -rf ${ograc_home}/server/bin/cms
     return 0
 }
 
@@ -538,6 +548,7 @@ function safety_rollback()
     fi
     rm -rf ${ograc_local}/*
     cp -arf ${backup_dir}/ograc/ograc_local/* ${ograc_local}
+    rm -rf ${ograc_home}/server/bin/cms
 
     echo "check that all files are rolled back to ensure that no data is lost for safety rollback"
     check_rollback_files ${backup_dir}/ograc/ograc_home_files_list.txt ${backup_dir}/ograc/ograc_home ${ograc_home}

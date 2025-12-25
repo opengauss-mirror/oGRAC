@@ -16,7 +16,7 @@ else
 fi
 CI_PACKAGE_PATH=${OGDB_CODE_PATH}/package_out
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="oGRAC 1.0.0"
+BUILD_PACK_NAME="openGauss_oGRAC"
 SYMBOL_TARGET_NAME="ograc_connector_symbol"
 BUILD_TARGET_PATH=${CI_PACKAGE_PATH}/${BUILD_TARGET_NAME}
 BUILD_SYMBOL_PATH=${CI_PACKAGE_PATH}/${SYMBOL_TARGET_NAME}
@@ -240,7 +240,7 @@ function prepare() {
 
 
 function buildCtOmPackage() {
-  sh ${CURRENT_PATH}/build_ct_om.sh
+  sh ${CURRENT_PATH}/build_ograc_om.sh
   sh ${CURRENT_PATH}/rpm_build_ct_om.sh
   if [ $? -ne 0 ]; then
       echo "build og_om fail"

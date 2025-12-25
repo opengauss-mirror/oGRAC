@@ -305,6 +305,7 @@ typedef struct st_knl_attr {
     bool32 drc_in_reformer_mode;
     uint32 res_recycle_ratio;
     uint32 create_index_parallelism;
+    bool32 enable_dss;
 } knl_attr_t;
 
 typedef struct st_sys_name_context {  // for system name
@@ -347,7 +348,7 @@ typedef struct st_knl_instance {
     database_t db;
     atomic_t min_scn;  // min query scn of all active sessions
     atomic_t local_min_scn; // min query scn of all local node sessions
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     atomic_t min_gts_scn; // min GTS query scn of all active sessions in current CN
     bool32 is_coordinator;
 #endif
@@ -393,7 +394,7 @@ typedef struct st_knl_instance {
 
     knl_dynview_t *global_dyn_views;
     uint32 global_dyn_view_count;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     knl_dynview_t *shd_dyn_views;
     uint32 shd_dyn_view_count;
 #endif

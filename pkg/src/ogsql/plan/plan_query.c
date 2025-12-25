@@ -242,7 +242,9 @@ static status_t sql_generate_merge_group_items(plan_assist_t *plan_ass, group_pl
     for (uint32 i = 0; i < plan_ass->query->aggrs->count; ++i) {
         expr_node_t *aggr_node = (expr_node_t *)cm_galist_get(plan_ass->query->aggrs, i);
         const sql_func_t *func = sql_get_func(&aggr_node->value.v_func);
-        OG_CONTINUE_IFTRUE(func->aggr_type != AGGR_TYPE_GROUP_CONCAT || aggr_node->sort_items == NULL);
+        if (!chk_has_aggr_sort(func->builtin_func_id, aggr_node->sort_items)) {
+            continue;
+        }
         OG_RETURN_IFERR(sql_create_aggr_sort_items(plan_ass->stmt, aggr_node, aggr_cid, group_p->sort_items));
         group_p->aggrs_sorts += aggr_node->sort_items->count;
     }
@@ -1012,7 +1014,7 @@ static status_t sql_create_rowid_rs_columns(sql_stmt_t *stmt, sql_query_t *query
 
 static status_t check_expr_contains_rownum_or_const_only(visit_assist_t *va, expr_node_t **node)
 {
-    if (va->result0 == OG_TRUE && !NODE_IS_RES_ROWNUM(*node) && !NODE_IS_CONST(*node)) {
+    if (va->result0 == OG_TRUE && !NODE_IS_RES_ROWNUM(*node) && !sql_is_const_expr_node(*node)) {
         va->result0 = OG_FALSE;
     }
     return OG_SUCCESS;
@@ -1029,6 +1031,7 @@ static bool32 check_siblings_order_can_eliminated(sql_stmt_t *stmt, sql_query_t 
         if (rs->type == RS_COL_COLUMN) {
             break;
         }
+        visit_as.excl_flags |= VA_EXCL_PROC | VA_EXCL_WIN_SORT | VA_EXCL_FUNC;
         visit_as.result0 = OG_TRUE;
         OG_BREAK_IF_ERROR(visit_expr_tree(&visit_as, rs->expr, check_expr_contains_rownum_or_const_only));
         if (visit_as.result0 == OG_FALSE) {
@@ -1221,6 +1224,10 @@ static status_t sql_clone_join_root_table(void *ogx, sql_stmt_t *stmt, sql_join_
         table = (sql_table_t *)sql_array_get(&src_join_root->tables, i);
         OG_RETURN_IFERR(alloc_mem_func(ogx, sizeof(sql_table_t), (void **)&new_table));
         *new_table = *table;
+        if (table->scan_part_info != NULL) {
+            OG_RETURN_IFERR(alloc_mem_func(ogx, sizeof(scan_part_info_t), (void **)&new_table->scan_part_info));
+            *new_table->scan_part_info = *table->scan_part_info;
+        }
         OG_RETURN_IFERR(sql_array_set(*tables, new_table->id, new_table));
     }
     return OG_SUCCESS;
@@ -1251,7 +1258,9 @@ status_t sql_clone_join_root(sql_stmt_t *stmt, void *ogx, sql_join_node_t *src_j
     (*dst_root)->type = src_join_root->type;
     (*dst_root)->oper = src_join_root->oper;
     (*dst_root)->cost = src_join_root->cost;
+    (*dst_root)->outer_rels = src_join_root->outer_rels;
     (*dst_root)->is_cartesian_join = src_join_root->is_cartesian_join;
+    (*dst_root)->parent = src_join_root->parent;
 
     if (tables == NULL) {
         OG_RETURN_IFERR(sql_clone_join_root_table(ogx, stmt, src_join_root, &tables, alloc_mem_func));

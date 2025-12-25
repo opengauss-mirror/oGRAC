@@ -168,6 +168,7 @@ status_t lex_expected_fetch_uint64(lex_t *lex, uint64 *size);
 status_t lex_expected_fetch_dec(lex_t *lex, dec8_t *dec);
 status_t lex_expected_fetch_seqval(lex_t *lex, int64 *val);
 status_t lex_expected_fetch_size(lex_t *lex, int64 *size, int64 min_size, int64 max_size);
+status_t lex_parse_and_valid_pool_size(lex_t *lex, int64 *size, int64 min_size, int64 max_size);
 status_t lex_check_asciichar(text_t *text, source_location_t *loc, char *c, bool32 allow_empty_char);
 status_t lex_expected_fetch_asciichar(lex_t *lex, char *c, bool32 allow_empty_char);
 status_t lex_expected_fetch_str(lex_t *lex, char *str, uint32 str_max_length, char *key_word_info);
@@ -373,6 +374,26 @@ static inline void lex_remove_all_brackets(sql_text_t *text)
         text->loc.column++;
         lex_trim(text);
     }
+}
+
+static inline bool32 is_slct_with_word(word_t *word)
+{
+    return word->id == KEY_WORD_SELECT || word->id == KEY_WORD_WITH;
+}
+
+static inline bool32 is_json_table_word(word_t *word)
+{
+    return word->id == KEY_WORD_JSON_TABLE || word->id == KEY_WORD_JSONB_TABLE;
+}
+
+static inline bool32 is_table_word(word_t *word)
+{
+    return word->id == KEY_WORD_TABLE;
+}
+
+static inline bool32 is_eof_word(word_t *word)
+{
+    return word->type == WORD_TYPE_EOF;
 }
 
 static inline bool32 is_variant(word_t *word)

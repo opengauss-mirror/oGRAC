@@ -67,7 +67,7 @@ static const char * const SQL_AUDIT_ACTION_XA_START = "XA_START";
 static const char * const SQL_AUDIT_ACTION_XA_END = "XA_END";
 static const char * const SQL_AUDIT_ACTION_XA_STATUS = "XA_STATUS";
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static const char * const SQL_AUDIT_ACTION_GTS = "GTS";
 static const char * const SQL_AUDIT_ACTION_SEQUENCE = "SEQUENCE";
 #endif

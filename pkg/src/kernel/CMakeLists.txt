@@ -50,5 +50,5 @@ set(KERNEL_TOTAL_SRC ${KERNEL_BAK_SRC} ${KERNEL_BUF_SRC} ${KERNEL_CATA_SRC} ${KE
 
 link_directories(${OGRACDB_LIB})
 
-add_library(zekernel STATIC ${KERNEL_TOTAL_SRC})
-target_link_libraries(zekernel PRIVATE zefdsa)
+add_library(ogkernel STATIC ${KERNEL_TOTAL_SRC})
+target_link_libraries(ogkernel PRIVATE ogfdsa)

@@ -69,7 +69,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 cc_library (
-    name = "zecluster",
+    name = "ogcluster",
     srcs = [
         "dtc_backup.c",
         "dtc_btree.c",
@@ -152,9 +152,9 @@ cc_library (
         "-fprofile-arcs",
         "-ftest-coverage",] + COMMON_LINKOPTS,
     deps = [
-        "//pkg/src/rc:zerc",
-        "//pkg/src/tms:zetms",
-        "//pkg/src/fdsa:zefdsa",
+        "//pkg/src/rc:ogrc",
+        "//pkg/src/tms:ogtms",
+        "//pkg/src/fdsa:ogfdsa",
     ],
 )
 

@@ -165,7 +165,7 @@ typedef struct st_ctx_accum {
     int64 proc_oid;            // Program identifier
     uint16 proc_line;          // program line number
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     atomic_t network_time; // cn to dn network transmission time consuming
     atomic_t shd_sql_executions;
     date_t shd_sql_begin_time_m;
@@ -287,7 +287,7 @@ typedef struct st_sql_stat {
     uint64 res_sess_queue_time;
     uint64 res_sess_queues;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     uint64 dis_exec_selects_single_shard;
     uint64 dis_exec_select_time_single_shard;
     uint64 dis_exec_updates_single_shard;
@@ -314,6 +314,7 @@ typedef struct st_sql_stat {
 typedef struct st_cbo_cost {
     int64 card; // cardinality
     double cost;
+    double startup_cost;
 } cbo_cost_t;
 
 static inline char *get_sys_stat_name(sys_stat_t item)

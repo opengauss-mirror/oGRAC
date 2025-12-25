@@ -13,7 +13,7 @@ COMMON_LOCAL_DEFINES = GLOBAL_LOCAL_DEFINES + []
 COMMON_COPTS = GLOBAL_COPTS + []
 
 cc_library (
-    name = "zekernel",
+    name = "ogkernel",
     srcs = [
         "backup/bak_build.c",
         "backup/bak_common.c",
@@ -281,7 +281,7 @@ cc_library (
     ] + COMMON_COPTS,
     linkopts = COMMON_LINKOPTS,
     deps = [
-        "//pkg/src/fdsa:zefdsa",
+        "//pkg/src/fdsa:ogfdsa",
     ],
 )
 

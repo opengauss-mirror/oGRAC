@@ -25,9 +25,9 @@
 #ifndef __CBB_DISKLOCK_H__
 #define __CBB_DISKLOCK_H__
 
-#define CM_MAX_DISKLOCK_COUNT (16)
+#define CM_MAX_DISKLOCK_COUNT (1000)
 #define CM_MAX_PATH_SIZE (256)
-#define CM_MAX_INST_COUNT (15)
+#define CM_MAX_INST_COUNT (64)
 
 #define CM_DL_ERR_IO (1)
 #define CM_DL_ERR_OCCUPIED (2)
@@ -108,6 +108,26 @@ int cm_dl_clean(unsigned int lock_id, unsigned long long inst_id);
  * @return != 0 fail
  */
 int cm_dl_getowner(unsigned int lock_id, unsigned long long *inst_id);
+
+/**
+ * Get the lock's data.
+ * @param [in] lock_id: lock_id
+ * @param [out] data: owner's lock data buffer. If the lock does not have an owner, it will be padded with 0.
+ * @param [in] size: size of owner's lock data buffer.
+ * @return 0 success
+ * @return != 0 fail
+ */
+int cm_dl_get_data(unsigned int lock_id, char* data, uint32 size);
+
+/**
+ * Set the lock's data.
+ * @param [in] lock_id: lock_id
+ * @param [in] data: lock data buffer to set.
+ * @param [in] size: size of buffer.
+ * @return 0 success
+ * @return != 0 fail
+ */
+int cm_dl_set_data(unsigned int lock_id, char* data, uint32 size);
 
 /**
  * Get the lock's time.

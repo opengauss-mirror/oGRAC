@@ -256,7 +256,7 @@ static inline bool32 is_same_local_lock(char *res_id, void *res)
     drid_t *lock_id = (drid_t *)res_id;
 
     if (local_lock->res_id.key1 == lock_id->key1 && local_lock->res_id.key2 == lock_id->key2 &&
-        local_lock->res_id.key3 == lock_id->key3 && local_lock->res_id.key4 == lock_id->key4) {  // todo
+        local_lock->res_id.key3 == lock_id->key3 && local_lock->res_id.key4 == lock_id->key4) {
         return OG_TRUE;
     }
     return OG_FALSE;
@@ -1990,7 +1990,7 @@ static void drc_revert_converting_page_abort_owner(knl_session_t *session, drc_b
             buf_res->claimed_owner = OG_INVALID_ID8;
         }
         if (ctrl->is_edp) {
-            drc_bitmap64_set(&buf_res->edp_map, DRC_SELF_INST_ID);  // TODO: 4 node
+            drc_bitmap64_set(&buf_res->edp_map, DRC_SELF_INST_ID);
             buf_res->latest_edp = DRC_SELF_INST_ID;
             buf_res->latest_edp_lsn = ctrl->page->lsn;
         }
@@ -2113,7 +2113,6 @@ static void drc_clean_page_owner_by_part(uint8 inst_id, drc_list_t *part_list, k
                          buf_res->page_id.file, buf_res->page_id.page, inst_id, buf_res->claimed_owner, buf_res->lsn,
                          buf_res->convert_q.count, buf_res->converting.req_info.inst_id, buf_res->edp_map,
                          buf_res->readonly_copies);
-        // TODO: 4 node
         drc_clean_convert_q(inst_id, &buf_res->convert_q);
         drc_clean_page_converting(inst_id, buf_res, session);
         drc_bitmap64_clear(&buf_res->edp_map, inst_id);
@@ -3138,11 +3137,6 @@ void drc_set_local_lock_stat(drid_t *lock_id, bool8 is_locked, bool8 is_owner)
 
     lock_res->is_locked = is_locked;
     lock_res->is_owner = is_owner;
-    if (!lock_res->is_owner) {
-        // todo: recyle local resource
-        // drc_res_map_remove(bucket, (char*)lock_id, DRC_RES_LOCAL_LOCK_TYPE);
-        // drc_release_local_lock_res(lock_res);
-    }
     return;
 }
 
@@ -3218,11 +3212,6 @@ void drc_set_local_lock_statx(drc_local_lock_res_t *lock_res, bool8 is_locked, b
 {
     lock_res->is_locked = is_locked;
     lock_res->is_owner = is_owner;
-    if (!lock_res->is_owner) {
-        // todo: recycle local resource
-        // drc_res_map_remove(bucket, (char*)lock_id, DRC_RES_LOCAL_LOCK_TYPE);
-        // drc_release_local_lock_res(lock_res);
-    }
 }
 
 void drc_get_local_latch_statx(drc_local_lock_res_t *lock_res, drc_local_latch **latch_stat)
@@ -6329,7 +6318,6 @@ bool32 drc_page_need_recover(knl_session_t *session, page_id_t *pagid)
     uint8 id;
     drc_get_page_owner_id_for_rcy(session, *pagid, &id);
     if (id != OG_INVALID_ID8) {
-        // TODO: this is only for 2 nodes cluster, need change
         CM_ASSERT(id == DRC_SELF_INST_ID);
         return OG_FALSE;
     }

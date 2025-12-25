@@ -525,19 +525,19 @@ static status_t jsonb_calculate_max_size(json_assist_write_t *json_ass_w, json_a
 
     uint32 entry_count = janalys->array_elems_count + janalys->object_elems_count * JSONB_OBJ_ENTRY_COUNT_TIMES;
 
-    if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_1) * entry_count - janalys->last_elem_len) <=
+    if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_1) * entry_count) <=
         JBE_OFFSET_1B_MAX_LEN) {
         json_ass_w->entry_bytes = JSONB_ENTRY_BYTES_1;
         json_ass_w->max_size = baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_1) * entry_count;
-    } else if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_2) * entry_count - janalys->last_elem_len) <=
+    } else if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_2) * entry_count) <=
         JBE_OFFSET_2B_MAX_LEN) {
         json_ass_w->entry_bytes = JSONB_ENTRY_BYTES_2;
         json_ass_w->max_size = baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_2) * entry_count;
-    } else if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_3) * entry_count - janalys->last_elem_len) <=
+    } else if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_3) * entry_count) <=
         JBE_OFFSET_3B_MAX_LEN) {
         json_ass_w->entry_bytes = JSONB_ENTRY_BYTES_3;
         json_ass_w->max_size = baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_3) * entry_count;
-    } else if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_4) * entry_count - janalys->last_elem_len) <=
+    } else if ((baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_4) * entry_count) <=
         JBE_OFFSET_4B_MAX_LEN) {
         json_ass_w->entry_bytes = JSONB_ENTRY_BYTES_4;
         json_ass_w->max_size = baseLen + JSONB_GET_ENTRY_LEN(JSONB_ENTRY_BYTES_4) * entry_count;

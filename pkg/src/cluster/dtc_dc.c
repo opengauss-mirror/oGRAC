@@ -976,7 +976,7 @@ status_t dtc_ddl_enabled(knl_handle_t knl_session, bool32 forbid_in_rollback)
         return OG_SUCCESS;
     }
 
-    if (!DB_CLUSTER_NO_CMS && RC_REFORM_IN_PROGRESS) {
+    if (!DB_CLUSTER_NO_CMS && (g_rc_ctx == NULL || RC_REFORM_IN_PROGRESS)) {
         OG_LOG_RUN_WAR("reform is preparing, refuse to ddl operation");
         OG_THROW_ERROR(ERR_CLUSTER_DDL_DISABLED, "reform is preparing");
         return OG_ERROR;

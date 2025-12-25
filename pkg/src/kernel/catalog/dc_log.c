@@ -1462,7 +1462,7 @@ void print_drop_tenant(log_entry_t *log)
     printf("drop tenant tid:%u\n", rd->tid);
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t rd_create_rule_entry(knl_session_t *session, dc_user_t *user, text_t *name, bool32 *is_exists)
 {
     knl_cursor_t *cursor = NULL;

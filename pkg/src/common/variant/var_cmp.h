@@ -49,10 +49,19 @@ static inline cmp_rule_t *get_cmp_rule(og_type_t lt, og_type_t rt)
 
 static inline og_type_t get_cmp_datatype(og_type_t lt, og_type_t rt)
 {
-    if (lt == OG_TYPE_UNKNOWN || rt == OG_TYPE_UNKNOWN) {
+    if (lt <= OG_TYPE_BASE || lt >= OG_TYPE_OPERAND_CEIL ||
+        rt <= OG_TYPE_BASE || rt >= OG_TYPE_OPERAND_CEIL) {
         return INVALID_CMP_DATATYPE;
     }
     return get_cmp_rule(lt, rt)->cmp_type;
+}
+
+static inline bool32 type_is_indexable_compatible(og_type_t lt, og_type_t rt)
+{
+    if (lt == OG_TYPE_UNKNOWN || rt == OG_TYPE_UNKNOWN) {
+        return OG_TRUE;
+    }
+    return OG_CMP_RULE(lt, rt)->compatible;
 }
 
 status_t  var_like(variant_t *left,

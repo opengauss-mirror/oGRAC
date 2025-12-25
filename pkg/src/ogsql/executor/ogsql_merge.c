@@ -370,7 +370,7 @@ static status_t sql_execute_merge_into_hash_join_plan(sql_stmt_t *stmt, sql_curs
 
     OG_RETURN_IFERR(sql_mtrl_merge_into_table(stmt, cursor, hash_seg, &hash_table, key_types));
 
-    cursor->last_table = using_table->plan_id;
+    cursor->last_table = MAX(using_table->plan_id, merge_p->merge_into_table->plan_id);
     OG_RETURN_IFERR(sql_execute_for_merge(stmt, cursor, merge_p->using_table_scan_p));
     OG_RETURN_IFERR(sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&key_buf));
 
@@ -431,8 +431,11 @@ static inline status_t sql_open_merge_cursor(sql_stmt_t *stmt, sql_cursor_t *sql
     OG_RETURN_IFERR(sql_alloc_table_cursors(sql_cursor, ogx->query->tables.count));
 
     sql_table_t *merge_to_table = (sql_table_t *)sql_array_get(&ogx->query->tables, 0);
-    OG_RETURN_IFERR(sql_open_cursor_for_update(stmt, merge_to_table, &ogx->query->ssa, sql_cursor,
-        CURSOR_ACTION_UPDATE));
+    // merge into has two type cursor, update and insert
+    // this cursor is used to merge update table, not insert
+    // a new insert type cursor is allocated can be seen @sql_execute_merge_insert
+    knl_cursor_action_t cursor_act = (ogx->update_ctx != NULL ? CURSOR_ACTION_UPDATE : CURSOR_ACTION_SELECT);
+    OG_RETURN_IFERR(sql_open_cursor_for_update(stmt, merge_to_table, &ogx->query->ssa, sql_cursor, cursor_act));
     OG_RETURN_IFERR(sql_open_merge_cursor_for_using(stmt, sql_cursor, ogx));
 
     sql_cursor->table_count = ogx->query->tables.count;
@@ -473,7 +476,7 @@ static status_t sql_execute_merge_core(sql_stmt_t *stmt)
         // new update_info need push memory from stack if execute update statement in trigger,
         // and save the old update_info address.
         knl_update_info_t update_info;
-        if (stmt->is_sub_stmt && (stmt->pl_exec != NULL && ((pl_executor_t *)stmt->pl_exec)->trig_exec != NULL)) {
+        if (stmt->is_sub_stmt && stmt->session->if_in_triggers) {
             uint16 col_cnt = KNL_SESSION(stmt)->kernel->attr.max_column_count;
             OG_BREAK_IF_ERROR(sql_push(stmt, col_cnt * sizeof(uint16), (void **)&update_info.columns));
             OG_BREAK_IF_ERROR(sql_push(stmt, col_cnt * sizeof(uint16), (void **)&update_info.offsets));

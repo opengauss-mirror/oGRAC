@@ -149,7 +149,7 @@ typedef struct st_knl_stat {
     uint64 cr_pool_capacity;
     uint64 cr_pool_used;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     uint64 dis_commits_single_shard;
     uint64 dis_rollbacks_single_shard;
     uint64 dis_commits_multi_shard;
@@ -430,6 +430,7 @@ typedef struct st_knl_session {
     vm_pool_t *temp_pool;
     uint32 temp_table_count;
     uint32 temp_table_capacity;
+    spinlock_t temp_cache_lock;
     knl_temp_cache_t *temp_table_cache;  // temp table is created on mtrl segment, refer to OG_MAX_MATERIALS
     mtrl_context_t *temp_mtrl;
     knl_temp_dc_t *temp_dc;

@@ -45,6 +45,10 @@
 #include "cms_cmd_upgrade.h"
 #include "cms_stat.h"
 #include "cm_dbstor.h"
+#include "cms_cbb.h"
+#include "cbb_disklock.h"
+
+#define CMS_DSS_MASTER_LOCK_POS (1073741824)
 
 void cms_date2str(date_t date, char* str, uint32 max_size);
 
@@ -245,6 +249,54 @@ bool32 cms_try_be_new_master(void)
     return OG_TRUE;
 }
 
+static status_t cms_get_dss_current_reformer(uint8* node_id)
+{
+    uint64 inst_id = OG_INVALID_ID64;
+    OG_RETURN_IFERR(cms_disk_lock_get_inst(&g_cms_inst->dss_master_lock, &inst_id));
+    if (inst_id == OG_INVALID_ID64) {
+        *node_id = OG_INVALID_ID8;
+    } else {
+        *node_id = (uint16)inst_id;
+    }
+    return OG_SUCCESS;
+}
+
+status_t cms_release_dss_master(uint16 offline_node)
+{
+    if (g_cms_param->gcc_type != CMS_DEV_TYPE_SD && g_cms_param->gcc_type != CMS_DEV_TYPE_LUN) {
+        return OG_SUCCESS;
+    }
+    uint8 dss_master_id = OG_INVALID_ID8;
+    if (cms_get_dss_current_reformer(&dss_master_id) != OG_SUCCESS) {
+        CMS_LOG_ERR("get dss current master failed. lock_id: %u", g_cms_inst->dss_master_lock.lock_id);
+        return OG_ERROR;
+    }
+    if (offline_node != OG_INVALID_ID8 && dss_master_id != offline_node) {
+        CMS_LOG_ERR("dss current master no need to release. dss_master_id: %u, offline_node: %u",
+                    dss_master_id, offline_node);
+        return OG_SUCCESS;
+    }
+    CMS_LOG_INF("dss master OFFLINE, start release dss master lock, dss_master_id: %u, offline_node: %u",
+                dss_master_id, offline_node);
+    int32 ret;
+    int32 retry_times = 0;
+    do {
+        retry_times++;
+        ret = cm_dl_clean(g_cms_inst->dss_master_lock.lock_id, dss_master_id);
+        if (ret == OG_SUCCESS) {
+            CMS_LOG_INF("release dss master lock success. offline_node: %u, released_node: %u",
+                        offline_node, dss_master_id);
+            return OG_SUCCESS;
+        }
+        CMS_LOG_ERR("release dss master lock failed. lock_id: %u, ret: %d, retry_times: %d",
+                    g_cms_inst->dss_master_lock.lock_id, ret, retry_times);
+        cm_sleep(CMS_RETRY_SLEEP_TIME);
+    } while (retry_times <= CMS_DSS_MASTER_RETRY_TIMES);
+    CMS_LOG_ERR("release dss master lock failed. dss_master_id: %u, offline_node: %u",
+                dss_master_id, offline_node);
+    return OG_ERROR;
+}
+
 status_t cms_init_vote_info(void)
 {
     bool32 all_restart = OG_FALSE;
@@ -372,7 +424,7 @@ status_t cms_vote_file_init(void)
             &g_cms_inst->vote_file_fd) != OG_SUCCESS) {
             return OG_ERROR;
         }
-    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         OG_RETURN_IFERR(cm_open_disk(g_cms_param->gcc_home, &g_cms_inst->vote_file_fd));
     } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_DBS) {
         char file_path[CMS_FILE_NAME_BUFFER_SIZE] = { 0 };
@@ -474,9 +526,14 @@ status_t cms_init_stat(void)
 
     // init master lock
     OG_RETURN_IFERR(cms_disk_lock_init(g_cms_param->gcc_type, g_cms_param->gcc_home, "_master_lock",
-        CMS_MASTER_LOCK_POS, CMS_RLOCK_MASTER_LOCK_START, CMS_RLOCK_MASTER_LOCK_LEN,
-        g_cms_param->node_id, &g_cms_inst->master_lock, NULL, 0, OG_TRUE));
-    // init cluster stat head lock
+                                       CMS_MASTER_LOCK_POS, CMS_RLOCK_MASTER_LOCK_START, CMS_RLOCK_MASTER_LOCK_LEN,
+                                       g_cms_param->node_id, &g_cms_inst->master_lock, NULL, 0, OG_TRUE));
+    // init dss master lock
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_LUN || g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+        OG_RETURN_IFERR(cms_disk_lock_init(g_cms_param->gcc_type, g_cms_param->gcc_home, "_dss_master_lock",
+                                           CMS_DSS_MASTER_LOCK_POS, 0, 0, g_cms_param->node_id,
+                                           &g_cms_inst->dss_master_lock, NULL, 0, OG_FALSE));
+    }    // init cluster stat head lock
     OG_RETURN_IFERR(cms_disk_lock_init(g_cms_param->gcc_type, g_cms_param->gcc_home, "", CMS_STAT_LOCK_POS,
         CMS_RLOCK_STAT_LOCK_START, CMS_RLOCK_STAT_LOCK_LEN, g_cms_param->node_id, &g_cms_inst->stat_lock,
         NULL, CMS_DLOCK_THREAD, OG_FALSE));
@@ -538,7 +595,6 @@ status_t inc_stat_version(void)
 
 status_t cms_get_stat_version(uint64* version)
 {
-    __TODO__; // refresh stat's version aysnc
     *version = g_stat->head.stat_ver;
 
     return OG_SUCCESS;
@@ -571,7 +627,7 @@ static bool32 cm_check_shell_special_character(const char* str)
 
 status_t cms_exec_res_script(const char* script, const char* arg, uint32 timeout_ms, status_t* result)
 {
-    CMS_LOG_INF("begin cms exec res script.");
+    CMS_LOG_TIMER("begin cms exec res script.");
     char cmd[CMS_CMD_BUFFER_SIZE] = {0};
     *result = OG_ERROR;
     errno_t ret = EOK;
@@ -612,19 +668,20 @@ status_t cms_exec_res_script(const char* script, const char* arg, uint32 timeout
     }
 
     cmd_out[size] = 0;
-    CMS_LOG_INF("end cms exec res script.");
-    if (strstr(cmd_out, "RES_SUCCESS") != NULL) {
-        *result = OG_SUCCESS;
-        return OG_SUCCESS;
-    }
+    CMS_LOG_TIMER("end cms exec res script.");
 
     if (strstr(cmd_out, CMS_TIMEOUT_ERROR_NUMBER) != NULL) {
         *result = OG_TIMEDOUT;
         return OG_SUCCESS;
     }
 
-    if (strstr(cmd_out, "RES_MULTI") != NULL) {
+    if (strstr(cmd_out, "RES_EAGAIN") != NULL) {
         *result = OG_EAGAIN;
+        return OG_SUCCESS;
+    }
+
+    if (strstr(cmd_out, "RES_SUCCESS") != NULL) {
+        *result = OG_SUCCESS;
         return OG_SUCCESS;
     }
 
@@ -943,6 +1000,42 @@ status_t cms_check_res_running(uint32 res_id)
     return OG_SUCCESS;
 }
 
+status_t cms_check_dss_stat(cms_res_t res, cms_res_stat_t stat)
+{
+    status_t dss_status = OG_SUCCESS;
+    status_t ret;
+
+    ret = cms_res_check(res.res_id, &dss_status);
+if (ret != OG_SUCCESS) {
+        CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                          "check dss failed, res_id=%u, script=%s, ret=%d, dss_status=%d",
+                          res.res_id, res.script, ret, dss_status);
+        return OG_ERROR;
+    }
+
+    if (dss_status == OG_ERROR) {
+        CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                          "dss process not exit, res_id=%u, script=%s, ret=%d, dss_status=%d",
+                          res.res_id, res.script, ret, dss_status);
+        cms_res_detect_offline(res.res_id, NULL);
+        return OG_ERROR;
+    }
+
+    if (dss_status == OG_TIMEDOUT) {
+        CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                          "check dss stat timeout, res_id=%u, script=%s", res.res_id, res.script);
+        return OG_ERROR;
+    }
+
+    if (dss_status == OG_EAGAIN) {
+        CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                          "dss work stat is abnormal, res_id=%u, script=%s", res.res_id, res.script);
+        return OG_ERROR;
+    }
+    cms_res_hb(res.res_id);
+    return OG_SUCCESS;
+}
+
 status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
 {
     status_t ret;
@@ -953,6 +1046,25 @@ status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
     OG_RETURN_IFERR(cms_get_res_by_id(res_id, &res));
 
     CMS_LOG_INF("begin start res, res_id=%u", res_id);
+    if ((g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN)
+        && cm_strcmpi(res.name, CMS_RES_TYPE_DB) == 0) {
+        CMS_LOG_INF("cms check dss stat before start db, res_id=%u", res_id);
+        cms_res_t dss_res;
+        uint32 dss_res_id;
+        cms_res_stat_t dss_res_stat;
+        // find dss resource
+        if (cms_get_res_id_by_type(CMS_RES_TYPE_DSS, &dss_res_id) != OG_SUCCESS) {
+            CMS_LOG_ERR("cms get res id failed, res_type %s", CMS_RES_TYPE_DSS);
+            return OG_ERROR;
+        }
+        
+        OG_RETURN_IFERR(cms_get_res_by_id(dss_res_id, &dss_res));
+        get_cur_res_stat(dss_res_id, &dss_res_stat);
+        if (cms_check_dss_stat(dss_res, dss_res_stat) != OG_SUCCESS) {
+            CMS_LOG_ERR("DSS status is abnormal, unable to start oGRac.");
+            return OG_ERROR;
+        }
+    }
 
     CMS_LOG_INF("begin to get start lock, res_id=%u", res_id);
     if (cms_get_res_start_lock(res_id) != OG_SUCCESS) {
@@ -967,7 +1079,9 @@ status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
         return OG_SUCCESS;
     }
 
-    if (wait_for_cluster_reform_done(res_id) != OG_SUCCESS) {
+    if (cm_strcmpi(res.name, CMS_RES_TYPE_DSS) == 0) {
+        CMS_LOG_INF("CMS does not need to wait for reform when starting DSS");
+    } else if (wait_for_cluster_reform_done(res_id) != OG_SUCCESS) {
         CMS_LOG_ERR("cms wait cluster reform done failed");
         cms_release_res_start_lock(res_id);
         return OG_ERROR;
@@ -1060,17 +1174,7 @@ status_t cms_res_check(uint32 res_id, status_t *res_status)
     cms_res_t res;
 
     OG_RETURN_IFERR(cms_get_res_by_id(res_id, &res));
-    cms_res_stat_t* res_stat = CMS_CUR_RES_STAT(res_id);
-
-    if (cm_atomic32_inc(&res_stat->checking) != 1) {
-        cm_atomic32_dec(&res_stat->checking);
-        CMS_LOG_WAR("resource is being checked, res_id=%u, checking=%d", res_id, cm_atomic32_get(&res_stat->checking));
-        return OG_SUCCESS;
-    }
-
     ret = cms_exec_res_script(res.script, "-check", res.check_timeout, res_status);
-    cm_atomic32_dec(&res_stat->checking);
-
     if (ret == OG_SUCCESS) {
         if (*res_status == OG_SUCCESS) {
             CMS_LOG_TIMER("exec check script succeed, script=%s, res_id=%u", res.script, res_id);
@@ -1187,6 +1291,12 @@ status_t cms_res_detect_online(uint32 res_id, cms_res_stat_t *old_stat)
         cm_thread_unlock(&g_res_session[res_id].lock);
         return OG_ERROR;
     }
+    res_stat->last_stat_change = cm_now();
+    res_stat->work_stat = 1;
+    res_stat->hb_time = cm_now();
+    res_stat->session_id = res_id;
+    res_stat->target_stat = CMS_RES_ONLINE;
+    res_stat->inst_id = g_cms_param->node_id;
     cms_stat_set(res_stat, CMS_RES_ONLINE, &is_changed);
     if (!(is_changed)) {
         cm_thread_unlock(&g_res_session[res_id].lock);
@@ -1275,14 +1385,18 @@ status_t cms_res_detect_offline(uint32 res_id, cms_res_stat_t *old_stat)
         return OG_SUCCESS;
     }
 
-    try_cms_kick_node(g_cms_param->node_id, res_id, IOFENCE_BY_DETECT_OFFLINE);
-
+    if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) != 0) {
+        try_cms_kick_node(g_cms_param->node_id, res_id, IOFENCE_BY_DETECT_OFFLINE);
+    }
     cms_stat_set(res_stat, CMS_RES_OFFLINE, &is_changed);
     res_stat->restart_count = res.restart_times;
     if (cms_sync_cur_res_stat(res_id, res_stat) != OG_SUCCESS) {
         CMS_LOG_ERR("sync curr res stat failed, res id %u, res stat %d", res_id, res_stat->cur_stat);
         cm_thread_unlock(&g_res_session[res_id].lock);
         return OG_ERROR;
+    }
+    if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) == 0) {
+        OG_RETURN_IFERR(cms_release_dss_master(g_cms_param->node_id));
     }
     // The g_res_session[res_id].lock may not be released due to the iofence failure.
     cm_thread_unlock(&g_res_session[res_id].lock);
@@ -1302,7 +1416,6 @@ status_t cms_res_detect_offline(uint32 res_id, cms_res_stat_t *old_stat)
     cms_do_try_master();
     if (res_stat->pre_stat != CMS_RES_UNKNOWN && res_stat->last_check +
         res.hb_timeout * MICROSECS_PER_MILLISEC > cm_now()) {
-        // cms_stat_chg_offline_reset_res(res); TODO open after resource online/offline is complete
     }
     cms_stat_chg_notify_to_cms(res_id, version);
 
@@ -2050,6 +2163,40 @@ status_t cms_stat_get_res_data(const char* res_type, uint32 slot_id, char* data,
     return OG_SUCCESS;
 }
 
+static status_t cms_elect_res_reformer_continue(uint32 res_id, uint8 reformer, uint8* new_reformer)
+{
+    cms_res_stat_t res_stat;
+    *new_reformer = OG_INVALID_ID8;
+    for (uint32 node_id = 0; node_id < CMS_MAX_NODE_COUNT; node_id++) {
+        if (cms_node_is_invalid(node_id)) {
+            continue;
+        }
+
+        if (get_res_stat(node_id, res_id, &res_stat) != OG_SUCCESS) {
+            continue;
+        }
+
+        // resource is online and joined
+        if (res_stat.cur_stat == CMS_RES_ONLINE && res_stat.work_stat == 1) {
+            *new_reformer = node_id;
+            CMS_LOG_INF("resource's reformer elect, res_id=%u, new reformer=%u", res_id, *new_reformer);
+            break;
+        }
+
+        // resource is online and joining
+        if (res_stat.cur_stat == CMS_RES_ONLINE && res_stat.work_stat == 0) {
+            if (*new_reformer == OG_INVALID_ID8) {
+                *new_reformer = node_id;
+                CMS_LOG_INF("resource's tmp reformer elect, res_id=%u, new reformer=%u", res_id, *new_reformer);
+            }
+        }
+    }
+    if (*new_reformer != OG_INVALID_ID8) {
+        CMS_LOG_INF("resource's reformer elect success, res_id=%u, new reformer=%u", res_id, (uint32)(*new_reformer));
+    }
+    return OG_SUCCESS;
+}
+
 static status_t cms_elect_res_reformer(uint32 res_id, uint8 reformer, uint8* new_reformer)
 {
     cms_res_stat_t res_stat;
@@ -2077,34 +2224,8 @@ static status_t cms_elect_res_reformer(uint32 res_id, uint8 reformer, uint8* new
         return OG_SUCCESS;
     }
 
-    *new_reformer = OG_INVALID_ID8;
-    for (uint32 node_id = 0; node_id < CMS_MAX_NODE_COUNT; node_id++) {
-        if (cms_node_is_invalid(node_id)) {
-            continue;
-        }
-
-        if (get_res_stat(node_id, res_id, &res_stat) != OG_SUCCESS) {
-            continue;
-        }
-
-        // resource is online and joined
-        if (res_stat.cur_stat == CMS_RES_ONLINE && res_stat.work_stat == 1) {
-            *new_reformer = node_id;
-            CMS_LOG_INF("resource's reformer elect, res_id=%u, new reformer=%u", res_id, (uint32)(*new_reformer));
-            return OG_SUCCESS;
-        }
-
-        // resource is online and joining
-        if (res_stat.cur_stat == CMS_RES_ONLINE && res_stat.work_stat == 0) {
-            if (*new_reformer == OG_INVALID_ID8) {
-                *new_reformer = node_id;
-                CMS_LOG_INF("resource's tmp reformer elect, res_id=%u, new reformer=%u", res_id,
-                            (uint32)(*new_reformer));
-            };
-        }
-    }
-    if (*new_reformer != OG_INVALID_ID8) {
-        CMS_LOG_INF("resource's reformer elect, res_id=%u, new_reformer=%u", res_id, (uint32)(*new_reformer));
+    if (cms_elect_res_reformer_continue(res_id, reformer, new_reformer) != OG_SUCCESS) {
+        return OG_ERROR;
     }
     return OG_SUCCESS;
 }
@@ -2174,11 +2295,22 @@ status_t cms_try_be_master(void)
         if (cms_res_is_invalid(res_id)) {
             continue;
         }
+        cms_res_t res;
+        if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
+            CMS_LOG_ERR("get reformer res failed, res_id=%u", res_id);
+            continue;
+        }
+
+        if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) == 0) {
+            continue;
+        }
 
         if (reformers.magic == CMS_REFORMER_MAGIC) {
             (void)cms_elect_res_reformer(res_id, reformers.reformer[res_id], &reformers.reformer[res_id]);
+            CMS_LOG_DEBUG_INF("get reformer %u, res_id %u", reformers.reformer[res_id], res_id);
         } else {
             (void)cms_elect_res_reformer(res_id, OG_INVALID_ID8, &reformers.reformer[res_id]);
+            CMS_LOG_DEBUG_INF("get reformer OG_INVALID_ID8, res_id %u", res_id);
         }
     }
 
@@ -2250,8 +2382,20 @@ status_t cms_get_res_master(uint32 res_id, uint8* node_id)
     if (reformers.magic == CMS_REFORMER_MAGIC) {
         *node_id = reformers.reformer[res_id];
     }
+    if (g_cms_param->gcc_type != CMS_DEV_TYPE_LUN && g_cms_param->gcc_type != CMS_DEV_TYPE_SD) {
+        return OG_SUCCESS;
+    }
+    cms_res_t res;
+    if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
+        CMS_LOG_ERR("get reformer res failed, res_id=%u", res_id);
+        return OG_ERROR;
+    }
 
-    return OG_SUCCESS;
+    if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) != 0) {
+        return OG_SUCCESS;
+    }
+    
+    return cms_get_dss_current_reformer(node_id);
 }
 
 status_t cms_is_master(bool32* is_master)

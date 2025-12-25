@@ -1,4 +1,4 @@
 aux_source_directory(. TMS_SRC)
 
 # generate static library
-add_library(zetms STATIC ${TMS_SRC})
+add_library(ogtms STATIC ${TMS_SRC})

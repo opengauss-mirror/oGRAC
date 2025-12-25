@@ -1151,6 +1151,10 @@ static status_t cbo_load_part_table_stats(knl_session_t *session, dc_entity_t *e
 
 cbo_stats_column_t *cbo_get_column_stats(cbo_stats_table_t *table_stats, uint32 col_id)
 {
+    if (table_stats == NULL) {
+        return NULL;
+    }
+
     cbo_stats_column_t *cbo_column = NULL;
     uint32 pos = get_cbo_col_map(table_stats, col_id);
     if (pos != CBO_INVALID_COLUMN_ID) {
@@ -1844,7 +1848,7 @@ cbo_stats_table_t *knl_get_cbo_table(knl_handle_t session, dc_entity_t *entity)
          */
         knl_temp_cache_t *temp_cache = knl_get_temp_cache(session, table->desc.uid, table->desc.id);
 
-        if (temp_cache != NULL) {
+        if (temp_cache != NULL && temp_cache->stat_exists && temp_cache->cbo_stats != NULL) {
             return temp_cache->cbo_stats;
         }
 

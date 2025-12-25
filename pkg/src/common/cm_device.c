@@ -1,8 +1,8 @@
 /* -------------------------------------------------------------------------
- *  This file is part of the oGRAC project.
+ *  This file is part of the Cantian project.
  * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
  *
- * oGRAC is licensed under Mulan PSL v2.
+ * Cantian is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *
@@ -25,6 +25,7 @@
 #include "cm_device_module.h"
 #include "cm_device.h"
 #include "cm_file.h"
+#include "cm_malloc.h"
 #include "cm_dbstor.h"
 #include "cm_dbs_ulog.h"
 #include "cm_dbs_pgpool.h"
@@ -88,7 +89,7 @@ status_t cm_access_device(device_type_t type, const char *file_name, uint32 mode
             return OG_ERROR;
         }
 
-        dss_stat_t item = {0};
+        dss_stat_t item = { 0 };
         if (g_raw_device_op.raw_stat(file_name, &item) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -325,12 +326,12 @@ static status_t cm_open_device_common(const char *name, device_type_t type, uint
 
 status_t cm_open_device(const char *name, device_type_t type, uint32 flags, int32 *handle)
 {
-    return cm_open_device_common(name, type ,flags, handle, OG_TRUE);
+    return cm_open_device_common(name, type, flags, handle, OG_TRUE);
 }
 
 status_t cm_open_device_no_retry(const char *name, device_type_t type, uint32 flags, int32 *handle)
 {
-    return cm_open_device_common(name, type ,flags, handle, OG_FALSE);
+    return cm_open_device_common(name, type, flags, handle, OG_FALSE);
 }
 
 void cm_close_device(device_type_t type, int32 *handle)
@@ -356,6 +357,41 @@ void cm_close_device(device_type_t type, int32 *handle)
     *handle = -1;  // reset handle
 }
 
+static inline bool32 cm_is_aligned_ptr(const void *ptr, uint32 align_size)
+{
+    return (((uintptr_t)ptr & (uintptr_t)(align_size - 1)) == 0);
+}
+
+static inline bool32 cm_is_aligned_val(uint64 val, uint32 align_size)
+{
+    return ((val & (uint64)(align_size - 1)) == 0);
+}
+
+
+static status_t cm_raw_read_file(int32 handle, int64 offset, void *buf, int32 size, int32 *return_size)
+{
+    if (g_raw_device_op.raw_pread == NULL) {
+        OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
+        return OG_ERROR;
+    }
+
+    OG_LOG_DEBUG_INF("[CM_DEVICE] Begin to read file handle %d offset %lld size %d.", handle, offset, size);
+    if (!cm_is_aligned_val((uint64)offset, FILE_BLOCK_SIZE) ||
+        !cm_is_aligned_val((uint64)size, FILE_BLOCK_SIZE) ||
+        !cm_is_aligned_ptr(buf, FILE_BLOCK_SIZE)) {
+        OG_LOG_RUN_ERR("[CM_DEVICE] read requires %dB alignment: offset=%lld size=%d buff_ptr=%p",
+                       FILE_BLOCK_SIZE, (long long)offset, size, buf);
+        return OG_ERROR;
+    }
+
+    if (g_raw_device_op.raw_pread(handle, buf, size, offset, return_size) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[CM_DEVICE] Failed to read file total_size: %d already read size: %d.", size, *return_size);
+        return OG_ERROR;
+    }
+    OG_LOG_DEBUG_INF("[CM_DEVICE] Success to read file total_size: %d already read size: %d.", size, *return_size);
+    return OG_SUCCESS;
+}
+
 status_t cm_read_device(device_type_t type, int32 handle, int64 offset, void *buf, int32 size)
 {
     int32 read_size;
@@ -365,12 +401,7 @@ status_t cm_read_device(device_type_t type, int32 handle, int64 offset, void *bu
             return OG_ERROR;
         }
     } else if (type == DEV_TYPE_RAW) {
-        if (g_raw_device_op.raw_pread == NULL) {
-            OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
-            return OG_ERROR;
-        }
-
-        if (g_raw_device_op.raw_pread(handle, buf, size, offset, &read_size) != OG_SUCCESS) {
+        if (cm_raw_read_file(handle, offset, buf, size, &read_size) != OG_SUCCESS) {
             return OG_ERROR;
         }
     } else if (type == DEV_TYPE_ULOG) {
@@ -460,8 +491,8 @@ status_t cm_read_device_nocheck(device_type_t type, int32 handle, int64 offset, 
     return OG_SUCCESS;
 }
 
-status_t cm_device_read_batch(device_type_t type, int32 handle, uint64 startLsn, uint64 endLsn,
-                              void *buf, int32 size, int32 *r_size, uint64 *outLsn)
+status_t cm_device_read_batch(device_type_t type, int32 handle, uint64 startLsn, uint64 endLsn, void *buf, int32 size,
+                              int32 *r_size, uint64 *outLsn)
 {
     if (type == DEV_TYPE_ULOG) {
         return cm_dbs_ulog_batch_read(handle, startLsn, endLsn, buf, size, r_size, outLsn);
@@ -469,9 +500,9 @@ status_t cm_device_read_batch(device_type_t type, int32 handle, uint64 startLsn,
     OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
     return OG_ERROR;
 }
- 
-static status_t cm_device_get_used_cap_common(device_type_t type, int32 handle, uint64_t startLsn, uint32_t *sizeKb, uint8
-    is_retry)
+
+static status_t cm_device_get_used_cap_common(device_type_t type, int32 handle, uint64_t startLsn, uint32_t *sizeKb,
+                                       uint8 is_retry)
 {
     if (type == DEV_TYPE_ULOG) {
         return cm_dbs_get_used_cap(handle, startLsn, sizeKb, is_retry);
@@ -548,6 +579,38 @@ status_t cm_write_device(device_type_t type, int32 handle, int64 offset, const v
     return OG_SUCCESS;
 }
 
+static status_t cm_query_raw_file_num(const char *name, uint32 *file_num)
+{
+    raw_dir_handle dss_dir_handle = g_raw_device_op.raw_open_dir(name);
+    if (dss_dir_handle == NULL) {
+        OG_LOG_RUN_ERR("Failed to open raw dir: %s.", name);
+        return OG_ERROR;
+    }
+
+    uint32 num = 0;
+    raw_dirent_t raw_dirent;
+    raw_dir_item_t raw_item;
+    while (OG_TRUE) {
+        if (g_raw_device_op.raw_read_dir(dss_dir_handle, &raw_dirent, &raw_item) != OG_SUCCESS) {
+            (void)g_raw_device_op.raw_close_dir(dss_dir_handle);
+            OG_LOG_RUN_ERR("Failed to read raw dir: %s.", name);
+            return OG_ERROR;
+        }
+
+        if (raw_item == NULL) {
+            break;
+        }
+
+        num++;
+    }
+    if (g_raw_device_op.raw_close_dir(dss_dir_handle) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("Failed to close raw dir: %s.", name);
+            return OG_ERROR;
+    }
+    *file_num = num;
+    return OG_SUCCESS;
+}
+
 static status_t cm_query_file_num_device(device_type_t type, const char *name, uint32 *file_num)
 {
     if (type == DEV_TYPE_FILE) {
@@ -555,16 +618,57 @@ static status_t cm_query_file_num_device(device_type_t type, const char *name, u
             OG_LOG_RUN_ERR("query file num failed, path %s.", name);
             return OG_ERROR;
         }
-    } else if (type == DEV_TYPE_DBSTOR_FILE) {
+        return OG_SUCCESS;
+    }
+
+    if (type == DEV_TYPE_DBSTOR_FILE) {
         if (cm_dbs_query_file_num(name, file_num) != OG_SUCCESS) {
-            OG_LOG_RUN_ERR("query file num failed, path %s.", name);
+            OG_LOG_RUN_ERR("query DBSTOR file num failed, path %s.", name);
             return OG_ERROR;
         }
-    } else {
-        OG_LOG_RUN_ERR("query file num failed, error device type, path %s", name);
-        return OG_ERROR;
+        return OG_SUCCESS;
+    }
+
+    if (type == DEV_TYPE_RAW) {
+        if (cm_query_raw_file_num(name, file_num) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("query raw file num failed, path %s.", name);
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
     }
     
+    OG_LOG_RUN_ERR("query file num failed, error device type, path %s", name);
+    return OG_ERROR;
+}
+
+static status_t cm_query_raw_dir(const char *name, void *file_list, uint32 *file_num)
+{
+    raw_dir_handle dss_dir_handle = g_raw_device_op.raw_open_dir(name);
+    if (dss_dir_handle == NULL) {
+        OG_LOG_RUN_ERR("Failed to open raw dir: %s.", name);
+        return OG_ERROR;
+    }
+
+    uint32 num = 0;
+    raw_dir_item_t raw_item;
+    raw_dirent_t *list = (raw_dirent_t *)file_list;
+    while (OG_TRUE) {
+        if (g_raw_device_op.raw_read_dir(dss_dir_handle, &list[num], &raw_item) != OG_SUCCESS) {
+            (void)g_raw_device_op.raw_close_dir(dss_dir_handle);
+            OG_LOG_RUN_ERR("Failed to read raw dir: %s.", name);
+            return OG_ERROR;
+        }
+
+        if (raw_item == NULL) {
+            break;
+        }
+        num++;
+    }
+    if (g_raw_device_op.raw_close_dir(dss_dir_handle) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("Failed to close raw dir: %s.", name);
+            return OG_ERROR;
+    }
+    *file_num = num;
     return OG_SUCCESS;
 }
 
@@ -578,10 +682,15 @@ status_t cm_query_device(device_type_t type, const char *name, void *file_list, 
         if (cm_dbs_query_dir(name, file_list, file_num) != OG_SUCCESS) {
             return OG_ERROR;
         }
+    } else if (type == DEV_TYPE_RAW) {
+        if (cm_query_raw_dir(name, file_list, file_num) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
     } else {
+        OG_LOG_RUN_ERR("query file num failed, error device type, path %s", name);
         return OG_ERROR;
     }
-    
+
     return OG_SUCCESS;
 }
 
@@ -601,7 +710,7 @@ status_t cm_get_size_device(device_type_t type, int32 handle, int64 *file_size)
     } else {
         return OG_ERROR;
     }
-    
+
     return OG_SUCCESS;
 }
 
@@ -633,7 +742,7 @@ bool32 cm_exist_device_dir(device_type_t type, const char *name)
             return OG_FALSE;
         }
 
-        dss_stat_t item = {0};
+        dss_stat_t item = { 0 };
         if (g_raw_device_op.raw_stat(name, &item) != OG_SUCCESS) {
             return OG_FALSE;
         }
@@ -698,6 +807,79 @@ bool32 cm_create_device_dir_ex(device_type_t type, const char *name)
     return OG_SUCCESS;
 }
 
+DIR *cm_open_device_dir(device_type_t type, const char *name)
+{
+    if (type == DEV_TYPE_FILE) {
+        return opendir(name);
+    }
+
+    if (type == DEV_TYPE_RAW) {
+        raw_dir_handle *dss_dir_handle = (raw_dir_handle*)cm_malloc(sizeof(raw_dir_handle));
+        if (dss_dir_handle == NULL) {
+            OG_LOG_RUN_ERR("malloc dss dir handle failed");
+            return NULL;
+        }
+        if (g_raw_device_op.raw_open_dir == NULL) {
+            OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
+            return NULL;
+        }
+        *dss_dir_handle = g_raw_device_op.raw_open_dir(name);
+        return (DIR*)dss_dir_handle;
+    }
+    OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
+    return NULL;
+}
+
+int cm_close_device_dir(device_type_t type, DIR *dir_handle)
+{
+    if (type == DEV_TYPE_RAW) {
+        raw_dir_handle *dss_dir_handle = (raw_dir_handle *)dir_handle;
+        int result = g_raw_device_op.raw_close_dir(*dss_dir_handle);
+        free(dss_dir_handle);
+        return result;
+    }
+
+    return closedir(dir_handle);
+}
+
+status_t cm_read_device_dir(device_type_t type, DIR *dirp, struct dirent *result)
+{
+    if (dirp == NULL) {
+        OG_LOG_RUN_ERR("The handle of dir to read is NULL.");
+        return OG_ERROR;
+    }
+
+    if (type == DEV_TYPE_RAW) {
+        raw_dir_handle *dss_dir_handle = (raw_dir_handle *)dirp;
+        raw_dirent_t raw_dirent;
+        raw_dir_item_t raw_item;
+        if (g_raw_device_op.raw_read_dir(*dss_dir_handle, &raw_dirent, &raw_item) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("read dir by dss failed.");
+            return OG_ERROR;
+        }
+
+        if (raw_dirent.d_type != DSS_PATH && raw_dirent.d_type != DSS_FILE && raw_dirent.d_type != DSS_LINK) {
+            OG_LOG_RUN_ERR("Invalide file type %u", raw_dirent.d_type);
+            return OG_ERROR;
+        }
+        
+        result->d_type = raw_dirent.d_type;
+        errno_t ret = strcpy_sp(result->d_name, DSS_MAX_NAME_LEN, raw_dirent.d_name);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("Failed to copy d_name");
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
+    
+    result = readdir(dirp);
+    if (result == NULL) {
+        OG_LOG_RUN_ERR("exec readdir failed.");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
 bool32 cm_exist_device(device_type_t type, const char *name)
 {
     if (type == DEV_TYPE_FILE) {
@@ -707,7 +889,7 @@ bool32 cm_exist_device(device_type_t type, const char *name)
             return OG_FALSE;
         }
 
-        dss_stat_t item = {0};
+        dss_stat_t item = { 0 };
         if (g_raw_device_op.raw_stat(name, &item) != OG_SUCCESS) {
             return OG_FALSE;
         }
@@ -724,13 +906,29 @@ bool32 cm_exist_device(device_type_t type, const char *name)
 }
 
 // prealloc file by fallocate
-static status_t cm_prealloc_device(int32 handle, int64 offset, int64 size)
+static status_t cm_prealloc_device(device_type_t type, int32 handle, int64 offset, int64 size)
 {
-    return cm_fallocate_file(handle, 0, offset, size);
+    if (type == DEV_TYPE_FILE) {
+        return cm_fallocate_file(handle, 0, offset, size);
+    } else if (type == DEV_TYPE_RAW) {
+        if (g_raw_device_op.raw_fallocate == NULL) {
+            OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
+            return OG_ERROR;
+        }
+
+        return g_raw_device_op.raw_fallocate(handle, 0, offset, size);
+    } else if (type == DEV_TYPE_ULOG || type == DEV_TYPE_PGPOOL) {
+        // dbstor support preallocate internally.
+        return OG_SUCCESS;
+    } else {
+        OG_LOG_RUN_ERR("Unsupported operation(truncate) for device(%u).", type);
+        OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
+        return OG_ERROR;
+    }
 }
 
-static status_t cm_write_device_by_zero(int32 handle, device_type_t type, char *buf, uint32 buf_size,
-    int64 offset, int64 size)
+static status_t cm_write_device_by_zero(int32 handle, device_type_t type, char *buf,
+                                        uint32 buf_size, int64 offset, int64 size)
 {
     int64 offset_tmp = offset;
     if (type == DEV_TYPE_PGPOOL || type == DEV_TYPE_ULOG) {
@@ -757,8 +955,7 @@ static status_t cm_write_device_by_zero(int32 handle, device_type_t type, char *
     return OG_SUCCESS;
 }
 
-status_t cm_extend_device(device_type_t type, int32 handle, char *buf, uint32 buf_size, int64 size,
-    bool32 prealloc)
+status_t cm_extend_device(device_type_t type, int32 handle, char *buf, uint32 buf_size, int64 size, bool32 prealloc)
 {
     int64 offset = cm_device_size(type, handle);
     if (offset == -1) {
@@ -774,14 +971,14 @@ status_t cm_extend_device(device_type_t type, int32 handle, char *buf, uint32 bu
     }
     if (prealloc) {
         // use falloc to fast build device
-        return cm_prealloc_device(handle, offset, size);
+        return cm_prealloc_device(type, handle, offset, size);
     }
 
     return cm_write_device_by_zero(handle, type, buf, buf_size, offset, size);
 }
 
 status_t cm_try_prealloc_extend_device(device_type_t type, int32 handle, char *buf, uint32 buf_size, int64 size,
-    bool32 prealloc)
+                                       bool32 prealloc)
 {
     int64 offset = cm_device_size(type, handle);
     if (offset == -1) {
@@ -791,7 +988,7 @@ status_t cm_try_prealloc_extend_device(device_type_t type, int32 handle, char *b
 
     if (prealloc) {
         // use falloc to fast build device
-        if (cm_prealloc_device(handle, offset, size) == OG_SUCCESS) {
+        if (cm_prealloc_device(type, handle, offset, size) == OG_SUCCESS) {
             return OG_SUCCESS;
         }
 
@@ -805,7 +1002,6 @@ status_t cm_try_prealloc_extend_device(device_type_t type, int32 handle, char *b
 
     return cm_write_device_by_zero(handle, type, buf, buf_size, offset, size);
 }
-
 
 status_t cm_truncate_device(device_type_t type, int32 handle, int64 keep_size)
 {
@@ -829,25 +1025,6 @@ status_t cm_truncate_device(device_type_t type, int32 handle, int64 keep_size)
     }
 
     return OG_SUCCESS;
-}
-
-status_t cm_check_device_size(device_type_t type, int32 size)
-{
-    if (type == DEV_TYPE_FILE) {
-        return OG_SUCCESS;
-    } else if (type == DEV_TYPE_RAW) {
-        if (g_raw_device_op.raw_check_size == NULL) {
-            OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
-            return OG_ERROR;
-        }
-
-        return g_raw_device_op.raw_check_size(size);
-    } else if (type == DEV_TYPE_ULOG || type == DEV_TYPE_PGPOOL) {
-        return OG_SUCCESS;
-    } else {
-        OG_THROW_ERROR(ERR_DEVICE_NOT_SUPPORT);
-        return OG_ERROR;
-    }
 }
 
 int32 cm_align_device_size(device_type_t type, int32 size)
@@ -878,8 +1055,8 @@ bool32 cm_check_device_offset_valid(device_type_t type, int32 handle, int64 offs
     return OG_FALSE;
 }
 
-status_t cm_build_device(const char *name, device_type_t type, char *buf, uint32 buf_size, int64 size,
-    uint32 flags, bool32 prealloc, int32 *handle)
+status_t cm_build_device(const char *name, device_type_t type, char *buf, uint32 buf_size, int64 size, uint32 flags,
+                         bool32 prealloc, int32 *handle)
 {
     *handle = -1;
     if (type == DEV_TYPE_PGPOOL) {
@@ -893,7 +1070,7 @@ status_t cm_build_device(const char *name, device_type_t type, char *buf, uint32
     }
     status_t status;
     if (prealloc) {
-        status = cm_prealloc_device(*handle, 0, size);
+        status = cm_prealloc_device(type, *handle, 0, size);
     } else {
         status = cm_write_device_by_zero(*handle, type, buf, buf_size, 0, size);
     }
@@ -935,10 +1112,10 @@ status_t cm_aio_destroy(cm_aio_lib_t *lib_ctx, cm_io_context_t io_ctx)
     return OG_SUCCESS;
 }
 
-status_t cm_aio_getevents(cm_aio_lib_t *lib_ctx, cm_io_context_t io_ctx, long min_nr, long nr,
-                          cm_io_event_t *events, int32 *aio_ret)
+status_t cm_aio_getevents(cm_aio_lib_t *lib_ctx, cm_io_context_t io_ctx, long min_nr, long nr, cm_io_event_t *events,
+                          int32 *aio_ret)
 {
-    struct timespec timeout  = { 0, 200 };
+    struct timespec timeout = { 0, 200 };
     *aio_ret = lib_ctx->io_getevents(io_ctx, min_nr, nr, events, &timeout);
     if (*aio_ret < 0) {
         if (*aio_ret != -EINTR) {
@@ -1027,26 +1204,26 @@ status_t cm_malloc_file_list(device_type_t type, void **file_list, const char *f
     }
 
     if (type == DEV_TYPE_DBSTOR_FILE) {
-        *file_list = malloc((*file_num) * sizeof(dbstor_file_info));
+        *file_list = cm_malloc((*file_num) * sizeof(dbstor_file_info));
         if (*file_list == NULL) {
             OG_LOG_RUN_ERR("malloc dbstor arch file list array failed");
             return OG_ERROR;
         }
-        errno_t mem_ret = memset_sp(*file_list, sizeof(dbstor_file_info) * (*file_num),
-                                    0, sizeof(dbstor_file_info) * (*file_num));
+        errno_t mem_ret = memset_sp(*file_list, sizeof(dbstor_file_info) * (*file_num), 0,
+                                    sizeof(dbstor_file_info) * (*file_num));
         if (mem_ret != EOK) {
             OG_LOG_RUN_ERR("memset dbstor arch file list array failed");
             cm_free_file_list(file_list);
             return OG_ERROR;
         }
-    } else if (type == DEV_TYPE_FILE) {
-        *file_list = malloc((*file_num) * sizeof(cm_file_info));
+    } else if (type == DEV_TYPE_FILE || type == DEV_TYPE_RAW) {
+        *file_list = cm_malloc((*file_num) * sizeof(cm_file_info));
         if (*file_list == NULL) {
             OG_LOG_RUN_ERR("malloc arch file list array failed");
             return OG_ERROR;
         }
-        errno_t mem_ret = memset_sp(*file_list, sizeof(cm_file_info) * (*file_num),
-                                    0, sizeof(cm_file_info) * (*file_num));
+        errno_t mem_ret = memset_sp(*file_list, sizeof(cm_file_info) * (*file_num), 0,
+                                    sizeof(cm_file_info) * (*file_num));
         if (mem_ret != EOK) {
             OG_LOG_RUN_ERR("memset arch file list array failed");
             cm_free_file_list(file_list);
@@ -1058,10 +1235,9 @@ status_t cm_malloc_file_list(device_type_t type, void **file_list, const char *f
     return OG_SUCCESS;
 }
 
-status_t cm_malloc_file_list_by_version_id(file_info_version_t version, uint32 vstore_id, void **file_list, const char
-    *file_path, uint32 *file_num)
-{   
-
+status_t cm_malloc_file_list_by_version_id(file_info_version_t version, uint32 vstore_id, void **file_list,
+                                           const char *file_path, uint32 *file_num)
+{
     if (cm_dbs_query_file_num_by_vstore_id(file_path, file_num, vstore_id) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("dbstor query file num failed, file_path %s", file_path);
         return OG_ERROR;
@@ -1075,26 +1251,26 @@ status_t cm_malloc_file_list_by_version_id(file_info_version_t version, uint32 v
     }
 
     if (version == DBS_FILE_INFO_VERSION_1) {
-        *file_list = malloc((*file_num) * sizeof(dbstor_file_info));
+        *file_list = cm_malloc((*file_num) * sizeof(dbstor_file_info));
         if (*file_list == NULL) {
             OG_LOG_RUN_ERR("malloc dbstor arch file list array failed");
             return OG_ERROR;
         }
-        errno_t mem_ret = memset_sp(*file_list, sizeof(dbstor_file_info) * (*file_num),
-                                    0, sizeof(dbstor_file_info) * (*file_num));
+        errno_t mem_ret = memset_sp(*file_list, sizeof(dbstor_file_info) * (*file_num), 0,
+                                    sizeof(dbstor_file_info) * (*file_num));
         if (mem_ret != EOK) {
             OG_LOG_RUN_ERR("memset dbstor arch file list array failed");
             cm_free_file_list(file_list);
             return OG_ERROR;
         }
     } else if (version == DBS_FILE_INFO_VERSION_2) {
-        *file_list = malloc((*file_num) * sizeof(dbstor_file_info_detail));
+        *file_list = cm_malloc((*file_num) * sizeof(dbstor_file_info_detail));
         if (*file_list == NULL) {
             OG_LOG_RUN_ERR("malloc dbstor arch file list array failed");
             return OG_ERROR;
         }
-        errno_t mem_ret = memset_sp(*file_list, sizeof(dbstor_file_info_detail) * (*file_num),
-                                    0, sizeof(dbstor_file_info_detail) * (*file_num));
+        errno_t mem_ret = memset_sp(*file_list, sizeof(dbstor_file_info_detail) * (*file_num), 0,
+                                    sizeof(dbstor_file_info_detail) * (*file_num));
         if (mem_ret != EOK) {
             OG_LOG_RUN_ERR("memset dbstor arch file list array failed");
             cm_free_file_list(file_list);
@@ -1111,9 +1287,14 @@ char *cm_get_name_from_file_list(device_type_t type, void *list, int32 index)
     if (type == DEV_TYPE_DBSTOR_FILE) {
         dbstor_file_info *file_list = (dbstor_file_info *)((char *)list + index * sizeof(dbstor_file_info));
         return file_list->file_name;
-    } else if (type == DEV_TYPE_FILE) {
+    }
+    if (type == DEV_TYPE_FILE) {
         cm_file_info *file_list = (cm_file_info *)((char *)list + index * sizeof(cm_file_info));
         return file_list->file_name;
+    }
+    if (type == DEV_TYPE_RAW) {
+        raw_dirent_t *file_list = (raw_dirent_t *)((char *)list + index * sizeof(raw_dirent_t));
+        return file_list->d_name;
     }
     return NULL;
 }
@@ -1140,9 +1321,8 @@ bool32 cm_match_arch_pattern(const char *filename)
     if (filename_len < prefix_len + suffix_len) {
         return OG_FALSE;
     }
-    if (strncmp(filename, prefix, prefix_len) == 0 &&
-        strcmp(filename + filename_len - suffix_len, suffix) == 0) {
-        return OG_TRUE; // Match
+    if (strncmp(filename, prefix, prefix_len) == 0 && strcmp(filename + filename_len - suffix_len, suffix) == 0) {
+        return OG_TRUE;  // Match
     }
     return OG_FALSE;
 }
@@ -1223,4 +1403,3 @@ status_t cm_fsync_device(device_type_t type, int32 handle)
 #ifdef __cplusplus
 }
 #endif
-

@@ -137,7 +137,7 @@ typedef struct st_table {
         heap_t heap; /* < table storage entity */
     };
     struct st_part_table *part_table; /* < partition table info */
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     routing_info_t routing_info;
 #endif
     struct st_table_accessor *acsor; /* < table access method */

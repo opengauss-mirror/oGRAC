@@ -83,7 +83,7 @@ void dc_convert_seq_desc(knl_cursor_t *cursor, sequence_desc_t *desc)
     desc->org_scn = *(uint64 *)CURSOR_COLUMN_DATA(cursor, SYS_SEQUENCE_COL_ORG_SCN);
     desc->chg_scn = *(uint64 *)CURSOR_COLUMN_DATA(cursor, SYS_SEQUENCE_COL_CHG_SCN);
     desc->lastval = *(int64 *)CURSOR_COLUMN_DATA(cursor, SYS_SEQUENCE_COL_LAST_NUMBER);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     desc->dist_data.size = CURSOR_COLUMN_SIZE(cursor, SYS_SEQUENCE_COL_DIST_DATA);
     desc->dist_data.bytes = (uint8 *)CURSOR_COLUMN_DATA(cursor, SYS_SEQUENCE_COL_DIST_DATA);
 #endif
@@ -219,7 +219,7 @@ static status_t dc_load_sequence(knl_session_t *session, knl_cursor_t *cursor, d
     seq_entity->is_cache = (seq_entity->cache_size > 0);
     seq_entity->cache_pos = seq_entity->is_cache ? seq_entity->cache_size - 1 : 0;
     seq_entity->dist_data.size = CURSOR_COLUMN_SIZE(cursor, SYS_SEQUENCE_COL_DIST_DATA);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (seq_entity->dist_data.size > 0 && seq_entity->dist_data.size <= OG_DISTRIBUTE_BUFFER_SIZE) {
         if (dc_alloc_mem(&session->kernel->dc_ctx, seq_entity->memory, seq_entity->dist_data.size,
             (void **)&seq_entity->dist_data.bytes) != OG_SUCCESS) {

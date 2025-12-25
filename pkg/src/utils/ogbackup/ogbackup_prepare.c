@@ -344,6 +344,8 @@ status_t fill_params_for_ograc_recover(ogbak_param_t* ogbak_param, char *og_para
         len += ogbak_param->pitr_scn.len + strlen(OGSQL_PITR_SCN_OPTION);
     } else if (ogbak_param->is_pitr_cancel == OG_TRUE) {
         len += strlen(OGSQL_PITR_CANCEL_OPTION);
+    } else {    // 无参数时自动拼接最大scn确保恢复全部redo日志
+        len += strlen(SCN_MAX) + strlen(OGSQL_PITR_SCN_OPTION);
     }
     // stetement not free here
     char *statement = (char *)malloc(len);
@@ -361,7 +363,8 @@ status_t fill_params_for_ograc_recover(ogbak_param_t* ogbak_param, char *og_para
         ret = snprintf_s(statement, len, len - 1, "%s%s%s", OGSQL_RECOVER_STATEMENT_PREFIX, OGSQL_PITR_CANCEL_OPTION,
                          OGSQL_STATEMENT_END_CHARACTER);
     } else {
-        ret = snprintf_s(statement, len, len - 1, "%s%s", OGSQL_RECOVER_STATEMENT_PREFIX, OGSQL_STATEMENT_END_CHARACTER);
+        ret = snprintf_s(statement, len, len - 1, "%s%s%s%s", OGSQL_RECOVER_STATEMENT_PREFIX, OGSQL_PITR_SCN_OPTION,
+                         SCN_MAX, OGSQL_STATEMENT_END_CHARACTER);
     }
     
     if (ret == -1) {

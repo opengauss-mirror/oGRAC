@@ -24,6 +24,7 @@
  */
 #include "cm_dec4.h"
 #include "cm_binary.h"
+#include "var_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -871,7 +872,7 @@ static status_t cm_real_to_dec4_inexac(double real, dec4_t *dec)
         return OG_ERROR;
     }
 
-    if (r == 0.0) {
+    if (VAR_DOUBLE_IS_ZERO(r)) {
         cm_zero_dec4(dec);
         return OG_SUCCESS;
     }
@@ -905,7 +906,7 @@ static status_t cm_real_to_dec4_inexac(double real, dec4_t *dec)
     }
 
     while (dec->ncells < 5) {
-        if (r == 0) {
+        if (cm_compare_double(r, 0) == 0) {
             break;
         }
         r = modf(r * (double)DEC4_CELL_MASK, &int_r);

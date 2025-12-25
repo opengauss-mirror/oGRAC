@@ -177,6 +177,9 @@ void sql_prepare_scan(sql_stmt_t *stmt, knl_dictionary_t *dc, knl_cursor_t *knl_
     } else {
         knl_cursor->ssn = stmt->xact_ssn;
     }
+    if (stmt->context->type == OGSQL_TYPE_SELECT) {
+        knl_cursor->xid = stmt->xid;
+    }
 }
 
 static inline status_t sql_init_knl_scan_key(sql_stmt_t *stmt, knl_index_desc_t *desc, bool32 need_alloc,
@@ -497,11 +500,11 @@ static status_t sql_create_full_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *pl
     }
 
     return sql_make_subpart_scan_keys(stmt, &plan->subpart_array, cursor->table, &cursor->vmc, &cursor->curr_part,
-        calc_mode);
+        calc_mode, NULL);
 }
 
 static status_t sql_create_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, sql_table_cursor_t *cursor,
-    knl_handle_t handle, scan_list_array_t *ar, calc_mode_t calc_mode)
+    knl_handle_t handle, scan_list_array_t *ar, calc_mode_t calc_mode, scan_part_flags_t* scan_part_flags)
 {
     bool32 full_scan = OG_FALSE;
     part_assist_t part_ass = { 0 };
@@ -525,8 +528,7 @@ static status_t sql_create_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, s
     if (knl_is_compart_table(handle)) {
         for (uint32 i = 0; i < part_ass.count; i++) {
             if (sql_make_subpart_scan_keys(stmt, &plan->subpart_array, cursor->table, &cursor->vmc,
-                &part_ass.scan_key[i],
-                calc_mode) != OG_SUCCESS) {
+                &part_ass.scan_key[i], calc_mode, scan_part_flags) != OG_SUCCESS) {
                 return OG_ERROR;
             }
         }
@@ -619,7 +621,7 @@ bool32 sql_load_index_scan_key(sql_table_cursor_t *cursor)
     return OG_TRUE;
 }
 
-static bool32 sql_load_part_scan_key(sql_table_cursor_t *table_cur)
+bool32 sql_load_part_scan_key(sql_table_cursor_t *table_cur)
 {
     char *buf = NULL;
     uint32 len;
@@ -666,7 +668,7 @@ static bool32 sql_load_subscan_key(sql_table_cursor_t *table_cur, bool32 is_asc)
     }
 
     key_set_t *key_set = (key_set_t *)cm_galist_get(table_cur->curr_part.sub_scan_key, table_cur->part_scan_index);
-    if (key_set->type == KEY_SET_EMPTY) {
+    if (key_set->type == KEY_SET_EMPTY || key_set->key_data == NULL) {
         return OG_FALSE;
     }
 
@@ -1519,7 +1521,8 @@ static bool32 inline array_is_exist_empty(uint32 flags, sql_table_cursor_t *tabl
 }
 
 status_t sql_make_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, sql_table_cursor_t *table_cur,
-    sql_cursor_t *sql_cursor, calc_mode_t calc_mode)
+    sql_cursor_t *sql_cursor, calc_mode_t calc_mode, calc_mode_t finalize_calc_mode,
+    scan_part_flags_t* scan_part_flags)
 {
     galist_t **list = NULL;
     scan_list_array_t part_array = { 0 };
@@ -1531,7 +1534,7 @@ status_t sql_make_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, sql_table_
         if (table_cur->part_set.type != KEY_SET_EMPTY && knl_is_parent_part(handle, table_cur->curr_part.left) &&
             !table_cur->table->part_info.is_subpart) {
             OG_RETURN_IFERR(sql_make_subpart_scan_keys(stmt, &plan->subpart_array, table_cur->table, &table_cur->vmc,
-                &table_cur->curr_part, calc_mode));
+                &table_cur->curr_part, calc_mode, scan_part_flags));
             sql_init_subpart_scan_key(table_cur);
         }
 
@@ -1540,7 +1543,8 @@ status_t sql_make_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, sql_table_
 
     if (plan->part_array.count == 0) {
         table_cur->part_set.type = KEY_SET_FULL;
-        OG_RETURN_IFERR(sql_create_part_scan_keys(stmt, plan, table_cur, handle, &part_array, calc_mode));
+        OG_RETURN_IFERR(sql_create_part_scan_keys(stmt, plan, table_cur, handle, &part_array, calc_mode,
+            scan_part_flags));
         if (!knl_is_compart_table(handle)) {
             return OG_SUCCESS;
         }
@@ -1556,7 +1560,7 @@ status_t sql_make_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, sql_table_
     }
 
     OG_RETURN_IFERR(sql_finalize_scan_range(stmt, &plan->part_array, &part_array, table_cur->table, sql_cursor, list,
-        CALC_IN_EXEC_PART_KEY));
+        finalize_calc_mode));
 
     OG_RETSUC_IFTRUE(array_is_exist_empty(part_array.flags, table_cur));
 
@@ -1564,9 +1568,13 @@ status_t sql_make_part_scan_keys(sql_stmt_t *stmt, scan_plan_t *plan, sql_table_
         table_cur->part_set.type = KEY_SET_FULL;
     }
 
-    OG_RETURN_IFERR(sql_create_part_scan_keys(stmt, plan, table_cur, handle, &part_array, calc_mode));
+    OG_RETURN_IFERR(sql_create_part_scan_keys(stmt, plan, table_cur, handle, &part_array, calc_mode, scan_part_flags));
     if (knl_is_compart_table(handle) && table_cur->part_set.type != KEY_SET_EMPTY) {
         sql_init_subpart_scan_key(table_cur);
+    }
+
+    if (scan_part_flags != NULL) {
+        scan_part_flags->scan_part_flags = part_array.flags;
     }
 
     return OG_SUCCESS;
@@ -1580,7 +1588,7 @@ static inline void sql_init_key_set(key_set_t *key)
 }
 
 status_t sql_make_subpart_scan_keys(sql_stmt_t *stmt, sql_array_t *subpart, sql_table_t *table, vmc_t *vmc,
-    part_scan_key_t *part_scan_key, calc_mode_t calc_mode)
+    part_scan_key_t *part_scan_key, calc_mode_t calc_mode, scan_part_flags_t* scan_part_flags)
 {
     key_set_t *curr_sub_set = NULL;
     scan_list_array_t subpart_arrays = { 0 };
@@ -1631,6 +1639,10 @@ status_t sql_make_subpart_scan_keys(sql_stmt_t *stmt, sql_array_t *subpart, sql_
         }
 
         OGSQL_RESTORE_STACK(stmt);
+    }
+
+    if (scan_part_flags != NULL) {
+        scan_part_flags->scan_subpart_flags = subpart_arrays.flags;
     }
 
     return OG_SUCCESS;
@@ -1938,7 +1950,8 @@ status_t sql_scan_normal_table(sql_stmt_t *stmt, sql_table_t *table, sql_table_c
     if (knl_is_part_table(table->entry->dc.handle)) {
         OGSQL_SAVE_STACK(stmt);
 
-        if (sql_make_part_scan_keys(stmt, &plan->scan_p, tab_cursor, cursor, CALC_IN_EXEC) != OG_SUCCESS) {
+        if (sql_make_part_scan_keys(stmt, &plan->scan_p, tab_cursor, cursor, CALC_IN_EXEC,
+            CALC_IN_EXEC_PART_KEY, NULL) != OG_SUCCESS) {
             OGSQL_RESTORE_STACK(stmt);
             return OG_ERROR;
         }
@@ -2671,7 +2684,7 @@ status_t sql_fetch_scan(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *pla
     return OG_SUCCESS;
 }
 
-static bool32 can_print_subpart_no(sql_table_cursor_t *cursor)
+bool32 can_print_subpart_no(sql_table_cursor_t *cursor)
 {
     if (!knl_is_compart_table(cursor->table->entry->dc.handle)) {
         return OG_FALSE;
@@ -2731,7 +2744,8 @@ void sql_part_get_print(sql_stmt_t *stmt, scan_plan_t *plan, char *buffer, uint3
         table_cur.part_set.key_data = NULL;
         vmc_init(&stmt->session->vmp, &table_cur.vmc);
 
-        if (sql_make_part_scan_keys(stmt, plan, &table_cur, NULL, CALC_IN_PLAN) != OG_SUCCESS) {
+        if (sql_make_part_scan_keys(stmt, plan, &table_cur, NULL, CALC_IN_PLAN, CALC_IN_EXEC_PART_KEY,
+            NULL) != OG_SUCCESS) {
             iret_snprintf = snprintf_s(buffer, size, size - 1, "Filter:ERROR");
             if (iret_snprintf == -1) {
                 OG_THROW_ERROR(ERR_SYSTEM_CALL, iret_snprintf);

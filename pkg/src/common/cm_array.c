@@ -37,15 +37,18 @@ extern "C" {
 #ifdef WIN32
     __declspec(thread) handle_t tls_session_handle = NULL;
     __declspec(thread) handle_t tls_pool_handle = NULL;
+    __declspec(thread) handle_t tls_array_stack_set_handle = NULL;
 #else
     __thread handle_t tls_session_handle = NULL;
     __thread handle_t tls_pool_handle = NULL;
+    __thread handle_t tls_array_stack_set_handle = NULL;
 #endif
 
-void array_set_handle(handle_t session_handle, handle_t pool_handle)
+void array_set_handle(handle_t session_handle, handle_t pool_handle, handle_t array_stack_set_handle)
 {
     tls_session_handle = session_handle;
     tls_pool_handle = pool_handle;
+    tls_array_stack_set_handle = array_stack_set_handle;
 }
 
 static status_t array_modify_head_offset(handle_t session, vm_pool_t *vm_pool, uint32 vmid,
@@ -624,7 +627,7 @@ static status_t cm_element_as_string(array_assist_t *aa, const nlsparams_t *nls,
                               elem_dir_t *dir, text_t *text, uint32 max_buf_size)
 {
     char *data = NULL;
-    uint32 buf_size;
+    uint32 buf_size = max_buf_size - text->len;
     text_t ele_text;
     text_t fmt_text;
     status_t status = OG_SUCCESS;
@@ -633,11 +636,6 @@ static status_t cm_element_as_string(array_assist_t *aa, const nlsparams_t *nls,
     vm_lob_t *vlob = &var->value.vm_lob;
     dec2_t d2;
 
-    data = text->str + text->len;
-    buf_size = max_buf_size - text->len;
-    ele_text.str = data;
-    ele_text.len = 0;
-
     if (dir->size == 0) {
         if (dir->offset == ELEMENT_NULL_OFFSET) {
             return cm_concat_string(text, max_buf_size, "NULL");
@@ -645,19 +643,27 @@ static status_t cm_element_as_string(array_assist_t *aa, const nlsparams_t *nls,
             return OG_SUCCESS;
         }
     }
-    
+    ele_text.str = text->str + text->len;
+    ele_text.len = 0;
+    if (OG_IS_STRING_TYPE((og_type_t)var->type)) {
+        OG_RETURN_IFERR(array_get_value_by_dir(aa, ele_text.str, buf_size, vlob, dir));
+        /* the string is already in the buffer */
+        text->len += dir->size;
+        return OG_SUCCESS;
+    }
+
+    CM_SAVE_STACK(aa->stack);
+    data = cm_push(aa->stack, buf_size);
+    if (SECUREC_UNLIKELY(data == NULL)) {
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, buf_size, "alloc array element buffer failed");
+        return OG_ERROR;
+    }
     if (array_get_value_by_dir(aa, data, buf_size, vlob, dir) != OG_SUCCESS) {
+        CM_RESTORE_STACK(aa->stack);
         return OG_ERROR;
     }
 
     switch (var->type) {
-        case OG_TYPE_STRING:
-        case OG_TYPE_CHAR:
-        case OG_TYPE_VARCHAR:
-            /* the string is already in the buffer */
-            ele_text.len = dir->size;
-            break;
-
         case OG_TYPE_UINT32:
             OG_BREAK_IF_ERROR(cm_check_bufsize_and_set_stat(buf_size, OG_MAX_UINT32_STRLEN, &status));
             cm_uint32_to_text(*(uint32 *)data, &ele_text);
@@ -728,9 +734,11 @@ static status_t cm_element_as_string(array_assist_t *aa, const nlsparams_t *nls,
 
         default:
             OG_SET_ERROR_MISMATCH(OG_TYPE_STRING, var->type);
+            CM_RESTORE_STACK(aa->stack);
             return OG_ERROR;
     }
 
+    CM_RESTORE_STACK(aa->stack);
     OG_RETURN_IFERR(status);
     text->len += ele_text.len;
     return OG_SUCCESS;
@@ -749,13 +757,14 @@ status_t cm_array2text(const nlsparams_t *nls, var_array_t *var, text_t *text)
     bool32 switch_page = OG_TRUE;
     text->len = 0;
 
-    if (tls_session_handle == NULL || tls_pool_handle == NULL) {
+    if (tls_session_handle == NULL || tls_pool_handle == NULL || tls_array_stack_set_handle == NULL) {
         OG_THROW_ERROR(ERR_ARRAY_TO_STR_FAILED);
         return OG_ERROR;
     }
 
     aa.session = tls_session_handle;
     aa.pool = (vm_pool_t *)tls_pool_handle;
+    aa.stack = (cm_stack_t *)tls_array_stack_set_handle;
     OG_RETURN_IFERR(array_get_last_dir_end(&aa, &var->value.vm_lob, &dir_end));
 
     dir_start = sizeof(array_head_t);
@@ -1461,7 +1470,8 @@ static status_t array_insert_element(array_assist_t *aa, char *data, uint32 size
 
     /* null element */
     if (size == 0) {
-        dir->offset = 0;
+        dir->offset = ELEMENT_NULL_OFFSET;
+        dir->size = 0;
         return OG_SUCCESS;
     }
 

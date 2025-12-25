@@ -601,12 +601,13 @@ static status_t sql_static_check_exprs(const expr_tree_t *left, const expr_tree_
         return OG_SUCCESS;
     }
 
+    if (IS_COMPLEX_TYPE(TREE_DATATYPE(left)) || IS_COMPLEX_TYPE(TREE_DATATYPE(right))) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "complex type cannot be used for condition");
+        return OG_ERROR;
+    }
+
     if (get_cmp_datatype(TREE_DATATYPE(left), TREE_DATATYPE(right)) == INVALID_CMP_DATATYPE) {
-        if (IS_COMPLEX_TYPE(TREE_DATATYPE(left)) || IS_COMPLEX_TYPE(TREE_DATATYPE(right))) {
-            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "complex type cannot be used for condition");
-        } else {
-            OG_SRC_ERROR_MISMATCH(TREE_LOC(right), TREE_DATATYPE(left), TREE_DATATYPE(right));
-        }
+        OG_SRC_ERROR_MISMATCH(TREE_LOC(right), TREE_DATATYPE(left), TREE_DATATYPE(right));
         return OG_ERROR;
     }
 

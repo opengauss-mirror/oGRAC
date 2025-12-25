@@ -28,7 +28,7 @@
 #include "cm_defs.h"
 #include "ogsql_stmt.h"
 #include "cm_lex.h"
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 extern status_t shd_calc_direct_route_for_value(sql_stmt_t *ogsql_stmt, sql_route_t *route_rule, group_list_t *groups);
 #endif
 #ifdef __cplusplus

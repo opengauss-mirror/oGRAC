@@ -35,6 +35,8 @@
 #include "dtc_recovery.h"
 #include "dtc_backup.h"
 #include "knl_lrepl_meta.h"
+#include "cm_malloc.h"
+
 #define OG_MIN_FREE_LOGS 2
 
 // LOG_ARCHIVE_FORMAT contains %s %r %t, need to reserve enough space for the integers
@@ -1140,6 +1142,7 @@ static status_t arch_dbstor_generate_arch_file(arch_proc_context_t *proc_ctx, lo
     uint32 node_id = arch_get_proc_node_id(proc_ctx);
     uint32 *asn = &proc_ctx->last_archived_log_record.asn;
     device_type_t arch_file_type = arch_get_device_type(proc_ctx->arch_dest);
+    bool32 ignore = OG_FALSE;
     if (proc_ctx->last_archived_log_record.end_lsn == proc_ctx->last_archived_log_record.cur_lsn) {
         proc_ctx->need_file_archive = OG_FALSE; // no log when force archive, need clear.
         OG_LOG_RUN_WAR("[ARCH] empty file no need to archive %s", tmp_file_name);
@@ -1161,6 +1164,17 @@ static status_t arch_dbstor_generate_arch_file(arch_proc_context_t *proc_ctx, lo
                                             proc_ctx->last_archived_log_record.start_lsn,
                                             proc_ctx->last_archived_log_record.cur_lsn, arch_file_name};
     arch_set_archive_log_name_with_lsn(proc_ctx->session, ARCH_DEFAULT_DEST, &file_name_info);
+    if (cm_exist_device(arch_file_type, arch_file_name)) {
+        OG_LOG_RUN_WAR("[ARCH] Archived log file %s already exits", arch_file_name);
+        if (arch_process_existed_archfile(proc_ctx->session, arch_file_name, logfile->head, &ignore) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (ignore) {
+            OG_LOG_RUN_WAR("[ARCH] skip archive log file %s to %s which already exists",
+                           logfile->ctrl->name, arch_file_name);
+            return OG_SUCCESS;
+        }
+    }
     if (arch_dbstor_rename_tmp_file(tmp_file_name, arch_file_name, arch_file_type) != OG_SUCCESS) {
         proc_ctx->last_archived_log_record = tmp_record;
         arch_set_force_archive_stat(proc_ctx, OG_TRUE);
@@ -1319,9 +1333,10 @@ static status_t arch_write_arch_file_nocompress(knl_session_t *session, aligned_
 }
 
 static status_t arch_compress_write(arch_file_attr_t *arch_files, knl_compress_t *compress_ctx,
-    char *buf, int32 size, bool32 stream_end)
+    char *buf, int64 *file_offset, int32 size, bool32 stream_end)
 {
     compress_algo_e compress_alog;
+    device_type_t arch_file_type = arch_get_device_type(arch_files->arch_file_name);
     if (arch_files->log_head != NULL && arch_files->log_head->cmp_algorithm == COMPRESS_LZ4) {
         compress_alog = COMPRESS_LZ4;
     } else {
@@ -1338,8 +1353,9 @@ static status_t arch_compress_write(arch_file_attr_t *arch_files, knl_compress_t
         OG_LOG_DEBUG_INF("[ARCHIVE] compress log file %s with data_size %d to %u stream end %d",
             arch_files->arch_file_name, size, compress_ctx->write_len, stream_end);
 
-        if (cm_write_file(arch_files->dst_file, compress_ctx->compress_buf.aligned_buf,
+        if (cm_write_device(arch_file_type, arch_files->dst_file, *file_offset, compress_ctx->compress_buf.aligned_buf,
             compress_ctx->write_len) != OG_SUCCESS) {
+            *file_offset += (uint64)compress_ctx->write_len;
             return OG_ERROR;
         }
 
@@ -1389,7 +1405,10 @@ static status_t arch_write_arch_file_compress(knl_session_t *session, aligned_bu
 
     // Need to set compress flag first
     read_size = CM_CALC_ALIGN(sizeof(log_file_head_t), logfile->ctrl->block_size);
-    if (cm_read_file(arch_files->src_file, buf.aligned_buf, read_size, &data_size) != OG_SUCCESS) {
+    device_type_t src_type = arch_get_device_type(arch_files->src_name);
+    device_type_t arch_file_type = arch_get_device_type(arch_files->arch_file_name);
+    if (cm_read_device_nocheck(src_type, arch_files->src_file, arch_ctx->total_bytes, buf.aligned_buf, read_size,
+                               &data_size) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[ARCHIVE] failed to read archive log file %s offset size %llu actual read size %u",
             arch_files->src_name, logfile->head.write_pos - left_size, read_size);
         return OG_ERROR;
@@ -1403,28 +1422,26 @@ static status_t arch_write_arch_file_compress(knl_session_t *session, aligned_bu
     }
     // Recalculate checksum for log head
     log_calc_head_checksum(session, arch_log_head);
-    
-    if (cm_write_file(arch_files->dst_file, buf.aligned_buf, data_size) != OG_SUCCESS) {
+    int64 offset = 0;
+    if (cm_write_device(arch_file_type, arch_files->dst_file, offset, buf.aligned_buf, data_size) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[ARCHIVE] failed to write archive log file %s offset size %llu write size %u",
             arch_files->arch_file_name, logfile->head.write_pos - left_size, data_size);
         return OG_ERROR;
     }
 
-    if (arch_write_lz4_compress_head(&session->kernel->backup_ctx.bak, compress_ctx, arch_files, &logfile->head) !=
-        OG_SUCCESS) {
-        return OG_ERROR;
-    }
+    OG_RETURN_IFERR(arch_write_lz4_compress_head(&session->kernel->backup_ctx.bak,
+                                                 compress_ctx, arch_files, &logfile->head));
 
     left_size -= (uint64)data_size;
+    offset += (uint64)data_size;
     arch_ctx->total_bytes += data_size;
     logfile->arch_pos += data_size;
 
     arch_files->log_head = &logfile->head;
     while (left_size > 0) {
         read_size = (int32)((left_size > buf.buf_size) ? buf.buf_size : left_size);
-        if (cm_read_file(arch_files->src_file, buf.aligned_buf, read_size, &data_size) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
+        OG_RETURN_IFERR(cm_read_device_nocheck(src_type, arch_files->src_file, arch_ctx->total_bytes, buf.aligned_buf,
+                                               read_size, &data_size));
 
         if (read_size != data_size) {
             OG_LOG_RUN_ERR("[ARCH] failed to read log file %s, expect to read %d but actually read %d",
@@ -1432,9 +1449,7 @@ static status_t arch_write_arch_file_compress(knl_session_t *session, aligned_bu
             return OG_ERROR;
         }
 
-        if (arch_compress_write(arch_files, compress_ctx, buf.aligned_buf, data_size, OG_FALSE) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
+        OG_RETURN_IFERR(arch_compress_write(arch_files, compress_ctx, buf.aligned_buf, &offset, data_size, OG_FALSE));
 
         left_size -= (uint64)data_size;
         arch_ctx->total_bytes += data_size;
@@ -1444,7 +1459,7 @@ static status_t arch_write_arch_file_compress(knl_session_t *session, aligned_bu
         }
     }
 
-    return arch_compress_write(arch_files, compress_ctx, NULL, 0, OG_TRUE);
+    return arch_compress_write(arch_files, compress_ctx, NULL, &offset, 0, OG_TRUE);
 }
 
 static status_t arch_write_arch_file(knl_session_t *session, aligned_buf_t buf, log_file_t *logfile,
@@ -1488,29 +1503,33 @@ static status_t arch_archive_tmp_file(knl_session_t *session, aligned_buf_t buf,
         logfile, logfile->ctrl->name, logfile->ctrl->type, knl_redo_io_flag(session));
     SYNC_POINT_GLOBAL_END;
     if (status != OG_SUCCESS) {
-        OG_LOG_RUN_ERR_LIMIT(60, "[ARCH] failed to open log file %s", logfile->ctrl->name);
+        OG_LOG_RUN_ERR("[ARCH] failed to open log file %s", logfile->ctrl->name);
         return OG_ERROR;
     }
 
     arch_files.dst_file = -1;
-    if (cm_build_device(tmp_arch_file_name, logfile->ctrl->type, session->kernel->attr.xpurpose_buf,
+    if (cm_build_device(tmp_arch_file_name, arch_file_type, session->kernel->attr.xpurpose_buf,
         OG_XPURPOSE_BUFFER_SIZE, CM_CALC_ALIGN(sizeof(log_file_head_t), logfile->ctrl->block_size),
         knl_arch_io_flag(session, compress), OG_FALSE, &arch_files.dst_file) != OG_SUCCESS) {
         cm_close_device(logfile->ctrl->type, &arch_files.src_file);
+        OG_LOG_RUN_ERR("[ARCH] failed to cm_build_device file %s", tmp_arch_file_name);
         return OG_ERROR;
     }
 
-    if (cm_open_device(tmp_arch_file_name, logfile->ctrl->type, knl_arch_io_flag(session, compress),
+    if (cm_open_device(tmp_arch_file_name, arch_file_type, knl_arch_io_flag(session, compress),
         &arch_files.dst_file) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[ARCH] failed to create temp archive log file %s", tmp_arch_file_name);
+        OG_LOG_RUN_ERR("[ARCH] failed to create temp archive log file %s , type %u",
+                       tmp_arch_file_name, arch_file_type);
         cm_close_device(logfile->ctrl->type, &arch_files.src_file);
         return OG_ERROR;
     }
 
     status = arch_write_arch_file(session, buf, logfile, &arch_files, compress_ctx);
+    if (status != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[ARCH] failed to arch_write_arch_file %s", logfile->ctrl->name);
+    }
 
     cm_close_device(logfile->ctrl->type, &arch_files.src_file);
-    cm_close_device(logfile->ctrl->type, &arch_files.dst_file);
     return status;
 }
 
@@ -1521,10 +1540,18 @@ status_t arch_archive_file(knl_session_t *session, aligned_buf_t buf, log_file_t
     char tmp_arch_file_name[OG_FILE_NAME_BUFFER_SIZE + 4] = {0}; /* 4 bytes for ".tmp" */
     uint64 left_size = logfile->head.write_pos;
     int32 ret;
+    bool32 ignore = OG_FALSE;
     device_type_t arch_file_type = arch_get_device_type(arch_file_name);
     if (cm_exist_device(arch_file_type, arch_file_name)) {
-        OG_LOG_RUN_INF("[ARCH] Archived log file %s already exits", arch_file_name);
-        return OG_SUCCESS;
+        OG_LOG_RUN_WAR("[ARCH] Archived log file %s already exits", arch_file_name);
+        if (arch_process_existed_archfile(session, arch_file_name, logfile->head, &ignore) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (ignore) {
+            OG_LOG_RUN_WAR("[ARCH] skip archive log file %s to %s which already exists",
+                           logfile->ctrl->name, arch_file_name);
+            return OG_SUCCESS;
+        }
     } else {
         knl_panic(left_size > CM_CALC_ALIGN(sizeof(log_file_head_t), logfile->ctrl->block_size));
     }
@@ -4148,26 +4175,34 @@ bool32 arch_has_valid_arch_dest(knl_session_t *session)
 status_t arch_regist_archive(knl_session_t *session, const char *name)
 {
     int32 handle = OG_INVALID_HANDLE;
-    log_file_head_t head = {0};
     int64 file_size = 0;
     device_type_t type = arch_get_device_type(name);
     if (cm_open_device(name, type, O_BINARY | O_SYNC | O_RDWR, &handle) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
+    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
     cm_get_size_device(type, handle, &file_size);
-    if ((head.cmp_algorithm == COMPRESS_NONE) && ((int64)head.write_pos != file_size)) {
+    if ((head->cmp_algorithm == COMPRESS_NONE) && ((int64)head->write_pos != file_size)) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         OG_THROW_ERROR(ERR_INVALID_ARCHIVE_LOG, name);
         return OG_ERROR;
     }
     cm_close_device(type, &handle);
-    if (arch_try_record_archinfo(session, ARCH_DEFAULT_DEST, name, &head) != OG_SUCCESS) {
+    if (arch_try_record_archinfo(session, ARCH_DEFAULT_DEST, name, head) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
+    CM_FREE_PTR(head);
     return OG_SUCCESS;
 }
 
@@ -4359,9 +4394,8 @@ void arch_get_bind_host(knl_session_t *session, const char *srv_host, char *bind
     bind_host[0] = '\0';
 }
 
-static bool32 arch_is_same(const char *arch_name, log_file_head_t head)
+static bool32 arch_is_same(knl_session_t *session, const char *arch_name, log_file_head_t head)
 {
-    log_file_head_t arch_head = {0};
     int32 handle = OG_INVALID_HANDLE;
     device_type_t type = arch_get_device_type(arch_name);
     int64 file_size = 0;
@@ -4371,27 +4405,43 @@ static bool32 arch_is_same(const char *arch_name, log_file_head_t head)
         return OG_FALSE;
     }
 
-    if (cm_read_device(type, handle, 0, &arch_head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    log_file_head_t* arch_head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (arch_head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
+
+    if (cm_read_device(type, handle, 0, arch_head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         cm_close_device(type, &handle);
         OG_LOG_RUN_INF("[ARCH] failed to read %s", arch_name);
+        CM_FREE_PTR(arch_head);
         cm_reset_error();
         return OG_FALSE;
     }
 
     cm_get_size_device(type, handle, &file_size);
-    if (arch_head.cmp_algorithm == COMPRESS_NONE && file_size != (int64)arch_head.write_pos) {
+    if (arch_head->cmp_algorithm == COMPRESS_NONE && file_size != (int64)arch_head->write_pos) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(arch_head);
         OG_LOG_RUN_INF("[ARCH] archive file %s is invalid", arch_name);
         return OG_FALSE;
     }
     cm_close_device(type, &handle);
 
-    if (arch_head.first != head.first || arch_head.write_pos < head.write_pos) {
-        OG_LOG_RUN_INF("[ARCH] archive file %s is not expected, arch info [%lld-%lld], expected log info [%lld-%lld]",
-            arch_name, arch_head.write_pos, arch_head.first, head.write_pos, head.first);
+    if (arch_head->dbid != session->kernel->db.ctrl.core.dbid) {
+        OG_LOG_RUN_INF("[ARCH] archive file %s is not expected, arch dbid %u, expected dbid %u",
+            arch_name, arch_head->dbid, head.dbid);
+        CM_FREE_PTR(arch_head);
         return OG_FALSE;
     }
 
+    if (arch_head->first != head.first || arch_head->write_pos < head.write_pos) {
+        OG_LOG_RUN_INF("[ARCH] archive file %s is not expected, arch info [%lld-%lld], expected log info [%lld-%lld]",
+            arch_name, arch_head->write_pos, arch_head->first, head.write_pos, head.first);
+        CM_FREE_PTR(arch_head);
+        return OG_FALSE;
+    }
+    CM_FREE_PTR(arch_head);
     return OG_TRUE;
 }
 
@@ -4401,7 +4451,7 @@ status_t arch_process_existed_archfile(knl_session_t *session, const char *arch_
     arch_proc_context_t *proc_ctx = &session->kernel->arch_ctx.arch_proc[0];
     arch_ctrl_t *arch_ctrl = NULL;
     device_type_t type = arch_get_device_type(arch_name);
-    *ignore_data = arch_is_same(arch_name, head);
+    *ignore_data = arch_is_same(session, arch_name, head);
     if (*ignore_data) {
         return OG_SUCCESS;
     }
@@ -5224,16 +5274,21 @@ void arch_dbs_ctrl_record_arch_ctrl(arch_ctrl_t *arch_ctrl, log_file_head_t *log
 
 status_t arch_dbs_ctrl_rebuild_parse_arch_ctrl(knl_session_t *session, const char *file_name, uint32 node_id)
 {
-    log_file_head_t log_head;
     int32 handle = OG_INVALID_HANDLE;
     device_type_t type = arch_get_device_type(file_name);
     if (cm_open_device(file_name, type, O_BINARY | O_SYNC | O_RDWR, &handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[arch_bk] can not open archivelog %s.", file_name);
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &log_head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    log_file_head_t* log_head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (log_head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
+    if (cm_read_device(type, handle, 0, log_head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[arch_bk] can not read archivelog %s.", file_name);
         cm_close_device(type, &handle);
+        CM_FREE_PTR(log_head);
         return OG_ERROR;
     }
     dtc_node_ctrl_t *node_ctrl = dtc_get_ctrl(session, node_id);
@@ -5253,7 +5308,7 @@ status_t arch_dbs_ctrl_rebuild_parse_arch_ctrl(knl_session_t *session, const cha
         }
     }
     arch_ctrl = db_get_arch_ctrl(session, archived_end, node_id);
-    arch_dbs_ctrl_record_arch_ctrl(arch_ctrl, &log_head, file_name);
+    arch_dbs_ctrl_record_arch_ctrl(arch_ctrl, log_head, file_name);
     // save node ctrl and arch ctrl
     if (db_save_arch_ctrl(session, archived_end, node_id, archived_start, end_pos) != OG_SUCCESS) {
         CM_ABORT(0, "[arch_bk] ABORT INFO: save core control file failed when record archive log file %s for "
@@ -5261,6 +5316,7 @@ status_t arch_dbs_ctrl_rebuild_parse_arch_ctrl(knl_session_t *session, const cha
                      file_name, node_ctrl->archived_start, node_ctrl->archived_end, node_id);
     }
     cm_close_device(type, &handle);
+    CM_FREE_PTR(log_head);
     return OG_SUCCESS;
 }
 

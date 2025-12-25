@@ -61,7 +61,7 @@ cms_msg_iostat_contrast_t g_cms_iostat_type[CMS_IO_COUNT] = {
     {"CMS_STATISTIC_HB_AYNC_TIME_GAP"},
 };
 
-int32 g_lockConfigHandle = OG_INVALID_HANDLE; // TODO???
+int32 g_lockConfigHandle = OG_INVALID_HANDLE;
 
 static status_t cm_get_and_flock_conf_file(char *config_name)
 {

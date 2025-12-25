@@ -53,7 +53,6 @@ int32 cm_iof_register(iof_reg_out_t *iof_out)
         if (CM_SCSI_ERR_CONFLICT == ret) {
             OG_LOG_DEBUG_INF("Scsi3 register conflict, rk %lld, dev %s.", CM_OUT_SCSI_RK(iof_out), iof_out->dev);
             close(fd);
-            /// TODO: need to check I_T and initiator
             return CM_IOF_ERR_DUP_OP;
         } else {
             OG_LOG_DEBUG_ERR("Scsi3 register failed, rk %lld, dev %s.", CM_OUT_SCSI_RK(iof_out), iof_out->dev);
@@ -98,7 +97,6 @@ int32 cm_iof_unregister(iof_reg_out_t *iof_out)
         if (CM_SCSI_ERR_CONFLICT == ret) {
             OG_LOG_DEBUG_INF("Scsi3 unregister conflict, rk %lld, dev %s.", CM_OUT_SCSI_RK(iof_out), iof_out->dev);
             close(fd);
-            /// TODO: need to check I_T and initiator
             return CM_IOF_ERR_DUP_OP;
         } else {
             OG_LOG_DEBUG_ERR("Scsi3 unregister failed, rk %lld, dev %s.", CM_OUT_SCSI_RK(iof_out), iof_out->dev);

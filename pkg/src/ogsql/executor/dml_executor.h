@@ -52,7 +52,7 @@ typedef struct st_key_set_t {
     key_set_type_t type;
 } key_set_t;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 typedef struct st_participant_node {
     uint16 stmt_index;
@@ -100,22 +100,6 @@ static inline int32 *sql_remote_get_merge_sort_losertree(sql_stmt_t *ogsql_stmt,
         OG_THROW_ERROR_EX(ERR_ASSERT_ERROR, "mergesort_property->buf == NULL");
     }
     return (int32 *)(mergesort_property->buf + mergesort_property->participants_count * sizeof(participant_node_t));
-}
-
-/* @NOTE: never store the return value in a heap variable */
-static inline participant_node_t *sql_remote_get_merge_sort_participant(sql_stmt_t *ogsql_stmt,
-    merge_fetch_property_t *mergesort_property, int32 index)
-{
-    participant_node_t *node_arr = NULL;
-    if (mergesort_property->buf == NULL) {
-        OG_THROW_ERROR_EX(ERR_ASSERT_ERROR, "mergesort_property->buf == NULL");
-        return NULL;
-    }
-    if (index < 0 || index >= mergesort_property->participants_count) {
-        return NULL;
-    }
-    node_arr = (participant_node_t *)mergesort_property->buf;
-    return &node_arr[index];
 }
 
 typedef struct st_remote_cursor {
@@ -389,23 +373,21 @@ typedef struct st_group_ctx {
     group_by_phase_t group_by_phase;
     uint32 key_card;
     variant_t *str_aggr_val;
+    hash_segment_t hash_segment;
+    hash_table_entry_t *hash_dist_tables;
     union {
         struct {
             // hash group
             bool32 empty;
-            union {
-                hash_segment_t hash_segment;
-                // for hash group par
-                struct {
-                    hash_segment_t *hash_segment_par;
-                    bool32 *empty_par;
-                    uint32 par_hash_tab_count;
-                };
+            // for hash group par
+            struct {
+                hash_segment_t *hash_segment_par;
+                bool32 *empty_par;
+                uint32 par_hash_tab_count;
             };
             hash_table_entry_t group_hash_table;
             hash_scan_assist_t group_hash_scan_assit;
             hash_table_entry_t *hash_tables;
-            hash_table_entry_t *hash_dist_tables;
             hash_table_iter_t *iters;
         };
 
@@ -416,7 +398,9 @@ typedef struct st_group_ctx {
         };
     };
     char *row_buf;
+    char *aggr_buf;
     uint32 row_buf_len;
+    uint32 aggr_buf_len;
 } group_ctx_t;
 
 typedef enum en_distinct_type {
@@ -634,7 +618,8 @@ typedef struct st_sql_cursor {
     uint32 global_cached : 1; // cached scan pages into global CR pool or not
     uint32 hash_table_status : 2;
     bool32 is_mtrl_cursor : 1;
-    uint32 reserved : 23;
+    uint32 is_group_insert : 1;  // set in hash_group_i_operation_func
+    uint32 reserved : 22;
     bool32 eof;
 
     sql_cursor_par_ctx_t par_ctx; // for parallel execute sql
@@ -772,6 +757,7 @@ static inline sql_cursor_t *sql_get_group_cursor(sql_cursor_t *cursor)
     }
     return cursor->exec_data.group_cube->fetch_cursor;
 }
+void sql_release_multi_parts_resources(sql_stmt_t *ogsql_stmt, sql_table_cursor_t *tab_cur);
 
 #ifdef __cplusplus
 }

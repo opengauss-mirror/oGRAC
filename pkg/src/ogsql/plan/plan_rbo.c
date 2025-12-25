@@ -75,35 +75,28 @@ bool32 rbo_find_column_in_func_index(query_field_t *query_field, knl_index_desc_
     return OG_FALSE;
 }
 
-static inline status_t sql_get_col_ref_count(visit_assist_t *visit_ass, expr_node_t **node)
+bool32 chk_part_key_match_index(dc_entity_t *entity, uint32 part_key_count, knl_index_desc_t *index, uint16 equal_to)
 {
-    uint32 *col_ref_map = (uint32 *)(visit_ass->param0);
-    if ((*node)->type == EXPR_NODE_COLUMN) {
-        col_ref_map[NODE_COL(*node)]++;
-    }
-
-    return OG_SUCCESS;
-}
-
-static inline bool32 can_use_func_index_only(sql_query_t *query)
-{
-    if (!g_instance->sql.enable_func_idx_only || query->winsort_list->count > 0) {
-        return OG_FALSE;
-    }
-
-    for (uint32 i = 0; i < query->tables.count; i++) {
-        sql_table_t *table = sql_array_get(&query->tables, i);
-        if (table->type != NORMAL_TABLE) {
+    for (uint16 i = 0; i < part_key_count; ++i) {
+        uint16 part_key_col = knl_part_key_column_id(entity, i);
+        uint16 idx_id = OG_INVALID_ID16;
+        for (uint16 j = 0; j < index->column_count; j++) {
+            if (index->columns[j] == part_key_col) {
+                idx_id = j;
+                break;
+            }
+        }
+        if (idx_id == OG_INVALID_ID16) {
+            return OG_FALSE;
+        }
+        if (idx_id < equal_to) {
+            continue;
+        }
+        if (equal_to + i != idx_id) {
             return OG_FALSE;
         }
     }
-
     return OG_TRUE;
-}
-
-bool32 chk_part_key_match_index(dc_entity_t *entity, uint32 part_key_count, knl_index_desc_t *index, uint16 equal_to)
-{
-    return OG_FALSE;
 }
 
 static inline status_t sql_de_adjust_node_type(visit_assist_t *visit_ass, expr_node_t **node)

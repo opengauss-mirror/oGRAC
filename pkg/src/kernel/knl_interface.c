@@ -30,6 +30,7 @@
 #include "cm_device.h"
 #include "cm_io_record.h"
 #include "cm_file_iofence.h"
+#include "cm_dss_iofence.h"
 #include "knl_lob.h"
 #include "rcr_btree.h"
 #include "rcr_btree_scan.h"
@@ -271,6 +272,24 @@ void knl_attach_cpu_core(void)
     }
 }
 
+void knl_get_cpu_set_from_conf(cpu_set_t *cpuset)
+{
+    int cpu_group_num = get_cpu_group_num();
+    cpu_set_t *cpu_masks = get_cpu_masks();
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    if (cpu_group_num <= 0) {
+        OG_LOG_RUN_ERR("Invalid cpu_group_num is %d!", cpu_group_num);
+        return;
+    } else if (cpu_masks == NULL) {
+        OG_LOG_RUN_ERR("cpu_masks is NULL");
+        return;
+    } else {
+        mask = cpu_masks[(cm_get_current_thread_id()) % cpu_group_num];
+    }
+    *cpuset = mask;
+}
+
 void knl_set_curr_sess2tls(void *sess)
 {
     tls_curr_sess = sess;
@@ -317,7 +336,7 @@ status_t knl_ddl_latch_x_inner(drlatch_t *latch, knl_handle_t session, latch_sta
             OG_THROW_ERROR(ERR_USER_DDL_LOCKED);
             return OG_ERROR;
         }
-        if (!dls_latch_timed_x(session, latch, se->id, 1, stat, OG_INVALID_ID32)) {
+        if (!dls_latch_timed_x(session, latch, 1, stat, OG_INVALID_ID32)) {
             if (se->canceled) {
                 OG_THROW_ERROR(ERR_OPERATION_CANCELED);
                 return OG_ERROR;
@@ -328,7 +347,7 @@ status_t knl_ddl_latch_x_inner(drlatch_t *latch, knl_handle_t session, latch_sta
                 return OG_ERROR;
             }
         } else {
-            if (DB_IS_CLUSTER((knl_session_t*)session) && RC_REFORM_IN_PROGRESS) {
+            if (DB_IS_CLUSTER((knl_session_t*)session) && (g_rc_ctx == NULL || RC_REFORM_IN_PROGRESS)) {
                 dls_unlatch(session, latch, NULL);
                 OG_THROW_ERROR(ERR_CLUSTER_DDL_DISABLED);
                 return OG_ERROR;
@@ -1135,6 +1154,9 @@ uint32 knl_subpart_count(knl_handle_t dc_entity, uint32 part_no)
     dc_entity_t *entity = (dc_entity_t *)dc_entity;
     part_table_t *part_table = entity->table.part_table;
     table_part_t *table_part = PART_GET_ENTITY(part_table, part_no);
+    if (table_part == NULL) {
+        return 0;
+    }
     knl_panic_log(IS_PARENT_TABPART(&table_part->desc),
                   "the table_part is not parent tabpart, panic info: "
                   "table %s table_part %s",
@@ -2139,9 +2161,10 @@ static status_t knl_delete_index_key(knl_handle_t session, knl_cursor_t *cursor)
     }
 
     if (knl_make_key(session, cursor, index, cursor->key) != OG_SUCCESS) {
-        knl_panic_log(0, "knl_make_key is failed, panic info: page %u-%u type %u table %s index %s", cursor->rowid.file,
-                      cursor->rowid.page, ((page_head_t *)cursor->page_buf)->type,
-                      ((dc_entity_t *)cursor->dc_entity)->table.desc.name, index->desc.name);
+        OG_LOG_RUN_ERR("knl_make_key is failed, page %u-%u type %u table %s index %s",
+            cursor->rowid.file, cursor->rowid.page, ((page_head_t *)cursor->page_buf)->type,
+            ((dc_entity_t *)cursor->dc_entity)->table.desc.name, index->desc.name);
+        return OG_ERROR;
     }
 
     return index->acsor->do_delete(session, cursor);
@@ -2928,8 +2951,6 @@ status_t knl_verify_dep_by_row_delete(knl_session_t *session, dep_condition_t *d
     knl_handle_t child_cursor_stmt = child_cursor->stmt;
 
     dc_entity_t *child_entity = (dc_entity_t *)child_dc->handle;
-    table_t *child_table = &child_entity->table;
-    table_t *parent_table = (table_t *)parent_cursor->table;
     session->wtid.is_locking = OG_TRUE;
     session->wtid.oid = child_entity->entry->id;
     session->wtid.uid = child_entity->entry->uid;
@@ -2953,11 +2974,6 @@ status_t knl_verify_dep_by_row_delete(knl_session_t *session, dep_condition_t *d
         }
 
         if (child_cursor->eof) {
-            // self-referenced delete
-            if (child_table->desc.id == parent_table->desc.id && child_table->desc.uid == parent_table->desc.uid &&
-                !(cons_dep->refactor & REF_DEL_CASCADE || cons_dep->refactor & REF_DEL_SET_NULL)) {
-                *depended = OG_TRUE;
-            }
             ret = OG_SUCCESS;
             break;
         }
@@ -3072,7 +3088,6 @@ status_t knl_verify_dep_by_key_delete(knl_session_t *session, dep_condition_t *d
 
     dc_entity_t *child_entity = (dc_entity_t *)child_dc->handle;
     table_t *child_table = &child_entity->table;
-    table_t *parent_table = (table_t *)parent_cursor->table;
 
     for (uint32 i = 0; i < child_table->index_set.count; i++) {
         index = child_table->index_set.items[i];
@@ -3087,11 +3102,6 @@ status_t knl_verify_dep_by_key_delete(knl_session_t *session, dep_condition_t *d
         }
 
         if (child_cursor->eof) {
-            // self-referenced delete
-            if (child_table->desc.id == parent_table->desc.id && child_table->desc.uid == parent_table->desc.uid &&
-                !(cons_dep->refactor & REF_DEL_CASCADE || cons_dep->refactor & REF_DEL_SET_NULL)) {
-                *depended = OG_TRUE;
-            }
             ret = OG_SUCCESS;
             break;
         }
@@ -4485,85 +4495,55 @@ status_t knl_get_serial_cached_value(knl_handle_t session, knl_handle_t dc_entit
     return OG_SUCCESS;
 }
 
-status_t knl_get_serial_value(knl_handle_t handle, knl_handle_t dc_entity, uint64 *value)
+static status_t knl_get_serial_value_tmp_table(knl_handle_t se, knl_handle_t dc_entity, uint64 *value,
+    uint16 auto_inc_step, uint16 auto_inc_offset)
 {
-    uint32 residue = 1;
-    knl_session_t *session = (knl_session_t *)handle;
+    knl_session_t *session = (knl_session_t *)se;
     dc_entity_t *entity = (dc_entity_t *)dc_entity;
-    dc_entry_t *entry = entity->entry;
+    knl_temp_cache_t *temp_table = NULL;
 
-    if (lock_table_shared(session, dc_entity, LOCK_INF_WAIT) != OG_SUCCESS) {
+    if (knl_ensure_temp_cache(session, entity, &temp_table) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("get temp cache failed!");
         return OG_ERROR;
     }
-
-    if (entity->type == DICT_TYPE_TEMP_TABLE_SESSION || entity->type == DICT_TYPE_TEMP_TABLE_TRANS) {
-        knl_temp_cache_t *temp_table = NULL;
-
-        if (knl_ensure_temp_cache(session, entity, &temp_table) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-
-        if (temp_table->serial == 0) {
-            temp_table->serial = entity->table.desc.serial_start;
-            if (temp_table->serial == 0) {
-                temp_table->serial++;
-            }
-        }
-        *value = temp_table->serial++;
-        return OG_SUCCESS;
+    if (temp_table->serial >= OG_INVALID_ID64 - auto_inc_step ||
+        entity->table.desc.serial_start >= OG_INVALID_ID64 - auto_inc_step) {
+        OG_LOG_RUN_ERR("serial value exceeded the maximum!");
+        return OG_ERROR;
     }
-
-    if (entity->table.heap.segment == NULL) {
-        if (heap_create_entry(session, &entity->table.heap) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-    }
-
-    dls_spin_lock(session, &entry->serial_lock, NULL);
-
-    if (entry->version != session->kernel->dc_ctx.version) {
-        entry->serial_value = 0;
-        entry->version = session->kernel->dc_ctx.version;
-    }
-
-    // int64 segment_serial = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial;
-
-    if (entry->serial_value == 0) {
-        entry->serial_value = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial;
-
-        if (entry->serial_value == 0) {
-            entry->serial_value = 1;
-        }
-    }
-
-    if (entity->table.desc.serial_start == 0) {
-        residue = 1;
-    } else {
-        residue = 0;
-    }
-
-    *value = entry->serial_value;
-    if (*value == OG_INVALID_ID64) {
-        dls_spin_unlock(session, &entry->serial_lock);
-        return OG_SUCCESS;
-    }
-
-    if (*value >= OG_INVALID_ID64 - OG_SERIAL_CACHE_COUNT) {
-        if (OG_INVALID_ID64 != HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial) {
-            heap_update_serial(session, &entity->table.heap, OG_INVALID_ID64);
-        }
-    } else if ((entry->serial_value - entity->table.desc.serial_start) % OG_SERIAL_CACHE_COUNT == residue) {
-        heap_increase_serial(session, &entity->table.heap);
-        entry->serial_value = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial -
-            OG_SERIAL_CACHE_COUNT;
-        *value = entry->serial_value;
-    }
-
-    entry->serial_value++;
-
-    dls_spin_unlock(session, &entry->serial_lock);
-
+    knl_cal_serial_value(temp_table->serial, value, entity->table.desc.serial_start, auto_inc_step,
+        auto_inc_offset);
+    temp_table->serial = *value;
     return OG_SUCCESS;
+}
+
+void knl_cal_serial_value(uint64 prev_id, uint64 *curr_id, uint64 start_val, uint16 step, uint16 offset)
+{
+    if (step == 1) { // auto_increment_increment, step = 1
+        *curr_id = prev_id + 1;
+        if (*curr_id < start_val) {
+            *curr_id = start_val;
+        }
+    } else {
+        *curr_id = prev_id + step;
+        if (*curr_id <= offset) {
+            *curr_id = offset;
+        } else if (*curr_id <= start_val) {
+            *curr_id = AUTO_INCREMENT_VALUE(start_val, offset, step);
+        } else {
+            *curr_id = AUTO_INCREMENT_VALUE(*curr_id, offset, step);
+        }
+    }
+    return ;
+}
+
+void knl_first_serial_value(uint64 *curr_id, uint64 start_val, uint16 step, uint16 offset)
+{
+    if (offset < start_val) {
+        *curr_id = AUTO_INCREMENT_VALUE(start_val, offset, step);
+    } else {
+        *curr_id = offset;
+    }
 }
 
 void knl_heap_update_serial_value(knl_session_t *session, dc_entity_t *entity, uint64 *value, uint16 step,
@@ -4574,6 +4554,67 @@ void knl_heap_update_serial_value(knl_session_t *session, dc_entity_t *entity, u
     *value = AUTO_INCREMENT_VALUE(update_serial_value, offset, step);
     uint64 residue = (update_serial_value == 0) ? 0 : 1;
     heap_update_serial(session, &entity->table.heap, DC_CACHED_SERIAL_VALUE(*value, residue));
+}
+
+static void knl_init_serial_value(knl_session_t *session, dc_entity_t *entity, uint64 *value, uint16 auto_inc_step,
+                           uint16 auto_inc_offset)
+{
+    dc_entry_t *entry = entity->entry;
+    knl_first_serial_value(value, entity->table.desc.serial_start, auto_inc_step, auto_inc_offset);
+    knl_heap_update_serial_value(session, entity, value, auto_inc_step, auto_inc_offset);
+    entry->serial_value = *value;
+}
+
+// If the current entry->serial_value is larger than the pre-allocated segment_serial
+// we need to update the pre-allocated segment_serial
+status_t knl_get_serial_value(knl_handle_t handle, knl_handle_t dc_entity, uint64 *value, uint16 auto_inc_step,
+                                       uint16 auto_inc_offset)
+{
+    knl_session_t *session = (knl_session_t *)handle;
+    dc_entity_t *entity = (dc_entity_t *)dc_entity;
+    dc_entry_t *entry = entity->entry;
+    uint64 start_val = entity->table.desc.serial_start;
+    if (lock_table_shared(session, dc_entity, LOCK_INF_WAIT) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (entity->type == DICT_TYPE_TEMP_TABLE_SESSION || entity->type == DICT_TYPE_TEMP_TABLE_TRANS) {
+        return knl_get_serial_value_tmp_table(session, entity, value, auto_inc_step, auto_inc_offset);
+    }
+
+    if (entity->table.heap.segment == NULL) {
+        if (heap_create_entry(session, &entity->table.heap) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    dls_spin_lock(session, &entry->serial_lock, NULL);
+    if (entry->version != session->kernel->dc_ctx.version) {
+        entry->serial_value = 0;
+        entry->version = session->kernel->dc_ctx.version;
+    }
+    if (entry->serial_value == 0) {
+        knl_init_serial_value(session, entity, value, auto_inc_step, auto_inc_offset);
+        dls_spin_unlock(session, &entry->serial_lock);
+        return OG_SUCCESS;
+    }
+
+    if (entry->serial_value >= OG_INVALID_INT64 - auto_inc_step) {
+        *value = OG_INVALID_INT64;
+        dls_spin_unlock(session, &entry->serial_lock);
+        return OG_SUCCESS;
+    }
+
+    knl_cal_serial_value(entry->serial_value, value, start_val, auto_inc_step, auto_inc_offset);
+    if (*value >= OG_INVALID_INT64 - OG_SERIAL_CACHE_COUNT) {
+        if (OG_INVALID_INT64 != HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial) {
+            heap_update_serial(session, &entity->table.heap, OG_INVALID_INT64);
+        }
+    } else if ((*value - 1) / OG_SERIAL_CACHE_COUNT >
+               (entry->serial_value - 1) / OG_SERIAL_CACHE_COUNT) {
+        knl_heap_update_serial_value(session, entity, value, auto_inc_step, auto_inc_offset);
+    }
+    entry->serial_value = *value;
+    dls_spin_unlock(session, &entry->serial_lock);
+    return OG_SUCCESS;
 }
 
 status_t knl_reset_serial_value(knl_handle_t handle, knl_handle_t dc_entity)
@@ -7468,10 +7509,6 @@ static status_t knl_truncate_table_precheck(knl_handle_t session, knl_trunc_def_
                                             bool32 *no_segment)
 {
     knl_session_t *se = (knl_session_t *)session;
-    if (knl_check_truncate_table(se, def, *dc) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[TRUNCATE TABLE] Failed to check table %s", T2S_EX(&def->name));
-        return OG_ERROR;
-    }
     table_t *table = DC_TABLE(dc);
     if (db_table_is_referenced(se, table, OG_TRUE)) {
         OG_THROW_ERROR(ERR_TABLE_IS_REFERENCED);
@@ -7579,6 +7616,13 @@ status_t knl_truncate_table(knl_handle_t session, knl_handle_t stmt, knl_trunc_d
 
     if (OG_SUCCESS != dc_open(se, &def->owner, &def->name, &dc)) {
         oGRAC_record_io_stat_end(IO_RECORD_EVENT_KNL_TRUNCATE_TABLE, &tv_begin);
+        return OG_ERROR;
+    }
+
+    if (knl_check_truncate_table(se, def, dc) != OG_SUCCESS) {
+        dc_close(&dc);
+        oGRAC_record_io_stat_end(IO_RECORD_EVENT_KNL_TRUNCATE_TABLE, &tv_begin);
+        OG_LOG_RUN_ERR("[TRUNCATE TABLE] Failed to check table %s", T2S_EX(&def->name));
         return OG_ERROR;
     }
 
@@ -8880,13 +8924,22 @@ status_t knl_register_iof(knl_session_t *se)
             OG_LOG_RUN_INF("failed to open dbstor namespace");
             return OG_ERROR;
         }
-    } else {
-        knl_instance_t *kernel = (knl_instance_t *)se->kernel;
-        if (kernel->file_iof_thd.id == 0) {
-            if (cm_file_iof_register(kernel->id, &kernel->file_iof_thd) != OG_SUCCESS) {
-                OG_LOG_RUN_ERR("failed to iof reg file, inst id %u", kernel->id);
-                return OG_ERROR;
-            }
+        return OG_SUCCESS;
+    }
+
+    knl_instance_t *kernel = (knl_instance_t *)se->kernel;
+    if (g_instance->kernel.attr.enable_dss) {
+        if (cm_dss_iof_register() != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("failed to iof reg dss, inst id %u", kernel->id);
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
+    
+    if (kernel->file_iof_thd.id == 0) {
+        if (cm_file_iof_register(kernel->id, &kernel->file_iof_thd) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("failed to iof reg file, inst id %u", kernel->id);
+            return OG_ERROR;
         }
     }
     return OG_SUCCESS;
@@ -9391,6 +9444,7 @@ status_t knl_ensure_temp_cache(knl_handle_t session, knl_handle_t dc_entity, knl
     table_t *table = &entity->table;
     knl_temp_cache_t *temp_table;
 
+    cm_spin_lock(&se->temp_cache_lock, NULL);
     temp_table = knl_get_temp_cache(session, table->desc.uid, table->desc.id);
     if (temp_table != NULL) {
         if (temp_table->org_scn != table->desc.org_scn) {
@@ -9409,6 +9463,7 @@ status_t knl_ensure_temp_cache(knl_handle_t session, knl_handle_t dc_entity, knl
         if (knl_put_temp_cache(session, dc_entity) != OG_SUCCESS) {
             OG_THROW_ERROR(ERR_TOO_MANY_OBJECTS, se->temp_table_capacity, "temp tables opened");
             *temp_table_ret = NULL;
+            cm_spin_unlock(&se->temp_cache_lock);
             return OG_ERROR;
         }
 
@@ -9421,6 +9476,7 @@ status_t knl_ensure_temp_cache(knl_handle_t session, knl_handle_t dc_entity, knl
         if (temp_heap_create_segment(se, temp_table) != OG_SUCCESS) {
             knl_free_temp_vm(session, temp_table);
             *temp_table_ret = NULL;
+            cm_spin_unlock(&se->temp_cache_lock);
             return OG_ERROR;
         }
 
@@ -9428,11 +9484,13 @@ status_t knl_ensure_temp_cache(knl_handle_t session, knl_handle_t dc_entity, knl
             if (lob_temp_create_segment(se, temp_table) != OG_SUCCESS) {
                 knl_free_temp_vm(session, temp_table);
                 *temp_table_ret = NULL;
+                cm_spin_unlock(&se->temp_cache_lock);
                 return OG_ERROR;
             }
         }
 
     }
+    cm_spin_unlock(&se->temp_cache_lock);
     /* one for temp heap, one for temp index */
     knl_panic_log(temp_table->table_segid < se->temp_table_capacity * 2,
                   "temp_table's table_segid is invalid, panic info: table %s table_segid %u temp_table_capacity %u",
@@ -9606,6 +9664,7 @@ void knl_close_temp_tables(knl_handle_t session, knl_dict_type_t type)
     knl_temp_cache_t *temp_table_ptr = NULL;
     knl_session_t *se = (knl_session_t *)session;
 
+    cm_spin_lock(&se->temp_cache_lock, NULL);
     for (i = 0; i < se->temp_table_count; i++) {
         temp_table_ptr = &se->temp_table_cache[i];
         if (temp_table_ptr->table_id != OG_INVALID_ID32) {
@@ -9620,6 +9679,7 @@ void knl_close_temp_tables(knl_handle_t session, knl_dict_type_t type)
         temp_mtrl_release_context(se);
         se->temp_table_count = 0;
     }
+    cm_spin_unlock(&se->temp_cache_lock);
 }
 
 status_t knl_init_temp_dc(knl_handle_t session)
@@ -9651,10 +9711,12 @@ status_t knl_init_temp_dc(knl_handle_t session)
 
     return OG_SUCCESS;
 }
+
 void knl_release_temp_dc(knl_handle_t session)
 {
     knl_session_t *sess = (knl_session_t *)session;
     knl_temp_dc_t *temp_dc = sess->temp_dc;
+    cm_latch_x(&sess->ltt_latch, sess->id, NULL);
     if (temp_dc != NULL) {
         for (uint32 i = 0; i < sess->temp_table_capacity; i++) {
             dc_entry_t *entry = (dc_entry_t *)temp_dc->entries[i];
@@ -9667,6 +9729,7 @@ void knl_release_temp_dc(knl_handle_t session)
         mctx_destroy(ogx);
         sess->temp_dc = NULL;
     }
+    cm_unlatch(&sess->ltt_latch, NULL);
 }
 
 status_t knl_get_lob_recycle_pages(knl_handle_t se, page_id_t entry, uint32 *extents, uint32 *pages, uint32 *page_size)
@@ -11239,98 +11302,6 @@ status_t knl_process_failed_login(knl_handle_t session, text_t *user, uint32 *p_
     return dc_process_failed_login((knl_session_t *)session, user, p_lock_unlock);
 }
 
-/* the following 3 functions were intended to replaced knl_get_page_size() */
-status_t knl_update_serial_value(knl_handle_t session, knl_handle_t dc_entity, int64 value, bool32 is_uint64)
-{
-    dc_entity_t *entity = (dc_entity_t *)dc_entity;
-    dc_entry_t *entry = entity->entry;
-    knl_session_t *se = (knl_session_t *)session;
-
-    if (entity->type == DICT_TYPE_TEMP_TABLE_SESSION || entity->type == DICT_TYPE_TEMP_TABLE_TRANS) {
-        knl_temp_cache_t *temp_table = NULL;
-
-        if (knl_ensure_temp_cache(session, entity, &temp_table) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-
-        if (temp_table->serial == 0) {
-            temp_table->serial = entity->table.desc.serial_start;
-            if (temp_table->serial == 0) {
-                temp_table->serial++;
-            }
-        }
-
-        if ((!is_uint64 && value < 0) || (uint64)value < temp_table->serial) {
-            return OG_SUCCESS;
-        }
- 
-        if (is_uint64) {
-            temp_table->serial = (value == OG_INVALID_ID64) ? value : (value + 1);
-        } else {
-            temp_table->serial = (value == OG_INVALID_INT64) ? value : (value + 1);
-        }
-
-        return OG_SUCCESS;
-    }
-
-    if (entity->table.heap.segment == NULL) {
-        if (heap_create_entry(se, &entity->table.heap) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-    }
-
-    dls_spin_lock(session, &entry->serial_lock, NULL);
-
-    // int64 segment_serial = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial;
-
-    if (entry->serial_value == 0) {
-        entry->serial_value = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial;
-
-        if (entry->serial_value == 0) {
-            entry->serial_value = 1;
-        }
-    }
-
-    if ((!is_uint64 && value < 0) || (uint64)value < entry->serial_value) {
-        dls_spin_unlock(session, &entry->serial_lock);
-        return OG_SUCCESS;
-    }
- 
-    if (is_uint64) {
-        if ((uint64)value >= OG_INVALID_ID64 - OG_SERIAL_CACHE_COUNT) {
-            if (OG_INVALID_ID64 != HEAP_SEGMENT(session, entity->table.heap.entry,
-                                                entity->table.heap.segment)->serial) {
-                heap_update_serial(se, &entity->table.heap, OG_INVALID_ID64);
-            }
-        } else if ((uint64)value >= HEAP_SEGMENT(session, entity->table.heap.entry,
-            entity->table.heap.segment)->serial) {
-            heap_update_serial(se, &entity->table.heap,
-                               DC_CACHED_SERIAL_VALUE(value, entity->table.desc.serial_start));
-        }
-    } else {
-        if (value >= OG_INVALID_INT64 - OG_SERIAL_CACHE_COUNT) {
-            if (OG_INVALID_INT64 != HEAP_SEGMENT(session, entity->table.heap.entry,
-                entity->table.heap.segment)->serial) {
-                heap_update_serial(se, &entity->table.heap, OG_INVALID_INT64);
-            }
-        } else if (value >= HEAP_SEGMENT(session, entity->table.heap.entry,
-            entity->table.heap.segment)->serial) {
-            heap_update_serial(se, &entity->table.heap,
-                               DC_CACHED_SERIAL_VALUE(value, entity->table.desc.serial_start));
-        }
-    }
-
-    if (is_uint64) {
-        entry->serial_value = (value == OG_INVALID_ID64) ? value : (value + 1);
-    } else {
-        entry->serial_value = (value == OG_INVALID_INT64) ? value : (value + 1);
-    }
-
-    dls_spin_unlock(session, &entry->serial_lock);
-
-    return OG_SUCCESS;
-}
-
 status_t knl_update_serial_value_tmp_table(knl_handle_t session, dc_entity_t *entity, int64 value, bool32 is_uint64)
 {
     knl_temp_cache_t *temp_table = NULL;
@@ -11351,6 +11322,78 @@ status_t knl_update_serial_value_tmp_table(knl_handle_t session, dc_entity_t *en
     }
 
     temp_table->serial = value;
+
+    return OG_SUCCESS;
+}
+
+static void knl_update_heap_serial(knl_handle_t session, dc_entity_t *entity, int64 *value, bool32 is_uint64)
+{
+    knl_session_t *se = (knl_session_t *)session;
+    uint64 residue = (*value == 0) ? 0 : 1;
+    if (is_uint64) {
+        if ((uint64)*value >= OG_INVALID_ID64 - OG_SERIAL_CACHE_COUNT) {
+            if (OG_INVALID_ID64 != HEAP_SEGMENT(session, entity->table.heap.entry,
+                                                entity->table.heap.segment)->serial) {
+                heap_update_serial(se, &entity->table.heap, OG_INVALID_ID64);
+            }
+        } else if ((uint64)*value >= HEAP_SEGMENT(session, entity->table.heap.entry,
+                                                  entity->table.heap.segment)->serial) {
+            heap_update_serial(se, &entity->table.heap,
+                               DC_CACHED_SERIAL_VALUE(*value, residue));
+        }
+    } else {
+        if (*value >= OG_INVALID_INT64 - OG_SERIAL_CACHE_COUNT) {
+            if (OG_INVALID_INT64 != HEAP_SEGMENT(session, entity->table.heap.entry,
+                                                 entity->table.heap.segment)->serial) {
+                heap_update_serial(se, &entity->table.heap, OG_INVALID_INT64);
+            }
+        } else if (*value >= HEAP_SEGMENT(session, entity->table.heap.entry,
+                                          entity->table.heap.segment)->serial) {
+            heap_update_serial(se, &entity->table.heap,
+                               DC_CACHED_SERIAL_VALUE(*value, residue));
+        }
+    }
+}
+
+/* the following 3 functions were intended to replaced knl_get_page_size() */
+status_t knl_update_serial_value(knl_handle_t session, knl_handle_t dc_entity, int64 value, bool32 is_uint64)
+{
+    dc_entity_t *entity = (dc_entity_t *)dc_entity;
+    dc_entry_t *entry = entity->entry;
+    knl_session_t *se = (knl_session_t *)session;
+
+    if (entity->type == DICT_TYPE_TEMP_TABLE_SESSION || entity->type == DICT_TYPE_TEMP_TABLE_TRANS) {
+        return knl_update_serial_value_tmp_table(session, entity, value, is_uint64);
+    }
+    if (entity->table.heap.segment == NULL) {
+        if (heap_create_entry(se, &entity->table.heap) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    dls_spin_lock(session, &entry->serial_lock, NULL);
+    uint64 seg_val = HEAP_SEGMENT(session, entity->table.heap.entry, entity->table.heap.segment)->serial;
+    uint64 serial_value = entry->serial_value;
+    if (serial_value == 0) {
+        serial_value = seg_val;
+        if (serial_value == 0) {
+            serial_value = 1;
+        }
+    }
+
+    if ((!is_uint64 && value < 0) || (uint64)value < serial_value) {
+        dls_spin_unlock(session, &entry->serial_lock);
+        return OG_SUCCESS;
+    }
+
+    if ((value >= DC_CACHED_SERIAL_VALUE(entry->serial_value, 0)) && (value < seg_val)) {
+        entry->serial_value = seg_val - 1;
+        dls_spin_unlock(session, &entry->serial_lock);
+        return OG_SUCCESS;
+    }
+    knl_update_heap_serial(session, entity, &value, is_uint64);
+    entry->serial_value = value;
+    dls_spin_unlock(session, &entry->serial_lock);
 
     return OG_SUCCESS;
 }
@@ -11698,10 +11741,15 @@ status_t knl_get_space_type(knl_handle_t se, text_t *spc_name, device_type_t *ty
         return OG_ERROR;
     }
 
+    if (!DB_IS_OPEN(session)) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "operation on non-open mode");
+        return OG_ERROR;
+    }
+
     return spc_get_device_type(session, spc_name, type);
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 routing_info_t *knl_get_table_routing_info(knl_handle_t dc_entity)
 {
@@ -11928,7 +11976,7 @@ status_t knl_ddl_execute_status(knl_handle_t sess, bool32 forbid_in_rollback, dd
 status_t knl_ddl_enabled4ltt(knl_handle_t session, bool32 forbid_in_rollback)
 {
     ddl_exec_status_t ddl_exec_stat;
-    if (DB_IS_CLUSTER((knl_session_t*)session) && RC_REFORM_IN_PROGRESS) {
+    if (DB_IS_CLUSTER((knl_session_t*)session) && (g_rc_ctx == NULL || RC_REFORM_IN_PROGRESS)) {
         OG_LOG_RUN_WAR("reform is preparing, refuse to ddl operation");
         OG_THROW_ERROR(ERR_CLUSTER_DDL_DISABLED, "reform is preparing");
         return OG_ERROR;
@@ -12992,7 +13040,7 @@ status_t knl_pl_create_synonym(knl_handle_t knl_session, knl_synonym_def_t *def,
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t knl_insert_ddl_loginfo(knl_handle_t knl_session, knl_dist_ddl_loginfo_t *info)
 {
     row_assist_t ra;
@@ -13046,7 +13094,7 @@ void knl_set_ddl_id(knl_handle_t knl_session, text_t *id)
 
 void knl_clean_before_commit(knl_handle_t knl_session)
 {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     knl_session_t *session = (knl_session_t *)knl_session;
     if (session->dist_ddl_id != NULL) {
         (void)knl_delete_ddl_loginfo(knl_session, session->dist_ddl_id);
@@ -13056,7 +13104,7 @@ void knl_clean_before_commit(knl_handle_t knl_session)
 #endif
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t knl_clean_ddl_loginfo(knl_handle_t knl_session, text_t *ddl_id, uint32 *rows)
 {
     knl_cursor_t *cursor = NULL;
@@ -13687,7 +13735,7 @@ status_t knl_alter_switch_undo_space(knl_handle_t se, text_t *spc_name)
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t knl_get_consis_hash_buckets(knl_handle_t handle, knl_consis_hash_strategy_t *strategy, bool32 *is_found)
 {
     lob_locator_t *lob = NULL;

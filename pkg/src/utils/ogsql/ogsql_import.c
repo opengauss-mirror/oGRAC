@@ -237,23 +237,10 @@ static void ogsql_display_import_usage(void)
     ogsql_printf("USERS                   List of schema names, use %% to import all users\n");
     ogsql_printf("TABLES                  List of table names, use %% to import all tables\n");
     ogsql_printf("FILE                    Input file (EXPDAT.DMP) \n");
-    ogsql_printf("FILETYPE                input file type: (TXT), BIN\n");
     ogsql_printf("LOG                     Log file of screen output\n");
-    ogsql_printf("REMAP_SCHEMA            Objects from one schema are loaded into another schema.\n");
-    ogsql_printf("SHOW                    Just list file contents (N) \n");
     ogsql_printf("FEEDBACK                Feedback row count, feedback once if set 0 (10000)\n");
     ogsql_printf("CONTENT                 Specifies data to load where the valid keyword, values are: (ALL), DATA_ONLY, and METADATA_ONLY. \n");
-    ogsql_printf("IGNORE                  Ignore create errors (N) \n");
-    ogsql_printf("FULL                    Import everything from source (N). \n");
-    ogsql_printf("REMAP_TABLESPACE        Tablespace objects are remapped to another tablespace. \n");
     ogsql_printf("CREATE_USER             Import user definition (N). \n");
-    ogsql_printf("PARALLEL                Table data import parallelism settings, range 1~32, The default value is 1.\n");
-    ogsql_printf("DDL_PARALLEL            metadata import parallelism settings, range 1~32, The default value is 1.\n");
-    ogsql_printf("NOLOGGING               Insert data without redo and undo log (N) \n");
-    ogsql_printf("TIMING                  Display the time of importing each object, values are: (OFF), ON.\n");
-    ogsql_printf("BATCH_COUNT             Batch rows while filetype is BIN , range 1~10000, The default value is 10000.\n");
-    ogsql_printf("DISABLE_TRIGGER         Disable triggers on tables when import data (Y).\n");
-    ogsql_printf("DECRYPT                 Files will be decrypted.\n");
     ogsql_printf("\n");
 }
 

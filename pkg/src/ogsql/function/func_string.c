@@ -1411,6 +1411,8 @@ status_t sql_func_repeat(sql_stmt_t *stmt, expr_node_t *func, variant_t *result)
     } else if (var2.v_int < 0) {
         SQL_SET_NULL_VAR(result);
         return OG_SUCCESS;
+    } else {
+        result->is_null = OG_FALSE;
     }
     uint32 total_len = (uint32)var2.v_int * var1.v_text.len;
 
@@ -2001,6 +2003,32 @@ static status_t sql_func_substr_core2(sql_stmt_t *stmt, variant_t *result, varia
     return OG_SUCCESS;
 }
 
+static status_t sql_exec_func_arg_substr(sql_stmt_t *statement, expr_tree_t *arg_expr,
+    variant_t *arg_var, variant_t *res_var)
+{
+    OG_RETURN_IFERR(sql_exec_expr(statement, arg_expr, arg_var));
+    SQL_CHECK_COLUMN_VAR(arg_var, res_var);
+
+    if (!OG_IS_LOB_TYPE(arg_var->type) || (arg_var->is_null)) {
+        return OG_SUCCESS;
+    }
+
+    if (arg_var->v_lob.type == OG_LOB_FROM_KERNEL) {
+        if (((lob_locator_t *)(arg_var->v_lob.knl_lob.bytes))->head.size >
+            g_instance->attr.lob_max_exec_size) {
+            ((lob_locator_t *)(arg_var->v_lob.knl_lob.bytes))->head.size = OG_LOB_LOCATOR_BUF_SIZE;
+        }
+    }
+
+    if (arg_var->v_lob.type == OG_LOB_FROM_VMPOOL) {
+        if (arg_var->v_lob.vm_lob.size > g_instance->attr.lob_max_exec_size) {
+            arg_var->v_lob.vm_lob.size = OG_LOB_LOCATOR_BUF_SIZE;
+        }
+    }
+
+    return sql_get_lob_value(statement, arg_var);
+}
+
 static status_t sql_func_substr_core(sql_stmt_t *stmt, expr_node_t *func, variant_t *result, bool32 is_special)
 {
     variant_t var1;
@@ -2038,7 +2066,12 @@ static status_t sql_func_substr_core(sql_stmt_t *stmt, expr_node_t *func, varian
     }
 
     /* incase substr_len + var2->v_int is overflow */
-    SQL_EXEC_FUNC_ARG_EX_SUBSTR(arg1, &var1, result);
+    OG_RETURN_IFERR(sql_exec_func_arg_substr(stmt, arg1, &var1, result));
+    if (var1.is_null) {
+        SQL_SET_NULL_VAR(result);
+        return OG_SUCCESS;
+    }
+
     sql_keep_stack_variant(stmt, &var1);
     OG_RETURN_IFERR(sql_var_as_string(stmt, &var1));
     if (var1.v_text.len == 0 && g_instance->sql.enable_empty_string_null) {

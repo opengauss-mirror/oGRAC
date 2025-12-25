@@ -87,7 +87,7 @@ function remove_useless_packages_file()
 }
 
 # 拷贝og_om下的og_om文件夹
-function copy_ct_om_src()
+function copy_og_om_src()
 {
     if [ -d ${OG_OM_ROOT} ]; then
         cp -rf ${OG_OM_ROOT}/. ${OG_OM_COMPONENT_PATH}
@@ -153,7 +153,7 @@ function main()
     init_temp_dir
 
     # 复制og_om库的src
-    copy_ct_om_src
+    copy_og_om_src
     if [ $? -ne 0 ]; then
         echo "Failed to copy og_om src. [Line:${LINENO}, File:${SCRIPT_NAME}]"
         return 1

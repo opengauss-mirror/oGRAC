@@ -177,6 +177,12 @@ typedef struct st_variant {
         (var)->type = (datatype);      \
     } while (0)
 
+static inline void var_set_not_null(variant_t *var, og_type_t type)
+{
+    var->is_null = OG_FALSE;
+    var->type = type;
+}
+
 #define VALUE(TYPE, v)       (*(TYPE *)(&(v)->v_int))
 #define VALUE_PTR(TYPE, v)   ((TYPE *)(&(v)->v_int))
 #define VAR_TAB(val)         ((val)->v_col.tab)

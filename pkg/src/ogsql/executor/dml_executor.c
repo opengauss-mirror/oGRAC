@@ -210,6 +210,7 @@ void sql_init_sql_cursor(sql_stmt_t *stmt, sql_cursor_t *ogsql_cursor)
     ogsql_cursor->winsort_ready = OG_FALSE;
     ogsql_cursor->global_cached = OG_FALSE;
     ogsql_cursor->idx_func_cache = NULL;
+    ogsql_cursor->is_group_insert = OG_FALSE;
 }
 
 static bool32 sql_try_extend_global_cursor(object_t **object)
@@ -397,7 +398,7 @@ void sql_free_knl_cursor(sql_stmt_t *ogsql_stmt, knl_cursor_t *ogsql_cursor)
     opool_free(pool, object);
 }
 
-static void sql_release_multi_parts_resources(sql_stmt_t *ogsql_stmt, sql_table_cursor_t *tab_cur)
+void sql_release_multi_parts_resources(sql_stmt_t *ogsql_stmt, sql_table_cursor_t *tab_cur)
 {
     if (tab_cur->multi_parts_info.knlcur_list == NULL || tab_cur->multi_parts_info.knlcur_list->count == 0) {
         tab_cur->multi_parts_info.knlcur_list = NULL;
@@ -619,7 +620,7 @@ void sql_close_cursor(sql_stmt_t *ogsql_stmt, sql_cursor_t *ogsql_cursor)
     sql_free_cursor_tables(ogsql_stmt, ogsql_cursor);
     sql_free_ssa_cursors(ogsql_stmt, ogsql_cursor);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     ogsql_cursor->do_sink_all = OG_FALSE;
     // ogsql_cursor->sink_all_list will be cleared again before execute
     (void)group_list_clear(&ogsql_cursor->sink_all_list);

@@ -26,7 +26,7 @@
 #include "srv_instance.h"
 #include "pl_meta_common.h"
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t shd_pre_execute_ddl(sql_stmt_t *stmt, bool32 multi_ddl, bool32 need_encrypt);
 status_t shd_trigger_check_for_rebalance(sql_stmt_t *stmt, text_t *user, text_t *tab);
 #endif
@@ -176,10 +176,13 @@ status_t pl_insert_proc_arg(knl_session_t *session, void *desc_in, void *pl_ctx_
     pl_desc_t *desc = (pl_desc_t *)desc_in;
     pl_entity_t *pl_ctx = (pl_entity_t *)pl_ctx_in;
     procedure_desc_t *proc_desc = NULL;
+    procedure_t *proc = pl_ctx->procedure;
 
-    proc_desc = &pl_ctx->procedure->desc;
-    proc_desc->oid = desc->oid;
-    OG_RETURN_IFERR(pl_write_sys_arguments(session, desc, proc_desc));
+    if (proc != NULL) {
+        proc_desc = &pl_ctx->procedure->desc;
+        proc_desc->oid = desc->oid;
+        OG_RETURN_IFERR(pl_write_sys_arguments(session, desc, proc_desc));
+    }
     return OG_SUCCESS;
 }
 
@@ -192,11 +195,15 @@ status_t pl_insert_package_proc_args(knl_session_t *session, void *desc_in, void
     procedure_desc_t *proc_desc = NULL;
 
     pack_def = pl_ctx->package_spec;
-    for (uint32 id = 0; id < pack_def->defs->count; id++) {
-        proc_decl = (plv_decl_t *)cm_galist_get(pack_def->defs, id);
-        proc_desc = &proc_decl->func->desc;
-        proc_desc->oid = desc->oid;
-        OG_RETURN_IFERR(pl_write_sys_arguments(session, desc, proc_desc));
+    if (pack_def != NULL) {
+        for (uint32 id = 0; id < pack_def->defs->count; id++) {
+            proc_decl = (plv_decl_t *)cm_galist_get(pack_def->defs, id);
+            if (proc_decl->type == PLV_FUNCTION && proc_decl->func != NULL) {
+                proc_desc = &proc_decl->func->desc;
+                proc_desc->oid = desc->oid;
+                OG_RETURN_IFERR(pl_write_sys_arguments(session, desc, proc_desc));
+            }
+        }
     }
 
     return OG_SUCCESS;

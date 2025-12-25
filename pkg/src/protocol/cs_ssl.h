@@ -111,7 +111,7 @@ const char **cs_ssl_tls13_get_default_cipher_list(void);
  * @param [in]      timeout       timeout, unit:ms; block if < 0
  * @return
  * @retval OG_SUCCESS  accept a client successfully
- * @retval GS_TIMEOUT  accept timeout, no incoming client
+ * @retval OG_TIMEOUT  accept timeout, no incoming client
  * @retval OG_ERROR   ssl connection is shutdown
  */
 status_t cs_ssl_accept_socket(ssl_link_t *link, socket_t sock, int32 timeout);
@@ -123,7 +123,7 @@ status_t cs_ssl_accept_socket(ssl_link_t *link, socket_t sock, int32 timeout);
  * @param [in]      timeout  timeout, unit: ms
  * @return
  * @retval OG_SUCCESS  connect to the server successfully
- * @retval GS_TIMEOUT  connect timeout
+ * @retval OG_TIMEOUT  connect timeout
  * @retval OG_ERROR    ssl connection is shutdown or other errors
  */
 status_t cs_ssl_connect_socket(ssl_link_t *link, socket_t sock, int32 timeout);

@@ -1157,7 +1157,6 @@ static void ogsql_print_parameters(text_t *params, text_t *base_sql, char *sql_s
     uint32 affected_rows = 0;
     bool32 feedback_on = OG_FALSE;
     uint16 bind_size = 0;
-    bool32 temp_trace = OGSQL_TRACE_OFF;
 
     if (params->len == 0) {
         if (base_sql->len >= MAX_SQL_SIZE) {
@@ -1169,8 +1168,6 @@ static void ogsql_print_parameters(text_t *params, text_t *base_sql, char *sql_s
 
         g_sql_buf[base_sql->len] = '\0';
         // output query result
-        // sql sent to the server is dml, but show parameter no need trace when autotrace is on
-        (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &temp_trace, sizeof(uint32));
         if (ogsql_execute_sql() == OG_SUCCESS) {
             (void)ogconn_get_stmt_attr(STMT, OGCONN_ATTR_AFFECTED_ROWS, &affected_rows, sizeof(uint32), NULL);
             if (affected_rows > 0) {
@@ -1180,12 +1177,10 @@ static void ogsql_print_parameters(text_t *params, text_t *base_sql, char *sql_s
                 g_local_config.feedback.feedback_on = feedback_on;
             }
         }
-        (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &g_local_config.trace_mode, sizeof(uint32));
         g_sql_buf[0] = '\0';
     } else {
         bind_size = params->len;
         do {
-            (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &temp_trace, sizeof(uint32));
             OG_BREAK_IF_ERROR(ogconn_prepare(STMT, sql_select));
             OG_BREAK_IF_ERROR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_CHAR, params->str, params->len, &bind_size));
             OG_BREAK_IF_ERROR(ogconn_execute(STMT));
@@ -1197,10 +1192,8 @@ static void ogsql_print_parameters(text_t *params, text_t *base_sql, char *sql_s
                 ogsql_print_result();
                 g_local_config.feedback.feedback_on = feedback_on;
             }
-            (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &g_local_config.trace_mode, sizeof(uint32));
             return;
         } while (0);
-        (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &g_local_config.trace_mode, sizeof(uint32));
         ogsql_print_error(CONN);
         return;
     }
@@ -1588,7 +1581,7 @@ static status_t ogsql_show_create(const text_t *create_table_text)
 
     MEMS_RETURN_IFERR(strcat_s(send_cmd, OG_MAX_CMD_LEN, "EXPORT SHOW_CREATE_TABLE=Y TABLES="));
     MEMS_RETURN_IFERR(strcat_s(send_cmd, OG_MAX_CMD_LEN, table_name_str));
-    MEMS_RETURN_IFERR(strcat_s(send_cmd, OG_MAX_CMD_LEN, " CONTENT=METADATA_ONLY"));
+    MEMS_RETURN_IFERR(strcat_s(send_cmd, OG_MAX_CMD_LEN, " CONTENT=METADATA_ONLY INDEX_PARTITIONS=Y"));
     cm_str2text_safe(send_cmd, (uint32)strlen(send_cmd), &cmd_sql);
     OG_RETURN_IFERR(ogsql_export(&cmd_sql, show_parse_info));
 

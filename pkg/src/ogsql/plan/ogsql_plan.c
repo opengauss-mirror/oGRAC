@@ -95,14 +95,6 @@ status_t visit_select_node(sql_stmt_t *stmt, select_node_t *node, query_visit_fu
     return OG_SUCCESS;
 }
 
-static inline bool32 is_analyzed_table(sql_stmt_t *stmt, sql_table_t *table)
-{
-    if (OG_IS_SUBSELECT_TABLE(table->type)) {
-        return OG_FALSE;
-    }
-    return IS_ANALYZED_TABLE(table);
-}
-
 #define MIN_PARAM_ROWNUM (uint32)1
 #define MAX_PARAM_ROWNUM (uint32)1000
 
@@ -212,6 +204,7 @@ void sql_init_plan_assist_impl(sql_stmt_t *stmt, plan_assist_t *plan_ass, sql_qu
     plan_ass->save_plcnt = 0;
     plan_ass->filter_node_pptr = NULL;
     plan_ass->vpeek_flag = OG_FALSE;
+    plan_ass->outer_rels_list = NULL;
 }
 
 static inline void set_query_sort_plan_flag(sql_query_t *query, uint32 *flag)

@@ -1,0 +1,100 @@
+
+
+SQL> drop table if exists test_merge_1;
+
+Succeed.
+
+SQL> drop table if exists test_merge_2;
+
+Succeed.
+
+SQL> create table test_merge_1 (f1 int, f2 int, f3 int);
+
+Succeed.
+
+SQL> create table test_merge_2 (f1 int, f2 int, f3 int);
+
+Succeed.
+
+SQL> insert into test_merge_1 values (1,4,4),(2,3,3),(3,2,2),(4,1,1);
+
+4 rows affected.
+
+SQL> insert into test_merge_2 values (1,4,4),(2,3,3),(3,2,2),(4,1,1);
+
+4 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> -- ensure the dml executing in one Transaction
+SQL> set autocommit off;
+
+OFF
+SQL> merge into test_merge_2 t2 using (select * from test_merge_1) t1
+  2 on (t1.f2 = t2.f1 or t1.f3 = t2.f1)
+  3 when not matched then insert (f1,f2,f3) values (5,5,5);
+
+0 rows affected.
+
+SQL> -- table lock and row lock status
+SQL> select TYPE, LMODE, BLOCK from DV_LOCKS lt join DV_ME mt ON lt.sid = mt.sid order by type;
+
+TYPE                 LMODE                BLOCK       
+-------------------- -------------------- ------------
+
+0 rows fetched.
+
+SQL> set autocommit on;
+
+ON
+SQL> 
+SQL> set autocommit off;
+
+OFF
+SQL> MERGE INTO test_merge_2 t2
+  2 USING (SELECT * FROM test_merge_1) t1
+  3 ON (t1.f2 = t2.f1 OR t1.f3 = t2.f1)
+  4 WHEN MATCHED THEN
+  5     UPDATE SET t2.f2 = 1000, t2.f3 = 1000
+  6 WHEN NOT MATCHED THEN
+  7     INSERT (f1, f2, f3) VALUES (t1.f1, t1.f2, t1.f3);
+
+4 rows affected.
+
+SQL> select TYPE, LMODE, BLOCK from DV_LOCKS lt join DV_ME mt ON lt.sid = mt.sid order by type;
+
+TYPE                 LMODE                BLOCK       
+-------------------- -------------------- ------------
+RX                                        1           
+TS                   S                    1           
+
+2 rows fetched.
+
+SQL> commit;
+
+Succeed.
+
+SQL> -- after commit, release the lock
+SQL> select TYPE, LMODE, BLOCK from DV_LOCKS lt join DV_ME mt ON lt.sid = mt.sid order by type;
+
+TYPE                 LMODE                BLOCK       
+-------------------- -------------------- ------------
+
+0 rows fetched.
+
+SQL> set autocommit on;
+
+ON
+SQL> 
+SQL> drop table if exists test_merge_1;
+
+Succeed.
+
+SQL> drop table if exists test_merge_2;
+Succeed.
+
+
+
+

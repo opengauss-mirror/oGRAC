@@ -25,6 +25,7 @@
 #include "cm_text.h"
 #include "cm_decimal.h"
 #include "cm_binary.h"
+#include "var_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1394,14 +1395,12 @@ static const double g_pos_pow8[] = {
 /**
  * compute 100000000^x, x should be between -21 and 21
  */
-static inline double cm_pow8(int32 x, double real)
+static inline double cm_pow8(int32 x)
 {
     int32 y = abs(x);
     double r = (y < 21) ? g_pos_pow8[y] : pow(10e8, y);
     if (x < 0) {
-        r = real / r;
-    } else {
-        r = real * r;
+        r = 1.0 / r;
     }
     return r;
 }
@@ -1446,7 +1445,7 @@ static status_t cm_real_to_dec8_inexac(double real, dec8_t *dec)
         return OG_ERROR;
     }
 
-    if (r == 0.0) {
+    if (cm_compare_double(r, 0) == 0) {
         cm_zero_dec8(dec);
         return OG_SUCCESS;
     }
@@ -1468,7 +1467,7 @@ static status_t cm_real_to_dec8_inexac(double real, dec8_t *dec)
     // Set a decimal
     dec->head = CONVERT_D8EXPN(dexp, is_neg);
 
-    r = cm_pow8(-SEXP_2_D8EXP(dexp), r);
+    r *= cm_pow8(-SEXP_2_D8EXP(dexp));
     // now, int_r is used as the integer part of r
     if (r >= 1.0) {
         r = modf(r, &int_r);
@@ -1479,7 +1478,7 @@ static status_t cm_real_to_dec8_inexac(double real, dec8_t *dec)
     }
 
     while (index < DEC8_TO_REAL_MAX_CELLS) {
-        if (r == 0) {
+        if (cm_compare_double(r, 0) == 0) {
             break;
         }
         r = modf(r * (double)DEC8_CELL_MASK, &int_r);

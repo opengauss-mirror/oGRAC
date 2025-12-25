@@ -1,0 +1,56 @@
+
+
+SQL> SELECT TIMESTAMPADD (WEEK, 2, '2025-11-25');
+
+TIMESTAMPADD (WEEK, 2, '2025-11-25')
+------------------------------------
+2025-12-09 00:00:00.000000          
+
+1 rows fetched.
+
+SQL> SELECT TIMESTAMPADD (DAY, MOD(1,20), '2025-11-25 14:14:14');
+
+TIMESTAMPADD (DAY, MOD(1,20), '2025-11-25 14:14:14')
+----------------------------------------------------
+2025-11-26 14:14:14.000000                          
+
+1 rows fetched.
+
+SQL> SELECT CURRENT_TIMESTAMP(-1);
+
+OG-00601, [1:26]Sql syntax error: fraction must between 0 and 6. 
+SQL> SELECT TO_NUMBER('10E+128');
+
+OG-00636, [1:18]Invalid number -- overflow
+SQL> SELECT IF(concat_ws('-', 'a', 'b', 'c'), 'cond is true', 'cond is false');
+
+OG-00601, [1:8]Sql syntax error: invalid BOOLEAN text
+SQL> SELECT IF(concat_ws('-', 'a', 'b', 'c') = 'a-b-c', 'cond is true', 'cond is false');
+
+IF(CONCAT_WS('-', 'A', 'B', 'C') = 'A-B-C', 'COND IS TRUE', 'CON
+----------------------------------------------------------------
+cond is true                                                    
+
+1 rows fetched.
+
+SQL> drop table if exists t_null_if;
+
+Succeed.
+
+SQL> create table t_null_if(a int, b blob, c clob);
+
+Succeed.
+
+SQL> select nullif(b, to_blob('')) from t_null_if;
+
+NULLIF(B, TO_BLOB(''))                                          
+----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> drop table if exists t_null_if;
+Succeed.
+
+
+
+

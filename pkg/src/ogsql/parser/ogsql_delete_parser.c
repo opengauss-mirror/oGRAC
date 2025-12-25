@@ -27,7 +27,6 @@
 #include "srv_instance.h"
 #include "table_parser.h"
 #include "ogsql_select_parser.h"
-#include "hint_parser.h"
 #include "cond_parser.h"
 #include "ogsql_update_parser.h"
 
@@ -138,7 +137,7 @@ static status_t sql_parse_delete_tables(sql_stmt_t *stmt, sql_delete_t *delete_c
 
         OG_RETURN_IFERR(sql_parse_del_objects(stmt, delete_ctx, word));
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         if (IS_COORDINATOR) {
             if (delete_ctx->objects->count > 1) {
                 OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "multi delete");

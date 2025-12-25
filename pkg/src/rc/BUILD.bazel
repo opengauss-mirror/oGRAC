@@ -42,7 +42,7 @@ COMMON_COPTS = GLOBAL_COPTS + [
 ]
 
 cc_library (
-    name = "zerc",
+    name = "ogrc",
     srcs =  [
         "rc_reform.c",
         "rc_reform.h",
@@ -118,7 +118,7 @@ cc_library (
         "-Wno-stringop-overflow",
     ] + COMMON_COPTS,
     linkopts = COMMON_LINKOPTS,
-    deps =  ["//pkg/src/cms:zecms"],
+    deps =  ["//pkg/src/cms:ogcms"],
 )
 
 filegroup(

@@ -128,7 +128,6 @@ function rundev()
     container="${docker_name}-dev"
     script_dir=$(dirname "$(readlink -f "$0")")
     project_dir=$(dirname $script_dir)
-    cd -
     pwd
     run_docker
     echo "${container} is running"

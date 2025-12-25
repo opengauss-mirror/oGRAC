@@ -37,6 +37,7 @@ status_t sql_func_cume_dist(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 status_t sql_verify_cume_dist(sql_verifier_t *verif, expr_node_t *func);
 status_t sql_func_dense_rank(sql_stmt_t *stmt, expr_node_t *func, variant_t *result);
 status_t sql_verify_dense_rank(sql_verifier_t *verif, expr_node_t *func);
+status_t ogsql_func_rank(sql_stmt_t *stmt, expr_node_t *func, variant_t *result);
 status_t sql_verify_listagg(sql_verifier_t *verif, expr_node_t *func);
 status_t sql_verify_min_max(sql_verifier_t *verif, expr_node_t *func);
 status_t sql_verify_median(sql_verifier_t *verif, expr_node_t *func);

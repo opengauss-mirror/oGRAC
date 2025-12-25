@@ -55,11 +55,11 @@ EXTER_ATTACK status_t sql_process_xa_rollback(session_t *session);
 EXTER_ATTACK status_t sql_process_xa_status(session_t *session);
 status_t sql_get_stmt(session_t *session, uint32 stmt_id);
 
-EXTER_ATTACK status_t sql_process_gts(session_t *session);           /* added for z_sharding */
-EXTER_ATTACK status_t sql_process_stmt_rollback(session_t *session); /* added for z_sharding */
+EXTER_ATTACK status_t sql_process_gts(session_t *session);           /* added for OG_RAC_ING */
+EXTER_ATTACK status_t sql_process_stmt_rollback(session_t *session); /* added for OG_RAC_ING */
 void init_gts(bool32 need_read_persit_time);
 status_t sql_get_uuid(char *buf, uint32 in_len);
-EXTER_ATTACK status_t sql_process_sequence(session_t *session); /* added for z_sharding */
+EXTER_ATTACK status_t sql_process_sequence(session_t *session); /* added for OG_RAC_ING */
 status_t sql_convert_gts_2_local_scn(session_t *session, knl_scn_t *gts_scn, knl_scn_t *local_scn);
 status_t sql_convert_local_2_gts_scn(session_t *session, knl_scn_t *gts_scn, knl_scn_t *local_scn);
 status_t sql_gts_create_scn(uint64 *scn);
@@ -79,7 +79,7 @@ typedef struct st_sql_type_map {
 } sql_type_map_t;
 
 // for online update
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef enum en_shd_set_stauts {
     SHD_SET_STATUS_NORMAL = 0,   /* normal */
     SHD_SET_STATUS_MODIFING = 1, /* WAIT */
@@ -170,33 +170,12 @@ typedef struct st_sql_instance {
     bool32 enable_nl_full_opt;
     bool32 enable_arr_store_opt; // default value is FALSE, and when set to TRUE, forbidden to set back to FALSE
     bool32 enable_exists_transform;
-#ifdef Z_SHARDING
-    bool32 shard_serial_exec;       // whether to execute serially in shard situation
-    bool32 shard_check_unique;      // open the switch of check distribution cloumn list in unique idx cloumn list
-    uint32 shard_refusesql_level;   // open the switch to refuse unsinkable sql
-    uint32 shard_refusetrans_level; // open the switch to refuse transation
-    bool32 shard_retry_times;       // cn dml retry times when dml execte faild by switchover
-    bool32 shard_retry_interval;    // cn dml retry interval when dml execte faild by switchover
-
-    uint32 shard_connect_timeout;      // CN connect other node timeout(s)
-    uint32 shard_socket_timeout;       // CN socket timeout(s)
-    uint32 shard_heartbeat_timeout;    // CN connection pool health check timeout (s)
-    uint32 shard_ptrans_clean_timeout; // CN pending transactions clean timeout (s)
-    bool32 shard_check_db_role;        // CN check DN conn is primary as expected
-
-    bool32 shard_enable_read_sync_slave; // client only read synced slave node
-    uint32 shard_max_replay_lag;         // max replay lag for master to slave(s)
-
-    uint32 shard_scn_interval_threshold;
-    // for online update
-    atomic_t ddl_cnt;
-    spinlock_t lock_node;
-    shd_set_stauts_t set_status;
-    shd_lock_node_def_t lock_node_def;
-    uint32 dn_groups_before_exp;
-#endif
+    bool32 enable_subquery_rewrite;
+    bool32 enable_semi2inner;
     bool32 parallel_policy;
     bool32 strict_case_datatype;
+    bool32 enable_nestloop_join;
+    bool32 enable_hash_join;
     bool8 coverage_enable;
     uint8 res[7];
     sql_json_mem_pool_t json_mpool;

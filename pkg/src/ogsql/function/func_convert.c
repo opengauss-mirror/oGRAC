@@ -613,7 +613,7 @@ status_t sql_func_if(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     expr_tree_t *result_arg = NULL;
     text_buf_t text_buf;
 
-    OG_RETURN_IFERR(sql_match_cond_argument(stmt, func->cond_arg->root, &pending, &cond_result));
+    LOC_RETURN_IFERR(sql_match_cond_argument(stmt, func->cond_arg->root, &pending, &cond_result), func->loc);
     if (pending) {
         SQL_SET_COLUMN_VAR(res);
         return OG_SUCCESS;
@@ -996,7 +996,7 @@ status_t sql_func_lnnvl(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     bool32 match_res;
     cond_result_t cond_result;
 
-    OG_RETURN_IFERR(sql_match_cond_argument(stmt, func->cond_arg->root, &pending, &cond_result));
+    LOC_RETURN_IFERR(sql_match_cond_argument(stmt, func->cond_arg->root, &pending, &cond_result), func->loc);
     if (pending) {
         SQL_SET_COLUMN_VAR(res);
         return OG_SUCCESS;
@@ -1044,7 +1044,6 @@ bool32 chk_lnnvl_unsupport_cmp_type(cond_node_t *cond)
 status_t sql_verify_lnnvl(sql_verifier_t *verif, expr_node_t *func)
 {
     cond_tree_t *cond_arg = func->cond_arg;
-    uint32 old_excl_flags;
 
     if (cond_arg == NULL) {
         OG_SRC_THROW_ERROR(func->loc, ERR_SQL_SYNTAX_ERROR, "not enough argument for LNNVL");
@@ -1060,10 +1059,8 @@ status_t sql_verify_lnnvl(sql_verifier_t *verif, expr_node_t *func)
         OG_SRC_THROW_ERROR(cond_arg->loc, ERR_INVALID_FUNC_PARAMS, "invalid argument for LNNVL function");
         return OG_ERROR;
     }
-    old_excl_flags = verif->excl_flags;
-    verif->excl_flags |= SQL_EXCL_STAR;
+
     OG_RETURN_IFERR(sql_verify_cond(verif, cond_arg));
-    verif->excl_flags = old_excl_flags;
 
     func->datatype = OG_TYPE_BOOLEAN;
     func->size = OG_BOOLEAN_SIZE;
@@ -1120,6 +1117,27 @@ status_t sql_func_nullif(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     return OG_SUCCESS;
 }
 
+static inline void og_nullif_convert_char(expr_tree_t *exprtr, typmode_t *typmode)
+{
+    if (!TREE_IS_RES_NULL(exprtr) && cm_is_null_typmode(*typmode)) {
+        typmode->datatype = OG_TYPE_CHAR;
+    }
+}
+
+static status_t og_nullif_check_null_typmode(expr_tree_t *src_exprtr, expr_tree_t *dst_exprtr)
+{
+    if ((!TREE_IS_CONST(src_exprtr) || !TREE_IS_VALUE_NULL(src_exprtr)) &&
+        (!TREE_IS_CONST(dst_exprtr) || !TREE_IS_VALUE_NULL(dst_exprtr))) {
+        return OG_SUCCESS;
+    }
+    typmode_t tmp_typmode;
+    typmode_t src_typmode = TREE_TYPMODE(src_exprtr);
+    typmode_t dst_typmode = TREE_TYPMODE(dst_exprtr);
+    og_nullif_convert_char(src_exprtr, &src_typmode);
+    og_nullif_convert_char(dst_exprtr, &dst_typmode);
+    return cm_combine_typmode(src_typmode, OG_FALSE, dst_typmode, OG_FALSE, &tmp_typmode);
+}
+
 status_t sql_verify_nullif(sql_verifier_t *verif, expr_node_t *func)
 {
     CM_POINTER2(verif, func);
@@ -1138,6 +1156,14 @@ status_t sql_verify_nullif(sql_verifier_t *verif, expr_node_t *func)
     // for bind param : nullif(?,?)
     if (TREE_DATATYPE(arg1) == OG_TYPE_UNKNOWN || TREE_DATATYPE(arg2) == OG_TYPE_UNKNOWN) {
         func->typmod.datatype = OG_TYPE_UNKNOWN;
+        return OG_SUCCESS;
+    }
+    OG_RETURN_IFERR(og_nullif_check_null_typmode(arg1, arg2));
+
+    og_type_t arg1_typ = TREE_DATATYPE(arg1);
+    og_type_t arg2_typ = TREE_DATATYPE(arg2);
+    if (arg1_typ == arg2_typ && (OG_IS_LOB_TYPE(arg1_typ) || arg1_typ == OG_TYPE_ARRAY)) {
+        func->typmod.datatype = TREE_DATATYPE(arg1);
         return OG_SUCCESS;
     }
 
@@ -1550,7 +1576,7 @@ status_t sql_func_to_number(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 
     expr_tree_t *fmt_arg = num_arg->next;
     if (fmt_arg == NULL) { // if fmt argument is absent
-        LOC_RETURN_IFERR(var_as_number(res), func->loc);
+        LOC_RETURN_IFERR(var_as_number(res), num_arg->loc);
         res->is_null = OG_FALSE;
         return OG_SUCCESS;
     }
@@ -2098,7 +2124,7 @@ status_t sql_func_to_char(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 
     if (format != NULL) {
         if (!OG_IS_DATETIME_TYPE(res->type)) {
-            OG_RETURN_IFERR(var_as_num(res));
+            LOC_RETURN_IFERR(var_as_num(res), arg1->loc);
         }
     }
 
@@ -2130,7 +2156,14 @@ status_t sql_verify_to_char(sql_verifier_t *verif, expr_node_t *func)
 
     sql_infer_func_optmz_mode(verif, func);
 
-    if (NODE_IS_OPTMZ_CONST(func)) {
+    if (!NODE_IS_OPTMZ_CONST(func)) {
+        return OG_SUCCESS;
+    }
+
+    // Convert datetime to string depends on the session's NLS datetime formats
+    // Convert number to string with format depends on session's NLS numeric formats
+    if ((OG_IS_DATETIME_TYPE(func->argument->root->datatype) && arg2 == NULL) ||
+        (OG_IS_NUMERIC_TYPE(func->argument->root->datatype) && arg2 != NULL)) {
         sql_add_first_exec_node(verif, func);
     }
 

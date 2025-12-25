@@ -187,7 +187,7 @@ status_t plc_compile_pragma(pl_compiler_t *compiler, galist_t *decls, word_t *wo
     OG_RETURN_IFERR(lex_try_fetch_1ofn(lex, &match_id, 2, "AUTONOMOUS_TRANSACTION", "EXCEPTION_INIT"));
     switch (match_id) {
         case AUTON_TRANS:
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
             if (IS_COORDINATOR && IS_APP_CONN(compiler->stmt->session)) {
                 OG_SRC_THROW_ERROR(word->loc, ERR_CAPABILITY_NOT_SUPPORT, "AUTONOMOUS_TRANSACTION on coordinator is");
                 return OG_ERROR;

@@ -18,9 +18,9 @@ set_target_properties(mes_test PROPERTIES LINKER_LANGUAGE "CXX")
 
 target_link_libraries(mes_test 
                      -Wl,--start-group 
-                     gtest mockcpp gmock zetms zecms zeprotocol m rt dl z zstd lz4
-                     zecmssrc zeclient zerc zecommon zemes zefdsa zecluster
-                     zeserver zekernel zesql pthread  z 
+                     gtest mockcpp gmock ogtms ogcms ogprotocol m rt dl z zstd lz4
+                     ogcmssrc ogclient ogrc ogcommon ogmes ogfdsa ogcluster
+                     ogserver ogkernel ogracsql pthread  z 
                      -Wl,--end-group)
 target_compile_definitions(mes_test PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})
 target_compile_definitions(mes_test PRIVATE -DGETDBVERSION=${DD_GETDBVERSION})

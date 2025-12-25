@@ -854,6 +854,59 @@ SQL> drop table sort_pending_t2;
 Succeed.
 
 SQL> drop table sort_pending_t3;
+
+Succeed.
+
+SQL> 
+SQL> -- test the subqry of union all has order clause, the order can not be eliminated
+SQL> drop table if exists t_union_all_order_eliminate_test;
+
+Succeed.
+
+SQL> create table t_union_all_order_eliminate_test(id decimal(5,2));
+
+Succeed.
+
+SQL> create index index_test on t_union_all_order_eliminate_test(id);
+
+Succeed.
+
+SQL> insert into t_union_all_order_eliminate_test values (999.99),(999.99),(-999.99),(null),(0),(2),(2),(3),(4);
+
+9 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> (select power(id,2) as pwr from t_union_all_order_eliminate_test order by id)
+  2 union all
+  3 (select power(id,2) from t_union_all_order_eliminate_test order by id);
+
+PWR                                     
+----------------------------------------
+999980.0001                             
+0                                       
+4                                       
+4                                       
+9                                       
+16                                      
+999980.0001                             
+999980.0001                             
+                                        
+999980.0001                             
+0                                       
+4                                       
+4                                       
+9                                       
+16                                      
+999980.0001                             
+999980.0001                             
+                                        
+
+18 rows fetched.
+
+SQL> drop table t_union_all_order_eliminate_test;
 Succeed.
 
 

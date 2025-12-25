@@ -1,0 +1,149 @@
+
+
+SQL> drop table if exists sse_t1;
+
+Succeed.
+
+SQL> drop table if exists sse_t2;
+
+Succeed.
+
+SQL> 
+SQL> create table sse_t1(a int, b int);
+
+Succeed.
+
+SQL> create table sse_t2(a int, b int);
+
+Succeed.
+
+SQL> 
+SQL> --success case
+SQL> select * from sse_t1
+  2 where  
+  3  (
+  4     (a) in (select a from sse_t2 where a > 1) and
+  5     (a) in (select a from sse_t2 where a > 2)
+  6  );
+
+A            B           
+------------ ------------
+
+0 rows fetched.
+
+SQL> 
+SQL> --error case
+SQL> select * from sse_t1
+  2 where  
+  3  (
+  4     (a) in (select a from sse_t2 where a > 1)
+  5     (a) in (select a from sse_t2 where a > 2)
+  6  );
+
+OG-00601, [5:2]Sql syntax error: invalid word '(a)' found
+SQL> 
+SQL> drop table if exists sse_t1;
+
+Succeed.
+
+SQL> drop table if exists sse_t2;
+
+Succeed.
+
+SQL> 
+SQL> --test order by with nested aggregate functions
+SQL> drop table if exists test_order_by_aggr;
+
+Succeed.
+
+SQL> create table test_order_by_aggr (id int);
+
+Succeed.
+
+SQL> insert into test_order_by_aggr values(1);
+
+1 rows affected.
+
+SQL> insert into test_order_by_aggr values(2);
+
+1 rows affected.
+
+SQL> select id from test_order_by_aggr group by id order by max(nvl2(nullif(3,id),3,id));
+
+ID          
+------------
+2           
+1           
+
+2 rows fetched.
+
+SQL> select id from test_order_by_aggr group by id order by max(id) + id;
+
+ID          
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> select id from test_order_by_aggr group by id order by max(id), id;
+
+ID          
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> drop table if exists test_order_by_aggr;
+
+Succeed.
+
+SQL> 
+SQL> create table test_order_by_aggr (id INT, quantity INT, price DECIMAL(10,2), discount DECIMAL(10,2));
+
+Succeed.
+
+SQL> insert into test_order_by_aggr values (1, 5, 100, 10), (2, 8, 120, 5), (3, NULL, 150, NULL), (4, 0, 200, 0);
+
+4 rows affected.
+
+SQL> select id from test_order_by_aggr group by id order by avg(coalesce(round(nullif(id + quantity, 0), 2 ), id ));
+
+ID          
+------------
+3           
+4           
+1           
+2           
+
+4 rows fetched.
+
+SQL> select id from test_order_by_aggr group by id order by max(abs(id));
+
+ID          
+------------
+1           
+2           
+3           
+4           
+
+4 rows fetched.
+
+SQL> select id from test_order_by_aggr group by id order by sum(round(abs(id * 2), 0));
+
+ID          
+------------
+1           
+2           
+3           
+4           
+
+4 rows fetched.
+
+SQL> drop table if exists test_order_by_aggr;
+Succeed.
+
+
+
+

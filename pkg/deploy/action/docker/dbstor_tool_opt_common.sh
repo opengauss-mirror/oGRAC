@@ -149,6 +149,12 @@ function create_file_in_filesystem() {
 }
 
 function update_local_status_file_path_by_dbstor() {
+    if [[ "${deploy_mode}" == "dss" ]];then
+        mkdir -p "${METADATA_FS_PATH}"/upgrade/cluster_and_node_status
+        chown "${ograc_user}":"${ograc_group}" "${METADATA_FS_PATH}"/upgrade
+        chown "${ograc_user}":"${ograc_group}" "${METADATA_FS_PATH}"/upgrade/cluster_and_node_status
+        return 0
+    fi
     if [[ "${deploy_mode}" != "dbstor" ]];then
         return 0
     fi
@@ -202,6 +208,16 @@ function update_local_status_file_path_by_dbstor() {
 }
 
 function update_remote_status_file_path_by_dbstor() {
+    cluster_or_node_status_file_path=$1
+    if [[ "${deploy_mode}" == "dss" ]];then
+        chown -hR "${ograc_user}":"${ograc_group}" ${METADATA_FS_PATH}/upgrade
+        su -s /bin/bash - "${ograc_user}" -c "python3 -B ${CURRENT_PATH}/dss/common/dss_upgrade_remote_status_file.py ${cluster_or_node_status_file_path}"
+        if [[ $? -ne 0 ]];then
+            logAndEchoError "file to remote failed."
+            exit 1
+        fi
+        return 0
+    fi
     if [[ "${deploy_mode}" != "dbstor" ]];then
         return 0
     fi
@@ -239,6 +255,15 @@ function update_remote_status_file_path_by_dbstor() {
 }
 
 function delete_fs_upgrade_file_or_path_by_dbstor() {
+    local file_name=$1
+    if [[ "${deploy_mode}" == "dss" ]];then
+        su -s /bin/bash - "${ograc_user}" -c "python3 -B ${CURRENT_PATH}/dss/common/dss_upgrade_delete.py ${file_name}"  
+        if [[ $? -ne 0 ]];then
+            logAndEchoError "file to delete failed."
+            exit 1
+        fi
+        return 0
+    fi
     if [[ "${deploy_mode}" != "dbstor" ]];then
         return 0
     fi
@@ -261,6 +286,15 @@ function delete_fs_upgrade_file_or_path_by_dbstor() {
 }
 
 function update_version_yml_by_dbstor() {
+    if [[ "${deploy_mode}" == "dss" ]];then
+        chown "${ograc_user}":"${ograc_group}" "${PKG_PATH}/${VERSION_FILE}"
+        su -s /bin/bash - "${ograc_user}" -c "python3 -B ${CURRENT_PATH}/dss/common/dss_upgrade_yaml.py ${PKG_PATH}/${VERSION_FILE}"  
+        if [[ $? -ne 0 ]];then
+            logAndEchoError "file to yml failed."
+            exit 1
+        fi
+        return 0
+    fi
     if [[ "${deploy_mode}" != "dbstor" ]];then
         return 0
     fi
@@ -276,6 +310,16 @@ function update_version_yml_by_dbstor() {
 }
 
 function upgrade_lock_by_dbstor() {
+     node_lock_file=${lock_file_prefix}${node_id}
+    if [[ "${deploy_mode}" == "dss" ]];then
+        touch /mnt/dbdata/remote/metadata_/upgrade/${node_lock_file}
+        su -s /bin/bash - "${ograc_user}" -c "python3 -B ${CURRENT_PATH}/dss/common/dss_upgrade_lock.py ${node_lock_file}"
+        if [[ $? -ne 0 ]];then
+            logAndEchoError "file to lock failed."
+            exit 1
+        fi
+        return 0
+    fi
     if [[ "${deploy_mode}" != "dbstor" ]];then
         return 0
     fi
@@ -305,12 +349,21 @@ function upgrade_lock_by_dbstor() {
 }
 
 function upgrade_unlock_by_dbstor() {
+    node_lock_file=${lock_file_prefix}${node_id}
+    if [[ "${deploy_mode}" == "dss" ]];then
+        su -s /bin/bash - "${ograc_user}" -c "python3 -B "${CURRENT_PATH}/dss/common/dss_upgrade_unlock.py" ${node_lock_file}"
+        if [[ $? -ne 0 ]];then
+            logAndEchoError "file to rempte failed."
+            exit 1
+        fi
+        return 0
+    fi
     if [[ "${deploy_mode}" != "dbstor" ]];then
         return 0
     fi
     get_dbs_version
     dbs_vs=$?
-    node_lock_file=${lock_file_prefix}${node_id}
+
     lock_file=$(query_filesystem ${dbs_vs} ${storage_share_fs} "upgrade" | grep  "${node_lock_file}" | wc -l)
 
     if [[ ${lock_file} -eq 0 ]];then

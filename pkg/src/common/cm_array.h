@@ -78,6 +78,7 @@ typedef struct st_array_assist_t {
     uint32 dir_curr;
     uint32 dir_end;
     array_head_t *head;
+    cm_stack_t *stack;
 } array_assist_t;
 
 typedef enum en_search_mode {
@@ -141,9 +142,10 @@ typedef struct st_clt_array_assist {
         (aa)->session = KNL_SESSION(stmt);              \
         (aa)->pool = (stmt)->mtrl.pool;                 \
         (aa)->list = sql_get_exec_lob_list(stmt);       \
+        (aa)->stack = KNL_SESSION(stmt)->stack;         \
     } while (0)
 
-void array_set_handle(handle_t session_handle, handle_t pool_handle);
+void array_set_handle(handle_t session_handle, handle_t pool_handle, handle_t array_stack_set_handle);
 bool32 array_str_invalid(text_t *src);
 bool32 array_str_null(text_t *src);
 status_t array_init(array_assist_t *aa, handle_t session, vm_pool_t *pool, id_list_t *list, vm_lob_t *vlob);

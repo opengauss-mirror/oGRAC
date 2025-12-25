@@ -43,7 +43,7 @@
 #include "srv_instance.h"
 #include "pl_udt.h"
 #include "base_compiler.h"
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #include "shd_expr.h"
 #include "shd_remote.h"
 #endif
@@ -429,18 +429,17 @@ static status_t sql_exec_unary_oper(sql_stmt_t *stmt, expr_node_t *node, variant
         return OG_SUCCESS;
     }
 
+    status = opr_unary(&var, result);
+    if (status != OG_SUCCESS) {
+        cm_set_error_loc(node->loc);
+    }
+
     if (var_as_num(&var) != OG_SUCCESS) {
         OG_SRC_THROW_ERROR(node->loc, ERR_INVALID_NUMBER, "");
         return OG_ERROR;
     }
 
     result->is_null = OG_FALSE;
-
-    status = opr_unary(&var, result);
-    if (status != OG_SUCCESS) {
-        cm_set_error_loc(node->loc);
-    }
-
     return status;
 }
 
@@ -680,7 +679,8 @@ static status_t sql_get_select_value(sql_stmt_t *stmt, expr_node_t *node, varian
 status_t sql_get_serial_value(sql_stmt_t *stmt, knl_dictionary_t *dc, variant_t *value)
 {
     if (stmt->serial_value <= 0) {
-        if (knl_get_serial_value((knl_handle_t)stmt->session, dc->handle, &stmt->serial_value) != OG_SUCCESS) {
+        if (knl_get_serial_value((knl_handle_t)stmt->session, dc->handle, &stmt->serial_value,
+                                 KNL_SERIAL_INC_STEP, KNL_SERIAL_INC_OFFSET) != OG_SUCCESS) {
             return OG_ERROR;
         }
     }
@@ -1846,6 +1846,7 @@ inline bool32 sql_is_const_expr_node(const expr_node_t *node)
         case EXPR_NODE_BITXOR:
         case EXPR_NODE_LSHIFT:
         case EXPR_NODE_RSHIFT:
+        case EXPR_NODE_CASE:
         case EXPR_NODE_CAT:
         case EXPR_NODE_NEGATIVE:
             return NODE_IS_OPTMZ_CONST(node);
@@ -3075,10 +3076,6 @@ bool32 sql_expr_node_equal(sql_stmt_t *stmt, expr_node_t *node1, expr_node_t *no
 
         case EXPR_NODE_PARAM:
         case EXPR_NODE_CSR_PARAM:
-            if (stmt->pl_compiler != NULL || stmt->pl_exec != NULL) {
-                return OG_FALSE;
-            }
-
             return (bool32)(VALUE(uint32, &node1->value) == VALUE(uint32, &node2->value));
 
         case EXPR_NODE_FUNC:

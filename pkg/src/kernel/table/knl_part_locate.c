@@ -520,7 +520,7 @@ static status_t part_get_hash_key(knl_handle_t dc_entity, text_t *value, knl_par
     dc_entity_t *entity = (dc_entity_t *)dc_entity;
     table_t *table = &entity->table;
     
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     part_table_t *part_table = table->part_table;
     if (part_table->desc.is_slice == OG_TRUE && table->desc.slice_count > 0) {
         knl_column_t *knl_column = knl_get_column(entity, key_col->column_id);
@@ -531,7 +531,7 @@ static status_t part_get_hash_key(knl_handle_t dc_entity, text_t *value, knl_par
     } else {
 #endif
         part_get_hash_key_variant(key_col->datatype, value, variant_value, table->desc.version);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     }
 #endif
     return OG_SUCCESS;
@@ -547,7 +547,7 @@ static uint32 part_locate_hash_key(dc_entity_t *entity, part_table_t *part_table
     bool32 is_type_ok = OG_FALSE;
     uint32 hash_value = 0;
     table_t *table = &entity->table;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     routing_info_t *routing_info = knl_get_table_routing_info(entity);
 #endif
     
@@ -572,7 +572,7 @@ static uint32 part_locate_hash_key(dc_entity_t *entity, part_table_t *part_table
             OG_THROW_ERROR(ERR_INVALID_PART_TYPE, "key", "");
             return OG_INVALID_ID32;
         }
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         if (part_table->desc.is_slice == OG_TRUE && table->desc.slice_count > 0 &&
             routing_info->type == distribute_hash_basic) {
             hash_value = hash_basic_value_combination(i, hash_value, &variant_value, &is_type_ok);
@@ -586,7 +586,7 @@ static uint32 part_locate_hash_key(dc_entity_t *entity, part_table_t *part_table
             return OG_INVALID_ID32;
         }
     }
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (part_table->desc.is_slice == OG_TRUE && table->desc.slice_count > 0) {
         uint32 modulo = abs(hash_value) % BUCKETDATALEN;
         uint32 slice_id = modulo % table->desc.slice_count;
@@ -766,7 +766,7 @@ static uint32 subpart_locate_hash_key(dc_entity_t *entity, table_part_t *compart
     table_t *table = &entity->table;
     part_table_t *part_table = table->part_table;
     part_decode_key_t *decoder = &part_key->decoder;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     routing_info_t *routing_info = knl_get_table_routing_info(entity);
 #endif
 
@@ -786,7 +786,7 @@ static uint32 subpart_locate_hash_key(dc_entity_t *entity, table_part_t *compart
             return OG_INVALID_ID32;
         }
         
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         if (part_table->desc.is_slice == OG_TRUE && table->desc.slice_count > 0 &&
             routing_info->type == distribute_hash_basic) {
             hash_value = hash_basic_value_combination(i, hash_value, &variant_value, &is_type_ok);
@@ -802,7 +802,7 @@ static uint32 subpart_locate_hash_key(dc_entity_t *entity, table_part_t *compart
         }
     }
     
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (part_table->desc.is_slice == OG_TRUE && table->desc.slice_count > 0) {
         uint32 modulo = abs(hash_value) % BUCKETDATALEN;
         uint32 slice_id = modulo % table->desc.slice_count;

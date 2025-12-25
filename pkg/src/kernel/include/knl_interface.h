@@ -200,7 +200,7 @@ typedef struct st_knl_table_desc {
     knl_storage_desc_t storage_desc;
     knl_ext_desc_t *external_desc;   // external table definition
     uint64 serial_start;              // init auto increment value
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     uint32 distribute_type;
     text_t distribute_text;      // distribute info
     binary_t distribute_data;  // distribute
@@ -255,6 +255,10 @@ typedef struct st_knl_table_desc {
 #define INDEX_IS_DISABLED_MASK 0x00000002
 #define INDEX_IS_INVALID_MASK  0x00000004
 #define INDEX_IS_STORED_MASK   0x00000008
+
+// default serial step and offset value for increment
+#define KNL_SERIAL_INC_STEP 1
+#define KNL_SERIAL_INC_OFFSET 1
 
 /* kernel partition key */
 typedef struct st_knl_part_key {
@@ -529,7 +533,7 @@ typedef struct st_knl_callback {
 
     knl_logic_log_replay_t pl_logic_log_replay;
     knl_execute_check_t exec_check;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     knl_init_shard_resource_t init_shard_resource;
     knl_parse_distribute_info_t parse_distribute_info;
     knl_parse_distribute_bkts_t parse_distribute_bkts;
@@ -690,7 +694,10 @@ void knl_set_logbuf_stack(knl_handle_t kernel, uint32 sid, char *plog_buf, cm_st
 void knl_logic_log_put(knl_handle_t session, uint32 type, const void *data, uint32 size);
 status_t knl_tx_enabled(knl_handle_t session);
 status_t knl_get_serial_cached_value(knl_handle_t session, knl_handle_t dc_entity, int64 *value);
-status_t knl_get_serial_value(knl_handle_t handle, knl_handle_t dc_entity, uint64 *value);
+status_t knl_get_serial_value(knl_handle_t handle, knl_handle_t dc_entity, uint64 *value,
+                                     uint16 auto_inc_step, uint16 auto_inc_offset);
+void knl_first_serial_value(uint64 *curr_id, uint64 start_val, uint16 step, uint16 offset);
+void knl_cal_serial_value(uint64 prev_id, uint64 *curr_id, uint64 start_val, uint16 step, uint16 offset);
 knl_table_desc_t *knl_get_table(knl_dictionary_t *dc);
 uint32 knl_get_index_count(knl_handle_t dc_entity);
 knl_index_desc_t *knl_get_index(knl_handle_t dc_entity, uint32 index_id);
@@ -873,7 +880,7 @@ uint8 knl_get_initrans(void);
 uint32 knl_db_node_count(knl_handle_t session);
 
 void knl_attach_cpu_core(void);
-
+void knl_get_cpu_set_from_conf(cpu_set_t *cpuset);
 /* @} */
 #ifdef __cplusplus
 }

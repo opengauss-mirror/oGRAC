@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define CMS_GCC_STORAGE_T_SIZE    177152
+#define CMS_GCC_STORAGE_T_SIZE    227840
 CM_STATIC_ASSERT(sizeof(cms_gcc_storage_t) == CMS_GCC_STORAGE_T_SIZE);
 
 #ifdef __cplusplus

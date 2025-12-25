@@ -25,6 +25,7 @@
 #include "ogconn_fetch.h"
 #include "cm_row.h"
 #include "ogconn_lob.h"
+#include "ogconn_stmt.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,19 +34,7 @@ extern "C" {
 static status_t clt_remote_fetch_core(clt_stmt_t *stmt, cs_packet_t *req_pack, cs_packet_t *ack_pack)
 {
     OG_RETURN_IFERR(clt_remote_call(stmt->conn, req_pack, ack_pack));
-
-    do {
-        if (ack_pack->head->flags & CS_FLAG_SERVEROUPUT) {
-            (void)clt_receive_serveroutput(stmt, ack_pack);
-            OG_RETURN_IFERR(clt_remote_call(stmt->conn, ack_pack, ack_pack));
-            continue;
-        } else if (ack_pack->head->flags & ~CS_FLAG_SERVEROUPUT) {
-            CLT_THROW_ERROR(stmt->conn, ERR_CLT_FETCH_INVALID_FLAGS);
-            return OG_ERROR;
-        }
-        break;
-    } while (OG_TRUE);
-
+    OG_RETURN_IFERR(clt_try_receive_pl_proc_data(stmt, ack_pack));
     cs_init_get(&stmt->cache_pack->pack);
     return OG_SUCCESS;
 }

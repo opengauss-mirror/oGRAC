@@ -813,17 +813,6 @@ status_t sql_parse_drop_table(sql_stmt_t *stmt, bool32 is_temp)
     if (sql_parse_drop_object(stmt, def) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if_exists = def->options & DROP_IF_EXISTS;
-    if (if_exists == OG_FALSE) {
-        if (knl_open_dc_with_public(&stmt->session->knl_session, &def->owner, OG_TRUE, &def->name, &dc) != OG_SUCCESS) {
-            cm_reset_error_user(ERR_TABLE_OR_VIEW_NOT_EXIST, T2S(&def->owner), T2S_EX(&def->name),
-                ERR_TYPE_TABLE_OR_VIEW);
-            sql_check_user_priv(stmt, &def->owner);
-            return OG_ERROR;
-        }
-        knl_close_dc(&dc);
-    }
-    stmt->context->entry = def;
 
     if (lex_try_fetch(lex, "CASCADE", &is_cascade) != OG_SUCCESS) {
         return OG_ERROR;
@@ -839,7 +828,20 @@ status_t sql_parse_drop_table(sql_stmt_t *stmt, bool32 is_temp)
         return OG_ERROR;
     }
 
-    return lex_expected_end(lex);
+    OG_RETURN_IFERR(lex_expected_end(lex));
+    if_exists = def->options & DROP_IF_EXISTS;
+    if (if_exists == OG_FALSE) {
+        if (knl_open_dc_with_public(&stmt->session->knl_session, &def->owner, OG_TRUE, &def->name, &dc) != OG_SUCCESS) {
+            cm_reset_error_user(ERR_TABLE_OR_VIEW_NOT_EXIST, T2S(&def->owner), T2S_EX(&def->name),
+                ERR_TYPE_TABLE_OR_VIEW);
+            sql_check_user_priv(stmt, &def->owner);
+            return OG_ERROR;
+        }
+        knl_close_dc(&dc);
+    }
+    stmt->context->entry = def;
+
+    return OG_SUCCESS;
 }
 
 status_t sql_parse_drop_temporary_lead(sql_stmt_t *stmt)

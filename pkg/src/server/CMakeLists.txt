@@ -22,11 +22,11 @@ aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/route SHD_ROUTE_SRC)
 aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/shard/adapter SHD_ADAPTER_SRC)
 set(SHARD_TOTAL_SRC ${SHARD_SRC} ${SHD_REBALANCE_SRC} ${SHD_DDL_SRC} ${SHD_DML_SRC} ${SHD_ROUTE_SRC} ${SHD_ADAPTER_SRC})
 
-add_library(zeserver STATIC ${SERVER_SRC} ${SERVER_PARAMS_SRC}  ${SHARD_TOTAL_SRC})
+add_library(ogserver STATIC ${SERVER_SRC} ${SERVER_PARAMS_SRC}  ${SHARD_TOTAL_SRC})
 if (USE_FUZZASAN)
-target_link_libraries(zeserver PRIVATE zecluster zecms Secodefuzz zesql zemes)
+target_link_libraries(ogserver PRIVATE ogcluster ogcms Secodefuzz ogracsql ogmes)
 else ()
-target_link_libraries(zeserver PRIVATE zecluster zecms)
+target_link_libraries(ogserver PRIVATE ogcluster ogcms)
 endif(USE_FUZZASAN)
 
 add_library(oGRAC SHARED ${SERVER_SRC} ${SERVER_PARAMS_SRC} ${SHARED_TOTAL_SRC} ${VERSION_SRC})
@@ -41,21 +41,21 @@ if (USE_FUZZASAN)
     ADD_EXECUTABLE(ogracd ${VERSION_SRC})
     target_link_libraries(ogracd PRIVATE
                           -Wl,--start-group
-                          zeserver zesql zekernel zemes zeprotocol zecommon zeclient
-                          zecluster zecms zerc m rt pthread dl z zstd lz4 Secodefuzz
+                          ogserver ogracsql ogkernel ogmes ogprotocol ogcommon ogclient
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4 Secodefuzz
                           -Wl,--end-group)
 else ()
     add_definitions(-DBUILD_SRV_MAIN)
     ADD_EXECUTABLE(ogracd ${VERSION_SRC})
     target_link_libraries(ogracd PRIVATE
                           -Wl,--start-group
-                          zeserver zesql zekernel zemes zeprotocol zecommon zeclient
-                          zecluster zecms zerc m rt pthread dl z zstd lz4
+                          ogserver ogracsql ogkernel ogmes ogprotocol ogcommon ogclient
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4
                           -Wl,--end-group)         
     target_link_libraries(oGRAC PRIVATE
                           -Wl,--start-group
-                          zeserver zesql zekernel zemes zeprotocol zecommon zeclient
-                          zecluster zecms zerc m rt pthread dl z zstd lz4
+                          ogserver ogracsql ogkernel ogmes ogprotocol ogcommon ogclient
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4
                           -Wl,--end-group)
 endif(USE_FUZZASAN)
 target_compile_definitions(ogracd PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})

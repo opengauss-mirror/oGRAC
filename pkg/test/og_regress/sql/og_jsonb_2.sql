@@ -694,3 +694,17 @@ select NVL(jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[0]'),100) from tbl_jsonb_026;
 select 1 from tbl_jsonb_026 where json_value(c_json,'$[1]."s1#$%%@#"[0]') is null;
 select NVL(json_value(c_json,'$[1]."s1#$%%@#"[0]'),100) from tbl_jsonb_026;
 drop table if exists tbl_jsonb_026;
+
+
+drop table if exists tc_jsonb_001 cascade constraints; 
+create table tc_jsonb_001(col_1 int not null,col_2 JSONB);
+insert into tc_jsonb_001 values (1,'{"actExplain":"仅为兼容2.0,不实际使用","actName":"#SG3_强制关闭浏览器","actTclName":"com.huawei.webgui.aw.BrowserActionWord.close","alias":"SGUI_KillAllBrowsers","executeType":"JAVA","implement":"SmartGUI3.0\\SmartGUI3.0-aw.jar","para":[],"referFile":"SmartGUI3.0\\AWDefine.xml","show":true}');
+commit;
+
+select col_1 from tc_jsonb_001 where jsonb_query(col_2, '$' returning CLOB) is null;
+
+select count(col_1) from tc_jsonb_001 where jsonb_query(col_2, '$' returning CLOB) is not null order by col_1;
+
+select jsonb_query(col_2, '$' error on error) from tc_jsonb_001;
+
+drop table tc_jsonb_001;

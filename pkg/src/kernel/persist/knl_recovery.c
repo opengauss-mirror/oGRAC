@@ -605,7 +605,6 @@ static bool32 rcy_get_page_index(rcy_context_t *rcy_ctx, uint32 page, uint32 fil
     }
 
     if (rcy_ctx->page_list_count >= RCY_PAGE_MAX_COUNT) {
-        // __TODO__: try hold more page
         OG_LOG_RUN_ERR("rcy paral replay error, page list if full! page_limit:%u", RCY_PAGE_MAX_COUNT);
         knl_panic(0);
     }
@@ -643,9 +642,6 @@ static void rcy_add_page(rcy_page_t **pages, rcy_paral_group_t *paral_group, rd_
             now_page->group_count++;
             slot = group_count;
         }
-        // let previous RD_ENTER_PAGE entry know the bucket id which replay next RD_ENTER_PAGE entry
-        // TODO in cluster mode, this will cause invalid write;
-        // pages[index].prev_enter->next_bucket_id = (uint8)(paral_group->group->rmid % rcy->capacity);
 
         // reset prev_enter to current RD_ENTER_PAGE entry
         now_page->prev_enter = &paral_group->items[paral_group->enter_count];
@@ -715,13 +711,6 @@ void rcy_add_pages(rcy_paral_group_t *paral_group, log_group_t *group, uint32 gr
             paral_group->tx_next_bid = OG_INVALID_ID8;
             rcy->tx_end_count++;
             rcy_record_batch_scn(log, paral_group);
-
-            // TODO in cluster mode, this will cause invalid write;
-            // if (paral_group->tx_id > 0) {
-            //     // let previous tx group know the bucket id which replay next tx group
-            //     rcy->prev_tx_group->tx_next_bid = (uint8)(paral_group->group->rmid % rcy->capacity);
-            // }
-            // rcy->prev_tx_group = paral_group; // reset prev_tx_group to current tx group
         }
         if (log->type == RD_LOGIC_OPERATION || log->type == RD_LOGIC_REP_ALL_DDL || rcy_contain_spc_log(log->type)) {
             *logic = OG_TRUE;
@@ -1901,8 +1890,7 @@ void rcy_close(knl_session_t *session)
 {
     rcy_context_t *rcy = &session->kernel->rcy_ctx;
 
-    if (session->kernel->attr.clustered) {  // TODO: double check
-        // dtc_recovery_close(session);
+    if (session->kernel->attr.clustered) {
         return;
     }
 
@@ -2022,7 +2010,6 @@ status_t rcy_recover(knl_session_t *session)
     session->kernel->ckpt_ctx.trunc_lsn = (uint64)session->kernel->lsn;
     session->kernel->rcy_ctx.rcy_end = OG_FALSE;
 
-    /* TODO: support cluster recover */
     if (session->kernel->attr.clustered) {
         return dtc_recover(session);
     }

@@ -33,6 +33,7 @@
 #include "dtc_database.h"
 #include "dtc_log.h"
 #include "dtc_ckpt.h"
+#include "cm_malloc.h"
 
 #define BAK_GET_CTRL_RETRY_TIMES 3
 #define ARCH_FORCE_ARCH_CHECK_INTERVAL_MS 1000
@@ -307,41 +308,50 @@ status_t bak_get_arch_asn_file(knl_session_t *session, log_start_end_info_t arch
     uint32 rst_id = session->kernel->db.ctrl.core.resetlogs.rst_id;
     local_arch_file_info_t file_info;
     DIR *arch_dir;
-    struct dirent *arch_dirent;
+    struct dirent arch_dirent = {0};
     arch_attr_t *arch_attr = &session->kernel->attr.arch_attr[0];
     char *arch_path = arch_attr->local_path;
-    log_file_head_t head;
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
     char tmp_file_name[OG_FILE_NAME_BUFFER_SIZE];
-    if ((arch_dir = opendir(arch_path)) == NULL) {
+    device_type_t type = cm_device_type(arch_path);
+    if ((arch_dir = cm_open_device_dir(type, arch_path)) == NULL) {
         OG_LOG_RUN_ERR("[BACKUP] can not open arch_dir %s.", arch_path);
         return OG_ERROR;
     }
-    while ((arch_dirent = readdir(arch_dir)) != NULL) {
+    while ((cm_read_device_dir(type, arch_dir, &arch_dirent)) == OG_SUCCESS) {
         if (bak_check_arch_file_num(arch_info) != OG_SUCCESS) {
-            closedir(arch_dir);
+            cm_close_device_dir(type, arch_dir);
+            CM_FREE_PTR(head);
             return OG_ERROR;
         }
-        if (bak_convert_archfile_name(arch_dirent->d_name, &file_info, inst_id, rst_id,
+        if (bak_convert_archfile_name(arch_dirent.d_name, &file_info, inst_id, rst_id,
                                       BAK_IS_DBSOTR(&session->kernel->backup_ctx.bak)) == OG_FALSE) {
             continue;
         }
-        if (bak_get_arch_file_head(session, arch_path, arch_dirent->d_name, &head) != OG_SUCCESS) {
-            closedir(arch_dir);
+        if (bak_get_arch_file_head(session, arch_path, arch_dirent.d_name, head) != OG_SUCCESS) {
+            cm_close_device_dir(type, arch_dir);
+            CM_FREE_PTR(head);
             return OG_ERROR;
         }
 
-        if (head.dbid != session->kernel->db.ctrl.core.dbid) {
+        if (head->dbid != session->kernel->db.ctrl.core.dbid) {
             OG_LOG_RUN_WAR("[BACKUP] the dbid %u of archive logfile %s is different from the bak dbid %u",
-                head.dbid, arch_dirent->d_name, session->kernel->db.ctrl.core.dbid);
+                head->dbid, arch_dirent.d_name, session->kernel->db.ctrl.core.dbid);
             continue;
         }
         arch_info.result_asn->max_asn = MAX(arch_info.result_asn->max_asn, file_info.local_asn);
-        bak_set_file_name(tmp_file_name, arch_path, arch_dirent->d_name);
-        if (bak_set_archfile_info_file(arch_info, file_info, tmp_file_name, &head) != OG_SUCCESS) {
+        bak_set_file_name(tmp_file_name, arch_path, arch_dirent.d_name);
+        if (bak_set_archfile_info_file(arch_info, file_info, tmp_file_name, head) != OG_SUCCESS) {
+            CM_FREE_PTR(head);
             return OG_ERROR;
         }
     }
-    closedir(arch_dir);
+    cm_close_device_dir(type, arch_dir);
+    CM_FREE_PTR(head);
     return OG_SUCCESS;
 }
 
@@ -481,6 +491,34 @@ static status_t dtc_bak_get_arch_file(knl_session_t *session, uint32 inst_id, ba
     return OG_SUCCESS;
 }
 
+static status_t dtc_bak_fetch_arch_files(knl_session_t *session, uint32 inst_id,
+                                         bak_arch_files_t *buf, log_start_end_asn_t *local_asn)
+{
+    bak_t *bak = &session->kernel->backup_ctx.bak;
+
+    if (local_asn->start_asn != 0) {
+        if (dtc_bak_get_arch_file(session, inst_id, buf, local_asn) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    } else {
+        bak->arch_end_lsn[inst_id] = bak->record.ctrlinfo.dtc_lrp_point[inst_id].lsn;
+        OG_LOG_RUN_INF("[BACKUP] node %u archive log end lsn is %llu",
+                       inst_id, bak->arch_end_lsn[inst_id]);
+    }
+
+    return OG_SUCCESS;
+}
+
+static void dtc_bak_post_parallel(knl_session_t *session)
+{
+    bak_t *bak = &session->kernel->backup_ctx.bak;
+
+    bak_wait_paral_proc(session, OG_FALSE);
+    if (bak_paral_task_enable(session)) {
+        bak->curr_file_index = bak->file_count;
+    }
+}
+
 status_t dtc_bak_read_logfiles(knl_session_t *session, uint32 inst_id)
 {
     bak_t *bak = &session->kernel->backup_ctx.bak;
@@ -493,7 +531,7 @@ status_t dtc_bak_read_logfiles(knl_session_t *session, uint32 inst_id)
         OG_LOG_RUN_INF("[BACKUP] node %u archive log end lsn is %llu", inst_id, bak->arch_end_lsn[inst_id]);
         return OG_SUCCESS;
     }
-    bak_arch_files_t *arch_file_buf = (bak_arch_files_t *)malloc(sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM);
+    bak_arch_files_t *arch_file_buf = (bak_arch_files_t *)cm_malloc(sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM);
     if (arch_file_buf == NULL) {
         OG_LOG_RUN_ERR("[BACKUP] malloc arch file buffer failed");
         return OG_ERROR;
@@ -501,19 +539,22 @@ status_t dtc_bak_read_logfiles(knl_session_t *session, uint32 inst_id)
     errno_t ret = memset_sp(arch_file_buf, sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM, 0,
         sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM);
     if (ret != EOK) {
+        CM_FREE_PTR(arch_file_buf);
         OG_LOG_RUN_ERR("[BACKUP] memset arch file buffer failed");
         return OG_ERROR;
     }
     log_start_end_asn_t local_arch_file_asn = {0, 0, 0};
     log_start_end_asn_t target_arch_file_asn = {0, 0, 0};
 
-    if (dtc_bak_get_arch_start_and_end_point(session, inst_id, &arch_file_buf, &local_arch_file_asn,
-        &target_arch_file_asn) != OG_SUCCESS) {
+    if (dtc_bak_get_arch_start_and_end_point(session, inst_id, &arch_file_buf,
+                                             &local_arch_file_asn, &target_arch_file_asn) != OG_SUCCESS) {
+        CM_FREE_PTR(arch_file_buf);
         OG_LOG_RUN_ERR("[BACKUP] dtc get log start and end log failed");
         return OG_ERROR;
     }
 
     if (dtc_get_log_curr_size(session, inst_id, &curr_size) != OG_SUCCESS) {
+        CM_FREE_PTR(arch_file_buf);
         OG_LOG_RUN_ERR("[BACKUP] dtc curr_size failed");
         return OG_ERROR;
     }
@@ -522,24 +563,18 @@ status_t dtc_bak_read_logfiles(knl_session_t *session, uint32 inst_id)
     OG_LOG_RUN_INF("[BACKUP] curr_size %llu.", (uint64)data_size);
     uint32 target_end_asn = target_arch_file_asn.end_asn;
     if (local_arch_file_asn.end_asn < target_end_asn &&
-        dtc_bak_get_logfile_by_asn_file(session, arch_file_buf, local_arch_file_asn, inst_id, &target_arch_file_asn) !=
-            OG_SUCCESS) {
+        dtc_bak_get_logfile_by_asn_file(session, arch_file_buf,
+                                        local_arch_file_asn, inst_id, &target_arch_file_asn) != OG_SUCCESS) {
+        CM_FREE_PTR(arch_file_buf);
         return OG_ERROR;
     }
-    if (local_arch_file_asn.start_asn != 0) {
-        if (dtc_bak_get_arch_file(session, inst_id, arch_file_buf, &local_arch_file_asn) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-    } else {
-        bak->arch_end_lsn[inst_id] = bak->record.ctrlinfo.dtc_lrp_point[inst_id].lsn;
-        OG_LOG_RUN_INF("[BACKUP] node %u archive log end lsn is %llu", inst_id, bak->arch_end_lsn[inst_id]);
+    if (dtc_bak_fetch_arch_files(session, inst_id, arch_file_buf, &local_arch_file_asn) != OG_SUCCESS) {
+        CM_FREE_PTR(arch_file_buf);
+        return OG_ERROR;
     }
 
-    bak_wait_paral_proc(session, OG_FALSE);
-    if (bak_paral_task_enable(session)) {
-        bak->curr_file_index = bak->file_count;
-    }
-
+    dtc_bak_post_parallel(session);
+    CM_FREE_PTR(arch_file_buf);
     return OG_SUCCESS;
 }
 
@@ -558,7 +593,7 @@ status_t dtc_bak_read_logfiles_dbstor(knl_session_t *session, uint32 inst_id)
         OG_LOG_RUN_INF("[BACKUP] node %u archive log end lsn is %llu", inst_id, bak->arch_end_lsn[inst_id]);
         return OG_SUCCESS;
     }
-    bak_arch_files_t *arch_file_buf = (bak_arch_files_t *)malloc(sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM);\
+    bak_arch_files_t *arch_file_buf = (bak_arch_files_t *)cm_malloc(sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM);\
     if (arch_file_buf == NULL) {
         OG_LOG_RUN_ERR("[BACKUP] malloc arch file buffer failed");
         return OG_ERROR;
@@ -566,6 +601,7 @@ status_t dtc_bak_read_logfiles_dbstor(knl_session_t *session, uint32 inst_id)
     errno_t ret = memset_sp(arch_file_buf, sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM, 0,
                             sizeof(bak_arch_files_t) * BAK_ARCH_FILE_INIT_NUM);
     if (ret != EOK) {
+        CM_FREE_PTR(arch_file_buf);
         OG_LOG_RUN_ERR("[BACKUP] memset arch file buffer failed");
         return OG_ERROR;
     }
@@ -1808,28 +1844,37 @@ static uint64 dtc_rst_db_get_logfiles_size(knl_session_t *session)
 status_t dtc_rst_arch_regist_archive(knl_session_t *session, const char *name, uint32 inst_id)
 {
     int32 handle = OG_INVALID_HANDLE;
-    log_file_head_t head;
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
     int64 file_size = 0;
     device_type_t type = arch_get_device_type(name);
     if (cm_open_device(name, type, O_BINARY | O_SYNC | O_RDWR, &handle) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         cm_close_device(type, &handle);
         return OG_ERROR;
     }
     if (cm_get_size_device(type, handle, &file_size) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
-    if ((int64)head.write_pos != file_size) {
+    if ((int64)head->write_pos != file_size) {
+        CM_FREE_PTR(head);
         cm_close_device(type, &handle);
         OG_THROW_ERROR(ERR_INVALID_ARCHIVE_LOG, name);
         return OG_ERROR;
     }
     cm_close_device(type, &handle);
-    if (dtc_rst_arch_try_record_archinfo(session, ARCH_DEFAULT_DEST, name, &head, inst_id) != OG_SUCCESS) {
+    if (dtc_rst_arch_try_record_archinfo(session, ARCH_DEFAULT_DEST, name, head, inst_id) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
+    CM_FREE_PTR(head);
     return OG_SUCCESS;
 }
 
@@ -1865,17 +1910,19 @@ static bool32 dtc_rst_check_archive_is_dir(knl_session_t *session, char *file_na
 status_t get_dbid_from_arch_logfile(knl_session_t *session, uint32 *dbid, const char *name)
 {
     int32 handle = OG_INVALID_HANDLE;
-    log_file_head_t head;
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
     device_type_t type = arch_get_device_type(name);
     if (cm_open_device(name, type, O_BINARY | O_SYNC | O_RDWR, &handle) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         cm_close_device(type, &handle);
         return OG_ERROR;
     }
-
-    *dbid = head.dbid;
+    *dbid = head->dbid;
+    CM_FREE_PTR(head);
     cm_close_device(type, &handle);
     return OG_SUCCESS;
 }
@@ -2465,28 +2512,61 @@ static status_t bak_get_arch_from_redo_prepare(knl_session_t *session, knl_sessi
                                         arch_file_info_t *file_info, dtc_rcy_node_t *rcy_node, logfile_set_t
                                             *local_file_set)
 {
-    errno_t ret;
-    ret = memcpy_s((char*)session_bak, sizeof(knl_session_t), (char*)session, sizeof(knl_session_t));
-    knl_securec_check(ret);
-    session_bak->kernel = (knl_instance_t *)malloc(sizeof(knl_instance_t));
+    errno_t ret = memcpy_s((char*)session_bak, sizeof(knl_session_t), (char*)session, sizeof(knl_session_t));
+    if (ret != EOK) {
+        OG_LOG_RUN_ERR("[BACKUP] memcpy_s session_bak failed");
+        return OG_ERROR;
+    }
+
+    session_bak->kernel = (knl_instance_t *)cm_malloc(sizeof(knl_instance_t));
+    if (session_bak->kernel == NULL) {
+        OG_LOG_RUN_ERR("[BACKUP] malloc kernel of session_bak failed");
+        return OG_ERROR;
+    }
+
     ret = memcpy_s((char*)session_bak->kernel, sizeof(knl_instance_t), (char*)session->kernel, sizeof(knl_instance_t));
-    knl_securec_check(ret);
+    if (ret != EOK) {
+        CM_FREE_PTR(session_bak->kernel);
+        OG_LOG_RUN_ERR("[BACKUP] memcpy_s kernel of session_bak failed");
+        return OG_ERROR;
+    }
+
     session_bak->kernel->attr.xpurpose_buf = cm_aligned_buf(g_instance->xpurpose_buf);
     session_bak->kernel->db.status = DB_STATUS_CLOSED;
     if (cm_aligned_malloc(OG_MAX_BATCH_SIZE, "bak log batch buffer", &file_info->read_buf) != OG_SUCCESS) {
+        CM_FREE_PTR(session_bak->kernel);
         return OG_ERROR;
     }
+
+    uint32 read_buf_size = g_instance->kernel.attr.rcy_node_read_buf_size;
+    rcy_node->read_buf = (aligned_buf_t *)cm_malloc(sizeof(aligned_buf_t) *
+                                                 g_instance->kernel.attr.rcy_node_read_buf_size);
+    if (rcy_node->read_buf == NULL) {
+        CM_FREE_PTR(session_bak->kernel);
+        cm_aligned_free(&file_info->read_buf);
+        OG_LOG_RUN_ERR("[BACKUP] malloc rcy_node buffer failed");
+        
+        return OG_ERROR;
+    }
+
     int64 size = (int64)LOG_LGWR_BUF_SIZE(session);
-    if (cm_aligned_malloc(size, "bak rcy read buffer",
-                          &rcy_node->read_buf[rcy_node->read_buf_read_index]) != OG_SUCCESS) {
+    // 分配 read_buf 数组里的每个 aligned_buf_t
+    if (cm_aligned_array_malloc(rcy_node->read_buf, read_buf_size, size, "bak rcy read buffer") != OG_SUCCESS) {
+        CM_FREE_PTR(session_bak->kernel);
+        cm_aligned_free(&file_info->read_buf);
         return OG_ERROR;
     }
+
     logfile_set_t *file_set = LOGFILE_SET(session, rcy_node->node_id);
     local_file_set->log_count = file_set->log_count;
     local_file_set->logfile_hwm = file_set->logfile_hwm;
     if (dtc_init_node_logset_for_backup(session, rcy_node->node_id, rcy_node, local_file_set) != OG_SUCCESS) {
+        CM_FREE_PTR(session_bak->kernel);
+        cm_aligned_free(&file_info->read_buf);
+        cm_aligned_array_free(rcy_node->read_buf, read_buf_size);
         return OG_ERROR;
     }
+
     return OG_SUCCESS;
 }
 
@@ -2496,17 +2576,13 @@ static void bak_get_arch_from_redo_free(knl_compress_t *compress_ctx, knl_sessio
     uint32 read_buf_size = g_instance->kernel.attr.rcy_node_read_buf_size;
     CM_FREE_PTR(session->kernel);
     cm_aligned_free(&file_info->read_buf);
-    for(int i = 0; i < read_buf_size;  ++i){
-        cm_aligned_free(&rcy_node->read_buf[i]);
-    }
-    for (uint32 i = 0; i <  local_file_set->logfile_hwm; i++) {
+    cm_aligned_array_free(rcy_node->read_buf, read_buf_size);
+    for (uint32 i = 0; i < local_file_set->logfile_hwm; i++) {
         if (rcy_node->handle[i] != OG_INVALID_HANDLE) {
             cm_close_device(local_file_set->items[i].ctrl->type, &rcy_node->handle[i]);
         }
     }
-    for(int i = 0; i < read_buf_size;  ++i){
-        cm_aligned_free(&rcy_node->read_buf[i]);
-    }
+    CM_FREE_PTR(rcy_node->read_buf);
 }
 
 static bool32 dtc_bak_logfile_empty(log_file_t *logfile, dtc_node_ctrl_t *node_ctrl)
@@ -2699,7 +2775,7 @@ status_t bak_set_archfile_info_file(log_start_end_info_t arch_info, local_arch_f
 
 static status_t bak_remalloc_arch_file_buf(log_start_end_info_t arch_info, uint32_t new_cap)
 {
-    char *arch_file_buf = (char *)malloc(sizeof(bak_arch_files_t) * new_cap);
+    char *arch_file_buf = (char *)cm_malloc(sizeof(bak_arch_files_t) * new_cap);
     if (arch_file_buf == NULL) {
         OG_LOG_RUN_ERR("[BACKUP] Failed to malloc arch files buffer");
         return OG_ERROR;
@@ -3134,38 +3210,47 @@ status_t rst_modify_archfile_content(knl_session_t *session, log_start_end_lsn_t
     char *file_name = first_arch_info.buf;
     log_start_end_lsn_t *lsn = first_arch_info.find_lsn;
     int32 handle = OG_INVALID_HANDLE;
-    log_file_head_t head;
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
     device_type_t type = arch_get_device_type(file_name);
     aligned_buf_t read_buf;
     char tmp_file_name[OG_FILE_NAME_BUFFER_SIZE] = {0};
     int32 tmp_arch_handle = OG_INVALID_HANDLE;
     if (rst_prepare_modify_archfile(file_name, &handle, tmp_file_name, &tmp_arch_handle, &read_buf) != OG_SUCCESS) {
+        CM_FREE_PTR(head);
         OG_LOG_RUN_ERR("[RESTORE] prepare for modify archive log file failed");
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         rst_release_modify_resource(type, &handle, tmp_file_name, &tmp_arch_handle, &read_buf);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
 
     if (rst_remove_duplicate_batch_archfile(type, handle, tmp_arch_handle,
-                                            read_buf, &head, lsn->end_lsn) != OG_SUCCESS) {
+                                            read_buf, head, lsn->end_lsn) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[RESTORE] remove duplicates batchs failed.");
         rst_release_modify_resource(type, &handle, tmp_file_name, &tmp_arch_handle, &read_buf);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
     *(first_arch_info.last_archived_asn) += 1;
-    head.first_lsn = lsn->end_lsn;
-    head.last_lsn = local_lsn->end_lsn;
-    head.asn = *(first_arch_info.last_archived_asn);
+    head->first_lsn = lsn->end_lsn;
+    head->last_lsn = local_lsn->end_lsn;
+    head->asn = *(first_arch_info.last_archived_asn);
     // after that, the asn of the log batch may not match the asn of the archive file in which it is located.
-    if (rst_generate_deduplicate_archfile(session, &head, tmp_file_name, tmp_arch_handle,
+    if (rst_generate_deduplicate_archfile(session, head, tmp_file_name, tmp_arch_handle,
                                           first_arch_info) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[RESTORE] generate new archive log file failed.");
         rst_release_modify_resource(type, &handle, tmp_file_name, &tmp_arch_handle, &read_buf);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
     rst_release_modify_resource(type, &handle, tmp_file_name, &tmp_arch_handle, &read_buf);
+    CM_FREE_PTR(head);
     return OG_SUCCESS;
 }
 
@@ -3176,35 +3261,46 @@ status_t rst_modify_archfile_name(knl_session_t *session, arch_info_t first_arch
     int32 handle = OG_INVALID_HANDLE;
     arch_attr_t *arch_attr = &session->kernel->attr.arch_attr[0];
     char *arch_path = arch_attr->local_path;
-    log_file_head_t head;
     device_type_t type = cm_device_type(arch_buf);
     if (cm_open_device(arch_buf, type, O_BINARY | O_SYNC | O_RDWR, &handle) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
+        return OG_ERROR;
+    }
+
+    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
     *(first_arch_info.last_archived_asn) += 1;
-    if (head.asn == *(first_arch_info.last_archived_asn)) {
+    if (head->asn == *(first_arch_info.last_archived_asn)) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         return OG_SUCCESS;
     }
-    head.asn = *(first_arch_info.last_archived_asn);
-    log_calc_head_checksum(session, &head);
-    if (cm_write_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    head->asn = *(first_arch_info.last_archived_asn);
+    log_calc_head_checksum(session, head);
+    if (cm_write_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
     cm_close_device(type, &handle);
     OG_LOG_RUN_INF("[RESTORE] Flush head start[%llu] end[%llu] asn[%u] rst[%u] fscn[%llu], write_pos[%llu] dbid[%u]",
-                   head.first_lsn, head.last_lsn, head.asn, head.rst_id, head.first, head.write_pos, head.dbid);
-    local_arch_file_info_t file_info = {head.rst_id, first_arch_info.inst_id,
-                                        head.first_lsn, head.last_lsn, head.asn};
+                   head->first_lsn, head->last_lsn, head->asn, head->rst_id, head->first, head->write_pos, head->dbid);
+    local_arch_file_info_t file_info = {head->rst_id, first_arch_info.inst_id,
+                                        head->first_lsn, head->last_lsn, head->asn};
     bak_set_archfile_name_with_lsn(session, tmp_buf, arch_path, OG_FILE_NAME_BUFFER_SIZE, file_info);
     if (cm_rename_device(type, arch_buf, tmp_buf) != OG_SUCCESS) {
         return OG_ERROR;
+        CM_FREE_PTR(head);
     }
+    CM_FREE_PTR(head);
     return OG_SUCCESS;
 }
 
@@ -3300,37 +3396,46 @@ status_t rst_rename_archfile_by_asn(knl_session_t *session, arch_info_t arch_inf
     int32 handle = OG_INVALID_HANDLE;
     arch_attr_t *arch_attr = &session->kernel->attr.arch_attr[0];
     char *arch_path = arch_attr->local_path;
-    log_file_head_t head;
     device_type_t type = arch_get_device_type(arch_name);
     bak_set_file_name(tmp_buf, arch_path, arch_name);
     if (cm_open_device(tmp_buf, type, O_BINARY | O_SYNC | O_RDWR, &handle) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if (cm_read_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
-        cm_close_device(type, &handle);
+    log_file_head_t* head = cm_malloc_align(FILE_BLOCK_SIZE, sizeof(log_file_head_t));
+    if (head == NULL) {
+        OG_LOG_RUN_ERR("arch head allocate memory failed.");
         return OG_ERROR;
     }
-    if (head.dbid != session->kernel->db.ctrl.core.dbid) {
+    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+        cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
+        return OG_ERROR;
+    }
+    if (head->dbid != session->kernel->db.ctrl.core.dbid) {
         cm_close_device(type, &handle);
         *dbid_equal = OG_FALSE;
+        CM_FREE_PTR(head);
         return OG_SUCCESS;
     }
     *dbid_equal = OG_TRUE;
     *(arch_info.last_archived_asn) += 1;
-    if (head.asn == *(arch_info.last_archived_asn)) {
+    if (head->asn == *(arch_info.last_archived_asn)) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         return OG_SUCCESS;
     }
-    head.asn = *(arch_info.last_archived_asn);
-    log_calc_head_checksum(session, &head);
-    if (cm_write_device(type, handle, 0, &head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    head->asn = *(arch_info.last_archived_asn);
+    log_calc_head_checksum(session, head);
+    if (cm_write_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
         cm_close_device(type, &handle);
+        CM_FREE_PTR(head);
         return OG_ERROR;
     }
     cm_close_device(type, &handle);
     OG_LOG_RUN_INF("[RESTORE] Flush head start[%llu] end[%llu] asn[%u] rst[%u] fscn[%llu], write_pos[%llu] dbid[%u]",
-                   head.first_lsn, head.last_lsn, head.asn, head.rst_id, head.first, head.write_pos, head.dbid);
-    local_arch_file_info_t file_info = {head.rst_id, arch_info.inst_id, head.first_lsn, head.last_lsn, head.asn};
+                   head->first_lsn, head->last_lsn, head->asn, head->rst_id, head->first, head->write_pos, head->dbid);
+    local_arch_file_info_t file_info = {head->rst_id, arch_info.inst_id, head->first_lsn, head->last_lsn, head->asn};
+    CM_FREE_PTR(head);
     bak_set_archfile_name_with_lsn(session, arch_info.buf, arch_path, OG_FILE_NAME_BUFFER_SIZE, file_info);
     if (cm_rename_device(type, tmp_buf, arch_info.buf) != OG_SUCCESS) {
         return OG_ERROR;

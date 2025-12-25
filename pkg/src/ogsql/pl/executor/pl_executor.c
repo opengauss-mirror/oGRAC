@@ -638,6 +638,7 @@ static status_t ple_get_outparam_dest(sql_stmt_t *stmt, ple_call_assist_t *assis
             sub_stmt->is_sub_stmt = OG_FALSE;                                        \
             sub_stmt->parent_stmt = NULL;                                            \
             sub_stmt->pl_ref_entry = NULL;                                           \
+            sub_stmt->pl_exec = NULL;                                                \
         }                                                                            \
     } while (0)
 
@@ -1313,9 +1314,7 @@ static status_t ple_exec_call_clang_func(sql_stmt_t *stmt, expr_node_t *node, va
     }
 
     assist.library = &library;
-    // todo: recompile ple_exec_call_clang_func_core
     status_t status = OG_SUCCESS;
-    // todo:   status_t status = ple_exec_call_clang_func_core(stmt, node, result, &assist);
     dls_unlatch(KNL_SESSION(stmt), &dc_user->lib_latch, NULL);
     pl_clang_close_exec_dc(&assist);
     return status;

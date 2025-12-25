@@ -77,7 +77,7 @@ status_t db_create_sequence(knl_session_t *session, knl_handle_t stmt, knl_seque
     desc.minval = def->min_value;
     desc.maxval = def->max_value;
     desc.cache = (uint64)(desc.is_cache ? def->cache : 0);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     desc.dist_data = def->dist_data;
 #endif
 
@@ -103,7 +103,7 @@ status_t db_create_sequence(knl_session_t *session, knl_handle_t stmt, knl_seque
     (void)row_put_int64(&ra, desc.org_scn);
     (void)row_put_int64(&ra, desc.chg_scn);
     (void)row_put_int64(&ra, def->start);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     (void)row_put_bin(&ra, &desc.dist_data);
 #endif
 
@@ -506,7 +506,7 @@ static status_t seq_generate_cache(knl_session_t *session, dc_sequence_t *sequen
         }
 
         lastval = *(int64 *)CURSOR_COLUMN_DATA(cursor, SEQ_LASTVAL_COLUMN_ID);
-        sequence->lastval = lastval;  // TODO: double check
+        sequence->lastval = lastval;
 
         (void)seq_generate_last_number(sequence, &lastval);
 

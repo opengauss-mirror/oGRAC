@@ -78,8 +78,6 @@ static status_t dtc_register_proc_func(mes_command_t command_type, dtc_message_p
         return OG_ERROR;
     }
 
-    //TODO info log
-
     return OG_SUCCESS;
 }
 

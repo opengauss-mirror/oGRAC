@@ -419,6 +419,14 @@ case "$ACTION" in
         if [[ "$(find ${SUCCESS_FLAG_PATH} -type f -name pre_upgrade_"${INSTALL_TYPE}".success)" ]]; then
             UPGRADE_IP_PORT=$3
             lock_file=${UPGRADE_NAME}
+            deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
+            node_id=$(python3 ${CURRENT_PATH}/get_config_info.py "node_id")
+            if [[ "${deploy_mode}" == "dss" ]]; then
+                sh /opt/ograc/action/cms/appctl.sh start
+                sh /opt/ograc/action/dss/appctl.sh start
+                sh /opt/ograc/action/cms/appctl.sh stop
+                sleep 10
+            fi
             create_upgrade_flag
             upgrade_lock
             do_deploy ${UPGRADE_NAME} ${INSTALL_TYPE} ${UPGRADE_IP_PORT}
@@ -451,7 +459,14 @@ case "$ACTION" in
         UPGRADE_IP_PORT=$3
         ROLLBACK_VERSION=$4
         lock_file=${ROLLBACK_NAME}
+        deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
         upgrade_init_flag
+        if [[ "${deploy_mode}" == "dss" ]]; then
+            sh /opt/ograc/action/cms/appctl.sh start
+            sh /opt/ograc/action/dss/appctl.sh start
+            sh /opt/ograc/action/cms/appctl.sh stop
+            sleep 10
+        fi
         upgrade_lock
         do_deploy ${ROLLBACK_NAME} ${INSTALL_TYPE} ${UPGRADE_IP_PORT} ${ROLLBACK_VERSION}
         ret=$?

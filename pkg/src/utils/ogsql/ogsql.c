@@ -3086,10 +3086,13 @@ static status_t ogsql_exec_multiline_cmd()
     } else if (g_cmd_type.cmd == CMD_IMPORT) {
         status = ogsql_import(&sql_text);
     } else {
+        (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &g_local_config.trace_mode, sizeof(uint32));
         status = ogsql_execute(NULL);
         if (status == OG_SUCCESS && !OGSQL_CANCELING && g_local_config.trace_mode) {
             status = ogsql_process_autotrace_cmd();
         }
+        uint32 trace_off = OGSQL_TRACE_OFF;
+        (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &trace_off, sizeof(uint32));
     }
     /* Step 3: Clear the SQL buffer and reset the command type */
     OGSQL_RESET_CMD_TYPE(&g_cmd_type);

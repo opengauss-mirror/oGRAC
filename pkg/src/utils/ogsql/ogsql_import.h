@@ -391,7 +391,7 @@ typedef struct {
     text_t sql; // sql text
 } imp_sql_parser_t;
 
-#define GS_RETURN_END_IF_TRUE(ret) \
+#define OG_RETURN_END_IF_TRUE(ret) \
     if (ret) {                     \
         return IMP_STATUS_END;     \
     }

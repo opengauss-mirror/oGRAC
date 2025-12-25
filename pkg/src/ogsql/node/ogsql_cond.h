@@ -167,7 +167,7 @@ status_t sql_cond_tree_walker(sql_stmt_t *stmt, cond_tree_t *cond_tree,
 void sql_convert_match_result(cmp_type_t cmp_type, int32 cmp_result, bool32 *res);
 status_t sql_exec_expr_list(sql_stmt_t *stmt, expr_tree_t *list, uint32 count, variant_t *vars, bool32 *pending,
     expr_tree_t **last);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 bool32 sql_check_where_cond_has_subquery(cond_node_t *cond);
 bool32 sql_ancestor_tables_in_cond_node(sql_array_t *tables, cond_node_t *cond_node);
 #endif
@@ -196,6 +196,8 @@ status_t visit_join_node_cond(visit_assist_t *va, sql_join_node_t *join_node, vi
 bool32 sql_is_join_node(cond_node_t *cond_node, uint32 table1, uint32 table2);
 status_t sql_exec_escape_character(expr_tree_t *expr, variant_t *var, char *escape);
 status_t sql_try_simplify_new_cond(sql_stmt_t *stmt, cond_node_t *cond);
+join_tbl_bitmap_t sql_collect_table_ids_in_expr(expr_tree_t *expr, galist_t *outer_rels_list, uint8 *check);
+join_tbl_bitmap_t sql_collect_table_ids_in_cond(cond_node_t *cond_node, galist_t *outer_rels_list, uint8 *check);
 
 // compare node can be pushed up and used as join condition:
 // 1.expr1 (flag==HAS_PARENT_COLS) = expr2(flag==HAS_SELF_COLS)

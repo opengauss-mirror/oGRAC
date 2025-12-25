@@ -173,6 +173,7 @@ void cms_hb_lost_handle(uint32 node_id)
         }
         if (stat_changed) {
             cms_res_offline_broadcast(node_id);
+            cms_release_dss_master(node_id);
         }
     }
 }

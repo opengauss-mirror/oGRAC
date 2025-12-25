@@ -202,17 +202,56 @@ static status_t sql_infer_nvl2_datatype(sql_stmt_t *stmt, sql_query_t *query, ex
     return sql_infer_expr_node_datatype(stmt, query, arg2->root, type);
 }
 
+static status_t og_get_avg_median_argtype(bool32 is_median_func, og_type_t infer_type, og_type_t *output_type)
+{
+    if (infer_type == OG_TYPE_UNKNOWN) {
+        *output_type = OG_TYPE_UNKNOWN;
+    } else if (OG_IS_NUMERIC_TYPE(infer_type)) {
+        *output_type = (infer_type == OG_TYPE_NUMBER2 || infer_type == OG_TYPE_REAL) ? infer_type : OG_TYPE_NUMBER;
+    } else if (OG_IS_STRING_TYPE(infer_type) && !is_median_func) {
+        *output_type = OG_TYPE_NUMBER;
+    } else if (OG_IS_DATETIME_TYPE(infer_type) && is_median_func) {
+        *output_type = infer_type;
+    } else {
+        OG_THROW_ERROR(ERR_TYPE_MISMATCH, is_median_func ? "NUMERIC OR DATETIME" : "NUMERIC",
+            get_datatype_name_str(infer_type));
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t og_infer_avg_median_datatype(sql_stmt_t *statement, sql_query_t *sql_qry, expr_node_t *func_exprn,
+    og_type_t *output_type)
+{
+    og_type_t argument_type = OG_TYPE_UNKNOWN;
+    bool32 is_median_func = func_exprn->value.v_func.func_id == ID_FUNC_ITEM_MEDIAN;
+
+    if (sql_infer_expr_node_datatype(statement, sql_qry, func_exprn->argument->root, &argument_type) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("Failed to infer argument datatype of func %s", is_median_func ? "MEDIAN" : "AVG");
+        return OG_ERROR;
+    }
+
+    if (og_get_avg_median_argtype(is_median_func, argument_type, output_type) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("Failed to get the argument datatype of func %s", is_median_func ? "MEDIAN" : "AVG");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t sql_infer_func_node_datatype(sql_stmt_t *stmt, sql_query_t *query, expr_node_t *func_node, og_type_t *og_type)
 {
     sql_func_t *func = sql_get_func(&func_node->value.v_func);
     switch (func->builtin_func_id) {
-        case ID_FUNC_ITEM_AVG:
         case ID_FUNC_ITEM_GREATEST:
         case ID_FUNC_ITEM_LEAST:
         case ID_FUNC_ITEM_MIN:
         case ID_FUNC_ITEM_MAX:
-        case ID_FUNC_ITEM_MEDIAN:
             return sql_infer_expr_node_datatype(stmt, query, func_node->argument->root, og_type);
+        case ID_FUNC_ITEM_AVG:
+        case ID_FUNC_ITEM_MEDIAN:
+            return og_infer_avg_median_datatype(stmt, query, func_node, og_type);
         case ID_FUNC_ITEM_ROUND:
         case ID_FUNC_ITEM_TRUNC:
             return sql_infer_round_trunc_datatype(stmt, query, func_node, og_type);

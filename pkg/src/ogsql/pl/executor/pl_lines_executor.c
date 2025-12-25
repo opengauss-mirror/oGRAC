@@ -1500,6 +1500,17 @@ static status_t ple_open(ple_line_assist_t *line_ass)
     exec->recent_rows = sub_stmt->total_rows;
     sub_stmt->cursor_info.sql_executed = OG_TRUE;
 
+    if (sub_stmt->cursor_info.param_buf == NULL && exec->curr_input != NULL) {
+        if (ple_keep_input(sub_stmt, exec, (void *)exec->curr_input, exec->is_dyncur) != OG_SUCCESS) {
+            sql_free_stmt(sub_stmt);
+            ref_cursor->stmt_id = OG_INVALID_ID16;
+            ple_free_ref_cursor(ref_cursor);
+            var->value.v_cursor.ref_cursor = NULL;
+            PLE_RESTORE_STMT(stmt);
+            return OG_ERROR;
+        }
+    }
+
     // sql is reparsed, sub stmt's context is changed
     if (ple_check_substmt_ctx(sub_stmt, save_ctx)) {
         // set procedure/function status to invalid

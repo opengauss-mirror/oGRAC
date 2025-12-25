@@ -1361,11 +1361,6 @@ static status_t sql_parse_add_logfile(sql_stmt_t *stmt, lex_t *lex, knl_device_d
         return OG_ERROR;
     }
 
-    device_type_t type = cm_device_type(dev_def->name.str);
-    if (cm_check_device_size(type, dev_def->size) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
     if (sql_try_parse_file_blocksize(lex, &dev_def->block_size) != OG_SUCCESS) {
         return OG_ERROR;
     }

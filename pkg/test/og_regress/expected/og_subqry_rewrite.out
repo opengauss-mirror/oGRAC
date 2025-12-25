@@ -1,0 +1,73 @@
+
+
+SQL> ---  subquery to table
+SQL> alter system set _OPTIM_SUBQUERY_REWRITE=true;
+
+Succeed.
+
+SQL> alter system set _OPTIM_SEMI2INNER=true;
+
+Succeed.
+
+SQL> drop table if exists subquery_to_table_t1;
+
+Succeed.
+
+SQL> drop table if exists subquery_to_table_t2;
+
+Succeed.
+
+SQL> create table subquery_to_table_t1 (a int, b int, c int);
+
+Succeed.
+
+SQL> create table subquery_to_table_t2 (a int, b int, c int);
+
+Succeed.
+
+SQL> insert into subquery_to_table_t1 values(1, 2, 3);
+
+1 rows affected.
+
+SQL> insert into subquery_to_table_t1 values(2, 3, 4);
+
+1 rows affected.
+
+SQL> insert into subquery_to_table_t1 values(3, 4, 5);
+
+1 rows affected.
+
+SQL> insert into subquery_to_table_t2 values(3, 2, 1);
+
+1 rows affected.
+
+SQL> insert into subquery_to_table_t2 values(3, 5, 7);
+
+1 rows affected.
+
+SQL> insert into subquery_to_table_t2 values(5, 9, 7);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> select * from subquery_to_table_t1 t1 where a in (select a from subquery_to_table_t2 limit 1);
+
+A            B            C           
+------------ ------------ ------------
+3            4            5           
+
+1 rows fetched.
+
+SQL> drop table if exists subquery_to_table_t1;
+
+Succeed.
+
+SQL> drop table if exists subquery_to_table_t2;
+Succeed.
+
+
+
+

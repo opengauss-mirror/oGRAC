@@ -1,0 +1,59 @@
+
+
+SQL> -- the default col and check can not using user define func
+SQL> CREATE OR REPLACE FUNCTION func1(c1 int) return int is
+  2 begin
+  3 return 123;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> -- DEFAULT using user define func
+SQL> drop table if exists users_status;
+
+Succeed.
+
+SQL> CREATE TABLE users_status (id int, status int DEFAULT func1(1)); -- error
+
+OG-01323, [1:55]procedure, function, package, or type not supported here
+SQL> -- CHECK using user define func
+SQL> drop table if exists users_name;
+
+Succeed.
+
+SQL> CREATE TABLE users_name (
+  2     id int, age int,
+  3     CONSTRAINT age_check CHECK (age < func1(1))); -- error
+
+OG-01323, [3:35]procedure, function, package, or type not supported here
+SQL> CREATE TABLE users_name (
+  2     id int, age int, birth int,
+  3     CONSTRAINT age_check CHECK (birth < 100 and age < func1(1))); -- error
+
+OG-01323, [3:51]procedure, function, package, or type not supported here
+SQL> 
+SQL> -- alter default 
+SQL> CREATE TABLE users_status (id int, status int);
+
+Succeed.
+
+SQL> alter table users_status modify (status int default  func1(1)); -- error
+
+OG-01323, [1:54]procedure, function, package, or type not supported here
+SQL> alter table users_status add CONSTRAINT check_status check (id < func1(1)); -- error
+
+OG-01323, [1:66]procedure, function, package, or type not supported here
+SQL> alter table users_status add CONSTRAINT check_status check (status > 100 and id < func1(1)); -- error
+
+OG-01323, [1:83]procedure, function, package, or type not supported here
+SQL> DROP TABLE users_status;
+
+Succeed.
+
+SQL> DROP FUNCTION func1;
+Succeed.
+
+
+
+

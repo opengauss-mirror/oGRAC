@@ -27,7 +27,6 @@
 #include "srv_instance.h"
 #include "ogsql_select_parser.h"
 #include "ogsql_update_parser.h"
-#include "hint_parser.h"
 #include "expr_parser.h"
 #include "table_parser.h"
 

@@ -133,7 +133,7 @@ typedef enum en_hint_id {
     ID_HINT_ROWID,
     ID_HINT_RULE,              // the max number of hint with parameters
     ID_HINT_SEMI_TO_INNER,
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     ID_HINT_SHD_READ_MASTER,
     ID_HINT_SQL_WHITELIST,
 #endif

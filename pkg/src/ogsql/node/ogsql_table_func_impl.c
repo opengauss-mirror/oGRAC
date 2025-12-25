@@ -74,7 +74,7 @@ static status_t table_cast_check(variant_t *value, expr_tree_t *arg2)
 {
     plv_collection_t *collection = NULL;
     plv_collection_t *type_coll = (plv_collection_t *)arg2->root->udt_type;
-    if (!value->is_null && value->type != OG_TYPE_COLLECTION) {
+    if (value->type != OG_TYPE_COLLECTION) {
         OG_THROW_ERROR(ERR_PLSQL_VALUE_ERROR_FMT, " cannot access rows from a non-nested table item");
         return OG_ERROR;
     }
@@ -95,13 +95,55 @@ static status_t table_cast_check(variant_t *value, expr_tree_t *arg2)
         (!var_datatype_matched(collection->type_mode.datatype, type_coll->type_mode.datatype) ||
         arg2->root->value.v_type.is_array == OG_TRUE)) {
         OG_THROW_ERROR(ERR_TYPE_MISMATCH, get_datatype_name_str(collection->type_mode.datatype),
-            get_datatype_name_str(TREE_DATATYPE(arg2)));
+            get_datatype_name_str(type_coll->type_mode.datatype));
         return OG_ERROR;
     }
     if (collection->attr_type == UDT_OBJECT && type_coll != collection) {
         OG_THROW_ERROR(ERR_PLSQL_VALUE_ERROR_FMT, "the 2nd-arg's object data type should equal to 1st-arg's type");
         return OG_ERROR;
     }
+    return OG_SUCCESS;
+}
+
+// Convert the expression result to collection type for using TABLE() function
+static status_t ogsql_table_cast_scalar_expr(sql_stmt_t *stmt, expr_tree_t *ori_argument, variant_t *value,
+    plv_collection_t *type_collection)
+{
+    if ((IS_COMPLEX_TYPE(ori_argument->root->datatype))) {
+        OG_LOG_DEBUG_INF("[TABLE_FUNC] cast complex type argument to collection.");
+        return OG_SUCCESS;
+    }
+
+    if (((ori_argument->root->type == EXPR_NODE_PARAM) && (IS_COMPLEX_TYPE(value->type)))) {
+        OG_LOG_DEBUG_INF("[TABLE_FUNC] cast complex type bind parameter to collection.");
+        return OG_SUCCESS;
+    }
+
+    if (type_collection->attr_type != UDT_SCALAR) {
+        OG_THROW_ERROR_EX(ERR_PL_SYNTAX_ERROR_FMT,
+            "Array or string can only be converted to collection types whose members are scalar");
+        return OG_ERROR;
+    }
+
+    if (value->is_null) {
+        value->type = OG_TYPE_COLLECTION;
+        value->v_collection.coll_meta = (void *)type_collection;
+        value->v_collection.is_constructed= OG_FALSE;
+        OG_LOG_DEBUG_INF("[TABLE_FUNC] cast null value to collection.");
+        return OG_SUCCESS;
+    }
+
+    if (value->type != OG_TYPE_ARRAY) {
+        OG_THROW_ERROR(ERR_TYPE_MISMATCH, get_datatype_name_str(OG_TYPE_COLLECTION),
+            get_datatype_name_str(value->type));
+        return OG_ERROR;
+    }
+
+    if (ple_array_as_collection(stmt, value, (void *)type_collection) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[TABLE_FUNC] cast array to collection failed.");
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 
@@ -121,8 +163,9 @@ status_t table_cast_exec(sql_stmt_t *stmt, table_func_t *func, knl_cursor_t *cur
             return OG_ERROR;
         }
     }
-    if (value.type == OG_TYPE_ARRAY) {
-        OG_RETURN_IFERR(ple_array_as_collection(stmt, &value, (void *)type_coll));
+    if (ogsql_table_cast_scalar_expr(stmt, arg1, &value, type_coll) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[TABLE_FUNC] cast scalar expr failed.");
+        return OG_ERROR;
     }
     OG_RETURN_IFERR(table_cast_check(&value, arg2));
     MEMS_RETURN_IFERR(memcpy_s(cur->page_buf, sizeof(variant_t), &value, sizeof(variant_t)));

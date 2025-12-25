@@ -462,7 +462,7 @@ static status_t sql_win_aggr_value_until_row(windowing_assist_t *win_ass, mtrl_c
     bool32 eof = OG_FALSE;
 
     if (aggr_ass->aggr_type == AGGR_TYPE_COUNT) {
-        if (TREE_IS_CONST(arg_expr->root->argument)) {
+        if (TREE_IS_CONST(arg_expr->root->argument) && !TREE_IS_VALUE_NULL(arg_expr->root->argument)) {
             if (sort->rownum <= rownum) {
                 win_ass->cur_aggr->var.is_null = OG_FALSE;
                 win_ass->cur_aggr->var.v_bigint += rownum - sort->rownum + 1;

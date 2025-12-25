@@ -587,9 +587,22 @@ static bool32 cm_check_valid_zero_time(date_detail_t *datetime)
     if (cm_is_all_zero_time(datetime)) {
         return OG_TRUE;
     }
-    if (datetime->day == 0 || datetime->mon == 0 || datetime->year == 0) {
+
+    if (datetime->year == 0) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, "YEAR", 1, 9999); // 9999 is the MAX_YEAR4
         return OG_FALSE;
     }
+
+    if (datetime->mon == 0) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, "MONTH", 1, 12); // 12 is the max month
+        return OG_FALSE;
+    }
+
+    if (datetime->day == 0) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, "DAY", 1, 31); // 31 is the max days in a month
+        return OG_FALSE;
+    }
+
     return OG_TRUE;
 }
 
@@ -1787,6 +1800,41 @@ static inline uint32 cm_find_point(text_t *date_text)
     return i;
 }
 
+static status_t cm_get_number_and_check(const char *name, uint32 part_length, int64 begin,
+                                     int64 end, text_t *date_txt, int64 *number_value)
+{
+    uint16 item_length = cm_get_num_len_in_str(date_txt, part_length, OG_FALSE);
+    if (item_length == 0 ||
+        cm_check_number(date_txt, item_length, begin, end, number_value) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, name, begin, end);
+        return OG_ERROR;
+    }
+    date_txt->len -= item_length;
+    date_txt->str += item_length;
+    return OG_SUCCESS;
+}
+
+static status_t cm_get_num_and_check_with_sign(const char *name, uint32 part_len, int32 start,
+                                               int32 end, text_t *date_text, int32 *num_value)
+{
+    uint16 item_len = cm_get_num_len_in_str(date_text, part_len, OG_TRUE);
+    if (item_len == 0 ||
+        cm_check_number_with_sign(date_text, item_len, start, end, num_value) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, name, start, end);
+        return OG_ERROR;
+    }
+    date_text->len -= item_len;
+    date_text->str += item_len;
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_verify_mask(uint32 *mask, date_time_mask_t mask_id)
+{
+    OG_RETVALUE_IFTRUE((*(mask) & (mask_id)), OG_ERROR);
+    *mask |= mask_id;
+    return OG_SUCCESS;
+}
+
 static inline status_t cm_get_date_item(text_t *date_text,
                                         const format_item_t *fmt_item,
                                         text_t *fmt_extra,
@@ -1798,6 +1846,7 @@ static inline status_t cm_get_date_item(text_t *date_text,
     int32 num_value_with_sign = 0;
     bool8 neg = 0;
     uint32 item_len = 0;
+    status_t status = 0;
 
     CM_POINTER4(date_text, fmt_item, date, mask);
 
@@ -1851,8 +1900,17 @@ static inline status_t cm_get_date_item(text_t *date_text,
 
         case FMT_DAY_OF_MONTH:
             cm_check_special_char(date_text);
-            // part_len is 2, start is 1, end is 31 // support all 0 time
-            cm_check_time(MASK_DAY, 2, 0, 31, date_text, mask, num_value);
+            status = cm_verify_mask(mask, MASK_DAY);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            // part_len is 2, start is 1, end is 31 support all 0 time
+            status = cm_get_number_and_check("DAY", 2, 1, 31, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->day = (uint8)num_value;
             break;
 
@@ -1879,7 +1937,16 @@ static inline status_t cm_get_date_item(text_t *date_text,
 
         case FMT_HOUR_OF_DAY12:
             cm_check_special_char(date_text);
-            cm_check_time(MASK_HOUR, 2, 1, 12, date_text, mask, num_value);
+            status = cm_verify_mask(mask, MASK_HOUR);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_number_and_check("HOUR", 2, 1, 12, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->hour = (uint8)num_value;
             break;
 
@@ -1889,10 +1956,23 @@ static inline status_t cm_get_date_item(text_t *date_text,
             }
             cm_check_special_char(date_text);
             item_len = cm_find_point(date_text);
+            status = cm_verify_mask(mask, MASK_HOUR);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             if ((item_len % EVEN_NUM) == 0) {
-                cm_check_time(MASK_HOUR, 2, -99, 99, date_text, mask, num_value);
+                status = cm_get_number_and_check("HOUR", 2, -99, 99, date_text, &num_value);
+                if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                    cm_set_error_pos(__FILE__, __LINE__);
+                    return status;
+                }
             } else {
-                cm_check_time(MASK_HOUR, 3, -838, 838, date_text, mask, num_value);
+                status = cm_get_number_and_check("HOUR", 3, -838, 838, date_text, &num_value);
+                if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                    cm_set_error_pos(__FILE__, __LINE__);
+                    return status;
+                }
             }
             date->hour = (int32)num_value;
             date->neg = neg;
@@ -1900,34 +1980,88 @@ static inline status_t cm_get_date_item(text_t *date_text,
 
         case FMT_MINUTE:
             cm_check_special_char(date_text);
-            cm_check_time(MASK_MINUTE, 2, 0, 59, date_text, mask, num_value);
+            status = cm_verify_mask(mask, MASK_MINUTE);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_number_and_check("MINUTE", 2, 0, 59, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->min = (uint8)num_value;
             break;
 
         case FMT_MONTH:
             cm_check_special_char(date_text);
-            cm_check_time(MASK_MONTH, 2, 0, 12, date_text, mask, num_value); // support all 0 time
+            status = cm_verify_mask(mask, MASK_MONTH);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_number_and_check("MONTH", 2, 1, 12, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->mon = (uint8)num_value;
             break;
 
         case FMT_SECOND:
             cm_check_special_char(date_text);
-            cm_check_time(MASK_SECOND, 2, 0, 59, date_text, mask, num_value);
+            status = cm_verify_mask(mask, MASK_SECOND);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_number_and_check("SECOND", 2, 0, 59, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->sec = (uint8)num_value;
             break;
 
         case FMT_YEAR4:
-            cm_check_time(MASK_YEAR, 4, 0, CM_MAX_YEAR, date_text, mask, num_value); // support all 0 time
+            status = cm_verify_mask(mask, MASK_YEAR);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_number_and_check("YEAR", 4, CM_MIN_YEAR, CM_MAX_YEAR, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->year = (uint16)num_value;
             break;
 
         case FMT_TZ_HOUR:
-            cm_check_time_with_sign(MASK_TZ_HOUR, 3, -12, 14, date_text, mask, num_value_with_sign);
+            status = cm_verify_mask(mask, MASK_TZ_HOUR);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_num_and_check_with_sign("Time zone hour", 3, -12, 14, date_text, &num_value_with_sign);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             date->tz_offset = (timezone_info_t)(((int8)num_value_with_sign) * SECONDS_PER_MIN);
             break;
 
         case FMT_TZ_MINUTE:
-            cm_check_time(MASK_TZ_MINUTE, 2, 0, 59, date_text, mask, num_value);
+            status = cm_verify_mask(mask, MASK_TZ_MINUTE);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
+            status = cm_get_number_and_check("Time zone minute", 2, 0, 59, date_text, &num_value);
+            if (SECUREC_UNLIKELY(status != OG_SUCCESS)) {
+                cm_set_error_pos(__FILE__, __LINE__);
+                return status;
+            }
             if (date->tz_offset < 0) {
                 date->tz_offset -= (uint8)num_value;
             } else {
@@ -1973,7 +2107,7 @@ static status_t cm_text2date_detail(const text_t *text, const text_t *fmt, date_
             break;
         }
 
-        if (cm_get_date_item(&date_text, fmt_item, &fmt_extra, datetime, &mask) != 0) {
+        if (cm_get_date_item(&date_text, fmt_item, &fmt_extra, datetime, &mask) != OG_SUCCESS) {
             return OG_ERROR;
         }
     }
@@ -2041,7 +2175,6 @@ status_t cm_text2timestamp_tz(const text_t *text, const text_t *fmt, timezone_in
     }
 
     if (!cm_check_valid_zero_time(&detail)) {
-        OG_SET_DATETIME_FMT_ERROR;
         return OG_ERROR;
     }
 
@@ -2075,7 +2208,6 @@ status_t cm_text2date(const text_t *text, const text_t *fmt, date_t *date)
     }
 
     if (!cm_check_valid_zero_time(&detail)) {
-        OG_SET_DATETIME_FMT_ERROR;
         return OG_ERROR;
     }
 
@@ -2120,7 +2252,29 @@ static void cm_text2date_fixed_init(date_detail_t *datetime)
     datetime->tz_offset = TIMEZONE_OFFSET_ZERO;
 }
 
-status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date)
+status_t static cm_is_time_valid(date_detail_t *detail)
+{
+    OG_RETVALUE_IFTRUE(detail == NULL, OG_ERROR);
+
+    if (!CM_IS_VALID_HOUR(detail->hour)) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, "HOUR", 0, 23); // 23 is the max hour in day
+        return OG_ERROR;
+    }
+
+    if (!CM_IS_VALID_MINUTE(detail->min)) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, "MINUTE", 0, 59); // 59 is the max minute in hour
+        return OG_ERROR;
+    }
+
+    if (!CM_IS_VALID_SECOND(detail->sec)) {
+        OG_THROW_ERROR(ERR_ILLEGAL_TIME, "SECOND", 0, 59); // 59 is the max sec in minute
+        return OG_ERROR;
+    }
+    
+    return OG_SUCCESS;
+}
+
+status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date, bool32 is_date_fmt)
 {
     date_detail_t detail;
     CM_POINTER2(text, fmt);
@@ -2132,11 +2286,16 @@ status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date)
     }
 
     if (!cm_check_valid_zero_time(&detail)) {
-        OG_SET_DATETIME_FMT_ERROR;
         return OG_ERROR;
     }
 
+    OG_RETURN_IFERR(cm_is_time_valid(&detail));
+
     *date = cm_encode_date(&detail);
+    // For DATE_FMT, truncate microsecond-precision timestamp to the second.
+    if (is_date_fmt) {
+        *date = cm_adjust_date(*date);
+    }
 
     // check again
     if (!CM_IS_VALID_TIMESTAMP(*date)) {
@@ -2150,12 +2309,14 @@ status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date)
 status_t cm_fetch_date_field(text_t *text, uint32 minval, uint32 maxval, char spilt_char, uint32 *field_val)
 {
     uint32 num_len;
+    int64 temp_field_val = 0;
 
     cm_trim_text(text);
     num_len = cm_get_num_len_in_str(text, text->len, OG_FALSE);
     OG_RETVALUE_IFTRUE(num_len == 0, OG_ERROR);
 
-    OG_RETURN_IFERR(cm_check_number(text, num_len, minval, maxval, (int64*)field_val));
+    OG_RETURN_IFERR(cm_check_number(text, num_len, minval, maxval, &temp_field_val));
+    *field_val = (uint32)temp_field_val;
     text->str += num_len;
     text->len -= num_len;
 
@@ -2323,7 +2484,6 @@ static status_t cm_numtext2date(const text_t *text, date_t *date)
     }
 
     if (!cm_check_valid_zero_time(&detail)) {
-        OG_SET_DATETIME_FMT_ERROR;
         return OG_ERROR;
     }
 

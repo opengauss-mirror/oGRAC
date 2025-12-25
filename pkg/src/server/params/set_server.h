@@ -107,7 +107,7 @@ status_t sql_notify_als_enable_permissive_unicode(void *se, void *item, char *va
 status_t sql_notify_als_disable_var_peek(void *se, void *item, char *value);
 status_t sql_notify_als_enable_cursor_sharing(void *se, void *item, char *value);
 status_t sql_notify_als_enable_use_spm(void *se, void *item, char *value);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t sql_verify_als_cache_size(void *se, void *lex, void *def);
 status_t sql_verify_als_node_heartbeat_timeout(void *se, void *lex, void *def);
 status_t sql_verify_als_ptrans_timeout(void *se, void *lex, void *def);

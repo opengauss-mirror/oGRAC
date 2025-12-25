@@ -65,7 +65,6 @@ EXTER_ATTACK status_t dls_process_clean_granted_map(knl_session_t *session, mes_
 // if type + id can uniquely identifies lock resource, you can ignore uid
 #define DLS_INIT_DR_RES(drid, _type, _id, _uid, _idx, _part, _parentpart, _is_shadow) \
     do {                                                                              \
-        CM_ASSERT((drid)->type == DR_TYPE_INVALID);                                   \
         (drid)->type = _type;                                                         \
         (drid)->id = _id;                                                             \
         (drid)->uid = _uid;                                                           \
@@ -124,7 +123,7 @@ void dls_latch_s(knl_session_t *session, drlatch_t *dlatch, uint32 sid, bool32 i
 bool32 dls_latch_timed_s(knl_session_t *session, drlatch_t *dlatch, uint32 ticks_for_wait, bool32 is_force,
                          latch_statis_t *stat, uint32 release_timeout_ticks);
 void dls_latch_x(knl_session_t *session, drlatch_t *dlatch, uint32 sid, latch_statis_t *stat);
-bool32 dls_latch_timed_x(knl_session_t *session, drlatch_t *dlatch, uint32 ticks_for_wait, bool32 is_force,
+bool32 dls_latch_timed_x(knl_session_t *session, drlatch_t *dlatch, uint32 ticks_for_wait,
                          latch_statis_t *stat, uint32 release_timeout_ticks);
 void dls_latch_sx(knl_session_t *session, drlatch_t *dlatch, uint32 sid, latch_statis_t *stat);
 void dls_unlatch(knl_session_t *session, drlatch_t *dlatch, latch_statis_t *stat);

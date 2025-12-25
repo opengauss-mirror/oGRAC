@@ -1477,11 +1477,7 @@ status_t bak_check_increment_type(knl_session_t *session, knl_backup_t *param)
         return OG_SUCCESS;
     }
 
-    bool32 unblock = OG_TRUE;
-    if (bak_check_increment_unblock(session, &unblock) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-    if (unblock == OG_FALSE) {
+    if (session->kernel->db.ctrl.core.inc_backup_block == OG_TRUE) {
         OG_THROW_ERROR(ERR_BACKUP_INCREMENT_BLOCK);
         return OG_ERROR;
     }
@@ -1562,10 +1558,20 @@ static status_t bak_backup_database_internal(knl_session_t *session, knl_backup_
         return OG_ERROR;
     }
 
-    if (bak_backup_proc(session) != OG_SUCCESS) {
+    if (knl_ddl_latch_sx(session, NULL) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[BACKUP] Failed to lock ddl for backup");
+        bak_free_check_reform(session);
         return OG_ERROR;
     }
+    OG_LOG_RUN_INF("[BACKUP] LOCK INSTENCE FOR BACKUP");
 
+    if (bak_backup_proc(session) != OG_SUCCESS) {
+        knl_ddl_unlatch_x(session);
+        OG_LOG_RUN_INF("[BACKUP] RELEASE LOCK");
+        return OG_ERROR;
+    }
+    knl_ddl_unlatch_x(session);
+    OG_LOG_RUN_INF("[BACKUP] RELEASE LOCK");
     return OG_SUCCESS;
 }
 
@@ -2818,7 +2824,6 @@ static status_t bak_read_logfile_data(knl_session_t *session, bak_process_t *pro
     return OG_SUCCESS;
 }
 
-// todo xjl
 static status_t bak_read_logfiles(knl_session_t *session)
 {
     knl_instance_t *kernel = session->kernel;
@@ -2902,9 +2907,7 @@ static status_t bak_read_logfiles(knl_session_t *session)
         bak->curr_file_index = bak->file_count;
     }
 
-    uint32 rst_id = bak_get_rst_id(bak, last_asn, &(kernel->db.ctrl.core.resetlogs));
-    arch_ctrl_t *arch_ctrl = arch_get_archived_log_info(session, rst_id, last_asn, ARCH_DEFAULT_DEST, bak->inst_id);
-    bak->arch_end_lsn[bak->inst_id] = arch_ctrl->end_lsn;
+    bak->arch_end_lsn[bak->inst_id] = bak->record.ctrlinfo.dtc_lrp_point[bak->inst_id].lsn;
     OG_LOG_RUN_INF("[BACKUP] node %u archive log end lsn is %llu", bak->inst_id, bak->arch_end_lsn[bak->inst_id]);
     return OG_SUCCESS;
 }
@@ -3028,11 +3031,11 @@ static status_t bak_wait_write_finished(bak_t *bak)
     return bak->failed ? OG_ERROR : OG_SUCCESS;
 }
 
-static status_t bak_generate_backupset_head(knl_session_t *session, bak_context_t *ctx)
+static status_t bak_generate_backupset_head(knl_session_t *session, bak_context_t *ogx)
 {
-    bak_t *bak = &ctx->bak;
+    bak_t *bak = &ogx->bak;
     bak_buf_t *send_buf = &bak->send_buf;
-    bak_head_t *head = (bak_head_t *)ctx->process[BAK_COMMON_PROC].backup_buf.aligned_buf;
+    bak_head_t *head = (bak_head_t *)ogx->process[BAK_COMMON_PROC].backup_buf.aligned_buf;
     uint64 data_size;
     bak_stage_t *stage = &bak->progress.build_progress.stage;
 
@@ -3065,7 +3068,7 @@ static status_t bak_generate_backupset_head(knl_session_t *session, bak_context_
                      (uint32)sizeof(bak_head_t), head->file_count, head->attr.tag);
     if (bak->is_building) {
         bak_calc_head_checksum(head, sizeof(bak_head_t));
-        send_buf->buf = ctx->process[BAK_COMMON_PROC].backup_buf.aligned_buf;
+        send_buf->buf = ogx->process[BAK_COMMON_PROC].backup_buf.aligned_buf;
         send_buf->buf_size = (uint32)sizeof(bak_head_t);
         send_buf->offset = 0;
 
@@ -3216,7 +3219,7 @@ void bak_read_proc(thread_t *thread)
             }
         }
 
-        if (bak_check_arch_lsn(session) != OG_SUCCESS) {
+        if (knl_dbs_is_enable_dbs() && bak_check_arch_lsn(session) != OG_SUCCESS) {
             bak->failed = OG_TRUE;
             break;
         }
@@ -3295,26 +3298,6 @@ status_t bak_set_increment_unblock(knl_session_t *session)
         CM_ABORT(0, "[CKPT] ABORT INFO: save core control file failed when set inc backup unblock");
     }
     OG_LOG_RUN_INF("[BACKUP] set inc_backup_block value in core control file succ");
-    return OG_SUCCESS;
-}
-
-status_t bak_check_increment_unblock(knl_session_t *session, bool32 *unblock)
-{
-    ctrl_page_t *page = (ctrl_page_t *)cm_push(session->stack,
-                                               session->kernel->db.ctrlfiles.items[0].block_size);
-    if (dtc_read_core_ctrl(session, page) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[BACKUP] read core control file failed");
-        OG_THROW_ERROR(ERR_LOAD_CONTROL_FILE, "no usable control file");
-        cm_pop(session->stack);
-        return OG_ERROR;
-    }
-    if (((core_ctrl_t *)&page->buf[0])->inc_backup_block == OG_TRUE) {
-        *unblock = OG_FALSE;
-    } else {
-        *unblock = OG_TRUE;
-    }
-    cm_pop(session->stack);
-    OG_LOG_RUN_INF("[BACKUP] get inc_backup_block value from core control file succ");
     return OG_SUCCESS;
 }
 

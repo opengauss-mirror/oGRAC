@@ -3675,3 +3675,49 @@ SQL> drop table if exists tbl_jsonb_026;
 Succeed.
 
 SQL> 
+SQL> 
+SQL> drop table if exists tc_jsonb_001 cascade constraints; 
+
+Succeed.
+
+SQL> create table tc_jsonb_001(col_1 int not null,col_2 JSONB);
+
+Succeed.
+
+SQL> insert into tc_jsonb_001 values (1,'{"actExplain":"仅为兼容2.0,不实际使用","actName":"#SG3_强制关闭浏览器","actTclName":"com.huawei.webgui.aw.BrowserActionWord.close","alias":"SGUI_KillAllBrowsers","executeType":"JAVA","implement":"SmartGUI3.0\\SmartGUI3.0-aw.jar","para":[],"referFile":"SmartGUI3.0\\AWDefine.xml","show":true}');
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> select col_1 from tc_jsonb_001 where jsonb_query(col_2, '$' returning CLOB) is null;
+
+COL_1       
+------------
+
+0 rows fetched.
+
+SQL> 
+SQL> select count(col_1) from tc_jsonb_001 where jsonb_query(col_2, '$' returning CLOB) is not null order by col_1;
+
+COUNT(COL_1)        
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> select jsonb_query(col_2, '$' error on error) from tc_jsonb_001;
+
+JSONB_QUERY(COL_2, '$' ERROR ON ERROR)                          
+----------------------------------------------------------------
+{"actExplain":"仅为兼容2.0,不实际使用","actName":"#SG3_强制关闭浏览器","actTclName":"com.huawei.webgui.aw.BrowserActionWord.close","alias":"SGUI_KillAllBrowsers","executeType":"JAVA","implement":"SmartGUI3.0\\SmartGUI3.0-aw.jar","para":[],"referFile":"SmartGUI3.0\\AWDefine.xml","show":true}
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table tc_jsonb_001;
+Succeed.

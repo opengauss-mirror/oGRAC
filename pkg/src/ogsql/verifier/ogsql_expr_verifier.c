@@ -66,6 +66,8 @@ static status_t check_single_column(visit_assist_t *visit_ass, expr_node_t **nod
     if (visit_ass->result0) {
         return OG_SUCCESS;
     }
+
+    sql_select_t *slct_ctx = NULL;
     switch ((*node)->type) {
         case EXPR_NODE_COLUMN:
             visit_ass->result0 = VAR_ANCESTOR(&(*node)->value) == 0;
@@ -75,6 +77,10 @@ static status_t check_single_column(visit_assist_t *visit_ass, expr_node_t **nod
             break;
         case EXPR_NODE_PRIOR:
             visit_ass->result0 = OG_TRUE;
+            break;
+        case EXPR_NODE_SELECT:
+            slct_ctx = (sql_select_t *)((*node)->value.v_obj.ptr);
+            visit_ass->result0 = (slct_ctx->parent_refs != NULL && slct_ctx->parent_refs->count > 0);
             break;
         // avg/count/max/min/sum
         case EXPR_NODE_AGGR:
@@ -241,20 +247,16 @@ static status_t sql_verify_update_case_expr_node(expr_node_t *node, expr_tree_t 
     return OG_SUCCESS;
 }
 
-#define CONST_EXPR_INFER_RET(mode, value, node)          \
-    do {                                                 \
-        (mode) = NODE_OPTIMIZE_MODE((value)->root);      \
-        switch (mode) {                                  \
-            case OPTIMIZE_NONE:                          \
-                SQL_SET_OPTMZ_MODE(node, OPTIMIZE_NONE); \
-                return;                                  \
-            case OPTIMIZE_AS_CONST:                      \
-            case OPTIMIZE_AS_PARAM:                      \
-                break;                                   \
-            default:                                     \
-                return;                                  \
-        }                                                \
-    } while (0)
+static void og_case_node_optmz_mode(expr_node_t *exprn, const expr_node_t *case_exprn,
+    optmz_mode_t *opt_mode, bool32 *early_return)
+{
+    *early_return = OG_FALSE;
+    *opt_mode = case_exprn->optmz_info.mode;
+    if (*opt_mode != OPTIMIZE_AS_CONST && *opt_mode != OPTIMIZE_AS_PARAM) {
+        SQL_SET_OPTMZ_MODE(exprn, OPTIMIZE_NONE);
+        *early_return = OG_TRUE;
+    }
+}
 
 /* * scan the case when arguments, and decide the optmz mode */
 static void sql_infer_case_when_optmz_mode(sql_verifier_t *verif, expr_node_t *node)
@@ -263,8 +265,12 @@ static void sql_infer_case_when_optmz_mode(sql_verifier_t *verif, expr_node_t *n
     case_pair_t *case_pair = NULL;
 
     optmz_mode_t mode = OPTMZ_INVAILD;
-    if (case_expr->expr != NULL && mode > NODE_OPTIMIZE_MODE(case_expr->expr->root)) {
-        CONST_EXPR_INFER_RET(mode, case_expr->expr, node);
+    bool32 early_return = OG_FALSE;
+    optmz_mode_t tmp_opt_mode = OPTMZ_INVAILD;
+    if (case_expr->expr != NULL) {
+        og_case_node_optmz_mode(node, case_expr->expr->root, &tmp_opt_mode, &early_return);
+        OG_RETVOID_IFTRUE(early_return);
+        mode = tmp_opt_mode;
     }
 
     for (uint32 i = 0; i < case_expr->pairs.count; i++) {
@@ -275,21 +281,26 @@ static void sql_infer_case_when_optmz_mode(sql_verifier_t *verif, expr_node_t *n
                 return;
             }
         } else {
-            CONST_EXPR_INFER_RET(mode, case_pair->when_expr, node);
+            og_case_node_optmz_mode(node, case_pair->when_expr->root, &tmp_opt_mode, &early_return);
+            OG_RETVOID_IFTRUE(early_return);
+            mode = MIN(mode, tmp_opt_mode);
         }
-        CONST_EXPR_INFER_RET(mode, case_pair->value, node);
+
+        og_case_node_optmz_mode(node, case_pair->value->root, &tmp_opt_mode, &early_return);
+        OG_RETVOID_IFTRUE(early_return);
+        mode = MIN(mode, tmp_opt_mode);
     }
 
-    if (case_expr->default_expr != NULL && mode > NODE_OPTIMIZE_MODE(case_expr->default_expr->root)) {
-        CONST_EXPR_INFER_RET(mode, case_expr->default_expr, node);
+    if (case_expr->default_expr != NULL) {
+        og_case_node_optmz_mode(node, case_expr->default_expr->root, &tmp_opt_mode, &early_return);
+        OG_RETVOID_IFTRUE(early_return);
+        mode = MIN(mode, tmp_opt_mode);
     }
 
     // Step 2: decide the optmz mode
     // if all value and default are constant, the case when can be constantly optimized.
-    if (mode == OPTIMIZE_AS_CONST || mode == OPTIMIZE_AS_PARAM) {
-        SQL_SET_OPTMZ_MODE(node, mode);
-        return;
-    }
+    SQL_SET_OPTMZ_MODE(node, mode);
+    return;
 }
 
 static status_t sql_verify_case_expr(sql_verifier_t *verif, expr_node_t *node)
@@ -309,6 +320,7 @@ static status_t sql_verify_case_expr(sql_verifier_t *verif, expr_node_t *node)
         verif->excl_flags = old_excl_flags;
     }
 
+    bool32 has_unknown = OG_FALSE;
     for (uint32 i = 0; i < case_expr->pairs.count; i++) {
         verif->excl_flags = new_excl_flags;
 
@@ -322,11 +334,13 @@ static status_t sql_verify_case_expr(sql_verifier_t *verif, expr_node_t *node)
         verif->excl_flags = old_excl_flags;
         OG_RETURN_IFERR(sql_verify_expr(verif, case_pair->value));
         OG_RETURN_IFERR(sql_verify_update_case_expr_node(node, case_pair->value, &is_null_value));
+        has_unknown |= OG_IS_UNKNOWN_TYPE(TREE_DATATYPE(case_pair->value));
     }
 
     if (case_expr->default_expr != NULL) {
         OG_RETURN_IFERR(sql_verify_expr(verif, case_expr->default_expr));
         OG_RETURN_IFERR(sql_verify_update_case_expr_node(node, case_expr->default_expr, &is_null_value));
+        has_unknown |= OG_IS_UNKNOWN_TYPE(TREE_DATATYPE(case_expr->default_expr));
     }
 
     if (is_null_value) {
@@ -334,8 +348,13 @@ static status_t sql_verify_case_expr(sql_verifier_t *verif, expr_node_t *node)
         node->size = OG_SIZE_OF_NULL;
     }
 
+    if (OG_IS_NUMERIC_TYPE(node->datatype) && node->datatype != OG_TYPE_REAL && has_unknown) {
+        node->precision = OG_UNSPECIFIED_NUM_PREC;
+        node->scale = OG_UNSPECIFIED_NUM_SCALE;
+        node->datatype = OG_TYPE_NUMBER;
+    }
     sql_infer_case_when_optmz_mode(verif, node);
-    return OG_SUCCESS;
+    return sql_try_optimize_const_expr(verif->stmt, node);
 }
 
 status_t sql_gen_winsort_rs_column(sql_stmt_t *stmt, sql_query_t *query, rs_column_t *rs_column);
@@ -606,35 +625,6 @@ static inline status_t sql_verify_trig_res(sql_verifier_t *verif, expr_node_t *n
     return OG_SUCCESS;
 }
 
-static status_t sql_verify_column_value(sql_verifier_t *verif, expr_node_t *node)
-{
-    column_word_t *col = NULL;
-    uint32 ancestor = 0;
-    sql_table_t *table = NULL;
-
-    col = &node->word.column;
-
-    if (col->table.len == 0) {
-        if (verif->tables == NULL) {
-            // for nonselect
-            table = verif->table;
-        } else {
-            // for select
-            if (verif->tables->count > 1) {
-                OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "rowid ambiguously defined at");
-                return OG_ERROR;
-            }
-            table = (sql_table_t *)sql_array_get(verif->tables, 0);
-        }
-    }
-
-    if (sql_search_table(verif, node, (text_t *)&col->user, (text_t *)&col->table, &table, &ancestor) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
-    return OG_SUCCESS;
-}
-
 static status_t sql_verify_connect_pseudocolumn(sql_verifier_t *verif, expr_node_t *node, uint32 excl_flag)
 {
     if (verif->curr_query == NULL || verif->curr_query->connect_by_cond == NULL) {
@@ -670,7 +660,7 @@ static inline status_t sql_verify_reserved_value(sql_verifier_t *verif, expr_nod
                     verif->incl_flags & SQL_INCL_COND_COL ? COND_INCL_ROWNUM : EXPR_INCL_ROWNUM;
             }
             node->datatype = OG_TYPE_INTEGER;
-            node->size = sizeof(int32);
+            node->size = OG_BIGINT_SIZE;
             verif->incl_flags |= SQL_INCL_ROWNUM;
             break;
 
@@ -802,8 +792,8 @@ static inline status_t sql_verify_reserved_value(sql_verifier_t *verif, expr_nod
             node->size = TIMEZONE_OFFSET_STRLEN;
             break;
         case RES_WORD_COLUMN_VALUE:
-            status = sql_verify_column_value(verif, node);
-            break;
+            OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "invalid column name 'column_value'");
+            return OG_ERROR;
 
         default:
             break;
@@ -1150,10 +1140,10 @@ static status_t sql_verify_winsort(sql_verifier_t *verif, expr_node_t *node)
         OG_SRC_THROW_ERROR(node->loc, ERR_UNEXPECTED_KEY, "windows sort analytic function");
         return OG_ERROR;
     }
-    verif->incl_flags |= SQL_INCL_WINSORT;
+
+    OG_BIT_SET(verif->incl_flags, SQL_INCL_WINSORT);
     // not support analytic functions in analytic clause
-    verif->excl_flags |= SQL_EXCL_WIN_SORT;
-    verif->excl_flags |= SQL_EXCL_SEQUENCE;
+    OG_BIT_SET(verif->excl_flags, SQL_EXCL_WIN_SORT | SQL_EXCL_SEQUENCE | SQL_EXCL_STAR);
 
     OG_RETURN_IFERR(cm_galist_insert(verif->curr_query->winsort_list, node));
 
@@ -1206,6 +1196,11 @@ static status_t sql_verify_array_type(expr_node_t *array_node, expr_node_t *expr
 
     if (!cm_datatype_arrayable(node_type)) {
         OG_SRC_THROW_ERROR(NODE_LOC(expr_node), ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(node_type));
+        return OG_ERROR;
+    }
+
+    if (expr_node->typmod.is_array) {
+        OG_SRC_THROW_ERROR(NODE_LOC(expr_node), ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(OG_TYPE_ARRAY));
         return OG_ERROR;
     }
 
@@ -1661,7 +1656,7 @@ static status_t sql_verify_expr_node_core(sql_verifier_t *verif, expr_node_t *no
 
         case EXPR_NODE_STAR:
             if ((verif->excl_flags & SQL_EXCL_STAR) != 0) {
-                OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "unexcpected '*'");
+                OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "unexpected '*'");
                 return OG_ERROR;
             }
             status = OG_SUCCESS;

@@ -318,6 +318,7 @@ void sql_end_plan_cursor_fetch(sql_cursor_t *cursor, plan_node_t *plan_node)
                 case FUNC_AS_TABLE:
                     tab_cursor->knl_cur->eof = OG_TRUE;
                     tab_cursor->knl_cur->scan_mode = 0;
+                    sql_release_multi_parts_resources(cursor->stmt, tab_cursor);
                     sql_free_varea_set(tab_cursor);
                     sql_init_cursor_part_info(tab_cursor);
                     break;
@@ -407,7 +408,7 @@ status_t sql_fetch_nest_loop_left(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_n
                 continue;
             }
         } else {
-            OG_RETURN_IFERR(sql_match_cond_node(stmt, plan->join_p.cond->root, &result));
+            OG_RETURN_IFERR(og_match_outerjoin_condition(stmt, plan->join_p.cond, &result));
             if (!result) {
                 continue;
             }

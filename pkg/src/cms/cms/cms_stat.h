@@ -60,14 +60,14 @@ typedef struct st_cms_hb_aync_start_t {
 
 // reserve one gcc and 100 blocks
 #define CMS_CLUSTER_STAT_OFFSET     (sizeof(cms_gcc_storage_t) + sizeof(cms_gcc_t) + CMS_RESERVED_BLOCKS_SIZE)
-#define CMS_CLUSTER_STAT_DISK_SIZE  SIZE_M(32)
+#define CMS_CLUSTER_STAT_DISK_SIZE  (43772416)
 // reserve 100 blocks
 #define CMS_RES_DATA_OFFSET         (CMS_CLUSTER_STAT_OFFSET + sizeof(cms_cluster_stat_t) + CMS_RESERVED_BLOCKS_SIZE)
-#define CMS_RES_DATA_DISK_SIZE      SIZE_M(32)
+#define CMS_RES_DATA_DISK_SIZE      (4194304)
 
 #define CMS_RES_LOCK_OFFSET         (CMS_RES_DATA_OFFSET + sizeof(cms_cluster_res_data_t) + CMS_RESERVED_BLOCKS_SIZE)
 #define CMS_MES_CHANNEL_OFFSET      (CMS_RES_LOCK_OFFSET + sizeof(cms_cluster_res_lock_t))
-#define CMS_RES_LOCK_DISK_SIZE      SIZE_M(32)
+#define CMS_RES_LOCK_DISK_SIZE      (6553600)
 
 #define CMS_STAT_HEAD_MAGIC         (*((uint64*)"STATHEAD"))
 #define CMS_RES_DATA_MAGIC          (*((uint64*)"RES_DATA"))
@@ -84,6 +84,7 @@ typedef struct st_cms_hb_aync_start_t {
 #define CMS_MAX_FILE_NAME 256
 #define CMS_INIT_VTINFO_RETRY_INTERNAL 1000
 #define CMS_RETRY_SLEEP_TIME 100
+#define CMS_DSS_MASTER_RETRY_TIMES 20
 #define CMS_HB_AYNC_UPDATE_INTERNAL 5000
 #define CMS_CHECK_RES_RUNING_TIMES 10
 #define CMS_DBS_DETECT_TIMEOUT 11
@@ -210,22 +211,22 @@ CM_STATIC_ASSERT(CMS_BLOCK_SIZE == sizeof(cms_cluster_stat_head_t));
 
 typedef struct st_cms_cluster_stat_t {
     cms_cluster_stat_head_t head;
-    char                    stat_lock[CMS_BLOCK_SIZE];
-    char                    cms_lock[CMS_BLOCK_SIZE];
-    char                    res_data_lock[CMS_MAX_RESOURCE_COUNT][CMS_MAX_RES_SLOT_COUNT][CMS_BLOCK_SIZE];
-    char                    vote_data_lock[CMS_MAX_NODE_COUNT][CMS_MAX_VOTE_SLOT_COUNT][CMS_BLOCK_SIZE];
-    char                    vote_result_lock[CMS_BLOCK_SIZE];
-    char                    res_start_lock[CMS_BLOCK_SIZE];
-    char                    vote_info_lock[CMS_BLOCK_SIZE];
+    char                    stat_lock[CMS_DISK_LOCK_BLOCKS_SIZE];
+    char                    cms_lock[CMS_DISK_LOCK_BLOCKS_SIZE];
+    char                    res_data_lock[CMS_MAX_RESOURCE_COUNT][CMS_MAX_RES_SLOT_COUNT][CMS_DISK_LOCK_BLOCKS_SIZE];
+    char                    vote_data_lock[CMS_MAX_NODE_COUNT][CMS_MAX_VOTE_SLOT_COUNT][CMS_DISK_LOCK_BLOCKS_SIZE];
+    char                    vote_result_lock[CMS_DISK_LOCK_BLOCKS_SIZE];
+    char                    res_start_lock[CMS_DISK_LOCK_BLOCKS_SIZE];
+    char                    vote_info_lock[CMS_DISK_LOCK_BLOCKS_SIZE];
     cms_node_inf_t          node_inf[CMS_MAX_NODE_COUNT];
 }cms_cluster_stat_t;
 
-CM_STATIC_ASSERT(CMS_CLUSTER_STAT_DISK_SIZE > sizeof(cms_cluster_stat_t));
+CM_STATIC_ASSERT(CMS_CLUSTER_STAT_DISK_SIZE == sizeof(cms_cluster_stat_t));
 
 typedef struct st_cms_cluster_res_lock_t {
-    char                    res_stat_lock[CMS_MAX_NODE_COUNT][CMS_RES_STAT_MAX_RESOURCE_COUNT][CMS_BLOCK_SIZE];
+    char            res_stat_lock[CMS_MAX_NODE_COUNT][CMS_RES_STAT_MAX_RESOURCE_COUNT][CMS_DISK_LOCK_BLOCKS_SIZE];
 }cms_cluster_res_lock_t;
-CM_STATIC_ASSERT(CMS_RES_DATA_DISK_SIZE > sizeof(cms_cluster_res_lock_t));
+CM_STATIC_ASSERT(CMS_RES_LOCK_DISK_SIZE == sizeof(cms_cluster_res_lock_t));
 
 typedef union st_cms_res_data_t {
     struct {
@@ -243,7 +244,7 @@ typedef union st_cms_cluster_res_data_t {
     cms_res_data_t  res_data[CMS_MAX_RESOURCE_COUNT][CMS_MAX_RES_SLOT_COUNT];
 }cms_cluster_res_data_t;
 
-CM_STATIC_ASSERT(CMS_RES_DATA_DISK_SIZE > sizeof(cms_cluster_res_data_t));
+CM_STATIC_ASSERT(CMS_RES_DATA_DISK_SIZE == sizeof(cms_cluster_res_data_t));
 
 #define CMS_RES_DATA_ADDR(res_id, slot_id) ((uint64)(&(((cms_cluster_res_data_t*)NULL)->res_data[res_id][slot_id])))
 #define CMS_RES_DATA_GCC_OFFSET(res_id, slot_id) (CMS_RES_DATA_OFFSET + CMS_RES_DATA_ADDR(res_id, slot_id))
@@ -285,6 +286,7 @@ status_t cms_res_no_hb(uint32 res_id);
 status_t cms_res_detect_online(uint32 res_id, cms_res_stat_t *old_stat);
 status_t cms_res_detect_offline(uint32 res_id, cms_res_stat_t *old_stat);
 void cms_tool_detect_offline(uint32 session_id);
+status_t cms_release_dss_master(uint16 offline_node);
 status_t cms_get_res_session(cms_res_session_t* sessions, uint32 size);
 status_t cms_get_stat_version(uint64* version);
 status_t get_res_stat(uint32 node_id, uint32 res_id, cms_res_stat_t* res_stat);
@@ -335,6 +337,7 @@ status_t cms_get_node_view(uint64* cms_online_bitmap);
 status_t cms_check_res_running(uint32 res_id);
 bool32 cms_check_node_dead(uint32 node_id);
 
+status_t cms_check_dss_stat(cms_res_t res, cms_res_stat_t stat);
 status_t cms_init_mes_channel_version(void);
 status_t cms_get_mes_channel_version(uint64* version);
 status_t cms_get_cluster_res_list_4tool(uint32 res_id, cms_tool_res_stat_list_t *res_list);

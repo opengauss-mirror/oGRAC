@@ -546,8 +546,11 @@ status_t sql_row_put_value(sql_stmt_t *stmt, row_assist_t *row_ass, variant_t *v
 
         case OG_TYPE_BINARY:
         case OG_TYPE_RAW:
-        default:
+        case OG_TYPE_VARBINARY:
             return row_put_bin(row_ass, VALUE_PTR(binary_t, value));
+        default:
+            OG_THROW_ERROR_EX(ERR_INVALID_DATA_TYPE, "put value, curr type is %s", get_datatype_name_str(value->type));
+            return OG_ERROR;
     }
 }
 
@@ -677,15 +680,11 @@ static status_t sql_make_mtrl_rs_one_row(sql_stmt_t *stmt, char *pending_buf, ro
             }
             return sql_put_row_value(stmt, pending_buf, ra, rs_col->datatype, &value);
 
-        case RS_COL_CALC:
+        default:
             if (sql_exec_expr(stmt, rs_col->expr, &value) != OG_SUCCESS) {
                 return OG_ERROR;
             }
             return sql_put_row_value(stmt, pending_buf, ra, rs_col->datatype, &value);
-
-        default:
-            OG_THROW_ERROR(ERR_INVALID_COL_TYPE, rs_col->type);
-            return OG_ERROR;
     }
 }
 
@@ -728,12 +727,9 @@ status_t sql_make_mtrl_winsort_row(sql_stmt_t *stmt, winsort_args_t *args, mtrl_
     }
 
     if (args->sort_items != NULL) {
-        for (i = 0; i < args->sort_items->count; i++) {
-            item = (sort_item_t *)cm_galist_get(args->sort_items, i);
-            OG_RETURN_IFERR(sql_exec_expr(stmt, item->expr, &value));
-            OG_RETURN_IFERR(sql_put_row_value(stmt, pending_buf, &ra, item->expr->root->datatype, &value));
-        }
+        OG_RETURN_IFERR(sql_make_mtrl_sort_row(stmt, pending_buf, args->sort_items, &ra));
         if (args->windowing != NULL) {
+            item = (sort_item_t *)cm_galist_get(args->sort_items, args->sort_items->count - 1);
             if (args->windowing->l_expr != NULL && !TREE_IS_CONST(args->windowing->l_expr)) {
                 OG_RETURN_IFERR(sql_sql_exec_win_border_expr(stmt, args->windowing->l_expr, item->expr->root->datatype,
                     &value, args->windowing->is_range));
@@ -777,6 +773,38 @@ status_t sql_make_mtrl_rs_row(sql_stmt_t *stmt, char *pending_buf, galist_t *col
     return OG_SUCCESS;
 }
 
+static inline og_type_t og_convert_unknown_row(sql_stmt_t *statement, char *row_buf, og_type_t temp_type, uint32 col_id,
+    variant_t *var)
+{
+    if (temp_type == OG_TYPE_UNKNOWN) {
+        return sql_make_pending_column_def(statement, row_buf, temp_type, col_id, var);
+    }
+    return temp_type;
+}
+
+static inline og_type_t og_convert_lob_row(og_type_t temp_type)
+{
+    if (OG_IS_LOB_TYPE(temp_type)) {
+        if (temp_type == OG_TYPE_BLOB) {
+            return OG_TYPE_RAW;
+        }
+        return OG_TYPE_STRING;
+    }
+    return temp_type;
+}
+
+static inline status_t og_put_select_sort_row(sql_stmt_t *statement, char *row_buf, row_assist_t *row_ast,
+    og_type_t temp_type, variant_t *var)
+{
+    CM_POINTER4(statement, row_buf, row_ast, var);
+    if (OG_IS_LOB_TYPE(var->type) && sql_get_lob_value(statement, var) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    temp_type = og_convert_unknown_row(statement, row_buf, temp_type, row_ast->col_id, var);
+    temp_type = og_convert_lob_row(temp_type);
+    return sql_put_row_value(statement, row_buf, row_ast, temp_type, var);
+}
+
 status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, row_assist_t *ra)
 {
     sort_item_t *item = NULL;
@@ -789,23 +817,12 @@ status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *s
         expr = item->expr;
 
         OG_RETURN_IFERR(sql_exec_expr(stmt, expr, &value));
-        if (OG_IS_LOB_TYPE(value.type)) {
-            OG_RETURN_IFERR(sql_get_lob_value(stmt, &value));
-            if (value.is_null) {
-                OG_RETURN_IFERR(row_put_null(ra));
-            } else if (value.type == OG_TYPE_STRING) {
-                OG_RETURN_IFERR(row_put_text(ra, VALUE_PTR(text_t, &value)));
-            } else if (value.type == OG_TYPE_RAW) {
-                OG_RETURN_IFERR(row_put_bin(ra, VALUE_PTR(binary_t, &value)));
-            }
-            continue;
-        }
 
         if (!value.is_null && value.type >= OG_TYPE_OPERAND_CEIL) {
             OG_THROW_ERROR(ERR_INVALID_DATA_TYPE, "unexpected user define type");
             return OG_ERROR;
         }
-        OG_RETURN_IFERR(sql_put_row_value(stmt, pending_buf, ra, expr->root->datatype, &value));
+        OG_RETURN_IFERR(og_put_select_sort_row(stmt, pending_buf, ra, expr->root->datatype, &value));
         OGSQL_RESTORE_STACK(stmt);
     }
     return OG_SUCCESS;
@@ -839,15 +856,19 @@ status_t sql_make_mtrl_select_sort_row(sql_stmt_t *stmt, char *pending_buf, sql_
     select_sort_item_t *item = NULL;
     rs_column_t *rs_column = NULL;
     row_assist_t ra;
+    variant_t value = {0};
 
     row_init(&ra, buf, OG_MAX_ROW_SIZE, sort_items->count);
 
     for (i = 0; i < sort_items->count; i++) {
         item = (select_sort_item_t *)cm_galist_get(sort_items, i);
         rs_column = (rs_column_t *)cm_galist_get(cursor->columns, item->rs_columns_id);
-        if (sql_make_mtrl_rs_one_row(stmt, pending_buf, &ra, rs_column) != OG_SUCCESS) {
-            return OG_ERROR;
+        if (rs_column->type == RS_COL_CALC) {
+            OG_RETURN_IFERR(sql_exec_expr(stmt, rs_column->expr, &value));
+        } else {
+            OG_RETURN_IFERR(sql_get_table_value(stmt, &rs_column->v_col, &value));
         }
+        OG_RETURN_IFERR(og_put_select_sort_row(stmt, pending_buf, &ra, rs_column->datatype, &value));
     }
 
     if (ra.head->size + sizeof(mtrl_rowid_t) > OG_MAX_ROW_SIZE) {
@@ -903,7 +924,6 @@ status_t sql_make_mtrl_group_row(sql_stmt_t *stmt, char *pending_buf, group_plan
     for (i = 0; i < group_p->aggrs->count; i++) {
         expr_node = (expr_node_t *)cm_galist_get(group_p->aggrs, i);
         const sql_func_t *func = sql_get_func(&expr_node->value.v_func);
-        OG_CONTINUE_IFTRUE(func->aggr_type == AGGR_TYPE_DENSE_RANK || func->aggr_type == AGGR_TYPE_RANK);
         OG_RETURN_IFERR(sql_exec_expr_node(stmt, expr_node, var));
         for (uint32 j = 0; j < func->value_cnt; j++) {
             OG_RETURN_IFERR(sql_put_row_value(stmt, pending_buf, &ra, expr_node->datatype, &var[j]));

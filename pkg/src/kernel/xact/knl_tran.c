@@ -532,7 +532,7 @@ knl_scn_t tx_inc_scn(knl_session_t *session, uint32 seg_id, txn_t *txn, knl_scn_
 
     init_time = DB_INIT_TIME(session);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     knl_scn_t gts_scn;
     if (TX_XA_CONSISTENCY(session)) {
         status_t status = gts_get_lcl_timestamp(&gts_scn);

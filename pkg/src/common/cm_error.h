@@ -177,6 +177,7 @@ typedef enum en_errno {
     ERR_SKLIST_NOT_INIT = 143,
     ERR_SKLIST_NOT_EXIST = 144,
     ERR_SKLIST_EXIST = 145,
+    ERR_ILLEGAL_TIME = 146,
 
     /* invalid configuration errors: 200 - 299 */
     ERR_FILE_SIZE_TOO_LARGE = 200,
@@ -780,7 +781,7 @@ typedef enum en_errno {
     ERR_CHILD_ROW_CANNOT_ADD_OR_UPDATE = 1134,
 
 /* sharding error: 1200 - 1299 */
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     // XA and datanode error
     ERR_XA_EXECUTE_FAILED = 1200,
     ERR_XA_WITHOUT_TIMESTAMP = 1201,
@@ -797,7 +798,9 @@ typedef enum en_errno {
     ERR_NO_CONN = 1210,
     ERR_CONN_REACH_LIMIT = 1211,
     ERR_CONN_TIMESTAMP_FAILED = 1212,
+#endif
     ERR_REMOTE_ERROR = 1213,
+#ifdef OG_RAC_ING
     ERR_SLOT_RELEASE = 1214,
     ERR_GTS_GETTIME_FAILED = 1215,
     ERR_GTS_INVALID_TIMESTAMP = 1216,
@@ -838,7 +841,7 @@ typedef enum en_errno {
 
     ERR_SELECT_ROWNODEID = 1243,
 
-#endif  // Z_SHARDING
+#endif  // OG_RAC_ING
 
     /* additional: sql engine */
     ERR_DUPLICATE_AUTO_COLUMN = 1300,

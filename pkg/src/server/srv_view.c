@@ -4834,9 +4834,11 @@ static void vw_make_temptable_row(knl_session_t *session, knl_cursor_t *cursor)
     row_put_int32(&ra, entry->entity->column_count);
     row_put_int32(&ra, entry->entity->table.index_set.count);
 
+    cm_spin_lock(&session->temp_cache_lock, NULL);
     for (uint32 i = 0; i < session->temp_table_count; i++) {
         temp_table = &session->temp_table_cache[i];
-        if (temp_table->table_id == entry->id) {
+        if (temp_table != NULL && temp_table->table_id != OG_INVALID_ID32 &&
+            temp_table->table_id == entry->id) {
             data_segement = ogx->segments[temp_table->table_segid];
             data_pages_num = data_segement->vm_list.count;
 
@@ -4846,6 +4848,7 @@ static void vw_make_temptable_row(knl_session_t *session, knl_cursor_t *cursor)
             }
         }
     }
+    cm_spin_unlock(&session->temp_cache_lock);
     row_put_int32(&ra, data_pages_num);
     row_put_int32(&ra, index_pages_num);
 }

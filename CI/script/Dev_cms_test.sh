@@ -144,7 +144,7 @@ function parse_parameter()
     declare -g LCOV_ENABLE=FALSE
     declare -g RUN_TEST_USER="ogracdba"
     declare -g CORE_DIR="/home/core"
-    declare -g GS_SCHEDULE_LIST="og_schedule"
+    declare -g OG_SCHEDULE_LIST="og_schedule"
     while true
     do
         case "$1" in
@@ -161,7 +161,7 @@ function parse_parameter()
                 shift 2
                 ;;
             -g | --og_schedule_list)
-                GS_SCHEDULE_LIST="$2"
+                OG_SCHEDULE_LIST="$2"
                 shift 2
                 ;;
             --)

@@ -1207,3 +1207,8 @@ end;
 
 select GetBigintFromHex('0xFF');
 drop function GetBigintFromHex;
+
+drop table if exists t1;
+create table t1(ts timestamp default getutcdate(), id int);
+insert into t1(id) values (1);
+drop table if exists t1;

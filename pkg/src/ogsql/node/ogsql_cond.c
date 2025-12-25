@@ -32,6 +32,7 @@
 #include "json/ogsql_json.h"
 #include "srv_instance.h"
 #include "ogsql_func.h"
+#include "ogsql_cbo_cost.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -409,7 +410,7 @@ status_t sql_union_cond_node(sql_context_t *context, cond_tree_t **dst, cond_nod
     (*dst)->root = node;
     return OG_SUCCESS;
 }
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 static bool32 sql_ancestor_tables_in_cmp_node(sql_array_t *tables, cmp_node_t *cmp_node, bool32 use_remote_id)
 {
@@ -614,6 +615,96 @@ bool32 sql_cond_node_exist_table(cond_node_t *cond_node, uint32 table_id)
         curr = curr->next;
     }
     return OG_FALSE;
+}
+
+static inline bool32 sql_cmp_is_var_eq_var(cmp_node_t *cmp)
+{
+    return (cmp->type == CMP_TYPE_EQUAL && cmp->left->root->type == EXPR_NODE_COLUMN &&
+            cmp->right->root->type == EXPR_NODE_COLUMN);
+}
+
+join_tbl_bitmap_t sql_collect_table_ids_in_expr(expr_tree_t *expr, galist_t *outer_rels_list, uint8 *check)
+{
+    cols_used_t used_cols;
+    biqueue_t *cols_que = NULL;
+    biqueue_node_t *curr = NULL;
+    biqueue_node_t *end = NULL;
+    expr_node_t *col = NULL;
+    join_tbl_bitmap_t table_ids;
+
+    init_cols_used(&used_cols);
+    sql_bitmap_init(&table_ids);
+    sql_collect_cols_in_expr_tree(expr, &used_cols);
+
+    if (check != NULL) {
+        if (outer_rels_list == NULL) {
+            *check |= COND_HAS_OUTER_RELS;
+        } else if (if_table_in_outer_rels_list(&used_cols, PARENT_IDX, outer_rels_list) &&
+            if_table_in_outer_rels_list(&used_cols, ANCESTOR_IDX, outer_rels_list)) {
+            *check |= COND_HAS_OUTER_RELS;
+        }
+    }
+
+    if (HAS_ROWNUM(&used_cols)) {
+        *check |= COND_HAS_ROWNUM;
+    }
+
+    if (HAS_DYNAMIC_SUBSLCT(&used_cols)) {
+        *check |= COND_HAS_DYNAMIC_SUBSEL;
+    }
+
+    cols_que = &used_cols.cols_que[SELF_IDX];
+    curr = biqueue_first(cols_que);
+    end = biqueue_end(cols_que);
+
+    while (curr != end) {
+        col = OBJECT_OF(expr_node_t, curr);
+        uint32 table_id = TAB_OF_NODE(col);
+        sql_bitmap_add_member(table_id, &table_ids);
+        curr = curr->next;
+    }
+
+    return table_ids;
+}
+
+join_tbl_bitmap_t sql_collect_table_ids_in_cond(cond_node_t *cond_node, galist_t *outer_rels_list, uint8 *check)
+{
+    cols_used_t used_cols;
+    biqueue_t *cols_que = NULL;
+    biqueue_node_t *curr = NULL;
+    biqueue_node_t *end = NULL;
+    expr_node_t *col = NULL;
+    join_tbl_bitmap_t table_ids;
+
+    init_cols_used(&used_cols);
+    sql_bitmap_init(&table_ids);
+    sql_collect_cols_in_cond(cond_node, &used_cols);
+
+    if (check != NULL) {
+        if (outer_rels_list == NULL) {
+            *check |= COND_HAS_OUTER_RELS;
+        } else if (if_table_in_outer_rels_list(&used_cols, PARENT_IDX, outer_rels_list) &&
+            if_table_in_outer_rels_list(&used_cols, ANCESTOR_IDX, outer_rels_list)) {
+            *check |= COND_HAS_OUTER_RELS;
+        }
+    }
+
+    if (HAS_DYNAMIC_SUBSLCT(&used_cols)) {
+        *check |= COND_HAS_DYNAMIC_SUBSEL;
+    }
+
+    cols_que = &used_cols.cols_que[SELF_IDX];
+    curr = biqueue_first(cols_que);
+    end = biqueue_end(cols_que);
+
+    while (curr != end) {
+        col = OBJECT_OF(expr_node_t, curr);
+        uint32 table_id = TAB_OF_NODE(col);
+        sql_bitmap_add_member(table_id, &table_ids);
+        curr = curr->next;
+    }
+
+    return table_ids;
 }
 
 void sql_convert_match_result(cmp_type_t cmp_type, int32 cmp_result, bool32 *res)

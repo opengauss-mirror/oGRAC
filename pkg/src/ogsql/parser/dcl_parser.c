@@ -491,7 +491,7 @@ static status_t sql_parse_table_defs(sql_stmt_t *stmt, lex_t *lex, lock_tables_d
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 // for online update
 static shd_lock_unlock_type_t shd_diag_lock_type(sql_stmt_t *stmt)
 {
@@ -666,7 +666,7 @@ static status_t sql_parse_locktable(sql_stmt_t *stmt)
     return lex_expected_end(lex);
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t sql_init_route(sql_stmt_t *stmt, sql_route_t *route_ctx)
 {
     if (sql_create_list(stmt, &route_ctx->pairs) != OG_SUCCESS) {

@@ -27,6 +27,7 @@
 #include "plan_rbo.h"
 #include "srv_instance.h"
 #include "dml_executor.h"
+#include "ogsql_cbo_cost.h"
 
 static inline void sql_make_left_infinite_range(expr_tree_t *expr, plan_range_t *plan_range, bool32 right_closed)
 {
@@ -530,8 +531,133 @@ static status_t sql_init_plan_range_list(sql_stmt_t *stmt, og_type_t datatype, k
     return OG_SUCCESS;
 }
 
-bool32 sql_cmp_range_usable(plan_assist_t *pa, cmp_node_t *node, expr_node_t *match_node)
+static bool32 sql_cmp_type_support_range(cmp_type_t cmp_type)
 {
+    switch (cmp_type) {
+        case CMP_TYPE_EQUAL:
+        case CMP_TYPE_EQUAL_ALL:
+        case CMP_TYPE_LESS:
+        case CMP_TYPE_LESS_EQUAL:
+        case CMP_TYPE_GREAT_EQUAL:
+        case CMP_TYPE_GREAT:
+        case CMP_TYPE_IN:
+        case CMP_TYPE_EQUAL_ANY:
+        case CMP_TYPE_LIKE:
+        case CMP_TYPE_BETWEEN:
+            return OG_TRUE;
+        default:
+            return OG_FALSE;
+    }
+}
+static bool32 sql_check_operand_range_usable(plan_assist_t *pa, expr_tree_t *operand, expr_node_t *match_node)
+{
+    uint8 check = 0;
+    join_tbl_bitmap_t table_ids = sql_collect_table_ids_in_expr(operand, pa->outer_rels_list, &check);
+    OG_RETVALUE_IFTRUE(!(check & COND_HAS_OUTER_RELS), OG_FALSE);
+    if (sql_bitmap_empty(&table_ids)) {
+        return OG_TRUE;
+    }
+
+    uint32 cur_tab = match_node->type == EXPR_NODE_COLUMN ? TAB_OF_NODE(match_node) :
+        TAB_OF_NODE(sql_find_column_in_func(match_node));
+    sql_table_t *cur_table = (sql_table_t *)sql_array_get(&pa->query->tables, cur_tab);
+    uint32 tab_id;
+    BITMAP_FOREACH(tab_id, &table_ids) {
+        sql_table_t *tmp_table = (sql_table_t *)sql_array_get(&pa->query->tables, tab_id);
+
+        if (tmp_table->plan_id < cur_table->plan_id) {
+            if (!chk_tab_with_oper_map(pa, tab_id, cur_tab)) {
+                return OG_FALSE;
+            }
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static status_t og_expr_node_is_certain(visit_assist_t *v_ast, expr_node_t **exprn)
+{
+    OG_RETSUC_IFTRUE(!v_ast->result0);
+
+    plan_assist_t *plan_ast = (plan_assist_t *)v_ast->param0;
+    var_column_t *match_col = (var_column_t *)v_ast->param1;
+    sql_select_t *slct_ctx = NULL;
+
+    switch ((*exprn)->type) {
+        case EXPR_NODE_COLUMN:
+            /* column had been checked during sql_check_operand_range_usable, so directly set to true */
+            v_ast->result0 = OG_TRUE;
+            return OG_SUCCESS;
+        case EXPR_NODE_RESERVED:
+            v_ast->result0 = sql_reserved_word_indexable(plan_ast, *exprn, match_col->tab);
+            return OG_SUCCESS;
+        case EXPR_NODE_GROUP:
+            if (NODE_VM_ANCESTOR(*exprn) > 0) {
+                plan_ast->col_use_flag |= USE_ANCESTOR_COL;
+                plan_ast->max_ancestor = MAX(plan_ast->max_ancestor, NODE_VM_ANCESTOR(*exprn));
+                return OG_SUCCESS;
+            }
+            v_ast->result0 = OG_FALSE;
+            return OG_SUCCESS;
+        case EXPR_NODE_SELECT:
+            slct_ctx = (sql_select_t *)VALUE_PTR(var_object_t, &(*exprn)->value)->ptr; 
+            v_ast->result0 = (bool32)(slct_ctx->type == SELECT_AS_VARIANT && slct_ctx->parent_refs->count == 0);
+            return OG_SUCCESS;
+        case EXPR_NODE_V_ADDR:
+            v_ast->result0 = sql_pair_type_is_plvar(*exprn);
+            return OG_SUCCESS;
+        case EXPR_NODE_CONST:
+        case EXPR_NODE_PARAM:
+        case EXPR_NODE_CSR_PARAM:
+        case EXPR_NODE_SEQUENCE:
+        case EXPR_NODE_PL_ATTR:
+        case EXPR_NODE_PRIOR:
+            v_ast->result0 = OG_TRUE;
+            return OG_SUCCESS;
+        default:
+            v_ast->result0 = OG_FALSE;
+            return OG_SUCCESS;
+    }
+}
+
+static bool32 og_chk_expr_range_is_certain(plan_assist_t *plan_ast, expr_tree_t *exprt, var_column_t *match_col)
+{
+    visit_assist_t v_ast = {0};
+    sql_init_visit_assist(&v_ast, NULL, NULL);
+    v_ast.param0 = (void *)plan_ast;
+    v_ast.param1 = (void *)match_col;
+    v_ast.result0 = OG_TRUE;
+    v_ast.excl_flags = VA_EXCL_PRIOR;
+
+    (void)visit_expr_tree(&v_ast, exprt, og_expr_node_is_certain);
+    return (bool32)v_ast.result0;
+}
+
+static bool32 sql_cmp_range_usable(plan_assist_t *plan_ast, cmp_node_t *cmp, expr_node_t *match_node)
+{
+    if (!sql_cmp_type_support_range(cmp->type)) {
+        return OG_FALSE;
+    }
+
+    expr_tree_t *left = cmp->left;
+    expr_tree_t *right = cmp->right;
+
+    if (sql_expr_node_matched(plan_ast->stmt, left, match_node) &&
+        type_is_indexable_compatible(match_node->datatype, right->root->datatype)) {
+        if (!sql_check_operand_range_usable(plan_ast, right, match_node)) {
+            return OG_FALSE;
+        }
+        return og_chk_expr_range_is_certain(plan_ast, cmp->right, &match_node->value.v_col);
+    }
+
+    if (sql_expr_node_matched(plan_ast->stmt, right, match_node) &&
+        type_is_indexable_compatible(match_node->datatype, left->root->datatype)) {
+        if (!sql_check_operand_range_usable(plan_ast, left, match_node)) {
+            return OG_FALSE;
+        }
+        return og_chk_expr_range_is_certain(plan_ast, cmp->left, &match_node->value.v_col);
+    }
+
     return OG_FALSE;
 }
 

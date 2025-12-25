@@ -393,7 +393,7 @@ function install_rpm() {
     chown root:root ${RPM_PACK_ORG_PATH}
     if [[ ${deploy_mode} == "dss" ]];then
         cp  ${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit/lib/* /usr/lib64/
-        chown ${ograc_user}:${ograc_group} -hR /usr/lib64/libze*
+        chown ${ograc_user}:${ograc_group} -hR /usr/lib64/libog*
     fi
 }
 
@@ -865,8 +865,12 @@ done
 # 把升级备份相关路径拷贝到/opt/ograc
 cp -rfp ${CURRENT_PATH}/../repo /opt/ograc/
 cp -rfp ${CURRENT_PATH}/../versions.yml /opt/ograc/
-source ${CURRENT_PATH}/docker/dbstor_tool_opt_common.sh
-update_version_yml_by_dbstor
+if [[ "${ograc_in_container}" == "0" ]]; then
+    source ${CURRENT_PATH}/docker/dbstor_tool_opt_common.sh
+    if [[ ${deploy_mode} != "dss" ]]; then
+        update_version_yml_by_dbstor
+    fi
+fi
 
 config_security_limits > /dev/null 2>&1
 

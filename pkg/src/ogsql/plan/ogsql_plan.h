@@ -144,6 +144,14 @@ static inline bool32 sql_reserved_word_indexable(plan_assist_t *pa, expr_node_t 
     }
 }
 
+static inline bool32 is_analyzed_table(sql_stmt_t *stmt, sql_table_t *table)
+{
+    if (OG_IS_SUBSELECT_TABLE(table->type)) {
+        return OG_FALSE;
+    }
+    return IS_ANALYZED_TABLE(table);
+}
+
 status_t sql_create_dml_plan(sql_stmt_t *stmt);
 status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, cond_tree_t *cond);
 status_t sql_create_table_scan_plan(sql_stmt_t *stmt, plan_assist_t *pa, cond_tree_t *cond, sql_table_t *table,
@@ -225,6 +233,11 @@ status_t remove_pushed_down_join_cond(sql_stmt_t *stmt, plan_assist_t *pa, sql_a
 static inline void sql_plan_assist_set_table(plan_assist_t *pa, sql_table_t *table)
 {
     table->plan_id = pa->plan_count;
+    /*
+     * table in jpath which is parameterized path has been copied from table in query,
+     * so we need to set plan_id of table in query too.
+     */
+    ((sql_table_t *)sql_array_get(&pa->query->tables, table->id))->plan_id = table->plan_id;
     pa->plan_tables[pa->plan_count++] = table;
 
     if (table->sub_tables != NULL) {

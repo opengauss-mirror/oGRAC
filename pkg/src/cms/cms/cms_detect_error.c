@@ -42,7 +42,7 @@ status_t cms_detect_disk(void)
                 return OG_ERROR;
             }
         }
-    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         if (cms_detect_file_stat(g_cms_param->gcc_home, &g_detect_file_fd[0]) != OG_SUCCESS) {
             CMS_LOG_ERR("cms detect file failed, file is %s.", g_cms_param->gcc_home);
             return OG_ERROR;
@@ -330,7 +330,7 @@ status_t cms_open_detect_file(void)
                 return ret;
             }
         }
-    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD) {
+    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         ret = cm_open_file(g_cms_param->gcc_home, O_RDWR | O_BINARY | O_CLOEXEC | O_SYNC | O_DIRECT,
             &g_detect_file_fd[0]);
         if (ret != OG_SUCCESS) {

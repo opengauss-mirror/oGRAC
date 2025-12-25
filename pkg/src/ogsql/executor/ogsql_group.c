@@ -30,6 +30,8 @@
 #include "ogsql_sort.h"
 #include "knl_mtrl.h"
 #include "ogsql_scan.h"
+#include "ogsql_sort_group.h"
+#include "ogsql_expr_datatype.h"
 
 typedef struct st_group_aggr_assist {
     aggr_assist_t aa;
@@ -61,7 +63,6 @@ typedef struct st_group_aggr_assist {
         (ga)->aa.avg_count = (avg_cnt);                                                              \
     } while (0)
 
-
 typedef status_t (*group_init_func_t)(group_aggr_assist_t *ga);
 typedef status_t (*group_invoke_func_t)(group_aggr_assist_t *ga);
 typedef status_t (*group_calc_func_t)(aggr_assist_t *aa, aggr_var_t *aggr_var, group_ctx_t *ogx);
@@ -74,7 +75,6 @@ typedef struct st_group_aggr_func {
     group_calc_func_t calc;
 } group_aggr_func_t;
 
-
 // ///////////////////////////////////////////////////////////////////////////////////////////
 #define HASH_GROUP_AGGR_STR_RESERVE_SIZE 32
 
@@ -83,14 +83,13 @@ static status_t sql_hash_group_convert_rowid_to_str(group_ctx_t *group_ctx, sql_
                                                     bool32 keep_old_open);
 static inline status_t sql_hash_group_copy_aggr_value(group_ctx_t *ogx, aggr_var_t *old_aggr_var, variant_t *value);
 static status_t sql_hash_group_ensure_str_buf(group_ctx_t *ogx, aggr_var_t *old_aggr_var, uint32 ensure_size,
-    bool32 keep_value);
+                                              bool32 keep_value);
 static status_t sql_group_calc_pivot(group_ctx_t *ogx, const char *new_buf, const char *old_buf);
 static status_t sql_group_init_aggrs_buf_pivot(group_ctx_t *group_ctx, const char *old_buf, uint32 old_size);
-static status_t sql_group_init_aggrs_buf(group_ctx_t *ogx, const char *old_buf, uint32 old_size);
 static status_t sql_group_insert_listagg_value(group_ctx_t *ogx, expr_node_t *aggr_node, aggr_var_t *aggr_var,
-    variant_t *value);
+                                               variant_t *value);
 static status_t sql_group_insert_median_value(group_ctx_t *ogx, expr_node_t *aggr_node, aggr_var_t *aggr_var,
-    variant_t *value);
+                                               variant_t *value);
 static status_t sql_group_calc_aggr(group_aggr_assist_t *ga, const sql_func_t *func, const char *new_buf);
 
 status_t sql_init_group_exec_data(sql_stmt_t *stmt, sql_cursor_t *cursor, group_plan_t *group_p)
@@ -161,37 +160,35 @@ status_t sql_group_mtrl_record_types(sql_cursor_t *cursor, plan_node_t *plan, ch
     return OG_SUCCESS;
 }
 
-static status_t sql_group_get_cntdis_value(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, uint32 group_id,
-    variant_t *value)
+static status_t sql_acquire_group_aggr_value(sql_cursor_t *sql_cursor, mtrl_row_assist_t *mtrl_row_assist,
+                                             expr_node_t *aggr_exprn, uint32 *aggr_id, variant_t *var_value)
 {
-    expr_node_t *cntdis_column = NULL;
-    uint32 cntdis_cid;
-    og_type_t type;
+    og_type_t og_type;
+    const sql_func_t *function = GET_AGGR_FUNC(aggr_exprn);
+    bool32 iseof = sql_cursor->mtrl.cursor.eof;
 
-    if (value->v_bigint == 0 || group_id == OG_INVALID_ID32) {
-        value->is_null = OG_TRUE;
-        return OG_SUCCESS;
-    }
-
-    cntdis_column = (expr_node_t *)cm_galist_get(plan->group.cntdis_columns, group_id);
-    cntdis_cid = plan->group.exprs->count + plan->group.aggrs_args + group_id;
-
-    if (cntdis_column->datatype == OG_TYPE_UNKNOWN) {
-        type = sql_get_pending_type(cursor->mtrl.group.buf, cntdis_cid);
+    if (function->aggr_type == AGGR_TYPE_COUNT && aggr_exprn->dis_info.need_distinct) {
+        og_type = aggr_exprn->argument->root->datatype;
     } else {
-        type = cntdis_column->datatype;
+        og_type = aggr_exprn->datatype;
     }
 
-    mtrl_row_assist_t row_assist;
-    mtrl_row_init(&row_assist, &cursor->mtrl.cursor.row);
-    return mtrl_get_column_value(&row_assist, cursor->mtrl.cursor.eof, cntdis_cid, type, cntdis_column->typmod.is_array,
-        value);
+    if (og_type == OG_TYPE_UNKNOWN) {
+        og_type = sql_get_pending_type(sql_cursor->mtrl.group.buf, *aggr_id);
+    }
+
+    for (uint32 i = 0; i < function->value_cnt; i++) {
+        OG_RETURN_IFERR(mtrl_get_column_value(mtrl_row_assist, iseof, (*aggr_id)++, og_type, OG_FALSE, &var_value[i]));
+    }
+    return OG_SUCCESS;
 }
 
+// Extract input param_vals of aggr func from current materialized row,
+// execute all agg funcs in query, and calculate the intermediate results.
 status_t sql_aggregate_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan)
 {
+    // Input param_vals of aggr func
     variant_t value[FO_VAL_MAX - 1];
-    og_type_t type;
     uint32 aggr_cid = plan->group.exprs->count;
     mtrl_cursor_t *mtrl_cursor = &cursor->mtrl.cursor;
     aggr_assist_t ass;
@@ -201,25 +198,8 @@ status_t sql_aggregate_group(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t
 
     for (uint32 i = 0; i < plan->group.aggrs->count; i++) {
         ass.aggr_node = (expr_node_t *)cm_galist_get(plan->group.aggrs, i);
-        const sql_func_t *func = GET_AGGR_FUNC(ass.aggr_node);
-        if (ass.aggr_node->datatype == OG_TYPE_UNKNOWN) {
-            type = sql_get_pending_type(cursor->mtrl.group.buf, aggr_cid);
-        } else {
-            type = ass.aggr_node->datatype;
-        }
-
-        if (func->aggr_type != AGGR_TYPE_DENSE_RANK && func->aggr_type != AGGR_TYPE_RANK) {
-            for (uint32 j = 0; j < func->value_cnt; j++) {
-                OG_RETURN_IFERR(mtrl_get_column_value(&row_assist, mtrl_cursor->eof, aggr_cid++, type,
-                    ass.aggr_node->typmod.is_array, &value[j]));
-            }
-        }
-
-        if (ass.aggr_node->dis_info.need_distinct && func->aggr_type == AGGR_TYPE_COUNT) {
-            OG_RETURN_IFERR(sql_group_get_cntdis_value(stmt, cursor, plan, ass.aggr_node->dis_info.group_id, value));
-        }
-
-        ass.aggr_type = func->aggr_type;
+        OG_RETURN_IFERR(sql_acquire_group_aggr_value(cursor, &row_assist, ass.aggr_node, &aggr_cid, value));
+        ass.aggr_type = GET_AGGR_FUNC(ass.aggr_node)->aggr_type;
         ass.avg_count = 1;
         OG_RETURN_IFERR(sql_aggr_value(&ass, i, value));
     }
@@ -247,7 +227,7 @@ status_t sql_fetch_having(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *p
         }
 
         if (is_found) {
-            return OG_SUCCESS; // should not invoke OGSQL_RESTORE_STACK
+            return OG_SUCCESS;  // should not invoke OGSQL_RESTORE_STACK
         }
         OGSQL_RESTORE_STACK(stmt);
     }
@@ -287,7 +267,7 @@ static status_t sql_hash_group_mtrl_record_types(group_ctx_t *ogx, expr_node_t *
     }
     if (ogx->concat_typebuf[aggr_id] == NULL) {
         OG_RETURN_IFERR(sql_sort_mtrl_record_types(&cursor->vmc, MTRL_SEGMENT_CONCAT_SORT, aggr_node->sort_items,
-            &ogx->concat_typebuf[aggr_id]));
+                                                   &ogx->concat_typebuf[aggr_id]));
     }
     *buf = ogx->concat_typebuf[aggr_id];
     return OG_SUCCESS;
@@ -331,7 +311,7 @@ static inline status_t sql_group_init_median(group_aggr_assist_t *ga)
 {
     GET_AGGR_VAR_MEDIAN(GA_AGGR_VAR(ga))->median_count = GA_AVG_COUNT(ga);
     OG_RETURN_IFERR(sql_hash_group_mtrl_record_types(ga->group_ctx, GA_AGGR_NODE(ga), ga->index,
-        &GET_AGGR_VAR_MEDIAN(GA_AGGR_VAR(ga))->type_buf));
+                                                     &GET_AGGR_VAR_MEDIAN(GA_AGGR_VAR(ga))->type_buf));
     return sql_group_init_value(ga);
 }
 
@@ -396,39 +376,39 @@ static status_t sql_group_init_array_agg(group_aggr_assist_t *ga)
 
     OG_RETURN_IFERR(
         array_init(&ass, KNL_SESSION(GA_STMT(ga)), GA_STMT(ga)->mtrl.pool, vm_list,
-            &aggr_var->var.v_array.value.vm_lob));
+                   &aggr_var->var.v_array.value.vm_lob));
     OG_RETURN_IFERR(sql_exec_array_element(GA_STMT(ga), &ass, aggr_var->var.v_array.count, ga->value, OG_TRUE,
-        &aggr_var->var.v_array.value.vm_lob));
+                                           &aggr_var->var.v_array.value.vm_lob));
     return array_update_head_datatype(&ass, &aggr_var->var.v_array.value.vm_lob, ga->value->type);
 }
 
 static inline status_t sql_group_init_dense_rank(group_aggr_assist_t *ga)
 {
     aggr_var_t *aggr_var = ga->old_aggr_var;
-    aggr_dense_rank_t *aggr_dense_rank = GET_AGGR_VAR_DENSE_RANK(aggr_var);
-    vm_hash_segment_init(KNL_SESSION(GA_STMT(ga)), GA_STMT(ga)->mtrl.pool, &aggr_dense_rank->hash_segment, PMA_POOL,
-        HASH_PAGES_HOLD, HASH_AREA_SIZE);
-    aggr_dense_rank->table_entry.vmid = OG_INVALID_ID32;
-    aggr_dense_rank->table_entry.offset = OG_INVALID_ID32;
-    OG_RETURN_IFERR(vm_hash_table_alloc(&aggr_dense_rank->table_entry, &aggr_dense_rank->hash_segment, 0));
-    OG_RETURN_IFERR(
-        vm_hash_table_init(&aggr_dense_rank->hash_segment, &aggr_dense_rank->table_entry, NULL, NULL, NULL));
+    aggr_var->var.is_null = OG_TRUE;
+    aggr_var->var.type = OG_TYPE_INTEGER;
+    aggr_var->var.v_int = 1;
     return sql_aggr_invoke(&ga->aa, aggr_var, ga->value);
 }
 
 static inline status_t sql_group_init_rank(group_aggr_assist_t *ga)
 {
-    return sql_aggr_invoke(&ga->aa, GA_AGGR_VAR(ga), ga->value);
+    aggr_var_t *aggr_var = ga->old_aggr_var;
+    aggr_var->var.is_null = OG_TRUE;
+    aggr_var->var.type = OG_TYPE_INTEGER;
+    aggr_var->var.v_int = 1;
+    return sql_aggr_invoke(&ga->aa, aggr_var, ga->value);
 }
 
 static inline status_t sql_group_init_listagg(group_aggr_assist_t *ga)
 {
     OG_RETURN_IFERR(sql_alloc_listagg_page(KNL_SESSION(GA_STMT(ga)), ga->group_ctx));
     OG_RETURN_IFERR(sql_hash_group_mtrl_record_types(ga->group_ctx, GA_AGGR_NODE(ga), ga->index,
-        &GET_AGGR_VAR_GROUPCONCAT(GA_AGGR_VAR(ga))->type_buf));
+                                                     &GET_AGGR_VAR_GROUPCONCAT(GA_AGGR_VAR(ga))->type_buf));
     if (!OG_IS_STRING_TYPE(ga->value->type)) {
         OG_RETURN_IFERR(sql_convert_variant(GA_STMT(ga), ga->value, OG_TYPE_STRING));
     }
+
     if (GA_AGGR_NODE(ga)->sort_items == NULL) {
         return sql_group_init_value(ga);
     }
@@ -492,8 +472,8 @@ static inline status_t sql_group_aggr_min_max(group_aggr_assist_t *ga)
 
     OG_RETURN_IFERR(sql_compare_variant(GA_STMT(ga), &GA_AGGR_VAR(ga)->var, ga->value, &cmp_result));
 
-    if ((GA_AGGR_TYPE(ga) == AGGR_TYPE_MIN && cmp_result > 0) || (GA_AGGR_TYPE(ga) == AGGR_TYPE_MAX && cmp_result < 0))
-        {
+    if ((GA_AGGR_TYPE(ga) == AGGR_TYPE_MIN && cmp_result > 0) ||
+        (GA_AGGR_TYPE(ga) == AGGR_TYPE_MAX && cmp_result < 0)) {
         return sql_hash_group_copy_aggr_value(ga->group_ctx, GA_AGGR_VAR(ga), ga->value);
     }
 
@@ -573,7 +553,7 @@ static inline status_t sql_group_aggr_array_agg(group_aggr_assist_t *ga)
     ARRAY_INIT_ASSIST_INFO(&aa, GA_STMT(ga));
 
     return sql_exec_array_element(GA_STMT(ga), &aa, GA_AGGR_VAR(ga)->var.v_array.count, ga->value, OG_TRUE,
-        &GA_AGGR_VAR(ga)->var.v_array.value.vm_lob);
+                                  &GA_AGGR_VAR(ga)->var.v_array.value.vm_lob);
 }
 
 static inline status_t sql_group_aggr_normal(group_aggr_assist_t *ga)
@@ -590,7 +570,7 @@ static status_t sql_group_calc_avg(aggr_assist_t *ass, aggr_var_t *aggr_var, gro
 
     v_rows.v_bigint = (int64)GET_AGGR_VAR_AVG(aggr_var)->ex_avg_count;
     if (ogx == NULL || ogx->group_by_phase != GROUP_BY_COLLECT) {
-        GET_AGGR_VAR_AVG(aggr_var)->ex_avg_count = 1; // for fetch again
+        GET_AGGR_VAR_AVG(aggr_var)->ex_avg_count = 1;  // for fetch again
     }
     if (v_rows.v_bigint <= 0) {
         OG_THROW_ERROR_EX(ERR_ASSERT_ERROR, "v_rows.v_bigint(%lld) > 0", v_rows.v_bigint);
@@ -664,13 +644,12 @@ status_t sql_group_re_calu_aggr(group_ctx_t *group_ctx, galist_t *aggrs)
     return OG_SUCCESS;
 }
 
-
 static status_t sql_hash_group_convert_rowid_to_str(group_ctx_t *group_ctx, sql_stmt_t *stmt, aggr_var_t *aggr_var,
-    bool32 keep_old_open)
+                                                    bool32 keep_old_open)
 {
     aggr_str_t *aggr_str = GET_AGGR_VAR_STR_EX(aggr_var);
     mtrl_rowid_t rowid = aggr_str->str_result;
-    if (rowid.vmid != OG_INVALID_ID32) { // aggr string value's buffer is alloced from vm_page
+    if (rowid.vmid != OG_INVALID_ID32) {  // aggr string value's buffer is alloced from vm_page
         vm_page_t *curr_page = group_ctx->extra_data.curr_page;
         mtrl_page_t *mtrl_page = NULL;
 
@@ -694,7 +673,7 @@ static status_t sql_hash_group_convert_rowid_to_str(group_ctx_t *group_ctx, sql_
         mtrl_page = (mtrl_page_t *)curr_page->data;
         aggr_var->var.v_text.str = MTRL_GET_ROW(mtrl_page, rowid.slot) + sizeof(row_head_t) + sizeof(uint16);
     } else {
-        if (rowid.slot != OG_INVALID_ID32) { // aggr string value's buffer is reserved near group_key & aggr value
+        if (rowid.slot != OG_INVALID_ID32) {  // aggr string value's buffer is reserved near group_key & aggr value
             aggr_var->var.v_text.str = ((char *)aggr_var) + rowid.slot;
         }
     }
@@ -703,7 +682,7 @@ static status_t sql_hash_group_convert_rowid_to_str(group_ctx_t *group_ctx, sql_
 }
 
 status_t sql_hash_group_convert_rowid_to_str_row(group_ctx_t *ogx, sql_stmt_t *stmt, sql_cursor_t *cursor,
-    galist_t *aggrs)
+                                                 galist_t *aggrs)
 {
     uint32 i;
     uint32 j;
@@ -746,7 +725,7 @@ status_t sql_hash_group_convert_rowid_to_str_row(group_ctx_t *ogx, sql_stmt_t *s
 }
 
 status_t group_hash_q_oper_func(void *callback_ctx, const char *new_buf, uint32 new_size, const char *old_buf,
-    uint32 old_size, bool32 found)
+                                uint32 old_size, bool32 found)
 {
     if (found) {
         group_ctx_t *ogx = (group_ctx_t *)callback_ctx;
@@ -761,7 +740,7 @@ status_t group_hash_q_oper_func(void *callback_ctx, const char *new_buf, uint32 
         cm_decode_row(mtrl_cursor->row.data, mtrl_cursor->row.offsets, mtrl_cursor->row.lens, NULL);
         mtrl_cursor->hash_group.aggrs = mtrl_cursor->row.data + ((row_head_t *)old_buf)->size;
         OG_RETURN_IFERR(sql_hash_group_convert_rowid_to_str_row(ogx, ogx->stmt, (sql_cursor_t *)(ogx->cursor),
-            ogx->group_p->aggrs));
+                                                                ogx->group_p->aggrs));
         // can not get group_ctx from cursor
         // both hash group and hash mtrl will invoke this function
         return sql_group_re_calu_aggr(ogx, ogx->group_p->aggrs);
@@ -771,7 +750,7 @@ status_t group_hash_q_oper_func(void *callback_ctx, const char *new_buf, uint32 
 }
 
 static inline status_t group_pivot_i_oper_func(void *callback_ctx, const char *new_buf, uint32 new_size,
-    const char *old_buf, uint32 old_size, bool32 found)
+                                               const char *old_buf, uint32 old_size, bool32 found)
 {
     group_ctx_t *ogx = (group_ctx_t *)callback_ctx;
 
@@ -782,44 +761,109 @@ static inline status_t group_pivot_i_oper_func(void *callback_ctx, const char *n
     }
 }
 
-static status_t sql_group_calc_aggrs(group_ctx_t *ogx, const char *new_buf, const char *old_buf)
+static status_t sql_calc_aggr_value(group_ctx_t *ctx, group_aggr_assist_t *gp_assist,
+                                    mtrl_row_assist_t *mtrl_row_assist)
 {
-    uint32 aggr_cnt = ogx->group_p->aggrs->count;
-    const sql_func_t *func = NULL;
-    row_head_t *row_head = (row_head_t *)old_buf;
-    aggr_var_t *old_aggr_var = (aggr_var_t *)(old_buf + row_head->size);
-    group_aggr_assist_t gp_assist;
-    group_aggr_assist_t *ga = &gp_assist;
-    SQL_INIT_GROUP_AGGR_ASSIST(ga, AGGR_TYPE_NONE, ogx, NULL, NULL, row_head, 0, ogx->str_aggr_val, 1);
+    sql_cursor_t *cursor = (sql_cursor_t *)ctx->cursor;
+    uint32 aggr_cid = ctx->group_p->exprs->count;
 
-    OGSQL_SAVE_STACK(ogx->stmt);
-    for (uint32 index = 0; index < aggr_cnt; index++) {
-        ga->index = index;
-        GA_AGGR_NODE(ga) = ogx->aggr_node[index];
-        func = GET_AGGR_FUNC(GA_AGGR_NODE(ga));
-        GA_AGGR_TYPE(ga) = func->aggr_type;
-        GA_AGGR_VAR(ga) = &old_aggr_var[index];
-        OG_RETURN_IFERR(sql_group_calc_aggr(ga, func, new_buf));
-        OGSQL_RESTORE_STACK(ogx->stmt);
+    if (ctx->group_p->aggrs_sorts > 0) {
+        OG_RETURN_IFERR(
+            sql_acquire_group_aggr_value(cursor, mtrl_row_assist, GA_AGGR_NODE(gp_assist),
+                                         &aggr_cid, gp_assist->value));
+    } else {
+        const sql_func_t *function = GET_AGGR_FUNC(GA_AGGR_NODE(gp_assist));
+        OG_RETURN_IFERR(
+            sql_exec_expr_node(ctx->stmt, AGGR_VALUE_NODE(function, GA_AGGR_NODE(gp_assist)), gp_assist->value));
+        if (function->aggr_type == AGGR_TYPE_GROUP_CONCAT) {
+            OG_RETURN_IFERR(sql_convert_variant(ctx->stmt, gp_assist->value, OG_TYPE_STRING));
+        } else if (gp_assist->value->type != GA_AGGR_NODE(gp_assist)->datatype &&
+                   GA_AGGR_NODE(gp_assist)->datatype != OG_TYPE_UNKNOWN) {
+            OG_RETURN_IFERR(sql_convert_variant(ctx->stmt, gp_assist->value, GA_AGGR_NODE(gp_assist)->datatype));
+        }
+        sql_keep_stack_variant(ctx->stmt, gp_assist->value);
     }
 
     return OG_SUCCESS;
 }
 
-status_t group_hash_i_oper_func(void *callback_ctx, const char *new_buf, uint32 new_size, const char *old_buf,
-    uint32 old_size, bool32 found)
-{
-    group_ctx_t *ogx = (group_ctx_t *)callback_ctx;
+static inline status_t sql_group_aggr_distinct(group_aggr_assist_t *ga, bool32 *found);
+static status_t sql_group_init_aggr_distinct(group_aggr_assist_t *ga);
 
-    if (found) {
-        return sql_group_calc_aggrs(ogx, new_buf, old_buf);
-    } else {
-        return sql_group_init_aggrs_buf(ogx, old_buf, old_size);
+static void cursor_decode_row(group_ctx_t *group_ctx, sql_cursor_t *sql_cursor, mtrl_row_assist_t *row_assist)
+{
+    if (group_ctx->group_p->aggrs_sorts > 0) {
+        mtrl_cursor_t *cursor = &sql_cursor->mtrl.cursor;
+        cursor->row.data = group_ctx->row_buf;
+        cm_decode_row(cursor->row.data, cursor->row.offsets, cursor->row.lens, NULL);
+        mtrl_row_init(row_assist, &cursor->row);
+        cursor->eof = IS_INVALID_ROW(group_ctx->row_buf);
+        cursor->type = MTRL_CURSOR_HASH_GROUP;
+        sql_cursor->is_group_insert = OG_TRUE;
     }
 }
 
+static status_t process_group_aggr(group_ctx_t *group_ctx, group_aggr_assist_t *gp_assist, aggr_var_t *old_aggr_var,
+                                   mtrl_row_assist_t *row_assist, bool32 is_found)
+{
+    OGSQL_SAVE_STACK(group_ctx->stmt);
+    uint32 aggr_count = group_ctx->group_p->aggrs->count;
+    for (uint32 i = 0; i < aggr_count; i++) {
+        gp_assist->index = i;
+        GA_AGGR_NODE(gp_assist) = group_ctx->aggr_node[i];
+        GA_AGGR_TYPE(gp_assist) = GET_AGGR_FUNC(GA_AGGR_NODE(gp_assist))->aggr_type;
+        GA_AGGR_VAR(gp_assist) = &old_aggr_var[i];
+        OG_RETURN_IFERR(sql_calc_aggr_value(group_ctx, gp_assist, row_assist));
+        GA_AVG_COUNT(gp_assist) = 1;
+        if (is_found) {
+            bool32 exists_row = OG_FALSE;
+            OG_CONTINUE_IFTRUE(gp_assist->value->is_null && GA_AGGR_TYPE(gp_assist) != AGGR_TYPE_ARRAY_AGG);
+            OG_RETURN_IFERR(sql_group_aggr_distinct(gp_assist, &exists_row));
+            OG_CONTINUE_IFTRUE(exists_row);
+            OG_RETURN_IFERR(sql_group_aggr_func(GA_AGGR_TYPE(gp_assist))->invoke(gp_assist));
+        } else {
+            OG_RETURN_IFERR(sql_group_init_aggr_distinct(gp_assist));
+            OG_RETURN_IFERR(sql_group_aggr_func(GA_AGGR_TYPE(gp_assist))->init(gp_assist));
+        }
+        OGSQL_RESTORE_STACK(group_ctx->stmt);
+    }
+    return OG_SUCCESS;
+}
+
+status_t hash_group_i_operation_func(void *callback_context, const char *new_buffer, uint32 new_size,
+                                     const char *old_buffer, uint32 old_size, bool32 is_found)
+{
+    group_ctx_t *group_ctx = (group_ctx_t *)callback_context;
+    sql_cursor_t *sql_cursor = (sql_cursor_t *)group_ctx->cursor;
+    uint32 aggr_count = group_ctx->group_p->aggrs->count;
+    if (aggr_count == 0) {
+        return OG_SUCCESS;
+    }
+
+    aggr_var_t *old_aggr_var = (aggr_var_t *)(old_buffer + ((row_head_t *)old_buffer)->size);
+    mtrl_row_assist_t row_assist;
+    group_aggr_assist_t *gp_assist = NULL;
+    
+    OG_RETURN_IFERR(sql_push(group_ctx->stmt, sizeof(group_aggr_assist_t), (void **)&gp_assist));
+    SQL_INIT_GROUP_AGGR_ASSIST(gp_assist, AGGR_TYPE_NONE, group_ctx, NULL, NULL, (row_head_t *)old_buffer,
+                               0, group_ctx->str_aggr_val, 1);
+
+    // decode row
+    cursor_decode_row(group_ctx, sql_cursor, &row_assist);
+
+    status_t status = process_group_aggr(group_ctx, gp_assist, old_aggr_var, &row_assist, is_found);
+    if (status != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "hash_group_i_operation_func", "process_group_aggr");
+        return status;
+    }
+
+    cm_pop((group_ctx->stmt)->session->stack);
+    sql_cursor->is_group_insert = OG_FALSE;
+    return OG_SUCCESS;
+}
+
 static status_t sql_hash_group_ensure_str_buf(group_ctx_t *ogx, aggr_var_t *old_aggr_var, uint32 ensure_size,
-    bool32 keep_value)
+                                              bool32 keep_value)
 {
     char *buf = NULL;
     row_head_t *head = NULL;
@@ -894,7 +938,7 @@ static status_t sql_init_hash_dist_tables(sql_stmt_t *stmt, sql_cursor_t *cursor
 }
 
 static status_t sql_hash_group_insert(group_ctx_t *ogx, hash_table_entry_t *table, row_head_t *key_row, uint32 aggr_id,
-    variant_t *value, bool32 *found)
+                                      variant_t *value, bool32 *found)
 {
     char *buf = NULL;
     sql_stmt_t *stmt = ogx->stmt;
@@ -955,7 +999,7 @@ static status_t sql_group_init_aggr_distinct(group_aggr_assist_t *ga)
         }
         bool32 found = OG_FALSE;
         OG_RETURN_IFERR(sql_hash_group_insert(ogx, &ogx->hash_dist_tables[group_data->curr_group], ga->row_head,
-            ga->index, &dis_value, &found));
+                                              ga->index, &dis_value, &found));
     }
     return OG_SUCCESS;
 }
@@ -970,7 +1014,7 @@ static status_t sql_group_init_aggr_buf(group_ctx_t *group_ctx, const char *old_
     uint64 avg_count = 1;
     uint32 vmid = OG_INVALID_ID32;
 
-    if (SECUREC_UNLIKELY(group_ctx->group_by_phase == GROUP_BY_COLLECT)) { // for par group
+    if (SECUREC_UNLIKELY(group_ctx->group_by_phase == GROUP_BY_COLLECT)) {  // for par group
         *value = aggr_var[index].var;
         if (func->aggr_type == AGGR_TYPE_AVG || func->aggr_type == AGGR_TYPE_CUME_DIST) {
             avg_count = GET_AGGR_VAR_AVG(&aggr_var[index])->ex_avg_count;
@@ -980,8 +1024,8 @@ static status_t sql_group_init_aggr_buf(group_ctx_t *group_ctx, const char *old_
             vm_page_t *page = NULL;
             vmid = rowid.vmid;
             OG_RETURN_IFERR(vm_open(group_ctx->stmt->mtrl.session, group_ctx->stmt->mtrl.pool, vmid, &page));
-            value->v_text.str =
-                MTRL_GET_ROW((mtrl_page_t *)page->data, rowid.slot) + sizeof(row_head_t) + sizeof(uint16);
+            value->v_text.str = MTRL_GET_ROW((mtrl_page_t *)page->data, rowid.slot) + sizeof(row_head_t) +
+                                sizeof(uint16);
         }
     } else {
         if (sql_exec_expr_node(group_ctx->stmt, AGGR_VALUE_NODE(func, aggr_node), value) != OG_SUCCESS) {
@@ -997,7 +1041,7 @@ static status_t sql_group_init_aggr_buf(group_ctx_t *group_ctx, const char *old_
 
     group_aggr_assist_t ga;
     SQL_INIT_GROUP_AGGR_ASSIST(&ga, func->aggr_type, group_ctx, aggr_node, &aggr_var[index], row_head, index, value,
-        avg_count);
+                               avg_count);
     OG_RETURN_IFERR(sql_group_init_aggr_distinct(&ga));
     OG_RETURN_IFERR(sql_group_aggr_func(func->aggr_type)->init(&ga));
     if (SECUREC_UNLIKELY(vmid != OG_INVALID_ID32)) {
@@ -1006,22 +1050,18 @@ static status_t sql_group_init_aggr_buf(group_ctx_t *group_ctx, const char *old_
     return OG_SUCCESS;
 }
 
-static status_t sql_group_init_aggrs_buf(group_ctx_t *ogx, const char *old_buf, uint32 old_size)
+static void ogsql_group_pivot_init_type_buffer(aggr_var_t *aggr_var)
 {
-    uint32 i;
-    galist_t *aggrs = ogx->group_p->aggrs;
-
-    OGSQL_SAVE_STACK(ogx->stmt);
-    for (i = 0; i < aggrs->count; i++) {
-        if (sql_group_init_aggr_buf(ogx, old_buf, i) != OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(ogx->stmt);
-            return OG_ERROR;
-        }
-
-        OGSQL_RESTORE_STACK(ogx->stmt);
+    sql_aggr_type_t aggr_type = (sql_aggr_type_t)aggr_var->aggr_type;
+    if (aggr_type == AGGR_TYPE_GROUP_CONCAT) {
+        GET_AGGR_VAR_GROUPCONCAT(aggr_var)->type_buf = NULL;
+        return;
     }
-
-    return OG_SUCCESS;
+    if (aggr_type == AGGR_TYPE_MEDIAN) {
+        GET_AGGR_VAR_MEDIAN(aggr_var)->type_buf = NULL;
+        return;
+    }
+    return;
 }
 
 static status_t sql_group_init_aggrs_buf_pivot(group_ctx_t *group_ctx, const char *old_buf, uint32 old_size)
@@ -1033,7 +1073,7 @@ static status_t sql_group_init_aggrs_buf_pivot(group_ctx_t *group_ctx, const cha
     SQL_INIT_AGGR_ASSIST(&aa, group_ctx->stmt, group_ctx->cursor);
 
     OG_RETURN_IFERR(sql_match_pivot_list(group_ctx->stmt, group_ctx->group_p->pivot_assist->for_expr,
-        group_ctx->group_p->pivot_assist->in_expr, &index));
+                                         group_ctx->group_p->pivot_assist->in_expr, &index));
     OGSQL_SAVE_STACK(group_ctx->stmt);
     if (index >= 0) {
         uint32 start_pos = (uint32)index * group_ctx->group_p->pivot_assist->aggr_count;
@@ -1047,15 +1087,20 @@ static status_t sql_group_init_aggrs_buf_pivot(group_ctx_t *group_ctx, const cha
     }
     for (uint32 i = 0; i < group_ctx->group_p->aggrs->count; i++) {
         if (group_ctx->group_p->pivot_assist->aggr_count == 0) {
-            OG_THROW_ERROR(ERR_ZERO_DIVIDE);
-            knl_panic(0);
-        } else {
-            if (i / group_ctx->group_p->pivot_assist->aggr_count != index) {
-                aa.aggr_node = (expr_node_t *)cm_galist_get(group_ctx->group_p->aggrs, i);
-                aa.aggr_type = GET_AGGR_FUNC(aa.aggr_node)->aggr_type;
-                aggr_var[i].var.type = OG_TYPE_UNKNOWN;
-                OG_RETURN_IFERR(sql_aggr_reset(&aa, &aggr_var[i]));
-                OG_RETURN_IFERR(sql_aggr_init_var(&aa, &aggr_var[i]));
+            OG_THROW_ERROR(ERR_ZERO_DIVIDE, "Invalid zero aggr count");
+            OGSQL_RESTORE_STACK(group_ctx->stmt);
+            return OG_ERROR;
+        }
+
+        if (i / group_ctx->group_p->pivot_assist->aggr_count != index) {
+            aa.aggr_node = (expr_node_t *)cm_galist_get(group_ctx->group_p->aggrs, i);
+            aa.aggr_type = GET_AGGR_FUNC(aa.aggr_node)->aggr_type;
+            aggr_var[i].var.type = OG_TYPE_UNKNOWN;
+            ogsql_group_pivot_init_type_buffer(&aggr_var[i]);
+            OG_RETURN_IFERR(sql_aggr_reset(&aa, &aggr_var[i]));
+            OG_RETURN_IFERR(sql_aggr_init_var(&aa, &aggr_var[i]));
+            if (aa.aggr_node->dis_info.need_distinct && group_ctx->hash_dist_tables == NULL) {
+                OG_RETURN_IFERR(sql_init_hash_dist_tables(group_ctx->stmt, group_ctx->cursor, group_ctx));
             }
         }
     }
@@ -1063,52 +1108,8 @@ static status_t sql_group_init_aggrs_buf_pivot(group_ctx_t *group_ctx, const cha
     return OG_SUCCESS;
 }
 
-static inline status_t sql_hash_group_aggr_concat(group_ctx_t *group_ctx, expr_node_t *aggr_node, aggr_var_t
-    *old_aggr_var,
-    variant_t *value)
-{
-    variant_t sep_var;
-    variant_t *p_sep_var = &sep_var;
-    sql_stmt_t *stmt = group_ctx->stmt;
-
-    if (value->is_null) {
-        return OG_SUCCESS;
-    }
-
-    if (old_aggr_var->var.is_null) {
-        return sql_hash_group_save_aggr_str_value(group_ctx, old_aggr_var, value);
-    }
-
-    OG_RETURN_IFERR(sql_group_exec_sepvar(stmt, aggr_node, p_sep_var));
-
-    uint32 len = old_aggr_var->var.v_text.len + value->v_text.len;
-    if (!sep_var.is_null && sep_var.v_text.len > 0) {
-        len += sep_var.v_text.len;
-    }
-
-    OG_RETURN_IFERR(sql_hash_group_ensure_str_buf(group_ctx, old_aggr_var, len, OG_TRUE));
-    OG_RETURN_IFERR(sql_hash_group_convert_rowid_to_str(group_ctx, stmt, old_aggr_var, OG_FALSE));
-
-    char *cur_buffer = old_aggr_var->var.v_text.str + old_aggr_var->var.v_text.len;
-    uint32 remain_len = len - old_aggr_var->var.v_text.len;
-    if (!sep_var.is_null && sep_var.v_text.len > 0) {
-        MEMS_RETURN_IFERR(memcpy_s(cur_buffer, remain_len, sep_var.v_text.str, sep_var.v_text.len));
-
-        cur_buffer += sep_var.v_text.len;
-        remain_len -= sep_var.v_text.len;
-    }
-    /* hit scenario: group_concat '1,1,2,' aggr_node is zero len string */
-    if (value->v_text.len != 0) {
-        MEMS_RETURN_IFERR(memcpy_s(cur_buffer, remain_len, value->v_text.str, value->v_text.len));
-    }
-
-    old_aggr_var->var.v_text.len = len;
-
-    return OG_SUCCESS;
-}
-
 static status_t sql_hash_group_decode_concat_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node, aggr_var_t *aggr_var,
-    text_buf_t *sort_concat)
+                                                      text_buf_t *sort_concat)
 {
     char *buf = NULL;
     uint32 size;
@@ -1134,7 +1135,7 @@ static status_t sql_hash_group_decode_concat_sort_row(sql_stmt_t *stmt, expr_nod
 }
 
 static status_t sql_hash_group_aggr_concat_sort_value(sql_stmt_t *stmt, mtrl_segment_t *segment, expr_node_t *aggr_node,
-    aggr_var_t *aggr_var)
+                                                      aggr_var_t *aggr_var)
 {
     char *buf = NULL;
     char *cur_buf = NULL;
@@ -1230,7 +1231,7 @@ static status_t sql_hash_group_aggr_concat_sort_value(sql_stmt_t *stmt, mtrl_seg
 }
 
 status_t sql_hash_group_calc_listagg(sql_stmt_t *stmt, sql_cursor_t *cursor, expr_node_t *aggr_node,
-    aggr_var_t *aggr_var, text_buf_t *sort_concat)
+                                     aggr_var_t *aggr_var, text_buf_t *sort_concat)
 {
     char *buf = NULL;
     uint32 size;
@@ -1288,7 +1289,7 @@ status_t sql_hash_group_calc_listagg(sql_stmt_t *stmt, sql_cursor_t *cursor, exp
 }
 
 static status_t inline sql_get_value_in_page(sql_stmt_t *stmt, og_type_t datatype, mtrl_page_t *page, uint32 slot,
-    variant_t *value)
+                                             variant_t *value)
 {
     mtrl_row_t row;
     var_column_t v_col;
@@ -1317,7 +1318,7 @@ static status_t inline sql_calc_median_value(sql_stmt_t *stmt, variant_t *var1, 
 }
 
 static status_t sql_hash_group_calc_median_value(sql_stmt_t *stmt, mtrl_segment_t *seg, expr_node_t *aggr_node,
-    aggr_var_t *aggr_var)
+                                                 aggr_var_t *aggr_var)
 {
     uint32 next;
     uint32 slot;
@@ -1392,7 +1393,7 @@ static status_t sql_hash_group_calc_median_value(sql_stmt_t *stmt, mtrl_segment_
 }
 
 status_t sql_hash_group_calc_median(sql_stmt_t *stmt, sql_cursor_t *cursor, expr_node_t *aggr_node,
-    aggr_var_t *aggr_var)
+                                    aggr_var_t *aggr_var)
 {
     mtrl_segment_t *segment = NULL;
     aggr_median_t *aggr_median = GET_AGGR_VAR_MEDIAN(aggr_var);
@@ -1410,7 +1411,7 @@ status_t sql_hash_group_calc_median(sql_stmt_t *stmt, sql_cursor_t *cursor, expr
 }
 
 status_t sql_hash_group_mtrl_insert_row(sql_stmt_t *stmt, uint32 sort_seg, expr_node_t *aggr_node, aggr_var_t *var,
-    char *row)
+                                        char *row)
 {
     status_t status;
     mtrl_rowid_t rid;
@@ -1455,17 +1456,41 @@ status_t sql_hash_group_mtrl_insert_row(sql_stmt_t *stmt, uint32 sort_seg, expr_
     return status;
 }
 
-status_t sql_hash_group_make_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node, row_assist_t *ra, variant_t *value)
+status_t sql_hash_group_make_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node, row_assist_t *ra, char *type_buf,
+                                      variant_t *value, sql_cursor_t *cursor)
 {
-    uint32 i;
+    og_type_t *types = (og_type_t *)(type_buf + PENDING_HEAD_SIZE);
     variant_t sort_var;
+    status_t status;
     sort_item_t *sort_item = NULL;
 
     // make sort rows
-    for (i = 0; i < aggr_node->sort_items->count; ++i) {
+    for (uint32 i = 0; i < aggr_node->sort_items->count; ++i) {
         sort_item = (sort_item_t *)cm_galist_get(aggr_node->sort_items, i);
-        OG_RETURN_IFERR(sql_exec_expr(stmt, sort_item->expr, &sort_var));
-        OG_RETURN_IFERR(sql_put_row_value(stmt, NULL, ra, sort_var.type, &sort_var));
+        expr_node_t *node = sort_item->expr->root;
+        if (node->type != EXPR_NODE_GROUP || cursor == NULL) {
+            status = sql_exec_expr(stmt, sort_item->expr, &sort_var);
+            if (status != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "sql_hash_group_make_sort_row", "sql_exec_expr");
+                return status;
+            }
+        } else {
+            status = sql_get_group_value(stmt, &node->value.v_vm_col, node->datatype, node->typmod.is_array, &sort_var);
+            if (status != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "sql_hash_group_make_sort_row",
+                               "sql_get_group_value");
+                return status;
+            }
+        }
+
+        if (types[i] == OG_TYPE_UNKNOWN) {
+            types[i] = sort_var.type;
+        }
+        status = sql_put_row_value(stmt, NULL, ra, types[i], &sort_var);
+        if (status != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "sql_hash_group_make_sort_row", "sql_put_row_value");
+            return status;
+        }
     }
 
     // add aggr value row
@@ -1473,7 +1498,7 @@ status_t sql_hash_group_make_sort_row(sql_stmt_t *stmt, expr_node_t *aggr_node, 
 }
 
 static status_t sql_group_insert_listagg_value(group_ctx_t *ogx, expr_node_t *aggr_node, aggr_var_t *aggr_var,
-    variant_t *value)
+                                               variant_t *value)
 {
     status_t status = OG_ERROR;
     char *buf = NULL;
@@ -1498,8 +1523,10 @@ static status_t sql_group_insert_listagg_value(group_ctx_t *ogx, expr_node_t *ag
 
     do {
         // make sort rows
-        OG_BREAK_IF_ERROR(sql_hash_group_make_sort_row(ogx->stmt, aggr_node, &ra, value));
         aggr_group_concat_t *aggr_group_concat = GET_AGGR_VAR_GROUPCONCAT(aggr_var);
+        char *type_buf = aggr_group_concat->type_buf;
+        OG_BREAK_IF_ERROR(sql_hash_group_make_sort_row(ogx->stmt, aggr_node, &ra, type_buf, value, cursor));
+        
         if (aggr_var->var.is_null) {
             // insert the first row into extra page
             sort_var.v_text.str = ra.buf;
@@ -1514,7 +1541,7 @@ static status_t sql_group_insert_listagg_value(group_ctx_t *ogx, expr_node_t *ag
                 OG_BREAK_IF_ERROR(sql_hash_group_convert_rowid_to_str(ogx, ogx->stmt, aggr_var, OG_FALSE));
                 // insert the first row into mtrl page
                 OG_BREAK_IF_ERROR(sql_hash_group_mtrl_insert_row(ogx->stmt, cursor->mtrl.sort_seg, aggr_node, aggr_var,
-                    aggr_var->var.v_text.str));
+                                                                 aggr_var->var.v_text.str));
                 aggr_var->var.v_text.len = 0;
             }
             // check row size
@@ -1535,7 +1562,7 @@ static status_t sql_group_insert_listagg_value(group_ctx_t *ogx, expr_node_t *ag
 }
 
 static status_t sql_group_insert_median_first_row(sql_stmt_t *stmt, uint32 sort_seg, expr_node_t *aggr_node,
-    aggr_var_t *aggr_var)
+                                                  aggr_var_t *aggr_var)
 {
     char *buf = NULL;
     row_assist_t ra;
@@ -1559,7 +1586,7 @@ static status_t sql_group_insert_median_first_row(sql_stmt_t *stmt, uint32 sort_
 }
 
 static status_t sql_group_insert_median_value(group_ctx_t *ogx, expr_node_t *aggr_node, aggr_var_t *aggr_var,
-    variant_t *value)
+                                              variant_t *value)
 {
     status_t status = OG_ERROR;
     char *buf = NULL;
@@ -1592,7 +1619,7 @@ static status_t sql_group_insert_median_value(group_ctx_t *ogx, expr_node_t *agg
 
         if (aggr_var->var.is_null) {
             if (!OG_IS_NUMERIC_TYPE(value->type) && !OG_IS_DATETIME_TYPE(value->type)) {
-                OG_THROW_ERROR(ERR_TYPE_MISMATCH, "NUMERIC", get_datatype_name_str(value->type));
+                OG_THROW_ERROR(ERR_TYPE_MISMATCH, "NUMERIC OR DATETIME", get_datatype_name_str(value->type));
                 break;
             }
             var_copy(value, &aggr_var->var);
@@ -1659,8 +1686,8 @@ static inline status_t sql_group_aggr_distinct(group_aggr_assist_t *ga, bool32 *
         var_copy(ga->value, &dis_value);
         group_ctx_t *ogx = ga->group_ctx;
         if (GA_AGGR_TYPE(ga) == AGGR_TYPE_COUNT) {
-            expr_node_t *dis_node =
-                (expr_node_t *)cm_galist_get(ogx->group_p->cntdis_columns, GA_AGGR_NODE(ga)->dis_info.group_id);
+            expr_node_t *dis_node = (expr_node_t *)cm_galist_get(ogx->group_p->cntdis_columns,
+                                                                 GA_AGGR_NODE(ga)->dis_info.group_id);
             OG_RETURN_IFERR(sql_exec_expr_node(ogx->stmt, dis_node, &dis_value));
             sql_keep_stack_variant(ogx->stmt, &dis_value);
         }
@@ -1676,7 +1703,7 @@ static status_t sql_group_calc_aggr(group_aggr_assist_t *ga, const sql_func_t *f
     GA_AVG_COUNT(ga) = 1;
     uint32 vmid = OG_INVALID_ID32;
     mtrl_context_t *ogx = &ga->group_ctx->stmt->mtrl;
-    if (SECUREC_UNLIKELY(ga->group_ctx->group_by_phase == GROUP_BY_COLLECT)) { // for par group
+    if (SECUREC_UNLIKELY(ga->group_ctx->group_by_phase == GROUP_BY_COLLECT)) {  // for par group
         row_head_t *new_head = ((row_head_t *)new_buf);
         aggr_var_t *new_aggr_var = (aggr_var_t *)(new_buf + new_head->size);
         var_copy(&new_aggr_var[ga->index].var, ga->value);
@@ -1688,8 +1715,8 @@ static status_t sql_group_calc_aggr(group_aggr_assist_t *ga, const sql_func_t *f
             vm_page_t *page = NULL;
             vmid = rowid.vmid;
             OG_RETURN_IFERR(vm_open(ogx->session, ogx->pool, vmid, &page));
-            ga->value->v_text.str =
-                MTRL_GET_ROW((mtrl_page_t *)page->data, rowid.slot) + sizeof(row_head_t) + sizeof(uint16);
+            ga->value->v_text.str = MTRL_GET_ROW((mtrl_page_t *)page->data, rowid.slot) + sizeof(row_head_t) +
+                                                  sizeof(uint16);
         }
     } else {
         if (sql_exec_expr_node(GA_STMT(ga), AGGR_VALUE_NODE(func, GA_AGGR_NODE(ga)), ga->value) != OG_SUCCESS) {
@@ -1705,8 +1732,7 @@ static status_t sql_group_calc_aggr(group_aggr_assist_t *ga, const sql_func_t *f
         }
     }
 
-    if (ga->value->is_null && GA_AGGR_TYPE(ga) != AGGR_TYPE_ARRAY_AGG && GA_AGGR_TYPE(ga) != AGGR_TYPE_DENSE_RANK &&
-        GA_AGGR_TYPE(ga) != AGGR_TYPE_RANK) {
+    if (ga->value->is_null && GA_AGGR_TYPE(ga) != AGGR_TYPE_ARRAY_AGG) {
         return OG_SUCCESS;
     }
 
@@ -1731,7 +1757,7 @@ static status_t sql_group_calc_pivot(group_ctx_t *ogx, const char *new_buf, cons
     group_aggr_assist_t *ga = &gp_assist;
 
     OG_RETURN_IFERR(sql_match_pivot_list(ogx->stmt, ogx->group_p->pivot_assist->for_expr,
-        ogx->group_p->pivot_assist->in_expr, &index));
+                                         ogx->group_p->pivot_assist->in_expr, &index));
     if (index < 0) {
         return OG_SUCCESS;
     }
@@ -1766,11 +1792,13 @@ static status_t sql_group_calc_pivot(group_ctx_t *ogx, const char *new_buf, cons
 
 status_t sql_calc_aggr_reserve_size(row_assist_t *ra, group_ctx_t *group_ctx, uint32 *size)
 {
+    group_plan_t *group_p = group_ctx->group_p;
+    sql_cursor_t *cursor = (sql_cursor_t *)group_ctx->cursor;
+
     uint32 i;
     expr_node_t *aggr_node = NULL;
     const sql_func_t *func = NULL;
-    group_plan_t *group_p = group_ctx->group_p;
-
+    
     uint32 reserve_count = group_p->aggrs->count;
     uint32 fix_size = ra->head->size + reserve_count * sizeof(aggr_var_t);
     *size = fix_size;
@@ -1780,16 +1808,19 @@ status_t sql_calc_aggr_reserve_size(row_assist_t *ra, group_ctx_t *group_ctx, ui
         return OG_ERROR;
     }
 
-    if (group_ctx->row_buf_len != 0) {
-        if (SECUREC_UNLIKELY(group_ctx->row_buf_len > (uint32)(ra->max_size - ra->head->size))) {
-            OG_THROW_ERROR(ERR_TOO_MANY_ARRG);
+    if (group_ctx->aggr_buf_len != 0) {
+        *size = ra->head->size + group_ctx->aggr_buf_len;
+        CHECK_AGGR_RESERVE_SIZE(ra, *size);
+
+        int32 code = memcpy_sp(ra->buf + ra->head->size, (uint32)(ra->max_size - ra->head->size),
+                                    group_ctx->aggr_buf, group_ctx->aggr_buf_len);
+        if (code != EOK) {
+            OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "sql_calc_aggr_reserve_size", "memcpy_sp");
             return OG_ERROR;
         }
-        MEMS_RETURN_IFERR(memcpy_sp(ra->buf + ra->head->size, (uint32)(ra->max_size - ra->head->size),
-            group_ctx->row_buf,
-            group_ctx->row_buf_len));
-        *size = ra->head->size + group_ctx->row_buf_len;
-        return OG_SUCCESS;
+
+        OG_RETSUC_IFTRUE(group_ctx->group_p->aggrs_sorts == 0);
+        return sql_make_mtrl_group_row(group_ctx->stmt, cursor->mtrl.group.buf, group_p, group_ctx->row_buf);
     }
 
     aggr_var_t *a_var = (aggr_var_t *)(ra->buf + ra->head->size);
@@ -1881,11 +1912,6 @@ status_t sql_calc_aggr_reserve_size(row_assist_t *ra, group_ctx_t *group_ctx, ui
                 a_var->extra_size = sizeof(aggr_dense_rank_t);
                 *size += sizeof(aggr_dense_rank_t);
                 CHECK_AGGR_RESERVE_SIZE(ra, *size);
-                /* fall-through */
-            case AGGR_TYPE_RANK:
-                a_var->var.is_null = OG_TRUE;
-                a_var->var.type = OG_TYPE_INTEGER;
-                VALUE(uint32, &a_var->var) = 1;
                 break;
             default:
                 a_var->extra_offset = 0;
@@ -1897,13 +1923,18 @@ status_t sql_calc_aggr_reserve_size(row_assist_t *ra, group_ctx_t *group_ctx, ui
         };
     }
 
-    group_ctx->row_buf_len = *size - ra->head->size;
-    MEMS_RETURN_IFERR(memcpy_sp(group_ctx->row_buf, OG_MAX_ROW_SIZE, ra->buf + ra->head->size, group_ctx->row_buf_len));
-    return OG_SUCCESS;
+    group_ctx->aggr_buf_len = *size - ra->head->size;
+    if (group_ctx->aggr_buf_len > 0) {
+        OG_RETURN_IFERR(vmc_alloc(&cursor->vmc, group_ctx->aggr_buf_len, (void **)&group_ctx->aggr_buf));
+        MEMS_RETURN_IFERR(
+            memcpy_sp(group_ctx->aggr_buf, group_ctx->aggr_buf_len, ra->buf + ra->head->size, group_ctx->aggr_buf_len));
+    }
+    OG_RETSUC_IFTRUE(group_ctx->group_p->aggrs_sorts == 0);
+    return sql_make_mtrl_group_row(group_ctx->stmt, cursor->mtrl.group.buf, group_p, group_ctx->row_buf);
 }
 
 status_t sql_make_hash_group_row_new(sql_stmt_t *stmt, group_ctx_t *group_ctx, uint32 group_id, char *buf, uint32 *size,
-    uint32 *key_size, char *pending_buffer)
+                                     uint32 *key_size, char *pending_buffer)
 {
     expr_tree_t *expr = NULL;
     variant_t value;
@@ -1999,8 +2030,7 @@ status_t sql_hash_group_open_cursor(sql_stmt_t *stmt, sql_cursor_t *cursor, grou
     bool32 found = OG_FALSE;
     hash_table_entry_t *hash_table = NULL;
     mtrl_cursor_t *mtrl_cursor = &cursor->mtrl.cursor;
-    hash_segment_t *seg =
-        (ogx->type == HASH_GROUP_PAR_TYPE) ? &ogx->hash_segment_par[group_id] : &ogx->hash_segment;
+    hash_segment_t *seg = (ogx->type == HASH_GROUP_PAR_TYPE) ? &ogx->hash_segment_par[group_id] : &ogx->hash_segment;
 
     if (ogx->empty) {
         cursor->eof = OG_TRUE;
@@ -2028,8 +2058,8 @@ static status_t sql_init_hash_group_tables(sql_stmt_t *stmt, group_ctx_t *group_
     hash_segment_t *hash_seg = &group_ctx->hash_segment;
     hash_table_entry_t *hash_table = NULL;
     hash_table_iter_t *iter = NULL;
-    oper_func_t i_oper_func = (group_ctx->type == HASH_GROUP_PIVOT_TYPE) ? group_pivot_i_oper_func :
-        group_hash_i_oper_func;
+    oper_func_t i_oper_func = (group_ctx->type == HASH_GROUP_PIVOT_TYPE) ? group_pivot_i_oper_func
+                                                                         : hash_group_i_operation_func;
 
     hash_bucket_size = (stmt->context->hash_bucket_size == 0) ? group_ctx->key_card : stmt->context->hash_bucket_size;
 
@@ -2063,11 +2093,13 @@ static void sql_init_group_ctx(group_ctx_t **group_ctx, group_type_t type, group
     (*group_ctx)->key_card = key_card;
     (*group_ctx)->par_hash_tab_count = 0;
     (*group_ctx)->aggr_node = NULL;
+    (*group_ctx)->aggr_buf = NULL;
+    (*group_ctx)->aggr_buf_len = 0;
     (*group_ctx)->hash_segment_par = NULL;
 }
 
 static void sql_set_par_group_param(sql_stmt_t *stmt, sql_cursor_t *cursor, group_ctx_t **group_ctx, vm_page_t *vm_page,
-    uint32 *offset)
+                                    uint32 *offset)
 {
     uint32 par_cons_num = MIN(stmt->context->parallel, OG_MAX_PAR_COMSUMER_SESSIONS);
 
@@ -2083,21 +2115,21 @@ static void sql_set_par_group_param(sql_stmt_t *stmt, sql_cursor_t *cursor, grou
         (*group_ctx)->hash_segment_par[i].pm_pool = NULL;
         (*group_ctx)->empty_par[i] = OG_TRUE;
     }
-    cursor->par_ctx.par_parallel = (*group_ctx)->group_p->multi_prod ? (par_cons_num + par_cons_num) : (par_cons_num +
-        1);
+    cursor->par_ctx.par_parallel = (*group_ctx)->group_p->multi_prod ? (par_cons_num + par_cons_num)
+                                                                     : (par_cons_num + 1);
     cursor->exec_data.group->group_count = (*group_ctx)->par_hash_tab_count;
 }
 
 status_t sql_alloc_hash_group_ctx(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, group_type_t type,
-    uint32 key_card)
+                                  uint32 key_card)
 {
     uint32 vmid;
     vm_page_t *vm_page = NULL;
     group_plan_t *group_p = (plan->type == PLAN_NODE_HASH_MTRL) ? &plan->hash_mtrl.group : &plan->group;
     vmc_t *vmc = (plan->type == PLAN_NODE_HASH_MTRL) ? &stmt->vmc : &cursor->vmc;
     uint32 offset = (plan->type == PLAN_NODE_HASH_MTRL) ? sizeof(hash_mtrl_ctx_t) : sizeof(group_ctx_t);
-    group_ctx_t **group_ctx =
-        (plan->type == PLAN_NODE_HASH_MTRL) ? (group_ctx_t **)(&cursor->hash_mtrl_ctx) : &cursor->group_ctx;
+    group_ctx_t **group_ctx = (plan->type == PLAN_NODE_HASH_MTRL) ? (group_ctx_t **)(&cursor->hash_mtrl_ctx)
+                                                                  : &cursor->group_ctx;
 
     OG_RETURN_IFERR(sql_init_group_exec_data(stmt, cursor, group_p));
     OG_RETURN_IFERR(vm_alloc(KNL_SESSION(stmt), KNL_SESSION(stmt)->temp_pool, &vmid));
@@ -2125,7 +2157,7 @@ status_t sql_alloc_hash_group_ctx(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_n
         sql_set_par_group_param(stmt, cursor, group_ctx, vm_page, &offset);
     } else {
         vm_hash_segment_init(KNL_SESSION(stmt), stmt->mtrl.pool, &(*group_ctx)->hash_segment, PMA_POOL, HASH_PAGES_HOLD,
-            HASH_AREA_SIZE);
+                             HASH_AREA_SIZE);
     }
 
     // buf for hash_tables
@@ -2144,6 +2176,10 @@ status_t sql_alloc_hash_group_ctx(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_n
         return OG_ERROR;
     }
     OG_RETURN_IFERR(sql_cache_aggr_node(vmc, *group_ctx));
+    if (type == SORT_GROUP_TYPE) {
+        return sql_btree_init(&(*group_ctx)->btree_seg, stmt->mtrl.session, stmt->mtrl.pool, cursor,
+                              sql_sort_group_cmp,  sql_sort_group_calc);
+    }
     return sql_init_hash_group_tables(stmt, *group_ctx);
 }
 
@@ -2174,9 +2210,8 @@ void sql_free_group_ctx(sql_stmt_t *stmt, group_ctx_t *group_ctx)
         sql_btree_deinit(&group_ctx->btree_seg);
     } else if (group_ctx->type == HASH_GROUP_PAR_TYPE) {
 	    knl_panic(0);
-    } else {
-        vm_hash_segment_deinit(&group_ctx->hash_segment);
     }
+    vm_hash_segment_deinit(&group_ctx->hash_segment);
 
     if (group_ctx->listagg_page != OG_INVALID_ID32) {
         vm_free(&stmt->session->knl_session, stmt->session->knl_session.temp_pool, group_ctx->listagg_page);

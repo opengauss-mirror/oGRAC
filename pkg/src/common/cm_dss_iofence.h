@@ -14,27 +14,26 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * hint_parser.h
+ * cm_dss_iofence.h
  *
  *
  * IDENTIFICATION
- * src/ogsql/parser/hint_parser.h
+ * src/common/cm_dss_iofence.h
  *
  * -------------------------------------------------------------------------
  */
-#ifndef __HINT_PARSER_H__
-#define __HINT_PARSER_H__
 
-#include "dml_parser.h"
+#ifndef __CM_DSS_IO_FENCE_H__
+#define __CM_DSS_IO_FENCE_H__
+
+#include "cm_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-status_t sql_parse_hint(sql_stmt_t *stmt, hint_info_t **hint_info);
-status_t sql_alloc_hint(sql_stmt_t *stmt, hint_info_t **hint_info);
-bool32 hint_apply_join_method(sql_stmt_t *stmt, sql_join_node_t *join_node, join_cond_t *join_cond, bool32 is_select,
-    join_oper_t *jop);
+status_t cm_dss_iof_register();
+status_t cm_dss_iof_kick_by_inst_id(uint32 inst_id);
 
 #ifdef __cplusplus
 }

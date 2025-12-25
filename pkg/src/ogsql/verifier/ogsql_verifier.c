@@ -168,7 +168,11 @@ bool32 if_unqiue_idx_in_list(sql_query_t *query, sql_table_t *table, galist_t *l
 
 bool32 if_query_distinct_can_eliminate(sql_verifier_t *verif, sql_query_t *query)
 {
-    if (verif->has_union || verif->has_minus || (query->aggrs->count > 0 && query->group_sets->count == 0)) {
+    if ((verif->has_union || verif->has_minus) && !LIMIT_CLAUSE_OCCUR(&query->limit)) {
+        return OG_TRUE;
+    }
+
+    if (query->aggrs->count > 0 && query->group_sets->count == 0) {
         return OG_TRUE;
     }
 
@@ -213,23 +217,14 @@ static status_t pl_add_seq_node(sql_stmt_t *stmt, expr_node_t *seq_node)
 status_t sql_add_sequence_node(sql_stmt_t *stmt, expr_node_t *node)
 {
     sql_seq_t *seq_item = NULL;
-    expr_node_t *seq_node = NULL;
 
-    if (node->type == EXPR_NODE_SEQUENCE) {
-        stmt->context->unsinkable = OG_TRUE;
-        seq_node = node;
-    } else if (node->type == EXPR_NODE_FUNC) {
-        seq_node = node->argument->root;
-    } else {
-        seq_node = NULL;
-    }
-
-    if (seq_node == NULL || seq_node->type != EXPR_NODE_SEQUENCE) {
+    if (node->type != EXPR_NODE_SEQUENCE) {
         return OG_SUCCESS;
     }
+    stmt->context->unsinkable = OG_TRUE;
 
     if (stmt->pl_context != NULL) {
-        return pl_add_seq_node(stmt, seq_node);
+        return pl_add_seq_node(stmt, node);
     }
 
     if (stmt->context->sequences == NULL) {
@@ -238,9 +233,9 @@ status_t sql_add_sequence_node(sql_stmt_t *stmt, expr_node_t *node)
 
     for (uint32 i = 0; i < stmt->context->sequences->count; ++i) {
         seq_item = (sql_seq_t *)cm_galist_get(stmt->context->sequences, i);
-        seq_item->seq.mode = seq_node->value.v_seq.mode;
-        if (var_seq_equal(&seq_node->value.v_seq, &seq_item->seq)) {
-            seq_item->flags |= (uint32)seq_node->value.v_seq.mode;
+        seq_item->seq.mode = node->value.v_seq.mode;
+        if (var_seq_equal(&node->value.v_seq, &seq_item->seq)) {
+            seq_item->flags |= (uint32)node->value.v_seq.mode;
             break;
         }
         seq_item = NULL;
@@ -248,8 +243,8 @@ status_t sql_add_sequence_node(sql_stmt_t *stmt, expr_node_t *node)
 
     if (seq_item == NULL) {
         OG_RETURN_IFERR(cm_galist_new(stmt->context->sequences, sizeof(sql_seq_t), (void **)&seq_item));
-        seq_item->seq = seq_node->value.v_seq;
-        seq_item->flags = seq_node->value.v_seq.mode;
+        seq_item->seq = node->value.v_seq;
+        seq_item->flags = node->value.v_seq.mode;
         seq_item->processed = OG_FALSE;
         seq_item->value = 0;
     }
@@ -779,7 +774,7 @@ status_t sql_verify_table_dml_object(knl_handle_t session, sql_stmt_t *stmt, sou
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t sql_extract_route_columns(sql_verifier_t *verif, sql_route_t *route_ctx)
 {
     knl_column_t *knl_column = NULL;

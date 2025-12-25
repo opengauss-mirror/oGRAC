@@ -26,7 +26,6 @@
 #include "ogsql_update_parser.h"
 #include "srv_instance.h"
 #include "ogsql_select_parser.h"
-#include "hint_parser.h"
 #include "cond_parser.h"
 #include "table_parser.h"
 
@@ -198,14 +197,6 @@ static status_t sql_parse_update(sql_stmt_t *stmt, sql_update_t *update_ctx)
 
         if (word.id == KEY_WORD_RETURN || word.id == KEY_WORD_RETURNING) {
             OG_BREAK_IF_ERROR(sql_parse_return_columns(stmt, &update_ctx->ret_columns, &word));
-        }
-
-        if (word.id == KEY_WORD_LIMIT || word.id == KEY_WORD_OFFSET) {
-            if (update_ctx->query->tables.count > 1) {
-                OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR, "multi update do not support limit");
-                return OG_ERROR;
-            }
-            OG_BREAK_IF_ERROR(sql_parse_limit_offset(stmt, &update_ctx->query->limit, &word));
         }
 
         if (word.type != WORD_TYPE_EOF) {

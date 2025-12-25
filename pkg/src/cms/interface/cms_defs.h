@@ -42,6 +42,7 @@
 #define CMS_LOG_AUDIT                   OG_LOG_AUDIT
 
 #define CMS_BLOCK_SIZE                  512
+#define CMS_DISK_LOCK_BLOCKS_SIZE       (CMS_BLOCK_SIZE * 100)
 #define CMS_RESERVED_BLOCKS_SIZE        (CMS_BLOCK_SIZE * 100)
 #define CMS_NAME_BUFFER_SIZE            OG_NAME_BUFFER_SIZE
 #define CMS_MAX_NAME_LEN                OG_MAX_NAME_LEN
@@ -120,6 +121,7 @@ typedef enum en_cms_dev_type {
     CMS_DEV_TYPE_FILE   = 2, // normal file
     CMS_DEV_TYPE_NFS    = 3,  // nfs
     CMS_DEV_TYPE_DBS    = 4,  // dbstor
+    CMS_DEV_TYPE_LUN    = 5,  // not dependent on SCSI CAW
     CMS_DEV_TYPE_BUTT
 } cms_dev_type_t;
 

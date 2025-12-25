@@ -450,7 +450,7 @@ static status_t clt_read_param_defs(clt_stmt_t *stmt, cs_packet_t *pack, const t
     OG_RETURN_IFERR(clt_extend_param_list(stmt, stmt->param_count));
 
     for (i = 0; i < stmt->param_count; i++) {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         // the params from CN to DN has been preprocessed before remote_prepare.
         if (stmt->batch_bnd_ptr != NULL) {
             if (stmt->conn->call_version >= CS_VERSION_23) {

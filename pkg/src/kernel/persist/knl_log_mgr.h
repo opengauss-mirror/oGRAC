@@ -397,7 +397,7 @@ static logic_log_manager_t g_logic_lmgrs[] = {
     { RD_DROP_SYNONYM, "drop_synonym", rd_drop_synonym, print_drop_synonym, backup_safe_entry },
     { RD_UPDATE_CORE_INDEX, "db_update_core_index", rd_db_update_core_index, print_db_update_core_index,
       backup_safe_entry },
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     { RD_CREATE_DISTRIBUTE_RULE, "create_distribute_rule", rd_create_distribute_rule, print_create_distribute_rule,
       backup_safe_entry },
     { RD_DROP_DISTRIBUTE_RULE, "drop_distribute_rule", rd_drop_distribute_rule, print_drop_distribute_rule,

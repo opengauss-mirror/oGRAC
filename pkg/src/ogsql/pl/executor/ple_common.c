@@ -1497,7 +1497,7 @@ status_t ple_fork_stmt(sql_stmt_t *stmt, sql_stmt_t **sub_stmt)
     (*sub_stmt)->session->switched_schema = stmt->session->switched_schema;
     (*sub_stmt)->sync_scn = stmt->sync_scn;
     (*sub_stmt)->trace_disabled = stmt->trace_disabled;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         (*sub_stmt)->gts_scn = stmt->gts_scn;
     }

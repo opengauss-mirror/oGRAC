@@ -1,0 +1,29 @@
+
+
+SQL> --test order array element error
+SQL> create table t_order_array_1(id number(5,5), c_int int[]);
+
+Succeed.
+
+SQL> select id, c_int from t_order_array_1 union all select id, c_int from t_order_array_1 order by id desc, c_int[2] + c_int[3] desc limit 1; -- error
+
+OG-00601, Sql syntax error: ORDER BY item must be the number of a SELECT-list expression
+SQL> select id, c_int from t_order_array_1 union all select id, c_int from t_order_array_1 order by id desc, c_int[2], c_int[3] desc limit 1; -- error
+
+OG-00601, Sql syntax error: ORDER BY item must be the number of a SELECT-list expression
+SQL> select id, c_int[1] from t_order_array_1 union all select id, c_int[1] from t_order_array_1 order by id desc, c_int[1] desc limit 1; -- success
+
+ID                                       C_INT       
+---------------------------------------- ------------
+
+0 rows fetched.
+
+SQL> select id, c_int[2] from t_order_array_1 union all select id, c_int[2] from t_order_array_1 order by id desc, c_int[3] desc limit 1; -- error
+
+OG-00601, Sql syntax error: ORDER BY item must be the number of a SELECT-list expression
+SQL> drop table if exists t_order_array_1;
+Succeed.
+
+
+
+

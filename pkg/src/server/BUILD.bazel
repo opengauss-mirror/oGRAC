@@ -59,9 +59,9 @@ cc_binary(
     srcs =  [
         "//pkg/src:version/gs_version.c",
         "//pkg/src/common:common_hdrs",
-        "//pkg/src/protocol:libzeprotocol.so",
-        "//pkg/src/driver/gsc:libzeclient.so",
-        "//pkg/src/common:libzecommon.so",
+        "//pkg/src/protocol:libogprotocol.so",
+        "//pkg/src/driver/gsc:libogclient.so",
+        "//pkg/src/common:libogcommon.so",
     ],
     linkstatic = True,
     local_defines = [
@@ -91,13 +91,13 @@ cc_binary(
         "-Wl,-Bdynamic",
     ] + COMMON_LINKOPTS,
     deps = [
-        ":zeserver",
-        "//pkg/src/sql:zesql",
-        "//pkg/src/kernel:zekernel",
-        "//pkg/src/cluster:zecluster",
-        "//pkg/src/rc:zerc",
-        "//pkg/src/mec:zemes",
-        "//pkg/src/cms:zecms",
+        ":ogserver",
+        "//pkg/src/sql:ogracsql",
+        "//pkg/src/kernel:ogkernel",
+        "//pkg/src/cluster:ogcluster",
+        "//pkg/src/rc:ogrc",
+        "//pkg/src/mec:ogmes",
+        "//pkg/src/cms:ogcms",
         "//library:z",
         "//library:zstd",
         "//library:lz4",
@@ -136,7 +136,7 @@ cc_binary(
 )
 
 cc_library (
-    name = "zeserver",
+    name = "ogserver",
     srcs = [
         "//pkg/src/shard:adapter/shd_adapter.c",
         "//pkg/src/shard:adapter/shd_adapter_concat.c",
@@ -339,7 +339,7 @@ cc_library (
     ] + COMMON_COPTS,
     linkopts = COMMON_LINKOPTS,
     deps =  [
-        "//pkg/src/cluster:zecluster",
+        "//pkg/src/cluster:ogcluster",
         "//library:dif_usr",
     ],
 )

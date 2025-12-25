@@ -197,12 +197,13 @@ func_release_symbol()
     if [ "${ENABLE_LLT_ASAN}" == "NO" ]; then
         echo "release symbol"
         mkdir -p ${OGRACDB_SYMBOL}
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libzeclient.so
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libzecommon.so
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libzeprotocol.so
-        mv -f ${OGRACDB_LIB}/libzeclient.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libzeclient.${SO}.${SYMBOLFIX}
-        mv -f ${OGRACDB_LIB}/libzecommon.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libzecommon.${SO}.${SYMBOLFIX}
-        mv -f ${OGRACDB_LIB}/libzeprotocol.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libzeprotocol.${SO}.${SYMBOLFIX}
+        echo ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogclient.so
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogclient.so
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogcommon.so
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogprotocol.so
+        mv -f ${OGRACDB_LIB}/libogclient.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogclient.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libogcommon.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogcommon.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libogprotocol.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogprotocol.${SO}.${SYMBOLFIX}
 
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/${OGRACD_BIN}
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/cms
@@ -279,9 +280,9 @@ func_pkg_run_basic()
     cp ${OGRACDB_INSTALL}/script/cluster/cluster.sh  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cp ${OGRACDB_INSTALL}/sql_process.py  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cp ${OGRACDB_INSTALL}/Common.py  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
-    cp -d ${OGRACDB_LIB}/libzeclient.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
-    cp -d ${OGRACDB_LIB}/libzecommon.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
-    cp -d ${OGRACDB_LIB}/libzeprotocol.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
+    cp -d ${OGRACDB_LIB}/libogclient.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
+    cp -d ${OGRACDB_LIB}/libogcommon.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
+    cp -d ${OGRACDB_LIB}/libogprotocol.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
     cp -d ${OGRACDB_LIB}/libograc.so  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/lib/
 
     cp -d ${PCRE_LIB_PATH}/libpcre2-8.so*  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
@@ -354,7 +355,7 @@ func_test()
 {
     echo "make test"
     func_all Debug
-    strip -N main ${OGRACDB_LIB}/libzeserver.a
+    strip -N main ${OGRACDB_LIB}/libogserver.a
     cd ${OG_TEST_BUILD_DIR}
     make -sj 8
 
@@ -435,9 +436,9 @@ func_pkg_ogsql()
     func_version_ogsql_pkg
 
     cp ${OGRACDB_BIN}/ogsql ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/bin/ogsql
-    cp -d ${OGRACDB_LIB}/libzeclient.so ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/lib/
-    cp -d ${OGRACDB_LIB}/libzecommon.so ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/lib/
-    cp -d ${OGRACDB_LIB}/libzeprotocol.so ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/lib/
+    cp -d ${OGRACDB_LIB}/libogclient.so ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/lib/
+    cp -d ${OGRACDB_LIB}/libogcommon.so ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/lib/
+    cp -d ${OGRACDB_LIB}/libogprotocol.so ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/lib/
 
     cp -d ${Z_LIB_PATH}/libz.so* ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/add-ons/
     cp -d ${PCRE_LIB_PATH}/libpcre2-8.so* ${OGRACDB_BIN}/${OGSQL_PACK_DIR_NAME}/add-ons/

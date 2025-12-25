@@ -41,7 +41,7 @@ extern "C" {
  *  The bigger the value is, the more accuracy it can be improved, but may
  *  weaken the performance.
  */
-#define MAX_NUMERIC_BUFF 65
+#define MAX_NUMERIC_BUFF 40
     
 /* The maximal precision for comparing two decimal. Directly compare
  * two decimals may cause failure as several digits in the last may be

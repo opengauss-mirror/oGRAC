@@ -37,6 +37,7 @@ extern "C" {
 // typedef void *(*cm_oamap_malloc_t)(memory_context_t *mem_ctx, uint32 size);
 typedef uint32 (*cm_oamap_hash_t)(void *key);
 typedef bool32 (*cm_oamap_compare_t)(void *key1, void *key2);
+typedef status_t (*cm_oamap_alloc_t)(void *owner, uint32 size, void **ptr);
 typedef uint32 cm_oamap_iterator_t;
 
 typedef enum tag_cm_oamap_bucket_state {
@@ -60,13 +61,15 @@ typedef struct tag_cm_oamap {
     uint32 deleted;
     // memory_context_t *mem_ctx;
     cm_oamap_compare_t compare_func;
+    void *owner;
+    cm_oamap_alloc_t alloc_func;
 } cm_oamap_t;
 
 // mem_ctx == NULL will use the standard malloc and free
 void cm_oamap_init_mem(cm_oamap_t *map);
 
-int32 cm_oamap_init(cm_oamap_t *map, uint32 init_capacity, cm_oamap_compare_t compare_func/*, memory_context_t
-    *mem_ctx*/);
+int32 cm_oamap_init(cm_oamap_t *map, uint32 init_capacity, cm_oamap_compare_t compare_func, void *owner,
+    cm_oamap_alloc_t alloc_func /*, memory_context_t *mem_ctx */);
 
 void cm_oamap_destroy(cm_oamap_t *map);
 

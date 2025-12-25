@@ -32,6 +32,7 @@
 #include "srv_instance.h"
 #include "ogsql_verifier.h"
 #include "ogsql_transform.h"
+#include "ogsql_cbo_cost.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -319,7 +320,7 @@ static void sql_get_query_rs_type(sql_select_t *select_context, plan_node_t *pla
             select_context->rs_type = RS_TYPE_LIMIT;
             break;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         case PLAN_NODE_REMOTE_SCAN:
 	    knl_panic(0);
             break;
@@ -445,6 +446,7 @@ status_t sql_generate_select_plan(sql_stmt_t *stmt, sql_select_t *select_ctx, pl
         OG_RETURN_IFERR(sql_create_mtrl_plan_rs_columns(stmt, select_ctx->first_query, &select_p->rs_columns));
     }
     clear_select_cbo_extra_attr(select_ctx->root);
+    (void)sql_estimate_node_cost(stmt, select_ctx->plan);
     return OG_SUCCESS;
 }
 
@@ -626,7 +628,7 @@ status_t sql_generate_delete_plan(sql_stmt_t *stmt, sql_delete_t *delete_ctx, pl
     del_plan->next = next_plan;
     del_plan->objects = delete_ctx->objects;
     del_plan->rowid = delete_ctx->query->rs_columns;
-
+    OG_RETURN_IFERR(sql_estimate_node_cost(stmt, delete_ctx->plan));
     SQL_NODE_POP(stmt);
     return OG_SUCCESS;
 }
@@ -652,7 +654,7 @@ status_t sql_generate_update_plan(sql_stmt_t *stmt, sql_update_t *update_ctx, pl
     update_plan->next = next_plan;
     update_plan->objects = update_ctx->objects;
     update_plan->check_self_update = update_ctx->check_self_update;
-
+    OG_RETURN_IFERR(sql_estimate_node_cost(stmt, update_ctx->plan));
     SQL_NODE_POP(stmt);
     return OG_SUCCESS;
 }
@@ -677,6 +679,7 @@ status_t sql_generate_insert_plan(sql_stmt_t *stmt, sql_insert_t *insert_ctx, pl
     insert_p->table = insert_ctx->table;
 
     OG_RETURN_IFERR(sql_create_insert_sub_plan(stmt, insert_ctx, parent));
+    OG_RETURN_IFERR(sql_estimate_node_cost(stmt, insert_ctx->plan));
     return OG_SUCCESS;
 }
 
@@ -686,33 +689,33 @@ static inline void set_merge_into_tables_plan_id(merge_plan_t *merge_p, bool32 i
     merge_p->using_table->plan_id = is_hash ? 1 : 0;
 }
 
-static status_t sql_generate_merge_into_join_plan(sql_stmt_t *stmt, sql_merge_t *merge_ctx, merge_plan_t *merge_p,
-    plan_assist_t *plan_ass)
+static status_t sql_generate_merge_into_join_plan(sql_stmt_t *stmt, merge_plan_t *merge_p, sql_query_t *query)
 {
-    join_oper_t oper = JOIN_OPER_NL;
-    sql_table_t *using_table = (sql_table_t *)sql_array_get(&merge_ctx->query->tables, 1);
-    sql_table_t *merge_into_table = (sql_table_t *)sql_array_get(&merge_ctx->query->tables, 0);
-    set_merge_into_tables_plan_id(merge_p, OG_FALSE);
-    cond_tree_t *merge_cond = merge_ctx->query->cond;
-    // using table can't use plan_ass.cond to check indexable when has insert
-    cond_tree_t *using_cond = merge_ctx->insert_ctx != NULL ? NULL : merge_ctx->query->cond;
-
-    oper = JOIN_OPER_NL;
-    plan_ass->cbo_flags = (oper == JOIN_OPER_NL) ? CBO_CHECK_JOIN_IDX : CBO_CHECK_FILTER_IDX;
-    OG_RETURN_IFERR(sql_check_table_indexable(stmt, plan_ass, merge_into_table, merge_cond));
-    OG_RETURN_IFERR(sql_create_table_scan_plan(stmt, plan_ass, merge_cond, merge_into_table,
-                                               &merge_p->merge_into_scan_p));
-    plan_ass->cbo_flags = CBO_CHECK_FILTER_IDX;
-    OG_RETURN_IFERR(sql_check_table_indexable(stmt, plan_ass, using_table, using_cond));
-    OG_RETURN_IFERR(sql_create_table_scan_plan(stmt, plan_ass, using_cond, using_table, &merge_p->using_table_scan_p));
-
-    {
-        if (merge_into_table->scan_mode == SCAN_MODE_TABLE_FULL) {
-            plan_ass->cond = NULL;
-            OG_RETURN_IFERR(sql_create_part_scan_ranges(stmt, plan_ass, merge_p->merge_into_table,
-                &merge_p->merge_into_scan_p->scan_p.part_array));
+    join_plan_t *query_jplan = &(merge_p->next->query.next->join_p);
+    merge_p->merge_into_scan_p = query_jplan->right;
+    merge_p->using_table_scan_p = query_jplan->left;
+    merge_p->merge_into_table = query_jplan->right->scan_p.table;
+    merge_p->using_table = query_jplan->left->scan_p.table;
+    sql_array_set(&query->tables, 0, query_jplan->right->scan_p.table);
+    sql_array_set(&query->tables, 1, query_jplan->left->scan_p.table);
+    merge_p->merge_table_filter_cond = query->join_assist.join_node->join_cond;
+    if (query->cond == NULL && query->join_assist.join_node->join_cond != NULL) {
+        query->cond = query->join_assist.join_node->join_cond;
+    }
+    if (query_jplan->oper == JOIN_OPER_HASH_LEFT || query_jplan->oper == JOIN_OPER_HASH) {
+        merge_p->merge_keys = query_jplan->right_hash.key_items;
+        merge_p->using_keys = query_jplan->left_hash.key_items;
+        cond_tree_t *filter_cond_tree = NULL;
+        if (merge_p->merge_keys->count > 0) {
+            OG_RETURN_IFERR(sql_split_cond(stmt, &query_jplan->right_hash.rs_tables, &filter_cond_tree, query->cond,
+                OG_FALSE));
+            merge_p->merge_table_filter_cond = (filter_cond_tree->root == NULL) ? NULL : filter_cond_tree;
+            bool32 ignore = OG_TRUE;
+            OG_RETURN_IFERR(sql_rebuild_cond(stmt, &filter_cond_tree, query->cond, &ignore));
+            merge_p->remain_on_cond = ignore ? NULL :  filter_cond_tree;
         }
     }
+
     return OG_SUCCESS;
 }
 
@@ -721,7 +724,6 @@ status_t sql_generate_merge_into_plan(sql_stmt_t *stmt, sql_merge_t *merge_ctx, 
     merge_plan_t *merge_plan = NULL;
     sql_table_t *merge_into_table = (sql_table_t *)sql_array_get(&merge_ctx->query->tables, 0);
     sql_table_t *using_table = (sql_table_t *)sql_array_get(&merge_ctx->query->tables, 1);
-    plan_assist_t plan_ass;
 
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(plan_node_t), (void **)&merge_ctx->plan));
 
@@ -730,11 +732,23 @@ status_t sql_generate_merge_into_plan(sql_stmt_t *stmt, sql_merge_t *merge_ctx, 
     merge_plan->using_table = using_table;
     merge_plan->merge_into_table = merge_into_table;
 
-    sql_init_plan_assist(stmt, &plan_ass, merge_ctx->query, SQL_MERGE_NODE, parent);
+    sql_query_t *query = merge_ctx->query;
+    SWAP(sql_join_node_t *, query->join_assist.join_node->left, query->join_assist.join_node->right);
+    if (merge_ctx->insert_ctx != NULL) {
+        query->join_assist.join_node->type = JOIN_TYPE_LEFT;
+        query->join_assist.join_node->oper = JOIN_OPER_NL_LEFT;
+        query->join_assist.outer_node_count++;
+        query->join_assist.join_node->join_cond = query->cond;
+        query->cond = NULL;
+    } else {
+        query->join_assist.join_node->type = JOIN_TYPE_INNER;
+        query->join_assist.join_node->oper = JOIN_OPER_NL;
+        query->join_assist.outer_node_count = 0;
+    }
 
-    OG_RETURN_IFERR(sql_generate_merge_into_join_plan(stmt, merge_ctx, merge_plan, &plan_ass));
-
-    OG_RETURN_IFERR(sql_create_subselect_plan(stmt, merge_ctx->query, &plan_ass));
+    OG_RETURN_IFERR(sql_create_query_plan(stmt, query, SQL_MERGE_NODE, &merge_plan->next, NULL));
+    OG_RETURN_IFERR(sql_generate_merge_into_join_plan(stmt, merge_plan, query));
+    OG_RETURN_IFERR(sql_estimate_node_cost(stmt, merge_ctx->plan));
 
     return OG_SUCCESS;
 }
@@ -875,7 +889,7 @@ static void sql_get_par_node(plan_node_t *plan, plan_node_t **par_node, plan_nod
         case PLAN_NODE_SCAN:
             *par_node = NULL;
             sql_table_t *table = plan->scan_p.table;
-            if (table->type == NORMAL_TABLE && !SQL_IS_DUAL_TABLE(table)) {
+            if (table->type == NORMAL_TABLE && !og_check_if_dual(table)) {
                 *par_node = plan;
             }
             break;
@@ -929,7 +943,9 @@ static status_t sql_generate_replace_plan(sql_stmt_t *stmt, sql_replace_t *repla
 {
     sql_insert_t *insert_ctx = &(replace_ctx->insert_ctx);
 
-    return sql_generate_insert_plan(stmt, insert_ctx, parent);
+    status_t ret = sql_generate_insert_plan(stmt, insert_ctx, parent);
+    OG_RETURN_IFERR(sql_estimate_node_cost(stmt, insert_ctx->plan));
+    return ret;
 }
 
 status_t sql_create_dml_plan(sql_stmt_t *stmt)

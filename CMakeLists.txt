@@ -238,12 +238,6 @@ if (USE_TSAN)
     message(STATUS "Toolchain: Build with TSAN TEST Configure")
 endif (USE_TSAN)
 
-option(USE_STD_PYZENITH OFF)
-if (USE_STD_PYZENITH)
-    add_compile_definitions(STD_PYZENITH)
-    message(STATUS "Toolchain: Build use -DSTD_PYZENITH")
-endif (USE_STD_PYZENITH)
-
 option(USE_OSS_BUILD OFF)
 if (USE_OSS_BUILD)
     add_compile_definitions(OSS_BUILD)

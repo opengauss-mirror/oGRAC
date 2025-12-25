@@ -44,6 +44,7 @@ function check_process()
 			return 0
 		else
 			echo "res_count= ${res_count}"
+			echo "RES_EAGAIN"
 			return 1
 		fi
 	fi
@@ -74,13 +75,13 @@ function start_ograc() {
 	fi
 	set -e
 	if [ "${loguser}" = "root" ]; then
-		sudo  -E -i -u ${dbuser} sh -c "nohup ogracd -D \${OGDB_DATA}  1>/dev/null 2>&1 &"
+		sudo  -E -i -u ${dbuser} sh -c "nohup ogracd -D \${OGDB_DATA} >> ${OGDB_DATA}/log/ogracstatus.log 2>&1 &"
 		if [ $? -ne 0 ]; then 
 			echo "RES_FAILED"
 			exit 1
 		fi
 	else
-		nohup ogracd -D ${OGDB_DATA}  1>/dev/null 2>&1 &
+		nohup ogracd -D ${OGDB_DATA} >> ${OGDB_DATA}/log/ogracstatus.log 2>&1 &
 		if [ $? -ne 0 ]; then 
 			echo "RES_FAILED"
 			exit 1
@@ -109,8 +110,8 @@ function stop_ograc() {
 			echo "RES_SUCCESS"
 			exit 0
 		else
-			echo "RES_MULTI"
-			exit 1
+			echo "RES_EAGAIN"
+			exit 3
 		fi
 	fi
 }
@@ -136,8 +137,8 @@ function stop_ograc_by_force() {
 			echo "RES_SUCCESS"
 			exit 0
 		else
-			echo "RES_FAILED"
-			exit 1
+			echo "RES_EAGAIN"
+			exit 3
 		fi
 	fi
 }

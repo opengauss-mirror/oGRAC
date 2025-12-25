@@ -167,7 +167,7 @@ static inline status_t sql_match_group_subselect(sql_stmt_t *stmt, sql_query_t *
     sql_select_t *select_ctx = NULL;
     select_ctx = (sql_select_t *)node->value.v_obj.ptr;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_SHARD && stmt->context->has_sharding_tab) {
         if (select_ctx->has_ancestor > 0) {
             OG_SRC_THROW_ERROR(node->loc, ERR_CAPABILITY_NOT_SUPPORT, "subquery contain group by column");
@@ -555,13 +555,13 @@ status_t sql_verify_query_group(sql_verifier_t *verif, sql_query_t *query)
     }
 
     if (query->group_sets->count > 1) {
-#ifdef Z_SHARDING
-        // not support multiple grouping sets in Z_SHARDING
+#ifdef OG_RAC_ING
+        // not support multiple grouping sets in OG_RAC_ING
         if (IS_COORDINATOR) {
             OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "GROUPING SETS/CUBE/ROLLUP");
             return OG_ERROR;
         }
-#endif // Z_SHARDING
+#endif // OG_RAC_ING
     }
     return sql_normalize_group_sets(verif->stmt, query);
 }

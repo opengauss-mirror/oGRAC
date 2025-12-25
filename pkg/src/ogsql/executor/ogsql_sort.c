@@ -514,10 +514,8 @@ status_t sql_sort_mtrl_open_segment(sql_stmt_t *stmt, sql_cursor_t *cursor, mtrl
         return OG_ERROR;
     }
 
-    if (cursor->select_ctx != NULL && cursor->select_ctx->pending_col_count > 0) {
-        OG_RETURN_IFERR(sql_sort_mtrl_record_types(&cursor->vmc, sort_type, cmp_items, &cursor->mtrl.sort.buf));
-        stmt->mtrl.segments[cursor->mtrl.sort.sid]->pending_type_buf = cursor->mtrl.sort.buf;
-    }
+    OG_RETURN_IFERR(sql_sort_mtrl_record_types(&cursor->vmc, sort_type, cmp_items, &cursor->mtrl.sort.buf));
+    stmt->mtrl.segments[cursor->mtrl.sort.sid]->pending_type_buf = cursor->mtrl.sort.buf;
 
     return OG_SUCCESS;
 }

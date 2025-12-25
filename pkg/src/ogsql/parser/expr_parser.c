@@ -884,7 +884,7 @@ static status_t sql_parse_orcl_typmod(lex_t *lex, pmode_t pmod, typmode_t *typmo
         }
 
         case DTYP_IMAGE:
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
             if (IS_COORDINATOR) {
                 OG_SRC_THROW_ERROR(typword->loc, ERR_CAPABILITY_NOT_SUPPORT,
                     "IMAGE Type(includes IMAGE and LONGBLOB and MEDIUMBLOB)");

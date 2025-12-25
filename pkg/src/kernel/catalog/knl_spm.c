@@ -1106,7 +1106,7 @@ status_t dc_spm_fetch_sql(knl_session_t *knl_session, uint32 uid, uint32 sql_id,
 void dc_spm_make_clean(knl_session_t *session)
 {
     dc_spm_t *spm = (dc_spm_t *)session->kernel->dc_ctx.dc_spm;
-    if (spm->item_count == 0) {
+    if (spm == NULL || spm->item_count == 0) {
         return;
     }
     for (uint32 i = 0; i < spm->bucket_count; i++) {

@@ -31,6 +31,7 @@
 #include "srv_replica.h"
 #include "pl_trigger.h"
 #include "pl_memory.h"
+#include "knl_spm.h"
 
 #ifdef DB_DEBUG_VERSION
 #include "knl_syncpoint.h"
@@ -126,6 +127,8 @@ static status_t sql_flush_sqlpool(sql_stmt_t *ogsql_stmt)
         OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "flush sqlpool only work in mount or open state");
         return OG_ERROR;
     }
+    ogx_flush_shared_pool(sql_pool);
+    dc_spm_make_clean(se);
     return OG_SUCCESS;
 }
 

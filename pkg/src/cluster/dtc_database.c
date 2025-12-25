@@ -251,6 +251,7 @@ status_t dtc_read_core_ctrl(knl_session_t *session, ctrl_page_t *page)
                            ctrlfile->block_size) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DB] failed to read %s offset %lld", ctrlfile->name,
                            (int64)CORE_CTRL_PAGE_ID * ctrlfile->block_size);
+            cm_spin_unlock(&db->ctrl_lock);
             return OG_ERROR;
         }
         // read ctrl successfully

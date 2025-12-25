@@ -661,7 +661,9 @@ static status_t cms_keep_recent_files_remote(const char *bak_path, char *prefix)
         return OG_ERROR;
     }
 
-    if (g_cms_param->gcc_type != CMS_DEV_TYPE_DBS) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
+        return OG_SUCCESS;
+    } else if (g_cms_param->gcc_type != CMS_DEV_TYPE_DBS) {
         ret = cms_remove_old_files(dirname, prefix);
     } else {
         ret = cms_remove_old_files_dbs(dirname, prefix);
@@ -719,7 +721,7 @@ static status_t cms_create_gcc_backup_files_remote(date_t bak_time, const char *
         home_path, bak_type, time_str);
     PRTS_RETURN_IFERR(ret);
 
-    if (CMS_DEV_TYPE_SD == g_cms_param->gcc_type) {
+    if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
         return OG_SUCCESS;
     } else {
         if (CMS_DEV_TYPE_DBS != g_cms_param->gcc_type) {

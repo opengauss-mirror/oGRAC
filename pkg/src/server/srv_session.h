@@ -51,7 +51,7 @@
 #include "cms_interface.h"
 #include "cm_hash.h"
 #include "cm_hashmap.h"
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #include "shd_connpool.h"
 #include "shd_comm.h"
 #endif
@@ -239,7 +239,7 @@ typedef struct st_session {
     vmp_t vms; // for cursor sharing memory manage
     object_pool_t sql_cur_pool;
     object_pool_t knl_cur_pool;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     object_pool_t remote_cur_pool;
     timeval_t trx_cmd_begin_tv;
 #endif
@@ -286,12 +286,13 @@ typedef struct st_session {
     bool8 prefix_tenant_flag;
     bool8 is_auth;
     bool8 triggers_disable;
+    bool8 if_in_triggers;
     bool8 nologging_enable;
     bool8 switched_schema;
     bool8 is_reg; // hit sBit field thread insecure
                   // hit concurrency scenario:when session register the epool, set is_reg = true
                   // reactor receive first proto message, and set is_auth = false.
-    bool8 unused[3];
+    bool8 unused[2];
     struct {
         param_status_t outer_join_optimization : 2;
         withas_mode_t withas_subquery : 2;
@@ -559,7 +560,7 @@ static inline void sql_reset_audit_sql(sql_audit_t *audit)
     audit->sql.len = 0;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 // for online update
 bool32 srv_check_user_session_in_ddl(session_t *session);
 bool32 srv_check_all_user_session_lock_done(session_t *session);

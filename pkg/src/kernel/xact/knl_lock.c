@@ -699,7 +699,7 @@ status_t lock_table_in_exclusive_mode(knl_session_t *session, knl_handle_t dc_en
     drc_lock_local_resx(lock_res);
     drc_get_local_latch_statx(lock_res, &latch_stat);
     if (latch_stat->lock_mode != DRC_LOCK_EXCLUSIVE) {
-        locked = dls_request_latch_x(session, &entry->ddl_latch.drid, OG_TRUE, timeout_s, OG_INVALID_ID32);
+        locked = dls_request_latch_x(session, &entry->ddl_latch.drid, OG_TRUE, 1, timeout_s);
         dc_entity_t *entity = (dc_entity_t *)dc_entity;
         cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
         if (locked && entity != NULL && !entity->valid) {
@@ -713,6 +713,8 @@ status_t lock_table_in_exclusive_mode(knl_session_t *session, knl_handle_t dc_en
             drc_unlock_local_resx(lock_res);
             unlock_table_local(session, entry, session->kernel->dtc_attr.inst_id, local_lock_released); /* the table
                 may be dropped and invalidated from other nodes.*/
+            OG_THROW_ERROR(ERR_REMOTE_ERROR, session->kernel->dtc_attr.inst_id,
+                           ERR_REMOTE_ERROR, "Other node process failed.");
             return OG_ERROR;
         }
         latch_stat->lock_mode = DRC_LOCK_EXCLUSIVE;

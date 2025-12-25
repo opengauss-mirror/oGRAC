@@ -452,7 +452,13 @@ status_t cm_dbs_pg_rename(const char *src_name, const char *dst_name)
         OG_LOG_RUN_ERR("Failed to copy ns name");
         return OG_ERROR;
     }
-
+    if (cm_dbs_pg_exist(dst_name)) {
+        OG_LOG_DEBUG_INF("target pagepool %s already exists, try to remove before rmname %s", dst_name, src_name);
+        if (cm_dbs_pg_destroy(dst_name) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("Failed to remove the existing target file %s before renaming %s", dst_name, src_name);
+            return OG_ERROR;
+        }
+    }
     /* call the interface of DBStor to rename the pagepool */
     ret = dbs_global_handle()->rename_pagepool((char *)src_name, (char *)dst_name, &attr);
     if (ret != 0) {

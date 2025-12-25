@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef enum {
     distribute_none = 0,
     distribute_hash = 1,
@@ -144,7 +144,7 @@ typedef enum {
 typedef struct st_knl_node_def {
     uint32 node_id;
     text_t name;
-    text_t type; /* added for z_sharding, need to rename */
+    text_t type; /* added for OG_RAC_ING, need to rename */
     text_t host;
     int32 port;
     uint32 group_id;
@@ -180,7 +180,7 @@ typedef struct st_knl_consis_hash_strategy {
 routing_info_t *knl_get_table_routing_info(knl_handle_t dc_entity);
 status_t knl_get_consis_hash_buckets(knl_handle_t handle, knl_consis_hash_strategy_t *strategy, bool32 *is_found);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 typedef status_t(*knl_parse_distribute_info_t)(void *entity, void *distribute_info);
 typedef status_t(*knl_parse_distribute_bkts_t)(knl_handle_t handle, void *entity, void *distribute_info);
 typedef status_t(*knl_parse_distribute_from_text_t)(knl_handle_t handle, knl_handle_t entity, text_t *dist_text);

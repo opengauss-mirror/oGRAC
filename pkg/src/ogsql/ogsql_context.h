@@ -35,6 +35,7 @@
 #include "ogsql_statistics.h"
 #include "cm_lex.h"
 #include "cm_bilist.h"
+#include "ogsql_bitmap.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -280,7 +281,9 @@ typedef struct st_opt_param_bool {
     uint64 enable_unnest_set_subq : 1;
     uint64 vm_view_enabled : 1;
     uint64 enable_winmagic_rewrite : 1;
-    uint64 reserved : 43;
+    uint64 enable_subquery_rewrite : 1;
+    uint64 enable_semi2inner : 1;
+    uint64 reserved : 41;
 } opt_param_bool_t;
 
 typedef struct st_opt_param_info {
@@ -374,7 +377,7 @@ typedef struct st_sql_context {
     text_t spm_sign; // associated with sys_spm's signature
     text_t sql_sign; // text_addr SQL text MD5 sign
     clause_info_t clause_info;
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     uint32 max_remote_params; // copy of param MAX_CACHE_ROWS
     galist_t *rules;
     void *old_entry;
@@ -427,7 +430,7 @@ typedef enum sql_clause {
 } sql_clause_t;
 
 /* begin: for select statement */
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #define ITEM_NOT_IN_TARGET_LIST (-1)
 #define SQL_HAS_GLOBAL_SEQUENCE(stmt) ((stmt)->context->sequences != NULL && (stmt)->context->sequences->count > 0)
 #define SHD_IS_UNSINKABLE(context) ((context)->unsinkable)
@@ -440,6 +443,7 @@ typedef struct {
 
 typedef struct st_sort_item {
     struct st_expr_tree *expr;
+    og_type_t  cmp_type;        /* custom sorting comparison rules */
 
     union { // use union for compatibility previous usage
         struct {
@@ -496,7 +500,7 @@ typedef struct st_winsort_args {
     bool32 is_rs_node;
 } winsort_args_t;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 #define COPY_SORT_ITEM_SHALLOW(dest, org)     \
     do {                                      \
         (dest)->expr = (org)->expr;           \
@@ -545,6 +549,12 @@ typedef enum en_sql_join_type {
     JOIN_TYPE_LEFT = 0x00080000,
     JOIN_TYPE_RIGHT = 0x00100000,
     JOIN_TYPE_FULL = 0x00200000,
+    JOIN_TYPE_SEMI = 0x00400000,
+    JOIN_TYPE_ANTI = 0x00800000,
+    JOIN_TYPE_ANTI_NA = 0x01000000,
+    JOIN_TYPE_RIGHT_SEMI = 0x02000000,
+    JOIN_TYPE_RIGHT_ANTI = 0x04000000,
+    JOIN_TYPE_RIGHT_ANTI_NA = 0x08000000,
 } sql_join_type_t;
 
 /* Remember to modify `g_join_oper_desc` synchronously when modify the following contents */
@@ -570,6 +580,8 @@ typedef enum en_join_oper {
     JOIN_OPER_HASH_RIGHT_ANTI,
     JOIN_OPER_HASH_RIGHT_ANTI_NA,
     JOIN_OPER_HASH_PAR,
+    JOIN_OPER_NL_SEMI,
+    JOIN_OPER_NL_ANTI,
 } join_oper_t;
 
 typedef enum en_nl_full_opt_type {
@@ -587,6 +599,7 @@ typedef struct st_nl_full_opt_info {
 } nl_full_opt_info_t;
 
 typedef struct st_sql_join_node {
+    bilist_node_t bilist_node;  // for diff path
     join_oper_t oper;
     sql_join_type_t type;
     cbo_cost_t cost;
@@ -597,13 +610,18 @@ typedef struct st_sql_join_node {
     struct st_sql_join_node *right;
     struct st_sql_join_node *prev;
     struct st_sql_join_node *next;
+    join_tbl_bitmap_t outer_rels;
     uint32 plan_id_start;
     struct {
         bool32 hash_left : 1;
         bool32 is_cartesian_join : 1; // join cond cannot choose join edge, like true or a.f1 + b.f1 = c.f1
-        bool32 unused : 30;
+        bool32 is_split_as_group : 1; // split as a group
+        bool32 unused : 29;
     };
     nl_full_opt_info_t nl_full_opt_info;
+    struct st_sql_join_table* parent;
+    int32 left_group_id;
+    int32 right_group_id;
 } sql_join_node_t;
 #define TABLE_OF_JOIN_LEAF(node) ((struct st_sql_table *)((node)->tables.items[0]))
 #define SET_TABLE_OF_JOIN_LEAF(node, table) \
@@ -759,15 +777,16 @@ typedef enum en_rs_column_type {
     RS_COL_COLUMN,
 } rs_column_type_t;
 
-#define RS_SINGLE_COL 0x01
-#define RS_EXIST_ALIAS 0x02
-#define RS_NULLABLE 0x04
-#define RS_HAS_QUOTE 0x08
-#define RS_COND_UNABLE 0x10
-#define RS_HAS_ROWNUM 0x20
-#define RS_HAS_AGGR 0x40
-#define RS_HAS_GROUPING 0x80
-#define RS_IS_SERIAL 0x0100
+#define RS_SINGLE_COL   0x0001
+#define RS_EXIST_ALIAS  0x0002
+#define RS_NULLABLE     0x0004
+#define RS_HAS_QUOTE    0x0008
+#define RS_COND_UNABLE  0x0010
+#define RS_HAS_ROWNUM   0x0020
+#define RS_HAS_AGGR     0x0040
+#define RS_HAS_GROUPING 0x0080
+#define RS_IS_SERIAL    0x0100
+#define RS_IS_REWRITE   0x0200
 
 #define RS_SET_FLAG(_set_, _rs_col_, _flag_)         \
     if ((_set_)) {                                   \
@@ -1139,6 +1158,7 @@ typedef struct st_scan_info {
     uint16 index_match_count; // for index match column count
     uint16 scan_mode;         // for table
     double cost;
+    double startup_cost;
     void *rowid_set;           // Use void* to point plan_rowid_set_t* for avoiding loop include;
     uint16 *idx_col_map;       // for index only scan, decode row by index defined sequence
     struct st_cond_tree *cond; // for multi index scan, create scan range for each index;
@@ -1151,6 +1171,7 @@ typedef struct st_cbo_filter_info {
     int64 card;
     bool32 is_ready;
 } cbo_filter_info_t;
+
 
 // ///////////////////////////////////////////////////////////////////////////////////
 typedef struct st_sql_table {
@@ -1168,7 +1189,6 @@ typedef struct st_sql_table {
     int64 card;
     int64 filter_rows; // save the filter card of table
     cbo_attribute_t cbo_attr;
-
     sql_text_t user;
     sql_text_t name;
     sql_text_t alias;
@@ -1213,7 +1233,12 @@ typedef struct st_sql_table {
     bool32 is_descartes : 1;       // indicates this table is cartesian join with other tables
     bool32 index_cond_pruning : 1; // indicates index cond of this table has been pruned
     bool32 is_jsonb_table : 1;     // indicates index cond of this table has been pruned
-    bool32 reserved : 18;
+    bool32 no_join_push : 1;
+    bool32 enable_nestloop_join : 1;
+    bool32 enable_hash_join : 1;
+    bool32 reserved : 14;
+
+    bilist_t join_info;
 
     tf_scan_flag_t tf_scan_flag; // Parallel Scan Indicator
     scan_part_info_t *scan_part_info;
@@ -1239,6 +1264,7 @@ typedef struct st_sql_table {
             uint16 index_match_count; // for index match column count
             uint16 scan_mode;         // for table
             double cost;
+            double startup_cost;
             void *rowid_set;           // Use void* to point plan_rowid_set_t* for avoiding loop include;
             uint16 *idx_col_map;       // for index only scan, decode row by index defined sequence
             struct st_cond_tree *cond; // for multi index scan, create scan range for each index;
@@ -1306,7 +1332,7 @@ typedef struct st_sql_update {
 } sql_update_t;
 
 /* end: for update statement */
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 
 typedef enum {
     SHD_ROUTE_BY_RULE = 0,
@@ -1405,7 +1431,7 @@ typedef struct st_par_scan_range {
 } par_scan_range_t;
 
 /* end: for merge statement */
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 // for online update
 typedef enum en_shd_lock_unlock_type_t {
     SHD_LOCK_UNLOCK_TYPE_TALBE = 0,

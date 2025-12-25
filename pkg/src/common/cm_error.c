@@ -152,6 +152,7 @@ const char *g_error_desc[] = {
     [ERR_SKLIST_NOT_INIT] = "sklist is not initial",
     [ERR_SKLIST_NOT_EXIST] = "sklist is not existed",
     [ERR_SKLIST_EXIST] = "sklist is already exist",
+    [ERR_ILLEGAL_TIME] = "%s should be from %d to %d",
 
     /* invalid configuration errors */
     [ERR_FILE_SIZE_TOO_LARGE] = "The size of config file %s is too large",
@@ -330,7 +331,7 @@ const char *g_error_desc[] = {
     [ERR_GROUPING_NOT_ALLOWED] = "GROUPING function is not allowed here",
     [ERR_TYPE_MISMATCH] = "Inconsistent datatypes, expected %s - got %s",
     [ERR_INVALID_DATA_TYPE] = "Invalid datatype for %s",
-    [ERR_INVALID_EXPRESSION] = "Invalid expression %s",
+    [ERR_INVALID_EXPRESSION] = "Invalid expression",
     [ERR_EXPR_NOT_IN_GROUP_LIST] = "Expression not in group list",
     [ERR_GROUPING_NO_GROUPBY] = "GROUPING function is supported only with GROUP BY clause",
     [ERR_REQUEST_OUT_OF_SQUENCE] = "No sql %s",
@@ -597,7 +598,7 @@ const char *g_error_desc[] = {
     [ERR_RECORD_BACKUP_FAILED] = "Wait primary record backup set failed",
     [ERR_EXCLUDE_SPACES] = "Can not exclude space %s",
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     // XA error
     [ERR_XA_EXECUTE_FAILED] = "Error for modifying XA transaction state",
     [ERR_XA_WITHOUT_TIMESTAMP] = "Xa need timestamp to synchronize datanode logic clock",
@@ -614,7 +615,9 @@ const char *g_error_desc[] = {
     [ERR_CONN_REACH_LIMIT] =
         "Wrong connect cause %s reaches upper limit: current num is %u, max num is %u, node id is %u",
     [ERR_CONN_TIMESTAMP_FAILED] = "Failed to get timestamp from gts (node id=%u), error number = %05d",
+#endif
     [ERR_REMOTE_ERROR] = "Node id = %u, error number = OG-%05d, error message = '%s'",
+#ifdef OG_RAC_ING
     [ERR_SLOT_RELEASE] = "Some slot not released",
     [ERR_GTS_GETTIME_FAILED] = "Failed to get timestamp, %s",
     [ERR_GTS_INVALID_TIMESTAMP] =

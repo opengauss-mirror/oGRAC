@@ -131,7 +131,7 @@ status_t sql_parse_parallelism(lex_t *lex, word_t *word, uint32 *parallelism, in
 {
     int32 tmp_size;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "create index parallel", "coordinator mode");
         return OG_ERROR;
@@ -160,7 +160,7 @@ status_t sql_parse_parallelism(lex_t *lex, word_t *word, uint32 *parallelism, in
 
 status_t sql_parse_reverse(word_t *word, bool32 *is_reverse)
 {
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     if (IS_COORDINATOR) {
         OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "create reverse index", "coordinator mode");
         return OG_ERROR;

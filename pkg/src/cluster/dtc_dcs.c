@@ -166,7 +166,6 @@ static inline status_t dcs_notify_local_owner4page(knl_session_t *session, cvt_i
                        "req_version=%llu, cur_version=%llu",
                        page_req.page_id.file, page_req.page_id.page, cvt_info->req_rsn, page_req.req_version,
                        DRC_GET_CURR_REFORM_VERSION);
-        // TODO 4node deal with the cvting
         return OG_ERROR;
     }
     SYNC_POINT_GLOBAL_START(OGRAC_DCS_NOTIFY_OWNER_SEND_FAIL, &ret, OG_ERROR);
@@ -373,7 +372,6 @@ static inline status_t dcs_handle_ack_need_load(knl_session_t *session, mes_mess
     if (DRC_STOP_DCS_IO_FOR_REFORMING(ack->req_version, session, page_id)) {
         OG_LOG_RUN_ERR("[DCS][%u-%u]reforming, handle ack need_load failed, req_version=%llu, cur_version=%llu",
                        page_id.file, page_id.page, ack->req_version, DRC_GET_CURR_REFORM_VERSION);
-        // TODO 4node
         return OG_ERROR;
     }
 
@@ -943,7 +941,6 @@ static inline status_t dcs_notify_owner_for_page_r(knl_session_t *session, uint8
 
 static status_t dcs_notify_owner_for_page(knl_session_t *session, uint8 owner_id, msg_page_req_t *page_req)
 {
-    // TODO 4node deal with owner failed
     if ((DCS_SELF_INSTID(session) == owner_id) && (owner_id != page_req->head.src_inst)) {
         // this instance is owner, transfer local page, and requester must be on another instance
         status_t ret = dcs_owner_transfer_page(session, owner_id, page_req);
@@ -981,7 +978,6 @@ static inline void dcs_send_requester_granted(knl_session_t *session, msg_page_r
 
     if (dcs_send_data_retry(&ack) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DCS]failed to send ack");
-        // TODO reform
         return;
     }
 
@@ -1004,7 +1000,6 @@ static inline void dcs_send_requester_already_owner(knl_session_t *session, msg_
     ack.req_mode = page_req->req_mode;
 
     if (dcs_send_data_retry(&ack) != OG_SUCCESS) {
-        // TODO reform
         return;
     }
 

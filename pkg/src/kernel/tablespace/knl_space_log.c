@@ -436,6 +436,26 @@ static void rd_spc_create_datafile_internal(knl_session_t *session, rd_create_da
     if (IS_SWAP_SPACE(space)) {
         space->head->datafile_count++;
         spc_init_swap_space(session, space);
+    } else if (DB_IS_CLUSTER(session)) {
+        if (redo->file_no == 0) {
+            buf_enter_page(session, space->entry, LATCH_MODE_S, ENTER_PAGE_RESIDENT);
+            space->head = (space_head_t *)(session->curr_page + PAGE_HEAD_SIZE);
+            buf_leave_page(session, OG_FALSE);
+        }
+        if (SPACE_CTRL_IS_BITMAPMANAGED(space)) {
+            page_id_t page_id = { 0 };
+            page_id.file = (uint16)df->ctrl->id;
+            if (df->ctrl->id == knl_get_dbwrite_file_id(session)) {
+                page_id.page = DW_MAP_HEAD_PAGE;
+            } else {
+                page_id.page = DF_MAP_HEAD_PAGE;
+            }
+            buf_enter_page(session, page_id, LATCH_MODE_S, ENTER_PAGE_RESIDENT);
+            df_map_head_t *bitmap_head = (df_map_head_t *)CURR_PAGE(session);
+            df->map_head = bitmap_head;
+            df->map_head_entry = page_id;
+            buf_leave_page(session, OG_FALSE);
+        }
     }
 
     if (!session->log_diag) {
@@ -586,7 +606,7 @@ static void rd_spc_remove_datafile_interanal(knl_session_t *session, rd_remove_d
             head->hwms[redo->file_no] = 0;
         }
     } else {
-        if (!OGRAC_REPLAY_NODE(session)) {  // todo: how does head->hwm changes? how does this resident page changes?
+        if (!OGRAC_REPLAY_NODE(session)) {
             head->datafile_count--;
             head->hwms[redo->file_no] = 0;
         }
@@ -606,7 +626,7 @@ static void rd_spc_remove_datafile_interanal(knl_session_t *session, rd_remove_d
             CM_ABORT(0, "[SPACE] ABORT INFO: failed to save whole control file when rd_remove datafile");
         }
 
-        if (!DB_IS_CLUSTER(session)) {  // todo: check this condition
+        if (!DB_IS_CLUSTER(session)) {
             cm_unlatch(&session->kernel->db.ddl_latch.latch, NULL);
         }
     }

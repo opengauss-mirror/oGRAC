@@ -199,7 +199,7 @@ static status_t sr_encode_sequence(sql_stmt_t *stmt, serializer_t *sr, expr_node
     return OG_SUCCESS;
 }
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 static status_t sr_encode_column(sql_stmt_t *stmt, serializer_t *sr, expr_node_t *node, uint32 *offset)
 {
     OG_RETURN_IFERR(sql_stack_safe(stmt));
@@ -371,7 +371,7 @@ status_t sr_encode_expr_node(sql_stmt_t *stmt, serializer_t *sr, expr_node_t *no
             OG_RETURN_IFERR(sr_encode_expr_node(stmt, sr, node->right, &sr_node->right));
             break;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         case EXPR_NODE_COLUMN:
         case EXPR_NODE_DIRECT_COLUMN:
             OG_RETURN_IFERR(sr_encode_column(stmt, sr, node, &sr_node->value));
@@ -709,7 +709,7 @@ status_t sr_decode_expr_node(memory_context_t *mem_ctx, char *sr_data, uint32 of
             OG_RETURN_IFERR(sr_decode_expr_node(mem_ctx, sr_data, sr_node->right, &(*node)->right));
             break;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
         case EXPR_NODE_COLUMN:
         case EXPR_NODE_DIRECT_COLUMN:
             OG_RETURN_IFERR(sr_decode_column(sr_data, sr_node->value, &(*node)->value));

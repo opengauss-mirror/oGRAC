@@ -101,6 +101,8 @@ status_t sql_notify_als_valid_node_checking(void *se, void *item, char *value);
 status_t sql_notify_als_invited_nodes(void *se, void *item, char *value);
 status_t sql_notify_als_excluded_nodes(void *se, void *item, char *value);
 status_t sql_notify_als_merge_sort_batch_size(void *se, void *item, char *value);
+status_t sql_notify_als_enable_nestloop_join(void *se, void *item, char *value);
+status_t sql_notify_als_enable_hash_join(void *se, void *item, char *value);
 status_t sql_notify_als_datefile_convert(void *se, void *item, char *value);
 status_t sql_notify_als_logfile_convert(void *se, void *item, char *value);
 status_t sql_notify_als_row_format(void *se, void *item, char *value);
@@ -170,8 +172,10 @@ status_t sql_notify_als_nl_full_opt(void *se, void *item, char *value);
 status_t sql_notify_als_enable_arch_compressed(void *se, void *item, char *value);
 status_t sql_notify_als_enable_cbo_hint(void *se, void *item, char *value);
 status_t sql_notify_als_strict_case_datatype(void *se, void *item, char *value);
+status_t sql_notify_als_subquery_rewrite(void *se, void *item, char *value);
+status_t sql_notify_als_semi2inner(void *se, void *item, char *value);
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t shd_verify_als_scn_interval_threshold(void *se, void *lex, void *def);
 status_t shd_notify_als_scn_interval_threshold(void *se, void *item, char *value);
 #endif

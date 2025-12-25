@@ -135,6 +135,12 @@
         SQL_EXCL_WIN_SORT | SQL_EXCL_PRIOR | SQL_EXCL_GROUPING | SQL_EXCL_PATH_FUNC | SQL_EXCL_LEVEL |     \
         SQL_EXCL_PARENT | SQL_EXCL_CONNECTBY_ATTR | SQL_EXCL_LOB_COL | SQL_EXCL_ROOT | SQL_EXCL_PL_PROC)
 
+#define SQL_EXCL_TBL_FUNC_EXPR                                                                             \
+    (SQL_EXCL_PL_PROC | SQL_EXCL_LEVEL | SQL_EXCL_ROOT | SQL_EXCL_CONNECTBY_ATTR |                         \
+        SQL_EXCL_GROUPING | SQL_EXCL_PATH_FUNC | SQL_EXCL_PRIOR | SQL_EXCL_WIN_SORT |                      \
+        SQL_EXCL_METH_PROC | SQL_EXCL_ROWNODEID | SQL_EXCL_ROWSCN | SQL_EXCL_ROWID |                       \
+        SQL_EXCL_ROWNUM | SQL_EXCL_DEFAULT | SQL_EXCL_JOIN | SQL_EXCL_STAR | SQL_EXCL_AGGR)
+
 #define SQL_INCL_AGGR 0x00000001
 #define SQL_INCL_ROWNUM 0x00000002
 #define SQL_INCL_JOIN 0x00000004
@@ -203,7 +209,8 @@ struct st_sql_verifier {
         bool32 same_join_tab : 1;
         bool32 has_ddm_col : 1;
         bool32 from_table_define : 1;
-        bool32 unused : 19;
+        bool32 create_table_define : 1;
+        bool32 unused : 18;
     };
 
     uint32 aggr_flags; // insert aggr into query columns list flags
@@ -230,7 +237,7 @@ struct st_sql_verifier {
     knl_column_def_t *column;
     knl_table_def_t *table_def;
 
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
     verifier_func excl_func;
 #endif
     struct st_sql_verifier *parent;
@@ -254,16 +261,11 @@ typedef struct st_hint_conflict_t {
 } sql_hint_conflict_t;
 
 typedef struct st_sql_hint_verifier {
-    sql_stmt_t *stmt;
+    sql_stmt_t *statement;
     sql_array_t *tables; // for select/update/delete
-    sql_table_t *table;  // for insert
+    sql_table_t *table;  // for insert/replace
     sql_hint_conflict_t conflicts;
 } sql_hint_verifier_t;
-
-hint_id_t get_hint_id_4_index(index_hint_key_wid_t access_hint);
-bool32 index_intercepted_in_hints(sql_table_t *table, uint32 index_id);
-bool32 index_specified_in_hint(sql_table_t *t, hint_id_t hint_id, uint32 idx_id);
-bool32 if_index_in_hint(sql_table_t *t, hint_id_t hint_id, uint32 idx_id);
 
 void set_ddm_attr(sql_verifier_t *verif, var_column_t *v_col, knl_column_t *knl_col);
 
@@ -287,7 +289,7 @@ status_t sql_verify_select_context(sql_verifier_t *verif, sql_select_t *select_c
 status_t sql_verify_query_order(sql_verifier_t *verif, sql_query_t *query, galist_t *sort_items, bool32 is_query);
 status_t sql_verify_query_distinct(sql_verifier_t *verif, sql_query_t *query);
 status_t sql_verify_query_pivot(sql_verifier_t *verif, sql_query_t *query);
-status_t sql_match_distinct_expr(sql_stmt_t *stmt, sql_query_t *query, expr_tree_t **expr, bool32 need_clone);
+status_t sql_match_distinct_expr(sql_stmt_t *statement, sql_query_t *sql_qry, expr_tree_t *exprtr);
 status_t sql_verify_group_concat_order(sql_verifier_t *verif, expr_node_t *func, galist_t *sort_items);
 status_t sql_verify_listagg_order(sql_verifier_t *verif, galist_t *sort_items);
 
@@ -309,7 +311,7 @@ status_t sql_gen_winsort_rs_columns(sql_stmt_t *stmt, sql_query_t *query);
 bool32 sql_check_user_exists(knl_handle_t session, text_t *name);
 status_t sql_match_group_expr(sql_stmt_t *stmt, sql_query_t *query, expr_tree_t *expr);
 bool32 sql_check_reserved_is_const(expr_node_t *node);
-#ifdef Z_SHARDING
+#ifdef OG_RAC_ING
 status_t sql_verify_route(sql_stmt_t *stmt, sql_route_t *route_ctx);
 status_t sql_verify_route(sql_stmt_t *stmt, sql_route_t *route_ctx);
 status_t shd_verfity_excl_user_function(sql_verifier_t *verif, sql_stmt_t *stmt);
