@@ -16,7 +16,7 @@ oGRAC主要由五个主要部分组成：
 -   DSS（Distribute Storage Service）：分布式存储服务，给数据库提供统一的底层存储接口，向下管理不同类型的存储形态，支持集中式和分布式存储。
 -   工具：包括备份恢复工具、运维管理工具等。
 
-更详细的oGRAC架构介绍，请参考[架构描述](https://gitcode.com/opengauss/oGRAC_DOC/blob/master/%E4%BA%A7%E5%93%81%E6%8F%8F%E8%BF%B0/%E4%BA%A7%E5%93%81%E6%9E%B6%E6%9E%84/%E6%9E%B6%E6%9E%84%E6%8F%8F%E8%BF%B0.md)。
+更详细的oGRAC架构介绍，请参考[架构描述](https://docs.opengauss.org/zh/docs/latest/ograc/about_ograc/product_architecture/architecture_description.html)。
 
 ## 工程说明
 
