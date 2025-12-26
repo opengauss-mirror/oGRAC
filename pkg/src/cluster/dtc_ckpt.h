@@ -81,7 +81,7 @@ EXTER_ATTACK status_t dcs_master_process_ckpt_request(knl_session_t *session, ed
 EXTER_ATTACK void dcs_process_ckpt_edp_broadcast_to_owner_req(void *sess, mes_message_t *msg);
 EXTER_ATTACK void dcs_process_ckpt_request(void *sess, mes_message_t *msg);
 status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx);
-status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx);
+status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx, ckpt_stat_items_t *stat);
 void dcs_ckpt_trigger(knl_session_t *session, bool32 wait, ckpt_mode_t trigger);
 void dcs_ckpt_trigger4drop(knl_session_t *session, bool32 wait, ckpt_mode_t trigger);
 bool32 dtc_add_to_edp_group(knl_session_t *session, ckpt_edp_group_t *dst, uint32 count, page_id_t page, uint64 lsn);

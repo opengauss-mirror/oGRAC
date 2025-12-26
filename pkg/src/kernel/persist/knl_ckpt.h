@@ -168,6 +168,19 @@ typedef struct st_ckpt_part_stat {
     uint64 cur_flush_pages;
 } ckpt_part_stat_t;
 
+typedef struct st_ckpt_stat_items {
+    uint64 task_count; // FOR TEST: viewing
+    uint64 task_us;
+    uint64 save_contrl_us;
+    uint64 perform_us;
+    uint64 wait_us;
+    uint64 recycle_us;
+    uint64 backup_us;
+    uint64 clean_edp_us;
+    uint64 flush_pages;
+    uint64 clean_edp_count;
+    date_t ckpt_begin_time;
+} ckpt_stat_items_t;
 typedef struct st_ckpt_stat {
     uint64 double_writes;
     uint64 double_write_time;
@@ -178,13 +191,9 @@ typedef struct st_ckpt_stat {
     uint32 ckpt_last_neighbors_len;
     uint32 ckpt_curr_neighbors_times;
     uint32 ckpt_curr_neighbors_len;
-    uint64 task_count[CKPT_MODE_NUM]; // FOR TEST: viewing
-    uint64 task_us[CKPT_MODE_NUM];
-    uint64 flush_pages[CKPT_MODE_NUM];
-    uint64 clean_edp_count[CKPT_MODE_NUM];
+    ckpt_stat_items_t stat_items[CKPT_MODE_NUM];
     uint64 proc_wait_cnt;
     ckpt_part_stat_t part_stat[OG_MAX_DBWR_PROCESS];
-    date_t ckpt_begin_time[CKPT_MODE_NUM];
 } ckpt_stat_t;
 
 typedef struct st_ckpt_clean_ctx {

@@ -243,16 +243,17 @@ static int cm_dl_check_lock(unsigned int lock_id, checkperiod_t checkperiod)
         } else if (lock_info->type == LT_LEASE) {
             LOG("DL:check lease:%d.", checkperiod);
             if (checkperiod == CP_CONFIRM) {
-                LOG("DL:return CM_DL_ERR_OCCUPIED lease:%d.", checkperiod);
+                LOG("DL:return CM_DL_ERR_OCCUPIED lease:%d,lock_id:%u.", checkperiod, lock_id);
                 return CM_DL_ERR_OCCUPIED;
             }
 
             dl_hb_t *hb = &lock_info->hb[inst_id];
-            LOG("DL:lock_time=%lld,peer_lock_time=%lld.", lock_stat->lock_time, hb->peer_lock_time);
+            LOG("DL:lock_time=%lld,peer_lock_time=%lld,lock_id:%u.", lock_stat->lock_time, hb->peer_lock_time, lock_id);
             if (lock_stat->lock_time != hb->peer_lock_time) {
                 hb->peer_lock_time = lock_stat->lock_time;
                 hb->lock_hb_time = cm_now();
-                LOG("DL:update hb:peer_lock_time=%lld,lock_hb_time=%lld", hb->peer_lock_time, hb->lock_hb_time);
+                LOG("DL:update hb:peer_lock_time=%lld,lock_hb_time=%lld,lock_id:%u.",
+                    hb->peer_lock_time, hb->lock_hb_time, lock_id);
             }
 
             LOG("DL:now=%lld,lock_hb_time=%lld,lease_ns=%lld.", 
@@ -261,10 +262,10 @@ static int cm_dl_check_lock(unsigned int lock_id, checkperiod_t checkperiod)
                 lock_info->lease_sec * MICROSECS_PER_SECOND);
 
             if (cm_now() - hb->lock_hb_time > lock_info->lease_sec * MICROSECS_PER_SECOND) {
-                LOG("DL:release lock,inst_id=%llu", inst_id);
+                LOG("DL:release lock,inst_id=%llu,lock_id:%u.", inst_id, lock_id);
                 cm_dl_unlock_inner(lock_id, inst_id);
             } else {
-                LOG("DL:CM_DL_ERR_OCCUPIED");
+                LOG("DL:CM_DL_ERR_OCCUPIED,lock_id:%u.", lock_id);
                 return CM_DL_ERR_OCCUPIED;
             }
         }
@@ -319,6 +320,7 @@ static int cm_dl_lock_inner(unsigned int lock_id)
 
 int cm_dl_lock(unsigned int lock_id, int timeout_ms)
 {
+    LOG("DL:start lock lock_id:%u.", lock_id);
     int ret;
 
     if (lock_id >= CM_MAX_DISKLOCK_COUNT) {
@@ -342,6 +344,7 @@ int cm_dl_lock(unsigned int lock_id, int timeout_ms)
         unsigned long long now = cm_now();
         if (timeout_ms >= 0) {
             if (now - start > (unsigned long long)timeout_ms * MICROSECS_PER_MILLISEC) {
+                LOG("DL:lock timeout lock_id:%u, start:%llu, end:%llu.", lock_id, start, now);
                 return CM_DL_ERR_TIMEOUT;
             }
         }
@@ -350,9 +353,10 @@ int cm_dl_lock(unsigned int lock_id, int timeout_ms)
             ((start + now) & (CM_MAX_INST_COUNT - 1)) * (CM_MAX_RETRY_WAIT_TIME_MS / CM_MAX_INST_COUNT) + 
             lock_info->inst_id;
         cm_sleep(random_time);
-        LOG("DL:wait for retry:%lldms.", random_time);
+        LOG("DL:wait for retry:%lldms,lock_id:%u.", random_time, lock_id);
     } while (OG_TRUE);
         
+    LOG("DL:finish lock lock_id:%u, ret:%d.", lock_id, ret);
     return ret;
 }
 
@@ -378,7 +382,7 @@ static int cm_dl_unlock_inner(unsigned int lock_id, unsigned long long inst_id)
         LOG("DL:write path failed:%d,%s.", errno, strerror(errno));
         return CM_DL_ERR_IO;
     }
-
+    LOG("DL:unlock sucess inst_id:%llu, lock_id:%u.", lock_stat->inst_id, lock_id);
     return OG_SUCCESS;
 }
 
@@ -492,12 +496,11 @@ int cm_dl_get_data(unsigned int lock_id, char* data, uint32 size)
         return OG_SUCCESS;
     }
     cm_dl_t *lock_info = &g_dl_ctx.lock_info[lock_id];
-    unsigned long long lock_time;
+    unsigned long long now = cm_now();
     if (lock_info->type == LT_LEASE) {
-        lock_time = cm_now() - lock_stat->lock_time;
-        if (lock_time > lock_info->lease_sec * MICROSECS_PER_SECOND) {
-            LOG("DL:Get lock data, the lock is timeout, lock_time:%llu, release_sec:%u, lock_id:%u.",
-                lock_time, lock_info->lease_sec, lock_id);
+        if (now > lock_stat->lock_time && now - lock_stat->lock_time > lock_info->lease_sec * MICROSECS_PER_SECOND) {
+            LOG("DL:Get lock data, the lock is timeout, lock_time:%llu, now:%llu, release_sec:%u, lock_id:%u.",
+                lock_stat->lock_time, now, lock_info->lease_sec, lock_id);
             MEMS_RETURN_IFERR(memset_s(data, size, 0, size));
             return OG_SUCCESS;
         }
