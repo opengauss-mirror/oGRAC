@@ -128,6 +128,7 @@ typedef struct range_query_cond {
     bool have_hibound;           /* found a high-bound cond yet? */
     double lobound;              /* ff of a var > something cond */
     double hibound;              /* ff of a var < something cond */
+    double null_hist;
 } range_query_cond;
 
 // //////////////////////////////////////////////////////////////////////////////////////

@@ -438,6 +438,17 @@ static status_t binary_search_histogram(sql_stmt_t *stmt, dc_entity_t *entity, c
     return OG_SUCCESS;
 }
 
+static double is_null_hist_factor(cbo_stats_column_t *column_stats)
+{
+    if (column_stats == NULL) {
+        return CBO_DEFAULT_NULL_FF;
+    }
+    if (column_stats->total_rows == 0) {
+        return 0.0;
+    }
+    return 1.0 * column_stats->num_null / column_stats->total_rows;
+}
+
 static double ineq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
     cbo_stats_column_t *column_stats, expr_node_t *node, bool isgt)
 {
@@ -469,7 +480,7 @@ static double ineq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, u
         hist_frac = 0;
     } else if (low_bound == n_hist) {
         /* 3 */
-        hist_frac = 1.0;
+        hist_frac = 1.0 - is_null_hist_factor(column_stats);
     } else {
         /* 1.b && 2 */
         variant_t left_var;
@@ -497,7 +508,7 @@ static double ineq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, u
         hist_frac /= n_hist;
     }
 
-    hist_frac = isgt ? (1.0 - hist_frac) : hist_frac;
+    hist_frac = isgt ? (1.0 - hist_frac - is_null_hist_factor(column_stats)) : hist_frac;
 
     return hist_frac;
 }
@@ -635,7 +646,7 @@ static double eq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, ui
         int64 last_num = low_bound == 0 ? 0 : column_stats->column_hist[low_bound - 1]->ep_number;
 
         hist_frac = column_stats->column_hist[low_bound]->ep_number - last_num;
-        hist_frac /= (column_stats->total_rows - column_stats->num_null);
+        hist_frac /= column_stats->total_rows;
     } else {
         /* 2.b */
         hist_frac = 0;
@@ -789,7 +800,7 @@ status_t sql_cal_table_or_partition_stats(dc_entity_t *entity, sql_table_t *tabl
 
 
 static status_t add_range_cond(sql_stmt_t *stmt, range_query_cond **rq_cond, cmp_node_t *cmp, bool32 col_on_left,
-    double f2)
+    double f2, cbo_stats_column_t *column_stats)
 {
     range_query_cond *rq_elem = NULL;
     expr_tree_t *column = NULL;
@@ -832,6 +843,7 @@ static status_t add_range_cond(sql_stmt_t *stmt, range_query_cond **rq_cond, cmp
 
     OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(range_query_cond), (void **)&rq_elem));
     rq_elem->column = column;
+    rq_elem->null_hist = is_null_hist_factor(column_stats);
     if (is_lobound) {
         rq_elem->have_lobound = true;
         rq_elem->have_hibound = false;
@@ -875,7 +887,7 @@ status_t compute_hist_factor_by_conds(sql_stmt_t *stmt, dc_entity_t *entity, gal
 
         if (other_node->type == EXPR_NODE_CONST && cmp->type >= CMP_TYPE_GREAT_EQUAL &&
             cmp->type <= CMP_TYPE_LESS_EQUAL) {
-            RET_AND_RESTORE_STACK_IFERR(add_range_cond(stmt, &rq_cond, cmp, col_on_left, f2), stmt);
+            RET_AND_RESTORE_STACK_IFERR(add_range_cond(stmt, &rq_cond, cmp, col_on_left, f2, column_stats), stmt);
         } else {
             f1 = f1 * f2;
         }
@@ -884,8 +896,10 @@ status_t compute_hist_factor_by_conds(sql_stmt_t *stmt, dc_entity_t *entity, gal
     while (rq_cond != NULL) {
         if (rq_cond->have_lobound && rq_cond->have_hibound) {
             double f2;
-            f2 = rq_cond->lobound + rq_cond->hibound - 1.0;
-
+            f2 = rq_cond->lobound + rq_cond->hibound - (1.0 - rq_cond->null_hist);
+            if (f2 < 0) {
+                f2 = 0.0;
+            }
             f1 = f1 * f2;
         } else {
             if (rq_cond->have_lobound) {
