@@ -438,25 +438,71 @@ static status_t binary_search_histogram(sql_stmt_t *stmt, dc_entity_t *entity, c
     return OG_SUCCESS;
 }
 
-static double is_null_hist_factor(cbo_stats_column_t *column_stats)
+#define MAX_STR_COMPARE_LEN 20
+
+static double calc_normalized_string_position(sql_stmt_t *stmt,
+    variant_t *start_var, variant_t *middle_var, variant_t *end_var)
 {
-    if (column_stats == NULL) {
-        return CBO_DEFAULT_NULL_FF;
+    int32 cmp;
+    OG_RETVALUE_IFTRUE(sql_compare_variant(stmt, middle_var, start_var, &cmp) != OG_SUCCESS, CBO_DEFAULT_INEQ_FF);
+    if (cmp <= 0) {
+        return 0;
     }
-    if (column_stats->total_rows == 0) {
-        return 0.0;
+    OG_RETVALUE_IFTRUE(sql_compare_variant(stmt, middle_var, end_var, &cmp) != OG_SUCCESS, CBO_DEFAULT_INEQ_FF);
+    if (cmp >= 0) {
+        return 1;
     }
-    return 1.0 * column_stats->num_null / column_stats->total_rows;
+
+    const text_t *start_text = VALUE_PTR(text_t, start_var);
+    const text_t *middle_text = VALUE_PTR(text_t, middle_var);
+    const text_t *end_text = VALUE_PTR(text_t, end_var);
+
+    int32 max_len = MAX(start_text->len, MAX(middle_text->len, end_text->len));
+    max_len = MIN(max_len, MAX_STR_COMPARE_LEN);
+
+    double start_val = 0;
+    double middle_val = 0;
+    double end_val = 0;
+    uchar base_min = OG_MAX_UINT8;
+    uchar base_max = 0;
+    for (int32 i = 0; i < start_text->len; i++) {
+        base_min = MIN(base_min, start_text->str[i]);
+        base_max = MAX(base_max, start_text->str[i]);
+    }
+    for (int32 i = 0; i < middle_text->len; i++) {
+        base_min = MIN(base_min, middle_text->str[i]);
+        base_max = MAX(base_max, middle_text->str[i]);
+    }
+    for (int32 i = 0; i < end_text->len; i++) {
+        base_min = MIN(base_min, end_text->str[i]);
+        base_max = MAX(base_max, end_text->str[i]);
+    }
+    uint16 base = base_max - base_min + 1;
+    for (int32 i = 0; i < max_len; i++) {
+        uchar start_c = 0;
+        if (i < start_text->len) {
+            start_c = start_text->str[i] - base_min + 1;
+        }
+        start_val = start_val * base + start_c;
+        uchar middle_c = 0;
+        if (i < middle_text->len) {
+            middle_c = middle_text->str[i] - base_min + 1;
+        }
+        middle_val = middle_val * base + middle_c;
+        uchar end_c = 0;
+        if (i < end_text->len) {
+            end_c = end_text->str[i] - base_min + 1;
+        }
+        end_val = end_val * base + end_c;
+    }
+    return (end_val - middle_val) / (end_val - start_val);
 }
 
-static double ineq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
-    cbo_stats_column_t *column_stats, expr_node_t *node, bool isgt)
-{
-    if (node->type != EXPR_NODE_CONST) {
-        return CBO_DEFAULT_INEQ_FF;
-    }
+#undef MAX_STR_COMPARE_LEN
 
-    variant_t *const_val = &node->value;
+static double ineq_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, variant_t *const_val, bool isgt)
+{
     double hist_frac;
     uint32 n_hist = column_stats->hist_count;
     uint32 low_bound = 0;
@@ -508,19 +554,29 @@ static double ineq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, u
         hist_frac /= n_hist;
     }
 
-    hist_frac = isgt ? (1.0 - hist_frac - is_null_hist_factor(column_stats)) : hist_frac;
+    hist_frac = isgt ? (1.0 - hist_frac) : hist_frac;
 
-    return hist_frac;
+    return hist_frac * (1.0 - is_null_hist_factor(column_stats));
 }
 
-static double eq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
-    cbo_stats_column_t *column_stats, expr_node_t *node)
+static double ineq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node, bool isgt)
 {
-    if (node->type != EXPR_NODE_CONST) {
-        return CBO_DEFAULT_EQ_FF;
+    variant_t reserved_value;
+    variant_t *const_val = &node->value;
+    if (NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        (void)sql_get_reserved_value(stmt, node, &reserved_value);
+        const_val = &reserved_value;
+    } else if (node->type != EXPR_NODE_CONST) {
+        return CBO_DEFAULT_INEQ_FF;
     }
 
-    variant_t *const_val = &node->value;
+    return ineq_balanced_hist_factor_var(stmt, entity, col_id, column_stats, const_val, isgt);
+}
+
+static double eq_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, variant_t *const_val)
+{
     double hist_frac;
     uint32 n_hist = column_stats->hist_count;
     uint32 low_bound = 0;
@@ -550,7 +606,7 @@ static double eq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uin
     variant_t right_var;
     knl_cbo_text2variant(entity, col_id, &column_stats->low_value, &low_var);
     if (low_bound == 0) {
-        OG_RETVALUE_IFTRUE(sql_compare_variant(stmt, &low_var, const_val, &cmp) != OG_SUCCESS, CBO_DEFAULT_EQ_FF);
+        OG_RETVALUE_IFTRUE(sql_compare_variant(stmt, const_val, &low_var, &cmp) != OG_SUCCESS, CBO_DEFAULT_EQ_FF);
         if (cmp < 0) {
             /* 1.a */
             hist_frac = 0;
@@ -607,17 +663,27 @@ static double eq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uin
         hist_frac = 1.0 / hist_frac / n_hist;
     }
 
-    return hist_frac;
+    return hist_frac * (1.0 - is_null_hist_factor(column_stats));
 }
 
-static double eq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+static double eq_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
     cbo_stats_column_t *column_stats, expr_node_t *node)
 {
-    if (node->type != EXPR_NODE_CONST) {
+    variant_t reserved_value;
+    variant_t *const_val = &node->value;
+    if (NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        (void)sql_get_reserved_value(stmt, node, &reserved_value);
+        const_val = &reserved_value;
+    } else if (node->type != EXPR_NODE_CONST) {
         return CBO_DEFAULT_EQ_FF;
     }
 
-    variant_t *const_val = &node->value;
+    return eq_balanced_hist_factor_var(stmt, entity, col_id, column_stats, const_val);
+}
+
+static double eq_frequence_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, variant_t *const_val)
+{
     double hist_frac;
     uint32 n_hist = column_stats->hist_count;
     uint32 low_bound = 0;
@@ -655,14 +721,24 @@ static double eq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, ui
     return hist_frac;
 }
 
-static double ineq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
-    cbo_stats_column_t *column_stats, expr_node_t *node, bool isgt)
+static double eq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node)
 {
-    if (node->type != EXPR_NODE_CONST) {
-        return CBO_DEFAULT_INEQ_FF;
+    variant_t reserved_value;
+    variant_t *const_val = &node->value;
+    if (NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        (void)sql_get_reserved_value(stmt, node, &reserved_value);
+        const_val = &reserved_value;
+    } else if (node->type != EXPR_NODE_CONST) {
+        return CBO_DEFAULT_EQ_FF;
     }
 
-    variant_t *const_val = &node->value;
+    return eq_frequence_hist_factor_var(stmt, entity, col_id, column_stats, const_val);
+}
+
+static double ineq_frequence_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, variant_t *const_val, bool isgt)
+{
     double hist_frac;
     uint32 n_hist = column_stats->hist_count;
     uint32 low_bound = 0;
@@ -693,19 +769,517 @@ static double ineq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, 
     return hist_frac;
 }
 
+static double ineq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node, bool isgt)
+{
+    variant_t reserved_value;
+    variant_t *const_val = &node->value;
+    if (NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        (void)sql_get_reserved_value(stmt, node, &reserved_value);
+        const_val = &reserved_value;
+    } else if (node->type != EXPR_NODE_CONST) {
+        return CBO_DEFAULT_INEQ_FF;
+    }
+
+    return ineq_frequence_hist_factor_var(stmt, entity, col_id, column_stats, const_val, isgt);
+}
+
+static double btw_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node)
+{
+    if (node == NULL ||node->owner == NULL || node->owner->next == NULL || node->owner->next->root == NULL) {
+        return 0.0;
+    }
+    
+    double hist_frac_left =
+        ineq_balanced_hist_factor(stmt, entity, col_id, column_stats, node, false);
+    double hist_frac_right =
+        ineq_balanced_hist_factor(stmt, entity, col_id, column_stats, node->owner->next->root, true);
+    double btw_hist = 1 - hist_frac_right - hist_frac_left - is_null_hist_factor(column_stats);
+    if (btw_hist < 0) {
+        btw_hist = 0.0;
+    }
+    return btw_hist;
+}
+
+static double btw_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node)
+{
+    if (node == NULL || node->owner == NULL || node->owner->next == NULL || node->owner->next->root == NULL) {
+        return 0.0;
+    }
+    
+    double hist_frac_left =
+        ineq_frequence_hist_factor(stmt, entity, col_id, column_stats, node, false);
+    double hist_frac_right =
+        ineq_frequence_hist_factor(stmt, entity, col_id, column_stats, node->owner->next->root, true);
+    
+    double btw_hist = 1 - hist_frac_right - hist_frac_left - is_null_hist_factor(column_stats);
+    if (btw_hist < 0) {
+        btw_hist = 0.0;
+    }
+    return btw_hist;
+}
+
+static double in_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node)
+{
+    if (node == NULL || node->owner == NULL) {
+        return 0.0;
+    }
+    double result = 0.0;
+    for (expr_tree_t *pos = node->owner; pos != NULL; pos = pos->next) {
+        if (pos->root != NULL) {
+            result = result + eq_balanced_hist_factor(stmt, entity, col_id, column_stats, pos->root);
+        }
+    }
+    return result;
+}
+
+static double in_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node)
+{
+    if (node == NULL || node->owner == NULL) {
+        return 0.0;
+    }
+    double result = 0.0;
+    for (expr_tree_t *pos = node->owner; pos != NULL; pos = pos->next) {
+        if (pos->root != NULL) {
+            result = result + eq_frequence_hist_factor(stmt, entity, col_id, column_stats, pos->root);
+        }
+    }
+    return result;
+}
+
+static int32 check_like_fixed_prefix(const text_t *text, bool32 has_escape, char escape)
+{
+    int32 pos;
+    for (pos = 0; pos < text->len; pos++) {
+        uchar c = (uchar)text->str[pos];
+        if (c == '%' || c == '_') {
+            break;
+        }
+        if (has_escape && c == escape) {
+            pos++;
+        }
+    }
+    return (pos >= text->len) ? -1 : pos;
+}
+
+#define FIXED_CHAR_SEL 0.20
+#define ANY_CHAR_SEL 0.9
+#define LIKE_SEL_MIN (0.0001)
+#define LIKE_SEL_MAX (1 - (LIKE_SEL_MIN))
+
+static double sql_normalize_likesel(double sel_result)
+{
+    if (sel_result < LIKE_SEL_MIN) {
+        return LIKE_SEL_MIN;
+    }
+    if (sel_result > LIKE_SEL_MAX) {
+        return LIKE_SEL_MAX;
+    }
+    return sel_result;
+}
+
+static double like_selectivity(const text_t *text, bool32 has_escape, char escape)
+{
+    int32 pos;
+    double sel = 1.0;
+    double last_sel = 1.0;
+    for (pos = 0; pos < text->len; pos++) {
+        char c = text->str[pos];
+        if (c == '%') {
+            break;
+        }
+        if (c == '_') {
+            last_sel = ANY_CHAR_SEL;
+            break;
+        }
+        if (has_escape && c == escape) {
+            pos++;
+        }
+    }
+    for (pos = pos + 1; pos < text->len; pos++) {
+        char c = text->str[pos];
+        if (c == '%') {
+            sel = sel * pow(last_sel, FIXED_CHAR_SEL);
+            last_sel = 1.0;
+            continue;
+        }
+        if (c == '_') {
+            last_sel = last_sel * ANY_CHAR_SEL;
+            continue;
+        }
+        if (has_escape && c == escape) {
+            pos++;
+            if (pos == text->len) {
+                break;
+            }
+        }
+        last_sel = last_sel * FIXED_CHAR_SEL;
+    }
+    sel *= last_sel;
+    return sel;
+}
+
+static status_t var_copy_prev(sql_stmt_t* stmt, variant_t *src, variant_t *dst,
+    uint32 prev_len, bool32 has_escape, char escape)
+{
+    char* buff = NULL;
+    char* src_buff = NULL;
+
+    *dst = *src;
+
+    if (OG_IS_VARLEN_TYPE(src->type)) {
+        src_buff = src->v_text.str;
+    } else {
+        return OG_ERROR;
+    }
+    uint32 real_prev_len = prev_len;
+    if (has_escape) {
+        for (uint32 i = 0; i < prev_len; i++) {
+            if (src_buff[i] == escape) {
+                real_prev_len = real_prev_len - 1;
+                i++;
+            }
+        }
+        OG_RETURN_IFERR(sql_stack_alloc(stmt, real_prev_len, (void **)&buff));
+        for (uint32 i = 0, j = 0; i < prev_len; i++) {
+            if (src_buff[i] == escape) {
+                i++;
+                // No need to check because illegal cases will fail to compile
+            }
+            buff[j] = src_buff[i];
+            j++;
+        }
+    } else {
+        OG_RETURN_IFERR(sql_stack_alloc(stmt, prev_len, (void **)&buff));
+        MEMS_RETURN_IFERR(memcpy_s(buff, prev_len, src_buff, prev_len));
+    }
+
+    dst->v_text.str = buff;
+    dst->v_text.len = real_prev_len;
+
+    return OG_SUCCESS;
+}
+
+static bool get_var_str_next(variant_t *var)
+{
+    text_t *text = VALUE_PTR(text_t, var);
+    int32 pos;
+    for (pos = text->len - 1; pos >= 0; pos--) {
+        uchar c = (uchar)text->str[pos];
+        if (c != UINT8_MAX) {
+            break;
+        }
+    }
+    if (pos == -1) {
+        return OG_FALSE;
+    }
+
+    text->str[pos] = text->str[pos] + 1;
+    for (pos = pos + 1; pos < text->len; pos++) {
+        text->str[pos] = 0;
+    }
+
+    return OG_TRUE;
+}
+
+#define MAXNUM_SAMPLES 3000
+#define MAXNUM_SAMPLES_CHAR_LEN 10000000
+#define BAD_SAMPLE (-1)
+#define MINNUM_SAMPLES 5
+
+static double like_frequence_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, variant_t *const_val1, variant_t *const_val2,
+    variant_t *like_val, bool32 has_escape, char escape, double *prev_sel)
+{
+    uint32 left = 0;
+    uint32 right = column_stats->hist_count;
+
+    if (const_val1 != NULL) {
+        OG_RETVALUE_IFTRUE(binary_search_histogram(stmt, entity, column_stats, col_id, const_val1, false, &left) !=
+                           OG_SUCCESS, BAD_SAMPLE);
+    }
+    if (const_val2 != NULL) {
+        OG_RETVALUE_IFTRUE(binary_search_histogram(stmt, entity, column_stats, col_id, const_val2, false, &right) !=
+                           OG_SUCCESS, BAD_SAMPLE);
+    }
+
+    if (left == column_stats->hist_count || right == 0 || column_stats->total_rows == 0) {
+        *prev_sel = 0;
+        return BAD_SAMPLE;
+    }
+
+    int64 prev_range_num = column_stats->column_hist[right - 1]->ep_number -
+        (left == 0 ? 0 : column_stats->column_hist[left - 1]->ep_number);
+    *prev_sel = 1.0 * prev_range_num / column_stats->total_rows;
+
+    uint32 step = (right - left < MAXNUM_SAMPLES) ? 1 : (right - left) / MAXNUM_SAMPLES;
+    uint32 n_samples = 0;
+    uint32 n_hits = 0;
+
+    for (uint32 i = left, sum_char = 0; i < right && sum_char < MAXNUM_SAMPLES_CHAR_LEN; i += step) {
+        bool32 cmp;
+        variant_t hist_var;
+        knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[i]->ep_value, &hist_var);
+        OG_RETVALUE_IFTRUE(var_like(&hist_var, like_val, &cmp, has_escape, escape, GET_CHARSET_ID) != OG_SUCCESS,
+            BAD_SAMPLE);
+
+        int32 var_cnt = column_stats->column_hist[i]->ep_number -
+            (i == 0 ? 0 : column_stats->column_hist[i - 1]->ep_number);
+
+        n_samples += var_cnt;
+        if (cmp) {
+            n_hits += var_cnt;
+        }
+
+        sum_char += hist_var.v_text.len;
+    }
+
+    if (n_samples == 0) {
+        return BAD_SAMPLE;
+    }
+
+    double hist_frac = 1.0 * prev_range_num * n_hits / n_samples;
+    hist_frac /= column_stats->total_rows;
+
+    return hist_frac;
+}
+
+static double like_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, variant_t *const_val1, variant_t *const_val2,
+    variant_t *like_val, bool32 has_escape, char escape, double *prev_sel)
+{
+    uint32 n_hist = column_stats->hist_count;
+    uint32 left = 0;
+    uint32 right = n_hist;
+
+    if (const_val1 != NULL) {
+        OG_RETVALUE_IFTRUE(binary_search_histogram(stmt, entity, column_stats, col_id, const_val1, false, &left) !=
+                           OG_SUCCESS, BAD_SAMPLE);
+    }
+    if (const_val2 != NULL) {
+        OG_RETVALUE_IFTRUE(binary_search_histogram(stmt, entity, column_stats, col_id, const_val2, false, &right) !=
+                           OG_SUCCESS, BAD_SAMPLE);
+    }
+    
+    if (right - left <= MINNUM_SAMPLES) {
+        if (left ==  n_hist) {
+            *prev_sel = 0;
+        } else {
+            *prev_sel = 1.0 * (right - left + 1) / n_hist;
+            *prev_sel *= 1 - is_null_hist_factor(column_stats);
+        }
+        return BAD_SAMPLE;
+    }
+
+    *prev_sel = 0;
+    if (const_val1 != NULL) {
+        variant_t left_var;
+        if (left == 0) {
+            knl_cbo_text2variant(entity, col_id, &column_stats->low_value, &left_var);
+        } else {
+            knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[left - 1]->ep_value, &left_var);
+        }
+        variant_t right_var;
+        knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[left]->ep_value, &right_var);
+        *prev_sel += 1 - calc_normalized_string_position(stmt, &left_var, const_val1, &right_var);
+    }
+
+    if (const_val2 != NULL) {
+        variant_t right_var;
+        if (right == n_hist) {
+            knl_cbo_text2variant(entity, col_id, &column_stats->high_value, &right_var);
+        } else {
+            knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[right]->ep_value, &right_var);
+        }
+        variant_t left_var;
+        knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[right - 1]->ep_value, &left_var);
+        *prev_sel += calc_normalized_string_position(stmt, &left_var, const_val2, &right_var);
+    }
+
+    *prev_sel += right - left;
+    *prev_sel /= n_hist;
+    *prev_sel *= 1 - is_null_hist_factor(column_stats);
+
+    uint32 n_samples = 0;
+    uint32 n_hits = 0;
+
+    for (uint32 i = left, sum_char = 0; i < right && sum_char < MAXNUM_SAMPLES_CHAR_LEN; i++) {
+        bool32 cmp;
+        variant_t hist_var;
+        knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[i]->ep_value, &hist_var);
+        OG_RETVALUE_IFTRUE(var_like(&hist_var, like_val, &cmp, has_escape, escape, GET_CHARSET_ID) != OG_SUCCESS,
+            BAD_SAMPLE);
+
+        n_samples++;
+        if (cmp) {
+            n_hits++;
+        }
+
+        sum_char += hist_var.v_text.len;
+    }
+
+    if (n_samples == 0) {
+        return BAD_SAMPLE;
+    }
+
+    double hist_frac = 1.0 * n_hits / n_samples;
+    hist_frac *= *prev_sel;
+
+    return hist_frac;
+}
+
+static double like_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node, cmp_node_t *cmp)
+{
+    variant_t *const_val = &node->value;
+    if (NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        return eq_frequence_hist_factor(stmt, entity, col_id, column_stats, node);
+    } else if (NODE_IS_RES_NULL(node)) {
+        return 0.0;
+    } else if (node->type != EXPR_NODE_CONST) {
+        return CBO_DEFAULT_LIKE_FF;
+    }
+
+    bool32 has_escape = (cmp->right->next != NULL);
+    char escape = OG_INVALID_INT8;
+    if (has_escape) {
+        variant_t escape_var;
+        OG_RETVALUE_IFTRUE(sql_exec_expr(stmt, cmp->right->next, &escape_var) != OG_SUCCESS,
+            CBO_DEFAULT_LIKE_FF);
+        OG_RETVALUE_IFTRUE(sql_exec_escape_character(cmp->right->next, &escape_var, &escape) != OG_SUCCESS,
+            CBO_DEFAULT_LIKE_FF);
+    }
+
+    const text_t *text = VALUE_PTR(text_t, const_val);
+    int32 prev_len = check_like_fixed_prefix(text, has_escape, escape);
+    if (prev_len == -1) {
+        OGSQL_SAVE_STACK(stmt);
+        variant_t real_const_val;
+        RETVALUE_AND_RESTORE_STACK_IFERR(var_copy_prev(stmt, const_val, &real_const_val, text->len, has_escape, escape),
+            stmt, CBO_DEFAULT_EQ_FF);
+        double eq_sel = eq_frequence_hist_factor_var(stmt, entity, col_id, column_stats, &real_const_val);
+        OGSQL_RESTORE_STACK(stmt);
+        return eq_sel;
+    }
+
+    double prev_sel = 1 - is_null_hist_factor(column_stats);
+    double rest_sel = like_selectivity(text, has_escape, escape);
+    double like_sel;
+    if (prev_len != 0) {
+        OGSQL_SAVE_STACK(stmt);
+
+        variant_t prev_str;
+        variant_t prev_str_next;
+        RETVALUE_AND_RESTORE_STACK_IFERR(var_copy_prev(stmt, const_val, &prev_str, prev_len, has_escape, escape),
+            stmt, sql_normalize_likesel(prev_sel * rest_sel));
+        RETVALUE_AND_RESTORE_STACK_IFERR(var_copy_prev(stmt, const_val, &prev_str_next, prev_len, has_escape, escape),
+            stmt, sql_normalize_likesel(prev_sel * rest_sel));
+        
+        if (get_var_str_next(&prev_str_next)) {
+            like_sel = like_frequence_hist_factor_var(stmt, entity, col_id, column_stats,
+                &prev_str, &prev_str_next, const_val, has_escape, escape, &prev_sel);
+        } else {
+            like_sel = like_frequence_hist_factor_var(stmt, entity, col_id, column_stats,
+                &prev_str, NULL, const_val, has_escape, escape, &prev_sel);
+        }
+        OGSQL_RESTORE_STACK(stmt);
+    } else {
+        like_sel = like_frequence_hist_factor_var(stmt, entity, col_id, column_stats,
+            NULL, NULL, const_val, has_escape, escape, &prev_sel);
+    }
+    
+    if (like_sel < 0) {
+        return sql_normalize_likesel(prev_sel * rest_sel);
+    }
+    return sql_normalize_likesel(like_sel);
+}
+
+static double like_balanced_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
+    cbo_stats_column_t *column_stats, expr_node_t *node, cmp_node_t *cmp)
+{
+    variant_t *const_val = &node->value;
+    if (NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        return eq_balanced_hist_factor(stmt, entity, col_id, column_stats, node);
+    } else if (NODE_IS_RES_NULL(node)) {
+        return 0.0;
+    } else if (node->type != EXPR_NODE_CONST) {
+        return CBO_DEFAULT_LIKE_FF;
+    }
+
+    bool32 has_escape = (cmp->right->next != NULL);
+    char escape = OG_INVALID_INT8;
+    if (has_escape) {
+        variant_t escape_var;
+        OG_RETVALUE_IFTRUE(sql_exec_expr(stmt, cmp->right->next, &escape_var) != OG_SUCCESS,
+            CBO_DEFAULT_LIKE_FF);
+        OG_RETVALUE_IFTRUE(sql_exec_escape_character(cmp->right->next, &escape_var, &escape) != OG_SUCCESS,
+            CBO_DEFAULT_LIKE_FF);
+    }
+
+    const text_t *text = VALUE_PTR(text_t, const_val);
+    int32 prev_len = check_like_fixed_prefix(text, has_escape, escape);
+    if (prev_len == -1) {
+        OGSQL_SAVE_STACK(stmt);
+        variant_t real_const_val;
+        RETVALUE_AND_RESTORE_STACK_IFERR(var_copy_prev(stmt, const_val, &real_const_val, text->len, has_escape, escape),
+            stmt, CBO_DEFAULT_EQ_FF);
+        double eq_sel = eq_balanced_hist_factor_var(stmt, entity, col_id, column_stats, &real_const_val);
+        OGSQL_RESTORE_STACK(stmt);
+        return eq_sel;
+    }
+
+    double prev_sel = 1 - is_null_hist_factor(column_stats);
+    double rest_sel = like_selectivity(text, has_escape, escape);
+    double like_sel;
+    if (prev_len != 0) {
+        OGSQL_SAVE_STACK(stmt);
+
+        variant_t prev_str;
+        variant_t prev_str_next;
+        RETVALUE_AND_RESTORE_STACK_IFERR(var_copy_prev(stmt, const_val, &prev_str, prev_len, has_escape, escape),
+            stmt, sql_normalize_likesel(prev_sel * rest_sel));
+        RETVALUE_AND_RESTORE_STACK_IFERR(var_copy_prev(stmt, const_val, &prev_str_next, prev_len, has_escape, escape),
+            stmt, sql_normalize_likesel(prev_sel * rest_sel));
+        
+        if (get_var_str_next(&prev_str_next)) {
+            like_sel = like_balanced_hist_factor_var(stmt, entity, col_id, column_stats,
+                &prev_str, &prev_str_next, const_val, has_escape, escape, &prev_sel);
+        } else {
+            like_sel = like_balanced_hist_factor_var(stmt, entity, col_id, column_stats,
+                &prev_str, NULL, const_val, has_escape, escape, &prev_sel);
+        }
+        OGSQL_RESTORE_STACK(stmt);
+    } else {
+        like_sel = like_balanced_hist_factor_var(stmt, entity, col_id, column_stats,
+            NULL, NULL, const_val, has_escape, escape, &prev_sel);
+    }
+
+    if (like_sel < 0) {
+        return sql_normalize_likesel(prev_sel * rest_sel);
+    }
+    return sql_normalize_likesel(like_sel);
+}
+
+
 static double compute_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
-    cbo_stats_column_t *column_stats, cmp_type_t cmp_type, expr_node_t *node)
+    cbo_stats_column_t *column_stats, cmp_node_t *cmp, expr_node_t *node)
 {
     if (column_stats == NULL) {
         return CBO_MIDDLE_FF;
     }
+    cmp_type_t cmp_type = cmp->type;
     /* const type must be INTERGER */
     if (column_stats->hist_type == HEIGHT_BALANCED) {
         switch (cmp_type) {
             case CMP_TYPE_EQUAL:
                 return eq_balanced_hist_factor(stmt, entity, col_id, column_stats, node);
             case CMP_TYPE_NOT_EQUAL:
-                return 1 - eq_balanced_hist_factor(stmt, entity, col_id, column_stats, node);
+                return 1 - eq_balanced_hist_factor(stmt, entity, col_id, column_stats, node) -
+                       is_null_hist_factor(column_stats);
             case CMP_TYPE_LESS:
                 return ineq_balanced_hist_factor(stmt, entity, col_id, column_stats, node, false);
             case CMP_TYPE_LESS_EQUAL:
@@ -716,6 +1290,25 @@ static double compute_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 
             case CMP_TYPE_GREAT_EQUAL:
                 return ineq_balanced_hist_factor(stmt, entity, col_id, column_stats, node, true) +
                        eq_balanced_hist_factor(stmt, entity, col_id, column_stats, node);
+            case CMP_TYPE_BETWEEN:
+                return btw_balanced_hist_factor(stmt, entity, col_id, column_stats, node);
+            case CMP_TYPE_NOT_BETWEEN:
+                return 1 - btw_balanced_hist_factor(stmt, entity, col_id, column_stats, node) -
+                       is_null_hist_factor(column_stats);
+            case CMP_TYPE_IS_NULL:
+                return is_null_hist_factor(column_stats);
+            case CMP_TYPE_IS_NOT_NULL:
+                return 1 - is_null_hist_factor(column_stats);
+            case CMP_TYPE_IN:
+                return in_balanced_hist_factor(stmt, entity, col_id, column_stats, node);
+            case CMP_TYPE_NOT_IN:
+                return 1 - in_balanced_hist_factor(stmt, entity, col_id, column_stats, node) -
+                       is_null_hist_factor(column_stats);
+            case CMP_TYPE_LIKE:
+                return like_balanced_hist_factor(stmt, entity, col_id, column_stats, node, cmp);
+            case CMP_TYPE_NOT_LIKE:
+                return 1 - like_balanced_hist_factor(stmt, entity, col_id, column_stats, node, cmp) -
+                       is_null_hist_factor(column_stats);
             default:
                 break;
         }
@@ -725,7 +1318,8 @@ static double compute_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 
             case CMP_TYPE_EQUAL:
                 return eq_frequence_hist_factor(stmt, entity, col_id, column_stats, node);
             case CMP_TYPE_NOT_EQUAL:
-                return 1 - eq_frequence_hist_factor(stmt, entity, col_id, column_stats, node);
+                return 1 - eq_frequence_hist_factor(stmt, entity, col_id, column_stats, node) -
+                       is_null_hist_factor(column_stats);
             case CMP_TYPE_LESS:
                 return ineq_frequence_hist_factor(stmt, entity, col_id, column_stats, node, false);
             case CMP_TYPE_LESS_EQUAL:
@@ -736,6 +1330,25 @@ static double compute_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 
             case CMP_TYPE_GREAT_EQUAL:
                 return ineq_frequence_hist_factor(stmt, entity, col_id, column_stats, node, true) +
                        eq_frequence_hist_factor(stmt, entity, col_id, column_stats, node);
+            case CMP_TYPE_BETWEEN:
+                return btw_frequence_hist_factor(stmt, entity, col_id, column_stats, node);
+            case CMP_TYPE_NOT_BETWEEN:
+                return 1 - btw_frequence_hist_factor(stmt, entity, col_id, column_stats, node) -
+                       is_null_hist_factor(column_stats);
+            case CMP_TYPE_IS_NULL:
+                return is_null_hist_factor(column_stats);
+            case CMP_TYPE_IS_NOT_NULL:
+                return 1 - is_null_hist_factor(column_stats);
+            case CMP_TYPE_IN:
+                return in_frequence_hist_factor(stmt, entity, col_id, column_stats, node);
+            case CMP_TYPE_NOT_IN:
+                return 1 - in_frequence_hist_factor(stmt, entity, col_id, column_stats, node) -
+                       is_null_hist_factor(column_stats);
+            case CMP_TYPE_LIKE:
+                return like_frequence_hist_factor(stmt, entity, col_id, column_stats, node, cmp);
+            case CMP_TYPE_NOT_LIKE:
+                return 1 - like_frequence_hist_factor(stmt, entity, col_id, column_stats, node, cmp) -
+                       is_null_hist_factor(column_stats);
             default:
                 break;
         }
@@ -743,7 +1356,6 @@ static double compute_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 
 
     return CBO_MIDDLE_FF;
 }
-
 
 status_t sql_cal_table_or_partition_stats(dc_entity_t *entity, sql_table_t *table, cbo_stats_info_t* stats_info,
                                                  knl_handle_t session)
@@ -878,15 +1490,21 @@ status_t compute_hist_factor_by_conds(sql_stmt_t *stmt, dc_entity_t *entity, gal
         }
 
         cbo_stats_column_t *column_stats = cbo_get_column_stats(stats_info->cbo_table_stats, col_id);
-        bool32 col_on_left = cmp->left->root->type == EXPR_NODE_COLUMN ? true : false;
-        expr_node_t *other_node = col_on_left ? cmp->right->root : cmp->left->root;
+        bool32 col_on_left;
+        expr_node_t *other_node = NULL;
+
+        col_on_left = (cmp->left != NULL && cmp->left->root->type == EXPR_NODE_COLUMN) ? true : false;
+
+        if (cmp->right != NULL && cmp->left != NULL) {
+            other_node = col_on_left ? cmp->right->root : cmp->left->root;
+        }
 
         double f2;
 
-        f2 = compute_hist_factor(stmt, entity, col_id, column_stats, cmp->type, other_node);
+        f2 = compute_hist_factor(stmt, entity, col_id, column_stats, cmp, other_node);
 
-        if (other_node->type == EXPR_NODE_CONST && cmp->type >= CMP_TYPE_GREAT_EQUAL &&
-            cmp->type <= CMP_TYPE_LESS_EQUAL) {
+        if (cmp->type <= CMP_TYPE_LESS_EQUAL && cmp->type >= CMP_TYPE_GREAT_EQUAL &&
+            other_node->type == EXPR_NODE_CONST) {
             RET_AND_RESTORE_STACK_IFERR(add_range_cond(stmt, &rq_cond, cmp, col_on_left, f2, column_stats), stmt);
         } else {
             f1 = f1 * f2;
@@ -3171,13 +3789,17 @@ static bool32 match_cond_to_indexcol(plan_assist_t *pa, sql_table_t *table, cmp_
     expr_tree_t *left = cmp->left;
     expr_tree_t *right = cmp->right;
 
-    if (left == NULL || right == NULL) {
-        return OG_FALSE;
-    }
-
     OGSQL_SAVE_STACK(stmt);
     RETVALUE_AND_RESTORE_STACK_IFERR(sql_get_index_col_node(stmt, knl_col, &col_node, &node, table->id, index_col),
         stmt, OG_FALSE);
+
+    if (left == NULL || right == NULL) {
+        if (sql_expr_node_matched(stmt, left != NULL ? left : right, node)) {
+            result = OG_TRUE;
+        }
+        OGSQL_RESTORE_STACK(stmt);
+        return result;
+    }
 
     if (type_is_indexable_compatible(node->datatype, right->root->datatype) &&
         sql_expr_node_matched(stmt, left, node)) {

@@ -1,0 +1,749 @@
+SQL> -- @owner: Nerifish
+SQL> -- @date: 2026/1/31
+SQL> -- @testpoint: explain执行条件中对varchar类型的between,like,in,is null测试,要求rows列的值与select尽可能相近
+SQL> DROP TABLE IF EXISTS test_explain_data;
+
+Succeed.
+
+SQL> 
+SQL> -- 创建测试表，使用varchar类型
+SQL> CREATE TABLE test_explain_data (
+  2     id INT PRIMARY KEY,
+  3     varchar_col VARCHAR(100)  -- 使用varchar类型，最大长度100
+  4 );
+
+Succeed.
+
+SQL> 
+SQL> -- 插入10000条随机数据
+SQL> BEGIN
+  2     DECLARE
+  3         str_len INT;
+  4         rand_str VARCHAR(100);
+  5         rand_char CHAR(1);
+  6         insert_pos INT;
+  7     BEGIN
+  8         -- 插入前100条特定数据，包含各种边界情况和特殊字符
+  9         INSERT INTO test_explain_data VALUES 
+ 10         (1, 'abc'),
+ 11         (2, 'def'),
+ 12         (3, 'ghi'),
+ 13         (4, 'jkl'),
+ 14         (5, 'mno'),
+ 15         (6, 'pqr'),
+ 16         (7, 'stu'),
+ 17         (8, 'vwx'),
+ 18         (9, 'yz'),
+ 19         (10, ''),
+ 20         (11, 'a'),
+ 21         (12, 'z'),
+ 22         (13, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),  -- 40个a
+ 23         (14, 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'),  -- 40个z
+ 24         (15, 'abcdefghijklmnopqrstuvwxyzabcdefghijklmn'),  -- 40个字母
+ 25         (16, 'test'),
+ 26         (17, 'null_test'),
+ 27         (18, 'like_test'),
+ 28         (19, 'between_test'),
+ 29         (20, 'in_test'),
+ 30         (21, 'abc123'),
+ 31         (22, 'special%char'),
+ 32         (23, 'char_with_space'),
+ 33         (24, 'char_with_underscore'),
+ 34         (25, 'char-with-hyphen'),
+ 35         (26, 'char_with_numbers123'),
+ 36         (27, 'char_with_CAPS'),
+ 37         (28, 'char_with_特殊字符'),
+ 38         (29, 'char_with_mixed123abc'),
+ 39         (30, 'char_with_punctuation!'),
+ 40         (31, NULL),  -- 插入NULL值
+ 41         (32, NULL),  -- 插入NULL值
+ 42         (33, ''),
+ 43         (34, ' '),  -- 单个空格
+ 44         (35, '  '),  -- 两个空格
+ 45         (36, '        '),  -- 8个空格
+ 46         (37, '                                        '),  -- 40个空格
+ 47         (38, 'a b c d e'),
+ 48         (39, 'abc def ghi'),
+ 49         (40, 'test_data_123'),
+ 50         (41, 'very_long_string_that_is_close_to_max_length_but_not_quite_there_yet_1234567890'),
+ 51         (42, 'edge_case_1'),
+ 52         (43, 'edge_case_2'),
+ 53         (44, 'edge_case_3'),
+ 54         (45, '边界值测试'),
+ 55         (46, 'a' || CHR(9) || 'b'),  -- 包含制表符
+ 56         (47, 'a' || CHR(10) || 'b'),  -- 包含换行符
+ 57         (48, 'a' || CHR(13) || 'b'),  -- 包含回车符
+ 58         (49, 'unicode_测试'),
+ 59         (50, 'emoji_😀');
+ 60         
+ 61         -- 从51开始插入随机数据，直到10000
+ 62         FOR i IN 51..10000 LOOP
+ 63             -- 决定字符串长度：0到80之间随机，varchar(100)但保留一些空间
+ 64             str_len := MOD(i, 80);
+ 65             
+ 66             -- 初始化字符串
+ 67             rand_str := '';
+ 68             
+ 69             -- 根据长度生成随机小写字母字符串
+ 70             FOR j IN 1..str_len LOOP
+ 71                 -- 使用MOD(i*j, 26)生成0-25的随机数，加上97得到小写字母的ASCII码
+ 72                 rand_char := CHR(97 + MOD(i * j, 26));
+ 73                 rand_str := rand_str || rand_char;
+ 74             END LOOP;
+ 75             
+ 76             -- 5%的概率插入NULL
+ 77             IF MOD(i, 20) = 0 THEN
+ 78                 rand_str := NULL;
+ 79             END IF;
+ 80             
+ 81             -- 3%的概率插入空字符串
+ 82             IF MOD(i, 33) = 0 THEN
+ 83                 rand_str := '';
+ 84             END IF;
+ 85             
+ 86             -- 2%的概率插入包含特殊字符的字符串
+ 87             IF MOD(i, 50) = 0 THEN
+ 88                 -- 在随机位置插入特殊字符
+ 89                 insert_pos := CASE 
+ 90                     WHEN str_len = 0 THEN 1 
+ 91                     ELSE MOD(i, str_len) + 1 
+ 92                 END;
+ 93                 rand_str := SUBSTRING(rand_str FROM 1 FOR insert_pos - 1) || 
+ 94                            CASE MOD(i, 8)
+ 95                                WHEN 0 THEN '%'
+ 96                                WHEN 1 THEN '_'
+ 97                                WHEN 2 THEN ' '
+ 98                                WHEN 3 THEN '-'
+ 99                                WHEN 4 THEN '!'
+100                                WHEN 5 THEN '@'
+101                                WHEN 6 THEN '#'
+102                                ELSE '$'
+103                            END ||
+104                            SUBSTRING(rand_str FROM insert_pos);
+105             END IF;
+106             
+107             -- 10%的概率插入包含数字的字符串
+108             IF MOD(i, 10) = 0 THEN
+109                 rand_str := rand_str || MOD(i, 1000);
+110             END IF;
+111             
+112             -- 插入数据
+113             INSERT INTO test_explain_data VALUES (i, rand_str);
+114             
+115         END LOOP;
+116         
+117     END;
+118 END;
+119 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> -- 收集统计信息
+SQL> ANALYZE TABLE test_explain_data compute statistics;
+
+Succeed.
+
+SQL> 
+SQL> -----测试BETWEEN操作符适配-----
+SQL> -- 用例1: BETWEEN 基础测试 - 小写字母范围
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN 'a' AND 'f';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 125  | 15        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 125  | 15        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 3057 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL BETWEEN 'a' AND 'f'                 
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN 'a' AND 'f';
+
+COUNT(*)            
+--------------------
+1763                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例2: BETWEEN 边界测试 - 从空字符串开始
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN '' AND 'c';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 1    | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL BETWEEN  AND 'c'                    
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN '' AND 'c';
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例3: BETWEEN 边界测试 - 到特定字符串
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN 'x' AND 'zzzzzz';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 125  | 15        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 125  | 15        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 3057 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL BETWEEN 'x' AND 'zzzzzz'            
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN 'x' AND 'zzzzzz';
+
+COUNT(*)            
+--------------------
+1073                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例4: NOT BETWEEN 测试
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col NOT BETWEEN 'm' AND 't';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 153  | 33        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 153  | 33        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 6667 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL NOT BETWEEN 'm' AND 't'             
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col NOT BETWEEN 'm' AND 't';
+
+COUNT(*)            
+--------------------
+7279                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例5: BETWEEN 长字符串范围
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN 'aaaaaaaaaa' AND 'mmmmmmmmmm';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 125  | 15        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 125  | 15        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 3057 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL BETWEEN 'aaaaaaaaaa' AND 'mmmmmmmmmm'
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col BETWEEN 'aaaaaaaaaa' AND 'mmmmmmmmmm';
+
+COUNT(*)            
+--------------------
+4195                
+
+1 rows fetched.
+
+SQL> 
+SQL> -----测试IS NULL操作符适配-----
+SQL> -- 用例6: IS NULL 基础测试
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col IS NULL;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 105  | 1         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 105  | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 276  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL IS NULL                             
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col IS NULL;
+
+COUNT(*)            
+--------------------
+276                 
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例7: IS NOT NULL 测试
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col IS NOT NULL;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 175  | 48        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 175  | 48        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 9724 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL IS NOT NULL                         
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col IS NOT NULL;
+
+COUNT(*)            
+--------------------
+9724                
+
+1 rows fetched.
+
+SQL> 
+SQL> -----测试LIKE操作符适配-----
+SQL> -- 用例8: LIKE 前缀匹配 - 以a开头
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE 'a%';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 105  | 1         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 105  | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 382  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE 'a%'                           
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE 'a%';
+
+COUNT(*)            
+--------------------
+339                 
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例9: LIKE 中间匹配 - 包含test
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%test%';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 1    | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '%test%'                       
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%test%';
+
+COUNT(*)            
+--------------------
+6                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例10: LIKE 后缀匹配 - 以z结尾
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%z';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 105  | 1         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 105  | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 268  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '%z'                           
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%z';
+
+COUNT(*)            
+--------------------
+352                 
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例11: NOT LIKE 测试
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col NOT LIKE 'a%';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 173  | 46        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 173  | 46        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 9342 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL NOT LIKE 'a%'                       
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col NOT LIKE 'a%';
+
+COUNT(*)            
+--------------------
+9385                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例12: LIKE 单字符匹配
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '_';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 104  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 104  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 191  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '_'                            
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '_';
+
+COUNT(*)            
+--------------------
+123                 
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例13: LIKE 多字符匹配
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '____';  -- 正好4个字符
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 105  | 1         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 105  | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 268  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '____'                         
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '____';  -- 正好4个字符
+
+COUNT(*)            
+--------------------
+215                 
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例14: LIKE 带通配符的混合模式
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE 'a%z';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 1    | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE 'a%z'                          
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE 'a%z';
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例15: LIKE 匹配下划线（使用ESCAPE）
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%\_%' ESCAPE '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 1    | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '%\_%' ESCAPE '\'              
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%\_%' ESCAPE '\';
+
+COUNT(*)            
+--------------------
+18                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例16: LIKE 匹配百分号（使用ESCAPE）
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%\%%' ESCAPE '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 38   | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '%\%%' ESCAPE '\'              
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '%\%%' ESCAPE '\';
+
+COUNT(*)            
+--------------------
+51                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例17: LIKE 匹配空格
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '% %';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 1    | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '% %'                          
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '% %';
+
+COUNT(*)            
+--------------------
+55                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例18: LIKE 复杂模式
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '_e%t';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 38   | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL LIKE '_e%t'                         
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col LIKE '_e%t';
+
+COUNT(*)            
+--------------------
+31                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -----测试IN操作符适配-----
+SQL> -- 用例19: IN 基础测试 - 单个字符
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col IN ('a', 'b', 'c', 'd', 'e');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 104  | 1         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 104  | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 250  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL IN ('a', 'b', 'c', 'd', 'e')        
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col IN ('a', 'b', 'c', 'd', 'e');
+
+COUNT(*)            
+--------------------
+19                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例20: IN 测试 - 多个字符串
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col IN ('abc', 'def', 'ghi', 'test');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 104  | 1         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 104  | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 200  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL IN ('abc', 'def', 'ghi', 'test')    
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col IN ('abc', 'def', 'ghi', 'test');
+
+COUNT(*)            
+--------------------
+4                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例21: IN 测试 - 包含空字符串
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col IN ('', 'abc', 'def');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 103  | 0         |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 103  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 100  | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL IN (, 'abc', 'def')                 
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col IN ('', 'abc', 'def');
+
+COUNT(*)            
+--------------------
+2                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例22: NOT IN 测试
+SQL> EXPLAIN SELECT count(*) FROM test_explain_data WHERE varchar_col NOT IN ('abc', 'def', 'ghi');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                   | 1    | 174  | 47        |       |        |
+| 1  |   AGGR                  |       |                   | 1    | 174  | 47        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_EXPLAIN_DATA | 9574 | 103  | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VARCHAR_COL NOT IN ('abc', 'def', 'ghi')        
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM test_explain_data WHERE varchar_col NOT IN ('abc', 'def', 'ghi');
+
+COUNT(*)            
+--------------------
+9721                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 清理环境
+SQL> DROP TABLE IF EXISTS test_explain_data;
+
+Succeed.
