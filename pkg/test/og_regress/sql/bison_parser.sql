@@ -876,5 +876,330 @@ create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 
 
 create database db1 user xbin IDENTIFIED by 'Huawei@123'; --error
 
+------------------------------------
+--function/expression test
+--will create two table, one for use_bison_parser is on while anotner is off
+--test the result by join two table
+--func_res_test_bison: use_bison_parser is on
+--func_res_test_bison_off: use_bison_parser is off
+------------------------------------
+CREATE TABLE json_col_test(id serial primary key, json_col CLOB);
+INSERT INTO json_col_test(json_col) VALUES ('{"name":"张三", "age":25, "address":{"city":"北京"}}'); -- 合法 JSON
+INSERT INTO json_col_test(json_col) VALUES ('{"name":"李四", "age":30}'); -- 合法 JSON（无 address 路径）
+INSERT INTO json_col_test(json_col) VALUES ('{name:"王五", age:35}'); -- 非法 JSON（键未加双引号）
+INSERT INTO json_col_test(json_col) VALUES ('不是 JSON 数据'); -- 完全非法的非 JSON 字符串
+INSERT INTO json_col_test(json_col) VALUES (NULL); -- 空值
+commit;
+
+create table jb_merpatch_tbl_bison(id serial primary key, a jsonb);
+insert into jb_merpatch_tbl_bison(a) values('{"addres":"CHN", "id":"55185651515", "name":"zzzzzzzzzzzzzzzzzzzzzzzzzzzz", "age":4444444444444444444444444, "hobby":[1,2,34,5]}');
+insert into jb_merpatch_tbl_bison(a) values('[1,2,3,4,5,6]');
+insert into jb_merpatch_tbl_bison(a) values('{"AAA":{"BBB":{"CCC":"XXXXX"}}}');
+insert into jb_merpatch_tbl_bison(a) values('[1, 2, {"AAA":{"BBB":{"CCC":"XXXXX"}}}]');
+commit;
+
+create table func_res_test_bison(id serial primary key, result varchar(1000));
+insert into func_res_test_bison(result) values (JSON_QUERY('[0,1,2,3,4]', '$[3]' WITH WRAPPER));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[*]' WITH CONDITIONAL WRAPPER));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]'));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on error));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on empty));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on empty));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on error));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on empty));
+insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on error));
+insert into func_res_test_bison(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{"last_name":"banana"}'));
+insert into func_res_test_bison(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) error on error));
+insert into func_res_test_bison(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) null on error));
+insert into func_res_test_bison(result) values (JSON_VALUE('{"x":1, "y":2}', '$.y'));
+insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON ERROR));
+insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON empty));
+insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' error ON empty));
+insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' error ON ERROR));
+
+insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city') from json_col_test order by id;
+insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city' true on error) from json_col_test order by id;
+insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city' false on error) from json_col_test order by id;
+insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city' error on error) from json_col_test order by id;
+
+insert into func_res_test_bison(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name'));
+insert into func_res_test_bison(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$'));
+insert into func_res_test_bison(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name', '{"bbb":66, "aaa":54}'));
+insert into func_res_test_bison(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob error on error));
+insert into func_res_test_bison(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob));
+
+insert into func_res_test_bison(result) select jsonb_mergepatch(a, '{"name":"andy", "age":12}') from jb_merpatch_tbl_bison where id = 1;
+insert into func_res_test_bison(result) select JSONB_QUERY(a, '$[*]' WITH CONDITIONAL WRAPPER) from jb_merpatch_tbl_bison order by id;
+insert into func_res_test_bison(result) select JSONB_VALUE(a, '$.addres') from jb_merpatch_tbl_bison order by id;
+insert into func_res_test_bison(result) select JSONB_EXISTS(a, '$.id') from jb_merpatch_tbl_bison order by id;
+insert into func_res_test_bison(result) select JSONB_SET(a, '$.id') from jb_merpatch_tbl_bison order by id;
+
+insert into func_res_test_bison(result) SELECT JSON_OBJECT('name' is 'Tim', 'age' is 20);
+insert into func_res_test_bison(result) SELECT JSON_OBJECT(KEY 'name' is 'Tim', KEY 'age' is 20);
+insert into func_res_test_bison(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
+insert into func_res_test_bison(result) SELECT JSON_ARRAY(1,2,3,4);
+insert into func_res_test_bison(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}' FORMAT JSON);
+insert into func_res_test_bison(result) SELECT JSON_ARRAY('[1,2,3]' , '{"x":1}' FORMAT JSON);
+insert into func_res_test_bison(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}');
+
+insert into func_res_test_bison(result)  select interval '22' year;
+insert into func_res_test_bison(result)  select interval '2022' year; --error
+insert into func_res_test_bison(result)  select interval '2022' year(4);
+insert into func_res_test_bison(result)  select interval '22' year to year;
+insert into func_res_test_bison(result)  select interval '2022' year to year; --error
+insert into func_res_test_bison(result)  select interval '2022' year(4) to year;
+insert into func_res_test_bison(result)  select interval '22' year to MONTH; --error
+insert into func_res_test_bison(result)  select interval '2022-11' year to MONTH; --error
+insert into func_res_test_bison(result)  select interval '2022-11' year(4) to MONTH;
+insert into func_res_test_bison(result)  select interval '0 0:0:1' day to second;
+insert into func_res_test_bison(result)  select interval '0 0:0:1' day(5) to second(2);
+insert into func_res_test_bison(result)  select interval '11 22:05' day to minute;
+insert into func_res_test_bison(result)  select interval '100 10' day to hour; --error
+insert into func_res_test_bison(result)  select interval '100 10' day(3) to hour;
+insert into func_res_test_bison(result)  select interval '1' second(5,1);
+insert into func_res_test_bison(result)  select interval '8' month;
+insert into func_res_test_bison(result)  select interval '8' day;
+insert into func_res_test_bison(result)  select interval '8' hour;
+insert into func_res_test_bison(result)  select interval '8' minute;
+insert into func_res_test_bison(result)  select interval '09:30' hour to day; --error
+insert into func_res_test_bison(result)  select interval '09:30' minute to hour; --error
+insert into func_res_test_bison(result)  select interval '09:30' hour to minute;
+insert into func_res_test_bison(result)  select interval '09:30:1.11' hour to second;
+insert into func_res_test_bison(result)  select interval '09:30' minute to second;
+
+insert into func_res_test_bison(result) select 0x573456;
+insert into func_res_test_bison(result) select X'573456';
+insert into func_res_test_bison(result) select X'5734567'; --error
+insert into func_res_test_bison(result) select x'573456'; --error
+
+insert into func_res_test_bison(result) select 1::int;
+insert into func_res_test_bison(result) select -(-4);
+insert into func_res_test_bison(result) select -4;
+insert into func_res_test_bison(result) select +5;
+insert into func_res_test_bison(result) select 5423237233838653440 << 20;
+insert into func_res_test_bison(result) select -5423237233838653440 >> 32;
+insert into func_res_test_bison(result) select 542323723383865345324532452343440 >> 32;
+insert into func_res_test_bison(result) select 5423237233838653440 >> 32;
+insert into func_res_test_bison(result) select -542323723334534534534535838653440 >> 32;
+insert into func_res_test_bison(result) select -5423237233838653440 >> 30;
+insert into func_res_test_bison(result) select 838653440 >> 32234444444444444444444444444444444;
+insert into func_res_test_bison(result) select 2147483648 + 1;
+insert into func_res_test_bison(result) select 120::decimal(3, -1);
+insert into func_res_test_bison(result) select 120::date;
+insert into func_res_test_bison(result) select case when 1 = 0 then 1 - 1 else 2.123 end from sys_dummy;
+insert into func_res_test_bison(result) select convert((case(cast(1 as int) & 2) when 0 then 1 else 2 end) / 2, int);
+insert into func_res_test_bison(result) select convert((case(cast(1 as int) & 1) when (cast(1 as int) & 1) then (case (1) when (1) then (1) else (0) end) else (cast (3 as int) & 3) end) / 2, int);
+
+insert into func_res_test_bison(result) select 1^2|3;
+insert into func_res_test_bison(result) select 1&2<<3;
+insert into func_res_test_bison(result) select 1&2>>3;
+insert into func_res_test_bison(result) select 1<<3||4;
+insert into func_res_test_bison(result) select 1>>3||4;
+insert into func_res_test_bison(result) select 4||5+6;
+insert into func_res_test_bison(result) select 4||6-1;
+insert into func_res_test_bison(result) select 4+5*6;
+insert into func_res_test_bison(result) select 4+5/6;
+insert into func_res_test_bison(result) select 4+5%6;
+
+insert into func_res_test_bison(result) SELECT SUBSTR('Quadratically',5,6);
+insert into func_res_test_bison(result) SELECT SUBSTR('Quadratically' FROM 5 FOR 6);
+insert into func_res_test_bison(result) SELECT SUBSTRING('Quadratically',5,6);
+insert into func_res_test_bison(result) SELECT SUBSTRING('Quadratically' FROM 5 FOR 6);
+insert into func_res_test_bison(result) SELECT EXTRACT (MONTH from '2018-10-04');
+insert into func_res_test_bison(result) SELECT CONVERT('2018-06-28 13:14:15', timestamp);
+insert into func_res_test_bison(result) SELECT TRIM(LEADING '1' FROM '123sfd111');
+insert into func_res_test_bison(result) SELECT TRIM( '123sfd111','1');
+
+select * from func_res_test_bison order by id;
+
+------------------------------------
+--same test case for func_res_test_bison_off
+alter system set use_bison_parser = false;
+
+create table func_res_test_bison_off(id serial primary key, result varchar(1000));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[0,1,2,3,4]', '$[3]' WITH WRAPPER));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[*]' WITH CONDITIONAL WRAPPER));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]'));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on error));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on empty));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on empty));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on error));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on empty));
+insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on error));
+insert into func_res_test_bison_off(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{"last_name":"banana"}'));
+insert into func_res_test_bison_off(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) error on error));
+insert into func_res_test_bison_off(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) null on error));
+insert into func_res_test_bison_off(result) values (JSON_VALUE('{"x":1, "y":2}', '$.y'));
+insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON ERROR));
+insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON empty));
+insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' error ON empty));
+insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' error ON ERROR));
+
+insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city') from json_col_test order by id;
+insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' true on error) from json_col_test order by id;
+insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' false on error) from json_col_test order by id;
+insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' error on error) from json_col_test order by id;
+
+insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name'));
+insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$'));
+insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name', '{"bbb":66, "aaa":54}'));
+insert into func_res_test_bison_off(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob error on error));
+insert into func_res_test_bison_off(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob));
+
+insert into func_res_test_bison_off(result) select jsonb_mergepatch(a, '{"name":"andy", "age":12}') from jb_merpatch_tbl_bison where id = 1;
+insert into func_res_test_bison_off(result) select JSONB_QUERY(a, '$[*]' WITH CONDITIONAL WRAPPER) from jb_merpatch_tbl_bison order by id;
+insert into func_res_test_bison_off(result) select JSONB_VALUE(a, '$.addres') from jb_merpatch_tbl_bison order by id;
+insert into func_res_test_bison_off(result) select JSONB_EXISTS(a, '$.id') from jb_merpatch_tbl_bison order by id;
+insert into func_res_test_bison_off(result) select JSONB_SET(a, '$.id') from jb_merpatch_tbl_bison order by id;
+
+insert into func_res_test_bison_off(result) SELECT JSON_OBJECT('name' is 'Tim', 'age' is 20);
+insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' is 'Tim', KEY 'age' is 20);
+insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
+insert into func_res_test_bison_off(result) SELECT JSON_ARRAY(1,2,3,4);
+insert into func_res_test_bison_off(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}' FORMAT JSON);
+insert into func_res_test_bison_off(result) SELECT JSON_ARRAY('[1,2,3]' , '{"x":1}' FORMAT JSON);
+insert into func_res_test_bison_off(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}');
+
+insert into func_res_test_bison_off(result)  select interval '22' year;
+insert into func_res_test_bison_off(result)  select interval '2022' year; --error
+insert into func_res_test_bison_off(result)  select interval '2022' year(4);
+insert into func_res_test_bison_off(result)  select interval '22' year to year;
+insert into func_res_test_bison_off(result)  select interval '2022' year to year; --error
+insert into func_res_test_bison_off(result)  select interval '2022' year(4) to year;
+insert into func_res_test_bison_off(result)  select interval '22' year to MONTH; --error
+insert into func_res_test_bison_off(result)  select interval '2022-11' year to MONTH; --error
+insert into func_res_test_bison_off(result)  select interval '2022-11' year(4) to MONTH;
+insert into func_res_test_bison_off(result)  select interval '0 0:0:1' day to second;
+insert into func_res_test_bison_off(result)  select interval '0 0:0:1' day(5) to second(2);
+insert into func_res_test_bison_off(result)  select interval '11 22:05' day to minute;
+insert into func_res_test_bison_off(result)  select interval '100 10' day to hour; --error
+insert into func_res_test_bison_off(result)  select interval '100 10' day(3) to hour;
+insert into func_res_test_bison_off(result)  select interval '1' second(5,1);
+insert into func_res_test_bison_off(result)  select interval '8' month;
+insert into func_res_test_bison_off(result)  select interval '8' day;
+insert into func_res_test_bison_off(result)  select interval '8' hour;
+insert into func_res_test_bison_off(result)  select interval '8' minute;
+insert into func_res_test_bison_off(result)  select interval '09:30' hour to day; --error
+insert into func_res_test_bison_off(result)  select interval '09:30' minute to hour; --error
+insert into func_res_test_bison_off(result)  select interval '09:30' hour to minute;
+insert into func_res_test_bison_off(result)  select interval '09:30:1.11' hour to second;
+insert into func_res_test_bison_off(result)  select interval '09:30' minute to second;
+
+insert into func_res_test_bison_off(result) select 0x573456;
+insert into func_res_test_bison_off(result) select X'573456';
+insert into func_res_test_bison_off(result) select X'5734567'; --error
+insert into func_res_test_bison_off(result) select x'573456'; --error
+
+insert into func_res_test_bison_off(result) select 1::int;
+insert into func_res_test_bison_off(result) select -(-4);
+insert into func_res_test_bison_off(result) select -4;
+insert into func_res_test_bison_off(result) select +5;
+insert into func_res_test_bison_off(result) select 5423237233838653440 << 20;
+insert into func_res_test_bison_off(result) select -5423237233838653440 >> 32;
+insert into func_res_test_bison_off(result) select 542323723383865345324532452343440 >> 32;
+insert into func_res_test_bison_off(result) select 5423237233838653440 >> 32;
+insert into func_res_test_bison_off(result) select -542323723334534534534535838653440 >> 32;
+insert into func_res_test_bison_off(result) select -5423237233838653440 >> 30;
+insert into func_res_test_bison_off(result) select 838653440 >> 32234444444444444444444444444444444;
+insert into func_res_test_bison_off(result) select 2147483648 + 1;
+insert into func_res_test_bison_off(result) select 120::decimal(3, -1);
+insert into func_res_test_bison_off(result) select 120::date;
+insert into func_res_test_bison_off(result) select case when 1 = 0 then 1 - 1 else 2.123 end from sys_dummy;
+insert into func_res_test_bison_off(result) select convert((case(cast(1 as int) & 2) when 0 then 1 else 2 end) / 2, int);
+insert into func_res_test_bison_off(result) select convert((case(cast(1 as int) & 1) when (cast(1 as int) & 1) then (case (1) when (1) then (1) else (0) end) else (cast (3 as int) & 3) end) / 2, int);
+
+insert into func_res_test_bison_off(result) select 1^2|3;
+insert into func_res_test_bison_off(result) select 1&2<<3;
+insert into func_res_test_bison_off(result) select 1&2>>3;
+insert into func_res_test_bison_off(result) select 1<<3||4;
+insert into func_res_test_bison_off(result) select 1>>3||4;
+insert into func_res_test_bison_off(result) select 4||5+6;
+insert into func_res_test_bison_off(result) select 4||6-1;
+insert into func_res_test_bison_off(result) select 4+5*6;
+insert into func_res_test_bison_off(result) select 4+5/6;
+insert into func_res_test_bison_off(result) select 4+5%6;
+
+insert into func_res_test_bison_off(result) SELECT SUBSTR('Quadratically',5,6);
+insert into func_res_test_bison_off(result) SELECT SUBSTR('Quadratically' FROM 5 FOR 6);
+insert into func_res_test_bison_off(result) SELECT SUBSTRING('Quadratically',5,6);
+insert into func_res_test_bison_off(result) SELECT SUBSTRING('Quadratically' FROM 5 FOR 6);
+insert into func_res_test_bison_off(result) SELECT EXTRACT (MONTH from '2018-10-04');
+insert into func_res_test_bison_off(result) SELECT CONVERT('2018-06-28 13:14:15', timestamp);
+insert into func_res_test_bison_off(result) SELECT TRIM(LEADING '1' FROM '123sfd111');
+insert into func_res_test_bison_off(result) SELECT TRIM( '123sfd111','1');
+
+-- should be 0, no not matched
+select * from func_res_test_bison left join func_res_test_bison_off
+on func_res_test_bison.id = func_res_test_bison_off.id
+where func_res_test_bison.result != func_res_test_bison_off.result ;
+
+alter system set use_bison_parser = true;
+
+drop table jb_merpatch_tbl_bison;
+drop table json_col_test;
+drop table func_res_test_bison;
+drop table func_res_test_bison_off;
+------------------------------------
+--function/expression test end
+------------------------------------
+
+--if/lnnvl/group_concat/listagg/count over
+CREATE TABLE  test_func_2
+(
+  staff_ID       NUMBER(6) not null,
+  NAME           VARCHAR2(20),
+  EMAIL          VARCHAR2(25),
+  PHONE_NUMBER   VARCHAR2(20),
+  HIRE_DATE      DATE,
+  employment_ID  VARCHAR2(10),
+  SALARY         NUMBER(8,2),
+  MANAGER_ID     NUMBER(6),
+  section_ID     NUMBER(4)
+);
+INSERT INTO test_func_2
+values (111, '张三', 'zhangsan@126.com', '13312345678', to_date('11-11-1999', 'dd-mm-yyyy'), 'SH_CLERK',  NULL, 124, 50);
+INSERT INTO  test_func_2
+values (222, '李四', 'lisi@126.com', '13312345679', to_date('13-05-2000', 'dd-mm-yyyy'), 'SH_CLERK', 2600.00, 124, 50);
+INSERT INTO  test_func_2 
+values (333, '王五', 'wangwu@126.com', '13312345680', to_date('01-11-1987', 'dd-mm-yyyy'), 'AD_ASST', 4400.00, 101, 10);
+INSERT INTO  test_func_2 
+values (444, '赵二', 'zhaoer@126.com', '13312345681', to_date('13-12-1988', 'dd-mm-yyyy'), 'AD_ASST', 3900.00, 101, 10);
+SELECT staff_ID, IF(SALARY < 4000, SALARY, 'secret') "SALARY" FROM test_func_2 WHERE staff_ID IS NOT NULL ORDER BY staff_ID;
+SELECT staff_ID,NAME,SALARY FROM test_func_2 WHERE LNNVL(SALARY<10000.00);
+SELECT staff_ID,GROUP_CONCAT(SALARY) FROM test_func_2 GROUP BY staff_ID;
+select listagg(staff_ID) within group(order by staff_ID) over(partition by section_ID) from test_func_2;
+select count(staff_ID) over(partition by section_ID order by staff_ID) from test_func_2;
+drop table test_func_2; 
+
+--select (subquery)
+select (select id from sys_tables);  -- error
+select (select id from sys_tables limit 1);
+--array
+select array[1,2];
+select array[];
+--join
+create table t_first(a int, b int);
+insert into t_first values(1,11),(2,22),(3,33);
+create table t_second(c int, d int);
+insert into t_second values(3,33);
+select * from t_first,t_second where a(+)=c order by a;
+select * from t_first,t_second where t_first.a(+)=c order by a;
+select * from t_first,t_second where c=a(+) order by a;
+select * from t_first,t_second where c=t_first.a(+) order by a;
+select * from t_first,t_second where c(+)=a order by a;
+select * from t_first,t_second where t_second.c(+)=a order by a;
+select * from t_first,t_second where a=c(+) order by a;
+select * from t_first,t_second where a=t_second.c(+) order by a;
+select * from t_first,t_second where a(+)=c(+); --error
+select * from t_first,t_second where t_second.*(+)=a; --error
+drop table t_first;
+drop table t_second;
+--quote
+select 1 as `1`; 
+create table `t_lowercase`(`a_lowercase` int);
+select count(*) from sys_tables where NAME='t_lowercase';
+select sys_columns.name from sys_tables join sys_columns on sys_tables.id=sys_columns.TABLE# where sys_tables.NAME='t_lowercase';
+drop table t_lowercase; --error
+drop table `t_lowercase`;
 
 alter system set use_bison_parser = false;

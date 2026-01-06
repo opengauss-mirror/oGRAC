@@ -1623,9 +1623,33 @@ status_t sql_create_extract_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, 
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(sql_create_columnref_expr(stmt, &arg_expr, extract_list->extract_type, NULL, loc));
+    OG_RETURN_IFERR(sql_create_columnref_expr(stmt, &arg_expr, extract_list->extract_type, NULL,
+        EXPR_NODE_COLUMN, loc));
     node->argument = arg_expr;
     node->argument->next = extract_list->arg;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_json_func_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t *arg_list,
+    char *func_name, json_func_attr_t attr, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, func_name, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->argument = arg_list;
+    node->json_func_attr = attr;
+    if (cm_strcmpi(func_name, "json_array") == 0 || cm_strcmpi(func_name, "json_object") == 0 ||
+        cm_strcmpi(func_name, "json_query") == 0 || cm_strcmpi(func_name, "json_mergepatch") == 0 ||
+        cm_strcmpi(func_name, "jsonb_query") == 0 || cm_strcmpi(func_name, "jsonb_mergepatch") == 0) {
+        node->format_json = OG_TRUE;
+    } else {
+        node->format_json = OG_FALSE;
+    }
+
     APPEND_CHAIN(&((*expr)->chain), node);
     sql_generate_expr(*expr);
     return OG_SUCCESS;
