@@ -38,6 +38,7 @@ extern "C" {
 
 #define CBO_DEFAULT_EQ_FF 0.005
 #define CBO_DEFAULT_INEQ_FF 0.3333333333333333
+#define CBO_DEFAULT_NULL_FF 0.05
 #define CBO_DEFAULT_DISABLE_COST (double)(1.0e10)
 
 #define DEFAULT_CPU_INDEX_TUP_COST (0.005)
@@ -134,7 +135,7 @@ typedef struct range_query_cond {
 void og_get_query_cbo_cost(sql_query_t *query, cbo_cost_t *cost);
 
 double sql_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, dc_entity_t *entity, index_t *index,
-    galist_t **idx_cond_array, int64 *card, cbo_stats_info_t* stats_info);
+    galist_t **idx_cond_array, int64 *card, cbo_stats_info_t* stats_info, sql_table_t *table);
 status_t compute_hist_factor_by_conds(sql_stmt_t *stmt, dc_entity_t *entity, galist_t *cond_cols,
     galist_t *conds, double *ff, cbo_stats_info_t* stats_info);
 double sql_seq_scan_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table);
@@ -214,6 +215,7 @@ void cbo_try_choose_multi_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t
 bool32 prefer_table_scan(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, double seq_cost);
 status_t sql_init_table_scan_partition_info(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table);
 void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, index_t *index);
+bool32 get_table_skip_index_flag(sql_table_t *table, uint32 id);
 
 typedef status_t (*sql_estimate_node_cost_funcs_t)(sql_stmt_t *stmt, plan_node_t *plan);
     

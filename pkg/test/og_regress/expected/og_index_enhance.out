@@ -1,0 +1,292 @@
+SQL> /* index skip scan*/
+SQL>
+SQL> drop table if exists test_idx1;
+
+Succeed.
+
+SQL> create table test_idx1(c1 int, c2 int, c3 int);
+
+Succeed.
+
+SQL> create index t_i1 on test_idx1(c1, c2, c3);
+
+Succeed.
+
+SQL>
+SQL> declare
+  2    i int;
+  3    begin
+  4     insert into test_idx1 values(1,1,1);
+  5     for i in 1..13 loop
+  6         insert into test_idx1 select 1000, dbe_random.get_value(1,10)*100000, dbe_random.get_value(1,10)*100000 from test_idx1;
+  7     end loop;
+  8 end;
+  9 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> analyze table test_idx1 compute statistics;
+
+Succeed.
+
+SQL> alter system flush sqlpool;
+
+Succeed.
+
+SQL> alter system set cbo =on;
+
+Succeed.
+
+SQL>
+SQL> /* use index skip scan for the first column is not equal */
+SQL> explain select * from test_idx1 where c1 > 100 and c2 = 100 and c3 > 100 and c3 < 100;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 1    | 8    | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX1 | 1    | 8    | 8         |       |        |
+| 2  |       INDEX SKIP SCAN           | SYS   | T_I1      | 1    | 8    | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: C1 > 100 AND C2 = 100 AND C3 > 100 AND C3 < 100
+
+10 rows fetched.
+
+SQL> /* no use index skip scan */
+SQL> explain select * from test_idx1 where c1 = 1000 and c2 = 100 and c3 > 100;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 1    | 8    | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX1 | 1    | 8    | 8         |       |        |
+| 2  |       INDEX RANGE SCAN          | SYS   | T_I1      | 1    | 8    | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: C1 = 1000 AND C2 = 100 AND C3 > 100
+
+10 rows fetched.
+
+SQL> /* use index skip scan for lack of the first column */
+SQL> explain select * from test_idx1 where c2 = 10 and c3 < 1000;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 1    | 8    | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX1 | 1    | 8    | 8         |       |        |
+| 2  |       INDEX SKIP SCAN           | SYS   | T_I1      | 1    | 8    | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: C2 = 10 AND C3 < 1000
+
+10 rows fetched.
+
+SQL>
+SQL> /* index fast full scan */
+SQL> drop table if exists test_idx2;
+
+Succeed.
+
+SQL> create table test_idx2(c1 int, c2 int, c3 int);
+
+Succeed.
+
+SQL> create index t_i2 on test_idx2(c2, c3);
+
+Succeed.
+
+SQL> create index t_i3 on test_idx2(c1, c2, c3);
+
+Succeed.
+
+SQL>
+SQL> begin
+  2     insert into test_idx2 values(1,1,1);
+  3     for i in 10000..15000 loop
+  4         insert into test_idx2 values (i, i + 4, i + 10);
+  5     end loop;
+  6 end;
+  7 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> analyze table test_idx2 compute statistics;
+
+Succeed.
+
+SQL> alter system flush sqlpool;
+
+Succeed.
+
+SQL> alter system set cbo =on;
+
+Succeed.
+
+SQL>
+SQL> /* no use fss */
+SQL> explain select * from test_idx2 where c2 = 1000;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------
+| Id | Operation                        | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                 |       |           | 1    | 8    | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | TEST_IDX2 | 1    | 8    | 8         |       |        |
+| 2  |       INDEX RANGE SCAN           | SYS   | T_I2      | 1    | 8    | 8         |       |        |
+--------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: C2 = 1000
+
+10 rows fetched.
+
+SQL> alter system flush sqlpool;
+
+Succeed.
+
+SQL> /* use fss */
+SQL> explain select /*+index_ffs(test_idx2)*/ * from test_idx2 where c2 = 1000;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------
+| Id | Operation                        | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                 |       |           | 1    | 8    | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | TEST_IDX2 | 1    | 8    | 8         |       |        |
+| 2  |       INDEX RANGE SCAN           | SYS   | T_I2      | 1    | 8    | 8         |       |        |
+--------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: C2 = 1000
+
+10 rows fetched.
+
+SQL>
+SQL> /* use fss */
+SQL> explain select * from test_idx2 where c2 > 1000;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 5000 | 25   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 25   | 8         |       |        |
+| 2  |       INDEX FAST FULL SCAN      | SYS   | T_I3      | 5000 | 25   | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    1 - filter: C2 > 1000
+
+10 rows fetched.
+
+SQL> /* no use fss due to index_ffs cost not adapt to index order */
+SQL> explain select * from test_idx2 where c2 > 1000 order by c1;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 5000 | 76   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 76   | 8         |       |        |
+| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 76   | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    1 - filter: C2 > 1000
+
+10 rows fetched.
+
+SQL> alter system flush sqlpool;
+
+Succeed.
+
+SQL> /* no use fss due to index_ffs cost not adapt to index order when index hint*/
+SQL> explain select /*+index(test_idx2) */ * from test_idx2 where c2 > 1000 order by c1;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 5000 | 76   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 76   | 8         |       |        |
+| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 76   | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    1 - filter: C2 > 1000
+
+10 rows fetched.
+
+SQL> alter system flush sqlpool;
+
+Succeed.
+
+SQL> explain select /*+index_ffs(test_idx2) */ * from test_idx2 where c2 > 1000 order by c1;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 5000 | 76   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 76   | 8         |       |        |
+| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 76   | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    1 - filter: C2 > 1000
+
+10 rows fetched.
+
+SQL> /* no use fss due to no_index_ffs hint */
+SQL> explain select /*+no_index_ffs(test_idx2) */* from test_idx2 where c2 > 1000;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |           | 5000 | 25   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 25   | 8         |       |        |
+| 2  |       INDEX FAST FULL SCAN      | SYS   | T_I3      | 5000 | 25   | 8         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    1 - filter: C2 > 1000
+
+10 rows fetched.
+
+SQL>
+SQL> /* use fss due to index_ffs cost is optimal */
+SQL> explain select count(*) from test_idx2;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                         | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                  |       |           | 1    | 71   | 33        |       |        |
+| 1  |   AGGR                            |       |           | 1    | 71   | 33        |       |        |
+| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5002 | 25   | 8         |       |        |
+| 3  |         INDEX FAST FULL SCAN      | SYS   | T_I3      | 5002 | 25   | 8         |       |        |
+---------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
