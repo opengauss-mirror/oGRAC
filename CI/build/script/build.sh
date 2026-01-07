@@ -264,19 +264,6 @@ function installCert(){
     # cd -
 }
 
-# 数据入湖是否debug模式修改
-function changeLogicrepDebugConf(){
-    cd ${OGDB_CODE_PATH}/pkg/src/zlogicrep/conf/
-    sed -i 's/isdebug=/isdebug=true/g' init.properties
-}
-
-# 数据入湖是否debug模式修改
-function changeLogicrepRealeaseConf(){
-    cd ${OGDB_CODE_PATH}/pkg/src/zlogicrep/conf/
-    sed -i 's/isdebug=/isdebug=false/g' init.properties
-    rm -f injection_switch.properties
-}
-
 set +e
 
 set -e
@@ -285,11 +272,9 @@ if [ "${BUILD_MODE}" == "multiple" ] && [ "${COMPILE_TYPE}" == "ASAN" ]; then
   buildoGRACAsan
   buildCtOmPackage
 elif [ "${BUILD_TYPE}" == "DEBUG" ]; then
-  changeLogicrepDebugConf
   buildoGRACDebug
   buildCtOmPackage
 elif [ "${BUILD_TYPE}" == "RELEASE" ]; then
-  changeLogicrepRealeaseConf
   buildoGRACRelease
   buildCtOmPackage
 else

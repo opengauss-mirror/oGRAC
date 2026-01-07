@@ -55,8 +55,7 @@ function newPackageTarget() {
   local pkg_real_path=${TMP_PKG_PATH}/${pkg_dir_name}
   echo "Current directory: $(pwd)"
   ls -la
-  mkdir -p ${pkg_real_path}/{action,repo,config,common,zlogicrep,dss}
-  mkdir -p ${pkg_real_path}/zlogicrep/build/oGRAC_PKG/file
+  mkdir -p ${pkg_real_path}/{action,repo,config,common,dss}
   cp -arf "${CURRENT_PATH}"/versions.yml ${pkg_real_path}/
   cp -arf "${OGRACDB_BIN}"/rpm/RPMS/"${ENV_TYPE}"/ograc*.rpm ${pkg_real_path}/repo/
   cp -arf "${OGDB_CODE_PATH}"/temp/og_om/rpm/RPMS/"${ENV_TYPE}"/og_om*.rpm ${pkg_real_path}/repo/

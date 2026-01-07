@@ -47,7 +47,7 @@ function main() {
     mkdir -p /home/mfdb_core/${cluster_name}_${cluster_id}/${DATE}-node${node_id}
     delete_log_if_too_much /home/mfdb_core/${cluster_name}_${cluster_id}
     cd /home/mfdb_core/${cluster_name}_${cluster_id}/${DATE}-node${node_id}
-    mkdir ograc cms dbstor core_symbol logicrep
+    mkdir ograc cms dbstor core_symbol
     mkdir ograc/opt ograc/mnt
     mkdir dbstor/opt dbstor/mnt dbstor/ftds dbstor/install
     check_path_and_copy /mnt/dbdata/local/ograc/tmp/data/log ograc/mnt
@@ -62,10 +62,6 @@ function main() {
     check_path_and_copy /opt/ograc/dbstor/data/logs dbstor/install
     check_path_and_copy /mnt/dbdata/local/ograc/tmp/data/dbstor/data/ftds/ftds/data/stat dbstor/ftds
     check_path_and_copy /opt/ograc/ograc/server/bin core_symbol/
-    check_path_and_copy /opt/software/tools/logicrep/log logicrep/
-    check_path_and_copy /opt/software/tools/logicrep/logicrep/run logicrep/
-    check_path_and_copy /opt/software/tools/logicrep/logicrep/perf logicrep/
-    check_path_and_copy /opt/ograc/log/logicrep/logicrep_deploy.log logicrep/
     logAndEchoInfo "Backup log complete."
 }
 

@@ -8,7 +8,6 @@ declare VERSION_DESCRIP=""
 declare PACK_PREFIX=""
 declare PROJECT_VERSION=""
 declare RUN_PACK_DIR_NAME=""
-declare LOGICREP_DIR_NAME=""
 declare ALL_PACK_DIR_NAME=""
 declare SYMBOL_PACK_DIR_NAME=""
 declare TOOLS_PACK_DIR_NAME=""
@@ -18,7 +17,6 @@ declare JDRIVER_PACK_DIR_NAME=""
 declare WITHOUT_DEPS=""
 export BUILD_MODE=""
 export PYTHON_INCLUDE_DIR=""
-export LOGICREP_PERSONAL_PKG_DIR=""
 export WORKSPACE=$(dirname $(dirname $(pwd)))
 DFT_WORKSPACE="/home/regress"
 
@@ -36,10 +34,6 @@ func_prepare_git_msg
 PROJECT_VERSION=$(cat ${CONFIG_IN_FILE} | grep 'PROJECT_VERSION' | awk '{print $3}')
 OGRACD_BIN=ogracd-${PROJECT_VERSION}
 JDBC_DIR=${OGRACDB_HOME}/src/jdbc/ograc-jdbc/build/oGRAC_PKG
-LOGICREP_PERSONAL_PKG_DIR=${OGRACDB_HOME}/src/logicrep
-LOGICREP_DIR=${OGRACDB_HOME}/src/zlogicrep/build/oGRAC_PKG
-LOGICREP_FILE_DIR=${OGRACDB_HOME}/src/zlogicrep/build/oGRAC_PKG/file
-LOGICREP_GZ_NAME=com.huawei.oGRAC.logicrep.tar.gz
 GODRIVER_NAME=go-oGRAC-driver
 ZEBRATOOL_DIR=${OGRACDB_HOME}/src/zebratool
 OGRAC_LIB_DIR=${OGRACDB_HOME}/../oGRAC_lib
@@ -80,13 +74,11 @@ func_prepare_pkg_name()
     fi
 
     RUN_PACK_DIR_NAME=${PACK_PREFIX}-RUN-${OS_SUFFIX}-${ARCH}bit
-    LOGICREP_DIR_NAME=${PACK_PREFIX}-LOGICREP
     ALL_PACK_DIR_NAME=${PACK_PREFIX}-DATABASE-${OS_SUFFIX}-${ARCH}bit
     SYMBOL_PACK_DIR_NAME=${PACK_PREFIX}-DATABASE-${OS_SUFFIX}-${ARCH}bit-SYMBOL
     OGBOX_DIR_NAME=${PACK_PREFIX}-OGBOX
     TOOLS_PACK_DIR_NAME=${PACK_PREFIX}-TOOLS
     JDRIVER_PACK_DIR_NAME=${PACK_PREFIX}-CLIENT-JDBC
-    LOGICREP_AGENT_DIR_NAME=${PACK_PREFIX}-LOGICREP-AGENT
     OGSQL_PACK_DIR_NAME=${PACK_PREFIX}-OGSQL-${OS_SUFFIX}-${ARCH}bit
 
     if [[ ! -d "${OGRACDB_BIN}" ]]; then
@@ -442,50 +434,6 @@ func_pkg_ogsql()
 
 }
 
-func_logic_rep()
-{
-    if [[ -d "${LOGICREP_FILE_DIR}" ]]; then
-        chmod -R 700 ${LOGICREP_FILE_DIR}/*
-    fi
-    rm -rf ${LOGICREP_DIR}/file
-
-    cd ${LOGICREP_DIR} && sh build_package_unix.sh
-    rm -rf ${LOGICREP_DIR}/file/${LOGICREP_GZ_NAME}
-    chmod 700 ${LOGICREP_DIR}/file/*
-    chmod 500 ${LOGICREP_DIR}/file/*.sh
-    chmod 600 ${LOGICREP_DIR}/file/*.ini
-    chmod 500 ${LOGICREP_DIR}/file/*.jar
-    chmod 500 ${LOGICREP_DIR}/file/*.py
-    chmod -R 700 ${LOGICREP_DIR}/file/conf/*
-    chmod 600 ${LOGICREP_DIR}/file/conf/*.xml
-    chmod 600 ${LOGICREP_DIR}/file/conf/*.properties
-    chmod 600 ${LOGICREP_DIR}/file/conf/repconf/*.xml
-    chmod 600 ${LOGICREP_DIR}/file/conf/topicconf/*.properties
-    chmod 600 ${LOGICREP_DIR}/file/conf/sec/*.properties
-    chmod -R 500 ${LOGICREP_DIR}/file/lib/*
-    chmod -R 500 ${LOGICREP_DIR}/file/plugin/*
-
-    rm -rf ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}*
-    mkdir -p ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}/logicrep
-    chmod 700 ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}/logicrep
-    cd ${LOGICREP_DIR}/file/lib/
-    cp -r ${LOGICREP_DIR}/file/* ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}/logicrep/
-    cd ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}/logicrep/ && ln -s com.huawei.oGRAC.logicrep-*.jar com.huawei.oGRAC.logicrep.jar
-    cd ${OGRACDB_BIN} && tar --owner=root --group=root -zcf ${LOGICREP_DIR_NAME}.tar.gz ${LOGICREP_DIR_NAME}
-    sha256sum ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}.sha256
-}
-
-func_toolkit()
-{
-    cp -r /usr1/build/logicrep/pkg/src/zlogicrep ${OGRACDB_HOME}/src
-    func_logic_rep
-    rm -rf ${OGRACDB_BIN}/${TOOLS_PACK_DIR_NAME}
-    mkdir -p ${OGRACDB_BIN}/${TOOLS_PACK_DIR_NAME}
-    mv ${OGRACDB_BIN}/${LOGICREP_DIR_NAME}.tar.gz ${OGRACDB_BIN}/${TOOLS_PACK_DIR_NAME}
-    cd ${OGRACDB_BIN} && tar --owner=root --group=root -zcf ${TOOLS_PACK_DIR_NAME}.tar.gz ${TOOLS_PACK_DIR_NAME}
-    sha256sum ${OGRACDB_BIN}/${TOOLS_PACK_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${TOOLS_PACK_DIR_NAME}.sha256
-}
-
 func_making_package()
 {
     build_package_mode=$1
@@ -505,7 +453,6 @@ func_making_package()
         # func_release_symbol
         func_pkg_run
     fi
-    func_toolkit
     rm -rf ${OGRACDB_HOME}/../${ALL_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}.tar.gz
