@@ -650,7 +650,7 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
     return OG_SUCCESS;
 }
 
-status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx)
+status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx, ckpt_stat_items_t *stat)
 {
     uint32 i = 0;
     edp_page_info_t page;
@@ -680,11 +680,7 @@ status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx)
         }
         i++;
     }
-    if (ogx->timed_task == CKPT_MODE_IDLE) {
-        ogx->stat.clean_edp_count[ogx->trigger_task] += count;
-    } else {
-        ogx->stat.clean_edp_count[ogx->timed_task] += count;
-    }
+    stat->clean_edp_count += count;
     group->count -= count;
     if (group->count > 0) {
         ret = memmove_s((char*)group->pages, group->count * sizeof(edp_page_info_t),

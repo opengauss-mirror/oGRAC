@@ -45,8 +45,8 @@ bool32 g_crc_verify = 0;
 
 void ckpt_proc(thread_t *thread);
 void dbwr_proc(thread_t *thread);
-static status_t ckpt_perform(knl_session_t *session);
-static void ckpt_page_clean(knl_session_t *session);
+static status_t ckpt_perform(knl_session_t *session, ckpt_stat_items_t *stat);
+static void ckpt_page_clean(knl_session_t *session, ckpt_stat_items_t *stat);
 
 static inline void init_ckpt_part_group(knl_session_t *session)
 {
@@ -58,6 +58,14 @@ static inline void init_ckpt_part_group(knl_session_t *session)
     for (uint32 i = 0; i < cm_dbs_get_part_num(); i++) {
         ogx->ckpt_part_group[i].count = 0;
     }
+}
+
+static inline uint64 ckpt_stat_time_diff(uint64 begin_time, uint64 end_time)
+{
+    if (end_time > begin_time) {
+        return (end_time - begin_time);
+    }
+    return 0;
 }
 
 static inline void ckpt_param_init(knl_session_t *session)
@@ -387,14 +395,15 @@ static void ckpt_wait_enable_update_point(ckpt_context_t *ogx)
 /*
  * trigger full checkpoint to promote rcy point to current point
  */
-static void ckpt_full_checkpoint(knl_session_t *session)
+static void ckpt_full_checkpoint(knl_session_t *session, ckpt_stat_items_t *stat)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
     ogx->batch_end = NULL;
     OG_LOG_RUN_INF("start trigger full checkpoint, expect process pages %d", ogx->queue.count);
-    uint64 curr_flush_count = ogx->stat.flush_pages[ogx->trigger_task];
-    uint64 curr_clean_edp_count = ogx->stat.clean_edp_count[ogx->trigger_task];
+    uint64 curr_flush_count = stat->flush_pages;
+    uint64 curr_clean_edp_count = stat->clean_edp_count;
     uint64 task_begin = KNL_NOW(session);
+    stat->ckpt_begin_time = (date_t)task_begin;
     for (;;) {
         if (ogx->thread.closed || (!DB_IS_PRIMARY(&session->kernel->db) && rc_is_master() == OG_FALSE)) {
             break;
@@ -405,14 +414,17 @@ static void ckpt_full_checkpoint(knl_session_t *session)
             ogx->batch_end = ogx->queue.last;
         }
 
-        if (ckpt_perform(session) != OG_SUCCESS) {
+        if (ckpt_perform(session, stat) != OG_SUCCESS) {
             KNL_SESSION_CLEAR_THREADID(session);
             CM_ABORT(0, "[CKPT] ABORT INFO: redo log task flush redo file failed.");
         }
 
+        uint64 task_perform = KNL_NOW(session);
+        stat->perform_us += ckpt_stat_time_diff(task_begin, task_perform);
         ckpt_block_and_wait_enable(ogx);
         ckpt_wait_enable_update_point(ogx);
-
+        uint64 task_wait_1 = KNL_NOW(session);
+        stat->wait_us += ckpt_stat_time_diff(task_perform, task_wait_1);
         if (!DB_IS_PRIMARY(&session->kernel->db)) {
             ckpt_update_log_point_slave_role(session);
         } else {
@@ -424,6 +436,8 @@ static void ckpt_full_checkpoint(knl_session_t *session)
             }
         }
         
+        uint64 task_save_ctrl_1 = KNL_NOW(session);
+        stat->save_contrl_us += ckpt_stat_time_diff(task_wait_1, task_save_ctrl_1);
         log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);
         OG_LOG_DEBUG_INF("[CKPT] Set rcy point to [%u-%u/%u/%llu] in ctrl for instance %u",
                          dtc_my_ctrl(session)->rcy_point.rst_id, dtc_my_ctrl(session)->rcy_point.asn,
@@ -435,12 +449,14 @@ static void ckpt_full_checkpoint(knl_session_t *session)
             KNL_SESSION_CLEAR_THREADID(session);
             CM_ABORT(0, "[CKPT] ABORT INFO: backup core control info failed when perform checkpoint");
         }
-
+        uint64 task_backup = KNL_NOW(session);
+        stat->backup_us += ckpt_stat_time_diff(task_save_ctrl_1, task_backup);
         /* maybe someone has been blocked by full ckpt when alloc buffer ctrl */
         if (ckpt_first == ogx->queue.first) {
-            ckpt_page_clean(session);
+            ckpt_page_clean(session, stat);
         }
-
+        uint64 task_recycle = KNL_NOW(session);
+        stat->recycle_us += ckpt_stat_time_diff(task_backup, task_recycle);
         if (ogx->batch_end != NULL) {
             if (ogx->edp_group.count != 0) {
                 uint32 sleep_time = (ogx->edp_group.count / (OG_CKPT_GROUP_SIZE(session) / 2 + 1) + 1) * 3 *
@@ -449,37 +465,45 @@ static void ckpt_full_checkpoint(knl_session_t *session)
             }
             continue;
         }
-
+        uint64 task_wait = KNL_NOW(session);
+        stat->wait_us += ckpt_stat_time_diff(task_recycle, task_wait);
         if (ckpt_save_ctrl(session) != OG_SUCCESS) {
             KNL_SESSION_CLEAR_THREADID(session);
             CM_ABORT(0, "[CKPT] ABORT INFO: save core control file failed when perform checkpoint");
         }
-
+        uint64 task_save_ctrl_2 = KNL_NOW(session);
+        stat->save_contrl_us += ckpt_stat_time_diff(task_wait, task_save_ctrl_2);
         break;
     }
     ckpt_remove_clean_page_all_set(session);
     uint64 task_end = KNL_NOW(session);
+    stat->task_us += ckpt_stat_time_diff(task_begin, task_end);
+    stat->task_count++;
     OG_LOG_RUN_INF("Finish trigger full checkpoint, Flush pages %llu, Clean edp count %llu, cost time(us) %llu",
-        ogx->stat.flush_pages[ogx->trigger_task] - curr_flush_count,
-        ogx->stat.clean_edp_count[ogx->trigger_task] - curr_clean_edp_count, task_end - task_begin);
+        stat->flush_pages - curr_flush_count,
+        stat->clean_edp_count - curr_clean_edp_count, task_end - task_begin);
 }
 
 /*
  * trigger inc checkpoint to flush page on ckpt-q as soon as possible
  */
-static void ckpt_inc_checkpoint(knl_session_t *session)
+static void ckpt_inc_checkpoint(knl_session_t *session, ckpt_stat_items_t *stat)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
     if (!DB_IS_PRIMARY(&session->kernel->db) && rc_is_master() == OG_FALSE) {
         return;
     }
-    if (ckpt_perform(session) != OG_SUCCESS) {
+    uint64 task_begin = KNL_NOW(session);
+    stat->ckpt_begin_time = (date_t)task_begin;
+    if (ckpt_perform(session, stat) != OG_SUCCESS) {
         KNL_SESSION_CLEAR_THREADID(session);
         CM_ABORT(0, "[CKPT] ABORT INFO: redo log task flush redo file failed.");
     }
-
+    uint64 task_perform = KNL_NOW(session);
+    stat->perform_us += ckpt_stat_time_diff(task_begin, task_perform);
     ckpt_block_and_wait_enable(ogx);
-
+    uint64 task_wait = KNL_NOW(session);
+    stat->wait_us += ckpt_stat_time_diff(task_perform, task_wait);
     if (ogx->ckpt_enable_update_point == OG_TRUE)
     {
         if (!DB_IS_PRIMARY(&session->kernel->db)) {
@@ -493,23 +517,30 @@ static void ckpt_inc_checkpoint(knl_session_t *session)
             }
         }
     }
-    
+    uint64 task_save_ctrl_1 = KNL_NOW(session);
+    stat->save_contrl_us += ckpt_stat_time_diff(task_wait, task_save_ctrl_1);
     log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);
     OG_LOG_DEBUG_INF("[CKPT] Set rcy point to [%u-%u/%u/%llu] in ctrl for instance %u",
                      dtc_my_ctrl(session)->rcy_point.rst_id, dtc_my_ctrl(session)->rcy_point.asn,
                      dtc_my_ctrl(session)->rcy_point.block_id, (uint64)dtc_my_ctrl(session)->rcy_point.lfn,
                      session->kernel->id);
-
+    uint64 task_recycle = KNL_NOW(session);
+    stat->recycle_us += ckpt_stat_time_diff(task_save_ctrl_1, task_recycle);
     /* backup some core info on datafile head: only back up core log info for full ckpt and timed task */
     if (NEED_SYNC_LOG_INFO(ogx) && ctrl_backup_core_log_info(session) != OG_SUCCESS) {
         KNL_SESSION_CLEAR_THREADID(session);
         CM_ABORT(0, "[CKPT] ABORT INFO: backup core control info failed when perform checkpoint");
     }
-
+    uint64 task_backup = KNL_NOW(session);
+    stat->backup_us += ckpt_stat_time_diff(task_recycle, task_backup);
     if (ckpt_save_ctrl(session) != OG_SUCCESS) {
         KNL_SESSION_CLEAR_THREADID(session);
         CM_ABORT(0, "[CKPT] ABORT INFO: save core control file failed when perform checkpoint");
     }
+    uint64 task_end = KNL_NOW(session);
+    stat->save_contrl_us += ckpt_stat_time_diff(task_backup, task_end);
+    stat->task_us += ckpt_stat_time_diff(task_begin, task_end);
+    stat->task_count++;
 }
 
 void ckpt_pop_page(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl)
@@ -644,39 +675,34 @@ static void ckpt_do_trigger_task(knl_session_t *session, ckpt_context_t *ogx, da
         return;
     }
 
-    uint64 task_begin = KNL_NOW(session);
-    ogx->stat.ckpt_begin_time[ogx->trigger_task] = (date_t)task_begin;
     knl_panic (CKPT_IS_TRIGGER(ogx->trigger_task));
-    
+    ckpt_stat_items_t *stat = &ogx->stat.stat_items[ogx->trigger_task];
     switch (ogx->trigger_task) {
         case CKPT_TRIGGER_FULL:
-            ckpt_full_checkpoint(session);
+            ckpt_full_checkpoint(session, stat);
 
             (void)cm_atomic_dec(&ogx->full_trigger_active_num);
             *ckpt_time = KNL_NOW(session);
             break;
         case CKPT_TRIGGER_FULL_STANDBY:
-            ckpt_full_checkpoint(session);
+            ckpt_full_checkpoint(session, stat);
 
             (void)cm_atomic_dec(&ogx->full_trigger_active_num);
             *ckpt_time = KNL_NOW(session);
             break;
         case CKPT_TRIGGER_INC:
-            ckpt_inc_checkpoint(session);
+            ckpt_inc_checkpoint(session, stat);
             *ckpt_time = KNL_NOW(session);
             break;
         case CKPT_TRIGGER_CLEAN:
-            ckpt_page_clean(session);
+            ckpt_page_clean(session, stat);
             *clean_time = KNL_NOW(session);
+            stat->task_count++;
             break;
         default:
             /* Not possible, for grammar compliance with switch clause */
             break;
     }
-
-    uint64 task_end = KNL_NOW(session);
-    ogx->stat.task_count[ogx->trigger_task]++;
-    ogx->stat.task_us[ogx->trigger_task] += task_end - task_begin;
 
     cm_spin_lock(&ogx->lock, &session->stat->spin_stat.stat_ckpt);
     ogx->trigger_finish_num++;
@@ -691,19 +717,15 @@ static void ckpt_do_timed_task(knl_session_t *session, ckpt_context_t *ogx, date
         return;
     }
     knl_attr_t *attr = &session->kernel->attr;
-
+    ckpt_stat_items_t *stat;
     if (attr->page_clean_period != 0 &&
         KNL_NOW(session) - (*clean_time) >= (date_t)attr->page_clean_period * MILLISECS_PER_SECOND) {
         if (ckpt_assign_timed_task(session, ogx, CKPT_TIMED_CLEAN) == OG_SUCCESS) {
-            date_t task_begin = KNL_NOW(session);
-            ogx->stat.ckpt_begin_time[CKPT_TIMED_CLEAN] = task_begin;
-            ckpt_page_clean(session);
+            stat = &ogx->stat.stat_items[CKPT_TIMED_CLEAN];
+            ckpt_page_clean(session, stat);
             *clean_time = KNL_NOW(session);
+            stat->task_count++;
             ogx->timed_task = CKPT_MODE_IDLE;
-
-            date_t task_end = KNL_NOW(session);
-            ogx->stat.task_count[CKPT_TIMED_CLEAN]++;
-            ogx->stat.task_us[CKPT_TIMED_CLEAN] += task_end - task_begin;
         }
     }
 
@@ -711,15 +733,10 @@ static void ckpt_do_timed_task(knl_session_t *session, ckpt_context_t *ogx, date
         ogx->remote_edp_group.count + ogx->local_edp_clean_group.count >= OG_CKPT_EDP_GROUP_SIZE(session) ||
         KNL_NOW(session) - (*ckpt_time) >= (date_t)attr->ckpt_timeout * MICROSECS_PER_SECOND) {
         if (ckpt_assign_timed_task(session, ogx, CKPT_TIMED_INC) == OG_SUCCESS) {
-            date_t task_begin = KNL_NOW(session);
-            ogx->stat.ckpt_begin_time[CKPT_TIMED_INC] = task_begin;
-            ckpt_inc_checkpoint(session);
+            stat = &ogx->stat.stat_items[CKPT_TIMED_INC];
+            ckpt_inc_checkpoint(session, stat);
             *ckpt_time = KNL_NOW(session);
             ogx->timed_task = CKPT_MODE_IDLE;
-
-            date_t task_end = KNL_NOW(session);
-            ogx->stat.task_count[CKPT_TIMED_INC]++;
-            ogx->stat.task_us[CKPT_TIMED_INC] += task_end - task_begin;
         }
     }
 }
@@ -1281,7 +1298,7 @@ static status_t ckpt_prepare_normal(knl_session_t *session, ckpt_context_t *ogx,
     return OG_SUCCESS;
 }
 
-static status_t ckpt_prepare_pages(knl_session_t *session, ckpt_context_t *ogx)
+static status_t ckpt_prepare_pages(knl_session_t *session, ckpt_context_t *ogx, ckpt_stat_items_t *stat)
 {
     buf_ctrl_t *ctrl_next = NULL;
     buf_ctrl_t *ctrl = NULL;
@@ -1293,7 +1310,7 @@ static status_t ckpt_prepare_pages(knl_session_t *session, ckpt_context_t *ogx)
     init_ckpt_part_group(session);
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
-        dcs_ckpt_clean_local_edp(session, ogx);
+        dcs_ckpt_clean_local_edp(session, ogx, stat);
         dtc_calculate_rcy_redo_size(session, ctrl);
     }
 
@@ -2140,21 +2157,16 @@ static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
  * 2.flush redo log and double write dirty pages.
  * 3.flush pages to disk.
  */
-static status_t ckpt_perform(knl_session_t *session)
+static status_t ckpt_perform(knl_session_t *session, ckpt_stat_items_t *stat)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
 
-    if (ckpt_prepare_pages(session, ogx) != OG_SUCCESS) {
+    if (ckpt_prepare_pages(session, ogx, stat) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
     dcs_notify_owner_for_ckpt(session, ogx);
-
-    if (ogx->timed_task == CKPT_MODE_IDLE) {
-        ogx->stat.flush_pages[ogx->trigger_task] += ogx->group.count;
-    } else {
-        ogx->stat.flush_pages[ogx->timed_task] += ogx->group.count;
-    }
+    stat->flush_pages += ogx->group.count;
 
     if (DB_IS_PRIMARY(&session->kernel->db)) {
         ckpt_get_trunc_point(session, &ogx->trunc_point_snapshot);
@@ -3192,7 +3204,7 @@ static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t
  * 2.stash dirty pages for releasing after flushing.
  */
 static status_t ckpt_clean_prepare_pages(knl_session_t *session, ckpt_context_t *ogx, buf_set_t *set,
-    buf_lru_list_t *page_list)
+    buf_lru_list_t *page_list, ckpt_stat_items_t *stat)
 {
     ogx->has_compressed = OG_FALSE;
     buf_ctrl_t *ctrl = NULL;
@@ -3209,7 +3221,7 @@ static status_t ckpt_clean_prepare_pages(knl_session_t *session, ckpt_context_t 
     ogx->edp_group.count = 0;
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
-        dcs_ckpt_clean_local_edp(session, ogx);
+        dcs_ckpt_clean_local_edp(session, ogx, stat);
     }
 
     if (ogx->group.count >= OG_CKPT_GROUP_SIZE(session)) {
@@ -3274,7 +3286,8 @@ static status_t ckpt_clean_prepare_pages(knl_session_t *session, ckpt_context_t 
  * 1.only flush a part of dirty page to release clean page of other buffer set.
  * 2.need to flush one more time because of ckpt group size limitation.
  */
-static status_t ckpt_clean_single_set(knl_session_t *session, ckpt_context_t *ckpt_ctx, buf_set_t *set)
+static status_t ckpt_clean_single_set(knl_session_t *session, ckpt_context_t *ckpt_ctx,
+                                      buf_set_t *set, ckpt_stat_items_t *stat)
 {
     buf_lru_list_t page_list;
     int64 clean_cnt = (int64)(set->write_list.count * CKPT_PAGE_CLEAN_RATIO(session));
@@ -3282,17 +3295,12 @@ static status_t ckpt_clean_single_set(knl_session_t *session, ckpt_context_t *ck
 
     for (;;) {
         page_list = g_init_list_t;
-        if (ckpt_clean_prepare_pages(session, ckpt_ctx, set, &page_list) != OG_SUCCESS) {
+        if (ckpt_clean_prepare_pages(session, ckpt_ctx, set, &page_list, stat) != OG_SUCCESS) {
             return OG_ERROR;
         }
 
         dcs_notify_owner_for_ckpt(session, ckpt_ctx);
-
-        if (ckpt_ctx->timed_task == CKPT_MODE_IDLE) {
-            ckpt_ctx->stat.flush_pages[CKPT_TRIGGER_CLEAN] += ckpt_ctx->group.count;
-        } else {
-            ckpt_ctx->stat.flush_pages[CKPT_TIMED_CLEAN] += ckpt_ctx->group.count;
-        }
+        stat->flush_pages += ckpt_ctx->group.count;
 
         if (ckpt_ctx->group.count == 0) {
             dcs_clean_edp(session, ckpt_ctx);
@@ -3355,7 +3363,7 @@ static inline bool32 ckpt_bitmap_exist(uint8 *bitmap, uint8 num)
 }
 
 static status_t ckpt_clean_prepare_pages_all_set(knl_session_t *session, ckpt_context_t *ogx, buf_lru_list_t *page_list,
-    ckpt_clean_ctx_t *page_clean_ctx)
+    ckpt_clean_ctx_t *page_clean_ctx, ckpt_stat_items_t *stat)
 {
     ogx->has_compressed = OG_FALSE;
     buf_context_t *buf_ctx = &session->kernel->buf_ctx;
@@ -3365,7 +3373,7 @@ static status_t ckpt_clean_prepare_pages_all_set(knl_session_t *session, ckpt_co
     init_ckpt_part_group(session);
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
-        dcs_ckpt_clean_local_edp(session, ogx);
+        dcs_ckpt_clean_local_edp(session, ogx, stat);
     }
 
     if (ogx->group.count >= OG_CKPT_GROUP_SIZE(session)) {
@@ -3451,7 +3459,7 @@ static void ckpt_clean_prepare_buf_list(buf_context_t *buf_ctx, ckpt_clean_ctx_t
  * 2.need to flush one more time because of ckpt group size limitation.
  * 3.when flush once will get page from all off the buffer set
  */
-static status_t ckpt_clean_all_set(knl_session_t *session)
+static status_t ckpt_clean_all_set(knl_session_t *session, ckpt_stat_items_t *stat)
 {
     buf_context_t *buf_ctx = &session->kernel->buf_ctx;
     ckpt_context_t *ckpt_ctx = &session->kernel->ckpt_ctx;
@@ -3460,18 +3468,12 @@ static status_t ckpt_clean_all_set(knl_session_t *session)
     buf_lru_list_t page_list;
     for (;;) {
         page_list = g_init_list_t;
-        if (ckpt_clean_prepare_pages_all_set(session, ckpt_ctx, &page_list, &page_clean_ctx) != OG_SUCCESS) {
+        if (ckpt_clean_prepare_pages_all_set(session, ckpt_ctx, &page_list, &page_clean_ctx, stat) != OG_SUCCESS) {
             return OG_ERROR;
         }
 
         dcs_notify_owner_for_ckpt(session, ckpt_ctx);
-
-        if (ckpt_ctx->timed_task == CKPT_MODE_IDLE) {
-            ckpt_ctx->stat.flush_pages[CKPT_TRIGGER_CLEAN] += ckpt_ctx->group.count;
-        } else {
-            ckpt_ctx->stat.flush_pages[CKPT_TIMED_CLEAN] += ckpt_ctx->group.count;
-        }
-
+        stat->flush_pages += ckpt_ctx->group.count;
         if (ckpt_ctx->group.count == 0) {
             dcs_clean_edp(session, ckpt_ctx);
             buf_reset_cleaned_pages_all_bufset(buf_ctx, &page_list);
@@ -3509,7 +3511,7 @@ static status_t ckpt_clean_all_set(knl_session_t *session)
 /*
  * clean dirty page on buffer write list of each buffer set
  */
-static void ckpt_page_clean(knl_session_t *session)
+static void ckpt_page_clean(knl_session_t *session, ckpt_stat_items_t *stat)
 {
     buf_context_t *buf_ctx = &session->kernel->buf_ctx;
     ckpt_context_t *ckpt_ctx = &session->kernel->ckpt_ctx;
@@ -3517,25 +3519,36 @@ static void ckpt_page_clean(knl_session_t *session)
     if (!DB_IS_PRIMARY(&session->kernel->db) && rc_is_master() == OG_FALSE) {
         return;
     }
-
+    uint64 task_begin = KNL_NOW(session);
+    stat->ckpt_begin_time = (date_t)task_begin;
     if (clean_mode == PAGE_CLEAN_MODE_ALLSET) {
         ckpt_block_and_wait_enable(&session->kernel->ckpt_ctx);
-        if (ckpt_clean_all_set(session) != OG_SUCCESS) {
+        uint64 task_wait = KNL_NOW(session);
+        stat->wait_us += ckpt_stat_time_diff(task_begin, task_wait);
+        if (ckpt_clean_all_set(session, stat) != OG_SUCCESS) {
             KNL_SESSION_CLEAR_THREADID(session);
             CM_ABORT(0, "[CKPT] ABORT INFO: flush page failed when clean dirty page");
         }
+        uint64 task_clean = KNL_NOW(session);
+        stat->clean_edp_us += ckpt_stat_time_diff(task_wait, task_clean);
     } else if (clean_mode == PAGE_CLEAN_MODE_SINGLESET) {
         for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+            uint64 task_buf_set_begin = KNL_NOW(session);
             ckpt_block_and_wait_enable(&session->kernel->ckpt_ctx);
-
-            if (ckpt_clean_single_set(session, ckpt_ctx, &buf_ctx->buf_set[i]) != OG_SUCCESS) {
+            uint64 task_wait = KNL_NOW(session);
+            stat->wait_us += ckpt_stat_time_diff(task_buf_set_begin, task_wait);
+            if (ckpt_clean_single_set(session, ckpt_ctx, &buf_ctx->buf_set[i], stat) != OG_SUCCESS) {
                 KNL_SESSION_CLEAR_THREADID(session);
                 CM_ABORT(0, "[CKPT] ABORT INFO: flush page failed when clean dirty page");
             }
+            uint64 task_clean = KNL_NOW(session);
+            stat->clean_edp_us += ckpt_stat_time_diff(task_wait, task_clean);
         }
     } else {
         CM_ABORT(0, "[CKPT] ABORT INFO: Not support this mode %d", session->kernel->attr.page_clean_mode);
     }
+    uint64 task_end = KNL_NOW(session);
+    stat->task_us += ckpt_stat_time_diff(task_begin, task_end);
 }
 
 void ckpt_put_to_part_group(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *to_flush_ctrl)

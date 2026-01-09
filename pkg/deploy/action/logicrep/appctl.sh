@@ -36,7 +36,7 @@ source "${CURRENT_PATH}"/../env.sh
 #组件名称
 COMPONENTNAME="logicrep"
 LOGICREP_HOME='/opt/software/tools/logicrep'
-LOGICREP_PKG="${CURRENT_PATH}/../../zlogicrep/build/ograc_PKG/file"
+LOGICREP_PKG="${CURRENT_PATH}/../../zlogicrep/build/oGRAC_PKG/file"
 
 tools_home='/opt/ograc/logicrep'
 tools_scripts='/opt/ograc/action/logicrep'

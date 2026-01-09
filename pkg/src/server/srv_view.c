@@ -785,6 +785,12 @@ static knl_column_t g_ckpt_stats_columns[] = {
     { 7, "CUR_TRIG",     0,  0,  OG_TYPE_VARCHAR,    16,                 0, 0, OG_FALSE, 0, { 0 } },
     { 8, "CUR_TIMED",    0,  0,  OG_TYPE_VARCHAR,    16,                 0, 0, OG_FALSE, 0, { 0 } },
     { 9, "QUEUE_FIRST",  0,  0,  OG_TYPE_VARCHAR,    16,                 0, 0, OG_FALSE, 0, { 0 } },
+    { 10, "PERFORM_TIME",      0,  0,  OG_TYPE_REAL,       sizeof(uint64),     0, 0, OG_FALSE, 0, { 0 } },
+    { 11, "SAVE_CTL_TIME",     0,  0,  OG_TYPE_REAL,       sizeof(uint64),     0, 0, OG_FALSE, 0, { 0 } },
+    { 12, "WAIT_TIME",         0,  0,  OG_TYPE_REAL,       sizeof(uint64),     0, 0, OG_FALSE, 0, { 0 } },
+    { 13, "RECYCLE_TIME",      0,  0,  OG_TYPE_REAL,       sizeof(uint64),     0, 0, OG_FALSE, 0, { 0 } },
+    { 14, "BACKUP_TIME",       0,  0,  OG_TYPE_REAL,       sizeof(uint64),     0, 0, OG_FALSE, 0, { 0 } },
+    { 15, "CLEAN_EDP_TIME",    0,  0,  OG_TYPE_REAL,       sizeof(uint64),     0, 0, OG_FALSE, 0, { 0 } },
 };
 
 static knl_column_t g_users_columns[] = {
@@ -6130,11 +6136,12 @@ static status_t vw_ckpt_stats_fetch(knl_handle_t session, knl_cursor_t *cursor)
     int32 id = cursor->rowid.vmid;
     OG_RETURN_IFERR(row_put_str(&ra, vw_ckpt_stats_flush_type((uint8)id)));
 
-    OG_RETURN_IFERR(row_put_int64(&ra, (int64)ogx->stat.task_count[id]));
-    OG_RETURN_IFERR(row_put_real(&ra, (double)ogx->stat.task_us[id] / MICROSECS_PER_SECOND));
-    OG_RETURN_IFERR(row_put_int64(&ra, (int64)ogx->stat.flush_pages[id]));
-    OG_RETURN_IFERR(row_put_int64(&ra, (int64)ogx->stat.clean_edp_count[id]));
-    OG_RETURN_IFERR(row_put_date(&ra, ogx->stat.ckpt_begin_time[id]));
+    ckpt_stat_items_t ckpt_stat = ogx->stat.stat_items[id];
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)ckpt_stat.task_count));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.task_us / MICROSECS_PER_SECOND));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)ckpt_stat.flush_pages));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)ckpt_stat.clean_edp_count));
+    OG_RETURN_IFERR(row_put_date(&ra, ckpt_stat.ckpt_begin_time));
     OG_RETURN_IFERR(row_put_int64(&ra, (int64)ogx->stat.proc_wait_cnt));
     OG_RETURN_IFERR(row_put_str(&ra, vw_ckpt_stats_flush_type((uint8)ogx->trigger_task)));
     OG_RETURN_IFERR(row_put_str(&ra, vw_ckpt_stats_flush_type((uint8)ogx->timed_task)));
@@ -6147,6 +6154,12 @@ static status_t vw_ckpt_stats_fetch(knl_handle_t session, knl_cursor_t *cursor)
     }
     cm_spin_unlock(&ogx->queue.lock);
     OG_RETURN_IFERR(row_put_str(&ra, ckpt_queue_first));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.perform_us / MICROSECS_PER_SECOND));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.save_contrl_us / MICROSECS_PER_SECOND));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.wait_us / MICROSECS_PER_SECOND));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.recycle_us / MICROSECS_PER_SECOND));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.backup_us / MICROSECS_PER_SECOND));
+    OG_RETURN_IFERR(row_put_real(&ra, (double)ckpt_stat.clean_edp_us / MICROSECS_PER_SECOND));
     cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
     cursor->rowid.vmid++;
 

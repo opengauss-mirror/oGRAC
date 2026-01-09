@@ -171,7 +171,8 @@ static status_t cms_get_node_stat(uint32 node_id, char *node_stat)
     return OG_SUCCESS;
 }
 
-bool32 cms_check_node_dead(uint32 node_id){
+bool32 cms_check_node_dead(uint32 node_id)
+{
     char disk_hb[32];
     char now_str[32];
     uint64_t now_time = cm_now();
@@ -180,7 +181,7 @@ bool32 cms_check_node_dead(uint32 node_id){
     cms_date2str(node_stat->disk_hb, disk_hb, sizeof(disk_hb));
     cms_date2str(now_time, now_str, sizeof(now_str));
 
-    if (node_stat->disk_hb + CMS_LIVE_DETECT_TIMEOUT * CMS_SECOND_TRANS_MICROSECOND >= now_time){
+    if (node_stat->disk_hb + CMS_LIVE_DETECT_TIMEOUT * CMS_SECOND_TRANS_MICROSECOND >= now_time) {
         CMS_LOG_INF("deleting node: node %u cms is alive, last disk_hb %s, now time %s", node_id, disk_hb, now_str);
         return OG_FALSE;
     }
@@ -477,7 +478,9 @@ status_t cms_res_lock_init(void)
     OG_RETURN_IFERR(cms_disk_lock_init(g_cms_param->gcc_type, g_cms_param->gcc_home, "", CMS_RES_START_LOCK_POS,
         CMS_RLOCK_RES_START_LOCK_START, CMS_RLOCK_RES_START_LOCK_LEN, g_cms_param->node_id,
         &g_cms_inst->res_start_lock, NULL, CMS_DLOCK_THREAD, OG_FALSE));
-    cms_disk_unlock(&g_cms_inst->res_start_lock, DISK_LOCK_READ);
+    if (g_cms_inst->is_server) {
+        cms_disk_unlock(&g_cms_inst->res_start_lock, DISK_LOCK_READ);
+    }
     // init res stat lock
     for (int32 node_id = 0; node_id < CMS_MAX_NODE_COUNT; node_id++) {
         if (cms_node_is_invalid(node_id)) {
@@ -488,7 +491,9 @@ status_t cms_res_lock_init(void)
                 CMS_RES_STAT_LOCK_POS(node_id, res_id), CMS_RLOCK_RES_STAT_LOCK_START(node_id, res_id),
                 CMS_RLOCK_RES_STAT_LOCK_LEN, g_cms_param->node_id,
                 &g_cms_inst->res_stat_lock[node_id][res_id], NULL, 0, OG_FALSE));
-            cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_READ);
+                if (g_cms_inst->is_server) {
+                    cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_READ);
+                }
         }
         cm_init_thread_lock(&g_node_lock[node_id]);
     }
@@ -506,7 +511,9 @@ status_t cms_res_lock_init(void)
                 CMS_RLOCK_RES_DATA_LOCK_LEN, g_cms_param->node_id, &g_cms_inst->res_data_lock[res_id][slot_id],
                 res_is_active, 0, OG_FALSE));
             g_cms_inst->res_data_lock[res_id][slot_id].int64_param1 = res_id;
-            cms_disk_unlock(&g_cms_inst->res_data_lock[res_id][slot_id], DISK_LOCK_READ);
+            if (g_cms_inst->is_server) {
+                cms_disk_unlock(&g_cms_inst->res_data_lock[res_id][slot_id], DISK_LOCK_READ);
+            }
         }
     }
     return OG_SUCCESS;
@@ -537,7 +544,9 @@ status_t cms_init_stat(void)
     OG_RETURN_IFERR(cms_disk_lock_init(g_cms_param->gcc_type, g_cms_param->gcc_home, "", CMS_STAT_LOCK_POS,
         CMS_RLOCK_STAT_LOCK_START, CMS_RLOCK_STAT_LOCK_LEN, g_cms_param->node_id, &g_cms_inst->stat_lock,
         NULL, CMS_DLOCK_THREAD, OG_FALSE));
-    cms_disk_unlock(&g_cms_inst->stat_lock, DISK_LOCK_READ);
+    if (g_cms_inst->is_server) {
+        cms_disk_unlock(&g_cms_inst->stat_lock, DISK_LOCK_READ);
+    }
 
     OG_RETURN_IFERR(cms_res_lock_init());
 
@@ -2204,6 +2213,7 @@ static status_t cms_elect_res_reformer(uint32 res_id, uint8 reformer, uint8* new
 
     if (reformer == OG_INVALID_ID8) {
         do_elect = OG_TRUE;
+        CMS_LOG_DEBUG_INF("resource's reformer not exist, do elect, res_id=%u, reformer=%u", res_id, reformer);
     } else if (cms_node_is_invalid(reformer)) {
         do_elect = OG_TRUE;
         CMS_LOG_DEBUG_INF("resource's reformer is invalid, do elect, res_id=%u, reformer=%u", res_id, reformer);
