@@ -8,7 +8,6 @@ SCRIPT_NAME=${PARENT_DIR_NAME}/$(basename $0)
 CMS_ENABLE_FLAG=/opt/ograc/cms/cfg/cms_enable
 DEPLOY_USER=$(python3 "${CURRENT_PATH}"/../../action/get_config_info.py "deploy_user")
 node_count=$(python3 ${CURRENT_PATH}/../../action/get_config_info.py "cluster_scale")
-LOGICREP_START_FLAG=/opt/software/tools/logicrep/start.success
 CMS_CGROUP=/sys/fs/cgroup/memory/cms
 OGMGR_CGROUP=/sys/fs/cgroup/memory/ogmgr
 OGRAC_EXPORTER_CGROUP=/sys/fs/cgroup/memory/ograc_exporter
@@ -126,12 +125,6 @@ do
     if [ ! -f ${CMS_ENABLE_FLAG} ]; then
         sleep ${LOOP_TIME}
         continue
-    fi
-    if [ -f ${LOGICREP_START_FLAG} ];then
-        logicrep_pid=$(ps -ef | grep "/opt/software/tools/logicrep/watchdog_logicrep.sh -n logicrep -N" | grep -v grep | awk 'NR==1 {print $2}')
-        if [[ -z ${logicrep_pid} ]];then
-            su -s /bin/bash - ${ograc_user} -c "nohup sh /opt/software/tools/logicrep/watchdog_logicrep.sh -n logicrep -N ${node_count} &" >> /opt/ograc/log/deploy/deploy_daemon.log 2>&1
-        fi
     fi
 
     cms_process_info=$(ps -fu ${ograc_user} | grep "cms server -start" | grep -vE '(grep|defunct)')

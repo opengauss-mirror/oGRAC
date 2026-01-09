@@ -59,8 +59,7 @@ function newPackageTarget() {
   echo "当前目录: $(pwd)"
   echo "目录内容:"
   ls -la
-  mkdir -p ${pkg_real_path}/{action,repo,config,common,zlogicrep,dss}
-  mkdir -p ${pkg_real_path}/zlogicrep/build/oGRAC_PKG/file
+  mkdir -p ${pkg_real_path}/{action,repo,config,common,dss}
   B_VERSION=$(grep -oP '<Bversion>\K[^<]+' "${OGDB_CODE_PATH}"/../ProductComm_DoradoAA/CI/conf/cmc/dbstore/archive_cmc_versions.xml | sed 's/oGRAC //g')
   # 提取B_VERSION最后一个点之后的部分
   B_VERSION_SUFFIX="${B_VERSION##*.}"
@@ -84,8 +83,6 @@ function newPackageTarget() {
   fi
   cp -arf "${OGDB_CODE_PATH}"/dss/* ${pkg_real_path}/dss/
   echo "目录内容:"
-  ls -la ${OGDB_CODE_PATH}/pkg/src/zlogicrep/build/
-  cp -rf ${OGDB_CODE_PATH}/pkg/src/zlogicrep/build/oGRAC_PKG/file/* ${pkg_real_path}/zlogicrep/build/oGRAC_PKG/file/
 
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_usr_pwd.sh
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_dbstor_compat.sh
