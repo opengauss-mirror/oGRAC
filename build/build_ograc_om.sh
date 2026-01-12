@@ -11,7 +11,7 @@ SERVICE_NAME=oGRAC
 MODULE_NAME=og_om
 
 TEMP_PATH="${CI_TOP_DIR}/temp/ograc/package/temp"
-OG_OM_COMPONENT_PATH="/opt/ograc/og_om"
+OG_OM_COMPONENT_PATH="${CI_TOP_DIR}/opt/og_om"
 OG_OM_SITE_PACKAGES_PATH="${TEMP_PATH}/venv/lib64/python*/site-packages"
 
 

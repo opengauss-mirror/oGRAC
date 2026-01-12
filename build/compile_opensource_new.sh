@@ -10,6 +10,14 @@ export LIBRARY=${WORKSPACE}/ogracKernel/library
 export PLATFORM=${WORKSPACE}/ogracKernel/platform
 export OS_ARCH=$(uname -i)
 DFT_WORKSPACE="/home/regress"
+export TP_PREFIX="${OPEN_SOURCE}/local"
+mkdir -p "${TP_PREFIX}"
+export PATH="${TP_PREFIX}/bin:${PATH}"
+export LD_LIBRARY_PATH="${TP_PREFIX}/lib:${TP_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+export CPPFLAGS="-I${TP_PREFIX}/include ${CPPFLAGS:-}"
+export LDFLAGS="-L${TP_PREFIX}/lib -L${TP_PREFIX}/lib64 ${LDFLAGS:-}"
+export CMAKE_PREFIX_PATH="${TP_PREFIX}:${CMAKE_PREFIX_PATH:-}"
+
 
 echo $DFT_WORKSPACE " " $WORKSPACE
 if [[ "$WORKSPACE" == *"regress"* ]]; then
@@ -35,7 +43,7 @@ if [[ ! -z ${BEP} ]]; then
     sed -i "2653,2692d" configure  #从2653到2692行是构建环境检查，检查系统时间的。做bep固定时间戳时，若是centos系统，系统时间固定，必须删除构建环境检查，才能编译，才能保证两次出包bep一致；若是euler系统，可不用删除，删除了也不影响编译。
     fi
 fi
-./configure
+./configure --prefix="${TP_PREFIX}" --libdir="${TP_PREFIX}/lib"
 CFLAGS='-Wall -Wtrampolines -fno-common -fvisibility=default -fstack-protector-strong -fPIC --param ssp-buffer-size=4 -D_FORTIFY_SOURCE=2 -O2 -Wl,-z,relro,-z,now,-z,noexecstack' ./configure --enable-utf8 --enable-unicode-properties --prefix=${OPEN_SOURCE}/pcre/pcre2-10.40/pcre-build --disable-stack-for-recursion
 make;make check;make install
 cd .libs/;tar -cvf libpcre.tar libpcre2-8.so*;mkdir -p ${LIBRARY}/pcre/lib/;cp libpcre.tar libpcre2-8.so* ${LIBRARY}/pcre/lib/
@@ -80,7 +88,7 @@ if [[ ! -z ${BEP} ]]; then
     sed -i "2915,2949d" configure
     fi
 fi
-./configure
+./configure --prefix="${TP_PREFIX}" --libdir="${TP_PREFIX}/lib"
 if [[ ${OS_ARCH} =~ "x86_64" ]]; then
     export CPU_CORES_NUM_x86=`cat /proc/cpuinfo |grep "cores" |wc -l`
     make -j${CPU_CORES_NUM_x86}
@@ -100,13 +108,14 @@ tar -zxvf protobuf-c-1.4.1.tar.gz
 cd ${OPEN_SOURCE}/protobuf-c/protobuf-c-1.4.1
 # ./autogen.sh
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+export PKG_CONFIG_PATH="${TP_PREFIX}/lib/pkgconfig:${TP_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 # 流水线是否设置BEP
 if [[ ! -z ${BEP} ]]; then
     if [[ -n "$(cat /etc/os-release | grep CentOS)" ]] && [[ ${BEP} == "true" ]] && [[ "${BUILD_TYPE}" == "RELEASE" ]];then
     sed -i "2692,2726d" configure
     fi
 fi
-./configure CFLAGS="-fPIC" CXXFLAGS="-fPIC" --enable-static=yes --enable-shared=no
+./configure --prefix="${TP_PREFIX}" --libdir="${TP_PREFIX}/lib" CFLAGS="-fPIC" CXXFLAGS="-fPIC" --enable-static=yes --enable-shared=no
 
 if [[ ${OS_ARCH} =~ "x86_64" ]]; then
     export CPU_CORES_NUM_x86=`cat /proc/cpuinfo |grep "cores" |wc -l`
@@ -131,7 +140,8 @@ cp ${OPEN_SOURCE}/protobuf-c/protobuf-c-1.4.1/protobuf-c/protobuf-c.h ${LIBRARY}
 cd ${OPEN_SOURCE}/openssl
 tar -zxvf openssl-3.0.7.tar.gz
 cd ${OPEN_SOURCE}/openssl/openssl-3.0.7/
-./config shared
+mkdir -p "${OPEN_SOURCE}/openssl/install"
+./config --prefix="${OPEN_SOURCE}/openssl/install" shared
 if [[ ${OS_ARCH} =~ "x86_64" ]]; then
     export CPU_CORES_NUM_x86=`cat /proc/cpuinfo |grep "cores" |wc -l`
     make -j${CPU_CORES_NUM_x86}

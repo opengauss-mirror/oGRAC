@@ -11,7 +11,7 @@ CI_TOP_DIR=$(cd ${SCRIPT_TOP_DIR}/..; pwd)
 MODULE_NAME=og_om
 
 
-og_om_component_path="/opt/ograc/og_om"
+og_om_component_path="${CI_TOP_DIR}/opt/og_om"
 
 RPM_TMP_PATH="${CI_TOP_DIR}/temp/${MODULE_NAME}"
 RPM_PKG_PATH="${RPM_TMP_PATH}/package"
