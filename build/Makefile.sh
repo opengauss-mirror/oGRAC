@@ -64,6 +64,24 @@ else
     export CPU_CORES_NUM=16
 fi
 
+func_get_os_suffix() {
+    ARCH=$1
+    OS_TYPE="unknown"
+
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS_TYPE=$ID
+    fi
+
+    case "${ARCH}-${OS_TYPE}" in
+        aarch64-openEuler) echo "OPENEULER" ;;
+        aarch64-Centos)    echo "CENTOS" ;;
+        x86_64-openEuler)  echo "OPENEULER" ;;
+        x86_64-Centos)     echo "CENTOS" ;;
+        *)                 echo "UNKNOWN" ;;
+    esac
+}
+
 echo ${OGRACDB_HOME}
 func_prepare_pkg_name()
 {
@@ -78,10 +96,7 @@ func_prepare_pkg_name()
     PACK_PREFIX=$(cat ${CONFIG_IN_FILE} | grep 'PACK_PREFIX' | awk '{print $3}')
     PROJECT_VERSION=$(cat ${CONFIG_IN_FILE} | grep 'PROJECT_VERSION' | awk '{print $3}')
 
-    # arm_euler临时规避
-    if [[ ${OS_ARCH} =~ "aarch64" ]]; then
-        OS_SUFFIX=CENTOS
-    fi
+    OS_SUFFIX=$(func_get_os_suffix "${OS_ARCH}")
 
     RUN_PACK_DIR_NAME=${PACK_PREFIX}-RUN-${OS_SUFFIX}-${ARCH}bit
     ALL_PACK_DIR_NAME=${PACK_PREFIX}-DATABASE-${OS_SUFFIX}-${ARCH}bit
