@@ -1,10 +1,12 @@
 #!/bin/bash
 set +x
 umask 0022
+
 CURRENT_PATH=$(dirname $(readlink -f $0))
 SCRIPT_NAME=${CURRENT_PATH}/$(basename $0)
 MODULE_NAME=ograc
-oGRAC_component_path="/opt/ograc/image"
+OGDB_CODE_PATH="${CURRENT_PATH}"/..
+oGRAC_component_path="${OGDB_CODE_PATH}/image"
 SPEC_FILE="${CURRENT_PATH}/${MODULE_NAME}.spec"
 
 OGRACDB_BIN=$(echo $(dirname $(pwd)))/output/bin

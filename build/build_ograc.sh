@@ -12,6 +12,7 @@ ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
 DSSENABLED="FALSE"
+OGRAC_IMAGE="${OGDB_CODE_PATH}/image"
 
 mkdir -p ${TMP_PKG_PATH}
 
@@ -21,11 +22,11 @@ function packageTarget() {
   echo "Current directory: $(pwd)"
   ls -la
   tar -zcf ograc.tar.gz ${BUILD_TARGET_NAME}/
-  if [ -d /opt/ograc/image ]; then
-    rm -rf /opt/ograc/image
+  if [ -d ${OGRAC_IMAGE} ]; then
+    rm -rf ${OGRAC_IMAGE}
   fi
-  mkdir -p /opt/ograc/image
-  mv -f ograc.tar.gz /opt/ograc/image/
+  mkdir -p ${OGRAC_IMAGE}
+  mv -f ograc.tar.gz ${OGRAC_IMAGE}
   cd ${CURRENT_PATH}
   bash "${CURRENT_PATH}"/rpm_build_ograc.sh
 }
