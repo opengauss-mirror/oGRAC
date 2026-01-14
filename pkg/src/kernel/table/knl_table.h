@@ -127,7 +127,7 @@ status_t db_create_part_index(knl_session_t *session, knl_cursor_t *cursor, inde
 status_t db_create_part_shadow_index(knl_session_t *session, knl_dictionary_t *dc, index_t *index,
     knl_part_obj_def_t *def, rebuild_info_t rebuild_info);
 status_t db_drop_index(knl_session_t *session, index_t *index, knl_dictionary_t *dc);
-status_t db_fetch_index_desc(knl_session_t *session, uint32 uid, uint32 table_id, text_t *name,
+status_t db_fetch_index_desc(knl_session_t *session, uint32 uid, text_t *name,
                              knl_index_desc_t *desc);
 status_t db_update_index_status(knl_session_t *session, index_t *index, bool32 is_invalid, bool32 *is_changed);
 status_t db_update_table_chgscn(knl_session_t *session, knl_table_desc_t *desc);
@@ -250,7 +250,7 @@ status_t db_alter_part_index_coalesce(knl_session_t *session, knl_dictionary_t *
 status_t db_alter_subpart_index_coalesce(knl_session_t *session, knl_dictionary_t *dc, knl_alindex_def_t *def,
     index_t *index);
 status_t db_alter_index_coalesce(knl_session_t *session, knl_dictionary_t *dc, index_t *index);
-status_t db_fetch_sysindex_row(knl_session_t *session, knl_cursor_t *cursor, uint32 uid, uint32 table_id,
+status_t db_fetch_sysindex_row(knl_session_t *session, knl_cursor_t *cursor, uint32 uid,
                                text_t *index_name, knl_cursor_action_t action, bool32 *is_found);
 status_t db_fetch_shadow_indexpart_row(knl_session_t *session, knl_handle_t dc_entity, knl_cursor_t *cursor);
 status_t db_fetch_shadow_index_row(knl_session_t *session, knl_handle_t dc_entity, knl_cursor_t *cursor);

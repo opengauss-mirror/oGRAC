@@ -1,0 +1,91 @@
+SQL> --CREATE TABLE
+SQL> drop TABLE if exists salary_2025;
+
+Succeed.
+
+SQL> CREATE TABLE salary_2025(id INT NOT NULL, name CHAR(50), job VARCHAR(30), salary NUMBER);
+
+Succeed.
+
+SQL> drop TABLE if exists salary_2026;
+
+Succeed.
+
+SQL> CREATE TABLE salary_2026(id INT NOT NULL, name CHAR(50), job VARCHAR(30), salary NUMBER);
+
+Succeed.
+
+SQL> 
+SQL> --WRITE DATA
+SQL> insert into salary_2025(id, name, job, salary) values(1, 'jack', 'teacher', 2000);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> --CREATE INDEX
+SQL> create index idx1 on salary_2025(id);
+
+Succeed.
+
+SQL> create index idx1 on salary_2025(name);
+
+OG-00753, The object index IDX1 already exists.
+SQL> create index idx1 on salary_2026(id);
+
+OG-00753, The object index IDX1 already exists.
+SQL> 
+SQL> --DROP INDEX
+SQL> drop index idx1;
+
+Succeed.
+
+SQL> create index idx1 on salary_2025(id);
+
+Succeed.
+
+SQL> drop index idx1 on salary_2025;
+
+Succeed.
+
+SQL> 
+SQL> --ALTER INDEX
+SQL> create index idx1 on salary_2025(id);
+
+Succeed.
+
+SQL> alter index idx1 rename to idx2;
+
+Succeed.
+
+SQL> alter index idx2 rename to idx1;
+
+Succeed.
+
+SQL> alter index idx1 on salary_2025 rename to idx2;
+
+OG-00601, [1:18]Sql syntax error: unexpected word on found.
+SQL> 
+SQL> --ANALYZE INDEX
+SQL> analyze table salary_2025 compute statistics;
+
+Succeed.
+
+SQL> analyze index idx1 compute statistics;
+
+Succeed.
+
+SQL> analyze index idx1 on salary_2025 compute statistics;
+OG-00601, [1:20]Sql syntax error: COMPUTE or ESTIMATE expected
+SQL> 
+SQL> --DROP TABLE
+SQL> drop TABLE if exists salary_2025;
+
+Succeed.
+
+SQL> drop TABLE if exists salary_2026;
+
+Succeed.

@@ -494,6 +494,7 @@ void knl_init_index_scan(knl_cursor_t *cursor, bool32 is_equal);
 void knl_set_scan_key(knl_index_desc_t *desc, knl_scan_key_t *scan_key, og_type_t type, const void *data, uint16 len,
                       uint16 id);
 void knl_set_key_flag(knl_scan_key_t *border, uint8 flag, uint16 id);
+status_t knl_get_table_of_index(knl_handle_t se, text_t *user, text_t *index, text_t *table);
 void knl_get_index_name(knl_index_desc_t *desc, char *name, uint32 max_len);
 
 status_t knl_insert(knl_handle_t session, knl_cursor_t *cursor);

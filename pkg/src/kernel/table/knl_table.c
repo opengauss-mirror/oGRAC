@@ -5686,7 +5686,7 @@ status_t db_update_table_trig_flag(knl_session_t *session, knl_table_desc_t *des
  * Return Value    : status_t
  * History         : 1. 2017/4/26,  add description
  */
-status_t db_fetch_sysindex_row(knl_session_t *session, knl_cursor_t *cursor, uint32 uid, uint32 table_id,
+status_t db_fetch_sysindex_row(knl_session_t *session, knl_cursor_t *cursor, uint32 uid,
                                text_t *index_name, knl_cursor_action_t action, bool32 *is_found)
 {
     knl_scan_key_t *lkey = &cursor->scan_range.l_key;
@@ -5698,9 +5698,7 @@ status_t db_fetch_sysindex_row(knl_session_t *session, knl_cursor_t *cursor, uin
                      IX_COL_SYS_INDEX_002_USER);
     knl_set_scan_key(INDEX_DESC(cursor->index), lkey, OG_TYPE_STRING, index_name->str, index_name->len,
                      IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), lkey, OG_TYPE_INTEGER, &table_id, sizeof(uint32),
-                     IX_COL_SYS_INDEX_002_TABLE);
-
+    
     if (OG_SUCCESS != knl_fetch(session, cursor)) {
         return OG_ERROR;
     }
@@ -7628,7 +7626,7 @@ status_t db_create_index_online(knl_session_t *session, knl_index_def_t *def, kn
     return status;
 }
 
-status_t db_fetch_index_desc(knl_session_t *session, uint32 uid, uint32 table_id, text_t *name,
+status_t db_fetch_index_desc(knl_session_t *session, uint32 uid, text_t *name,
                              knl_index_desc_t *desc)
 {
     bool32 is_found;
@@ -7641,7 +7639,7 @@ status_t db_fetch_index_desc(knl_session_t *session, uint32 uid, uint32 table_id
     CM_SAVE_STACK(session->stack);
 
     cursor = knl_push_cursor(session);
-    if (OG_SUCCESS != db_fetch_sysindex_row(session, cursor, uid, table_id, name, CURSOR_ACTION_SELECT, &is_found)) {
+    if (OG_SUCCESS != db_fetch_sysindex_row(session, cursor, uid, name, CURSOR_ACTION_SELECT, &is_found)) {
         CM_RESTORE_STACK(session->stack);
         return OG_ERROR;
     }
@@ -8669,8 +8667,6 @@ status_t db_update_index_entry(knl_session_t *session, knl_index_desc_t *desc, p
     knl_get_index_name(desc, idx_name, OG_NAME_BUFFER_SIZE);
     knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_STRING, idx_name, (uint16)strlen(idx_name),
         IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_INTEGER, &desc->table_id, sizeof(uint32),
-                     IX_COL_SYS_INDEX_002_TABLE);
 
     if (knl_fetch(session, cursor) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);
@@ -8904,8 +8900,6 @@ status_t db_update_index_name(knl_session_t *session, uint32 uid, uint32 table_i
     // index name len is not greater 68
     knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_STRING, name, (uint16)strlen(name),
                      IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_INTEGER, &table_id, sizeof(uint32),
-                     IX_COL_SYS_INDEX_002_TABLE);
 
     if (knl_fetch(session, cursor) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);
@@ -8947,8 +8941,6 @@ status_t db_update_index_initrans(knl_session_t *session, knl_index_desc_t *desc
     // index name len is not greater 68
     knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_STRING, desc->name, (uint16)strlen(desc->name),
         IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_INTEGER, &desc->table_id, sizeof(uint32),
-        IX_COL_SYS_INDEX_002_TABLE);
 
     if (knl_fetch(session, cursor) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);
@@ -13501,7 +13493,6 @@ status_t db_analyze_index(knl_session_t *session, knl_analyze_index_def_t *def, 
 {
     text_t user = def->owner;
     text_t idx_name = def->name;
-    text_t table_name = def->table_name;
     knl_dictionary_t dc;
     bool32 unsupport_type = OG_FALSE;
     stats_load_info_t load_info;
@@ -13515,7 +13506,7 @@ status_t db_analyze_index(knl_session_t *session, knl_analyze_index_def_t *def, 
         return OG_ERROR;
     }
 
-    if (knl_open_dc_by_index(session, &user, &table_name, &idx_name, &dc) != OG_SUCCESS) {
+    if (knl_open_dc_by_index(session, &user, NULL, &idx_name, &dc) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -13876,7 +13867,7 @@ static status_t db_init_shadow_index(knl_session_t *session, rebuild_index_def_t
 
     cm_str2text(old_index->desc.name, &idx_name);
 
-    if (db_fetch_index_desc(session, old_index->desc.uid, old_index->desc.table_id, &idx_name, &desc) != OG_SUCCESS) {
+    if (db_fetch_index_desc(session, old_index->desc.uid, &idx_name, &desc) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -15853,15 +15844,11 @@ static status_t db_get_unique_idx_id(knl_session_t *session, table_t *table,
     knl_set_scan_key(INDEX_DESC(cursor->index), &cursor->scan_range.l_key, OG_TYPE_STRING, (void
         *)def->logical_log_def.idx_name.str,
                      def->logical_log_def.idx_name.len, IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), &cursor->scan_range.l_key, OG_TYPE_INTEGER, &table->desc.id,
-                     sizeof(uint32), IX_COL_SYS_INDEX_002_TABLE);
     knl_set_scan_key(INDEX_DESC(cursor->index), &cursor->scan_range.r_key, OG_TYPE_INTEGER, &table->desc.uid,
                      sizeof(uint32), IX_COL_SYS_INDEX_002_USER);
     knl_set_scan_key(INDEX_DESC(cursor->index), &cursor->scan_range.r_key, OG_TYPE_STRING, (void
         *)def->logical_log_def.idx_name.str,
                      def->logical_log_def.idx_name.len, IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), &cursor->scan_range.r_key, OG_TYPE_INTEGER, &table->desc.id,
-                     sizeof(uint32), IX_COL_SYS_INDEX_002_TABLE);
 
     if (OG_SUCCESS != knl_fetch(session, cursor)) {
         CM_RESTORE_STACK(session->stack);

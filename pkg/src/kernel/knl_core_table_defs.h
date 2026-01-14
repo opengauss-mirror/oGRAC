@@ -150,7 +150,6 @@ typedef enum en_sys_column_column {
 
 #define IX_COL_SYS_INDEX_002_USER        0
 #define IX_COL_SYS_INDEX_002_NAME        1
-#define IX_COL_SYS_INDEX_002_TABLE       2
 
 
 /***************************************************SYS_USER**********************************************************/
