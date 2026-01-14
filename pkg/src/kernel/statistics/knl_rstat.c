@@ -3684,8 +3684,6 @@ static status_t stats_update_sys_index(knl_session_t *session, stats_index_t *st
                      IX_COL_SYS_INDEX_002_USER);
     knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_STRING, stats_index->name.str, stats_index->name.len,
                      IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_INTEGER, &stats_index->table_id, sizeof(uint32),
-                     IX_COL_SYS_INDEX_002_TABLE);
     
     if (knl_fetch(session, cursor) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);
@@ -11494,8 +11492,6 @@ static status_t stats_update_sys_index_force(knl_session_t *session, knl_diction
                      IX_COL_SYS_INDEX_002_USER);
     knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_STRING, index->desc.name,
                      (uint16)strlen(index->desc.name), IX_COL_SYS_INDEX_002_NAME);
-    knl_set_scan_key(INDEX_DESC(cursor->index), key, OG_TYPE_INTEGER, &index->desc.table_id, sizeof(uint32),
-                     IX_COL_SYS_INDEX_002_TABLE);
     
     if (knl_fetch(session, cursor) != OG_SUCCESS) {
         CM_RESTORE_STACK(session->stack);

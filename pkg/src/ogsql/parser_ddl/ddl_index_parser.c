@@ -970,7 +970,7 @@ status_t sql_parse_alter_index(sql_stmt_t *stmt)
     word_t word;
     lex_t *lex = stmt->session->lex;
     knl_alindex_def_t *def = NULL;
-    bool32 is_on = OG_FALSE;
+    text_t table;
 
     lex->flags |= LEX_WITH_OWNER;
     stmt->context->type = OGSQL_TYPE_ALTER_INDEX;
@@ -981,21 +981,13 @@ status_t sql_parse_alter_index(sql_stmt_t *stmt)
 
     OG_RETURN_IFERR(sql_convert_object_name(stmt, &word, &def->user, NULL, &def->name));
 
-    OG_RETURN_IFERR(lex_try_fetch(lex, "on", &is_on));
-
-    if (!is_on) {
-        OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR,
-                              "invalid SQL syntax due to not 'on' expression before table name");
+    if (knl_get_table_of_index(&stmt->session->knl_session, &def->user, &def->name, &table) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_INDEX_NOT_EXIST, T2S(&def->user), T2S_EX(&def->name));
+        sql_check_user_priv(stmt, &def->user);
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(lex_expected_fetch_variant(lex, &word));
-
-    if (sql_convert_object_name(stmt, &word, &def->user, NULL, &def->table) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
-    OG_RETURN_IFERR(sql_regist_ddl_table(stmt, &def->user, &def->table));
+    OG_RETURN_IFERR(sql_regist_ddl_table(stmt, &def->user, &table));
 
     OG_RETURN_IFERR(lex_fetch(stmt->session->lex, &word));
 
@@ -1024,23 +1016,17 @@ status_t sql_parse_drop_index(sql_stmt_t *stmt)
 
     OG_RETURN_IFERR(lex_try_fetch(lex, "on", &is_on));
 
-    if (!is_on) {
-        OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR,
-                              "invalid SQL syntax due to not 'on' expression before table name");
-        return OG_ERROR;
-    }
+    if (is_on) {
+        OG_RETURN_IFERR(lex_expected_fetch_variant(lex, &word));
+        if (sql_convert_object_name(stmt, &word, &def->ex_owner, NULL, &def->ex_name) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
 
-    OG_RETURN_IFERR(lex_expected_fetch_variant(lex, &word));
-
-    if (sql_convert_object_name(stmt, &word, &def->ex_owner, NULL, &def->ex_name) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
-    if (cm_compare_text_ins(&def->owner, &def->ex_owner) != 0) {
-        OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR,
-                              "index user(%s) is not consistent with table user(%s)",
-                              T2S(&def->owner), T2S_EX(&def->ex_owner));
-        return OG_ERROR;
+        if (cm_compare_text_ins(&def->owner, &def->ex_owner) != 0) {
+            OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR,
+                "index user(%s) is not consistent with table user(%s)", T2S(&def->owner), T2S_EX(&def->ex_owner));
+            return OG_ERROR;
+        }
     }
 
     OG_RETURN_IFERR(lex_try_fetch(lex, "CASCADE", &is_cascade));
@@ -1062,7 +1048,6 @@ status_t sql_parse_analyze_index(sql_stmt_t *stmt)
     knl_analyze_index_def_t *def = NULL;
     uint32 sample_ratio = 0;
     uint32 match_id = 0;
-    bool32 is_on = OG_FALSE;
 
     lex->flags |= LEX_WITH_OWNER;
     stmt->context->type = OGSQL_TYPE_ANALYZE_INDEX;
@@ -1076,20 +1061,6 @@ status_t sql_parse_analyze_index(sql_stmt_t *stmt)
     }
 
     if (sql_convert_object_name(stmt, &word, &def->owner, NULL, &def->name) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
-    OG_RETURN_IFERR(lex_try_fetch(lex, "on", &is_on));
-
-    if (!is_on) {
-        OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR,
-                              "invalid SQL syntax due to not 'on' expression before table name");
-        return OG_ERROR;
-    }
-
-    OG_RETURN_IFERR(lex_expected_fetch_variant(lex, &word));
-
-    if (sql_convert_object_name(stmt, &word, &def->table_owner, NULL, &def->table_name) != OG_SUCCESS) {
         return OG_ERROR;
     }
 

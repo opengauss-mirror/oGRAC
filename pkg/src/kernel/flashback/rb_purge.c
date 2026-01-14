@@ -834,7 +834,7 @@ static status_t rb_purge_drop_index(knl_session_t *session, knl_rb_desc_t *desc)
     }
 
     cm_str2text(desc->name, &index_name);
-    if (db_fetch_index_desc(session, desc->uid, desc->table_id, &index_name, &index_desc) != OG_SUCCESS) {
+    if (db_fetch_index_desc(session, desc->uid, &index_name, &index_desc) != OG_SUCCESS) {
         unlock_tables_directly(session);
         dc_close(&dc);
         return OG_ERROR;

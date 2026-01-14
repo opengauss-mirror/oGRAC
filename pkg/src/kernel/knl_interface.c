@@ -2069,6 +2069,60 @@ void knl_set_key_flag(knl_scan_key_t *border, uint8 flag, uint16 id)
     border->flags[id] = flag;
 }
 
+status_t knl_get_table_of_index(knl_handle_t sess, text_t *user, text_t *idx, text_t *tbl)
+{
+    dc_user_t *dict_user = NULL;
+    knl_session_t *knl_session = (knl_session_t *)sess;
+    knl_cursor_t *cur = NULL;
+    uint32 userid;
+    uint32 tblid;
+ 
+    if (knl_session->kernel->db.status != DB_STATUS_OPEN) {
+        OG_LOG_RUN_ERR("func:%s Invalid operation when database isn't available.", "knl_get_table_of_index");
+        return OG_ERROR;
+    }
+ 
+    knl_set_session_scn(knl_session, OG_INVALID_ID64);
+    if (dc_get_user_id(knl_session, user, &userid) == OG_FALSE) {
+        return OG_ERROR;
+    }
+ 
+    CM_SAVE_STACK(knl_session->stack);
+    cur = knl_push_cursor(knl_session);
+
+    knl_open_sys_cursor(knl_session, cur, CURSOR_ACTION_SELECT, SYS_INDEX_ID, IX_SYS_INDEX_002_ID);
+    knl_init_index_scan(cur, OG_TRUE);
+    /* find the tuple by userid only */
+    knl_set_scan_key(INDEX_DESC(cur->index), &cur->scan_range.l_key, OG_TYPE_INTEGER, (void *)&userid,
+                     sizeof(uint32), 0);
+    knl_set_scan_key(INDEX_DESC(cur->index), &cur->scan_range.l_key, OG_TYPE_STRING, idx->str, idx->len, 1);
+ 
+    if (OG_SUCCESS != knl_fetch(knl_session, cur)) {
+        CM_RESTORE_STACK(knl_session->stack);
+        OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "knl_get_table_of_index", "knl_fetch");
+        return OG_ERROR;
+    }
+ 
+    if (cur->eof) {
+        CM_RESTORE_STACK(knl_session->stack);
+        OG_LOG_RUN_ERR("func:%s can not find data.", "knl_get_table_of_index");
+        return OG_ERROR;
+    }
+ 
+    tblid = *(uint32 *)(CURSOR_COLUMN_DATA(cur, SYS_INDEX_COLUMN_ID_TABLE));
+    CM_RESTORE_STACK(knl_session->stack);
+ 
+    if (dc_open_user_by_id(knl_session, userid, &dict_user) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("func:%s invoke func:%s run failed.", "knl_get_table_of_index", "dc_open_user_by_id");
+        return OG_ERROR;
+    }
+
+    tbl->str = DC_GET_ENTRY(dict_user, tblid)->name;
+    tbl->len = (uint32)strlen(tbl->str);
+
+    return OG_SUCCESS;
+}
+
 /*
  * if index is invalid and it is primary/unique index, then report error
  */
@@ -6704,7 +6758,7 @@ status_t knl_open_dc_by_index(knl_handle_t se, text_t *owner, text_t *table, tex
             return OG_ERROR;
         }
 
-        if (db_fetch_index_desc(session, uid, OG_INVALID_ID32, idx_name, &desc) != OG_SUCCESS) {
+        if (db_fetch_index_desc(session, uid, idx_name, &desc) != OG_SUCCESS) {
             return OG_ERROR;
         }
 
@@ -6843,7 +6897,7 @@ status_t knl_alter_index_rename(knl_handle_t session, knl_alt_index_prop_t *def,
 
     CM_SAVE_STACK(se->stack);
     cursor = knl_push_cursor(se);
-    if (db_fetch_sysindex_row(se, cursor, dc->uid, dc->oid, &def->new_name,
+    if (db_fetch_sysindex_row(se, cursor, dc->uid, &def->new_name,
                               CURSOR_ACTION_SELECT, &is_found) != OG_SUCCESS) {
         CM_RESTORE_STACK(se->stack);
         return OG_ERROR;
@@ -6928,7 +6982,6 @@ status_t knl_alter_index(knl_handle_t session, knl_handle_t stmt, knl_alindex_de
     index_t *index = NULL;
     knl_session_t *se = (knl_session_t *)session;
     drlatch_t *ddl_latch = &se->kernel->db.ddl_latch;
-    text_t *table_name;
     if (knl_ddl_enabled(session, OG_TRUE) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -6936,8 +6989,7 @@ status_t knl_alter_index(knl_handle_t session, knl_handle_t stmt, knl_alindex_de
     if (knl_ddl_latch_s(ddl_latch, session, NULL) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    table_name = &def->table;
-    if (knl_open_dc_by_index(se, &def->user, table_name, &def->name, &dc) != OG_SUCCESS) {
+    if (knl_open_dc_by_index(se, &def->user, NULL, &def->name, &dc) != OG_SUCCESS) {
         dls_unlatch(session, ddl_latch, NULL);
         return OG_ERROR;
     }

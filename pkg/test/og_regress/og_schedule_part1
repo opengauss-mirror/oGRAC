@@ -16,3 +16,4 @@ test: og_function
 test: og_order_by_eliminate
 test: og_exp_imp
 test: og_auto_increment
+test: og_index_unique
