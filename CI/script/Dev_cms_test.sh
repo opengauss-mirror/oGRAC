@@ -65,11 +65,7 @@ function uninstall_ogracdb()
 function install_ogracdb()
 {
     echo "========================= Install ogracDB ======================="
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS_TYPE=$ID
-    fi
-    cd ${ROOT_PATH}/output/bin/oGRAC-DATABASE-${OS_TYPE^^}-64bit
+    cd ${ROOT_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit
     python3 install.py -U ${RUN_TEST_USER}:${RUN_TEST_USER}  \
                        -R ${TEST_DATA_DIR}/install/  \
                        -D ${TEST_DATA_DIR}/data/  \
