@@ -1,8 +1,8 @@
 /* -------------------------------------------------------------------------
- *  This file is part of the Cantian project.
- * Copyright (c) 2025 Huawei Technologies Co.,Ltd.
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2026 Huawei Technologies Co.,Ltd.
  *
- * Cantian is licensed under Mulan PSL v2.
+ * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *
@@ -70,7 +70,8 @@ status_t expl_pre_execute(sql_stmt_t *statement, sql_cursor_t **cursor)
     return ret;
 }
 
-static status_t expl_send_explain_row(sql_stmt_t *statement, sql_cursor_t *cursor, char *row_buf, char *info, bool32 *is_full)
+static status_t expl_send_explain_row(sql_stmt_t *statement,
+                                      sql_cursor_t *cursor, char *row_buf, char *info, bool32 *is_full)
 {
     row_assist_t ra;
     MEMS_RETURN_IFERR(memset_s(row_buf, OG_MAX_ROW_SIZE, 0, OG_MAX_ROW_SIZE));
@@ -101,8 +102,9 @@ static status_t expl_send_explain_text(text_t *plan_text, const char *buffer)
     return OG_SUCCESS;
 }
 
-static status_t expl_send_explain_data(sql_stmt_t *statement, sql_cursor_t *cursor, char *row_buf, char *info, bool32 *is_full,
-                                text_t *plan_text)
+static status_t expl_send_explain_data(sql_stmt_t *statement,
+                                       sql_cursor_t *cursor, char *row_buf, char *info, bool32 *is_full,
+                                       text_t *plan_text)
 {
     if (plan_text != NULL) {
         return expl_send_explain_text(plan_text, info);
@@ -200,9 +202,11 @@ static status_t expl_send_explain_tail(sql_stmt_t *statement, sql_cursor_t *curs
     return OG_SUCCESS;
 }
 
+#define VM_LIST_MIN_VALID_COUNT 2
+
 static bool32 check_rs_page_in_segment(mtrl_context_t *mtrl, mtrl_segment_t *segment, uint32 vmid)
 {
-    if (segment->vm_list.count <= 2) {
+    if (segment->vm_list.count <= VM_LIST_MIN_VALID_COUNT) {
         return (vmid == segment->vm_list.first || vmid == segment->vm_list.last);
     }
 
@@ -235,18 +239,20 @@ static status_t expl_fmt_column_content(mtrl_row_t *row, char *content, uint32 o
     return OG_SUCCESS;
 }
 
+#define EXPL_ROW_RESERVED_TAIL_SPACE 2
+
 static status_t expl_fmt_plan_content(sql_stmt_t *statement, sql_cursor_t *cursor, expl_helper_t *helper, char *content)
 {
     uint32 offset = 0;
     uint32 *fmt_sizes = helper->fmt_sizes;
     mtrl_row_t *row = &cursor->mtrl.cursor.row;
 
-    (void)memset_s(content, OG_MAX_ROW_SIZE, ' ', OG_MAX_ROW_SIZE);
+    MEMS_RETURN_IFERR(memset_s(content, OG_MAX_ROW_SIZE, ' ', OG_MAX_ROW_SIZE));
     for (uint32 i = 0; i < EXPL_COL_TYPE_MAX; i++) {
         if (!OG_BIT_TEST(helper->display_option, OG_GET_MASK(i))) {
             continue;
         }
-        if (offset + fmt_sizes[i] + EXPL_FMT_ALIGN_SIZE > OG_MAX_ROW_SIZE - 2) {
+        if (offset + fmt_sizes[i] + EXPL_FMT_ALIGN_SIZE > OG_MAX_ROW_SIZE - EXPL_ROW_RESERVED_TAIL_SPACE) {
             break;
         }
 
@@ -312,7 +318,7 @@ static status_t expl_send_plan_info(sql_stmt_t *statement, sql_cursor_t *cursor,
     return OG_SUCCESS;
 }
 
-status_t expl_send_predicate_head(sql_stmt_t *statement, sql_cursor_t *cursor, pred_helper_t *helper)
+static status_t expl_send_predicate_head(sql_stmt_t *statement, sql_cursor_t *cursor, pred_helper_t *helper)
 {
     char *info = NULL;
     bool32 is_full = OG_FALSE;
@@ -403,7 +409,7 @@ status_t expl_send_explain_rows(sql_stmt_t *statement, sql_cursor_t *cursor, exp
 {
     OG_RETURN_IFERR(expl_send_plan_info(statement, cursor, helper));
     OG_RETURN_IFERR(expl_send_predicate_info(statement, cursor, &helper->pred_helper));
-    // TODO how client<->server
+    // how client<->server
     if (statement->batch_rows < statement->prefetch_rows) {
         statement->eof = OG_TRUE;
         cursor->eof = OG_TRUE;

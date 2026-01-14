@@ -1,8 +1,8 @@
 /* -------------------------------------------------------------------------
- *  This file is part of the Cantian project.
- * Copyright (c) 2025 Huawei Technologies Co.,Ltd.
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2026 Huawei Technologies Co.,Ltd.
  *
- * Cantian is licensed under Mulan PSL v2.
+ * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *
@@ -114,24 +114,26 @@ static status_t ogsql_unparse_table_info(sql_query_t *qry, sql_table_t *tbl, var
 
 static inline status_t ogsql_unparse_cond_need(cond_tree_t *cond)
 {
-    return cond != NULL && cond->root != NULL && 
+    return cond != NULL && cond->root != NULL &&
         cond->root->type != COND_NODE_TRUE && cond->root->type != COND_NODE_FALSE;
 }
 
-status_t ogsql_unparse_expr_operation(sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_expr_operation(
+    sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
 {
     OG_RETURN_IFERR(ogsql_unparse_expr_node(qry, exprn->left, result, table_unparsed));
     OG_RETURN_IFERR(cm_concat_var_string(result, g_expr_oper[exprn->type - EXPR_NODE_MUL]));
     return ogsql_unparse_expr_node(qry, exprn->right, result, table_unparsed);
 }
 
-status_t ogsql_unparse_prior_node(sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_prior_node(
+    sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
 {
     OG_RETURN_IFERR(cm_concat_var_string(result, "PRIOR "));
     return ogsql_unparse_expr_node(qry, exprn->right, result, table_unparsed);
 }
 
-status_t ogsql_unparse_reserved_node(expr_node_t *exprn, var_text_t *result)
+static status_t ogsql_unparse_reserved_node(expr_node_t *exprn, var_text_t *result)
 {
     reserved_wid_t res_id = VAR_RES_ID(&exprn->value);
     if (res_id >= RES_WORD_CONNECT_BY_ISCYCLE && res_id <= RES_WORD_ROWNODEID) {
@@ -141,7 +143,7 @@ status_t ogsql_unparse_reserved_node(expr_node_t *exprn, var_text_t *result)
     return OG_ERROR;
 }
 
-status_t ogsql_unparse_query_cols(sql_query_t *qry, var_text_t *result)
+static status_t ogsql_unparse_query_cols(sql_query_t *qry, var_text_t *result)
 {
     if (qry->is_exists_query) {
         return cm_concat_var_string(result, " 1");
@@ -208,7 +210,7 @@ static status_t ogsql_unparse_unpivot_name(galist_t *lst, var_text_t *result)
 static status_t ogsql_unparse_unpivot_column(pivot_items_t *items, var_text_t *result)
 {
     uint32 data_count = items->unpivot_data_rs->count;
-    for(uint32 i = 0; i < items->column_name->count; i++) {
+    for (uint32 i = 0; i < items->column_name->count; i++) {
         if (i % data_count == 0) {
             OG_RETURN_IFERR(cm_concat_var_string(result, "("));
         }
@@ -361,7 +363,7 @@ static status_t ogsql_unparse_join_cond(sql_query_t *qry, sql_join_node_t *jnode
 }
 
 static status_t ogsql_unparse_join_tree(sql_query_t *qry, sql_join_node_t *jnode, var_text_t *result)
-{    
+{
     if (jnode->left->type != JOIN_TYPE_NONE && jnode->right->type != JOIN_TYPE_NONE) {
         OG_RETURN_IFERR(ogsql_unparse_join_tree(qry, jnode->left, result));
         return ogsql_unparse_join_tree(qry, jnode->right, result);
@@ -626,7 +628,8 @@ static status_t ogsql_unparse_case_node(sql_query_t *qry, expr_node_t *exprn, va
     return cm_concat_var_string(result, " END");
 }
 
-static status_t ogsql_unparse_negative_node(sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_negative_node(
+    sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
 {
     OG_RETURN_IFERR(cm_concat_var_string(result, "-"));
     return ogsql_unparse_expr_node(qry, exprn->right, result, table_unparsed);
@@ -722,7 +725,8 @@ static status_t ogsql_make_const_char(variant_t *var, text_t *var_str, var_text_
     return cm_concat_var_string(result, "\'");
 }
 
-static status_t ogsql_make_const_date(variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
+static status_t ogsql_make_const_date(
+    variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
 {
     nls->param_geter(nls, NLS_DATE_FORMAT, fmt_text);
     OG_RETURN_IFERR(cm_date2text(VALUE(date_t, var), fmt_text, var_str, DEFAULT_UNPARSE_STR_LEN));
@@ -735,7 +739,8 @@ static status_t ogsql_make_const_date(variant_t *var, const nlsparams_t *nls, te
     return cm_concat_var_string(result, "\')");
 }
 
-static status_t ogsql_make_const_timestamp(variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
+static status_t ogsql_make_const_timestamp(
+    variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
 {
     nls->param_geter(nls, NLS_TIMESTAMP_FORMAT, fmt_text);
     OG_RETURN_IFERR(cm_date2text(VALUE(timestamp_t, var), fmt_text, var_str, DEFAULT_UNPARSE_STR_LEN));
@@ -746,7 +751,8 @@ static status_t ogsql_make_const_timestamp(variant_t *var, const nlsparams_t *nl
     return cm_concat_var_string(result, "\'");
 }
 
-static status_t ogsql_make_const_timestamp_tz(variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
+static status_t ogsql_make_const_timestamp_tz(
+    variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
 {
     nls->param_geter(nls, NLS_TIMESTAMP_TZ_FORMAT, fmt_text);
     OG_RETURN_IFERR(cm_date2text(VALUE(date_t, var), fmt_text, var_str, DEFAULT_UNPARSE_STR_LEN));
@@ -757,7 +763,8 @@ static status_t ogsql_make_const_timestamp_tz(variant_t *var, const nlsparams_t 
     return cm_concat_var_string(result, "\'");
 }
 
-static status_t ogsql_make_const_timestamp_ltz(variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
+static status_t ogsql_make_const_timestamp_ltz(
+    variant_t *var, const nlsparams_t *nls, text_t *fmt_text, text_t *var_str, var_text_t *result)
 {
     nls->param_geter(nls, NLS_TIMESTAMP_FORMAT, fmt_text);
 
@@ -772,14 +779,16 @@ static status_t ogsql_make_const_timestamp_ltz(variant_t *var, const nlsparams_t
     return cm_concat_var_string(result, "\'");
 }
 
+#define BIN_TO_HEX_CHAR_RATIO 2
+
 static status_t ogsql_make_const_bin(variant_t *var, text_t *var_str, var_text_t *result)
-{    
+{
     OG_RETURN_IFERR(cm_concat_var_string(result, "0x"));
     binary_t *bin = VALUE_PTR(binary_t, var);
     uint32 bin_len = bin->size;
     // for print long bin
-    if (bin_len * 2 >= DEFAULT_UNPARSE_STR_LEN) {
-        bin->size = DEFAULT_UNPARSE_STR_LEN / 2;
+    if (bin_len * BIN_TO_HEX_CHAR_RATIO >= DEFAULT_UNPARSE_STR_LEN) {
+        bin->size = DEFAULT_UNPARSE_STR_LEN / BIN_TO_HEX_CHAR_RATIO;
     }
     var_str->len = DEFAULT_UNPARSE_STR_LEN;
     OG_RETURN_IFERR(cm_bin2text(bin, OG_FALSE, var_str));
@@ -806,7 +815,7 @@ static status_t ogsql_make_const_interval_ym(variant_t *var, text_t *var_str, va
     return cm_concat_var_string(result, "\' YEAR(4) TO MONTH");
 }
 
-static status_t ogsql_make_const_time(interval_unit_t time_type, var_text_t *result) 
+static status_t ogsql_make_const_time(interval_unit_t time_type, var_text_t *result)
 {
     switch (time_type) {
         case IU_DAY:
@@ -852,84 +861,81 @@ static status_t ogsql_make_const_typmode(variant_t *var, text_t *var_str, var_te
     return cm_concat_n_var_string(result, var_str->str, var_str->len);
 }
 
-static status_t ogsql_concat_var2text(variant_t *var, var_text_t *result)
+static status_t handle_negative_prefix(variant_t *var, var_text_t *result)
 {
-    text_t fmt_text;
-    const nlsparams_t *nls = OG_DEFALUT_SESSION_NLS_PARAMS;
-    text_t var_str = { 0 };
-    char buf[DEFAULT_UNPARSE_STR_LEN] = { 0 };
     bool32 is_negative = var_is_negative(var);
-    var_str.str = buf;
-
     if (is_negative && var->type != OG_TYPE_INTERVAL_DS &&
         var->type != OG_TYPE_INTERVAL_YM) {
-        OG_RETURN_IFERR(cm_concat_var_string(result, "("));
+        return cm_concat_var_string(result, "(");
     }
+    return OG_SUCCESS;
+}
 
+static status_t handle_var_type_conversion(variant_t *var, const nlsparams_t *nls,
+                                           text_t *fmt_text, text_t *var_str, var_text_t *result)
+{
     switch (var->type) {
-        case OG_TYPE_UINT32:
-        case OG_TYPE_USMALLINT:
-        case OG_TYPE_UTINYINT:
-            OG_RETURN_IFERR(ogsql_make_const_uint32(var, &var_str, result));
-            break;
-        case OG_TYPE_INTEGER:
-        case OG_TYPE_SMALLINT:
-        case OG_TYPE_TINYINT:
-            OG_RETURN_IFERR(ogsql_make_const_int(var, &var_str, result));
-            break;
+        case OG_TYPE_UINT32: case OG_TYPE_USMALLINT: case OG_TYPE_UTINYINT:
+            return ogsql_make_const_uint32(var, var_str, result);
+        case OG_TYPE_INTEGER: case OG_TYPE_SMALLINT: case OG_TYPE_TINYINT:
+            return ogsql_make_const_int(var, var_str, result);
         case OG_TYPE_BOOLEAN:
-            OG_RETURN_IFERR(ogsql_make_const_bool(var, &var_str, result));
-            break;
+            return ogsql_make_const_bool(var, var_str, result);
         case OG_TYPE_BIGINT:
-            OG_RETURN_IFERR(ogsql_make_const_bigint(var, &var_str, result));
-            break;
+            return ogsql_make_const_bigint(var, var_str, result);
         case OG_TYPE_UINT64:
-            OG_RETURN_IFERR(ogsql_make_const_uint64(var, &var_str, result));
-            break;
-        case OG_TYPE_REAL:
-        case OG_TYPE_FLOAT:
-            OG_RETURN_IFERR(ogsql_make_const_real(var, &var_str, result));
-            break;
-        case OG_TYPE_NUMBER:
-        case OG_TYPE_DECIMAL:
-        case OG_TYPE_NUMBER2:
-            OG_RETURN_IFERR(ogsql_make_const_number(var, &var_str, result));
-            break;
+            return ogsql_make_const_uint64(var, var_str, result);
+        case OG_TYPE_REAL: case OG_TYPE_FLOAT:
+            return ogsql_make_const_real(var, var_str, result);
+        case OG_TYPE_NUMBER: case OG_TYPE_DECIMAL: case OG_TYPE_NUMBER2:
+            return ogsql_make_const_number(var, var_str, result);
         case OG_TYPE_TYPMODE:
-            OG_RETURN_IFERR(ogsql_make_const_typmode(var, &var_str, result));
-            break;
-        case OG_TYPE_STRING:
-        case OG_TYPE_CHAR:
-        case OG_TYPE_VARCHAR:
-            return ogsql_make_const_char(var, &var_str, result);
+            return ogsql_make_const_typmode(var, var_str, result);
+        case OG_TYPE_STRING: case OG_TYPE_CHAR: case OG_TYPE_VARCHAR:
+            return ogsql_make_const_char(var, var_str, result);
         case OG_TYPE_DATE:
-            return ogsql_make_const_date(var, nls, &fmt_text, &var_str, result);
-        case OG_TYPE_TIMESTAMP:
-        case OG_TYPE_TIMESTAMP_TZ_FAKE:
-            return ogsql_make_const_timestamp(var, nls, &fmt_text, &var_str, result);
+            return ogsql_make_const_date(var, nls, fmt_text, var_str, result);
+        case OG_TYPE_TIMESTAMP: case OG_TYPE_TIMESTAMP_TZ_FAKE:
+            return ogsql_make_const_timestamp(var, nls, fmt_text, var_str, result);
         case OG_TYPE_TIMESTAMP_TZ:
-            return ogsql_make_const_timestamp_tz(var, nls, &fmt_text, &var_str, result);
+            return ogsql_make_const_timestamp_tz(var, nls, fmt_text, var_str, result);
         case OG_TYPE_TIMESTAMP_LTZ:
-            return ogsql_make_const_timestamp_ltz(var, nls, &fmt_text, &var_str, result);
-        case OG_TYPE_RAW:
-        case OG_TYPE_BINARY:
-        case OG_TYPE_VARBINARY:
-            return ogsql_make_const_bin(var, &var_str, result);
+            return ogsql_make_const_timestamp_ltz(var, nls, fmt_text, var_str, result);
+        case OG_TYPE_RAW: case OG_TYPE_BINARY: case OG_TYPE_VARBINARY:
+            return ogsql_make_const_bin(var, var_str, result);
         case OG_TYPE_INTERVAL_DS:
-            return ogsql_make_const_interval_ds(var, &var_str, result);
+            return ogsql_make_const_interval_ds(var, var_str, result);
         case OG_TYPE_INTERVAL_YM:
-            return ogsql_make_const_interval_ym(var, &var_str, result);
+            return ogsql_make_const_interval_ym(var, var_str, result);
         case OG_TYPE_ITVL_UNIT:
             return ogsql_make_const_time(var->v_itvl_unit_id, result);
         default:
             OG_THROW_ERROR(ERR_CONVERT_TYPE, get_datatype_name_str((int32)var->type), "string");
             return OG_ERROR;
     }
-
-    return is_negative ? cm_concat_var_string(result, ")") : OG_SUCCESS;
 }
 
-status_t ogsql_unparse_const_node(sql_query_t *qry, expr_node_t *exprn, var_text_t *result)
+static status_t ogsql_concat_var2text(variant_t *var, var_text_t *result)
+{
+    text_t fmt_text;
+    const nlsparams_t *nls = OG_DEFALUT_SESSION_NLS_PARAMS;
+    text_t var_str = { 0 };
+    char buf[DEFAULT_UNPARSE_STR_LEN] = { 0 };
+    var_str.str = buf;
+
+    OG_RETURN_IFERR(handle_negative_prefix(var, result));
+
+    status_t type_handle_ret = handle_var_type_conversion(var, nls, &fmt_text, &var_str, result);
+    if (type_handle_ret != OG_SUCCESS) {
+        return type_handle_ret;
+    }
+
+    bool32 is_negative = var_is_negative(var);
+    return is_negative && var->type != OG_TYPE_INTERVAL_DS &&
+                   var->type != OG_TYPE_INTERVAL_YM ? cm_concat_var_string(result, ")") : OG_SUCCESS;
+}
+
+static status_t ogsql_unparse_const_node(sql_query_t *qry, expr_node_t *exprn, var_text_t *result)
 {
     variant_t *var = &exprn->value;
     if (var->is_null) {
@@ -939,12 +945,13 @@ status_t ogsql_unparse_const_node(sql_query_t *qry, expr_node_t *exprn, var_text
     return ogsql_concat_var2text(var, result);
 }
 
-status_t ogsql_unparse_column_prefix(sql_table_t *tbl, expr_node_t *node, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_column_prefix(
+    sql_table_t *tbl, expr_node_t *node, var_text_t *result, bool32 table_unparsed)
 {
     OG_RETSUC_IFTRUE(table_unparsed);
     if (node->word.column.user.len > 0) {
         OG_RETURN_IFERR(cm_concat_n_var_string(result, tbl->user.str, tbl->user.len));
-        OG_RETURN_IFERR(cm_concat_var_string(result, ".")); 
+        OG_RETURN_IFERR(cm_concat_var_string(result, "."));
     }
 
     bool32 is_alias_valid = (tbl->alias.len > 0 && !tbl->alias.implicit);
@@ -959,7 +966,7 @@ status_t ogsql_unparse_column_prefix(sql_table_t *tbl, expr_node_t *node, var_te
     return cm_concat_var_string(result, ".");
 }
 
-status_t ogsql_unparse_col_by_normal_table(sql_table_t *tbl, expr_node_t *node, var_text_t *result,
+static status_t ogsql_unparse_col_by_normal_table(sql_table_t *tbl, expr_node_t *node, var_text_t *result,
     bool32 table_unparsed)
 {
     OG_RETURN_IFERR(ogsql_unparse_column_prefix(tbl, node, result, table_unparsed));
@@ -1006,7 +1013,8 @@ static status_t ogsql_unparse_col_by_func_table(sql_table_t *tbl, expr_node_t *n
     return cm_concat_n_var_string(result, column->name, (uint32)strlen(column->name));
 }
 
-static status_t ogsql_unparse_col_by_json_table(sql_table_t *tbl, expr_node_t *node, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_col_by_json_table(
+    sql_table_t *tbl, expr_node_t *node, var_text_t *result, bool32 table_unparsed)
 {
     rs_column_t *rs_column = (rs_column_t *)cm_galist_get(&tbl->json_table_info->columns, COL_OF_NODE(node));
     OG_RETURN_IFERR(ogsql_unparse_column_prefix(tbl, node, result, table_unparsed));
@@ -1042,7 +1050,8 @@ static status_t ogsql_unparse_rs_column(sql_table_t *tbl, expr_node_t *node, var
     return ogsql_unparse_expr_node(qry, rs_column->expr->root, result, table_unparsed);
 }
 
-static status_t ogsql_unparse_column_inner(sql_query_t *qry, expr_node_t *node, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_column_inner(
+    sql_query_t *qry, expr_node_t *node, var_text_t *result, bool32 table_unparsed)
 {
     sql_array_t *tbl_ary = &qry->tables;
     if (tbl_ary->count <= NODE_TAB(node) && qry->s_query != NULL) {
@@ -1062,7 +1071,8 @@ static status_t ogsql_unparse_column_inner(sql_query_t *qry, expr_node_t *node, 
     }
 }
 
-static status_t ogsql_unparse_column_node(sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
+static status_t ogsql_unparse_column_node(
+    sql_query_t *qry, expr_node_t *exprn, var_text_t *result, bool32 table_unparsed)
 {
     uint32 i = 0;
     while (i++ < NODE_ANCESTOR(exprn)) {
@@ -1146,7 +1156,7 @@ static status_t ogsql_unparse_sort_args(sort_item_t *sort_item, var_text_t *resu
     }
 
     if (sort_item->nulls_pos == SORT_NULLS_FIRST) {
-        OG_RETURN_IFERR(cm_concat_var_string(result, "NULLS FIRST")); 
+        OG_RETURN_IFERR(cm_concat_var_string(result, "NULLS FIRST"));
     } else if (sort_item->nulls_pos == SORT_NULLS_LAST) {
         OG_RETURN_IFERR(cm_concat_var_string(result, "NULLS LAST"));
     }
@@ -1197,7 +1207,7 @@ static status_t ogsql_unparse_over_node(sql_query_t *qry, expr_node_t *node, var
 {
     expr_node_t *over_func = node->argument->root;
     if (ogsql_unparse_over_func(qry, over_func, result) != OG_SUCCESS) {
-        return OG_ERROR; 
+        return OG_ERROR;
     }
 
     OG_RETURN_IFERR(cm_concat_var_string(result, " OVER ("));
@@ -1282,7 +1292,7 @@ static status_t ogsql_unparse_expr_tree(sql_query_t *qry, expr_tree_t *exprtr, v
 }
 
 static status_t ogsql_unparse_expr_tree_list(sql_query_t *qry, galist_t *lst, var_text_t *result)
-{   
+{
     uint32 i = 0;
     while (i < lst->count) {
         expr_tree_t *exprtr = (expr_tree_t *)cm_galist_get(lst, i);
@@ -1398,7 +1408,8 @@ static status_t ogsql_unparse_node_func(sql_query_t *qry, expr_node_t *node, var
     return OG_SUCCESS;
 }
 
-static status_t ogsql_unparse_hash_exprs(sql_query_t *qry, galist_t *l_expr_lst, galist_t *r_expr_lst, var_text_t *result)
+static status_t ogsql_unparse_hash_exprs(
+    sql_query_t *qry, galist_t *l_expr_lst, galist_t *r_expr_lst, var_text_t *result)
 {
     uint32 id = 0;
     const char *prefix = "";
@@ -1484,13 +1495,13 @@ static status_t ogsql_unparse_in_expr(sql_query_t *qry, expr_tree_t *exprtr, uin
             OG_RETURN_IFERR(cm_concat_var_string(result, ", "));
         }
 
-        if (index % len == 0) {
+        if (len == 0 || index % len == 0) {
             OG_RETURN_IFERR(cm_concat_var_string(result, "("));
         }
 
         OG_RETURN_IFERR(ogsql_unparse_expr_node(qry, exprtr->root, result, OG_FALSE));
 
-        if (index % len == len - 1) {
+        if (len == 0 || index % len == len - 1) {
             OG_RETURN_IFERR(cm_concat_var_string(result, ")"));
         }
 
@@ -1503,7 +1514,7 @@ static status_t ogsql_unparse_in_expr(sql_query_t *qry, expr_tree_t *exprtr, uin
 static status_t ogsql_unparse_in_compare(sql_query_t *qry, cmp_node_t *cmp, var_text_t *result)
 {
     uint32 len = sql_expr_list_len(cmp->left);
-    if (len == 1 || TREE_EXPR_TYPE(cmp->right) == EXPR_NODE_SELECT) {
+    if (len == 0 || len == 1 || TREE_EXPR_TYPE(cmp->right) == EXPR_NODE_SELECT) {
         return ogsql_unparse_match_compare(qry, cmp, result);
     }
 

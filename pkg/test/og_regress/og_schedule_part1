@@ -18,3 +18,4 @@ test: og_exp_imp
 test: bison_parser
 test: og_auto_increment
 test: og_index_unique
+test: og_explain

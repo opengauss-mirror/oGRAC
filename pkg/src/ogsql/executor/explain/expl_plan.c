@@ -1,8 +1,8 @@
 /* -------------------------------------------------------------------------
- *  This file is part of the Cantian project.
- * Copyright (c) 2025 Huawei Technologies Co.,Ltd.
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2026 Huawei Technologies Co.,Ltd.
  *
- * Cantian is licensed under Mulan PSL v2.
+ * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *
@@ -440,16 +440,10 @@ static status_t expl_format_query_plan(sql_stmt_t *statement, expl_helper_t *hel
 
 static inline bool32 expl_format_withas_has_mtrl(sql_withas_t *withas_plan)
 {
-    if (withas_plan == NULL || withas_plan->withas_factors->count == 0) {
-        return OG_FALSE;
-    }
-    uint32 i = 0;
-    sql_withas_factor_t *factor = NULL;
-    while (i < withas_plan->withas_factors->count) {
-        factor = (sql_withas_factor_t *)cm_galist_get(withas_plan->withas_factors, i++);
-        if (factor->is_mtrl) {
-            return OG_TRUE;
-        }
+    if (withas_plan == NULL || withas_plan->withas_factors->count == 0) return OG_FALSE;
+    for (uint32 i = 0; i < withas_plan->withas_factors->count; i++) {
+        sql_withas_factor_t *factor = (sql_withas_factor_t *)cm_galist_get(withas_plan->withas_factors, i);
+        if (factor->is_mtrl) return OG_TRUE;
     }
     return OG_FALSE;
 }
@@ -580,7 +574,7 @@ static status_t expl_format_index_scan_mode(sql_stmt_t *statement, expl_helper_t
     return expl_format_pred_index_cond(statement, &helper->pred_helper, plan_node);
 }
 
-static status_t expl_format_user_index_scan_plan(sql_stmt_t *statement, expl_helper_t *helper, plan_node_t *plan_node, 
+static status_t expl_format_user_index_scan_plan(sql_stmt_t *statement, expl_helper_t *helper, plan_node_t *plan_node,
                                                  uint32 depth)
 {
     char oper[OG_MAX_DFLT_VALUE_LEN] = { 0 };
@@ -657,7 +651,8 @@ static status_t expl_format_view_as_table_scan_plan(sql_stmt_t *statement, expl_
     return expl_format_plan_node(statement, helper, next_plan_node, depth + 1);
 }
 
-status_t expl_format_subselect_as_table_scan_plan(sql_stmt_t *statement, expl_helper_t *helper, plan_node_t *plan_node,
+static status_t expl_format_subselect_as_table_scan_plan(
+    sql_stmt_t *statement, expl_helper_t *helper, plan_node_t *plan_node,
                                                   uint32 depth)
 {
     char *oper = NULL;
@@ -757,7 +752,8 @@ static status_t format_subselect_conditions(sql_stmt_t *statement, expl_helper_t
         return OG_ERROR;
     }
 
-    if (has_index_subselect && expl_format_cond_node_plan(statement, helper, tbl->cond->root, depth, NULL) != OG_SUCCESS) {
+    if (has_index_subselect && expl_format_cond_node_plan(
+                                   statement, helper, tbl->cond->root, depth, NULL) != OG_SUCCESS) {
         OG_LOG_DEBUG_ERR("[EXPLAIN] Failed to format index subselect condition plan.");
         return OG_ERROR;
     }
@@ -995,7 +991,6 @@ static status_t expl_format_join_plan(sql_stmt_t *statement, expl_helper_t *help
     OG_RETURN_IFERR(expl_format_plan_node_row(statement, helper, plan_node, depth, oper, NULL, NULL, NULL));
     OG_RETURN_IFERR(expl_format_predicate_row(statement, &helper->pred_helper, plan_node));
 
-
     cond_tree_t *lcond = plan_node->join_p.left_hash.filter_cond;
     if (lcond && lcond->root->type != COND_NODE_TRUE) {
         OG_RETURN_IFERR(sql_clone_cond_tree(&helper->pred_helper.vmc, lcond,
@@ -1063,7 +1058,7 @@ static status_t expl_format_insert_expr_plan(sql_stmt_t *statement, expl_helper_
         if (pair->exprs == NULL) {
             continue;
         }
-        for(uint32 j = 0; j < pair->exprs->count; j++) {
+        for (uint32 j = 0; j < pair->exprs->count; j++) {
             exprt = (expr_tree_t *)cm_galist_get(pair->exprs, j);
             OG_RETURN_IFERR(expl_format_expr_tree_plan(statement, helper, exprt, depth));
         }
@@ -1087,7 +1082,7 @@ static status_t expl_format_insert_plan(sql_stmt_t *statement, expl_helper_t *he
     helper->ssa = &insert_ctx->ssa;
     bool32 insert_all = OG_BIT_TEST(insert_ctx->syntax_flag, INSERT_IS_ALL);
     OG_RETURN_IFERR(expl_format_plan_node_row(statement, helper, plan_node, depth, oper, NULL, NULL, NULL));
-    if (sql_get_plan(statement) == plan_node ) {
+    if (sql_get_plan(statement) == plan_node) {
         OG_RETURN_IFERR(expl_format_withas_plan(statement, helper, plan_node, depth + 1));
     }
     OG_RETURN_IFERR(expl_format_insert_print_oper(statement, helper, plan_node, depth + 1, insert_all));
@@ -1108,7 +1103,8 @@ static status_t expl_format_merge_insert_plan(sql_stmt_t *statement, expl_helper
         return OG_SUCCESS;
     }
     if (merge_ctx->insert_filter_cond == NULL) {
-        OG_RETURN_IFERR(expl_format_plan_node_row(statement, helper, merge_ctx->insert_ctx->plan, depth, "INSERT STATEMENT",
+        OG_RETURN_IFERR(expl_format_plan_node_row(
+            statement, helper, merge_ctx->insert_ctx->plan, depth, "INSERT STATEMENT",
                                                   NULL, NULL, NULL));
         return OG_SUCCESS;
     }
@@ -1351,7 +1347,7 @@ static status_t expl_format_distinct_plan(sql_stmt_t *statement, expl_helper_t *
     return expl_format_distinct_plan_data(statement, helper, plan, depth, oper);
 }
 
-static status_t expl_format_next_plan(sql_stmt_t *statement, expl_helper_t *helper, plan_node_t *plan_node, 
+static status_t expl_format_next_plan(sql_stmt_t *statement, expl_helper_t *helper, plan_node_t *plan_node,
                                       plan_node_t *next_plan_node, uint32 depth, char *oper)
 {
     OG_RETURN_IFERR(expl_format_plan_node_row(statement, helper, plan_node, depth, oper, NULL, NULL, NULL));

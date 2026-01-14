@@ -1,8 +1,8 @@
 /* -------------------------------------------------------------------------
- *  This file is part of the Cantian project.
- * Copyright (c) 2025 Huawei Technologies Co.,Ltd.
+ *  This file is part of the oGRAC project.
+ * Copyright (c) 2026 Huawei Technologies Co.,Ltd.
  *
- * Cantian is licensed under Mulan PSL v2.
+ * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *
@@ -220,7 +220,8 @@ static status_t expl_extract_cond_by_table(sql_stmt_t *statement, sql_query_t *q
     return OG_SUCCESS;
 }
 
-static uint32 extract_break_positions(text_t *content, uint32 *space_pos) {
+static uint32 extract_break_positions(text_t *content, uint32 *space_pos)
+{
     bool32 in_single_quote = false;
     bool32 in_double_quote = false;
     uint32 count = 0;
@@ -345,11 +346,13 @@ status_t expl_put_pred_info(sql_stmt_t *statement, sql_query_t *qry, pred_helper
     return OG_SUCCESS;
 }
 
+#define DECIMAL_BASE 10
+
 static inline uint32 get_row_id_len(int32 row_id)
 {
     uint32 row_id_len = 0;
     while (row_id > 0) {
-        row_id /= 10;
+        row_id /= DECIMAL_BASE;
         row_id_len++;
     }
     return row_id_len;
@@ -360,11 +363,9 @@ static status_t expl_format_hash_filter(sql_stmt_t *statement, sql_query_t *qry,
 {
     int row_id = helper->parent->row_helper.id;
     uint32 row_id_len = get_row_id_len(row_id);
-    
     if (row_id_len == 0) {
         return OG_SUCCESS;
     }
-
     MEMS_RETURN_IFERR(memset_s(content->str, OG_MAX_ROW_SIZE, (char)' ', (uint32)strlen(" - ") + row_id_len));
     content->len += row_id_len;
     OG_RETURN_IFERR(cm_concat_var_string(content, expl_get_pred_type(PREDICATE_FILTER)));
@@ -468,9 +469,9 @@ static status_t expl_format_nl_join(sql_query_t *qry, pred_helper_t *helper, pla
     OG_RETURN_IFERR(ogsql_unparse_cond_node(qry, tree->root, OG_FALSE, content));
 
     if (helper->outer_cond) {
-       helper->outer_cond = NULL;
+        helper->outer_cond = NULL;
     } else if (helper->nl_filter) {
-        helper->nl_filter = NULL; 
+        helper->nl_filter = NULL;
     }
     return OG_SUCCESS;
 }
@@ -637,7 +638,7 @@ static bool32 index_related_cmp_for_col(sql_stmt_t *statement, sql_table_t *tbl,
 
 static bool32 index_related_cmp_node(sql_stmt_t *statement, sql_table_t *tbl, cmp_node_t *cmp_node)
 {
-    for(uint32 i = 0; i < tbl->index->column_count; i++) {
+    for (uint32 i = 0; i < tbl->index->column_count; i++) {
         uint32 col_id = tbl->index->columns[i];
         knl_column_t *knl_col = knl_get_column(tbl->entry->dc.handle, col_id);
         if (KNL_COLUMN_IS_VIRTUAL(knl_col)) {
@@ -672,7 +673,7 @@ static status_t expl_extract_index_cond(sql_stmt_t *statement, sql_table_t *tbl,
         OG_RETURN_IFERR(expl_extract_index_cond(statement, tbl, src_cond->right, dst_tree));
         try_eval_logic_and(src_cond);
         return OG_SUCCESS;
-    } 
+    }
     
     if ((src_cond->type == COND_NODE_OR &&
          index_related_cond(statement, tbl, src_cond->left) &&
@@ -894,7 +895,7 @@ static bool32 ogsql_cond_tree_has_rownum(sql_stmt_t *statement, sql_query_t *qry
     return OG_FALSE;
 }
 
-status_t ogsql_unparse_rownumm_cond_tree(sql_stmt_t *statement, sql_query_t *qry, cond_node_t *cond,
+static status_t ogsql_unparse_rownumm_cond_tree(sql_stmt_t *statement, sql_query_t *qry, cond_node_t *cond,
     var_text_t *result, bool32 *has_cond)
 {
     if (cond->type == COND_NODE_AND) {
@@ -938,7 +939,7 @@ static status_t expl_format_node_rownum(sql_stmt_t *statement, sql_query_t *qry,
     }
     int row_id = helper->parent->row_helper.id;
     var_text_t *content = &helper->content;
-    bool32 has_cond = OG_FALSE;  // if CT_TRUE: need add "AND" in front 
+    bool32 has_cond = OG_FALSE;  // if CT_TRUE: need add "AND" in front
 
     CM_TEXT_CLEAR(content);
     OG_RETURN_IFERR(expl_format_cond_head(content, row_id, OG_FALSE));

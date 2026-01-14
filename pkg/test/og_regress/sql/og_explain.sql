@@ -11,7 +11,7 @@ create table like_optm_t (id int, a varchar(20), b varchar(20), c clob, d raw(50
 insert into like_optm_t values (1, 'storage','aaa','11111','123456789','12345');
 insert into like_optm_t values (2, 'mysql','bbb','22222','987654321','abcde');
 insert into like_optm_t values (3, 'openGauss','ccc','33333','20250715','ABCDE');
-insert into like_optm_t values (4, 'cantian','ddd','44444','19980804','QWERF');
+insert into like_optm_t values (4, 'ograc','ddd','44444','19980804','QWERF');
 insert into like_optm_t values (5, null,'',null,'','A');
 insert into like_optm_t values (6, 'Innodb','2025-07-15 00:00:00','66666','19980804','AAA');
 insert into like_optm_t values (7, 'mysql%','b_bb','22_22%2','123456789','12345');
@@ -25,7 +25,7 @@ explain select * from like_optm_t where d like '20250715';
 select count(*) from like_optm_t where d like '20250715';
 
 -- const val or bind param in the left no optim
-explain select * from like_optm_t where 'cantian' like a;
+explain select * from like_optm_t where 'ograc' like a;
 explain select * from like_optm_t where '19980804' like d;
 explain select * from like_optm_t where '44444' like c;
 
@@ -59,8 +59,8 @@ explain select * from like_optm_t where id like char_length('mysql');
 select id from like_optm_t where id like char_length('mysql');
 explain select * from like_optm_t where d like hextoraw('19980804');
 select count(*) from like_optm_t where d like hextoraw('19980804');
-explain select * from like_optm_t where lower(a) like 'cantian';
-select id from like_optm_t where lower(a) like 'cantian';
+explain select * from like_optm_t where lower(a) like 'ograc';
+select id from like_optm_t where lower(a) like 'ograc';
 explain select * from like_optm_t where b like to_date('2025-07-15', 'yyyy-mm-dd');
 select id from like_optm_t where b like to_date('2025-07-15', 'yyyy-mm-dd');
 explain select * from like_optm_t where a like cast('openGauss' as char(9));
