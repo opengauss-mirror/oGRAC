@@ -207,6 +207,33 @@ function rm_cgroup() {
         fi
 }
 
+function correct_ctom_files_ownmod() {
+    chown -R ogmgruser:ogmgruser /opt/ograc/og_om/service
+    chmod -R 400 /opt/ograc/og_om/service
+    chown ograc:ogracgroup /opt/ograc/og_om/service
+    chown -R ograc:ogracgroup /opt/ograc/og_om/service/ograc_exporter
+    chmod 770 /opt/ograc/og_om
+    chmod 770 /opt/ograc/og_om/service
+    chmod 700 /opt/ograc/og_om/service/ograc_exporter
+    chmod 700 /opt/ograc/og_om/service/ograc_exporter/scripts
+    chmod 700 /opt/ograc/og_om/service/ograc_exporter/exporter
+    chmod 700 /opt/ograc/og_om/service/ograc_exporter/config
+    chmod 755 /opt/ograc/og_om/service/ograc_exporter/query_storage_info
+    chmod 600 /opt/ograc/og_om/service/ogcli/commands.json
+    chmod 700 /opt/ograc/og_om/service/ogcli
+    chmod 700 /opt/ograc/og_om/service/ogcli/params_factory
+    chmod 700 /opt/ograc/og_om/service/ogmgr
+    chmod 700 /opt/ograc/og_om/service/ogmgr/scripts
+    chmod 700 /opt/ograc/og_om/service/ogmgr/checker
+    chmod 700 /opt/ograc/og_om/service/ogmgr/logs_collection
+    chmod 700 /opt/ograc/og_om/service/ogmgr/log_tool
+    chmod 700 /opt/ograc/og_om/service/ogmgr/tasks
+    chmod 700 /opt/ograc/og_om/service/ogmgr/common
+    chmod 700 /opt/ograc/og_om/service/ogmgr/tasks/inspection
+    chmod 600 /opt/ograc/og_om/service/ogmgr/format_note.json
+    chmod 600 /opt/ograc/og_om/service/ogmgr/logs_collection/log_packing_progress.json
+}
+
 function mod_prepare() {
     # 修改og_om相关文件归属和权限
     sh ${CURRENT_PATH}/pre_install.sh ${ACTION}
@@ -239,6 +266,9 @@ case "$ACTION" in
         correct_ctom_files_mod  # 修改action/og_om路径下文件权限
         mod_prepare  # 预安装：修改owner，进行文件cp
         do_deploy ${INSTALL_NAME} ${INSTALL_TYPE}
+        if [ -f /opt/ograc/installed_by_rpm ]; then
+            correct_ctom_files_ownmod
+        fi
         chmod 600 /opt/ograc/og_om/service/ograc_exporter/config/get_logicrep_info.sql
         exit $?
         ;;

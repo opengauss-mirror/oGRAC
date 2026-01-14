@@ -41,7 +41,6 @@ rm -rf $RPM_BUILD_DIR/%{name}-%{version}
 %dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/scripts
 %dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/checker
 %dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/logs_collection
-%dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/checker
 %dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/log_tool
 %dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/tasks
 %dir %attr (0700,ogmgruser,ogmgruser) %{user_path}/service/ogmgr/common

@@ -34,6 +34,7 @@ INSTALL_FILE = "/opt/ograc/config/deploy_param.json"
 RETRY_TIMES = 20
 TIMEOUT = 60
 INIT_DSS_TIMEOUT = 300
+RPMINSTALLED_TAG = "/opt/ograc/installed_by_rpm"
 
 CAP_WIO = "CAP_SYS_RAWIO"
 CAP_ADM = "CAP_SYS_ADMIN"
@@ -376,7 +377,8 @@ class DssCtl(object):
         """
         self.modify_env(action="add")
         self.prepare_cfg()
-        self.prepare_source()
+        if not os.path.exists(RPMINSTALLED_TAG):
+            self.prepare_source()
         self.cms_add_dss_res()
         self.config_perctrl_permission()
         with open(INSTALL_FILE, encoding="utf-8") as f:
@@ -414,7 +416,9 @@ class DssCtl(object):
         """
         self.modify_env(action="delete")
         self.clean_shm()
-        self.clean_soft()
+        rpm_installed_file = "/opt/ograc/installed_by_rpm"
+        if not os.path.exists(rpm_installed_file):
+            self.clean_soft()
 
     def start(self, *args) -> None:
         """

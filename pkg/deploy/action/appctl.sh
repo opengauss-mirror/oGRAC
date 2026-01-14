@@ -379,7 +379,9 @@ case "$ACTION" in
         if [ $ret -ne 0 ];then
             exit 1
         fi
-        clean_dir
+        if [ ! -f /opt/ograc/installed_by_rpm ]; then
+            clean_dir
+        fi
         exit $?
         ;;
     check_status)

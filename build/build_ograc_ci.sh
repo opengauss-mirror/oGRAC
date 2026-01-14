@@ -32,7 +32,7 @@ function packageTarget() {
 
 function buildCtOmPackage() {
   bash "${CURRENT_PATH}"/build_ograc_om.sh
-  bash "${CURRENT_PATH}"/rpm_build_ct_om.sh
+  bash "${CURRENT_PATH}"/rpm_build_og_om.sh
   if [ $? -ne 0 ]; then
       echo "build og_om fail"
       return 1

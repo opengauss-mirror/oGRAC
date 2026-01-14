@@ -2,80 +2,52 @@
 set +x
 umask 0022
 CURRENT_PATH=$(dirname $(readlink -f $0))
+source "${CURRENT_PATH}"/common.sh
 SCRIPT_NAME=${CURRENT_PATH}/$(basename $0)
-
 SCRIPT_TOP_DIR=$(cd ${CURRENT_PATH}; pwd)
-CI_TOP_DIR=$(cd ${SCRIPT_TOP_DIR}/..; pwd)
-
-
-MODULE_NAME=og_om
-
-
-og_om_component_path="${CI_TOP_DIR}/opt/og_om"
-
-RPM_TMP_PATH="${CI_TOP_DIR}/temp/${MODULE_NAME}"
-RPM_PKG_PATH="${RPM_TMP_PATH}/package"
+RPMSOURCE_PATH="${OGRACDB_OUTPUT}/rpm/SOURCES"
+MODULE_NAME=ograc_all_in_one
 SPEC_FILE="${CURRENT_PATH}/${MODULE_NAME}.spec"
 
-#将源文件构建成tar.gz包
 function tar_console_rpm()
 {
     echo "Begin to tar component rpm. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-
     local name="$(getSpecParamVal "${SPEC_FILE}" Name)"
     local version="$(getSpecParamVal "${SPEC_FILE}" Version)"
-
-    if [ -d "${og_om_component_path}" ]; then
-        cd ${og_om_component_path}
+    if [ -d "${RPMSOURCE_PATH}" ]; then
+        cd ${RPMSOURCE_PATH}
         if [ $? -ne 0 ]; then
-            echo "Failed to cd ${og_om_component_path}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+            echo "Failed to cd ${RPMSOURCE_PATH}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             return 1
         fi
-#        tar zcvf ${name}.tar.gz *
-        echo "当前目录: $(pwd)"
-        echo "目录内容:"
+        echo "Current directory: $(pwd)"
+        echo "Contents of current directory:"
         ls -la
-        rm -f ${og_om_component_path}/${name}.tar.gz
-        echo "目录内容:"
-        ls -la
-        echo "开始执行tar命令..."
-        tar zcvf ${name}.tar.gz * || echo "tar命令失败，错误码: $?"
+        rm -f ${RPMSOURCE_PATH}/${name}.tar.gz
+        echo "Generating all-in-one tar..."
+        tar zcvf ${name}.tar.gz * || echo "Generate all-in-one tar failed and errcode is: $?"
         if [ $? -ne 0 ]; then
             echo "Failed to make ${name}.tar.gz package. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             return 1
         fi
 
         echo "Succeed in making ${name}.tar.gz package. [Line:${LINENO}, File:${SCRIPT_NAME} "
+        rm -rf ${RPMSOURCE_PATH}/opt
         return 0
-
     else
-        echo "${og_om_component_path} is not exist. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        echo "${RPMSOURCE_PATH} is not exist. [Line:${LINENO}, File:${SCRIPT_NAME}]"
         return 1
     fi
 
     return 0
 }
 
-#构建oam-console rpm包
 function build_console_rpm()
 {
     echo "Begin to build rpm ${MODULE_NAME}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
     local name="$(getSpecParamVal "${SPEC_FILE}" Name)"
-    local RPM_TOP_DIR="${CI_TOP_DIR}/temp/${MODULE_NAME}/rpm"
-
-    echo "Begin to mkdir ${RPM_TOP_DIR}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-    if [ -d ${RPM_TOP_DIR} ]; then
-        rm -rf ${RPM_TOP_DIR} >> ${LOG_PATH} 2>&1
-    fi
-
-    mkdir -p ${RPM_TOP_DIR}/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-    if [ $? -ne 0 ]; then
-        echo "Failed to mkdir ${RPM_TOP_DIR}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-        return 1
-    fi
-
-    echo "Begin to copy files: ${name}.tar.gz to ${RPM_TOP_DIR}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-    cp -rf ${og_om_component_path}/${name}.tar.gz ${RPM_TOP_DIR}/SOURCES && cp -rf ${SPEC_FILE} ${RPM_TOP_DIR}/SPECS/
+    local RPM_TOP_DIR="${OGRACDB_OUTPUT}/rpm"
+    cp -rf ${SPEC_FILE} ${RPM_TOP_DIR}/SPECS/
     if [ $? -ne 0 ]; then
         echo "Failed to copy files: ${name} to ${RPM_TOP_DIR}, [Line:${LINENO}, File:${SCRIPT_NAME}]"
         return 1
@@ -83,8 +55,6 @@ function build_console_rpm()
 
     echo "Begin to build rpm to ${RPM_TOP_DIR}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
     cd ${RPM_TOP_DIR}/SPECS
-
-
     echo "rpmbuild --define '_topdir ${RPM_TOP_DIR}' --define '_build_id_links none' -bb ${MODULE_NAME}.spec"
     eval "rpmbuild --define '_topdir ${RPM_TOP_DIR}' --define '_build_id_links none' -bb ${MODULE_NAME}.spec"
     if [ $? -ne 0 ]; then
@@ -97,12 +67,12 @@ function build_console_rpm()
 
 function clear_venv()
 {
-    echo "Begin to delete ${og_om_component_path}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-    if [ -d "${og_om_component_path}" ]; then
-        rm -rf "${og_om_component_path}"
-        echo "Succeed in deleting ${og_om_component_path}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    local RPM_TOP_DIR="${OGRACDB_OUTPUT}/rpm"
+    echo "Begin to delete ${RPM_TOP_DIR}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    if [ -d "${RPM_TOP_DIR}" ]; then
+        rm -rf "${RPM_TOP_DIR}"
+        echo "Succeed in deleting ${RPM_TOP_DIR}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
     fi
-
     return 0
 }
 
@@ -137,15 +107,15 @@ function main()
         return 1
     fi
 
-    clear_venv
+    # clear_venv
     return 0
 }
 
 main
 ret=$?
 if [ $ret -eq 0 ]; then
-    echo "Succeed in building oam-console rpm. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    echo "Succeed in building all-in-one oGRAC rpm. [Line:${LINENO}, File:${SCRIPT_NAME}]"
 else
-    echo "Failed to build oam-console rpm. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    echo "Failed to build all-in-one oGRAC rpm. [Line:${LINENO}, File:${SCRIPT_NAME}]"
 fi
 exit $ret

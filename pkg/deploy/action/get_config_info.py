@@ -24,6 +24,9 @@ def get_value(param):
     if param == "cluster_scale":
         return len(info.get("cms_ip").split(";"))
 
+    if param == 'SYS_PASSWORD':
+        return info.get('SYS_PASSWORD', "")
+
     return info.get(param, "")
 
 

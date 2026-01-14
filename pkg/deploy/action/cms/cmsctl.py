@@ -1117,12 +1117,14 @@ class CmsCtl(object):
         if not os.path.exists(self.install_path):
             os.makedirs(self.install_path, CommonValue.KEY_DIRECTORY_PERMISSION)
         cms_pkg_file = "/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
-        str_cmd = ("cp -arf %s/add-ons %s/admin %s/bin %s/cfg %s/lib %s/package.xml %s"
-                   % (cms_pkg_file, cms_pkg_file, cms_pkg_file,
-                      cms_pkg_file, cms_pkg_file, cms_pkg_file,
-                      self.install_path))
-        LOGGER.info("copy install files cmd: " + str_cmd)
-        run_cmd(str_cmd, "failed to install cms lib files")
+        rpm_installed_file = "/opt/ograc/installed_by_rpm"
+        if not os.path.exists(rpm_installed_file):
+            str_cmd = ("cp -arf %s/add-ons %s/admin %s/bin %s/cfg %s/lib %s/package.xml %s"
+                    % (cms_pkg_file, cms_pkg_file, cms_pkg_file,
+                        cms_pkg_file, cms_pkg_file, cms_pkg_file,
+                        self.install_path))
+            LOGGER.info("copy install files cmd: " + str_cmd)
+            run_cmd(str_cmd, "failed to install cms lib files")
 
         if deploy_mode in USE_DBSTOR:
             self.install_xnet_lib()
@@ -1429,10 +1431,10 @@ class CmsCtl(object):
         LOGGER.info("======================== begin to uninstall cms module ========================")
 
         if self.gcc_home == "":
-            if deploy_mode not in USE_DBSTOR:
-                self.gcc_home = os.path.join("/mnt/dbdata/remote/share_" + self.storage_share_fs, "gcc_home")
-            elif deploy_mode == "dss":
+            if deploy_mode == "dss":
                 self.gcc_home = "/dev/gcc-disk"
+            elif deploy_mode not in USE_DBSTOR:
+                self.gcc_home = os.path.join("/mnt/dbdata/remote/share_" + self.storage_share_fs, "gcc_home")
         
         if self.node_id == 0:
             stdout, stderr = "", ""
@@ -1478,7 +1480,9 @@ class CmsCtl(object):
                          "ret_code : %s, stdout : %s, stderr : %s" % (self.gcc_home, ret_code, stdout, stderr))
 
         self.clean_environment()
-        self.clean_install_path()
+        rpm_installed_file = "/opt/ograc/installed_by_rpm"
+        if not os.path.exists(rpm_installed_file):
+            self.clean_install_path()
 
         str_cmd = "rm -rf {0}/cms_server.lck {0}/local {0}/gcc_backup {0}/ograc.ctd.cms*".format(
             self.cms_home)

@@ -26,11 +26,13 @@ for ogracdba_file in "${OGRACDBA_FILE_LIST[@]}"; do
     fi
 done
 
-chmod ${OGRAC_EXPORTER_DIR_MOD} ${CURRENT_PATH}
-chmod ${OGRAC_EXPORTER_FILE_MOD} ${CURRENT_PATH}/*
+if [ ! -f /opt/ograc/installed_by_rpm ]; then
+    chmod ${OGRAC_EXPORTER_DIR_MOD} ${CURRENT_PATH}
+    chmod ${OGRAC_EXPORTER_FILE_MOD} ${CURRENT_PATH}/*
+fi
 
 # 仅安装部署和离线升级场景需要执行下方的拷贝操作
-if [[ ${ACTION_TYPE} != "rollback" ]];then
+if [[ ${ACTION_TYPE} != "rollback" ]] && [[ ! -f /opt/ograc/installed_by_rpm ]];then
     # 把ograc_exporter代码拷贝到opt/ograc/action路径下
     cp -rpf ${CURRENT_PATH} /opt/ograc/action
     if [ $? -eq 0 ]; then

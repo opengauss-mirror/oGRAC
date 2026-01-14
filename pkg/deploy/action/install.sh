@@ -31,6 +31,7 @@ deploy_user=''
 deploy_group=''
 ograc_in_container=''
 NFS_TIMEO=50
+rpminstalled_check='0'
 
 source ${CURRENT_PATH}/log4sh.sh
 source ${FILE_MOD_FILE}
@@ -448,6 +449,9 @@ function check_dbstor_client_compatibility() {
 }
 
 function mount_fs() {
+    if [[ "${ograc_in_container}" != "0" ]] || [[ x"${deploy_mode}" == x"dbstor" ]] || [[ x"${deploy_mode}" == x"dss" ]]; then
+        return 0
+    fi
     mkdir -m 750 -p /mnt/dbdata/remote/share_${storage_share_fs}
     chown ${ograc_user}:${ograc_group} /mnt/dbdata/remote/share_${storage_share_fs}
     mkdir -m 750 -p /mnt/dbdata/remote/archive_${storage_archive_fs}
@@ -460,9 +464,6 @@ function mount_fs() {
     fi
     mkdir -m 770 -p /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
     chown ${deploy_user}:${ograc_common_group} /mnt/dbdata/remote/metadata_${storage_metadata_fs}/node${node_id}
-    if [[ "${ograc_in_container}" != "0" ]] || [[ x"${deploy_mode}" == x"dbstor" ]] || [[ x"${deploy_mode}" == x"dss" ]]; then
-        return 0
-    fi
 
     # 获取nfs挂载的ip
     if [[ ${storage_archive_fs} != '' ]]; then
@@ -558,6 +559,10 @@ if [ ! -f /.dockerenv ]; then
     check_ntp_active
 fi
 
+if [ -f /opt/ograc/installed_by_rpm ]; then
+    rpminstalled_check='1'
+fi
+
 if [[ -r "${CONFIG_FILE}" ]]; then
     ograc_in_container=`cat ${CONFIG_FILE} | grep -oP '(?<="ograc_in_container": ")[^"]*'`
 fi
@@ -580,15 +585,34 @@ deploy_mode=`python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode"`
 if [[ x"${deploy_mode}" == x"dss" ]]; then
     cp -arf ${CURRENT_PATH}/ograc_common/env_lun.sh ${CURRENT_PATH}/env.sh
 fi
+
+if [[ "${rpminstalled_check}" == "1" ]]; then
+    unix_sys_pwd_first=`python3 ${CURRENT_PATH}/get_config_info.py "SYS_PASSWORD"`
+    echo "${unix_sys_pwd_first}" | python3 ${CURRENT_PATH}/implement/check_pwd.py
+    if [ $? -ne 0 ]; then
+        logAndEchoError 'SYS_PASSWORD in config file is not available'
+        exit 1
+    fi
+fi
+
 ograc_in_container=`python3 ${CURRENT_PATH}/get_config_info.py "ograc_in_container"`
 # 公共预安装检查
-rpm_check
+if [[ "${rpminstalled_check}" == "0" ]]; then
+    rpm_check
+fi
 
 # 获取deploy_user和deploy_group，输入文档中的deploy_user关键字
 deploy_user=`python3 ${CURRENT_PATH}/get_config_info.py "deploy_user"`
-exit_deploy_user_name=`ls /home | grep "^${deploy_user}$"`
+exit_deploy_user_name=`compgen -u | grep ${deploy_user}`
 if [[ ${exit_deploy_user_name} = '' ]]; then
     logAndEchoError "deploy_user ${deploy_user} not exist"
+    if [[ "${rpminstalled_check}" == "1" ]]; then
+        useradd ${deploy_user}
+        if [ $? -ne 0 ]; then
+            logAndEchoError "deploy_user ${deploy_user} not exist and add it automatically failed"
+            exit 1
+        fi
+    fi
     exit 1
 fi
 
@@ -626,7 +650,7 @@ fi
 
 # 提前创建/opt/ograc/action路径，方便各模块pre_install的时候移动模块代码到该路径下
 config_install_type=`python3 ${CURRENT_PATH}/get_config_info.py "install_type"`
-if [[ ${config_install_type} = 'override' ]]; then
+if [[ ${config_install_type} = 'override' ]] && [[ "${rpminstalled_check}" == "0" ]]; then
     mkdir -p /opt/ograc/action
 fi
 
@@ -649,7 +673,9 @@ done
 
 # 修改公共模块文件权限
 correct_files_mod
-chmod 400 "${CURRENT_PATH}"/../repo/*
+if [[ "${rpminstalled_check}" == "0" ]]; then
+    chmod 400 "${CURRENT_PATH}"/../repo/*
+fi
 chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/obtains_lsid.py
 chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/implement/update_ograc_passwd.py
 chown "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/implement/check_deploy_param.py
@@ -685,13 +711,15 @@ node_id=$(python3 ${CURRENT_PATH}/get_config_info.py "node_id")
 echo "install_type in deploy_param.json is: ${config_install_type}"
 if [[ ${config_install_type} = 'override' ]]; then
   # 用户输入密码
-  if [[ "${ograc_in_container}" == "0" ]]; then
-      enter_pwd
-  else
-      dbstor_user=""
-      dbstor_pwd_first=""
-      unix_sys_pwd_first=""
-  fi
+  if [[ "${rpminstalled_check}" == "0" ]]; then
+    if [[ "${ograc_in_container}" == "0" ]]; then
+        enter_pwd
+    else
+        dbstor_user=""
+        dbstor_pwd_first=""
+        unix_sys_pwd_first=""
+    fi
+   fi
 
   if [[ "${ograc_in_container}" == "0" && ${auto_create_fs} == "true" && ${node_id} == "0" ]];then
       if [ ! -f "${FS_CONFIG_FILE}" ];then
@@ -740,11 +768,14 @@ if [[ ${config_install_type} = 'override' ]]; then
   storage_share_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_share_fs"`
   storage_archive_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_archive_fs"`
   storage_metadata_fs=`python3 ${CURRENT_PATH}/get_config_info.py "storage_metadata_fs"`
-  mkdir -m 750 -p /mnt/dbdata/remote/share_${storage_share_fs}
-  chown ${ograc_user}:${ograc_group} /mnt/dbdata/remote/share_${storage_share_fs}
-
+  if [[ x"${storage_share_fs}" != x"" ]];then
+    mkdir -m 750 -p /mnt/dbdata/remote/share_${storage_share_fs}
+    chown ${ograc_user}:${ograc_group} /mnt/dbdata/remote/share_${storage_share_fs}
+  fi
   # 创建公共路径
-  mkdir -m 755 -p /opt/ograc/image
+  if [[ "${rpminstalled_check}" == "0" ]]; then
+    mkdir -m 755 -p /opt/ograc/image
+  fi
   mkdir -m 750 -p /opt/ograc/common/data
   mkdir -m 755 -p /opt/ograc/common/socket
   mkdir -m 755 -p /opt/ograc/common/config # 秘钥配置文件
@@ -762,14 +793,16 @@ if [[ ${config_install_type} = 'override' ]]; then
   fi
 
   # 创建dbstor需要的key
-  if [ ! -f /opt/ograc/common/config/primary_keystore.ks ]; then
-      touch /opt/ograc/common/config/primary_keystore.ks
-      chmod 600 /opt/ograc/common/config/primary_keystore.ks
-  fi
+  if [ x"${deploy_mode}" == x"dbstor" ]; then
+    if [ ! -f /opt/ograc/common/config/primary_keystore.ks ]; then
+        touch /opt/ograc/common/config/primary_keystore.ks
+        chmod 600 /opt/ograc/common/config/primary_keystore.ks
+    fi
 
-  if [ ! -f /opt/ograc/common/config/standby_keystore.ks ]; then
-      touch /opt/ograc/common/config/standby_keystore.ks
-      chmod 600 /opt/ograc/common/config/standby_keystore.ks
+    if [ ! -f /opt/ograc/common/config/standby_keystore.ks ]; then
+        touch /opt/ograc/common/config/standby_keystore.ks
+        chmod 600 /opt/ograc/common/config/standby_keystore.ks
+    fi
   fi
 
   # 挂载文件系统
@@ -786,7 +819,11 @@ chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/common/config
 if [[ x"${deploy_mode}" != x"dbstor" ]]; then
     chown -hR "${ograc_user}":"${ograc_group}" /mnt/dbdata/remote/share_${storage_share_fs} > /dev/null 2>&1
 fi
-chown -hR "${ograc_user}":"${deploy_group}" /mnt/dbdata/remote/archive_${storage_archive_fs} > /dev/null 2>&1
+
+if [[ x"${storage_archive_fs}" != x"" && -d "${storage_archive_fs}" ]]; then
+    chown -hR "${ograc_user}":"${deploy_group}" /mnt/dbdata/remote/archive_${storage_archive_fs} > /dev/null 2>&1
+fi
+
 # 修改日志定期清理执行脚本权限
 chown -h "${ograc_user}":"${ograc_group}" ${CURRENT_PATH}/../common/script/logs_handler/do_compress_and_archive.py
 
@@ -795,21 +832,27 @@ cp -fp ${CURRENT_PATH}/../config/ograc.timer /etc/systemd/system/
 cp -fp ${CURRENT_PATH}/../config/ograc_logs_handler.service /etc/systemd/system/
 cp -fp ${CURRENT_PATH}/../config/ograc_logs_handler.timer /etc/systemd/system/
 
-cp -fp ${CURRENT_PATH}/* /opt/ograc/action > /dev/null 2>&1
-cp -rfp ${CURRENT_PATH}/inspection /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/implement /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/ograc_common /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/docker /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/logic /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/storage_operate /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/utils /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/../config /opt/ograc/
-cp -rfp ${CURRENT_PATH}/../common /opt/ograc/
-cp -rfp ${CURRENT_PATH}/wsr_report /opt/ograc/action
-cp -rfp ${CURRENT_PATH}/dbstor /opt/ograc/action
+if [[ "${rpminstalled_check}" == "0" ]]; then
+    cp -fp ${CURRENT_PATH}/* /opt/ograc/action > /dev/null 2>&1
+    cp -rfp ${CURRENT_PATH}/inspection /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/implement /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/ograc_common /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/docker /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/logic /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/storage_operate /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/utils /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/../config /opt/ograc/
+    cp -rfp ${CURRENT_PATH}/../common /opt/ograc/
+    cp -rfp ${CURRENT_PATH}/wsr_report /opt/ograc/action
+    cp -rfp ${CURRENT_PATH}/dbstor /opt/ograc/action
 
-# 适配开源场景，使用file，不使用dbstor，提前安装ogracrpm包
-install_rpm
+    # 适配开源场景，使用file，不使用dbstor，提前安装ogracrpm包
+    install_rpm
+fi
+
+if [[ "${rpminstalled_check}" == "1" ]]; then
+    chown "${ograc_user}":"${ograc_group}" /opt/ograc/action/env.sh
+fi
 
 if [[ x"${deploy_mode}" == x"dss" ]];then
     chown "${ograc_user}":"${ograc_group}" /dev/*-disk*
@@ -827,7 +870,9 @@ do
         if [ ${install_result} -ne 0 ]; then
             logAndEchoError "ograc install failed."
             logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-            uninstall
+            if [[ "${rpminstalled_check}" == "0" ]]; then
+                uninstall
+            fi
             exit 1
         fi
     elif [[ ${lib_name} = 'dbstor' ]]; then
@@ -840,7 +885,9 @@ do
             else
                 logAndEchoError "dbstor install failed"
                 logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-                uninstall
+                if [[ "${rpminstalled_check}" == "0" ]]; then
+                    uninstall
+                fi
                 exit 1
             fi
         fi
@@ -856,15 +903,20 @@ do
         if [ ${install_result} -ne 0 ]; then
             logAndEchoError "${lib_name} install failed"
             logAndEchoError "For details, see the /opt/ograc/log/${lib_name}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-            uninstall
+            if [[ "${rpminstalled_check}" == "0" ]]; then
+                uninstall
+            fi
             exit 1
         fi
     fi
 done
 
 # 把升级备份相关路径拷贝到/opt/ograc
-cp -rfp ${CURRENT_PATH}/../repo /opt/ograc/
-cp -rfp ${CURRENT_PATH}/../versions.yml /opt/ograc/
+if [[ "${rpminstalled_check}" == "0" ]]; then
+    cp -rfp ${CURRENT_PATH}/../repo /opt/ograc/
+    cp -rfp ${CURRENT_PATH}/../versions.yml /opt/ograc/
+fi
+
 if [[ "${ograc_in_container}" == "0" ]]; then
     source ${CURRENT_PATH}/docker/dbstor_tool_opt_common.sh
     if [[ ${deploy_mode} != "dss" ]]; then
@@ -874,17 +926,22 @@ fi
 
 config_security_limits > /dev/null 2>&1
 
-# 修改/home/regress/action目录下ograc, ograc_exporter, cms, dbstor权限，防止复写造成提权
-for module in "${INSTALL_ORDER[@]}"
-do
-    chown -h root:root ${CURRENT_PATH}/${module}
-    chmod 755 ${CURRENT_PATH}/${module}
-    chown -h root:root /opt/ograc/action/${module}
-    chmod 755 /opt/ograc/action/${module}
-done
+if [ "${rpminstalled_check}" == "0" ]; then
+    # 修改/home/regress/action目录下ograc, ograc_exporter, cms, dbstor权限，防止复写造成提权
+    for module in "${INSTALL_ORDER[@]}"
+    do
+        chown -h root:root ${CURRENT_PATH}/${module}
+        chmod 755 ${CURRENT_PATH}/${module}
+        chown -h root:root /opt/ograc/action/${module}
+        chmod 755 /opt/ograc/action/${module}
+    done
+fi
 
 # 修改巡检相关脚本为deploy_user
 chown -hR ${ograc_user}:${ograc_group} /opt/ograc/action/inspection
 show_ograc_version
+if [[ "${rpminstalled_check}" == "1" ]]; then
+    echo "2" > /opt/ograc/installed_by_rpm
+fi
 logAndEchoInfo "install success"
 exit 0

@@ -55,7 +55,7 @@ for ogmgr_file in "${OGMGR_USER_FILE_LIST[@]}"; do
 done
 
 # 仅安装部署和离线升级场景需要执行下方的拷贝操作
-if [[ ${ACTION_TYPE} != "rollback" ]];then
+if [[ ${ACTION_TYPE} != "rollback" ]] && [[ ! -f /opt/ograc/installed_by_rpm ]];then
     # 把og_om代码拷贝到opt/ograc/action路径下
     cp -rpf ${CURRENT_PATH} /opt/ograc/action
     if [ $? -eq 0 ]; then

@@ -241,7 +241,7 @@ function prepare() {
 
 function buildCtOmPackage() {
   sh ${CURRENT_PATH}/build_ograc_om.sh
-  sh ${CURRENT_PATH}/rpm_build_ct_om.sh
+  sh ${CURRENT_PATH}/rpm_build_og_om.sh
   if [ $? -ne 0 ]; then
       echo "build og_om fail"
       retrun 1
