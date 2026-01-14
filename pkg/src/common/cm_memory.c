@@ -1480,6 +1480,7 @@ status_t vm_open(handle_t session, vm_pool_t *pool, uint32 id, vm_page_t **page)
         ctrl->cpid = INVALID_CPID;
         cm_spin_unlock(&ctrl->lock);
         pool->vm_stat(session, VM_STAT_END);
+        OG_LOG_RUN_ERR("vm_open: vm_alloc_page failed for vmid: %u, error code: %d", id, cm_get_error_code());
         return OG_ERROR;
     }
 
@@ -1489,6 +1490,7 @@ status_t vm_open(handle_t session, vm_pool_t *pool, uint32 id, vm_page_t **page)
     if (SECUREC_UNLIKELY(*page == NULL)) {
         cm_spin_unlock(&ctrl->lock);
         pool->vm_stat(session, VM_STAT_END);
+        OG_LOG_RUN_ERR("vm_open: fail to get vm page for vmid: %u error code: %d", id, cm_get_error_code());
         OG_THROW_ERROR(ERR_VM, "fail to get vm page.");
         return OG_ERROR;
     }
@@ -1501,6 +1503,8 @@ status_t vm_open(handle_t session, vm_pool_t *pool, uint32 id, vm_page_t **page)
             cm_spin_unlock(&ctrl->lock);
             vm_free_cpid_page(session, pool, ctrl, VM_ENQUE_HEAD);
             pool->vm_stat(session, VM_STAT_END);
+            OG_LOG_RUN_ERR("vm_open: swapper.in failed for vmid: %u, "
+                           "swid: %llu, error code: %d", id, ctrl->swid, cm_get_error_code());
             return OG_ERROR;
         }
         (void)cm_atomic32_dec((atomic32_t *)&pool->swap_count);

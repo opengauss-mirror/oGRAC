@@ -83,8 +83,8 @@ status_t mtrl_open_page(mtrl_context_t *ogx, uint32 vmid, vm_page_t **page)
     }
 
     if (vm_open(MTRL_SESSION(ogx), MTRL_POOL(ogx), vmid, page) != OG_SUCCESS) {
-        OG_THROW_ERROR(ERR_VM, "fail to open the vm");
         cm_spin_unlock(&ogx->lock);
+        OG_LOG_RUN_ERR("vm_open failed for vmid: %u, error code: %d", vmid, cm_get_error_code());
         return OG_ERROR;
     }
     knl_panic((*page)->vmid == vmid);
