@@ -914,7 +914,7 @@ status_t spc_mount_space(knl_session_t *session, space_t *space, bool32 auto_off
                 if (spc_rebuild_datafile(session, space, i) != OG_SUCCESS) {
                     return OG_ERROR;
                 }
-                OG_LOG_RUN_INF("sucessfully rebuild datafile %s", df->ctrl->name);
+                OG_LOG_RUN_INF("successfully rebuild datafile %s", df->ctrl->name);
             } else {
                 if (auto_offline && spc_auto_offline_space(session, space, df)) {
                     return OG_SUCCESS;

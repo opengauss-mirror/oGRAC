@@ -1252,7 +1252,7 @@ static status_t rst_save_continuous_pages(knl_session_t *session, bak_process_t 
             OG_LOG_RUN_ERR("[RESTORE] failed to write compress datafile %s", df->ctrl->name);
             return OG_ERROR;
         }
-        OG_LOG_DEBUG_INF("[RESTORE] inc rst, compress datafile. start page:%u-%u,type:%u,count:%u write sucessfully",
+        OG_LOG_DEBUG_INF("[RESTORE] inc rst, compress datafile. start page:%u-%u,type:%u,count:%u write successfully",
             rst_assist.page_id.file, rst_assist.page_id.page, (uint32)page->type, rst_assist.page_count);
         return OG_SUCCESS;
     }
@@ -1262,7 +1262,7 @@ static status_t rst_save_continuous_pages(knl_session_t *session, bak_process_t 
             OG_LOG_RUN_ERR("[RESTORE] failed to write punched datafile %s", df->ctrl->name);
             return OG_ERROR;
         }
-        OG_LOG_DEBUG_INF("[RESTORE] inc rst, punched datafile. start page:%u-%u,type:%u,count:%u write sucessfully",
+        OG_LOG_DEBUG_INF("[RESTORE] inc rst, punched datafile. start page:%u-%u,type:%u,count:%u write successfully",
             rst_assist.page_id.file, rst_assist.page_id.page, (uint32)page->type, rst_assist.page_count);
         return OG_SUCCESS;
     }

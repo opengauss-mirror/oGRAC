@@ -758,7 +758,7 @@ if [[ ${config_install_type} = 'override' ]]; then
       uninstall
       exit 1
   else
-      logAndEchoInfo "change /opt/ograc/common/data to ${ograc_user}:${ograc_group} sucess"
+      logAndEchoInfo "change /opt/ograc/common/data to ${ograc_user}:${ograc_group} success"
   fi
 
   # 创建dbstor需要的key

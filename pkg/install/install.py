@@ -3185,7 +3185,7 @@ class Installer:
         if ret_code:
             output = stdout + stderr
             raise Exception("Failed to setcap.\ncmd: %s.\nOutput: %s" % (cmd, output))
-        log("setcap sucessed", True)
+        log("setcap successed", True)
 
     pass
     def start_gss(self):

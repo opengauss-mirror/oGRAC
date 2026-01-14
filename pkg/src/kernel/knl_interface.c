@@ -7522,7 +7522,7 @@ static status_t knl_truncate_table_precheck(knl_handle_t session, knl_trunc_def_
     if (dc->type == DICT_TYPE_TABLE || dc->type == DICT_TYPE_TABLE_NOLOGGING) {
         if (!db_table_has_segment(se, dc)) {
             *no_segment = OG_TRUE;
-            OG_LOG_RUN_INF("[DB] Sucess to truncate table %s", T2S_EX(&def->name));
+            OG_LOG_RUN_INF("[DB] Success to truncate table %s", T2S_EX(&def->name));
         }
     }
     return OG_SUCCESS;
