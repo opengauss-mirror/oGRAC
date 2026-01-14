@@ -1530,6 +1530,7 @@ static status_t arch_archive_tmp_file(knl_session_t *session, aligned_buf_t buf,
     }
 
     cm_close_device(logfile->ctrl->type, &arch_files.src_file);
+    cm_close_device(arch_file_type, &arch_files.dst_file);
     return status;
 }
 
