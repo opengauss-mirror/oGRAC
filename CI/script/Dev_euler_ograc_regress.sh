@@ -68,11 +68,7 @@ function install_ogracdb() {
     #chmod 755 -R ${OGRAC_DATA_DIR}
     export LD_LIBRARY_PATH=${TEST_DATA_DIR}/ograc/ograc_lib
     echo "========================= Install ogracDB ======================="
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS_TYPE=$ID
-    fi
-    cd ${ROOT_PATH}/output/bin/oGRAC-DATABASE-${OS_TYPE^^}-64bit
+    cd ${ROOT_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit
     python3 install.py -U ${RUN_TEST_USER}:${RUN_TEST_USER}  \
                        -R ${TEST_DATA_DIR}/install/  \
                        -D ${TEST_DATA_DIR}/data/  \
