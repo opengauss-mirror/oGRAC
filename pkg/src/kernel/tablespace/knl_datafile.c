@@ -231,7 +231,7 @@ status_t spc_extend_datafile(knl_session_t *session, datafile_t *df, int32 *hand
     }
 #endif
 
-    if (db_fsync_file(session, *handle) != OG_SUCCESS) {
+    if (db_fsync(session, cm_device_type(df->ctrl->name), *handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[SPACE] failed to fsync datafile %s", df->ctrl->name);
         (void)spc_truncate_datafile(session, df, handle, df->ctrl->size, need_redo);
         return OG_ERROR;
@@ -309,7 +309,7 @@ status_t spc_extend_datafile_ddl(knl_session_t *session, datafile_t *df, int32 *
         return OG_ERROR;
     }
 
-    if (db_fsync_file(session, *handle) != OG_SUCCESS) {
+    if (db_fsync(session, df->ctrl->type, *handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[SPACE] failed to fsync datafile %s", df->ctrl->name);
         (void)spc_truncate_datafile(session, df, handle, df->ctrl->size, need_redo);
         return OG_ERROR;
@@ -367,7 +367,7 @@ status_t spc_truncate_datafile(knl_session_t *session, datafile_t *df, int32 *ha
         return OG_ERROR;
     }
 
-    if (db_fsync_file(session, *handle) != OG_SUCCESS) {
+    if (db_fsync(session,  df->ctrl->type, *handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[SPACE] failed to fsync datafile %s", df->ctrl->name);
         return OG_ERROR;
     }
@@ -436,7 +436,7 @@ status_t spc_truncate_datafile_ddl(knl_session_t *session, datafile_t *df, int32
         return OG_ERROR;
     }
 
-    if (db_fsync_file(session, *handle) != OG_SUCCESS) {
+    if (db_fsync(session,  df->ctrl->type, *handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[SPACE] failed to fsync datafile %s", df->ctrl->name);
         return OG_ERROR;
     }
@@ -480,7 +480,7 @@ static status_t spc_build_datafile_paral(knl_session_t *session, datafile_t *df,
         return OG_ERROR;
     }
 
-    if (db_fsync_file(session, *handle) != OG_SUCCESS) {
+    if (db_fsync(session,  df->ctrl->type, *handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[SPACE] failed to fsync datafile %s", df->ctrl->name);
         return OG_ERROR;
     }

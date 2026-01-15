@@ -45,7 +45,7 @@ static status_t cm_exec_dss_cmd(const char* arg, uint32 node_id)
     OG_LOG_RUN_INF("begin exec dss cmd, cmd=%s", cmd);
     FILE* fp = popen(cmd, "r");
     if (fp == NULL) {
-        OG_LOG_RUN_ERR("popen failed, cmd=%s", cmd);
+        OG_LOG_RUN_ERR("popen failed, cmd=%s, errno %d[%s].", cmd, errno, strerror(errno));
         return OG_ERROR;
     }
 

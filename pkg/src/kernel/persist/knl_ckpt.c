@@ -156,18 +156,21 @@ status_t ckpt_init(knl_session_t *session)
     if (dbwr_init(session) != OG_SUCCESS) {
         return OG_ERROR;
     }
-
+    uint32 iocbs_size = 0;
     if (kernel->attr.enable_asynch) {
-        if (DB_IS_CLUSTER(session)) {
-            ogx->group.iocbs_buf = (char *)malloc(OG_CKPT_GROUP_SIZE(session) * CM_IOCB_LENTH_EX);
+        if (DB_ATTR_CLUSTER(session)) {
+            iocbs_size = OG_CKPT_GROUP_SIZE(session) * CM_IOCB_LENTH_EX;
         } else {
-            ogx->group.iocbs_buf = (char *)malloc(OG_CKPT_GROUP_SIZE(session) * CM_IOCB_LENTH);
+            iocbs_size = OG_CKPT_GROUP_SIZE(session) * CM_IOCB_LENTH;
         }
-
+        ogx->group.iocbs_buf = (char *)malloc(iocbs_size);
         if (ogx->group.iocbs_buf == NULL) {
-            OG_LOG_RUN_ERR("[CKPT] iocb malloc fail");
+            OG_LOG_RUN_ERR("[CKPT] iocb malloc fail, is cluster: %u, iocbs_size: %u",
+                           DB_ATTR_CLUSTER(session), iocbs_size);
             return OG_ERROR;
         }
+        OG_LOG_RUN_INF("[CKPT] iocb malloc success, is cluster: %u, iocbs_size: %u",
+                       DB_ATTR_CLUSTER(session), iocbs_size);
     }
 
     return OG_SUCCESS;

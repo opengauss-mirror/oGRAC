@@ -343,7 +343,7 @@ static void cms_k8s_delete_node0()
     CMS_LOG_INF("proc cms exec res script. cmd=%s", cmd);
     FILE* fp = popen(cmd, "r");
     if (fp == NULL) {
-        CMS_LOG_WAR("popen failed, cmd=%s", cmd);
+        CMS_LOG_WAR("popen failed, cmd=%s, errno %d[%s].", cmd, errno, strerror(errno));
         return;
     }
     char cmd_out[CMS_CMD_OUT_BUFFER_SIZE];

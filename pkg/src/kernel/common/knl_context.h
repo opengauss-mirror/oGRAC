@@ -465,6 +465,7 @@ uint32 knl_arch_io_flag(knl_session_t *session, bool32 arch_compressed);
 
 status_t db_fdatasync_file(knl_session_t *session, int32 file);
 status_t db_fsync_file(knl_session_t *session, int32 file);
+status_t db_fsync(knl_session_t *session, device_type_t type, int32 handle);
 status_t db_load_lib(knl_session_t *session);
 
 #ifdef __cplusplus

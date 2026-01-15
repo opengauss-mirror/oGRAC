@@ -896,7 +896,7 @@ status_t buf_read_page_asynch(knl_session_t *session, page_id_t page_id)
     page_id_t head;
     bool32 is_compress = page_compress(session, page_id);
 
-    if (!session->kernel->attr.enable_asynch) {
+    if (!session->kernel->attr.enable_asynch || session->kernel->attr.enable_dss) {
         return OG_SUCCESS;
     }
 
@@ -1646,7 +1646,7 @@ status_t buf_read_prefetch_page(knl_session_t *session, page_id_t page_id, latch
     buf_push_page(session, ctrl, mode);
     buf_log_enter_page(session, ctrl, mode, options);
 
-    if (session->kernel->attr.enable_asynch) {
+    if (session->kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
         if (buf_try_prefetch_next_ext(session, ctrl) != OG_SUCCESS) {
             OG_LOG_DEBUG_WAR("[BUFFER] failed to prefetch next extent file : %u , page: %llu",
                              (uint32)ctrl->page_id.file, (uint64)ctrl->page_id.page);

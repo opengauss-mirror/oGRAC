@@ -392,9 +392,7 @@ static void rd_spc_create_datafile_internal(knl_session_t *session, rd_create_da
                                  session->kernel->attr.build_datafile_prealloc) != OG_SUCCESS) {
                 CM_ABORT(0, "[SPACE] ABORT INFO: failed to rebuild datafile %s", df->ctrl->name);
             }
-
-            if (df->ctrl->type == DEV_TYPE_FILE &&
-                db_fsync_file(session, *(DATAFILE_FD(session, df->ctrl->id))) != OG_SUCCESS) {
+            if (db_fsync(session,  df->ctrl->type, *(DATAFILE_FD(session, df->ctrl->id))) != OG_SUCCESS) {
                 CM_ABORT(0, "[SPACE] ABORT INFO: failed to fsync datafile %s", df->ctrl->name);
             }
         } else {
@@ -940,43 +938,44 @@ static void rd_spc_extend_datafile_internal(knl_session_t *session, rd_extend_da
         return;
     }
 
-    if (df->ctrl->size < redo->size) {
-        if (OGRAC_REPLAY_NODE(session)) {
-            df->ctrl->size = redo->size;
-        } else {
-            if (*handle == -1) {
-                if (spc_open_datafile(session, df, handle) != OG_SUCCESS) {
-                    CM_ABORT(0, "[SPACE] ABORT INFO: failed to open file %s when extending datafile, error code is %d",
-                             df->ctrl->name, errno);
-                }
-            }
+    if (df->ctrl->size >= redo->size) {
+        return;
+    }
 
-            knl_attr_t *attr = &(session->kernel->attr);
-            // if a node crashed after write redo log, but before sync_ddl, the reformer's df->ctrl->size may be staled,
-            // thus, before extend the physical datafile, get its real size first to prevent re-extend
-            int64 offset = cm_device_size(df->ctrl->type, *handle);
-            if (offset == -1) {
-                OG_THROW_ERROR(ERR_SEEK_FILE, 0, SEEK_END, errno);
-                CM_ABORT(0, "[REDO] ABORT INFO: failed to extend datafile %s, error code is %d", df->ctrl->name, errno);
-            }
-            if (offset < redo->size) {
-                if (cm_extend_device(df->ctrl->type, *handle, attr->xpurpose_buf, OG_XPURPOSE_BUFFER_SIZE,
-                                     redo->size - df->ctrl->size, attr->build_datafile_prealloc) != OG_SUCCESS) {
-                    CM_ABORT(0, "[REDO] ABORT INFO: failed to extend datafile %s, error code is %d", df->ctrl->name,
-                             errno);
-                }
-
-                if (db_fsync_file(session, *handle) != OG_SUCCESS) {
-                    CM_ABORT(0, "[REDO] ABORT INFO: failed to fsync datafile %s", df->ctrl->name);
-                }
-            }
-
-            df->ctrl->size = redo->size;
-
-            if (db_save_datafile_ctrl(session, df->ctrl->id) != OG_SUCCESS) {
-                CM_ABORT(0, "[REDO] ABORT INFO: failed to save whole ctrl files");
-            }
+    if (OGRAC_REPLAY_NODE(session)) {
+        df->ctrl->size = redo->size;
+        return;
+    }
+    if (*handle == -1) {
+        if (spc_open_datafile(session, df, handle) != OG_SUCCESS) {
+            CM_ABORT(0, "[SPACE] ABORT INFO: failed to open file %s when extending datafile, error code is %d",
+                        df->ctrl->name, errno);
         }
+    }
+
+    knl_attr_t *attr = &(session->kernel->attr);
+    // if a node crashed after write redo log, but before sync_ddl, the reformer's df->ctrl->size may be staled,
+    // thus, before extend the physical datafile, get its real size first to prevent re-extend
+    int64 offset = cm_device_size(df->ctrl->type, *handle);
+    if (offset == -1) {
+        OG_THROW_ERROR(ERR_SEEK_FILE, 0, SEEK_END, errno);
+        CM_ABORT(0, "[REDO] ABORT INFO: failed to extend datafile %s, error code is %d", df->ctrl->name, errno);
+    }
+    if (offset < redo->size) {
+        if (cm_extend_device(df->ctrl->type, *handle, attr->xpurpose_buf, OG_XPURPOSE_BUFFER_SIZE,
+                                redo->size - df->ctrl->size, attr->build_datafile_prealloc) != OG_SUCCESS) {
+            CM_ABORT(0, "[REDO] ABORT INFO: failed to extend datafile %s, error code is %d", df->ctrl->name,
+                        errno);
+        }
+        if (db_fsync(session,  df->ctrl->type, *handle) != OG_SUCCESS) {
+            CM_ABORT(0, "[REDO] ABORT INFO: failed to fsync datafile %s", df->ctrl->name);
+        }
+    }
+
+    df->ctrl->size = redo->size;
+
+    if (db_save_datafile_ctrl(session, df->ctrl->id) != OG_SUCCESS) {
+        CM_ABORT(0, "[REDO] ABORT INFO: failed to save whole ctrl files");
     }
 }
 
@@ -1027,7 +1026,7 @@ void rd_spc_truncate_datafile_internal(knl_session_t *session, rd_truncate_dataf
                          errno);
             }
 
-            if (db_fsync_file(session, *handle) != OG_SUCCESS) {
+            if (db_fsync(session,  df->ctrl->type, *handle) != OG_SUCCESS) {
                 CM_ABORT(0, "[REDO] ABORT INFO: failed to fsync datafile %s", df->ctrl->name);
             }
 

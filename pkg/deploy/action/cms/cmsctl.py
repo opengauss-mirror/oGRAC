@@ -1347,7 +1347,8 @@ class CmsCtl(object):
             LOGGER.error("please run install previously")
             if FORCE_UNINSTALL != "force":
                 raise Exception("please run install previously")
-        if self.install_step == 3:
+        cms_pid = self.get_pid("cms server -start")
+        if cms_pid:
             LOGGER.info("warning: cms started already")
             LOGGER.info("========================= start cms process successfully ========================")
             return
@@ -1515,8 +1516,9 @@ class CmsCtl(object):
         cms init in container
         """
         LOGGER.info("======================== begin to init cms process =======================")
-        if self.install_step == 3:
-            LOGGER.info("Warning: cms start already")
+        cms_pid = self.get_pid("cms server -start")
+        if cms_pid:
+            LOGGER.info("warning: cms started already")
             return
         if deploy_mode in USE_DBSTOR:
             self.copy_dbstor_config()

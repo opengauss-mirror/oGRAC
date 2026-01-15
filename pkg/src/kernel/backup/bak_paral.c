@@ -969,7 +969,7 @@ void bak_paral_backup_task(knl_session_t *session, bak_process_t *proc)
     }
 
     oGRAC_record_io_stat_begin(IO_RECORD_EVENT_BAK_FSYNC, &tv_begin);
-    bak_fsync_and_close(bak, bak_file->type, &bak_file->handle);
+    bak_fsync_and_close(session, bak, bak_file->type, &bak_file->handle);
     oGRAC_record_io_stat_end(IO_RECORD_EVENT_BAK_FSYNC, &tv_begin);
     bak_file->handle = OG_INVALID_HANDLE;
 

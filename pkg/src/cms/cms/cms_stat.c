@@ -312,6 +312,10 @@ status_t cms_init_vote_info(void)
     
     for (;;) {
         OG_RETURN_IFERR(cms_is_all_restart(&all_restart));
+        if (cms_disk_update_lock(&g_cms_inst->vote_info_lock, DISK_LOCK_WRITE) != OG_SUCCESS) {
+            CMS_LOG_ERR("cms maintain res vote init lock failed");
+            return OG_ERROR;
+        }
         if (all_restart) {
             if (cms_try_be_new_master()) {
                 CMS_LOG_INF("cms is full restart, cms master begin to init vote file");
@@ -660,7 +664,7 @@ status_t cms_exec_res_script(const char* script, const char* arg, uint32 timeout
     }
     FILE* fp = popen(cmd, "r");
     if (fp == NULL) {
-        CMS_LOG_ERR("popen failed, cmd=%s", cmd);
+        CMS_LOG_WAR("popen failed, cmd=%s, errno %d[%s].", cmd, errno, strerror(errno));
         return OG_ERROR;
     }
 
@@ -935,6 +939,12 @@ status_t cms_get_res_start_lock(uint32 res_id)
     return OG_SUCCESS;
 }
 
+static status_t cms_maintain_res_start_lock(uint32 res_id)
+{
+    status_t ret = cms_disk_update_lock(&g_cms_inst->res_start_lock, DISK_LOCK_WRITE);
+    return ret;
+}
+
 void cms_release_res_start_lock(uint32 res_id)
 {
     cms_disk_unlock(&g_cms_inst->res_start_lock, DISK_LOCK_WRITE);
@@ -970,6 +980,10 @@ static status_t wait_for_node_joined(uint32 res_id, uint32 timeout_ms)
         }
 
         CMS_LOG_INF("cms waiting for res jioned");
+        if (cms_maintain_res_start_lock(res_id) != OG_SUCCESS) {
+            CMS_LOG_ERR("cms maintain res start lock failed, res_id=%u", res_id);
+            return OG_ERROR;
+        }
         cm_sleep(CMS_WAIT_RES_JOINED_INTERNAL);
         now_time = cm_now();
         if (now_time - begin_time > timeout_ms * MICROSECS_PER_MILLISEC) {
