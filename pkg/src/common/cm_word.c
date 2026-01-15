@@ -426,6 +426,63 @@ static_assert(sizeof(g_key_words) / sizeof(key_word_t) == KEY_WORD_DUMB_END - KE
 #endif
 
 /* datatype key words */
+static datatype_word_t g_datatype_words_bison[] = {
+    { { (char *)"bigint" }, DTYP_BIGINT, OG_TRUE, OG_TRUE },
+    { { (char *)"binary" }, DTYP_BINARY, OG_TRUE, OG_FALSE },
+    { { (char *)"binary_bigint" }, DTYP_BINARY_BIGINT, OG_TRUE, OG_TRUE },
+    { { (char *)"binary_double" }, DTYP_BINARY_DOUBLE, OG_TRUE, OG_FALSE },
+    { { (char *)"binary_float" }, DTYP_BINARY_FLOAT, OG_TRUE, OG_FALSE },
+    { { (char *)"binary_integer" }, DTYP_BINARY_INTEGER, OG_TRUE, OG_TRUE },
+    { { (char *)"binary_uint32" }, DTYP_UINTEGER, OG_TRUE, OG_FALSE },
+    { { (char *)"blob" }, DTYP_BLOB, OG_TRUE, OG_FALSE },
+    { { (char *)"bool" }, DTYP_BOOLEAN, OG_TRUE, OG_FALSE },
+    { { (char *)"boolean" }, DTYP_BOOLEAN, OG_TRUE, OG_FALSE },
+    { { (char *)"bpchar" }, DTYP_CHAR, OG_TRUE, OG_FALSE },
+    { { (char *)"bytea" }, DTYP_BLOB, OG_TRUE, OG_FALSE },
+    { { (char *)"char" }, DTYP_CHAR, OG_FALSE, OG_FALSE },
+    { { (char *)"character" }, DTYP_CHAR, OG_TRUE, OG_FALSE },
+    { { (char *)"clob" }, DTYP_CLOB, OG_TRUE, OG_FALSE },
+    { { (char *)"date" }, DTYP_DATE, OG_FALSE, OG_FALSE },
+    { { (char *)"datetime" }, DTYP_DATE, OG_TRUE, OG_FALSE },
+    { { (char *)"decimal" }, DTYP_DECIMAL, OG_FALSE, OG_FALSE },
+    { { (char *)"double" }, DTYP_DOUBLE, OG_TRUE, OG_FALSE },
+    { { (char *)"float" }, DTYP_FLOAT, OG_TRUE, OG_FALSE },
+    { { (char *)"image" }, DTYP_IMAGE, OG_TRUE, OG_FALSE },
+    { { (char *)"int" }, DTYP_INTEGER, OG_TRUE, OG_TRUE },
+    { { (char *)"integer" }, DTYP_INTEGER, OG_FALSE, OG_TRUE },
+    { { (char *)"interval day to second" }, DTYP_INTERVAL_DS, OG_TRUE, OG_FALSE },
+    { { (char *)"interval year to month" }, DTYP_INTERVAL_YM, OG_TRUE, OG_FALSE },
+    { { (char *)"jsonb" }, DTYP_JSONB, OG_TRUE, OG_FALSE },
+    { { (char *)"long" }, DTYP_CLOB, OG_TRUE, OG_FALSE },
+    { { (char *)"longblob" }, DTYP_IMAGE, OG_TRUE, OG_FALSE },
+    { { (char *)"longtext" }, DTYP_CLOB, OG_TRUE, OG_FALSE },
+    { { (char *)"mediumblob" }, DTYP_IMAGE, OG_TRUE, OG_FALSE },
+    { { (char *)"nchar" }, DTYP_NCHAR, OG_TRUE, OG_FALSE },
+    { { (char *)"number" }, DTYP_NUMBER, OG_FALSE, OG_FALSE },
+    { { (char *)"number2" }, DTYP_NUMBER2, OG_TRUE, OG_FALSE },
+    { { (char *)"numeric" }, DTYP_DECIMAL, OG_TRUE, OG_FALSE },
+    { { (char *)"nvarchar" }, DTYP_NVARCHAR, OG_TRUE, OG_FALSE },
+    { { (char *)"nvarchar2" }, DTYP_NVARCHAR, OG_TRUE, OG_FALSE },
+    { { (char *)"raw" }, DTYP_RAW, OG_FALSE, OG_FALSE },
+    { { (char *)"real" }, DTYP_DOUBLE, OG_TRUE, OG_FALSE },
+    { { (char *)"serial" }, DTYP_SERIAL, OG_TRUE, OG_FALSE },
+    { { (char *)"short" }, DTYP_SMALLINT, OG_TRUE, OG_TRUE },
+    { { (char *)"smallint" }, DTYP_SMALLINT, OG_TRUE, OG_TRUE },
+    { { (char *)"text" }, DTYP_CLOB, OG_TRUE, OG_FALSE },
+    { { (char *)"timestamp" }, DTYP_TIMESTAMP, OG_TRUE, OG_FALSE },
+    { { (char *)"tinyint" }, DTYP_TINYINT, OG_TRUE, OG_TRUE },
+    { { (char *)"ubigint" }, DTYP_UBIGINT, OG_TRUE, OG_FALSE },
+    { { (char *)"uint" }, DTYP_UINTEGER, OG_TRUE, OG_FALSE },
+    { { (char *)"uinteger" }, DTYP_UINTEGER, OG_TRUE, OG_FALSE },
+    { { (char *)"ushort" }, DTYP_USMALLINT, OG_TRUE, OG_FALSE },
+    { { (char *)"usmallint" }, DTYP_USMALLINT, OG_TRUE, OG_FALSE },
+    { { (char *)"utinyint" }, DTYP_UTINYINT, OG_TRUE, OG_FALSE },
+    { { (char *)"varbinary" }, DTYP_VARBINARY, OG_TRUE, OG_FALSE },
+    { { (char *)"varchar" }, DTYP_VARCHAR, OG_FALSE, OG_FALSE },
+    { { (char *)"varchar2" }, DTYP_VARCHAR, OG_FALSE, OG_FALSE },
+};
+
+/* datatype key words */
 static datatype_word_t g_datatype_words[] = {
     { { (char *)"bigint" }, DTYP_BIGINT, OG_TRUE, OG_TRUE },
     { { (char *)"binary" }, DTYP_BINARY, OG_TRUE, OG_FALSE },
@@ -534,7 +591,7 @@ static key_word_t g_datetime_unit_words[] = {
     { (uint32)IU_YEAR,        OG_TRUE, { "YEAR", 4 } },
 };
 
-static key_word_t g_hint_key_words[] = {
+key_word_t g_hint_key_words[] = {
     { (uint32)ID_HINT_CB_MTRL,          OG_FALSE, { (char *)"cb_mtrl", 7 } },
     { (uint32)ID_HINT_DB_VERSION,       OG_FALSE, { (char *)"db_version", 10 } },
     { (uint32)ID_HINT_FULL,             OG_FALSE, { (char *)"full", 4 } },
@@ -607,7 +664,7 @@ const key_word_t g_pl_attr_words[] = {
 #define RESERVED_WORDS_COUNT (sizeof(g_reserved_words) / sizeof(key_word_t))
 #define KEY_WORDS_COUNT      (sizeof(g_key_words) / sizeof(key_word_t))
 #define DATATYPE_WORDS_COUNT (ELEMENT_COUNT(g_datatype_words))
-#define HINT_KEY_WORDS_COUNT (sizeof(g_hint_key_words) / sizeof(key_word_t))
+#define DATATYPE_WORDS_BISON_COUNT (ELEMENT_COUNT(g_datatype_words_bison))
 
 bool32 lex_match_subset(key_word_t *word_set, int32 count, word_t *word)
 {
@@ -819,6 +876,10 @@ void lex_init_keywords(void)
         g_datatype_words[i].text.len = (uint32)strlen(g_datatype_words[i].text.str);
     }
 
+    for (i = 0; i < DATATYPE_WORDS_BISON_COUNT; i++) {
+        g_datatype_words_bison[i].text.len = (uint32)strlen(g_datatype_words_bison[i].text.str);
+    }
+
     for (i = 0; i < HINT_KEY_WORDS_COUNT; i++) {
         g_hint_key_words[i].text.len = (uint32)strlen(g_hint_key_words[i].text.str);
     }
@@ -889,6 +950,16 @@ bool32 lex_match_coll_method_name(sql_text_t *method_name, uint8 *method_id)
     }
 }
 
+status_t lex_try_match_datatype_bison(word_t *word)
+{
+    const datatype_word_t *dt_word = lex_match_datatype_words(g_datatype_words_bison, DATATYPE_WORDS_BISON_COUNT, word);
+    if (dt_word == NULL) {
+        return OG_ERROR;
+    }
+    word->id = (uint32)dt_word->id;
+    word->type = WORD_TYPE_DATATYPE;
+    return OG_SUCCESS;
+}
 
 #ifdef __cplusplus
 }

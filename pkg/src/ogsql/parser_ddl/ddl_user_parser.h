@@ -65,6 +65,13 @@ status_t sql_parse_alter_profile(sql_stmt_t *stmt);
 status_t sql_parse_drop_profile(sql_stmt_t *stmt);
 status_t sql_parse_alter_tenant(sql_stmt_t *stmt);
 status_t sql_parse_drop_tenant(sql_stmt_t *stmt);
+status_t og_parse_create_user(sql_stmt_t *stmt, knl_user_def_t **def, char *user_name, char *password,
+    source_location_t pwd_loc, bool encrypted, galist_t *options);
+status_t og_parse_create_role(sql_stmt_t *stmt, knl_role_def_t **role_def, char *role_name, char *password,
+    source_location_t pwd_loc, bool32 encrypted);
+bool32 sql_find_space_in_list(galist_t *space_lst, const text_t *space_name);
+    status_t og_parse_create_tenant(sql_stmt_t *stmt, knl_tenant_def_t **tenant_def, char *tenant_name,
+    galist_t *space_list, char *default_tablespace);
 #ifdef __cplusplus
 }
 #endif

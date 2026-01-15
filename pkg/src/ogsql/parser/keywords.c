@@ -14,24 +14,28 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * ogsql_replace_parser.h
+ * keywords.c
  *
  *
  * IDENTIFICATION
- * src/ogsql/parser/ogsql_replace_parser.h
+ * src/ogsql/parser/keywords.c
  *
  * -------------------------------------------------------------------------
  */
-#ifndef __SQL_REPLACE_PARSER_H__
-#define __SQL_REPLACE_PARSER_H__
+#include <stddef.h>
+#include <stddef.h>
 
-#include "dml_parser.h"
+#include "cm_types.h"
+#include "keywords.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+/* ScanKeywordList lookup.data.for.SQL.keywords. */
+#include "kwlist_d.h"
 
-status_t sql_create_replace_context(sql_stmt_t *stmt, sql_text_t *sql, sql_replace_t **replace_context);
-status_t sql_init_replace(sql_stmt_t *stmt, sql_replace_t *replace_context);
+#define OG_KEYWORD(kwname,value,category) category,
 
-#endif
+const uint8 ScanKeywordCategories[SCANKEYWORDS_NUM_KEYWORDS] = {
+    #include "kwlist.h"
+};
+
+#undef OG_KEYWORD
+

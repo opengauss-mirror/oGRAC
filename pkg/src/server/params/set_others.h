@@ -103,6 +103,7 @@ status_t sql_notify_als_excluded_nodes(void *se, void *item, char *value);
 status_t sql_notify_als_merge_sort_batch_size(void *se, void *item, char *value);
 status_t sql_notify_als_enable_nestloop_join(void *se, void *item, char *value);
 status_t sql_notify_als_enable_hash_join(void *se, void *item, char *value);
+status_t sql_notify_als_use_bison_parser(void *se, void *item, char *value);
 status_t sql_notify_als_datefile_convert(void *se, void *item, char *value);
 status_t sql_notify_als_logfile_convert(void *se, void *item, char *value);
 status_t sql_notify_als_row_format(void *se, void *item, char *value);

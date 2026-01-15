@@ -85,7 +85,7 @@ static inline status_t sql_create_new_query_columns(sql_stmt_t *stmt, sql_query_
     return OG_SUCCESS;
 }
 
-static status_t sql_create_pivot_sub_select(sql_stmt_t *stmt, sql_table_t *query_table, sql_query_t *query,
+status_t sql_create_pivot_sub_select(sql_stmt_t *stmt, sql_table_t *query_table, sql_query_t *query,
     pivot_items_t *pivot_items)
 {
     text_t curr_schema;
@@ -144,10 +144,11 @@ static status_t sql_create_pivot_sub_select(sql_stmt_t *stmt, sql_table_t *query
     return OG_SUCCESS;
 }
 
-static status_t sql_create_pivot_items(sql_stmt_t *stmt, pivot_items_t **pivot_items, word_t *word, pivot_type_t type)
+status_t sql_create_pivot_items(sql_stmt_t *stmt, pivot_items_t **pivot_items, source_location_t loc,
+    pivot_type_t type)
 {
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(pivot_items_t), (void **)pivot_items));
-    (*pivot_items)->loc = word->loc;
+    (*pivot_items)->loc = loc;
     (*pivot_items)->type = type;
     if (type == PIVOT_TYPE) {
         OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(galist_t), (void **)&(*pivot_items)->alias));
@@ -389,7 +390,7 @@ status_t sql_create_pivot(sql_stmt_t *stmt, sql_query_t *query, word_t *word)
 #endif
 
     OG_RETURN_IFERR(sql_stack_safe(stmt));
-    OG_RETURN_IFERR(sql_create_pivot_items(stmt, &pivot_items, word, PIVOT_TYPE));
+    OG_RETURN_IFERR(sql_create_pivot_items(stmt, &pivot_items, word->loc, PIVOT_TYPE));
     OG_RETURN_IFERR(sql_create_pivot_sub_select(stmt, NULL, query, pivot_items));
 
     query_table = (sql_table_t *)query->tables.items[0];
@@ -571,7 +572,7 @@ status_t sql_create_unpivot(sql_stmt_t *stmt, sql_query_t *query, word_t *word)
 #endif
 
     OG_RETURN_IFERR(sql_stack_safe(stmt));
-    OG_RETURN_IFERR(sql_create_pivot_items(stmt, &pivot_items, word, UNPIVOT_TYPE));
+    OG_RETURN_IFERR(sql_create_pivot_items(stmt, &pivot_items, word->loc, UNPIVOT_TYPE));
     OG_RETURN_IFERR(sql_create_pivot_sub_select(stmt, NULL, query, pivot_items));
     OG_RETURN_IFERR(sql_create_unpivot_core(stmt, word, pivot_items));
 
@@ -582,7 +583,7 @@ static status_t sql_create_pivot_for_table(sql_stmt_t *stmt, sql_table_t *query_
 {
     pivot_items_t *pivot_items = NULL;
 
-    OG_RETURN_IFERR(sql_create_pivot_items(stmt, &pivot_items, word, type));
+    OG_RETURN_IFERR(sql_create_pivot_items(stmt, &pivot_items, word->loc, type));
     OG_RETURN_IFERR(sql_create_pivot_sub_select(stmt, query_table, NULL, pivot_items));
     if (type == PIVOT_TYPE) {
         return sql_create_pivot_core(stmt, word, pivot_items, query_table);
@@ -643,6 +644,149 @@ status_t sql_try_create_pivot_unpivot_table(sql_stmt_t *stmt, sql_table_t *query
     OG_RETURN_IFERR(lex_fetch(lex, word));
     lex->flags = ori_flags;
     return sql_try_create_pivot_unpivot_table(stmt, query_table, word, is_pivot);
+}
+
+status_t sql_parse_pivot_aggr_list(galist_t *query_columns, expr_tree_t **expr, galist_t *expr_alias,
+    bool32 need_filling)
+{
+    text_t *alias = NULL;
+    expr_tree_t *curr_expr = NULL;
+    expr_tree_t *last_expr = sql_get_last_expr_tree(*expr);
+    query_column_t *query_column = NULL;
+
+    for (uint32 i = 0; i < query_columns->count; i++) {
+        query_column = (query_column_t*)cm_galist_get(query_columns, i);
+
+        curr_expr = query_column->expr;
+        if (last_expr == NULL) {
+            *expr = curr_expr;
+        } else {
+            last_expr->next = curr_expr;
+        }
+        last_expr = curr_expr;
+
+        if (query_column->exist_alias || need_filling) {
+            OG_RETURN_IFERR(cm_galist_insert(expr_alias, &query_column->alias));
+        } else {
+            OG_RETURN_IFERR(cm_galist_new(expr_alias, sizeof(text_t), (void **)&alias));
+            alias->str = NULL;
+            alias->len = 0;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_pivot_in_list(pivot_items_t *pivot_items, galist_t *in_list)
+{
+    uint32 list_len = sql_expr_list_len(pivot_items->for_expr);
+    expr_with_alias *pivot_expr = NULL;
+    expr_tree_t *last_expr = pivot_items->in_expr;
+
+    for (uint32 i = 0; i < in_list->count; i++) {
+        pivot_expr = (expr_with_alias*)cm_galist_get(in_list, i);
+        if (list_len != sql_expr_list_len(pivot_expr->expr)) {
+            return OG_ERROR;
+        }
+        
+        if (pivot_items->in_expr == NULL) {
+            pivot_items->in_expr = pivot_expr->expr;
+        } else {
+            last_expr->next = pivot_expr->expr;
+        }
+        last_expr = sql_get_last_expr_tree(pivot_expr->expr);
+
+        OG_RETURN_IFERR(cm_galist_insert(pivot_items->alias, &pivot_expr->alias));
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_pivot_clause_list(sql_stmt_t *stmt, sql_query_t *query, galist_t *pivot_list)
+{
+    if (pivot_list == NULL) {
+        return OG_SUCCESS;
+    }
+    pivot_items_t *pivot_item = NULL;
+    for (uint32 i = 0; i < pivot_list->count; i++) {
+        pivot_item = (pivot_items_t*)cm_galist_get(pivot_list, i);
+        OG_RETURN_IFERR(sql_create_pivot_sub_select(stmt, NULL, query, pivot_item));
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_unpivot_in_list(sql_stmt_t *stmt, pivot_items_t *pivot_items, galist_t *in_list)
+{
+    uint32 data_count = pivot_items->unpivot_data_rs->count;
+    uint32 alias_count = pivot_items->unpivot_alias_rs->count;
+
+    expr_with_as_expr *pivot_expr = NULL;
+    expr_tree_t *data_expr = NULL;
+    expr_tree_t *as_expr = NULL;
+    expr_tree_t *alias_expr = NULL;
+
+    for (uint32 i = 0; i < in_list->count; i++) {
+        pivot_expr = (expr_with_as_expr*)cm_galist_get(in_list, i);
+        data_expr = pivot_expr->expr_alias->expr;
+        as_expr = pivot_expr->as_expr;
+
+        if (data_count != sql_expr_list_len(data_expr)) {
+            return OG_ERROR;
+        }
+
+        while (data_expr != NULL) {
+            if (data_expr->root->type != EXPR_NODE_COLUMN || data_expr->root->word.column.table.len != 0) {
+                return OG_ERROR;
+            }
+            OG_RETURN_IFERR(cm_galist_insert(pivot_items->column_name,
+                (void *)&data_expr->root->word.column.name.value));
+            data_expr = data_expr->next;
+        }
+
+        if (as_expr != NULL) {
+            if (alias_count != sql_expr_list_len(as_expr)) {
+                return OG_ERROR;
+            }
+            while (as_expr != NULL) {
+                as_expr->root->datatype = as_expr->root->value.type;
+                OG_RETURN_IFERR(cm_galist_insert(pivot_items->alias, (void *)as_expr));
+                as_expr = as_expr->next;
+            }
+        } else {
+            OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_tree_t), (void **)&alias_expr));
+            OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&alias_expr->root));
+            OG_RETURN_IFERR(sql_copy_text(stmt->context, &pivot_expr->expr_alias->alias,
+                &alias_expr->root->value.v_text));
+            alias_expr->root->value.v_text.len = pivot_expr->expr_alias->alias.len;
+            cm_text_upper(&alias_expr->root->value.v_text);
+            alias_expr->root->type = EXPR_NODE_CONST;
+            alias_expr->root->value.is_null = OG_FALSE;
+            alias_expr->root->value.type = OG_TYPE_CHAR;
+            alias_expr->root->datatype = OG_TYPE_CHAR;
+            for (uint32 i = 0; i < alias_count; i++) {
+                OG_RETURN_IFERR(cm_galist_insert(pivot_items->alias, alias_expr));
+            }
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_unpivot_data_rs(sql_stmt_t *stmt, galist_t *unpivot_rs, expr_tree_t *expr)
+{
+    while (expr != NULL) {
+        if (expr->root->type != EXPR_NODE_COLUMN) {
+            return OG_ERROR;
+        }
+        OG_RETURN_IFERR(sql_unpivot_alias_if_repeat(unpivot_rs, expr));
+        OG_RETURN_IFERR(cm_galist_insert(unpivot_rs, &expr->root->word.column.name.value));
+        expr = expr->next;
+    }
+
+    if (unpivot_rs->count == 0) {
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 #ifdef __cplusplus

@@ -18741,7 +18741,7 @@ static status_t db_fill_part_indexes(knl_session_t *session, knl_dictionary_t *d
     index_t **indexes, uint32 index_cnt)
 {
     table_t *table = DC_TABLE(dc);
-    uint32 segment_cnt;
+    uint32 segment_cnt = 0;
 
     for (uint32 i = 0; i < index_cnt; i++) {
         segment_cnt = 0;

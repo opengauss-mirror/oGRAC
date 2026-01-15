@@ -32,5 +32,6 @@ extern "C" {
 #endif
 
 status_t sql_create_merge_context(sql_stmt_t *stmt, sql_text_t *sql, sql_merge_t **merge_ctx);
+status_t sql_init_merge(sql_stmt_t *stmt, sql_merge_t *merge_ctx);
 
 #endif

@@ -526,7 +526,7 @@ static status_t sql_dep_trace_obj(knl_session_t *session, knl_cursor_t *cursor, 
 {
     obj_info_t obj_buf;
     obj_node_t key_node;
-    object_status_t obj_status;
+    object_status_t obj_status = OBJ_STATUS_INVALID;
     rb_node_t *res_node = NULL;
     obj_node_t *new_node = NULL;
     bool32 is_found = OG_FALSE;

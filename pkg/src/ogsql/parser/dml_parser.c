@@ -48,6 +48,7 @@
 #include "ogsql_replace_parser.h"
 #include "ogsql_merge_parser.h"
 #include "ogsql_cache.h"
+#include "gramparse.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,6 +61,313 @@ status_t sql_create_list(sql_stmt_t *stmt, galist_t **list)
     }
 
     cm_galist_init((*list), stmt->context, sql_alloc_mem);
+    return OG_SUCCESS;
+}
+
+static inline void get_next_token_without_yy(int *lookahead_len, struct base_yy_lookahead *lookaheads, int *next_token,
+    int *next_yyleng, YYSTYPE *lvalp, YYLTYPE *llocp, yyscan_t yyscanner, char *scanbuf)
+{
+    if (*lookahead_len) {
+        struct base_yy_lookahead lookahead = lookaheads[(*lookahead_len) - 1];
+        *next_token = lookahead.token;
+        *next_yyleng = lookahead.yyleng;
+        lvalp->core_yystype = lookahead.yylval;
+        *llocp = lookahead.yylloc;
+        scanbuf[lookahead.prev_hold_char_loc] = lookahead.prev_hold_char;
+        scanbuf[lookahead.yylloc.offset + lookahead.yyleng] = '\0';
+        (*lookahead_len)--;
+    } else {
+        *next_token = core_yylex(&(lvalp->core_yystype), llocp, yyscanner);
+        *next_yyleng = ct_yyget_leng(yyscanner);
+    }
+}
+
+static inline void get_next_token(int *lookahead_len, struct base_yy_lookahead *lookaheads, int *next_token,
+    int *next_yyleng, YYSTYPE *lvalp, YYLTYPE *llocp, yyscan_t yyscanner, char *scanbuf, core_YYSTYPE *cur_yylval,
+    YYLTYPE *cur_yylloc)
+{
+    *cur_yylval = lvalp->core_yystype;
+    *cur_yylloc = *llocp;
+    get_next_token_without_yy(lookahead_len, lookaheads, next_token, next_yyleng, lvalp, llocp, yyscanner, scanbuf);
+}
+
+static inline void set_lookahead_token(int *lookahead_len, struct base_yy_lookahead *lookaheads, int *next_token,
+    YYSTYPE *lvalp, YYLTYPE *llocp, int *next_yyleng, YYLTYPE *cur_yylloc, char *scanbuf, int cur_yyleng)
+{
+    *lookahead_len = 1;
+    struct base_yy_lookahead* lookahead = &lookaheads[0];
+    lookahead->token = *next_token;
+    lookahead->yylval = lvalp->core_yystype;
+    lookahead->yylloc = *llocp;
+    lookahead->yyleng = *next_yyleng;
+    lookahead->prev_hold_char_loc = cur_yylloc->offset + cur_yyleng;
+    lookahead->prev_hold_char = scanbuf[cur_yylloc->offset + cur_yyleng];
+}
+
+int base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
+{
+    base_yy_extra_type* yyextra = og_yyget_extra(yyscanner);
+    char* scanbuf = yyextra->core_yy_extra.scanbuf;
+    struct base_yy_lookahead* lookaheads = yyextra->lookaheads;
+    int* lookahead_len = &yyextra->lookahead_len;
+    int cur_token;
+    int cur_yyleng = 0;
+    int next_token;
+    int next_yyleng = 0;
+    core_YYSTYPE cur_yylval;
+    YYLTYPE cur_yylloc = {{0, 0}, 0};
+
+    /* Get next token --- we might already have it */
+    if (yyextra->lookahead_len != 0) {
+        const struct base_yy_lookahead lookahead = lookaheads[yyextra->lookahead_len - 1];
+        cur_token = lookahead.token;
+        lvalp->core_yystype = lookahead.yylval;
+        *llocp = lookahead.yylloc;
+        scanbuf[lookahead.prev_hold_char_loc] = lookahead.prev_hold_char;
+        scanbuf[lookahead.yylloc.offset + lookahead.yyleng] = '\0';
+        yyextra->lookahead_len--;
+    } else {
+        cur_token = core_yylex(&(lvalp->core_yystype), llocp, yyscanner);
+    }
+
+    /* Do we need to look ahead for a possible multiword token? */
+    switch (cur_token) {
+        case NULLS_P:
+            /*
+             * NULLS FIRST and NULLS LAST must be reduced to one token
+             */
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case FIRST_P:
+                    cur_token = NULLS_FIRST;
+                    break;
+                case LAST_P:
+                    cur_token = NULLS_LAST;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case WITH:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case TIME:
+                    cur_token = WITH_TIME;
+                    break;
+                case LOCAL:
+                    cur_token = WITH_LOCAL;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case WITHOUT:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case TIME:
+                    cur_token = WITHOUT_TIME;
+                    break;
+                case LOCAL:
+                    cur_token = WITHOUT_LOCAL;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case PIVOT:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case '(':
+                    cur_token = PIVOT_TOK;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case UNPIVOT:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case '(':
+                    cur_token = UNPIVOT_TOK;
+                    break;
+                case INCLUDE:
+                    cur_token = UNPIVOT_INC;
+                    break;
+                case EXCLUDE:
+                    cur_token = UNPIVOT_EXC;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case CONNECT:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case BY:
+                    cur_token = CONNECT_BY;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case START:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case WITH:
+                    cur_token = START_WITH;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case PARTITION:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case FOR:
+                    cur_token = PARTITION_FOR;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case SUBPARTITION:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case FOR:
+                    cur_token = SUBPARTITION_FOR;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case ORDER:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case SIBLINGS:
+                    cur_token = ORDER_SIBLINGS;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+    return cur_token;
+}
+
+status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+{
+    core_yyscan_t yyscanner;
+    base_yy_extra_type yyextra;
+    int yyresult;
+
+    CM_SAVE_STACK(stmt->session->stack);
+
+    /* initialize the flex scanner */
+    yyscanner = scanner_init(sql, &yyextra.core_yy_extra, &ScanKeywords, ScanKeywordTokens, stmt);
+    if (SECUREC_UNLIKELY(yyscanner == NULL)) {
+        return OG_ERROR;
+    }
+
+    yyextra.lookahead_len = 0;
+
+    /* initialize the bison parser */
+    parser_init(&yyextra);
+
+    /* Parse! */
+    yyresult = base_yyparse(yyscanner);
+
+    /* Clean up (release memory) */
+    scanner_finish(yyscanner);
+
+    if (SECUREC_UNLIKELY(yyresult)) { /* error */
+        return OG_ERROR;
+    }
+
+    CM_RESTORE_STACK(stmt->session->stack);
+
+    *context = yyextra.parsetree;
     return OG_SUCCESS;
 }
 
@@ -81,27 +389,51 @@ static status_t sql_create_dml_context(sql_stmt_t *stmt, sql_text_t *sql, key_wi
         case KEY_WORD_SELECT:
         case KEY_WORD_WITH:
             stmt->context->type = OGSQL_TYPE_SELECT;
-            return sql_create_select_context(stmt, sql, SELECT_AS_RESULT, (sql_select_t **)&ogx->entry);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_create_select_context(stmt, sql, SELECT_AS_RESULT, (sql_select_t **)&ogx->entry);
+            } else {
+                return raw_parser(stmt, sql, &ogx->entry);
+            }
 
         case KEY_WORD_UPDATE:
             stmt->context->type = OGSQL_TYPE_UPDATE;
-            return sql_create_update_context(stmt, sql, (sql_update_t **)&ogx->entry);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_create_update_context(stmt, sql, (sql_update_t **)&ogx->entry);
+            } else {
+                return raw_parser(stmt, sql, &ogx->entry);
+            }
 
         case KEY_WORD_INSERT:
             stmt->context->type = OGSQL_TYPE_INSERT;
-            return sql_create_insert_context(stmt, sql, (sql_insert_t **)&ogx->entry);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_create_insert_context(stmt, sql, (sql_insert_t **)&ogx->entry);
+            } else {
+                return raw_parser(stmt, sql, &ogx->entry);
+            }
 
         case KEY_WORD_DELETE:
             stmt->context->type = OGSQL_TYPE_DELETE;
-            return sql_create_delete_context(stmt, sql, (sql_delete_t **)&ogx->entry);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_create_delete_context(stmt, sql, (sql_delete_t **)&ogx->entry);
+            } else {
+                return raw_parser(stmt, sql, &ogx->entry);
+            }
 
         case KEY_WORD_MERGE:
             stmt->context->type = OGSQL_TYPE_MERGE;
-            return sql_create_merge_context(stmt, sql, (sql_merge_t **)&ogx->entry);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_create_merge_context(stmt, sql, (sql_merge_t **)&ogx->entry);
+            } else {
+                return raw_parser(stmt, sql, &ogx->entry);
+            }
 
         case KEY_WORD_REPLACE:
             stmt->context->type = OGSQL_TYPE_REPLACE;
-            return sql_create_replace_context(stmt, sql, (sql_replace_t **)&ogx->entry);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_create_replace_context(stmt, sql, (sql_replace_t **)&ogx->entry);
+            } else {
+                return raw_parser(stmt, sql, &ogx->entry);
+            }
 
         default:
             OG_SRC_THROW_ERROR(sql->loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
@@ -326,7 +658,7 @@ status_t sql_parse_dml(sql_stmt_t *stmt, key_wid_t key_wid)
 
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
     uint32 special_word = sql_has_special_word(stmt, &stmt->session->lex->text.value);
-    if (SQL_HAS_NONE != special_word || stmt->session->disable_soft_parse) {
+    if (SQL_HAS_NONE != special_word || stmt->session->disable_soft_parse || g_instance->sql.use_bison_parser) {
         OG_RETURN_IFERR(sql_parse_dml_directly(stmt, key_wid, &stmt->session->lex->text));
     } else {
         OG_RETURN_IFERR(og_find_then_parse_dml(stmt, key_wid, special_word));

@@ -28,6 +28,8 @@
 #include "srv_instance.h"
 #include "expr_parser.h"
 #include "cm_pbl.h"
+#include "sysdba_defs.h"
+#include "scanner.h"
 
 /* ****************************************************************************
 Description  : verify pwd text.
@@ -674,7 +676,7 @@ status_t sql_parse_alter_user(sql_stmt_t *stmt)
     return OG_SUCCESS;
 }
 
-static bool32 sql_find_space_in_list(galist_t *space_lst, const text_t *space_name)
+bool32 sql_find_space_in_list(galist_t *space_lst, const text_t *space_name)
 {
     uint32 i;
     text_t *tmp_space = NULL;
@@ -1265,4 +1267,360 @@ status_t sql_parse_drop_profile(sql_stmt_t *stmt)
     stmt->context->entry = def;
 
     return lex_expected_end(lex);
+}
+
+static status_t og_parse_user_name(sql_stmt_t *stmt, char *name, bool32 for_user)
+{
+    if (contains_nonnaming_char(name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
+        return OG_ERROR;
+    }
+
+    if (for_user) {
+        if (sql_user_prefix_tenant(stmt->session, name) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    /* can not create user name default DBA user's name */
+    if (strlen(name) == strlen(SYS_USER_NAME) && !strncmp(name, SYS_USER_NAME, strlen(name))) {
+        OG_THROW_ERROR(ERR_FORBID_CREATE_SYS_USER);
+        return OG_ERROR;
+    }
+
+    /* can not create user name default DBA user's name:CM_SYSDBA_USER_NAME */
+    if (strlen(name) == strlen(CM_SYSDBA_USER_NAME) && !strncmp(name, CM_SYSDBA_USER_NAME, strlen(name))) {
+        OG_THROW_ERROR(ERR_FORBID_CREATE_SYS_USER);
+        return OG_ERROR;
+    }
+
+    /* can not create user name default DBA user's name:CM_CLSMGR_USER_NAME */
+    if (strlen(name) == strlen(CM_CLSMGR_USER_NAME) && !strncmp(name, CM_CLSMGR_USER_NAME, strlen(name))) {
+        OG_THROW_ERROR(ERR_FORBID_CREATE_SYS_USER);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_user_passwd(sql_stmt_t *stmt, knl_user_def_t *def, text_t *pwd_text, source_location_t loc)
+{
+    def->pwd_loc = loc.column;
+    def->pwd_len = pwd_text->len;
+
+    OG_RETURN_IFERR(cm_text2str(pwd_text, def->password, OG_PASSWORD_BUFFER_SIZE));
+    OG_RETURN_IFERR(sql_replace_password(stmt, pwd_text));
+    return OG_SUCCESS;
+}
+
+status_t og_parse_create_user(sql_stmt_t *stmt, knl_user_def_t **user_def, char *user_name, char *password,
+    source_location_t pwd_loc, bool encrypted, galist_t *options)
+{
+    status_t status;
+    char log_pwd[OG_PWD_BUFFER_SIZE] = {0};
+    uint64 pwd_min_len;
+    uint32 flag = 0;
+    text_t pwd_text;
+    cm_str2text(password, &pwd_text);
+    knl_user_def_t *def = NULL;
+
+    SQL_SET_IGNORE_PWD(stmt->session);
+
+    stmt->context->type = OGSQL_TYPE_CREATE_USER;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(knl_user_def_t), (void **)user_def));
+    def = *user_def;
+
+    def->is_readonly = OG_TRUE;
+    MEMS_RETURN_IFERR(memcpy_sp(def->name, OG_NAME_BUFFER_SIZE - 1, user_name, strlen(user_name)));
+    def->name[OG_NAME_BUFFER_SIZE - 1] = '\0';
+    OG_RETURN_IFERR(og_parse_user_name(stmt, def->name, OG_TRUE));
+    status = og_parse_user_passwd(stmt, def, &pwd_text, pwd_loc);
+    if (status == OG_ERROR) {
+        (void)sql_replace_password(stmt, &pwd_text); // for audit
+        return OG_ERROR;
+    }
+
+    def->is_encrypt = encrypted;
+    if (!g_instance->sql.enable_password_cipher && def->is_encrypt) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "please check whether supports create user with ciphertext");
+        return OG_ERROR;
+    }
+
+    // Process options if provided
+    if (options != NULL) {
+        for (uint32 i = 0; i < options->count; i++) {
+            user_option_t *option = (user_option_t *)cm_galist_get(options, i);
+            switch (option->type) {
+                case USER_OPTION_DEFAULT_TABLESPACE:
+                    if (flag & DDL_USER_DEFALT_SPACE) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"default\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    MEMS_RETURN_IFERR(memcpy_sp(def->default_space, OG_NAME_BUFFER_SIZE - 1, option->value,
+                        strlen(option->value)));
+                    def->default_space[OG_NAME_BUFFER_SIZE - 1] = '\0';
+                    def->mask |= USER_DATA_SPACE_MASK;
+                    flag |= DDL_USER_DEFALT_SPACE;
+                    break;
+                case USER_OPTION_TEMPORARY_TABLESPACE:
+                    if (flag & DDL_USER_TMP_SPACE) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"temporaray\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    MEMS_RETURN_IFERR(memcpy_sp(def->temp_space, OG_NAME_BUFFER_SIZE - 1, option->value,
+                        strlen(option->value)));
+                    def->temp_space[OG_NAME_BUFFER_SIZE - 1] = '\0';
+                    def->mask |= USER_TEMP_SPACE_MASK;
+                    flag |= DDL_USER_TMP_SPACE;
+                    break;
+                case USER_OPTION_PASSWORD_EXPIRE:
+                    if (flag & DDL_USER_PWD_EXPIRE) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"password\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    def->is_expire = OG_TRUE;
+                    flag |= DDL_USER_PWD_EXPIRE;
+                    def->mask |= USER_EXPIRE_MASK;
+                    break;
+                case USER_OPTION_ACCOUNT_LOCK:
+                    if (flag & DDL_USER_ACCOUNT_LOCK) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"account\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    def->is_lock = OG_TRUE;
+                    flag |= DDL_USER_ACCOUNT_LOCK;
+                    def->mask |= USER_LOCK_MASK;
+                    break;
+                case USER_OPTION_ACCOUNT_UNLOCK:
+                    if (flag & DDL_USER_ACCOUNT_LOCK) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"account\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    def->is_lock = OG_FALSE;
+                    flag |= DDL_USER_ACCOUNT_LOCK;
+                    def->mask |= USER_LOCK_MASK;
+                    break;
+                case USER_OPTION_PROFILE:
+                    if (flag & DDL_USER_PROFILE) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"profile\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    cm_str2text(option->value, &def->profile);
+                    flag |= DDL_USER_PROFILE;
+                    def->mask |= USER_PROFILE_MASK;
+                    break;
+                case USER_OPTION_PROFILE_DEFAULT:
+                    if (flag & DDL_USER_PROFILE) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"profile\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    {
+                        text_t default_profile = { DEFAULT_PROFILE_NAME, (uint32)strlen(DEFAULT_PROFILE_NAME) };
+                        status = sql_copy_text(stmt->context, &default_profile, &def->profile);
+                    }
+                    flag |= DDL_USER_PROFILE;
+                    def->mask |= USER_PROFILE_MASK;
+                    break;
+                case USER_OPTION_PERMANENT:
+                    if (flag & DDL_USER_PERMANENT) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR,
+                            "keyword \"permanent\" cannot be appear more than once");
+                        status = OG_ERROR;
+                        break;
+                    }
+                    if (!cm_text_str_equal_ins(&stmt->session->curr_user, SYS_USER_NAME)) {
+                        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "only sys can create the permanent user");
+                        status = OG_ERROR;
+                    }
+                    flag |= DDL_USER_PERMANENT;
+                    def->is_permanent = OG_TRUE;
+                    break;
+                default:
+                    OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "illegal sql text");
+                    status = OG_ERROR;
+            }
+            if (status == OG_ERROR) {
+                break;
+            }
+        }
+    }
+
+    do {
+        if (status == OG_SUCCESS && !def->is_encrypt) {
+            if (cm_check_pwd_black_list(GET_PWD_BLACK_CTX, def->name, def->password, log_pwd)) {
+                OG_THROW_ERROR_EX(ERR_PASSWORD_FORMAT_ERROR, "The password violates the pbl rule");
+                return OG_ERROR;
+            }
+            status = sql_parse_profile_pwd_len(stmt, def, &pwd_min_len);
+            OG_BREAK_IF_ERROR(status);
+            status = cm_verify_password_str(def->name, def->password, (uint32)pwd_min_len);
+            OG_BREAK_IF_ERROR(status);
+        }
+    } while (0);
+    
+    if (status != OG_SUCCESS) {
+        MEMS_RETURN_IFERR(memset_sp(def->old_password, OG_PASSWORD_BUFFER_SIZE, 0, OG_PASSWORD_BUFFER_SIZE));
+        MEMS_RETURN_IFERR(memset_sp(def->password, OG_PASSWORD_BUFFER_SIZE, 0, OG_PASSWORD_BUFFER_SIZE));
+    }
+    
+    return status;
+}
+
+static status_t og_parse_role_passwd(sql_stmt_t *stmt, knl_role_def_t *def, text_t *pwd_text, source_location_t loc)
+{
+    def->pwd_loc = loc.column;
+    def->pwd_len = pwd_text->len;
+
+    OG_RETURN_IFERR(cm_text2str(pwd_text, def->password, OG_PASSWORD_BUFFER_SIZE));
+    OG_RETURN_IFERR(sql_replace_password(stmt, pwd_text));
+    return OG_SUCCESS;
+}
+
+status_t og_parse_create_role(sql_stmt_t *stmt, knl_role_def_t **role_def, char *role_name, char *password,
+    source_location_t pwd_loc, bool32 encrypted)
+{
+    knl_role_def_t *def = NULL;
+    char log_pwd[OG_PWD_BUFFER_SIZE] = {0};
+    text_t pwd_text;
+    cm_str2text(password, &pwd_text);
+
+    SQL_SET_IGNORE_PWD(stmt->session);
+
+    if (sql_alloc_mem(stmt->context, sizeof(knl_role_def_t), (void **)role_def) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    def = *role_def;
+
+    def->owner_uid = stmt->session->knl_session.uid;
+    stmt->context->type = OGSQL_TYPE_CREATE_ROLE;
+
+    MEMS_RETURN_IFERR(memcpy_sp(def->name, OG_NAME_BUFFER_SIZE - 1, role_name, strlen(role_name)));
+    def->name[OG_NAME_BUFFER_SIZE - 1] = '\0';
+    OG_RETURN_IFERR(og_parse_user_name(stmt, def->name, OG_FALSE));
+    
+    // Set password if provided
+    if (!CM_IS_EMPTY_STR(password)) {
+        if (og_parse_role_passwd(stmt, def, &pwd_text, pwd_loc) == OG_ERROR) {
+            (void)sql_replace_password(stmt, &pwd_text); // for audit
+            return OG_ERROR;
+        }
+        def->is_encrypt = encrypted;
+        // Verify password if not encrypted
+        if (!def->is_encrypt) {
+            if (cm_check_pwd_black_list(GET_PWD_BLACK_CTX, def->name, def->password, log_pwd)) {
+                OG_THROW_ERROR_EX(ERR_PASSWORD_FORMAT_ERROR, "The password violates the pbl rule");
+                return OG_ERROR;
+            }
+            if (cm_verify_password_str(def->name, def->password, OG_PASSWD_MIN_LEN) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t og_parse_create_tenant(sql_stmt_t *stmt, knl_tenant_def_t **tenant_def, char *tenant_name,
+    galist_t *space_list, char *default_tablespace)
+{
+    knl_tenant_def_t *def = NULL;
+    text_t *space_name = NULL;
+    text_t *tmp_space = NULL;
+    uint32 i;
+    
+    stmt->context->type = OGSQL_TYPE_CREATE_TENANT;
+    if (sql_alloc_mem(stmt->context, sizeof(knl_tenant_def_t), (void **)tenant_def) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    def = *tenant_def;
+    
+    CM_MAGIC_SET(def, knl_tenant_def_t);
+    
+    // Set tenant name
+    if (CM_IS_EMPTY_STR(tenant_name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "tenant name is required");
+        return OG_ERROR;
+    }
+    
+    if (strlen(tenant_name) > OG_TENANT_NAME_LEN) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "'%s' is too long to as tenant name", tenant_name);
+        return OG_ERROR;
+    }
+    
+    // tenant name must be upper case
+    MEMS_RETURN_IFERR(memcpy_sp(def->name, OG_TENANT_BUFFER_SIZE - 1, tenant_name, strlen(tenant_name)));
+    def->name[OG_TENANT_BUFFER_SIZE - 1] = '\0';
+    
+    if (contains_nonnaming_char_ex(def->name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
+        return OG_ERROR;
+    }
+    
+    if (cm_text_str_equal(&g_tenantroot, def->name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "can not create TENANT$ROOT");
+        return OG_ERROR;
+    }
+    
+    // Copy space list
+    if (space_list != NULL) {
+        cm_galist_init(&def->space_lst, stmt->context, sql_alloc_mem);
+        
+        for (i = 0; i < space_list->count; i++) {
+            tmp_space = (text_t *)cm_galist_get(space_list, i);
+            if (cm_galist_new(&def->space_lst, sizeof(text_t), (pointer_t *)&space_name) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+            if (sql_copy_name(stmt->context, tmp_space, space_name) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+        }
+    } else {
+        cm_galist_init(&def->space_lst, stmt->context, sql_alloc_mem);
+    }
+    
+    // Set default tablespace
+    if (!CM_IS_EMPTY_STR(default_tablespace)) {
+        MEMS_RETURN_IFERR(memcpy_sp(def->default_tablespace, OG_NAME_BUFFER_SIZE - 1, default_tablespace,
+            strlen(default_tablespace)));
+        def->default_tablespace[OG_NAME_BUFFER_SIZE - 1] = '\0';
+    } else if (def->space_lst.count > 0) {
+        // If no default tablespace specified, use the first one from the list
+        tmp_space = (text_t *)cm_galist_get(&def->space_lst, 0);
+        if (tmp_space != NULL) {
+            cm_text2str_with_upper(tmp_space, def->default_tablespace, OG_NAME_BUFFER_SIZE);
+        }
+    }
+    
+    // Validate that default tablespace is in the space list
+    if (!CM_IS_EMPTY_STR(def->default_tablespace)) {
+        bool32 found = OG_FALSE;
+        for (i = 0; i < def->space_lst.count; i++) {
+            tmp_space = (text_t *)cm_galist_get(&def->space_lst, i);
+            if (cm_text_str_equal_ins(tmp_space, def->default_tablespace)) {
+                found = OG_TRUE;
+                break;
+            }
+        }
+        
+        if (!found) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "tablespace %s has not been declared previously",
+                def->default_tablespace);
+            return OG_ERROR;
+        }
+    }
+    
+    stmt->context->entry = def;
+    return OG_SUCCESS;
 }

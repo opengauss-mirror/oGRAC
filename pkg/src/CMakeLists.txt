@@ -1,6 +1,7 @@
 add_compile_options(-Werror)
 add_compile_options(-Wno-psabi)
 add_compile_options(-Wno-stringop-overflow)
+add_compile_options(-Wno-array-bounds)
 
 execute_process(
         COMMAND uname -p

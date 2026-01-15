@@ -270,13 +270,13 @@ static status_t mes_ssl_inner_accept(cs_pipe_t *pipe)
     }
 
     if (msg.head->cmd != (uint8)MES_CMD_CONNECT) {
-        cm_free(msg_buf);
         OG_THROW_ERROR_EX(ERR_MES_INVALID_CMD, "when building connection type %u", msg.head->cmd);
+        cm_free(msg_buf);
         return OG_ERROR;
     }
     if (msg.head->src_sid >= g_mes.profile.channel_num) {
-        cm_free(msg_buf);
         OG_THROW_ERROR_EX(ERR_MES_ILEGAL_MESSAGE, "when building connection src_sid invalid %u", msg.head->src_sid);
+        cm_free(msg_buf);
         return OG_ERROR;
     }
 
@@ -326,19 +326,19 @@ static status_t mes_accept(cs_pipe_t *pipe)
     }
 
     if (mes_read_message(pipe, &msg) != OG_SUCCESS) {
-        cm_free(msg_buf);
         OG_LOG_RUN_ERR("[mes]: read message failed.");
+        cm_free(msg_buf);
         return OG_ERROR;
     }
 
     if (msg.head->cmd != (uint8)MES_CMD_CONNECT) {
-        cm_free(msg_buf);
         OG_THROW_ERROR_EX(ERR_MES_INVALID_CMD, "when building connection type %u", msg.head->cmd);
+        cm_free(msg_buf);
         return OG_ERROR;
     }
     if (msg.head->src_sid >= g_mes.profile.channel_num) {
-        cm_free(msg_buf);
         OG_THROW_ERROR_EX(ERR_MES_ILEGAL_MESSAGE, "when building connection src_sid invalid %u", msg.head->src_sid);
+        cm_free(msg_buf);
         return OG_ERROR;
     }
 

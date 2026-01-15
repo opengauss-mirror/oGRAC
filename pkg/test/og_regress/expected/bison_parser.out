@@ -1,0 +1,2624 @@
+
+
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b char(10));
+
+Succeed.
+
+SQL> insert into bison_t1 values (1,'abc');
+
+1 rows affected.
+
+SQL> insert into bison_t1 values (1,'abc'), (2, 'abc');
+
+2 rows affected.
+
+SQL> insert into sys.bison_t1 values (1,'abc'), (2, 'abc');
+
+2 rows affected.
+
+SQL> insert sys.bison_t1 values (1,'abc'), (2, 'abc');
+
+2 rows affected.
+
+SQL> insert into bison_t1(a,b) values (1,'abc'), (2, 'abc');
+
+2 rows affected.
+
+SQL> insert into bison_t1(sys.bison_t1.a, bison_t1.b) values (1,'abc'), (2, 'abc');
+
+2 rows affected.
+
+SQL> insert into bison_t1 tbison_t1(sys.bison_t1.a, tbison_t1.b) values (1,'abc'), (2, 'abc');
+
+2 rows affected.
+
+SQL> insert into bison_t1 as values(sys.bison_t1.a, bison_t1.b) values (1,'abc'), (2, 'abc');
+
+OG-00601, [1:25]Sql syntax error: syntax error
+SQL> insert into bison_t1 values(sys.bison_t1.a, bison_t1.b) values (1,'abc'), (2, 'abc'); --error
+
+OG-00601, [1:57]Sql syntax error: syntax error
+SQL> insert into bison_t1(sys.bison_t1.a, bison_t2.b) values (1,'abc'), (2, 'abc'); --error
+
+OG-00601, [1:78]Sql syntax error: invalid column name
+SQL> 
+SQL> drop table bison_t2;
+
+OG-00843, [1:20]The table or view SYS.BISON_T2 does not exist.
+SQL> create table bison_t2 (a int primary key, b int);
+
+Succeed.
+
+SQL> insert into bison_t2 values (1,1);
+
+1 rows affected.
+
+SQL> insert ignore into bison_t2 values (1,1);
+
+0 rows affected.
+
+SQL> insert into bison_t2 values (1,1); --error
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 1
+SQL> 
+SQL> insert /*+parallel(10)*/ into bison_t2 values (1,1);
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 1
+SQL> insert /*+parallel(10)*/ into bison_t2(a, b) values (1,1);
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 1
+SQL> insert /*+opt_param(abc=true)*/ into bison_t2 values (1,1);
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 1
+SQL> insert /*+db_version(=abc)*/ into bison_t2 values (1,1);
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 1
+SQL> insert /*+db_version(==abc)*/ into bison_t2 values (1,1);
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 1
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> drop table bison_t2;
+
+Succeed.
+
+SQL> create table bison_t1 (a int);
+
+Succeed.
+
+SQL> create table bison_t2 (a int);
+
+Succeed.
+
+SQL> insert into bison_t2 values (1), (2);
+
+2 rows affected.
+
+SQL> insert all into bison_t1 values (1) into bison_t1 values (2) select a from bison_t2;
+
+4 rows affected.
+
+SQL> insert all into bison_t1 values (1) into bison_t1 values (2) select 1;
+
+2 rows affected.
+
+SQL> insert all into bison_t1 (a) values (1) into bison_t1 (a) values (2) select 1;
+
+2 rows affected.
+
+SQL> insert all into bison_t1 (a) values (1) into bison_t1 values (2) select 1; --error
+
+OG-00601, Sql syntax error: Inconsistent user, table, column or value groups
+SQL> 
+SQL> insert into bison_t1 select a from bison_t2;
+
+2 rows affected.
+
+SQL> insert into bison_t1(a) select a from bison_t2;
+
+2 rows affected.
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int primary key, b int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (1,1);
+
+1 rows affected.
+
+SQL> insert into bison_t1 values (1,2) on duplicate key update b = 2;
+
+2 rows affected.
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int primary key, b int, c int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (1,1,1);
+
+1 rows affected.
+
+SQL> insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (select 1,2), c = 4;
+
+2 rows affected.
+
+SQL> insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (1,2), c = 4; --error
+
+OG-00601, [1:71]Sql syntax error: syntax error
+SQL> 
+SQL> insert into bison_t1 values (1, 1, 1) returning a; --error
+
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
+SQL> insert into bison_t1 values (1, 1) returning a; --error
+
+OG-00601, Sql syntax error: too less value expressions
+SQL> 
+SQL> declare
+  2 	tmp int;
+  3 begin
+  4 	insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (select 1,2), c = 4 returning c into tmp;
+  5 	dbe_output.print_line(tmp);
+  6 end;
+  7 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[4:2] PLC-00601 Sql syntax error: unexpected returning columns occurs
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (1, 1);
+
+1 rows affected.
+
+SQL> insert into bison_t1 values (2, 2);
+
+1 rows affected.
+
+SQL> delete bison_t1;
+
+2 rows affected.
+
+SQL> delete from bison_t1;
+
+0 rows affected.
+
+SQL> 
+SQL> insert into bison_t1 values (1, 1);
+
+1 rows affected.
+
+SQL> insert into bison_t1 values (2, 2);
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a;
+
+2 rows affected.
+
+SQL> delete from bison_t1 where (a);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where (a = 2);
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where not a;
+
+0 rows affected.
+
+SQL> delete from bison_t1 where not (a = 2);
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a = 1 and b = 2;
+
+0 rows affected.
+
+SQL> 
+SQL> insert into bison_t1 values (0, 0), (1, 2);
+
+2 rows affected.
+
+SQL> delete from bison_t1 where a = 0 or b = 2;
+
+2 rows affected.
+
+SQL> 
+SQL> insert into bison_t1 values (1,1), (2,2), (3,3);
+
+3 rows affected.
+
+SQL> delete from bison_t1 where a = 2;
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a > 1;
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a < 2;
+
+1 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a = (select 1);
+
+0 rows affected.
+
+SQL> 
+SQL> insert into bison_t1 values (1,1), (2,2), (3,3);
+
+3 rows affected.
+
+SQL> delete from bison_t1 where a >= 2;
+
+2 rows affected.
+
+SQL> delete from bison_t1 where a <= 2;
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a <> 2;
+
+0 rows affected.
+
+SQL> 
+SQL> insert into bison_t1 values (1,1), (2,2), (3,3);
+
+3 rows affected.
+
+SQL> delete from bison_t1 where a = any (2,3);
+
+2 rows affected.
+
+SQL> delete from bison_t1 where a = any (select 1);
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a = any ((select 1), (select 3));
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a = any (select 1,2); --error
+
+OG-00687, Values were too many
+SQL> 
+SQL> delete from bison_t1 where a > any (2, 5);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a > all (2, 5);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a < any ((select 1), (select 3));
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a <= any ((select 1), (select 3));
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a in (2, 3);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a in (select 1);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a in ((select 1), (select 2));
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a not in (2, 3);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a not in ((select 1), (select 2));
+
+0 rows affected.
+
+SQL> delete from bison_t1 where (a, b) not in (select 1,1);
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where (a, b) in (select 1,1);
+
+0 rows affected.
+
+SQL> delete from bison_t1 where (a,b) in (((select 2), 2));
+
+0 rows affected.
+
+SQL> delete from bison_t1 where (a,b) in (((select 2), 2),(3, (select 3)));
+
+0 rows affected.
+
+SQL> delete from bison_t1 where (a, b) in ((2,3));
+
+0 rows affected.
+
+SQL> delete from bison_t1 where (a,b) in (((select 2), (select 3)), (1,1));
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where (a, b) in ((2), (3)); --error
+
+OG-00601, [1:47]Sql syntax error: not enough values
+SQL> delete from bison_t1 where (a, b) in (2,3); --error
+
+OG-00601, [1:39]Sql syntax error: syntax error
+SQL> delete from bison_t1 where (a, b) in (select 2); --error
+
+OG-00923, Values were not enough
+SQL> delete from bison_t1 where (a,b) in (((select 1), 2), ((select 2))); --error
+
+OG-00601, [1:67]Sql syntax error: not enough values
+SQL> 
+SQL> insert into bison_t1 values (null, 2);
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a is null;
+
+1 rows affected.
+
+SQL> delete from bison_t1 where (select 1) is null;
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a is not null;
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a is not json;
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a is json;
+
+0 rows affected.
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a varchar(10));
+
+Succeed.
+
+SQL> insert into bison_t1 values ('abcdef');
+
+1 rows affected.
+
+SQL> insert into bison_t1 values ('abcdef%');
+
+1 rows affected.
+
+SQL> delete from bison_t1 where a like 'abc%';
+
+2 rows affected.
+
+SQL> delete from bison_t1 where a not like 'abc%';
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where (select 'abc') like 'abc%';
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a like '%\%' escape '\';
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a not like '%\%' escape '\';
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a regexp 'abc';
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a not regexp 'abc';
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a between 'ab' and 'ac';
+
+0 rows affected.
+
+SQL> delete from bison_t1 where a not between 'ab' and 'ac';
+
+0 rows affected.
+
+SQL> 
+SQL> alter system set _OPTIM_SUBQUERY_REWRITE=false;
+
+Succeed.
+
+SQL> delete from bison_t1 where exists (select 'ab');
+
+0 rows affected.
+
+SQL> delete from bison_t1 where not exists (select 'ab');
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where regexp_like (a, 'ab');
+
+0 rows affected.
+
+SQL> delete from bison_t1 where regexp_like (a);  --error
+
+OG-00615, Invalid argument number for REGEXP_LIKE, min=2, max=3
+SQL> delete from bison_t1 where regexp_like (a, 'ab', 'ab', 'ab');  --error
+
+OG-00615, Invalid argument number for REGEXP_LIKE, min=2, max=3
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (1, 1);
+
+1 rows affected.
+
+SQL> insert into bison_t1 values (2, 2);
+
+1 rows affected.
+
+SQL> 
+SQL> drop table bison_t2;
+
+Succeed.
+
+SQL> create table bison_t2 (c int, d int);
+
+Succeed.
+
+SQL> insert into bison_t2 values (1, 1);
+
+1 rows affected.
+
+SQL> insert into bison_t2 values (2, 2);
+
+1 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 where a = 1;
+
+1 rows affected.
+
+SQL> delete from bison_t1 using bison_t1, bison_t2 where a = 1;	
+
+0 rows affected.
+
+SQL> delete from bison_t1, bison_t2 using bison_t1, bison_t2 where a = 2;
+
+3 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 using bison_t1, bison_t2;
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 using bison_t2 partition(p1), bison_t1 where a = 1;
+
+OG-00601, Sql syntax error: BISON_T2 is not a partition table
+SQL> 
+SQL> delete from bison_t1, bison_t2 using bison_t1 join bison_t2 where a = c;
+
+OG-00601, [1:52]Sql syntax error: syntax error
+SQL> 
+SQL> delete from bison_t1, bison_t2 using bison_t1 inner join bison_t2 where a = c;
+
+OG-00601, Sql syntax error: unknown table BISON_T1 in multi delete
+SQL> 
+SQL> delete from bison_t1, bison_t2 using bison_t1 join bison_t2 on a = c;
+
+OG-00601, [1:52]Sql syntax error: syntax error
+SQL> 
+SQL> delete from bison_t1, bison_t2; -- error
+
+OG-00601, [1:31]Sql syntax error: USING expected
+SQL> 
+SQL> delete bison_t1 from bison_t1, bison_t2 where a = 1;
+
+0 rows affected.
+
+SQL> delete bison_t1, bison_t2 from bison_t1, bison_t2 where a = 2;
+
+0 rows affected.
+
+SQL> 
+SQL> delete bison_t1, bison_t2; -- error
+
+OG-00601, [1:26]Sql syntax error: FROM expected
+SQL> 
+SQL> select 1 from table(abc(1,2));  --does not exist
+
+OG-00845, Function ABC does not exist in oGRAC
+SQL> select 1 from table(cast(1 as int)); -- verify error
+
+OG-00606, Inconsistent datatypes, expected PLSQL INDEX TABLE - got BINARY_INTEGER
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name (RETURNING varchar2) PATH '$.name', age varchar2 PATH '$.age')); --error
+
+OG-00601, [1:110]Sql syntax error: syntax error
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name for ordinality, age varchar2 PATH '$.age'));
+
+NAME                
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name for ordinality, age varchar2('10abc') PATH '$.age')); --error
+
+OG-00601, [1:139]Sql syntax error: syntax error
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name varchar2 exists PATH '$.name' TRUE ON ERROR, age varchar2 exists PATH '$.age' TRUE ON ERROR));
+
+NAME                                                            
+----------------------------------------------------------------
+TRUE                                                            
+
+1 rows fetched.
+
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name varchar2 PATH '$.name' TRUE ON ERROR, age varchar2 PATH '$.age' TRUE ON ERROR));  -- error
+
+OG-02501, [1:105]Invalid RETURNING/ON ERROR/ON EMPTY clause, 
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name for ordinality, age varchar2(10) PATH '$.age')) jian;
+
+NAME                
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> select name from json_table('{"name":"Messi"}' format json, '$' default '1' on error COLUMNS(name for ordinality));
+
+NAME                
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> select name from json_table('{"name":"Messi"}' format json, '$' default '1' on error COLUMNS(name varchar2(10) PATH '$.age'));
+
+NAME                                                        
+------------------------------------------------------------
+1                                                           
+
+1 rows fetched.
+
+SQL> 
+SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name varchar2 exists PATH '$.name' TRUE ON ERROR, age varchar2 exists PATH '$.age' TRUE ON ERROR));
+
+NAME                                                            
+----------------------------------------------------------------
+TRUE                                                            
+
+1 rows fetched.
+
+SQL> 
+SQL> 
+SQL> 
+SQL> create table clob_bison_t1 (a clob);
+
+Succeed.
+
+SQL> insert into clob_bison_t1 values ('{"name":"Messi", "age": 10}');
+
+1 rows affected.
+
+SQL> select * from clob_bison_t1, json_table (clob_bison_t1.a, '$' default '1' on error COLUMNS(name varchar2 PATH '$.name', age varchar2 PATH '$.age'));
+
+A                                                                NAME                                                             AGE                                                             
+---------------------------------------------------------------- ---------------------------------------------------------------- ----------------------------------------------------------------
+{"name":"Messi", "age": 10}                                      Messi                                                            10                                                              
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (1,1), (2,2);
+
+2 rows affected.
+
+SQL> delete from bison_t1 limit 1 offset 1;
+
+1 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 order by a desc limit 1 offset 1;
+
+0 rows affected.
+
+SQL> delete from bison_t1 order by a desc limit 1 offset 1 returning a;
+
+A           
+------------
+
+0 rows fetched.
+
+SQL> 
+SQL> delete from bison_t1 order by a desc offset 1 limit 1;
+
+0 rows affected.
+
+SQL> 
+SQL> delete from bison_t1 order siblings by a desc limit 1 offset 1; --error
+
+OG-00601, [1:28]Sql syntax error: syntax error
+SQL> delete from bison_t1, bison_t2 using bison_t1, bison_t2 limit 1 offset 1;  --error
+
+OG-00601, [1:73]Sql syntax error: multi delete do not support limit
+SQL> delete from bison_t1, bison_t2 using bison_t1, bison_t2 order by a;  --error
+
+OG-00601, [1:67]Sql syntax error: multi delete do not support order by
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (1,1), (2,2);
+
+2 rows affected.
+
+SQL> update bison_t1 set a = 1 where b = 2;
+
+1 rows affected.
+
+SQL> update bison_t1 set a = 3, b = 3 where a = 1;
+
+2 rows affected.
+
+SQL> 
+SQL> drop table bison_t2;
+
+Succeed.
+
+SQL> create table bison_t2 (c int, d int);
+
+Succeed.
+
+SQL> insert into bison_t2 values (1,1), (2,2);
+
+2 rows affected.
+
+SQL> update bison_t1, bison_t2 set a = 3, b = 3 where a = 1;
+
+0 rows affected.
+
+SQL> 
+SQL> select a from bison_t1;
+
+A           
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> select abs
+  2 (a) from bison_t1;
+
+ABS
+(A)                                 
+----------------------------------------
+3                                       
+3                                       
+
+2 rows fetched.
+
+SQL> select 1;
+
+1           
+------------
+1           
+
+1 rows fetched.
+
+SQL> 
+SQL> select a as "abc" from bison_t1;
+
+abc         
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> select a as abc from bison_t1;
+
+ABC         
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> select a "abc" from bison_t1;
+
+abc         
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> select a abc from bison_t1;
+
+ABC         
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> 
+SQL> select "A" from bison_t1;
+
+A           
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> select "a" from bison_t1;
+
+OG-00601, [1:8]Sql syntax error: invalid column name 'a'
+SQL> select a from bison_t1;
+
+A           
+------------
+3           
+3           
+
+2 rows fetched.
+
+SQL> 
+SQL> select a "abc", b def from bison_t1;
+
+abc          DEF         
+------------ ------------
+3            3           
+3            3           
+
+2 rows fetched.
+
+SQL> 
+SQL> select * from bison_t1, bison_t2;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+3            3            1            1           
+3            3            2            2           
+3            3            1            1           
+3            3            2            2           
+
+4 rows fetched.
+
+SQL> 
+SQL> -- 创建销售数据表
+SQL> CREATE TABLE sales_data (
+  2     product_id VARCHAR2(10),
+  3     month VARCHAR2(20),
+  4     sales_amount NUMBER(10,2),
+  5     region VARCHAR2(20)
+  6 );
+
+Succeed.
+
+SQL> 
+SQL> -- 插入示例数据
+SQL> INSERT INTO sales_data VALUES ('P001', 'January', 1000, 'North');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P001', 'February', 1500, 'North');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P001', 'March', 1200, 'North');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P001', 'January', 800, 'South');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P001', 'February', 900, 'South');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P001', 'March', 1100, 'South');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P002', 'January', 2000, 'North');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P002', 'February', 1800, 'North');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P002', 'March', 2200, 'North');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P002', 'January', 1200, 'South');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P002', 'February', 1400, 'South');
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('P002', 'March', 1600, 'South');
+
+1 rows affected.
+
+SQL> 
+SQL> COMMIT;
+
+Succeed.
+
+SQL> 
+SQL> -- 简单的按月汇总
+SQL> SELECT *
+  2 FROM (
+  3     SELECT product_id, month, sales_amount
+  4     FROM sales_data
+  5 )
+  6 PIVOT (
+  7     SUM(sales_amount)
+  8     FOR month IN ('January' AS Jan, 'February' AS Feb, 'March' AS Mar)
+  9 )
+ 10 ORDER BY product_id;
+
+PRODUCT_ID JAN                                      FEB                                      MAR                                     
+---------- ---------------------------------------- ---------------------------------------- ----------------------------------------
+P001       1800                                     2400                                     2300                                    
+P002       3200                                     3200                                     3800                                    
+
+2 rows fetched.
+
+SQL> 
+SQL> 
+SQL> SELECT *
+  2 FROM (
+  3     SELECT product_id, month, sales_amount
+  4     FROM sales_data
+  5 )
+  6 PIVOT (
+  7     SUM(sales_amount)
+  8     FOR month IN ('January' AS Jan, 'February' AS Feb, 'March' AS Mar)
+  9 )
+ 10 PIVOT (
+ 11     SUM(jan)
+ 12     FOR product_id IN ('P001' AS p1, 'P002' AS p2)
+ 13 );
+
+FEB                                      MAR                                      P1                                       P2                                      
+---------------------------------------- ---------------------------------------- ---------------------------------------- ----------------------------------------
+3200                                     3800                                                                              3200                                    
+2400                                     2300                                     1800                                                                             
+
+2 rows fetched.
+
+SQL> 
+SQL> SELECT *
+  2 FROM (
+  3     SELECT product_id, month, sales_amount
+  4     FROM sales_data
+  5 )
+  6 PIVOT (
+  7     sales_amount
+  8     FOR month IN ('January' AS Jan, 'February' AS Feb, 'March' AS Mar)
+  9 )
+ 10 ORDER BY product_id; -- verify error
+
+OG-00612, Aggregation function expected, but SALES_AMOUNT found
+SQL> 
+SQL> SELECT *
+  2 FROM (
+  3     SELECT product_id, month, sales_amount
+  4     FROM sales_data
+  5 )
+  6 PIVOT (
+  7     SUM(sales_amount)
+  8     FOR month IN ('January', 'February', 'March')
+  9 )
+ 10 ORDER BY product_id;
+
+PRODUCT_ID 'JANUARY'                                'FEBRUARY'                               'MARCH'                                 
+---------- ---------------------------------------- ---------------------------------------- ----------------------------------------
+P001       1800                                     2400                                     2300                                    
+P002       3200                                     3200                                     3800                                    
+
+2 rows fetched.
+
+SQL> 
+SQL> SELECT *
+  2 FROM (
+  3     SELECT product_id, month, sales_amount
+  4     FROM sales_data
+  5 )
+  6 PIVOT (
+  7     SUM(sales_amount)
+  8     FOR (product_id, month) IN (('P001', 'January'), ('P001', 'February'), ('P001', 'March'), ('P002', 'January'), ('P002', 'February'), ('P002', 'March'))
+  9 );
+
+'P001'_'January'                         'P001'_'February'                        'P001'_'March'                           'P002'_'January'                         'P002'_'February'                        'P002'_'March'                          
+---------------------------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------- ----------------------------------------
+1800                                     2400                                     2300                                     3200                                     3200                                     3800                                    
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table sales_data;
+
+Succeed.
+
+SQL> CREATE TABLE sales_data (
+  2     region VARCHAR2(20),
+  3     quarter VARCHAR2(10),
+  4     product_a NUMBER,
+  5     product_b NUMBER,
+  6     product_c NUMBER
+  7 );
+
+Succeed.
+
+SQL> 
+SQL> INSERT INTO sales_data VALUES ('North', 'Q1', 1000, 1500, 1200);
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('North', 'Q2', 1100, 1600, 1300);
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('South', 'Q1', 900, 1400, 1100);
+
+1 rows affected.
+
+SQL> INSERT INTO sales_data VALUES ('South', 'Q2', 950, 1450, 1150);
+
+1 rows affected.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL> 
+SQL> SELECT region, quarter, product_type, sales_amount
+  2 FROM sales_data
+  3 UNPIVOT (
+  4     sales_amount          -- 新列：存放原来多列的值
+  5     FOR product_type      -- 新列：存放原来列名的描述
+  6     IN (                  -- 指定要转换的列
+  7         product_a AS 'A', -- 可以给原列名起别名
+  8         product_b AS 'B',
+  9         product_c AS 'C'
+ 10     )
+ 11 );
+
+REGION               QUARTER    PRODUCT_TYPE SALES_AMOUNT                            
+-------------------- ---------- ------------ ----------------------------------------
+North                Q1         A            1000                                    
+North                Q1         B            1500                                    
+North                Q1         C            1200                                    
+North                Q2         A            1100                                    
+North                Q2         B            1600                                    
+North                Q2         C            1300                                    
+South                Q1         A            900                                     
+South                Q1         B            1400                                    
+South                Q1         C            1100                                    
+South                Q2         A            950                                     
+South                Q2         B            1450                                    
+South                Q2         C            1150                                    
+
+12 rows fetched.
+
+SQL> 
+SQL> -- 包含NULL值的数据
+SQL> INSERT INTO sales_data VALUES ('West', 'Q1', NULL, 1800, 1400);
+
+1 rows affected.
+
+SQL> 
+SQL> -- 使用INCLUDE NULLS（默认是EXCLUDE NULLS）
+SQL> SELECT region, quarter, product_type, sales_amount
+  2 FROM sales_data
+  3 UNPIVOT INCLUDE NULLS (
+  4     sales_amount
+  5     FOR product_type
+  6     IN (
+  7         product_a AS 'A',
+  8         product_b AS 'B',
+  9         product_c AS 'C'
+ 10     )
+ 11 );
+
+REGION               QUARTER    PRODUCT_TYPE SALES_AMOUNT                            
+-------------------- ---------- ------------ ----------------------------------------
+North                Q1         A            1000                                    
+North                Q1         B            1500                                    
+North                Q1         C            1200                                    
+North                Q2         A            1100                                    
+North                Q2         B            1600                                    
+North                Q2         C            1300                                    
+South                Q1         A            900                                     
+South                Q1         B            1400                                    
+South                Q1         C            1100                                    
+South                Q2         A            950                                     
+South                Q2         B            1450                                    
+South                Q2         C            1150                                    
+West                 Q1         A                                                    
+West                 Q1         B            1800                                    
+West                 Q1         C            1400                                    
+
+15 rows fetched.
+
+SQL> 
+SQL> SELECT region, quarter, product_type, sales_amount
+  2 FROM sales_data
+  3 UNPIVOT EXCLUDE NULLS (
+  4     sales_amount
+  5     FOR product_type
+  6     IN (
+  7         product_a AS 'A',
+  8         product_b AS 'B',
+  9         product_c AS 'C'
+ 10     )
+ 11 );
+
+REGION               QUARTER    PRODUCT_TYPE SALES_AMOUNT                            
+-------------------- ---------- ------------ ----------------------------------------
+North                Q1         A            1000                                    
+North                Q1         B            1500                                    
+North                Q1         C            1200                                    
+North                Q2         A            1100                                    
+North                Q2         B            1600                                    
+North                Q2         C            1300                                    
+South                Q1         A            900                                     
+South                Q1         B            1400                                    
+South                Q1         C            1100                                    
+South                Q2         A            950                                     
+South                Q2         B            1450                                    
+South                Q2         C            1150                                    
+West                 Q1         B            1800                                    
+West                 Q1         C            1400                                    
+
+14 rows fetched.
+
+SQL> 
+SQL> CREATE TABLE employee_metrics (
+  2     emp_id NUMBER,
+  3     emp_name VARCHAR2(50),
+  4     q1_sales NUMBER,
+  5     q1_target NUMBER,
+  6     q2_sales NUMBER,
+  7     q2_target NUMBER
+  8 );
+
+Succeed.
+
+SQL> 
+SQL> INSERT INTO employee_metrics VALUES (1, '张三', 50000, 45000, 55000, 50000);
+
+1 rows affected.
+
+SQL> INSERT INTO employee_metrics VALUES (2, '李四', 48000, 50000, 52000, 48000);
+
+1 rows affected.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL> 
+SQL> SELECT emp_id, emp_name, quarter, sales, target
+  2 FROM employee_metrics
+  3 UNPIVOT (
+  4     (sales, target)           -- 同时处理多列值对
+  5     FOR quarter
+  6     IN (
+  7         (q1_sales, q1_target) AS 'Q1',
+  8         (q2_sales, q2_target) AS 'Q2'
+  9     )
+ 10 );
+
+EMP_ID                                   EMP_NAME                                           QUARTER SALES                                    TARGET                                  
+---------------------------------------- -------------------------------------------------- ------- ---------------------------------------- ----------------------------------------
+1                                        张三                                             Q1      50000                                    45000                                   
+1                                        张三                                             Q2      55000                                    50000                                   
+2                                        李四                                             Q1      48000                                    50000                                   
+2                                        李四                                             Q2      52000                                    48000                                   
+
+4 rows fetched.
+
+SQL> 
+SQL> -- 创建员工表
+SQL> CREATE TABLE employees (
+  2     employee_id NUMBER,
+  3     employee_name VARCHAR2(50),
+  4     manager_id NUMBER
+  5 );
+
+Succeed.
+
+SQL> 
+SQL> -- 插入测试数据
+SQL> INSERT INTO employees VALUES (1, 'CEO', NULL);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (2, '技术副总裁', 1);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (3, '销售副总裁', 1);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (4, '开发经理', 2);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (5, '测试经理', 2);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (6, '销售经理', 3);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (7, '高级开发工程师', 4);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (8, '初级开发工程师', 4);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (9, '测试工程师', 5);
+
+1 rows affected.
+
+SQL> INSERT INTO employees VALUES (10, '销售代表', 6);
+
+1 rows affected.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL> 
+SQL> SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id
+  5 FROM employees
+  6 START WITH manager_id IS NULL
+  7 CONNECT BY PRIOR employee_id = manager_id;
+
+EMPLOYEE_ID                              EMPLOYEE_NAME                                      MANAGER_ID                              
+---------------------------------------- -------------------------------------------------- ----------------------------------------
+1                                        CEO                                                                                        
+2                                        技术副总裁                                    1                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+3                                        销售副总裁                                    1                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+
+10 rows fetched.
+
+SQL> 
+SQL> SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id
+  5 FROM employees
+  6 START WITH manager_id IS NULL
+  7 CONNECT BY PRIOR employee_id = manager_id order siblings by employee_id;
+
+EMPLOYEE_ID                              EMPLOYEE_NAME                                      MANAGER_ID                              
+---------------------------------------- -------------------------------------------------- ----------------------------------------
+1                                        CEO                                                                                        
+2                                        技术副总裁                                    1                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+3                                        销售副总裁                                    1                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+
+10 rows fetched.
+
+SQL> 
+SQL> -- 原生会报错,order by前加个括号就可以执行；raw_parser加不加都可以执行，结果一致
+SQL> SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id
+  5 FROM employees
+  6 START WITH manager_id IS NULL
+  7 CONNECT BY PRIOR employee_id = manager_id order siblings by employee_id order by manager_id;
+
+EMPLOYEE_ID                              EMPLOYEE_NAME                                      MANAGER_ID                              
+---------------------------------------- -------------------------------------------------- ----------------------------------------
+1                                        CEO                                                                                        
+2                                        技术副总裁                                    1                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+3                                        销售副总裁                                    1                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+
+10 rows fetched.
+
+SQL> 
+SQL> -- error
+SQL> (SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id
+  5 FROM employees
+  6 START WITH manager_id IS NULL
+  7 CONNECT BY PRIOR employee_id = manager_id) order siblings by employee_id;
+
+OG-00601, [7:50]Sql syntax error: syntax error
+SQL> 
+SQL> select * from bison_t1 order siblings by a; -- error
+
+OG-00601, [1:43]Sql syntax error: ORDER SIBLINGS BY clause not allowed here.
+SQL> 
+SQL> SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id
+  5 FROM employees
+  6 CONNECT BY PRIOR employee_id = manager_id
+  7 START WITH manager_id IS NULL;
+
+EMPLOYEE_ID                              EMPLOYEE_NAME                                      MANAGER_ID                              
+---------------------------------------- -------------------------------------------------- ----------------------------------------
+1                                        CEO                                                                                        
+2                                        技术副总裁                                    1                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+3                                        销售副总裁                                    1                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+
+10 rows fetched.
+
+SQL> 
+SQL> SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id
+  5 FROM employees
+  6 CONNECT BY PRIOR employee_id = manager_id;
+
+EMPLOYEE_ID                              EMPLOYEE_NAME                                      MANAGER_ID                              
+---------------------------------------- -------------------------------------------------- ----------------------------------------
+1                                        CEO                                                                                        
+2                                        技术副总裁                                    1                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+3                                        销售副总裁                                    1                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+2                                        技术副总裁                                    1                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+3                                        销售副总裁                                    1                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+4                                        开发经理                                       2                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+5                                        测试经理                                       2                                       
+9                                        测试工程师                                    5                                       
+6                                        销售经理                                       3                                       
+10                                       销售代表                                       6                                       
+7                                        高级开发工程师                              4                                       
+8                                        初级开发工程师                              4                                       
+9                                        测试工程师                                    5                                       
+10                                       销售代表                                       6                                       
+
+30 rows fetched.
+
+SQL> 
+SQL> -- 目前会报错，level需要映射为EXPR_NODE_RESERVED
+SQL> SELECT 
+  2     employee_id,
+  3     employee_name,
+  4     manager_id,
+  5     level as hierarchy_level
+  6 FROM employees
+  7 START WITH manager_id IS NULL
+  8 CONNECT BY PRIOR employee_id = manager_id;
+
+EMPLOYEE_ID                              EMPLOYEE_NAME                                      MANAGER_ID                               HIERARCHY_LEVEL
+---------------------------------------- -------------------------------------------------- ---------------------------------------- ---------------
+1                                        CEO                                                                                         1              
+2                                        技术副总裁                                    1                                        2              
+4                                        开发经理                                       2                                        3              
+7                                        高级开发工程师                              4                                        4              
+8                                        初级开发工程师                              4                                        4              
+5                                        测试经理                                       2                                        3              
+9                                        测试工程师                                    5                                        4              
+3                                        销售副总裁                                    1                                        2              
+6                                        销售经理                                       3                                        3              
+10                                       销售代表                                       6                                        4              
+
+10 rows fetched.
+
+SQL> 
+SQL> -- 创建示例表
+SQL> drop table sales_data;
+
+Succeed.
+
+SQL> CREATE TABLE sales_data (
+  2     sale_id NUMBER,
+  3     region VARCHAR2(20),
+  4     product_category VARCHAR2(20),
+  5     salesperson VARCHAR2(30),
+  6     sale_amount NUMBER(10,2),
+  7     sale_date DATE
+  8 );
+
+Succeed.
+
+SQL> 
+SQL> -- 插入示例数据
+SQL> INSERT INTO sales_data VALUES (1, 'North', 'Electronics', 'John', 1500, DATE '2024-01-15');
+
+OG-00601, [1:78]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (2, 'North', 'Furniture', 'John', 2500, DATE '2024-01-20');
+
+OG-00601, [1:76]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (3, 'South', 'Electronics', 'Sarah', 1800, DATE '2024-01-10');
+
+OG-00601, [1:79]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (4, 'South', 'Furniture', 'Sarah', 2200, DATE '2024-01-25');
+
+OG-00601, [1:77]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (5, 'North', 'Electronics', 'Mike', 1200, DATE '2024-02-05');
+
+OG-00601, [1:78]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (6, 'South', 'Furniture', 'Mike', 1900, DATE '2024-02-10');
+
+OG-00601, [1:76]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (7, 'North', 'Electronics', 'John', 1700, DATE '2024-02-15');
+
+OG-00601, [1:78]Sql syntax error: syntax error
+SQL> INSERT INTO sales_data VALUES (8, 'South', 'Electronics', 'Sarah', 2100, DATE '2024-02-20');
+
+OG-00601, [1:79]Sql syntax error: syntax error
+SQL> 
+SQL> COMMIT;
+
+Succeed.
+
+SQL> 
+SQL> SELECT 
+  2     region,
+  3     product_category,
+  4     SUM(sale_amount) AS total_sales
+  5 FROM sales_data
+  6 GROUP BY GROUPING SETS ( 
+  7     (region, product_category));
+
+REGION               PRODUCT_CATEGORY     TOTAL_SALES                             
+-------------------- -------------------- ----------------------------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT 
+  2     region,
+  3     product_category,
+  4     SUM(sale_amount) AS total_sales
+  5 FROM sales_data
+  6 GROUP BY ( 
+  7     region, product_category);
+
+REGION               PRODUCT_CATEGORY     TOTAL_SALES                             
+-------------------- -------------------- ----------------------------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT 
+  2     region,
+  3     product_category,
+  4     SUM(sale_amount) AS total_sales
+  5 FROM sales_data
+  6 GROUP BY GROUPING SETS ( grouping sets
+  7     (region, product_category));
+
+OG-00601, [6:35]Sql syntax error: syntax error
+SQL> 
+SQL> 
+SQL> SELECT 
+  2     region,
+  3     product_category,
+  4     salesperson,
+  5     SUM(sale_amount) AS total_sales,
+  6     COUNT(*) AS transaction_count
+  7 FROM sales_data
+  8 GROUP BY GROUPING SETS (
+  9     (region, product_category, salesperson),
+ 10     (region, product_category),             
+ 11     (region, salesperson),                  
+ 12     (product_category, salesperson),        
+ 13     (region),                               
+ 14     (product_category),                     
+ 15     (salesperson),                           
+ 16     ()
+ 17 );
+
+REGION               PRODUCT_CATEGORY     SALESPERSON                    TOTAL_SALES                              TRANSACTION_COUNT   
+-------------------- -------------------- ------------------------------ ---------------------------------------- --------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT 
+  2     region,
+  3     product_category,
+  4     salesperson,
+  5     SUM(sale_amount) AS total_sales,
+  6     GROUPING_ID(region, product_category, salesperson) AS grp_id
+  7 FROM sales_data
+  8 GROUP BY GROUPING SETS (
+  9     ROLLUP(region, product_category, salesperson)
+ 10 );
+
+REGION               PRODUCT_CATEGORY     SALESPERSON                    TOTAL_SALES                              GRP_ID              
+-------------------- -------------------- ------------------------------ ---------------------------------------- --------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT 
+  2     region,
+  3     product_category,
+  4     salesperson,
+  5     SUM(sale_amount) AS total_sales,
+  6     GROUPING_ID(region, product_category, salesperson) AS grp_id
+  7 FROM sales_data
+  8 GROUP BY CUBE (region, product_category, salesperson);
+
+REGION               PRODUCT_CATEGORY     SALESPERSON                    TOTAL_SALES                              GRP_ID              
+-------------------- -------------------- ------------------------------ ---------------------------------------- --------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT salesperson, SUM(sale_amount) AS total_sales
+  2 FROM sales_data
+  3 GROUP BY salesperson
+  4 HAVING SUM(sale_amount) > 5000;
+
+SALESPERSON                    TOTAL_SALES                             
+------------------------------ ----------------------------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT region, 
+  2        SUM(sale_amount) AS total_sales,
+  3        AVG(sale_amount) AS avg_sale
+  4 FROM sales_data
+  5 GROUP BY region
+  6 HAVING SUM(sale_amount) > 3000 
+  7    AND AVG(sale_amount) < 2000;
+
+REGION               TOTAL_SALES                              AVG_SALE                                
+-------------------- ---------------------------------------- ----------------------------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT region, product_category, COUNT(*) AS order_count
+  2 FROM sales_data
+  3 WHERE sale_date >= '2024-01-01'
+  4 GROUP BY region, product_category
+  5 HAVING COUNT(*) >= 2;
+
+REGION               PRODUCT_CATEGORY     ORDER_COUNT         
+-------------------- -------------------- --------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT salesperson, COUNT(DISTINCT product_category) AS category_count
+  2 FROM sales_data
+  3 GROUP BY salesperson
+  4 HAVING COUNT(DISTINCT product_category) >= 2;
+
+SALESPERSON                    CATEGORY_COUNT      
+------------------------------ --------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> SELECT region, product_category, SUM(sale_amount) AS total
+  2 FROM sales_data
+  3 GROUP BY GROUPING SETS ((region), (product_category), ())
+  4 HAVING SUM(sale_amount) > 4000;
+
+REGION               PRODUCT_CATEGORY     TOTAL                                   
+-------------------- -------------------- ----------------------------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int);
+
+Succeed.
+
+SQL> insert into bison_t1 values (2), (1), (3), (5);
+
+4 rows affected.
+
+SQL> insert into bison_t1 values (null);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> select * from bison_t1 order by a;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 order by a asc;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 order by a desc;
+
+A           
+------------
+            
+5           
+3           
+2           
+1           
+
+5 rows fetched.
+
+SQL> select * from bison_t1 order by a nulls first;
+
+A           
+------------
+            
+1           
+2           
+3           
+5           
+
+5 rows fetched.
+
+SQL> select * from bison_t1 order by a nulls last;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> select * from bison_t1 order by a desc limit 2 offset 1;
+
+A           
+------------
+5           
+3           
+
+2 rows fetched.
+
+SQL> select * from bison_t1 order by a desc offset 2 limit 1;
+
+A           
+------------
+3           
+
+1 rows fetched.
+
+SQL> 
+SQL> select a from bison_t1 union select c from bison_t2;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select a from bison_t1 union all select c from bison_t2;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+1           
+2           
+
+7 rows fetched.
+
+SQL> select a from bison_t1 intersect select c from bison_t2;
+
+A           
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> select a from bison_t1 intersect all select c from bison_t2;
+
+A           
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> select a from bison_t1 intersect distinct select c from bison_t2;
+
+A           
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> select a from bison_t1 except select c from bison_t2;
+
+A           
+------------
+3           
+5           
+            
+
+3 rows fetched.
+
+SQL> select a from bison_t1 except all select c from bison_t2;
+
+A           
+------------
+3           
+5           
+            
+
+3 rows fetched.
+
+SQL> select a from bison_t1 except distinct select c from bison_t2;
+
+A           
+------------
+3           
+5           
+            
+
+3 rows fetched.
+
+SQL> select a from bison_t1 minus select c from bison_t2;
+
+A           
+------------
+3           
+5           
+            
+
+3 rows fetched.
+
+SQL> 
+SQL> select a from bison_t1 order by a union select c from bison_t2; -- error
+
+OG-00601, [1:35]Sql syntax error: syntax error
+SQL> (select a from bison_t1 order by a) union select c from bison_t2;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> (select a from bison_t1 order by a) union (select c from bison_t2 order by c);
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select a from bison_t1 union select c from bison_t2 order by a;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> select a from bison_t1 limit 1 union select c from bison_t2; -- error
+
+OG-00601, [1:32]Sql syntax error: syntax error
+SQL> (select a from bison_t1 limit 1) union select c from bison_t2;
+
+A           
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> 
+SQL> select * from bison_t1 for update;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 for update of a;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 for update of a nowait;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 for update of a wait 10;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 for update of a skip locked;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select a from bison_t1 union select c from bison_t2 order by a for update;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select a from bison_t1 for update union select c from bison_t2 order by a;
+
+OG-00601, [1:35]Sql syntax error: syntax error
+SQL> 
+SQL> 
+SQL> select SQL_CALC_FOUND_ROWS * from bison_t1 limit 2;
+
+A           
+------------
+2           
+1           
+
+2 rows fetched.
+
+SQL> select found_rows();
+
+FOUND_ROWS()        
+--------------------
+5                   
+
+1 rows fetched.
+
+SQL> 
+SQL> select SQL_CALC_FOUND_ROWS c from bison_t2 union select a from bison_t1;
+
+C           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> (select SQL_CALC_FOUND_ROWS c from bison_t2) union (select a from bison_t1);
+
+C           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> select a from bison_t1 union select SQL_CALC_FOUND_ROWS c from bison_t2 limit 1;
+
+A           
+------------
+1           
+
+1 rows fetched.
+
+SQL> (select a from bison_t1) union (select SQL_CALC_FOUND_ROWS c from bison_t2);
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> with tmp as (select c from bison_t2) select * from tmp;
+
+C           
+------------
+1           
+2           
+
+2 rows fetched.
+
+SQL> (select a from bison_t1) union (with tmp as (select c from bison_t2) select * from tmp);
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> with tmp as (select a from bison_t1) select * from (with tmp as (select c from bison_t2) select * from tmp);
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> -- 子查询
+SQL> select * from (select a from bison_t1);
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> select * from bison_t1 where a in (select c from bison_t2);
+
+A           
+------------
+2           
+1           
+
+2 rows fetched.
+
+SQL> 
+SQL> select * from (with tmp as (select c from bison_t2) select * from tmp), tmp;
+
+C            C           
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> 
+SQL> with tmp as (with tmp1 as (select * from bison_t1) select * from tmp1) select * from tmp;
+
+A           
+------------
+2           
+1           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> with tmp as (with tmp1 as (select * from bison_t1) select * from tmp1) select * from tmp order by a;
+
+A           
+------------
+1           
+2           
+3           
+5           
+            
+
+5 rows fetched.
+
+SQL> 
+SQL> with tmp as (with tmp1 as (select * from bison_t1) select * from tmp1) select * from tmp limit 2;
+
+A           
+------------
+2           
+1           
+
+2 rows fetched.
+
+SQL> 
+SQL> -- 目标表：现有员工信息
+SQL> drop table if exists employees;
+
+Succeed.
+
+SQL> CREATE TABLE employees (
+  2     emp_id NUMBER PRIMARY KEY,
+  3     name VARCHAR2(20),
+  4     salary NUMBER,
+  5     last_update DATE
+  6 );
+
+Succeed.
+
+SQL> INSERT INTO employees VALUES (1, '张三', 5000, SYSDATE-30);
+
+OG-00601, [1:50]Sql syntax error: syntax error
+SQL> INSERT INTO employees VALUES (2, '李四', 6000, SYSDATE-30);
+
+OG-00601, [1:50]Sql syntax error: syntax error
+SQL> 
+SQL> -- 来源表：本次要同步的更新数据
+SQL> drop table if exists salary_updates;
+
+Succeed.
+
+SQL> CREATE TABLE salary_updates (
+  2     emp_id NUMBER PRIMARY KEY,
+  3     new_salary NUMBER,
+  4     update_date DATE
+  5 );
+
+Succeed.
+
+SQL> INSERT INTO salary_updates VALUES (1, 5500, SYSDATE); -- 张三加薪
+
+OG-00601, [1:45]Sql syntax error: syntax error
+SQL> INSERT INTO salary_updates VALUES (3, 7000, SYSDATE); -- 新员工王五
+
+OG-00601, [1:45]Sql syntax error: syntax error
+SQL> 
+SQL> MERGE INTO employees e
+  2 USING salary_updates s
+  3 ON (e.emp_id = s.emp_id)
+  4 WHEN MATCHED THEN
+  5     UPDATE SET 
+  6         e.salary = s.new_salary,
+  7         e.last_update = s.update_date
+  8     WHERE s.new_salary > e.salary
+  9 WHEN NOT MATCHED THEN INSERT (e.emp_id, e.name, e.salary, e.last_update)
+ 10     VALUES (s.emp_id, '新员工', s.new_salary, s.update_date);
+
+0 rows affected.
+
+SQL> 
+SQL> MERGE INTO employees e
+  2 USING salary_updates s
+  3 ON (e.emp_id = s.emp_id)
+  4 WHEN NOT MATCHED THEN INSERT (e.emp_id, e.name, e.salary, e.last_update)
+  5     VALUES (s.emp_id, '新员工', s.new_salary, s.update_date);
+
+0 rows affected.
+
+SQL> 
+SQL> MERGE INTO employees e
+  2 USING salary_updates s
+  3 ON (e.emp_id = s.emp_id)
+  4 WHEN MATCHED THEN
+  5     UPDATE SET 
+  6         e.salary = s.new_salary,
+  7         e.last_update = s.update_date
+  8     WHERE s.new_salary > e.salary;
+
+0 rows affected.
+
+SQL> 
+SQL> MERGE INTO employees e
+  2 USING salary_updates s
+  3 ON (e.emp_id = s.emp_id)
+  4 WHEN NOT MATCHED THEN INSERT (e.emp_id, e.name, e.salary, e.last_update)
+  5     VALUES (s.emp_id, '新员工', s.new_salary, s.update_date)
+  6 WHEN MATCHED THEN
+  7     UPDATE SET 
+  8         e.salary = s.new_salary,
+  9         e.last_update = s.update_date
+ 10     WHERE s.new_salary > e.salary;
+
+0 rows affected.
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> replace into bison_t1 (a, b) values (1,1), (2,2);
+
+2 rows affected.
+
+SQL> replace into bison_t1 (a, b) select 1,2;
+
+1 rows affected.
+
+SQL> replace into bison_t1 values (1,1), (2,2);
+
+2 rows affected.
+
+SQL> replace into bison_t1 select 1,2;
+
+1 rows affected.
+
+SQL> replace into bison_t1 set a = 5, b = 5;
+
+1 rows affected.
+
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> 
+SQL> create temporary table #temp_bison_t1 (a int);
+
+OG-00601, Sql syntax error: parameter LOCAL_TEMPORARY_TABLE_ENABLED is false, can't create local temporary table
+SQL> drop table #temp_bison_t1;
+
+OG-00843, [1:26]The table or view SYS.#TEMP_BISON_T1 does not exist.
+SQL> drop temporary table #temp_bison_t1;
+
+OG-00843, [1:36]The table or view SYS.#TEMP_BISON_T1 does not exist.
+SQL> 
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int);
+
+Succeed.
+
+SQL> drop view if exists v1;
+
+Succeed.
+
+SQL> create view v1 as select * from bison_t1;
+
+Succeed.
+
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> drop table bison_t1 cascade;
+
+OG-00843, [1:28]The table or view SYS.BISON_T1 does not exist.
+SQL> drop table bison_t1 cascade constraints;
+
+OG-00843, [1:40]The table or view SYS.BISON_T1 does not exist.
+SQL> 
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int);
+
+Succeed.
+
+SQL> drop table bison_t1 purge;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int);
+
+Succeed.
+
+SQL> drop table sys.bison_t1;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> create index bison_t1_idx on bison_t1 (a);
+
+Succeed.
+
+SQL> drop index sys.bison_t1_idx on bison_t1;
+
+Succeed.
+
+SQL> drop index if exists sys.bison_t1_idx on bison_t1;
+
+Succeed.
+
+SQL> 
+SQL> create sequence bison_t1;
+
+Succeed.
+
+SQL> drop sequence if exists bison_t1;
+
+Succeed.
+
+SQL> 
+SQL> drop tablespace bison_t1;
+
+OG-00780, The tablespace  does not exist.
+SQL> drop tablespace bison_t1 including contents cascade;
+
+OG-00780, The tablespace  does not exist.
+SQL> drop tablespace bison_t1 including contents and datafiles cascade;
+
+OG-00780, The tablespace  does not exist.
+SQL> drop tablespace bison_t1 including contents keep datafiles;
+
+OG-00780, The tablespace  does not exist.
+SQL> 
+SQL> drop user if exists xbin;
+
+OG-00781, The user XBIN does not exist.
+SQL> drop user if exists xbin cascade;
+
+OG-00781, The user XBIN does not exist.
+SQL> 
+SQL> drop public synonym public.syn1;
+
+OG-00724, Synonym PUBLIC.SYN1 does not exist
+SQL> drop public synonym sys.syn1 force;
+
+OG-00601, [1:30]Sql syntax error: owner of object should be public
+SQL> drop synonym public.syn1;
+
+OG-00724, Synonym PUBLIC.SYN1 does not exist
+SQL> drop public synonym "PUBLIC".syn1;
+
+OG-00724, Synonym PUBLIC.SYN1 does not exist
+SQL> drop synonym sys.syn1 force;
+
+OG-00724, Synonym SYS.SYN1 does not exist
+SQL> 
+SQL> drop role xbin;
+
+OG-00783, The role XBIN does not exist.
+SQL> 
+SQL> drop profile default cascade;
+
+OG-00601, [1:22]Sql syntax error: cannot drop PUBLIC_DEFAULT profile
+SQL> drop profile xxx cascade;
+
+OG-00785, Profile XXX does not exist
+SQL> 
+SQL> drop directory xxx;
+
+OG-00708, The object directory XXX does not exist
+SQL> 
+SQL> drop function fun1;
+
+OG-00828, object SYS.FUN1 does not exist
+SQL> drop function if exists fun1;
+
+Succeed.
+
+SQL> drop function if exists sys.fun1;
+
+Succeed.
+
+SQL> drop function if exists fun1(int); --error
+
+OG-00601, [1:29]Sql syntax error: syntax error
+SQL> 
+SQL> drop procedure if exists pro1;
+
+Succeed.
+
+SQL> drop procedure if exists sys.pro1;
+
+Succeed.
+
+SQL> 
+SQL> drop trigger if exists tri1;
+
+Succeed.
+
+SQL> 
+SQL> drop package if exists pkg1;
+
+Succeed.
+
+SQL> drop package body if exists pkg1;
+
+Succeed.
+
+SQL> 
+SQL> drop type if exists typ1 force;
+
+Succeed.
+
+SQL> drop type body if exists typ1 force;
+
+OG-00958, Unsupported feature
+SQL> 
+SQL> drop library lib1;
+
+OG-00828, library SYS.LIB1 does not exist
+SQL> 
+SQL> 
+SQL> create table bison_t1 (a int, b int);
+
+OG-01301, SYS.BISON_T1 already exists
+SQL> insert into bison_t1 values (1,1);
+
+1 rows affected.
+
+SQL> truncate table bison_t1;
+
+Succeed.
+
+SQL> truncate table bison_t1 purge;
+
+Succeed.
+
+SQL> truncate table bison_t1 purge drop storage;
+
+Succeed.
+
+SQL> truncate table bison_t1 purge drop storage drop storage;
+
+Succeed.
+
+SQL> truncate table bison_t1 purge reuse storage;
+
+Succeed.
+
+SQL> truncate table bison_t1 purge reuse storage drop storage;
+
+OG-00601, [1:50]Sql syntax error: unexpected text conflict
+SQL> 
+SQL> flashback table bison_t1 to scn '10';
+
+OG-00732, The table definition of SYS.BISON_T1 has been changed.
+SQL> flashback table bison_t1 to scn 10;
+
+OG-00732, The table definition of SYS.BISON_T1 has been changed.
+SQL> flashback table bison_t1 to TIMESTAMP to_timestamp('2025-12-15 10:00:00');
+
+OG-00806, Scn too old and no snapshot found based on specified time
+SQL> 
+SQL> flashback table bison_t1 to before drop rename to tbison_t2;
+
+OG-00829, Recyclebin object SYS.BISON_T1 does not exist
+SQL> flashback table bison_t1 to before drop;
+
+OG-00829, Recyclebin object SYS.BISON_T1 does not exist
+SQL> flashback table bison_t1 to before truncate force;
+
+OG-00829, Recyclebin object SYS.BISON_T1 does not exist
+SQL> flashback table bison_t1 to before truncate;
+
+OG-00829, Recyclebin object SYS.BISON_T1 does not exist
+SQL> 
+SQL> flashback table bison_t1 partition p1 to before truncate;
+
+OG-00130, Operation flashback table partition is not supported on BISON_T1
+SQL> 
+SQL> flashback table bison_t1 partition p1 to scn '10'; --error
+
+OG-00601, [1:42]Sql syntax error: syntax error
+SQL> flashback table bison_t1 partition p1 to before drop rename to tbison_t2; --error
+
+OG-00601, [1:49]Sql syntax error: syntax error
+SQL> 
+SQL> comment on table bison_t1 is 'test comment table';
+
+Succeed.
+
+SQL> comment on column bison_t1.a is 'test comment column';
+
+Succeed.
+
+SQL> comment on table bison_t1 is 'xx''a';
+
+Succeed.
+
+SQL> 
+SQL> comment on column bison_t1.a is '';
+
+Succeed.
+
+SQL> comment on column bison_t1.a is NULL; --error
+
+OG-00601, [1:33]Sql syntax error: syntax error
+SQL> 
+SQL> drop table bison_t1;
+
+Succeed.
+
+SQL> create table bison_t1 (a int, b int);
+
+Succeed.
+
+SQL> create index bison_t1_idx on bison_t1(a);
+
+Succeed.
+
+SQL> 
+SQL> analyze table bison_t1 compute statistics;
+
+Succeed.
+
+SQL> analyze table bison_t1 compute statistics for report;
+
+Succeed.
+
+SQL> analyze table bison_t1 compute statistics for report sample 60;
+
+Succeed.
+
+SQL> 
+SQL> analyze index bison_t1_idx on bison_t1 compute statistics;
+
+Succeed.
+
+SQL> analyze index bison_t1_idx on bison_t1 estimate statistics 10;
+
+Succeed.
+
+SQL> analyze index bison_t1_idx on bison_t1 compute statistics for report; --error
+
+OG-00601, [1:59]Sql syntax error: syntax error
+SQL> 
+SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
+
+OG-00738, [1:378]The database is already in the MOUNT state
+SQL> 
+SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M, 'bb' size 10M reuse autoextend off temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
+
+OG-00738, [1:414]The database is already in the MOUNT state
+SQL> 
+SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M, 'bb' size 10M reuse autoextend on next 5M maxsize 100M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
+
+OG-00738, [1:434]The database is already in the MOUNT state
+SQL> 
+SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' nologging undo tablespace tempfile 'a' size 10M system tablespace datafile 'st' size 128.6M sysaux tablespace datafile 'ast' size 128M default tablespace datafile 'ast' size 1M instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog MAXINSTANCES 5;
+
+OG-00601, [1:152]Sql syntax error: syntax error
+SQL> 
+SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) node 0 nologging undo tablespace tempfile 'aa' size 10M undo tablespace datafile 'bb' size 10M temporary TABLESPACE TEMPFILE 'cc' size 10M logfile ('logfile11' size 10M blocksize 512, 'logfile21' size 10M blocksize 512, 'logfile31' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 noarchivelog;
+
+OG-00601, [1:636]Sql syntax error: parse create database failed
+SQL> 
+SQL> create database db1 user xbin IDENTIFIED by 'Huawei@123'; --error
+
+OG-00601, [1:17]Sql syntax error: syntax error
+SQL> 
+SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
+
+

@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-static status_t sql_init_replace(sql_stmt_t *stmt, sql_replace_t *replace_context)
+status_t sql_init_replace(sql_stmt_t *stmt, sql_replace_t *replace_context)
 {
     if (sql_create_list(stmt, &replace_context->insert_ctx.pairs) != OG_SUCCESS) {
         return OG_ERROR;

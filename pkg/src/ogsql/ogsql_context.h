@@ -623,6 +623,12 @@ typedef struct st_sql_join_node {
     int32 left_group_id;
     int32 right_group_id;
 } sql_join_node_t;
+
+typedef struct st_join_node_info {
+    sql_join_node_t *join_info;
+    sql_join_node_t *last;
+} join_node_info_t;
+
 #define TABLE_OF_JOIN_LEAF(node) ((struct st_sql_table *)((node)->tables.items[0]))
 #define SET_TABLE_OF_JOIN_LEAF(node, table) \
     do {                                    \

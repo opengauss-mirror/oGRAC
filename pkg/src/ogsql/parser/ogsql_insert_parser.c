@@ -315,7 +315,7 @@ static status_t sql_parse_insert_update(sql_stmt_t *stmt, sql_insert_t *insert_c
     return sql_parse_update_pairs(stmt, insert_context->update_ctx, word);
 }
 
-static void set_insert_ctx(sql_insert_t *insert_context, uint32 num)
+void set_insert_ctx(sql_insert_t *insert_context, uint32 num)
 {
     insert_all_t *into_item = NULL;
     into_item = (insert_all_t *)cm_galist_get(insert_context->into_list, num);
