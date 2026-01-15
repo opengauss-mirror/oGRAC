@@ -26,13 +26,6 @@ function download_source() {
     fi
     git clone -b 7.0.0-RC1 https://gitcode.com/opengauss/CBB.git
     git clone -b 7.0.0-RC1 https://gitcode.com/opengauss/DSS.git
-    if [[ ${ENV_TYPE} == "aarch64" ]];then
-        wget --no-check-certificate https://opengauss.obs.cn-south-1.myhuaweicloud.com/6.0.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_2203_arm.tar.gz
-        tar -zxf openGauss-third_party_binarylibs_openEuler_2203_arm.tar.gz
-    else
-        wget --no-check-certificate https://opengauss.obs.cn-south-1.myhuaweicloud.com/6.0.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_Centos7.6_x86_64.tar.gz
-        tar -zxf openGauss-third_party_binarylibs_Centos7.6_x86_64.tar.gz
-    fi
 
     echo "Clone source success"
 }
