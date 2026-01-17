@@ -110,6 +110,8 @@ with open(ENV_FILE, "r", encoding="utf-8") as f:
 
 
 def get_value(param):
+    if param == 'auto_tune':
+        return info.get('auto_tune', '0')
     if param == 'ograc_in_container':
         return info.get('ograc_in_container', '0')
     if param == 'SYS_PASSWORD':

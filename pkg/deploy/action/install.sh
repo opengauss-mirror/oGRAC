@@ -845,7 +845,6 @@ if [[ "${rpminstalled_check}" == "0" ]]; then
     cp -rfp ${CURRENT_PATH}/../common /opt/ograc/
     cp -rfp ${CURRENT_PATH}/wsr_report /opt/ograc/action
     cp -rfp ${CURRENT_PATH}/dbstor /opt/ograc/action
-
     # 适配开源场景，使用file，不使用dbstor，提前安装ogracrpm包
     install_rpm
 fi
@@ -855,7 +854,13 @@ if [[ "${rpminstalled_check}" == "1" ]]; then
 fi
 
 if [[ x"${deploy_mode}" == x"dss" ]];then
-    chown "${ograc_user}":"${ograc_group}" /dev/*-disk*
+    gcc_home=`python3 ${CURRENT_PATH}/get_config_info.py "gcc_home"`
+    dss_vg_list=`python3 ${CURRENT_PATH}/get_config_info.py "dss_vg_list"`
+    dss_vg_list=(${dss_vg_list//;/ })
+    for vg in ${dss_vg_list[@]};do
+        chown "${ograc_user}":"${ograc_group}" ${vg}
+    done
+    chown "${ograc_user}":"${ograc_group}" ${gcc_home}
 fi
 
 # 调用各模块安装脚本，如果有模块安装失败直接退出，不继续安装接下来的模块

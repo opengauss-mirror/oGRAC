@@ -2559,6 +2559,8 @@ class Installer:
                             % (os.path.join(self.installPath, "lib"),
                                os.path.join(self.installPath, "add-ons")))
                 _file.write(os.linesep)
+                _file.write("export GCC_HOME=\"%s\"" % self.gcc_home)
+                _file.write(os.linesep)
                 if self.oldDataPath == "":
                     # set OGDB_DATA
                     _file.write("export OGDB_DATA=\"%s\"" % self.data)

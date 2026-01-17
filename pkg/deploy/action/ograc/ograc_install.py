@@ -762,7 +762,7 @@ class Installer:
     login_ip = ""
     ipv_type = "ipv4"
 
-    def __init__(self, user, group):
+    def __init__(self, user, group, auto_tune = False):
         """ Constructor for the Installer class. """
         LOGGER.info("Begin init...")
         LOGGER.info("Installer runs on python version : " + gPyVersion)
@@ -771,6 +771,8 @@ class Installer:
 
         # User
         self.user = user
+        # Auto tune for config
+        self.auto_tune = True if auto_tune == "1" else False
         # Sysdba login enabled by default
         self.enable_sysdba_login = False
         # Group
@@ -842,6 +844,16 @@ class Installer:
         self.factor_key = ""
 
         self.ogsql_conf = {}
+
+        # auto_tune config param
+        self.threshold_gb = 31
+        self.small_ratios = (0.20, 0.10, 0.10)      # db_cache, temp, shared
+        self.large_ratios = (0.40, 0.10, 0.05)
+        self.bt_ratio = 1.0 / 3
+        self.max_bt_ratio = 0.70
+        self.cr_divisor = 10
+        self.min_db = 4
+        self.min_temp = 2
 
         LOGGER.info("End init")
 
@@ -947,6 +959,114 @@ class Installer:
         if g_opts.running_mode in [OGRACD_IN_CLUSTER] and g_opts.node_id == 1:
             self.ogracd_configs = ClusterNode1Config.get_config(False)
 
+    def get_total_memory_gb(self):
+        """
+        Read total physical memory from /proc/meminfo (Linux only)
+        Returns memory in GB (rounded)
+        """
+        try:
+            f = open('/proc/meminfo', 'r')
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    parts = line.split()
+                    kb = int(parts[1])
+                    gb = int(kb / 1024.0 / 1024.0 + 0.5)
+                    f.close()
+                    return gb
+            f.close()
+            print("Warning: MemTotal not found in /proc/meminfo")
+            return 0
+        except:
+            print("Warning: Cannot read /proc/meminfo (not Linux or no permission?)")
+            return 0
+
+    def get_base_allocation(self, total_gb):
+        if total_gb <= self.threshold_gb:
+            ratios = self.small_ratios
+            strategy = "small/medium (conservative)"
+        else:
+            ratios = self.large_ratios
+            strategy = "large memory (aggressive)"
+
+        db = int(total_gb * ratios[0] + 0.5)
+        temp = int(total_gb * ratios[1] + 0.5)
+        shared = int(total_gb * ratios[2] + 0.5)
+
+        return db, temp, shared, strategy
+
+
+    def calculate_config_mem_size(self, total_gb, num_factor=1.0):
+        if total_gb < 1:
+            err_msg = "Error: Invalid total memory value"
+            LOGGER.error(err_msg)
+            raise Exception(err_msg)
+
+        base_db, base_temp, base_shared, strategy = self.get_base_allocation(total_gb)
+
+        bt = int(base_db * num_factor * self.bt_ratio + 0.5)
+        max_bt = int(base_db * self.max_bt_ratio + 0.5)
+        bt = min(bt, max_bt)
+
+        db_cache = max(base_db - bt, self.min_db)
+        temp_buffer = max(base_temp + bt, self.min_temp)
+        shared_pool = base_shared
+
+        cr_pool_mb = int(bt * 1024 / self.cr_divisor + 0.5)
+
+        total_sga = db_cache + temp_buffer + shared_pool
+
+        return {
+            "total_memory_gb": total_gb,
+            "strategy": strategy,
+            "num_factor": num_factor,
+            "bt_moved_gb": bt,
+            "db_cache_size_gb": db_cache,
+            "temp_buffer_gb": temp_buffer,
+            "shared_pool_size_gb": shared_pool,
+            "cr_pool_size_mb": cr_pool_mb,
+            "total_sga_gb": total_sga,
+            "sga_usage_percent": int(total_sga * 100.0 / total_gb + 0.5)
+        }
+
+
+    def format_result_and_retune(self, result):
+        r = result
+        lines = [
+            "=" * 60,
+            "Total Physical Memory : " + str(r["total_memory_gb"]) + " GB",
+            "Adjustment Factor     : " + str(r["num_factor"]),
+            "Strategy              : " + r["strategy"],
+            "=" * 60,
+            "",
+            "Suggested Parameters:",
+            "-" * 50,
+            "  db_cache_size     = " + str(r["db_cache_size_gb"]).rjust(3) + "G",
+            "  temp_buffer       = " + str(r["temp_buffer_gb"]).rjust(3) + "G",
+            "  shared_pool_size  = " + str(r["shared_pool_size_gb"]).rjust(3) + "G",
+            "  cr_pool_size(~)   = " + str(r["cr_pool_size_mb"]).rjust(3) + "M",
+            "-" * 50,
+            "",
+            "Total SGA (excl. cr_pool): " + str(r["total_sga_gb"]) + "G "
+            "(" + str(r["sga_usage_percent"]) + "% of RAM)",
+            "Moved from db_cache (bt) : " + str(r["bt_moved_gb"]) + "G"
+        ]
+        log_lines = "\n".join(lines)
+        LOGGER.info(log_lines)
+        self.ogracd_configs["DATA_BUFFER_SIZE"] = str(r["db_cache_size_gb"])+"G"
+        self.ogracd_configs["TEMP_BUFFER_SIZE"] = str(r["temp_buffer_gb"])+"G"
+        self.ogracd_configs["SHARED_POOL_SIZE"] = str(r["shared_pool_size_gb"])+"G"
+        self.ogracd_configs["CR_POOL_SIZE"] = str(r["cr_pool_size_mb"])+"M"
+
+    def retune_param_by_memory(self):
+        """
+        Retune parameters by memory, if user dont have high memory
+        :return: NA
+        """
+        if self.auto_tune:
+            total_gb = self.get_total_memory_gb()
+            result = self.calculate_config_mem_size(total_gb)
+            self.format_result_and_retune(result)
+
     def check_parameter(self):
         """
         Detect the legality of input parameters,
@@ -955,6 +1075,7 @@ class Installer:
         """
         LOGGER.info("Checking parameters.")
         self.parse_default_config()
+        self.retune_param_by_memory()
         self.parse_key_and_value()
         if len(self.ogracd_configs.get("INTERCONNECT_ADDR")) == 0:
             err_msg = "Database INTERCONNECT_ADDR must input, need -Z parameter."
@@ -3219,6 +3340,7 @@ def check_archive_dir():
 
 class oGRAC(object):
     g_opts.os_user, g_opts.os_group = get_value("deploy_user"), get_value("deploy_group")
+    g_opts.auto_tune = get_value("auto_tune")
     g_opts.install_type = get_value('install_type') if get_value('install_type') else "0"
 
     def ograc_pre_install(self):
@@ -3230,7 +3352,7 @@ class oGRAC(object):
         parse_parameter()
         init_start_status_file()
         try:
-            installer = Installer(g_opts.os_user, g_opts.os_group)
+            installer = Installer(g_opts.os_user, g_opts.os_group, g_opts.auto_tune)
             installer.install()
             LOGGER.info("Install successfully, for more detail information see %s." % g_opts.log_file)
         except Exception as error:

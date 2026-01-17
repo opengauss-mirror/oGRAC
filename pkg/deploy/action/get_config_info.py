@@ -27,6 +27,12 @@ def get_value(param):
     if param == 'SYS_PASSWORD':
         return info.get('SYS_PASSWORD', "")
 
+    if param == "dss_vg_list":
+        vg_list = ""
+        for key, value in info.get("dss_vg_list", {}).items():
+            vg_list += f"{value};"
+        return vg_list[:-1]
+
     return info.get(param, "")
 
 

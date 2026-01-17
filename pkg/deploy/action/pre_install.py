@@ -43,6 +43,11 @@ ping_check_element = {
     'storage_logic_ip'
 }
 
+vg_check_element = {
+    'dss_vg_list',
+    'gcc_home'
+}
+
 kernel_element = {
     'TEMP_BUFFER_SIZE',
     'DATA_BUFFER_SIZE',
@@ -208,6 +213,14 @@ class ConfigChecker:
             LOG.error('dbstor_fs_vstore id type must be int : %s', str(error))
             return False
         return True
+    
+    @staticmethod
+    def auto_tune(value):
+        auto_tune_enum = {'0', '1'}
+        if value not in auto_tune_enum:
+            LOG.error('auto_tune type must be bool')
+            return False
+        return True
 
 
 class CheckBase(metaclass=abc.ABCMeta):
@@ -313,11 +326,12 @@ class CheckInstallConfig(CheckBase):
             'MAX_ARCH_FILES_SIZE', 'storage_logic_ip', 'deploy_mode',
             'mes_ssl_switch', 'ograc_in_container', 'deploy_policy', 'link_type', 'ca_path', 'crt_path', 'key_path'
         }
+
         if os.path.exists(RPMINSTALLED_TAG):
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD'}
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune', 'dss_vg_list', 'gcc_home'}
         else:
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
@@ -330,6 +344,9 @@ class CheckInstallConfig(CheckBase):
         }
         self.file_config_key = {
             "redo_num", "redo_size"
+        }
+        self.vg_config_key = {
+            'dss_vg_list', 'gcc_home'
         }
         self.mes_type_key = {"ca_path", "crt_path", "key_path"}
         self.config_params = {}
@@ -601,6 +618,13 @@ class CheckInstallConfig(CheckBase):
         if install_config_params["deploy_mode"] == "dss":
             self.config_key = self.dss_config_key
 
+        if install_config_params.get("dss_vg_list") == "" or install_config_params.get("gcc_home") == "":
+            LOG.info("dss_vg_list or gcc_home is not set, user is not specify vg, will use default vg")
+            install_config_params["dss_vg_list"]["vg1"] = "/dev/dss-disk1"
+            install_config_params["dss_vg_list"]["vg2"] = "/dev/dss-disk2"
+            install_config_params["dss_vg_list"]["vg3"] = "/dev/dss-disk3"
+            install_config_params["gcc_home"] = "/dev/gcc-disk"
+
         self.install_config_params_init(install_config_params)
 
         self.cluster_name = install_config_params.get("cluster_name")
@@ -712,6 +736,8 @@ class CheckInstallConfig(CheckBase):
             install_config_params['db_type'] = '0'
         if 'ograc_in_container' not in install_config_params.keys():
             install_config_params['ograc_in_container'] = "0"
+        if 'auto_tune' not in install_config_params.keys():
+            install_config_params['auto_tune'] = False
 
     def parse_policy_config_file(self):
         policy_path = os.path.join(dir_name, "deploy_policy_config.json")

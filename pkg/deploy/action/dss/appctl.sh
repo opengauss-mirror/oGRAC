@@ -29,6 +29,9 @@ CURRENT_PATH=$(dirname $(readlink -f "$0"))
 PARENT_DIR_NAME=$(pwd | awk -F "/" '{print $NF}')
 SCRIPT_NAME=${PARENT_DIR_NAME}/$(basename "$0")
 DSS_SOURCE=${CURRENT_PATH}/../../dss
+
+# We must get vg info from 
+CONFIG_FILE=${CURRENT_PATH}/../../config/deploy_param.json
 dss_scripts=/opt/ograc/action/dss
 
 #依赖文件
