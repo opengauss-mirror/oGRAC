@@ -65,11 +65,15 @@ function permission_opt() {
     chown -hR "${ograc_user}":"${ograc_group}" "${DSS_SOURCE}"
     chown -hR "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/*
     chown root:root "${CURRENT_PATH}"/appctl.sh
-    mkdir -p /opt/ograc/log/dss
+    if [[ ! -d /opt/ograc/log/dss ]]; then
+        mkdir -p /opt/ograc/log/dss
+    fi
     touch /opt/ograc/log/dss/dss_deploy.log
     chmod -R 750 /opt/ograc/log/dss/
     chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/log/dss/
-    mkdir -m 750 -p /opt/ograc/dss/
+    if [[ ! -d /opt/ograc/dss/ ]]; then
+        mkdir -m 750 -p /opt/ograc/dss/
+    fi
     chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/dss/
 }
 pkg/src/server/srv_instance.hpkg/src/server/srv_instance.hpkg/src/server/srv_instance.h
@@ -118,7 +122,9 @@ function main()
             ;;
         install)
             permission_opt
-            copy_dss_scripts
+            if [ ! -f /opt/ograc/installed_by_rpm ]; then
+                copy_dss_scripts
+            fi
             do_deploy "--action=${ACTION} --mode=${START_MODE}"
             exit $?
             ;;

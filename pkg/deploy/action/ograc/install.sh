@@ -64,15 +64,17 @@ function ograc_install()
         mkdir -p -m 750 /opt/ograc/log/ograc
     fi
 
-    cp -rf ${RPM_UNPACK_PATH}/add-ons /opt/ograc/ograc/server/
-    cp -rf ${RPM_UNPACK_PATH}/bin /opt/ograc/ograc/server/
-    rm -rf /opt/ograc/ograc/server/bin/cms
-    cp -rf ${RPM_UNPACK_PATH}/lib /opt/ograc/ograc/server/
-    cp -rf ${RPM_UNPACK_PATH}/admin /opt/ograc/ograc/server/
-    cp -rf ${RPM_UNPACK_PATH}/cfg /opt/ograc/ograc/server/
-    cp -rf ${RPM_UNPACK_PATH}/package.xml /opt/ograc/ograc/server/
+    if [ ! -f /opt/ograc/installed_by_rpm ]; then
+        cp -rf ${RPM_UNPACK_PATH}/add-ons /opt/ograc/ograc/server/
+        cp -rf ${RPM_UNPACK_PATH}/bin /opt/ograc/ograc/server/
+        rm -rf /opt/ograc/ograc/server/bin/cms
+        cp -rf ${RPM_UNPACK_PATH}/lib /opt/ograc/ograc/server/
+        cp -rf ${RPM_UNPACK_PATH}/admin /opt/ograc/ograc/server/
+        cp -rf ${RPM_UNPACK_PATH}/cfg /opt/ograc/ograc/server/
+        cp -rf ${RPM_UNPACK_PATH}/package.xml /opt/ograc/ograc/server/
+        log "rpm files copy success."
+    fi
     chmod 700 -R /opt/ograc/ograc/server
-    log "rpm files copy success."
     # 执行主文件
     cd ${CURRENT_PATH}
     if [ ${is_encrept} -eq 0 ]; then

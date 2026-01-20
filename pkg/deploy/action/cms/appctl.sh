@@ -645,6 +645,10 @@ function check_and_create_cms_home()
 
 function check_old_install()
 {
+    if [ -f /opt/ograc/installed_by_rpm ]; then
+        return 0
+    fi
+
     if [ -d ${cms_home}/service ]; then
         echo "Error: cms has been installed in ${cms_home}"
         return 1
@@ -721,10 +725,12 @@ function main_deploy()
             exit $?
             ;;
         install)
-            if [[ "${ograc_in_container}" == "0" && "${deploy_mode}" != "dbstor" && ${deploy_mode} != "combined" ]]; then
+            if [[ "${ograc_in_container}" == "0" && "${deploy_mode}" != "dbstor" && ${deploy_mode} != "combined" && "${deploy_mode}" != "dss" ]]; then
                 chown ${ograc_user_and_group} /mnt/dbdata/remote/share_${storage_share_fs}
             fi
-            copy_cms_scripts
+            if [ ! -f /opt/ograc/installed_by_rpm ]; then
+                copy_cms_scripts
+            fi
             do_deploy ${INSTALL_NAME}
             if [ $? -ne 0 ];then
                 exit 1

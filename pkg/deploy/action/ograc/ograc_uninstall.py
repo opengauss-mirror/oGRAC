@@ -1130,7 +1130,12 @@ class oGRAC(object):
         with os.fdopen(os.open(OGRAC_START_STATUS_FILE, flags, modes), 'w') as load_fp:
             json.dump(start_parameters, load_fp)
         LOGGER.info("uninstall step 6")
-        clean_install_path()
+        rpm_installed_file = "/opt/ograc/installed_by_rpm"
+        if os.path.exists(rpm_installed_file):
+            cmd = "cp -arf %s/cfg %s" % (g_opts.gs_data_path, g_opts.install_path_l)
+            ret_code, _, stderr = _exec_popen(cmd)
+        if not os.path.exists(rpm_installed_file):
+            clean_install_path()
         LOGGER.info("uninstall step 7")
         log("oGRACd was successfully removed from your computer, "
             "for more message please see %s." % g_opts.log_file)

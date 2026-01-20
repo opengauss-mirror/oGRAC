@@ -21,6 +21,7 @@ dir_name, _ = os.path.split(os.path.abspath(__file__))
 PKG_DIR = os.path.abspath(os.path.join(dir_name, ".."))
 OGRAC_MEM_SPEC_FILE = os.path.join(dir_name, "config", "container_conf", "init_conf", "mem_spec")
 OGRACD_INI_FILE = "/mnt/dbdata/local/ograc/tmp/data/cfg/ogracd.ini"
+RPMINSTALLED_TAG = "/opt/ograc/installed_by_rpm"
 
 SINGLE_DOUBLE_PROCESS_MAP = {
     "0": "ogracd_in_cluster"
@@ -312,10 +313,17 @@ class CheckInstallConfig(CheckBase):
             'MAX_ARCH_FILES_SIZE', 'storage_logic_ip', 'deploy_mode',
             'mes_ssl_switch', 'ograc_in_container', 'deploy_policy', 'link_type', 'ca_path', 'crt_path', 'key_path'
         }
-        self.dss_config_key = {
-            'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
-            'MAX_ARCH_FILES_SIZE',
-            'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size"}
+        if os.path.exists(RPMINSTALLED_TAG):
+            self.dss_config_key = {
+                'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
+                'MAX_ARCH_FILES_SIZE',
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD'}
+        else:
+            self.dss_config_key = {
+                'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
+                'MAX_ARCH_FILES_SIZE',
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size"}
+
         self.dbstor_config_key = {
             'cluster_name', 'ograc_vlan_ip', 'storage_vlan_ip', 'link_type', 'storage_dbstor_page_fs',
             'kerberos_key', 'cluster_id', 'mes_type', "vstore_id", "dbstor_fs_vstore_id"

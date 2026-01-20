@@ -695,14 +695,18 @@ function main_deploy() {
             exit $?
             ;;
         pre_install)
-            check_old_install
+            if [ ! -f /opt/ograc/installed_by_rpm ]; then
+                check_old_install
+            fi
             chown_mod_scripts
             init_cpu_config
             do_deploy ${PRE_INSTALL_NAME} ${INSTALL_TYPE}
             exit $?
             ;;
         install)
-            copy_ograc_scripts
+            if [ ! -f /opt/ograc/installed_by_rpm ]; then
+                copy_ograc_scripts
+            fi
             do_deploy ${INSTALL_NAME} ${INSTALL_TYPE}
             exit $?
             ;;

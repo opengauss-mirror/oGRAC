@@ -171,7 +171,9 @@ do
     fi
 done
 
-uninstall_rpm
+if [ ! -f /opt/ograc/installed_by_rpm ]; then
+    uninstall_rpm
+fi
 
 # 如果uninstall_type为override 执行以下操作
 echo "uninstall_type is: ${uninstall_type}"
@@ -326,7 +328,9 @@ if [[ ${uninstall_type} = 'override' ]]; then
 
   rm -f /etc/systemd/system/ograc.timer /etc/systemd/system/ograc.service
   rm -f /etc/systemd/system/ograc_logs_handler.timer /etc/systemd/system/ograc_logs_handler.service
-  rm -rf /opt/ograc/image /opt/ograc/action /opt/ograc/config
+  if [ ! -f /opt/ograc/installed_by_rpm ]; then
+    rm -rf /opt/ograc/image /opt/ograc/action /opt/ograc/config
+  fi
   rm -rf /usr/local/bin/show
 fi
 

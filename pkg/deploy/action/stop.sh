@@ -29,11 +29,20 @@ function stop_systemd_timer() {
     return 0
 }
 
-if [ ! -d /opt/ograc/image ]; then
+if [ ! -d /opt/ograc/image ] && [ ! -f /opt/ograc/installed_by_rpm ]; then
     echo "ograc id not install, stop success."
     echo "Stop ograc Engine success. [Line:${LINENO}, File:${SCRIPT_NAME}]"
     exit 0
 fi
+
+if [ -f /opt/ograc/installed_by_rpm ]; then
+    INSTALLED_STATUS=`cat /opt/ograc/installed_by_rpm | head -1`
+    if [ x"${INSTALLED_STATUS}" != x"2" ]; then
+        echo "ograc installed not complete, skip stop. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        exit 0
+    fi
+fi
+
 source ${CURRENT_PATH}/env.sh
 source ${CURRENT_PATH}/log4sh.sh
 
