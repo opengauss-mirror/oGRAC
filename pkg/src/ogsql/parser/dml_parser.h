@@ -50,7 +50,8 @@ typedef enum en_sql_special_word {
 } sql_special_word_t;
 
 status_t sql_create_list(sql_stmt_t *stmt, galist_t **list);
-status_t sql_parse_dml(sql_stmt_t *stmt, key_wid_t key_wid);
+status_t sql_parse_dml(sql_stmt_t *stmt, word_t *leader_word);
+status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader);
 status_t sql_parse_view_subselect(sql_stmt_t *stmt, text_t *sql, sql_select_t **select_ctx, source_location_t *loc);
 bool32 sql_has_ltt(sql_stmt_t *stmt, text_t *sql_text);
 bool32 sql_check_procedures(sql_stmt_t *stmt, galist_t *dc_lst);

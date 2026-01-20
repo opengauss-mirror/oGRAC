@@ -55,7 +55,7 @@ typedef struct st_seqence_info {
     bool32 nocyc_flag;
 } sql_seqence_info_t;
 
-status_t sql_parse_ddl(sql_stmt_t *stmt, key_wid_t wid);
+status_t sql_parse_ddl(sql_stmt_t *stmt, word_t *leader_word);
 status_t sql_parse_drop(sql_stmt_t *sql_stmt);
 status_t sql_parse_truncate(sql_stmt_t *stmt);
 status_t sql_parse_flashback(sql_stmt_t *stmt);

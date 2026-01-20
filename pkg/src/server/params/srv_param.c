@@ -1154,6 +1154,13 @@ config_item_t g_parameters[] = {
     { "USE_BISON_PARSER", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_USE_BISON_PARSER, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool,
       sql_notify_als_use_bison_parser, sql_notify_als_bool, NULL },
+    // EXPLAIN
+    { "PLAN_DISPLAY_FORMAT", OG_TRUE, ATTR_NONE, "TYPICAL", NULL, NULL, "-", "SIMPLE,BASIC,TYPICAL,ALL",
+      "CT_TYPE_VARCHAR", NULL, PARAM_PLAN_DISPLAY_FORMAT, EFFECT_IMMEDIATELY, CFG_INS,
+      sql_verify_als_plan_display_format, sql_notify_als_plan_display_format, NULL, NULL },
+    { "_SHOW_EXPLAIN_PREDICATE", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "CT_TYPE_BOOLEAN", NULL,
+      PARAM_SHOW_EXPLAIN_PREDICATE, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_predicate,
+      sql_notify_als_bool, NULL },
 };
 
 void srv_get_config_info(config_item_t **params, uint32 *count)
@@ -1383,15 +1390,16 @@ status_t verify_file_path(const char *path)
 }
 
 plan_format_t g_plan_format_tab[] = {
-    { { (char *)"BASIC", 5 }, PLAN_FORMAT_BASIC },
-    { { (char *)"TYPICAL", 7 }, PLAN_FORMAT_TYPICAL },
-    { { (char *)"ALL", 3 }, PLAN_FORMAT_ALL },
+    { { (char *)"SIMPLE", 6 }, FORMAT_MASK_SIMPLE },
+    { { (char *)"BASIC", 5 }, FORMAT_MASK_BASIC },
+    { { (char *)"TYPICAL", 7 }, FORMAT_MASK_TYPICAL },
+    { { (char *)"ALL", 3 }, FORMAT_MASK_ALL },
 };
 
 plan_format_t g_plan_option_tab[] = {
-    { { (char *)"PREDICATE", 9 }, PLAN_FORMAT_PREDICATE },
-    { { (char *)"QUERY_BLOCK", 11 }, PLAN_FORMAT_QUERY_BLOCK },
-    { { (char *)"OUTLINE", 7 }, PLAN_FORMAT_OUTLINE },
+    { { (char *)"PREDICATE", 9 }, FORMAT_MASK_PREDICATE },
+    { { (char *)"QUERY_BLOCK", 11 }, FORMAT_MASK_QUERY_BLOCK },
+    { { (char *)"OUTLINE", 7 }, FORMAT_MASK_OUTLINE },
 };
 
 #define PLAN_DISPLAY_FORMAT_COUNT ELEMENT_COUNT(g_plan_format_tab)
@@ -1409,9 +1417,8 @@ status_t sql_verify_als_plan_display_format(void *se, void *lex, void *def)
     uint32 format_index = OG_INVALID_ID32;
     // 3 is PLAN_DISPLAY_OPTION_COUNT
     bool32 option_flag[3] = { OG_FALSE };
-    OG_RETURN_IFERR(sql_get_plan_display_format_info(lex, &format_index, option_flag, PLAN_DISPLAY_OPTION_COUNT));
-    OG_RETURN_IFERR(sql_normalize_plan_display_format_value(sys_def->value, OG_PARAM_BUFFER_SIZE, format_index,
-        option_flag, PLAN_DISPLAY_OPTION_COUNT));
+    OG_RETURN_IFERR(sql_get_plan_display_format_info(lex, &format_index, option_flag));
+    OG_RETURN_IFERR(sql_normalize_plan_display_format_value(sys_def->value, format_index, option_flag));
     return OG_SUCCESS;
 }
 
@@ -1478,7 +1485,7 @@ static status_t sql_get_plan_format_index(text_t *left, uint32 *format_index, bo
     return OG_SUCCESS;
 }
 
-static status_t sql_get_plan_option_flag(text_t *left, bool32 *option_flag, uint32 flag_count, bool32 *option_mismatch)
+static status_t sql_get_plan_option_flag(text_t *left, bool32 *option_flag, bool32 *option_mismatch)
 {
     uint32 i;
     for (i = 0; i < PLAN_DISPLAY_OPTION_COUNT; i++) {
@@ -1515,7 +1522,7 @@ static status_t get_plan_display_format_value_len(lex_t *lex, uint32 *len)
     return OG_SUCCESS;
 }
 
-status_t sql_get_plan_display_format_info(void *lex_in, uint32 *format_index, bool32 *option_flag, uint32 flag_count)
+status_t sql_get_plan_display_format_info(void *lex_in, uint32 *format_index, bool32 *option_flag)
 {
     text_t left = { 0 };
     text_t right = { 0 };
@@ -1551,7 +1558,7 @@ status_t sql_get_plan_display_format_info(void *lex_in, uint32 *format_index, bo
         }
 
         OG_RETURN_IFERR(sql_get_plan_format_index(&left, format_index, &format_mismatch));
-        OG_RETURN_IFERR(sql_get_plan_option_flag(&left, option_flag, flag_count, &option_mismatch));
+        OG_RETURN_IFERR(sql_get_plan_option_flag(&left, option_flag, &option_mismatch));
         if (format_mismatch && option_mismatch) {
             OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "Invalid value %s for PLAN_DISPLAY_FORMAT", T2S(&left));
             return OG_ERROR;
@@ -1566,8 +1573,7 @@ status_t sql_get_plan_display_format_info(void *lex_in, uint32 *format_index, bo
     return OG_SUCCESS;
 }
 
-status_t sql_normalize_plan_display_format_value(char *value, uint32 max_szie, uint32 format_index, bool32 *option_flag,
-    uint32 flag_count)
+status_t sql_normalize_plan_display_format_value(char *value, uint32 format_index, bool32 *option_flag)
 {
     uint32 len = 0;
     if (format_index == OG_INVALID_ID32) {
@@ -1598,6 +1604,28 @@ status_t sql_normalize_plan_display_format_value(char *value, uint32 max_szie, u
     }
 
     value[len++] = '\0';
+    return OG_SUCCESS;
+}
+
+status_t srv_apply_param_plan_display_format(sql_instance_t *sql)
+{
+    char *value = srv_get_param("PLAN_DISPLAY_FORMAT");
+    if (value == NULL || strlen(value) == 0) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "PLAN_DISPLAY_FORMAT");
+        return OG_ERROR;
+    }
+
+    lex_t lex = { 0 };
+    sql_text_t sql_text = { .str = value, .len = (uint32)strlen(value), .loc = { .line = 1, .column = 1 } };
+    lex_trim(&sql_text);
+    lex_init(&lex, &sql_text);
+    uint32 format_index = OG_INVALID_ID32;
+    bool32 options[PLAN_DISPLAY_OPTION_COUNT] = { OG_FALSE };
+    OG_RETURN_IFERR(sql_get_plan_display_format_info(&lex, &format_index, options));
+
+    char format_str[OG_PARAM_BUFFER_SIZE] = { 0 };
+    OG_RETURN_IFERR(sql_normalize_plan_display_format_value(format_str, format_index, options));
+    (void)sql_set_plan_display_format(format_str, &sql->plan_display_format);
     return OG_SUCCESS;
 }
 

@@ -5,6 +5,8 @@ include_directories(
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/catalog"
         "${CMAKE_CURRENT_SOURCE_DIR}/executor"
+        "${CMAKE_CURRENT_SOURCE_DIR}/executor/hash_join"
+        "${CMAKE_CURRENT_SOURCE_DIR}/executor/explain"
         "${CMAKE_CURRENT_SOURCE_DIR}/json"
         "${CMAKE_CURRENT_SOURCE_DIR}/node"
         "${CMAKE_CURRENT_SOURCE_DIR}/function"
@@ -77,6 +79,8 @@ set(LIBRARY_OUTPUT_PATH ${OGRACDB_LIB})
 aux_source_directory(. SQL_SRC)
 aux_source_directory(./catalog SQL_CATALOG_SRC)
 aux_source_directory(./executor SQL_EXECUTOR_SRC)
+aux_source_directory(./executor/hash_join SQL_EXECUTOR_HASH_JOIN_SRC)
+aux_source_directory(./executor/explain SQL_EXECUTOR_EXPLAIN_SRC)
 aux_source_directory(./json SQL_JSON_SRC)
 aux_source_directory(./node SQL_NODE_SRC)
 aux_source_directory(./function SQL_FUNCTION_SRC)
@@ -102,6 +106,8 @@ set(SQL_ALL_SRC
         ${SQL_SRC}
         ${SQL_CATALOG_SRC}
         ${SQL_EXECUTOR_SRC}
+        ${SQL_EXECUTOR_HASH_JOIN_SRC}
+        ${SQL_EXECUTOR_EXPLAIN_SRC}
         ${SQL_NODE_SRC}
         ${SQL_FUNCTION_SRC}
         ${SQL_JSON_SRC}

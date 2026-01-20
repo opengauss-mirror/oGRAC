@@ -36,7 +36,7 @@
 #include "ogsql_select.h"
 #include "ddl_column_parser.h"
 #include "pl_executor.h"
-
+#include "expl_executor.h"
 #ifdef TIME_STATISTIC
 #include "cm_statistic.h"
 #endif
@@ -64,6 +64,8 @@ extern "C" {
         (stmt)->session->current_sql = __current_sql__;     \
         (stmt)->session->sql_id = __sql_id__;               \
     } while (0)
+
+#define EXPLAIN_HEAD "EXPLAIN PLAN OUTPUT"
 
 void sql_init_stmt(session_t *session, sql_stmt_t *stmt, uint32 stmt_id)
 {
@@ -1122,6 +1124,23 @@ static inline status_t sql_execute_dml_and_send(sql_stmt_t *stmt)
     return OG_SUCCESS;
 }
 
+static inline status_t sql_execute_expl_and_send(sql_stmt_t *stmt)
+{
+    sql_reset_first_exec_vars(stmt);
+
+    if (my_sender(stmt)->send_exec_begin(stmt) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (expl_execute(stmt) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    my_sender(stmt)->send_exec_end(stmt);
+
+    return OG_SUCCESS;
+}
+
 static status_t sql_init_trigger_list_core(sql_stmt_t *stmt)
 {
     if (vmc_alloc(&stmt->vmc, sizeof(galist_t), (void **)&stmt->trigger_list) != OG_SUCCESS) {
@@ -1271,7 +1290,9 @@ status_t sql_execute(sql_stmt_t *stmt)
     }
 
     /* do execute */
-    if (SQL_TYPE(stmt) < OGSQL_TYPE_DML_CEIL) {
+    if (stmt->is_explain) {
+        status = sql_execute_expl_and_send(stmt);
+    } else if (SQL_TYPE(stmt) < OGSQL_TYPE_DML_CEIL) {
         status = sql_execute_dml_and_send(stmt);
     } else if (SQL_TYPE(stmt) == OGSQL_TYPE_ANONYMOUS_BLOCK) {
         status = ple_exec_anonymous_block(stmt);
@@ -3423,6 +3444,32 @@ static void sql_set_column_attr(rs_column_t *rs_col, cs_column_def_t *col_def, t
     }
 }
 
+static status_t sql_prepare_and_send_stmt_expl(sql_stmt_t *stmt)
+{
+    cs_column_def_t *col_def = NULL;
+    cs_packet_t *send_pack = stmt->session->send_pack;
+
+    uint32 column_def_offset = 0;
+    OG_RETURN_IFERR(cs_reserve_space(send_pack, sizeof(cs_column_def_t), &column_def_offset));
+    col_def = (cs_column_def_t *)CS_RESERVE_ADDR(send_pack, column_def_offset);
+    MEMS_RETURN_IFERR(memset_sp(col_def, sizeof(cs_column_def_t), 0, sizeof(cs_column_def_t)));
+
+    col_def->size = OG_MAX_COLUMN_SIZE;
+    col_def->datatype = OG_TYPE_STRING - OG_TYPE_BASE;
+    col_def->name_len = strlen(EXPLAIN_HEAD);
+
+    uint32 column_name_offset = 0;
+    OG_RETURN_IFERR(cs_reserve_space(send_pack, col_def->name_len, &column_name_offset));
+    char *name = (char *)CS_RESERVE_ADDR(send_pack, column_name_offset);
+    uint32 align_len = CM_ALIGN4(col_def->name_len);
+    MEMS_RETURN_IFERR(memcpy_sp(name, align_len, EXPLAIN_HEAD, col_def->name_len));
+    if (col_def->name_len < align_len) {
+        name[col_def->name_len] = '\0';
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t sql_send_parsed_stmt_normal(sql_stmt_t *stmt, uint16 columnCount)
 {
     rs_column_t *rs_col = NULL;
@@ -3541,14 +3588,13 @@ static status_t sql_send_parsed_stmt_pl(sql_stmt_t *stmt)
     return status;
 }
 
-static void sql_set_ack_column_count(sql_stmt_t *stmt, cs_prepare_ack_t *prepare_ack)
+static uint16 sql_get_ack_column_count(sql_stmt_t *stmt)
 {
     if (stmt->is_explain) {
-        prepare_ack->column_count = 1;
-    } else {
-        sql_context_t *ogx = (sql_context_t *)stmt->context;
-        prepare_ack->column_count = (ogx->rs_columns == NULL) ? 0 : ogx->rs_columns->count;
+        return 1;
     }
+    sql_context_t *ctx = (sql_context_t *)stmt->context;
+    return (ctx->rs_columns == NULL) ? 0 : ctx->rs_columns->count;
 }
 
 static status_t sql_send_param_info_impl(sql_stmt_t *stmt, galist_t *params_list)
@@ -3612,8 +3658,8 @@ static status_t sql_send_params_info(sql_stmt_t *stmt, cs_prepare_ack_t *prepare
 
 status_t sql_send_parsed_stmt(sql_stmt_t *stmt)
 {
-    cs_prepare_ack_t *prepare_ack = NULL;
     uint32 ack_offset;
+    cs_prepare_ack_t *prepare_ack = NULL;
     cs_packet_t *send_pack = stmt->session->send_pack;
 
     OG_BIT_RESET(send_pack->head->flags, CS_FLAG_WITH_TS);
@@ -3627,7 +3673,7 @@ status_t sql_send_parsed_stmt(sql_stmt_t *stmt)
     }
 
     prepare_ack->stmt_type = ACK_STMT_TYPE(stmt->lang_type, stmt->context->type);
-    sql_set_ack_column_count(stmt, prepare_ack);
+    prepare_ack->column_count = sql_get_ack_column_count(stmt);
 
     // Do not optimize the temporary variables column_count,
     // because the message expansion may cause the ack address to change,
@@ -3635,7 +3681,9 @@ status_t sql_send_parsed_stmt(sql_stmt_t *stmt)
     uint16 column_count = prepare_ack->column_count;
     OG_RETURN_IFERR(sql_send_params_info(stmt, prepare_ack));
 
-    {
+    if (stmt->is_explain) {
+        OG_RETURN_IFERR(sql_prepare_and_send_stmt_expl(stmt));
+    } else {
         OG_RETURN_IFERR(sql_send_parsed_stmt_normal(stmt, column_count));
     }
 

@@ -916,93 +916,174 @@ static status_t sql_parse_route(sql_stmt_t *stmt)
 }
 #endif
 
-status_t sql_parse_dcl(sql_stmt_t *stmt, key_wid_t key_wid)
+static status_t sql_parse_prepare_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_commit_phase1(stmt);
+}
+
+static status_t sql_parse_alter_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_dcl_alter(stmt);
+}
+
+static status_t sql_parse_commit_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_commit(stmt);
+}
+
+static status_t sql_parse_rollback_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_rollback(stmt);
+}
+
+static status_t sql_parse_savepoint_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_savepoint(stmt);
+}
+
+static status_t sql_parse_release_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_release_savepoint(stmt);
+}
+
+static status_t sql_parse_set_dcl(sql_stmt_t *stmt)
+{
+    return sql_parse_set(stmt);
+}
+
+static status_t sql_parse_backup_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_BACKUP;
+    return sql_parse_backup(stmt);
+}
+
+static status_t sql_parse_restore_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_RESTORE;
+    return sql_parse_restore(stmt);
+}
+
+static status_t sql_parse_recover_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_RECOVER;
+    return sql_parse_recover(stmt);
+}
+
+static status_t sql_parse_ograc_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_OGRAC;
+    return sql_parse_ograc(stmt);
+}
+
+static status_t sql_parse_shutdown_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_SHUTDOWN;
+    return sql_parse_shutdown(stmt);
+}
+
+static status_t sql_parse_build_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_BUILD;
+    return sql_parse_build(stmt);
+}
+
+static status_t sql_parse_repair_page_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_REPAIR_PAGE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_parse_repair_copyctrl_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_REPAIR_COPYCTRL;
+    return OG_SUCCESS;
+}
+
+#ifdef DB_DEBUG_VERSION
+static status_t sql_parse_syncpoint_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_SYNCPOINT;
+    return sql_parse_syncpoint(stmt);
+}
+#endif
+
+static status_t sql_parse_lock_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_LOCK_TABLE;
+    return sql_parse_locktable(stmt);
+}
+
+static status_t sql_parse_checkpoint_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_CHECKPOINT;
+    return lex_expected_end(stmt->session->lex);
+}
+
+static status_t sql_parse_validate_dcl(sql_stmt_t *stmt)
+{
+    stmt->context->type = OGSQL_TYPE_VALIDATE;
+    return sql_parse_validate(stmt);
+}
+
+static status_t sql_dispatch_dcl_parse(sql_stmt_t *stmt, key_wid_t key_wid)
+{
+    switch (key_wid) {
+        case KEY_WORD_PREPARE:
+            return sql_parse_prepare_dcl(stmt);
+        case KEY_WORD_ALTER:
+            return sql_parse_alter_dcl(stmt);
+        case KEY_WORD_COMMIT:
+            return sql_parse_commit_dcl(stmt);
+        case KEY_WORD_ROLLBACK:
+            return sql_parse_rollback_dcl(stmt);
+        case KEY_WORD_SAVEPOINT:
+            return sql_parse_savepoint_dcl(stmt);
+        case KEY_WORD_RELEASE:
+            return sql_parse_release_dcl(stmt);
+        case KEY_WORD_SET:
+            return sql_parse_set_dcl(stmt);
+        case KEY_WORD_BACKUP:
+            return sql_parse_backup_dcl(stmt);
+        case KEY_WORD_RESTORE:
+            return sql_parse_restore_dcl(stmt);
+        case KEY_WORD_RECOVER:
+            return sql_parse_recover_dcl(stmt);
+        case KEY_WORD_OGRAC:
+            return sql_parse_ograc_dcl(stmt);
+        case KEY_WORD_SHUTDOWN:
+            return sql_parse_shutdown_dcl(stmt);
+        case KEY_WORD_BUILD:
+            return sql_parse_build_dcl(stmt);
+        case KEY_WORD_REPAIR_PAGE:
+            return sql_parse_repair_page_dcl(stmt);
+        case KEY_WORD_REPAIR_COPYCTRL:
+            return sql_parse_repair_copyctrl_dcl(stmt);
+#ifdef DB_DEBUG_VERSION
+        case KEY_WORD_SYNCPOINT:
+            return sql_parse_syncpoint_dcl(stmt);
+#endif
+        case KEY_WORD_LOCK:
+            return sql_parse_lock_dcl(stmt);
+        case KEY_WORD_CHECKPOINT:
+            return sql_parse_checkpoint_dcl(stmt);
+        case KEY_WORD_VALIDATE:
+            return sql_parse_validate_dcl(stmt);
+        default:
+            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected");
+            return OG_ERROR;
+    }
+}
+
+status_t sql_parse_dcl(sql_stmt_t *stmt, word_t *leader_word)
 {
     status_t status;
+    key_wid_t key_wid = leader_word->id;
 
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DCL;
     status = sql_alloc_context(stmt);
     OG_RETURN_IFERR(status);
 
-    switch (key_wid) {
-        case KEY_WORD_PREPARE:
-            status = sql_parse_commit_phase1(stmt);
-            break;
-        case KEY_WORD_ALTER:
-            status = sql_parse_dcl_alter(stmt);
-            break;
-        case KEY_WORD_COMMIT:
-            status = sql_parse_commit(stmt);
-            break;
-        case KEY_WORD_ROLLBACK:
-            status = sql_parse_rollback(stmt);
-            break;
-        case KEY_WORD_SAVEPOINT:
-            status = sql_parse_savepoint(stmt);
-            break;
-        case KEY_WORD_RELEASE:
-            status = sql_parse_release_savepoint(stmt);
-            break;
-        case KEY_WORD_SET:
-            status = sql_parse_set(stmt);
-            break;
-        case KEY_WORD_BACKUP:
-            stmt->context->type = OGSQL_TYPE_BACKUP;
-            status = sql_parse_backup(stmt);
-            break;
-        case KEY_WORD_RESTORE:
-            stmt->context->type = OGSQL_TYPE_RESTORE;
-            status = sql_parse_restore(stmt);
-            break;
-        case KEY_WORD_RECOVER:
-            stmt->context->type = OGSQL_TYPE_RECOVER;
-            status = sql_parse_recover(stmt);
-            break;
-        case KEY_WORD_OGRAC:
-            stmt->context->type = OGSQL_TYPE_OGRAC;
-            status = sql_parse_ograc(stmt);
-            break;
-        case KEY_WORD_SHUTDOWN:
-            stmt->context->type = OGSQL_TYPE_SHUTDOWN;
-            return sql_parse_shutdown(stmt);
-        case KEY_WORD_BUILD:
-            stmt->context->type = OGSQL_TYPE_BUILD;
-            return sql_parse_build(stmt);
-        case KEY_WORD_REPAIR_PAGE:
-            stmt->context->type = OGSQL_TYPE_REPAIR_PAGE;
-            status = OG_SUCCESS;
-            break;
-        case KEY_WORD_REPAIR_COPYCTRL:
-            stmt->context->type = OGSQL_TYPE_REPAIR_COPYCTRL;
-            status = OG_SUCCESS;
-            break;
-
-#ifdef DB_DEBUG_VERSION
-        case KEY_WORD_SYNCPOINT:
-            stmt->context->type = OGSQL_TYPE_SYNCPOINT;
-            status = sql_parse_syncpoint(stmt);
-            break;
-#endif /* DB_DEBUG_VERSION */
-        case KEY_WORD_LOCK:
-                stmt->context->type = OGSQL_TYPE_LOCK_TABLE;
-                status = sql_parse_locktable(stmt);
-            break;
-        case KEY_WORD_CHECKPOINT:
-            stmt->context->type = OGSQL_TYPE_CHECKPOINT;
-            status = lex_expected_end(stmt->session->lex);
-            break;
-        case KEY_WORD_VALIDATE:
-            stmt->context->type = OGSQL_TYPE_VALIDATE;
-            status = sql_parse_validate(stmt);
-            break;
-
-        default:
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected");
-            status = OG_ERROR;
-            break;
-    }
-
-    return status;
+    return sql_dispatch_dcl_parse(stmt, key_wid);
 }
 
 #ifdef __cplusplus

@@ -40,6 +40,8 @@ status_t sql_get_ddl_sql(void *sql_stmt, text_t *sql, vmc_t *vmc, bool8 *need_fr
 status_t sql_execute_alter_index(sql_stmt_t *ogsql_stmt);
 status_t sql_execute_create_index(sql_stmt_t *ogsql_stmt);
 status_t sql_execute_drop_index(sql_stmt_t *ogsql_stmt);
+status_t sql_init_withas_vmc(sql_stmt_t *ogsql_stmt, sql_withas_t *withas_ctx);
+status_t sql_init_select_vmc(sql_stmt_t *ogsql_stmt, select_node_t *select_node);
 #ifdef __cplusplus
 }
 #endif

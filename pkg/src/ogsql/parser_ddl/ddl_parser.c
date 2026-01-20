@@ -825,15 +825,16 @@ static status_t sql_parse_comment(sql_stmt_t *stmt)
     return status;
 }
 
-status_t sql_parse_ddl(sql_stmt_t *stmt, key_wid_t wid)
+status_t sql_parse_ddl(sql_stmt_t *stmt, word_t *leader_word)
 {
     status_t status;
+    key_wid_t key_wid = leader_word->id;
     text_t origin_sql = stmt->session->lex->text.value;
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DDL;
     OG_RETURN_IFERR(sql_alloc_context(stmt));
     OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->ref_objects));
 
-    switch (wid) {
+    switch (key_wid) {
         case KEY_WORD_CREATE:
             status = sql_parse_create(stmt);
             break;

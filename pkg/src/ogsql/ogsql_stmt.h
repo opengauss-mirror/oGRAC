@@ -94,6 +94,7 @@ typedef enum en_lang_type {
     LANG_DDL = 3,
     LANG_PL = 4,
     LANG_EXPLAIN = 5,
+    LANG_MAX,
 } lang_type_t;
 
 typedef struct st_sql_lob_info {

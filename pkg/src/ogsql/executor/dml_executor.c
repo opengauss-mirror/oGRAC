@@ -47,6 +47,7 @@
 #include "ogsql_proj.h"
 #include "ogsql_concate.h"
 #include "dml_parser.h"
+#include "expl_executor.h"
 
 #ifdef __cplusplus
 
@@ -126,7 +127,7 @@ static inline void sql_init_cur_exec_data(plan_exec_data_t *executor_data)
     executor_data->minus.r_continue_fetch = OG_TRUE;
     executor_data->minus.rs_vmid = OG_INVALID_ID32;
     executor_data->minus.rnums = 0;
-    executor_data->explain_col_max_size = NULL;
+    executor_data->expl_col_max_size = NULL;
     executor_data->qb_col_max_size = NULL;
     executor_data->outer_join = NULL;
     executor_data->inner_join = NULL;
@@ -478,7 +479,7 @@ void sql_free_va_set(sql_stmt_t *ogsql_stmt, sql_cursor_t *ogsql_cursor)
     ogsql_cursor->exec_data.union_all = NULL;
     ogsql_cursor->exec_data.minus.r_continue_fetch = OG_TRUE;
     ogsql_cursor->exec_data.minus.rnums = 0;
-    ogsql_cursor->exec_data.explain_col_max_size = NULL;
+    ogsql_cursor->exec_data.expl_col_max_size = NULL;
     ogsql_cursor->exec_data.qb_col_max_size = NULL;
     ogsql_cursor->exec_data.outer_join = NULL;
     ogsql_cursor->exec_data.inner_join = NULL;
@@ -1104,7 +1105,13 @@ static inline status_t sql_send_fetch_result(sql_stmt_t *ogsql_stmt, sql_cursor_
         OG_THROW_ERROR(ERR_INVALID_CURSOR);
         return OG_ERROR;
     }
-    {
+
+    if (ogsql_stmt->is_explain) {
+        if (expl_send_fetch_result(ogsql_stmt, cursor, NULL) != OG_SUCCESS) {
+            sql_release_resource(ogsql_stmt, OG_TRUE);
+            return OG_ERROR;
+        }
+    } else {
         if (sql_make_result_set(ogsql_stmt, cursor) != OG_SUCCESS) {
             sql_release_resource(ogsql_stmt, OG_TRUE);
             return OG_ERROR;

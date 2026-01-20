@@ -280,26 +280,21 @@ lang_type_t sql_diag_lang_type(sql_stmt_t *stmt, sql_text_t *sql, word_t *leader
     }
 }
 
+sql_parser_t g_sql_parser[] = { { LANG_DML,         sql_parse_dml },
+                                { LANG_DCL,         sql_parse_dcl },
+                                { LANG_DDL,         sql_parse_ddl },
+                                { LANG_PL,          sql_parse_pl },
+                                { LANG_EXPLAIN,     ogsql_parse_explain_sql } };
+
 static status_t sql_parse_by_lang_type(sql_stmt_t *stmt, sql_text_t *sql_text, word_t *leader_word)
 {
     status_t status;
 
-    switch (stmt->lang_type) {
-        case LANG_DML:
-            status = sql_parse_dml(stmt, leader_word->id);
-            break;
-        case LANG_DDL:
-            status = sql_parse_ddl(stmt, leader_word->id);
-            break;
-        case LANG_DCL:
-            status = sql_parse_dcl(stmt, leader_word->id);
-            break;
-        case LANG_PL:
-            status = sql_parse_pl(stmt, leader_word);
-            break;
-        default:
-            OG_SRC_THROW_ERROR(sql_text->loc, ERR_SQL_SYNTAX_ERROR, "key word expected");
-            status = OG_ERROR;
+    if (stmt->lang_type < LANG_MAX && stmt->lang_type != LANG_INVALID) {
+        status = g_sql_parser[stmt->lang_type - LANG_DML].sql_parse(stmt, leader_word);
+    } else {
+        OG_SRC_THROW_ERROR(sql_text->loc, ERR_SQL_SYNTAX_ERROR, "key word expected");
+        status = OG_ERROR;
     }
 
     text_t sql_log_text = stmt->session->sql_audit.sql;

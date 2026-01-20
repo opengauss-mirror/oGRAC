@@ -1,0 +1,893 @@
+
+
+SQL> drop table if exists t_expl_0;
+
+Succeed.
+
+SQL> create table t_expl_0(f_int1 int, f_int2 int);
+
+Succeed.
+
+SQL> insert into t_expl_0(f_int1, f_int2) values(1, 11);
+
+1 rows affected.
+
+SQL> explain plan for select * from t_expl_0;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name     | Rows | Cost  | Bytes | Remark |
+---------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |          | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T_EXPL_0 | 0    | 10000 |       |        |
+---------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> explain plan for xselect * from t_expl_0;
+
+OG-00601, [1:18]Sql syntax error: missing keyword
+SQL> drop table if exists t_expl_0;
+
+Succeed.
+
+SQL> -- ------------------ test [not]like convert to [not]equal --------------------------
+SQL> -- prepare
+SQL> drop table if exists like_optm_t;
+
+Succeed.
+
+SQL> create table like_optm_t (id int, a varchar(20), b varchar(20), c clob, d raw(50), e char(5));
+
+Succeed.
+
+SQL> insert into like_optm_t values (1, 'storage','aaa','11111','123456789','12345');
+
+1 rows affected.
+
+SQL> insert into like_optm_t values (2, 'mysql','bbb','22222','987654321','abcde');
+
+1 rows affected.
+
+SQL> insert into like_optm_t values (3, 'openGauss','ccc','33333','20250715','ABCDE');
+
+1 rows affected.
+
+SQL> insert into like_optm_t values (4, 'ograc','ddd','44444','19980804','QWERF');
+
+1 rows affected.
+
+SQL> insert into like_optm_t values (5, null,'',null,'','A');
+
+1 rows affected.
+
+SQL> insert into like_optm_t values (6, 'Innodb','2025-07-15 00:00:00','66666','19980804','AAA');
+
+1 rows affected.
+
+SQL> insert into like_optm_t values (7, 'mysql%','b_bb','22_22%2','123456789','12345');
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> --  like --> equal
+SQL> explain select * from like_optm_t where a like 'mysql';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: A LIKE 'mysql'                                  
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where b like 'cc_'; -- no convert
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: B LIKE 'cc_'                                    
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where c not like '11111';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C NOT LIKE '11111'                              
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where d like '20250715';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: D LIKE '20250715'                               
+
+9 rows fetched.
+
+SQL> select count(*) from like_optm_t where d like '20250715';
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- const val or bind param in the left no optim
+SQL> explain select * from like_optm_t where 'ograc' like a;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: 'ograc' LIKE A                                  
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where '19980804' like d;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: '19980804' LIKE D                               
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where '44444' like c;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: '44444' LIKE C                                  
+
+9 rows fetched.
+
+SQL> 
+SQL> -- = null or != null 当前不存在转换
+SQL> explain select * from like_optm_t where a like '';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: A LIKE                                          
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where b not like '';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: B NOT LIKE                                      
+
+9 rows fetched.
+
+SQL> 
+SQL> -- 'like null' or 'not like null' no optim 
+SQL> explain select * from like_optm_t where c not like null; -- reversed type 不进行优化
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C NOT LIKE NULL                                 
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where d like null;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: D LIKE NULL                                     
+
+9 rows fetched.
+
+SQL> 
+SQL> -- when bind param no convert
+SQL> explain select * from like_optm_t where c like ?;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C LIKE ?                                        
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where d not like :val;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: D NOT LIKE ?                                    
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where ? like a;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ? LIKE A                                        
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where ? like b;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ? LIKE B                                        
+
+9 rows fetched.
+
+SQL> 
+SQL> -- char(n) test
+SQL> explain select * from like_optm_t where e like '12345';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: E LIKE '12345'                                  
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where e like 'AAA';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: E LIKE 'AAA'                                    
+
+9 rows fetched.
+
+SQL> select count(*) from like_optm_t where e like 'AAA%';
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where e like upper('abcde');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: E LIKE 'ABCDE'                                  
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where e like to_char('A    ');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: E LIKE 'A    '                                  
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where e like to_char('A    ');
+
+ID          
+------------
+5           
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where e like cast('A' as char(5));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: E LIKE 'A    '                                  
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where e like cast('A' as char(5));
+
+ID          
+------------
+5           
+
+1 rows fetched.
+
+SQL> 
+SQL> -- func test
+SQL> explain select * from like_optm_t where c like bin2hex('0x26');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C LIKE '0x30783236'                             
+
+9 rows fetched.
+
+SQL> explain select * from like_optm_t where id like char_length('mysql');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ID LIKE 5                                       
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where id like char_length('mysql');
+
+ID          
+------------
+5           
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where d like hextoraw('19980804');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: D LIKE 0x19980804                               
+
+9 rows fetched.
+
+SQL> select count(*) from like_optm_t where d like hextoraw('19980804');
+
+COUNT(*)            
+--------------------
+2                   
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where lower(a) like 'ograc';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: LOWER(A) LIKE 'ograc'                           
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where lower(a) like 'ograc';
+
+ID          
+------------
+4           
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where b like to_date('2025-07-15', 'yyyy-mm-dd');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: B LIKE TO_DATE('2025-07-15 00:00:00, YYYY-MM-DD HH24:MI:SS')
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where b like to_date('2025-07-15', 'yyyy-mm-dd');
+
+ID          
+------------
+6           
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where a like cast('openGauss' as char(9));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: A LIKE 'openGauss'                              
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where a like cast('openGauss' as char(9));
+
+ID          
+------------
+3           
+
+1 rows fetched.
+
+SQL> explain select * from like_optm_t where a like concat('Inn','odb'); -- right no const val
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: A LIKE 'Innodb'                                 
+
+9 rows fetched.
+
+SQL> select id from like_optm_t where a like concat('Inn','odb');
+
+ID          
+------------
+6           
+
+1 rows fetched.
+
+SQL> 
+SQL> -- test \% \_
+SQL> explain select * from like_optm_t where a like 'mysql\%' escape '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: A LIKE 'mysql\%' ESCAPE '\'                     
+
+9 rows fetched.
+
+SQL> select a from like_optm_t where a like 'mysql\%' escape '\';
+
+A                   
+--------------------
+mysql%              
+
+1 rows fetched.
+
+SQL> select a from like_optm_t where a = 'mysql%';
+
+A                   
+--------------------
+mysql%              
+
+1 rows fetched.
+
+SQL> 
+SQL> explain select * from like_optm_t where b like 'b\_bb' escape '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: B LIKE 'b\_bb' ESCAPE '\'                       
+
+9 rows fetched.
+
+SQL> select b from like_optm_t where b like 'b\_bb' escape '\';
+
+B                   
+--------------------
+b_bb                
+
+1 rows fetched.
+
+SQL> select b from like_optm_t where b = 'b_bb';
+
+B                   
+--------------------
+b_bb                
+
+1 rows fetched.
+
+SQL> 
+SQL> explain select * from like_optm_t where c like '22\_22\%2' escape '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C LIKE '22\_22\%2' ESCAPE '\'                   
+
+9 rows fetched.
+
+SQL> select c from like_optm_t where c like '22\_22\%2' escape '\';
+
+C                                                               
+----------------------------------------------------------------
+22_22%2                                                         
+
+1 rows fetched.
+
+SQL> select c from like_optm_t where c = '22_22%2';
+
+C                                                               
+----------------------------------------------------------------
+22_22%2                                                         
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists like_optm_t;
+
+Succeed.
+
+SQL> 
+SQL> -- test
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> drop table if exists t2;
+
+Succeed.
+
+SQL> create table t1(id int, location int);
+
+Succeed.
+
+SQL> create table t2(id int, revenue int);
+
+Succeed.
+
+SQL> explain select t2.id, sum(revenue) from t1, t2 where t2.id = t1.id group by t2.id having sum(revenue) >=2;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |      | 1    | 20008 |       |        |
+| 1  |   HAVING                    |       |      | 1    | 20008 |       |        |
+| 2  |     HASH GROUP BY           |       |      | 1    | 20008 |       |        |
+| 3  |       NESTED LOOPS          |       |      | 1    | 20000 |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | T2   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: SUM(REVENUE) >= 2                               
+    5 - filter: T2.ID = T1.ID                                   
+
+14 rows fetched.
+
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> drop table if exists t2;
+
+Succeed.
+
+SQL> 
+SQL> --- test explain const node
+SQL> create table t1(c1 varchar(20));
+
+Succeed.
+
+SQL> explain select * from t1 where c1 in (lpad('1',4090,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',101,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000...'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',100,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',99,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 = '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001'
+
+9 rows fetched.
+
+SQL> explain select * from t1 where c1 in (lpad('1',0,'0'));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------
+| Id | Operation             | Owner | Name | Rows | Cost  | Bytes | Remark |
+-----------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |      | 0    | 10000 |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 10000 |       |        |
+-----------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: C1 =                                            
+
+9 rows fetched.
+
+SQL> drop table t1;
+
+Succeed.
+
+SQL> 
+SQL> --- test explain connect by
+SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS squared FROM SYS_DUMMY CONNECT BY level <= 10;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost  | Bytes | Remark |
+------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 0    | 0     |       |        |
+| 1  |   START WITH            |       |           | 0    | 0     |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+| 3  |   CONNECT BY            |       |           | 0    | 0     |       |        |
+| 4  |       TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    3 - filter: LEVEL <= 10                                     
+
+12 rows fetched.
+
+SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS squared FROM 
+  2     (SELECT 1 AS seed FROM SYS_DUMMY) START WITH seed = 1 CONNECT BY PRIOR seed = seed AND LEVEL <= 10;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name      | Rows | Cost  | Bytes | Remark |
+----------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |           | 0    | 0     |       |        |
+| 1  |   START WITH                |       |           | 0    | 0     |       |        |
+| 2  |       SUBSELECT             | SYS   |           | 0    | 0     |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+| 4  |   CONNECT BY                |       |           | 0    | 0     |       |        |
+| 5  |       SUBSELECT             | SYS   |           | 0    | 0     |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 0    | 10000 |       |        |
+----------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: SEED = 1                                        
+    2 - filter: SEED = 1                                        
+    4 - filter: PRIOR SEED = SEED AND LEVEL <= 10               
+
+16 rows fetched.
+
+SQL> 
+SQL> 
+
+

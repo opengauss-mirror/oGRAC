@@ -1581,6 +1581,20 @@ void cm_str_upper(char *str)
     return;
 }
 
+void cm_str_to_upper(char *src, char *dst)
+{
+    CM_POINTER2(src, dst);
+
+    while (*src != '\0') {
+        *dst = UPPER(*src);
+        dst++;
+        src++;
+    }
+    *dst = '\0';
+
+    return;
+}
+
 void cm_str_lower(char *str)
 {
     char *tmp = NULL;
@@ -1595,6 +1609,21 @@ void cm_str_lower(char *str)
 
     return;
 }
+
+void cm_str_to_lower(char *src, char *dst)
+{
+    CM_POINTER2(src, dst);
+
+    while (*src != '\0') {
+        *dst = LOWER(*src);
+        dst++;
+        src++;
+    }
+    *dst = '\0';
+
+    return;
+}
+
 /* calculate how many different character bits of two strings,for example:
 1."abc" and "ab"  : one different character bit
 2."abc" and  "accd" : two different character bits
