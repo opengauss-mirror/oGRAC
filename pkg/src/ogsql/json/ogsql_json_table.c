@@ -171,7 +171,7 @@ static void create_ordinality_for_json_table(sql_table_t *table)
     new_col->expr->root->value.is_null = OG_FALSE;
 }
 
-static void set_json_func_default_error_type(expr_node_t *func_node, json_error_type_t default_type)
+void set_json_func_default_error_type(expr_node_t *func_node, json_error_type_t default_type)
 {
     json_func_attr_t *json_func = &func_node->json_func_attr;
     if (default_type == JSON_RETURN_NULL) {

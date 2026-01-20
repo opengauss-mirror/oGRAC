@@ -1365,6 +1365,272 @@ status_t sql_convert_to_cast(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word)
     return OG_SUCCESS;
 }
 
+status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t *func_name,
+    expr_tree_t *arg_list, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_FUNC, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    text_t user;
+    expr_tree_t *list_expr;
+    user.str = stmt->session->db_user;
+    user.len = (uint32)strlen(stmt->session->db_user);
+    node->word.func.user_func_first = OG_FALSE;
+
+    for (int i = 0; i < func_name->count; i++) {
+        list_expr = cm_galist_get(func_name, i);
+        if (list_expr->root->type != EXPR_NODE_CONST || list_expr->root->value.type != OG_TYPE_CHAR) {
+            OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "Invalid funcname expr");
+            return OG_ERROR;
+        }
+    }
+
+    if (func_name->count == 1) {
+        list_expr = cm_galist_get(func_name, 0);
+        text_t text_word = list_expr->root->value.v_text;
+        if (sql_self_func_configed(&user, &text_word)) {
+            /* the function(CAST,CONVERT,IF...) is defined in udf.ini, build as user function */
+            node->word.func.user_func_first = OG_TRUE;
+        }
+    }
+
+    sql_expr_list_as_func(stmt, func_name, &node->word);
+
+    /*
+     * 1. if call by user.func, build as user func.
+     * 2. function is in udf.ini, build as user func first, such as SLEEP, "sleep", so compare case sensitive.
+    */
+    if (node->word.func.user.len > 0 || sql_self_func_configed_direct(&user, &node->word.func.name.value)) {
+        node->word.func.user_func_first = OG_TRUE;
+    }
+
+    node->argument = arg_list;
+    (*expr)->root = node;
+    return OG_SUCCESS;
+}
+
+status_t sql_build_winsort_node_bison(sql_stmt_t *stmt, winsort_args_t **winsort_args, galist_t* group_exprs,
+    galist_t *sort_items, windowing_args_t *windowing, source_location_t loc)
+{
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(winsort_args_t), (void **)winsort_args));
+    (*winsort_args)->group_exprs = group_exprs;
+    (*winsort_args)->sort_items = sort_items;
+    (*winsort_args)->windowing = windowing;
+    return OG_SUCCESS;
+}
+
+status_t sql_create_winsort_node_bison(sql_stmt_t *stmt, expr_tree_t *func_expr, expr_node_t *func_node,
+    winsort_args_t *winsort_args, source_location_t loc)
+{
+    expr_tree_t *n_expr = NULL;
+    expr_node_t *over_node = NULL;
+    sql_text_t over_test;
+
+    if (winsort_args != NULL) {
+        OG_RETURN_IFERR(sql_create_expr(stmt, &n_expr));
+        APPEND_CHAIN(&n_expr->chain, func_node);
+        n_expr->root = func_node;
+        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&over_node));
+        over_node->owner = func_expr;
+        over_node->type = EXPR_NODE_OVER;
+        over_node->unary = func_expr->unary;
+        over_node->loc = loc;
+        over_node->argument = n_expr;
+        over_test.str = "over";
+        over_test.len = strlen("over");
+        over_test.loc = loc;
+
+        OG_RETURN_IFERR(sql_copy_object_name_loc(stmt->context, WORD_TYPE_UNKNOWN, &over_test,
+            &over_node->word.func.name));
+        over_node->word.func.args.value = CM_NULL_TEXT;
+        over_node->word.func.args.loc = loc;
+        over_node->word.func.pack.value = CM_NULL_TEXT;
+        over_node->word.func.pack.loc = loc;
+        over_node->word.func.user.value = CM_NULL_TEXT;
+        over_node->word.func.user.loc = loc;
+
+        if (winsort_args->sort_items == NULL && winsort_args->group_exprs == NULL && winsort_args->windowing == NULL) {
+            expr_tree_t *expr = NULL;
+            OG_RETURN_IFERR(sql_create_list(stmt, &winsort_args->group_exprs));
+            OG_RETURN_IFERR(sql_create_const_expr_false(stmt, &expr, NULL, 0));
+            OG_RETURN_IFERR(cm_galist_insert(winsort_args->group_exprs, expr));
+        }
+
+        over_node->win_args = winsort_args;
+        APPEND_CHAIN(&func_expr->chain, over_node);
+    } else {
+        APPEND_CHAIN(&func_expr->chain, func_node);
+    }
+
+    sql_generate_expr(func_expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_windowing_arg(sql_stmt_t *stmt, windowing_args_t **windowing_args,
+    windowing_border_t *l_border, windowing_border_t *r_border)
+{
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(windowing_args_t), (void **)windowing_args) != OG_SUCCESS);
+    (*windowing_args)->l_expr = l_border->expr;
+    (*windowing_args)->l_type = l_border->border_type;
+    if (r_border != NULL) {
+        (*windowing_args)->r_expr = r_border->expr;
+        (*windowing_args)->r_type = r_border->border_type;
+    } else {
+        (*windowing_args)->r_type = WB_TYPE_CURRENT_ROW;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_create_special_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t **node,
+    char *func_name, source_location_t loc)
+{
+    if (sql_init_expr_node(stmt, expr, node, OG_TYPE_INTEGER, EXPR_NODE_FUNC, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    (*node)->word.func.user_func_first = OG_FALSE;
+    sql_text_t text;
+    text.str = func_name;
+    text.len = strlen(func_name);
+    text.loc = loc;
+    if (sql_copy_object_name_loc(stmt->context, WORD_TYPE_UNKNOWN, &text, &(*node)->word.func.name) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_cast_convert_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t *arg, type_word_t *type,
+    char *func_name, source_location_t loc)
+{
+    expr_tree_t *type_expr = NULL;
+    expr_node_t *node = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, func_name, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->argument = arg;
+
+    if (sql_create_expr(stmt, &type_expr) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&type_expr->root) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (sql_build_type_expr(stmt, type, type_expr) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->argument->next = type_expr;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_if_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, cond_tree_t *cond_tree,
+    expr_tree_t *first_arg, expr_tree_t *second_arg, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, "if", loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->cond_arg = cond_tree;
+    node->argument = first_arg;
+    node->argument->next = second_arg;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_lnnvl_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, cond_tree_t *cond_tree,
+    source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, "lnnvl", loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->cond_arg = cond_tree;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_trim_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, trim_list_t *trim,
+    func_trim_type_t trim_type, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, "trim", loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->ext_args = trim_type;
+    if (trim->reverse) {
+        node->argument = trim->second_expr;
+        node->argument->next = trim->first_expr;
+    } else {
+        node->argument = trim->first_expr;
+        node->argument->next = trim->second_expr;
+    }
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_groupconcat_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t *expr_list,
+    galist_t *sort_list, char *separator, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    expr_tree_t *arg_sep = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, "group_concat", loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    bool32 has_separator = separator != NULL;
+    node->sort_items = sort_list;
+
+    OG_RETURN_IFERR(sql_create_const_string_expr(stmt, &arg_sep, has_separator ? separator : ","));
+    arg_sep->next = expr_list;
+    node->argument = arg_sep;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_substr_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t *arg_list,
+    char *func_name, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, func_name, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->argument = arg_list;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_extract_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, extract_list_t *extract_list,
+    source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    expr_tree_t *arg_expr = NULL;
+    if (sql_create_special_funccall_expr(stmt, expr, &node, "extract", loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(sql_create_columnref_expr(stmt, &arg_expr, extract_list->extract_type, NULL, loc));
+    node->argument = arg_expr;
+    node->argument->next = extract_list->arg;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
 #ifdef __cplusplus
 }
 #endif

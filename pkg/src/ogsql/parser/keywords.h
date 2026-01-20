@@ -14,24 +14,39 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * ogsql_replace_parser.h
+ * keywords.h
  *
  *
  * IDENTIFICATION
- * src/ogsql/parser/ogsql_replace_parser.h
+ * src/ogsql/parser/keywords.h
  *
  * -------------------------------------------------------------------------
  */
-#ifndef __SQL_REPLACE_PARSER_H__
-#define __SQL_REPLACE_PARSER_H__
+#ifndef KEYWORDS_H
+#define KEYWORDS_H
 
-#include "dml_parser.h"
+/* Keyword categories --- should match lists in gram.y */
+#define UNRESERVED_KEYWORD 0
+#define COL_NAME_KEYWORD 1
+#define RESERVED_KEYWORD 2
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "kwlookup.h"
+typedef struct PlpgsqlKeywordValue {
+    int16 procedure;
+    int16 function;
+    int16 begin;
+    int16 select;
+    int16 update;
+    int16 insert;
+    int16 Delete;
+    int16 merge;
+} PlpgsqlKeywordValue;
 
-status_t sql_create_replace_context(sql_stmt_t *stmt, sql_text_t *sql, sql_replace_t **replace_context);
-status_t sql_init_replace(sql_stmt_t *stmt, sql_replace_t *replace_context);
+extern const ScanKeywordList ScanKeywords;
+extern const uint8 ScanKeywordCategories[];
+extern const bool8 ScanKeywordDirectLabel[];
 
-#endif
+/* Globals from keywords.c */
+extern const ScanKeywordList SQLScanKeywords[];
+
+#endif /* KEYWORDS_H */

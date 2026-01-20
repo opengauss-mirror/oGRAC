@@ -45,5 +45,12 @@ status_t sql_parse_comma_join(sql_stmt_t *stmt, sql_array_t *tables, sql_join_as
     sql_join_chain_t *join_chain, sql_table_t **table, word_t *word);
 status_t sql_form_table_join_with_opers(sql_join_chain_t *chain, uint32 opers);
 status_t sql_set_table_qb_name(sql_stmt_t *stmt, sql_query_t *query);
+status_t sql_create_query_table(sql_stmt_t *stmt, sql_array_t *tables, sql_join_assist_t *join_ass,
+                                       sql_table_t *query_table, word_t *word);
+void sql_parse_join_set_table_nullable(sql_join_node_t *node);
+uint32 sql_outer_join_count(sql_join_node_t *join_node);
+status_t sql_remove_join_table(sql_stmt_t *stmt, sql_query_t *query);
+void sql_init_json_table_info(sql_stmt_t *stmt, json_table_info_t *json_info);
+status_t sql_try_match_withas_table(sql_stmt_t *stmt, sql_table_t *query_table, bool32 *is_withas_table);
 
 #endif

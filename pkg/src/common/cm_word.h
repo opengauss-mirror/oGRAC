@@ -260,6 +260,8 @@ extern const key_word_t g_method_key_words[METHOD_END];
 extern const key_word_t g_pl_attr_words[PL_ATTR_SIZE];
 #define PL_ATTR_WORDS_COUNT (sizeof(g_pl_attr_words) / sizeof(key_word_t))
 
+extern key_word_t g_hint_key_words[41];
+#define HINT_KEY_WORDS_COUNT (sizeof(g_hint_key_words) / sizeof(key_word_t))
 
 typedef struct st_datatype_word {
     text_t text;
@@ -310,6 +312,7 @@ status_t lex_try_match_datatype(struct st_lex *lex, word_t *word, bool32 *matche
 bool32 lex_check_datatype(struct st_lex *lex, word_t *typword);
 status_t lex_get_word_typmode(word_t *word, typmode_t *typmod);
 bool32 lex_match_coll_method_name(sql_text_t *method_name, uint8 *method_id);
+status_t lex_try_match_datatype_bison(word_t *word);
 
 #ifdef __cplusplus
 }

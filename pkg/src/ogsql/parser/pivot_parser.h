@@ -31,8 +31,28 @@
 extern "C" {
 #endif
 
+typedef struct expr_with_alias {
+    expr_tree_t *expr;
+    text_t alias;
+} expr_with_alias;
+
+typedef struct expr_with_as_expr {
+    expr_with_alias *expr_alias;
+    expr_tree_t *as_expr;
+} expr_with_as_expr;
+
 status_t sql_create_pivot(sql_stmt_t *stmt, sql_query_t *query, word_t *word);
 status_t sql_create_unpivot(sql_stmt_t *stmt, sql_query_t *query, word_t *word);
 status_t sql_try_create_pivot_unpivot_table(sql_stmt_t *stmt, sql_table_t *query_table, word_t *word, bool32 *is_pivot);
+status_t sql_create_pivot_sub_select(sql_stmt_t *stmt, sql_table_t *query_table, sql_query_t *query,
+    pivot_items_t *pivot_items);
+status_t sql_create_pivot_items(sql_stmt_t *stmt, pivot_items_t **pivot_items, source_location_t loc,
+    pivot_type_t type);
+status_t sql_parse_pivot_aggr_list(galist_t *query_column, expr_tree_t **expr, galist_t *expr_alias,
+    bool32 need_filling);
+status_t sql_parse_pivot_in_list(pivot_items_t *pivot_items, galist_t *in_list);
+status_t sql_parse_pivot_clause_list(sql_stmt_t *stmt, sql_query_t *query, galist_t *pivot_list);
+status_t sql_parse_unpivot_in_list(sql_stmt_t *stmt, pivot_items_t *pivot_items, galist_t *in_list);
+status_t sql_parse_unpivot_data_rs(sql_stmt_t *stmt, galist_t *unpivot_rs, expr_tree_t *expr);
 
 #endif

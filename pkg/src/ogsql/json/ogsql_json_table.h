@@ -41,5 +41,6 @@ status_t sql_try_switch_json_array_loc(sql_stmt_t *stmt, json_value_t *jv, json_
     bool32 *switched);
 status_t sql_visit_json_value(sql_stmt_t *stmt, json_value_t *jv, json_table_exec_t *exec, uint32 temp_level,
     bool32 *switched, json_value_visit_func visit_func);
+void set_json_func_default_error_type(expr_node_t *func_node, json_error_type_t default_type);
 
 #endif

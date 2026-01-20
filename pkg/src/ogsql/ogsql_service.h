@@ -179,6 +179,7 @@ typedef struct st_sql_instance {
     bool8 coverage_enable;
     uint8 res[7];
     sql_json_mem_pool_t json_mpool;
+    bool32 use_bison_parser;
 } sql_instance_t;
 #ifdef __cplusplus
 }

@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-static status_t sql_init_merge(sql_stmt_t *stmt, sql_merge_t *merge_ctx)
+status_t sql_init_merge(sql_stmt_t *stmt, sql_merge_t *merge_ctx)
 {
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_query_t), (void **)&merge_ctx->query));
     OG_RETURN_IFERR(sql_init_query(stmt, NULL, stmt->session->lex->loc, merge_ctx->query));

@@ -20,6 +20,58 @@ include_directories(
 
 )
 
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/kwlist_d.h
+    COMMAND perl -I ${CMAKE_CURRENT_SOURCE_DIR}/parser ${CMAKE_CURRENT_SOURCE_DIR}/parser/gen_keywordlist.pl --extern ${CMAKE_CURRENT_SOURCE_DIR}/parser/kwlist.h
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/kwlist.h
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/kwlist.h
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser
+    COMMENT "Generating kwlist_d.h from kwlist.h"
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.inc
+    COMMAND rm -fr lex.backup
+    COMMAND flex -CF -b -p -p -o scan.inc scan.l
+    #COMMAND sed -i "s/YY_NULL/YY_ZERO/g" scan.inc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.l
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.l
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser
+    COMMENT "Generating scan.inc from scan.l"
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.h
+    COMMAND bison -d -o gram.c gram.y
+    COMMAND sed -i "s/YY_NULL nullptr/YY_NULL 0/g" gram.c
+    COMMAND sed -i "s/\# define YYINITDEPTH .*/\# define YYINITDEPTH 1000/g" gram.c
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.l
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.l
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser
+    COMMENT "Generating gram.c, gram.h from gram.y"
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.inc
+    COMMAND rm -fr lex.backup
+    COMMAND flex -CF -b -p -p -o hint_scan.inc hint_scan.l
+    #COMMAND sed -i "s/YY_NULL/YY_ZERO/g" hint_scan.inc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.l
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.l
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser
+    COMMENT "Generating hint_scan.inc from hint_scan.l"
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.h
+    COMMAND bison -d -o hint_gram.c hint_gram.y
+    COMMAND sed -i "s/YY_NULL nullptr/YY_NULL 0/g" hint_gram.c
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.l
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.l
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser
+    COMMENT "Generating hint_gram.c, hint_gram.h from hint_gram.y"
+)
+
 set(LIBRARY_OUTPUT_PATH ${OGRACDB_LIB})
 
 aux_source_directory(. SQL_SRC)
@@ -58,7 +110,14 @@ set(SQL_ALL_SRC
         ${SQL_DDL_PARSER_SRC}
         ${SQL_VERIFIER_SRC}
         ${SQL_PLAN_SRC}
-	${SQL_GDV_SRC}
+        ${SQL_GDV_SRC}
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.inc
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/kwlist_d.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.inc
         )
 
 link_directories(${OGRACDB_LIB} ${PCRE_LIB_PATH} ${VPP_LIB_PATH} ${Z_LIB_PATH})

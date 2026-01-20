@@ -196,18 +196,34 @@ status_t sql_parse_create(sql_stmt_t *stmt)
 
     switch ((uint32)word.id) {
         case KEY_WORD_DATABASE:
-            status = sql_create_database_lead(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_create_database_lead(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case RES_WORD_USER:
-            status = sql_parse_create_user(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_create_user(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             OG_RETURN_IFERR(sql_clear_origin_sql_if_error(stmt, status));
             break;
         case KEY_WORD_ROLE:
-            status = sql_parse_create_role(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_create_role(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             OG_RETURN_IFERR(sql_clear_origin_sql_if_error(stmt, status));
             break;
         case KEY_WORD_TENANT:
-            status = sql_parse_create_tenant(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_create_tenant(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_TABLE:
             status = sql_parse_create_table(stmt, OG_FALSE, OG_FALSE);
@@ -822,19 +838,35 @@ status_t sql_parse_ddl(sql_stmt_t *stmt, key_wid_t wid)
             status = sql_parse_create(stmt);
             break;
         case KEY_WORD_DROP:
-            status = sql_parse_drop(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_drop(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_TRUNCATE:
-            status = sql_parse_truncate(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_truncate(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_FLASHBACK:
-            status = sql_parse_flashback(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_flashback(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_PURGE:
             status = sql_parse_purge(stmt);
             break;
         case KEY_WORD_COMMENT:
-            status = sql_parse_comment(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_comment(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_GRANT:
             status = sql_parse_grant(stmt);
@@ -843,7 +875,11 @@ status_t sql_parse_ddl(sql_stmt_t *stmt, key_wid_t wid)
             status = sql_parse_revoke(stmt);
             break;
         case KEY_WORD_ANALYZE:
-            status = sql_parse_analyze(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_analyze(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         default:
             status = sql_parse_ddl_alter(stmt);

@@ -60,5 +60,6 @@ status_t sql_create_cond_from_text(sql_stmt_t *stmt, sql_text_t *text, cond_tree
 status_t sql_create_const_expr_false(sql_stmt_t *stmt, expr_tree_t **expr, word_t *word, int32 val);
 status_t sql_check_select_expr(sql_stmt_t *stmt, sql_text_t *text, bool32 *is_select);
 status_t sql_parse_in_subselect(sql_stmt_t *stmt, expr_tree_t **expr, word_t *word);
+status_t sql_conver_not_node(sql_stmt_t *stmt, cond_node_t *node);
 
 #endif

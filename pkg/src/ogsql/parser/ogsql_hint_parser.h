@@ -14,30 +14,31 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * ogsql_insert_parser.h
+ * ogsql_hint_parser.h
  *
  *
  * IDENTIFICATION
- * src/ogsql/parser/ogsql_insert_parser.h
+ * src/ogsql/parser/ogsql_hint_parser.h
  *
  * -------------------------------------------------------------------------
  */
-#ifndef __SQL_INSERT_PARSER_H__
-#define __SQL_INSERT_PARSER_H__
+#ifndef __HINT_PARSER_H__
+#define __HINT_PARSER_H__
 
 #include "dml_parser.h"
+#include "expr_parser.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-status_t sql_create_insert_context(sql_stmt_t *stmt, sql_text_t *sql, sql_insert_t **insert_context);
-status_t sql_init_insert(sql_stmt_t *stmt, sql_insert_t *insert_context);
-status_t sql_try_parse_insert_columns(sql_stmt_t *stmt, sql_insert_t *insert_context, word_t *word);
-status_t sql_parse_insert_column_quote_info(word_t *word, column_value_pair_t *pair);
-status_t sql_convert_insert_column(sql_stmt_t *stmt, sql_insert_t *insert_context, word_t *word, sql_text_t *column);
-status_t sql_try_parse_insert_select(sql_stmt_t *stmt, sql_insert_t *insert_context, word_t *word, bool32 *result);
-status_t sql_parse_insert_values(sql_stmt_t *stmt, sql_insert_t *insert_context, word_t *word);
-void set_insert_ctx(sql_insert_t *insert_context, uint32 num);
+#define HINT_START "/*+"
+
+status_t og_alloc_hint(sql_stmt_t *stmt, hint_info_t **hint_info);
+void og_get_hint_info(sql_stmt_t *stmt, const char* hints, hint_info_t **hint_info);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

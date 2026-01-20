@@ -319,7 +319,7 @@ ID
 
 SQL> INSERT INTO T_AUTO_INCREMENT VALUES(0);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_48, duplicate key 9223372036854775807
+OG-00729, Unique constraint violated, index _PK_SYS_1_53, duplicate key 9223372036854775807
 SQL>
 SQL> DROP TABLE T_AUTO_INCREMENT;
 

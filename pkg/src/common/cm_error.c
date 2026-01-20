@@ -1585,6 +1585,9 @@ status_t cm_set_plc_error(const char *file, uint32 line, og_errno_t code, const 
 #else
     last_file = strrchr(file, '/');
 #endif
+    if (last_file == NULL) {
+        last_file = (char *)file;
+    }
 
     // return value of security fuction snpritf_s/vsnprintf_s which in cm_error.c or cm_log.c can be void
     int32 rc_memzero = vsnprintf_s(log_msg, OG_MAX_LOG_CONTENT_LENGTH, OG_MAX_LOG_CONTENT_LENGTH - 1, format, args);

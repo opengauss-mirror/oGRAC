@@ -28,6 +28,7 @@
 #include "ogsql_select_parser.h"
 #include "pivot_parser.h"
 #include "cond_parser.h"
+#include "table_parser.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -253,7 +254,7 @@ status_t sql_decode_object_name(sql_stmt_t *stmt, word_t *word, sql_text_t *user
     return OG_SUCCESS;
 }
 
-static status_t sql_try_match_withas_table(sql_stmt_t *stmt, sql_table_t *query_table, bool32 *is_withas_table)
+status_t sql_try_match_withas_table(sql_stmt_t *stmt, sql_table_t *query_table, bool32 *is_withas_table)
 {
     sql_withas_t *sql_withas = NULL;
     sql_withas_factor_t *factor = NULL;
@@ -589,9 +590,6 @@ static status_t sql_try_parse_table_attribute(sql_stmt_t *stmt, word_t *word, sq
 
     return OG_SUCCESS;
 }
-
-static status_t sql_create_query_table(sql_stmt_t *stmt, sql_array_t *tables, sql_join_assist_t *join_ass,
-                                       sql_table_t *query_table, word_t *word);
 
 #define IS_INCLUDE_SPEC_WORD(word)                                                                             \
     (((*(word)).id == KEY_WORD_LEFT) || ((*(word)).id == KEY_WORD_RIGHT) || ((*(word)).id == KEY_WORD_FULL) || \
@@ -1018,7 +1016,7 @@ static status_t sql_create_query_table_in_bracket(sql_stmt_t *stmt, sql_array_t 
     return sql_parse_table_with_join(stmt, tables, query_table, word, join_assist);
 }
 
-static void sql_init_json_table_info(sql_stmt_t *stmt, json_table_info_t *json_info)
+void sql_init_json_table_info(sql_stmt_t *stmt, json_table_info_t *json_info)
 {
     json_info->data_expr = NULL;
     json_info->json_error_info.default_value = NULL;
@@ -1043,7 +1041,7 @@ static status_t sql_create_json_table(sql_stmt_t *stmt, sql_table_t *table, word
     return OG_SUCCESS;
 }
 
-static status_t sql_create_query_table(sql_stmt_t *stmt, sql_array_t *tables, sql_join_assist_t *join_ass,
+status_t sql_create_query_table(sql_stmt_t *stmt, sql_array_t *tables, sql_join_assist_t *join_ass,
     sql_table_t *query_table, word_t *word)
 {
     if (IS_VARIANT(word)) {
@@ -1378,7 +1376,7 @@ static status_t sql_parse_join(sql_stmt_t *stmt, sql_array_t *tables, sql_join_a
     return OG_SUCCESS;
 }
 
-static status_t sql_remove_join_table(sql_stmt_t *stmt, sql_query_t *query)
+status_t sql_remove_join_table(sql_stmt_t *stmt, sql_query_t *query)
 {
     sql_array_t new_tables;
 
@@ -1408,7 +1406,7 @@ static void sql_traverse_join_tree_set_nullable(sql_join_node_t *node)
     return;
 }
 
-static void sql_parse_join_set_table_nullable(sql_join_node_t *node)
+void sql_parse_join_set_table_nullable(sql_join_node_t *node)
 {
     if (node->type == JOIN_TYPE_NONE) {
         return;
@@ -1524,6 +1522,24 @@ status_t sql_set_table_qb_name(sql_stmt_t *stmt, sql_query_t *query)
         OG_RETURN_IFERR(sql_copy_text(stmt->context, &query->block_info->origin_name, &table->qb_name));
     }
     return OG_SUCCESS;
+}
+
+uint32 sql_outer_join_count(sql_join_node_t *join_node)
+{
+    if (join_node->type == JOIN_TYPE_NONE) {
+        return 0;
+    }
+
+    uint32 res = 0;
+
+    if (join_node->type == JOIN_TYPE_LEFT || join_node->type == JOIN_TYPE_RIGHT || join_node->type == JOIN_TYPE_FULL) {
+        res++;
+    }
+
+    res += sql_outer_join_count(join_node->left);
+    res += sql_outer_join_count(join_node->right);
+
+    return res;
 }
 
 #ifdef __cplusplus

@@ -1026,7 +1026,7 @@ static status_t sql_convert_cmp_node(cmp_node_t *cmp)
     return OG_SUCCESS;
 }
 
-static status_t sql_conver_not_node(sql_stmt_t *stmt, cond_node_t *node)
+status_t sql_conver_not_node(sql_stmt_t *stmt, cond_node_t *node)
 {
     OG_RETURN_IFERR(sql_stack_safe(stmt));
     switch (node->type) {

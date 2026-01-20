@@ -39,9 +39,19 @@ status_t sql_parse_order_by(sql_stmt_t *stmt, sql_query_t *query, word_t *word);
 status_t sql_verify_limit_offset(sql_stmt_t *stmt, limit_item_t *limit_item);
 status_t sql_parse_limit_offset(sql_stmt_t *stmt, limit_item_t *limit_item, word_t *word);
 status_t sql_init_join_assist(sql_stmt_t *stmt, sql_join_assist_t *join_ass);
+status_t sql_build_set_select_context(sql_stmt_t *stmt, sql_select_t **ctx, sql_select_t *left_ctx,
+    sql_select_t *right_ctx, select_node_type_t type);
 status_t sql_parse_select_context(sql_stmt_t *stmt, select_type_t type, word_t *word, sql_select_t **select_ctx);
 status_t sql_create_select_context(sql_stmt_t *stmt, sql_text_t *sql, select_type_t type, sql_select_t **select_ctx);
 status_t sql_alloc_select_context(sql_stmt_t *stmt, select_type_t type, sql_select_t **select_ctx);
 status_t sql_set_origin_query_block_name(sql_stmt_t *stmt, sql_query_t *query);
+status_t sql_create_target_entry(sql_stmt_t *stmt, query_column_t **column, expr_tree_t *expr, char *scanbuf,
+    uint32 alias_len, bool indicate);
+status_t sql_build_select_context(sql_stmt_t *stmt, sql_select_t **ctx, galist_t *columns,
+    sql_join_node_t *input_table, source_location_t select_loc, source_location_t from_loc);
+status_t sql_extract_group_cube(sql_stmt_t *stmt, galist_t *items, galist_t *group_sets);
+status_t sql_extract_group_rollup(sql_stmt_t *stmt, galist_t *items, galist_t *group_sets);
+status_t sql_cartesin_one_group_set(sql_stmt_t *stmt, galist_t *group_sets, group_set_t *group_set,
+    galist_t *result);
 
 #endif

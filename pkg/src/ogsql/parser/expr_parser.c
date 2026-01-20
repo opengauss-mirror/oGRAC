@@ -234,6 +234,104 @@ static status_t sql_parse_size(lex_t *lex, uint16 max_size, bool32 is_requred, t
     return OG_SUCCESS;
 }
 
+static status_t sql_parse_size_bison(type_word_t *type_word, uint16 max_size, bool32 is_requred, typmode_t *type,
+    datatype_wid_t datatype_id)
+{
+    int32 size;
+
+     // if no typemode found, i.e., the size is not specified
+    if (type_word->typemode == NULL || type_word->typemode->count == 0) {
+        if (is_requred) { // but the size must be specified, then throw an error
+            OG_SRC_THROW_ERROR(type_word->loc, ERR_SQL_SYNTAX_ERROR, "the column size must be specified");
+            return OG_ERROR;
+        }
+        type->size = 1;
+        return OG_SUCCESS;
+    }
+
+    // try get char or byte attr
+    if (type->datatype == OG_TYPE_CHAR || type->datatype == OG_TYPE_VARCHAR) {
+        type->is_char = type_word->is_char;
+    }
+
+    if (type_word->typemode->count != 1) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR,
+            "only support 1 type modifiers, but %u found", type_word->typemode->count);
+        return OG_ERROR;
+    }
+
+    expr_tree_t *expr = (expr_tree_t *)cm_galist_get(type_word->typemode, 0);
+    if (expr->root->type != EXPR_NODE_CONST || expr->root->value.type != OG_TYPE_INTEGER) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "int const modifiers expected");
+        return OG_ERROR;
+    }
+    size = expr->root->value.v_int;
+    if (size <= 0 || size > (int32)max_size) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "size value must between 1 and %u", max_size);
+        return OG_ERROR;
+    }
+
+    type->size = (uint16)size;
+    return OG_SUCCESS;
+}
+
+static status_t sql_parse_precision_bison(type_word_t *type_word, typmode_t *type)
+{
+    expr_tree_t *expr = NULL;
+    int32 precision;
+    int32 scale; // to avoid overflow
+
+    if (type_word->typemode == NULL || type_word->typemode->count == 0)  { // both precision and scale are not specified
+        type->precision = OG_UNSPECIFIED_NUM_PREC; /* *< 0 stands for precision is not defined when create table */
+        type->scale = OG_UNSPECIFIED_NUM_SCALE;
+        type->size = OG_IS_NUMBER2_TYPE(type->datatype) ? (uint16)MAX_DEC2_BYTE_SZ : (uint16)MAX_DEC_BYTE_SZ;
+        return OG_SUCCESS;
+    }
+
+    /* 2 means a precision value and a scanle value */
+    if (type_word->typemode->count > 2) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR,
+            "only support 2 type modifiers, but %u found", type_word->typemode->count);
+        return OG_ERROR;
+    }
+
+    for (int i = 0; i < type_word->typemode->count; i++) {
+        expr_tree_t *expr = (expr_tree_t *)cm_galist_get(type_word->typemode, i);
+        if (expr->root->type != EXPR_NODE_CONST || expr->root->value.type != OG_TYPE_INTEGER) {
+            OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "int const modifiers expected");
+            return OG_ERROR;
+        }
+    }
+    expr = (expr_tree_t *)cm_galist_get(type_word->typemode, 0);
+    precision = expr->root->value.v_int;
+
+    if (precision < OG_MIN_NUM_PRECISION || precision > OG_MAX_NUM_PRECISION) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "precision must between %d and %d",
+            OG_MIN_NUM_PRECISION, OG_MAX_NUM_PRECISION);
+        return OG_ERROR;
+    }
+    type->precision = (uint8)precision;
+    type->size = OG_IS_NUMBER2_TYPE(type->datatype) ? (uint16)MAX_DEC2_BYTE_BY_PREC(type->precision) :
+                                                      (uint16)MAX_DEC_BYTE_BY_PREC(type->precision);
+
+    if (type_word->typemode->count == 1) { // Only the precision is specified and the scale is not specified
+        type->scale = 0;       // then the scale is 0
+        return OG_SUCCESS;
+    }
+
+    expr = (expr_tree_t *)cm_galist_get(type_word->typemode, 1);
+    scale = expr->root->value.v_int;
+    int32 min_scale = OG_MIN_NUM_SCALE;
+    int32 max_scale = OG_MAX_NUM_SCALE;
+    if (scale > max_scale || scale < min_scale) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR,
+            "numeric scale specifier is out of range (%d to %d)", min_scale, max_scale);
+        return OG_ERROR;
+    }
+    type->scale = (int8)scale;
+    return OG_SUCCESS;
+}
+
 static status_t sql_parse_precision(lex_t *lex, typmode_t *type)
 {
     bool32 result = OG_FALSE;
@@ -289,6 +387,58 @@ static status_t sql_parse_precision(lex_t *lex, typmode_t *type)
     if (scale > max_scale || scale < min_scale) {
         OG_SRC_THROW_ERROR_EX(word.text.loc, ERR_SQL_SYNTAX_ERROR, "numeric scale specifier is out of range (%d to %d)",
             min_scale, max_scale);
+        return OG_ERROR;
+    }
+    type->scale = (int8)scale;
+    return OG_SUCCESS;
+}
+
+static status_t sql_parse_real_mode_bison(type_word_t *type_word, pmode_t pmod, typmode_t *type)
+{
+    int32 precision;
+    int32 scale; // to avoid overflow
+    type->size = sizeof(double);
+
+    // both precision and scale are not specified
+    if (pmod == PM_PL_ARG || type_word->typemode == NULL || type_word->typemode->count == 0) {
+        type->precision = OG_UNSPECIFIED_REAL_PREC; /* *< 0 stands for precision is not defined when create table */
+        type->scale = OG_UNSPECIFIED_REAL_SCALE;
+        return OG_SUCCESS;
+    }
+
+    /* 2 means a precision value and a scanle value */
+    if (type_word->typemode->count > 2) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR,
+            "only support 2 type modifiers, but %u found", type_word->typemode->count);
+        return OG_ERROR;
+    }
+
+    for (int i = 0; i < type_word->typemode->count; i++) {
+        expr_tree_t *expr = (expr_tree_t *)cm_galist_get(type_word->typemode, i);
+        if (expr->root->type != EXPR_NODE_CONST || expr->root->value.type != OG_TYPE_INTEGER) {
+            OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "int const modifiers expected");
+            return OG_ERROR;
+        }
+    }
+    expr_tree_t *expr = (expr_tree_t *)cm_galist_get(type_word->typemode, 0);
+    precision = expr->root->value.v_int;
+    if (precision < OG_MIN_REAL_PRECISION || precision > OG_MAX_REAL_PRECISION) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "precision must between %d and %d",
+            OG_MIN_NUM_PRECISION, OG_MAX_NUM_PRECISION);
+        return OG_ERROR;
+    }
+    type->precision = (uint8)precision;
+
+    if (type_word->typemode->count == 1) { // Only the precision is specified and the scale is not specified
+        type->scale = 0;       // then the scale is 0
+        return OG_SUCCESS;
+    }
+
+    expr = (expr_tree_t *)cm_galist_get(type_word->typemode, 1);
+    scale = expr->root->value.v_int;
+    if (scale > OG_MAX_REAL_SCALE || scale < OG_MIN_REAL_SCALE) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "scale must between %d and %d", OG_MIN_REAL_SCALE,
+            OG_MAX_REAL_SCALE);
         return OG_ERROR;
     }
     type->scale = (int8)scale;
@@ -372,6 +522,40 @@ static inline status_t sql_parse_rough_precision(lex_t *lex, typmode_t *type)
     type->precision = OG_UNSPECIFIED_NUM_PREC; /* *< 0 stands for precision is not defined when create table */
     type->scale = OG_UNSPECIFIED_NUM_SCALE;
     type->size = OG_IS_NUMBER2_TYPE(type->datatype) ? MAX_DEC2_BYTE_SZ : MAX_DEC_BYTE_SZ;
+    return OG_SUCCESS;
+}
+
+/**
+ * Parse the precision of a DATATIME or INTERVAL datatype
+ * The specified precision must be between *min_prec* and *max_prec*.
+ * If it not specified, then the default value is used
+ */
+static status_t sql_parse_datetime_precision_bison(galist_t *typemode, source_location_t loc, int32 *val_int32,
+    int32 def_prec, int32 min_prec, int32 max_prec, const char *field_name)
+{
+    if (typemode == NULL || typemode->count == 0) {
+        *val_int32 = def_prec;
+        return OG_SUCCESS;
+    }
+
+    if (typemode->count != 1) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR,
+            "only support 1 type modifiers, but %u found", typemode->count);
+        return OG_ERROR;
+    }
+
+    expr_tree_t *expr = (expr_tree_t *)cm_galist_get(typemode, 0);
+    if (expr->root->type != EXPR_NODE_CONST || expr->root->value.type != OG_TYPE_INTEGER) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "int const modifiers expected");
+        return OG_ERROR;
+    }
+    *val_int32 = expr->root->value.v_int;
+    if (*val_int32 < min_prec || *val_int32 > max_prec) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "%s precision must be between %d and %d", field_name,
+            min_prec, max_prec);
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 
@@ -469,6 +653,40 @@ static status_t sql_parse_second_precision(lex_t *lex, int32 *lead_prec, int32 *
 
     lex_pop(lex);
     return status;
+}
+
+static status_t sql_parse_timestamp_mod_bison(type_word_t *type_word, typmode_t *type, pmode_t pmod,
+    word_t *word)
+{
+    int32 prec_val = OG_MAX_DATETIME_PRECISION;
+
+    type->datatype = OG_TYPE_TIMESTAMP;
+
+    if (pmod != PM_PL_ARG) {
+        if (sql_parse_datetime_precision_bison(type_word->typemode, type_word->loc, &prec_val,
+            OG_DEFAULT_DATETIME_PRECISION, OG_MIN_DATETIME_PRECISION, OG_MAX_DATETIME_PRECISION,
+            "timestamp") != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    type->precision = (uint8)prec_val;
+    type->scale = 0;
+    type->size = sizeof(timestamp_t);
+    if (type_word->timezone == WITHOUT_TIMEZONE) {
+        return OG_SUCCESS;
+    }
+
+    if (type_word->timezone == WITH_LOCAL_TIMEZONE) {
+        type->datatype = OG_TYPE_TIMESTAMP_LTZ;
+        word->id = DTYP_TIMESTAMP_LTZ;
+    } else {
+        type->datatype = OG_TYPE_TIMESTAMP_TZ;
+        type->size = sizeof(timestamp_tz_t);
+        word->id = DTYP_TIMESTAMP_TZ;
+    }
+
+    return OG_SUCCESS;
 }
 
 static inline status_t sql_parse_timestamp_mod(lex_t *lex, typmode_t *type, pmode_t pmod, word_t *word)
@@ -613,6 +831,82 @@ static inline status_t sql_parse_interval_literal(lex_t *lex, typmode_t *type, u
     if (pfmt != NULL) {
         (*pfmt) = itvl_fmt;
     }
+    return OG_SUCCESS;
+}
+
+/**
+ * Further distinguish two INTERVAL datatypes, with syntax:
+ * INTERVAL  YEAR [( year_precision)]  TO  MONTH
+ * INTERVAL  DAY [( day_precision)]  TO  SECOND[( fractional_seconds_precision)]
+ */
+static status_t sql_parse_interval_attr_bison(type_word_t *type_word, typmode_t *type, word_t *word,
+    datatype_wid_t dwid)
+{
+    int32 prec;
+
+    if (dwid == DTYP_INTERVAL_YM) {
+        // parse year_precision
+        if (sql_parse_datetime_precision_bison(type_word->typemode, type_word->loc, &prec, ITVL_DEFAULT_YEAR_PREC,
+            ITVL_MIN_YEAR_PREC, ITVL_MAX_YEAR_PREC, "YEAR") != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        type->year_prec = (uint8)prec;
+        type->reserved = 0;
+        type->datatype = OG_TYPE_INTERVAL_YM;
+        type->size = sizeof(interval_ym_t);
+        word->id = DTYP_INTERVAL_YM;
+    } else {
+        // parse day_precision
+        if (sql_parse_datetime_precision_bison(type_word->typemode, type_word->loc, &prec, ITVL_DEFAULT_DAY_PREC,
+            ITVL_MIN_DAY_PREC, ITVL_MAX_DAY_PREC, "DAY") != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        type->day_prec = (uint8)prec;
+        // parse fractional_seconds_precision
+        if (sql_parse_datetime_precision_bison(type_word->second_typemde, type_word->loc, &prec,
+            ITVL_DEFAULT_SECOND_PREC, ITVL_MIN_SECOND_PREC, ITVL_MAX_SECOND_PREC, "SECOND") != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        type->frac_prec = (uint8)prec;
+        type->datatype = OG_TYPE_INTERVAL_DS;
+        type->size = sizeof(interval_ds_t);
+        word->id = DTYP_INTERVAL_DS;
+    }
+
+    return OG_SUCCESS;
+}
+
+/**
+ * Further distinguish two INTERVAL datatypes, with syntax:
+ * INTERVAL  YEAR TO  MONTH
+ * INTERVAL  DAY TO  SECOND
+ *
+ * @see sql_parse_rough_precision
+ */
+static status_t sql_parse_rough_interval_attr_bison(type_word_t *type_word, typmode_t *type, word_t *word,
+    datatype_wid_t dwid)
+{
+    if (type_word->typemode != NULL || type_word->second_typemde != NULL) {
+        OG_SRC_THROW_ERROR_EX(type_word->loc, ERR_SQL_SYNTAX_ERROR, "don't support any type modifiers");
+        return OG_ERROR;
+    }
+    if (dwid == DTYP_INTERVAL_YM) {
+        // set year_precision
+        type->year_prec = (uint8)ITVL_MAX_YEAR_PREC;
+        type->reserved = 0;
+        type->datatype = OG_TYPE_INTERVAL_YM;
+        type->size = sizeof(interval_ym_t);
+        word->id = DTYP_INTERVAL_YM;
+    } else {
+        // set day_precision
+        type->day_prec = (uint8)ITVL_MAX_DAY_PREC;
+        // set fractional_seconds_precision
+        type->frac_prec = (uint8)ITVL_MAX_SECOND_PREC;
+        type->datatype = OG_TYPE_INTERVAL_DS;
+        type->size = sizeof(interval_ds_t);
+        word->id = DTYP_INTERVAL_DS;
+    }
+
     return OG_SUCCESS;
 }
 
@@ -780,7 +1074,157 @@ static inline status_t sql_parse_varchar_mode(lex_t *lex, pmode_t pmod, typmode_
     if (pmod == PM_PL_ARG) {
         return sql_set_default_typmod(typmod, OG_MAX_STRING_LEN);
     }
-    return sql_parse_size(lex, (pmod == PM_NORMAL) ? OG_MAX_COLUMN_SIZE : OG_MAX_STRING_LEN, OG_TRUE, typmod, dword_id);
+    return sql_parse_size(lex, (pmod == PM_NORMAL) ? OG_MAX_COLUMN_SIZE : OG_MAX_STRING_LEN, OG_TRUE, typmod,
+        dword_id);
+}
+
+static inline status_t sql_parse_varchar_mode_bison(type_word_t *type_word, pmode_t pmod, typmode_t *typmod,
+    datatype_wid_t dword_id)
+{
+    if (pmod == PM_PL_ARG) {
+        return sql_set_default_typmod(typmod, OG_MAX_STRING_LEN);
+    }
+    return sql_parse_size_bison(type_word, (pmod == PM_NORMAL) ? OG_MAX_COLUMN_SIZE : OG_MAX_STRING_LEN,
+        OG_TRUE, typmod, dword_id);
+}
+
+static status_t sql_parse_orcl_typmod_bison(type_word_t *type, pmode_t pmod, typmode_t *typmode, word_t *typword)
+{
+    datatype_wid_t dword_id = (datatype_wid_t)typword->id;
+    switch (dword_id) {
+        case DTYP_BIGINT:
+        case DTYP_UBIGINT:
+        case DTYP_INTEGER:
+        case DTYP_UINTEGER:
+        case DTYP_SMALLINT:
+        case DTYP_USMALLINT:
+        case DTYP_TINYINT:
+        case DTYP_UTINYINT:
+            typmode->datatype = OG_TYPE_NUMBER;
+            typmode->precision = OG_MAX_NUM_PRECISION;
+            typmode->scale = 0;
+            typmode->size = MAX_DEC_BYTE_BY_PREC(OG_MAX_NUM_PRECISION);
+            return OG_SUCCESS;
+
+        case DTYP_BOOLEAN:
+            typmode->datatype = OG_TYPE_BOOLEAN;
+            typmode->size = sizeof(bool32);
+            return OG_SUCCESS;
+
+        case DTYP_DOUBLE:
+        case DTYP_FLOAT:
+        case DTYP_NUMBER:
+        case DTYP_DECIMAL:
+            typmode->datatype = OG_TYPE_NUMBER;
+            return (pmod != PM_PL_ARG) ? sql_parse_precision_bison(type, typmode) :
+                sql_parse_rough_precision(NULL, typmode);
+        case DTYP_NUMBER2:
+            typmode->datatype = OG_TYPE_NUMBER2;
+            return (pmod != PM_PL_ARG) ? sql_parse_precision_bison(type, typmode) :
+                sql_parse_rough_precision(NULL, typmode);
+
+        case DTYP_BINARY:
+            typmode->datatype = g_instance->sql.string_as_hex_binary ? OG_TYPE_RAW : OG_TYPE_BINARY;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_FALSE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_VARBINARY:
+            typmode->datatype = g_instance->sql.string_as_hex_binary ? OG_TYPE_RAW : OG_TYPE_VARBINARY;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_TRUE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_RAW:
+            typmode->datatype = OG_TYPE_RAW;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_FALSE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_CHAR:
+            typmode->datatype = OG_TYPE_CHAR;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_FALSE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_VARCHAR:
+            typmode->datatype = OG_TYPE_VARCHAR;
+            return sql_parse_varchar_mode_bison(type, pmod, typmode, dword_id);
+
+        case DTYP_DATE:
+            typmode->datatype = OG_TYPE_DATE;
+            typmode->size = sizeof(date_t);
+            return OG_SUCCESS;
+
+        case DTYP_TIMESTAMP:
+            return sql_parse_timestamp_mod_bison(type, typmode, pmod, typword);
+
+        case DTYP_INTERVAL_DS:
+        case DTYP_INTERVAL_YM:
+            return (pmod != PM_PL_ARG) ? sql_parse_interval_attr_bison(type, typmode, typword, dword_id) :
+                                         sql_parse_rough_interval_attr_bison(type, typmode, typword, dword_id);
+
+        case DTYP_BINARY_DOUBLE:
+        case DTYP_BINARY_FLOAT:
+            typmode->datatype = OG_TYPE_REAL;
+            typmode->size = sizeof(double);
+            return OG_SUCCESS;
+
+        case DTYP_BINARY_UINTEGER:
+            typmode->datatype = OG_TYPE_UINT32;
+            typmode->size = sizeof(uint32);
+            return OG_SUCCESS;
+        case DTYP_BINARY_INTEGER:
+            typmode->datatype = OG_TYPE_INTEGER;
+            typmode->size = sizeof(int32);
+            return OG_SUCCESS;
+
+        case DTYP_SERIAL:
+        case DTYP_BINARY_BIGINT:
+            typmode->datatype = OG_TYPE_BIGINT;
+            typmode->size = sizeof(int64);
+            return OG_SUCCESS;
+
+        case DTYP_BLOB: {
+            typmode->datatype = OG_TYPE_BLOB;
+            return sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+        }
+
+        case DTYP_CLOB: {
+            typmode->datatype = OG_TYPE_CLOB;
+            return sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+        }
+
+        case DTYP_IMAGE:
+            typmode->datatype = OG_TYPE_IMAGE;
+            return sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_NVARCHAR:
+            typmode->datatype = OG_TYPE_VARCHAR;
+            OG_RETURN_IFERR(sql_parse_varchar_mode_bison(type, pmod, typmode, dword_id));
+            typmode->is_char = OG_TRUE;
+            return OG_SUCCESS;
+
+        case DTYP_NCHAR:
+            typmode->datatype = OG_TYPE_CHAR;
+            if (pmod != PM_PL_ARG) {
+                OG_RETURN_IFERR(sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_FALSE, typmode, dword_id));
+            } else {
+                OG_RETURN_IFERR(sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE));
+            }
+
+            typmode->is_char = OG_TRUE;
+            return OG_SUCCESS;
+
+        case DTYP_BINARY_UBIGINT:
+            OG_SRC_THROW_ERROR(typword->loc, ERR_CAPABILITY_NOT_SUPPORT, "datatype");
+            return OG_ERROR;
+
+        default:
+            OG_SRC_THROW_ERROR_EX(typword->loc, ERR_SQL_SYNTAX_ERROR, "unrecognized datatype word: %s",
+                T2S(&typword->text.value));
+            return OG_ERROR;
+    }
 }
 
 static status_t sql_parse_orcl_typmod(lex_t *lex, pmode_t pmod, typmode_t *typmode, word_t *typword)
@@ -1065,6 +1509,185 @@ static status_t sql_parse_native_typmod(lex_t *lex, pmode_t pmod, typmode_t *typ
             return OG_ERROR;
     }
 }
+
+static status_t sql_parse_native_typmod_bison(char *user, type_word_t *type, pmode_t pmod,
+    typmode_t *typmode, word_t *typword)
+{
+    text_t curr_user;
+    status_t status;
+    datatype_wid_t dword_id = (datatype_wid_t)typword->id;
+    switch (dword_id) {
+        case DTYP_UINTEGER:
+        case DTYP_BINARY_UINTEGER:
+            typmode->datatype = OG_TYPE_UINT32;
+            typmode->size = sizeof(uint32);
+            return OG_SUCCESS;
+        case DTYP_USMALLINT:
+        case DTYP_UTINYINT:
+        case DTYP_SMALLINT:
+        case DTYP_TINYINT:
+        case DTYP_INTEGER:
+        case DTYP_PLS_INTEGER:
+        case DTYP_BINARY_INTEGER:
+            typmode->datatype = OG_TYPE_INTEGER;
+            typmode->size = sizeof(int32);
+            return OG_SUCCESS;
+
+        case DTYP_BOOLEAN:
+            typmode->datatype = OG_TYPE_BOOLEAN;
+            typmode->size = sizeof(bool32);
+            return OG_SUCCESS;
+
+        case DTYP_NUMBER:
+            typmode->datatype = OG_TYPE_NUMBER;
+            status = (pmod != PM_PL_ARG) ? sql_parse_precision_bison(type, typmode) :
+                sql_parse_rough_precision(NULL, typmode);
+            OG_RETURN_IFERR(status);
+            curr_user.str = user;
+            curr_user.len = (uint32)strlen(user);
+            sql_try_match_type_map(&curr_user, typmode);
+            return status;
+
+        case DTYP_NUMBER2:
+            typmode->datatype = OG_TYPE_NUMBER2;
+            return (pmod != PM_PL_ARG) ? sql_parse_precision_bison(type, typmode) :
+                sql_parse_rough_precision(NULL, typmode);
+
+        case DTYP_DECIMAL:
+            typmode->datatype = OG_TYPE_NUMBER;
+            return (pmod != PM_PL_ARG) ? sql_parse_precision_bison(type, typmode) :
+                sql_parse_rough_precision(NULL, typmode);
+
+        case DTYP_BINARY:
+            typmode->datatype = g_instance->sql.string_as_hex_binary ? OG_TYPE_RAW : OG_TYPE_BINARY;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_TRUE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_VARBINARY:
+            typmode->datatype = g_instance->sql.string_as_hex_binary ? OG_TYPE_RAW : OG_TYPE_VARBINARY;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_TRUE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_RAW:
+            typmode->datatype = OG_TYPE_RAW;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_TRUE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_CHAR:
+            typmode->datatype = OG_TYPE_CHAR;
+            return (pmod != PM_PL_ARG) ?
+                    sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_FALSE, typmode, dword_id) :
+                    sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_VARCHAR:
+        case DTYP_STRING:
+            typmode->datatype = OG_TYPE_VARCHAR;
+            return sql_parse_varchar_mode_bison(type, pmod, typmode, dword_id);
+
+        case DTYP_DATE:
+            typmode->datatype = OG_TYPE_DATE;
+            typmode->size = sizeof(date_t);
+            return OG_SUCCESS;
+
+        case DTYP_TIMESTAMP:
+            return sql_parse_timestamp_mod_bison(type, typmode, pmod, typword);
+
+        case DTYP_INTERVAL_DS:
+        case DTYP_INTERVAL_YM:
+            return (pmod != PM_PL_ARG) ? sql_parse_interval_attr_bison(type, typmode, typword, dword_id) :
+                                         sql_parse_rough_interval_attr_bison(type, typmode, typword, dword_id);
+
+        case DTYP_DOUBLE:
+        case DTYP_FLOAT:
+            typmode->datatype = OG_TYPE_REAL;
+            return sql_parse_real_mode_bison(type, pmod, typmode);
+
+        case DTYP_BINARY_DOUBLE:
+        case DTYP_BINARY_FLOAT:
+            typmode->datatype = OG_TYPE_REAL;
+            typmode->size = sizeof(double);
+            typmode->precision = OG_UNSPECIFIED_REAL_PREC;
+            typmode->scale = OG_UNSPECIFIED_REAL_SCALE;
+            return OG_SUCCESS;
+
+        case DTYP_SERIAL:
+        case DTYP_BIGINT:
+        case DTYP_BINARY_BIGINT:
+            typmode->datatype = OG_TYPE_BIGINT;
+            typmode->size = sizeof(int64);
+            return OG_SUCCESS;
+
+        case DTYP_JSONB:
+        case DTYP_BLOB: {
+            typmode->datatype = OG_TYPE_BLOB;
+            return sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+        }
+
+        case DTYP_CLOB: {
+            typmode->datatype = OG_TYPE_CLOB;
+            return sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+        }
+
+        case DTYP_IMAGE:
+            typmode->datatype = OG_TYPE_IMAGE;
+            return sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE);
+
+        case DTYP_NVARCHAR:
+            typmode->datatype = OG_TYPE_VARCHAR;
+            OG_RETURN_IFERR(sql_parse_varchar_mode_bison(type, pmod, typmode, dword_id));
+            typmode->is_char = OG_TRUE;
+            return OG_SUCCESS;
+
+        case DTYP_NCHAR:
+            typmode->datatype = OG_TYPE_CHAR;
+            if (pmod != PM_PL_ARG) {
+                OG_RETURN_IFERR(sql_parse_size_bison(type, (uint16)OG_MAX_COLUMN_SIZE, OG_FALSE, typmode, dword_id));
+            } else {
+                OG_RETURN_IFERR(sql_set_default_typmod(typmode, OG_MAX_COLUMN_SIZE));
+            }
+
+            typmode->is_char = OG_TRUE;
+            return OG_SUCCESS;
+
+        case DTYP_UBIGINT:
+        case DTYP_BINARY_UBIGINT:
+            OG_SRC_THROW_ERROR(typword->loc, ERR_CAPABILITY_NOT_SUPPORT, "datatype");
+            return OG_ERROR;
+
+        default:
+            OG_SRC_THROW_ERROR_EX(typword->loc, ERR_SQL_SYNTAX_ERROR, "unrecognized datatype word: %s",
+                T2S(&typword->text.value));
+            return OG_ERROR;
+    }
+}
+
+static status_t sql_parse_typmode_bison(char *user, type_word_t *type, pmode_t pmod, typmode_t *typmod, word_t *typword)
+{
+    status_t status;
+    typmode_t tmode = { 0 };
+
+    if (USE_NATIVE_DATATYPE) {
+        status = sql_parse_native_typmod_bison(user, type, pmod, &tmode, typword);
+        OG_RETURN_IFERR(status);
+    } else {
+        status = sql_parse_orcl_typmod_bison(type, pmod, &tmode, typword);
+        OG_RETURN_IFERR(status);
+    }
+    if (OG_IS_STRING_TYPE(tmode.datatype)) {
+        tmode.charset = type->charset;
+        tmode.collate = type->collation;
+    }
+
+    if (typmod != NULL) {
+        *typmod = tmode;
+    }
+
+    return OG_SUCCESS;
+}
+
 
 status_t sql_parse_typmode(lex_t *lex, pmode_t pmod, typmode_t *typmod, word_t *typword)
 {
@@ -2401,6 +3024,391 @@ status_t sql_build_default_reserved_expr(sql_stmt_t *stmt, expr_tree_t **r_resul
 
     *r_result = reserved_expr;
     return sql_generate_expr(*r_result);
+}
+
+status_t sql_init_expr_node(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t **node,
+    og_type_t type, expr_node_type_t expr_type, source_location_t loc)
+{
+    if (sql_create_expr(stmt, expr) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)node) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    (*node)->owner = *expr;
+    (*node)->type = expr_type;
+    (*node)->unary = (*expr)->unary;
+    (*node)->loc = loc;
+    (*node)->dis_info.need_distinct = OG_FALSE;
+    (*node)->dis_info.idx = OG_INVALID_ID32;
+    (*node)->optmz_info = (expr_optmz_info_t) { OPTIMIZE_NONE, 0 };
+    (*node)->format_json = OG_FALSE;
+    (*node)->json_func_attr = (json_func_attr_t) { 0, 0 };
+    (*node)->typmod.is_array = 0;
+    (*node)->value.v_col.ss_start = OG_INVALID_ID32;
+    (*node)->value.v_col.ss_end = OG_INVALID_ID32;
+    (*node)->value.is_null = OG_FALSE;
+    (*node)->value.type = type;
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_int_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, int val, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    node->value.v_int = val;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_expr_tree(sql_stmt_t *stmt, expr_tree_t **expr, og_type_t type, expr_node_type_t expr_type,
+    source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, type, expr_type, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_float_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_NUMBER, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (cm_str_to_dec8(val, &node->value.v_dec) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_string_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_CHAR, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    uint32 len = strlen(val);
+    if (len > OG_MAX_COLUMN_SIZE) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_VALUE_ERROR, "constant string in SQL is too long, can not exceed %u",
+            OG_MAX_COLUMN_SIZE);
+        return OG_ERROR;
+    }
+
+    if (len == 0) {
+        if (g_instance->sql.enable_empty_string_null) {
+            // empty text is used as NULL like oracle
+            node->value.v_text.str = NULL;
+            node->value.v_text.len = 0;
+            node->value.is_null = OG_TRUE;
+            return OG_SUCCESS;
+        }
+    }
+
+    text_t src = {(char*)val, len};
+    OG_RETURN_IFERR(sql_copy_text_remove_quotes(stmt->context, (text_t *)&src, &node->value.v_text));
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_bool_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, bool32 val, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_RESERVED, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->value.v_res.res_id = val ? RES_WORD_TRUE : RES_WORD_FALSE;
+    node->value.v_res.namable = OG_FALSE;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_null_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_RESERVED, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->value.v_res.res_id = RES_WORD_NULL;
+    node->value.v_res.namable = OG_FALSE;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, galist_t *list,
+    source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_COLUMN, EXPR_NODE_COLUMN, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    var_word_t *var = &node->word;
+    if (list == NULL) {
+        var->column.name.value.str = (char*)val;
+        var->column.name.value.len = strlen(val);
+        var->column.ss_start = OG_INVALID_ID32;
+        var->column.ss_end = OG_INVALID_ID32;
+    } else {
+        uint32 list_count = list->count;
+        expr_tree_t *last_node = (expr_tree_t *)cm_galist_get(list, list_count - 1);
+        if (last_node->root->type == EXPR_NODE_ARRAY_INDICES) {
+            var->column.ss_start = last_node->root->word.column.ss_start;
+            var->column.ss_end = last_node->root->word.column.ss_end;
+            list_count--;
+        } else {
+            var->column.ss_start = OG_INVALID_ID32;
+            var->column.ss_end = OG_INVALID_ID32;
+        }
+        if (last_node->root->type == EXPR_NODE_STAR) {
+            node->type = EXPR_NODE_STAR;
+            (*expr)->star_loc.begin = last_node->star_loc.begin;
+            (*expr)->star_loc.end = last_node->star_loc.end;
+        }
+        switch (list_count) {
+            case 1:
+                var->column.table.value.str = (char*)val;
+                var->column.table.value.len = strlen(val);
+
+                var->column.name.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
+                break;
+            case 2:
+                var->column.user.value.str = (char*)val;
+                var->column.user.value.len = strlen(val);
+
+                var->column.table.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
+                var->column.name.value = ((expr_tree_t*)cm_galist_get(list, 1))->root->value.v_text;
+                break;
+            default:
+                return OG_ERROR;
+        }
+    }
+
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_indices_expr(sql_stmt_t *stmt, expr_tree_t **expr, int32 start, int32 end, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_ARRAY_INDICES, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->word.column.ss_start = start;
+    node->word.column.ss_end = end;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_paramref_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 token_len, lex_location_t lex_loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_PARAM, lex_loc.loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (IS_DDL(stmt) || IS_DCL(stmt)) {
+        OG_SRC_THROW_ERROR(lex_loc.loc, ERR_SQL_SYNTAX_ERROR, "param only allowed in dml or anonymous block or call");
+        return OG_ERROR;
+    }
+    if (stmt->context->params == NULL) {
+        OG_SRC_THROW_ERROR(lex_loc.loc, ERR_SQL_SYNTAX_ERROR, "Current position cannot use params");
+        return OG_ERROR;
+    }
+
+    VALUE(uint32, &node->value) = stmt->context->params->count;
+    sql_param_mark_t *param_mark = NULL;
+    if (cm_galist_new(stmt->context->params, sizeof(sql_param_mark_t), (void **)&param_mark) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    param_mark->offset = lex_loc.offset;
+    param_mark->len = token_len;
+    param_mark->pnid = stmt->context->pname_count++;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_case_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t* case_arg,
+    galist_t* case_pair, expr_tree_t* default_expr, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    case_expr_t *case_expr = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_CASE, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (sql_alloc_mem(stmt->context, sizeof(case_expr_t), (void **)&case_expr) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    case_expr->is_cond = case_arg == NULL;
+    case_expr->expr = case_arg;
+    case_expr->pairs = *case_pair;
+    case_expr->default_expr = default_expr;
+    VALUE(pointer_t, &node->value) = case_expr;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+status_t sql_expr_tree_to_cond_node(sql_stmt_t *stmt, expr_tree_t *expr, cond_node_t **node)
+{
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)node));
+    (*node)->type = COND_NODE_COMPARE;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&(*node)->cmp));
+
+    cmp_node_t *cmp_node = (*node)->cmp;
+
+    cmp_node->right = expr;
+    cmp_node->type = CMP_TYPE_NOT_EQUAL;
+
+    OG_RETURN_IFERR(sql_create_const_expr_false(stmt, &cmp_node->left, NULL, 0));
+    return OG_SUCCESS;
+}
+
+status_t sql_create_select_expr(sql_stmt_t *stmt, expr_tree_t **expr, sql_select_t *select_ctx, sql_array_t *array,
+    source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_SELECT, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (sql_array_put(array, select_ctx) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->value.v_obj.id = array->count - 1;
+    node->value.v_obj.ptr = select_ctx;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
+static status_t sql_parse_datatype_typemode_bison(char *user, type_word_t *type, typmode_t *v_type)
+{
+    word_t typword;
+    typword.text.str = type->str;
+    typword.text.len = strlen(type->str);
+    if (lex_try_match_datatype_bison(&typword) != OG_SUCCESS) {
+        OG_SRC_THROW_ERROR(type->loc, ERR_SQL_SYNTAX_ERROR, "Invalid datatype");
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(sql_parse_typmode_bison(user, type, PM_NORMAL, v_type, &typword));
+
+    /* array size is useless in this case */
+    v_type->is_array = type->is_array;
+    if (type->is_array && !cm_datatype_arrayable(v_type->datatype)) {
+        OG_THROW_ERROR(ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(v_type->datatype));
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_build_type_expr(sql_stmt_t *stmt, type_word_t *type, expr_tree_t *type_expr)
+{
+    typmode_t *v_type = &type_expr->root->value.v_type;
+    if (sql_parse_datatype_typemode_bison(stmt->session->db_user, type, v_type) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    type_expr->root->value.type = OG_TYPE_TYPMODE;
+    type_expr->root->typmod = *v_type;
+    type_expr->root->type = EXPR_NODE_CONST;
+    type_expr->loc = type->loc;
+    /* if cast to array type, e.g. '{1,2,3}'::int[], expression can NOT be optimized,
+    because we need temporay (rather than persistent) vm_lob pages to save the
+    array elements. Once optimized, the vm_lob page will be freed after the first
+    execution of statement, and next time we will get an invalid vm page, and this
+    must cause an error.
+    */
+    if (v_type->is_array != OG_TRUE) {
+        SQL_SET_OPTMZ_MODE(type_expr->root, OPTIMIZE_AS_CONST);
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_star_expr(sql_stmt_t *stmt, expr_tree_t **expr, lex_location_t loc)
+{
+    OG_RETURN_IFERR(sql_create_expr(stmt, expr));
+    expr_node_t **node = &(*expr)->root;
+
+    if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)node) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    (*node)->word.column.name.str = "*";
+    (*node)->word.column.name.len = 1;
+
+    (*node)->type = EXPR_NODE_STAR;
+    (*node)->loc = loc.loc;
+    (*expr)->star_loc.begin = loc.offset;
+    (*expr)->star_loc.end = loc.offset + 1;
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_prior_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t *column, source_location_t loc)
+{
+    OG_RETURN_IFERR(sql_create_expr(stmt, expr));
+    expr_node_t *node = NULL;
+
+    if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&node) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->type = EXPR_NODE_PRIOR;
+    node->loc = loc;
+    node->right = column;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
+status_t sql_create_reserved_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 res_id, bool32 namable,
+    source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_RESERVED, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    node->value.v_res.res_id = res_id;
+    node->value.v_res.namable = namable;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
 }
 
 #ifdef __cplusplus

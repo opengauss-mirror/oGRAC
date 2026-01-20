@@ -1843,3 +1843,323 @@ status_t sql_parse_alter_database_lead(sql_stmt_t *stmt)
         return sql_parse_alter_database(stmt);
     }
 }
+
+static status_t og_parse_createdb_user(sql_stmt_t *stmt, knl_database_def_t *def, createdb_user *user)
+{
+    text_t user_name;
+    size_t passwd_len;
+    char log_pwd[OG_PWD_BUFFER_SIZE] = {0};
+
+    if (strlen(def->sys_password) != 0) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "sys user is already defined");
+        return OG_ERROR;
+    }
+
+    user_name.str = user->user_name;
+    user_name.len = strlen(user->user_name);
+    if (!cm_text_str_equal(&user_name, "SYS")) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "user name SYS expected");
+        return OG_ERROR;
+    }
+
+    passwd_len = strlen(user->password);
+    if (passwd_len > OG_PASSWORD_BUFFER_SIZE - 1) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "The password length must be less than 512");
+        return OG_ERROR;
+    }
+
+    MEMS_RETURN_IFERR(memcpy_sp(def->sys_password, OG_PASSWORD_BUFFER_SIZE - 1, user->password, passwd_len));
+    def->sys_password[OG_PASSWORD_BUFFER_SIZE - 1] = '\0';
+
+    if (stmt->pl_exec == NULL && stmt->pl_compiler == NULL) { // can't modify sql in pl
+        if (passwd_len != 0) {
+            MEMS_RETURN_IFERR(memset_s(user->password, passwd_len, '*', passwd_len));
+        }
+    }
+
+    if (cm_check_pwd_black_list(GET_PWD_BLACK_CTX, SYS_USER_NAME, def->sys_password, log_pwd)) {
+        OG_THROW_ERROR_EX(ERR_PASSWORD_FORMAT_ERROR, "The password violates the pbl rule");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_createdb_controlfile(knl_database_def_t *def, galist_t *ctrlfiles)
+{
+    if (def->ctrlfiles.count != 0) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "CONTROLFILE is already defined");
+        return OG_ERROR;
+    }
+    return cm_galist_copy(&def->ctrlfiles, ctrlfiles);
+}
+
+static status_t og_parse_createdb_charset(sql_stmt_t *stmt, knl_database_def_t *def, char *charset)
+{
+    text_t raw;
+
+    if (def->charset.len != 0) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "CHARACTER SET is already defined");
+        return OG_ERROR;
+    }
+
+    raw.str = charset;
+    raw.len = strlen(charset);
+    if (sql_copy_text(stmt->context, (text_t *)&raw, &def->charset) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_createdb_space(knl_space_def_t *space_def, createdb_space *space)
+{
+    knl_device_def_t *dev_def = NULL;
+    status_t status;
+
+    if (space_def->datafiles.count != 0) {
+        return OG_ERROR;
+    }
+
+    for (uint32 i = 0; i < space->datafiles->count; i++) {
+        knl_device_def_t *cur = NULL;
+
+        dev_def = (knl_device_def_t*)cm_galist_get(space->datafiles, i);
+        for (uint32 j = 0; j < i; j++) {
+            cur = (knl_device_def_t*)cm_galist_get(space->datafiles, j);
+            if (cur != dev_def) {
+                if (cm_text_equal_ins(&dev_def->name, &cur->name)) {
+                    return OG_ERROR;
+                }
+            }
+
+            status = sql_check_filesize(&space_def->name, dev_def);
+            OG_RETURN_IFERR(status);
+        }
+    }
+    status = cm_galist_copy(&space_def->datafiles, space->datafiles);
+    OG_RETURN_IFERR(status);
+    space_def->in_memory = space->in_memory;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_node_undo_space(sql_stmt_t *stmt, dtc_node_def_t *node, createdb_space *space)
+{
+    char *name;
+    errno_t code;
+
+    if (sql_alloc_mem(stmt->context, OG_NAME_BUFFER_SIZE, (void **)&name) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    code = snprintf_s(name, OG_NAME_BUFFER_SIZE, OG_NAME_BUFFER_SIZE - 1, "UNDO_%02u", node->id);
+    PRTS_RETURN_IFERR(code);
+
+    node->undo_space.name.str = name;
+    node->undo_space.name.len = (uint32)strlen(name);
+    if (node->id == 0) {
+        node->undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_DEFAULT | SPACE_TYPE_NODE0;
+    } else {
+        node->undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_DEFAULT | SPACE_TYPE_NODE1;
+    }
+    return og_parse_createdb_space(&node->undo_space, space);
+}
+
+static status_t og_parse_node_logfiles(galist_t *logfiles, galist_t *list)
+{
+    if (logfiles->count != 0) {
+        return OG_ERROR;
+    }
+    return cm_galist_copy(logfiles, list);
+}
+
+static status_t og_parse_node_swap_space(sql_stmt_t *stmt, dtc_node_def_t *node, createdb_space *space)
+{
+    char *name;
+    errno_t code;
+
+    if (sql_alloc_mem(stmt->context, OG_NAME_BUFFER_SIZE, (void **)&name) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    code = snprintf_s(name, OG_NAME_BUFFER_SIZE, OG_NAME_BUFFER_SIZE - 1, "SWAP_%02u", node->id);
+    PRTS_RETURN_IFERR(code);
+
+    node->swap_space.name.str = name;
+    node->swap_space.name.len = (uint32)strlen(name);
+    if (node->id == 0) {
+        node->swap_space.type = SPACE_TYPE_TEMP | SPACE_TYPE_SWAP | SPACE_TYPE_DEFAULT | SPACE_TYPE_NODE0;
+    } else {
+        node->swap_space.type = SPACE_TYPE_TEMP | SPACE_TYPE_SWAP | SPACE_TYPE_DEFAULT | SPACE_TYPE_NODE1;
+    }
+    return og_parse_createdb_space(&node->swap_space, space);
+}
+
+static status_t og_parse_node_temp_undo_space(sql_stmt_t *stmt, dtc_node_def_t *node, createdb_space *space)
+{
+    char *name;
+    errno_t code;
+
+    if (sql_alloc_mem(stmt->context, OG_NAME_BUFFER_SIZE, (void **)&name) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    code = snprintf_s(name, OG_NAME_BUFFER_SIZE, OG_NAME_BUFFER_SIZE - 1, "TEMP_UNDO_%u1", node->id);
+    PRTS_RETURN_IFERR(code);
+
+    node->temp_undo_space.name.str = name;
+    node->temp_undo_space.name.len = (uint32)strlen(name);
+    if (node->id == 0) {
+        node->temp_undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_DEFAULT | SPACE_TYPE_TEMP | SPACE_TYPE_NODE0;
+    } else {
+        node->temp_undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_DEFAULT | SPACE_TYPE_TEMP | SPACE_TYPE_NODE1;
+    }
+    return og_parse_createdb_space(&node->temp_undo_space, space);
+}
+
+static status_t og_parse_createdb_instance(sql_stmt_t *stmt, knl_database_def_t *def, galist_t *node_list)
+{
+    dtc_node_def_t *node = NULL;
+    createdb_instance_node *inode = NULL;
+    createdb_opt *opt = NULL;
+
+    for (uint32 i = 0; i < node_list->count; i++) {
+        inode = (createdb_instance_node*)cm_galist_get(node_list, i);
+        if (inode->id != i) {
+            return OG_ERROR;
+        }
+
+        if (cm_galist_new(&def->nodes, sizeof(dtc_node_def_t), (pointer_t *)&node) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        node->id = def->nodes.count - 1;
+        cm_galist_init(&node->logfiles, stmt->context, sql_alloc_mem);
+        cm_galist_init(&node->undo_space.datafiles, stmt->context, sql_alloc_mem);
+        cm_galist_init(&node->swap_space.datafiles, stmt->context, sql_alloc_mem);
+        cm_galist_init(&node->temp_undo_space.datafiles, stmt->context, sql_alloc_mem);
+
+        for (uint32 j = 0; j < inode->opts->count; j++) {
+            opt = (createdb_opt*)cm_galist_get(inode->opts, j);
+            switch (opt->type) {
+                case CREATEDB_INSTANCE_NODE_UNDO_OPT:
+                    if (og_parse_node_undo_space(stmt, node, &opt->space) != OG_SUCCESS) {
+                        return OG_ERROR;
+                    }
+                    break;
+                case CREATEDB_INSTANCE_NODE_LOGFILE_OPT:
+                    if (og_parse_node_logfiles(&node->logfiles, opt->list) != OG_SUCCESS) {
+                        return OG_ERROR;
+                    }
+                    break;
+                case CREATEDB_INSTANCE_NODE_TEMPORARY_OPT:
+                    if (og_parse_node_swap_space(stmt, node, &opt->space) != OG_SUCCESS) {
+                        return OG_ERROR;
+                    }
+                    break;
+                case CREATEDB_INSTANCE_NODE_NOLOGGING_OPT:
+                    if (og_parse_node_temp_undo_space(stmt, node, &opt->space) != OG_SUCCESS) {
+                        return OG_ERROR;
+                    }
+                    break;
+                default:
+                    return OG_SUCCESS;
+            }
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, char *db_name, galist_t *db_opts)
+{
+    status_t status;
+    archive_mode_t arch_mode = ARCHIVE_LOG_OFF;
+    createdb_opt *opt = NULL;
+    knl_space_def_t *space_def = NULL;
+    knl_database_def_t *db_def = NULL;
+
+    SQL_SET_IGNORE_PWD(stmt->session);
+    status = sql_alloc_mem(stmt->context, sizeof(knl_database_def_t), (pointer_t *)def);
+    OG_RETURN_IFERR(status);
+    db_def = *def;
+
+    stmt->context->type = OGSQL_TYPE_CREATE_CLUSTERED_DATABASE;
+
+    cm_galist_init(&db_def->ctrlfiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&db_def->nodes, stmt->context, sql_alloc_mem);
+    cm_galist_init(&db_def->system_space.datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&db_def->user_space.datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&db_def->temp_space.datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&db_def->temp_undo_space.datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&db_def->sysaux_space.datafiles, stmt->context, sql_alloc_mem);
+
+    db_def->system_space.name = g_system;
+    db_def->system_space.type = SPACE_TYPE_SYSTEM | SPACE_TYPE_DEFAULT;
+    db_def->user_space.name = g_users;
+    db_def->user_space.type = SPACE_TYPE_USERS | SPACE_TYPE_DEFAULT;
+    db_def->temp_space.name = g_temp;
+    db_def->temp_space.type = SPACE_TYPE_TEMP | SPACE_TYPE_USERS | SPACE_TYPE_DEFAULT;
+    db_def->temp_undo_space.name = g_temp_undo;
+    db_def->temp_undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_TEMP | SPACE_TYPE_DEFAULT;
+    db_def->sysaux_space.name = g_sysaux;
+    db_def->sysaux_space.type = SPACE_TYPE_SYSAUX | SPACE_TYPE_DEFAULT;
+    db_def->max_instance = OG_DEFAULT_INSTANCE;
+
+    db_def->name.str = db_name;
+    db_def->name.len = strlen(db_name);
+
+    for (uint32 i = 0; i < db_opts->count; i++) {
+        opt = (createdb_opt*)cm_galist_get(db_opts, i);
+
+        switch (opt->type) {
+            case CREATEDB_USER_OPT:
+                status = og_parse_createdb_user(stmt, db_def, &opt->user);
+                break;
+            case CREATEDB_CONTROLFILE_OPT:
+                status = og_parse_createdb_controlfile(db_def, opt->list);
+                break;
+            case CREATEDB_CHARSET_OPT:
+                status = og_parse_createdb_charset(stmt, db_def, opt->charset);
+                break;
+            case CREATEDB_ARCHIVELOG_OPT:
+                arch_mode = opt->archivelog_enable;
+                break;
+            case CREATEDB_DEFAULT_OPT:
+                space_def = &db_def->user_space;
+                space_def->name = g_users;
+                status = og_parse_createdb_space(space_def, &opt->space);
+                break;
+            case CREATEDB_NOLOGGING_UNDO_OPT:
+                space_def = &db_def->temp_undo_space;
+                space_def->name = g_temp_undo;
+                status = og_parse_createdb_space(space_def, &opt->space);
+                break;
+            case CREATEDB_NOLOGGING_OPT:
+                space_def = &db_def->temp_space;
+                space_def->name = g_temp;
+                status = og_parse_createdb_space(space_def, &opt->space);
+                break;
+            case CREATEDB_SYSAUX_OPT:
+                space_def = &db_def->sysaux_space;
+                space_def->name = g_sysaux;
+                status = og_parse_createdb_space(space_def, &opt->space);
+                break;
+            case CREATEDB_SYSTEM_OPT:
+                space_def = &db_def->system_space;
+                space_def->name = g_system;
+                status = og_parse_createdb_space(space_def, &opt->space);
+                break;
+            case CREATEDB_INSTANCE_OPT:
+                status = og_parse_createdb_instance(stmt, db_def, opt->list);
+                break;
+            case CREATEDB_MAXINSTANCE_OPT:
+                db_def->max_instance = opt->max_instance;
+                break;
+            default:
+                return OG_ERROR;
+        }
+        if (status != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    db_def->arch_mode = arch_mode;
+    status = sql_set_database_default(stmt, db_def, true);
+    OG_RETURN_IFERR(status);
+
+    return dtc_verify_database_def(stmt, db_def);
+}

@@ -56,6 +56,8 @@ status_t sql_parse_password(sql_stmt_t *stmt, char *password, word_t *word);
 status_t sql_parse_dbca_datafile_spec(sql_stmt_t *stmt, lex_t *lex, word_t *word, knl_space_def_t *space_def);
 status_t sql_parse_dbca_logfiles(sql_stmt_t *stmt, galist_t *logfiles, word_t *word);
 
+status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, char *db_name, galist_t *db_opts);
+
 #ifdef __cplusplus
 }
 #endif

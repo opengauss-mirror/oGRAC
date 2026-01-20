@@ -167,7 +167,7 @@ static status_t sql_extract_group_cube_expr(sql_stmt_t *stmt, galist_t *group_se
 }
 
 /* cube(a,b) = grouping sets((),(a),(b),(a,b)) */
-static status_t sql_extract_group_cube(sql_stmt_t *stmt, galist_t *items, galist_t *group_sets)
+status_t sql_extract_group_cube(sql_stmt_t *stmt, galist_t *items, galist_t *group_sets)
 {
     uint32 i;
     expr_tree_t *expr = NULL;
@@ -193,7 +193,7 @@ static status_t sql_extract_group_cube(sql_stmt_t *stmt, galist_t *items, galist
 }
 
 /* rollup(a,b) = grouping sets((),(a),(a,b)) */
-static status_t sql_extract_group_rollup(sql_stmt_t *stmt, galist_t *items, galist_t *group_sets)
+status_t sql_extract_group_rollup(sql_stmt_t *stmt, galist_t *items, galist_t *group_sets)
 {
     expr_tree_t *next_expr = NULL;
     expr_tree_t *expr = NULL;
@@ -340,7 +340,7 @@ static status_t sql_parse_grouping_set_items(sql_stmt_t *stmt, galist_t *items, 
     return lex_fetch(lex, word);
 }
 
-static status_t sql_cartesin_one_group_set(sql_stmt_t *stmt, galist_t *group_sets, group_set_t *group_set,
+status_t sql_cartesin_one_group_set(sql_stmt_t *stmt, galist_t *group_sets, group_set_t *group_set,
     galist_t *result)
 {
     group_set_t *old_group_set = NULL;
@@ -1626,6 +1626,131 @@ status_t sql_create_select_context(sql_stmt_t *stmt, sql_text_t *sql, select_typ
     lex->flags = save_flags;
     OG_RETURN_IFERR(lex_expected_end(lex));
     lex_pop(lex);
+    return OG_SUCCESS;
+}
+
+status_t sql_create_target_entry(sql_stmt_t *stmt, query_column_t **column, expr_tree_t *expr, char *alias_buf,
+    uint32 alias_len, bool indicate)
+{
+    text_t alias;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(query_column_t), (void **)column));
+    query_column_t *query_col = *column;
+    query_col->exist_alias = OG_FALSE;
+    query_col->expr = expr;
+
+    if (!indicate) {
+        query_col->exist_alias = OG_TRUE;
+        alias.str = alias_buf;
+        alias.len = alias_len;
+        return sql_copy_text(stmt->context, &alias, &query_col->alias);
+    }
+
+    if (query_col->expr->root->type == EXPR_NODE_COLUMN) {
+        alias = query_col->expr->root->word.column.name.value;
+        return sql_copy_text(stmt->context, &alias, &query_col->alias);
+    }
+    /* if ommit alias ,then alias is whole expr string */
+    alias.str = alias_buf;
+    alias.len = alias_len;
+
+    // modified since the right side has an space
+    cm_trim_text(&alias);
+
+    if (alias.len > OG_MAX_NAME_LEN) {
+        alias.len = OG_MAX_NAME_LEN;
+    }
+    return sql_copy_name(stmt->context, &alias, &query_col->alias);
+}
+
+static status_t put_subctx_withas_into_parent(sql_select_t *parent_ctx, sql_select_t *sub_ctx)
+{
+    if (sub_ctx->withass != NULL) {
+        if (parent_ctx->withass == NULL) {
+            parent_ctx->withass = sub_ctx->withass;
+        } else {
+            for (uint32 i = 0; i < sub_ctx->withass->count; i++) {
+                sql_withas_factor_t *factor = (sql_withas_factor_t *)cm_galist_get(sub_ctx->withass, i);
+                OG_RETURN_IFERR(cm_galist_insert(parent_ctx->withass, factor));
+            }
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_build_set_select_context(sql_stmt_t *stmt, sql_select_t **ctx, sql_select_t *left_ctx,
+    sql_select_t *right_ctx, select_node_type_t type)
+{
+    select_node_t *node = NULL;
+    OG_RETURN_IFERR(sql_alloc_select_context(stmt, SELECT_AS_RESULT, (sql_select_t **)ctx));
+    sql_select_t *select_ctx = *ctx;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(select_node_t), (void **)&node));
+    APPEND_CHAIN(&select_ctx->chain, node);
+    select_ctx->root = node;
+    select_ctx->first_query = left_ctx->first_query;
+
+    node->type = type;
+    node->left = left_ctx->root;
+    node->right = right_ctx->root;
+
+    OG_RETURN_IFERR(cm_galist_insert(stmt->context->selects, select_ctx));
+
+    OG_RETURN_IFERR(put_subctx_withas_into_parent(*ctx, left_ctx));
+    OG_RETURN_IFERR(put_subctx_withas_into_parent(*ctx, right_ctx));
+    return OG_SUCCESS;
+}
+
+status_t sql_build_select_context(sql_stmt_t *stmt, sql_select_t **ctx, galist_t *columns,
+    sql_join_node_t *join_node, source_location_t select_loc, source_location_t from_loc)
+{
+    select_node_t *node = NULL;
+    sql_query_t *query = NULL;
+    OG_RETURN_IFERR(sql_alloc_select_context(stmt, SELECT_AS_RESULT, (sql_select_t **)ctx));
+    sql_select_t *select_ctx = *ctx;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(select_node_t), (void **)&node));
+    APPEND_CHAIN(&select_ctx->chain, node);
+    node->type = SELECT_NODE_QUERY;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_query_t), (void **)&query));
+    OG_RETURN_IFERR(sql_init_query(stmt, select_ctx, select_loc, query));
+    query->block_info->origin_id = ++stmt->context->query_count;
+
+    select_ctx->first_query = query;
+    select_ctx->chain.last->query = query;
+    query->columns = columns;
+
+    word_t table_word;
+    sql_table_t *table = NULL;
+    if (join_node == NULL) {
+        table_word.ex_count = 0;
+        table_word.type = WORD_TYPE_VARIANT;
+        table_word.text.str = "SYS_DUMMY";
+        table_word.text.len = (uint32)strlen(table_word.text.str);
+        table_word.text.loc = from_loc;
+
+        OG_RETURN_IFERR(sql_array_new(&query->tables, sizeof(sql_table_t), (void **)&table));
+        table->id = query->tables.count - 1;
+        table->rs_nullable = OG_FALSE;
+        table->ineliminable = OG_FALSE;
+
+        OG_RETURN_IFERR(sql_create_query_table(stmt, &query->tables, &query->join_assist, table, &table_word));
+    } else {
+        OG_RETURN_IFERR(sql_array_concat(&query->tables, &join_node->tables));
+        if (join_node->type != JOIN_TYPE_NONE) {
+            query->join_assist.join_node = join_node;
+            query->join_assist.outer_node_count = sql_outer_join_count(join_node);
+            if (query->join_assist.outer_node_count > 0) {
+                sql_parse_join_set_table_nullable(query->join_assist.join_node);
+            }
+            sql_remove_join_table(stmt, query);
+        }
+    }
+
+    OG_RETURN_IFERR(sql_set_table_qb_name(stmt, query));
+    OG_RETURN_IFERR(sql_generate_select(select_ctx));
+    OG_RETURN_IFERR(cm_galist_insert(stmt->context->selects, select_ctx));
     return OG_SUCCESS;
 }
 
