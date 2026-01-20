@@ -1,0 +1,4 @@
+{
+    global: SQLAllocHandle;SQLAllocEnv;SQLAllocConnect;SQLAllocStmt;SQLSetEnvAttr;SQLFreeHandle;SQLFreeConnect;SQLFreeEnv;SQLFreeStmt;SQLSetConnectAttr;SQLConnect;SQLSetStmtAttr;SQLExecDirect;SQLPrepare;SQLExecute;SQLBindParameter;SQLDisconnect;SQLFetch;SQLGetData;SQLBindCol;SQLRowCount;SQLPutData;SQLError;SQL*;
+    local: *;
+};

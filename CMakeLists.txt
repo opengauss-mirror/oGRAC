@@ -28,6 +28,7 @@ include_directories(
         "${PROJECT_SOURCE_DIR}/pkg/src/common"
         "${PROJECT_SOURCE_DIR}/pkg/src/driver"
         "${PROJECT_SOURCE_DIR}/pkg/src/driver/ogconn"
+        "${PROJECT_SOURCE_DIR}/pkg/src/driver/ogodbc"
         "${PROJECT_SOURCE_DIR}/pkg/src/protocol"
         "${PROJECT_SOURCE_DIR}/pkg/src/server"
         "${PROJECT_SOURCE_DIR}/pkg/src/server/params"
