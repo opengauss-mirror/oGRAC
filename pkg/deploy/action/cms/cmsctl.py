@@ -424,7 +424,7 @@ class CmsCtl(object):
     cms_old_config = "/opt/ograc/backup/files/cms.json"
     cluster_config = "cluster.ini"
 
-    gcc_home = ""
+    gcc_home = "/dev/gcc-disk"
     gcc_dir = ""
     gcc_type = GCC_TYPE.get(deploy_mode, "NFS")
     if os.path.exists(YOUMAI_DEMO):
@@ -432,7 +432,7 @@ class CmsCtl(object):
     running_mode = "ogracd_in_cluster"
     install_config_file = "/root/tmp/install_ct_node0/config/deploy_param.json"
     link_type = "RDMA"
-    cms_gcc_bak = ""
+    cms_gcc_bak = "/dev/gcc-disk"
 
     install_step = 0
     storage_share_fs = ""
@@ -907,6 +907,8 @@ class CmsCtl(object):
                 _file.write("export PATH=\"%s\":$PATH"
                             % os.path.join(self.install_path, "bin"))
                 _file.write(os.linesep)
+                _file.write("export GCC_HOME=\"%s\"" % self.gcc_home)
+                _file.write(os.linesep)
                 if "LD_LIBRARY_PATH" in os.environ:
                     _file.write("export LD_LIBRARY_PATH=\"%s\":\"%s\""
                                 ":$LD_LIBRARY_PATH"
@@ -1151,8 +1153,8 @@ class CmsCtl(object):
                 self.gcc_home = os.path.join("/", self.storage_share_fs, "gcc_home")
                 self.cms_gcc_bak = os.path.join("/", self.storage_archive_fs)
             elif deploy_mode == "dss":
-                self.gcc_home = "/dev/gcc-disk"
-                self.cms_gcc_bak = "/dev/gcc-disk"
+                log_msg = f"gcc path has been set by user or default path:{self.gcc_home}"
+                LOGGER.info(log_msg)
             else:
                 self.gcc_home = os.path.join("/mnt/dbdata/remote/share_" + self.storage_share_fs, "gcc_home")
                 self.cms_gcc_bak = os.path.join("/mnt/dbdata/remote", "archive_" + self.storage_archive_fs)
@@ -1432,7 +1434,7 @@ class CmsCtl(object):
 
         if self.gcc_home == "":
             if deploy_mode == "dss":
-                self.gcc_home = "/dev/gcc-disk"
+                self.gcc_home = os.getenv("GCC_HOME")
             elif deploy_mode not in USE_DBSTOR:
                 self.gcc_home = os.path.join("/mnt/dbdata/remote/share_" + self.storage_share_fs, "gcc_home")
         
@@ -1453,7 +1455,7 @@ class CmsCtl(object):
                           % (self.storage_share_fs, self.storage_archive_fs)
                 ret_code = 0
             if deploy_mode in USE_DSS:
-                str_cmd = "dd if=/dev/zero of=/dev/gcc-disk bs=1M count=1024 conv=notrunc"
+                str_cmd = f"dd if=/dev/zero of={self.gcc_home} bs=1M count=1024 conv=notrunc"
                 ret_code = 0
             if ret_code == 0:
                 LOGGER.info("clean gcc home cmd : %s" % str_cmd)

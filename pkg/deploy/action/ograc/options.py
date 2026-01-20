@@ -19,6 +19,9 @@ class Options(object):
         # User info
         self.os_user = ""
         self.os_group = ""
+        
+        # The auto tune for config
+        self.auto_tune = ""
 
         # The object of opened log file.
         self.file_obj = None

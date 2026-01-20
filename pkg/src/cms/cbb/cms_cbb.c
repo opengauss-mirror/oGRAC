@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <stdlib.h>
 #include <string.h>
 #include "cm_defs.h"
 #include "cms_cbb.h"
@@ -35,14 +36,21 @@
 #define JSON_DATA_MAX_LEN 2000
 #define NODE_DATA_MAX_LEN 100
 
-#define DSS_RES_DATA_LOCK_PATH "/dev/gcc-disk"
+#define GCC_DEFAULT_PATH "/dev/gcc-disk"
+#define GCC_HOME_ENV "GCC_HOME"
 #define DSS_RES_DATA_LOCK_POS (1073741824)
 
 unsigned int g_lock_id = 0;
 
 int CmInit(unsigned int instance_id, const char *res_name, cm_notify_func_t func)
 {
-    int ret = cm_dl_alloc(DSS_RES_DATA_LOCK_PATH, DSS_RES_DATA_LOCK_POS, instance_id);
+    const char *gcc_home = getenv(GCC_HOME_ENV);
+    if (gcc_home == NULL || gcc_home[0] == '\0') {
+        LOG("GCC_HOME is not set, use default path: /dev/gcc-disk");
+        gcc_home = GCC_DEFAULT_PATH;
+    }
+
+    int ret = cm_dl_alloc(gcc_home, DSS_RES_DATA_LOCK_POS, instance_id);
     if (ret == CM_INVALID_LOCK_ID) {
         LOG("cm_dl_alloc failed with ret: %d", ret);
         return OG_ERROR;

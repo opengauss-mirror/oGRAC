@@ -375,23 +375,35 @@ class DssCtl(object):
         :param args:
         :return:
         """
+        with open(INSTALL_FILE, encoding="utf-8") as f:
+            _tmp = f.read()
+            info = json.loads(_tmp)
+            dss_install_type = info.get("install_type", "")
+            dss_vg_list = info.get("dss_vg_list", "")
+        
+        self.specify_dss_vg(dss_vg_list)
+        LOG.info("dss_install_type is %s", dss_install_type)
         self.modify_env(action="add")
         self.prepare_cfg()
         if not os.path.exists(RPMINSTALLED_TAG):
             self.prepare_source()
         self.cms_add_dss_res()
         self.config_perctrl_permission()
-        with open(INSTALL_FILE, encoding="utf-8") as f:
-            _tmp = f.read()
-            info = json.loads(_tmp)
-            dss_install_type = info.get("install_type", "")
-        
-        LOG.info("dss_install_type is %s", dss_install_type)
         
         if dss_install_type != "reserve":
             self.prepare_dss_dick()
             self.reghl_dss_disk()
             self.dss_cmd_add_vg()
+
+    def specify_dss_vg(self, dss_vg_list) -> None:
+        """
+        specify vg
+        :return:
+        """
+        LOG.info("Start to specify vg due to user configuration.")
+        for dss_vg, value in dss_vg_list.items():
+            VG_CONFIG[dss_vg] = value
+        LOG.info("Success to specify vg.")
 
     def backup(self, *args) -> None:
         LOG.info("Start backup.")
