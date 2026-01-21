@@ -778,6 +778,9 @@ create table bison_t1 (a int, b int);
 create index bison_t1_idx on bison_t1 (a);
 drop index sys.bison_t1_idx on bison_t1;
 drop index if exists sys.bison_t1_idx on bison_t1;
+create index bison_t1_idx on bison_t1 (a);
+drop index sys.bison_t1_idx;
+drop index if exists sys.bison_t1_idx;
 
 create sequence bison_t1;
 drop sequence if exists bison_t1;
@@ -860,9 +863,9 @@ analyze table bison_t1 compute statistics;
 analyze table bison_t1 compute statistics for report;
 analyze table bison_t1 compute statistics for report sample 60;
 
-analyze index bison_t1_idx on bison_t1 compute statistics;
-analyze index bison_t1_idx on bison_t1 estimate statistics 10;
-analyze index bison_t1_idx on bison_t1 compute statistics for report; --error
+analyze index bison_t1_idx compute statistics;
+analyze index bison_t1_idx estimate statistics 10;
+analyze index bison_t1_idx compute statistics for report; --error
 
 create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
 

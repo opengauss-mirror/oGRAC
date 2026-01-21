@@ -2354,6 +2354,18 @@ SQL> drop index if exists sys.bison_t1_idx on bison_t1;
 
 Succeed.
 
+SQL> create index bison_t1_idx on bison_t1 (a);
+
+Succeed.
+
+SQL> drop index sys.bison_t1_idx;
+
+Succeed.
+
+SQL> drop index if exists sys.bison_t1_idx;
+
+Succeed.
+
 SQL> 
 SQL> create sequence bison_t1;
 
@@ -2578,17 +2590,17 @@ SQL> analyze table bison_t1 compute statistics for report sample 60;
 Succeed.
 
 SQL> 
-SQL> analyze index bison_t1_idx on bison_t1 compute statistics;
+SQL> analyze index bison_t1_idx compute statistics;
 
 Succeed.
 
-SQL> analyze index bison_t1_idx on bison_t1 estimate statistics 10;
+SQL> analyze index bison_t1_idx estimate statistics 10;
 
 Succeed.
 
-SQL> analyze index bison_t1_idx on bison_t1 compute statistics for report; --error
+SQL> analyze index bison_t1_idx compute statistics for report; --error
 
-OG-00601, [1:59]Sql syntax error: syntax error
+OG-00601, [1:47]Sql syntax error: syntax error
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
 
