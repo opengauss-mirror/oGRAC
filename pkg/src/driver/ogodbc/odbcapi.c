@@ -218,8 +218,8 @@ SQLRETURN SQL_API SQLSetConnectAttr(SQLHDBC ConnectionHandle,
         return SQL_INVALID_HANDLE;
     }
     clean_conn_handle(ConnectionHandle);
-    int32 newValue;
-    int32 ret;
+    int32 newValue = 0;
+    int32 ret = 0;
 
     switch (Attribute) {
         case SQL_ATTR_AUTOCOMMIT:
@@ -328,7 +328,7 @@ SQLRETURN set_sql_params(statement *stmt)
 {
     bilist_t *param_list = &stmt->params;
     bilist_node_t *param = param_list->head;
-    uint32 param_count;
+    uint32 param_count = 0;
     sql_input_data *input_data = NULL;
     SQLRETURN ret;
 
@@ -396,7 +396,7 @@ static void get_data_result(statement *stmt, SQLPOINTER *value, unsigned int col
 
 static SQLRETURN og_bind_param_execute(statement *stmt, SQLPOINTER *value)
 {
-    uint32 col_num;
+    uint32 col_num = 0;
     uint32 col_num_len = sizeof(col_num);
     og_generate_result *generate_result = NULL;
     status_t status;
@@ -429,7 +429,7 @@ static SQLRETURN og_bind_param_execute(statement *stmt, SQLPOINTER *value)
 
 static SQLRETURN set_param_value(statement *stmt, bilist_t *params, SQLPOINTER *value, uint32 index)
 {
-    sql_input_data *input_data;
+    sql_input_data *input_data = NULL;
 
     input_data = generate_bind_param_instance(params->head, index);
     if (input_data == NULL) {
@@ -701,7 +701,7 @@ static SQLRETURN convert_param_to_decimal(statement *stmt, sql_input_data *input
     char *value = input_data->param_value + input_data->param_len * pos;
     SQLRETURN ret = SQL_ERROR;
     uint8 is_bind = OG_FALSE;
-    variant_t *data_struct;
+    variant_t *data_struct = NULL;
     data_struct = (variant_t *)malloc(sizeof(variant_t));
     int32 trans_map_count = sizeof(trans_map) / sizeof(transfer_num_map);
     transfer_number_func trans_func;
@@ -747,11 +747,11 @@ static SQLRETURN convert_sql_timestamp_to_ogdate(statement *stmt,
                                                  char *value,
                                                  uint32 *fraction)
 {
-    TIMESTAMP_STRUCT *ts;
-    uint32 frac_digits;
+    uint32 frac_digits = 0;
     uint8 pow_base = 10;
     uint8 digits_base = 9;
     uint32 digit_pow = (uint32)pow(pow_base, (digits_base - input_data->number));
+    TIMESTAMP_STRUCT *ts = NULL;
     ts = (TIMESTAMP_STRUCT *)value;
     uint16 year = (uint16)ts->year;
     uint8 max_mon = 12;
@@ -797,7 +797,7 @@ static SQLRETURN convert_sql_timestamp_to_ogdate(statement *stmt,
 
 static SQLRETURN convert_sql_date_to_ogdate(statement *stmt, date_detail_t *value_detail, char *value)
 {
-    DATE_STRUCT *dt;
+    DATE_STRUCT *dt = NULL;
     dt = (DATE_STRUCT *)value;
     uint16 year = (uint16)dt->year;
     uint8 max_mon = 12;
@@ -895,8 +895,8 @@ static SQLRETURN convert_db_type_data(statement *stmt, sql_input_data *input_dat
 static SQLRETURN bind_param_convert(statement *stmt, sql_input_data *input_data)
 {
     uint32 pos = 0;
-    char *param;
-    SQLLEN *param_ptr;
+    char *param = NULL;
+    SQLLEN *param_ptr = NULL;
 
     while (pos < input_data->param_count) {
         if (input_data->param_type == OGCONN_OUTPUT) {
@@ -944,8 +944,8 @@ static SQLRETURN ograc_execute(statement *stmt)
 {
     SQLRETURN ret;
     status_t status;
-    uint32 input_num;
-    uint32 row_count;
+    uint32 input_num = 0;
+    uint32 row_count = 0;
     uint32 total_param = 0;
     uint32 execute_flag = OGCONN_STMT_NONE;
 

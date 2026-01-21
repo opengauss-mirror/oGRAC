@@ -49,7 +49,7 @@ SQLRETURN ograc_AllocConnect(SQLHENV henv, SQLHDBC *phdbc)
 {
     ogconn_conn_t ctconn_conn;
     environment_class *environment = (environment_class *)henv;
-    connection_class *conn;
+    connection_class *conn = NULL;
     conn = (connection_class *)malloc(sizeof(connection_class));
     status_t status;
 
@@ -93,7 +93,7 @@ static SQLRETURN set_conn_info(connection_class *conn, const SQLCHAR *name,
                         SQLSMALLINT nameLength, char *buf, size_t size)
 {
     errno_t code;
-    uint32 len;
+    uint32 len = 0;
 
     if (name != NULL && name[0] != '\0') {
         len = (nameLength == SQL_NTS) ? (uint32)strlen((const char *)name) : nameLength;
@@ -120,7 +120,7 @@ SQLRETURN ograc_connect(SQLHDBC ConnectionHandle,
                         const SQLCHAR *Authentication, SQLSMALLINT NameLength3)
 {
     connection_class *conn = (connection_class *)ConnectionHandle;
-    ConnInfo *info;
+    ConnInfo *info = NULL;
     SQLRETURN retcode;
 
     if (ServerName == NULL) {
@@ -219,9 +219,9 @@ SQLRETURN ograc_bind_col(statement *stmt,
                          SQLLEN dataSize,
                          SQLLEN *buffPtr)
 {
-    column_param *col_param;
+    column_param *col_param = NULL;
     uint32 index = colIndex - 1;
-    uint32 ptr;
+    uint32 ptr = 0;
 
     col_param = get_col_param(stmt, index, dataPtr);
     if (col_param != NULL) {

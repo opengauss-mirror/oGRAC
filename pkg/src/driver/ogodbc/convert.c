@@ -82,12 +82,12 @@ static SQLRETURN get_db_lob_param(statement *stmt,
                                   bind_input_param *input_param,
                                   og_fetch_data_result *data_result)
 {
-    unsigned int param_buf;
+    unsigned int param_buf = 0;
     unsigned int nchars = 0;
     unsigned int nbytes = 0;
     status_t status;
     unsigned int flag = 0;
-    unsigned int data_size;
+    unsigned int data_size = 0;
 
     if (input_param->param_len <= 0) {
         return handle_fetch_err(stmt);
@@ -144,8 +144,8 @@ static SQLRETURN get_str_param(statement *stmt,
                                bind_input_param *input_param,
                                og_fetch_data_result *data_result)
 {
-    unsigned int remaining_len;
-    unsigned int actual_len;
+    unsigned int remaining_len = 0;
+    unsigned int actual_len = 0;
 
     if (input_param->param_len <= 0) {
         return handle_fetch_err(stmt);
@@ -193,10 +193,10 @@ static SQLRETURN get_c_wchar_type_param(statement *stmt,
     char value[DECIMAL_MOD];
     unsigned int end = OG_FALSE;
     status_t status;
-    int value_len;
+    int value_len = 0;
     char *data = (char *)input_param->param_value;
     unsigned int input_size = (unsigned int)strlen((const char *)input_param->param_value);
-    int param_size;
+    int param_size = 0;
 
     generate_result->is_str = OG_TRUE;
     if (input_param->param_len <= sizeof(WCHAR)) {
@@ -347,10 +347,10 @@ static SQLRETURN get_c_numeric_value(statement *stmt,
 {
     SQLRETURN ret;
     int32 num_count = 0;
-    int8 dec_exp;
-    int8 sign;
-    int32 prec_count;
-    SQL_NUMERIC_STRUCT *param_value;
+    int8 dec_exp = 0;
+    int8 sign = 0;
+    int32 prec_count = 0;
+    SQL_NUMERIC_STRUCT *param_value = input_param->param_value;
     int32 prec_num = 10;
     int32 prec_val = CALC_PREC_SINGAL;
     uint8 dec_mod = numeric_value->len - 1;
@@ -360,7 +360,6 @@ static SQLRETURN get_c_numeric_value(statement *stmt,
     uint8 expn_num = 8;
     uint8 len_offset = 2;
 
-    param_value = input_param->param_value;
     param_value->scale = 0;
     param_value->sign = numeric_value->sign;
     param_value->precision = 0;
@@ -414,8 +413,8 @@ static SQLRETURN get_c_float_by_db_str(statement *stmt,
     text_t src_data;
     src_data.str = data_result->value;
     src_data.len = data_result->len;
-    double ex_data;
-    double round_data;
+    double ex_data = 0.0;
+    double round_data = 0.0;
 
     if (cm_text2real_ex(&src_data, &ex_data) != NERR_SUCCESS) {
         return handle_convert_err(stmt);
@@ -447,7 +446,7 @@ static SQLRETURN get_db_int_value(statement *stmt,
                                   og_fetch_data_result *data_result)
 {
     connection_class *conn = stmt->conn;
-    int32 value;
+    int32 value = 0;
 
     switch (input_param->sql_type) {
         case SQL_C_LONG:
@@ -493,7 +492,7 @@ static SQLRETURN get_db_uint_value(statement *stmt,
                                    og_fetch_data_result *data_result)
 {
     connection_class *conn = stmt->conn;
-    uint32 value;
+    uint32 value = 0;
 
     switch (input_param->sql_type) {
         case SQL_C_LONG:
@@ -543,7 +542,7 @@ static SQLRETURN get_db_bool_value(statement *stmt,
                                    og_fetch_data_result *data_result)
 {
     connection_class *conn = stmt->conn;
-    uint32 value;
+    uint32 value = 0;
 
     switch (input_param->sql_type) {
         case SQL_C_LONG:
@@ -697,7 +696,7 @@ static SQLRETURN get_db_number_value(statement *stmt,
     dec4_t *number_value = (dec4_t *)data_result->value;
     status_t status;
     dec8_t number_value8;
-    uint32 byte;
+    uint32 byte = 0;
 
     switch (input_param->sql_type) {
         case SQL_C_NUMERIC:
@@ -917,7 +916,7 @@ static SQLRETURN get_fetch_param(statement *stmt,
 
 SQLRETURN build_fetch_param(statement *stmt, uint32 total_param)
 {
-    uint32 param_len;
+    uint32 param_len = 0;
     char *fetch_value = NULL;
     sql_input_data *input_data = NULL;
     int32 index = 0;
@@ -927,7 +926,7 @@ SQLRETURN build_fetch_param(statement *stmt, uint32 total_param)
     ogconn_outparam_desc_t outparam_info;
     bilist_t *params = &stmt->params;
     SQLRETURN ret;
-    uint32 has_param;
+    uint32 has_param = 0;
     uint32 p = 0;
     status_t status;
 
@@ -994,7 +993,7 @@ SQLRETURN ograc_sql_bind_param(statement *stmt,
     SQLULEN param_len = 0;
     status_t status;
     ogconn_type_t og_type;
-    uint32 size;
+    uint32 size = 0;
 
     if (param_num <= 0 || (value_ptr == NULL && str_size == NULL)) {
         return SQL_ERROR;
@@ -1085,8 +1084,8 @@ static SQLRETURN get_fetch_data(statement *stmt,
                                 og_generate_result *generate_result,
                                 bind_input_param *input_param)
 {
-    uint32 data_len;
-    uint32 has_data;
+    uint32 data_len = 0;
+    uint32 has_data = 0;
     og_fetch_data_result data_result;
     void *value = NULL;
     ogconn_inner_column_desc_t column_info;
@@ -1124,8 +1123,8 @@ static SQLRETURN get_fetch_data(statement *stmt,
 
 static SQLRETURN fetch_data_and_bind_col(statement *stmt, SQLULEN fetch_pos)
 {
-    column_param *col_param;
-    char *item_buf;
+    column_param *col_param = NULL;
+    char *item_buf = NULL;
     pointer_t ptr;
     bind_input_param input_param;
     uint32 p = 0;
@@ -1156,9 +1155,9 @@ static SQLRETURN fetch_data_and_bind_col(statement *stmt, SQLULEN fetch_pos)
 
 SQLRETURN ograc_fetch_data(statement *stmt)
 {
-    uint32 num;
-    uint32 param_count;
-    int32 status;
+    uint32 num = 0;
+    uint32 param_count = 0;
+    int32 status = 0;
     SQLRETURN ret;
     uint32 total_param = 0;
     uint32 p = 0;

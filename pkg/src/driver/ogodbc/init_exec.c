@@ -70,9 +70,9 @@ SQLRETURN og_db_connect(connection_class *conn, ConnInfo *info)
 {
     errno_t err;
     status_t status;
-    uint32 connHostlen;
-    uint32 serverLen;
-    uint32 portLen;
+    uint32 connHostlen = 0;
+    uint32 serverLen = 0;
+    uint32 portLen = 0;
 
     if (verify_conn_info(conn, info) != SQL_SUCCESS) {
         return SQL_ERROR;
@@ -281,8 +281,8 @@ void clean_up_param(bilist_node_t *node, bilist_t *params, sql_input_data *input
 void del_stmt_param(bilist_t *params, bool8 is_init)
 {
     bilist_node_t *item_param = params->head;
-    bilist_node_t *next_param;
-    sql_input_data *input_data;
+    bilist_node_t *next_param = NULL;
+    sql_input_data *input_data = NULL;
 
     while (item_param != NULL) {
         input_data = (sql_input_data *)((char *)item_param - OFFSET_OF(sql_input_data, data_list));
@@ -344,7 +344,7 @@ SQLRETURN malloc_bind_param(sql_input_data *input_data)
 
 sql_input_data *generate_bind_param_instance(bilist_node_t *item_param, uint32 pos)
 {
-    sql_input_data *input_data;
+    sql_input_data *input_data = NULL;
 
     while (item_param != NULL) {
         input_data = (sql_input_data *)((char *)item_param - OFFSET_OF(sql_input_data, data_list));
@@ -497,7 +497,7 @@ SQLULEN cal_column_len(SQLSMALLINT ValueType,
 
 void close_odbc_config()
 {
-    og_timer_t *timer;
+    og_timer_t *timer = NULL;
 
     if (dl_open != NULL) {
         timer = g_timer();
