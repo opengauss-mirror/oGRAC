@@ -24,7 +24,7 @@
 
 static statement *stmt_constructor(connection_class *conn)
 {
-    statement *stmt;
+    statement *stmt = NULL;
     stmt = (statement *)malloc(sizeof(statement));
     if (stmt) {
         stmt->conn = conn;
@@ -52,9 +52,9 @@ SQLRETURN ograc_AllocStmt(SQLHDBC hdbc, SQLHSTMT *phstmt)
     ogconn_conn_t ctconn_conn = conn->ctconn_conn;
     uint32 col_size = sizeof(column_param);
     uint32 generate_result_size = sizeof(og_generate_result);
-    bilist_t *param_list;
+    bilist_t *param_list = NULL;
     ogconn_stmt_t ctconn_stmt;
-    statement *stmt;
+    statement *stmt = NULL;
 
     if (hdbc == NULL || phstmt == NULL) {
         return SQL_INVALID_HANDLE;
