@@ -194,7 +194,7 @@ static interval_unit_t generate_interval_unit(interval_unit_order_t from, interv
 %type <for_update> for_locking_clause
 %type <rowmark_type> opt_nowait_or_skip
 %type <merge_when> merge_when_list
-%type <name_owner> any_name
+%type <name_owner> any_name on_list
 %type <drop_tbsp_opt> opt_drop_tbsp
 %type <db_opt> createdb_user_opt createdb_controlfile_opt createdb_charset_opt instance_node_opt createdb_instance_opt createdb_nologging_opt createdb_system_opt createdb_sysaux_opt createdb_default_opt createdb_maxinstance_opt createdb_opt createdb_archivelog_opt
 %type <list> controlfiles logfiles instance_node_opts instance_nodes createdb_opts datafiles opt_user_options user_option_list tablespace_name_list
@@ -6512,6 +6512,17 @@ opt_temporary:
             | /* EMPTY */                       { $$ = false; }
         ;
 
+on_list:
+ 	        ON any_name
+ 	            {
+ 	                $$ = $2;
+ 	            }
+ 	        | /*EMPTY*/
+ 	            {
+ 	                $$ = NULL;
+ 	            }
+ 	    ;
+
 any_name:
             ColId
                 {
@@ -6567,7 +6578,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     }
                     $$ = def;
                 }
-            | DROP INDEX_P opt_if_exists any_name ON any_name
+            | DROP INDEX_P opt_if_exists any_name on_list
                 {
                     knl_drop_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -6580,15 +6591,17 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     }
                     def->owner = $4->owner;
                     def->name = $4->name;
-                    def->ex_owner = $6->owner;
-                    def->ex_name = $6->name;
+                    if ($5) {
+ 	                    def->ex_owner = $5->owner;
+ 	                    def->ex_name = $5->name;
+ 	                }
                     if (def->owner.str == NULL) {
                         cm_str2text(stmt->session->curr_schema, &def->owner);
                     }
-                    if (def->ex_owner.str == NULL) {
+                    if ($5 && def->ex_owner.str == NULL) {
                         cm_str2text(stmt->session->curr_schema, &def->ex_owner);
                     }
-                    if (cm_compare_text_ins(&def->owner, &def->ex_owner) != 0) {
+                    if ($5 && (cm_compare_text_ins(&def->owner, &def->ex_owner) != 0)) {
                         parser_yyerror("index user is not consistent with table user");
                     }
                     $$ = def;
@@ -7248,7 +7261,7 @@ AnalyzeStmt:
                     
                     $$ = def;
                 }
-            | ANALYZE INDEX_P any_name ON any_name COMPUTE STATISTICS
+            | ANALYZE INDEX_P any_name COMPUTE STATISTICS
                 {
                     knl_analyze_index_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -7260,15 +7273,10 @@ AnalyzeStmt:
                     def->name = $3->name;
                     if (def->owner.str == NULL) {
                         cm_str2text(stmt->session->curr_schema, &def->owner);
-                    }
-                    def->table_owner = $5->owner;
-                    def->table_name = $5->name;
-                    if (def->table_owner.str == NULL) {
-                        cm_str2text(stmt->session->curr_schema, &def->table_owner);
                     }
                     $$ = def;
                 }
-            | ANALYZE INDEX_P any_name ON any_name ESTIMATE STATISTICS ICONST
+            | ANALYZE INDEX_P any_name ESTIMATE STATISTICS ICONST
                 {
                     knl_analyze_index_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -7281,12 +7289,7 @@ AnalyzeStmt:
                     if (def->owner.str == NULL) {
                         cm_str2text(stmt->session->curr_schema, &def->owner);
                     }
-                    def->table_owner = $5->owner;
-                    def->table_name = $5->name;
-                    if (def->table_owner.str == NULL) {
-                        cm_str2text(stmt->session->curr_schema, &def->table_owner);
-                    }
-                    def->sample_ratio = (double)$8 / 100;
+                    def->sample_ratio = (double)$6 / 100;
                     $$ = def;
                 }
         ;
