@@ -1205,4 +1205,84 @@ select sys_columns.name from sys_tables join sys_columns on sys_tables.id=sys_co
 drop table t_lowercase; --error
 drop table `t_lowercase`;
 
+--- error, reservered keyword, can't be object name
+create table t_reserverd_test(rownum int);
+create table t_reserverd_test(rowid int);
+create table t_reserverd_test(rowscn int);
+create table t_reserverd_test(sysdate int);
+create table t_reserverd_test(null int);
+create table t_reserverd_test(true int);
+create table t_reserverd_test(false int);
+create table t_reserverd_test(user int);
+
+--test special no arg func
+create table t_special_no_arg_func(a varchar(100));
+insert into t_special_no_arg_func select curdate;
+insert into t_special_no_arg_func select current_date;
+insert into t_special_no_arg_func select current_timestamp;
+insert into t_special_no_arg_func select now;
+insert into t_special_no_arg_func select systimestamp;
+insert into t_special_no_arg_func select localtimestamp;
+insert into t_special_no_arg_func select utc_timestamp;
+insert into t_special_no_arg_func select sysdate;
+
+-- all value have year value, so it muse be start with 20XX, use left to get first two char
+select left(a, 2) from t_special_no_arg_func;
+delete from t_special_no_arg_func;
+insert into t_special_no_arg_func select rowid;
+-- rowid, length is 18
+select length(a) from t_special_no_arg_func;
+drop table t_special_no_arg_func;
+
+select dbtimezone;
+select sessiontimezone;
+select rownum;
+select rowscn;
+select null;
+select true;
+select false;
+select user;
+
+--success, keyword can be object name
+create table curdate(curdate int);
+create table current_date(current_date int);
+create table current_timestamp(current_timestamp int);
+create table dbtimezone(dbtimezone int);
+create table now(now int);
+create table systimestamp(systimestamp int);
+create table localtimestamp(localtimestamp int);
+create table utc_timestamp(utc_timestamp int);
+create table sessiontimezone(sessiontimezone int);
+
+insert into curdate values(1);
+insert into current_date values(1);
+insert into current_timestamp values(1);
+insert into dbtimezone values(1);
+insert into now values(1);
+insert into systimestamp values(1);
+insert into localtimestamp values(1);
+insert into utc_timestamp values(1);
+insert into sessiontimezone values(1);
+
+-- will be column name, not function
+select curdate from curdate;
+select current_date from current_date;
+select current_timestamp from current_timestamp;
+select dbtimezone from dbtimezone;
+select now from now;
+select systimestamp from systimestamp;
+select localtimestamp from localtimestamp;
+select utc_timestamp from utc_timestamp;
+select sessiontimezone from sessiontimezone;
+
+drop table curdate;
+drop table current_date;
+drop table current_timestamp;
+drop table dbtimezone;
+drop table now;
+drop table systimestamp;
+drop table localtimestamp;
+drop table utc_timestamp;
+drop table sessiontimezone;
+
 alter system set use_bison_parser = false;

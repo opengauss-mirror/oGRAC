@@ -313,6 +313,7 @@ bool32 lex_check_datatype(struct st_lex *lex, word_t *typword);
 status_t lex_get_word_typmode(word_t *word, typmode_t *typmod);
 bool32 lex_match_coll_method_name(sql_text_t *method_name, uint8 *method_id);
 status_t lex_try_match_datatype_bison(word_t *word);
+bool32 lex_match_reserved_keyword_bison(word_t *word);
 
 #ifdef __cplusplus
 }

@@ -961,6 +961,15 @@ status_t lex_try_match_datatype_bison(word_t *word)
     return OG_SUCCESS;
 }
 
+bool32 lex_match_reserved_keyword_bison(word_t *word)
+{
+    if (lex_match_subset((key_word_t *)g_reserved_words, RESERVED_WORDS_COUNT, word)) {
+        word->type = WORD_TYPE_RESERVED;
+        return OG_TRUE;
+    }
+    return OG_FALSE;
+}
+
 #ifdef __cplusplus
 }
 #endif
