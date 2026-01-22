@@ -185,6 +185,7 @@ extern void core_yyset_column(int column_no, yyscan_t yyscanner);
  * Exclusive states:
  *  <xc> extended C-style comments
  *  <xd> delimited identifiers (double-quoted identifiers)
+ *  <xh> hexadecimal numeric string
  *  <xq> standard quoted strings
  *  <xe> extended quoted strings (support backslash escape sequences)
  *  <xdolq> $foo$ quoted strings
@@ -195,9 +196,11 @@ extern void core_yyset_column(int column_no, yyscan_t yyscanner);
 
 %x xc
 %x xd
+%x xh
 %x xe
 %x xq
 %x xdolq
+%x xbq
 %x xui
 %x xus
 %x xeu
@@ -273,6 +276,12 @@ xqstart            {quote}
 xqdouble        {quote}{quote}
 xqinside        [^']+
 
+/* Hexadecimal number */
+xhstart			X{quote}
+xhinside		[^']*
+/* Hexadecimal number, start with 0x */
+xhnumber		0x[0-9A-Fa-f]+
+
 /* $foo$ style quotes ("dollar quoting")
  * The quoted string starts with $foo$ where "foo" is an optional string
  * in the form of an identifier, except that it may not contain "$",
@@ -296,6 +305,15 @@ xdstart            {dquote}
 xdstop            {dquote}
 xddouble        {dquote}{dquote}
 xdinside        [^"]+
+
+/*
+ * backquote quote
+ * Allows embedded spaces and other special characters into identifiers.
+ */
+bquote			\`
+xbqstart		{bquote}
+xbqstop			{bquote}
+xbqinside		[^`]+
 
 /* Unicode escapes */
 uescape            [uU][eE][sS][cC][aA][pP][eE]{whitespace}*{quote}[^']{quote}
@@ -350,19 +368,6 @@ dot_dot            \.\.
 colon_equals    ":="
 para_equals    "=>"
 
-/*
- * These operator-like tokens (unlike the above ones) also match the {operator}
- * rule, which means that they might be overridden by a longer match if they
- * are followed by a comment start or a + or - character. Accordingly, if you
- * add to this list, you must also add corresponding code to the {operator}
- * block to return the correct token in such cases. (This is not needed in
- * psqlscan.l since the token value is ignored there.)
- */
-less_equals     "<="
-greater_equals  ">="
-less_greater    "<>"
-not_equals      "!="
-
 set_ident_start    "@@"
 set_ident_cont    [A-Za-z\200-\377_0-9\$\#]
 set_identifier    {set_ident_start}{set_ident_cont}*
@@ -377,8 +382,8 @@ set_identifier    {set_ident_start}{set_ident_cont}*
  * If you change either set, adjust the character lists appearing in the
  * rule for "operator"!
  */
-self            [,()\[\].;\:\+\-\*\/\%\^\<\>\=\@]
-op_chars        [\~\!\#\^\&\|\`\?\+\-\*\/\%\<\>\=\@]
+self            [,()\[\].;\:\+\-\*\/\%\^\<\>\=\@\&\|]
+op_chars        [\~\!\#\^\&\|\?\+\-\*\/\%\<\>\=\@]
 operator        {op_chars}+
 
 /* we no longer allow unary minus in numbers.
@@ -668,6 +673,27 @@ other            .
                 }
 <xq,xe,xus><<EOF>>        { yyerror("unterminated quoted string"); return 0;}
 
+<xh>{xhinside}  {
+                    addlit(yytext, yyleng, yyscanner);
+                }
+<xh>{quotecontinue} {
+                        /* ignore */
+                    }
+{xhstart}   {
+                SET_YYLLOC();
+                BEGIN(xh);
+                startlit();
+                addlit(yytext, yyleng, yyscanner);
+            }
+<xh>{quotestop} |
+<xh>{quotefail} {
+                    BEGIN(INITIAL);
+                    addlitchar('\'', yyscanner);
+                    yylval->str = litbufdup(yyscanner);
+                    yyextra->is_hint_str = false;
+                    return XCONST;
+                }
+<xh><<EOF>> { yyerror("unterminated hexadecimal string literal"); return 0;}
 {dolqdelim}        {
                     SET_YYLLOC();
                     FLEX_MEM_STRDUP(yyextra->dolqstart, yytext);
@@ -725,6 +751,11 @@ other            .
                     BEGIN(xui);
                     startlit();
                 }
+{xbqstart}      {
+                    SET_YYLLOC();
+                    BEGIN(xbq);
+                    startlit();
+                }
 <xd>{xdstop}    {
                     char           *ident;
 
@@ -773,12 +804,25 @@ other            .
                     yyextra->origin_str = NULL;
                     return IDENT;
                 }
+<xbq>{xbqstop}  {
+                BEGIN(INITIAL);
+                if (yyextra->literallen == 0)
+                    yyerror("zero-length delimited identifier");
+                char *ident = litbufdup(yyscanner);
+                yylval->str = ident;
+                yyextra->ident_quoted = true;
+                yyextra->is_hint_str = false;
+                return IDENT;
+            }
 <xd,xui>{xddouble}    {
                     addlitchar('"', yyscanner);
                 }
 <xd,xui>{xdinside}    {
                     addlit(yytext, yyleng, yyscanner);
                 }
+<xbq>{xbqinside}    {
+                        addlit(yytext, yyleng, yyscanner);
+                    }
 <xd,xui><<EOF>>        { yyerror("unterminated quoted identifier"); return 0;}
 
 {xufailed}    {
@@ -907,7 +951,7 @@ other            .
 
                         for (ic = nchars-2; ic >= 0; ic--)
                         {
-                            if (strchr("~!#^&|`?%", yytext[ic]))
+                            if (strchr("~!#^&|?%", yytext[ic]))
                                 break;
                         }
                         if (ic >= 0)
@@ -928,7 +972,7 @@ other            .
                          * that the "self" rule would have.
                          */
                         if (nchars == 1 &&
-                            strchr(",()[].;:+-*/%^<>=@", yytext[0]))
+                            strchr(",()[].;:+-*/%^<>=@|&", yytext[0]))
                         {
                             yyextra->is_hint_str = false;
                             return yytext[0];
@@ -957,12 +1001,28 @@ other            .
                         yyextra->is_hint_str = false;
                         return CmpOp;
                     }
-                    else
+                    else if (strcmp(yytext, "||") == 0)
                     {
                         FLEX_MEM_STRDUP(yylval->str, yytext);
+                        yyextra->is_hint_str = false;
+                        return OPER_CAT;
                     }
-                    yyextra->is_hint_str = false;
-                    return Op;
+                    else if (strcmp(yytext, "<<") == 0)
+                    {
+                        FLEX_MEM_STRDUP(yylval->str, yytext);
+                        yyextra->is_hint_str = false;
+                        return OPER_LSHIFT;
+                    }
+                    else if (strcmp(yytext, ">>") == 0)
+                    {
+                        FLEX_MEM_STRDUP(yylval->str, yytext);
+                        yyextra->is_hint_str = false;
+                        return OPER_RSHIFT;
+                    }
+                    else
+                    {
+                        yyerror("invalid operator");
+                    }
                 }
 {newArray}        {
                     yyless(1);
@@ -982,6 +1042,12 @@ other            .
                     yyextra->is_hint_str = false;
                     return PARAM;
                 }
+{xhnumber}  {
+                SET_YYLLOC();
+                yyextra->is_hint_str = false;
+                FLEX_MEM_STRDUP(yylval->str, yytext);
+                return XCONST;
+            }
 {integer}        {
                     SET_YYLLOC();
                     yyextra->is_hint_str = false;
@@ -1370,16 +1436,14 @@ litbufdup(core_yyscan_t yyscanner)
 static int
 process_integer_literal(const char *token, YYSTYPE *lval, core_yyscan_t yyscanner)
 {
-    long        val;
+    int64        val;
     char       *endptr;
 
     errno = 0;
     val = strtol(token, &endptr, 10);
     if (*endptr != '\0' || errno == ERANGE
-#ifdef HAVE_LONG_INT_64
         /* if long > 32 bits, check for overflow of int4 */
-        || val != (long) ((int32) val)
-#endif
+        || val != (int64) ((int32) val)
         )
     {
         /* integer too large, treat it as a float */

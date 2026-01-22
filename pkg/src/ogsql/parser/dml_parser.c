@@ -106,6 +106,53 @@ static inline void set_lookahead_token(int *lookahead_len, struct base_yy_lookah
     lookahead->prev_hold_char = scanbuf[cur_yylloc->offset + cur_yyleng];
 }
 
+static void set_lookahead_two_token(int *lookahead_len, struct base_yy_lookahead *lookaheads, YYSTYPE *lvalp,
+    YYLTYPE *llocp, int next_token_1, int next_token_2, core_YYSTYPE core_yystype_1, core_YYSTYPE core_yystype_2,
+    int next_yyleng_1, int next_yyleng_2, YYLTYPE cur_yylloc_1, YYLTYPE cur_yylloc_2, char *scanbuf, int cur_yyleng_1)
+{
+    int i = 0;
+    lookaheads[i].token = next_token_2;
+    lookaheads[i].yylval = lvalp->core_yystype;
+    lookaheads[i].yylloc = *llocp;
+    lookaheads[i].yyleng = next_yyleng_2;
+    lookaheads[i].prev_hold_char_loc = cur_yylloc_2.offset + next_yyleng_1;
+    lookaheads[i].prev_hold_char = scanbuf[cur_yylloc_2.offset + next_yyleng_1];
+    i++;
+    lookaheads[i].token = next_token_1;
+    lookaheads[i].yylval = core_yystype_2;
+    lookaheads[i].yylloc = cur_yylloc_2;
+    lookaheads[i].yyleng = next_yyleng_1;
+    lookaheads[i].prev_hold_char_loc = cur_yylloc_1.offset + cur_yyleng_1;
+    lookaheads[i].prev_hold_char = scanbuf[cur_yylloc_1.offset + cur_yyleng_1];
+    i++;
+    *lookahead_len = i;
+    lvalp->core_yystype = core_yystype_1;
+    *llocp = cur_yylloc_1;
+    scanbuf[cur_yylloc_1.offset + cur_yyleng_1] = '\0';
+}
+
+static void set_lookahead_three_token(int *lookahead_len, struct base_yy_lookahead *lookaheads, YYSTYPE *lvalp,
+    YYLTYPE *llocp, int next_token_1, int next_token_2, int next_token_3, YYLTYPE cur_yylloc_1, YYLTYPE cur_yylloc_2,
+    YYLTYPE cur_yylloc_3, core_YYSTYPE core_yystype_1, core_YYSTYPE core_yystype_2, core_YYSTYPE core_yystype_3)
+{
+    int i = 0;
+    lookaheads[i].token = next_token_3;
+    lookaheads[i].yylval = lvalp->core_yystype;
+    lookaheads[i].yylloc = *llocp;
+    i++;
+    lookaheads[i].token = next_token_1;
+    lookaheads[i].yylval = core_yystype_2;
+    lookaheads[i].yylloc = cur_yylloc_2;
+    i++;
+    lookaheads[i].token = next_token_2;
+    lookaheads[i].yylval = core_yystype_3;
+    lookaheads[i].yylloc = cur_yylloc_3;
+    i++;
+    *lookahead_len = i;
+    lvalp->core_yystype = core_yystype_1;
+    *llocp = cur_yylloc_1;
+}
+
 int base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
 {
     base_yy_extra_type* yyextra = og_yyget_extra(yyscanner);
@@ -118,11 +165,24 @@ int base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
     int next_yyleng = 0;
     core_YYSTYPE cur_yylval;
     YYLTYPE cur_yylloc = {{0, 0}, 0};
+    int next_token_1 = 0;
+    int next_yyleng_1 = 0;
+    core_YYSTYPE core_yystype_1;
+    YYLTYPE cur_yylloc_1 = {{0, 0}, 0};
+    int cur_yyleng_1 = 0;
+    int next_token_2 = 0;
+    int next_yyleng_2 = 0;
+    core_YYSTYPE core_yystype_2;
+    YYLTYPE cur_yylloc_2 = {{0, 0}, 0};
+    int next_token_3 = 0;
+    core_YYSTYPE core_yystype_3;
+    YYLTYPE cur_yylloc_3 = {{0, 0}, 0};
 
     /* Get next token --- we might already have it */
     if (yyextra->lookahead_len != 0) {
         const struct base_yy_lookahead lookahead = lookaheads[yyextra->lookahead_len - 1];
         cur_token = lookahead.token;
+        cur_yyleng = lookahead.yyleng;
         lvalp->core_yystype = lookahead.yylval;
         *llocp = lookahead.yylloc;
         scanbuf[lookahead.prev_hold_char_loc] = lookahead.prev_hold_char;
@@ -130,10 +190,32 @@ int base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
         yyextra->lookahead_len--;
     } else {
         cur_token = core_yylex(&(lvalp->core_yystype), llocp, yyscanner);
+        cur_yyleng = ct_yyget_leng(yyscanner);
     }
 
     /* Do we need to look ahead for a possible multiword token? */
     switch (cur_token) {
+        case ABSENT:
+            /*
+             * ABSENT ON must be reduced to one token
+             */
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            switch (next_token) {
+                case ON:
+                    cur_token = ABSENT_ON;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
         case NULLS_P:
             /*
              * NULLS FIRST and NULLS LAST must be reduced to one token
@@ -326,6 +408,202 @@ int base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
                     set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
                         &cur_yylloc, scanbuf, cur_yyleng);
                     /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case ERROR_P:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            core_yystype_1 = cur_yylval;
+            cur_yylloc_1 = cur_yylloc;
+            cur_yyleng_1 = cur_yyleng;
+            next_token_1 = next_token;
+            next_yyleng_1 = next_yyleng;
+            switch (next_token) {
+                case ON:
+                    get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner,
+                        scanbuf, &cur_yylval, &cur_yylloc);
+                    core_yystype_2 = cur_yylval;
+                    cur_yylloc_2 = cur_yylloc;
+                    next_token_2 = next_token;
+                    next_yyleng_2 = next_yyleng;
+                    switch (next_token) {
+                        case ERROR_P:
+                            cur_token = ERROR_ON_ERROR_P;
+                            break;
+                        case EMPTY:
+                            cur_token = ERROR_ON_EMPTY;
+                            break;
+                        default:
+                            set_lookahead_two_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                next_token_2, core_yystype_1, core_yystype_2, next_yyleng_1, next_yyleng_2,
+                                cur_yylloc_1, cur_yylloc_2, scanbuf, cur_yyleng_1);
+                            break;
+                    }
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case NULL_P:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc);
+            core_yystype_1 = cur_yylval;
+            cur_yylloc_1 = cur_yylloc;
+            cur_yyleng_1 = cur_yyleng;
+            next_token_1 = next_token;
+            next_yyleng_1 = next_yyleng;
+            switch (next_token) {
+                case ON:
+                    get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner,
+                        scanbuf, &cur_yylval, &cur_yylloc);
+                    core_yystype_2 = cur_yylval;
+                    cur_yylloc_2 = cur_yylloc;
+                    next_token_2 = next_token;
+                    next_yyleng_2 = next_yyleng;
+                    switch (next_token) {
+                        case ERROR_P:
+                            cur_token = NULL_ON_ERROR_P;
+                            break;
+                        case EMPTY:
+                            cur_token = NULL_ON_EMPTY;
+                            break;
+                        default:
+                            set_lookahead_two_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                next_token_2, core_yystype_1, core_yystype_2, next_yyleng_1, next_yyleng_2,
+                                cur_yylloc_1, cur_yylloc_2, scanbuf, cur_yyleng_1);
+                            break;
+                    }
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
+        case EMPTY:
+            /*
+             * EMPTY ON ERROR, EMPTY ON EMPTY, EMPTY ARRAY ON ERROR, etc.
+             * must be reduced to single tokens to avoid shift/reduce conflicts
+             * in JSON function parsing
+             */
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner,
+                        scanbuf, &cur_yylval, &cur_yylloc);
+            core_yystype_1 = cur_yylval;
+            cur_yylloc_1 = cur_yylloc;
+            cur_yyleng_1 = cur_yyleng;
+            next_token_1 = next_token;
+            next_yyleng_1 = next_yyleng;
+            switch (next_token) {
+                case ON:
+                    get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner,
+                        scanbuf, &cur_yylval, &cur_yylloc);
+                    core_yystype_2 = cur_yylval;
+                    cur_yylloc_2 = cur_yylloc;
+                    next_token_2 = next_token;
+                    next_yyleng_2 = next_yyleng;
+                    switch (next_token) {
+                        case ERROR_P:
+                            cur_token = EMPTY_ON_ERROR_P;
+                            break;
+                        case EMPTY:
+                            cur_token = EMPTY_ON_EMPTY;
+                            break;
+                        default:
+                            set_lookahead_two_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                next_token_2, core_yystype_1, core_yystype_2, next_yyleng_1, next_yyleng_2,
+                                cur_yylloc_1, cur_yylloc_2, scanbuf, cur_yyleng_1);
+                            break;
+                    }
+                    break;
+                case ARRAY:
+                    get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner,
+                        scanbuf, &cur_yylval, &cur_yylloc);
+                    core_yystype_2 = cur_yylval;
+                    cur_yylloc_2 = cur_yylloc;
+                    next_token_2 = next_token;
+                    next_yyleng_2 = next_yyleng;
+                    switch (next_token) {
+                        case ON:
+                            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp,
+                                yyscanner, scanbuf, &cur_yylval, &cur_yylloc);
+                            core_yystype_3 = cur_yylval;
+                            cur_yylloc_3 = cur_yylloc;
+                            next_token_3 = next_token;
+                            switch (next_token) {
+                                case ERROR_P:
+                                    cur_token = EMPTY_ARRAY_ON_ERROR_P;
+                                    break;
+                                case EMPTY:
+                                    cur_token = EMPTY_ARRAY_ON_EMPTY;
+                                    break;
+                                default:
+                                    set_lookahead_three_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                        next_token_2, next_token_3, cur_yylloc_1, cur_yylloc_2, cur_yylloc_3,
+                                        core_yystype_1, core_yystype_2, core_yystype_3);
+                                    break;
+                            }
+                            break;
+                        default:
+                            set_lookahead_two_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                next_token_2, core_yystype_1, core_yystype_2, next_yyleng_1, next_yyleng_2,
+                                cur_yylloc_1, cur_yylloc_2, scanbuf, cur_yyleng_1);
+                            break;
+                    }
+                    break;
+                case OBJECT_P:
+                    get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner,
+                        scanbuf, &cur_yylval, &cur_yylloc);
+                    core_yystype_2 = cur_yylval;
+                    cur_yylloc_2 = cur_yylloc;
+                    next_token_2 = next_token;
+                    next_yyleng_2 = next_yyleng;
+                    switch (next_token) {
+                        case ON:
+                            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp,
+                                yyscanner, scanbuf, &cur_yylval, &cur_yylloc);
+                            core_yystype_3 = cur_yylval;
+                            cur_yylloc_3 = cur_yylloc;
+                            next_token_3 = next_token;
+                            switch (next_token) {
+                                case ERROR_P:
+                                    cur_token = EMPTY_OBJECT_P_ON_ERROR_P;
+                                    break;
+                                case EMPTY:
+                                    cur_token = EMPTY_OBJECT_P_ON_EMPTY;
+                                    break;
+                                default:
+                                    set_lookahead_three_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                        next_token_2, next_token_3, cur_yylloc_1, cur_yylloc_2, cur_yylloc_3,
+                                        core_yystype_1, core_yystype_2, core_yystype_3);
+                                    break;
+                            }
+                            break;
+                        default:
+                            set_lookahead_two_token(lookahead_len, lookaheads, lvalp, llocp, next_token_1,
+                                next_token_2, core_yystype_1, core_yystype_2, next_yyleng_1, next_yyleng_2,
+                                cur_yylloc_1, cur_yylloc_2, scanbuf, cur_yyleng_1);
+                            break;
+                    }
+                    break;
+                default:
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
                     lvalp->core_yystype = cur_yylval;
                     *llocp = cur_yylloc;
                     scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';

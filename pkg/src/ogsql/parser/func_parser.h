@@ -28,6 +28,7 @@
 
 #include "ogsql_expr.h"
 #include "expr_parser.h"
+#include "json/ogsql_json_utils.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,6 +79,8 @@ status_t sql_create_substr_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, e
     char *func_name, source_location_t loc);
 status_t sql_create_extract_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, extract_list_t *extract_list,
     source_location_t loc);
+status_t sql_create_json_func_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t *arg_list,
+    char *func_name, json_func_attr_t attr, source_location_t loc);
 
 #ifdef __cplusplus
 }

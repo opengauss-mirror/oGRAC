@@ -679,6 +679,11 @@ typedef struct st_json_pf_cond_tree {
     json_pf_cond_chain_t chain;
 } json_pf_cond_tree_t;
 
+typedef struct st_json_array_returning_attr {
+    json_func_att_id_t attr;
+    uint32 return_size;
+} json_array_returning_attr;
+
 #define JSON_PF_COND_TREE_INIT(cond)                                                                    \
     do {                                                                                                \
         MEMS_RETURN_IFERR(memset_s(cond, sizeof(json_pf_cond_tree_t), 0, sizeof(json_pf_cond_tree_t))); \

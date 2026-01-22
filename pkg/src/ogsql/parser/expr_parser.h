@@ -40,6 +40,11 @@ typedef enum st_timezone_type {
     WITH_LOCAL_TIMEZONE,
 } timezone_type_t;
 
+typedef struct st_interval_info {
+    typmode_t type;
+    uint32 fmt;
+} interval_info_t;
+
 typedef struct st_type_word {
     char *str;
     galist_t *typemode;
@@ -277,10 +282,11 @@ status_t sql_create_expr_tree(sql_stmt_t *stmt, expr_tree_t **expr, og_type_t ty
 status_t sql_create_int_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, int val, source_location_t loc);
 status_t sql_create_float_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc);
 status_t sql_create_string_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc);
+status_t sql_create_hex_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc);
 status_t sql_create_bool_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, bool32 val, source_location_t loc);
 status_t sql_create_null_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, source_location_t loc);
 status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, galist_t *list,
-    source_location_t loc);
+    expr_node_type_t type, source_location_t loc);
 status_t sql_create_indices_expr(sql_stmt_t *stmt, expr_tree_t **expr, int32 start, int32 end, source_location_t loc);
 status_t sql_create_paramref_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 token_len, lex_location_t lex_loc);
 status_t sql_create_case_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t* case_arg,
@@ -301,6 +307,10 @@ status_t sql_parse_typmode(lex_t *lex, pmode_t pmod, typmode_t *typmod, word_t *
 status_t sql_parse_datatype(lex_t *lex, pmode_t pmod, typmode_t *typmod, word_t *typword);
 status_t sql_parse_datatype_typemode(lex_t *lex, pmode_t pmod, typmode_t *typmod, word_t *typword, word_t *tword);
 status_t sql_parse_case_expr(sql_stmt_t *stmt, word_t *word, expr_node_t *node);
+status_t sql_parse_datetime_precision_bison(galist_t *typemode, source_location_t loc, int32 *val_int32,
+    int32 def_prec, int32 min_prec, int32 max_prec, const char *field_name);
+status_t sql_parse_second_precision_bison(galist_t *typemode, source_location_t loc, int32 *lead_prec,
+    int32 *frac_prec);
 status_t sql_build_default_reserved_expr(sql_stmt_t *stmt, expr_tree_t **r_result);
 status_t sql_build_column_expr(sql_stmt_t *stmt, knl_column_t *column, expr_tree_t **r_result);
 status_t sql_copy_text_remove_quotes(sql_context_t *context, text_t *src, text_t *dst);
@@ -328,6 +338,13 @@ status_t sql_word2number(word_t *word, expr_node_t *node);
 status_t sql_add_param_mark(sql_stmt_t *stmt, word_t *word, bool32 *is_repeated, uint32 *pnid);
 status_t sql_create_star_expr(sql_stmt_t *stmt, expr_tree_t **expr, lex_location_t loc);
 status_t sql_create_prior_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t *column, source_location_t loc);
+status_t sql_create_negative_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t *operand, source_location_t loc);
+status_t sql_create_oper_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t *left, expr_node_t *right,
+    expr_node_type_t node_type, source_location_t loc);
+status_t sql_create_array_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr_tree_t *array_elements,
+    source_location_t loc);
+status_t sql_create_interval_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, interval_info_t info,
+    source_location_t loc);
 status_t sql_create_reserved_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 res_id, bool32 namable,
     source_location_t loc);
 

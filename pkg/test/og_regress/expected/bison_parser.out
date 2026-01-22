@@ -2614,6 +2614,1281 @@ SQL> create database db1 user xbin IDENTIFIED by 'Huawei@123'; --error
 
 OG-00601, [1:17]Sql syntax error: syntax error
 SQL> 
+SQL> ------------------------------------
+SQL> --function/expression test
+SQL> --will create two table, one for use_bison_parser is on while anotner is off
+SQL> --test the result by join two table
+SQL> --func_res_test_bison: use_bison_parser is on
+SQL> --func_res_test_bison_off: use_bison_parser is off
+SQL> ------------------------------------
+SQL> CREATE TABLE json_col_test(id serial primary key, json_col CLOB);
+
+Succeed.
+
+SQL> INSERT INTO json_col_test(json_col) VALUES ('{"name":"张三", "age":25, "address":{"city":"北京"}}'); -- 合法 JSON
+
+1 rows affected.
+
+SQL> INSERT INTO json_col_test(json_col) VALUES ('{"name":"李四", "age":30}'); -- 合法 JSON（无 address 路径）
+
+1 rows affected.
+
+SQL> INSERT INTO json_col_test(json_col) VALUES ('{name:"王五", age:35}'); -- 非法 JSON（键未加双引号）
+
+1 rows affected.
+
+SQL> INSERT INTO json_col_test(json_col) VALUES ('不是 JSON 数据'); -- 完全非法的非 JSON 字符串
+
+1 rows affected.
+
+SQL> INSERT INTO json_col_test(json_col) VALUES (NULL); -- 空值
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> create table jb_merpatch_tbl_bison(id serial primary key, a jsonb);
+
+Succeed.
+
+SQL> insert into jb_merpatch_tbl_bison(a) values('{"addres":"CHN", "id":"55185651515", "name":"zzzzzzzzzzzzzzzzzzzzzzzzzzzz", "age":4444444444444444444444444, "hobby":[1,2,34,5]}');
+
+1 rows affected.
+
+SQL> insert into jb_merpatch_tbl_bison(a) values('[1,2,3,4,5,6]');
+
+1 rows affected.
+
+SQL> insert into jb_merpatch_tbl_bison(a) values('{"AAA":{"BBB":{"CCC":"XXXXX"}}}');
+
+1 rows affected.
+
+SQL> insert into jb_merpatch_tbl_bison(a) values('[1, 2, {"AAA":{"BBB":{"CCC":"XXXXX"}}}]');
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> create table func_res_test_bison(id serial primary key, result varchar(1000));
+
+Succeed.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[0,1,2,3,4]', '$[3]' WITH WRAPPER));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[*]' WITH CONDITIONAL WRAPPER));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{"last_name":"banana"}'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) error on error));
+
+OG-02502, Output value too large
+SQL> insert into func_res_test_bison(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) null on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_VALUE('{"x":1, "y":2}', '$.y'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON ERROR));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' error ON empty));
+
+OG-02506, JSON_VALUE evaluated to no value
+SQL> insert into func_res_test_bison(result) values (JSON_VALUE('[1,2]', '$[2]' error ON ERROR));
+
+OG-02506, JSON_VALUE evaluated to no value
+SQL> 
+SQL> insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city') from json_col_test order by id;
+
+5 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city' true on error) from json_col_test order by id;
+
+5 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city' false on error) from json_col_test order by id;
+
+5 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSON_EXISTS(json_col, '$.address.city' error on error) from json_col_test order by id;
+
+OG-02504, JSON syntax error, " expected but n found
+SQL> 
+SQL> insert into func_res_test_bison(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name', '{"bbb":66, "aaa":54}'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob error on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob));
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison(result) select jsonb_mergepatch(a, '{"name":"andy", "age":12}') from jb_merpatch_tbl_bison where id = 1;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSONB_QUERY(a, '$[*]' WITH CONDITIONAL WRAPPER) from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSONB_VALUE(a, '$.addres') from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSONB_EXISTS(a, '$.id') from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> insert into func_res_test_bison(result) select JSONB_SET(a, '$.id') from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison(result) SELECT JSON_OBJECT('name' is 'Tim', 'age' is 20);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT JSON_OBJECT(KEY 'name' is 'Tim', KEY 'age' is 20);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
+
+OG-00601, [1:71]Sql syntax error: syntax error
+SQL> insert into func_res_test_bison(result) SELECT JSON_ARRAY(1,2,3,4);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}' FORMAT JSON);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT JSON_ARRAY('[1,2,3]' , '{"x":1}' FORMAT JSON);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}');
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison(result)  select interval '22' year;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '2022' year; --error
+
+OG-00674, [1:69]YEAR field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison(result)  select interval '2022' year(4);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '22' year to year;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '2022' year to year; --error
+
+OG-00674, [1:73]YEAR field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison(result)  select interval '2022' year(4) to year;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '22' year to MONTH; --error
+
+OG-00673, [1:71]Invalid interval text -- format error
+SQL> insert into func_res_test_bison(result)  select interval '2022-11' year to MONTH; --error
+
+OG-00674, [1:76]YEAR field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison(result)  select interval '2022-11' year(4) to MONTH;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '0 0:0:1' day to second;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '0 0:0:1' day(5) to second(2);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '11 22:05' day to minute;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '100 10' day to hour; --error
+
+OG-00674, [1:74]DAY field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison(result)  select interval '100 10' day(3) to hour;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '1' second(5,1);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '8' month;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '8' day;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '8' hour;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '8' minute;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '09:30' hour to day; --error
+
+OG-00601, [1:74]Sql syntax error: -- invalid field name
+SQL> insert into func_res_test_bison(result)  select interval '09:30' minute to hour; --error
+
+OG-00601, [1:76]Sql syntax error: -- invalid field name
+SQL> insert into func_res_test_bison(result)  select interval '09:30' hour to minute;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '09:30:1.11' hour to second;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result)  select interval '09:30' minute to second;
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison(result) select 0x573456;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select X'573456';
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select X'5734567'; --error
+
+OG-00105, [1:48]Invalid format of hex
+SQL> insert into func_res_test_bison(result) select x'573456'; --error
+
+OG-00601, [1:49]Sql syntax error: syntax error
+SQL> 
+SQL> insert into func_res_test_bison(result) select 1::int;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select -(-4);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select -4;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select +5;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 5423237233838653440 << 20;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select -5423237233838653440 >> 32;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 542323723383865345324532452343440 >> 32;
+
+OG-00659, [1:48]BIGINT out of range
+SQL> insert into func_res_test_bison(result) select 5423237233838653440 >> 32;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select -542323723334534534534535838653440 >> 32;
+
+OG-00659, [1:48]BIGINT out of range
+SQL> insert into func_res_test_bison(result) select -5423237233838653440 >> 30;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 838653440 >> 32234444444444444444444444444444444;
+
+OG-00659, [1:48]BIGINT out of range
+SQL> insert into func_res_test_bison(result) select 2147483648 + 1;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 120::decimal(3, -1);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 120::date;
+
+OG-00606, [1:48]Inconsistent datatypes, expected DATE - got BINARY_INTEGER
+SQL> insert into func_res_test_bison(result) select case when 1 = 0 then 1 - 1 else 2.123 end from sys_dummy;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select convert((case(cast(1 as int) & 2) when 0 then 1 else 2 end) / 2, int);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select convert((case(cast(1 as int) & 1) when (cast(1 as int) & 1) then (case (1) when (1) then (1) else (0) end) else (cast (3 as int) & 3) end) / 2, int);
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison(result) select 1^2|3;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 1&2<<3;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 1&2>>3;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 1<<3||4;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 1>>3||4;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 4||5+6;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 4||6-1;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 4+5*6;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 4+5/6;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) select 4+5%6;
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison(result) SELECT SUBSTR('Quadratically',5,6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT SUBSTR('Quadratically' FROM 5 FOR 6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT SUBSTRING('Quadratically',5,6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT SUBSTRING('Quadratically' FROM 5 FOR 6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT EXTRACT (MONTH from '2018-10-04');
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT CONVERT('2018-06-28 13:14:15', timestamp);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT TRIM(LEADING '1' FROM '123sfd111');
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison(result) SELECT TRIM( '123sfd111','1');
+
+1 rows affected.
+
+SQL> 
+SQL> select * from func_res_test_bison order by id;
+
+ID                   RESULT                                                          
+-------------------- ----------------------------------------------------------------
+1                    [3]                                                             
+2                    [{"a":100},{"b":200},{"c":300}]                                 
+3                                                                                    
+4                    []                                                              
+5                    []                                                              
+6                    []                                                              
+7                    []                                                              
+8                    {}                                                              
+9                    {}                                                              
+10                   {"id":1,"first_name":"Iron","last_name":"banana"}               
+12                                                                                   
+13                   2                                                               
+14                                                                                   
+15                                                                                   
+18                   TRUE                                                            
+19                   FALSE                                                           
+20                   FALSE                                                           
+21                   FALSE                                                           
+22                                                                                   
+23                   TRUE                                                            
+24                   FALSE                                                           
+25                   TRUE                                                            
+26                   TRUE                                                            
+27                                                                                   
+28                   TRUE                                                            
+29                   FALSE                                                           
+30                   FALSE                                                           
+31                   FALSE                                                           
+32                                                                                   
+33                   {"age":18,"addr":"China","ho":[1,2,3,4]}                        
+34                                                                                   
+35                   {"name":{"bbb":66,"aaa":54},"age":18,"addr":"China","ho":[1,2,3,4]}
+36                   [[1,2,3,4,{"aaa":54}]]                                          
+37                   [[1,2,3,4,{"aaa":54}]]                                          
+38                   {"addres":"CHN","age":12,"hobby":[1,2,34,5],"id":"55185651515","name":"andy"}
+39                   {"addres":"CHN","age":4444444444444444444444444,"hobby":[1,2,34,5],"id":"55185651515","name":"zzzzzzzzzzzzzzzzzzzzzzzzzzzz"}
+40                   [1,2,3,4,5,6]                                                   
+41                   {"AAA":{"BBB":{"CCC":"XXXXX"}}}                                 
+42                   [1,2,{"AAA":{"BBB":{"CCC":"XXXXX"}}}]                           
+43                   CHN                                                             
+44                                                                                   
+45                                                                                   
+46                                                                                   
+47                   TRUE                                                            
+48                   FALSE                                                           
+49                   FALSE                                                           
+50                   FALSE                                                           
+51                   {"addres":"CHN","age":4444444444444444444444444,"hobby":[1,2,34,5],"name":"zzzzzzzzzzzzzzzzzzzzzzzzzzzz"}
+52                   [1,2,3,4,5,6]                                                   
+53                   {"AAA":{"BBB":{"CCC":"XXXXX"}}}                                 
+54                   [1,2,{"AAA":{"BBB":{"CCC":"XXXXX"}}}]                           
+55                   {"name":"Tim","age":20}                                         
+56                   {"name":"Tim","age":20}                                         
+57                   [1,2,3,4]                                                       
+58                   [[1,2,3],{"x":1}]                                               
+59                   ["[1,2,3]",{"x":1}]                                             
+60                   [[1,2,3],"{\"x\":1}"]                                           
+61                   +22-00                                                          
+62                   +2022-00                                                        
+63                   +22-00                                                          
+64                   +2022-00                                                        
+65                   +2022-11                                                        
+66                   +00 00:00:01.000000                                             
+67                   +00 00:00:01.000000                                             
+68                   +11 22:05:00.000000                                             
+69                   +100 10:00:00.000000                                            
+70                   +00 00:00:01.000000                                             
+71                   +00-08                                                          
+72                   +08 00:00:00.000000                                             
+73                   +00 08:00:00.000000                                             
+74                   +00 00:08:00.000000                                             
+75                   +00 09:30:00.000000                                             
+76                   +00 09:30:01.110000                                             
+77                   +00 00:09:30.000000                                             
+78                   W4V                                                             
+79                   W4V                                                             
+80                   1                                                               
+81                   4                                                               
+82                   -4                                                              
+83                   5                                                               
+84                   6376386787845079040                                             
+85                   -1262695816                                                     
+86                   1262695815                                                      
+87                   -5050783264                                                     
+88                   2147483649                                                      
+89                   120                                                             
+90                   2.123                                                           
+91                   1                                                               
+92                   1                                                               
+93                   3                                                               
+94                   0                                                               
+95                   0                                                               
+96                   17179869184                                                     
+97                   0                                                               
+98                   51                                                              
+99                   45                                                              
+100                  34                                                              
+101                  4.83333333333333                                                
+102                  9                                                               
+103                  ratica                                                          
+104                  ratica                                                          
+105                  ratica                                                          
+106                  ratica                                                          
+107                  10                                                              
+108                  2018-06-28 13:14:15.000000                                      
+109                  23sfd111                                                        
+110                  23sfd                                                           
+
+107 rows fetched.
+
+SQL> 
+SQL> ------------------------------------
+SQL> --same test case for func_res_test_bison_off
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
+SQL> create table func_res_test_bison_off(id serial primary key, result varchar(1000));
+
+Succeed.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[0,1,2,3,4]', '$[3]' WITH WRAPPER));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[*]' WITH CONDITIONAL WRAPPER));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty on empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty ARRAY on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_QUERY('[{"a":100},{"b":200},{"c":300}]', '$[3]' empty OBJECT on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{"last_name":"banana"}'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) error on error));
+
+OG-02502, Output value too large
+SQL> insert into func_res_test_bison_off(result) values (JSON_MERGEPATCH('{"id":1,"first_name":"Iron","last_name":"Man"}', '{}' RETURNING VARCHAR2(10) null on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_VALUE('{"x":1, "y":2}', '$.y'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON ERROR));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' NULL ON empty));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' error ON empty));
+
+OG-02506, JSON_VALUE evaluated to no value
+SQL> insert into func_res_test_bison_off(result) values (JSON_VALUE('[1,2]', '$[2]' error ON ERROR));
+
+OG-02506, JSON_VALUE evaluated to no value
+SQL> 
+SQL> insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city') from json_col_test order by id;
+
+5 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' true on error) from json_col_test order by id;
+
+5 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' false on error) from json_col_test order by id;
+
+5 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' error on error) from json_col_test order by id;
+
+OG-02504, [1:66]JSON syntax error, " expected but n found
+SQL> 
+SQL> insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name', '{"bbb":66, "aaa":54}'));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob error on error));
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) values (json_set('[[1,2,3,4]]', '$[0][6]', '{"aaa":54}', true returning clob));
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison_off(result) select jsonb_mergepatch(a, '{"name":"andy", "age":12}') from jb_merpatch_tbl_bison where id = 1;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSONB_QUERY(a, '$[*]' WITH CONDITIONAL WRAPPER) from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSONB_VALUE(a, '$.addres') from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSONB_EXISTS(a, '$.id') from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select JSONB_SET(a, '$.id') from jb_merpatch_tbl_bison order by id;
+
+4 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT('name' is 'Tim', 'age' is 20);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' is 'Tim', KEY 'age' is 20);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
+
+OG-00601, [1:75]Sql syntax error: the word ":" is not correct
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_ARRAY(1,2,3,4);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}' FORMAT JSON);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_ARRAY('[1,2,3]' , '{"x":1}' FORMAT JSON);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT JSON_ARRAY('[1,2,3]' FORMAT JSON, '{"x":1}');
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison_off(result)  select interval '22' year;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '2022' year; --error
+
+OG-00674, YEAR field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison_off(result)  select interval '2022' year(4);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '22' year to year;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '2022' year to year; --error
+
+OG-00674, YEAR field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison_off(result)  select interval '2022' year(4) to year;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '22' year to MONTH; --error
+
+OG-00673, Invalid interval text -- format error
+SQL> insert into func_res_test_bison_off(result)  select interval '2022-11' year to MONTH; --error
+
+OG-00674, YEAR field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison_off(result)  select interval '2022-11' year(4) to MONTH;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '0 0:0:1' day to second;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '0 0:0:1' day(5) to second(2);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '11 22:05' day to minute;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '100 10' day to hour; --error
+
+OG-00674, DAY field exceeds the specified precision (2)
+SQL> insert into func_res_test_bison_off(result)  select interval '100 10' day(3) to hour;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '1' second(5,1);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '8' month;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '8' day;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '8' hour;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '8' minute;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '09:30' hour to day; --error
+
+OG-00673, [1:78]Invalid interval text -- invalid field name
+SQL> insert into func_res_test_bison_off(result)  select interval '09:30' minute to hour; --error
+
+OG-00673, [1:80]Invalid interval text -- invalid field name
+SQL> insert into func_res_test_bison_off(result)  select interval '09:30' hour to minute;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '09:30:1.11' hour to second;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result)  select interval '09:30' minute to second;
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison_off(result) select 0x573456;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select X'573456';
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select X'5734567'; --error
+
+OG-00105, Invalid format of hex
+SQL> insert into func_res_test_bison_off(result) select x'573456'; --error
+
+OG-00601, [1:53]Sql syntax error: FROM expected but '573456' found
+SQL> 
+SQL> insert into func_res_test_bison_off(result) select 1::int;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select -(-4);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select -4;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select +5;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 5423237233838653440 << 20;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select -5423237233838653440 >> 32;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 542323723383865345324532452343440 >> 32;
+
+OG-00659, [1:86]BIGINT out of range
+SQL> insert into func_res_test_bison_off(result) select 5423237233838653440 >> 32;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select -542323723334534534534535838653440 >> 32;
+
+OG-00659, [1:87]BIGINT out of range
+SQL> insert into func_res_test_bison_off(result) select -5423237233838653440 >> 30;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 838653440 >> 32234444444444444444444444444444444;
+
+OG-00659, [1:62]BIGINT out of range
+SQL> insert into func_res_test_bison_off(result) select 2147483648 + 1;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 120::decimal(3, -1);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 120::date;
+
+OG-00606, [1:52]Inconsistent datatypes, expected DATE - got BINARY_INTEGER
+SQL> insert into func_res_test_bison_off(result) select case when 1 = 0 then 1 - 1 else 2.123 end from sys_dummy;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select convert((case(cast(1 as int) & 2) when 0 then 1 else 2 end) / 2, int);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select convert((case(cast(1 as int) & 1) when (cast(1 as int) & 1) then (case (1) when (1) then (1) else (0) end) else (cast (3 as int) & 3) end) / 2, int);
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison_off(result) select 1^2|3;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 1&2<<3;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 1&2>>3;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 1<<3||4;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 1>>3||4;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 4||5+6;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 4||6-1;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 4+5*6;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 4+5/6;
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) select 4+5%6;
+
+1 rows affected.
+
+SQL> 
+SQL> insert into func_res_test_bison_off(result) SELECT SUBSTR('Quadratically',5,6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT SUBSTR('Quadratically' FROM 5 FOR 6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT SUBSTRING('Quadratically',5,6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT SUBSTRING('Quadratically' FROM 5 FOR 6);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT EXTRACT (MONTH from '2018-10-04');
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT CONVERT('2018-06-28 13:14:15', timestamp);
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT TRIM(LEADING '1' FROM '123sfd111');
+
+1 rows affected.
+
+SQL> insert into func_res_test_bison_off(result) SELECT TRIM( '123sfd111','1');
+
+1 rows affected.
+
+SQL> 
+SQL> -- should be 0, no not matched
+SQL> select * from func_res_test_bison left join func_res_test_bison_off
+  2 on func_res_test_bison.id = func_res_test_bison_off.id
+  3 where func_res_test_bison.result != func_res_test_bison_off.result ;
+
+ID                   RESULT                                                           ID                   RESULT                                                          
+-------------------- ---------------------------------------------------------------- -------------------- ----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> 
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> 
+SQL> drop table jb_merpatch_tbl_bison;
+
+Succeed.
+
+SQL> drop table json_col_test;
+
+Succeed.
+
+SQL> drop table func_res_test_bison;
+
+Succeed.
+
+SQL> drop table func_res_test_bison_off;
+
+Succeed.
+
+SQL> ------------------------------------
+SQL> --function/expression test end
+SQL> ------------------------------------
+SQL> 
+SQL> --if/lnnvl/group_concat/listagg/count over
+SQL> CREATE TABLE  test_func_2
+  2 (
+  3   staff_ID       NUMBER(6) not null,
+  4   NAME           VARCHAR2(20),
+  5   EMAIL          VARCHAR2(25),
+  6   PHONE_NUMBER   VARCHAR2(20),
+  7   HIRE_DATE      DATE,
+  8   employment_ID  VARCHAR2(10),
+  9   SALARY         NUMBER(8,2),
+ 10   MANAGER_ID     NUMBER(6),
+ 11   section_ID     NUMBER(4)
+ 12 );
+
+Succeed.
+
+SQL> INSERT INTO test_func_2
+  2 values (111, '张三', 'zhangsan@126.com', '13312345678', to_date('11-11-1999', 'dd-mm-yyyy'), 'SH_CLERK',  NULL, 124, 50);
+
+1 rows affected.
+
+SQL> INSERT INTO  test_func_2
+  2 values (222, '李四', 'lisi@126.com', '13312345679', to_date('13-05-2000', 'dd-mm-yyyy'), 'SH_CLERK', 2600.00, 124, 50);
+
+1 rows affected.
+
+SQL> INSERT INTO  test_func_2 
+  2 values (333, '王五', 'wangwu@126.com', '13312345680', to_date('01-11-1987', 'dd-mm-yyyy'), 'AD_ASST', 4400.00, 101, 10);
+
+1 rows affected.
+
+SQL> INSERT INTO  test_func_2 
+  2 values (444, '赵二', 'zhaoer@126.com', '13312345681', to_date('13-12-1988', 'dd-mm-yyyy'), 'AD_ASST', 3900.00, 101, 10);
+
+1 rows affected.
+
+SQL> SELECT staff_ID, IF(SALARY < 4000, SALARY, 'secret') "SALARY" FROM test_func_2 WHERE staff_ID IS NOT NULL ORDER BY staff_ID;
+
+STAFF_ID                                 SALARY                                                          
+---------------------------------------- ----------------------------------------------------------------
+111                                      secret                                                          
+222                                      2600                                                            
+333                                      secret                                                          
+444                                      3900                                                            
+
+4 rows fetched.
+
+SQL> SELECT staff_ID,NAME,SALARY FROM test_func_2 WHERE LNNVL(SALARY<10000.00);
+
+STAFF_ID                                 NAME                 SALARY                                  
+---------------------------------------- -------------------- ----------------------------------------
+111                                      张三                                                       
+
+1 rows fetched.
+
+SQL> SELECT staff_ID,GROUP_CONCAT(SALARY) FROM test_func_2 GROUP BY staff_ID;
+
+STAFF_ID                                 GROUP_CONCAT(SALARY)                                            
+---------------------------------------- ----------------------------------------------------------------
+444                                      3900                                                            
+111                                                                                                      
+222                                      2600                                                            
+333                                      4400                                                            
+
+4 rows fetched.
+
+SQL> select listagg(staff_ID) within group(order by staff_ID) over(partition by section_ID) from test_func_2;
+
+LISTAGG(STAFF_ID) WITHIN GROUP(ORDER BY STAFF_ID) OVER(PARTITION
+----------------------------------------------------------------
+333444                                                          
+333444                                                          
+111222                                                          
+111222                                                          
+
+4 rows fetched.
+
+SQL> select count(staff_ID) over(partition by section_ID order by staff_ID) from test_func_2;
+
+COUNT(STAFF_ID) OVER(PARTITION BY SECTION_ID ORDER BY STAFF_ID)
+---------------------------------------------------------------
+1                                                              
+2                                                              
+1                                                              
+2                                                              
+
+4 rows fetched.
+
+SQL> drop table test_func_2; 
+
+Succeed.
+
+SQL> 
+SQL> --select (subquery)
+SQL> select (select id from sys_tables);  -- error
+
+OG-00915, [1:8]More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+SQL> select (select id from sys_tables limit 1);
+
+ID          
+------------
+0           
+
+1 rows fetched.
+
+SQL> --array
+SQL> select array[1,2];
+
+ARRAY[1,2]                                                      
+----------------------------------------------------------------
+{1,2}                                                           
+
+1 rows fetched.
+
+SQL> select array[];
+
+ARRAY[]                                                         
+----------------------------------------------------------------
+{}                                                              
+
+1 rows fetched.
+
+SQL> --join
+SQL> create table t_first(a int, b int);
+
+Succeed.
+
+SQL> insert into t_first values(1,11),(2,22),(3,33);
+
+3 rows affected.
+
+SQL> create table t_second(c int, d int);
+
+Succeed.
+
+SQL> insert into t_second values(3,33);
+
+1 rows affected.
+
+SQL> select * from t_first,t_second where a(+)=c order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+3            33           3            33          
+
+1 rows fetched.
+
+SQL> select * from t_first,t_second where t_first.a(+)=c order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+3            33           3            33          
+
+1 rows fetched.
+
+SQL> select * from t_first,t_second where c=a(+) order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+3            33           3            33          
+
+1 rows fetched.
+
+SQL> select * from t_first,t_second where c=t_first.a(+) order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+3            33           3            33          
+
+1 rows fetched.
+
+SQL> select * from t_first,t_second where c(+)=a order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+1            11                                    
+2            22                                    
+3            33           3            33          
+
+3 rows fetched.
+
+SQL> select * from t_first,t_second where t_second.c(+)=a order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+1            11                                    
+2            22                                    
+3            33           3            33          
+
+3 rows fetched.
+
+SQL> select * from t_first,t_second where a=c(+) order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+1            11                                    
+2            22                                    
+3            33           3            33          
+
+3 rows fetched.
+
+SQL> select * from t_first,t_second where a=t_second.c(+) order by a;
+
+A            B            C            D           
+------------ ------------ ------------ ------------
+1            11                                    
+2            22                                    
+3            33           3            33          
+
+3 rows fetched.
+
+SQL> select * from t_first,t_second where a(+)=c(+); --error
+
+OG-00601, [1:43]Sql syntax error: invalid usage outer join symbol
+SQL> select * from t_first,t_second where t_second.*(+)=a; --error
+
+OG-00601, [1:38]Sql syntax error: unexpected '*'
+SQL> drop table t_first;
+
+Succeed.
+
+SQL> drop table t_second;
+
+Succeed.
+
+SQL> --quote
+SQL> select 1 as `1`; 
+
+1           
+------------
+1           
+
+1 rows fetched.
+
+SQL> create table `t_lowercase`(`a_lowercase` int);
+
+Succeed.
+
+SQL> select count(*) from sys_tables where NAME='t_lowercase';
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> select sys_columns.name from sys_tables join sys_columns on sys_tables.id=sys_columns.TABLE# where sys_tables.NAME='t_lowercase';
+
+OG-00601, [1:46]Sql syntax error: syntax error
+SQL> drop table t_lowercase; --error
+
+OG-00843, [1:23]The table or view SYS.T_LOWERCASE does not exist.
+SQL> drop table `t_lowercase`;
+
+Succeed.
+
 SQL> 
 SQL> alter system set use_bison_parser = false;
 

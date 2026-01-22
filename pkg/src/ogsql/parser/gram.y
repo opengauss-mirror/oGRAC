@@ -15,6 +15,7 @@
 #include "ddl_table_parser.h"
 #include "ddl_database_parser.h"
 #include "ddl_user_parser.h"
+#include "cm_interval.h"
 
 /* Location tracking support --- simpler than bison's default */
 
@@ -64,6 +65,17 @@ do {                                                                            
 
 static digitext_t g_pos_bigint_ceil = { "9223372036854775807",  19 };
 
+typedef enum en_interval_unit_order {
+    IUO_YEAR = 0,
+    IUO_MONTH,
+    IUO_DAY,
+    IUO_HOUR,
+    IUO_MINUTE,
+    IUO_SECOND,
+    /* add new value before this */
+    IUO_MAX
+} interval_unit_order_t;
+
 static void base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner,
                          const char *msg);
 static status_t column_list_to_column_pairs(sql_stmt_t *stmt, galist_t *colname_list, galist_t **pairs);
@@ -75,6 +87,9 @@ static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
 static status_t strGetInt64(const char *str, int64 *value);
+static char* ds_unit_to_str(interval_unit_order_t order);
+static interval_unit_t get_interval_unit(interval_unit_order_t order);
+static interval_unit_t generate_interval_unit(interval_unit_order_t from, interval_unit_order_t to);
 
 %}
 
@@ -120,6 +135,9 @@ static status_t strGetInt64(const char *str, int64 *value);
     sql_join_type_t     join_type;
     rs_column_t         *rs_column;
     json_func_att_id_t  json_func_att_id;
+    json_func_attr_t    json_func_attr;
+    interval_info_t     interval_info;
+    json_array_returning_attr returning_attr;
     limit_item_t        *limit_item;
     sql_withas_factor_t *withas_factor;
     expr_with_alias     *expr_alias;
@@ -141,11 +159,12 @@ static status_t strGetInt64(const char *str, int64 *value);
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds
 %type <list>   all_insert_into_list set_clause_list set_clause multiple_set_clause return_clause delete_target_list expr_list_with_select_rows json_column_list siblings_clause with_clause cte_list pivot_in_list pivot_clause_list select_pivot_clause unpivot_in_list expr_or_implicit_row_list cube_clause rollup_clause
 %type <list>   group_sets_item group_sets_list grouping_sets_clause group_by_cartesian_item group_by_list group_clause locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list
-%type <expr>   ctext_expr a_expr b_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr func_arg_expr func_arg_list func_expr_common_subexpr substr_list multi_expr_list expr_or_implicit_row
+%type <expr>   ctext_expr a_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr func_arg_expr func_arg_list expr_elem_list
+                func_expr_common_subexpr substr_list multi_expr_list expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
 %type <table>  insert_target qualified_name relation_expr table_func json_table
 %type <case_pair> when_expr_clause when_cond_clause
 %type <column> insert_column_item
-%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_table_on_error_or_null jsonb_table opt_found_rows opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition opt_archivelog opt_reuse opt_all_in_memory opt_encrypted
+%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition opt_archivelog opt_reuse opt_all_in_memory opt_encrypted ignore_nulls opt_orajoin
 %type <winsort_args> over_clause window_specification
 %type <windowing_args> opt_frame_clause frame_extent
 %type <query_column> target_el
@@ -164,7 +183,9 @@ static status_t strGetInt64(const char *str, int64 *value);
 %type <join_node> using_clause from_list table_ref joined_table from_clause
 %type <join_type> join_type
 %type <rs_column> json_column
-%type <json_func_att_id> format_json_attr json_column_on_error
+%type <json_func_att_id> format_json_attr json_on_null json_array_wrapper json_on_error json_on_empty json_on_empty_null_or_error
+%type <json_func_attr> json_attr_all
+%type <returning_attr> json_returning
 %type <withas_factor> common_table_expr
 %type <expr_alias> pivot_in_item_list pivot_in_item pivot_in_list_element
 %type <pivot_item> pivot_clause
@@ -180,24 +201,25 @@ static status_t strGetInt64(const char *str, int64 *value);
 %type <ival64> num_size opt_blocksize next_size max_size
 %type <dev_def> logfile datafile
 %type <inode> instance_node
-%type <str>  profile_name tablespace_name user_name role_name tenant_name opt_default_tablespace
+%type <interval_info> interval_type
+%type <str>  profile_name tablespace_name user_name role_name tenant_name opt_default_tablespace common_json_func_name json_set_func_name
 %type <user_opt> user_option
 
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword
-%type <str> ColId type_function_name alias_without_as param_name all_Op qual_all_Op MathOp hint_string character character_national charset_collate_name opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name user_password
-%type <ival>    opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options
+%type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name user_password
+%type <ival>    opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options year_month_unit day_hour_minute_unit opt_year_month_unit
 %type <sortby>  sortby
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 
-%token <str>    IDENT FCONST SCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
+%token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D OPER_CAT OPER_LSHIFT OPER_RSHIFT
 %token <ival>   ICONST PARAM
 
 %token            LEX_ERROR_TOKEN
 %token            TYPECAST ORA_JOINOP DOT_DOT COLON_EQUALS PARA_EQUALS SET_IDENT_SESSION SET_IDENT_GLOBAL NULLS_FIRST NULLS_LAST
 %token <str>      SIZE_B SIZE_KB SIZE_MB SIZE_GB SIZE_TB SIZE_PB SIZE_EB
 
-%token <keyword> ABORT_P ABSOLUTE_P ACCESS ACCOUNT ACTION ADD_P ADMIN AFTER
+%token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACCOUNT ACTION ADD_P ADMIN AFTER
     AGGREGATE ALGORITHM ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY APP APPEND APPLY ARCHIVE_P ARCHIVELOG ARRAY AS ASC ASOF_P
         ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUDIT AUTHID AUTHORIZATION AUTOEXTEND AUTOMAPPED AUTO_INCREMENT
 
@@ -207,7 +229,7 @@ static status_t strGetInt64(const char *str, int64 *value);
     CACHE CALL CALLED CANCELABLE CASCADE CASCADED CASE CAST CATALOG_P CATALOG_NAME CHAIN CHANGE CHAR_P
     CHARACTER CHARACTERISTICS CHARACTERSET CHARSET CHECK CHECKPOINT CLASS CLASS_ORIGIN CLEAN CLIENT CLIENT_MASTER_KEY CLIENT_MASTER_KEYS CLOB CLOSE
     CLUSTER_P CLUSTERED COALESCE COLLATE COLLATION COLUMN COLUMN_ENCRYPTION_KEY COLUMN_ENCRYPTION_KEYS COLUMN_NAME COLUMNS COMMENT COMMENTS COMMIT
-    COMMITTED COMPACT COMPATIBLE_ILLEGAL_CHARS COMPILE COMPLETE COMPLETION COMPRESS COMPUTE CONCURRENTLY CONDITION CONFIGURATION CONNECTION CONSISTENT CONSTANT CONSTRAINT CONSTRAINT_CATALOG CONSTRAINT_NAME CONSTRAINT_SCHEMA CONSTRAINTS
+    COMMITTED COMPACT COMPATIBLE_ILLEGAL_CHARS COMPILE COMPLETE COMPLETION COMPRESS COMPUTE CONCURRENTLY CONDITION CONDITIONAL CONFIGURATION CONNECTION CONSISTENT CONSTANT CONSTRAINT CONSTRAINT_CATALOG CONSTRAINT_NAME CONSTRAINT_SCHEMA CONSTRAINTS
     CONTENT_P CONTENTS CONTINUE_P CONTROLFILE CONTVIEW CONVERSION_P CONVERT_P CONNECT COORDINATOR COORDINATORS COPY COST CREATE
     CROSS CSN CSV CUBE CURRENT_P
     CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA
@@ -239,7 +261,7 @@ static status_t strGetInt64(const char *str, int64 *value);
     INNER_P INOUT_P INPUT_P INSENSITIVE INSERT INSTANCE INSTEAD INT_P INTEGER INTERNAL
     INTERSECT_P INTERVAL INTO INVISIBLE INVOKER IP IS ISNULL ISOLATION
 
-    JOIN JSON JSON_EXISTS JSON_TABLE_P JSONB JSONB_TABLE_P
+    JOIN JSON JSON_ARRAY JSON_EXISTS JSON_MERGEPATCH JSON_OBJECT JSON_QUERY JSON_SET JSON_VALUE JSON_TABLE_P JSONB JSONB_EXISTS JSONB_MERGEPATCH JSONB_QUERY JSONB_SET JSONB_VALUE JSONB_TABLE_P
 
     KEEP KEY KILL KEY_PATH KEY_STORE
 
@@ -285,7 +307,7 @@ static status_t strGetInt64(const char *str, int64 *value);
     TO TRAILING TRANSACTION TRANSFORM TREAT TRIGGER TRIM TRUE_P
     TRUNCATE TRUSTED TSFIELD TSTAG TSTIME TYPE_P TYPES_P
 
-    UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLIMITED UNLISTEN UNLOCK UNLOGGED UNPIVOT UNIMCSTORED
+    UNCONDITIONAL UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLIMITED UNLISTEN UNLOCK UNLOGGED UNPIVOT UNIMCSTORED
     UNTIL UNUSABLE UPDATE USEEOF USER USING
 
     VACUUM VALID VALIDATE VALIDATION VALIDATOR VALUE_P VALUES VARCHAR VARCHAR2 VARIABLES VARIADIC VARRAY VARYING VCGROUP
@@ -303,6 +325,16 @@ static status_t strGetInt64(const char *str, int64 *value);
 %token <keyword> CONSTRUCTOR FINAL MAP MEMBER MEMORY RESULT SELF STATIC_P UNDER UNDO
 
 /*
+ * Multiword tokens for JSON functions - ERROR ON ERROR, ERROR ON EMPTY, NULL ON ERROR, etc.
+ * These are created in base_yylex to avoid shift/reduce conflicts
+ */
+%token <keyword> ERROR_ON_EMPTY ERROR_ON_ERROR_P
+%token <keyword> NULL_ON_ERROR_P NULL_ON_EMPTY
+%token <keyword> EMPTY_ON_EMPTY EMPTY_ON_ERROR_P
+%token <keyword> EMPTY_ARRAY_ON_EMPTY EMPTY_ARRAY_ON_ERROR_P
+%token <keyword> EMPTY_OBJECT_P_ON_EMPTY EMPTY_OBJECT_P_ON_ERROR_P
+
+/*
  * The grammar thinks these are keywords, but they are not in the kwlist.h
  * list and so can never be entered directly.  The filter in parser.c
  * creates these tokens when required (based on looking one token ahead).
@@ -314,7 +346,7 @@ static status_t strGetInt64(const char *str, int64 *value);
  * LALR(1).
  */
 %token  WITH_TIME WITH_LOCAL WITHOUT_TIME WITHOUT_LOCAL PIVOT_TOK UNPIVOT_TOK UNPIVOT_INC UNPIVOT_EXC CONNECT_BY START_WITH
-        PARTITION_FOR SUBPARTITION_FOR ORDER_SIBLINGS
+        PARTITION_FOR SUBPARTITION_FOR ORDER_SIBLINGS ABSENT_ON
 
 /* Precedence: lowest to highest */
 %right       PRIOR
@@ -378,17 +410,19 @@ static status_t strGetInt64(const char *str, int64 *value);
 %nonassoc    IDENT PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
              SET KEYS OBJECT_P SCALAR VALUE_P WITH WITHOUT PATH FORMAT REGEXP
              SEPARATOR_P
-%left        Op OPERATOR        /* multi-character ops and user-defined operators */
-%left        '+' '-'
-%left        '*' '/' '%'
-%left        '^'
+%left        '|'    /* OPER_TYPE_BITOR */
+%left        '^'    /* OPER_TYPE_BITXOR */
+%left        '&'    /* OPER_TYPE_BITAND */
+%left        OPER_LSHIFT OPER_RSHIFT /* << and >>, OPER_TYPE_LSHIFT, OPER_TYPE_RSHIFT */
+%left        '+' '-' OPER_CAT   /* OPER_TYPE_ADD, OPER_TYPE_SUB, ||(OPER_TYPE_CAT) */
+%left        '*' '/' '%'    /* OPER_TYPE_MUL, OPER_TYPE_DIV, OPER_TYPE_MOD */
 /* Unary Operators */
 %left        AT                /* sets precedence for AT TIME ZONE, AT LOCAL */
 %left        COLLATE
 %right        UMINUS
 %left        '[' ']'
 %left        '(' ')'
-%left        TYPECAST
+%left        TYPECAST KEY
 %left        '.'
 /*
  * These might seem to be low-precedence, but actually they are not part
@@ -436,6 +470,10 @@ opt_into:
 opt_ignore:
         IGNORE                                  {  $$ = true; }
         | /*EMPTY*/         %prec UMINUS        {  $$ = false; }
+        ;
+
+ignore_nulls:
+        IGNORE NULLS_P  {  $$ = true; }
         ;
 
 hint_string:
@@ -2907,16 +2945,6 @@ expr_with_select:
             {
                 $$ = $1;
             }
-        | select_with_parens %prec UMINUS
-            {
-                expr_tree_t *expr = NULL;
-                sql_select_t *select_ctx = $1;
-                if (sql_create_select_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, select_ctx,
-                    &og_yyget_extra(yyscanner)->core_yy_extra.ssa, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
-                }
-                $$ = expr;
-            }
         ;
 
 opt_escape:
@@ -3550,9 +3578,9 @@ format_json: FORMAT JSON                            { $$ = true; }
             | /* EMPTY */                           { $$ = false; }
         ;
 
-json_table_on_error_or_null:
-            ERROR_P                                 { $$ = true; }
-            | NULL_P                                { $$ = false; }
+json_on_error_or_null:
+            ERROR_ON_ERROR_P                                 { $$ = true; }
+            | NULL_ON_ERROR_P                                { $$ = false; }
         ;
 
 format_json_attr:
@@ -3573,41 +3601,6 @@ json_table_column_error:
             | /* EMPTY */
             {
                 $$ = "JSON_VALUE";
-            }
-        ;
-
-json_column_on_error:
-            EMPTY ARRAY ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_EMPTY_ARRAY_ON_ERROR;
-            }
-            | EMPTY OBJECT_P ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_EMPTY_OBJECT_ON_ERROR;
-            }
-            | EMPTY ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_EMPTY_ON_EMPTY;
-            }
-            | ERROR_P ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_ERROR_ON_ERROR;
-            }
-            | FALSE_P ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_FALSE_ON_ERROR;
-            }
-            | NULL_P ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_NULL_ON_ERROR;
-            }
-            | TRUE_P ON ERROR_P
-            {
-                $$ = JSON_FUNC_ATT_TRUE_ON_ERROR;
-            }
-            | /* EMPTY */
-            {
-                $$ = JSON_FUNC_ATT_INVALID;
             }
         ;
 
@@ -3651,7 +3644,7 @@ json_column:
 
                 $$ = new_col;
             }
-            | insert_column_item CLOB json_table_column_error PATH SCONST json_column_on_error
+            | insert_column_item CLOB json_table_column_error PATH SCONST json_on_error
             {
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -3722,7 +3715,7 @@ json_column:
                 func_node->json_func_attr.ids |= $6;
                 $$ = new_col;
             }
-            | insert_column_item JSONB json_table_column_error PATH SCONST json_column_on_error
+            | insert_column_item JSONB json_table_column_error PATH SCONST json_on_error
             {
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -3793,7 +3786,7 @@ json_column:
                 func_node->json_func_attr.ids |= $6;
                 $$ = new_col;
             }
-            | insert_column_item VARCHAR2 json_table_column_error PATH SCONST json_column_on_error
+            | insert_column_item VARCHAR2 json_table_column_error PATH SCONST json_on_error
             {
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -3865,7 +3858,7 @@ json_column:
                 func_node->json_func_attr.ids |= $6;
                 $$ = new_col;
             }
-            | insert_column_item VARCHAR2 '(' ICONST ')' json_table_column_error PATH SCONST json_column_on_error
+            | insert_column_item VARCHAR2 '(' ICONST ')' json_table_column_error PATH SCONST json_on_error
             {
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -3964,7 +3957,7 @@ jsonb_table: JSON_TABLE_P                               { $$ = false; }
             | JSONB_TABLE_P                             { $$ = true; }
         ;
 
-json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_table_on_error_or_null ON ERROR_P COLUMNS '(' json_column_list ')' ')'
+json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_on_error_or_null COLUMNS '(' json_column_list ')' ')'
             {
                 sql_table_t *table = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -3992,7 +3985,7 @@ json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_table_o
                 table->json_table_info->basic_path_txt.len = len;
                 table->json_table_info->json_error_info.type = $7 ? JSON_RETURN_ERROR : JSON_RETURN_NULL;
 
-                cm_galist_copy(&table->json_table_info->columns, $12);
+                cm_galist_copy(&table->json_table_info->columns, $10);
                 rs_column_t *new_col = NULL;
                 expr_node_t *func_node = NULL;
                 for (uint32 i = 0; i < table->json_table_info->columns.count; i++) {
@@ -4250,19 +4243,124 @@ case_default:
  * of the first terminal instead; otherwise you will not get the behavior
  * you expect!  So we use %prec annotations freely to set precedences.
  */
-a_expr:    c_expr    { $$ = $1; }
-        ;
-
-/*
- * Restricted expressions
- *
- * b_expr is a subset of the complete expression syntax defined by a_expr.
- *
- * Presently, AND, NOT, IS, and IN are the a_expr keywords that would
- * cause trouble in the places where b_expr is used.  For simplicity, we
- * just eliminate all the boolean-keyword-operator productions from b_expr.
- */
-b_expr:    c_expr { $$ = $1; }
+a_expr:     c_expr    { $$ = $1; }
+            | a_expr TYPECAST Typename
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_cast_convert_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $1, $3, "cast", @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create cast func expr failed");
+                }
+                $$ = expr;
+            }
+            | '+' a_expr %prec UMINUS
+            {
+                // Unary plus operator is a no-op, just return the operand
+                $$ = $2;
+            }
+            | '-' a_expr %prec UMINUS
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_negative_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2->root, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create negative expr failed");
+                }
+                $$ = expr;
+            }
+            /*
+            * These operators must be called out explicitly in order to make use
+            * of bison's automatic operator-precedence handling.
+            *
+            * If you add more explicitly-known operators, be sure to add them
+            * also to b_expr
+            */
+            | a_expr '+' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_ADD, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '-' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_SUB, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '*' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_MUL, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '/' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_DIV, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '%' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_MOD, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '|' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_BITOR, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr OPER_CAT a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_CAT, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '&' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_BITAND, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr '^' a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_BITXOR, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr OPER_LSHIFT a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_LSHIFT, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
+            | a_expr OPER_RSHIFT a_expr
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_RSHIFT, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("create operator expr failed");
+                }
+                $$ = expr;
+            }
         ;
 
 /*
@@ -4287,6 +4385,16 @@ c_expr:     columnref       { $$ = $1; }
             | '(' a_expr ')'    { $$ = $2; }
             | case_expr         { $$ = $1; }
             | func_expr         { $$ = $1; }
+            | select_with_parens    %prec UMINUS
+                {
+                    expr_tree_t *expr = NULL;
+                    sql_select_t *select_ctx = $1;
+                    if (sql_create_select_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, select_ctx,
+                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("init select expr failed");
+                    }
+                    $$ = expr;
+                }
             | PRIOR columnref
                 {
                     expr_tree_t *expr = NULL;
@@ -4305,6 +4413,24 @@ c_expr:     columnref       { $$ = $1; }
                     }
                     $$ = expr;
                 }
+            | ARRAY '[' ']'
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, NULL, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create array expr failed");
+                    }
+                    $$ = expr;
+                }
+            | ARRAY '[' expr_elem_list ']'
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, $3, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create array expr failed");
+                    }
+                    $$ = expr;
+                }
         ;
 
 func_application: func_name '(' ')'
@@ -4314,6 +4440,25 @@ func_application: func_name '(' ')'
                             &expr, $1, NULL, @1.loc) != OG_SUCCESS) {
                             parser_yyerror("init function call expr failed");
                         }
+                        $$ = expr;
+                    }
+                | func_name '(' a_expr ignore_nulls ')'
+                    {
+                        if ($1->count != 1) {
+                            parser_yyerror("only first_value/last_value func support IGNORE NULLS option");
+                        }
+                        expr_tree_t *expr = NULL;
+                        const text_t *name = &(((expr_tree_t*)cm_galist_get($1, 0))->root->value.v_text);
+                        text_t target_text_1 = {(char*)"FIRST_VALUE", strlen("FIRST_VALUE")};
+                        text_t target_text_2 = {(char*)"LAST_VALUE", strlen("LAST_VALUE")};
+                        if (!cm_text_equal(name, &target_text_1) && !cm_text_equal(name, &target_text_2)) {
+                            parser_yyerror("only first_value/last_value func support IGNORE NULLS option");
+                        }
+                        if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &expr, $1, $3, @1.loc) != OG_SUCCESS) {
+                            parser_yyerror("init function call expr failed");
+                        }
+                        expr->root->ignore_nulls = $4;
                         $$ = expr;
                     }
                 | func_name '(' func_arg_list ')'
@@ -4393,6 +4538,22 @@ func_arg_expr:  a_expr
                     arg_expr->arg_name.str = $1;
                     arg_expr->arg_name.len = strlen($1);
                     $$ = arg_expr;
+                }
+        ;
+
+expr_elem_list: a_expr
+                {
+                    $$ = $1;
+                }
+            | expr_elem_list ',' a_expr
+                {
+                    expr_tree_t *first_expr = $1;
+                    expr_tree_t *tmp_expr = $1;
+                    while (tmp_expr->next != NULL) {
+                        tmp_expr = tmp_expr->next;
+                    }
+                    tmp_expr->next = $3;
+                    $$ = first_expr;
                 }
         ;
 
@@ -4539,26 +4700,6 @@ offset_clause:
                     $$ = limit_item;
                 }
     ;
-
-qual_all_Op:
-            all_Op { $$ = $1; }
-        ;
-
-all_Op:     Op          { $$ = $1; }
-            | CmpOp     { $$ = $1; }
-            | MathOp    { $$ = $1; }
-        ;
-
-MathOp:     '+'                 { $$ = "+"; }
-            | '-'               { $$ = "-"; }
-            | '*'               { $$ = "*"; }
-            | '/'               { $$ = "/"; }
-            | '%'               { $$ = "%"; }
-            | '^'               { $$ = "^"; }
-            | '<'               { $$ = "<"; }
-            | '>'               { $$ = ">"; }
-            | '='               { $$ = "="; }
-        ;
 
 opt_asc_desc: ASC       { $$ = SORT_MODE_ASC; }
             | DESC      { $$ = SORT_MODE_DESC; }
@@ -4877,6 +5018,279 @@ func_expr_common_subexpr:
                     }
                     $$ = expr;
                 }
+            | JSON_ARRAY '(' json_array_args json_on_null json_returning ')'
+                {
+                    expr_tree_t *expr = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    json_func_attr_t attr;
+                    attr.ids = $4 | $5.attr;
+                    attr.return_size = $5.return_size;
+                    attr.ignore_returning = OG_FALSE;
+                    if (sql_create_json_func_expr(stmt, &expr, $3, "json_array", attr, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create json_object func expr failed");
+                    }
+                    $$ = expr;
+                }
+            | JSON_OBJECT '(' json_object_args json_on_null json_returning ')'
+                {
+                    expr_tree_t *expr = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    json_func_attr_t attr;
+                    attr.ids = $4 | $5.attr;
+                    attr.return_size = $5.return_size;
+                    attr.ignore_returning = OG_FALSE;
+                    if (sql_create_json_func_expr(stmt, &expr, $3, "json_object", attr, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create json_object func expr failed");
+                    }
+                    $$ = expr;
+                }
+            | common_json_func_name '(' a_expr ',' a_expr json_attr_all ')'
+                {
+                    expr_tree_t *expr = NULL;
+                    $3->next = $5;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_json_func_expr(stmt, &expr, $3, $1, $6, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create json func expr failed");
+                    }
+                    $$ = expr;
+                }
+            | json_set_func_name '(' func_arg_list json_attr_all ')'
+                {
+                    expr_tree_t *expr = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_json_func_expr(stmt, &expr, $3, $1, $4, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create json_set/jsonb_set func expr failed");
+                    }
+                    $$ = expr;
+                }
+        ;
+
+common_json_func_name:
+            JSON_QUERY          { $$ = "json_query"; }
+            | JSON_MERGEPATCH   { $$ = "json_mergepatch"; }
+            | JSON_VALUE        { $$ = "json_value"; }
+            | JSON_EXISTS       { $$ = "json_exists"; }
+            | JSONB_QUERY       { $$ = "jsonb_query"; }
+            | JSONB_MERGEPATCH  { $$ = "jsonb_mergepatch"; }
+            | JSONB_VALUE       { $$ = "jsonb_value"; }
+            | JSONB_EXISTS      { $$ = "jsonb_exists"; }
+        ;
+
+json_set_func_name:
+            JSON_SET    { $$ = "json_set"; }
+            | JSONB_SET { $$ = "jsonb_set"; }
+        ;
+
+json_attr_all:
+            json_returning json_array_wrapper json_on_error json_on_empty
+            {
+                $$.ids = $1.attr | $2 | $3 | $4;
+                $$.return_size = $1.return_size;
+                $$.ignore_returning = OG_FALSE;
+            }
+
+json_array_args:
+            json_array_arg_item
+            {
+                $$ = $1;
+            }
+            | json_array_args ',' json_array_arg_item
+            {
+                expr_tree_t *last = $1;
+                while (last->next != NULL) {
+                    last = last->next;
+                }
+                last->next = $3;
+                $$ = $1;
+            }
+        ;
+
+json_array_arg_item:
+            a_expr format_json
+            {
+                $1->root->format_json = $2;
+                $$ = $1;
+            }
+        ;
+
+json_on_null:
+            ABSENT_ON NULL_P
+            {
+                $$ = JSON_FUNC_ATT_ABSENT_ON_NULL;
+            }
+            | NULL_P ON NULL_P
+            {
+                $$ = JSON_FUNC_ATT_NULL_ON_NULL;
+            }
+            | /* EMPTY */
+            {
+                $$ = JSON_FUNC_ATT_INVALID;
+            }
+        ;
+
+json_returning:
+            RETURNING VARCHAR2
+            {
+                $$.attr = JSON_FUNC_ATT_RETURNING_VARCHAR2;
+                $$.return_size = JSON_FUNC_LEN_DEFAULT;
+            }
+            | RETURNING VARCHAR2 '(' ICONST ')'
+            {
+                if ($4 <= 0 || $4 > JSON_MAX_STRING_LEN) {
+                    parser_yyerror("specified length invalid for its datatype");
+                }
+                $$.attr = JSON_FUNC_ATT_RETURNING_VARCHAR2;
+                $$.return_size = $4;
+            }
+            | RETURNING CLOB
+            {
+                $$.attr = JSON_FUNC_ATT_RETURNING_CLOB;
+                $$.return_size = JSON_FUNC_LEN_DEFAULT;
+            }
+            | RETURNING JSONB
+            {
+                $$.attr = JSON_FUNC_ATT_RETURNING_JSONB;
+                $$.return_size = JSON_FUNC_LEN_DEFAULT;
+            }
+            | /* EMPTY */
+            {
+                $$.attr = JSON_FUNC_ATT_INVALID;
+                $$.return_size = JSON_FUNC_LEN_DEFAULT;
+            }
+        ;
+
+json_array_wrapper:
+            format_json_attr
+            {
+                $$ = $1;
+            }
+            | WITH ARRAY WRAPPER
+            {
+                $$ = JSON_FUNC_ATT_WITH_WRAPPER;
+            }
+            | WITH CONDITIONAL WRAPPER
+            {
+                $$ = JSON_FUNC_ATT_WITH_CON_WRAPPER;
+            }
+            | WITH UNCONDITIONAL WRAPPER
+            {
+                $$ = JSON_FUNC_ATT_WITH_WRAPPER;
+            }
+            | WITH CONDITIONAL ARRAY WRAPPER
+            {
+                $$ = JSON_FUNC_ATT_WITH_CON_WRAPPER;
+            }
+            | WITH UNCONDITIONAL ARRAY WRAPPER
+            {
+                $$ = JSON_FUNC_ATT_WITH_WRAPPER;
+            }
+            | /* EMPTY */
+            {
+                $$ = JSON_FUNC_ATT_INVALID;
+            }
+        ;
+
+json_on_error:
+            ERROR_ON_ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_ERROR_ON_ERROR;
+            }
+            | FALSE_P ON ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_FALSE_ON_ERROR;
+            }
+            | NULL_ON_ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_NULL_ON_ERROR;
+            }
+            | TRUE_P ON ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_TRUE_ON_ERROR;
+            }
+            | EMPTY_ON_ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_EMPTY_ON_ERROR;
+            }
+            | EMPTY_ARRAY_ON_ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_EMPTY_ARRAY_ON_ERROR;
+            }
+            | EMPTY_OBJECT_P_ON_ERROR_P
+            {
+                $$ = JSON_FUNC_ATT_EMPTY_OBJECT_ON_ERROR;
+            }
+            | /* EMPTY */
+            {
+                $$ = JSON_FUNC_ATT_INVALID;
+            }
+        ;
+json_on_empty_null_or_error:
+            NULL_ON_EMPTY
+            {
+                $$ = JSON_FUNC_ATT_NULL_ON_EMPTY;
+            }
+            | ERROR_ON_EMPTY
+            {
+                $$ = JSON_FUNC_ATT_ERROR_ON_EMPTY;
+            }
+            | /* EMPTY */
+            {
+                $$ = JSON_FUNC_ATT_INVALID;
+            }
+        ;
+
+json_on_empty:
+            json_on_empty_null_or_error
+            {
+                $$ = $1;
+            }
+            | EMPTY_ON_EMPTY
+            {
+                $$ = JSON_FUNC_ATT_EMPTY_ON_EMPTY;
+            }
+            | EMPTY_ARRAY_ON_EMPTY
+            {
+                $$ = JSON_FUNC_ATT_EMPTY_ARRAY_ON_EMPTY;
+            }
+            | EMPTY_OBJECT_P_ON_EMPTY
+            {
+                $$ = JSON_FUNC_ATT_EMPTY_OBJECT_ON_EMPTY;
+            }
+        ;
+
+json_object_args:
+            json_object_arg_item
+            {
+                $$ = $1;
+            }
+            | json_object_args ',' json_object_arg_item
+            {
+                expr_tree_t *last = $1;
+                while (last->next != NULL) {
+                    last = last->next;
+                }
+                last->next = $3;
+                $$ = $1;
+            }
+        ;
+
+json_object_arg_item:
+            a_expr IS a_expr format_json
+            {
+                expr_tree_t *key_expr = $1;
+                expr_tree_t *value_expr = $3;
+                value_expr->root->format_json = $4;
+                key_expr->next = value_expr;
+                $$ = key_expr;
+            }
+            | KEY a_expr IS a_expr format_json
+            {
+                expr_tree_t *key_expr = $2;
+                expr_tree_t *value_expr = $4;
+                value_expr->root->format_json = $5;
+                key_expr->next = value_expr;
+                $$ = key_expr;
+            }
         ;
 
 extract_list:
@@ -4962,20 +5376,25 @@ opt_separator:  SEPARATOR_P SCONST   { $$ = $2; }
                 | /*EMPTY*/ {  $$ = NULL; }
         ;
 
-columnref:  ColId
+opt_orajoin:
+        ORA_JOINOP      { $$ = true; }
+        | /* EMPTY */   { $$ = false; }
+        ;
+
+columnref:  ColId opt_orajoin
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_columnref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
-                        &expr, $1, NULL, @1.loc) != OG_SUCCESS) {
+                        &expr, $1, NULL, $2 ? EXPR_NODE_JOIN : EXPR_NODE_COLUMN, @1.loc) != OG_SUCCESS) {
                         parser_yyerror("init columnref expr failed");
                     }
                     $$ = expr;
                 }
-            | ColId indirection
+            | ColId indirection opt_orajoin
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_columnref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
-                        &expr, $1, $2, @1.loc) != OG_SUCCESS) {
+                        &expr, $1, $2, $3 ? EXPR_NODE_JOIN : EXPR_NODE_COLUMN, @1.loc) != OG_SUCCESS) {
                         parser_yyerror("init columnref expr failed");
                     }
                     $$ = expr;
@@ -5492,6 +5911,14 @@ AexprConst: ICONST
                 }
                 $$ = expr;
             }
+            | XCONST
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_hex_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("init hex const expr failed");
+                }
+                $$ = expr;
+            }
             | TRUE_P
             {
                 expr_tree_t *expr = NULL;
@@ -5516,6 +5943,132 @@ AexprConst: ICONST
                 }
                 $$ = expr;
             }
+            | INTERVAL SCONST interval_type
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_interval_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, $3, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("init interval expr failed");
+                }
+                $$ = expr;
+            }
+        ;
+
+year_month_unit:
+            YEAR_P { $$ = IUO_YEAR; }
+            | MONTH_P { $$ = IUO_MONTH; }
+        ;
+
+day_hour_minute_unit:
+            DAY_P       { $$ = IUO_DAY; }
+            | HOUR_P    { $$ = IUO_HOUR; }
+            | MINUTE_P  { $$ = IUO_MINUTE; }
+        ;
+
+opt_year_month_unit:
+            TO year_month_unit      { $$ = $2; }
+            | /* EMPTY */           { $$ = IUO_MAX; }
+
+interval_type:
+            year_month_unit opt_type_modifiers opt_year_month_unit
+                {
+                    interval_info_t info;
+                    int32 prec = ITVL_DEFAULT_YEAR_PREC;
+                    info.type.datatype = OG_TYPE_INTERVAL_YM;
+                    info.type.size = sizeof(interval_ym_t);
+                    info.type.reserved = 0;
+                    info.fmt = get_interval_unit($1);
+                    if ($2 != NULL && $2->count > 0) {
+                        if (sql_parse_datetime_precision_bison($2, @1.loc, &prec, ITVL_DEFAULT_YEAR_PREC, ITVL_MIN_YEAR_PREC, ITVL_MAX_YEAR_PREC, "YEAR") != OG_SUCCESS) {
+                            parser_yyerror("invalid year precision");
+                        }
+                    }
+                    if ($3 != IUO_MAX) {
+                        if ($1 != IUO_YEAR) {
+                            parser_yyerror("invalid field name");
+                        }
+                        info.fmt |= get_interval_unit($3);
+                    }
+                    info.type.year_prec = (uint8)prec;
+                    $$ = info;
+                }
+            | day_hour_minute_unit opt_type_modifiers
+                {
+                    interval_info_t info;
+                    int32 prec = ITVL_DEFAULT_DAY_PREC;
+                    info.type.datatype = OG_TYPE_INTERVAL_DS;
+                    info.type.size = sizeof(interval_ds_t);
+                    info.type.frac_prec = 0;
+                    info.fmt = get_interval_unit($1);
+                    if ($2 != NULL && $2->count > 0) {
+                        if (sql_parse_datetime_precision_bison($2, @1.loc, &prec, ITVL_DEFAULT_DAY_PREC, ITVL_MIN_DAY_PREC,
+                            ITVL_MAX_DAY_PREC, ds_unit_to_str($1)) != OG_SUCCESS) {
+                            parser_yyerror("invalid day precision");
+                        }
+                    }
+                    info.type.day_prec = (uint8)prec;
+                    $$ = info;
+                }
+            | day_hour_minute_unit opt_type_modifiers TO day_hour_minute_unit
+                {
+                    if ($4 < $1) {
+                        parser_yyerror("-- invalid field name");
+                    }
+                    interval_info_t info;
+                    int32 day_prec = ITVL_DEFAULT_DAY_PREC;
+                    info.type.datatype = OG_TYPE_INTERVAL_DS;
+                    info.type.size = sizeof(interval_ds_t);
+                    info.fmt = get_interval_unit($1) | generate_interval_unit($1, $4);
+                    if ($2 != NULL && $2->count > 0) {
+                        if (sql_parse_datetime_precision_bison($2, @1.loc, &day_prec, ITVL_DEFAULT_DAY_PREC, ITVL_MIN_DAY_PREC,
+                            ITVL_MAX_DAY_PREC, ds_unit_to_str($1)) != OG_SUCCESS) {
+                            parser_yyerror("invalid day precision");
+                        }
+                    }
+                    info.type.day_prec = (uint8)day_prec;
+                    info.type.frac_prec = 0;
+                    $$ = info;
+                }
+            | day_hour_minute_unit opt_type_modifiers TO SECOND_P opt_type_modifiers
+                {
+                    interval_info_t info;
+                    int32 day_prec = ITVL_DEFAULT_DAY_PREC;
+                    int32 frac_prec = ITVL_DEFAULT_SECOND_PREC;
+                    info.type.datatype = OG_TYPE_INTERVAL_DS;
+                    info.type.size = sizeof(interval_ds_t);
+                    info.fmt = get_interval_unit($1) | generate_interval_unit($1, IUO_SECOND);
+                    if ($2 != NULL && $2->count > 0) {
+                        if (sql_parse_datetime_precision_bison($2, @1.loc, &day_prec, ITVL_DEFAULT_DAY_PREC, ITVL_MIN_DAY_PREC,
+                            ITVL_MAX_DAY_PREC, ds_unit_to_str($1)) != OG_SUCCESS) {
+                            parser_yyerror("invalid day precision");
+                        }
+                    }
+                    if ($5 != NULL && $5->count > 0) {
+                        if (sql_parse_datetime_precision_bison($5, @4.loc, &frac_prec, ITVL_DEFAULT_SECOND_PREC, ITVL_MIN_SECOND_PREC,
+                            ITVL_MAX_SECOND_PREC, "fractional second") != OG_SUCCESS) {
+                            parser_yyerror("invalid second precision");
+                        }
+                    }
+                    info.type.day_prec = (uint8)day_prec;
+                    info.type.frac_prec = (uint8)frac_prec;
+                    $$ = info;
+                }
+            | SECOND_P opt_type_modifiers
+                {
+                    interval_info_t info;
+                    int32 lead_prec = ITVL_DEFAULT_DAY_PREC;
+                    int32 frac_prec = ITVL_DEFAULT_SECOND_PREC;
+                    info.type.datatype = OG_TYPE_INTERVAL_DS;
+                    info.type.size = sizeof(interval_ds_t);
+                    info.fmt = IU_SECOND;
+                    if ($2 != NULL && $2->count > 0) {
+                        if (sql_parse_second_precision_bison($2, @1.loc, &lead_prec, &frac_prec) != OG_SUCCESS) {
+                            parser_yyerror("invalid second precision");
+                        }
+                    }
+                    info.type.day_prec = (uint8)lead_prec;
+                    info.type.frac_prec = (uint8)frac_prec;
+                    $$ = info;
+                }
         ;
 
 UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return_clause
@@ -5583,8 +6136,7 @@ ColLabel:   IDENT                                   { $$ = $1; }
 
 opt_merge_where_condition:
             WHERE cond_tree_expr                { $$ = $2; }
-            | /* EMPTY */                       { $$ = NULL; }
-        ;
+            | /* EMPTY */                       { $$ = NULL; }        ;
 
 merge_update:
             UPDATE SET set_clause_list
@@ -7596,6 +8148,7 @@ tablespace_name:
 
 unreserved_keyword:
               ABORT_P
+            | ABSENT
             | ABSOLUTE_P
             | ACCESS
             | ACCOUNT
@@ -7674,6 +8227,7 @@ unreserved_keyword:
             | COMPRESS
             | COMPUTE
             | CONDITION
+            | CONDITIONAL
             | CONFIGURATION
             | CONNECT
             | CONNECTION
@@ -8111,6 +8665,7 @@ unreserved_keyword:
             | TYPES_P
             | UNBOUNDED
             | UNCOMMITTED
+            | UNCONDITIONAL
             | UNDER
             | UNDO
             | UNENCRYPTED
@@ -8170,7 +8725,6 @@ unreserved_keyword:
             | GROUPING_P
             | INOUT_P
             | INTERVAL
-            | JSON_EXISTS
             | LEAST
             | NATIONAL
             | NONE
@@ -8240,6 +8794,18 @@ col_name_keyword:
             | IF_P
             | INT_P
             | JSON
+            | JSON_ARRAY
+            | JSON_EXISTS
+            | JSON_MERGEPATCH
+            | JSON_OBJECT
+            | JSON_QUERY
+            | JSON_SET
+            | JSON_VALUE
+            | JSONB_EXISTS
+            | JSONB_MERGEPATCH
+            | JSONB_QUERY
+            | JSONB_SET
+            | JSONB_VALUE
             | NCHAR
             | NUMERIC
             | NVARCHAR
@@ -8543,6 +9109,45 @@ static status_t strGetInt64(const char *str, int64 *value)
     return OG_SUCCESS;
 }
 
+static interval_unit_t get_interval_unit(interval_unit_order_t order)
+{
+    const interval_unit_t itvl_uints[] = { IU_YEAR, IU_MONTH, IU_DAY, IU_HOUR, IU_MINUTE, IU_SECOND };
+    if (order < (sizeof(itvl_uints) / sizeof(interval_unit_t))) {
+        return itvl_uints[order];
+    } else {
+        return IU_NONE;
+    }
+}
+
+static char* ds_unit_to_str(interval_unit_order_t order)
+{
+    switch (order) {
+        case IUO_DAY:
+            return "DAY";
+        case IUO_HOUR:
+            return "HOUR";
+        case IUO_MINUTE:
+            return "MINUTE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static interval_unit_t generate_interval_unit(interval_unit_order_t from, interval_unit_order_t to)
+{
+    const interval_unit_t itvl_uints[] = { IU_YEAR, IU_MONTH, IU_DAY, IU_HOUR, IU_MINUTE, IU_SECOND };
+    const uint32 itvl_uints_size = sizeof(itvl_uints) / sizeof(interval_unit_t);
+    if (from >= itvl_uints_size || to >= itvl_uints_size) {
+        return IU_NONE;
+    }
+
+    interval_unit_t itvl_fmt = IU_NONE;
+    for (uint32 i = from + 1; i <= to; ++i) {
+        itvl_fmt |= itvl_uints[i];
+    }
+    return itvl_fmt;
+}
+
 /*
  * Must undefine this stuff before including scan.c, since it has different
  * definitions for these macros.
@@ -8557,3 +9162,4 @@ static status_t strGetInt64(const char *str, int64 *value)
 #ifdef SCANINC
 #include "scan.inc"
 #endif
+
