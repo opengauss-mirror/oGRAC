@@ -830,6 +830,26 @@ status_t cms_disk_try_lock(cms_disk_lock_t *lock, uint8 lock_type)
     return ret;
 }
 
+status_t cms_disk_update_lock(cms_disk_lock_t *lock, uint8 lock_type)
+{
+    if (lock->type == CMS_DEV_TYPE_NFS ||
+        lock->type == CMS_DEV_TYPE_FILE ||
+        lock->type == CMS_DEV_TYPE_DBS) {
+        // Only the lease lock needs to update the lock heartbeat.
+        return OG_SUCCESS;
+    }
+    status_t ret = OG_ERROR;
+    if (lock->type == CMS_DEV_TYPE_SD) {
+        ret = cms_disk_lock_try_lock_sd(lock);
+    } else if (lock->type == CMS_DEV_TYPE_LUN) {
+        ret = cms_disk_lock_try_lock_lun(lock);
+    } else {
+        CMS_LOG_ERR("invalid device type, type %d", lock->type);
+        ret = OG_ERROR;
+    }
+    return ret;
+}
+
 static status_t cms_disk_try_lock_timeout(cms_disk_lock_t *lock, uint32 timeout_ms, uint8 lock_type)
 {
     status_t ret = OG_ERROR;

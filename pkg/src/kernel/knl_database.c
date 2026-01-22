@@ -502,7 +502,7 @@ void db_close(knl_session_t *session, bool32 need_ckpt)
         db_close_log_files(session);
     }
 
-    if (session->kernel->attr.enable_asynch) {
+    if (session->kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
         cm_close_thread(&session->kernel->buf_aio_ctx.thread);
     }
 
@@ -781,7 +781,7 @@ static status_t db_start_daemon(knl_session_t *session)
         }
     }
 
-    if (kernel->attr.enable_asynch) {
+    if (kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
         if (cm_create_thread(buf_aio_proc, 0, kernel, &kernel->buf_aio_ctx.thread) != OG_SUCCESS) {
             return OG_ERROR;
         }

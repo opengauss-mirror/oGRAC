@@ -102,7 +102,7 @@ status_t bak_write_proc(knl_session_t *session, bak_context_t *ogx);
 status_t bak_record(knl_session_t *session);
 status_t bak_start(knl_session_t *session);
 status_t bak_write(bak_t *bak, bak_process_t *proc, char *buf, int32 size);
-status_t bak_fsync_and_close(bak_t *bak, device_type_t type, int32 *handle);
+status_t bak_fsync_and_close(knl_session_t *session, bak_t *bak, device_type_t type, int32 *handle);
 void bak_fetch_read_range(knl_session_t *session, bak_process_t *bak_proc);
 status_t bak_read_logfile_with_proc(bak_process_t *bak_proc, bak_ctrl_t *ctrl, log_file_head_t *buf, int32 size);
 status_t bak_write_logfile_with_proc(bak_context_t *ogx, bak_process_t *bak_proc, char *buf, int32 size,

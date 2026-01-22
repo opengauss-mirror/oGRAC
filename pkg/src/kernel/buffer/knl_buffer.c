@@ -75,7 +75,7 @@ status_t buf_init(knl_session_t *session)
         buf_init_list(set);
     }
 
-    if (kernel->attr.enable_asynch) {
+    if (kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
         return buf_aio_init(session);
     }
     

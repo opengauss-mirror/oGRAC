@@ -3270,12 +3270,12 @@ status_t bak_delete_backupset_for_retry(knl_backup_t *param)
     return OG_ERROR;
 }
 
-status_t bak_fsync_and_close(bak_t *bak, device_type_t type, int32 *handle)
+status_t bak_fsync_and_close(knl_session_t *session, bak_t *bak, device_type_t type, int32 *handle)
 {
     if (*handle == OG_INVALID_HANDLE) {
         return OG_SUCCESS;
     }
-    if (cm_fsync_device(type, *handle) != OG_SUCCESS) {
+    if (db_fsync(session, type, *handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[BACKUP] failed to fsync datafile %s, handle %d", bak->local.name, *handle);
         cm_close_device(type, handle);
         bak->failed = OG_TRUE;

@@ -155,6 +155,14 @@ status_t db_fdatasync_file(knl_session_t *session, int32 file)
     return OG_SUCCESS;
 }
 
+status_t db_fsync(knl_session_t *session, device_type_t type, int32 file)
+{
+    if (type == DEV_TYPE_FILE) {
+        return db_fsync_file(session, file);
+    }
+    return cm_fsync_device(type, file);
+}
+
 status_t db_fsync_file(knl_session_t *session, int32 file)
 {
     if (session->kernel->attr.enable_OSYNC) {

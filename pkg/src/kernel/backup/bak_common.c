@@ -1606,7 +1606,7 @@ static status_t rst_truncate_file(knl_session_t *session, const char *name, devi
             return OG_ERROR;
         }
 
-        if (db_fsync_file(session, handle) != OG_SUCCESS) {
+        if (db_fsync(session, type, handle) != OG_SUCCESS) {
             cm_close_device(type, &handle);
             OG_LOG_RUN_ERR("[RESTORE] failed to fsync file %s", name);
             return OG_ERROR;
@@ -1677,7 +1677,7 @@ status_t rst_extend_file(knl_session_t *session, const char *name, device_type_t
                 OG_LOG_RUN_ERR("[RESTORE] failed to extend %s", name);
                 return OG_ERROR;
             }
-            if (db_fsync_file(session, handle) != OG_SUCCESS) {
+            if (db_fsync(session, type, handle) != OG_SUCCESS) {
                 OG_LOG_RUN_ERR("[RESTORE] failed to fsync file %s", name);
                 cm_close_device(type, &handle);
                 return OG_ERROR;

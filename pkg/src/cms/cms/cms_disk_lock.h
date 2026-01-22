@@ -126,6 +126,7 @@ status_t cms_disk_try_lock(cms_disk_lock_t* lock, uint8 lock_type);
 status_t cms_disk_unlock(cms_disk_lock_t* lock, uint8 lock_type);
 status_t cms_disk_lock_get_inst(cms_disk_lock_t* lock, uint64* inst_id);
 #endif
+status_t cms_disk_update_lock(cms_disk_lock_t* lock, uint8 lock_type);
 status_t cms_disk_lock_get_data(cms_disk_lock_t* lock, char* data, uint32 size);
 status_t cms_disk_lock_set_data(cms_disk_lock_t* lock, char* data, uint32 size);
 status_t cms_disk_unlock_file(cms_disk_lock_t* lock);

@@ -482,8 +482,7 @@ status_t db_create_ctrl_file(knl_session_t *session)
         if (db_create_ctrl_device(session, ctrlfile) != OG_SUCCESS) {
             return OG_ERROR;
         }
-
-        if (db_fsync_file(session, ctrlfile->handle) != OG_SUCCESS) {
+        if (db_fsync(session, ctrlfile->type, ctrlfile->handle) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[BACKUP] failed to fsync datafile %s", ctrlfile->name);
             return OG_ERROR;
         }
