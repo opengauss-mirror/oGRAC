@@ -823,7 +823,9 @@ config_item_t g_parameters[] = {
       PARAM_VIEW_ACCESS_DC, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool_only_sys_allowed,
       sql_notify_als_view_access_dc_bool, sql_notify_als_bool, NULL },
     /* shard force rollback when execute IDU sql in trans failed */
-
+    { "ENABLE_PERMISSIVE_UNICODE", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
+      PARAM_ENABLE_PERMISSIVE_UNICODE, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool,
+      sql_notify_als_enable_permissive_unicode, sql_notify_als_bool, NULL },
     { "NODE_LOCK_STATUS", OG_TRUE, ATTR_READONLY, "NOLOCK", NULL, NULL, "-", "NOLOCK,SHARE,EXCLUSIVE",
       "OG_TYPE_VARCHAR", NULL, PARAM_NODE_LOCK_STATUS, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_node_lock_status,
       NULL, NULL, NULL },

@@ -60,6 +60,7 @@ static status_t sql_win_set_aggr_value(sql_stmt_t *stmt, variant_t *var, variant
         case OG_TYPE_TIMESTAMP_LTZ:
         case OG_TYPE_INTERVAL_DS:
         case OG_TYPE_INTERVAL_YM:
+        case OG_TYPE_BOOLEAN:
             *result = *var;
             break;
 
@@ -1229,7 +1230,7 @@ static status_t sql_verify_winsort_listagg(sql_verifier_t *verif, expr_node_t *w
     OG_RETURN_IFERR(sql_clone_within_group_args(verif->stmt->context, func, &winsort->win_args, sql_alloc_mem));
     verif->excl_flags = excl_flags;
     winsort->datatype = func->datatype;
-    winsort->size = (uint16)cm_get_datatype_strlen(func->datatype, func->argument->root->size);
+    winsort->size = (uint16)cm_get_datatype_strlen(func->datatype, func->size);
     return OG_SUCCESS;
 }
 

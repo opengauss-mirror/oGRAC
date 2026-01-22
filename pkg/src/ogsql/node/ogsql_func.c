@@ -218,11 +218,15 @@ sql_func_t g_func_tab[] = {
     { { (char *)"tanh", 4 }, sql_func_tanh, sql_verify_tanh, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TANH, FO_USUAL, OG_FALSE },
     { { (char *)"timestampadd", 12 }, sql_func_timestampadd, sql_verify_timestampadd, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TIMESTAMPADD, FO_USUAL, OG_FALSE },
     { { (char *)"timestampdiff", 13 }, sql_func_timestampdiff, sql_verify_timestampdiff, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TIMESTAMPDIFF, FO_USUAL, OG_FALSE },
+    { { (char *)"to_bigint", 9 }, sql_func_to_bigint, sql_verify_to_bigint, AGGR_TYPE_NONE, FO_NONE,
+        ID_FUNC_ITEM_TO_BIGINT, FO_USUAL, OG_TRUE },
     { { (char *)"to_blob", 7 }, sql_func_to_blob, sql_verify_to_blob, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_TO_BLOB, FO_USUAL, OG_FALSE },
     { { (char *)"to_char", 7 }, sql_func_to_char, sql_verify_to_char, AGGR_TYPE_NONE, FO_SPECIAL, ID_FUNC_ITEM_TO_CHAR, FO_USUAL, OG_TRUE },
     { { (char *)"to_clob", 7 }, sql_func_to_clob, sql_verify_to_clob, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_TO_CLOB, FO_USUAL, OG_FALSE },
     { { (char *)"to_date", 7 }, sql_func_to_date, sql_verify_to_date, AGGR_TYPE_NONE, FO_SPECIAL, ID_FUNC_ITEM_TO_DATE, FO_USUAL, OG_TRUE },
     { { (char *)"to_dsinterval", 13 }, sql_func_to_dsinterval, sql_verify_to_dsinterval, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TO_DSINTERVAL, FO_USUAL, OG_FALSE },
+    { { (char *)"to_int", 6 }, sql_func_to_int, sql_verify_to_int, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TO_INT,
+        FO_USUAL, OG_TRUE },
     { { (char *)"to_multi_byte", 13 }, sql_func_to_multi_byte, sql_verify_to_single_or_multi_byte, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TO_MULTI_BYTE, FO_USUAL, OG_FALSE },
     { { (char *)"to_nchar", 8 }, sql_func_to_nchar, sql_verify_to_nchar, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_TO_NCHAR, FO_USUAL, OG_FALSE },
     { { (char *)"to_number", 9 }, sql_func_to_number, sql_verify_to_number, AGGR_TYPE_NONE, FO_NORMAL, ID_FUNC_ITEM_TO_NUMBER, FO_USUAL, OG_TRUE },
@@ -585,6 +589,11 @@ status_t sql_invoke_func(sql_stmt_t *stmt, expr_node_t *node, variant_t *result)
         status = OG_SUCCESS;
     } else {
         status = func->invoke(stmt, node, result);
+        // Convert empty string '' as null
+        if (!result->is_null && OG_IS_STRING_TYPE(result->type) &&
+            result->v_text.len == 0 && g_instance->sql.enable_empty_string_null) {
+            result->is_null = OG_TRUE;
+        }
     }
 
     OGSQL_RESTORE_STACK(stmt);

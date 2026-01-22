@@ -1931,7 +1931,7 @@ status_t sql_func_array_length(sql_stmt_t *stmt, expr_node_t *func, variant_t *r
 
     array_str = value.v_text;
     if (value.is_null || array_str_invalid(&array_str)) {
-        OG_THROW_ERROR(ERR_INVALID_ARRAY_FORMAT);
+        OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_ARRAY_FORMAT);
         return OG_ERROR;
     }
 

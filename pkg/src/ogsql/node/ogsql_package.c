@@ -6967,6 +6967,11 @@ status_t sql_invoke_pack_func(sql_stmt_t *stmt, expr_node_t *node, variant_t *re
     sql_func_t *func = &pack->funcs[func_id];
     OGSQL_SAVE_STACK(stmt);
     status = func->invoke(stmt, node, result);
+    // Convert empty string '' as null
+    if (!result->is_null && OG_IS_STRING_TYPE(result->type) &&
+        result->v_text.len == 0 && g_instance->sql.enable_empty_string_null) {
+        result->is_null = OG_TRUE;
+    }
     OGSQL_RESTORE_STACK(stmt);
     return status;
 }

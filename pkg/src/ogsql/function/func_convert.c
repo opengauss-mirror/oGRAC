@@ -1079,11 +1079,11 @@ status_t sql_func_nullif(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     arg1 = func->argument;
     arg2 = arg1->next;
 
-    OG_RETURN_IFERR(sql_exec_expr(stmt, arg1, &var1));
+    OG_RETURN_IFERR(ogsql_exec_func_argumnet(stmt, arg1, &var1));
     SQL_CHECK_COLUMN_VAR(&var1, res);
     sql_keep_stack_variant(stmt, &var1);
 
-    OG_RETURN_IFERR(sql_exec_expr(stmt, arg2, &var2));
+    OG_RETURN_IFERR(ogsql_exec_func_argumnet(stmt, arg2, &var2));
     SQL_CHECK_COLUMN_VAR(&var2, res);
     sql_keep_stack_variant(stmt, &var2);
 
@@ -1097,6 +1097,8 @@ status_t sql_func_nullif(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
         OGSQL_INIT_TYPEMOD(typmod2);
         typmod1.datatype = var1.type;
         typmod2.datatype = var2.type;
+        typmod1.size = var1.is_null ? 0 : OG_INVALID_ID16;
+        typmod2.size = var2.is_null ? 0 : OG_INVALID_ID16;
         OG_RETURN_IFERR(cm_combine_typmode(typmod1, OG_FALSE, typmod2, OG_FALSE, &typmode));
         result_type = OG_IS_NUMERIC_TYPE(typmode.datatype) ? typmode.datatype : var1.type;
     }
