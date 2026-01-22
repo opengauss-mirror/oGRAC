@@ -26,9 +26,10 @@ function main()
         rpm -qa | grep "ograc_all_in_one"
         if [ $? -eq 0 ]; then
             logAndEchoInfo "Rpm package has been installed. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        fi
         return 0
     fi
-
+    
     check_rpm_exist > /dev/null 2>&1
     if [ $? -eq 0 ]; then
         logAndEchoInfo "Rpm package has been installed. [Line:${LINENO}, File:${SCRIPT_NAME}]"

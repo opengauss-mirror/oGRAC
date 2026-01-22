@@ -2,7 +2,7 @@
     "deploy_mode": "dss",
     "deploy_user": "ogdba:ogdba",
     "node_id": "0",
-    "cms_ip": "192.168.86.1;192.168.86.2",
+    "cms_ip": "xxx.xxx.xxx.xxx;xxx.xxx.xxx.xxx",
     "db_type": "1",
     "mes_ssl_switch": false,
     "MAX_ARCH_FILES_SIZE": "300G",

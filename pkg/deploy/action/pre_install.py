@@ -336,7 +336,7 @@ class CheckInstallConfig(CheckBase):
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size"}
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune', 'dss_vg_list', 'gcc_home'}
 
         self.dbstor_config_key = {
             'cluster_name', 'ograc_vlan_ip', 'storage_vlan_ip', 'link_type', 'storage_dbstor_page_fs',
