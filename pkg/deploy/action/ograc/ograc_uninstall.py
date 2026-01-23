@@ -42,6 +42,7 @@ OGRAC_UNINSTALL_CONF_FILE = os.path.join(PKG_DIR, "action", "ograc", "ograc_unin
 OGRAC_CONF_FILE = os.path.join("/opt/ograc/ograc", "cfg", "ograc_config.json")
 OGRAC_START_STATUS_FILE = os.path.join("/opt/ograc/ograc", "cfg", "start_status.json")
 OGRAC_UNINSTALL_LOG_FILE = "/opt/ograc/log/ograc/ograc_deploy.log"
+DSS_HOME = "/opt/ograc/dss"
 CONFIG_PARAMS_FILE = os.path.join(PKG_DIR, "config", "deploy_param.json")
 FORCE_UNINSTALL = None
 CHECK_MAX_TIMES = 60
@@ -630,10 +631,10 @@ def gen_reg_string(text):
 
 #Exec dss cms
 def exec_dsscmd(cmd):
-    return_code, stdout, stderr = exec_popen(reg_cmd, timeout=TIMEOUT)
+    return_code, stdout, stderr = _exec_popen(cmd)
     if return_code:
         output = stdout + stderr
-        err_msg = "Reghl node cmd[%s] exec failed, details:%s" % (reg_cmd, output)
+        err_msg = "Reghl node cmd[%s] exec failed, details:%s" % (cmd, output)
         LOGGER.error(err_msg)
 
 
@@ -650,18 +651,18 @@ def unreg_nodes(json_data_deploy):
         return
     
     node_id = json_data_deploy.get('node_id', '').strip()
-    if deploy_mode != "0":
-        return
-    LOGGER.info("Unreg all nodes by dss")
+    LOGGER.info("Unreg dss lun")
     reg_cmd = "source ~/.bashrc && %s/bin/dsscmd reghl -D %s" % (DSS_HOME, DSS_HOME)
     unreg_cmd = "source ~/.bashrc && %s/bin/dsscmd unreghl -D %s" % (DSS_HOME, DSS_HOME)
     kick_1_cmd = "source ~/.bashrc && %s/bin/dsscmd kickh -i 1 -D %s" % (DSS_HOME, DSS_HOME)
     LOGGER.info("reg current node by dss")
     exec_dsscmd(reg_cmd)
-    LOGGER.info("kick other nodes by dss")
-    exec_dsscmd(kick_1_cmd)
+    if node_id == "0":
+        LOGGER.info("kick remote nodes by dss")
+        exec_dsscmd(kick_1_cmd)
     LOGGER.info("unreg current nodes by dss")
     exec_dsscmd(unreg_cmd)
+    LOGGER.info("Unreg dss lun finish")
 
 # Clear environment variables
 
