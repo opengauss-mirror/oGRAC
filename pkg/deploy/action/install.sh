@@ -851,6 +851,10 @@ fi
 
 if [[ "${rpminstalled_check}" == "1" ]]; then
     chown "${ograc_user}":"${ograc_group}" /opt/ograc/action/env.sh
+    if [[ ${deploy_mode} == "dss" ]];then
+        cp  ${CURRENT_PATH}/../cms/service/lib/* /usr/lib64/
+        chown ${ograc_user}:${ograc_group} -hR /usr/lib64/libog*
+    fi
 fi
 
 if [[ x"${deploy_mode}" == x"dss" ]];then

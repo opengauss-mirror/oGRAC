@@ -214,6 +214,10 @@ if [[ ${uninstall_type} = 'override' ]]; then
         logAndEchoInfo "Auto delete fs success"
   fi
 
+  if [ -f /opt/ograc/installed_by_rpm ]; then
+    find /usr/lib64 -maxdepth 1 -name 'libog*' -user ograc -type f -delete
+  fi
+
   # 删除已创建用户
   if id -u ograc > /dev/null 2>&1; then
       userdel -rf ograc
