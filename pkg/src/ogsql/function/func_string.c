@@ -2397,6 +2397,9 @@ status_t sql_func_translate(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     OG_RETURN_IFERR(sql_push(stmt, result->len, (void **)&result->str));
 
     OG_RETURN_IFERR(sql_func_translate_core(stmt, char_text, from_text, to_text, result));
+    if (g_instance->sql.enable_empty_string_null && result->len == 0) {
+        SQL_SET_NULL_VAR(res);
+    }
     OGSQL_RESTORE_STACK(stmt);
 
     return OG_SUCCESS;

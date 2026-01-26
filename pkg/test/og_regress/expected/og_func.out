@@ -49,7 +49,506 @@ NULLIF(B, TO_BLOB(''))
 0 rows fetched.
 
 SQL> drop table if exists t_null_if;
+
 Succeed.
+
+SQL> 
+SQL> -- array_length test
+SQL> select array_length(null) from SYS_DUMMY;
+
+OG-01362, [1:8]Invalid array format
+SQL> select array_length(rownum) from SYS_DUMMY;
+
+OG-00606, [1:8]Inconsistent datatypes, expected ARRAY - got BINARY_INTEGER
+SQL> 
+SQL> -- listagg size
+SQL> desc -q select distinct listagg('aa', '|') within group (order by 1) over (partition by 2);
+
+Name                                                                Null?    Type                                
+------------------------------------------------------------------- -------- ------------------------------------
+LISTAGG('AA', '|') WITHIN GROUP (ORDER BY 1) OVER (PARTITION BY              VARCHAR(64000 BYTE)                 
+
+SQL> 
+SQL> -- nullif function
+SQL> select nullif('oGRAC','  oGRAC');
+
+NULLIF('OGRAC','  OGRAC')
+-------------------------
+oGRAC                    
+
+1 rows fetched.
+
+SQL> select nullif('   ','   ');
+
+NULLIF('   ','   ')
+-------------------
+                   
+
+1 rows fetched.
+
+SQL> select nullif(to_blob('oGRAC'), to_blob('oGRAC'));
+
+OG-00105, Invalid format of hex
+SQL> select nullif(to_blob('oGRAC'), to_clob('oGRAC'));
+
+OG-00601, [1:8]Sql syntax error: expression must have same datatype as corresponding expression
+SQL> select nullif('100', 100);
+
+OG-00601, [1:8]Sql syntax error: expression must have same datatype as corresponding expression
+SQL> select nullif(cast(100 as int), cast(100.00 as float));
+
+NULLIF(CAST(100 AS INT), CAST(100.00 AS FLOAT))
+-----------------------------------------------
+                                               
+
+1 rows fetched.
+
+SQL> select nullif(cast(100 as int), cast(100.00 as decimal(7,2)));
+
+NULLIF(CAST(100 AS INT), CAST(100.00 AS DECIMAL(7,2)))
+------------------------------------------------------
+                                                      
+
+1 rows fetched.
+
+SQL> select nullif(cast(100 as real), cast(100.00 as decimal(7,2)));
+
+NULLIF(CAST(100 AS REAL), CAST(100.00 AS DECIMAL(7,2)))
+-------------------------------------------------------
+                                                       
+
+1 rows fetched.
+
+SQL> select nullif(to_blob('oGRAC'), null);
+
+OG-00105, Invalid format of hex
+SQL> select nullif(to_clob('oGRAC'), null);
+
+NULLIF(TO_CLOB('OGRAC'), NULL)                                  
+----------------------------------------------------------------
+oGRAC                                                           
+
+1 rows fetched.
+
+SQL> select nullif('100', null);
+
+NULLIF('100', NULL)
+-------------------
+100                
+
+1 rows fetched.
+
+SQL> select nullif(100, null);
+
+NULLIF(100, NULL)
+-----------------
+100              
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> create table t1(c1 clob, c2 clob, b1 clob, b2 clob, i1 int, v1 varchar(10));
+
+Succeed.
+
+SQL> insert into t1 values('oGRAC', 'oGRAC', '111', '111', 111, '111');
+
+1 rows affected.
+
+SQL> select nullif(c1, c2) from t1;
+
+NULLIF(C1, C2)                                                  
+----------------------------------------------------------------
+                                                                
+
+1 rows fetched.
+
+SQL> select nullif(b1, b2) from t1;
+
+NULLIF(B1, B2)                                                  
+----------------------------------------------------------------
+                                                                
+
+1 rows fetched.
+
+SQL> select nullif(c1, i1) from t1;
+
+OG-00601, [1:8]Sql syntax error: expression must have same datatype as corresponding expression
+SQL> select nullif(i1, b1) from t1;
+
+OG-00601, [1:8]Sql syntax error: expression must have same datatype as corresponding expression
+SQL> select nullif(v1, b1) from t1;
+
+OG-00601, [1:8]Sql syntax error: expression must have same datatype as corresponding expression
+SQL> drop table t1;
+
+Succeed.
+
+SQL> drop table if exists t2;
+
+Succeed.
+
+SQL> create table t2 (a int, b blob, c clob);
+
+Succeed.
+
+SQL> select nullif(b, to_blob('')) from t2;
+
+NULLIF(B, TO_BLOB(''))                                          
+----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> select nullif(c, to_clob('')) from t2;
+
+NULLIF(C, TO_CLOB(''))                                          
+----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> select nullif(to_blob('aa'), to_blob('')) from t2;
+
+NULLIF(TO_BLOB('AA'), TO_BLOB(''))                              
+----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> select nullif(to_blob('aa'), null) from t2;
+
+NULLIF(TO_BLOB('AA'), NULL)                                     
+----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> select nullif('abc', b) from t2;
+
+OG-00601, [1:8]Sql syntax error: expression must have same datatype as corresponding expression
+SQL> drop table t2;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists t3;
+
+Succeed.
+
+SQL> create table t3(c1 char(30), c2 varchar(20));
+
+Succeed.
+
+SQL> insert into t3 values('oGRAC', 'oGRAC');
+
+1 rows affected.
+
+SQL> insert into t3 values('数据', '数据');
+
+1 rows affected.
+
+SQL> insert into t3 values(null, 'engine');
+
+1 rows affected.
+
+SQL> select * from t3 where c1 = nullif('oGRAC', 'oGRAC');
+
+C1                             C2                  
+------------------------------ --------------------
+
+0 rows fetched.
+
+SQL> select * from t3 where c1 = nullif('数据', '数据');
+
+C1                             C2                  
+------------------------------ --------------------
+
+0 rows fetched.
+
+SQL> select * from t3 where c1 = nullif('oGRAC', 'engine');
+
+C1                             C2                  
+------------------------------ --------------------
+oGRAC                          oGRAC               
+
+1 rows fetched.
+
+SQL> select * from t3 where c1 = nullif('数据', 'oGRAC');
+
+C1                             C2                  
+------------------------------ --------------------
+数据                         数据              
+
+1 rows fetched.
+
+SQL> drop table t3;
+
+Succeed.
+
+SQL> 
+SQL> -- test enable_permissive_unicode
+SQL> drop table if exists t_hex_trim_func_1;
+
+Succeed.
+
+SQL> drop table if exists t_hex_trim_func_2;
+
+Succeed.
+
+SQL> create table t_hex_trim_func_1(c1 varchar(32 byte));
+
+Succeed.
+
+SQL> create table t_hex_trim_func_2(c1 varchar(32 byte));
+
+Succeed.
+
+SQL> insert into t_hex_trim_func_1 values(0xffffffffffffffffffffffffffffffff);
+
+1 rows affected.
+
+SQL> select HEX(c1) from t_hex_trim_func_1;
+
+HEX(C1)                                                         
+----------------------------------------------------------------
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                
+
+1 rows fetched.
+
+SQL> alter system set enable_permissive_unicode = FALSE;
+
+Succeed.
+
+SQL> insert into t_hex_trim_func_2 select ltrim(rtrim(c1)) from t_hex_trim_func_1;
+
+OG-00217, Nls internal error, invalid utf-8 buffer
+SQL> alter system set enable_permissive_unicode = TRUE;
+
+Succeed.
+
+SQL> insert into t_hex_trim_func_2 select ltrim(rtrim(c1)) from t_hex_trim_func_1;
+
+1 rows affected.
+
+SQL> select HEX(c1) from t_hex_trim_func_2;
+
+HEX(C1)                                                         
+----------------------------------------------------------------
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                
+
+1 rows fetched.
+
+SQL> select hex(CONCAT(tab1.c1, tab2.c1)) from t_hex_trim_func_1 tab1, t_hex_trim_func_2 tab2;
+
+HEX(CONCAT(TAB1.C1, TAB2.C1))                                   
+----------------------------------------------------------------
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+
+1 rows fetched.
+
+SQL> drop table t_hex_trim_func_1;
+
+Succeed.
+
+SQL> drop table t_hex_trim_func_2;
+
+Succeed.
+
+SQL> 
+SQL> -- test bool datatype support window func
+SQL> drop table if exists bool_func_t;
+
+Succeed.
+
+SQL> create table bool_func_t (f1 bool, f2 int, f3 int);
+
+Succeed.
+
+SQL> insert into bool_func_t values(TRUE,1,1),(TRUE,2,1),(FALSE,3,2),(FALSE,4,2),(FALSE,5,3),(TRUE,6,3);
+
+6 rows affected.
+
+SQL> select f1, f2, f3, lag(f1, '2', 0) over (order by f1) res from bool_func_t order by f1;
+
+F1     F2           F3           RES   
+------ ------------ ------------ ------
+FALSE  3            2            FALSE 
+FALSE  4            2            FALSE 
+FALSE  5            3            FALSE 
+TRUE   1            1            FALSE 
+TRUE   2            1            FALSE 
+TRUE   6            3            TRUE  
+
+6 rows fetched.
+
+SQL> select f1, f2, f3, lag(f1, '2', 0) over (partition by f3 order by f2) res from bool_func_t order by f1;
+
+F1     F2           F3           RES   
+------ ------------ ------------ ------
+FALSE  3            2            FALSE 
+FALSE  4            2            FALSE 
+FALSE  5            3            FALSE 
+TRUE   1            1            FALSE 
+TRUE   2            1            FALSE 
+TRUE   6            3            FALSE 
+
+6 rows fetched.
+
+SQL> select min(f1) over (partition by f3 order by f2) from bool_func_t order by f1;
+
+MIN(F1) OVER (PARTITION BY F3 ORDER BY F2)
+------------------------------------------
+FALSE                                     
+FALSE                                     
+FALSE                                     
+TRUE                                      
+TRUE                                      
+FALSE                                     
+
+6 rows fetched.
+
+SQL> select max(f1) over (partition by f3 order by f2) from bool_func_t order by f1;
+
+MAX(F1) OVER (PARTITION BY F3 ORDER BY F2)
+------------------------------------------
+FALSE                                     
+FALSE                                     
+FALSE                                     
+TRUE                                      
+TRUE                                      
+TRUE                                      
+
+6 rows fetched.
+
+SQL> select f1, f2, f3, last_value(f1) over (partition by f3 order by f2) res from bool_func_t order by f1;
+
+F1     F2           F3           RES   
+------ ------------ ------------ ------
+FALSE  3            2            FALSE 
+FALSE  4            2            FALSE 
+FALSE  5            3            FALSE 
+TRUE   1            1            TRUE  
+TRUE   2            1            TRUE  
+TRUE   6            3            TRUE  
+
+6 rows fetched.
+
+SQL> drop table bool_func_t;
+
+Succeed.
+
+SQL> 
+SQL> -- test translate
+SQL> select translate('100000','\12345','\');
+
+TRANSLATE('100000','\12345','\')
+--------------------------------
+00000                           
+
+1 rows fetched.
+
+SQL> select length(translate('100000','\12345','\'));
+
+LENGTH(TRANSLATE('100000','\12345','\'))
+----------------------------------------
+5                                       
+
+1 rows fetched.
+
+SQL> select translate('100000','\1234567890','\');
+
+TRANSLATE('100000','\1234567890','\')
+-------------------------------------
+                                     
+
+1 rows fetched.
+
+SQL> select length(translate('100000','\1234567890','\'));
+
+LENGTH(TRANSLATE('100000','\1234567890','\'))
+---------------------------------------------
+                                             
+
+1 rows fetched.
+
+SQL> select translate('100000','1234567890','S');
+
+TRANSLATE('100000','1234567890','S')
+------------------------------------
+S                                   
+
+1 rows fetched.
+
+SQL> select translate('100000','91234567890','S');
+
+TRANSLATE('100000','91234567890','S')
+-------------------------------------
+                                     
+
+1 rows fetched.
+
+SQL> select translate('cantian','INNODB','MYSQL');
+
+TRANSLATE('CANTIAN','INNODB','MYSQL')
+-------------------------------------
+cantian                              
+
+1 rows fetched.
+
+SQL> -- when empty_string_as_null is true, the '' as null
+SQL> select nvl2(translate('100000','\1234567890','\'), 'IS NOT NULL', 'IS NULL') as res from SYS_DUMMY;
+
+RES        
+-----------
+IS NULL    
+
+1 rows fetched.
+
+SQL> select nvl2(translate('','',''), 'IS NOT NULL', 'IS NULL') as res from SYS_DUMMY;
+
+RES        
+-----------
+IS NULL    
+
+1 rows fetched.
+
+SQL> select nvl2(translate('100000','1234567890',''), 'IS NOT NULL', 'IS NULL') as res from SYS_DUMMY;
+
+RES        
+-----------
+IS NULL    
+
+1 rows fetched.
+
+SQL> 
+SQL> -- support the to_int, to_bigint
+SQL> desc -q select to_int(2.00) as val;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+VAL                                          BINARY_INTEGER                      
+
+SQL> select to_int(to_char('123')) as val;
+
+VAL         
+------------
+123         
+
+1 rows fetched.
+
+SQL> desc -q select to_bigint(2.00) as val;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+VAL                                          BINARY_BIGINT                       
+
+SQL> select to_bigint(to_char('123')) as val;
+VAL                 
+--------------------
+123                 
+
+1 rows fetched.
 
 
 

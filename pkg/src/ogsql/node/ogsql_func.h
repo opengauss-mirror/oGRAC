@@ -244,11 +244,13 @@ typedef enum en_function_item_id {
     ID_FUNC_ITEM_TANH,
     ID_FUNC_ITEM_TIMESTAMPADD,
     ID_FUNC_ITEM_TIMESTAMPDIFF,
+    ID_FUNC_ITEM_TO_BIGINT,
     ID_FUNC_ITEM_TO_BLOB,
     ID_FUNC_ITEM_TO_CHAR,
     ID_FUNC_ITEM_TO_CLOB,
     ID_FUNC_ITEM_TO_DATE,
     ID_FUNC_ITEM_TO_DSINTERVAL,
+    ID_FUNC_ITEM_TO_INT,
     ID_FUNC_ITEM_TO_MULTI_BYTE,
     ID_FUNC_ITEM_TO_NCHAR,
     ID_FUNC_ITEM_TO_NUMBER,
@@ -452,6 +454,20 @@ static inline status_t sql_var_as_string(sql_stmt_t *stmt, variant_t *var)
     OG_RETURN_IFERR(sql_push(stmt, size, (void **)&buf));
     CM_INIT_TEXTBUF(&buffer, size, buf);
     OG_RETURN_IFERR(var_as_string(SESSION_NLS(stmt), var, &buffer));
+    return OG_SUCCESS;
+}
+
+static inline status_t ogsql_exec_func_argumnet(sql_stmt_t * stmt, expr_tree_t * arg_expr, variant_t *arg_value)
+{
+    if (sql_exec_expr(stmt, arg_expr, arg_value) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[FUNC]: sql exec expr failed when execute function argument");
+        return OG_ERROR;
+    }
+
+    if (OG_IS_LOB_TYPE(arg_value->type) && !arg_value->is_null) {
+        OG_RETURN_IFERR(sql_get_lob_value(stmt, arg_value));
+    }
+
     return OG_SUCCESS;
 }
 
