@@ -227,7 +227,7 @@ typedef struct st_init_cursor {
     void *stmt;                    // for callback, match condition argument
     knl_handle_t temp_cache;  // temp table
     vm_page_t *vm_page;            // cursor vm_page
-    int32 file;                    // for long sql
+    int32 file;                    // for slow sql
     knl_part_locate_t part_loc;    // for part locate
     uint16 rowid_count;            // for rowid scan
     uint16 decode_count;           // for row decode
@@ -281,7 +281,7 @@ typedef struct st_knl_cursor {
             void *stmt;                    // for callback, match condition argument
             knl_handle_t temp_cache;  // temp table
             vm_page_t *vm_page;            // cursor vm_page
-            int32 file;                    // for long sql
+            int32 file;                    // for slow sql
             knl_part_locate_t part_loc;    // for locating a part
             uint16 rowid_count;            // for rowid scan
             uint16 decode_count;           // for row decode

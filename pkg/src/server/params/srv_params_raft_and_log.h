@@ -33,8 +33,8 @@ extern "C" {
 #endif
 
 typedef enum en_method_id {
-    LONGSQL_ON,
-    LONGSQL_OFF,
+    SLOWSQL_ON,
+    SLOWSQL_OFF,
     LOG_LEVEL_FATAL,
     LOG_LEVEL_DEBUG,
     LOG_LEVEL_WARN,
@@ -62,7 +62,7 @@ status_t sql_verify_pbl_file_size(void *se, void *lex, void *def);
 status_t sql_verify_als_log_level(void *se, void *lex, void *def);
 status_t sql_verify_als_log_file(void *se, void *lex, void *def);
 status_t sql_verify_als_log_path(void *se, void *lex, void *def);
-status_t sql_verify_als_longsql_timeout(void *se, void *lex, void *def);
+status_t sql_verify_als_sql_stage_threshold(void *se, void *lex, void *def);
 status_t sql_verify_als_size(void *se, void *lex, void *def);
 status_t sql_verify_als_arch_size(void *se, void *lex, void *def);
 status_t sql_verify_als_arch_file_size(void *se, void *lex, void *def);
@@ -94,8 +94,8 @@ status_t sql_notify_als_log_level(void *se, void *item, char *value);
 status_t sql_notify_als_pbl_max_file_size(void *se, void *item, char *value);
 status_t sql_notify_als_log_file_permissions(void *se, void *item, char *value);
 status_t sql_notify_als_log_path_permissions(void *se, void *item, char *value);
-status_t sql_notify_enable_longsql_print(void *se, void *item, char *value);
-status_t sql_notify_als_longsql_timeout(void *se, void *item, char *value);
+status_t sql_notify_enable_slowsql_stats(void *se, void *item, char *value);
+status_t sql_notify_als_sql_stage_threshold(void *se, void *item, char *value);
 status_t sql_notify_als_arch_size(void *se, void *item, char *value);
 status_t sql_notify_als_need_arch_size(void *se, void *item, char *value);
 status_t sql_notify_als_need_arch_file_size(void *se, void *item, char *value);

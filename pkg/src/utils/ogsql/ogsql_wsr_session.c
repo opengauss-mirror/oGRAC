@@ -92,7 +92,7 @@ static int wsr_build_top_session_head_html(wsr_options_t *wsr_opts, wsr_info_t *
         "<td><a class=\"wsrg\" href=\"#300-%u\">Session ordered by Wait Time</a></td>", wsr_info->dbid);
     wsr_write_str2(wsr_opts, "    </tr><tr>");
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
-        " <td><a class=\"wsrg\" href=\"#310-%u\">Session ordered by Long SQL</a></td>", wsr_info->dbid);
+        " <td><a class=\"wsrg\" href=\"#310-%u\">Session ordered by Slow sql</a></td>", wsr_info->dbid);
     wsr_write_str2(wsr_opts, "    </tr><tr>");
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
         "<td><a class=\"wsrg\" href=\"#320-%u\">Session ordered by Long Transaction</a></td>", wsr_info->dbid);
@@ -253,13 +253,13 @@ static int wsr_build_top_session_sql_head(wsr_options_t *wsr_opts, wsr_info_t *w
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500, "<a class=\"wsr\" name=\"310-%u\"></a>", wsr_info->dbid);
     if (wsr_opts->switch_shd_off && wsr_info->node_name != NULL) {
         wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
-            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Session ordered by Long SQL %s</font>",
+            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Session ordered by Slow sql %s</font>",
             wsr_info->node_name);
     } else {
         wsr_write_str2(wsr_opts,
-            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Session ordered by Long SQL</font>");
+            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Session ordered by Slow sql</font>");
     }
-    wsr_write_str2(wsr_opts, "<!-- <h2 class=\"wsr\">Session ordered by Long SQL</h2> -->");
+    wsr_write_str2(wsr_opts, "<!-- <h2 class=\"wsr\">Session ordered by Slow sql</h2> -->");
     wsr_write_str2(wsr_opts, "<table class=\"table table-hover\">");
     wsr_write_str2(wsr_opts, "<thead>");
     wsr_write_str2(wsr_opts, "<tr>");

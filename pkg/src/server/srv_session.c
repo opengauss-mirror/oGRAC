@@ -31,6 +31,7 @@
 #include "srv_agent.h"
 #include "dml_executor.h"
 #include "ogsql_audit.h"
+#include "ogsql_slowsql.h"
 #include "srv_stat.h"
 #include "dtc_dmon.h"
 #include "cm_io_record.h"
@@ -1006,9 +1007,9 @@ EXTER_ATTACK status_t srv_process_command(session_t *session)
 {
     uint32 cmd;
     status_t ret;
-    timeval_t tv_begin;
+    struct timespec tv_begin;
 
-    (void)cm_gettimeofday(&tv_begin);
+    clock_gettime(CLOCK_MONOTONIC, &tv_begin);
     cm_reset_error();
     OG_RETURN_IFERR(srv_process_init_session(session));
 
@@ -1022,6 +1023,10 @@ EXTER_ATTACK status_t srv_process_command(session_t *session)
 
     ret = srv_process_command_core(session, cmd);
 
+    /* record Slowsql log regardless of command execution success (internal error handling exists) */
+    if (LOG_SLOWSQL_ON) {
+        ogsql_slowsql_record_slowsql(session->current_stmt, &tv_begin);
+    }
 
     /* send response command */
     if (ret != OG_SUCCESS) {

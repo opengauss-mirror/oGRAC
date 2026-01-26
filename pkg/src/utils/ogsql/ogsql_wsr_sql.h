@@ -33,7 +33,7 @@ extern "C" {
 #endif
 
 int wsr_build_sql_elapsed(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
-int wsr_build_longsql_time(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
+int wsr_build_slowsql_time(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 int wsr_build_cpu_time(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 int wsr_build_io_wait(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 int wsr_build_sql_gets(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
@@ -41,7 +41,7 @@ int wsr_build_sql_reads(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 int wsr_build_sql_executions(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 int wsr_build_sql_parses(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 int wsr_build_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, uint32 letter_num);
-int wsr_build_long_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, uint32 letter_num);
+int wsr_build_slow_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, uint32 letter_num);
 int wsr_build_sql_content(wsr_options_t *wsr_opts, wsr_info_t *wsr_info);
 
 #ifdef __cplusplus

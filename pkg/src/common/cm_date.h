@@ -108,6 +108,7 @@ typedef int64 date_t;
 #define NANOSECS_PER_MILLISEC   1000000U
 #define NANOSECS_PER_SECOND     1000000000U
 #define MICROSECS_PER_SECOND_LL 1000000LL
+#define NANOSECS_PER_SECOND_LL  1000000000ULL
 
 #define DATETIMEF_INT_OFS 0x8000000000LL
 #define DATETIME_MAX_DECIMALS 6
@@ -669,6 +670,22 @@ static inline uint64 cm_day_usec(void)
 #endif
 
     return usec;
+}
+
+static inline uint64 ogsql_timespec_func_diff_ns(const struct timespec *begin, const struct timespec *end)
+{
+    if (end == NULL || begin == NULL) {
+        return 0;
+    }
+    
+    if (end->tv_sec < begin->tv_sec ||
+        (end->tv_sec == begin->tv_sec && end->tv_nsec < begin->tv_nsec)) {
+        return 0;
+    }
+
+    uint64 sec_diff = (uint64)(end->tv_sec - begin->tv_sec) * NANOSECS_PER_SECOND_LL;
+    long nsec_diff = end->tv_nsec - begin->tv_nsec;
+    return sec_diff + (uint64)nsec_diff;
 }
 
 #ifndef WIN32

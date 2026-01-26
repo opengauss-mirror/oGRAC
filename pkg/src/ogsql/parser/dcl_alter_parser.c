@@ -787,9 +787,9 @@ static status_t set_log_parameter(const char *name)
         { "_LOG_LEVEL" },
         { "_LOG_FILE_PERMISSIONS" },
         { "_LOG_PATH_PERMISSIONS" },
-        { "LONGSQL_TIMEOUT" },
+        { "SQL_STAGE_THRESHOLD" },
         { "RAFT_LOG_LEVEL" },
-        { "_LONGSQL_STATS_PRINT" }
+        { "SLOWSQL_STATS_ENABLE" }
     };
     for (uint32 i = 0; i < OG_LOG_PARAM_CNT; i++) {
         if (cm_str_equal(name, log_name[i])) {

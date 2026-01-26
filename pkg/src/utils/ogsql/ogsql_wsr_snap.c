@@ -33,7 +33,7 @@ typedef struct st_wsr_snap {
     char sessions[MAX_WSR_ENTITY_LEN];
     char activesess[MAX_WSR_ENTITY_LEN];
     char trans[MAX_WSR_ENTITY_LEN];
-    char longsql[MAX_WSR_ENTITY_LEN];
+    char slowsql[MAX_WSR_ENTITY_LEN];
     char longtrans[MAX_WSR_ENTITY_LEN];
     char physical[MAX_WSR_ENTITY_LEN];
     char logical[MAX_WSR_ENTITY_LEN];
@@ -95,8 +95,8 @@ static void wsr_build_instance_snap_head_session(wsr_options_t *wsr_opts)
         g_wsritemdesc[WSR_ITEM_ACTIVE_SESSIONS]);
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_500, "<th><div title=\"%s\">Trans</div></th>",
         g_wsritemdesc[WSR_ITEM_TRANSACTIONS]);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_500, "<th><div title=\"%s\">LongSQL</div></th>",
-        g_wsritemdesc[WSR_ITEM_LONG_SQL]);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_500, "<th><div title=\"%s\">Slowsql</div></th>",
+        g_wsritemdesc[WSR_ITEM_SLOW_SQL]);
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_500, "<th><div title=\"%s\">LongTrans</div></th>",
         g_wsritemdesc[WSR_ITEM_LONG_TRANS]);
 }
@@ -264,13 +264,13 @@ static int wsr_build_instance_snap_session(wsr_options_t *wsr_opts, ogconn_stmt_
     OG_RETURN_IFERR(ogconn_column_as_string(*resultset, (*i_cnt)++, wsr_snap->sessions, MAX_WSR_ENTITY_LEN));
     OG_RETURN_IFERR(ogconn_column_as_string(*resultset, (*i_cnt)++, wsr_snap->activesess, MAX_WSR_ENTITY_LEN));
     OG_RETURN_IFERR(ogconn_column_as_string(*resultset, (*i_cnt)++, wsr_snap->trans, MAX_WSR_ENTITY_LEN));
-    OG_RETURN_IFERR(ogconn_column_as_string(*resultset, (*i_cnt)++, wsr_snap->longsql, MAX_WSR_ENTITY_LEN));
+    OG_RETURN_IFERR(ogconn_column_as_string(*resultset, (*i_cnt)++, wsr_snap->slowsql, MAX_WSR_ENTITY_LEN));
     OG_RETURN_IFERR(ogconn_column_as_string(*resultset, (*i_cnt)++, wsr_snap->longtrans, MAX_WSR_ENTITY_LEN));
 
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "    <td>%s</td>", wsr_snap->sessions);
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "    <td>%s</td>", wsr_snap->activesess);
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "    <td>%s</td>", wsr_snap->trans);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "    <td>%s</td>", wsr_snap->longsql);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "    <td>%s</td>", wsr_snap->slowsql);
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "    <td>%s</td>", wsr_snap->longtrans);
     return OGCONN_SUCCESS;
 }

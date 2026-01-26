@@ -49,7 +49,7 @@ typedef struct st_wsr_sql {
     char str_buf[WSR_MAX_RECEV_LEN + 1];
 } wsr_sql_t;
 
-typedef struct st_wsr_longsql {
+typedef struct st_wsr_slowsql {
     char executions[MAX_WSR_ENTITY_LEN];
     char elapsed_time[MAX_WSR_ENTITY_LEN];
     char max_exec_time[MAX_WSR_ENTITY_LEN];
@@ -60,7 +60,7 @@ typedef struct st_wsr_longsql {
     char sql_text_part[MAX_WSR_ENTITY_LEN];
     char sql_id[MAX_WSR_ENTITY_LEN];
     char str_buf[WSR_MAX_RECEV_LEN + 1];
-} wsr_longsql_t;
+} wsr_slowsql_t;
 
 typedef struct st_wsr_sql_common {
     char total[MAX_WSR_ENTITY_LEN];
@@ -103,7 +103,7 @@ static int wsr_build_sql_head(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
         "<td><a class=\"wsrg\" href=\"#400-%u\">SQL ordered by Elapsed Time</a></td></tr><tr>", wsr_info->dbid);
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
-        "<td><a class=\"wsrg\" href=\"#410-%u\">Long SQL ordered by Elapsed Time</a></td></tr><tr>", wsr_info->dbid);
+        "<td><a class=\"wsrg\" href=\"#410-%u\">Slow sql ordered by Elapsed Time</a></td></tr><tr>", wsr_info->dbid);
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
         "<td><a  class=\"wsrg\"href=\"#500-%u\">SQL ordered by CPU Time</a></td></tr><tr>", wsr_info->dbid);
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
@@ -128,10 +128,10 @@ static int wsr_build_sql_head(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
         "<td><a class=\"wsrg\" href=\"#930-%u\">SQL ordered by first 30 letters</a></td>", wsr_info->dbid);
     wsr_write_str2(wsr_opts, "</tr><tr>");
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
-        "<td><a class=\"wsrg\" href=\"#1015-%u\">Long SQL ordered by first 15 letters</a></td>", wsr_info->dbid);
+        "<td><a class=\"wsrg\" href=\"#1015-%u\">Slow sql ordered by first 15 letters</a></td>", wsr_info->dbid);
     wsr_write_str2(wsr_opts, "</tr><tr>");
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
-        "<td><a class=\"wsrg\" href=\"#1030-%u\">Long SQL ordered by first 30 letters</a></td>", wsr_info->dbid);
+        "<td><a class=\"wsrg\" href=\"#1030-%u\">Slow sql ordered by first 30 letters</a></td>", wsr_info->dbid);
     wsr_write_str2(wsr_opts, "</tr><tr><td><a class=\"wsrg\" href=\"#top\">Back to Top</a></td>");
     wsr_write_str2(wsr_opts, "</tr></thead></table><p />");
     return OGCONN_SUCCESS;
@@ -266,22 +266,22 @@ int wsr_build_sql_elapsed(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
     return OGCONN_SUCCESS;
 }
 
-static int wsr_build_longsql_time_head(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
+static int wsr_build_slowsql_time_head(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
 {
     wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500, "<a class=\"wsr\" name=\"410-%u\"></a>", wsr_info->dbid);
     if (wsr_opts->switch_shd_off && wsr_info->node_name != NULL) {
         wsr_write_fmt2(wsr_opts, WSR_FMT_SIZE_500,
-            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Long SQL ordered by Elapsed Time %s</font>",
+            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Slow sql ordered by Elapsed Time %s</font>",
             wsr_info->node_name);
     } else {
         wsr_write_str2(wsr_opts,
-            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Long SQL ordered by Elapsed Time</font>");
+            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Slow sql ordered by Elapsed Time</font>");
     }
-    wsr_write_str2(wsr_opts, "<!-- <h2 class=\"wsr\">Long SQL ordered by Elapsed Time</h2> -->");
+    wsr_write_str2(wsr_opts, "<!-- <h2 class=\"wsr\">Slow sql ordered by Elapsed Time</h2> -->");
     wsr_write_str2(wsr_opts, "<table class=\"table table-hover\" >");
     wsr_write_str2(wsr_opts, "<thead>");
     wsr_write_str2(wsr_opts, "<tr>");
-    wsr_write_str2(wsr_opts, "<td>Resources reported long SQL.</td>");
+    wsr_write_str2(wsr_opts, "<td>Resources reported slow sql.</td>");
     wsr_write_str2(wsr_opts, "</tr>");
     wsr_write_str2(wsr_opts, "</thead>");
     wsr_write_str2(wsr_opts, "</table>");
@@ -303,36 +303,36 @@ static int wsr_build_longsql_time_head(wsr_options_t *wsr_opts, wsr_info_t *wsr_
     return OGCONN_SUCCESS;
 }
 
-static int wsr_build_longsql_time_row(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, wsr_longsql_t *wsr_longsql)
+static int wsr_build_slowsql_time_row(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, wsr_slowsql_t *wsr_slowsql)
 {
     wsr_write_str2(wsr_opts, "<tr>");
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->executions);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->elapsed_time);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->max_exec_time);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->parses);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->parse_time);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->fetch);
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->fetch_time);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->executions);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->elapsed_time);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->max_exec_time);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->parses);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->parse_time);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->fetch);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->fetch_time);
     wsr_write_str2(wsr_opts, "<td scope=\"row\" class='wsrc'>");
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<a class=\"wsrc\" href=\"#%s-%u\">%s</a>", wsr_longsql->sql_id,
-        wsr_info->dbid, wsr_longsql->sql_id);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<a class=\"wsrc\" href=\"#%s-%u\">%s</a>", wsr_slowsql->sql_id,
+        wsr_info->dbid, wsr_slowsql->sql_id);
     wsr_write_str2(wsr_opts, "</td>");
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_longsql->sql_text_part);
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_2000, "<td class='wsrc'>%s</td>", wsr_slowsql->sql_text_part);
     wsr_write_str2(wsr_opts, "</tr>");
     return OGCONN_SUCCESS;
 }
 
-int wsr_build_longsql_time(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
+int wsr_build_slowsql_time(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
 {
     uint32 rows;
     char cmd_buf[MAX_CMD_LEN + 1];
-    wsr_longsql_t wsr_longsql;
+    wsr_slowsql_t wsr_slowsql;
     uint32 index;
     ogconn_stmt_t resultset;
 
-    OG_RETURN_IFERR(wsr_build_longsql_time_head(wsr_opts, wsr_info));
+    OG_RETURN_IFERR(wsr_build_slowsql_time_head(wsr_opts, wsr_info));
 
-    PRTS_RETURN_IFERR(sprintf_s(cmd_buf, MAX_CMD_LEN, "CALL SYS.WSR$TOPSQL_LONGSQL_TIME(%u, %u, %u)",
+    PRTS_RETURN_IFERR(sprintf_s(cmd_buf, MAX_CMD_LEN + 1, "CALL SYS.WSR$TOPSQL_SLOWSQL_TIME(%u, %u, %u)",
         wsr_opts->start_snap_id, wsr_opts->end_snap_id, wsr_info->topnsql));
 
     OG_RETURN_IFERR(ogconn_prepare(wsr_opts->curr_stmt, (const char *)cmd_buf));
@@ -347,20 +347,20 @@ int wsr_build_longsql_time(wsr_options_t *wsr_opts, wsr_info_t *wsr_info)
 
         index = 0;
 
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.executions, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.elapsed_time, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.max_exec_time, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.parses, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.parse_time, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.fetch, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.fetch_time, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.sql_id, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.sql_text_part, MAX_WSR_ENTITY_LEN));
-        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_longsql.str_buf, WSR_MAX_RECEV_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.executions, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.elapsed_time, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.max_exec_time, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.parses, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.parse_time, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.fetch, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.fetch_time, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.sql_id, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.sql_text_part, MAX_WSR_ENTITY_LEN));
+        OG_RETURN_IFERR(ogconn_column_as_string(resultset, index++, wsr_slowsql.str_buf, WSR_MAX_RECEV_LEN));
 
-        OG_RETURN_IFERR(wsr_insert_sql_list(wsr_opts, wsr_longsql.sql_id, wsr_longsql.str_buf));
+        OG_RETURN_IFERR(wsr_insert_sql_list(wsr_opts, wsr_slowsql.sql_id, wsr_slowsql.str_buf));
 
-        OG_RETURN_IFERR(wsr_build_longsql_time_row(wsr_opts, wsr_info, &wsr_longsql));
+        OG_RETURN_IFERR(wsr_build_slowsql_time_row(wsr_opts, wsr_info, &wsr_slowsql));
     } while (OG_TRUE);
     wsr_write_str2(wsr_opts, "</tbody></table><p />");
 
@@ -887,21 +887,21 @@ int wsr_build_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, u
     return OGCONN_SUCCESS;
 }
 
-static void wsr_build_long_sql_first_letters_write_str(wsr_options_t *wsr_opts,
+static void wsr_build_slow_sql_first_letters_write_str(wsr_options_t *wsr_opts,
     wsr_info_t *wsr_info, uint32 letter_num)
 {
     wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_1000, "<a class=\"wsr\" name=\"%u-%u\"></a>",
-        EWSR_LONGSQL_HTML_ID + letter_num, wsr_info->dbid);
+        EWSR_SLOWSQL_HTML_ID + letter_num, wsr_info->dbid);
     if (wsr_opts->switch_shd_off && wsr_info->node_name != NULL) {
         wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_1000,
-            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Long SQL ordered by first %u letters %s</font>",
+            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Slow sql ordered by first %u letters %s</font>",
             letter_num, wsr_info->node_name);
     } else {
         wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_1000,
-            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Long SQL ordered by first %u letters</font>",
+            "<font face=\"Courier New, Courier, mono\" color=\"#666\">Slow sql ordered by first %u letters</font>",
             letter_num);
     }
-    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_1000, "<!-- <h2 class=\"wsr\">Long SQL ordered by first %u letters</h2> -->",
+    wsr_write_fmt(wsr_opts, WSR_FMT_SIZE_1000, "<!-- <h2 class=\"wsr\">Slow sql ordered by first %u letters</h2> -->",
         letter_num);
     wsr_write_str2(wsr_opts, "<table class=\"table table-hover\">");
     wsr_write_str2(wsr_opts, "<thead>");
@@ -919,7 +919,7 @@ static void wsr_build_long_sql_first_letters_write_str(wsr_options_t *wsr_opts,
     wsr_write_str2(wsr_opts, "<tbody>");
 }
 
-int wsr_build_long_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, uint32 letter_num)
+int wsr_build_slow_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_info, uint32 letter_num)
 {
     uint32 rows;
     char executions[MAX_WSR_ENTITY_LEN];
@@ -934,9 +934,9 @@ int wsr_build_long_sql_first_letters(wsr_options_t *wsr_opts, wsr_info_t *wsr_in
     ogconn_stmt_t resultset;
     uint32 index;
 
-    wsr_build_long_sql_first_letters_write_str(wsr_opts, wsr_info, letter_num);
+    wsr_build_slow_sql_first_letters_write_str(wsr_opts, wsr_info, letter_num);
 
-    PRTS_RETURN_IFERR(sprintf_s(cmd_buf, MAX_CMD_LEN, "CALL SYS.WSR$TOPSQL_LONGSQL_TIME_PREFIX(%u, %u, %u, %u)",
+    PRTS_RETURN_IFERR(sprintf_s(cmd_buf, MAX_CMD_LEN + 1, "CALL SYS.WSR$TOPSQL_SLOWSQL_TIME_PREFIX(%u, %u, %u, %u)",
         wsr_opts->start_snap_id, wsr_opts->end_snap_id, wsr_info->topnsql, letter_num));
 
     OG_RETURN_IFERR(ogconn_prepare(wsr_opts->curr_stmt, (const char *)cmd_buf));

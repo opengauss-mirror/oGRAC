@@ -37,6 +37,7 @@
 #include "ddl_column_parser.h"
 #include "pl_executor.h"
 #include "expl_executor.h"
+#include "ogsql_slowsql.h"
 #ifdef TIME_STATISTIC
 #include "cm_statistic.h"
 #endif
@@ -99,7 +100,7 @@ void sql_init_stmt(session_t *session, sql_stmt_t *stmt, uint32 stmt_id)
     array_set_handle((void *)&session->knl_session, session->knl_session.temp_mtrl->pool,
         (void *)session->knl_session.stack);
 
-    (void)sql_alloc_for_longsql_stat(stmt);
+    (void)sql_alloc_for_slowsql_stat(stmt);
 }
 
 status_t sql_alloc_stmt(session_t *session, sql_stmt_t **statement)
@@ -376,10 +377,10 @@ void sql_release_lob_info(sql_stmt_t *stmt)
     }
 }
 
-/* alloc memory for longsql stat info */
-status_t sql_alloc_for_longsql_stat(sql_stmt_t *stmt)
+/* alloc memory for slowsql stat info */
+status_t sql_alloc_for_slowsql_stat(sql_stmt_t *stmt)
 {
-    if (!cm_log_param_instance()->longsql_print_enable || stmt->stat != NULL) {
+    if (!cm_log_param_instance()->slowsql_print_enable || stmt->stat != NULL) {
         return OG_SUCCESS;
     }
 
@@ -1250,14 +1251,21 @@ static status_t sql_init_exec_data(sql_stmt_t *stmt)
 status_t sql_execute(sql_stmt_t *stmt)
 {
     status_t status = OG_SUCCESS;
-    timeval_t tv_begin;
+    struct timespec tv_begin;
 
     /* execute DDL/DCL multi-times after prepare will cause null pointer access for context */
     if (sql_check_pre_exec(stmt) != OG_SUCCESS) {
         sql_release_exec_resource(stmt);
         return OG_ERROR;
     }
-    (void)cm_gettimeofday(&tv_begin);
+    
+    /* Check if slow SQL logging is needed before recording time */
+    bool32 need_slow_sql_log =
+        LOG_SLOWSQL_ON && (!og_slowsql_should_skip_logging(stmt, stmt->session) || stmt->pl_exec != NULL);
+    if (need_slow_sql_log) {
+        clock_gettime(CLOCK_MONOTONIC, &tv_begin);
+    }
+    
     STATIC_SAVE_STMT(stmt);
     stmt->status = STMT_STATUS_EXECUTING;
     sql_begin_ctx_stat(stmt);
@@ -1308,6 +1316,13 @@ status_t sql_execute(sql_stmt_t *stmt)
     sql_end_ctx_stat(stmt);
     STATIC_RESTORE_STMT(stmt);
     stmt->status = STMT_STATUS_EXECUTED;
+
+    /* record Slowsql log for pl regardless of command execution success (internal error handling exists)  */
+    if (need_slow_sql_log &&
+        (stmt->pl_exec != NULL ||
+            !og_slowsql_should_skip_logging(stmt, stmt->session))) {
+        ogsql_slowsql_record_slowsql(stmt, &tv_begin);
+    }
 
     if (status == OG_SUCCESS) {
         stmt->is_success = OG_TRUE;

@@ -31,6 +31,7 @@
 #include "dml_executor.h"
 #include "knl_spm.h"
 #include "dtc_database.h"
+#include "expl_executor.h"
 
 #define SGA_VALUE_BUFFER_NAME 40
 #define SGA_VALUE_BUFFER_LEN 40
@@ -38,7 +39,7 @@
 #define SGA_PDOWN_BUFFER_LEN (uint32)1000
 #define SGA_MAX_SQL_ID_NUM (uint32)90
 
-typedef struct st_vw_sqlarea_assist {
+typedef struct st_vw_ogsql_funcarea_assist {
     sql_context_t vw_ctx;
     uint32 pages;
     uint32 alloc_pos;
@@ -47,7 +48,7 @@ typedef struct st_vw_sqlarea_assist {
     text_t sql_text;
     uint32 sql_hash;
     uint32 ref_count;
-} vw_sqlarea_assist_t;
+} vw_ogsql_funcarea_assist_t;
 
 knl_column_t g_sga_columns[] = {
     { 0, "NAME", 0, 0, OG_TYPE_CHAR, SGA_VALUE_BUFFER_NAME, 0, 0, OG_FALSE, 0, { 0 } },
@@ -125,6 +126,35 @@ static knl_column_t g_sqlarea_columns[] = {
     { 38, "DCS_NET_TIME", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
 };
 
+static knl_column_t g_sql_execution_plan_columns[] = {
+    { 0, "SQL_ID", 0, 0, OG_TYPE_VARCHAR, OG_MAX_UINT32_STRLEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 1, "PLAN_VERSION", 0, 0, OG_TYPE_VARCHAR, OG_MAX_VPEEK_VER_SIZE * 2, 0, 0, OG_FALSE, 0, { 0 } },
+    { 2, "EXECUTION_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 3, "DISK_READ_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 4, "BUFFER_GET_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 5, "CR_GET_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 6, "SORT_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 7, "PARSE_ELAPSED_TIME", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 8, "IO_WAIT_ELAPSED_TIME", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 9, "CON_WAIT_ELAPSED_TIME", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 10, "CPU_ELAPSED_TIME", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 11, "TOTAL_ELAPSED_TIME", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 12, "LAST_LOAD_TIMESTAMP", 0, 0, OG_TYPE_DATE, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 13, "LAST_ACTIVE_TIMESTAMP", 0, 0, OG_TYPE_DATE, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 14, "REFERENCE_COUNT", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 15, "MEMORY_PAGES", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 16, "SHARED_MEMORY_SIZE", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 17, "VM_OPEN_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 18, "VM_CLOSE_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 19, "VM_SWAPIN_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 20, "VM_FREE_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 21, "PLAN_TEXT", 0, 0, OG_TYPE_VARCHAR, OG_MAX_COLUMN_SIZE, 0, 0, OG_TRUE, 0, { 0 } },
+    { 22, "VM_MAX_OPEN_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 23, "VM_SWAPOUT_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 24, "VM_SWAPOUT_PAGE_COUNT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 25, "SIGNATURE", 0, 0, OG_TYPE_VARCHAR, OG_MD5_SIZE, 0, 0, OG_FALSE, 0, { 0 } },
+};
+
 static knl_column_t g_sga_stat_columns[] = {
     { 0, "AREA", 0, 0, OG_TYPE_VARCHAR, 32, 0, 0, OG_FALSE, 0, { 0 } },
     { 1, "POOL", 0, 0, OG_TYPE_VARCHAR, 32, 0, 0, OG_FALSE, 0, { 0 } },
@@ -158,7 +188,7 @@ static knl_column_t g_sqlpool_columns[] = {
 #define SQLAREA_COLS (sizeof(g_sqlarea_columns) / sizeof(knl_column_t))
 #define SGA_STAT_COLS (sizeof(g_sga_stat_columns) / sizeof(knl_column_t))
 #define SQLPOOL_COLS (sizeof(g_sqlpool_columns) / sizeof(knl_column_t))
-#define SQL_PLAN_COLS (sizeof(g_sql_plan_columns) / sizeof(knl_column_t))
+#define SQL_PLAN_COLS (sizeof(g_sql_execution_plan_columns) / sizeof(knl_column_t))
 
 typedef struct st_sga_row {
     char *name;
@@ -1004,7 +1034,7 @@ static status_t vw_sga_stat_fetch(knl_handle_t session, knl_cursor_t *cursor)
     return OG_SUCCESS;
 }
 
-static inline status_t vw_sqlarea_row_put_vm_ctx(row_assist_t *row, vw_sqlarea_assist_t *assist)
+static inline status_t vw_ogsql_funcarea_row_put_vm_ctx(row_assist_t *row, vw_ogsql_funcarea_assist_t *assist)
 {
     int64 cpu_time;
     sql_context_t *vw_ctx = &assist->vw_ctx;
@@ -1052,7 +1082,8 @@ static inline status_t vw_sqlarea_row_put_vm_ctx(row_assist_t *row, vw_sqlarea_a
     return OG_SUCCESS;
 }
 
-static inline status_t vw_sqlarea_row_put(knl_handle_t session, row_assist_t *row, vw_sqlarea_assist_t *assist)
+static inline status_t vw_ogsql_funcarea_row_put
+    (knl_handle_t session, row_assist_t *row, vw_ogsql_funcarea_assist_t *assist)
 {
     int32 errcode;
     char hash_valstr[OG_MAX_UINT32_STRLEN + 1];
@@ -1101,14 +1132,14 @@ static inline status_t vw_sqlarea_row_put(knl_handle_t session, row_assist_t *ro
         cm_reset_error();
     }
     OG_RETURN_IFERR(row_put_text(row, &parse_username)); /* parsing user name */
-    OG_RETURN_IFERR(vw_sqlarea_row_put_vm_ctx(row, assist));
+    OG_RETURN_IFERR(vw_ogsql_funcarea_row_put_vm_ctx(row, assist));
     OG_RETURN_IFERR(row_put_int64(row, (int64)(vw_ctx->stat.dcs_buffer_gets + vw_ctx->stat.dcs_cr_gets)));
     OG_RETURN_IFERR(row_put_int64(row, (int64)vw_ctx->stat.dcs_cr_gets));
     OG_RETURN_IFERR(row_put_int64(row, (int64)vw_ctx->stat.dcs_wait_time));
     return OG_SUCCESS;
 }
 
-static status_t vw_sqlarea_save_assist(context_ctrl_t *ctrl, char *sql_copy, vw_sqlarea_assist_t *assist)
+static status_t vw_ogsql_funcarea_save_assist(context_ctrl_t *ctrl, char *sql_copy, vw_ogsql_funcarea_assist_t *assist)
 {
     uint32 total_len = 0;
     assist->pdown_sql_id.len = 0;
@@ -1146,14 +1177,14 @@ static status_t vw_sqlarea_save_assist(context_ctrl_t *ctrl, char *sql_copy, vw_
     return OG_SUCCESS;
 }
 
-static status_t vw_sqlarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
+static status_t vw_ogsql_funcarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
 {
     row_assist_t row;
     uint64 id = cursor->rowid.vmid;
     context_ctrl_t *ctrl = NULL;
     char *sql_copy = NULL;
     sql_stmt_t *stmt = ((session_t *)session)->current_stmt;
-    vw_sqlarea_assist_t assist;
+    vw_ogsql_funcarea_assist_t assist;
 
     OGSQL_SAVE_STACK(stmt);
     OG_RETURN_IFERR(sql_push(stmt, OG_MAX_COLUMN_SIZE, (void **)&sql_copy));
@@ -1167,7 +1198,7 @@ static status_t vw_sqlarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
         cm_spin_lock(&sql_pool->lock, NULL);
         ctrl = ogx_get(g_instance->sql.pool, (uint32)id);
         if (ctrl != NULL) {
-            if (vw_sqlarea_save_assist(ctrl, sql_copy, &assist) != OG_SUCCESS) {
+            if (vw_ogsql_funcarea_save_assist(ctrl, sql_copy, &assist) != OG_SUCCESS) {
                 cm_spin_unlock(&sql_pool->lock);
                 OGSQL_RESTORE_STACK(stmt);
                 return OG_ERROR;
@@ -1186,7 +1217,7 @@ static status_t vw_sqlarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
     }
 
     row_init(&row, (char *)cursor->row, OG_MAX_ROW_SIZE, SQLAREA_COLS);
-    if (vw_sqlarea_row_put(session, &row, &assist) != OG_SUCCESS) {
+    if (vw_ogsql_funcarea_row_put(session, &row, &assist) != OG_SUCCESS) {
         OGSQL_RESTORE_STACK(stmt);
         return OG_ERROR;
     }
@@ -1198,7 +1229,7 @@ static status_t vw_sqlarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
     return OG_SUCCESS;
 }
 
-static void vw_plarea_save_assist(pl_entity_t *entity, vw_sqlarea_assist_t *assist)
+static void vw_plarea_save_assist(pl_entity_t *entity, vw_ogsql_funcarea_assist_t *assist)
 {
     sql_context_t *sql_ctx = entity->context;
     memory_context_t *mem_ctx = entity->memory;
@@ -1223,7 +1254,7 @@ static status_t vw_plarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
     sql_stmt_t *stmt = ((session_t *)session)->current_stmt;
     uint32 bucketid = (uint32)cursor->rowid.vm_slot;
     uint32 position = (uint32)cursor->rowid.vmid;
-    vw_sqlarea_assist_t assist;
+    vw_ogsql_funcarea_assist_t assist;
     status_t status = OG_ERROR;
 
     while (OG_TRUE) {
@@ -1255,7 +1286,7 @@ static status_t vw_plarea_fetch(knl_handle_t session, knl_cursor_t *cursor)
     do {
         vw_plarea_save_assist(entity, &assist);
         row_init(&row, (char *)cursor->row, OG_MAX_ROW_SIZE, SQLAREA_COLS);
-        OG_BREAK_IF_ERROR(vw_sqlarea_row_put(session, &row, &assist));
+        OG_BREAK_IF_ERROR(vw_ogsql_funcarea_row_put(session, &row, &assist));
         cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
         status = OG_SUCCESS;
     } while (OG_FALSE);
@@ -1349,7 +1380,7 @@ static status_t inline vw_format_mctx_pages(const memory_context_t *mctx, text_b
     return OG_SUCCESS;
 }
 
-static status_t vw_sqlpool_fetch_core(knl_handle_t session, knl_cursor_t *cursor)
+static status_t vw_ogsql_funcpool_fetch_core(knl_handle_t session, knl_cursor_t *cursor)
 {
     row_assist_t row;
     memory_context_t mctx;
@@ -1408,27 +1439,606 @@ static status_t vw_sqlpool_fetch_core(knl_handle_t session, knl_cursor_t *cursor
     return OG_SUCCESS;
 }
 
-static status_t vw_sqlpool_fetch(knl_handle_t session, knl_cursor_t *cursor)
+static status_t vw_ogsql_funcpool_fetch(knl_handle_t session, knl_cursor_t *cursor)
 {
-    return vw_fetch_for_tenant(vw_sqlpool_fetch_core, session, cursor);
+    return vw_fetch_for_tenant(vw_ogsql_funcpool_fetch_core, session, cursor);
 }
 
-static inline void vw_sql_plan_ctx_switch(knl_cursor_t *cursor, bool32 is_subctx)
+/**
+ * Create sub-statement for SQL plan visualization
+ * @note Caller MUST protect memory stack with OGSQL_SAVE_STACK/OGSQL_RESTORE_STACK
+ *       before/after calling this function
+ */
+static status_t vw_ogsql_plan_func_push_stmt(sql_stmt_t *stmt, sql_stmt_t **ret, sql_context_t *ctx)
 {
-    if (is_subctx) {
-        cursor->rowid.vm_slot++;
+    sql_stmt_t *sub_stmt = NULL;
+    OG_RETURN_IFERR(sql_push(stmt, sizeof(sql_stmt_t), (void **)&sub_stmt));
+
+    sql_init_stmt(stmt->session, sub_stmt, stmt->id);
+    SET_STMT_CONTEXT(sub_stmt, ctx);
+
+    status_t init_status[] = {
+        sql_init_sequence(sub_stmt),
+        sql_init_first_exec_info(sub_stmt),
+        sql_fill_null_params(sub_stmt),
+        sql_init_pl_ref_dc(stmt)
+    };
+    for (size_t i = 0; i < sizeof(init_status) / sizeof(init_status[0]); ++i) {
+        OG_RETURN_IFERR(init_status[i]);
+    }
+
+    sub_stmt->is_explain = OG_TRUE;
+    *ret = sub_stmt;
+
+    return OG_SUCCESS;
+}
+
+/* Check whether the signature has been generated and is non-empty */
+static inline bool32 is_signature_generated(const text_t *sign)
+{
+    return (sign != NULL && sign->str != NULL && sign->len > 0 && sign->str[0] != '\0');
+}
+
+
+static status_t vw_with_spin_lock(spinlock_t *lock, status_t (*operation)(void *), void *arg)
+{
+    cm_spin_lock(lock, NULL);
+    status_t status = operation(arg);
+    cm_spin_unlock(lock);
+    return status;
+}
+
+typedef struct {
+    text_t *plan_text;
+    text_t *signature;
+} md5_calc_param_t;
+
+static status_t vw_calculate_md5_worker(void *arg)
+{
+    md5_calc_param_t *param = (md5_calc_param_t *)arg;
+    return spm_calculate_md5_signature(param->plan_text, param->signature);
+}
+
+static status_t vw_alloc_sql_buffer(sql_stmt_t *stmt, char **buffer)
+{
+    return sql_push(stmt, OG_MAX_COLUMN_SIZE, (void **)buffer);
+}
+
+/**
+ * Generate a new plan signature and store it in context
+ */
+static status_t vw_generate_and_store_signature(sql_stmt_t *stmt, sql_context_t *ctx)
+{
+    char *buffer = NULL;
+    OG_RETURN_IFERR(vw_alloc_sql_buffer(stmt, &buffer));
+
+    text_t plan_text = { .str = buffer, .len = OG_MAX_COLUMN_SIZE };
+    status_t status = OG_SUCCESS;
+
+    stmt->hide_plan_extras = OG_TRUE;
+    status = expl_get_explain_text(stmt, &plan_text);
+    stmt->hide_plan_extras = OG_FALSE;
+
+    if (status != OG_SUCCESS) {
+        OGSQL_POP(stmt);
+        return status;
+    }
+
+    plan_text.len = (uint32)(plan_text.str - buffer);
+    plan_text.str = buffer;
+
+    md5_calc_param_t md5_param = {
+        .plan_text = &plan_text,
+        .signature = &ctx->ctrl.signature
+    };
+    status = vw_with_spin_lock(&ctx->ctrl.lock, vw_calculate_md5_worker, &md5_param);
+
+    OGSQL_POP(stmt);
+    return status;
+}
+
+/* Check whether the signature is a valid MD5 hex string */
+static inline bool32 vw_is_spm_signature(text_t *sign)
+{
+    if (sign->len == OG_MD5_SIZE) {
+        if (cm_verify_hex_string(sign) == OG_SUCCESS) {
+            return OG_TRUE;
+        }
+        cm_reset_error();
+    }
+    return OG_FALSE;
+}
+
+static status_t vw_put_binary_as_text(row_assist_t *row, binary_t *bin, char *text_buffer, size_t buffer_size)
+{
+    text_t text = { .str = text_buffer, .len = buffer_size };
+    OG_RETURN_IFERR(cm_bin2text(bin, OG_FALSE, &text));
+    return row_put_text(row, &text);
+}
+
+#define VPEEK_VERSION_HEX_BUF_SIZE  (2 * OG_MAX_VPEEK_VER_SIZE)
+
+static status_t vw_put_ogsql_vpeek_func_version(row_assist_t *row, text_t *sign)
+{
+    char version[VPEEK_VERSION_HEX_BUF_SIZE] = { 0 };
+    binary_t bin = { .bytes = (uint8 *)sign->str, .size = sign->len };
+    return vw_put_binary_as_text(row, &bin, version, sizeof(version));
+}
+
+/* Write plan signature to row, generating or transforming if necessary */
+static inline status_t vw_put_ogsql_plan_func_version(sql_stmt_t *stmt, sql_context_t *context, row_assist_t *row)
+{
+    text_t *sign = &context->ctrl.signature;
+
+    if (!is_signature_generated(sign)) {
+        OG_RETURN_IFERR(vw_generate_and_store_signature(stmt, context));
+        return row_put_text(row, sign);
+    }
+
+    if (context->need_vpeek && !vw_is_spm_signature(sign)) {
+        OG_RETURN_IFERR(vw_put_ogsql_vpeek_func_version(row, sign));
+    }
+
+    return row_put_text(row, sign);
+}
+
+static status_t vw_batch_put_int64(row_assist_t *row, const int64 *metrics, size_t metric_count)
+{
+    for (size_t i = 0; i < metric_count; ++i) {
+        OG_RETURN_IFERR(row_put_int64(row, metrics[i]));
+    }
+    return OG_SUCCESS;
+}
+
+static status_t vw_put_plan_basic_metrics(row_assist_t *row, const sql_context_t *ctx)
+{
+    int64 basic_metrics[] = {
+        (int64)ctx->stat.executions,
+        (int64)ctx->stat.disk_reads,
+        (int64)(ctx->stat.buffer_gets + ctx->stat.cr_gets),
+        (int64)ctx->stat.cr_gets,
+        (int64)ctx->stat.sorts
+    };
+    return vw_batch_put_int64(row, basic_metrics, sizeof(basic_metrics) / sizeof(basic_metrics[0]));
+}
+
+static status_t vw_put_plan_time_metrics(row_assist_t *row, const sql_context_t *ctx)
+{
+    int64 cpu_time = ctx->stat.elapsed_time - ctx->stat.io_wait_time - ctx->stat.con_wait_time;
+
+    int64 time_metrics[] = {
+        (int64)ctx->stat.parse_time,
+        (int64)ctx->stat.io_wait_time,
+        (int64)ctx->stat.con_wait_time,
+        cpu_time,
+        (int64)ctx->stat.elapsed_time
+    };
+    return vw_batch_put_int64(row, time_metrics, sizeof(time_metrics) / sizeof(time_metrics[0]));
+}
+
+static status_t vw_put_plan_memory_metrics(row_assist_t *row, const sql_context_t *ctx)
+{
+    uint32 pages = ctx->ctrl.memory->pages.count;
+    OG_RETURN_IFERR(row_put_int32(row, (int32)pages));
+
+    uint32 alloc_pos = ctx->ctrl.memory->alloc_pos;
+    int64 memory_size = (pages > 1) ?
+                                    ((int64)pages - 1) * OG_SHARED_PAGE_SIZE + alloc_pos :
+                                    (int64)alloc_pos;
+
+    return row_put_int64(row, memory_size);
+}
+
+static status_t vw_init_plan_text(sql_stmt_t *stmt, text_t *plan_text)
+{
+    char *buf = NULL;
+    OG_RETURN_IFERR(vw_alloc_sql_buffer(stmt, &buf));
+
+    plan_text->str = buf;
+    plan_text->len = OG_MAX_COLUMN_SIZE;
+
+    status_t status = expl_get_explain_text(stmt, plan_text);
+    if (status != OG_SUCCESS) {
+    OGSQL_POP(stmt);
+    return OG_ERROR;
+    }
+
+    plan_text->len = (uint32)(plan_text->str - buf);
+    plan_text->str = buf;
+    if (plan_text->len > 0) {
+        plan_text->str[plan_text->len - 1] = '\0';
+    }
+
+    OGSQL_POP(stmt);
+    return OG_SUCCESS;
+}
+
+static status_t vw_put_plan_text(sql_stmt_t *stmt, row_assist_t *row)
+{
+    text_t plan_text = { 0 };
+    OG_RETURN_IFERR(vw_init_plan_text(stmt, &plan_text));
+
+    return row_put_text(row, &plan_text);
+}
+
+#define VM_METRICS_TOTAL_COUNT 4
+#define VM_METRICS_SWAP_START_INDEX 3
+
+static status_t vw_put_plan_vm_metrics(row_assist_t *row, const sql_context_t *ctx, sql_stmt_t *stmt)
+{
+    int64 vm_metrics[] = {
+        (int64)ctx->stat.vm_stat.open_pages,
+        (int64)ctx->stat.vm_stat.close_pages,
+        (int64)ctx->stat.vm_stat.swap_in_pages,
+        (int64)ctx->stat.vm_stat.free_pages,
+        (int64)ctx->stat.vm_stat.alloc_pages,
+        (int64)ctx->stat.vm_stat.max_open_pages,
+        (int64)ctx->stat.vm_stat.swap_out_pages
+    };
+
+    OG_RETURN_IFERR(vw_batch_put_int64(row, vm_metrics, VM_METRICS_TOTAL_COUNT));
+    OG_RETURN_IFERR(vw_put_plan_text(stmt, row));
+    return vw_batch_put_int64(row, &vm_metrics[VM_METRICS_TOTAL_COUNT], VM_METRICS_SWAP_START_INDEX);
+}
+
+static inline status_t vw_put_ogsql_plan_func_signature(row_assist_t *row, sql_context_t *ctx)
+{
+    if (is_signature_generated(&ctx->spm_sign)) {
+        return row_put_text(row, &ctx->spm_sign);  // sys_spm signature
+    } else if (vw_is_spm_signature(&ctx->ctrl.signature)) {
+        return row_put_text(row, &ctx->ctrl.signature);  // actual signature
     } else {
-        cursor->rowid.vmid++;
-        cursor->rowid.vm_slot = 0;
+        return row_put_null(row);
     }
 }
 
-static inline uint32 vw_sql_plan_ctx_id(knl_cursor_t *cursor, bool32 is_subctx)
+static inline bool32 vw_check_pl_entity(pl_dc_t *pl_dc)
 {
-    if (is_subctx) {
-        return (uint32)cursor->rowid.vm_slot;
+    return (pl_dc->entity != NULL && !pl_dc->entity->valid);
+}
+
+static int verify_table_dc_validity(knl_session_t *curr_session, sql_table_entry_t *table_item)
+{
+    if (NULL == table_item) {
+        return OG_SUCCESS;
     }
-    return (uint32)cursor->rowid.vmid;
+    return knl_check_dc(curr_session, &table_item->dc);
+}
+
+static int validate_sql_table_item_by_index(galist_t *p_table_set, uint32 table_index, knl_session_t *p_current_sess)
+{
+    sql_table_entry_t *p_target_table_item = (sql_table_entry_t *)cm_galist_get(p_table_set, table_index);
+    return verify_table_dc_validity(p_current_sess, p_target_table_item);
+}
+
+static int check_all_sql_table_dc(galist_t *p_table_set, knl_session_t *p_current_sess)
+{
+    if (NULL == p_table_set || NULL == p_current_sess) {
+        return OG_SUCCESS;
+    }
+
+    uint32 total_table_quantity = p_table_set->count;
+
+    for (uint32 curr_table_idx = 0; curr_table_idx < total_table_quantity; ++curr_table_idx) {
+        if (validate_sql_table_item_by_index(p_table_set, curr_table_idx, p_current_sess) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static bool32 vw_validate_context_entity(sql_context_t *ctx)
+{
+    knl_session_t *p_current_session = (knl_session_t *)knl_get_curr_sess();
+
+    if (NULL == ctx || NULL == ctx->tables || NULL == p_current_session) {
+        return OG_TRUE;
+    }
+
+    galist_t *p_sql_table_collection = ctx->tables;
+
+    if (check_all_sql_table_dc(p_sql_table_collection, p_current_session) != OG_SUCCESS) {
+        cm_reset_error();
+        return OG_FALSE;
+    }
+
+    if (ctx->dc_lst != NULL) {
+        for (uint32 i = 0; i < ctx->dc_lst->count; ++i) {
+            pl_dc_t *dc = (pl_dc_t *)cm_galist_get(ctx->dc_lst, i);
+            if (vw_check_pl_entity(dc)) {
+                return OG_FALSE;
+            }
+        }
+    }
+
+    return OG_TRUE;
+}
+
+static bool32 vw_validate_context(sql_context_t *ctx)
+{
+    return vw_validate_context_entity(ctx);
+}
+
+static inline void vw_ogsql_func_plan_switch_next_ctx(knl_cursor_t *cursor, bool32 subctx)
+{
+    if (!subctx) {
+        cursor->rowid.vm_slot = 0;
+        cursor->rowid.vmid++;
+        return;
+    }
+    cursor->rowid.vm_slot++;
+}
+
+static inline uint32 vw_ogsql_func_plan_get_context_id(knl_cursor_t *cursor, bool32 is_subctx)
+{
+    return (uint32)(is_subctx ? cursor->rowid.vm_slot : cursor->rowid.vmid);
+}
+
+static context_ctrl_t *vw_ogsql_func_plan_find_next_ctrl(context_pool_t *pool, knl_cursor_t *cursor, bool32 is_subctx)
+{
+    context_ctrl_t *found_ctrl = NULL;
+    bool found = OG_FALSE;
+
+    cm_spin_lock(&pool->lock, NULL);
+    while (!found) {
+        uint32 id = vw_ogsql_func_plan_get_context_id(cursor, is_subctx);
+        if (id >= pool->map->hwm) {
+            break;
+        }
+
+        context_ctrl_t *ctrl = ogx_get(pool, id);
+        if (ctrl == NULL || !ctrl->valid || ((sql_context_t *)ctrl)->type >= OGSQL_TYPE_DML_CEIL) {
+            vw_ogsql_func_plan_switch_next_ctx(cursor, is_subctx);
+            continue;
+        }
+
+        status_t validate_status = vw_with_spin_lock(&ctrl->lock,
+                                                     (status_t (*)(void *))vw_validate_context, (void *)ctrl);
+        if (validate_status == OG_SUCCESS && ctrl->valid) {
+            ctrl->ref_count++;
+            ctrl->exec_count++;
+            found_ctrl = ctrl;
+            found = true;
+        }
+
+        if (!found) {
+            vw_ogsql_func_plan_switch_next_ctx(cursor, is_subctx);
+        }
+    }
+    cm_spin_unlock(&pool->lock);
+    return found_ctrl;
+}
+
+static inline void vw_release_ctrl_res(context_pool_t *pool, context_ctrl_t *ctrl)
+{
+    ogx_dec_exec(ctrl);
+    ogx_dec_ref(pool, ctrl);
+}
+
+typedef struct {
+    row_assist_t *row;
+    sql_context_t *ctx;
+    sql_stmt_t *stmt;
+} plan_row_op_ctx_t;
+
+typedef status_t (*plan_row_op_func_t)(plan_row_op_ctx_t *op_ctx);
+
+static status_t vw_op_signature(plan_row_op_ctx_t *op_ctx)
+{
+    return vw_put_ogsql_plan_func_signature(op_ctx->row, op_ctx->ctx);
+}
+
+static status_t vw_common_batch_execute(plan_row_op_func_t *op_funcs, size_t func_count, plan_row_op_ctx_t *op_ctx)
+{
+    for (size_t i = 0; i < func_count; ++i) {
+        if (op_funcs[i] == NULL) {
+            continue;
+        }
+        OG_RETURN_IFERR(op_funcs[i](op_ctx));
+    }
+    return OG_SUCCESS;
+}
+
+#define PLAN_ROW_OP_FUNC_COUNT  (sizeof(op_funcs) / sizeof(*op_funcs))
+
+static status_t vw_op_combined_core_operations(plan_row_op_ctx_t *op_ctx)
+{
+    OG_RETURN_IFERR(vw_put_plan_basic_metrics(op_ctx->row, op_ctx->ctx));
+    OG_RETURN_IFERR(vw_put_plan_time_metrics(op_ctx->row, op_ctx->ctx));
+    OG_RETURN_IFERR(row_put_date(op_ctx->row, op_ctx->ctx->stat.last_load_time));
+    OG_RETURN_IFERR(row_put_date(op_ctx->row, op_ctx->ctx->stat.last_active_time));
+    OG_RETURN_IFERR(row_put_int32(op_ctx->row, (int32)op_ctx->ctx->ctrl.ref_count));
+    OG_RETURN_IFERR(vw_put_plan_memory_metrics(op_ctx->row, op_ctx->ctx));
+    return vw_put_plan_vm_metrics(op_ctx->row, op_ctx->ctx, op_ctx->stmt);
+}
+
+static status_t vw_ogsql_plan_func_row_put_core(row_assist_t *row, sql_context_t *ctx, sql_stmt_t *stmt)
+{
+    plan_row_op_ctx_t op_ctx = {.row = row, .ctx = ctx, .stmt = stmt};
+
+    plan_row_op_func_t op_funcs[] = {
+        vw_op_combined_core_operations,
+        vw_op_signature
+    };
+
+    const size_t func_count = sizeof(op_funcs) / sizeof(*op_funcs);
+    return vw_common_batch_execute(op_funcs, func_count, &op_ctx);
+}
+
+#define SQL_ID_BUF_SIZE  (OG_MAX_UINT32_STRLEN + 1)
+#define SQL_PLAN_ROW_OP_COUNT  (sizeof(row_op_status_array) / sizeof(*row_op_status_array))
+
+static status_t vw_verify_row_status_array(status_t *status_arr, size_t arr_len)
+{
+    for (size_t i = 0; i < arr_len; ++i) {
+        if (status_arr[i] != OG_SUCCESS) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
+}
+
+// Encapsulate the resource release logic for child SQL statement to avoid code duplication
+static inline void deallocate_child_sql_resources(void *p_sql_child_instance)
+{
+    // Release LOB related information first as per the internal resource dependency
+    sql_release_lob_info(p_sql_child_instance);
+    // Release all associated resources with forced mode enabled
+    sql_release_resource(p_sql_child_instance, OG_TRUE);
+}
+
+static int format_sql_id_by_hash(char *p_sql_id_buf, uint32 hash_val, uint32 buf_size)
+{
+    return sprintf_s(p_sql_id_buf, buf_size, "%010u", hash_val);
+}
+
+static void init_sql_data_row(row_assist_t *p_data_row, knl_cursor_t *p_cursor)
+{
+    row_init(p_data_row, (char *)p_cursor->row, OG_MAX_ROW_SIZE, SQL_PLAN_COLS);
+}
+
+static void release_child_sql_stmt_resources(void *p_sql_stmt_handle)
+{
+    if (p_sql_stmt_handle != NULL) {
+        deallocate_child_sql_resources(p_sql_stmt_handle);
+    }
+}
+
+static status_t vw_ogsql_func_plan_row_put
+    (knl_handle_t session, sql_context_t *ctx, uint32 hash_value, knl_cursor_t *cursor)
+{
+    row_assist_t data_row;
+    char stmt_sql_id[SQL_ID_BUF_SIZE] = { 0 };
+    sql_stmt_t *p_curr_stmt = ((session_t *)session)->current_stmt;
+    sql_stmt_t *p_child_stmt = NULL;
+    status_t op_status = OG_ERROR;
+
+    OGSQL_SAVE_STACK(p_curr_stmt);
+
+    do {
+        OG_BREAK_IF_ERROR(vw_ogsql_plan_func_push_stmt(p_curr_stmt, &p_child_stmt, ctx));
+
+        init_sql_data_row(&data_row, cursor);
+
+        if (format_sql_id_by_hash(stmt_sql_id, hash_value, SQL_ID_BUF_SIZE) == -1) {
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, -1);
+            break;
+        }
+
+        // Collect all row operation statuses into an array for unified verification
+        status_t row_op_status_array[] = {
+            row_put_str(&data_row, stmt_sql_id),
+            vw_put_ogsql_plan_func_version(p_child_stmt, ctx, &data_row),
+            vw_ogsql_plan_func_row_put_core(&data_row, ctx, p_child_stmt)
+        };
+
+        // Break loop if any row operation in the status array returns an error
+        if (!vw_verify_row_status_array(row_op_status_array, SQL_PLAN_ROW_OP_COUNT)) {
+            break;
+        }
+
+        // Decode cursor row data with offset and length information to update data size
+        cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+
+        // Update operation status to success after all operations complete normally
+        op_status = OG_SUCCESS;
+    } while (OG_FALSE);
+
+    void *p_child_sql_handle = p_child_stmt;
+    release_child_sql_stmt_resources(p_child_sql_handle);
+
+    OGSQL_RESTORE_STACK(p_curr_stmt);
+    return op_status;
+}
+
+static status_t vw_fetch_sub_plan(knl_handle_t session, context_ctrl_t *parent, knl_cursor_t *cursor, bool32 *result)
+{
+    if (parent->subpool == NULL) {
+        return OG_SUCCESS;
+    }
+
+    context_ctrl_t *ctrl = vw_ogsql_func_plan_find_next_ctrl(parent->subpool, cursor, OG_TRUE);
+    if (ctrl == NULL) {
+        return OG_SUCCESS;
+    }
+
+    status_t status = vw_ogsql_func_plan_row_put(session, (sql_context_t *)ctrl, parent->hash_value, cursor);
+    if (status == OG_SUCCESS) {
+        *result = OG_TRUE;
+        vw_ogsql_func_plan_switch_next_ctx(cursor, OG_TRUE);
+    }
+
+    ogx_dec_exec(ctrl);
+    ogx_dec_ref(parent->subpool, ctrl);
+    return status;
+}
+
+static status_t vw_ogsql_func_plan_open(knl_handle_t session, knl_cursor_t *cursor)
+{
+    if (cursor == NULL || cursor->stmt == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_CURSOR);
+        return OG_ERROR;
+    }
+
+    sql_stmt_t *stmt = (sql_stmt_t *)cursor->stmt;
+    sql_cursor_t *sql_cursor = OGSQL_CURR_CURSOR(stmt);
+
+    if (sql_cursor == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_CURSOR);
+        return OG_ERROR;
+    }
+
+    if (sql_cursor->exec_data.dv_plan_buf == NULL) {
+        OG_RETURN_IFERR(vmc_alloc(&sql_cursor->vmc, OG_MAX_ROW_SIZE, (void **)&sql_cursor->exec_data.dv_plan_buf));
+    }
+
+    cursor->row = (row_head_t *)sql_cursor->exec_data.dv_plan_buf;
+    cursor->rowid = (rowid_t){ .vmid = 0, .vm_slot = 0 };
+
+    return OG_SUCCESS;
+}
+
+static int get_next_sql_plan_ctrl(knl_cursor_t *p_cursor, context_ctrl_t **pp_plan_ctrl)
+{
+    *pp_plan_ctrl = vw_ogsql_func_plan_find_next_ctrl(sql_pool, p_cursor, OG_FALSE);
+    return (*pp_plan_ctrl != NULL) ? OG_SUCCESS : OG_ERROR;
+}
+
+static status_t vw_fetch_sql_plan(knl_handle_t session, knl_cursor_t *cursor)
+{
+    context_ctrl_t *p_subsequent_sql_plan_ctrl_handler = NULL;
+
+    if (get_next_sql_plan_ctrl(cursor, &p_subsequent_sql_plan_ctrl_handler) != OG_SUCCESS) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    status_t status = OG_SUCCESS;
+    bool32 result = OG_FALSE;
+
+    do {
+        status = vw_fetch_sub_plan(session,
+                                   p_subsequent_sql_plan_ctrl_handler, cursor, &result);
+        if (status != OG_SUCCESS) {
+            break;
+        }
+
+        if (result) {
+            break;
+        }
+
+        status = vw_ogsql_func_plan_row_put(session, (sql_context_t *)p_subsequent_sql_plan_ctrl_handler,
+                                     p_subsequent_sql_plan_ctrl_handler->hash_value, cursor);
+        if (status != OG_SUCCESS) {
+            break;
+        }
+
+        vw_ogsql_func_plan_switch_next_ctx(cursor, OG_FALSE);
+    } while (OG_FALSE);
+
+    vw_release_ctrl_res(sql_pool, p_subsequent_sql_plan_ctrl_handler);
+    return status;
 }
 
 VW_DECL dv_sga = { "SYS", "DV_GMA", SGA_COLS, g_sga_columns, vw_common_open, vw_sga_fetch };
@@ -1438,10 +2048,13 @@ VW_DECL dv_temp_pool = {
 };
 VW_DECL dv_vm_func_stack = { "SYS",          "DV_VM_FUNC_STACK",    VM_FUNC_STACK_COLS, g_vm_func_stack_columns,
                              vw_common_open, vw_vm_func_stack_fetch };
-VW_DECL dv_sqlarea = { "SYS", "DV_SQLS", SQLAREA_COLS, g_sqlarea_columns, vw_common_open, vw_sqlarea_fetch };
+VW_DECL dv_sqlarea = { "SYS", "DV_SQLS", SQLAREA_COLS, g_sqlarea_columns, vw_common_open, vw_ogsql_funcarea_fetch };
 VW_DECL dv_anonymous = { "SYS", "DV_ANONYMOUS", SQLAREA_COLS, g_sqlarea_columns, vw_common_open, vw_plarea_fetch };
 VW_DECL dv_sgastat = { "SYS", "DV_GMA_STATS", SGA_STAT_COLS, g_sga_stat_columns, vw_common_open, vw_sga_stat_fetch };
-VW_DECL dv_sqlpool = { "SYS", "DV_SQL_POOL", SQLPOOL_COLS, g_sqlpool_columns, vw_common_open, vw_sqlpool_fetch };
+VW_DECL dv_sqlpool = { "SYS", "DV_SQL_POOL", SQLPOOL_COLS, g_sqlpool_columns, vw_common_open, vw_ogsql_funcpool_fetch };
+VW_DECL dv_sql_execution_plan = { "SYS",
+                                  "DV_SQL_EXECUTION_PLAN", SQL_PLAN_COLS,
+      g_sql_execution_plan_columns, vw_ogsql_func_plan_open, vw_fetch_sql_plan };
 
 dynview_desc_t *vw_describe_sga(uint32 id)
 {
@@ -1466,6 +2079,9 @@ dynview_desc_t *vw_describe_sga(uint32 id)
 
         case DYN_VIEW_SQLPOOL:
             return &dv_sqlpool;
+
+        case DYN_VIEW_SQL_EXECUTION_PLAN:
+            return &dv_sql_execution_plan;
 
         case DYN_VIEW_PLAREA:
             return &dv_anonymous;

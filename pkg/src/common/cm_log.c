@@ -718,11 +718,11 @@ static status_t cm_rmv_and_bak_log_file(log_file_handle_t *log_file_handle, char
 
 static inline int cm_log_open_flag(log_id_t log_id)
 {
-    // run/longsql/alarm/oper/blackbox should be written synchronously to avoid erroneous data caused by power failure
+    // run/slowsql/alarm/oper/blackbox should be written synchronously to avoid erroneous data caused by power failure
     switch (log_id) {
         case LOG_RUN:
         case LOG_ALARM:
-        case LOG_LONGSQL:
+        case LOG_SLOWSQL:
         case LOG_OPER:
         case LOG_ODBC:
         case LOG_CTENCRYPT_OPER:
@@ -778,7 +778,7 @@ static void cm_write_log_file(log_file_handle_t *log_file_handle, char *buf, uin
     }
 }
 
-static void cm_write_longsql_file(log_file_handle_t *log_file_handle, char *buf, uint32 size)
+static void cm_write_slowsql_file(log_file_handle_t *log_file_handle, char *buf, uint32 size)
 {
     if (log_file_handle->file_handle == -1) {
         cm_log_open_file(log_file_handle);
@@ -1111,14 +1111,14 @@ void cm_write_alarm_log_cn(uint32 warn_id, const char *format, ...)
     va_end(args);
 }
 
-void cm_write_longsql_log(const char *format, ...)
+void cm_write_slowsql_log(const char *format, ...)
 {
-    char buf[OG_LOG_LONGSQL_LENGTH_16K + sizeof(uint32) + 1] = { 0 };
-    log_file_handle_t *log_file_handle = &g_logger[LOG_LONGSQL];
+    char buf[OG_LOG_SLOWSQL_LENGTH_16K + sizeof(uint32) + 1] = { 0 };
+    log_file_handle_t *log_file_handle = &g_logger[LOG_SLOWSQL];
     va_list args;
     errno_t errcode;
     va_start(args, format);
-    errcode = vsnprintf_s(buf + sizeof(uint32), OG_LOG_LONGSQL_LENGTH_16K + 1, OG_LOG_LONGSQL_LENGTH_16K, format, args);
+    errcode = vsnprintf_s(buf + sizeof(uint32), OG_LOG_SLOWSQL_LENGTH_16K + 1, OG_LOG_SLOWSQL_LENGTH_16K, format, args);
     if (SECUREC_UNLIKELY(errcode == -1)) {
         OG_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
         return;
@@ -1126,40 +1126,41 @@ void cm_write_longsql_log(const char *format, ...)
 
     *((uint32 *)buf) = (uint32)strlen(buf + sizeof(uint32));
     if (errcode >= 0) {
-        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_longsql_file);
+        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_slowsql_file);
     } else {
         // if the security function fails, continue to write the log after the string is truncated
-        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_longsql_file);
+        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_slowsql_file);
     }
 
     va_end(args);
 }
 
-void cm_write_max_longsql_log(const char *format, ...)
+void cm_write_max_slowsql_log(const char *format, ...)
 {
     errno_t rc_memzero;
-    char *buf = (char *)malloc(OG_MAX_LOG_LONGSQL_LENGTH + sizeof(uint32) + 1);
+    char *buf = (char *)malloc(OG_MAX_LOG_SLOWSQL_LENGTH + sizeof(uint32) + 1);
     if (buf == NULL) {
         return;
     }
-    rc_memzero = memset_s(buf, OG_MAX_LOG_LONGSQL_LENGTH, 0, OG_MAX_LOG_LONGSQL_LENGTH);
+    rc_memzero = memset_s(buf, OG_MAX_LOG_SLOWSQL_LENGTH + sizeof(uint32) + 1, 0,
+                          OG_MAX_LOG_SLOWSQL_LENGTH + sizeof(uint32) + 1);
     if (rc_memzero != EOK) {
         CM_FREE_PTR(buf);
         return;
     }
 
-    log_file_handle_t *log_file_handle = &g_logger[LOG_LONGSQL];
+    log_file_handle_t *log_file_handle = &g_logger[LOG_SLOWSQL];
     va_list args;
     va_start(args, format);
     rc_memzero =
-        vsnprintf_s(buf + sizeof(uint32), OG_MAX_LOG_LONGSQL_LENGTH + 1, OG_MAX_LOG_LONGSQL_LENGTH, format, args);
+        vsnprintf_s(buf + sizeof(uint32), OG_MAX_LOG_SLOWSQL_LENGTH + 1, OG_MAX_LOG_SLOWSQL_LENGTH, format, args);
 
     *((uint32 *)buf) = (uint32)strlen(buf + sizeof(uint32));
     if (rc_memzero >= 0) {
-        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_longsql_file);
+        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_slowsql_file);
     } else {
         // if the security function fails, continue to write the log after the string is truncated
-        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_longsql_file);
+        cm_stat_and_write_log(log_file_handle, buf, *((uint32 *)buf) + sizeof(uint32), OG_TRUE, cm_write_slowsql_file);
     }
 
     CM_FREE_PTR(buf);
@@ -1186,12 +1187,12 @@ void cm_write_pe_oper_log(char *buf, uint32 len)
 
 void cm_write_trace_log(const char *format, ...)
 {
-    char buf[OG_LOG_LONGSQL_LENGTH_16K] = { 0 }; // print deadlock sql log, use long sql length
+    char buf[OG_LOG_SLOWSQL_LENGTH_16K] = { 0 }; // print deadlock sql log, use slow sql length
     log_file_handle_t *log_file_handle = &g_logger[LOG_TRACE];
     va_list args;
     errno_t errcode;
     va_start(args, format);
-    errcode = vsnprintf_s(buf, OG_LOG_LONGSQL_LENGTH_16K, OG_LOG_LONGSQL_LENGTH_16K - 1, format, args);
+    errcode = vsnprintf_s(buf, OG_LOG_SLOWSQL_LENGTH_16K, OG_LOG_SLOWSQL_LENGTH_16K - 1, format, args);
     if (SECUREC_UNLIKELY(errcode == -1)) {
         OG_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
         return;

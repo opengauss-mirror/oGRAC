@@ -1451,7 +1451,7 @@ static inline void cm_try_delete_end_slash(char *str)
 #define LOG_DEBUG_ERR_LEVEL 0x00000010
 #define LOG_DEBUG_WAR_LEVEL 0x00000020
 #define LOG_DEBUG_INF_LEVEL 0x00000040
-#define LOG_LONGSQL_LEVEL 0x00000100
+#define LOG_SLOWSQL_LEVEL 0x00000100
 #define LOG_OPER_LEVEL 0x00000200
 #define LOG_FATAL_LEVEL 0xFFFFFFFF
 #define LOG_ODBC_ERR_LEVEL 0x00001000
@@ -1475,7 +1475,7 @@ static inline void cm_try_delete_end_slash(char *str)
 
 #define MAX_LOG_LEVEL                                                                                                  \
     ((LOG_RUN_ERR_LEVEL) | (LOG_RUN_WAR_LEVEL) | (LOG_RUN_INF_LEVEL) | (LOG_DEBUG_ERR_LEVEL) | (LOG_DEBUG_WAR_LEVEL) | \
-     (LOG_DEBUG_INF_LEVEL) | (LOG_LONGSQL_LEVEL) | (LOG_OPER_LEVEL) | (DTC_DCS_LOG_INF_LEVEL) |                        \
+     (LOG_DEBUG_INF_LEVEL) | (LOG_SLOWSQL_LEVEL) | (LOG_OPER_LEVEL) | (DTC_DCS_LOG_INF_LEVEL) |                        \
      (DTC_DCS_LOG_ERR_LEVEL) | (DTC_DLS_LOG_INF_LEVEL) | (DTC_DLS_LOG_ERR_LEVEL) | (DTC_MES_LOG_INF_LEVEL) |           \
      (DTC_MES_LOG_ERR_LEVEL) | (DTC_DRC_LOG_INF_LEVEL) | (DTC_DRC_LOG_ERR_LEVEL))
 #define MAX_LOG_ODBC_LEVEL ((LOG_ODBC_ERR_LEVEL) | (LOG_ODBC_WAR_LEVEL) | (LOG_ODBC_INF_LEVEL))

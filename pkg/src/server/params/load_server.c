@@ -136,9 +136,9 @@ static status_t srv_init_loggers(void)
     cm_log_init(LOG_RAFT, file_name);
 #endif
 
-    PRTS_RETURN_IFERR(snprintf_s(file_name, OG_FILE_NAME_BUFFER_SIZE, OG_MAX_FILE_NAME_LEN, "%s/longsql/%s",
+    PRTS_RETURN_IFERR(snprintf_s(file_name, OG_FILE_NAME_BUFFER_SIZE, OG_MAX_FILE_NAME_LEN, "%s/slowsql/%s",
         log_param->log_home, "ogracd.lsql"));
-    cm_log_init(LOG_LONGSQL, file_name);
+    cm_log_init(LOG_SLOWSQL, file_name);
 
     PRTS_RETURN_IFERR(snprintf_s(file_name, OG_FILE_NAME_BUFFER_SIZE, OG_MAX_FILE_NAME_LEN, "%s/opt/%s",
         log_param->log_home, "ogracd.opt"));
@@ -185,8 +185,6 @@ static status_t verify_als_file_dir(char *file_path)
 
 static status_t srv_get_log_params_core(log_param_t *log_param)
 {
-    uint16 val_uint16;
-
     OG_RETURN_IFERR(srv_get_param_uint32("_LOG_BACKUP_FILE_COUNT", &log_param->log_backup_file_count));
     if (log_param->log_backup_file_count > OG_MAX_LOG_FILE_COUNT) {
         OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_LOG_BACKUP_FILE_COUNT");
@@ -226,13 +224,23 @@ static status_t srv_get_log_params_core(log_param_t *log_param)
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(srv_get_param_uint16("_LOG_FILE_PERMISSIONS", &val_uint16));
-    OG_RETURN_IFERR(verify_log_file_permission(val_uint16));
-    cm_log_set_file_permissions(val_uint16);
+    uint16 log_file_perm;
+    OG_RETURN_IFERR(srv_get_param_uint16("_LOG_FILE_PERMISSIONS", &log_file_perm));
+    OG_RETURN_IFERR(verify_log_file_permission(log_file_perm));
+    cm_log_set_file_permissions(log_file_perm);
 
-    OG_RETURN_IFERR(srv_get_param_uint16("_LOG_PATH_PERMISSIONS", &val_uint16));
-    OG_RETURN_IFERR(verify_log_path_permission(val_uint16));
-    cm_log_set_path_permissions(val_uint16);
+    uint16 log_path_perm;
+    OG_RETURN_IFERR(srv_get_param_uint16("_LOG_PATH_PERMISSIONS", &log_path_perm));
+    OG_RETURN_IFERR(verify_log_path_permission(log_path_perm));
+    cm_log_set_path_permissions(log_path_perm);
+
+    uint32 slowsql_print_flag;
+    OG_RETURN_IFERR(srv_get_param_bool32("SLOWSQL_STATS_ENABLE", &slowsql_print_flag));
+    log_param->slowsql_print_enable = (bool8)slowsql_print_flag;
+
+    uint64 sql_stage_threshold_val;
+    OG_RETURN_IFERR(srv_get_param_second("SQL_STAGE_THRESHOLD", &sql_stage_threshold_val));
+    log_param->sql_stage_threshold = sql_stage_threshold_val;
 
     // must do it after load all log params, SQL_COMPAT and INSTANCE_NAME
     OG_RETURN_IFERR(srv_init_loggers());

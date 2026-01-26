@@ -32,8 +32,8 @@ extern "C" {
 #endif
 
 const log_mode_map_t g_log_map_set[] = {
-    { { (char *)"LONGSQL_LOG_MODE", 16 }, { (char *)"ON",           2 },  LONGSQL_ON },
-    { { (char *)"LONGSQL_LOG_MODE", 16 }, { (char *)"OFF",          3 },  LONGSQL_OFF },
+    { { (char *)"SLOWSQL_LOG_MODE", 16 }, { (char *)"ON",           2 },  SLOWSQL_ON },
+    { { (char *)"SLOWSQL_LOG_MODE", 16 }, { (char *)"OFF",          3 },  SLOWSQL_OFF },
     { { (char *)"_LOG_LEVEL_MODE",  15 }, { (char *)"FATAL",        5 },  LOG_LEVEL_FATAL },
     { { (char *)"_LOG_LEVEL_MODE",  15 }, { (char *)"DEBUG",        5 },  LOG_LEVEL_DEBUG },
     { { (char *)"_LOG_LEVEL_MODE",  15 }, { (char *)"WARN",         4 },  LOG_LEVEL_WARN },
@@ -258,7 +258,7 @@ static status_t sql_verify_als_log_mode_value(lex_t *lex, knl_alter_sys_def_t *d
         sql_remove_quota(&word.text.value);
     }
 
-    if (IS_LONGSQL_LOG_MODE(sys_def->param)) {
+    if (IS_SLOWSQL_LOG_MODE(sys_def->param)) {
         if (cm_text_str_equal_ins(&word.text.value, "ON") || cm_text_str_equal_ins(&word.text.value, "OFF")) {
             cm_text2str_with_upper((text_t *)&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
             return OG_SUCCESS;
@@ -290,11 +290,11 @@ static status_t cm_find_log_mode_method(const log_mode_map_t *log_map_set, text_
 static status_t cm_set_log_level_value_int(uint32 method, uint32 *log_level_value_int, const char *value)
 {
     switch (method) {
-        case LONGSQL_ON:
-            SET_LOG_LONGSQL_VALUE_ON(*log_level_value_int);
+        case SLOWSQL_ON:
+            SET_LOG_SLOWSQL_VALUE_ON(*log_level_value_int);
             break;
-        case LONGSQL_OFF:
-            SET_LOG_LONGSQL_VALUE_OFF(*log_level_value_int);
+        case SLOWSQL_OFF:
+            SET_LOG_SLOWSQL_VALUE_OFF(*log_level_value_int);
             break;
         case LOG_LEVEL_FATAL:
             SET_LOG_FATAL_ON(*log_level_value_int);
@@ -494,14 +494,14 @@ status_t sql_notify_als_log_path_permissions(void *se, void *item, char *value)
     return OG_SUCCESS;
 }
 
-status_t sql_notify_enable_longsql_print(void *se, void *item, char *value)
+status_t sql_notify_enable_slowsql_stats(void *se, void *item, char *value)
 {
-    cm_log_param_instance()->longsql_print_enable = (bool32)value[0];
+    cm_log_param_instance()->slowsql_print_enable = (bool32)value[0];
     // restore value for alter config.
     return sql_notify_als_bool(se, item, value);
 }
 
-status_t sql_verify_als_longsql_timeout(void *se, void *lex, void *def)
+status_t sql_verify_als_sql_stage_threshold(void *se, void *lex, void *def)
 {
     word_t word;
     knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
@@ -526,11 +526,11 @@ status_t sql_verify_als_longsql_timeout(void *se, void *lex, void *def)
     return cm_text2str((text_t *)&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
 }
 
-status_t sql_notify_als_longsql_timeout(void *se, void *item, char *value)
+status_t sql_notify_als_sql_stage_threshold(void *se, void *item, char *value)
 {
     uint64 timeout;
     OG_RETURN_IFERR(cm_str2microsecond(value, &timeout));
-    cm_log_param_instance()->longsql_timeout = timeout; // convert s to micro-seconds
+    cm_log_param_instance()->sql_stage_threshold = timeout; // convert s to micro-seconds
     return OG_SUCCESS;
 }
 

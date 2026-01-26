@@ -33,7 +33,7 @@ extern "C" {
 
 typedef enum {
     EWSR_SQL_HTML_ID = 900,
-    EWSR_LONGSQL_HTML_ID = 1000,
+    EWSR_SLOWSQL_HTML_ID = 1000,
 } WSR_HTML_ID;
 
 status_t ogsql_wsr(text_t *cmd_text);

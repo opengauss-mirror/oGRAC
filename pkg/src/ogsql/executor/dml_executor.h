@@ -321,7 +321,7 @@ typedef struct st_plan_exec_data {
     text_buf_t sort_concat;
     knl_cursor_t *ext_knl_cur;     // for on duplicate key update or replace delete
     hash_right_semi_t *right_semi; // for hash join right semi
-    char *dv_plan_buf;             // for dv_sql_plan knl cursor
+    char *dv_plan_buf;             // for dv_sql_execution_plan knl cursor
 } plan_exec_data_t;
 
 typedef enum e_hash_table_oper_type {

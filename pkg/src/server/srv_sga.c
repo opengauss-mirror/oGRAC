@@ -90,7 +90,7 @@ static void srv_stat_begin_vm(handle_t se)
 {
     session_t *session = (session_t *)se;
     sql_stmt_t *stmt = session->current_stmt;
-    if (stmt == NULL || !cm_log_param_instance()->longsql_print_enable) {
+    if (stmt == NULL || !cm_log_param_instance()->slowsql_print_enable) {
         return;
     }
 
@@ -102,7 +102,7 @@ static void srv_stat_end_vm(handle_t se)
 {
     session_t *session = (session_t *)se;
     sql_stmt_t *stmt = session->current_stmt;
-    if (stmt == NULL || !cm_log_param_instance()->longsql_print_enable) {
+    if (stmt == NULL || !cm_log_param_instance()->slowsql_print_enable) {
         return;
     }
 
