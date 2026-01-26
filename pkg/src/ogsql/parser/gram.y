@@ -208,7 +208,7 @@ static interval_unit_t generate_interval_unit(interval_unit_order_t from, interv
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword
 %type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name user_password
-%type <ival>    opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options year_month_unit day_hour_minute_unit opt_year_month_unit
+%type <ival>    opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options year_month_unit day_hour_minute_unit opt_year_month_unit no_arg_func_name_id
 %type <sortby>  sortby
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 
@@ -293,7 +293,7 @@ static interval_unit_t generate_interval_unit(interval_unit_order_t from, interv
     RANDOMIZED RANGE RATIO RAW READ REAL REASSIGN REBUILD RECHECK RECURSIVE RECYCLEBIN REDISANYVALUE REF REFERENCES REFRESH REGEXP REGEXP_LIKE REINDEX REJECT_P
     RELATIVE_P RELEASE RELOPTIONS REMOTE_P REMOVE RENAME REPEAT REPEATABLE REPLACE REPLICA REPORT
     RESET RESIZE RESOURCE RESPECT_P RESTART RESTRICT RETURN RETURNED_SQLSTATE RETURNING RETURNS REUSE REVOKE RIGHT ROLE ROLES ROLLBACK ROLLUP ROTATE
-    ROTATION ROW ROW_COUNT ROWNUM ROWS ROWTYPE_P RULE
+    ROTATION ROW ROW_COUNT ROWID ROWNUM ROWS ROWSCN ROWTYPE_P RULE
 
     SAMPLE SAVEPOINT SCHEDULE SCHEMA SCHEMA_NAME SCN SCROLL SEARCH SECOND_P SECURITY SELECT SEPARATOR_P SEQUENCE SEQUENCES SHARE_MEMORY
     SERIALIZABLE SERVER_P SESSION SESSION_USER SET SETS SETOF SHARE SHIPPABLE SHOW SHUTDOWN SIBLINGS SIGNED
@@ -5063,6 +5063,23 @@ func_expr_common_subexpr:
                     }
                     $$ = expr;
                 }
+            | no_arg_func_name_id
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, $1, OG_FALSE, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("init function call expr failed");
+                    }
+                    $$ = expr;
+                }
+        ;
+
+no_arg_func_name_id:
+            USER        { $$ = RES_WORD_USER; }
+            | ROWNUM    { $$ = RES_WORD_ROWNUM; }
+            | SYSDATE   { $$ = RES_WORD_SYSDATE; }
+            | ROWID     { $$ = RES_WORD_ROWID; }
+            | ROWSCN    { $$ = RES_WORD_ROWSCN; }
         ;
 
 common_json_func_name:
@@ -8254,6 +8271,8 @@ unreserved_keyword:
             | CSV
             | CUBE
             | CURRENT_P
+            | CURRENT_DATE
+            | CURRENT_TIMESTAMP
             | CURSOR
             | CURSOR_NAME
             | CYCLE
@@ -8412,6 +8431,7 @@ unreserved_keyword:
             | LISTEN
             | LOAD
             | LOCAL
+            | LOCALTIMESTAMP
             | LOCATION
             | LOCK_P
             | LOCKED
@@ -8852,10 +8872,8 @@ reserved_keyword:
             | CONSTRAINT
             | CREATE
             | CURRENT_CATALOG
-            | CURRENT_DATE
             | CURRENT_ROLE
             | CURRENT_TIME
-            | CURRENT_TIMESTAMP
             | CURRENT_USER
             | DEFAULT
             | DEFERRABLE
@@ -8886,7 +8904,6 @@ reserved_keyword:
             | LEVEL
             | LIMIT
             | LOCALTIME
-            | LOCALTIMESTAMP
             | MINUS_P
             | MODIFY_P
             | NOCYCLE
@@ -8904,7 +8921,9 @@ reserved_keyword:
             | REFERENCES
             | REJECT_P
             | RETURNING
-                        | ROWNUM
+            | ROWID
+            | ROWNUM
+            | ROWSCN
             | SHARE_MEMORY
             | SELECT
             | SESSION_USER

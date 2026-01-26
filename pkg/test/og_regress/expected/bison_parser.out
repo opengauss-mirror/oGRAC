@@ -2159,10 +2159,12 @@ Succeed.
 
 SQL> INSERT INTO employees VALUES (1, '张三', 5000, SYSDATE-30);
 
-OG-00601, [1:50]Sql syntax error: syntax error
+1 rows affected.
+
 SQL> INSERT INTO employees VALUES (2, '李四', 6000, SYSDATE-30);
 
-OG-00601, [1:50]Sql syntax error: syntax error
+1 rows affected.
+
 SQL> 
 SQL> -- 来源表：本次要同步的更新数据
 SQL> drop table if exists salary_updates;
@@ -2179,10 +2181,12 @@ Succeed.
 
 SQL> INSERT INTO salary_updates VALUES (1, 5500, SYSDATE); -- 张三加薪
 
-OG-00601, [1:45]Sql syntax error: syntax error
+1 rows affected.
+
 SQL> INSERT INTO salary_updates VALUES (3, 7000, SYSDATE); -- 新员工王五
 
-OG-00601, [1:45]Sql syntax error: syntax error
+1 rows affected.
+
 SQL> 
 SQL> MERGE INTO employees e
   2 USING salary_updates s
@@ -2195,7 +2199,7 @@ SQL> MERGE INTO employees e
   9 WHEN NOT MATCHED THEN INSERT (e.emp_id, e.name, e.salary, e.last_update)
  10     VALUES (s.emp_id, '新员工', s.new_salary, s.update_date);
 
-0 rows affected.
+2 rows affected.
 
 SQL> 
 SQL> MERGE INTO employees e
@@ -3898,6 +3902,359 @@ SQL> drop table t_lowercase; --error
 
 OG-00843, [1:23]The table or view SYS.T_LOWERCASE does not exist.
 SQL> drop table `t_lowercase`;
+
+Succeed.
+
+SQL> 
+SQL> --- error, reservered keyword, can't be object name
+SQL> create table t_reserverd_test(rownum int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'rownum'
+SQL> create table t_reserverd_test(rowid int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'rowid'
+SQL> create table t_reserverd_test(rowscn int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'rowscn'
+SQL> create table t_reserverd_test(sysdate int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'sysdate'
+SQL> create table t_reserverd_test(null int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'null'
+SQL> create table t_reserverd_test(true int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'true'
+SQL> create table t_reserverd_test(false int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'false'
+SQL> create table t_reserverd_test(user int);
+
+OG-00601, [1:31]Sql syntax error: invalid column name 'user'
+SQL> 
+SQL> --test special no arg func
+SQL> create table t_special_no_arg_func(a varchar(100));
+
+Succeed.
+
+SQL> insert into t_special_no_arg_func select curdate;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select current_date;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select current_timestamp;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select now;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select systimestamp;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select localtimestamp;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select utc_timestamp;
+
+1 rows affected.
+
+SQL> insert into t_special_no_arg_func select sysdate;
+
+1 rows affected.
+
+SQL> 
+SQL> -- all value have year value, so it muse be start with 20XX, use left to get first two char
+SQL> select left(a, 2) from t_special_no_arg_func;
+
+LEFT(A, 2)                                                      
+----------------------------------------------------------------
+20                                                              
+20                                                              
+20                                                              
+20                                                              
+20                                                              
+20                                                              
+20                                                              
+20                                                              
+
+8 rows fetched.
+
+SQL> delete from t_special_no_arg_func;
+
+8 rows affected.
+
+SQL> insert into t_special_no_arg_func select rowid;
+
+1 rows affected.
+
+SQL> -- rowid, length is 18
+SQL> select length(a) from t_special_no_arg_func;
+
+LENGTH(A)           
+--------------------
+18                  
+
+1 rows fetched.
+
+SQL> drop table t_special_no_arg_func;
+
+Succeed.
+
+SQL> 
+SQL> select dbtimezone;
+
+DBTIMEZONE
+----------
++00:00    
+
+1 rows fetched.
+
+SQL> select sessiontimezone;
+
+SESSIONTIMEZONE
+---------------
++08:00         
+
+1 rows fetched.
+
+SQL> select rownum;
+
+ROWNUM      
+------------
+1           
+
+1 rows fetched.
+
+SQL> select rowscn;
+
+ROWSCN              
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select null;
+
+NULL
+----
+    
+
+1 rows fetched.
+
+SQL> select true;
+
+TRUE  
+------
+TRUE  
+
+1 rows fetched.
+
+SQL> select false;
+
+FALSE 
+------
+FALSE 
+
+1 rows fetched.
+
+SQL> select user;
+
+USER                                                            
+----------------------------------------------------------------
+SYS                                                             
+
+1 rows fetched.
+
+SQL> 
+SQL> --success, keyword can be object name
+SQL> create table curdate(curdate int);
+
+Succeed.
+
+SQL> create table current_date(current_date int);
+
+Succeed.
+
+SQL> create table current_timestamp(current_timestamp int);
+
+Succeed.
+
+SQL> create table dbtimezone(dbtimezone int);
+
+Succeed.
+
+SQL> create table now(now int);
+
+Succeed.
+
+SQL> create table systimestamp(systimestamp int);
+
+Succeed.
+
+SQL> create table localtimestamp(localtimestamp int);
+
+Succeed.
+
+SQL> create table utc_timestamp(utc_timestamp int);
+
+Succeed.
+
+SQL> create table sessiontimezone(sessiontimezone int);
+
+Succeed.
+
+SQL> 
+SQL> insert into curdate values(1);
+
+1 rows affected.
+
+SQL> insert into current_date values(1);
+
+1 rows affected.
+
+SQL> insert into current_timestamp values(1);
+
+1 rows affected.
+
+SQL> insert into dbtimezone values(1);
+
+1 rows affected.
+
+SQL> insert into now values(1);
+
+1 rows affected.
+
+SQL> insert into systimestamp values(1);
+
+1 rows affected.
+
+SQL> insert into localtimestamp values(1);
+
+1 rows affected.
+
+SQL> insert into utc_timestamp values(1);
+
+1 rows affected.
+
+SQL> insert into sessiontimezone values(1);
+
+1 rows affected.
+
+SQL> 
+SQL> -- will be column name, not function
+SQL> select curdate from curdate;
+
+CURDATE     
+------------
+1           
+
+1 rows fetched.
+
+SQL> select current_date from current_date;
+
+CURRENT_DATE
+------------
+1           
+
+1 rows fetched.
+
+SQL> select current_timestamp from current_timestamp;
+
+CURRENT_TIMESTAMP
+-----------------
+1                
+
+1 rows fetched.
+
+SQL> select dbtimezone from dbtimezone;
+
+DBTIMEZONE  
+------------
+1           
+
+1 rows fetched.
+
+SQL> select now from now;
+
+NOW         
+------------
+1           
+
+1 rows fetched.
+
+SQL> select systimestamp from systimestamp;
+
+SYSTIMESTAMP
+------------
+1           
+
+1 rows fetched.
+
+SQL> select localtimestamp from localtimestamp;
+
+LOCALTIMESTAMP
+--------------
+1             
+
+1 rows fetched.
+
+SQL> select utc_timestamp from utc_timestamp;
+
+UTC_TIMESTAMP
+-------------
+1            
+
+1 rows fetched.
+
+SQL> select sessiontimezone from sessiontimezone;
+
+SESSIONTIMEZONE
+---------------
+1              
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table curdate;
+
+Succeed.
+
+SQL> drop table current_date;
+
+Succeed.
+
+SQL> drop table current_timestamp;
+
+Succeed.
+
+SQL> drop table dbtimezone;
+
+Succeed.
+
+SQL> drop table now;
+
+Succeed.
+
+SQL> drop table systimestamp;
+
+Succeed.
+
+SQL> drop table localtimestamp;
+
+Succeed.
+
+SQL> drop table utc_timestamp;
+
+Succeed.
+
+SQL> drop table sessiontimezone;
 
 Succeed.
 

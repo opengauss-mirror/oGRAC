@@ -3284,52 +3284,77 @@ status_t sql_create_interval_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, co
     return OG_SUCCESS;
 }
 
+static status_t sql_set_columnref_indirection(expr_tree_t *expr, expr_node_t *node, galist_t *list,
+    var_word_t *var, const char* val)
+{
+    uint32 list_count = list->count;
+    expr_tree_t *last_node = (expr_tree_t *)cm_galist_get(list, list_count - 1);
+    if (last_node->root->type == EXPR_NODE_ARRAY_INDICES) {
+        var->column.ss_start = last_node->root->word.column.ss_start;
+        var->column.ss_end = last_node->root->word.column.ss_end;
+        list_count--;
+    } else {
+        var->column.ss_start = OG_INVALID_ID32;
+        var->column.ss_end = OG_INVALID_ID32;
+    }
+    if (last_node->root->type == EXPR_NODE_STAR) {
+        node->type = EXPR_NODE_STAR;
+        expr->star_loc.begin = last_node->star_loc.begin;
+        expr->star_loc.end = last_node->star_loc.end;
+    }
+    switch (list_count) {
+        case 1:
+            var->column.table.value.str = (char*)val;
+            var->column.table.value.len = strlen(val);
+            var->column.name.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
+            break;
+        case 2:
+            var->column.user.value.str = (char*)val;
+            var->column.user.value.len = strlen(val);
+            var->column.table.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
+            var->column.name.value = ((expr_tree_t*)cm_galist_get(list, 1))->root->value.v_text;
+            break;
+        default:
+            return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
 status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, galist_t *list,
     expr_node_type_t type, source_location_t loc)
 {
     expr_node_t *node = NULL;
+    word_t word;
+    bool nameable_reserved_keyword = false;
+    if (type == EXPR_NODE_COLUMN && list == NULL) {
+        word.namable = OG_FALSE;
+        word.text.str = (char*)val;
+        word.text.len = strlen(val);
+        /* if the column name is a reserved words, change type to EXPR_NODE_RESERVED when nameable */
+        if (lex_match_reserved_keyword_bison(&word) && word.namable) {
+            nameable_reserved_keyword = true;
+            type = EXPR_NODE_RESERVED;
+        }
+    }
+
     if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_COLUMN, type, loc) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
     var_word_t *var = &node->word;
     if (list == NULL) {
+        if (nameable_reserved_keyword) {
+            node->value.v_res.res_id = word.id;
+            node->value.v_res.namable = OG_TRUE;
+        }
+
         var->column.name.value.str = (char*)val;
         var->column.name.value.len = strlen(val);
         var->column.ss_start = OG_INVALID_ID32;
         var->column.ss_end = OG_INVALID_ID32;
     } else {
-        uint32 list_count = list->count;
-        expr_tree_t *last_node = (expr_tree_t *)cm_galist_get(list, list_count - 1);
-        if (last_node->root->type == EXPR_NODE_ARRAY_INDICES) {
-            var->column.ss_start = last_node->root->word.column.ss_start;
-            var->column.ss_end = last_node->root->word.column.ss_end;
-            list_count--;
-        } else {
-            var->column.ss_start = OG_INVALID_ID32;
-            var->column.ss_end = OG_INVALID_ID32;
-        }
-        if (last_node->root->type == EXPR_NODE_STAR) {
-            node->type = EXPR_NODE_STAR;
-            (*expr)->star_loc.begin = last_node->star_loc.begin;
-            (*expr)->star_loc.end = last_node->star_loc.end;
-        }
-        switch (list_count) {
-            case 1:
-                var->column.table.value.str = (char*)val;
-                var->column.table.value.len = strlen(val);
-
-                var->column.name.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
-                break;
-            case 2:
-                var->column.user.value.str = (char*)val;
-                var->column.user.value.len = strlen(val);
-
-                var->column.table.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
-                var->column.name.value = ((expr_tree_t*)cm_galist_get(list, 1))->root->value.v_text;
-                break;
-            default:
-                return OG_ERROR;
+        if (sql_set_columnref_indirection(*expr, node, list, var, val) != OG_SUCCESS) {
+            return OG_ERROR;
         }
     }
 
