@@ -69,7 +69,7 @@ func_prepare_pkg_name()
 
     # arm_euler临时规避
     if [[ ${OS_ARCH} =~ "aarch64" ]]; then
-        OS_SUFFIX=CENTOS
+        OS_SUFFIX=LINUX
     fi
 
     RUN_PACK_DIR_NAME=${PACK_PREFIX}-RUN-${OS_SUFFIX}-${ARCH}bit

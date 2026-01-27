@@ -352,23 +352,23 @@ function install_dbstor(){
     mkdir -p "${dbstor_file_path}"/client_test
     tar -zxf "${dbstor_test_file}" -C "${dbstor_file_path}"/client_test
     tar -zxf "${dbstor_client_file}" -C "${dbstor_file_path}"/client
-    cp -arf "${dbstor_file_path}"/client/lib/* "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/add-ons/
-    cp -arf "${dbstor_file_path}"/client_test "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit
-    if [ ! -d "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared ];then
-        mkdir -p "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
-        cd "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared || exit 1
+    cp -arf "${dbstor_file_path}"/client/lib/* "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/add-ons/
+    cp -arf "${dbstor_file_path}"/client_test "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit
+    if [ ! -d "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/kmc_shared ];then
+        mkdir -p "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/kmc_shared
+        cd "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/kmc_shared || exit 1
         so_name=("libkmc.so.23.0.0" "libkmcext.so.23.0.0" "libsdp.so.23.0.0" "libsecurec.so" "libcrypto.so.1.1")
         link_name1=("libkmc.so.23" "libkmcext.so.23" "libsdp.so.23" "libcrypto.so.1.1")
         link_name2=("libkmc.so" "libkmcext.so" "libsdp.so" "libcrypto.so")
         ls -l "${dbstor_file_path}"/client/lib/kmc_shared
         for i in {0..2};do
-            cp -f "${dbstor_file_path}"/client/lib/kmc_shared/"${so_name[$i]}" "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+            cp -f "${dbstor_file_path}"/client/lib/kmc_shared/"${so_name[$i]}" "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/kmc_shared
             ln -s "${so_name[$i]}" "${link_name1[$i]}"
             ln -s "${link_name1[$i]}" "${link_name2[$i]}"
         done
-        cp -f "${dbstor_file_path}"/client/lib/kmc_shared/"${so_name[4]}" "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+        cp -f "${dbstor_file_path}"/client/lib/kmc_shared/"${so_name[4]}" "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/kmc_shared
         ln -s "${link_name1[3]}" "${link_name2[3]}"
-        cp -f "${dbstor_file_path}"/client/lib/kmc_shared/libsecurec.so "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-CENTOS-64bit/kmc_shared
+        cp -f "${dbstor_file_path}"/client/lib/kmc_shared/libsecurec.so "${RPM_PACK_ORG_PATH}"/oGRAC-RUN-LINUX-64bit/kmc_shared
         cd - || exit 1
     fi    
     rm -rf "${dbstor_file_path}"
@@ -378,7 +378,7 @@ function install_dbstor(){
 function install_rpm()
 {
     RPM_PATH=${CURRENT_PATH}/../repo/ograc-*.rpm
-    RPM_UNPACK_PATH_FILE="/opt/ograc/image/ograc_connector/ogracKernel/oGRAC-DATABASE-CENTOS-64bit"
+    RPM_UNPACK_PATH_FILE="/opt/ograc/image/ograc_connector/ogracKernel/oGRAC-DATABASE-LINUX-64bit"
     RPM_PACK_ORG_PATH="/opt/ograc/image"
 
     if [ ! -f  "${CURRENT_PATH}"/../repo/ograc-*.rpm ]; then
@@ -388,7 +388,7 @@ function install_rpm()
 
     rpm -ivh --replacepkgs ${RPM_PATH} --nodeps --force
 
-    tar -zxf ${RPM_UNPACK_PATH_FILE}/oGRAC-RUN-CENTOS-64bit.tar.gz -C ${RPM_PACK_ORG_PATH}
+    tar -zxf ${RPM_UNPACK_PATH_FILE}/oGRAC-RUN-LINUX-64bit.tar.gz -C ${RPM_PACK_ORG_PATH}
     if [ x"${deploy_mode}" != x"file" ] && [ x"${deploy_mode}" != x"dss" ];then
         echo  "start replace rpm package"
         install_dbstor
@@ -397,14 +397,14 @@ function install_rpm()
             exit 1
         fi
     fi
-    chmod -R 750 ${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit
-    chown ${deploy_user}:${deploy_group} -hR ${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit
+    chmod -R 750 ${RPM_PACK_ORG_PATH}/oGRAC-RUN-LINUX-64bit
+    chown ${deploy_user}:${deploy_group} -hR ${RPM_PACK_ORG_PATH}/oGRAC-RUN-LINUX-64bit
     chown root:root ${RPM_PACK_ORG_PATH}
 }
 
 function uninstall_rpm()
 {
-    RPM_PACK_ORG_PATH="/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+    RPM_PACK_ORG_PATH="/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
     result=`rpm -qa ograc | wc -l`
     if [ ${result} -ne 0 ]; then
         rpm -ev ograc --nodeps

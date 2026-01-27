@@ -65,11 +65,11 @@ function collectoGRACTarget() {
 
   rm -rf ${OGDB_TARGET_PATH}
   mkdir -p ${OGDB_TARGET_PATH}
-  cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit ${OGDB_TARGET_PATH}
-  cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit.sha256 ${OGDB_TARGET_PATH}
+  cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-LINUX-64bit ${OGDB_TARGET_PATH}
+  cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-LINUX-64bit.sha256 ${OGDB_TARGET_PATH}
   if [ "${BUILD_TYPE}" == "RELEASE" ] && [ "${COMPILE_TYPE}" != "ASAN" ]; then
-    cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit-SYMBOL ${BUILD_SYMBOL_PATH}
-    cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit-SYMBOL.sha256 ${BUILD_SYMBOL_PATH}
+    cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-LINUX-64bit-SYMBOL ${BUILD_SYMBOL_PATH}
+    cp -arf ${OGDB_CODE_PATH}/output/bin/oGRAC-DATABASE-LINUX-64bit-SYMBOL.sha256 ${BUILD_SYMBOL_PATH}
   fi
 }
 

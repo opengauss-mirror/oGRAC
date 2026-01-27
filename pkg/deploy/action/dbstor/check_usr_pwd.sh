@@ -26,7 +26,7 @@ function check_dr_status_in_container()
     return 0
   fi
   share_fs=$(python3 ${CURRENT_PATH}/../ograc/get_config_info.py "storage_share_fs")
-  out=$(/opt/ograc/image/oGRAC-RUN-CENTOS-64bit/bin/dbstor --query-file --fs-name="${share_fs}" )
+  out=$(/opt/ograc/image/oGRAC-RUN-LINUX-64bit/bin/dbstor --query-file --fs-name="${share_fs}" )
   if [[ $? -ne 0 ]];then
     echo "Failed to query share filesystem."
     return 0
@@ -48,10 +48,10 @@ function execute_dbstor_query_file()
   local fs=$(python3 ${CURRENT_PATH}/../ograc/get_config_info.py "$1")
   if [ $1 == "storage_dbstor_fs" ];then
     local dbstor_fs_vstore_id=$(python3 ${CURRENT_PATH}/../ograc/get_config_info.py "dbstor_fs_vstore_id")
-    out=$(/opt/ograc/image/oGRAC-RUN-CENTOS-64bit/bin/dbstor --query-fs-info --fs-name="${fs}" --vstore_id="${dbstor_fs_vstore_id}" )
+    out=$(/opt/ograc/image/oGRAC-RUN-LINUX-64bit/bin/dbstor --query-fs-info --fs-name="${fs}" --vstore_id="${dbstor_fs_vstore_id}" )
     result=$?
   else
-    out=$(/opt/ograc/image/oGRAC-RUN-CENTOS-64bit/bin/dbstor --query-fs-info --fs-name="${fs}" --vstore_id=0 )
+    out=$(/opt/ograc/image/oGRAC-RUN-LINUX-64bit/bin/dbstor --query-fs-info --fs-name="${fs}" --vstore_id=0 )
     result=$?
   fi
   echo ${out} >> /opt/ograc/log/dbstor/install.log
@@ -67,7 +67,7 @@ function execute_dbstor_query_file()
     fs_mode=$(echo ${out} | grep -c "fs_mode = 1")
     if [[ ${fs_mode} -gt 0 ]];then
       if [ $1 == "storage_dbstor_fs" ];then
-        out=$(/opt/ograc/image/oGRAC-RUN-CENTOS-64bit/bin/dbstor --query-file --fs-name="${fs}" --vstore_id="${dbstor_fs_vstore_id}" )
+        out=$(/opt/ograc/image/oGRAC-RUN-LINUX-64bit/bin/dbstor --query-file --fs-name="${fs}" --vstore_id="${dbstor_fs_vstore_id}" )
         return_code=$?
         echo ${out} >> /opt/ograc/log/dbstor/install.log
         if [[ ${return_code} -ne 0 ]];then
@@ -156,25 +156,25 @@ function main()
     link_type=$(python3 ${CURRENT_PATH}/../ograc/get_config_info.py "link_type")
     mkdir -p ${DBSTOOL_PATH}/conf/{dbs,infra/config}
     if [ ${link_type} == 1 ];then
-        cp -arf /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/cfg/node_config_rdma.xml ${DBSTOOL_PATH}/conf/infra/config/node_config.xml
+        cp -arf /opt/ograc/image/oGRAC-RUN-LINUX-64bit/cfg/node_config_rdma.xml ${DBSTOOL_PATH}/conf/infra/config/node_config.xml
         cp -arf /opt/ograc/dbstor/add-ons/mlnx/* /opt/ograc/dbstor/add-ons/
     else
-        cp -arf /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/cfg/node_config_tcp.xml ${DBSTOOL_PATH}/conf/infra/config/node_config.xml
+        cp -arf /opt/ograc/image/oGRAC-RUN-LINUX-64bit/cfg/node_config_tcp.xml ${DBSTOOL_PATH}/conf/infra/config/node_config.xml
         cp -arf /opt/ograc/dbstor/add-ons/nomlnx/* /opt/ograc/dbstor/add-ons/
     fi
-    cp -arf /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/cfg/osd.cfg ${DBSTOOL_PATH}/conf/infra/config/
+    cp -arf /opt/ograc/image/oGRAC-RUN-LINUX-64bit/cfg/osd.cfg ${DBSTOOL_PATH}/conf/infra/config/
     cp -r ${DBSTOOL_PATH}/tools/dbstor_config.ini ${DBSTOOL_PATH}/conf/dbs/dbstor_config.ini
     chmod 640 ${DBSTOOL_PATH}/conf/infra/config/*
     chmod 640 ${DBSTOOL_PATH}/conf/dbs/*
     mkdir -p /opt/ograc/dbstor/data/logs/run
-    export LD_LIBRARY_PATH=/opt/ograc/image/oGRAC-RUN-CENTOS-64bit/lib:/opt/ograc/dbstor/add-ons
+    export LD_LIBRARY_PATH=/opt/ograc/image/oGRAC-RUN-LINUX-64bit/lib:/opt/ograc/dbstor/add-ons
     if [[ -f /opt/ograc/youmai_demo ]];then
         return
     fi
 
     generate_numa_config
 
-    /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/bin/dbstor --dbs-link-check >> /opt/ograc/log/dbstor/install.log
+    /opt/ograc/image/oGRAC-RUN-LINUX-64bit/bin/dbstor --dbs-link-check >> /opt/ograc/log/dbstor/install.log
     if [[ $? -ne 0 ]];then
         cat /opt/ograc/log/dbstor/run/dsware_* | grep "CGW link failed, locIp" | tail -n 5
         if [[ $? -eq 0 ]];then

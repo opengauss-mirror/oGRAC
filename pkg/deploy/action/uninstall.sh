@@ -66,7 +66,7 @@ function initUserAndGroup()
 
 function uninstall_rpm()
 {
-    RPM_PACK_ORG_PATH="/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+    RPM_PACK_ORG_PATH="/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
     result=`rpm -qa ograc | wc -l`
     if [ ${result} -ne 0 ]; then
         rpm -ev ograc --nodeps

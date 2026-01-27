@@ -435,7 +435,7 @@ function safety_upgrade_backup()
 function update_cms_service() {
     echo "update the bin/lib files in ${cms_home}/service"
     RPM_PACK_ORG_PATH=/opt/ograc/image
-    cms_pkg_file=${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit
+    cms_pkg_file=${RPM_PACK_ORG_PATH}/oGRAC-RUN-LINUX-64bit
     rm -rf ${cms_home}/service/*
     rm -rf ${ograc_home}/server/*
     cp -arf ${cms_pkg_file}/add-ons ${cms_pkg_file}/admin ${cms_pkg_file}/bin \

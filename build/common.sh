@@ -101,7 +101,7 @@ elif [[ -f "${REDHAT_VERSION_PATH}" ]]; then
     elif [[ -f "${CENTOS_VERSION_PATH}" ]]; then
         cent_os_str=$(cat ${CENTOS_VERSION_PATH} | grep 'CentOS')
         if [[ -n "${cent_os_str}" ]]; then
-            OS_SUFFIX=CENTOS
+            OS_SUFFIX=LINUX
         fi
     fi
 elif [[ -f "${EULER_VERSION_PATH}" ]]; then

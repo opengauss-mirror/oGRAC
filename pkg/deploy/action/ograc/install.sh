@@ -3,7 +3,7 @@ set +x
 #当前路径
 CURRENT_PATH=$(dirname $(readlink -f $0))
 OGRAC_INSTALL_PY_NAME="ograc_install.py"
-RPM_UNPACK_PATH="/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+RPM_UNPACK_PATH="/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
 
 OGRAC_INSTALL_LOG_FILE=/opt/ograc/log/ograc/ograc_deploy.log
 OGRAC_INSTALL_CONFIG=/opt/ograc/ograc/cfg

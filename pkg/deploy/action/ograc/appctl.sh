@@ -449,7 +449,7 @@ function update_ograc_server()
 {
     echo "update the server files in ${ograc_home}/server"
     RPM_PACK_ORG_PATH=/opt/ograc/image
-    ograc_pkg_file=${RPM_PACK_ORG_PATH}/oGRAC-RUN-CENTOS-64bit
+    ograc_pkg_file=${RPM_PACK_ORG_PATH}/oGRAC-RUN-LINUX-64bit
     rm -rf ${ograc_home}/server/*
     cp -arf ${ograc_pkg_file}/add-ons ${ograc_pkg_file}/admin ${ograc_pkg_file}/bin \
        ${ograc_pkg_file}/cfg ${ograc_pkg_file}/lib ${ograc_pkg_file}/package.xml ${ograc_home}/server
