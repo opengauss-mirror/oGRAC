@@ -243,33 +243,39 @@ static SQLRETURN get_c_date_param(og_generate_result *generate_result,
                                   bind_input_param *input_param,
                                   og_fetch_data_result *data_result)
 {
+    TIME_STRUCT *time_param = NULL;
+    DATE_STRUCT *date_param = NULL;
+    TIMESTAMP_STRUCT *timestamp_param = NULL;
     date_detail_t detail;
     date_t date_input = *(date_t *)data_result->value;
+    uint32 mill = 0;
+    uint32 micro = 0;
 
     cm_decode_date(date_input, &detail);
     if (input_param->sql_type == SQL_C_TIME || input_param->sql_type == SQL_C_TYPE_TIME) {
-        TIME_STRUCT *time_param = (TIME_STRUCT *)input_param->param_value;
-        generate_result->result_size = (unsigned int)sizeof(TIME_STRUCT);
+        time_param = (TIME_STRUCT *)input_param->param_value;
+        generate_result->result_size = (uint32)sizeof(TIME_STRUCT);
         time_param->hour = detail.hour;
         time_param->minute = detail.min;
         time_param->second = detail.sec;
     } else if (input_param->sql_type == SQL_C_DATE || input_param->sql_type == SQL_C_TYPE_DATE) {
-        DATE_STRUCT *date_param = (DATE_STRUCT *)input_param->param_value;
-        generate_result->result_size = (unsigned int)sizeof(DATE_STRUCT);
+        date_param = (DATE_STRUCT *)input_param->param_value;
+        generate_result->result_size = (uint32)sizeof(DATE_STRUCT);
         date_param->year = detail.year;
         date_param->month = detail.mon;
         date_param->day = detail.day;
     } else {
-        TIMESTAMP_STRUCT *timestamp_param = (TIMESTAMP_STRUCT *)input_param->param_value;
-        generate_result->result_size = (unsigned int)sizeof(TIMESTAMP_STRUCT);
+        timestamp_param = (TIMESTAMP_STRUCT *)input_param->param_value;
+        micro = ((uint32)detail.microsec) * NANOSECS_PER_MICROSEC;
+        mill = ((uint32)detail.millisec) * NANOSECS_PER_MILLISEC;
+        generate_result->result_size = (uint32)sizeof(TIMESTAMP_STRUCT);
         timestamp_param->year = detail.year;
         timestamp_param->month = detail.mon;
         timestamp_param->day = detail.day;
         timestamp_param->hour = detail.hour;
         timestamp_param->minute = detail.min;
         timestamp_param->second = detail.sec;
-        timestamp_param->fraction = ((SQLUINTEGER)detail.millisec) * NANOSECS_PER_MILLISEC
-                                + ((SQLUINTEGER)detail.microsec) * NANOSECS_PER_MICROSEC;
+        timestamp_param->fraction = mill + micro;
     }
     return handle_fetch_param(generate_result, input_param);
 }
@@ -289,12 +295,12 @@ static SQLRETURN handle_decimal_param_scale(dec8_t *param_t, SQL_NUMERIC_STRUCT 
     dec8_t dec_mod;
     dec8_t left_v;
     dec8_t ratio;
-    SQLCHAR val;
+    size_t param_size = sizeof(param_value->val);
     uint32 radix = 10;
     uint32 max_zero_num = 16;
     uint32 p = 0;
 
-    errcode = memset_s(param_value->val, sizeof(param_value->val), 0, sizeof(param_value->val));
+    errcode = memset_s(param_value->val, param_size, 0, param_size);
     if (errcode != 0) {
         return SQL_ERROR;
     }
@@ -324,12 +330,7 @@ static SQLRETURN handle_decimal_param_scale(dec8_t *param_t, SQL_NUMERIC_STRUCT 
             return SQL_ERROR;
         }
         mul_result = ratio;
-        if (left_v.len == 1) {
-            val = (SQLCHAR)0;
-        } else {
-            val = (SQLCHAR)left_v.cells[0];
-        }
-        param_value->val[p] = val;
+        param_value->val[p] = (left_v.len == 1) ? (SQLCHAR)0 : (SQLCHAR)left_v.cells[0];
         p++;
     }
     if (mul_result.len == 1 && (mul_result.head == ZERO_D8EXPN
@@ -655,26 +656,28 @@ static SQLRETURN get_db_number2_value(statement *stmt,
                                       og_fetch_data_result *data_result)
 {
     connection_class *conn = stmt->conn;
-    dec2_t dec2;
+    dec2_t double_value;
+    const payload_t *dv = (const payload_t *)data_result->value;
+    uint8 len = (uint8)data_result->len;
     status_t status;
     dec8_t numeric_value;
 
     switch (input_param->sql_type) {
         case SQL_C_NUMERIC:
-            status = cm_dec_2_to_8(&numeric_value, (const payload_t *)data_result->value, (uint8)data_result->len);
+            status = cm_dec_2_to_8(&numeric_value, dv, len);
             if (status != OG_SUCCESS) {
                 return SQL_ERROR;
             }
             return get_c_numeric_value(stmt, generate_result, &numeric_value, input_param);
         case SQL_C_FLOAT:
-            cm_dec2_copy_ex(&dec2, (const payload_t *)data_result->value, (uint8)data_result->len);
-            *(float *)input_param->param_value = (float)cm_dec2_to_real(&dec2);
-            generate_result->result_size = (unsigned int)sizeof(float);
+            cm_dec2_copy_ex(&double_value, dv, len);
+            generate_result->result_size = (uint32)sizeof(float);
+            *(float *)input_param->param_value = (float)cm_dec2_to_real(&double_value);
             return handle_fetch_param(generate_result, input_param);
         case SQL_C_DOUBLE:
-            cm_dec2_copy_ex(&dec2, (const payload_t *)data_result->value, (uint8)data_result->len);
-            *(double *)input_param->param_value = cm_dec2_to_real(&dec2);
-            generate_result->result_size = (unsigned int)sizeof(double);
+            cm_dec2_copy_ex(&double_value, dv, len);
+            generate_result->result_size = (uint32)sizeof(double);
+            *(double *)input_param->param_value = cm_dec2_to_real(&double_value);
             return handle_fetch_param(generate_result, input_param);
         case SQL_C_CHAR:
             return get_c_char_type_param(stmt, generate_result, input_param);
@@ -707,12 +710,12 @@ static SQLRETURN get_db_number_value(statement *stmt,
             }
             return get_c_numeric_value(stmt, generate_result, &number_value8, input_param);
         case SQL_C_FLOAT:
+            generate_result->result_size = (uint32)sizeof(float);
             *(float *)input_param->param_value = (float)cm_dec4_to_real((dec4_t *)data_result->value);
-            generate_result->result_size = (unsigned int)sizeof(float);
             return handle_fetch_param(generate_result, input_param);
         case SQL_C_DOUBLE:
+            generate_result->result_size = (uint32)sizeof(double);
             *(double *)input_param->param_value = cm_dec4_to_real((dec4_t *)data_result->value);
-            generate_result->result_size = (unsigned int)sizeof(double);
             return handle_fetch_param(generate_result, input_param);
         case SQL_C_CHAR:
             return get_c_char_type_param(stmt, generate_result, input_param);
@@ -842,14 +845,14 @@ static SQLRETURN get_db_string_value(statement *stmt,
 {
     connection_class *conn = stmt->conn;
     text_t result_data;
+    result_data.str = data_result->value;
+    result_data.len = data_result->len;
 
     switch (input_param->sql_type) {
         case SQL_C_CHAR:
         case SQL_C_WCHAR:
             return get_str_param(stmt, generate_result, input_param, data_result);
         case SQL_C_DOUBLE:
-            result_data.str = (char *)data_result->value;
-            result_data.len = data_result->len;
             if (cm_text2real_ex(&result_data, (double *)input_param->param_value) != NERR_SUCCESS) {
                 return handle_convert_err(stmt);
             }
@@ -1056,8 +1059,8 @@ SQLRETURN ograc_sql_bind_param(statement *stmt,
     input_data->is_binded = OG_FALSE;
     if (value_ptr == NULL) {
         for (uint32 i = 0; i < data_len; i++) {
-            if (str_size[i] != SQL_NULL_DATA && str_size[i] != SQL_DATA_AT_EXEC
-                && str_size[i] != SQL_DEFAULT_PARAM) {
+            if (str_size[i] != SQL_DEFAULT_PARAM && str_size[i] != SQL_NULL_DATA
+                 && str_size[i] != SQL_DATA_AT_EXEC) {
                 return SQL_ERROR;
             }
         }
@@ -1224,12 +1227,12 @@ SQLRETURN ograc_get_data(statement *stmt,
     if (generate_result == NULL) {
         if (cm_list_new(&(stmt->data_rows), (void **)&generate_result) != OG_ERROR) {
             generate_result->ptr = (uint32)(col_num - 1);
-            generate_result->og_type = OGCONN_TYPE_CHAR;
-            generate_result->sql_type = SQL_C_CHAR;
-            generate_result->is_recieved = OG_FALSE;
+            generate_result->sql_type = SQL_C_DEFAULT;
             generate_result->result_size = 0;
+            generate_result->is_recieved = OG_FALSE;
             generate_result->is_str = OG_FALSE;
             generate_result->is_col = OG_TRUE;
+            generate_result->og_type = OGCONN_TYPE_UNKNOWN;
         }
     }
 
