@@ -1957,8 +1957,8 @@ class Installer:
         """
         rpm_installed_file = "/opt/ograc/installed_by_rpm"
         if not os.path.exists(rpm_installed_file):
-            self.run_file = "/opt/ograc/image/ograc_connector/ogracKernel/oGRAC-DATABASE-CENTOS-64bit/" \
-                            "oGRAC-RUN-CENTOS-64bit.tar.gz"
+            self.run_file = "/opt/ograc/image/ograc_connector/ogracKernel/oGRAC-DATABASE-LINUX-64bit/" \
+                            "oGRAC-RUN-LINUX-64bit.tar.gz"
             self.run_pkg_name = self.get_decompress_tarname(self.run_file)
             LOGGER.info("Decompressing run file.")
 

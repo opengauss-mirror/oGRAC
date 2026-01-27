@@ -20,7 +20,7 @@ source ${CURRENT_PATH}/log4sh.sh
 # 检查dbstor的user与pwd是否正确
 function check_dbstor_usr_passwd() {
     logAndEchoInfo "check username and password of dbstor and check filesystem. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-    chown -hR ${ograc_user}:${ograc_group} /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/cfg
+    chown -hR ${ograc_user}:${ograc_group} /opt/ograc/image/oGRAC-RUN-LINUX-64bit/cfg
     su -s /bin/bash - "${ograc_user}" -c "sh ${CURRENT_PATH}/dbstor/check_usr_pwd.sh"
     install_result=$?
     if [ ${install_result} -ne 0 ]; then

@@ -80,7 +80,7 @@ sed -i '/ogracdba/d' /home/ogracdba/.bashrc
 
 #### 单节点oGRAC部署
 ```shell
-cd /home/regress/ogracKernel/oGRAC-DATABASE-CENTOS-64bit
+cd /home/regress/ogracKernel/oGRAC-DATABASE-LINUX-64bit
 mkdir -p /home/ogracdba/logs
 # -Z SESSIONS=1000方便调试，需运行MTR时需要去掉此参数
 python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ogracdba/data -l /home/ogracdba/logs/install.log -Z _LOG_LEVEL=255 -g withoutroot -d -M ogracd -c -Z _SYS_PASSWORD=Huawei@123 -Z SESSIONS=1000
@@ -89,14 +89,14 @@ python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ograc
 节点0，在容器内执行以下命令
 ```shell
 # -Z SESSIONS=1000方便调试，需运行MTR时需要去掉此参数
-cd /home/regress/ogracKernel/oGRAC-DATABASE-CENTOS-64bit
+cd /home/regress/ogracKernel/oGRAC-DATABASE-LINUX-64bit
 mkdir -p /home/ogracdba/logs
 python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ogracdba/data -l /home/ogracdba/logs/install.log -M ogracd_in_cluster -Z _LOG_LEVEL=255 -N 0 -W 192.168.0.1 -g withoutroot -d -c -Z _SYS_PASSWORD=Huawei@123 -Z SESSIONS=1000
 ```
 节点1，在容器内执行以下命令
 ```shell
 #节点1，在容器内执行以下命令
-cd /home/regress/ogracKernel/oGRAC-DATABASE-CENTOS-64bit
+cd /home/regress/ogracKernel/oGRAC-DATABASE-LINUX-64bit
 mkdir -p /home/ogracdba/logs
 python3 install.py -U ogracdba:ogracdba -R /home/ogracdba/install -D /home/ogracdba/data -l /home/ogracdba/logs/install.log -M ogracd_in_cluster -Z _LOG_LEVEL=255 -N 1 -W 192.168.0.1 -g withoutroot -d -c -Z _SYS_PASSWORD=Huawei@123 -Z SESSIONS=1000
 ```

@@ -1118,7 +1118,7 @@ class CmsCtl(object):
         """
         if not os.path.exists(self.install_path):
             os.makedirs(self.install_path, CommonValue.KEY_DIRECTORY_PERMISSION)
-        cms_pkg_file = "/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+        cms_pkg_file = "/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
         rpm_installed_file = "/opt/ograc/installed_by_rpm"
         if not os.path.exists(rpm_installed_file):
             str_cmd = ("cp -arf %s/add-ons %s/admin %s/bin %s/cfg %s/lib %s/package.xml %s"

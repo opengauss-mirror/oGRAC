@@ -128,13 +128,13 @@ install_ogracdb()
     rm -rf ${OGDB_HOME}/bin
     rm -rf ${OGDB_HOME}/lib
 	rm -rf ${OGDB_HOME}/admin
-    # tar -zxvf ${code_path}/output/bin/oGRAC-DATABASE-CENTOS-64bit/oGRAC-RUN-CENTOS-64bit.tar.gz -C ${OGDB_HOME}
-    # cp -rf ${OGDB_HOME}/oGRAC-RUN-CENTOS-64bit/add-ons     ${OGDB_HOME}
-    # cp -rf ${OGDB_HOME}/oGRAC-RUN-CENTOS-64bit/bin         ${OGDB_HOME}
-    # cp -rf ${OGDB_HOME}/oGRAC-RUN-CENTOS-64bit/lib         ${OGDB_HOME}
-    # cp -rf ${OGDB_HOME}/oGRAC-RUN-CENTOS-64bit/admin       ${OGDB_HOME}
-    # cp -rf ${OGDB_HOME}/oGRAC-RUN-CENTOS-64bit/package.xml ${OGDB_HOME}
-    # rm -rf ${OGDB_HOME}/oGRAC-RUN-CENTOS-64bit
+    # tar -zxvf ${code_path}/output/bin/oGRAC-DATABASE-LINUX-64bit/oGRAC-RUN-LINUX-64bit.tar.gz -C ${OGDB_HOME}
+    # cp -rf ${OGDB_HOME}/oGRAC-RUN-LINUX-64bit/add-ons     ${OGDB_HOME}
+    # cp -rf ${OGDB_HOME}/oGRAC-RUN-LINUX-64bit/bin         ${OGDB_HOME}
+    # cp -rf ${OGDB_HOME}/oGRAC-RUN-LINUX-64bit/lib         ${OGDB_HOME}
+    # cp -rf ${OGDB_HOME}/oGRAC-RUN-LINUX-64bit/admin       ${OGDB_HOME}
+    # cp -rf ${OGDB_HOME}/oGRAC-RUN-LINUX-64bit/package.xml ${OGDB_HOME}
+    # rm -rf ${OGDB_HOME}/oGRAC-RUN-LINUX-64bit
 
     cp_ograc_add_ons /home/ogracdb/install
     cp_ograc_bin /home/ogracdb/install

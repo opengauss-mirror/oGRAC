@@ -44,7 +44,7 @@ STATUS_NAME="check_status.sh"
 UPGRADE_NAME="upgrade.sh"
 ROLLBACK_NAME="rollback.sh"
 INIT_CONTAINER_NAME="init_container.sh"
-RPM_UNPACK_PATH="/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+RPM_UNPACK_PATH="/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
 CILENT_TEST_PATH="/opt/ograc/dbstor/tools"
 
 dbstor_home="/opt/ograc/dbstor"
@@ -146,7 +146,7 @@ function check_sem_id() {
 
 function uninstall_rpm()
 {
-    RPM_PACK_ORG_PATH="/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+    RPM_PACK_ORG_PATH="/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
     result=`rpm -qa ograc | wc -l`
     if [ ${result} -ne 0 ]; then
         rpm -ev ograc --nodeps

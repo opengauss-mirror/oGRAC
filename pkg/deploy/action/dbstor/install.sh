@@ -3,7 +3,7 @@ set +x
 #当前路径
 CURRENT_PATH=$(dirname $(readlink -f $0))
 DBSTOR_INSTALL_PY_NAME="dbstor_install.py"
-RPM_UNPACK_PATH="/opt/ograc/image/oGRAC-RUN-CENTOS-64bit"
+RPM_UNPACK_PATH="/opt/ograc/image/oGRAC-RUN-LINUX-64bit"
 CILENT_TEST_PATH="/opt/ograc/dbstor/tools"
 
 # 判断是否存在对应的文件，不存在返回报错，存在则继续运行
@@ -15,7 +15,7 @@ function dbstor_install()
     fi
 
     if [ ! -d ${RPM_UNPACK_PATH} ]; then
-      echo "/opt/ograc/image/oGRAC-RUN-CENTOS-64bit not exist"
+      echo "/opt/ograc/image/oGRAC-RUN-LINUX-64bit not exist"
       exit 1
     fi
 

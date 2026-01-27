@@ -135,7 +135,7 @@ function copy_logicrep()
     rm -rf ${LOGICREP_HOME}/conf/sec/*
     touch ${LOGICREP_HOME}/conf/sec/primary_keystore.ks ${LOGICREP_HOME}/conf/sec/standby_keystore.ks
     chmod 600 ${LOGICREP_HOME}/conf/sec/*
-    cp -a /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/kmc_shared/* ${LOGICREP_HOME}/lib
+    cp -a /opt/ograc/image/oGRAC-RUN-LINUX-64bit/kmc_shared/* ${LOGICREP_HOME}/lib
     ln -s ${LOGICREP_HOME}/com.huawei.ograc.logicrep-*.jar ${LOGICREP_HOME}/com.huawei.ograc.logicrep.jar
     rm -rf "${LOGICREP_HOME}"/conf/init.properties
     rm -rf "${LOGICREP_HOME}"/conf/repconf/repconf_db.xml
@@ -170,7 +170,7 @@ function safe_update()
         cp -arf "${LOGICREP_PKG}"/startup.sh "${LOGICREP_HOME}"/
         cp -arf "${LOGICREP_PKG}"/watchdog_logicrep.sh "${LOGICREP_HOME}"/
         cp -arf "${LOGICREP_PKG}"/watchdog_shutdown.sh "${LOGICREP_HOME}"/
-        cp -a /opt/ograc/image/oGRAC-RUN-CENTOS-64bit/kmc_shared/* ${LOGICREP_HOME}/lib
+        cp -a /opt/ograc/image/oGRAC-RUN-LINUX-64bit/kmc_shared/* ${LOGICREP_HOME}/lib
         ln -s ${LOGICREP_HOME}/com.huawei.ograc.logicrep-*.jar ${LOGICREP_HOME}/com.huawei.ograc.logicrep.jar
         chmod 600 "${startup_lock}" > /dev/null 2>&1
         chown -hR "${ograc_user}":"${ograc_group}" /opt/software/tools

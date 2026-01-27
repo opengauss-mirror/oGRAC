@@ -65,7 +65,7 @@ function uninstall_ogracdb()
 function install_ogracdb()
 {
     echo "========================= Install ogracDB ======================="
-    cd ${ROOT_PATH}/output/bin/oGRAC-DATABASE-CENTOS-64bit
+    cd ${ROOT_PATH}/output/bin/oGRAC-DATABASE-LINUX-64bit
     python3 install.py -U ${RUN_TEST_USER}:${RUN_TEST_USER}  \
                        -R ${TEST_DATA_DIR}/install/  \
                        -D ${TEST_DATA_DIR}/data/  \
