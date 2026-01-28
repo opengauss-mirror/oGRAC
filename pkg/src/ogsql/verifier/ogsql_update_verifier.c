@@ -29,6 +29,7 @@
 #include "dml_parser.h"
 #include "base_compiler.h"
 #include "expr_parser.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -354,6 +355,9 @@ static status_t sql_verify_update_context(knl_handle_t session, sql_verifier_t *
     OG_RETURN_IFERR(sql_verify_query_joins(verif, query));
 
     OG_RETURN_IFERR(sql_verify_update_pairs(session, verif, update_ctx));
+
+    query->hint_info = verif->stmt->context->hint_info;
+    og_hint_verify(verif->stmt, OGSQL_TYPE_UPDATE, (void *)update_ctx);
 
     OG_RETURN_IFERR(sql_verify_update_return_columns(verif, update_ctx));
 

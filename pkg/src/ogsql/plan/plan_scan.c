@@ -102,12 +102,38 @@ static inline bool32 if_need_get_sort_index(plan_assist_t *pa, sql_table_t *tabl
     return OG_TRUE;
 }
 
+static inline bool32 check_apply_table_index(plan_assist_t *pa, sql_table_t *table)
+{
+    if (HAS_SPEC_TYPE_HINT(table->hint_info, INDEX_HINT, HINT_KEY_WORD_FULL)) {
+        return OG_FALSE;
+    }
+
+    return OG_TRUE;
+}
+
+static inline bool32 check_apply_table_full_scan(plan_assist_t *pa, sql_table_t *table)
+{
+    if (HAS_SPEC_TYPE_HINT(table->hint_info, INDEX_HINT, HINT_KEY_WORD_FULL)) {
+        return OG_TRUE;
+    }
+
+    if (table->index == NULL) {
+        return OG_TRUE;
+    }
+
+    if (TABLE_HAS_INDEX_HINT(table)) {
+        return OG_FALSE;
+    }
+
+    return OG_TRUE;
+}
+
 status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, cond_tree_t *cond)
 {
     if (pa->top_pa != NULL) {
         pa = pa->top_pa;
     }
-
+    
     if (table->type != NORMAL_TABLE) {
         return sql_set_mapped_table_cost(stmt, pa, table);
     }
@@ -125,19 +151,30 @@ status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_tabl
     }
         
     OG_RETURN_IFERR(sql_init_table_scan_partition_info(stmt, pa, table));
+
     table->card = sql_estimate_table_card(pa, entity, table, cond);
-    for (uint32 idx_id = 0; idx_id < entity->table.desc.index_count; idx_id++) {
-        index_t *index = DC_TABLE_INDEX(&entity->table, idx_id);
-        OG_CONTINUE_IFTRUE(index->desc.is_invalid);
-        cbo_try_choose_index(stmt, pa, table, index);
+
+    if (check_apply_table_index(pa, table)) {
+        for (uint32 idx_id = 0; idx_id < entity->table.desc.index_count; idx_id++) {
+            index_t *index = DC_TABLE_INDEX(&entity->table, idx_id);
+            OG_CONTINUE_IFTRUE(index->desc.is_invalid);
+            OG_CONTINUE_IFTRUE(TABLE_HAS_ACCESS_METHOD_HINT(table) &&
+                               index_skip_in_hints(table, index->desc.slot));
+            cbo_try_choose_index(stmt, pa, table, index);
+        }
     }
 
     /* try multi index scan */
     cbo_try_choose_multi_index(stmt, pa, table, false);
 
     /* try seq scan */
-    double seq_cost = sql_seq_scan_cost(stmt, entity, table);
-    sql_debug_scan_cost_info(stmt, table, "SEQ", NULL, seq_cost, NULL, NULL);
+    double seq_cost = CBO_MAX_COST;
+    if (check_apply_table_full_scan(pa, table)) {
+        seq_cost = sql_seq_scan_cost(stmt, entity, table);
+
+        sql_debug_scan_cost_info(stmt, table, "SEQ", NULL, seq_cost, NULL, NULL);
+    }
+
     /*
      * If no index is selected, a seqscan is chosen.
      * Otherwise, compares the cost of index scan versus seqscan, selecting

@@ -26,6 +26,12 @@
 #define __SQL_OGSQL_CACHE_H__
 #include "cm_defs.h"
 #include "ogsql_stmt.h"
+#include "ogsql_hint_verifier.h"
+#include "dml_parser.h"
+#include "ogsql_hint_parser.h"
+#include "srv_instance.h"
+#include "ogsql_plan.h"
+#include "cbo_base.h"
 
 #ifdef __cplusplus
 extern "C" {

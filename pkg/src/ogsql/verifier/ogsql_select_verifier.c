@@ -30,6 +30,7 @@
 #include "base_compiler.h"
 #include "expr_parser.h"
 #include "ogsql_limit.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1010,6 +1011,9 @@ static status_t sql_verify_query(sql_verifier_t *verif, sql_query_t *query)
     OG_RETURN_IFERR(sql_verify_for_update_columns(verif, query));
 
     OG_RETURN_IFERR(sql_try_eliminate_group_set(verif->stmt, query));
+
+    query->hint_info = verif->stmt->context->hint_info;
+    og_hint_verify(verif->stmt, OGSQL_TYPE_SELECT, (void *)query);
 
     sql_organize_group_sets(query);
 

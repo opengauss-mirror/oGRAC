@@ -27,6 +27,7 @@
 #include "ogsql_table_verifier.h"
 #include "dml_parser.h"
 #include "base_compiler.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -116,6 +117,9 @@ static status_t sql_verify_delete_context(knl_handle_t session, sql_verifier_t *
     OG_RETURN_IFERR(sql_verify_query_order(verf, query, query->sort_items, OG_TRUE));
 
     OG_RETURN_IFERR(sql_verify_oper_objects(session, verf, delete_ctx));
+
+    delete_ctx->hint_info = verf->stmt->context->hint_info;
+    og_hint_verify(verf->stmt, OGSQL_TYPE_DELETE, (void *)delete_ctx);
 
     if (!LIMIT_CLAUSE_OCCUR(&query->limit)) {
         cm_galist_reset(query->sort_items);

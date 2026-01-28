@@ -77,7 +77,7 @@ typedef struct st_stats_idx_assist {
 typedef enum en_stats_table_columns {
     TABLE_UID = 0,
     TABLE_TABLE_ID = 1,
-    TABLE_NAME = 2,
+    TABLE_NAME_STR = 2,
 
     TABLE_TYPE = 6,
 

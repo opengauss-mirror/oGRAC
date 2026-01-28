@@ -27,6 +27,7 @@
 #include "ogsql_update_verifier.h"
 #include "ogsql_table_verifier.h"
 #include "base_compiler.h"
+#include "ogsql_hint_verifier.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -313,6 +314,9 @@ status_t sql_verify_insert_context(knl_handle_t session, sql_verifier_t *verif, 
     if (insert_ctx->update_ctx != NULL) {
         OG_RETURN_IFERR(sql_verify_update_pairs(session, verif, insert_ctx->update_ctx));
     }
+
+    insert_ctx->hint_info = verif->stmt->context->hint_info;
+    og_hint_verify(verif->stmt, OGSQL_TYPE_INSERT, (void *)insert_ctx);
 
     OG_RETURN_IFERR(sql_verify_insert_return_columns(verif, insert_ctx));
 
