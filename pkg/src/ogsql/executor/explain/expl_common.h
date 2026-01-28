@@ -42,6 +42,7 @@ typedef enum {
     EXPL_COL_TYPE_TABLE,
     EXPL_COL_TYPE_ROWS,
     EXPL_COL_TYPE_COST,
+    EXPL_COL_TYPE_START_COST,
     EXPL_COL_TYPE_BYTES,
     EXPL_COL_TYPE_REMARK,
     EXPL_COL_TYPE_MAX
@@ -55,6 +56,7 @@ typedef struct st_row_helper {
     text_t *alias;      // Table name alias
     int64 rows;
     double cost;
+    double start_cost;
     int64 bytes;
     int64 remark;
 } row_helper_t;

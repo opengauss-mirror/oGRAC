@@ -151,7 +151,9 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
     uint32 blevel = index_stats->blevel;
 
     /* start up cost*/
-    *cost += blevel * CBO_DEFAULT_RANDOM_PAGE_COST;
+    ca->startup_cost += blevel * CBO_DEFAULT_RANDOM_PAGE_COST;
+    ca->startup_cost = CBO_COST_SAFETY_RET(ca->startup_cost);
+    *cost += ca->startup_cost;
     /* index io cost */
     *cost += (index_stats->leaf_blocks) * index_ff * CBO_DEFAULT_RANDOM_PAGE_COST;
     /* index cpu cost */
@@ -992,14 +994,24 @@ static status_t sql_cost_pre_check(sql_join_node_t* join_tree)
     return OG_SUCCESS;
 }
 
-static status_t sql_cost_qual_eval_node(double* qual_startup_cost, double* qual_cost)
+static status_t sql_cost_qual_eval_walker(double* qual_startup_cost, double* qual_cost, galist_t* restricts)
 {
-    /* does not differentiate between different functions and has different costs,
-     * so it is written as a fixed value first.
-     */
-
-    *qual_startup_cost = 0;
-    *qual_cost = CBO_DEFAULT_CPU_OPERATOR_COST;       /* the cost do the one op */
+    // qual_cost: cost for per tuple
+    for (uint32 i = 0; i < restricts->count; i++) {
+        expr_node_t* node = (expr_node_t*)cm_galist_get(restricts, i);
+        switch (node->type) {
+            case EXPR_NODE_AGGR:
+                // The aggregation node is treated as a variable (vars) with an execution cost of 0, ignoring the
+                // cost of the input expression, as the actual execution cost is considered in the specific cost
+                // evaluation of the plan node.
+                break;
+            default:
+                // current cost of conditional expressions only considers common operations such as comparisons,
+                // with a default coefficient set to 1.0
+                *qual_cost += CBO_NORMAL_FUNC_FACTOR * CBO_DEFAULT_CPU_OPERATOR_COST;
+                break;
+        }
+    }
     return OG_SUCCESS;
 }
 
@@ -1082,7 +1094,7 @@ status_t sql_initial_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree
 }
 
 status_t sql_final_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree, join_cost_workspace* join_cost_ws,
-    special_join_info_t *sjoininfo)
+    special_join_info_t *sjoininfo, galist_t *restricts)
 {
     int64 ntuples = 0;
     double cpu_per_tuple = 0;
@@ -1116,7 +1128,7 @@ status_t sql_final_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree, 
         ntuples = sql_adjust_est_row(outer_path_rows * inner_path_rows);
     }
 
-    (void)sql_cost_qual_eval_node(&qual_startup_cost, &qual_cost);
+    (void)sql_cost_qual_eval_walker(&qual_startup_cost, &qual_cost, restricts);
 
     /* startup_cost */
     startup_cost += qual_startup_cost;
@@ -1502,6 +1514,8 @@ double sql_estimate_subpartition_index_scan_cost(sql_stmt_t *stmt, cbo_index_cho
     if (part_cnt > MAX_CBO_CALU_PARTS_COUNT) {
         cost = cost * (double)part_cnt / (double)cal_part_cnt;
         cost = CBO_COST_SAFETY_RET(cost);
+        ca->startup_cost = ca->startup_cost * (double)part_cnt / (double)cal_part_cnt;
+        ca->startup_cost = CBO_COST_SAFETY_RET(ca->startup_cost);
     }
     return cost;
 }
@@ -1529,6 +1543,8 @@ double sql_estimate_partition_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose
     if (part_cnt > MAX_CBO_CALU_PARTS_COUNT) {
         cost = cost * (double)part_cnt / (double)cal_part_cnt;
         cost = CBO_COST_SAFETY_RET(cost);
+        ca->startup_cost = ca->startup_cost * (double)part_cnt / (double)cal_part_cnt;
+        ca->startup_cost = CBO_COST_SAFETY_RET(ca->startup_cost);
     }
     return cost;
 }
@@ -1829,17 +1845,199 @@ static status_t sql_estimate_join_cost(sql_stmt_t *stmt, plan_node_t *plan)
     return OG_SUCCESS;
 }
 
-static double sql_estimate_group_cost(int64 rows, bool with_sort)
+static status_t sql_estimate_group_cost(cbo_cost_t* cost_group, double input_rows, double group_cols, bool with_sort)
 {
-    double cost = CBO_DEFAULT_CPU_OPERATOR_COST * rows;
+    double cost = 0;
+    double startup_cost = 0;
     if (with_sort) {
-        cost += rows * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST)
-                       + rows * log(rows) * CBO_DEFAULT_CPU_QK_COMP_COST;
+        // sort group
+        startup_cost += input_rows * log(input_rows) * CBO_DEFAULT_CPU_QK_COMP_COST;
+        cost += group_cols * input_rows * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST);
+        cost += startup_cost;
     } else {
-        cost += CBO_DEFAULT_HASH_INIT_COST + rows * (CBO_DEFAULT_CPU_HASH_BUILD_COST +
-        CBO_DEFAULT_CPU_HASH_CALC_COST);
+        // hash group
+        startup_cost = CBO_DEFAULT_HASH_INIT_COST;
+        cost += startup_cost + input_rows * (CBO_DEFAULT_CPU_HASH_BUILD_COST + CBO_DEFAULT_CPU_HASH_CALC_COST);
     }
-    return cost;
+    cost_group->startup_cost += startup_cost;
+    cost_group->cost += cost;
+    return OG_SUCCESS;
+}
+
+static double get_column_distinct_from_stats(plan_node_t *child, uint32 tab_id, uint32 col_id, double input_rows)
+{
+    sql_table_t *table = NULL;
+    double col_ndistinct = DEFAULT_DISTINCT_FACTOR * input_rows;
+    if (child == NULL) {
+        return col_ndistinct;
+    }
+    switch (child->type) {
+        case PLAN_NODE_JOIN:
+            table = child->join_p.cache_tab;
+            break;
+        case PLAN_NODE_SCAN:
+            table = child->scan_p.table;
+            break;
+        case PLAN_NODE_QUERY:
+            if (child->query.ref != NULL) {
+                table = (sql_table_t *)sql_array_get(&child->query.ref->tables, tab_id);
+            }
+            break;
+        default:
+            break;
+    }
+    if (table == NULL || table->type != NORMAL_TABLE) {
+        return col_ndistinct;
+    }
+    dc_entity_t* dc_entity = DC_ENTITY(&table->entry->dc);
+    if (dc_entity == NULL || dc_entity->cbo_table_stats == NULL) {
+        return col_ndistinct;
+    }
+    cbo_stats_column_t* col_stats = cbo_get_column_stats(dc_entity->cbo_table_stats, col_id);
+    if (col_stats == NULL || col_stats->num_distinct <= 0) {
+        return col_ndistinct;
+    }
+    col_ndistinct = (double)col_stats->num_distinct;
+    if (col_ndistinct < 1.0) {
+        col_ndistinct = 1.0;
+    }
+    if (col_ndistinct > input_rows) {
+        col_ndistinct = input_rows;
+    }
+    return col_ndistinct;
+}
+
+static double sql_estimate_column_distinct(cols_used_t *cols_used, plan_node_t *child, double input_rows)
+{
+    expr_node_t *col_node = sql_any_self_col_node(cols_used);
+    if (col_node == NULL || (col_node->type != EXPR_NODE_COLUMN && col_node->type != EXPR_NODE_TRANS_COLUMN) ||
+        NODE_COL(col_node) == OG_INVALID_ID16) {
+        return sqrt(input_rows);
+    }
+    uint32 tab_id = NODE_TAB(col_node);
+    uint32 col_id = NODE_COL(col_node);
+    if (tab_id == OG_INVALID_ID32 || col_id == OG_INVALID_ID16) {
+        // No statistical information available, using default estimation
+        return DEFAULT_DISTINCT_FACTOR * input_rows;
+    }
+    return get_column_distinct_from_stats(child, tab_id, col_id, input_rows);
+}
+
+static double sql_estimate_expr_distinct(expr_tree_t *expr, plan_node_t *child, double input_rows)
+{
+    double col_ndistinct = 1.0;
+    if (expr == NULL || expr->root == NULL) {
+        return col_ndistinct;
+    }
+    expr_node_t *node = expr->root;
+    if (node->datatype == OG_TYPE_BOOLEAN) {
+        // boolean type has 2 distinct values
+        col_ndistinct *= 2.0;
+        return col_ndistinct;
+    }
+    cols_used_t cols_used;
+    init_cols_used(&cols_used);
+    sql_collect_cols_in_expr_tree(expr, &cols_used);
+    if (!HAS_SELF_COLS(cols_used.flags) || HAS_DIFF_TABS(&cols_used, SELF_IDX)) {
+        col_ndistinct = sqrt(input_rows);
+        return col_ndistinct;
+    }
+    return sql_estimate_column_distinct(&cols_used, child, input_rows);
+}
+
+static double sql_estimate_group_by_distinct(galist_t *groupExprs, plan_node_t *child, double input_rows)
+{
+    double numdistinct = 1.0;
+    double max_ndistinct = 1.0;
+    uint32 num_cols = 0;
+    for (uint32 i = 0; i < groupExprs->count; i++) {
+        expr_tree_t *expr = (expr_tree_t *)cm_galist_get(groupExprs, i);
+        double col_ndistinct = sql_estimate_expr_distinct(expr, child, input_rows);
+        if (col_ndistinct > max_ndistinct) {
+            max_ndistinct = col_ndistinct;
+        }
+        numdistinct *= col_ndistinct;
+        num_cols++;
+    }
+    if (numdistinct < 1.0) {
+        numdistinct = 1.0;
+    }
+    if (numdistinct > input_rows) {
+        numdistinct = input_rows;
+    }
+    return numdistinct;
+}
+
+static double sql_estimate_num_groups(plan_node_t *plan)
+{
+    galist_t *groupExprs = plan->group.exprs;
+    plan_node_t *child = plan->group.next;
+    if (groupExprs == NULL || groupExprs->count == 0 || child == NULL) {
+        return 1.0;
+    }
+    double input_rows = (double)child->rows;
+    if (input_rows <= 1.0) {
+        return (input_rows <= 0.0) ? 1.0 : input_rows;
+    }
+    return sql_estimate_group_by_distinct(groupExprs, child, input_rows);
+}
+
+static status_t sql_get_limit_const_value(plan_node_t *plan, int64 *limit_count_var,
+    int64 *limit_offset_var)
+{
+    if (plan->limit.item.offset != NULL) {
+        expr_tree_t* offset_expr = (expr_tree_t *)plan->limit.item.offset;
+        if (offset_expr->root->type == EXPR_NODE_CONST) {
+            variant_t offset_value = offset_expr->root->value;
+            *limit_offset_var = offset_value.v_bigint;
+        }
+    }
+
+    if (plan->limit.item.count != NULL) {
+        expr_tree_t* count_expr = (expr_tree_t *)plan->limit.item.count;
+        if (count_expr->root->type == EXPR_NODE_CONST) {
+            variant_t count_value = count_expr->root->value;
+            *limit_count_var = count_value.v_bigint;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t sql_estimate_group_aggr_cost(cbo_cost_t *cost_group, plan_node_t *plan, bool hash_aggr)
+{
+    if (plan == NULL || plan->group.aggrs == NULL)
+        return OG_ERROR;
+
+    double trans_startup = 0;
+    double trans_per = 0;
+    double final_cost = 0;
+    double numdistincts = cost_group->card;
+    double group_cols = (double)plan->group.sets->count;
+    double input_rows = (double)plan->rows;
+    double start_cost = 0;
+    double cost = 0;
+
+    (void)sql_cost_qual_eval_walker(&trans_startup, &trans_per, plan->group.aggrs);
+
+    if (plan->group.sort_groups != NULL) {
+        final_cost += trans_per;
+    }
+    if (!hash_aggr) {
+        // aggr sort group cost
+        cost += trans_startup + trans_per * input_rows + CBO_DEFAULT_CPU_SCAN_TUPLE_COST * numdistincts;
+        cost += final_cost * numdistincts;
+    } else {
+        // hash group cost, currently not consider
+        start_cost += trans_startup + trans_per * input_rows;
+        start_cost += (CBO_DEFAULT_CPU_OPERATOR_COST * group_cols) * input_rows;
+        cost += final_cost * numdistincts + CBO_DEFAULT_CPU_SCAN_TUPLE_COST * numdistincts;
+        // todo: memory spilling cost
+    }
+
+    cost_group->startup_cost += start_cost;
+    cost_group->cost += start_cost + cost;
+    return OG_SUCCESS;
 }
 
 static status_t sql_estimate_sort_group_cost(sql_stmt_t *stmt, plan_node_t *plan)
@@ -1857,10 +2055,24 @@ static status_t sql_estimate_sort_group_cost(sql_stmt_t *stmt, plan_node_t *plan
         plan->start_cost = plan->group.next->start_cost;
         return OG_SUCCESS;
     }
-    
-    double group_cost = sql_estimate_group_cost(plan->rows, plan->group.sort_groups != NULL);
-    plan->cost = plan->group.next->cost + group_cost;
-    plan->start_cost = plan->group.next->start_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST;
+
+    double numdistincts = CBO_CARD_SAFETY_RET(sql_estimate_num_groups(plan));
+    double total_rows = plan->rows;
+    plan->start_cost = plan->group.next->start_cost;
+    int64 limit_tuples = 0;
+    int64 limit_offset = 0;
+    (void)sql_get_limit_const_value(plan, &limit_tuples, &limit_offset);
+        
+    cbo_cost_t cost_group = {
+        .card = (int64)numdistincts,
+        .cost = plan->cost,
+        .startup_cost = plan->start_cost
+    };
+    sql_estimate_group_cost(&cost_group, total_rows, (double)plan->group.sets->count, plan->group.sort_groups != NULL);
+    sql_estimate_group_aggr_cost(&cost_group, plan, false);
+    plan->rows = (int64)numdistincts;
+    plan->cost = cost_group.cost + plan->group.next->cost;
+    plan->start_cost = cost_group.startup_cost + plan->group.next->start_cost;
     return OG_SUCCESS;
 }
 
@@ -1871,8 +2083,50 @@ static status_t sql_estimate_merge_sort_group_by_cost(sql_stmt_t *stmt, plan_nod
 
 static status_t sql_estimate_hash_group_by_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
-    return sql_estimate_sort_group_cost(stmt, plan);
+    if (plan == NULL || plan->group.next == NULL)
+        return OG_ERROR;
+
+    if (plan->group.next->cost == 0 && plan->group.next->start_cost == 0) {
+        OG_RETURN_IFERR(sql_estimate_node_cost(stmt, plan->group.next));
+    }
+
+    plan->rows = plan->group.next->rows;
+    if (plan->rows == 0) {
+        plan->cost = plan->group.next->cost;
+        plan->start_cost = plan->group.next->start_cost;
+        return OG_SUCCESS;
+    }
+
+    double group_cols = (double)plan->group.sets->count;
+    double numdistincts = CBO_CARD_SAFETY_RET(sql_estimate_num_groups(plan));
+    plan->rows = (int64)numdistincts;
+    cbo_cost_t cost_group = {
+        .card = (int64)numdistincts,
+        .cost = plan->group.next->cost,
+        .startup_cost = plan->group.next->start_cost
+    };
+    sql_estimate_group_cost(&cost_group, plan->rows, group_cols, false);
+
+    double trans_startup = 0;
+    double trans_per = 0;
+    double final_cost = 0;
+    double start_cost = 0;
+    double cost = cost_group.cost;
+    if (plan->group.aggrs != NULL) {
+        // hash aggr
+        (void)sql_cost_qual_eval_walker(&trans_startup, &trans_per, plan->group.aggrs);
+        start_cost += trans_startup + trans_per * plan->rows;
+        start_cost += (CBO_DEFAULT_CPU_OPERATOR_COST * group_cols) * plan->rows;
+        cost += final_cost * numdistincts + CBO_DEFAULT_CPU_SCAN_TUPLE_COST * numdistincts;
+        // todo: memory spilling cost
+    }
+
+    // currently hash group, not include order by clause
+    plan->start_cost += cost_group.startup_cost + start_cost;
+    plan->cost = cost_group.cost + cost;
+    return OG_SUCCESS;
 }
+
 
 static status_t sql_estimate_index_group_by_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
@@ -1895,10 +2149,11 @@ static status_t sql_estimate_query_sort_cost(sql_stmt_t *stmt, plan_node_t *plan
         return OG_SUCCESS;
     }
     
-    double sort_cost = plan->rows * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST)
-                       + plan->rows * log(plan->rows) * CBO_DEFAULT_CPU_QK_COMP_COST;
+    double sort_startup = plan->rows * log(plan->rows) * CBO_DEFAULT_CPU_QK_COMP_COST;
+    double sort_cost = sort_startup + plan->rows * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST);
     plan->cost = plan->query_sort.next->cost + sort_cost;
-    plan->start_cost = plan->query_sort.next->start_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST;
+    plan->start_cost = plan->query_sort.next->start_cost + sort_startup;
+    
     return OG_SUCCESS;
 }
 
@@ -1919,15 +2174,20 @@ static status_t sql_estimate_select_sort_cost(sql_stmt_t *stmt, plan_node_t *pla
         return OG_SUCCESS;
     }
     
-    double sort_cost = plan->rows * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST)
-                       + plan->rows * log(plan->rows) * CBO_DEFAULT_CPU_QK_COMP_COST;
-    plan->cost = plan->select_sort.next->cost + sort_cost;
-    plan->start_cost = plan->select_sort.next->start_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST;
+    double sort_startup = plan->rows * log(plan->rows) * CBO_DEFAULT_CPU_QK_COMP_COST;
+    double sort_cost = sort_startup + plan->rows * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST);
+    plan->cost = plan->query_sort.next->cost + sort_cost;
+    plan->start_cost = plan->query_sort.next->start_cost + sort_startup;
+    
     return OG_SUCCESS;
 }
 
+
 static status_t sql_estimate_aggr_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
+    double trans_startup = 0;
+    double trans_per;
+    double final_cost;
     if (plan == NULL || plan->aggr.next == NULL)
         return OG_ERROR;
 
@@ -1936,10 +2196,17 @@ static status_t sql_estimate_aggr_cost(sql_stmt_t *stmt, plan_node_t *plan)
     }
 
     plan->rows = 1;
-    // transCost and final cost?
-    plan->cost = plan->aggr.next->cost + plan->aggr.next->rows * CBO_DEFAULT_CPU_OPERATOR_COST;
+    trans_per = CBO_NORMAL_FUNC_FACTOR * CBO_DEFAULT_CPU_OPERATOR_COST;
+    final_cost = CBO_NORMAL_FUNC_FACTOR * CBO_DEFAULT_CPU_OPERATOR_COST;
+
+    (void)sql_cost_qual_eval_walker(&trans_startup, &trans_per, plan->aggr.items);
+    // plain aggr
+    plan->start_cost += plan->aggr.next->start_cost + trans_startup + trans_per * plan->aggr.next->rows +
+                        final_cost;
+    plan->cost += plan->start_cost;
+    plan->cost += plan->aggr.next->cost + plan->aggr.next->rows * CBO_DEFAULT_CPU_OPERATOR_COST;
     plan->cost += plan->aggr.items->count * CBO_DEFAULT_CPU_OPERATOR_COST;  // simply for finaly cost
-    plan->start_cost = plan->aggr.next->start_cost;
+    
     return OG_SUCCESS;
 }
 
@@ -2034,28 +2301,6 @@ static status_t sql_estimate_scan_cost(sql_stmt_t *stmt, plan_node_t *plan)
     return OG_SUCCESS;
 }
 
-static status_t sql_get_limit_const_value(plan_node_t *plan, int64 *limit_count_var,
-    int64 *limit_offset_var)
-{
-    if (plan->limit.item.offset != NULL) {
-        expr_tree_t* offset_expr = (expr_tree_t *)plan->limit.item.offset;
-        if (offset_expr->root->type == EXPR_NODE_CONST) {
-            variant_t offset_value = offset_expr->root->value;
-            *limit_offset_var = offset_value.v_bigint;
-        }
-    }
-
-    if (plan->limit.item.count != NULL) {
-        expr_tree_t* count_expr = (expr_tree_t *)plan->limit.item.count;
-        if (count_expr->root->type == EXPR_NODE_CONST) {
-            variant_t count_value = count_expr->root->value;
-            *limit_count_var = count_value.v_bigint;
-        }
-    }
-
-    return OG_SUCCESS;
-}
-
 static status_t sql_estimate_limit_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
     if (plan == NULL || plan->limit.next == NULL)
@@ -2074,26 +2319,26 @@ static status_t sql_estimate_limit_cost(sql_stmt_t *stmt, plan_node_t *plan)
 
     /* limit */
     plan->rows = plan->limit.next->rows;
+    plan->start_cost = plan->limit.next->start_cost;
+    plan->cost = plan->limit.next->cost;
 
     if (plan->rows == 0) {
-        plan->cost = plan->limit.next->cost;
-        plan->start_cost = plan->limit.next->start_cost;
         return OG_SUCCESS;
     }
-    
+
     if (limit_offset_var != 0) {
+        double offset_rows = MIN((double)limit_offset_var, plan->rows);
+        plan->start_cost += (plan->limit.next->cost - plan->limit.next->start_cost) *
+            (offset_rows / (double)plan->limit.next->rows);
         plan->rows -= limit_offset_var;
         plan->rows = MAX(1, plan->rows);
     }
-
     if (limit_count_var != 0) {
         plan->rows = MIN(limit_count_var, plan->rows);
         plan->rows = MAX(1, plan->rows);
+        plan->cost += plan->start_cost + (plan->limit.next->cost - plan->limit.next->start_cost) *
+            ((double)plan->rows / (double)plan->limit.next->rows);
     }
-
-    plan->cost = plan->limit.next->cost * ((double)plan->rows / (double)plan->limit.next->rows);
-    plan->start_cost = plan->limit.next->start_cost * ((double)plan->rows / (double)plan->limit.next->rows);
-    
     return OG_SUCCESS;
 }
 
@@ -2115,26 +2360,26 @@ static status_t sql_estimate_select_limit_cost(sql_stmt_t *stmt, plan_node_t *pl
 
     /* limit */
     plan->rows = plan->limit.next->rows;
+    plan->start_cost = plan->limit.next->start_cost;
+    plan->cost = plan->limit.next->cost;
 
     if (plan->rows == 0) {
-        plan->cost = plan->limit.next->cost;
-        plan->start_cost = plan->limit.next->start_cost;
         return OG_SUCCESS;
     }
 
     if (limit_offset_var != 0) {
+        double offset_rows = MIN((double)limit_offset_var, plan->rows);
+        plan->start_cost += (plan->limit.next->cost - plan->limit.next->start_cost) *
+            (offset_rows / (double)plan->limit.next->rows);
         plan->rows -= limit_offset_var;
         plan->rows = MAX(1, plan->rows);
     }
-
     if (limit_count_var != 0) {
-        plan->rows = MIN(plan->rows, limit_count_var);
+        plan->rows = MIN(limit_count_var, plan->rows);
         plan->rows = MAX(1, plan->rows);
+        plan->cost += plan->start_cost + (plan->limit.next->cost - plan->limit.next->start_cost) *
+            ((double)plan->rows / (double)plan->limit.next->rows);
     }
-
-    plan->cost = plan->limit.next->cost * ((double)plan->rows / (double)plan->limit.next->rows);
-    plan->start_cost = plan->limit.next->start_cost * ((double)plan->rows / (double)plan->limit.next->rows);
-
     return OG_SUCCESS;
 }
 
@@ -2197,9 +2442,16 @@ static status_t sql_estimate_group_merge_cost(sql_stmt_t *stmt, plan_node_t *pla
         return OG_SUCCESS;
     }
     
-    double group_cost = sql_estimate_group_cost(plan->rows, plan->group.sort_groups != NULL);
-    plan->cost = plan->group.next->cost + group_cost;
-    plan->start_cost = plan->group.next->start_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST;
+    cbo_cost_t cost_group = {
+        .card = plan->rows,
+        .cost = plan->cost,
+        .startup_cost = plan->start_cost
+    };
+    sql_estimate_group_cost(&cost_group, plan->rows, (double)plan->group.sets->count,
+                            plan->group.sort_groups != NULL);
+    plan->cost = plan->group.next->cost + cost_group.cost;
+    plan->start_cost = cost_group.startup_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST
+                        + plan->group.next->start_cost;
     return OG_SUCCESS;
 }
 
@@ -2219,9 +2471,16 @@ static status_t sql_estimate_parallel_group_cost(sql_stmt_t *stmt, plan_node_t *
         return OG_SUCCESS;
     }
     
-    double group_cost = sql_estimate_group_cost(plan->rows, plan->group.sort_groups != NULL);
-    plan->cost = plan->group.next->cost + group_cost;
-    plan->start_cost = plan->group.next->start_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST;
+    cbo_cost_t cost_group = {
+        .card = plan->rows,
+        .cost = plan->cost,
+        .startup_cost = plan->start_cost
+    };
+    OG_RETURN_IFERR(sql_estimate_group_cost(&cost_group, plan->rows, (double)plan->group.sets->count,
+                            plan->group.sort_groups != NULL));
+    plan->cost = plan->group.next->cost + cost_group.cost;
+    plan->start_cost = cost_group.startup_cost + LOG2(plan->rows) * CBO_DEFAULT_CPU_OPERATOR_COST
+                        + plan->group.next->start_cost;
     return OG_SUCCESS;
 }
 
@@ -3503,11 +3762,13 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
 {
     cbo_index_choose_assist_t ca = {
         .index = &index->desc,
-        .strict_equal_cnt = 0
+        .strict_equal_cnt = 0,
+        .startup_cost = 0.0
     };
 
     dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
     double cost = 0.0;
+    double startup_cost = 0.0;
     bool32 matched = false;
 
     OGSQL_SAVE_STACK(stmt);
@@ -3524,6 +3785,7 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
     }
 
     cost = sql_estimate_index_scan_cost(stmt, &ca, entity, index, idx_cond_array, NULL, table);
+    startup_cost = ca.startup_cost;
 
     OGSQL_RESTORE_STACK(stmt);
 
@@ -3542,6 +3804,7 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
     /* Besides a lower cost, we prefer index scan containing unqiue. */
     if (table->index == NULL || prefer_another_index_choice(stmt, pa, table, &ca, cost)) {
         table->cost = cost;
+        table->startup_cost = startup_cost;
         table->index = &index->desc;
         table->scan_flag = ca.scan_flag;
         table->scan_mode = SCAN_MODE_INDEX;

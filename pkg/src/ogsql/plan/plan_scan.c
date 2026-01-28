@@ -216,6 +216,7 @@ static status_t sql_create_scan_plan(sql_stmt_t *stmt, plan_assist_t *pa, cond_t
     scan_plan->scan_p.par_exec = OG_FALSE;
     scan_plan->scan_p.sort_items = pa->sort_items;
     scan_plan->cost = table->cost;
+    scan_plan->start_cost = table->startup_cost;
     scan_plan->rows = table->card;
 
     return sql_create_scan_ranges(stmt, pa, table, &scan_plan->scan_p);
@@ -807,6 +808,7 @@ status_t sql_create_query_scan_plan(sql_stmt_t *stmt, plan_assist_t *plan_ass, p
     OG_RETURN_IFERR(sql_check_table_indexable(stmt, plan_ass, plan_ass->tables[0], plan_ass->cond));
     plan_ass->query->cost.card = plan_ass->tables[0]->card;
     plan_ass->query->cost.cost = plan_ass->tables[0]->cost;
+    plan_ass->query->cost.startup_cost = plan_ass->tables[0]->startup_cost;
     if (plan_ass->query->join_card == OG_INVALID_INT64) {
         plan_ass->query->join_card = TABLE_CBO_FILTER_ROWS(plan_ass->tables[0]);
     }

@@ -1833,6 +1833,7 @@ status_t sql_create_join_plan(sql_stmt_t *stmt, plan_assist_t *pa, sql_join_node
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(plan_node_t), (void **)plan));
     plan_node_t *plan_node = *plan;
     (*plan)->cost = join_node->cost.cost;
+    (*plan)->start_cost = join_node->cost.startup_cost;
     (*plan)->rows = (CBO_ON && !stmt->context->opt_by_rbo) ? join_node->cost.card : 0;
 
     if (join_node->type != JOIN_TYPE_NONE) {

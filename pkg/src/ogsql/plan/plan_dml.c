@@ -534,6 +534,7 @@ static status_t sql_create_withas_mtrl_plan(sql_stmt_t *stmt, sql_table_t *sql_t
     plan->withas_p.next = sql_tab->select_ctx->plan->select_p.next;
     sql_tab->select_ctx->plan->select_p.next = plan;
     plan->cost = plan->withas_p.next->cost;
+    plan->start_cost = plan->withas_p.next->start_cost;
     plan->rows = plan->withas_p.next->rows;
     return OG_SUCCESS;
 }

@@ -145,6 +145,7 @@ static inline void sql_init_table_indexable(sql_table_t *table, sql_table_t *par
     table->equal_cols = 0;
     table->idx_col_map = NULL;
     table->cost = RBO_TABLE_FULL_SCAN_COST(table);
+    table->startup_cost = 0.0;
 }
 
 static inline void init_join_root_table_scan_info(sql_join_node_t *join_node)

@@ -50,6 +50,8 @@ extern "C" {
 #define MIN_HASH_BUCKET_SIZE (uint32)16384    // 1<<14
 #define HASH_FILL_FACTOR (float)0.75
 #define HASH_BUCKET_NODE_SIZE (uint32)(sizeof(hash_entry_t))
+#define CBO_NORMAL_FUNC_FACTOR (double)1.0
+#define DEFAULT_DISTINCT_FACTOR 0.1
 
 #define CBO_PALN_SAFETY_SET(plan)                                \
 do {                                                             \
@@ -194,7 +196,7 @@ typedef struct st_cond_info {
 status_t sql_initial_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree, join_cost_workspace* join_cost_ws,
     special_join_info_t *sjoininfo);
 status_t sql_final_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree, join_cost_workspace* join_cost_ws,
-    special_join_info_t *sjoininfo);
+    special_join_info_t *sjoininfo, galist_t *restricts);
 void sql_init_sql_join_node_cost(sql_join_node_t* join_tree);
 status_t sql_estimate_node_cost(sql_stmt_t *stmt, plan_node_t *plan);
 double sql_compute_join_factor(join_assist_t *ja, galist_t* conds, special_join_info_t *sjinfo);
