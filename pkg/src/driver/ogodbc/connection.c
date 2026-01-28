@@ -222,6 +222,7 @@ SQLRETURN ograc_bind_col(statement *stmt,
     column_param *col_param = NULL;
     uint32 index = colIndex - 1;
     uint32 ptr = 0;
+    SQLLEN cal_len = 0;
 
     col_param = get_col_param(stmt, index, dataPtr);
     if (col_param != NULL) {
@@ -229,8 +230,12 @@ SQLRETURN ograc_bind_col(statement *stmt,
             col_param->sql_type = ctype;
             col_param->value = dataPtr;
             col_param->size = buffPtr;
-            SQLLEN buff_size = cal_len_of_sql_type(ctype);
-            col_param->col_len = (buff_size != 0) ? buff_size : dataSize;
+            cal_len = cal_len_of_sql_type(ctype);
+            if (cal_len == 0) {
+                col_param->col_len = dataSize;
+            } else {
+                col_param->col_len = cal_len;
+            }
             ptr = colIndex - 1;
         } else {
             col_param->sql_type = SQL_C_CHAR;
@@ -240,12 +245,12 @@ SQLRETURN ograc_bind_col(statement *stmt,
             ptr = col_param->ptr;
         }
         col_param->generate_result.result_size = 0;
-        col_param->generate_result.ptr = ptr;
-        col_param->generate_result.sql_type = SQL_C_CHAR;
+        col_param->generate_result.sql_type = SQL_C_DEFAULT;
         col_param->generate_result.is_str = OG_FALSE;
         col_param->generate_result.is_col = OG_TRUE;
+        col_param->generate_result.ptr = ptr;
         col_param->generate_result.is_recieved = OG_FALSE;
-        col_param->generate_result.og_type = OGCONN_TYPE_CHAR;
+        col_param->generate_result.og_type = OGCONN_TYPE_UNKNOWN;
     }
     return SQL_SUCCESS;
 }

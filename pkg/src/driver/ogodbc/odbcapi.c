@@ -553,8 +553,9 @@ static SQLRETURN numeric_type_transfer(statement *stmt, sql_input_data *input_da
     status_t status;
     dec8_t dec_data;
     SQLRETURN ret;
+    SQL_NUMERIC_STRUCT *numeric_value = (SQL_NUMERIC_STRUCT *)value;
 
-    ret = transfer_dec_type(stmt, (SQL_NUMERIC_STRUCT *)value, &dec_data);
+    ret = transfer_dec_type(stmt, numeric_value, &dec_data);
     if (ret != SQL_SUCCESS) {
         stmt->conn->err_sign = 1;
         stmt->conn->error_msg = "invalid input numeric2 type.";
@@ -828,6 +829,7 @@ static SQLRETURN convert_param_to_timestamp(statement *stmt, sql_input_data *inp
     SQLRETURN ret = SQL_SUCCESS;
     status_t status;
     date_detail_t value_detail = {0};
+    ogconn_datetime_t datetime;
 
     status_t attr = ogconn_get_conn_attr(stmt->conn->ctconn_conn,
                                          OGCONN_ATTR_TIMESTAMP_SIZE,
@@ -852,8 +854,10 @@ static SQLRETURN convert_param_to_timestamp(statement *stmt, sql_input_data *inp
     if (ret != SQL_SUCCESS) {
         return ret;
     }
+
+    datetime = (ogconn_datetime_t)&input_data->input_param[pos];
     status = ogconn_datetime_construct(stmt->ctconn_stmt,
-                                        (ogconn_datetime_t)&input_data->input_param[pos],
+                                        datetime,
                                         OGCONN_TYPE_TIMESTAMP,
                                         value_detail.year,
                                         value_detail.mon,
