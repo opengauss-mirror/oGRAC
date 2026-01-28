@@ -172,10 +172,9 @@ static SQLRETURN clean_up_info(connection_class *conn, size_t len)
     return SQL_SUCCESS;
 }
 
-SQLRETURN ograc_disconnect(SQLHDBC ConnectionHandle)
+SQLRETURN ograc_disconnect(connection_class *conn)
 {
     ogconn_conn_t pconn;
-    connection_class *conn = (connection_class *)ConnectionHandle;
 
     if (!conn) {
         conn->err_sign = 1;
