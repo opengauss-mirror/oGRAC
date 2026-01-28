@@ -74,3 +74,6 @@ class Options(object):
         self.cert_encrypt_pwd = ""
 
         self.storage_dbstor_fs = ""
+
+        # port set:
+        self.cms_port = ""

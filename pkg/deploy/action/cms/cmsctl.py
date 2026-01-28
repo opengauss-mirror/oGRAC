@@ -481,6 +481,10 @@ class CmsCtl(object):
 
         LOGGER.info("checked the node IP address or domain name success: %s" % node_ip)
 
+    def load_port_config(self, load_dict):
+        if "cms_port" in load_dict:
+            self.port = load_dict["cms_port"]
+
     def load_path_config(self, load_dict):
         if "gcc_home" in load_dict:
             self.gcc_home = load_dict["gcc_home"]
@@ -566,6 +570,7 @@ class CmsCtl(object):
                     self.load_user_config(load_dict)
                     self.load_cms_run_config(load_dict)
                     self.load_path_config(load_dict)
+                    self.load_port_config(load_dict)
                     node_str = "node" + str(self.node_id)
                     metadata_str = "metadata_" + self.storage_metadata_fs
             except OSError as ex:
@@ -1079,6 +1084,10 @@ class CmsCtl(object):
     def is_rdma_1823_startup(self):
         return self.link_type == "RDMA_1823" and self.is_hinicadm3()
 
+    def is_port_in_use(self, inPort, host='127.0.0.1'):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex((host, inPort)) == 0
+
     def check_parameter_install(self):
         if self.ip_cluster != "":
             _list = self.ip_cluster.split(';')
@@ -1111,6 +1120,11 @@ class CmsCtl(object):
             LOGGER.error("invalid node id: " + str(self.node_id))
             if FORCE_UNINSTALL != "force":
                 raise Exception("invalid node id: " + str(self.node_id))
+        # check the port is in use
+        if self.is_port_in_use(int(self.port)):
+            LOGGER.error("port %s is in use" % self.port)
+            if FORCE_UNINSTALL != "force":
+                raise Exception("port %s is in use" % self.port)
 
     def copy_app_files(self):
         """

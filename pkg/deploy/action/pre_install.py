@@ -331,12 +331,14 @@ class CheckInstallConfig(CheckBase):
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune', 'dss_vg_list', 'gcc_home'}
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune', 'dss_vg_list', 'gcc_home',
+                'cms_port', 'dss_port'}
         else:
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune', 'dss_vg_list', 'gcc_home'}
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune', 'dss_vg_list', 'gcc_home',
+                'cms_port', 'dss_port'}
 
         self.dbstor_config_key = {
             'cluster_name', 'ograc_vlan_ip', 'storage_vlan_ip', 'link_type', 'storage_dbstor_page_fs',
@@ -738,6 +740,10 @@ class CheckInstallConfig(CheckBase):
             install_config_params['ograc_in_container'] = "0"
         if 'auto_tune' not in install_config_params.keys():
             install_config_params['auto_tune'] = False
+        if 'cms_port' not in install_config_params.keys():
+            install_config_params['cms_port'] = "14587"
+        if 'dss_port' not in install_config_params.keys():
+            install_config_params['dss_port'] = "1811"
 
     def parse_policy_config_file(self):
         policy_path = os.path.join(dir_name, "deploy_policy_config.json")

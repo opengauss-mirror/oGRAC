@@ -10,6 +10,7 @@ DEPLOY_USER=$(python3 "${CURRENT_PATH}"/../../action/get_config_info.py "deploy_
 node_count=$(python3 ${CURRENT_PATH}/../../action/get_config_info.py "cluster_scale")
 CMS_CGROUP=/sys/fs/cgroup/memory/cms
 OGMGR_CGROUP=/sys/fs/cgroup/memory/ogmgr
+CMS_CONFIG=/opt/ograc/cms/cfg/cms.json
 OGRAC_EXPORTER_CGROUP=/sys/fs/cgroup/memory/ograc_exporter
 OGRACD_CGROUP_CALCULATE=${CURRENT_PATH}/../../action/ograc/ogracd_cgroup_calculate.sh
 CMS_MEM_LIMIT=95
@@ -144,14 +145,16 @@ do
             CMS_COUNT=$(expr "${CMS_COUNT}" + 1)
             if [ ${cms_process_count} -eq 0 ]; then
                 iptables_path=$(whereis iptables | awk -F: '{print $2}')
+                line=$(grep "_PORT" ${CMS_CONFIG})
+                cms_port=${line##*= }
                 if [ ! -z "${iptables_path}" ];then
                     logAndEchoInfo "[ograc daemon] begin to close iptables. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-                    iptables -D INPUT -p tcp --sport 14587 -j ACCEPT -w 60
-                    iptables -D FORWARD -p tcp --sport 14587 -j ACCEPT -w 60
-                    iptables -D OUTPUT -p tcp --sport 14587 -j ACCEPT -w 60
-                    iptables -I INPUT -p tcp --sport 14587 -j ACCEPT -w 60
-                    iptables -I FORWARD -p tcp --sport 14587 -j ACCEPT -w 60
-                    iptables -I OUTPUT -p tcp --sport 14587 -j ACCEPT -w 60
+                    iptables -D INPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
+                    iptables -D FORWARD -p tcp --sport ${cms_port} -j ACCEPT -w 60
+                    iptables -D OUTPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
+                    iptables -I INPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
+                    iptables -I FORWARD -p tcp --sport ${cms_port} -j ACCEPT -w 60
+                    iptables -I OUTPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
                 fi
                 logAndEchoInfo "[ograc daemon] begin to start cms use ${ograc_user}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
                 su -s /bin/bash - ${ograc_user} -c "sh /opt/ograc/action/cms/cms_start2.sh -start" >> /opt/ograc/log/deploy/deploy_daemon.log 2>&1 &

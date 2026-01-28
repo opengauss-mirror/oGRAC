@@ -91,6 +91,7 @@ class DssCtl(object):
         self.dss_vg_cfg = os.path.join(DSS_CFG, "dss_vg_conf.ini")
         self.node_id = get_value("node_id")
         self.cms_ip = get_value("cms_ip")
+        self.dss_port = get_value("dss_port")
         self.mes_ssl_switch = get_value("mes_ssl_switch")
         self.ca_path = get_value("ca_path")
         self.crt_path = get_value("crt_path")
@@ -224,7 +225,7 @@ class DssCtl(object):
             os.makedirs(DSS_CFG, exist_ok=True)
         ComOpt.write_ini(self.dss_vg_cfg, VG_CONFIG, split=":")
         INST_CONFIG["INST_ID"] = self.node_id
-        INST_CONFIG["DSS_NODES_LIST"] = "0:{}:1811,1:{}:1811".format(self.cms_ip.split(";")[0], self.cms_ip.split(";")[1])
+        INST_CONFIG["DSS_NODES_LIST"] = "0:{}:{},1:{}:{}".format(self.cms_ip.split(";")[0], self.dss_port, self.cms_ip.split(";")[1], self.dss_port)
         INST_CONFIG["LSNR_PATH"] = DSS_HOME
         INST_CONFIG["LOG_HOME"] = DSS_LOG
         INST_CONFIG["STORAGE_MODE"] = "SHARE_DISK"

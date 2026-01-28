@@ -313,7 +313,7 @@ def load_config_param(json_data):
     node_str = "node" + str(g_opts.node_id)
     g_opts.max_arch_files_size = json_data['MAX_ARCH_FILES_SIZE'].strip()
     g_opts.cluster_id = json_data.get("cluster_id", "0").strip()
-
+    g_opts.cms_port = json_data['cms_port']
 
 def parse_parameter():
     try:
@@ -2234,6 +2234,8 @@ class Installer:
             "NODE_ID": g_opts.node_id,
             "NODE_IP[0]": node_ip[0],
             "NODE_IP[1]": node_ip[1],
+            "CMS_PORT[0]": g_opts.cms_port,
+            "CMS_PORT[1]": g_opts.cms_port,
             "LSNR_NODE_IP[0]": node_ip[0],
             "LSNR_NODE_IP[1]": node_ip[1],
             "USER": self.user,
