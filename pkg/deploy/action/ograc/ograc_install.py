@@ -2173,8 +2173,8 @@ class Installer:
 
         if not g_opts.use_dbstor:
             common_parameters["FILE_OPTIONS"] = "FULLDIRECTIO"
-        # if g_opts.use_gss:
-        #     common_parameters["FILE_OPTIONS"] = "ASYNCH"
+        if g_opts.use_gss:
+            common_parameters["FILE_OPTIONS"] = "ASYNCH"
 
         # 1.clean old conf
         self.clean_old_conf(list(common_parameters.keys()), conf_file)

@@ -41,6 +41,20 @@ function buildCtOmPackage() {
 }
 
 function buildDssPackage() {
+  echo "wget openGauss third party"
+  if [[ x"${proxy_user}" != x"" ]];then
+      export http_proxy=http://${proxy_user}:${proxy_pwd}@${proxy_url}
+      export https_proxy=${http_proxy}
+      export no_proxy=127.0.0.1,.huawei.com,localhost,local,.local
+  fi
+  cd ${OGDB_CODE_PATH}
+  if [[ ${ENV_TYPE} == "aarch64" ]];then
+    wget --no-check-certificate https://opengauss.obs.cn-south-1.myhuaweicloud.com/6.0.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_2203_arm.tar.gz
+    tar -zxf openGauss-third_party_binarylibs_openEuler_2203_arm.tar.gz
+  else 
+    wget --no-check-certificate https://opengauss.obs.cn-south-1.myhuaweicloud.com/6.0.0/binarylibs/gcc10.3/openGauss-third_party_binarylibs_Centos7.6_x86_64.tar.gz
+    tar -zxf openGauss-third_party_binarylibs_Centos7.6_x86_64.tar.gz
+  fi
   sh "${CURRENT_PATH}"/build_dss.sh ${BUILD_TYPE}
 }
 
