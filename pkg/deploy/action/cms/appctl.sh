@@ -49,6 +49,7 @@ INIT_CONTAINER_NAME="init_container.sh"
 #cgroup预留cms内存隔离值，单位G
 DEFAULT_MEM_SIZE=10
 cms_home=/opt/ograc/cms
+cms_config=/opt/ograc/cms/cfg/cms.ini
 ograc_home=/opt/ograc/ograc
 cms_log=/opt/ograc/log/cms
 cms_scripts=/opt/ograc/action/cms
@@ -131,42 +132,46 @@ function clear_shm()
 }
 
 function iptables_accept() {
+    line=$(grep "_PORT" ${cms_config})
+    cms_port=${line##*= }
     iptables_path=$(whereis iptables | awk -F: '{print $2}')
     if [ -z "${iptables_path}" ];then
         return
     fi
     echo "start accept iptables, path ${iptables_path}"
-    ret=`iptables -L INPUT -w 60 | grep ACCEPT | grep 14587 | grep tcp | wc -l`
+    ret=`iptables -L INPUT -w 60 | grep ACCEPT | grep ${cms_port} | grep tcp | wc -l`
     if [ ${ret} == 0 ];then
-        iptables -I INPUT -p tcp --sport 14587 -j ACCEPT -w 60
+        iptables -I INPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
     fi
-    ret=`iptables -L FORWARD -w 60 | grep ACCEPT | grep 14587 | grep tcp | wc -l`
+    ret=`iptables -L FORWARD -w 60 | grep ACCEPT | grep ${cms_port} | grep tcp | wc -l`
     if [ ${ret} == 0 ];then
-        iptables -I FORWARD -p tcp --sport 14587 -j ACCEPT -w 60
+        iptables -I FORWARD -p tcp --sport ${cms_port} -j ACCEPT -w 60
     fi
-    ret=`iptables -L OUTPUT -w 60 | grep ACCEPT | grep 14587 | grep tcp | wc -l`
+    ret=`iptables -L OUTPUT -w 60 | grep ACCEPT | grep ${cms_port} | grep tcp | wc -l`
     if [ ${ret} == 0 ];then
-        iptables -I OUTPUT -p tcp --sport 14587 -j ACCEPT -w 60
+        iptables -I OUTPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
     fi
 }
 
 function iptables_delete() {
+    line=$(grep "_PORT" ${cms_config})
+    cms_port=${line##*= }
     iptables_path=$(whereis iptables | awk -F: '{print $2}')
     if [ -z "${iptables_path}" ];then
         return
     fi
     echo "start delete iptables, path ${iptables_path}"
-    ret=`iptables -L INPUT -w 60 | grep ACCEPT | grep 14587 | grep tcp | wc -l`
+    ret=`iptables -L INPUT -w 60 | grep ACCEPT | grep ${cms_port} | grep tcp | wc -l`
     if [ ${ret} != 0 ];then
-        iptables -D INPUT -p tcp --sport 14587 -j ACCEPT -w 60
+        iptables -D INPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
     fi
-    ret=`iptables -L FORWARD -w 60 | grep ACCEPT | grep 14587 | grep tcp | wc -l`
+    ret=`iptables -L FORWARD -w 60 | grep ACCEPT | grep ${cms_port} | grep tcp | wc -l`
     if [ ${ret} != 0 ];then
-        iptables -D FORWARD -p tcp --sport 14587 -j ACCEPT -w 60
+        iptables -D FORWARD -p tcp --sport ${cms_port} -j ACCEPT -w 60
     fi
-    ret=`iptables -L OUTPUT -w 60 | grep ACCEPT | grep 14587 | grep tcp | wc -l`
+    ret=`iptables -L OUTPUT -w 60 | grep ACCEPT | grep ${cms_port} | grep tcp | wc -l`
     if [ ${ret} != 0 ];then
-        iptables -D OUTPUT -p tcp --sport 14587 -j ACCEPT -w 60
+        iptables -D OUTPUT -p tcp --sport ${cms_port} -j ACCEPT -w 60
     fi
 }
 
