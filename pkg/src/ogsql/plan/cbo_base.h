@@ -381,6 +381,7 @@ typedef struct _st_cbo_index_choose_assist {
     bool8 index_full_scan;
     bool8 index_ss;
     double startup_cost;
+    bool8 index_ffs;
 } cbo_index_choose_assist_t;
 // //////////////////////////////////////////////////////////////////////////////////////
 // global variant

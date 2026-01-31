@@ -69,8 +69,174 @@ double sql_adjust_est_row(double rows)
     return rows;
 }
 
+static inline bool32 check_index_fast_full_scan(cbo_index_choose_assist_t *ca)
+{
+    return ca->index_ffs && INDEX_ONLY_SCAN_ONLY(ca->scan_flag);
+}
+
+bool32 get_table_skip_index_flag(sql_table_t *table, uint32 id)
+{
+    uint64 pos = ((uint64)1 << id);
+    return (bool32)((table->cbo_attr.idx_ss_flags & pos) != 0);
+}
+
+static inline void set_table_skip_index_flag(sql_table_t *table, uint32 id, bool32 flag)
+{
+    uint64 pos = ((uint64)1 << id);
+    if (flag) {
+        table->cbo_attr.idx_ss_flags |= pos;
+    } else {
+        table->cbo_attr.idx_ss_flags &= (~pos);
+    }
+}
+
+static bool32 cbo_get_index_skip_flag(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, sql_table_t *table,
+                                    galist_t *cond_cols, galist_t *conds, cbo_stats_info_t* stats_info)
+{
+    if (IS_REVERSE_INDEX(ca->index)) {
+        return OG_FALSE;
+    }
+
+    /* use range scan when the first column of index is an equal cond, a = 1 and b = 10 */
+    if (ca->strict_equal_cnt > 0) {
+        return OG_FALSE;
+    }
+
+    if (ca->idx_match_cnt <= 1) {
+        return OG_FALSE;
+    }
+
+    dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
+    uint16 leading_col = ca->index->columns[0];
+    /* cal num_disdinct: the number of unique value according to this column */
+    cbo_stats_column_t *column_stats = cbo_get_column_stats(stats_info->cbo_table_stats, leading_col);
+    uint64 num_dist = (column_stats == NULL ? OG_INVALID_ID64 : column_stats->num_distinct);
+    if (num_dist == OG_INVALID_ID64) {
+        return OG_FALSE;
+    }
+    
+    cbo_stats_index_t *index_stats = stats_info->cbo_index_stats;
+    if (index_stats == NULL) {
+        return OG_FALSE;
+    }
+
+    double ff;
+    OGSQL_SAVE_STACK(stmt);
+    RET_AND_RESTORE_STACK_IFERR(compute_hist_factor_by_conds(stmt, entity, cond_cols, conds, &ff, stats_info), stmt);
+    OGSQL_RESTORE_STACK(stmt);
+    uint32 leaf_blks = MAX(index_stats->leaf_blocks, 1);
+    if (leaf_blks == 0) {
+        return OG_FALSE;
+    }
+    double ff2 = (double)num_dist / leaf_blks;
+    return (bool32)(ff2 < ff);
+}
+
+static inline double index_ffs_io_cost(cbo_stats_index_t *idx_stats)
+{
+    double blocks_fetched;
+    if (idx_stats == NULL) {
+        blocks_fetched = CBO_INDEX_BASE_BLOCKS;
+    } else {
+        blocks_fetched = MAX(idx_stats->leaf_blocks, CBO_INDEX_BASE_BLOCKS);
+    }
+
+    /* IO cost: cost for index ffs is the same as index full scan nowdays for cantian */
+    double cost = blocks_fetched * CBO_DEFAULT_SEQ_PAGE_COST;
+    return CBO_COST_SAFETY_RET(cost);
+}
+
+static status_t cbo_table_need_cal_ss_column_count(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, index_t *index,
+    galist_t *index_cond, galist_t *cond_cols, galist_t *ss_cond_cols,
+    galist_t *ss_fisrt_index_bound_quals, galist_t *ss_index_bound_quals)
+{
+    uint32 col_id = 0;
+    uint32 *cond_col = NULL;
+    uint32 cond_idx;
+    OGSQL_SAVE_STACK(stmt);
+    for (cond_idx = 0; cond_idx < index_cond->count; cond_idx++) {
+        cmp_node_t *cmp = NULL;
+
+        if (index->desc.columns[col_id] != *(uint32*)cm_galist_get(cond_cols, cond_idx)) {
+            col_id++;
+            if (index->desc.columns[col_id] != *(uint32*)cm_galist_get(cond_cols, cond_idx)) {
+                break;
+            }
+        }
+
+        cmp = (cmp_node_t*)cm_galist_get(index_cond, cond_idx);
+        
+        /* a > 1 and b  = 10 and c = 5
+        * range scan: idx_match_cnt = 1 = index_bound_quals->count
+        * skip scan for not equel of the first column: idx_match_cnt = 3
+        * skip scan for lack of the first column: idx_match_cnt = 2 (b  = 10 and c = 5)
+        */
+        ca->idx_match_cnt++;
+        RET_AND_RESTORE_STACK_IFERR(cm_galist_insert(ss_index_bound_quals, cmp), stmt);
+
+        if (index->desc.columns[0] == *(uint32*)cm_galist_get(cond_cols, cond_idx)) {
+            RET_AND_RESTORE_STACK_IFERR(sql_stack_alloc(stmt, sizeof(uint32), (void **)&cond_col), stmt);
+            *cond_col = index->desc.columns[col_id];
+            RET_AND_RESTORE_STACK_IFERR(cm_galist_insert(ss_cond_cols, cond_col), stmt);
+            RET_AND_RESTORE_STACK_IFERR(cm_galist_insert(ss_fisrt_index_bound_quals, cmp), stmt);
+        }
+
+        if (col_id != 0 && cmp->type != CMP_TYPE_EQUAL && cmp->type != CMP_TYPE_IN) {
+            break;
+        }
+    }
+    OGSQL_RESTORE_STACK(stmt);
+    return OG_SUCCESS;
+}
+
+static status_t cbo_table_check_skip_scan_index(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, sql_table_t *table,
+    index_t *index, galist_t *cond_cols, galist_t *index_cond, galist_t *ss_index_bound_quals,
+    cbo_stats_info_t* stats_info, bool32 ss_strict_flag)
+{
+    galist_t *ss_fisrt_index_bound_quals = NULL;
+    galist_t *ss_cond_cols = NULL;
+    OGSQL_SAVE_STACK(stmt);
+    RET_AND_RESTORE_STACK_IFERR(sql_stack_alloc(stmt, sizeof(galist_t), (void **)&ss_cond_cols), stmt);
+    cm_galist_init(ss_cond_cols, stmt, sql_stack_alloc);
+
+    RET_AND_RESTORE_STACK_IFERR(sql_stack_alloc(stmt, sizeof(galist_t), (void **)&ss_fisrt_index_bound_quals), stmt);
+    cm_galist_init(ss_fisrt_index_bound_quals, stmt, sql_stack_alloc);
+
+    cbo_table_need_cal_ss_column_count(stmt, ca, index, index_cond, cond_cols, ss_cond_cols,
+                                    ss_fisrt_index_bound_quals, ss_index_bound_quals);
+
+    if (ss_strict_flag) {
+        ca->idx_match_cnt++;
+    }
+
+    if (cbo_get_index_skip_flag(stmt, ca, table, ss_cond_cols, ss_fisrt_index_bound_quals, stats_info)) {
+        set_table_skip_index_flag(table, ca->index->id, OG_TRUE);
+        OGSQL_RESTORE_STACK(stmt);
+        return OG_SUCCESS;
+    }
+
+    if (ss_strict_flag) {
+        ca->idx_match_cnt--;
+    }
+    set_table_skip_index_flag(table, ca->index->id, OG_FALSE);
+    OGSQL_RESTORE_STACK(stmt);
+    return OG_SUCCESS;
+}
+
+static double is_null_hist_factor(cbo_stats_column_t *column_stats)
+{
+    if (column_stats == NULL) {
+        return CBO_DEFAULT_NULL_FF;
+    }
+    if (column_stats->total_rows == 0) {
+        return 0.0;
+    }
+    return 1.0 * column_stats->num_null / column_stats->total_rows;
+}
+
 static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, dc_entity_t *entity,
-    index_t *index, galist_t *index_cond, galist_t *cond_cols, double *cost, int64* card, cbo_stats_info_t* stats_info)
+    index_t *index, galist_t *index_cond, galist_t *cond_cols, double *cost, int64* card,
+    cbo_stats_info_t* stats_info, sql_table_t *table)
 {
     galist_t *index_bound_quals = NULL;
     bool32 equal_here = OG_FALSE;
@@ -78,6 +244,8 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
     uint32 cond_idx;
     double index_ff;
     double table_ff;
+    galist_t *ss_index_bound_quals = NULL;
+    bool32 ss_strict_flag = OG_FALSE;
 
     /*
      * For a btree scan, only leading '=' conds plus inequality cond for the
@@ -88,6 +256,9 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
     OGSQL_SAVE_STACK(stmt);
     RET_AND_RESTORE_STACK_IFERR(sql_stack_alloc(stmt, sizeof(galist_t), (void **)&index_bound_quals), stmt);
     cm_galist_init(index_bound_quals, stmt, sql_stack_alloc);
+
+    RET_AND_RESTORE_STACK_IFERR(sql_stack_alloc(stmt, sizeof(galist_t), (void **)&ss_index_bound_quals), stmt);
+    cm_galist_init(ss_index_bound_quals, stmt, sql_stack_alloc);
 
     col_id = 0;
     for (cond_idx = 0; cond_idx < index_cond->count; cond_idx++) {
@@ -112,6 +283,10 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
         }
         cm_galist_insert(index_bound_quals, cmp);
     }
+    
+    if (index_cond->count != 0 && index_bound_quals->count == 0) {
+        ss_strict_flag = true;
+    }
 
     if (index_bound_quals->count == 0) {
         ca->index_full_scan = true;
@@ -121,6 +296,20 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
     if (IS_INDEX_UNIQUE(&index->desc) && index->desc.column_count == ca->strict_equal_cnt) {
         index_ff = table_ff = stats_info->cbo_table_stats->rows == 0 ? 0 : 1.0 / (stats_info->cbo_table_stats->rows);
     } else {
+        /* check to use skip index, two condition for matching skip index
+         * one condition: lack of the first column of index.
+         * two condition: type of the first column of index is not equel.
+         */
+        if (ss_strict_flag || ((ca->strict_equal_cnt == 0) && (index_bound_quals->count > 0))) {
+            cbo_table_check_skip_scan_index(stmt, ca, table, index, cond_cols, index_cond,
+                ss_index_bound_quals, stats_info, ss_strict_flag);
+        }
+
+        if (get_table_skip_index_flag(table, ca->index->id)) {
+            index_bound_quals = ss_index_bound_quals;
+            ca->index_full_scan = false;
+        }
+
         RET_AND_RESTORE_STACK_IFERR(compute_hist_factor_by_conds(stmt, entity, cond_cols, index_bound_quals,
             &index_ff, stats_info), stmt);
 
@@ -154,8 +343,16 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
     ca->startup_cost += blevel * CBO_DEFAULT_RANDOM_PAGE_COST;
     ca->startup_cost = CBO_COST_SAFETY_RET(ca->startup_cost);
     *cost += ca->startup_cost;
+
     /* index io cost */
-    *cost += (index_stats->leaf_blocks) * index_ff * CBO_DEFAULT_RANDOM_PAGE_COST;
+    if (check_index_fast_full_scan(ca)) {
+        // INDEX FAST FULL SCAN, JUST consider single table to lower the impact nowadays.
+        double cost_fast_full_scan = index_ffs_io_cost(index_stats);
+        *cost += cost_fast_full_scan;
+    } else {
+        *cost += (index_stats->leaf_blocks) * index_ff * CBO_DEFAULT_RANDOM_PAGE_COST;
+    }
+
     /* index cpu cost */
     if (index_stats->avg_leaf_key != 0) {
         *cost += 1 / index_stats->avg_leaf_key * CBO_DEFAULT_CPU_OPERATOR_COST;
@@ -177,7 +374,7 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
 }
 
 double sql_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, dc_entity_t *entity, index_t *index,
-    galist_t **idx_cond_array, int64 *card, cbo_stats_info_t* stats_info)
+    galist_t **idx_cond_array, int64 *card, cbo_stats_info_t* stats_info, sql_table_t *table)
 {
     galist_t *index_cond = NULL;
     galist_t *cond_cols = NULL;
@@ -208,14 +405,10 @@ double sql_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, dc_e
                 cm_galist_get(idx_cond_array[col_id], cond_idx)), stmt, cost);
             RETVALUE_AND_RESTORE_STACK_IFERR(cm_galist_insert(cond_cols, cond_col), stmt, cost);
         }
-        /* if first index col is not matched to any cond, break directly. Maybe index skip scan can continue. */
-        if (index_cond->count == 0) {
-            break;
-        }
     }
 
     RETVALUE_AND_RESTORE_STACK_IFERR(sql_calc_cost_index(stmt, ca, entity, index, index_cond, cond_cols, &cost,
-        card, stats_info), stmt, cost);
+        card, stats_info, table), stmt, cost);
     OGSQL_RESTORE_STACK(stmt);
 
     return cost;
@@ -462,7 +655,6 @@ static double ineq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, 
     double hist_frac;
     uint32 n_hist = column_stats->hist_count;
     uint32 low_bound = 0;
-    int32 cmp;
 
     OG_RETVALUE_IFTRUE(binary_search_histogram(stmt, entity, column_stats, col_id, const_val, isgt, &low_bound) !=
                        OG_SUCCESS, CBO_DEFAULT_INEQ_FF);
@@ -475,26 +667,17 @@ static double ineq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, 
      */
     if (low_bound == n_hist) {
         /* 1 */
-        hist_frac = isgt ? 0 : 1.0;
+        hist_frac = isgt ? 0 : 1.0 - is_null_hist_factor(column_stats);
         return hist_frac;
     }
-    variant_t hist_var;
-    knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[low_bound]->ep_value, &hist_var);
-    OG_RETVALUE_IFTRUE(sql_compare_variant(stmt, &hist_var, const_val, &cmp) != OG_SUCCESS, CBO_DEFAULT_INEQ_FF);
 
-    if (cmp == 0) {
-        /* 2.a */
-        int64 last_num = low_bound == 0 ? 0 : column_stats->column_hist[low_bound - 1]->ep_number;
+    /* 2 */
+    int64 last_num = low_bound == 0 ? 0 : column_stats->column_hist[low_bound - 1]->ep_number;
 
-        hist_frac = isgt ? column_stats->column_hist[low_bound]->ep_number : last_num * 1.0;
-        hist_frac /= (column_stats->total_rows - column_stats->num_null);
-    } else {
-        /* 2.b */
-        hist_frac = column_stats->column_hist[low_bound]->ep_number;
-        hist_frac /= (column_stats->total_rows - column_stats->num_null);
-    }
+    hist_frac = last_num * 1.0;
+    hist_frac /= column_stats->total_rows;
 
-    hist_frac = isgt ? (1 - hist_frac) : hist_frac;
+    hist_frac = isgt ? (1 - hist_frac - is_null_hist_factor(column_stats)) : hist_frac;
 
     return hist_frac;
 }
@@ -1508,7 +1691,7 @@ double sql_estimate_subpartition_index_scan_cost(sql_stmt_t *stmt, cbo_index_cho
             index_id, index_partition_no, index_subpartition_no));
         OG_RETURN_MAX_COST_IFERR(sql_cal_table_or_partition_stats(entity, table, &stats_info, KNL_SESSION(stmt)));
         OG_RETURN_MAX_COST_IFTRUE(stats_info.cbo_index_stats == NULL);
-        cost += sql_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, &stats_info);
+        cost += sql_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, &stats_info, table);
         cost = CBO_COST_SAFETY_RET(cost);
     }
     if (part_cnt > MAX_CBO_CALU_PARTS_COUNT) {
@@ -1537,7 +1720,7 @@ double sql_estimate_partition_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose
             index_id, index_partition_no, CBO_GLOBAL_SUBPART_NO));
         OG_RETURN_MAX_COST_IFERR(sql_cal_table_or_partition_stats(entity, table, &stats_info, KNL_SESSION(stmt)));
         OG_RETURN_MAX_COST_IFTRUE(stats_info.cbo_index_stats == NULL);
-        cost += sql_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, &stats_info);
+        cost += sql_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, &stats_info, table);
         cost = CBO_COST_SAFETY_RET(cost);
     }
     if (part_cnt > MAX_CBO_CALU_PARTS_COUNT) {
@@ -1560,7 +1743,7 @@ double sql_estimate_nopartition_index_scan_cost(sql_stmt_t *stmt, cbo_index_choo
         index_id, CBO_GLOBAL_PART_NO, CBO_GLOBAL_SUBPART_NO));
     OG_RETURN_MAX_COST_IFERR(sql_cal_table_or_partition_stats(entity, table, &stats_info, KNL_SESSION(stmt)));
     OG_RETURN_MAX_COST_IFTRUE(stats_info.cbo_index_stats == NULL);
-    cost = sql_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, &stats_info);
+    cost = sql_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, &stats_info, table);
     cost = CBO_COST_SAFETY_RET(cost);
     return cost;
 }
@@ -3758,6 +3941,78 @@ status_t sql_init_table_scan_partition_info(sql_stmt_t *stmt, plan_assist_t *pa,
     return OG_SUCCESS;
 }
 
+static bool32 cbo_check_use_index_ffs(plan_assist_t * pa, sql_table_t *table, knl_index_desc_t *index, uint32 scan_flag)
+{
+    if (pa->query->connect_by_cond != NULL) {
+        return OG_FALSE;
+    }
+    
+    /* no index only is conflict with ffs */
+    if (!INDEX_ONLY_SCAN(scan_flag)) {
+        return OG_FALSE;
+    }
+
+    /* sort(no index sort) is not with ffs */
+    if (pa->sort_items != NULL && pa->sort_items->count > 0 && !CAN_INDEX_SORT(scan_flag)) {
+        return OG_TRUE;
+    }
+    
+    /* with multi_index no conflict */
+    if (CBO_INDEX_HAS_FLAG(pa, USE_MULTI_INDEX)) {
+        return OG_TRUE;
+    }
+
+    return OG_TRUE;
+}
+
+static void cbo_try_choose_fast_full_scan_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, index_t *index,
+    uint16 scan_flag, bool32 index_dsc)
+{
+    if (!cbo_check_use_index_ffs(pa, table, &index->desc, scan_flag)) {
+        return;
+    }
+
+    cbo_index_choose_assist_t ca = {
+        .index = &index->desc,
+        .strict_equal_cnt = 0,
+        .match_mode = COLUMN_MATCH_1_BORDER_RANGE,
+        .scan_flag = scan_flag & RBO_INDEX_ONLY_FLAG,
+        .index_full_scan = OG_TRUE,
+        .index_ffs = OG_TRUE
+    };
+    
+    dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
+    double cost_ffs = 0.0;
+    bool32 matched = false;
+    
+    OGSQL_SAVE_STACK(stmt);
+    galist_t *idx_cond_array[OG_MAX_INDEX_COLUMNS];
+    RETVOID_AND_RESTORE_STACK_IFERR(init_idx_cond_array(stmt, idx_cond_array), stmt);
+
+    /* collect conditions matched to index, except OR conds */
+    if (pa->cond != NULL) {
+        match_conds_to_index(pa, table, index, pa->cond->root, idx_cond_array, &matched);
+    }
+
+    cost_ffs = sql_estimate_index_scan_cost(stmt, &ca, entity, index, idx_cond_array, NULL, table);
+
+    OGSQL_RESTORE_STACK(stmt);
+
+    /* Besides a lower cost, we prefer index scan containing unqiue. */
+    if (table->index == NULL || prefer_another_index_choice(stmt, pa, table, &ca, cost_ffs)
+        || HAS_SPEC_TYPE_HINT(table->hint_info, INDEX_HINT, HINT_KEY_WORD_INDEX_FFS)) {
+        table->cost = cost_ffs;
+        table->index = &index->desc;
+        table->scan_flag = ca.scan_flag;
+        table->scan_mode = SCAN_MODE_INDEX;
+        table->index_full_scan = ca.index_full_scan;
+        table->idx_equal_to = ca.strict_equal_cnt;
+        table->index_dsc = ca.index_dsc;
+        table->index_ffs = ca.index_ffs;
+        table->index_skip_scan = get_table_skip_index_flag(table, ca.index->id);
+    }
+}
+
 void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, index_t *index)
 {
     cbo_index_choose_assist_t ca = {
@@ -3811,6 +4066,12 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
         table->index_full_scan = ca.index_full_scan;
         table->idx_equal_to = ca.strict_equal_cnt;
         table->index_dsc = ca.index_dsc;
+        table->index_skip_scan = get_table_skip_index_flag(table, ca.index->id);
+    }
+
+    if ((ca.index_full_scan = true && INDEX_ONLY_SCAN_ONLY(ca.scan_flag)) || ca.index_full_scan == false) {
+        /* compare with ffs */
+        cbo_try_choose_fast_full_scan_index(stmt, pa, table, index, ca.scan_flag, table->index_dsc);
     }
 }
 

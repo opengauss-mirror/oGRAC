@@ -22,3 +22,4 @@ test: og_explain
 test: og_slowsql
 test: og_hint
 test: og_startcost
+test: og_index_enhance
