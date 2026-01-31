@@ -1,0 +1,168 @@
+SQL> create table t_startcost(id serial primary key, b int, c int,d char(1));
+
+Succeed.
+
+SQL> create index idx_b on t_startcost(b);
+
+Succeed.
+
+SQL> create index idx_b_c on t_startcost(b,c);
+
+Succeed.
+
+SQL> 
+SQL> BEGIN
+  2     INSERT INTO t_startcost (b, c, d) VALUES (1, 10, 'A');
+  3    
+  4     FOR i IN 2..1000 LOOP
+  5         INSERT INTO t_startcost (b, c, d) VALUES (
+  6             MOD(i, 100),                    
+  7             i * 10,                        
+  8             CASE MOD(i, 4)
+  9                 WHEN 0 THEN 'A'
+ 10                 WHEN 1 THEN 'B'
+ 11                 WHEN 2 THEN 'C'
+ 12                 WHEN 3 THEN 'D'
+ 13             END
+ 14         );
+ 15     END LOOP;
+ 16 END;
+ 17 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> analyze table t_startcost compute statistics;
+
+Succeed.
+
+SQL> 
+SQL> explain select * from t_startcost;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |             | 1000 | 7    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> explain select * from t_startcost where id = 100;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+| Id | Operation                        | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                 |       |              | 1    | 8    | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | T_STARTCOST  | 1    | 8    | 8         |       |        |
+| 2  |       INDEX UNIQUE SCAN          | SYS   | _PK_SYS_1_58 | 1    | 8    | 8         |       |        |
+-----------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - access: ID = 100                                        
+
+10 rows fetched.
+
+SQL> 
+SQL> explain select * from t_startcost as a1 join t_startcost as a2 on (a1.b=a2.b);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------
+| Id | Operation                          | Owner | Name           | Rows  | Cost  | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                   |       |                | 10000 | 10350 | 8         |       |        |
+| 1  |   NESTED LOOPS                     |       |                | 10000 | 10350 | 8         |       |        |
+| 2  |       TABLE ACCESS FULL            | SYS   | T_STARTCOST A1 | 1000  | 7     | 0         |       |        |
+| 3  |       TABLE ACCESS BY INDEX ROWID  | SYS   | T_STARTCOST A2 | 1000  | 10    | 8         |       |        |
+| 4  |         INDEX RANGE SCAN           | SYS   | IDX_B          | 1000  | 10    | 8         |       |        |
+-----------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    4 - access: A1.B = A2.B                                     
+
+12 rows fetched.
+
+SQL> 
+SQL> explain select * from t_startcost limit 100;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |             | 100  | 8    | 0         |       |        |
+| 1  |   QUERY LIMIT           |       |             | 100  | 8    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+-------------------------------------------------------------------------------------------------
+
+7 rows fetched.
+
+SQL> explain select * from t_startcost limit 10 offset 800;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |             | 10   | 13   | 6         |       |        |
+| 1  |   QUERY LIMIT           |       |             | 10   | 13   | 6         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+-------------------------------------------------------------------------------------------------
+
+7 rows fetched.
+
+SQL> 
+SQL> explain select b from t_startcost group by b;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+| Id | Operation                         | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                  |       |             | 100  | 50   | 24        |       |        |
+| 1  |   INDEX GROUP BY                  |       |             | 100  | 50   | 24        |       |        |
+| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | T_STARTCOST | 1000 | 24   | 8         |       |        |
+| 3  |         INDEX FULL SCAN           | SYS   | IDX_B       | 1000 | 24   | 8         |       |        |
+-----------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
+
+SQL> explain select b, count(*) from t_startcost group by b; 
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+| Id | Operation                         | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                  |       |             | 100  | 53   | 24        |       |        |
+| 1  |   INDEX GROUP BY                  |       |             | 100  | 53   | 24        |       |        |
+| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | T_STARTCOST | 1000 | 24   | 8         |       |        |
+| 3  |         INDEX FULL SCAN           | SYS   | IDX_B       | 1000 | 24   | 8         |       |        |
+-----------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
+
+SQL> explain select b, d, count(*) from t_startcost group by b, d;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |             | 400  | 49   | 10        |       |        |
+| 1  |   HASH GROUP BY         |       |             | 400  | 49   | 10        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+-------------------------------------------------------------------------------------------------
+
+7 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_startcost;
+
+Succeed.
+

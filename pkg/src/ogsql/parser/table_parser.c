@@ -1152,6 +1152,7 @@ status_t sql_create_join_node(sql_stmt_t *stmt, sql_join_type_t join_type, sql_t
     OG_RETURN_IFERR(sql_create_array(stmt->context, &(*join_node)->tables, "JOINS TABLES", OG_MAX_JOIN_TABLES));
     (*join_node)->type = join_type;
     (*join_node)->cost.cost = CBO_MIN_COST;
+    (*join_node)->cost.startup_cost = CBO_MIN_COST;
     (*join_node)->cost.card = CBO_MAX_ROWS;
     (*join_node)->join_cond = cond;
     (*join_node)->left = left;

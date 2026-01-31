@@ -227,6 +227,23 @@ static status_t expl_format_plan_cost(expl_helper_t *helper)
     return expl_row_put_text_data(helper, EXPL_COL_TYPE_COST, &cost_str);
 }
 
+static status_t expl_format_plan_start_cost(expl_helper_t *helper)
+{
+    if (!(CBO_ON)) {
+        return row_put_null(&helper->ra);
+    }
+
+    char buff[OG_MAX_INT64_STRLEN + 1] = {0};
+    int64 start_cost = (int64)helper->row_helper.start_cost;
+    int32 len = snprintf_s(buff, OG_MAX_INT64_STRLEN + 1, OG_MAX_INT64_STRLEN, "%lld", start_cost);
+    if (SECUREC_UNLIKELY(len == -1)) {
+        return OG_ERROR;
+    }
+
+    text_t start_cost_str = {buff, len};
+    return expl_row_put_text_data(helper, EXPL_COL_TYPE_START_COST, &start_cost_str);
+}
+
 static status_t expl_format_plan_bytes(expl_helper_t *helper)
 {
     return row_put_null(&helper->ra);
@@ -243,6 +260,7 @@ expl_column_t g_expl_columns[] = {{EXPL_COL_TYPE_ID, {"Id", 2}, expl_format_plan
                                   {EXPL_COL_TYPE_TABLE, {"Name", 4}, expl_format_plan_name},
                                   {EXPL_COL_TYPE_ROWS, {"Rows", 4}, expl_format_plan_rows},
                                   {EXPL_COL_TYPE_COST, {"Cost", 4}, expl_format_plan_cost},
+                                  {EXPL_COL_TYPE_START_COST, {"StartCost", 9}, expl_format_plan_start_cost},
                                   {EXPL_COL_TYPE_BYTES, {"Bytes", 5}, expl_format_plan_bytes},
                                   {EXPL_COL_TYPE_REMARK, {"Remark", 6}, expl_format_plan_remarks}};
 
@@ -257,6 +275,7 @@ void expl_row_helper_init(row_helper_t *helper, plan_node_t *plan_node, text_t *
     if (plan_node != NULL) {
         helper->rows = plan_node->rows;
         helper->cost = plan_node->cost;
+        helper->start_cost = plan_node->start_cost;
     }
 }
 

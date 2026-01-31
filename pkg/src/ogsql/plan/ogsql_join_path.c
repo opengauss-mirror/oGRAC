@@ -1113,6 +1113,7 @@ static status_t sql_build_subselect_path_internal(plan_assist_t *parent_pa, sql_
         OG_RETURN_IFERR(sql_jtable_add_path(stmt, jtable, jnode));
     } else {
         table->cost = jnode->cost.cost;
+        table->cost = jnode->cost.startup_cost;
         table->card = jnode->cost.card;
     }
 
@@ -1151,6 +1152,7 @@ static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_t
     if (pa.table_count > 1) {
         OG_RETURN_IFERR(sql_build_join_tree(stmt, &pa, &query->join_root));
         jnode->cost.cost += query->join_root->cost.cost;
+        jnode->cost.startup_cost += query->join_root->cost.startup_cost;
         jnode->cost.card += query->join_root->cost.card;
     } else if (pa.tables[0]->type == SUBSELECT_AS_TABLE || pa.tables[0]->type == WITH_AS_TABLE) {
         join_tbl_bitmap_t empty_table_ids;
@@ -1159,10 +1161,12 @@ static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_t
             sql_build_subselect_path_internal(&pa, pa.tables[0], NULL, &empty_table_ids, NULL), stmt);
         jnode->cost.card += pa.tables[0]->card;
         jnode->cost.cost += pa.tables[0]->cost;
+        jnode->cost.startup_cost += pa.tables[0]->startup_cost;
     } else {
         RET_AND_RESTORE_STACK_IFERR(sql_check_table_indexable(stmt, &pa, pa.tables[0], pa.cond), stmt);
         jnode->cost.card += pa.tables[0]->card;
         jnode->cost.cost += pa.tables[0]->cost;
+        jnode->cost.startup_cost += pa.tables[0]->startup_cost;
     }
 
     OGSQL_RESTORE_STACK(stmt);
@@ -1311,7 +1315,8 @@ static status_t get_parameterized_path_internal(join_assist_t *ja, uint32 table_
     dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
     cbo_index_choose_assist_t ca = {
         .index = &index->desc,
-        .strict_equal_cnt = 0
+        .strict_equal_cnt = 0,
+        .startup_cost = 0.0
     };
 
     sql_table_t *tmp_table = NULL;
@@ -1325,8 +1330,10 @@ static status_t get_parameterized_path_internal(join_assist_t *ja, uint32 table_
 
     int64 card;
     double cost = sql_estimate_index_scan_cost(stmt, &ca, entity, index, idx_cond_array, &card, table);
+    double startup_cost = ca.startup_cost;
 
     tmp_table->cost = cost;
+    tmp_table->startup_cost = startup_cost;
     tmp_table->index = &index->desc;
     tmp_table->scan_flag = ca.scan_flag;
     tmp_table->scan_mode = SCAN_MODE_INDEX;
@@ -1345,6 +1352,7 @@ static status_t get_parameterized_path_internal(join_assist_t *ja, uint32 table_
     OG_RETURN_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, tmp_table, NULL, NULL, NULL, &jnode));
     jnode->cost.card = card;
     jnode->cost.cost = cost;
+    jnode->cost.startup_cost = startup_cost;
     jnode->outer_rels = outer_rels;
 
     OG_RETURN_IFERR(sql_jtable_add_path(ja->stmt, jtable, jnode));
@@ -1517,6 +1525,7 @@ static status_t sql_build_base_jtable_path(join_assist_t *ja, sql_table_t *table
             sql_join_node_t* jnode;
             OG_RETURN_IFERR(sql_create_join_node(ja->stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &jnode));
             jnode->cost.cost = table->select_ctx->plan->cost;
+            jnode->cost.startup_cost = table->select_ctx->plan->start_cost;
             jnode->cost.card = table->select_ctx->plan->rows;
             OG_RETURN_IFERR(sql_jtable_add_path(ja->stmt, jtable, jnode));
         } else {
@@ -2053,9 +2062,9 @@ static void sql_set_rel_path_rows(sql_join_node_t* join_tree, double rows)
 }
 
 static status_t sql_add_nestloop_path_single(join_assist_t *ja, sql_join_table_t *jtable, sql_join_node_t* path,
-    join_cost_workspace* join_cost_ws, special_join_info_t *sjoininfo)
+    join_cost_workspace* join_cost_ws, special_join_info_t *sjoininfo, galist_t *restricts)
 {
-    OG_RETURN_IFERR(sql_final_cost_nestloop(ja, path, join_cost_ws, sjoininfo));
+    OG_RETURN_IFERR(sql_final_cost_nestloop(ja, path, join_cost_ws, sjoininfo, restricts));
     /* join row estimate */
     sql_set_rel_path_rows(path, jtable->rows);
     sql_debug_join_cost_info(ja->stmt, path, "NL", "add path");
@@ -2133,7 +2142,7 @@ static status_t sql_build_nestloop_path(join_assist_t *ja, sql_join_type_t joint
     OG_RETURN_IFERR(sql_array_concat(&path->tables, &innerpath->tables));
     path->cost.startup_cost =  temp_path_p->cost.startup_cost;
     path->cost.cost =  temp_path_p->cost.cost;
-    OG_RETURN_IFERR(sql_add_nestloop_path_single(ja, jtable, path, &join_cost_ws, sjoininfo));
+    OG_RETURN_IFERR(sql_add_nestloop_path_single(ja, jtable, path, &join_cost_ws, sjoininfo, restricts));
     return OG_SUCCESS;
 }
 
