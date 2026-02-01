@@ -428,7 +428,7 @@ Common options:
   -g        run install script without root privilege,
             but you must have permission of installation folder
             note: use \"-g withoutroot\" exactly
-  -Z        configure the database cluster config, eg: -Z "LSNR_PORT=1611",
+  -Z        configure the database cluster config, eg: -Z "LSNR_PORT=1611(default port)",
             for more detail information see documentation.
   -C        configure the database cluster cms config, eg: -C "GCC_HOME=/dev/cms-disk1",
             for more detail information see documentation.

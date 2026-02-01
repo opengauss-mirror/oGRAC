@@ -77,3 +77,4 @@ class Options(object):
 
         # port set:
         self.cms_port = ""
+        self.ograc_port = ""

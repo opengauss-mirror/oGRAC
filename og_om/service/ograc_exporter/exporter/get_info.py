@@ -42,6 +42,21 @@ def file_reader(file_path):
     with open(file_path, 'r') as file:
         return file.read()
 
+def param_reader(file_path, param_name=None):
+    data = file_reader(file_path)
+    params = {}
+    
+    for line in data.strip().split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):  # 跳过空行和注释
+            continue
+        if '=' in line:
+            key, value = line.split('=', 1)  # 只分割第一个 '='
+            params[key.strip()] = value.strip()
+    
+    if param_name is None:
+        return params
+    return params.get(param_name)
 
 def file_writer(file_path, data):
     modes = stat.S_IWRITE | stat.S_IRUSR
@@ -67,7 +82,8 @@ class GetNodesInfo:
                            'pitr_warning': '', 'logicrep': ''
                            }
 
-        self.sql = SimpleSql()
+        self.ograc_port = param_reader(OGRACD_INI_PATH, "LSNR_PORT")
+        self.sql = SimpleSql(ogsql_port=self.ograc_port)
         self.kmc_decrypt = CApiWrapper(primary_keystore=PRIMARY_KEYSTORE, standby_keystore=STANDBY_KEYSTORE)
         self.kmc_decrypt.initialize()
         self.deploy_param = None

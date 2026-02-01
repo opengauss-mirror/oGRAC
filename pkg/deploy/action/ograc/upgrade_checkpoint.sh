@@ -1,6 +1,4 @@
 #!/bin/bash
-export OGRACD_PORT0=1611
-
 function log() {
   printf "[%s] %s\n" "`date -d today \"+%Y-%m-%d %H:%M:%S\"`" "$1"
 }

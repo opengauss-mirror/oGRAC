@@ -184,6 +184,7 @@ class Logicrep:
         info = json.loads(file_reader(OGRAC_CONFIG))
         self.cmsip = info.get("cms_ip").split(";")
         self.node_id = info.get("node_id")
+        self.lsnr_port = info.get("ograc_port")
         if mode == "install" or mode == "init_container":
             self.storage_archive_fs = info.get("storage_archive_fs")
             self.deploy_mode = "nas" if info.get("deploy_mode") == "file" else "dbstore"

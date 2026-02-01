@@ -34,6 +34,7 @@ modify_sys_table_flag=""
 deploy_user=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_user")
 deploy_group=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_group")
 deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
+ograc_port=$(python3 ${CURRENT_PATH}/get_config_info.py "ograc_port")
 CPU_CONFIG_INFO="/opt/ograc/ograc/cfg/cpu_config.json"
 CLUSTER_PREPARED=3
 NFS_TIMEO=50
@@ -626,7 +627,7 @@ function modify_sys_tables() {
         fi
         echo ''
         chown "${ograc_user}":"${ograc_group}" "${old_initdb_sql}"
-        echo -e "${ograc_sys_pwd}" | su -s /bin/bash - "${ograc_user}" -c "sh ${systable_home}/upgrade_systable.sh ${node_ip} ${systable_home}/../../../bin ${old_initdb_sql} ${new_initdb_sql} ${systable_home}"
+        echo -e "${ograc_sys_pwd}" | su -s /bin/bash - "${ograc_user}" -c "sh ${systable_home}/upgrade_systable.sh ${node_ip} ${systable_home}/../../../bin ${old_initdb_sql} ${new_initdb_sql} ${systable_home} ${ograc_port}"
         if [ $? -ne 0 ];then
             logAndEchoError "modify sys tables failed"
             touch "${modify_sys_tables_failed}" && chmod 600 "${modify_sys_tables_failed}"

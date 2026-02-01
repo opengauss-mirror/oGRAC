@@ -4,6 +4,9 @@ set +x
 CURRENT_PATH=$(dirname $(readlink -f $0))
 date_time=`date +"%Y%m%d%H%M%S"`
 source ${CURRENT_PATH}/../env.sh
+deploy_param_file=${CURRENT_PATH}/../config/deploy_param.json
+ograc_port=$(python3 ${CURRENT_PATH}/get_config_info.py "ograc_port")
+export OGRACD_PORT=${ograc_port}
 
 function gen_wsr_report() {
     host_name=`hostname`
@@ -23,6 +26,7 @@ function gen_wsr_report() {
 
 function main() {
     source ${CURRENT_PATH}/report.cnf
+    sed -i "s/ogsql_server_port=\"1611\"/ogsql_server_port=\"${ograc_port}\"/" ${CURRENT_PATH}/report.cnf
     if [ ! -d ${report_output_dir} ]; then
         mkdir -m 750 -p ${report_output_dir}
     fi

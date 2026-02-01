@@ -12,7 +12,10 @@ py_path=$2
 old_initdb=$3
 new_initdb=$4
 sqls_path=$5
-
+ograc_port=$6
+if [ -n "${ograc_port}" ]; then
+    export OGRACD_PORT0=${ograc_port}
+fi
 echo "step1: upgrade systable check initdb..."
 initdb=$(python ${py_path}/sql_process.py -t check-initdb --old-initdb=${old_initdb} --new-initdb=${new_initdb})
 
