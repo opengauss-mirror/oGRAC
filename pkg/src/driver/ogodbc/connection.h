@@ -31,7 +31,7 @@ SQLRETURN ograc_connect(SQLHDBC ConnectionHandle,
                         const SQLCHAR *ServerName, SQLSMALLINT NameLength1,
                         const SQLCHAR *UserName, SQLSMALLINT NameLength2,
                         const SQLCHAR *Authentication, SQLSMALLINT NameLength3);
-SQLRETURN ograc_disconnect(SQLHDBC ConnectionHandle);
+SQLRETURN ograc_disconnect(connection_class *conn);
 SQLRETURN ograc_bind_col(statement *stmt,
                           SQLUSMALLINT ColumnNumber,
                           SQLSMALLINT TargetType,
