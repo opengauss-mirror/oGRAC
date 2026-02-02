@@ -1,0 +1,541 @@
+SQL> -- @owner: Nerifish
+SQL> -- @date: 2026/1/31
+SQL> -- @testpoint: explain执行条件中对between,like,in,is null,=true/false测试,数据较少走频率直方图,要求rows列的值与select结果完全一致
+SQL> DROP TABLE IF EXISTS employees;
+
+Succeed.
+
+SQL> 
+SQL> CREATE TABLE employees (
+  2 id INT PRIMARY KEY,
+  3 name VARCHAR(50),
+  4 age INT,
+  5 salary DECIMAL(10,2),
+  6 department VARCHAR(30),
+  7 is_active BOOLEAN,
+  8 manager_id INT,
+  9 bonus DECIMAL(8,2)
+ 10 );
+
+Succeed.
+
+SQL> 
+SQL> -- 插入测试数据
+SQL> INSERT INTO employees VALUES (1, '张三', 25, 50000.00, '技术部', true, NULL, 5000.00),
+  2 (2, '李四', 30, 60000.00, '技术部', true, 1, 6000.00),
+  3 (3, '王五', 28, 55000.00, '销售部', true, NULL, 4500.00),
+  4 (4, '赵六', 35, 75000.00, '销售部', false, 3, NULL),
+  5 (5, '钱七', 22, 45000.00, '人事部', true, NULL, 3000.00),
+  6 (6, '孙八', 40, 80000.00, '技术部', true, 1, 10000.00),
+  7 (7, '周九', 26, 48000.00, '财务部', true, NULL, 4000.00),
+  8 (8, '吴十', 33, 68000.00, '销售部', true, 3, 7000.00),
+  9 (9, '郑十一', 29, 58000.00, '技术部', false, 1, 5500.00),
+ 10 (10, '王芳', 31, 62000.00, '人事部', true, 5, 6500.00),
+ 11 (101, '张%特殊', 26, 48000.00, '技术部', true, 1, 3500.00),
+ 12 (102, '李_测试', 32, 65000.00, '销售部', true, 3, 5800.00),
+ 13 (103, '孙九', 33, 65000.00, '特殊部门', false, 3, 5800.00),
+ 14 (105, '钱\反斜杠', 24, 43000.00, '财务部', true, 7, 2800.00);
+
+14 rows affected.
+
+SQL> ANALYZE TABLE employees compute statistics;
+
+Succeed.
+
+SQL> 
+SQL> 
+SQL> -----测试in操作符适配-----
+SQL> -- 用例1: IN 操作符
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE department IN ('技术部', '销售部', '人事部');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 11   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: DEPARTMENT IN ('技术部', '销售部', '人事部')
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE department IN ('技术部', '销售部', '人事部');
+
+COUNT(*)            
+--------------------
+11                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例2: NOT IN 操作符
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE department NOT IN ('财务部', '测试部');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 12   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: DEPARTMENT NOT IN ('财务部', '测试部')    
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE department NOT IN ('财务部', '测试部');
+
+COUNT(*)            
+--------------------
+12                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例3: IN 与数值
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE age IN (25, 30, 35, 40);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 4    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: AGE IN (25, 30, 35, 40)                         
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE age IN (25, 30, 35, 40);
+
+COUNT(*)            
+--------------------
+4                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -----测试between and操作符适配-----
+SQL> -- 用例4: BETWEEN 操作符
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE salary BETWEEN 50000 AND 70000;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 8    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: SALARY BETWEEN 50000 AND 70000                  
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE salary BETWEEN 50000 AND 70000;
+
+COUNT(*)            
+--------------------
+8                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例5: NOT BETWEEN 操作符
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE salary NOT BETWEEN 60000 AND 80000;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 7    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: SALARY NOT BETWEEN 60000 AND 80000              
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE salary NOT BETWEEN 60000 AND 80000;
+
+COUNT(*)            
+--------------------
+7                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -----true/false操作符适配-----
+SQL> -- 用例6: = true 测试
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE is_active = true;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 11   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: IS_ACTIVE = TRUE                                
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE is_active = true;
+
+COUNT(*)            
+--------------------
+11                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例7: = false 测试
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE is_active = false;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 3    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: IS_ACTIVE = FALSE                               
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE is_active = false;
+
+COUNT(*)            
+--------------------
+3                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -----ISNULL操作符适配-----
+SQL> -- 用例8: IS NULL 测试
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE manager_id IS NULL;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 4    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: MANAGER_ID IS NULL                              
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE manager_id IS NULL;
+
+COUNT(*)            
+--------------------
+4                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例9: IS NOT NULL 测试
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE manager_id IS NOT NULL;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 10   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: MANAGER_ID IS NOT NULL                          
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE manager_id IS NOT NULL;
+
+COUNT(*)            
+--------------------
+10                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例10: 多列 IS NULL
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE bonus IS NULL OR manager_id IS NULL;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 5    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: BONUS IS NULL  OR MANAGER_ID IS NULL            
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE bonus IS NULL OR manager_id IS NULL;
+
+COUNT(*)            
+--------------------
+5                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -----LIKE操作符适配-----
+SQL> -- 用例11: LIKE 前缀匹配
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name LIKE '王%';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 2    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME LIKE '王%'                                
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name LIKE '王%';
+
+COUNT(*)            
+--------------------
+2                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例12: LIKE 中间匹配
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name LIKE '%测试%';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 1    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME LIKE '%测试%'                            
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name LIKE '%测试%';
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例13: NOT LIKE 测试
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name NOT LIKE '张%';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 12   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME NOT LIKE '张%'                            
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name NOT LIKE '张%';
+
+COUNT(*)            
+--------------------
+12                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例14: LIKE 单字符匹配
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name LIKE '孙_';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 2    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME LIKE '孙_'                                
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name LIKE '孙_';
+
+COUNT(*)            
+--------------------
+2                   
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例15：LIKE 带ESCAPE－匹配包含_的姓名
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name LIKE '%\_%' ESCAPE '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 1    | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME LIKE '%\_%' ESCAPE '\'                     
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name LIKE '%\_%' ESCAPE '\';
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> --  用例16：LIKE 带ESCAPE－匹配以%开头的姓名
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name NOT LIKE '\%%' ESCAPE '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 14   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME NOT LIKE '\%%' ESCAPE '\'                  
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name NOT LIKE '\%%' ESCAPE '\';
+
+COUNT(*)            
+--------------------
+14                  
+
+1 rows fetched.
+
+SQL> 
+SQL> -- 用例17：LIKE 带ESCAPE－匹配包含_的姓名，并且无通配符
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name NOT LIKE '李\_测试' ESCAPE '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 13   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME NOT LIKE '李\_测试' ESCAPE '\'          
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name NOT LIKE '李\_测试' ESCAPE '\';
+
+COUNT(*)            
+--------------------
+13                  
+
+1 rows fetched.
+
+SQL> 
+SQL> --用例18：NOT LIKE 带ESCAPE－排除包含特殊字符的姓名
+SQL> EXPLAIN SELECT count(*) FROM employees WHERE name NOT LIKE '%\%%' ESCAPE '\';
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |           | 1    | 1    | 0         |       |        |
+| 1  |   AGGR                  |       |           | 1    | 1    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EMPLOYEES | 13   | 1    | 0         |       |        |
+-----------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME NOT LIKE '%\%%' ESCAPE '\'                 
+
+10 rows fetched.
+
+SQL> SELECT count(*) FROM employees WHERE name NOT LIKE '%\%%' ESCAPE '\';
+
+COUNT(*)            
+--------------------
+13                  
+
+1 rows fetched.
+
+SQL> 
+SQL> --清理环境
+SQL> DROP TABLE IF EXISTS employees;
+
+Succeed.

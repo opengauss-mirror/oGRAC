@@ -39,6 +39,8 @@ extern "C" {
 #define CBO_DEFAULT_EQ_FF 0.005
 #define CBO_DEFAULT_INEQ_FF 0.3333333333333333
 #define CBO_DEFAULT_NULL_FF 0.05
+#define CBO_DEFAULT_BTW_FF 0.1
+#define CBO_DEFAULT_LIKE_FF 0.3
 #define CBO_DEFAULT_DISABLE_COST (double)(1.0e10)
 
 #define DEFAULT_CPU_INDEX_TUP_COST (0.005)
@@ -128,6 +130,7 @@ typedef struct range_query_cond {
     bool have_hibound;           /* found a high-bound cond yet? */
     double lobound;              /* ff of a var > something cond */
     double hibound;              /* ff of a var < something cond */
+    double null_hist;
 } range_query_cond;
 
 // //////////////////////////////////////////////////////////////////////////////////////
