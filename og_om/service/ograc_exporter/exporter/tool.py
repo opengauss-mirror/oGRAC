@@ -52,13 +52,13 @@ def _exec_popen(cmd):
 
 
 class SimpleSql:
-    def __init__(self):
+    def __init__(self, ogsql_port="1611"):
         self.sql_statement = None
         self.node_id = None
         self.sql_sh_path = None
         self.time_out = 5
         self.ogsql_ip_addr = '127.0.0.1'
-        self.ogsql_port = '1611'
+        self.ogsql_port = ogsql_port
         self.__decrypt_pwd = None
 
     def update_sys_data(self, cur_node_id, decrypt_pwd):

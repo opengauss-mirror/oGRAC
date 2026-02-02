@@ -54,6 +54,11 @@ CHECK_POINT="check_point.sh"
 INIT_CONTAINER_NAME="init_container.sh"
 lock_file=""
 
+function get_ograc_port() {
+    ograc_port=$(python3 ${CURRENT_PATH}/get_config_info.py "ograc_port")
+    export OGRACD_PORT0=${ograc_port}
+}
+
 function clear_history_flag() {
     if [[ "$(find ${SUCCESS_FLAG_PATH} -type f -name 'pre_upgrade_*.success')" ]]; then
         rm -rf ${SUCCESS_FLAG_PATH}/pre_upgrade_*.success
@@ -453,11 +458,13 @@ case "$ACTION" in
         exit $?
         ;;
     check_point)
+        get_ograc_port
         lock_file=${CHECK_POINT}
         do_deploy ${CHECK_POINT}
         exit $?
         ;;
     rollback)
+        get_ograc_port
         UPGRADE_IP_PORT=$3
         ROLLBACK_VERSION=$4
         lock_file=${ROLLBACK_NAME}

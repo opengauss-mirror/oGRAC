@@ -16,5 +16,6 @@
     },
     "gcc_home": "/dev/gcc-disk",
     "cms_port": "14587",
-    "dss_port": "1811"
+    "dss_port": "1811",
+    "ograc_port": "1611"
   }

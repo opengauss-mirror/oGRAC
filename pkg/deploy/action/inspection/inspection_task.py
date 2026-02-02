@@ -23,7 +23,7 @@ FAIL = 'fail'
 SUCCESS = 'success'
 SUCCESS_ENUM = [0, '0']
 OGSQL_IP = "127.0.0.1"
-OGSQL_PORT = "1611"
+DEPLY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
 LOG_DIRECTORY = f'{CUR_PATH}/inspection_task_log'
 
 
@@ -252,9 +252,18 @@ class InspectionTask:
         """
         for inspection_item in self.inspection_items:
             if self.inspection_map.get(inspection_item, {}).get('need_ip'):
-                return OGSQL_IP, OGSQL_PORT
+                return OGSQL_IP, self.get_ograc_port()
 
         return ()
+
+    def get_ograc_port(self):
+        try:
+            with open(DEPLY_PARAM_FILE, 'r', encoding='utf-8') as f:
+                deploy_data = json.load(f)
+                return str(deploy_data.get('ograc_port', ''))
+        except Exception as e:
+            LOG.error(f"Failed to read ograc_port from {DEPLY_PARAM_FILE}: {e}")
+            return ""
 
     def task_execute(self):
         """

@@ -91,17 +91,17 @@ static void ogsql_show_usage(void)
     ogsql_printf("     ogsql / as sysdba\n"
                 "                               Log in to a database as user sys in password-free mode.\n");
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611\n"
-                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611.\n");
+                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611(default port).\n");
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611/tenant\n"
-                "                               Log in to the database as the specified user in the specified tenant through the IP address 127.0.0.1 and port 1611.\n");
+                "                               Log in to the database as the specified user in the specified tenant through the IP address 127.0.0.1 and port 1611(default port).\n");
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611 -c \"SELECT 1 FROM SYS_DUMMY\"\n"
-                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611, \n"
+                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611(default port), \n"
                 "                               and then execute the SQL statement \"SELECT 1 FROM SYS_DUMMY\".\n");
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611 -f \"/home/user/example.sql\"\n"
-                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611,\n"
+                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611(default port),\n"
                 "                               and then execute the \"/home/user/example.sql\".\n");
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611,127.0.0.1:1612\n"
-                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611 \n"
+                "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611(default port) \n"
                 "                               or IP address 127.0.0.1 and port 1612.\n");
     ogsql_printf("\n");
 }

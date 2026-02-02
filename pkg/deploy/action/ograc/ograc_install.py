@@ -314,6 +314,7 @@ def load_config_param(json_data):
     g_opts.max_arch_files_size = json_data['MAX_ARCH_FILES_SIZE'].strip()
     g_opts.cluster_id = json_data.get("cluster_id", "0").strip()
     g_opts.cms_port = json_data['cms_port']
+    g_opts.ograc_port = json_data['ograc_port']
 
 def parse_parameter():
     try:
@@ -762,7 +763,7 @@ class Installer:
     login_ip = ""
     ipv_type = "ipv4"
 
-    def __init__(self, user, group, auto_tune = False):
+    def __init__(self, user, group, auto_tune = False, ograc_prot = "1611"):
         """ Constructor for the Installer class. """
         LOGGER.info("Begin init...")
         LOGGER.info("Installer runs on python version : " + gPyVersion)
@@ -803,7 +804,7 @@ class Installer:
 
         self.login_ip = "127.0.0.1"
         self.lsnr_addr = ""
-        self.lsnr_port = 1611
+        self.lsnr_port = int(ograc_prot)
         self.instance_name = self.DEFAULT_INSTANCE_NAME
 
         self.user_home_path = ""
@@ -2170,7 +2171,8 @@ class Installer:
                 self.set_cms_ini(common_parameters["MES_SSL_KEY_PWD"])
                 self.set_mes_passwd(common_parameters["MES_SSL_KEY_PWD"])
             g_opts.password = common_parameters["_SYS_PASSWORD"]
-
+        # Load database port form db;
+        common_parameters["LSNR_PORT"] = g_opts.ograc_port
         if not g_opts.use_dbstor:
             common_parameters["FILE_OPTIONS"] = "FULLDIRECTIO"
         if g_opts.use_gss:
@@ -2224,6 +2226,8 @@ class Installer:
 
     def write_cluster_conf(self, node_ip, size):
         common_parameters = {
+            "LSNR_PORT[0]": g_opts.ograc_port,
+            "LSNR_PORT[1]": g_opts.ograc_port,
             "REPORT_FILE": g_opts.log_file,
             "STATUS_LOG": os.path.join(self.data, "log", "ogracstatus.log"),
             "LD_LIBRARY_PATH": os.environ['LD_LIBRARY_PATH'],
@@ -3354,7 +3358,7 @@ class oGRAC(object):
         parse_parameter()
         init_start_status_file()
         try:
-            installer = Installer(g_opts.os_user, g_opts.os_group, g_opts.auto_tune)
+            installer = Installer(g_opts.os_user, g_opts.os_group, g_opts.auto_tune, g_opts.ograc_port)
             installer.install()
             LOGGER.info("Install successfully, for more detail information see %s." % g_opts.log_file)
         except Exception as error:
