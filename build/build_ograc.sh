@@ -56,13 +56,14 @@ function newPackageTarget() {
   local pkg_real_path=${TMP_PKG_PATH}/${pkg_dir_name}
   echo "Current directory: $(pwd)"
   ls -la
-  mkdir -p ${pkg_real_path}/{action,repo,config,common,dss}
+  mkdir -p ${pkg_real_path}/{action,repo,config,common,dss,odbc}
   cp -arf "${CURRENT_PATH}"/versions.yml ${pkg_real_path}/
   cp -arf "${OGRACDB_BIN}"/rpm/RPMS/"${ENV_TYPE}"/ograc*.rpm ${pkg_real_path}/repo/
   cp -arf "${OGDB_CODE_PATH}"/temp/og_om/rpm/RPMS/"${ENV_TYPE}"/og_om*.rpm ${pkg_real_path}/repo/
   cp -arf "${OGDB_CODE_PATH}"/pkg/deploy/action/* ${pkg_real_path}/action/
   cp -arf "${OGDB_CODE_PATH}"/pkg/deploy/config/* ${pkg_real_path}/config/
   cp -arf "${OGDB_CODE_PATH}"/common/* ${pkg_real_path}/common/
+  cp -arf "${OGDB_CODE_PATH}"/output/lib/libogodbc.so ${pkg_real_path}/odbc/
   if [[ ${BUILD_MODE} == "single" ]]; then
     cp -rf "${OGDB_CODE_PATH}"/pkg/deploy/single_options/* ${pkg_real_path}/action/oGRAC
   fi
