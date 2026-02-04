@@ -75,8 +75,8 @@ SQLRETURN ograc_AllocConnect(SQLHENV henv, SQLHDBC *phdbc)
         return handle_conn_error(phdbc, environment, conn, msg);
     }
 
-    uint8 is_autocommit = AUTO_COMMIT;
-    status = ogconn_set_conn_attr(ctconn_conn, OGCONN_ATTR_AUTO_COMMIT, &is_autocommit, sizeof(uint8));
+    int is_autocommit = AUTO_COMMIT;
+    status = ogconn_set_conn_attr(ctconn_conn, OGCONN_ATTR_AUTO_COMMIT, &is_autocommit, sizeof(int));
     if (status != OG_SUCCESS) {
         char *msg = "set autoCommit attribute failed.";
         ogconn_free_conn(ctconn_conn);
