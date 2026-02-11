@@ -63,6 +63,10 @@ typedef struct st_dtc_profile {
     double ckpt_notify_task_ratio;
     double clean_edp_task_ratio;
     double txn_info_task_ratio;
+	uint32 remote_buf_pool_num;
+	uint64 remote_data_buf_size;
+	uint64 remote_data_buf_part_size;
+	uint64 remote_data_buf_part_align_size;
 } dtc_profile_t;
 
 typedef struct st_dtc_instance {

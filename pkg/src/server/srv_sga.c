@@ -251,8 +251,6 @@ status_t srv_init_vmem_pool(void)
     return OG_SUCCESS;
 }
 
-#define SGA_BARRIER_SIZE 64
-
 static status_t load_large_pages_param(large_pages_mode_t *large_pages_mode)
 {
     char *value = srv_get_param("USE_LARGE_PAGES");

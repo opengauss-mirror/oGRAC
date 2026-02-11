@@ -270,6 +270,7 @@ endif ()
 
 set(OGRACDB_LIBRARY "${PROJECT_SOURCE_DIR}/library")
 set(OGRACDB_SRC "${PROJECT_SOURCE_DIR}/pkg/src")
+set(UBSM_LIB_PATH "/usr/local/ubs_mem/lib")
 
 set(OPENSSL_LIB_PATH "${OGRACDB_LIBRARY}/openssl/lib")
 set(SECUREC_LIB_PATH "${OGRACDB_LIBRARY}/huawei_security/lib")
@@ -407,7 +408,7 @@ if (UNIX)
 endif()
 
 link_directories(${OGRACDB_LIB} "${OGRACDB_LIBRARY}/protobuf/lib" ${OGRACDB_LIBRARY} ${OPENSSL_LIB_PATH} ${PCRE_LIB_PATH} ${Z_LIB_PATH} ${ODBC_LIB_PATH} ${VPP_LIB_PATH}
-         ${ZSTD_LIB_PATH} ${KMC_LIB_PATH} ${LZ4_LIB_PATH} ${AES_LIB_PATH})
+	${ZSTD_LIB_PATH} ${KMC_LIB_PATH} ${LZ4_LIB_PATH} ${AES_LIB_PATH} ${UBSM_LIB_PATH})
 
 # add subdir, this should be the last line!!
 add_subdirectory(pkg)

@@ -52,6 +52,8 @@ extern "C" {
         24, 6, 0, 4                          \
     }
 
+#define DRC_REMOTE_BUF_START_ADDR 0x80000000000
+
 // lock item structures
 typedef enum en_drc_lock_mode {
     DRC_LOCK_NULL = 0,
@@ -361,6 +363,19 @@ typedef struct st_drc_deposit_map {
     uint32 deposit_id;  // return self as default, return deposit instance id if error
 } drc_deposit_map_t;
 
+typedef struct st_remote_buf_context {
+    buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];
+    uint32 buf_set_count;
+	uint64 remote_buf_alloc_size;
+    thread_lock_t buf_mutex;
+    char *remote_buf_addr[OG_MAX_INSTANCES];
+} remote_buf_context_t;
+
+typedef struct st_mes_remote_buf_mmap_bcast {
+    mes_message_head_t head;
+    uint32 node_id;
+} mes_remote_buf_mmap_bcast_t;
+
 typedef struct st_drc_res_ctx {
     spinlock_t lock;
     knl_instance_t *kernel;
@@ -380,6 +395,7 @@ typedef struct st_drc_res_ctx {
     thread_t gc_thread;
 
     drc_deposit_map_t drc_deposit_map[OG_MAX_INSTANCES];
+    remote_buf_context_t buf_ctx;
 } drc_res_ctx_t;
 
 typedef struct st_cvt_info {
@@ -771,6 +787,9 @@ status_t drc_lock_local_lock_res_by_id_for_recycle(knl_session_t *session, drid_
 void drc_release_local_lock_res_by_id(knl_session_t *session, drid_t *lock_id);
 void drc_set_deposit_id(uint8 inst_id, uint8 deposit_id);
 void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id);
+
+void broadcast_remote_buf_allocated();
+EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 
 #ifdef __cplusplus
 }

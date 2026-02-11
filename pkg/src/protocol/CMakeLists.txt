@@ -24,7 +24,7 @@ set_target_properties(ogprotocol_static PROPERTIES OUTPUT_NAME ogprotocol
         ARCHIVE_OUTPUT_DIRECTORY ${OGRACDB_LIB}
         )
 if (USE_FUZZASAN)
-    target_link_libraries(ogprotocol PRIVATE ogcommon pthread m rt Secodefuzz)
+    target_link_libraries(ogprotocol PRIVATE ogcluster ogcommon pthread m rt Secodefuzz)
 else ()
-    target_link_libraries(ogprotocol PRIVATE ogcommon pthread m rt)
+    target_link_libraries(ogprotocol PRIVATE ogcluster ogcommon pthread m rt)
 endif(USE_FUZZASAN)

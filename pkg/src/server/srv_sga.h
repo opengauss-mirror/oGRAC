@@ -34,6 +34,8 @@
 extern "C" {
 #endif
 
+#define SGA_BARRIER_SIZE 64
+
 typedef enum en_large_pages_mode {
     LARGE_PAGES_TRUE = 1,  // try to use large_pages first
     LARGE_PAGES_FALSE = 2, // do not use large_pages
