@@ -42,4 +42,4 @@ status_t ub_delete_shm_region(uint32 host_id);
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif

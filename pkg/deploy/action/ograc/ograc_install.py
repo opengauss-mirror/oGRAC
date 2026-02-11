@@ -2022,10 +2022,11 @@ class Installer:
                             % os.path.join(self.install_path, "bin"))
                 _file.write(os.linesep)
                 if "LD_LIBRARY_PATH" in os.environ:
-                    _file.write("export LD_LIBRARY_PATH=\"%s\":\"%s\""
+                    _file.write("export LD_LIBRARY_PATH=\"%s\":\"%s\":\"%s\""
                                 ":$LD_LIBRARY_PATH"
                                 % (os.path.join(self.install_path, "lib"),
-                                    os.path.join(self.install_path, "add-ons")))
+                                    os.path.join(self.install_path, "add-ons"),
+                                    os.path.join("/usr/local/ubs_mem/", "lib")))
                 else:
                     _file.write("export LD_LIBRARY_PATH=\"%s\":\"%s\""
                                 % (os.path.join(self.install_path, "lib"),
