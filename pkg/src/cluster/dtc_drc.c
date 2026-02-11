@@ -534,6 +534,14 @@ status_t drc_init(void)
         }
     }
 
+    // remote buffer pool init, LRU lists init, hash table/bucket init
+    ret = drc_init_remote_buffer();
+    if (ret != OG_SUCCESS) {
+        drc_destroy();
+        OG_LOG_RUN_ERR("[DRC]remote buf pool init fail,return error:%u", ret);
+        return OG_ERROR;
+    }
+
     uint64 dc_pool_size = (uint64)g_dtc->kernel->dc_ctx.pool.opt_count * (uint64)g_dtc->kernel->dc_ctx.pool.page_size;
     uint64 local_dls_res_count = drc_cal_dls_res_count(dc_pool_size, DRC_DEFAULT_BUF_RES_NUM);
     uint64 global_dls_res_count = local_dls_res_count * g_dtc->profile.node_count;
@@ -7540,3 +7548,4 @@ void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id)
         i++;
     }
 }
+

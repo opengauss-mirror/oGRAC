@@ -38,7 +38,6 @@
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define BUF_PAGE_COST_WITH_RBP (BUF_PAGE_COST + sizeof(buf_rbp_ctrl_t))
 
-static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 uint32 g_cks_level;
 uint32 g_page_protect_check = 0;
 
@@ -68,6 +67,8 @@ static void buf_init_list(buf_set_t *set)
         set->list[i].type = i;
     }
 }
+
+static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 
 status_t buf_init(knl_session_t *session)
 {

@@ -1,4 +1,4 @@
-# coding=utf-8
+#!/usr/bin/env python3
 
 class ResponseParse(object):
     def __init__(self, res):

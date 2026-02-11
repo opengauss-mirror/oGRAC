@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 class Constant:
     PORT = '8088'
     HTTPS = 'https://'
@@ -26,7 +27,6 @@ class Constant:
                                       "query_fs_snapshot_rollback?PARENTNAME={fs_name}"
     QUERY_LOGIC_PORT_INFO = "/deviceManager/rest/{deviceId}/lif"
 
-    # 容灾查询操作
     QUERY_SYSTEM_INFO = "/deviceManager/rest/{deviceId}/system/"
     QUERY_REMOTE_DEVICE_INFO = "/deviceManager/rest/{deviceId}/remote_device"
     QUERY_LICENSE_FEATURE = "/deviceManager/rest/{deviceId}/license/feature"
@@ -35,7 +35,6 @@ class Constant:
     QUERY_REPLICATION_FILE_SYSTEM_PAIR = "/deviceManager/rest/{deviceId}/replicationpair/associate"
     QUERY_FILESYSTEM_FOR_REPLICATION = "/deviceManager/rest/{deviceId}/filesystem_for_replication"
 
-    # 容灾搭建操作
     HYPER_METRO_DOMAIN = "/deviceManager/rest/{deviceId}/FsHyperMetroDomain"
     HYPER_METRO_VSTORE_PAIR = "/deviceManager/rest/{deviceId}/vstore_pair"
     HYPER_METRO_FILESYSTEM_PAIR = "/deviceManager/rest/{deviceId}/HyperMetroPair"
@@ -53,12 +52,10 @@ class Constant:
     CHANGE_FS_HYPER_METRO_DOMAIN_SECOND_ACCESS = "/deviceManager/rest/{deviceId}/ChangeFsHyperMetroDomainSecondAccess"
     JOIN_FS_HYPER_METRO_DOMAIN = "/deviceManager/rest/{deviceId}/JoinFsHyperMetroDomain"
 
-    # omtask rest api
     REMOTE_EXECUTE = "/api/v2/remote_execute"
     CREATE_HYPER_METRO_FILESYSTEM_PAIR = "/api/v2/task/fileSystem/HyperMetroPair"
     QUERY_TASK_PROCESS = "/api/v2/task/{id}"
     CREATE_REMOTE_REPLICATION_FILESYSTEM_PAIR = "/api/v2/task/protection/nas"
-    # cdp操作
     DELETE_FS_CDP_SCHEDULE = '/deviceManager/rest/{deviceId}/filesystem/remove_associate'
 
     FULL_SYNC_MAX_TIME = 1500
@@ -74,9 +71,9 @@ SPEED = {
 
 
 class HealthStatus:
-    Normal = "1"              # 正常
-    Faulty = "2"              # 故障
-    Invalid = "14"            # 失效
+    Normal = "1"
+    Faulty = "2"
+    Invalid = "14"
 
 
 class SystemRunningStatus:
@@ -88,21 +85,21 @@ class SystemRunningStatus:
 
 
 class RemoteDeviceStatus:
-    LinkUp = "10"             # 已连接
-    LinkDown = "11"           # 未连接
-    Disabled = "31"           # 已禁用
-    Connecting = "101"        # 正在连接
-    AirGapLinkDown = "118"    # Air Gap断开
+    LinkUp = "10"
+    LinkDown = "11"
+    Disabled = "31"
+    Connecting = "101"
+    AirGapLinkDown = "118"
 
 
 class ReplicationRunningStatus:
-    Normal = "1"              # 正常
-    Synchronizing = "23"      # 正在同步
-    TobeRecovered = "33"      # 待恢复
-    Interrupted = "34"        # 异常断开
-    Split = "26"              # 已分裂
-    Invalid = "35"            # 失效
-    Standby = "110"           # 备用
+    Normal = "1"
+    Synchronizing = "23"
+    TobeRecovered = "33"
+    Interrupted = "34"
+    Split = "26"
+    Invalid = "35"
+    Standby = "110"
 
 
 class FilesystemRunningStatus:
@@ -113,68 +110,68 @@ class FilesystemRunningStatus:
 
 
 class MetroDomainRunningStatus:
-    Normal = "0"              # 正常
-    Recovering = "1"          # 恢复中
-    Faulty = "2"              # 故障
-    Split = "3"               # 分裂
-    ForceStarted = "4"        # 强制拉起
-    Invalid = "5"             # 失效
+    Normal = "0"
+    Recovering = "1"
+    Faulty = "2"
+    Split = "3"
+    ForceStarted = "4"
+    Invalid = "5"
 
 
 class VstorePairRunningStatus:
-    Normal = "1"              # 正常
-    Unsynchronized = "25"     # 未同步
-    Split = "26"              # 分裂
-    Invalid = "35"            # 失效
-    ForceStarted = "93"       # 强制启动
+    Normal = "1"
+    Unsynchronized = "25"
+    Split = "26"
+    Invalid = "35"
+    ForceStarted = "93"
 
 
 class VstorePairConfigStatus:
-    Normal = "0"              # 正常
-    Synchronizing = "1"       # 同步中
-    Unsynchronizing = "2"     # 待同步
+    Normal = "0"
+    Synchronizing = "1"
+    Unsynchronizing = "2"
 
 
 class FilesystemPairRunningStatus:
-    Normal = "1"              # 正常
-    Synchronizing = "23"      # 同步中
-    Invalid = "35"            # 失效
-    Paused = "41"             # 暂停
-    ForceStarted = "93"       # 强制启动
-    ToBeSynchronized = "100"  # 待同步
-    Creating = "119"          # 创建中
+    Normal = "1"
+    Synchronizing = "23"
+    Invalid = "35"
+    Paused = "41"
+    ForceStarted = "93"
+    ToBeSynchronized = "100"
+    Creating = "119"
 
 
 class SecresAccess:
-    AccessDenied = "1"        # 禁止访问
-    ReadOnly = "2"            # 只读
-    ReadAndWrite = "3"        # 读写
+    AccessDenied = "1"
+    ReadOnly = "2"
+    ReadAndWrite = "3"
 
 
 class PoolStatus:
-    PreCopy = "14"            # 预拷贝
-    Rebuilt = "16"            # 重构
-    Online = "27"             # 在线
-    Offline = "28"            # 离线
-    Balancing = "32"          # 正在均衡
-    Initializing = "53"       # 初始化中
-    Deleting = "106"          # 删除中
+    PreCopy = "14"
+    Rebuilt = "16"
+    Online = "27"
+    Offline = "28"
+    Balancing = "32"
+    Initializing = "53"
+    Deleting = "106"
 
 
 class PoolHealth:
-    Normal = "1"              # 正常
-    Faulty = "2"              # 故障
-    Degraded = "5"            # 降级
+    Normal = "1"
+    Faulty = "2"
+    Degraded = "5"
 
 
 class DomainAccess:
-    ReadAndWrite = "3"  # 读写
-    ReadOnly = "1"      # 只读
+    ReadAndWrite = "3"
+    ReadOnly = "1"
 
 
 class ConfigRole:
-    Secondary = "0"     # 从端
-    Primary = "1"       # 主端
+    Secondary = "0"
+    Primary = "1"
 
 
 class DataIntegrityStatus:
@@ -185,4 +182,3 @@ class DataIntegrityStatus:
 class RepFileSystemNameRule:
     NamePrefix = "og_"
     NameSuffix = "_rep"
-
