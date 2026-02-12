@@ -1,0 +1,44 @@
+{
+  "_comment": "og_om 部署路径配置文件 - 所有路径可自定义，不再硬编码 /opt/ograc",
+
+  "ograc_home": "",
+  "user": "ograc",
+  "group": "ograc",
+
+  "_comment_service": "og_om 服务运行态相对路径（相对于 ograc_home）",
+  "service": {
+    "og_om_dir": "og_om",
+    "service_dir": "og_om/service",
+    "ogmgr_dir": "og_om/service/ogmgr",
+    "ogmgr_scripts": "og_om/service/ogmgr/scripts",
+    "ogcli_dir": "og_om/service/ogcli",
+    "exporter_dir": "og_om/service/ograc_exporter",
+    "exporter_scripts": "og_om/service/ograc_exporter/scripts",
+    "exporter_data": "og_om/service/ograc_exporter/exporter_data",
+    "ogmgr_uds_server": "og_om/service/ogmgr/uds_server.py",
+    "exporter_execute": "og_om/service/ograc_exporter/exporter/execute.py",
+    "ogcli_main": "og_om/service/ogcli/main.py"
+  },
+
+  "_comment_cgroup": "cgroup 资源隔离",
+  "cgroup": {
+    "memory_base": "/sys/fs/cgroup/memory",
+    "exporter_name": "ograc_exporter",
+    "ogmgr_name": "ogmgr",
+    "ogmgr_memory_limit": "2G"
+  },
+
+  "_comment_timeout": "操作超时(秒) - 低配机器可按需调大; 0 表示不设超时",
+  "timeout": {
+    "default": 1800,
+    "start": 300,
+    "stop": 300,
+    "check_status": 120,
+    "install": 1800,
+    "uninstall": 600,
+    "pre_install": 600,
+    "upgrade": 1800,
+    "rollback": 1800,
+    "post_upgrade": 600
+  }
+}

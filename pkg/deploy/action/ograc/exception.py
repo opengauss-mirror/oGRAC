@@ -1,2 +1,0 @@
-class NormalException(Exception):
-    pass

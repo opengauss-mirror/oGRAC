@@ -4,6 +4,8 @@
 #
 
 CURRENT_PATH=$(dirname $(readlink -f $0))
+ACTION_DIR=$(dirname ${CURRENT_PATH})
+GET_CONFIG="${ACTION_DIR}/ograc_common/get_config_info.py"
 
 function help() {
     echo ""
@@ -73,21 +75,26 @@ function wait_node0_online() {
 
 function dss_reghl() {
   log "start register node ${NODE_ID} by dss"
-  dsscmd reghl -D ${DSS_HOME} >> /dev/null 2>&1
-  if [ $? != 0 ]; then err "failed to register node ${NODE_ID} by dss"; fi
+  set +e
+  dsscmd reghl -D ${DSS_HOME}
+  local rc=$?
+  set -e
+  if [ ${rc} != 0 ]; then
+    log "WARNING: dsscmd reghl returned ${rc}, may already be registered"
+  fi
 }
 
 function start_ogracd() {
   log "================ start ogracd ${NODE_ID} ================"
-  ever_started=`python3 ${CURRENT_PATH}/get_config_info.py "OGRAC_EVER_START"`
-  deploy_mode=`python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode"`
+  ever_started=`python3 ${GET_CONFIG} "OGRAC_EVER_START"`
+  deploy_mode=`python3 ${GET_CONFIG} "deploy_mode"`
   numactl_str=" "
   set +e
   numactl --hardware
   if [ $? -eq 0 ]; then
     OS_ARCH=$(uname -i)
     if [[ ${OS_ARCH} =~ "aarch64" ]] && [[ ${deploy_mode} != "dss" ]]; then
-      result_str=`python3 ${CURRENT_PATH}/get_config_info.py "OGRAC_NUMA_CPU_INFO"`
+      result_str=`python3 ${GET_CONFIG} "OGRAC_NUMA_CPU_INFO"`
       if [ -z "$result_str" ]; then
           echo "Error: OGRAC_NUMA_CPU_INFO is empty."
           exit 1
@@ -107,7 +114,7 @@ function start_ogracd() {
   fi
 
   # 如果ograc被cms抢占拉起，等待此ograc拉起完成，并跳过安装部署的启动ograc进程命令
-  ogracd_pid=$(ps -ef | grep -v grep | grep ogracd | grep -w 'ogracd -D /mnt/dbdata/local/ograc/tmp/data' | awk '{print $2}')
+  ogracd_pid=$(ps -ef | grep -v grep | grep ogracd | grep -w "ogracd -D ${OGDB_DATA}" | awk '{print $2}')
   if [ ! -z "${ogracd_pid}" ]; then
     log "cms has start ogracd already"
     if [ "${NODE_ID}" == 0 ]; then
@@ -115,15 +122,14 @@ function start_ogracd() {
     else
       wait_node1_online || err "timeout waiting for node1"
     fi
-    echo "instance started" >> /mnt/dbdata/local/ograc/tmp/data/log/ogracstatus.log
+    echo "instance started" >> ${OGDB_DATA}/log/ogracstatus.log
     return 0
   fi
   if [ "${ever_started}" == "True" ]; then
-    cms res -start db -node "${NODE_ID}"
-    if [ $? -eq 0 ]; then
-      echo "instance started" >> /mnt/dbdata/local/ograc/tmp/data/log/ogracstatus.log
+    if cms res -start db -node "${NODE_ID}"; then
+      echo "instance started" >> ${OGDB_DATA}/log/ogracstatus.log
     else
-      echo "instance startup failed" >> /mnt/dbdata/local/ograc/tmp/data/log/ogracstatus.log
+      echo "instance startup failed" >> ${OGDB_DATA}/log/ogracstatus.log
     fi
   else
     nohup ${numactl_str} ${OGDB_HOME}/bin/ogracd ${START_MODE} -D ${OGDB_DATA} >> ${STATUS_LOG} 2>&1 &
@@ -162,7 +168,7 @@ function parse_parameter() {
   declare -g IS_RERUN=0
   declare -g RUN_MODE=
   declare -g CLUSTER_CONFIG="${OGDB_DATA}/cfg/cluster.ini"
-  declare -g SINGLE_FLAG="/opt/ograc/ograc/cfg/single_flag"
+  declare -g SINGLE_FLAG="${OGDB_HOME}/../cfg/single_flag"
   
   while true
   do
@@ -231,7 +237,11 @@ function main() {
   TMPCFG=$(mktemp /tmp/tmpcfg.XXXXXXX) || exit 1
   log "create temp cfg file ${TMPCFG}"
   (cat ${CLUSTER_CONFIG} | sed 's/ *= */=/g') > $TMPCFG
+  local _saved_ld="${LD_LIBRARY_PATH:-}"
+  set -a
   source $TMPCFG
+  set +a
+  export LD_LIBRARY_PATH="${_saved_ld}"
 
   case ${PROCESS} in
   ogracd | OGRACD)

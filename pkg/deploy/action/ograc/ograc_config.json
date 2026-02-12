@@ -1,0 +1,35 @@
+{
+  "_comment": "oGRAC 部署路径配置文件 - 所有路径可自定义，不再硬编码 /opt/ograc",
+
+  "ograc_home": "/opt/ograc",
+  "data_root": "/mnt/dbdata",
+  "user": "ograc",
+
+  "_comment_instance": "实例/隔离配置 - user 为隔离主键，cgroup/shm 等公共资源按 user 分割",
+  "instance": {
+    "cgroup": {
+      "memory_base": "/sys/fs/cgroup/memory",
+      "ogracd_name": "ogracd",
+      "memory_limit_mb": 0
+    }
+  },
+
+  "_comment_timeout": "操作超时(秒) - 低配机器可按需调大; 0 表示不设超时",
+  "timeout": {
+    "default": 1800,
+    "pre_install": 600,
+    "install": 7200,
+    "start": 1800,
+    "stop": 600,
+    "check_status": 300,
+    "uninstall": 3600,
+    "init_container": 3600,
+    "backup": 7200,
+    "pre_upgrade": 3600,
+    "upgrade_backup": 7200,
+    "upgrade": 7200,
+    "rollback": 7200,
+    "post_upgrade": 3600
+  }
+}
+

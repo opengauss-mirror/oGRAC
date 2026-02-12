@@ -61,7 +61,6 @@ function newPackageTarget() {
   cp -arf "${OGRACDB_BIN}"/ograc*.tar.gz ${pkg_real_path}/repo/
   cp -arf "${OGDB_CODE_PATH}"/temp/og_om/og_om*.tar.gz ${pkg_real_path}/repo/
   cp -arf "${OGDB_CODE_PATH}"/pkg/deploy/action/* ${pkg_real_path}/action/
-  cp -arf "${OGDB_CODE_PATH}"/pkg/deploy/config/* ${pkg_real_path}/config/
   cp -arf "${OGDB_CODE_PATH}"/common/* ${pkg_real_path}/common/
   cp -arf "${OGDB_CODE_PATH}"/output/lib/libogodbc.so ${pkg_real_path}/odbc/
   if [[ ${BUILD_MODE} == "single" ]]; then
@@ -71,9 +70,6 @@ function newPackageTarget() {
     cp -arf "${OGDB_CODE_PATH}"/dss/* ${pkg_real_path}/dss/
   fi
 
-  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_usr_pwd.sh
-  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_dbstor_compat.sh
-  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/inspection/inspection_scripts/kernal/check_link_cnt.sh
   echo "Start pkg ${pkg_name}.tgz..."
   cd ${TMP_PKG_PATH}
   echo "Current directory: $(pwd)"

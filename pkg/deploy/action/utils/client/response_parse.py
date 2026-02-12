@@ -1,4 +1,3 @@
-# coding=utf-8
 
 class ResponseParse(object):
     def __init__(self, res):
