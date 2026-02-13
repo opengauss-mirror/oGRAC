@@ -98,6 +98,9 @@ status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remote_buf_
     uint32 node_id = g_instance->kernel.id;
     uint64 remote_buf_size = drc_calc_remote_data_buf_size(remote_sga, buf_ctx);    
 
+    /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
+    g_mes.profile.inst_count = 2;
+
     int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("[DRC] drc create sgm region fail, return error:%d", ret);
