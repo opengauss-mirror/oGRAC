@@ -46,6 +46,7 @@
 #include "tms_monitor.h"
 #include "cs_ub.h"
 #include "cm_ubs_mem.h"
+#include "dtc_remote_buffer.h"
 
 #define DTC_BUFFER_POOL_NUM      (4)
 #define DTC_MSG_BUFFER_QUEUE_NUM (8)
@@ -608,11 +609,13 @@ status_t dtc_startup(void)
     return OG_SUCCESS;
 }
 
-static int drc_unmap_shm(remote_buf_context_t *buf_ctx, uint64 data_buf_size, uint32 inst_count)
+static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
 {
    bool all_unmap = true;
+   uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
+
    for (uint32 i = 0; i < inst_count; i++) {
-	   if (buf_ctx->remote_buf_addr[i] == NULL) {
+	   if (remote_sga->map_success[i] == OG_FALSE) {
 		   continue;
 	   }
 	   char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
@@ -622,13 +625,14 @@ static int drc_unmap_shm(remote_buf_context_t *buf_ctx, uint64 data_buf_size, ui
 		   all_unmap = false;
 		   continue;
 	   }
-	   ret = ubsmem_shmem_unmap(buf_ctx->remote_buf_addr[i], data_buf_size);
+	   ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
 	   if (ret != UBSM_OK) {
-		   OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, buf_ctx->remote_buf_addr[i], ret); 		   
+		   OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret); 
 		   all_unmap = false;
 		   continue;
 	   }
-	   buf_ctx->remote_buf_addr[i] = NULL;
+	   remote_sga->map_success[i] = OG_TRUE;
+	   remote_sga->remote_buf_addr[i] = NULL;
 	   OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
    }
 
@@ -640,9 +644,9 @@ static int drc_unmap_shm(remote_buf_context_t *buf_ctx, uint64 data_buf_size, ui
    return OG_SUCCESS;
 }
 
-status_t drc_deinit_ubsm_mem(remote_buf_context_t *buf_ctx, uint64 data_buf_size, uint32 inst_count)
+status_t drc_deinit_ubsm_mem(remote_sga_t *remote_sga, uint32 inst_count)
 {
-    int ret = drc_unmap_shm(buf_ctx, data_buf_size, inst_count);
+    int ret = drc_unmap_shm(remote_sga, inst_count);
     if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("Failed to unmap shm region. ret:%d", ret);
         return ret;
@@ -671,8 +675,7 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
 {
     drc_res_ctx_t *ogx = DRC_RES_CTX;
 
-    uint64 data_buf_size = ogx->buf_ctx.remote_buf_alloc_size;
-	if (drc_deinit_ubsm_mem(&ogx->buf_ctx, data_buf_size, g_dtc->profile.node_count) != OG_SUCCESS) {
+	if (drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("failed to deinit ubsm_mem");
 	}
     free_dtc_rc();

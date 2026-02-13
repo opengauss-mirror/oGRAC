@@ -35,16 +35,9 @@
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 
-static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 uint32 g_cks_level;
 
-static void buf_init_list(buf_set_t *set)
-{
-    for (uint32 i = 0; i < LRU_LIST_TYPE_COUNT; i++) {
-        set->list[i] = g_init_list_t;
-        set->list[i].type = i;
-    }
-}
+static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 
 status_t buf_init(knl_session_t *session)
 {

@@ -109,7 +109,9 @@ status_t ub_create_shm_region(uint32 host_id, uint32 inst_count)
     }
 
     ret = ubsmem_create_region(region_name, 0, &region);
-    if (ret != EOK) {
+    if (ret == UBSM_ERR_ALREADY_EXIST) {
+        OG_LOG_RUN_WAR("ubsmem region %s already exist, ret: %d", region_name, ret);
+    } else if (ret != EOK) {
         OG_LOG_RUN_ERR("ubsmem_create_region %s failed. error:%d", region_name, ret);
         return OG_ERROR;
     }

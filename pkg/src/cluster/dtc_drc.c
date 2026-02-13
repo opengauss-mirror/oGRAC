@@ -38,9 +38,6 @@
 #include "knl_cluster_module.h"
 #include "cm_io_record.h"
 #include "oGRAC_fdsa.h"
-#include "cs_ub.h"
-#include "srv_sga.h"
-#include "cm_ubs_mem.h"
 
 extern bool32 g_enable_fdsa;
 drc_res_ctx_t g_drc_res_ctx;  // need to put it to global DTC instance structure later
@@ -437,102 +434,6 @@ static void drc_res_recycle_proc(thread_t *thread)
     KNL_SESSION_CLEAR_THREADID(session);
 }
 
-static inline uint64 drc_calc_buf_size(uint64 size)
-{
-    uint64 align_size = CM_CALC_ALIGN(size + SGA_BARRIER_SIZE, OG_MAX_ALIGN_SIZE_4K);
-    return align_size;
-}
-
-uint64 drc_calc_remote_data_buf_size(remote_buf_context_t *buf_ctx)
-{
-    /*adjust buf_ctx_count to match the data_buf_size */
-    if ((g_dtc->profile.remote_buf_pool_num > 1) && 
-        (g_dtc->profile.remote_data_buf_size < BUF_POOL_SIZE_THRESHOLD * g_dtc->profile.remote_buf_pool_num)) {
-        buf_ctx->buf_set_count = MAX(1, (uint32)(g_dtc->profile.remote_data_buf_size / BUF_POOL_SIZE_THRESHOLD));
-        OG_LOG_RUN_WAR("[DRC] The parameter buffer pool num (%d) is too large, reset to (%d), each buffer"
-            "pool must not be smaller than (%lld).",
-            g_dtc->profile.remote_buf_pool_num, buf_ctx->buf_set_count, BUF_POOL_SIZE_THRESHOLD);
-    } else {
-        buf_ctx->buf_set_count = g_dtc->profile.remote_buf_pool_num;
-    }
-    g_dtc->profile.remote_data_buf_part_size = g_dtc->profile.remote_data_buf_size / buf_ctx->buf_set_count;
-    g_dtc->profile.remote_data_buf_part_align_size = drc_calc_buf_size(g_dtc->profile.remote_data_buf_part_size);
-	buf_ctx->remote_buf_alloc_size = ALIGN_TO_4M(g_dtc->profile.remote_data_buf_part_align_size * buf_ctx->buf_set_count);
-	return buf_ctx->remote_buf_alloc_size;
-}
-
-status_t dtc_mmap_remote_data_buf(remote_buf_context_t *buf_ctx, uint32 node_id)
-{
-    int ret = OG_ERROR;
-    void *start = (void *)DRC_REMOTE_BUF_START_ADDR;
-    uint64 data_buf_size = buf_ctx->remote_buf_alloc_size;
-    void *start_temp = start + node_id * data_buf_size;
-    char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
-        return ret;
-    }
-
-    if (buf_ctx->remote_buf_addr[node_id] != NULL) {
-        OG_LOG_RUN_WAR("[DRC] remote data buf part %d has been mapped, skip.", node_id);
-        return OG_SUCCESS;
-    }
-
-    ret = ubsmem_shmem_map(start_temp, data_buf_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
-        data_buf_name, 0, (void **)&(buf_ctx->remote_buf_addr[node_id]));
-    if (ret != EOK) {
-        OG_LOG_RUN_ERR("[DRC] Failed to map data buffer %s on node_id %u, return error:%d", data_buf_name, node_id, ret);
-        return ret;
-    }
-
-    OG_LOG_RUN_INF("[DRC] Successfully mapped data buffer %s on node_id %u, addr: %p", data_buf_name, node_id, buf_ctx->remote_buf_addr[node_id]);
-    return OG_SUCCESS;
-}
-
-status_t drc_alloc_mmap_remote_buffer_pool(remote_buf_context_t *buf_ctx)
-{
-    uint32 node_id = g_instance->kernel.id;
-    uint64 remote_buf_size = drc_calc_remote_data_buf_size(buf_ctx);    
-
-    int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] drc create sgm region fail, return error:%d", ret);
-        return ret;
-    }
-
-    char data_buf_name[MAX_SHM_NAME_LENGTH] = {0};
-    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
-        return ret;
-    }
-
-    char region_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-    ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf region name fail,return error:%d", ret);
-        return ret;
-    }
-
-    ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_buf_size, 0600, UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
-    if (ret == UBSM_ERR_ALREADY_EXIST) {
-        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", data_buf_name, ret);
-        return EOK;
-    }
-    if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", data_buf_name, ret);
-        return ret;
-    }
-
-    //after allocate remote data buf, map the buf on self node.
-    ret = dtc_mmap_remote_data_buf(buf_ctx, node_id);
-    if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]mmap remote data buf %s on node %u failed, ret: %d", data_buf_name, node_id, ret);     
-    }
-    return ret;
-}
-
 status_t drc_init(void)
 {
     status_t ret;
@@ -580,7 +481,7 @@ status_t drc_init(void)
     }
 
     // remote buffer pool init, LRU lists init, hash table/bucket init
-    ret = drc_alloc_mmap_remote_buffer_pool(&ogx->buf_ctx);
+    ret = drc_init_remote_buffer(&ogx->remote_sga, &ogx->buf_ctx);
     if (ret != OG_SUCCESS) {
         drc_destroy();
         OG_LOG_RUN_ERR("[DRC]remote buf pool init fail,return error:%u", ret);
@@ -7544,39 +7445,5 @@ void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id)
         drc_res_pool_free_item(&g_buf_res->res_map.res_pool, i);
         i++;
     }
-}
-
-void broadcast_remote_buf_allocated()
-{
-    mes_remote_buf_mmap_bcast_t bcast;
-    uint64 success_inst;
-
-    mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_REMOTE_BUF_MMAP, sizeof(mes_remote_buf_mmap_bcast_t), OG_INVALID_ID32,
-                        g_dtc->profile.inst_id, OG_INVALID_ID8, 0, OG_INVALID_ID16);
-    bcast.node_id = g_dtc->profile.inst_id;
-    
-    mes_broadcast(0, MES_BROADCAST_ALL_INST, &bcast, &success_inst);
-}
-
-void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
-{
-    drc_res_ctx_t *ogx = DRC_RES_CTX;
-
-    if (sizeof(mes_remote_buf_mmap_bcast_t) != msg->head->size) {
-        OG_LOG_RUN_ERR("[DRC]recv remote buf mmap bcast msg length not match, recv %u", msg->head->size);		
-        mes_release_message_buf(msg->buffer);
-        return;
-    }
-
-    mes_remote_buf_mmap_bcast_t *bcast = (mes_remote_buf_mmap_bcast_t *)msg->buffer;
-
-    uint32 node_id = bcast->node_id;
-    if (msg->head->src_inst >= OG_MAX_INSTANCES) {
-        mes_release_message_buf(msg->buffer);
-        OG_LOG_RUN_ERR("[DRC]Do not process remote buf mmap broadcast, because src_inst is invalid: %u", msg->head->src_inst);
-        return;
-    }
-    mes_release_message_buf(msg->buffer);
-    (void)dtc_mmap_remote_data_buf(&ogx->buf_ctx, node_id);
 }
 

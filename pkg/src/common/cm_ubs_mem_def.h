@@ -62,8 +62,6 @@ extern "C" {
 #define UBSM_FLAG_MMAP_HUGETLB_PMD 0x20UL
 #define UBSM_FLAG_MALLOC_WITH_NUMA 0x40UL // create a remote numa when malloc
 
-const int FOUR_KB = 4 * 1024;
-
 typedef enum {
     UBSM_OK = 0,
     // common error

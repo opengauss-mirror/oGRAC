@@ -310,12 +310,6 @@ static status_t srv_alloc_sga(sga_t *sga)
     return OG_SUCCESS;
 }
 
-static inline uint64 srv_calc_buf_size(uint64 size)
-{
-    uint64 align_size = CM_CALC_ALIGN(size + SGA_BARRIER_SIZE, OG_MAX_ALIGN_SIZE_4K);
-    return align_size;
-}
-
 static inline void srv_set_sga_buffer(char **buf, uint64 size, uint64 *offset)
 {
     sga_t *sga = &g_instance->sga;
