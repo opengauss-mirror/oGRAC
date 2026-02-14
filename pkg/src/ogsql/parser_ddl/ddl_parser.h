@@ -107,6 +107,8 @@ status_t og_parse_grant(sql_stmt_t *stmt, knl_grant_def_t **grant_def, priv_type
 status_t og_parse_revoke(sql_stmt_t *stmt, knl_revoke_def_t **revoke_def, priv_type_def priv_type,
     galist_t *priv_list, object_type_t obj_type, name_with_owner *obj_name, galist_t *revokee_list,
     bool cascade_opt);
+status_t og_parse_purge(sql_stmt_t *stmt, knl_purge_def_t **purge_def, purge_type_t purge_type,
+    name_with_owner *name_owner, char *single_name);
 
 static inline status_t sql_replace_password(sql_stmt_t *stmt, text_t *password)
 {

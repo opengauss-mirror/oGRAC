@@ -195,7 +195,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
                CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateFunctionStmt compileFunctionSource
-               GrantStmt RevokeStmt
+               GrantStmt RevokeStmt PurgeStmt
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
                expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts
@@ -294,7 +294,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
             subpartitions_num partitions_num external_table func_arg_with_default
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword
-%type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name
+%type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name user_password
 
 %type <ival> opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options
@@ -583,6 +583,7 @@ stmtmulti:
         | compileFunctionSource
         | GrantStmt
         | RevokeStmt
+        | PurgeStmt
         | /*EMPTY*/ { $$ = NULL; }
     ;
 
@@ -9366,6 +9367,81 @@ revokee_list:
 opt_revoke_cascade:
             CASCADE CONSTRAINTS                  { $$ = true; }
             | /* EMPTY */                        { $$ = false; }
+        ;
+
+/* -------------------------
+ * PURGE
+ * ------------------------- */
+PurgeStmt:
+            PURGE TABLE_P any_name opt_purge_partition
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    purge_type_t ptype = ($3 != NULL) ? PURGE_PART : PURGE_TABLE;
+                    if (og_parse_purge(stmt, &def, ptype, $3, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+            | PURGE TABLE_P SCONST
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_purge(stmt, &def, PURGE_TABLE_OBJECT, NULL, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+            | PURGE INDEX_P any_name
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_purge(stmt, &def, PURGE_INDEX, $3, NULL) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+            | PURGE INDEX_P SCONST
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_purge(stmt, &def, PURGE_INDEX_OBJECT, NULL, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+            | PURGE PARTITION SCONST
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_purge(stmt, &def, PURGE_PART_OBJECT, NULL, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+            | PURGE TABLESPACE ColId
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_purge(stmt, &def, PURGE_TABLESPACE, NULL, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+            | PURGE RECYCLEBIN
+                {
+                    knl_purge_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_purge(stmt, &def, PURGE_RECYCLEBIN, NULL, NULL) != OG_SUCCESS) {
+                        parser_yyerror("parse purge failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
+opt_purge_partition:
+            PARTITION ColId                      { $$ = $2; }
+            | /* EMPTY */                        { $$ = NULL; }
         ;
 
 grantee_list:
