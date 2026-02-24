@@ -487,6 +487,24 @@ drop function convert1;
 
 purge recyclebin;
 
+drop table if exists bison_part_t1;
+create table bison_part_t1(f1 number2, f2 number2)
+PARTITION BY hash(f1) SUBPARTITION BY RANGE(f2)
+(
+PARTITION p1
+(
+SUBPARTITION PART_11 VALUES LESS THAN(20),
+SUBPARTITION PART_13 VALUES LESS THAN(MAXVALUE)
+),
+PARTITION p2
+(
+SUBPARTITION PART_21 VALUES LESS THAN(1E-5),
+SUBPARTITION PART_23 VALUES LESS THAN(MAXVALUE)
+)
+);
+create indexcluster (index bison_part_t1_idx1 on bison_part_t1(f1), index bison_part_t1_idx1 on bison_part_t1(f2)); --error
+create indexcluster (index bison_part_t1_idx1 on bison_part_t1(f1) parallel 5, index bison_part_t1_idx2 on bison_part_t1(f2) parallel 5);
+
 alter system set use_bison_parser = false;
 drop table if exists native_desc_idx_t;
 create table native_desc_idx_t(a int primary key, b int);

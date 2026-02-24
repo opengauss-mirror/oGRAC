@@ -193,9 +193,9 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <res>    stmtblock stmtmulti InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
                UpdateStmt select_clause MergeStmt DropStmt merge_insert merge_when_insert_clause ReplaceStmt TruncateStmt
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterIndexStmt CreateTablespaceStmt
-               CreateIndexStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
+               CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
                CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateFunctionStmt compileFunctionSource
-               GrantStmt RevokeStmt PurgeStmt
+               GrantStmt RevokeStmt PurgeStmt index_cluster_item
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
                expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts
@@ -205,7 +205,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                expr_list_with_select_rows json_column_list siblings_clause with_clause cte_list pivot_in_list pivot_clause_list
                select_pivot_clause unpivot_in_list expr_or_implicit_row_list cube_clause rollup_clause
                group_sets_item group_sets_list grouping_sets_clause group_by_cartesian_item group_by_list group_clause
-               locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list
+               locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list index_cluster_list
 %type <expr>   ctext_expr a_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr
                func_arg_expr func_arg_list expr_elem_list func_expr_common_subexpr substr_list multi_expr_list
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
@@ -354,7 +354,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     HANDLER HASH HAVING HDFSDIRECTORY HEADER_P HOLD HOUR_P HOUR_MINUTE_P HOUR_SECOND_P
 
     IDENTIFIED IDENTITY_P IF_P IGNORE IGNORE_EXTRA_DATA ILIKE IMMEDIATE IMMUTABLE IMPLICIT_P IN_P INCLUDE IMCSTORED
-    INCLUDING INCREMENT INCREMENTAL INDEX_P INDEXES INFILE INFINITE_P INHERIT INHERITS INITIAL_P INITIALLY INITRANS INLINE_P
+    INCLUDING INCREMENT INCREMENTAL INDEX_P INDEXES INDEXCLUSTER INFILE INFINITE_P INHERIT INHERITS INITIAL_P INITIALLY INITRANS INLINE_P
 
     INNER_P INOUT_P INPUT_P INSENSITIVE INSERT INSTANCE INSTEAD INT_P INTEGER INTERNAL
     INTERSECT_P INTERVAL INTO INVISIBLE INVOKER IP IS ISNULL ISOLATION
@@ -571,6 +571,7 @@ stmtmulti:
         | AlterIndexStmt
         | CreateTablespaceStmt
         | CreateIndexStmt
+        | CreateIndexClusterStmt
         | CreateSequenceStmt
         | CreateViewStmt
         | CreateSynonymStmt
@@ -8514,6 +8515,71 @@ CreateIndexStmt:
                 }
         ;
 
+CreateIndexClusterStmt:
+            CREATE INDEXCLUSTER '(' index_cluster_list ')'
+                {
+                    knl_indexes_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *index_list = $4;
+                    knl_index_def_t *index_def = NULL;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_indexes_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    def->index_count = 0;
+                    stmt->context->type = OGSQL_TYPE_CREATE_INDEXES;
+
+                    for (uint32 i = 0; i < index_list->count; i++) {
+                        if (def->index_count >= OG_MAX_INDEX_COUNT_PERSQL) {
+                            parser_yyerror("create more than eight indexes in one SQL statement");
+                        }
+                        index_def = (knl_index_def_t*)cm_galist_get(index_list, i);
+                        def->indexes_def[def->index_count] = *index_def;
+                        def->index_count++;
+                    }
+                    $$ = def;
+                }
+        ;
+
+index_cluster_list:
+            index_cluster_item
+                {
+                    galist_t *list = NULL;
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed.");
+                    }
+                    if (cm_galist_insert(list, $1) != OG_SUCCESS) {
+                        parser_yyerror("insert list failed.");
+                    }
+
+                    $$ = list;
+                }
+            | index_cluster_list ',' index_cluster_item
+                {
+                    galist_t *list = $1;
+                    if (cm_galist_insert(list, $3) != OG_SUCCESS) {
+                        parser_yyerror("insert list failed.");
+                    }
+
+                    $$ = list;
+                }
+        ;
+
+index_cluster_item:
+            opt_unique INDEX_P any_name ON any_name '(' index_column_list ')' opt_createidx_opts
+                {
+                    knl_index_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    
+                    if (og_parse_create_index(stmt, &def, $3, $5, $7, $9) != OG_SUCCESS) {
+                        parser_yyerror("parse create index failed");
+                    }
+                    
+                    def->unique = $1;
+                    $$ = def;
+                }
+        ;
+
 CreateSequenceStmt:
             CREATE SEQUENCE any_name opt_createseq_opts
                 {
@@ -12342,6 +12408,7 @@ unreserved_keyword:
             | INCREMENT
             | INCREMENTAL
             | INDEXES
+            | INDEXCLUSTER
             | INFILE
             | INFINITE_P
             | INHERIT

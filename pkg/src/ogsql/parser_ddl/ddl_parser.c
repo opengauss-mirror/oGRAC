@@ -79,11 +79,15 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             break;
         }
         case KEY_WORD_PUBLIC: {
-            if (lex_expected_fetch_word(stmt->session->lex, "SYNONYM") != OG_SUCCESS) {
-                return OG_ERROR;
-            }
+            if (!g_instance->sql.use_bison_parser) {
+                if (lex_expected_fetch_word(stmt->session->lex, "SYNONYM") != OG_SUCCESS) {
+                    return OG_ERROR;
+                }
 
-            status = sql_parse_create_synonym(stmt, SYNONYM_IS_PUBLIC + SYNONYM_IS_REPLACE);
+                status = sql_parse_create_synonym(stmt, SYNONYM_IS_PUBLIC + SYNONYM_IS_REPLACE);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         }
         case KEY_WORD_PACKAGE:
@@ -264,7 +268,11 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             }
             break;
         case KEY_WORD_INDEXCLUSTER:
-            status = sql_parse_create_indexes(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_create_indexes(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_SEQUENCE:
             if (!g_instance->sql.use_bison_parser) {
