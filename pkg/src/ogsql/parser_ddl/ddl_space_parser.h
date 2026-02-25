@@ -34,6 +34,38 @@
 extern "C" {
 #endif
 
+typedef enum alterts_opt_type {
+    ALTERTS_ADD_DATAFILE_OPT,
+    ALTERTS_DROP_DATAFILE_OPT,
+    ALTERTS_AUTOEXTEND_OFF_OPT,
+    ALTERTS_AUTOEXTEND_ON_OPT,
+    ALTERTS_AUTOOFFLINE_OPT,
+    ALTERTS_RENAME_OPT,
+    ALTERTS_RENAME_DATAFILE_OPT,
+    ALTERTS_OFFLINE_DATAFILE_OPT,
+    ALTERTS_AUTOPURGE_OPT,
+    ALTERTS_SHRINK_SPACE_OPT,
+    ALTERTS_PUNCH_OPT
+} alterts_opt_type;
+
+typedef struct alterts_opt {
+    alterts_opt_type type;
+    union {
+        galist_t *datafiles;       /* for ADD DATAFILE */
+        struct {
+            int64 next_size;       /* for AUTOEXTEND ON */
+            int64 max_size;
+        } autoextend;
+        bool on_off;               /* for AUTOOFFLINE, AUTOPURGE */
+        char *new_name; /* for RENAME TO */
+        struct {
+            galist_t *old_files;   /* for RENAME DATAFILE */
+            galist_t *new_files;
+        } rename_datafiles;
+        int64 size;
+    };
+} alterts_opt;
+
 status_t sql_parse_datafile(sql_stmt_t *stmt, knl_device_def_t *dev_def, word_t *word, bool32 *isRelative);
 status_t sql_parse_autoextend_clause_core(device_type_t type, sql_stmt_t *stmt, knl_autoextend_def_t *autoextend_def,
     word_t *next_word);
@@ -47,6 +79,8 @@ status_t sql_parse_create_ctrlfiles(sql_stmt_t *stmt);
 status_t og_parse_create_space(sql_stmt_t *stmt, knl_space_def_t **ts_def, bool is_undo, char *space_name,
     uint32 extentsize, galist_t *datafiles, galist_t *ts_opts);
 status_t og_parse_create_ctrlfile(sql_stmt_t *stmt, knl_rebuild_ctrlfile_def_t **def, galist_t *ctrlfile_opts);
+status_t og_parse_alter_tablespace(sql_stmt_t *stmt, knl_altspace_def_t **def, bool32 is_for_create_db,
+    char *tablespace_name, alterts_opt *opt, int64 segments_num);
 #ifdef __cplusplus
 }
 #endif

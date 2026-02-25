@@ -1355,3 +1355,225 @@ status_t og_parse_create_ctrlfile(sql_stmt_t *stmt, knl_rebuild_ctrlfile_def_t *
 
     return OG_SUCCESS;
 }
+
+static status_t og_parse_datafile_clause(sql_stmt_t *stmt, knl_altspace_def_t *altspace_def, galist_t *datafiles)
+{
+    knl_device_def_t *dev_def = NULL;
+
+    altspace_def->action = ALTSPACE_ADD_DATAFILE;
+
+    for (uint32 i = 0; i < datafiles->count; i++) {
+        knl_device_def_t *cur = NULL;
+        dev_def = (knl_device_def_t*)cm_galist_get(datafiles, i);
+        if (cm_galist_insert(&altspace_def->datafiles, dev_def) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        for (uint32 j = 0; j < i; j++) {
+            cur = (knl_device_def_t*)cm_galist_get(datafiles, j);
+            if (cm_text_equal_ins(&dev_def->name, &cur->name)) {
+                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "it is not allowed to specify duplicate datafile");
+                return OG_ERROR;
+            }
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_drop_datafile_clause(sql_stmt_t *stmt, knl_altspace_def_t *def, galist_t *datafiles)
+{
+    knl_device_def_t *dev_def = NULL;
+    text_t *datafile_name = NULL;
+    def->action = ALTSPACE_DROP_DATAFILE;
+
+    for (uint32 i = 0; i < datafiles->count; i++) {
+        if (cm_galist_new(&def->datafiles, sizeof(knl_device_def_t), (pointer_t *)&dev_def) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        datafile_name = (text_t*)cm_galist_get(datafiles, i);
+        dev_def->name = *datafile_name;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_autoextend_clause(sql_stmt_t *stmt, knl_altspace_def_t *def, alterts_opt *opt)
+{
+    device_type_t type;
+    int64 tmp_next_size = 0;
+    int64 tmp_max_size = 0;
+    uint32 page_size = 0;
+
+    def->action = ALTSPACE_SET_AUTOEXTEND;
+
+    /*
+     * the storage engine does not support auto-extend maxsize property,
+     * neither does the structure of knl_altspace_def_t.
+     * so the 5th~7th argument are all left NULL until the maxsize property
+     * implemented in the storage engine
+     */
+    OG_RETURN_IFERR(knl_get_space_type(KNL_SESSION(stmt), &def->name, &type));
+    if (opt->type == ALTERTS_AUTOEXTEND_OFF_OPT) {
+        def->autoextend.enabled = OG_FALSE;
+    } else {
+        def->autoextend.enabled = OG_TRUE;
+        tmp_next_size = opt->autoextend.next_size;
+        tmp_max_size = opt->autoextend.max_size;
+        OG_RETURN_IFERR(knl_get_page_size(KNL_SESSION(stmt), &page_size));
+        if (tmp_max_size != 0 && tmp_max_size > ((int64)OG_MAX_DATAFILE_PAGES * page_size)) {
+            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+                "\"MAXSIZE\" specified in autoextend clause cannot "
+                "be greater than %lld. \"MAXSIZE\": %lld",
+                ((int64)OG_MAX_DATAFILE_PAGES * page_size), tmp_max_size);
+            return OG_ERROR;
+        }
+        if ((tmp_max_size > 0) && (tmp_next_size > tmp_max_size)) {
+            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+                "\"NEXT\" size specified in autoextend clause cannot be "
+                "greater than the \"MAX\" size. \"Next\" size is %lld, \"MAX\" size is %lld",
+                tmp_next_size, tmp_max_size);
+            return OG_ERROR;
+        }
+
+        /* assign the parsed size value respectively */
+        def->autoextend.nextsize = tmp_next_size;
+        def->autoextend.maxsize = tmp_max_size;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_rename_datafiles_clause(sql_stmt_t *stmt, knl_altspace_def_t *def, alterts_opt *opt)
+{
+    knl_device_def_t *dev_def = NULL;
+    text_t *name = NULL;
+    def->action = ALTSPACE_RENAME_DATAFILE;
+
+    for (uint32 i = 0; i < opt->rename_datafiles.old_files->count; i++) {
+        if (cm_galist_new(&def->datafiles, sizeof(knl_device_def_t), (pointer_t *)&dev_def) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        name = (text_t*)cm_galist_get(opt->rename_datafiles.old_files, i);
+        dev_def->name = *name;
+    }
+
+    for (uint32 i = 0; i < opt->rename_datafiles.new_files->count; i++) {
+        if (cm_galist_new(&def->rename_datafiles, sizeof(knl_device_def_t), (pointer_t *)&dev_def) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        name = (text_t*)cm_galist_get(opt->rename_datafiles.new_files, i);
+        dev_def->name = *name;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_offline_clause(sql_stmt_t *stmt, knl_altspace_def_t *def, galist_t *datafiles)
+{
+    knl_device_def_t *dev_def = NULL;
+    text_t *name = NULL;
+
+    def->action = ALTSPACE_OFFLINE_DATAFILE;
+    for (uint32 i = 0; i < datafiles->count; i++) {
+        if (cm_galist_new(&def->datafiles, sizeof(knl_device_def_t), (pointer_t *)&dev_def) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        name = (text_t*)cm_galist_get(datafiles, i);
+        dev_def->name = *name;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_extend_segments(sql_stmt_t *stmt, knl_altspace_def_t *def, int64 segments_num)
+{
+    core_ctrl_t *core_ctrl = DB_CORE_CTRL(KNL_SESSION(stmt));
+    uint32 undo_segments = core_ctrl->undo_segments;
+
+    if (segments_num == OG_INVALID_INT64) {
+        return OG_SUCCESS;
+    }
+
+    if (def->datafiles.count > 1) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "extend undo segments only supports one file ");
+        return OG_ERROR;
+    }
+    if (segments_num < 1 || segments_num + undo_segments > OG_MAX_UNDO_SEGMENT) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid segments number");
+        return OG_ERROR;
+    }
+    def->undo_segments = segments_num;
+    return OG_SUCCESS;
+}
+
+status_t og_parse_alter_tablespace(sql_stmt_t *stmt, knl_altspace_def_t **def, bool32 is_for_create_db,
+    char *tablespace_name, alterts_opt *opt, int64 segments_num)
+{
+    knl_altspace_def_t *altspace_def = NULL;
+
+    stmt->context->type = OGSQL_TYPE_ALTER_TABLESPACE;
+
+    if (sql_alloc_mem(stmt->context, sizeof(knl_altspace_def_t), (void **)def) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    altspace_def = *def;
+
+    altspace_def->is_for_create_db = is_for_create_db;
+    cm_str2text(tablespace_name, &altspace_def->name);
+
+    cm_galist_init(&altspace_def->datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&altspace_def->rename_datafiles, stmt->context, sql_alloc_mem);
+
+    altspace_def->in_shard = OG_FALSE;
+
+    switch (opt->type) {
+        case ALTERTS_ADD_DATAFILE_OPT:
+            OG_RETURN_IFERR(og_parse_datafile_clause(stmt, altspace_def, opt->datafiles));
+            break;
+        case ALTERTS_DROP_DATAFILE_OPT:
+            OG_RETURN_IFERR(og_parse_drop_datafile_clause(stmt, altspace_def, opt->datafiles));
+            break;
+        case ALTERTS_AUTOEXTEND_OFF_OPT:
+            OG_RETURN_IFERR(og_parse_autoextend_clause(stmt, altspace_def, opt));
+            break;
+        case ALTERTS_AUTOEXTEND_ON_OPT:
+            OG_RETURN_IFERR(og_parse_autoextend_clause(stmt, altspace_def, opt));
+            break;
+        case ALTERTS_AUTOOFFLINE_OPT:
+            altspace_def->action = ALTSPACE_SET_AUTOOFFLINE;
+            altspace_def->auto_offline = opt->on_off;
+            break;
+        case ALTERTS_RENAME_OPT:
+            altspace_def->action = ALTSPACE_RENAME_SPACE;
+            if (strlen(opt->new_name) > OG_MAX_NAME_LEN) {
+                OG_THROW_ERROR(ERR_NAME_TOO_LONG, "tablespace", strlen(opt->new_name), OG_MAX_NAME_LEN);
+                return OG_ERROR;
+            }
+            cm_str2text(opt->new_name, &altspace_def->rename_space);
+            if (cm_text_equal(&altspace_def->name, &altspace_def->rename_space)) {
+                OG_THROW_ERROR(ERR_SPACE_NAME_INVALID, "the same name already exists");
+                return OG_ERROR;
+            }
+            break;
+        case ALTERTS_RENAME_DATAFILE_OPT:
+            OG_RETURN_IFERR(og_parse_rename_datafiles_clause(stmt, altspace_def, opt));
+            break;
+        case ALTERTS_OFFLINE_DATAFILE_OPT:
+            OG_RETURN_IFERR(og_parse_offline_clause(stmt, altspace_def, opt->datafiles));
+            break;
+        case ALTERTS_AUTOPURGE_OPT:
+            altspace_def->action = ALTSPACE_SET_AUTOPURGE;
+            altspace_def->auto_purge = opt->on_off;
+            break;
+        case ALTERTS_SHRINK_SPACE_OPT:
+            altspace_def->action = ALTSPACE_SHRINK_SPACE;
+            altspace_def->shrink.keep_size = opt->size;
+            break;
+        case ALTERTS_PUNCH_OPT:
+            altspace_def->action = ALTSPACE_PUNCH;
+            altspace_def->punch_size = opt->size;
+            break;
+        default:
+            break;
+    }
+
+    OG_RETURN_IFERR(og_parse_extend_segments(stmt, altspace_def, segments_num));
+
+    return OG_SUCCESS;
+}

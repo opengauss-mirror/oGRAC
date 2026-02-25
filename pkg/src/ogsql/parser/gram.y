@@ -188,6 +188,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     parse_column_t      *parse_col;
     parse_table_element_t *table_element;
     text_t              *text;
+    alterts_opt         *alts_opt;
 }
 
 %type <res>    stmtblock stmtmulti InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
@@ -195,7 +196,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
                CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateFunctionStmt compileFunctionSource
-               GrantStmt RevokeStmt PurgeStmt index_cluster_item
+               GrantStmt RevokeStmt PurgeStmt AlterTablespaceStmt index_cluster_item
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
                expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts
@@ -259,7 +260,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                createdb_nologging_opt createdb_system_opt createdb_sysaux_opt createdb_default_opt createdb_maxinstance_opt
                createdb_opt createdb_archivelog_opt createdb_compatibility_opt
 %type <ctrlfile_opt> ctrlfile_opt
-%type <list> controlfiles logfiles instance_node_opts instance_nodes createdb_opts datafiles opt_user_options user_option_list
+%type <list> files logfiles instance_node_opts instance_nodes createdb_opts datafiles opt_user_options user_option_list
              tablespace_name_list createts_opts opt_createts_opts index_column_list createidx_opts opt_partition_index_def
              partition_index_list opt_part_options part_options subpartition_index_list opt_subpartition_index_def opt_createidx_opts
              opt_view_column_list view_column_list table_column_list opt_constraint_states constraint_states
@@ -267,7 +268,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
              list_subpartition_list hash_subpartition_list list_partition_list listValueList hash_partition_list
              opt_partition_store_in_clause tablespaceList opt_interval_tablespaceList func_args_with_defaults_list
              func_args_with_defaults proc_args grantee_list sys_priv_list obj_priv_list revokee_list
-%type <ival64> num_size opt_blocksize next_size max_size extents_clause BigintOnly SignedIconst
+%type <ival64> num_size opt_blocksize next_size max_size extents_clause BigintOnly SignedIconst opt_punch_size opt_segments
 %type <dev_def> logfile datafile ctrlfile_file
 %type <inode> instance_node
 %type <interval_info> interval_type
@@ -275,7 +276,8 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
             json_set_func_name opt_subpart_tablespace_option opt_seg_name tablespace field_terminate opt_delimited
 %type <user_opt> user_option
 %type <ts_opt> createts_opt
-%type <boolean> opt_unique opt_if_not_exists csf_or_asf opt_global opt_with_grant opt_with_admin
+%type <alts_opt> alterts_opt
+%type <boolean> opt_unique opt_if_not_exists csf_or_asf opt_global opt_with_grant opt_with_admin opt_alter_ts_db
 %type <ival> profile_parameter
 %type <profile_limit_item> profile_limit_item
 %type <profile_limit_value> profile_limit_value
@@ -319,7 +321,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 
 %token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACCOUNT ACTION ADD_P ADMIN ADMINISTER AFTER
     AGGREGATE ALGORITHM ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY APP APPEND APPENDONLY APPLY ARCHIVE_P ARCHIVELOG ARRAY AS ASC ASF ASOF_P
-        ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUDIT AUTHID AUTHORIZATION AUTOEXTEND AUTOMAPPED AUTOOFFLINE AUTO_INCREMENT AUTOALLOCATE
+        ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUDIT AUTHID AUTHORIZATION AUTOEXTEND AUTOMAPPED AUTOOFFLINE AUTOPURGE AUTO_INCREMENT AUTOALLOCATE
 
     BACKWARD BARRIER BEFORE BEGIN_NON_ANOYBLOCK BEGIN_P BETWEEN BIGINT BINARY BINARY_BIGINT BINARY_DOUBLE BINARY_DOUBLE_INF BINARY_DOUBLE_NAN BINARY_FLOAT BINARY_INTEGER BIT BLANKS
     BLOB_P BLOCKCHAIN BOLCKSIZE BODY_P BOGUS BOOLEAN_P BOTH BPCHAR BUCKETCNT BUCKETS BUILD BY BYTE_P BYTEAWITHOUTORDER BYTEAWITHOUTORDERWITHEQUAL
@@ -334,7 +336,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CURSOR_NAME CYCLE
     SHRINK USE_P
 
-    DATA_P DATABASE DATAFILE DATAFILES DATANODE DATANODES DATATYPE_CL DATE_P DATE_FORMAT_P DAY_P DAY_HOUR_P DAY_MINUTE_P DAY_SECOND_P DBA_RECYCLEBIN DBCOMPATIBILITY_P DEALLOCATE DEC DECIMAL_P DECLARE DECODE DEFAULT DEFAULTS
+    DATA_P DB_P DATABASE DATAFILE DATAFILES DATANODE DATANODES DATATYPE_CL DATE_P DATE_FORMAT_P DAY_P DAY_HOUR_P DAY_MINUTE_P DAY_SECOND_P DBA_RECYCLEBIN DBCOMPATIBILITY_P DEALLOCATE DEC DECIMAL_P DECLARE DECODE DEFAULT DEFAULTS
     DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITED DELIMITER DELIMITERS DELTA DELTAMERGE DENSE_RANK DESC DETERMINISTIC
 /* PGXC_BEGIN */
     DIAGNOSTICS DICTIONARY DIRECT DIRECT_LOAD DIRECTORY DISABLE_P DISCARD DISTINCT DISTRIBUTE DISTRIBUTION DO DOCUMENT_P DOMAIN_P DOUBLE_P
@@ -372,7 +374,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     NAME_P NAMES NAN_P NATIONAL NATURAL NCHAR NEWLINE NEXT NO NOARCHIVELOG NOCACHE NOCOMPRESS NOCYCLE NODE NOLOGGING NOMAXVALUE NOMINVALUE NONE NOORDER NORELY
     NOT NOTHING NOTIFY NOTNULL NOVALIDATE NOWAIT NTH_VALUE_P NULL_P NULLCOLS NULLIF NULLS_P NUMBER_P NUMERIC NUMSTR NVARCHAR NVARCHAR2 NVL
 
-    OBJECT_P OF_P OFF OFFSET OIDS ON ONLINE ONLY OPERATIONS OPERATOR OPTIMIZATION OPTION OPTIONALLY OPTIONS OR
+    OBJECT_P OF_P OFF OFFLINE OFFSET OIDS ON ONLINE ONLY OPERATIONS OPERATOR OPTIMIZATION OPTION OPTIONALLY OPTIONS OR
     ORDER OUT_P OUTER_P OVER OVERLAPS OVERLAY OWNED OWNER ORDINALITY ORGANIZATION OUTFILE
 
     PACKAGE PACKAGES PAGE PARALLEL PARALLEL_ENABLE PARAMETERS PARSER PARTIAL PARTITION PARTITIONS PASSING PASSWORD PASSWORD_GRACE_TIME_P PASSWORD_LIFE_TIME_P PASSWORD_LOCK_TIME_P PASSWORD_MIN_LEN_P PASSWORD_REUSE_MAX_P PASSWORD_REUSE_TIME_P PATH PCTFREE PER_P PERCENT PERFORMANCE PERM PERMANENT PLACING PLAN PLANS POLICY POSITION
@@ -384,7 +386,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 /* PGXC_BEGIN */
     PREFERRED PREFIX PRESERVE PREPARE PREPARED PRIMARY
 /* PGXC_END */
-    PRECEDES_P PRIVATE PRIOR PRIORER PRIVILEGES PRIVILEGE PROCEDURAL PROCEDURE PROFILE PUBLIC PUBLICATION PUBLISH PURGE
+    PRECEDES_P PRIVATE PRIOR PRIORER PRIVILEGES PRIVILEGE PROCEDURAL PROCEDURE PROFILE PUBLIC PUBLICATION PUBLISH PURGE PUNCH
 
     QUERY QUOTE
 
@@ -393,7 +395,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     RESET REWRITE RESIZE RESOURCE RESPECT_P RESTART RESTRICT RETURN RETURNED_SQLSTATE RETURNING RETURNS REUSE REVERSE REVOKE RIGHT ROLE ROLES ROLLBACK ROLLUP ROTATE
     ROTATION ROW ROW_COUNT ROWID ROWNUM ROWS ROWSCN ROWTYPE_P RULE
 
-    SAMPLE SAVEPOINT SCHEDULE SCHEMA SCHEMA_NAME SCN SCROLL SEARCH SECOND_P SECURITY SELECT SEPARATOR_P SEQUENCE SEQUENCES SHARE_MEMORY
+    SAMPLE SAVEPOINT SCHEDULE SCHEMA SCHEMA_NAME SCN SCROLL SEARCH SECOND_P SECURITY SEGMENTS SELECT SEPARATOR_P SEQUENCE SEQUENCES SHARE_MEMORY
     SERIALIZABLE SERVER_P SESSION SESSION_USER SESSIONS_PER_USER_P SET SETS SETOF SHARE SHIPPABLE SHOW SHUTDOWN SIBLINGS SIGNED
     SIMILAR SIMPLE SIZE SKIP SLAVE SLICE SMALLDATETIME SMALLDATETIME_FORMAT_P SMALLINT SNAPSHOT SOME SOURCE_P SPACE_P SPECIFICATION SPILL SPLIT STABLE STACKED_P STANDALONE_P START STARTS STARTWITH
     STATEMENT STATEMENT_ID STATISTICS STDIN STDOUT STORAGE STORE_P STORED STRATIFY STREAM STRICT_P STRIP_P SUBCLASS_ORIGIN SUBPARTITION SUBPARTITIONS SUBSCRIPTION SUBSTR SUBSTRING
@@ -585,6 +587,7 @@ stmtmulti:
         | GrantStmt
         | RevokeStmt
         | PurgeStmt
+        | AlterTablespaceStmt
         | /*EMPTY*/ { $$ = NULL; }
     ;
 
@@ -7614,7 +7617,7 @@ createdb_user_opt:
                 }
         ;
 
-controlfiles:
+files:
             SCONST
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -7634,7 +7637,7 @@ controlfiles:
                     }
                     $$ = list;
                 }
-            | controlfiles ',' SCONST
+            | files ',' SCONST
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     galist_t *list = $1;
@@ -7653,7 +7656,7 @@ controlfiles:
         ;
 
 createdb_controlfile_opt:
-            CONTROLFILE '(' controlfiles ')'
+            CONTROLFILE '(' files ')'
                 {
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8492,6 +8495,172 @@ extents_clause:
 opt_undo:
             UNDO                                                    { $$ = true; }
             | /* EMPTY */                                           { $$ = false; }
+        ;
+
+opt_alter_ts_db:
+            DB_P                                                      { $$ = true; }
+            | /* EMPTY */                                           { $$ = false; }
+        ;
+
+AlterTablespaceStmt:
+            ALTER TABLESPACE opt_alter_ts_db ColId alterts_opt opt_segments
+                {
+                    knl_altspace_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (og_parse_alter_tablespace(stmt, &def, (bool32)$3, $4, $5, $6) != OG_SUCCESS) {
+                        parser_yyerror("parse alter tablespace failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
+alterts_opt:
+            ADD_P DATAFILE datafiles
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_ADD_DATAFILE_OPT;
+                    opt->datafiles = $3;
+                    $$ = opt;
+                }
+            | DROP DATAFILE files
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_DROP_DATAFILE_OPT;
+                    opt->datafiles = $3;
+                    $$ = opt;
+                }
+            | AUTOEXTEND OFF
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_AUTOEXTEND_OFF_OPT;
+                    $$ = opt;
+                }
+            | AUTOEXTEND ON next_size max_size
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_AUTOEXTEND_ON_OPT;
+                    opt->autoextend.next_size = $3;
+                    opt->autoextend.max_size = $4;
+                    if (opt->autoextend.next_size < OG_MIN_AUTOEXTEND_SIZE) {
+                        parser_yyerror("invalid datafile autoextend next size.");
+                    }
+                    if (opt->autoextend.max_size < OG_MIN_AUTOEXTEND_SIZE) {
+                        parser_yyerror("invalid datafile autoextend max size.");
+                    }
+                    $$ = opt;
+                }
+            | AUTOOFFLINE on_or_off
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_AUTOOFFLINE_OPT;
+                    opt->on_off = $2;
+                    $$ = opt;
+                }
+            | RENAME TO ColId
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_RENAME_OPT;
+                    opt->new_name = $3;
+                    $$ = opt;
+                }
+            | RENAME DATAFILE files TO files
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_RENAME_DATAFILE_OPT;
+                    opt->rename_datafiles.old_files = $3;
+                    opt->rename_datafiles.new_files = $5;
+                    $$ = opt;
+                }
+            | OFFLINE DATAFILE files
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_OFFLINE_DATAFILE_OPT;
+                    opt->datafiles = $3;
+                    $$ = opt;
+                }
+            | AUTOPURGE on_or_off
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_AUTOPURGE_OPT;
+                    opt->on_off = $2;
+                    $$ = opt;
+                }
+            | SHRINK SPACE_P KEEP num_size
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    int64 max_size = (int64)OG_MAX_SPACE_FILES * g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_SHRINK_SPACE_OPT;
+                    opt->size = $4;
+                    if (opt->size < OG_MIN_USER_DATAFILE_SIZE || opt->size > max_size) {
+                        parser_yyerror("invalid size for shrink space");
+                    }
+                    $$ = opt;
+                }
+            | PUNCH opt_punch_size
+                {
+                    alterts_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("Memory allocation failed for alterts_opt");
+                    }
+                    opt->type = ALTERTS_PUNCH_OPT;
+                    opt->size = $2;
+                    if (opt->size != OG_INVALID_INT64 && (opt->size < OG_MIN_USER_DATAFILE_SIZE ||
+                        opt->size > OG_MAX_PUNCH_SIZE)) {
+                        parser_yyerror("invalid size for punch");
+                    }
+                    $$ = opt;
+                }
+        ;
+
+opt_punch_size:
+            SIZE num_size                                           { $$ = $2; }
+            | /* EMPTY */                                           { $$ = OG_INVALID_INT64; }
+        ;
+
+opt_segments:
+            SEGMENTS BigintOnly                                     { $$ = $2; }
+            | /* EMPTY */                                           { $$ = OG_INVALID_INT64; }
         ;
 
 on_or_off:
@@ -12203,6 +12372,7 @@ unreserved_keyword:
             | AUTOEXTEND
             | AUTOMAPPED
             | AUTOOFFLINE
+            | AUTOPURGE
             | AUTO_INCREMENT
             | AUTOALLOCATE
             | BACKWARD
@@ -12514,6 +12684,7 @@ unreserved_keyword:
             | OBJECT_P
             | OF_P
             | OFF
+            | OFFLINE
             | OIDS
             | OPERATIONS
             | OPERATOR
@@ -12574,6 +12745,7 @@ unreserved_keyword:
             | PUBLIC
             | PUBLICATION
             | PUBLISH
+            | PUNCH
             | PURGE
             | QUERY
             | QUOTE
@@ -12638,6 +12810,7 @@ unreserved_keyword:
             | SEARCH
             | SECOND_P
             | SECURITY
+            | SEGMENTS
             | SELF
             | SEPARATOR_P
             | SEQUENCE
@@ -12919,6 +13092,7 @@ reserved_keyword:
             | CURRENT_ROLE
             | CURRENT_TIME
             | CURRENT_USER
+            | DB_P
             | DEFAULT
             | DEFERRABLE
             | DELETE_P

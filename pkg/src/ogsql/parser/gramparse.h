@@ -33,6 +33,7 @@
 #include "ddl_table_attr_parser.h"
 #include "pl_memory.h"
 #include "pl_compiler.h"
+#include "ddl_space_parser.h"
 
 /*
  * NB: include gram.h only AFTER including scanner.h, because scanner.h
