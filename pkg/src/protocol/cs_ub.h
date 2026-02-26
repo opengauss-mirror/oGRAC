@@ -22,12 +22,12 @@
  * -------------------------------------------------------------------------
  */
 
- #ifndef __CS_UB_H
- #define __CS_UB_H
+#ifndef __CS_UB_H
+#define __CS_UB_H
 
- #include <stdio.h>
- #include <errno.h>
- #include "cm_defs.h"
+#include <stdio.h>
+#include <errno.h>
+#include "cm_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,5 +42,4 @@ status_t ub_delete_shm_region(uint32 host_id);
 #ifdef __cplusplus
 }
 #endif
-
- #endif
+#endif

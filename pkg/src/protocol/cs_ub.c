@@ -23,40 +23,40 @@
  * -------------------------------------------------------------------------
  */
 
- #include "cm_log.h"
- #include "cs_pipe.h"
- #include "cm_signal.h"
- #include "cm_ubs_mem.h"
+#include "cm_log.h"
+#include "cs_pipe.h"
+#include "cm_signal.h"
+#include "cm_ubs_mem.h"
 
- #ifdef __cplusplus
- extern "C" {
- #endif
+#ifdef __cplusplus
+extern "C" {
+#endif
 
- #ifndef WIN32
+#ifndef WIN32
 
- static void cm_log_for_ubsm(int level, const char *msg)
- {
-	 switch(level) {
-		 case 0:
-			 OG_LOG_DEBUG_INF(msg);
-			 break;
-		 case 1:
-			 OG_LOG_RUN_INF(msg);
-			 break;
-		 case 2:
-			 OG_LOG_RUN_WAR(msg);
-			 break;
-		 case 3:
-			 OG_LOG_RUN_ERR(msg);
-			 break;
-		 default:
-			 OG_LOG_RUN_ERR(msg);
-			 break;
-	 }
- }
- 
- status_t ub_init_ubsm_mem(void)
- {
+static void cm_log_for_ubsm(int level, const char *msg)
+{
+    switch(level) {
+        case 0:
+            OG_LOG_DEBUG_INF(msg);
+            break;
+        case 1:
+            OG_LOG_RUN_INF(msg);
+            break;
+        case 2:
+            OG_LOG_RUN_WAR(msg);
+            break;
+        case 3:
+            OG_LOG_RUN_ERR(msg);
+            break;
+        default:
+            OG_LOG_RUN_ERR(msg);
+            break;
+    }
+}
+
+status_t ub_init_ubsm_mem(void)
+{
     OG_LOG_RUN_INF("ubsm_mem init start.");
     ubsmem_options_t ubsmem_options;
     int ret = ubsmem_init_attributes(&ubsmem_options);
@@ -69,19 +69,19 @@
         OG_LOG_RUN_ERR("ubsmem_initialize failed. error:%d", ret);
         return ret;
     }
-
+    
     ret = ubsmem_set_extern_logger(cm_log_for_ubsm);
     if (ret != UBSM_OK) {
         OG_LOG_RUN_ERR("ubsmem_set_extern_logger failed. error:%d", ret);
         return ret;
     }
-
+    
     OG_LOG_RUN_INF("ubsm_mem init success.");
     return OG_SUCCESS;
- }
+}
 
 status_t ub_create_shm_region(uint32 host_id, uint32 inst_count)
- {
+{
     char *host_name = cm_sys_host_name();
     char region_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
     int ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", host_id);
@@ -117,10 +117,10 @@ status_t ub_create_shm_region(uint32 host_id, uint32 inst_count)
     }
 
     return OG_SUCCESS;
- }
+}
 
 status_t ub_delete_shm_region(uint32 host_id)
- {
+{
     char region_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
     int ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", host_id);
     if (ret < EOK) {
@@ -133,7 +133,7 @@ status_t ub_delete_shm_region(uint32 host_id)
         return OG_ERROR;
     }
     return OG_SUCCESS;
- }
+}
 
 status_t ub_delete_shm(uint32 host_id)
 {
@@ -152,7 +152,7 @@ status_t ub_delete_shm(uint32 host_id)
     return OG_SUCCESS;
 }
 
- #endif // win32
+#endif // win32
  
- #ifdef __cplusplus
- }#endif
+#ifdef __cplusplus
+}#endif

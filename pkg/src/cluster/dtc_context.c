@@ -554,9 +554,9 @@ status_t dtc_startup(void)
     g_dtc->profile.inst_id = kernel->dtc_attr.inst_id;
     g_dtc->profile.node_count = kernel->db.ctrl.core.node_count;
 
-	if (ub_init_ubsm_mem() != OG_SUCCESS) {
-		OG_LOG_RUN_ERR("failed to init ubsm_mem");
-	}
+    if (ub_init_ubsm_mem() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("failed to init ubsm_mem");
+    }
 
     if (drc_init() != OG_SUCCESS) {
         OG_LOG_RUN_ERR("drc_init failed.");
@@ -604,7 +604,7 @@ status_t dtc_startup(void)
     }
 
     broadcast_remote_buf_allocated();
-	
+    
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }
@@ -615,36 +615,36 @@ static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
    uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
 
    for (uint32 i = 0; i < inst_count; i++) {
-	   if (remote_sga->map_success[i] == OG_FALSE) {
-		   continue;
-	   }
-	   char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-	   int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
-	   if (ret < EOK) {
-		   OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
-		   all_unmap = false;
-		   continue;
-	   }
-	   ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
-	   if (ret != UBSM_OK) {
-		   OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret); 
-		   all_unmap = false;
-		   continue;
-	   }
-	   remote_sga->map_success[i] = OG_TRUE;
-	   remote_sga->remote_buf_addr[i] = NULL;
-	   OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
+       if (remote_sga->map_success[i] == OG_FALSE) {
+           continue;
+       }
+       char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
+       int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
+       if (ret < EOK) {
+           OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
+           all_unmap = false;
+           continue;
+       }
+       ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
+       if (ret != UBSM_OK) {
+           OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret); 
+           all_unmap = false;
+           continue;
+       }
+       remote_sga->map_success[i] = OG_FALSE;
+       remote_sga->remote_buf_addr[i] = NULL;
+       OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
    }
 
-   if(!all_unmap) {
-	   OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
-	   return OG_ERROR;
+   if (!all_unmap) {
+       OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
+       return OG_ERROR;
    }
 
    return OG_SUCCESS;
 }
 
-status_t drc_deinit_ubsm_mem(remote_sga_t *remote_sga, uint32 inst_count)
+static status_t drc_deinit_ubsm_mem(remote_sga_t *remote_sga, uint32 inst_count)
 {
     int ret = drc_unmap_shm(remote_sga, inst_count);
     if (ret != OG_SUCCESS) {
@@ -675,9 +675,9 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
 {
     drc_res_ctx_t *ogx = DRC_RES_CTX;
 
-	if (drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
+    if (drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("failed to deinit ubsm_mem");
-	}
+    }
     free_dtc_rc();
     dmon_close();
     mes_clean();

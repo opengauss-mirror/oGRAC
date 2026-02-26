@@ -1030,7 +1030,7 @@ status_t srv_load_cluster_params(void)
         return OG_ERROR;
     }
 
-    //remote data buffer
+    // remote data buffer
     OG_RETURN_IFERR(srv_get_param_size_uint64("DTC_REMOTE_DATA_BUF_SIZE", &g_dtc->profile.remote_data_buf_size));
     if (g_dtc->profile.remote_data_buf_size < OG_MIN_DATA_BUFFER_SIZE) {
         OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "DTC_REMOTE_DATA_BUF_SIZE", OG_MIN_DATA_BUFFER_SIZE);

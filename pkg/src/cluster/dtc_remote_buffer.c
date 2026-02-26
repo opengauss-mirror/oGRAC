@@ -35,9 +35,9 @@
 #include "knl_common.h"
 #include "knl_buffer.h"
 
-
+// page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
 #define REMOTE_BUF_PAGE_COST (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64) + \
-                BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))  //page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
+                BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 
 static inline uint64 drc_calc_buf_size(uint64 size)
 {
@@ -45,10 +45,10 @@ static inline uint64 drc_calc_buf_size(uint64 size)
     return align_size;
 }
 
-uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
-    /*adjust buf_ctx_count to match the data_buf_size */
-    if ((g_dtc->profile.remote_buf_pool_num > 1) && 
+    /* adjust buf_ctx_count to match the data_buf_size */
+    if ((g_dtc->profile.remote_buf_pool_num > 1) &&
         (g_dtc->profile.remote_data_buf_size < BUF_POOL_SIZE_THRESHOLD * g_dtc->profile.remote_buf_pool_num)) {
         buf_ctx->buf_set_count = MAX(1, (uint32)(g_dtc->profile.remote_data_buf_size / BUF_POOL_SIZE_THRESHOLD));
         OG_LOG_RUN_WAR("[DRC] The parameter buffer pool num (%d) is too large, reset to (%d), each buffer"
@@ -63,7 +63,7 @@ uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf_contex
     return remote_sga->remote_buf_alloc_size;
 }
 
-status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
+static status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 {
     int ret = OG_ERROR;
     void *start = (void *)DRC_REMOTE_BUF_START_ADDR;
@@ -93,10 +93,10 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
     return OG_SUCCESS;
 }
 
-status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 node_id = g_instance->kernel.id;
-    uint64 remote_buf_size = drc_calc_remote_data_buf_size(remote_sga, buf_ctx);    
+    uint64 remote_buf_size = drc_calc_remote_data_buf_size(remote_sga, buf_ctx);
 
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
@@ -129,10 +129,10 @@ status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remote_buf_
         return ret;
     }
 
-    //after allocate remote data buf, map the buf on self node.
+    // after allocate remote data buf, map the buf on self node.
     ret = dtc_mmap_remote_data_buf(remote_sga, node_id);
     if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]mmap remote data buf %s on node %u failed, ret: %d", data_buf_name, node_id, ret);     
+        OG_LOG_RUN_ERR("[DRC]mmap remote data buf %s on node %u failed, ret: %d", data_buf_name, node_id, ret);
     }
     return ret;
 }
@@ -163,7 +163,7 @@ static void drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf
     }
 }
 
-void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
 
@@ -174,12 +174,12 @@ void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *
         set = &buf_ctx->buf_set[i];
         set->lock = 0;
         set->size = g_dtc->profile.remote_data_buf_part_size;
-        set->addr = remote_sga->data_buf + i * g_dtc->profile.remote_data_buf_part_align_size;  //start addr of each buf_set in UB shm.
+        set->addr = remote_sga->data_buf + i * g_dtc->profile.remote_data_buf_part_align_size;  // start addr of each buf_set in UB shm.
         cm_init_cond(&set->set_cond);
         /* set->size <= 32T, BUF_PAGE_COST >= 8360, set->capacity cannot overflow */
         set->capacity = (uint32)(set->size / REMOTE_BUF_PAGE_COST);
         set->hwm = 0;
-        set->page_buf = set->addr;   //in UB shm, page_buf includes remote_page_info_t, page and tail_lsn
+        set->page_buf = set->addr;   // in UB shm, page_buf includes remote_page_info_t, page and tail_lsn
         offset = (uint64)page_size * set->capacity;
         set->ctrls = (buf_ctrl_t *)(set->addr + offset);
         set->buckets = (buf_bucket_t *)(set->addr + offset);
@@ -241,5 +241,3 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     mes_release_message_buf(msg->buffer);
     (void)dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
 }
-
-

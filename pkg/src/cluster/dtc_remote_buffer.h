@@ -81,7 +81,6 @@ EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 #ifdef __cplusplus
 }
 #endif
-
 #endif
 
 
