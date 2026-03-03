@@ -251,8 +251,6 @@ status_t srv_init_vmem_pool(void)
     return OG_SUCCESS;
 }
 
-#define SGA_BARRIER_SIZE 64
-
 static status_t load_large_pages_param(large_pages_mode_t *large_pages_mode)
 {
     char *value = srv_get_param("USE_LARGE_PAGES");
@@ -310,12 +308,6 @@ static status_t srv_alloc_sga(sga_t *sga)
     g_instance->attr.mem_alloc_from_large_page = OG_FALSE;
 
     return OG_SUCCESS;
-}
-
-static inline uint64 srv_calc_buf_size(uint64 size)
-{
-    uint64 align_size = CM_CALC_ALIGN(size + SGA_BARRIER_SIZE, OG_MAX_ALIGN_SIZE_4K);
-    return align_size;
 }
 
 static inline void srv_set_sga_buffer(char **buf, uint64 size, uint64 *offset)

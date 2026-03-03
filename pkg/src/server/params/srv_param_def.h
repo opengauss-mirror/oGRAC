@@ -404,6 +404,8 @@ typedef enum en_param_global {
     PARAM_DTC_TXN_INFO_TASK_RATIO,
     PARAM_RCY_NODE_READ_BUF_SIZE,
     PARAM_DTC_RCY_PARAL_BUF_LIST_SIZE,
+    PARAM_DTC_REMOTE_DATA_BUF_SIZE,
+    PARAM_DTC_REMOTE_BUF_POOL_NUM,
     // cpu info
     PARAM_CPU_GROUP_INFO,
     // deadlock

@@ -44,6 +44,10 @@
 #include "dtc_smon.h"
 #include "cm_io_record.h"
 #include "tms_monitor.h"
+#include "cs_ub.h"
+#include "cm_ubs_mem.h"
+#include "dtc_remote_buffer.h"
+
 #define DTC_BUFFER_POOL_NUM      (4)
 #define DTC_MSG_BUFFER_QUEUE_NUM (8)
 #define DTC_FIRST_BUFFER_LENGTH  (64)
@@ -386,6 +390,10 @@ static status_t dtc_register_proc(void)
         "set bak increment unblock ack"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_VERIFY_REMASTER_PARAM, drc_process_remaster_param_verify,
                                              OG_FALSE, "drc verify remaster params"));
+
+    knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMOTE_BUF_MMAP, drc_process_remote_buf_mmap,
+                                             OG_FALSE, "REMOTE BUF MAP broadcast"));
+
     for (uint32 i = 0; i < MES_CMD_CEIL; i++) {
         mes_set_msg_enqueue(i, g_processors[i].is_enqueue);
     }
@@ -546,6 +554,10 @@ status_t dtc_startup(void)
     g_dtc->profile.inst_id = kernel->dtc_attr.inst_id;
     g_dtc->profile.node_count = kernel->db.ctrl.core.node_count;
 
+    if (ub_init_ubsm_mem() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("failed to init ubsm_mem");
+    }
+
     if (drc_init() != OG_SUCCESS) {
         OG_LOG_RUN_ERR("drc_init failed.");
         return OG_ERROR;
@@ -590,14 +602,82 @@ status_t dtc_startup(void)
         OG_LOG_RUN_ERR("init_dtc_rc failed.");
         return OG_ERROR;
     }
+
+    broadcast_remote_buf_allocated();
     
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }
 
+static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
+{
+   bool all_unmap = true;
+   uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
+
+   for (uint32 i = 0; i < inst_count; i++) {
+       if (remote_sga->map_success[i] == OG_FALSE) {
+           continue;
+       }
+       char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
+       int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
+       if (ret < EOK) {
+           OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
+           all_unmap = false;
+           continue;
+       }
+       ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
+       if (ret != UBSM_OK) {
+           OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret); 
+           all_unmap = false;
+           continue;
+       }
+       remote_sga->map_success[i] = OG_FALSE;
+       remote_sga->remote_buf_addr[i] = NULL;
+       OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
+   }
+
+   if (!all_unmap) {
+       OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
+       return OG_ERROR;
+   }
+
+   return OG_SUCCESS;
+}
+
+static status_t drc_deinit_ubsm_mem(remote_sga_t *remote_sga, uint32 inst_count)
+{
+    int ret = drc_unmap_shm(remote_sga, inst_count);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("Failed to unmap shm region. ret:%d", ret);
+        return ret;
+    }
+    uint32 inst_id = g_instance->kernel.id;
+    ret = ub_delete_shm(inst_id);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("Failed to delete shm region. ret:%d", ret);
+        return ret;
+    }
+    ret = ub_delete_shm_region(inst_id);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("Failed to delete shm region. ret:%d", ret);
+        return ret;
+    }
+    ret = ubsmem_finalize();
+    if (ret != UBSM_OK) {
+        OG_LOG_RUN_ERR("ubsmem_finalize failed. error:%d", ret);
+        return ret;
+    }
+    OG_LOG_RUN_INF("ubsm_mem deinit success.");
+    return OG_SUCCESS;
+}
 
 void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
 {
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+
+    if (drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("failed to deinit ubsm_mem");
+    }
     free_dtc_rc();
     dmon_close();
     mes_clean();
@@ -605,3 +685,4 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
         cms_res_inst_unregister();
     }
 }
+

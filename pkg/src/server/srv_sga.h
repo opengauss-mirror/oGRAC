@@ -34,6 +34,8 @@
 extern "C" {
 #endif
 
+#define SGA_BARRIER_SIZE 64
+
 typedef enum en_large_pages_mode {
     LARGE_PAGES_TRUE = 1,  // try to use large_pages first
     LARGE_PAGES_FALSE = 2, // do not use large_pages
@@ -68,6 +70,13 @@ typedef struct st_sga {
     memory_pool_t large_pool;
     mem_pool_t buddy_pool;
 } sga_t;
+
+
+static inline uint64 srv_calc_buf_size(uint64 size)
+{
+    uint64 align_size = CM_CALC_ALIGN(size + SGA_BARRIER_SIZE, OG_MAX_ALIGN_SIZE_4K);
+    return align_size;
+}
 
 status_t srv_create_sga(void);
 void srv_destroy_sga(void);

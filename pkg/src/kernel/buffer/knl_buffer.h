@@ -286,6 +286,14 @@ typedef struct st_edp_page_info {
 
 static const buf_lru_list_t g_init_list_t = {0};
 
+static inline void buf_init_list(buf_set_t *set)
+{
+    for (uint32 i = 0; i < LRU_LIST_TYPE_COUNT; i++) {
+        set->list[i] = g_init_list_t;
+        set->list[i].type = i;
+    }
+}
+
 static inline uint32 hash_page(uint32 hash)
 {
     /* a hash algorithm */

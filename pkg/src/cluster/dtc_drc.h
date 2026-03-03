@@ -35,6 +35,7 @@
 #include "mes_func.h"
 #include "dtc_drc_stat.h"
 #include "dtc_buffer.h"
+#include "dtc_remote_buffer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -380,6 +381,8 @@ typedef struct st_drc_res_ctx {
     thread_t gc_thread;
 
     drc_deposit_map_t drc_deposit_map[OG_MAX_INSTANCES];
+    remote_buf_context_t buf_ctx;
+    remote_sga_t remote_sga;
 } drc_res_ctx_t;
 
 typedef struct st_cvt_info {

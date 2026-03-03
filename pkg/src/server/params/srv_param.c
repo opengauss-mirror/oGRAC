@@ -1084,6 +1084,10 @@ config_item_t g_parameters[] = {
     { "DTC_RCY_PARAL_BUF_LIST_SIZE", OG_TRUE, ATTR_NONE, "256", NULL, NULL, "-", "[2,256]", "OG_TYPE_INTEGER", NULL,
       PARAM_DTC_RCY_PARAL_BUF_LIST_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_dtc_rcy_paral_buf_list_size, NULL,
       NULL, NULL },
+    {"DTC_REMOTE_DATA_BUF_SIZE", OG_TRUE, ATTR_NONE, "128M", NULL, NULL, "-", "[64M, 32T]", "OG_TYPE_INTEGER", NULL,
+      PARAM_DTC_REMOTE_DATA_BUF_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_data_buffer_size, NULL, NULL, NULL },
+    {"DTC_REMOTE_BUF_POOL_NUM", OG_TRUE, ATTR_NONE, "1", NULL, NULL, "-", "[1, 128]", "OG_TYPE_INTEGER", NULL,
+      PARAM_DTC_REMOTE_BUF_POOL_NUM, EFFECT_REBOOT, CFG_INS, sql_verify_als_buf_pool_num, NULL, NULL, NULL },
     { "CPU_GROUP_INFO",     OG_TRUE, ATTR_NONE, "0", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL, PARAM_CPU_GROUP_INFO, EFFECT_REBOOT, CFG_INS, sql_verify_als_cpu_inf_str, NULL, NULL, NULL },
 
     /* deadlock */

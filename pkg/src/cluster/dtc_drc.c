@@ -38,6 +38,7 @@
 #include "knl_cluster_module.h"
 #include "cm_io_record.h"
 #include "oGRAC_fdsa.h"
+
 extern bool32 g_enable_fdsa;
 drc_res_ctx_t g_drc_res_ctx;  // need to put it to global DTC instance structure later
 // buf_lock_mode string
@@ -477,6 +478,14 @@ status_t drc_init(void)
             OG_LOG_RUN_ERR("[DRC] oGRAC fdas init fail,return error:%u", ret);
             return OG_ERROR;
         }
+    }
+
+    // remote buffer pool init, LRU lists init, hash table/bucket init
+    ret = drc_init_remote_buffer(&ogx->remote_sga, &ogx->buf_ctx);
+    if (ret != OG_SUCCESS) {
+        drc_destroy();
+        OG_LOG_RUN_ERR("[DRC]remote buf pool init fail,return error:%u", ret);
+        return OG_ERROR;
     }
 
     uint64 dc_pool_size = (uint64)g_dtc->kernel->dc_ctx.pool.opt_count * (uint64)g_dtc->kernel->dc_ctx.pool.page_size;
@@ -7437,3 +7446,4 @@ void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id)
         i++;
     }
 }
+
