@@ -155,4 +155,5 @@ status_t ub_delete_shm(uint32 host_id)
 #endif // win32
  
 #ifdef __cplusplus
-}#endif
+}
+#endif

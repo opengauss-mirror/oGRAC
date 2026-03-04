@@ -602,9 +602,7 @@ status_t dtc_startup(void)
         OG_LOG_RUN_ERR("init_dtc_rc failed.");
         return OG_ERROR;
     }
-
-    broadcast_remote_buf_allocated();
-    
+	
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }

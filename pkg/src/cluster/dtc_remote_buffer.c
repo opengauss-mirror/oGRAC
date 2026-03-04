@@ -63,7 +63,7 @@ static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf
     return remote_sga->remote_buf_alloc_size;
 }
 
-static status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
+status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 {
     int ret = OG_ERROR;
     void *start = (void *)DRC_REMOTE_BUF_START_ADDR;
@@ -212,7 +212,6 @@ void broadcast_remote_buf_allocated()
 {
     mes_remote_buf_mmap_bcast_t bcast;
     uint64 success_inst;
-
     mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_REMOTE_BUF_MMAP, sizeof(mes_remote_buf_mmap_bcast_t), OG_INVALID_ID32,
                         g_dtc->profile.inst_id, OG_INVALID_ID8, 0, OG_INVALID_ID16);
     bcast.node_id = g_dtc->profile.inst_id;
@@ -231,7 +230,6 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     }
 
     mes_remote_buf_mmap_bcast_t *bcast = (mes_remote_buf_mmap_bcast_t *)msg->buffer;
-
     uint32 node_id = bcast->node_id;
     if (msg->head->src_inst >= OG_MAX_INSTANCES) {
         mes_release_message_buf(msg->buffer);

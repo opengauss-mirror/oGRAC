@@ -197,6 +197,7 @@ function initUserAndGroup() {
     usermod -a -G ogracgroup ograc
     usermod -a -G ogracgroup ogmgruser
     usermod -a -G ${deploy_group} ograc
+    usermod -a -G ubsmd ograc
     config_sudo
 }
 

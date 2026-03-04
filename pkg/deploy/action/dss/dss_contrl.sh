@@ -218,7 +218,7 @@ function is_reg()
     then
         echo "RES_FAILED"
         exit 1
-    fi 
+    fi
     echo "RES_SUCCESS"
     exit 0
 }

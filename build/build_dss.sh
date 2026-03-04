@@ -24,8 +24,11 @@ function download_source() {
         export https_proxy=${http_proxy}
         export no_proxy=127.0.0.1,.huawei.com,localhost,local,.local
     fi
-    git clone -b 7.0.0-RC1 https://gitcode.com/opengauss/CBB.git
-    git clone -b 7.0.0-RC1 https://gitcode.com/opengauss/DSS.git
+    
+    # due to ub sdk only support openeuler2403, so clone master branch
+    # To do that accoring to LTS-7.0.0 of DSS and DMS
+    git clone -b master https://gitcode.com/opengauss/CBB.git
+    git clone -b master https://gitcode.com/opengauss/DSS.git
 
     echo "Clone source success"
 }
@@ -33,7 +36,7 @@ function download_source() {
 function build_package() {
     export THIRD_PATH=${OGDB_CODE_PATH}/openGauss-third_party_binarylibs_Centos7.6_x86_64
     if [[ ${ENV_TYPE} == "aarch64" ]];then
-        export THIRD_PATH=${OGDB_CODE_PATH}/openGauss-third_party_binarylibs_openEuler_2203_arm
+        export THIRD_PATH=${OGDB_CODE_PATH}/openGauss-third_party_binarylibs_openEuler_2403_arm
     fi
     export CC=${THIRD_PATH}/buildtools/gcc10.3/gcc/bin/gcc
     export cc=${THIRD_PATH}/buildtools/gcc10.3/gcc/bin/gcc

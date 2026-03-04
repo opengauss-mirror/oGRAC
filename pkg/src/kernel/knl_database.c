@@ -37,6 +37,7 @@
 #include "cm_file_iofence.h"
 #include "cm_dss_iofence.h"
 #include "srv_view.h"
+#include "cm_ubs_mem.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -990,6 +991,29 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
         rc_allow_reform_finish();
         dtc_wait_reform();
         OG_LOG_RUN_INF("[DB OPEN] dtc_wait_reform finished");
+    }
+    
+    if (!rc_is_master()) {
+        // self map remote shared buffer of other nodes
+        drc_res_ctx_t *ogx = DRC_RES_CTX;
+        cluster_view_t view;
+        OG_LOG_RUN_WAR("[DRC]mmap remote data buf start, map status: %d", ogx->remote_sga.map_success[0]);
+        for (uint32 node_id = 0; node_id < g_dtc->profile.node_count; node_id++) {
+            rc_get_cluster_view(&view, OG_FALSE);
+            if (!rc_bitmap64_exist(&view.bitmap, node_id)) {
+                continue;
+            }
+
+            if (ogx->remote_sga.map_success[i] == OG_FALSE) {
+                int ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, i);
+                if (ret != UBSM_OK) {
+                    OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node failed, remote_id: %d, ret: %d",
+                                   node_id, ret);
+                }
+            }
+        }
+        // tell others to map owner remote shared buffer
+        broadcast_remote_buf_allocated();
     }
 
     if (log_check_asn(session, options->ignore_logs) != OG_SUCCESS) {
