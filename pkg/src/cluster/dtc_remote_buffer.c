@@ -24,6 +24,7 @@
  */
 #include <stdio.h>
 #include <pwd.h>
+#include <sys/syscall.h>
 #include "knl_cluster_module.h"
 #include "cm_defs.h"
 #include "dtc_drc.h"
@@ -36,6 +37,32 @@
 #include "cm_ubs_mem.h"
 #include "knl_common.h"
 #include "knl_buffer.h"
+
+#include "ub_dist_comm_queue.h"
+#include "ub_dist_lock.h"
+
+static const char *SHM_NAME_QUEUEA = "queue_buf_part_0";
+static const char *SHM_NAME_QUEUEB = "queue_buf_part_1";
+static size_t SHM_TOTAL_SIZE = (size_t)1024 * 1024 * 256; // 256MB
+
+static void *g_shm_base_ptr = NULL;
+static ub_rw_lock_t *g_ub_lock = NULL;
+
+static ub_shm_comm_t g_handle_send = NULL;
+static ub_shm_comm_t g_handle_recv = NULL;
+
+static inline uint64_t ub_get_tid_u64()
+{
+    static __thread uint64_t tid = 0;
+    if (tid == 0) {
+#ifdef __linux__
+        tid = (uint64_t)syscall(SYS_gettid);
+#else
+        tid = (uint64_t)pthread_self();
+#endif
+    }
+    return tid;
+}
 
 // page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
 #define REMOTE_BUF_PAGE_COST (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64) + \
@@ -144,6 +171,75 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remo
     return ret;
 }
 
+static status_t drc_alloc_mmap_remote_lock_buffer_pool(remote_sga_t *remote_lock, remote_sga_t *remote_queue,
+                                                       remote_buf_context_t *buf_ctx)
+{
+    uint32 node_id = g_instance->kernel.id;
+    uint64 remote_buf_size = SHM_TOTAL_SIZE;  // 256MB for lock buffer pool
+
+    /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
+    g_mes.profile.inst_count = 2;
+
+    int ret = 0;
+
+    char region_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
+    ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", node_id);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf region name fail,return error:%d", ret);
+        return ret;
+    }
+
+    struct passwd *pwd;
+    pwd = getpwuid(getuid());
+
+    char lock_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
+    ret = sprintf_s(lock_buf_name, sizeof(lock_buf_name), "%s_lock_buf_part_%d", pwd->pw_name, node_id);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
+        return ret;
+    }
+    ret = ubsmem_shmem_allocate(region_name, lock_buf_name, remote_buf_size, 0600,
+                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
+    if (ret == UBSM_ERR_ALREADY_EXIST) {
+        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", lock_buf_name, ret);
+    } else if (ret != UBSM_OK) {
+        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", lock_buf_name, ret);
+        return ret;
+    }
+
+    char queue_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
+
+    ret = sprintf_s(queue_buf_name, sizeof(queue_buf_name), "%s_queue_buf_part_0", pwd->pw_name);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
+        return ret;
+    }
+    ret = ubsmem_shmem_allocate(region_name, queue_buf_name, remote_buf_size, 0600,
+                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
+    if (ret == UBSM_ERR_ALREADY_EXIST) {
+        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", queue_buf_name, ret);
+    } else if (ret != UBSM_OK) {
+        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", queue_buf_name, ret);
+        return ret;
+    }
+
+    ret = sprintf_s(queue_buf_name, sizeof(queue_buf_name), "%s_queue_buf_part_1", pwd->pw_name);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
+        return ret;
+    }
+    ret = ubsmem_shmem_allocate(region_name, queue_buf_name, remote_buf_size, 0600,
+                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
+    if (ret == UBSM_ERR_ALREADY_EXIST) {
+        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", queue_buf_name, ret);
+    } else if (ret != UBSM_OK) {
+        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", queue_buf_name, ret);
+        return ret;
+    }
+
+    return UBSM_OK;
+}
+
 static inline void drc_set_remote_buffer(char **buf, char *remote_buf_addr, uint64 size, uint64 *offset)
 {
     char *barrier = NULL;
@@ -170,8 +266,94 @@ static void drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf
     }
 }
 
+static void drc_set_lock_buf(remote_sga_t *remote_sga)
+{
+    uint32 node_id = g_instance->kernel.id;
+    /* * allocate each data buffer part */
+    MEMS_RETVOID_IFERR(memset_s(remote_sga->remote_buf_addr[node_id], SHM_TOTAL_SIZE, 0xFF, SHM_TOTAL_SIZE));
+}
+
+static status_t init_comm_queue(bool is_master)
+{
+    void *shmA = NULL;
+    void *shmB = NULL;
+
+    struct passwd *pwd;
+    pwd = getpwuid(getuid());
+    char queue_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
+
+    ret = sprintf_s(queue_buf_name, sizeof(queue_buf_name), "%s_queue_buf_part_%d", pwd->pw_name, is_master ? 0 : 1);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
+        return ret;
+    }
+    if (ubsmem_shmem_map(NULL, SHM_TOTAL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, queue_buf_name, 0, &shmA) != 0) {
+        OG_LOG_RUN_ERR("[DRC] ubsmem_shmem_map for comm queue failed, return error");
+        return OG_ERROR;
+    }
+
+    ret = sprintf_s(queue_buf_name, sizeof(queue_buf_name), "%s_queue_buf_part_%d", pwd->pw_name, is_master ? 1 : 0);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
+        return ret;
+    }
+    if (ubsmem_shmem_map(NULL, SHM_TOTAL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, queue_buf_name, 0, &shmB) != 0) {
+        OG_LOG_RUN_ERR("[DRC] ubsmem_shmem_map for comm queue failed, return error");
+        return OG_ERROR;
+    }
+
+    const size_t kInitSize = 1024;
+    const size_t kRingSize = 1376640;
+
+    const uint8_t nodeA = 0;
+    const uint8_t nodeB = 1;
+    const uint8_t cur = is_master ? nodeA : nodeB;
+    const uint8_t peer = is_master ? nodeB : nodeA;
+
+    void *init_region_cur = (is_master ? (char *)shmA : (char *)shmB);
+    void *ring_region_cur = (is_master ? (char *)shmA : (char *)shmB) + kInitSize;
+    void *ring_region_peer = (is_master ? (char *)shmB : (char *)shmA) + kInitSize;
+
+    ub_ring_desc_t ring_descs[1];
+    ring_descs[0].ring_capacity = 1024;
+    ring_descs[0].max_msg_size = 512;
+    ring_descs[0].priority = 1;
+
+    ub_comm_conf_t conf;
+    conf.max_nodes = 2;
+    conf.current_node_id = cur;
+    conf.num_rings = 1;
+    conf.ring_descs = ring_descs;
+
+    ub_shm_area_t init_area;
+    init_area.size = kInitSize;
+    init_area.ptr = init_region_cur;
+
+    ub_ring_region_info_t infos[2];
+    infos[0].node_id = cur;
+    infos[0].region.size = kRingSize;
+    infos[0].region.ptr = ring_region_cur;
+    infos[1].node_id = peer;
+    infos[1].region.size = kRingSize;
+    infos[1].region.ptr = ring_region_peer;
+
+    ub_ring_region_map_t ring_map;
+    ring_map.entries = infos;
+    ring_map.count = 2;
+
+    ub_shm_comm_t *handle = is_master ? &g_handle_send : &g_handle_recv;
+    int ret = ub_comm_queue_init(handle, &init_area, &ring_map, &conf);
+    if (ret != 0) {
+        OG_LOG_RUN_ERR("[DRC] ub_comm_queue_init failed, return error:%d", ret);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
 static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
+    uint32 node_id = g_instance->kernel.id;
+    bool is_master = (node_id == 0);
     uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
 
     buf_set_t *set = NULL;
@@ -186,33 +368,84 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         /* set->size <= 32T, BUF_PAGE_COST >= 8360, set->capacity cannot overflow */
         set->capacity = (uint32)(set->size / REMOTE_BUF_PAGE_COST);
         set->hwm = 0;
-        set->page_buf = set->addr;   // in UB shm, page_buf includes remote_page_info_t, page and tail_lsn
+
+        if (init_comm_queue(is_master) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DRC] init_comm_queue for send failed.");
+            return;
+        }
+
+        char lock_buf_name[MAX_SHM_NAME_LENGTH] = {0};
+        struct passwd *pwd;
+        pwd = getpwuid(getuid());
+        int ret = sprintf_s(lock_buf_name, sizeof(lock_buf_name), "%s_lock_buf_part_%d", pwd->pw_name, node_id);
+        if (ret < EOK) {
+            OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
+            return;
+        }
+        if (ubsmem_shmem_map(NULL, SHM_TOTAL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, lock_buf_name, 0,
+                             &g_shm_base_ptr) != 0) {
+            OG_LOG_RUN_ERR("[DRC] dtc_mmap_remote_lock_buf for dist lock failed.");
+            return;
+        }
+
+        g_ub_lock = (ub_rw_lock_t *)g_shm_base_ptr;
+
+        ub_lock_config_t config;
+        config.lease_time = 60000;
+        config.heartbeat_timeout = 500;
+
+        ub_location_t creator;
+        creator.tid = ub_get_tid_u64();
+        creator.node_id = (uint8_t)node_id;
+
+        ub_rw_lock_create(g_ub_lock, &config, &creator);
+
+        set->page_buf = set->addr;  // in UB shm, page_buf includes remote_page_info_t, page and tail_lsn
+
+        for (uint32 j = 0; j < set->capacity; j++) {
+            char *page_addr = set->page_buf + j * page_size;
+            remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
+            // each page corresponds to a lock in the lock buffer.
+            page_info->lock_ptr = (uintptr_t)((char *)g_ub_lock + j * UB_RW_LOCK_SIZE);
+        }
+
         offset = (uint64)page_size * set->capacity;
         set->ctrls = (buf_ctrl_t *)(set->addr + offset);
-
+        offset += (uint64)set->capacity * sizeof(buf_ctrl_t);
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
 
         knl_reset_large_memory((char *)set->buckets, (uint64)sizeof(buf_bucket_t) * set->bucket_num);
         buf_init_list(set);
     }
-    
+
     cm_init_thread_lock(&buf_ctx->buf_mutex);
 
     return;
 }
 
-status_t drc_init_remote_buffer(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+status_t drc_init_remote_buffer()
 {
-    status_t ret = drc_alloc_mmap_remote_buffer_pool(remote_sga, buf_ctx);
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    status_t ret = drc_alloc_mmap_remote_buffer_pool(&ogx->remote_sga, &ogx->buf_ctx);
     if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DRC]alloc mmap remote buffer pool fail,return error:%u", ret);
         return ret;
     }
+    drc_set_data_buf(&ogx->remote_sga, &ogx->buf_ctx);
 
-    drc_set_data_buf(remote_sga, buf_ctx);
-
-    drc_init_remote_buf_struct(remote_sga, buf_ctx);
+    ret = drc_alloc_mmap_remote_lock_buffer_pool(&ogx->remote_lock, &ogx->remote_queue, &ogx->buf_ctx);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC]alloc mmap remote buffer pool fail,return error:%u", ret);
+        return ret;
+    }
+    OG_LOG_RUN_INF("[DRC]Successfully allocated and mapped remote buffer pool for data, lock and queue.");
+    drc_set_lock_buf(&ogx->remote_queue);
+    OG_LOG_RUN_INF("[DRC]Successfully set remote queue buffer.");
+    drc_set_lock_buf(&ogx->remote_lock);
+    OG_LOG_RUN_INF("[DRC]Successfully set remote lock buffer.");
+    drc_init_remote_buf_struct(&ogx->remote_sga, &ogx->buf_ctx);
+    OG_LOG_RUN_INF("[DRC]Successfully initialized remote buffer structures.");
     return OG_SUCCESS;
 }
 

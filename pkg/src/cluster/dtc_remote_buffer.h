@@ -62,8 +62,7 @@ typedef struct st_remote_sga {
 
 #pragma pack(push, 1)
 typedef struct st_remote_page_info {
-    uint32 lock_ptr;
-    uint32 lock_padded;
+    uintptr_t lock_ptr;
     uint64 head_lsn;
     uint64 page_id;
     uint64 page_access_count;
@@ -73,7 +72,7 @@ typedef struct st_remote_page_info {
 
 #pragma pack(pop)
 
-status_t drc_init_remote_buffer(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx);
+status_t drc_init_remote_buffer();
 void broadcast_remote_buf_allocated();
 EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
