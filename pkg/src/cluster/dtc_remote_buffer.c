@@ -22,6 +22,8 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <stdio.h>
+#include <pwd.h>
 #include "knl_cluster_module.h"
 #include "cm_defs.h"
 #include "dtc_drc.h"
@@ -59,7 +61,7 @@ static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf
     }
     g_dtc->profile.remote_data_buf_part_size = g_dtc->profile.remote_data_buf_size / buf_ctx->buf_set_count;
     g_dtc->profile.remote_data_buf_part_align_size = drc_calc_buf_size(g_dtc->profile.remote_data_buf_part_size);
-    remote_sga->remote_buf_alloc_size = ALIGN_TO_4M(g_dtc->profile.remote_data_buf_part_align_size * buf_ctx->buf_set_count);
+    remote_sga->remote_buf_alloc_size = ALIGN_TO_128M(g_dtc->profile.remote_data_buf_part_align_size * buf_ctx->buf_set_count);
     return remote_sga->remote_buf_alloc_size;
 }
 
@@ -70,7 +72,10 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
     uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
     void *start_temp = start + node_id * data_buf_size;
     char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", node_id);
+    struct passwd *pwd;
+    pwd = getpwuid(getuid());
+    OG_LOG_RUN_WAR("[DRC] uid %d, name: %s", getuid(), pwd->pw_name);
+    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, node_id);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
         return ret;
@@ -108,7 +113,9 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remo
     }
 
     char data_buf_name[MAX_SHM_NAME_LENGTH] = {0};
-    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", node_id);
+    struct passwd *pwd;
+    pwd = getpwuid(getuid());
+    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, node_id);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
         return ret;
@@ -182,6 +189,7 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         set->page_buf = set->addr;   // in UB shm, page_buf includes remote_page_info_t, page and tail_lsn
         offset = (uint64)page_size * set->capacity;
         set->ctrls = (buf_ctrl_t *)(set->addr + offset);
+
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
 
