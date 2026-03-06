@@ -72,11 +72,9 @@ static inline void buf_latch_ix2x(knl_session_t *session, buf_latch_t *latch, sp
     } while (1);
 }
 
-static inline void buf_latch_x(knl_session_t *session, buf_ctrl_t *ctrl, bool32 lock_needed)
+static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, bool32 lock_needed)
 {
     uint32 count = 0;
-    buf_set_t *set = &session->kernel->buf_ctx.buf_set[ctrl->buf_pool_id];
-    buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
     buf_latch_t *latch = &ctrl->latch;
 
     if (lock_needed) {
@@ -115,11 +113,10 @@ static inline void buf_latch_x(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
     } while (1);
 }
 
-static inline void buf_latch_s(knl_session_t *session, buf_ctrl_t *ctrl, bool32 is_force, bool32 lock_needed)
+static inline void buf_latch_s(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, bool32 is_force,
+                        bool32 lock_needed)
 {
     uint32 count = 0;
-    buf_set_t *set = &session->kernel->buf_ctx.buf_set[ctrl->buf_pool_id];
-    buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
     buf_latch_t *latch = &ctrl->latch;
 
     if (lock_needed) {
@@ -218,6 +215,31 @@ static inline void buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
 
     set = &session->kernel->buf_ctx.buf_set[ctrl->buf_pool_id];
     bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
+    latch = &ctrl->latch;
+
+    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+
+    if (latch->shared_count > 0) {
+        latch->shared_count--;
+    }
+
+    if (release) {
+        knl_panic_log(ctrl->ref_num > 0, "ctrl's ref_num is invalid, panic info: page %u-%u type %u ref_num %u",
+                      ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, ctrl->ref_num);
+        ctrl->ref_num--;
+    }
+
+    if ((latch->stat == LATCH_STATUS_S || latch->stat == LATCH_STATUS_X) && (latch->shared_count == 0)) {
+        latch->stat = LATCH_STATUS_IDLE;
+    }
+
+    cm_spin_unlock(&bucket->lock);
+}
+
+// unlatch with bucket from param, for case where shmem buffer may present
+static void __attribute__((unused)) buf_unlatch_w_bucket(knl_session_t *session, buf_ctrl_t *ctrl, buf_bucket_t *bucket, bool32 release)
+{
+    buf_latch_t *latch;
     latch = &ctrl->latch;
 
     cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);

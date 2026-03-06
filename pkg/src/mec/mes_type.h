@@ -42,6 +42,11 @@ typedef enum en_mes_command {
     MES_CMD_TRY_ASK_MASTER_ACK,
     MES_CMD_ASK_OWNER,
     MES_CMD_PAGE_READY,
+    MES_CMD_ASK_OWNER_TO_GBP,  // ask owner to move page to GBP
+    MES_CMD_PAGE_READY_GBP,    // OWNER ack to notify MASTER the page is in GBP now. Note this cmd is used in different
+                             // scenarios comapre to MES_CMD_PAGE_READY, which is send from Owner directly to Requester
+                             // to transfer the page in the old ping pong process.
+    MES_CMD_MASTER_ACK_CHECK_GBP,
     MES_CMD_MASTER_ACK_NEED_LOAD,
     MES_CMD_MASTER_ACK_ALREADY_OWNER,
     MES_CMD_MASTER_ACK_OWNER,
@@ -68,7 +73,7 @@ typedef enum en_mes_command {
     MES_CMD_SCN_REQ,
     MES_CMD_TXN_SCN_BROADCAST,
     #ifdef _DEBUG
-        NEW_MES_CMD_TXN_SCN_BROADCAST,
+    NEW_MES_CMD_TXN_SCN_BROADCAST,
     #endif
     MES_CMD_SCN_BROADCAST,
     MES_CMD_LSN_BROADCAST,

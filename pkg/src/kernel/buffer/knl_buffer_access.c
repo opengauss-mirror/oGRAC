@@ -781,7 +781,8 @@ static void buf_aio_alloc_ctrls(knl_session_t *session, buf_ctrl_t *ctrl, page_i
             if (page_id.page == ctrl->page_id.page) {
                 buf_iocb->ctrls[j] = ctrl;
             } else {
-                buf_iocb->ctrls[j] = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_OLD);
+                buf_iocb->ctrls[j] = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_OLD,
+                                                        OG_FALSE);
             }
         }
     }
@@ -904,7 +905,7 @@ status_t buf_read_page_asynch(knl_session_t *session, page_id_t page_id)
         head = page_first_group_id(session, page_id);
         ctrl = buf_try_alloc_compress(session, head, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_COLD);
     } else {
-        ctrl = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_COLD);
+        ctrl = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_COLD, OG_FALSE);
     }
     if (ctrl == NULL) {
         return OG_SUCCESS;
@@ -960,7 +961,7 @@ status_t buf_try_prefetch_next_ext(knl_session_t *session, buf_ctrl_t *ctrl)
     if (page_compress(session, next_ext)) {
         next_ctrl = buf_try_alloc_compress(session, next_ext, LATCH_MODE_S, ENTER_PAGE_SEQUENTIAL, BUF_ADD_OLD);
     } else {
-        next_ctrl = buf_try_alloc_ctrl(session, next_ext, LATCH_MODE_S, ENTER_PAGE_SEQUENTIAL, BUF_ADD_OLD);
+        next_ctrl = buf_try_alloc_ctrl(session, next_ext, LATCH_MODE_S, ENTER_PAGE_SEQUENTIAL, BUF_ADD_OLD, OG_FALSE);
     }
     if (next_ctrl == NULL) {
         return OG_SUCCESS;
@@ -1037,7 +1038,8 @@ static status_t buf_batch_load_pages(knl_session_t *session, char *read_buf, buf
             continue;
         }
 
-        ctrl_array[i] = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_SEQUENTIAL, BUF_ADD_OLD);
+        ctrl_array[i] = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_SEQUENTIAL, BUF_ADD_OLD,
+                                           OG_FALSE);
         if (ctrl_array[i] != NULL) {
             knl_panic_log(IS_SAME_PAGID(page_id, ctrl_array[i]->page_id),
                           "the page_id and current ctrl page are not "
@@ -1513,7 +1515,7 @@ status_t buf_read_page(knl_session_t *session, page_id_t page_id, latch_mode_t m
     stats_buf_init(session, &temp_stat);
 
     ctrl = page_compress(session, page_id) ? buf_alloc_compress(session, page_id, mode, options)
-                                           : buf_alloc_ctrl(session, page_id, mode, options);
+                                           : buf_alloc_ctrl(session, page_id, mode, options, OG_FALSE);
     if (SECUREC_UNLIKELY(ctrl == NULL)) {
         knl_panic_log(options & ENTER_PAGE_TRY, "options is invalid, panic info: page %u-%u type %u",
                       ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
@@ -1618,7 +1620,7 @@ status_t buf_read_prefetch_page(knl_session_t *session, page_id_t page_id, latch
         knl_panic_log(ctrl != NULL, "ctrl alloc failed, panic info: page %u-%u", page_id.file, page_id.page);
         status = buf_read_prefetch_compress(session, ctrl, page_id, mode, options);
     } else {
-        ctrl = buf_alloc_ctrl(session, page_id, mode, options);
+        ctrl = buf_alloc_ctrl(session, page_id, mode, options, OG_FALSE);
         knl_panic_log(ctrl != NULL, "ctrl alloc failed, panic info: page %u-%u", page_id.file, page_id.page);
         status = buf_read_prefetch_normal(session, ctrl, page_id, mode, options);
     }
@@ -1707,7 +1709,7 @@ status_t buf_read_prefetch_page_num(knl_session_t *session, page_id_t page_id, u
 
     stats_buf_init(session, &temp_stat);
 
-    ctrl = buf_alloc_ctrl(session, page_id, mode, options);
+    ctrl = buf_alloc_ctrl(session, page_id, mode, options, OG_FALSE);
     knl_panic_log(ctrl != NULL, "ctrl alloc failed, panic info: page %u-%u", page_id.file, page_id.page);
 
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
@@ -1860,7 +1862,7 @@ void buf_enter_temp_page(knl_session_t *session, page_id_t page_id, latch_mode_t
     knl_panic(DB_NOT_READY(session) ||
               DATAFILE_GET(session, page_id.file)->space_id == dtc_my_ctrl(session)->swap_space);
 
-    ctrl = buf_alloc_ctrl(session, page_id, mode, options);
+    ctrl = buf_alloc_ctrl(session, page_id, mode, options, OG_FALSE);
     knl_panic_log(ctrl != NULL, "ctrl alloc failed, panic info: page %u-%u", page_id.file, page_id.page);
 
     if (ctrl->load_status != (uint8)BUF_IS_LOADED) {
@@ -1897,6 +1899,37 @@ void buf_leave_temp_page(knl_session_t *session)
 
     buf_unlatch(session, ctrl, OG_TRUE);
     buf_pop_page(session);
+}
+
+status_t buf_claim_shmem_ctrl2hot(knl_session_t *session, page_id_t page_id, uint64 req_version)
+{
+    buf_bucket_t *bucket = buf_find_bucket_in_remote_ctx(session, page_id, DRC_GBP_BUF_CTX);
+    buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
+
+    if (ctrl == NULL) {
+        OG_LOG_DEBUG_ERR("[buffer][%u-%u][buf_claim_shmem_ctrl2hot]: not found in memory", page_id.file, page_id.page);
+        return OG_ERROR;
+    }
+
+    OG_LOG_DEBUG_INF("[buffer][%u-%u][buf_claim_shmem_ctrl2hot]: ctrl_dirty=%u, ctrl_remote_dirty=%u,"
+                     " ctrl_readonly=%u, in ckpt=%u, ctrl_lock_mode=%u, edp=%d",
+                     ctrl->page_id.file, ctrl->page_id.page, ctrl->is_dirty, ctrl->is_remote_dirty, ctrl->is_readonly,
+                     ctrl->in_ckpt, ctrl->lock_mode, ctrl->is_edp);
+
+    /* Try to latch page exclusively */
+    ctrl = buf_try_latchx_page(session, page_id, OG_TRUE);
+    if (ctrl == NULL) {
+        OG_LOG_RUN_ERR("[buffer][%u-%u][buf_claim_shmem_ctrl2hot failed]: not found in memory", page_id.file,
+                       page_id.page);
+        return OG_ERROR;
+    }
+
+    ctrl->load_status = BUF_IS_LOADED;
+    ctrl->lock_mode = DRC_LOCK_EXCLUSIVE;
+    ctrl->is_hot = OG_TRUE;
+
+    buf_unlatch_page(session, ctrl);
+    return OG_SUCCESS;
 }
 
 status_t buf_invalidate_page_with_version(knl_session_t *session, page_id_t page_id, uint64 req_version)
@@ -2151,7 +2184,7 @@ buf_ctrl_t *buf_try_latchx_page(knl_session_t *session, page_id_t page_id, bool3
     stats_buf_init(session, &temp_stat);
 
     for (;;) {
-        ctrl = buf_alloc_ctrl(session, page_id, LATCH_MODE_X, ENTER_PAGE_TRY);
+        ctrl = buf_alloc_ctrl(session, page_id, LATCH_MODE_X, ENTER_PAGE_TRY, OG_FALSE);
         if (ctrl == NULL) {
             return NULL;
         }
@@ -2218,7 +2251,7 @@ void buf_set_force_request(knl_session_t *session, page_id_t page_id)
     buf_ctrl_t *ctrl = NULL;
     knl_panic(!IS_INVALID_PAGID(page_id));
 
-    ctrl = buf_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL);
+    ctrl = buf_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, OG_FALSE);
     knl_panic_log(ctrl != NULL, "ctrl alloc failed, panic info: page %u-%u", page_id.file, page_id.page);
 
     ctrl->force_request = 1;

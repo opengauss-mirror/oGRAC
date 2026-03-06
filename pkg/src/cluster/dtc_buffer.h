@@ -77,6 +77,19 @@ status_t dtc_get_exclusive_owner_pages(knl_session_t *session, buf_ctrl_t **ctrl
 bool32 dtc_dcs_readable(knl_session_t *session, page_id_t page_id);
 bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id);
 
+// 100 same writer in 10 microsecond
+#define SAME_WRITER_COUNT_TRIGGER 100
+#define SAME_WRITER_THRESHOLD 10
+// 100 read in 10 microsecond
+#define READ_COUNT_TRIGGER 100
+#define READ_THRESHOLD 10
+
+// If any of these functions return true, a GBP-->LBP will be triggered
+// 1. Only one writer keeps writing to it. All other visitors are readers
+bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *ctrl);
+// 2. All visitors just keeps reading, no writing
+bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl);
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

@@ -76,7 +76,9 @@ typedef struct st_remote_page_info {
     uint64 head_lsn;
     uint32 file_id;   // page_identifier
     uint16 page_id;    // page_identifier
-    uint8 gbp_owner_id;
+    uint8 claimed_owner;
+    uint16 touch_number;
+    uint16 ref_num;
     uint16 xlog_owner_node;
     uint8 xlog_owner_node_timeline_id[6];
 } remote_page_info_t;

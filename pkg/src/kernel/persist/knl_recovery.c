@@ -2163,7 +2163,7 @@ static void rcy_preload_proc(thread_t *thread)
         if (page_compress(session, page_id)) {
             ctrl = buf_try_alloc_compress(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_HOT);
         } else {
-            ctrl = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_HOT);
+            ctrl = buf_try_alloc_ctrl(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL, BUF_ADD_HOT, OG_FALSE);
         }
 
         if (ctrl == NULL) {

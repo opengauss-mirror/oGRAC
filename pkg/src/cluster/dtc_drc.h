@@ -152,6 +152,13 @@ typedef enum en_drc_res_action {
     DRC_RES_MAX_ACTION,
 } drc_res_action_e;
 
+// Statistics for checking if this page becomes hot
+#define DRC_PAGE_HOT_THRESHOLD (UINT32_MAX)
+typedef struct st_page_hot_stat {
+    date_t start_time;
+    uint32 owner_changed_number;  // how many times has the owner been changed since start time
+    bool8 is_in_gbp;
+} drc_page_hot_stat_t;
 /* page buffer resource management structure */
 typedef struct st_drc_buf_res {
     uint32 next;  // should be the first field
@@ -162,6 +169,7 @@ typedef struct st_drc_buf_res {
     uint8 pending;     // this buf res is not accessible
     uint64 latest_edp_lsn;
     uint8 mode;
+    drc_page_hot_stat_t page_hot_stat;
     page_id_t page_id;
     drc_lock_item_t converting;
     drc_lock_q_t convert_q;
@@ -406,6 +414,11 @@ typedef struct st_claim_info {
     uint64 lsn;
     bool32 has_edp;
     drc_lock_mode_e mode;
+    // uint64_t shmem_page_meta; // points to the metadata of hot page in shared memory. Used when we move page from lbp
+    // -> gbp
+    uint8 gbp_owner_id;
+    uint8 reserved_gbp[7];
+    uint64 shmem_page_meta_off;
 } claim_info_t;
 
 typedef struct st_lock_claim_info {
@@ -451,8 +464,15 @@ typedef enum en_drc_req_owner_result_type {
     DRC_REQ_OWNER_ALREADY_OWNER = 2,
     DRC_REQ_OWNER_CONVERTING = 3,
     DRC_REQ_OWNER_WAITING = 4,
-    DRC_REQ_OWNER_TRANSFERRED = 5
+    DRC_REQ_OWNER_TRANSFERRED = 5,
+    DRC_REQ_OWNER_CONVERTING_TO_GBP
 } drc_req_owner_result_type;
+
+typedef enum en_drc_page_gdp_move_action {
+    DRC_NEED_MOVE_TO_GBP = 0,
+    DRC_NEED_MOVE_TO_LBP = 1,
+    DRC_NEED_NO_MOVE = 2
+} drc_page_gdp_move_action_type;
 
 typedef struct st_drc_req_owner_result {
     drc_req_owner_result_type type;
@@ -461,6 +481,8 @@ typedef struct st_drc_req_owner_result {
     uint8 is_retry;
     uint8 req_mode;
     uint64 readonly_copies;
+    drc_page_gdp_move_action_type gbp_action;
+    buf_ctrl_t *gbp_buf_ctrl;  // new field for GBP context
 } drc_req_owner_result_t;
 
 typedef struct st_drc_remaster_task_msg {
@@ -584,6 +606,8 @@ typedef struct st_drc_remaster_param_verify {
 
 extern drc_res_ctx_t g_drc_res_ctx;
 #define DRC_RES_CTX (&g_drc_res_ctx)
+#define DRC_GBP_BUF_CTX (&(g_drc_res_ctx.buf_ctx))
+
 extern int32 page_req_count;
 static inline bool32 stop_dcs_io(knl_session_t *session, page_id_t page_id)
 {
@@ -640,6 +664,7 @@ EXTER_ATTACK status_t drc_request_page_owner(knl_session_t *session, page_id_t p
                                              bool32 is_try, drc_req_owner_result_t *result);
 EXTER_ATTACK void drc_claim_page_owner(knl_session_t *session, claim_info_t *claim_info, cvt_info_t *cvt_info,
                                        uint64 req_version);
+EXTER_ATTACK void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uint64 req_version);
 status_t drc_release_page_owner(uint8 old_id, page_id_t pagid, bool32 *released);
 EXTER_ATTACK void drc_process_send_page_info(void *sess, mes_message_t *msg);
 drc_buf_res_t *drc_get_buf_res_by_pageid(knl_session_t *session, page_id_t pagid);
@@ -775,6 +800,9 @@ void drc_release_local_lock_res_by_id(knl_session_t *session, drid_t *lock_id);
 void drc_set_deposit_id(uint8 inst_id, uint8 deposit_id);
 void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id);
 
+/** invalidates a shmem page. */
+status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t pagid);
+status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl);
 #ifdef __cplusplus
 }
 #endif
