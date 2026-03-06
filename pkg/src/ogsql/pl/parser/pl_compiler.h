@@ -109,8 +109,17 @@ status_t pl_compile_by_user(sql_stmt_t *stmt, text_t *schema_name, bool32 compil
 typedef struct {
     char *name;
     type_word_t *type;
+    plv_direction_t drct;
     expr_tree_t *def_expr;
 } func_parameter;
+
+typedef struct {
+    char *name;
+    type_word_t *type;
+    bool32 nullable;
+    expr_tree_t *def_expr;
+    source_location_t loc;
+} record_attr_t;
 
 typedef struct {
     char* ident; /* palloc'd converted identifier */

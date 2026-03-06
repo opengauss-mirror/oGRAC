@@ -505,6 +505,151 @@ SUBPARTITION PART_23 VALUES LESS THAN(MAXVALUE)
 create indexcluster (index bison_part_t1_idx1 on bison_part_t1(f1), index bison_part_t1_idx1 on bison_part_t1(f2)); --error
 create indexcluster (index bison_part_t1_idx1 on bison_part_t1(f1) parallel 5, index bison_part_t1_idx2 on bison_part_t1(f2) parallel 5);
 
+CREATE OR REPLACE FUNCTION convert1 (
+    p_num1 IN NUMBER := 2,
+    p_num2 IN NUMBER := 3
+)
+RETURN NUMBER IS
+    v_result NUMBER;
+BEGIN
+    v_result := p_num1 + p_num2;
+    RETURN v_result;
+END convert1;
+/
+
+select convert1();
+
+drop table if exists bison_t1;
+create table bison_t1 (a int, b int);
+
+CREATE OR REPLACE FUNCTION convert1 (
+    p_num1 IN bison_t1.a%TYPE
+)
+RETURN NUMBER IS
+    v_result NUMBER;
+BEGIN
+    v_result := p_num1;
+    RETURN v_result;
+END convert1;
+/
+
+-- todo: 目前仅支持识别p_num1，p_num1.a还不支持(见sql_create_columnref_expr)
+CREATE OR REPLACE FUNCTION convert1 (
+    p_num1 IN bison_t1%ROWTYPE
+)
+RETURN NUMBER IS
+    v_result NUMBER;
+BEGIN
+    v_result := p_num1.a;
+    RETURN v_result;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 (
+    p_num1 NUMBER
+)
+RETURN NUMBER IS
+    v_result NUMBER;
+BEGIN
+    IF p_num1 > 0 THEN
+        v_result := 1;
+    elsif p_num1 < 0 THEN
+        v_result := -1;
+    ELSE
+        v_result := 0;
+    END IF;
+    RETURN v_result;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+    type v_type is record (a bison_t1%ROWTYPE);
+    v_result v_type;
+BEGIN
+    RETURN 1;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+    type v_type is record (a bison_t1.a%TYPE);
+    v_result number;
+BEGIN
+    RETURN 1;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+    type v_type is record (a number);
+    v_result v_type; -- todo: 查找自定义类型
+BEGIN
+    RETURN 1;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+    v_result NUMBER not null default 1;
+BEGIN
+    RETURN v_result;
+END convert1;
+/
+
+-- todo：支持label
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+BEGIN
+    <<main>>
+    declare
+        type v_type is record (a int, b int);
+    BEGIN
+        declare
+            v_result main.v_type;
+        BEGIN
+            DBE_OUTPUT.PRINT_LINE('proc');
+        END;
+    end;
+    RETURN 1;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+    v_result bison_t1.a%TYPE;
+BEGIN
+    v_result := 1;
+    RETURN v_result;
+END convert1;
+/
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+    v_result bison_t1%ROWTYPE;
+BEGIN
+    RETURN 1;
+END convert1;
+/
+
+
+CREATE OR REPLACE FUNCTION convert1 ()
+RETURN NUMBER IS
+BEGIN
+    <<main>>
+    declare
+        a number;
+    BEGIN
+        declare
+            v_result main.a%TYPE;
+        BEGIN
+            DBE_OUTPUT.PRINT_LINE('proc');
+        END;
+    end;
+    RETURN 1;
+END convert1;
+/
+
 alter system set use_bison_parser = false;
 drop table if exists native_desc_idx_t;
 create table native_desc_idx_t(a int primary key, b int);

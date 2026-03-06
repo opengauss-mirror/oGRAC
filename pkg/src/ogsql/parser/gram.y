@@ -206,7 +206,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                expr_list_with_select_rows json_column_list siblings_clause with_clause cte_list pivot_in_list pivot_clause_list
                select_pivot_clause unpivot_in_list expr_or_implicit_row_list cube_clause rollup_clause
                group_sets_item group_sets_list grouping_sets_clause group_by_cartesian_item group_by_list group_clause
-               locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list index_cluster_list
+               locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list index_cluster_list attrs
 %type <expr>   ctext_expr a_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr
                func_arg_expr func_arg_list expr_elem_list func_expr_common_subexpr substr_list multi_expr_list
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
@@ -234,7 +234,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <cond_node> cond_node
 %type <cond_tree> where_clause cond_tree_expr having_clause opt_merge_where_condition
 %type <type_word> GenericType Typename SimpleTypename Numeric NoSignedInteger Character CharacterWithLength CharacterWithoutLength
-                  ConstDatetime ConstInterval JsonType SignedInteger
+                  ConstDatetime ConstInterval JsonType SignedInteger func_type
 %type <type_word> opt_column_type
 %type <timezone_type> opt_timezone
 %type <trim_list> trim_list
@@ -293,7 +293,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <res> lob_store_param table_partitioning_clause range_partitioning_clause list_partitioning_clause hash_partitioning_clause
             range_partition_item opt_subpartition_clause range_subpartition_item list_subpartition_item hash_subpartition_item
             list_partition_item hash_partition_item opt_interval_partition_clause subpartitioning_clause opt_subpartitions_num
-            subpartitions_num partitions_num external_table func_arg_with_default
+            subpartitions_num partitions_num external_table func_arg_with_default func_arg
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword
 %type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_purge_partition
@@ -302,7 +302,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <ival> opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
              opt_foreign_action partition_type grant_objtype sys_priv_spec obj_priv_spec user_priv_spec
-             directory_priv_spec
+             directory_priv_spec arg_class
 %type <sortby>  sortby
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 %type <alter_idx_act> alter_index_action
@@ -12234,15 +12234,134 @@ tablespace_name:
             ColId                           { $$ = $1; }
         ;
 
+arg_class:  IN_P                                { $$ = PLV_DIR_IN; }
+            | OUT_P                             { $$ = PLV_DIR_OUT; }
+            | IN_P OUT_P                      { $$ = PLV_DIR_INOUT; }
+        ;
+
 func_arg_with_default:
-            ColId Typename
+            func_arg
+                {
+                    $$ = $1;
+                }
+            | func_arg DEFAULT a_expr
+                {
+                    func_parameter *param = (func_parameter*)$1;
+                    param->def_expr = $3;
+                    $$ = param;
+                }
+            | func_arg COLON_EQUALS a_expr
+                {
+                    func_parameter *param = (func_parameter*)$1;
+                    param->def_expr = $3;
+                    $$ = param;
+                }
+        ;
+
+attrs:      '.' ColId
+                {
+                    galist_t *list = NULL;
+                    text_t *text = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed.");
+                    }
+                    if (cm_galist_new(list, sizeof(text_t), (pointer_t *)&text) != OG_SUCCESS) {
+                        parser_yyerror("init element failed.");
+                    }
+
+                    cm_str2text($2, text);
+                    $$ = list;
+                }
+            | attrs '.' ColId
+                {
+                    galist_t *list = $1;
+                    text_t *text = NULL;
+                    if (cm_galist_new(list, sizeof(text_t), (pointer_t *)&text) != OG_SUCCESS) {
+                        parser_yyerror("init element failed.");
+                    }
+
+                    cm_str2text($3, text);
+                    $$ = list;
+                }
+        ;
+
+func_type:
+            Typename                                { $$ = $1; }
+            | type_function_name attrs '%' ROWTYPE_P
+                {
+                    type_word_t *type;
+                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    type->str = $1;
+                    type->typemode = $2;
+                    type->loc = @1.loc;
+                    type->pl_rowtype = OG_TRUE;
+                    $$ = type;
+                }
+            | type_function_name '%' ROWTYPE_P
+                {
+                    type_word_t *type;
+                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    type->str = $1;
+                    type->loc = @1.loc;
+                    type->pl_rowtype = OG_TRUE;
+                    $$ = type;
+                }
+            | type_function_name attrs '%' TYPE_P
+                {
+                    type_word_t *type;
+                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    type->str = $1;
+                    type->typemode = $2;
+                    type->loc = @1.loc;
+                    type->pl_type = OG_TRUE;
+                    $$ = type;
+                }
+            | type_function_name '%' TYPE_P
+                {
+                    type_word_t *type;
+                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    type->str = $1;
+                    type->loc = @1.loc;
+                    type->pl_type = OG_TRUE;
+                    $$ = type;
+                }
+        ;
+
+func_arg:
+            ColId func_type
                 {
                     func_parameter *param = NULL;
                     if (pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     param->name = $1;
+                    param->drct = PLV_DIR_IN;
                     param->type = $2;
+                    $$ = param;
+                }
+            | ColId arg_class func_type
+                {
+                    func_parameter *param = NULL;
+                    if (pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    param->name = $1;
+                    param->drct = $2;
+                    param->type = $3;
                     $$ = param;
                 }
         ;
@@ -12310,6 +12429,7 @@ CreateFunctionStmt:
                     storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
                     storage_source.len = yylloc.offset - @7.offset;
 
+                    /* todo:可能需要把subprogram_body的source_location_t传进去，即函数声明的行列信息，确保函数体语法报错时的位置信息准确 */
                     if (pl_bison_parse_create_function(stmt, $2, $5, $6, $7, $9, $11, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create function failed");
                     }
@@ -12964,7 +13084,6 @@ unreserved_keyword:
             | NTH_VALUE_P
             | NULLIF
             | NVL
-            | OUT_P
             | OVERLAY
             | POSITION
             | PRECISION
@@ -13058,6 +13177,7 @@ col_name_keyword:
             | PRIMARY       %prec UMINUS
             | UNIQUE
             | FOREIGN
+            | OUT_P
         ;
 
 

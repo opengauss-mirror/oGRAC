@@ -49,6 +49,8 @@ typedef struct st_type_word {
     char *str;
     galist_t *typemode;
     source_location_t loc;
+    bool32 pl_type;
+    bool32 pl_rowtype;
     union {
         // for timestamp
         struct {
@@ -321,6 +323,7 @@ status_t sql_build_column_expr(sql_stmt_t *stmt, knl_column_t *column, expr_tree
 status_t sql_copy_text_remove_quotes(sql_context_t *context, text_t *src, text_t *dst);
 status_t sql_word2text(sql_stmt_t *stmt, word_t *word, expr_node_t *node);
 status_t sql_word2number(word_t *word, expr_node_t *node);
+status_t sql_parse_datatype_typemode_bison(char *user, type_word_t *type, typmode_t *v_type);
 
 #define EXPR_VAR_WORDS                                                                                        \
     (WORD_TYPE_VARIANT | WORD_TYPE_FUNCTION | WORD_TYPE_STRING | WORD_TYPE_PARAM | WORD_TYPE_NUMBER |         \
