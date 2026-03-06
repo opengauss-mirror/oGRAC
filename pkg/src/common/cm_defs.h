@@ -587,8 +587,8 @@ typedef enum en_cs_distribute_type {
 #define OG_MIN_INDEX_CACHE_SIZE (int64)16384
 #define OG_MIN_AUTOEXTEND_SIZE (int64)1
 #define OG_MAX_ALIGN_SIZE_4K (uint64) SIZE_K(4)
-#define OG_MAX_ALIGN_SIZE_4M (uint64) SIZE_M(4)
-#define ALIGN_TO_4M(size) (((size) + OG_MAX_ALIGN_SIZE_4M - 1) & ~(OG_MAX_ALIGN_SIZE_4M - 1))
+#define OG_MAX_ALIGN_SIZE_128M (uint64) SIZE_M(128)
+#define ALIGN_TO_128M(size) (((size) + OG_MAX_ALIGN_SIZE_128M - 1) & ~(OG_MAX_ALIGN_SIZE_128M - 1))
 #define OG_MAX_SGA_BUF_SIZE SIZE_T(32)
 
 #define OG_MIN_KERNEL_RESERVE_SIZE (uint32) SIZE_K(256)

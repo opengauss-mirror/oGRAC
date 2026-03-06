@@ -1004,8 +1004,8 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
                 continue;
             }
 
-            if (ogx->remote_sga.map_success[i] == OG_FALSE) {
-                int ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, i);
+            if (ogx->remote_sga.map_success[node_id] == OG_FALSE) {
+                int ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
                 if (ret != UBSM_OK) {
                     OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node failed, remote_id: %d, ret: %d",
                                    node_id, ret);
