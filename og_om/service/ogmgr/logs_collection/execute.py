@@ -5,8 +5,10 @@ import argparse
 from functools import wraps
 from pathlib import Path
 
-sys.path.append('/opt/ograc/og_om/service')
-sys.path.append('/opt/ograc/og_om/service/ogmgr')
+SERVICE_ROOT = Path(__file__).resolve().parents[2]
+OGMGR_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(SERVICE_ROOT))
+sys.path.append(str(OGMGR_ROOT))
 
 from ogmgr.logs_collection.tools import LockFile
 from ogmgr.log_tool.om_log import LOGS_COLLECTION as LOG

@@ -1,0 +1,39 @@
+{
+    "_comment": "DSS 部署配置示例。实际部署优先读取 config_params_lun.json 的 module_config，不再依赖固定 /opt/ograc。",
+
+    "ograc_home": "",
+    "data_root": "",
+    "user": "",
+
+    "_comment_instance": "实例/隔离配置 - user 为隔离主键",
+    "instance": {
+        "cgroup": {
+            "memory_base": "/sys/fs/cgroup/memory",
+            "memory_limit_gb": 8
+        },
+        "shm": {
+            "base": "/dev/shm",
+            "prefix": "ograc"
+        }
+    },
+
+    "_comment_timeout": "操作超时(秒) - 低配机器可按需调大; 0 表示不设超时",
+    "timeout": {
+        "default":       1800,
+        "install":       3600,
+        "uninstall":     1800,
+        "upgrade":       3600,
+        "pre_install":    600,
+        "start":          600,
+        "stop":           300,
+        "check_status":   120,
+        "upgrade_backup": 3600
+    },
+
+    "_comment_dss": "DSS 组件专用配置",
+    "dss": {
+        "retry_times": 20,
+        "cmd_timeout": 60,
+        "init_disk_timeout": 300
+    }
+}

@@ -1,10 +1,11 @@
 #!/bin/bash
 set +x
 
-OM_DEPLOY_LOG_PATH=/opt/ograc/og_om/service/ogmgr/ogmgr_log
-OM_DEPLOY_LOG_FILE=/opt/ograc/og_om/service/ogmgr/ogmgr_log/ogmgr_deploy.log
-CURRENT_PATH=$(dirname $(readlink -f $0))
-SCRIPT_NAME=${CURRENT_PATH}/$(basename $0)
+CURRENT_PATH=$(dirname "$(readlink -f "$0")")
+SCRIPT_NAME=${CURRENT_PATH}/$(basename "$0")
+OGMGR_DIR=$(dirname "${CURRENT_PATH}")
+OM_DEPLOY_LOG_PATH="${OGMGR_DIR}/ogmgr_log"
+OM_DEPLOY_LOG_FILE="${OM_DEPLOY_LOG_PATH}/ogmgr_deploy.log"
 
 initLog4sh()
 {

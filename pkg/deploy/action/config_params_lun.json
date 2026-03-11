@@ -17,5 +17,12 @@
     "gcc_home": "/dev/gcc-disk",
     "cms_port": "14587",
     "dss_port": "1811",
-    "ograc_port": "1611"
-  }
+    "ograc_port": "1611",
+    "interconnect_port": "1601,1602",
+    "_SHM_KEY": 17,
+    "module_config": {
+        "ograc_home": "/opt/ograc",
+        "data_root": "/mnt/dbdata",
+        "user": "ograc"
+    }
+}

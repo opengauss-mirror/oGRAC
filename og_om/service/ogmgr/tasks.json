@@ -17,7 +17,7 @@
         "required": true
       }
     },
-    "filePath": "/opt/ograc/og_om/service/ogmgr/logs_collection/execute.py",
+    "filePath": "logs_collection/execute.py",
     "py_input": "-p ${log_dir} -t ${type}",
     "description": ""
   },

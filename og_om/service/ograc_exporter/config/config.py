@@ -1,8 +1,14 @@
+from pathlib import Path
+
+
+OGRAC_HOME = Path(__file__).resolve().parents[4]
+
+
 CONSOLE_CONF = {
     "log": {
         "use_syslog": False,
         "debug": False,
-        "log_dir": "/opt/ograc/log/og_om",
+        "log_dir": str(OGRAC_HOME / "log" / "og_om"),
         "log_file_max_size": 1048576,
         "log_file_backup_count": 5,
         "log_date_format": "%Y-%m-%d %H:%M:%S",

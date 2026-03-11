@@ -1,13 +1,15 @@
 #!/bin/bash
 set +x
-OM_DEPLOY_LOG_FILE=/opt/ograc/log/ograc_exporter/ograc_exporter.log
+CURRENT_PATH=$(dirname "$(readlink -f "$0")")
+UPPER_LEVEL_PATH=$(dirname "${CURRENT_PATH}")
+OM_DEPLOY_LOG_FILE=$(dirname "$(dirname "$(dirname "${UPPER_LEVEL_PATH}")")")/log/ograc_exporter/ograc_exporter.log
 
 function log() {
   printf "[%s] %s\n" "`date -d today \"+%Y-%m-%d %H:%M:%S\"`" "$1" >> ${OM_DEPLOY_LOG_FILE} 2>&1
 }
 
 function check_python_script_status() {
-    py_pid=$(ps -ef | grep "python3 /opt/ograc/og_om/service/ograc_exporter/exporter/execute.py" | grep -v grep | awk '{print $2}')
+    py_pid=$(ps -ef | grep "python3 ${UPPER_LEVEL_PATH}/exporter/execute.py" | grep -v grep | awk '{print $2}')
     if [ -z "${py_pid}" ];then
         return 1
     fi
@@ -32,7 +34,7 @@ function kill_descendants() {
 function kill_python_script_process() {
     check_python_script_status
     if [ $? -eq 0 ];then
-        og_exporter_pid=$(ps -ef | grep "python3 /opt/ograc/og_om/service/ograc_exporter/exporter/execute.py" | grep -v grep | awk '{print $2}')
+        og_exporter_pid=$(ps -ef | grep "python3 ${UPPER_LEVEL_PATH}/exporter/execute.py" | grep -v grep | awk '{print $2}')
         kill_descendants "${og_exporter_pid}"
         if [ $? -eq 0 ];then
             log "Success to kill [execute.py] process"

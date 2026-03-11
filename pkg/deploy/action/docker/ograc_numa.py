@@ -1,21 +1,27 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 import os
 import re
 import sys
 import time
 
-sys.path.append('/ogdb/ograc_install/ograc_connector/action')
+CUR_PATH = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, CUR_PATH)
+
+from config import get_config
+
+_cfg = get_config()
+_paths = _cfg.paths
+
+sys.path.append(os.path.join(CUR_PATH, ".."))
 
 from logic.common_func import exec_popen
 from delete_unready_pod import KubernetesService, get_pod_name_from_info
 from om_log import LOGGER as LOG
 from docker_common.file_utils import open_and_lock_json, write_and_unlock_json, LockFile
 
-NUMA_INFO_PATH = "/root/.kube/NUMA-INFO/numa-pod.json"
+NUMA_INFO_PATH = _paths.numa_info_path
 TIME_OUT = 100
-MAX_CHECK_TIME = 120  # 最大检查时间
-CHECK_INTERVAL = 3   # 每次检查的间隔
+MAX_CHECK_TIME = 120
+CHECK_INTERVAL = 3
 
 
 class CPUAllocator:
@@ -90,7 +96,7 @@ class CPUAllocator:
     def bind_cpu(self, cpus, pid=1):
         cpu_range = ",".join(map(str, cpus))
         taskset_cmd = f"taskset -cp {cpu_range} {pid}"
-        cpuset_cpu_cmd = f"echo {cpu_range} > /sys/fs/cgroup/cpuset/cpuset.cpus"
+        cpuset_cpu_cmd = f"echo {cpu_range} > {_paths.cpuset_cpus}"
 
         self.execute_cmd(cpuset_cpu_cmd)
         self.execute_cmd(taskset_cmd)
@@ -113,7 +119,6 @@ class CPUAllocator:
         cmd = f"taskset -cp {pid}"
         stdout = self.execute_cmd(cmd)
 
-        # 解析 taskset 输出的 CPU 列表
         match = re.search(r'list:\s+([\d,-]+)', stdout)
         if match:
             cpu_list_str = match.group(1)
@@ -127,7 +132,6 @@ class CPUAllocator:
         if cpu_num == 0:
             return 1, []
 
-        # 如果 numa_info 是空的，未拉起过 ograc 容器，需要初始化 numa 信息
         if not numa_info:
             total_cpus, numa_nodes, cpu_info = self.get_numa_info()
             numa_info.update(cpu_info)
@@ -240,14 +244,12 @@ class CPUAllocator:
                 LOG.info(f"Host {hostname} is already bound successfully. Skipping binding.")
                 return
 
-        # 检查 numa_info 是否为空，如果为空则初始化
         if not numa_data[self.numa_info_key]:
             total_cpus, numa_nodes, cpu_info = self.get_numa_info()
             numa_data[self.numa_info_key].update(cpu_info)
 
         binding_status, binding_cpus = self.determine_binding_strategy(cpu_num, numa_data[self.numa_info_key])
 
-        # 0-绑定失败，没有足够的 CPU
         if binding_status == 0:
             LOG.error("Binding failed: Insufficient CPUs.")
             numa_data[hostname] = {
@@ -259,7 +261,6 @@ class CPUAllocator:
             if binding_status == 2:
                 LOG.warning(f"Cross NUMA binding detected for host {hostname}. This may affect performance.")
 
-            # 执行绑核,1-单个numa，2-跨numa绑核
             self.bind_cpu(binding_cpus)
             bind_successful, taskset_output = self.verify_binding(len(binding_cpus))
 
@@ -298,7 +299,6 @@ class CPUAllocator:
                     except Exception as e:
                         LOG.error(f"Failed to delete file {pod_file_path}: {e}")
 
-                # 删除绑核信息
                 del numa_data[key]
 
             write_and_unlock_json(numa_data, file_handle)
@@ -390,7 +390,7 @@ def main():
     cpu_num = cpu_allocator.get_cpu_num()
     short_hostname = cpu_allocator.get_hostname()
 
-    kube_config_path = os.path.expanduser("~/.kube/config")
+    kube_config_path = _paths.kube_config
     k8s_service = KubernetesService(kube_config_path)
 
     try:
@@ -404,7 +404,6 @@ def main():
         LOG.error(err_msg)
         raise Exception(err_msg)
 
-    # 获取 NUMA 信息和初始化 JSON 数据
     try:
         total_cpus, numa_nodes, cpu_info = cpu_allocator.get_numa_info()
     except Exception as e:
@@ -415,13 +414,11 @@ def main():
     numa_data, file_handle = open_and_lock_json(NUMA_INFO_PATH)
 
     try:
-        # 找到与当前 short_hostname 匹配的 Pod 全名，并执行绑定操作
         start_time = time.time()
         while True:
             try:
                 pod_name_full = get_pod_name_from_info(all_pod_info, short_hostname)
                 if pod_name_full:
-                    # 清理 JSON 中不再存在的 POD 信息
                     hostname_pattern = r'ograc.*-node.*'
                     cpu_allocator.clean_up_json(numa_data, all_pod_info, hostname_pattern)
 

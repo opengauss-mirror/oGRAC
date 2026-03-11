@@ -1,0 +1,39 @@
+{
+  "_comment": "dbstor 部署路径配置文件 - 所有路径可自定义，不再硬编码",
+
+  "ograc_home": "/opt/ograc",
+  "data_root": "/mnt/dbdata",
+  "user": "ograc",
+  "group": "ograc",
+
+  "_comment_dirs": "dbstor 运行态路径",
+  "dbstor_home": "/opt/ograc/dbstor",
+  "rpm_unpack_path": "/opt/ograc/image/oGRAC-RUN-LINUX-64bit",
+  "regress_data_dir": "/home/regress/ograc_data",
+
+  "_comment_shm": "共享内存清理前缀",
+  "shm_cleanup_patterns": [
+    "/dev/shm/ograc*",
+    "/dev/shm/FDSA*",
+    "/dev/shm/cpuinfo_shm",
+    "/dev/shm/cputimeinfo_shm",
+    "/dev/shm/diag_server_usr_lock"
+  ],
+
+  "_comment_timeout": "操作超时(秒)",
+  "timeout": {
+    "default": 1800,
+    "install": 1800,
+    "start": 600,
+    "stop": 300,
+    "uninstall": 600,
+    "check_status": 120,
+    "backup": 600,
+    "init_container": 1800,
+    "pre_upgrade": 300,
+    "upgrade_backup": 1800,
+    "upgrade": 1800,
+    "rollback": 1800,
+    "update_config": 600
+  }
+}

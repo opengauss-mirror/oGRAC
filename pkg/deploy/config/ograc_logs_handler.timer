@@ -1,9 +1,0 @@
-[Unit]
-Description=Run every 60minutes and on boot
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=60min
-
-[Install]
-WantedBy=multi-user.target

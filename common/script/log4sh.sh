@@ -1,9 +1,10 @@
 #!/bin/bash
 set +x
 
-OM_DEPLOY_LOG_PATH=/opt/ograc/log/deploy
-OM_DEPLOY_LOG_FILE=/opt/ograc/log/deploy/deploy_daemon.log
-CURRENT_PATH=$(dirname $(readlink -f $0))
+CURRENT_PATH=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+OGRAC_HOME_DEFAULT=$(readlink -f "${CURRENT_PATH}/../..")
+OM_DEPLOY_LOG_PATH=${OM_DEPLOY_LOG_PATH:-${OGRAC_HOME_DEFAULT}/log/deploy}
+OM_DEPLOY_LOG_FILE=${OM_DEPLOY_LOG_FILE:-${OM_DEPLOY_LOG_PATH}/deploy_daemon.log}
 SCRIPT_NAME=${CURRENT_PATH}/$(basename $0)
 LOG_MOD=640
 LOG_MOD_STR='rw-r-----'
