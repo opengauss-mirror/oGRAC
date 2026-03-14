@@ -38,6 +38,7 @@ status_t init_lock_comm_queue()
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
     char *shmA = remote_sga->remote_buf_addr[0] + DRC_DIST_QUE_OFFSET;
     char *shmB = remote_sga->remote_buf_addr[1] + DRC_DIST_QUE_OFFSET;
+    remote_sga->remote_pool_reserve_offset += DRC_DIST_QUE_OFFSET;
 
     const size_t kInitSize = 1024;
     const size_t kRingSize = 1376640;
@@ -94,11 +95,86 @@ void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_l
     uint32 node_id = g_instance->kernel.id;
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
     *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p", *ub_lock);
+    remote_sga->remote_pool_reserve_offset += DRC_DIST_LCK_OFFSET;
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p, reserve offset:%llu",
+        *ub_lock, remote_sga->remote_pool_reserve_offset);
 
     config->lease_time = 60000;
     config->heartbeat_timeout = 500;
 
     creator->tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
     creator->node_id = (uint8_t)node_id;
+}
+
+static ub_location_t make_location(uint8 node_id)
+{
+    ub_location_t loc;
+    loc.node_id = node_id;
+    loc.tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
+
+    return loc;
+}
+
+status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode)
+{
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_offset;
+    if (lock == NULL) {
+        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to get lock address for offset: %llu", lock_offset);
+        return OG_ERROR;
+    }
+
+    int ret;
+    const char *lock_type;
+    drc_lock_mode_e lock_mode = (mode == LATCH_MODE_S ? DRC_LOCK_SHARE : DRC_LOCK_EXCLUSIVE);
+    ub_location_t lock_location = make_location((uint8)DCS_SELF_INSTID(session));
+
+    if (lock_mode == DRC_LOCK_EXCLUSIVE) {
+        ret = ub_rw_lock_x_lock(lock, NULL, &lock_location);
+        lock_type = "exlcusive";
+    } else {
+        ret = ub_rw_lock_s_lock(lock, NULL, &lock_location);
+        lock_type = "shared";
+    }
+
+    if (ret != UB_LOCK_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire %s lock for page (%u-%u):%d",
+            lock_type, page_id.file, page_id.page, ret);
+        return OG_ERROR;
+    }
+    
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] Success to acquire %s lock for page (%u-%u):%d",
+        lock_type, page_id.file, page_id.page, ret);
+    return OG_SUCCESS;
+}
+
+status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode)
+{
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_offset;
+    if (lock == NULL) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire lock for page");
+        return OG_ERROR;
+    }
+
+    int ret;
+    const char *lock_type;
+    drc_lock_mode_e lock_mode = (mode == LATCH_MODE_S ? DRC_LOCK_SHARE : DRC_LOCK_EXCLUSIVE);
+    ub_location_t lock_location = make_location((uint8)DCS_SELF_INSTID(session));
+
+    if (lock_mode == DRC_LOCK_EXCLUSIVE) {
+        ret = ub_rw_lock_x_unlock(lock, NULL, &lock_location);
+        lock_type = "exlcusive";
+    } else {
+        ret = ub_rw_lock_s_unlock(lock, NULL, &lock_location);
+        lock_type = "shared";
+    }
+
+    if (ret != UB_LOCK_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to release %s lock for page (%u-%u):%d",
+            lock_type, page_id.file, page_id.page, ret);
+        return OG_ERROR;
+    }
+    
+    OG_LOG_RUN_ERR("[DRC-LOCK] Success to release %s lock for page (%u-%u):%d",
+        lock_type, page_id.file, page_id.page, ret);
+    return OG_SUCCESS;
 }

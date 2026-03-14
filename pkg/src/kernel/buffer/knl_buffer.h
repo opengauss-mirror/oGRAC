@@ -113,6 +113,7 @@ typedef enum en_buf_load_status {
     BUF_NEED_LOAD = 0x00,
     BUF_IS_LOADED = 0x01,
     BUF_LOAD_FAILED = 0x02,
+    BUF_NEED_LOAD_FROM_GBP = 0x03,
 } buf_load_status_t;
 
 typedef struct st_buf_latch {

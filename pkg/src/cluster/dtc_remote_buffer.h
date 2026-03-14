@@ -64,10 +64,14 @@ typedef struct st_mes_remote_buf_mmap_bcast {
 } mes_remote_buf_mmap_bcast_t;
 
 typedef struct st_remote_sga {
-    uint64 remote_buf_alloc_size;
+    uint64 remote_total_pool_size;  // total 8G  global_buffer_pool_size after align 128 size
+    uint64 remote_buf_alloc_size;   // data buf  remote_data_buf_size after align 4k size
+    uint64 remote_lock_alloc_size;  // lock buf  remote_lock_size
+    uint64 remote_pool_reserve_offset;
     char *remote_buf_addr[OG_MAX_INSTANCES];  /* allocated in UB shared memory */
     bool map_success[OG_MAX_INSTANCES];
     char *data_buf;   /* each remote data buf is managed by master node. */
+    char *lock_buf;
 } remote_sga_t;
 
 #pragma pack(push, 1)
@@ -76,6 +80,7 @@ typedef struct st_remote_page_info {
     uint64 head_lsn;
     uint32 file_id;   // page_identifier
     uint16 page_id;    // page_identifier
+    uint8 gbp_owner_id;
     uint8 claimed_owner;
     uint16 touch_number;
     uint16 ref_num;
@@ -90,6 +95,10 @@ typedef enum buffer_type {
     LOCK_TYPE,
     LOCK_QUEUE,
 } buffer_type_t;
+
+#define GET_PAGE_ADRR_IN_GBP(addr) ((addr) + sizeof(remote_page_info_t))
+#define OFFSET_PAGE_ID offsetof(remote_page_info_t, page_id)
+#define OFFSET_HEAD_LSN offsetof(remote_page_info_t, head_lsn)
 
 status_t drc_init_remote_buffer();
 void broadcast_remote_buf_allocated();

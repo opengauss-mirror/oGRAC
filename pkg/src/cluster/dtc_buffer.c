@@ -31,6 +31,8 @@
 #include "dtc_trace.h"
 #include "knl_datafile.h"
 #include "knl_buflatch.h"
+#include "cm_ubs_mem.h"
+#include "dtc_remote_lock.h"
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
@@ -121,6 +123,95 @@ static status_t dtc_buf_try_prefetch(knl_session_t *session, buf_read_assist_t *
     return OG_SUCCESS;
 }
 
+static inline status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    char *page = (char *)ctrl->shmem_page_addr;
+    errno_t err = memcpy_s(ctrl->page, DEFAULT_PAGE_SIZE(session), page, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
+
+    return OG_SUCCESS;
+}
+
+
+static status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode)
+{
+    // TODO: Here it might be more complicated, since it is not a spin_lock
+    // We need to treat the situation of waiting for lock.
+    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    uint64 lock_offset = shmem_page_meta->lock_ptr;
+    status_t ret;
+
+    uint8 gbp_owner_id = shmem_page_meta->gbp_owner_id;
+    OG_LOG_RUN_WAR("[DCS-GBP_COPY][%u-%u] shmem_page_addr: %p, lock addr: %llu, addr: %p",
+        ctrl->page_id.file, ctrl->page_id.page, ctrl->shmem_page_addr, lock_offset, (void *)lock_offset);
+
+    if (gbp_owner_id != DCS_SELF_INSTID(session)) {
+        if (remote_sga->map_success[gbp_owner_id] != OG_TRUE) {
+            int ret = dtc_mmap_remote_data_buf(remote_sga, gbp_owner_id);
+            if (ret != UBSM_OK) {
+                OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node %u failed, ret: %d", gbp_owner_id, ret);
+            }
+        }
+    }
+
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        // Acquire remote global lock
+        ret = drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, mode);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_WAR("[DCS-GBP][%u-%u] failed to lock shmem page, return",
+                ctrl->page_id.file, ctrl->page_id.page);
+            return ret;
+        }
+    }
+
+    // check page identifier of remote buf meta with ctrl->page_id
+    if (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
+        datafile_t *df = NULL;
+        df = DATAFILE_GET(session, ctrl->page_id.file);
+        OG_LOG_RUN_ERR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
+                       shmem_page_meta->file_id, shmem_page_meta->page_id,
+                       ctrl->page_id.file, ctrl->page_id.page, df->ctrl->name);
+        // to do: unlock remote mate
+        return OG_ERROR;
+    }
+
+    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
+
+    // to do: check remote_head_lsn
+    if ((remote_head_lsn < ctrl->page->lsn)) {
+        // TODO: when we find the page is invalid, unlock remote mate
+        // the case (remote_head_lsn < ctrl->page->lsn) needs to get handle specially.
+        OG_LOG_RUN_ERR("[DCS-GBP][%llu-%llu] failed to check lsn, return", remote_head_lsn, ctrl->page->lsn);
+        return OG_ERROR;
+    }
+
+    dcs_copy_page_from_shmem(session, ctrl);
+
+    heap_page_t *heap_page = (heap_page_t *)ctrl->page;
+    OG_LOG_RUN_WAR("[DTC_HEAP_COPY_GBP] page[%u-%u], oid: %d, page addr: %p, page_lsn %llu, page addr by meta: %p",
+                AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page, heap_page->oid,
+                ctrl->shmem_page_addr, heap_page->head.lsn,
+                GET_PAGE_ADRR_IN_GBP((char *)shmem_page_meta));
+
+    // Release global lock
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
+            return ret;
+        }
+    }
+
+    // todo: dtc_update_lsn(session, remote_head_lsn), need to think how to set.
+    knl_panic(mode > ctrl->lock_mode);
+    ctrl->lock_mode = mode;
+    // ctrl->load_status need to set BUF_IS_LOADED, because commit need to check this status
+    ctrl->load_status = (uint8)BUF_IS_LOADED;
+
+    return OG_SUCCESS;
+}
+
 static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl, knl_buf_wait_t
     *temp_stat)
 {
@@ -144,6 +235,12 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             ctrl->load_status = (uint8)BUF_IS_LOADED;
         }
     } else {
+        if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP) {
+            dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
+            OG_LOG_RUN_WAR("[DTC_GBP_BNUFFER][%u-%u][dtc buf try from gbp] read num:%u, options: %u",
+                ctrl->page_id.file, ctrl->page_id.page, ra->read_num, (unsigned int)ra->options);
+        }
+
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
             OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
             buf_unlatch(session, ctrl, OG_TRUE);
@@ -186,6 +283,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
 // unit: ms
 #define DCS_LOG_LIMIT_INTERVAL (500)
+
 status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
 {
     buf_ctrl_t *ctrl = NULL;
