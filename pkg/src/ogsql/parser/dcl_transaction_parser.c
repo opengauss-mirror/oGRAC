@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-static status_t sql_parse_gtid(sql_stmt_t *stmt, const text_t *txt_xid)
+status_t sql_parse_gtid(sql_stmt_t *stmt, const text_t *txt_xid)
 {
     text_t fmt_id;
     text_t gtrid;
@@ -144,7 +144,7 @@ status_t sql_parse_commit_phase2(sql_stmt_t *stmt, word_t *word)
     return lex_expected_end(lex);
 }
 
-static status_t sql_parse_ltid(text_t *value, knl_xid_t *xid)
+status_t sql_parse_ltid(text_t *value, knl_xid_t *xid)
 {
     text_t seg_id;
     text_t part;
@@ -172,7 +172,7 @@ static status_t sql_parse_ltid(text_t *value, knl_xid_t *xid)
     return OG_SUCCESS;
 }
 
-static status_t sql_parse_commit_force(sql_stmt_t *stmt, word_t *word)
+status_t sql_parse_commit_force(sql_stmt_t *stmt, word_t *word)
 {
     lex_t *lex = stmt->session->lex;
     knl_xid_t *xid = NULL;

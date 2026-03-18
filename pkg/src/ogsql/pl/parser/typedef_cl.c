@@ -1497,7 +1497,7 @@ status_t plc_compile_global_type_member(pl_compiler_t *compiler, plv_decl_t *dec
     return OG_SUCCESS;
 }
 
-status_t plc_bison_verify_var(type_word_t *type)
+static status_t plc_bison_verify_var(type_word_t *type)
 {
     char *ex_name = NULL;
     if (strlen(type->str) > OG_MAX_NAME_LEN) {
@@ -1867,13 +1867,18 @@ static status_t plc_bison_copy_variant_type(pl_compiler_t *compiler, plv_decl_t 
 
 status_t plc_bison_compile_plv_type(pl_compiler_t *compiler, plattr_assist_t *plattr_ass, type_word_t *type)
 {
-    plv_cur_rowtype_t r_type;
+    plv_cur_rowtype_t r_type = PLV_CUR_UNKNOWN;
     plv_decl_t *decl = NULL;
     plc_var_type_t var_type;
 
+    if ((type->pl_rowtype && type->pl_type) || (!type->pl_rowtype && !type->pl_type)) {
+        OG_SRC_THROW_ERROR(type->loc, ERR_PL_EXPECTED_FAIL_FMT, "TYPE or ROWTYPE", type->str);
+        return OG_ERROR;
+    }
+
     if (type->pl_rowtype) {
         r_type = PLV_CUR_ROWTYPE;
-    } else if (type->pl_type) {
+    } else {
         r_type = PLV_CUR_TYPE;
     }
     OG_RETURN_IFERR(plc_bison_verify_var(type));
@@ -1991,7 +1996,6 @@ status_t plc_bison_compile_type_def(pl_compiler_t *compiler, char *type_name, ga
             return plc_bison_compile_type_record_def(compiler, decl, decls, record_attrs);
         case MATCH_REF:
         case MATCH_VARRAY:
-        cast MATCH_VARRAY:
         case MATCH_TABLE:
             /* todo */
         default:

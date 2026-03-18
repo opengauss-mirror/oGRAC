@@ -33,6 +33,23 @@
 extern "C" {
 #endif
 
+static inline bool32 sql_get_notify_bool_value(const char *value)
+{
+    /*
+     * Native ALTER SYSTEM verification stores OG_FALSE/OG_TRUE in value[0],
+     * while the bison path may pass normalized "FALSE"/"TRUE" strings here.
+     */
+    if (value[0] == (char)OG_TRUE && value[1] == '\0') {
+        return OG_TRUE;
+    }
+
+    if (value[0] == (char)OG_FALSE && value[1] == '\0') {
+        return OG_FALSE;
+    }
+
+    return (bool32)cm_str_equal_ins(value, "TRUE");
+}
+
 static status_t sql_verify_ip_address(lex_t *lex, char *ipstr, uint32 len)
 {
     uint32 ip_len = 0;
@@ -680,7 +697,7 @@ status_t sql_notify_als_enable_merge_join(void *se, void *item, char *value)
 
 status_t sql_notify_als_use_bison_parser(void *se, void *item, char *value)
 {
-    g_instance->sql.use_bison_parser = (bool32)value[0];
+    g_instance->sql.use_bison_parser = sql_get_notify_bool_value(value);
     return sql_notify_als_bool(se, item, value);
 }
 
@@ -1000,13 +1017,13 @@ status_t sql_notify_als_simplify_exists_subq(void *se, void *item, char *value)
 
 status_t sql_notify_als_subquery_rewrite(void *se, void *item, char *value)
 {
-    g_instance->sql.enable_subquery_rewrite = (bool32)value[0];
+    g_instance->sql.enable_subquery_rewrite = sql_get_notify_bool_value(value);
     return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_notify_als_semi2inner(void *se, void *item, char *value)
 {
-    g_instance->sql.enable_semi2inner = (bool32)value[0];
+    g_instance->sql.enable_semi2inner = sql_get_notify_bool_value(value);
     return sql_notify_als_bool(se, item, value);
 }
 

@@ -23,6 +23,7 @@
 #include "ddl_constraint_parser.h"
 #include "ddl_table_attr_parser.h"
 #include "ddl_privilege_parser.h"
+#include "ogsql_privilege.h"
 #include "pl_ddl_parser.h"
 
 /* Location tracking support --- simpler than bison's default */
@@ -179,6 +180,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     knl_part_def_t      *part_def;
     createseq_opt       *seq_opt;
     ctrlfile_opt        *ctrlfile_opt;
+    backup_opt          *backup_opt;
     profile_limit_item_t *profile_limit_item;
     profile_limit_value_t *profile_limit_value;
     table_attr_t        *table_attr;
@@ -196,16 +198,16 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
                CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateFunctionStmt compileFunctionSource
-               GrantStmt RevokeStmt PurgeStmt AlterTablespaceStmt index_cluster_item
+               GrantStmt RevokeStmt PurgeStmt AlterTablespaceStmt index_cluster_item TransactionStmt RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
                expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts
                profile_limit_list ctrlfile_opts opt_ctrlfile_opts ctrlfile_file_list ctrlfile_files OptTableElementList column_attrs
-               opt_column_attrs table_attrs opt_table_attrs column_name_list
+               opt_column_attrs table_attrs opt_table_attrs column_name_list opt_backup_opts backup_opts
                all_insert_into_list set_clause_list set_clause multiple_set_clause return_clause delete_target_list
                expr_list_with_select_rows json_column_list siblings_clause with_clause cte_list pivot_in_list pivot_clause_list
                select_pivot_clause unpivot_in_list expr_or_implicit_row_list cube_clause rollup_clause
-               group_sets_item group_sets_list grouping_sets_clause group_by_cartesian_item group_by_list group_clause
+               group_sets_item group_sets_list grouping_sets_clause group_by_cartesian_item group_by_list group_clause any_name_list
                locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list index_cluster_list attrs
 %type <expr>   ctext_expr a_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr
                func_arg_expr func_arg_list expr_elem_list func_expr_common_subexpr substr_list multi_expr_list
@@ -259,6 +261,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <db_opt> createdb_user_opt createdb_controlfile_opt createdb_charset_opt instance_node_opt createdb_instance_opt
                createdb_nologging_opt createdb_system_opt createdb_sysaux_opt createdb_default_opt createdb_maxinstance_opt
                createdb_opt createdb_archivelog_opt createdb_compatibility_opt
+%type <backup_opt> backup_opt
 %type <ctrlfile_opt> ctrlfile_opt
 %type <list> files logfiles instance_node_opts instance_nodes createdb_opts datafiles opt_user_options user_option_list
              tablespace_name_list createts_opts opt_createts_opts index_column_list createidx_opts opt_partition_index_def
@@ -298,15 +301,16 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <keyword> col_name_keyword reserved_keyword
 %type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name user_password
+            debug_mode_value altsession_set_key altsession_set_value alter_param_value
 
-%type <ival> opt_asc_desc opt_nulls_order opt_charset opt_collate opt_wait opt_truncate_options truncate_option truncate_options
+%type <ival> opt_asc_desc opt_nulls_order opt_ckpt_type opt_charset opt_collate opt_wait opt_wait_time opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
              opt_foreign_action partition_type grant_objtype sys_priv_spec obj_priv_spec user_priv_spec
-             directory_priv_spec arg_class
+             directory_priv_spec arg_class opt_compress_level compress_algo lock_mode opt_set_scope opt_arch_set_type
 %type <sortby>  sortby
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 %type <alter_idx_act> alter_index_action
-%type <text> subprogram_body
+%type <text> subprogram_body opt_dump_to_file
 
 %token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
                 OPER_CAT OPER_LSHIFT OPER_RSHIFT
@@ -320,64 +324,65 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %token            DIALECT_C_FORMAT_SQL
 
 %token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACCOUNT ACTION ADD_P ADMIN ADMINISTER AFTER
-    AGGREGATE ALGORITHM ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY APP APPEND APPENDONLY APPLY ARCHIVE_P ARCHIVELOG ARRAY AS ASC ASF ASOF_P
+    AGGREGATE ALGORITHM ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY APP APPEND APPENDONLY APPLY ARCHIVE_P ARCHIVE_SET ARCHIVELOG ARRAY AS ASC ASF ASN ASOF_P
         ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUDIT AUTHID AUTHORIZATION AUTOEXTEND AUTOMAPPED AUTOOFFLINE AUTOPURGE AUTO_INCREMENT AUTOALLOCATE
 
-    BACKWARD BARRIER BEFORE BEGIN_NON_ANOYBLOCK BEGIN_P BETWEEN BIGINT BINARY BINARY_BIGINT BINARY_DOUBLE BINARY_DOUBLE_INF BINARY_DOUBLE_NAN BINARY_FLOAT BINARY_INTEGER BIT BLANKS
-    BLOB_P BLOCKCHAIN BOLCKSIZE BODY_P BOGUS BOOLEAN_P BOTH BPCHAR BUCKETCNT BUCKETS BUILD BY BYTE_P BYTEAWITHOUTORDER BYTEAWITHOUTORDERWITHEQUAL
+    BACKUP_P BACKUPSET BACKWARD BADBLOCK BARRIER BEFORE BEGIN_NON_ANOYBLOCK BEGIN_P BETWEEN BIGINT BINARY BINARY_BIGINT BINARY_DOUBLE BINARY_DOUBLE_INF BINARY_DOUBLE_NAN BINARY_FLOAT BINARY_INTEGER BIT BLANKS
+    BLOB_P BLOCKCHAIN BLOCKRECOVER OGRAC RECOVER BOLCKSIZE BODY_P BOGUS BOOLEAN_P BOTH BPCHAR BUCKETCNT BUCKETS BUFFER_P BUILD BY BYTE_P BYTEAWITHOUTORDER BYTEAWITHOUTORDERWITHEQUAL
 
-    CACHE CALL CALLED CANCELABLE CASCADE CASCADED CASE CAST CATALOG_P CATALOG_NAME CHAIN CHANGE CHAR_P
+    CACHE CALL CALLED CANCEL CANCELABLE CASCADE CASCADED CASE CAST CATALOG_P CATALOG_NAME CHAIN CHANGE CHAR_P
     CHARACTER CHARACTERISTICS CHARACTERSET CHARSET CHECK CHECKPOINT CLASS CLASS_ORIGIN CLEAN CLIENT CLIENT_MASTER_KEY CLIENT_MASTER_KEYS CLOB CLOSE
     CLUSTER_P CLUSTERED COALESCE COLLATE COLLATION COLUMN COLUMN_ENCRYPTION_KEY COLUMN_ENCRYPTION_KEYS COLUMN_NAME COLUMNS COMMENT COMMENTS COMMIT
-    COMMITTED COMPACT COMPATIBLE_ILLEGAL_CHARS COMPILE COMPLETE COMPLETION COMPRESS COMPUTE CONCURRENTLY CONDITION CONDITIONAL CONFIGURATION CONNECTION CONSISTENT CONSTANT CONSTRAINT CONSTRAINT_CATALOG CONSTRAINT_NAME CONSTRAINT_SCHEMA CONSTRAINTS
-    CONTENT_P CONTENTS CONTINUE_P CONTROLFILE CONTVIEW CONVERSION_P CONVERT_P CONNECT COORDINATOR COORDINATORS COPY COST CREATE CRMODE
-    CROSS CSF CSN CSV CTRLFILE CUBE CURRENT_P
-    CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA
+    COMMITTED COMPACT COMPATIBLE_ILLEGAL_CHARS COMPILE COMPLETE COMPLETION COMPRESS COMPRESSED COMPUTE CONCURRENTLY CONDITION CONDITIONAL CONFIGURATION CONFIG CONNECTION CONSISTENT CONSTANT CONSTRAINT CONSTRAINT_CATALOG CONSTRAINT_NAME CONSTRAINT_SCHEMA CONSTRAINTS
+    CONTENT_P CONTENTS CONTINUE_P CONTROLFILE CONTVIEW CONVERSION_P CONVERT_P CONNECT COORDINATOR COORDINATORS COPY COPYCTRL COST CREATE CRMODE
+    CROSS CSF CSN CSV CTRLFILE CUBE CUMULATIVE CURRENT_P
+    COUNT CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA
     CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CURSOR_NAME CYCLE
     SHRINK USE_P
 
     DATA_P DB_P DATABASE DATAFILE DATAFILES DATANODE DATANODES DATATYPE_CL DATE_P DATE_FORMAT_P DAY_P DAY_HOUR_P DAY_MINUTE_P DAY_SECOND_P DBA_RECYCLEBIN DBCOMPATIBILITY_P DEALLOCATE DEC DECIMAL_P DECLARE DECODE DEFAULT DEFAULTS
     DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITED DELIMITER DELIMITERS DELTA DELTAMERGE DENSE_RANK DESC DETERMINISTIC
 /* PGXC_BEGIN */
-    DIAGNOSTICS DICTIONARY DIRECT DIRECT_LOAD DIRECTORY DISABLE_P DISCARD DISTINCT DISTRIBUTE DISTRIBUTION DO DOCUMENT_P DOMAIN_P DOUBLE_P
+    DEBUG DIAGNOSTICS DICTIONARY DIRECT DIRECT_LOAD DIRECTORY DISABLE_P DISCARD DISTINCT DISTRIBUTE DISTRIBUTION DO DOCUMENT_P DOMAIN_P DOUBLE_P
 /* PGXC_END */
-    DROP DUPLICATE DISCONNECT DUMPFILE
+    DROP DUPLICATE DISCONNECT DUMP DUMPFILE
 
-    EACH ELASTIC ELSE EMPTY ENABLE_P ENCLOSED ENCODING ENCRYPTED ENCRYPTED_VALUE ENCRYPTION ENCRYPTION_TYPE END_P ENDS ENFORCED ENUM_P ERROR_P ERRORS ESCAPE EOL ESCAPING ESTIMATE EXEMPT EVENT EVENTS EVERY EXCEPT EXCHANGE
+    EACH ELASTIC ELSE EMPTY ENABLE_P ENCLOSED ENCODING ENCRYPTED ENCRYPTED_VALUE ENCRYPTION ENCRYPTION_TYPE END_P ENDS ENTRY ENFORCED ENUM_P ERROR_P ERRORS ESCAPE EOL ESCAPING ESTIMATE EXEMPT EVENT EVENTS EVERY EXCEPT EXCHANGE
     EXCLUDE EXCLUDED EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPIRE EXPIRED_P EXPLAIN
     EXTENSION EXTENT EXTENTS EXTERNAL EXTRACT ESCAPED
 
-    FALSE_P FAILED_LOGIN_ATTEMPTS_P FAMILY FAST FENCED FETCH FIELDS FILEHEADER_P FILL_MISSING_FIELDS FILLER FILTER FIRST_P FIXED_P FLASHBACK FLOAT_P FOLLOWING FOLLOWS_P FOR FORCE FOREIGN FORMAT FORMATTER FORWARD
+    FALSE_P FAILED_LOGIN_ATTEMPTS_P FAMILY FAST FENCED FETCH FIELDS FILEHEADER_P FILEID FILENAME FILERECOVER FILL_MISSING_FIELDS FINISH FILLER FILTER FIRST_P FIXED_P FLASHBACK FLUSH FLUSHPAGE FLOAT_P FOLLOWING FOLLOWS_P FOR FORCE FOREIGN FORMAT FORMATTER FORWARD
     FEATURES // DB4AI
     FREEZE FROM FULL FUNCTION FUNCTIONS
 
     GENERATED GET GLOBAL GRANT GRANTED GREATEST GROUP_P GROUP_CONCAT GROUPING_P GROUPPARENT
 
-    HANDLER HASH HAVING HDFSDIRECTORY HEADER_P HOLD HOUR_P HOUR_MINUTE_P HOUR_SECOND_P
+    HANDLER HASH HAVING HBA HDFSDIRECTORY HEADER_P HOLD HOUR_P HOUR_MINUTE_P HOUR_SECOND_P
 
     IDENTIFIED IDENTITY_P IF_P IGNORE IGNORE_EXTRA_DATA ILIKE IMMEDIATE IMMUTABLE IMPLICIT_P IN_P INCLUDE IMCSTORED
-    INCLUDING INCREMENT INCREMENTAL INDEX_P INDEXES INDEXCLUSTER INFILE INFINITE_P INHERIT INHERITS INITIAL_P INITIALLY INITRANS INLINE_P
+    INCLUDING INCREMENT INCREMENTAL INDEX_P INDEXES INDEXCLUSTER INFILE INFINITE_P INHERIT INHERITS INIT INITIAL_P INITIALLY INITRANS INLINE_P
 
     INNER_P INOUT_P INPUT_P INSENSITIVE INSERT INSTANCE INSTEAD INT_P INTEGER INTERNAL
-    INTERSECT_P INTERVAL INTO INVISIBLE INVOKER IP IS ISNULL ISOLATION
+    INTERACTIVE INTERSECT_P INTERVAL INTO INVISIBLE INVOKER IP IS ISNULL ISOLATION
 
     JOIN JSON JSON_ARRAY JSON_EXISTS JSON_MERGEPATCH JSON_OBJECT JSON_QUERY JSON_SET JSON_VALUE JSON_TABLE_P JSONB JSONB_EXISTS JSONB_MERGEPATCH JSONB_QUERY JSONB_SET JSONB_VALUE JSONB_TABLE_P
 
     KEEP KEY KILL KEY_PATH KEY_STORE
 
     LABEL LANGUAGE LARGE_P LAST_P LATERAL_P LC_COLLATE_P LC_CTYPE_P LEADING LEAKPROOF LIBRARY LINES LINK
-    LEAST LESS LEFT LEVEL LIKE LIMIT LIST LISTEN LNNVL LOAD LOADER_P LOB LOCAL LOCALTIME LOCALTIMESTAMP
-    LOCATION LOCK_P LOCKED LOG_P LOGFILE LOGGING LOGIN_ANY LOGIN_FAILURE LOGIN_SUCCESS LOGOUT LOOP
+    LEAST LESS LEFT LEVEL LFN LIKE LIMIT LIST LISTEN LNNVL LOAD LOADER_P LOB LSNR_ADDR LOCAL LOCALTIME LOCALTIMESTAMP
+    LOCATION LOCK_P LOCKED LOG_P LOGFILE LOGGING LOGIN_ANY LOGIN_FAILURE LOGIN_SUCCESS LOGOUT LZ4 LOOP
     MAPPING MANAGE MASKING MASTER MATCH MATERIALIZED MATCHED MAXEXTENTS MAXINSTANCES MAXSIZE MAXTRANS MAXVALUE MERGE MESSAGE_TEXT METHOD MINUS_P MINUTE_P MINUTE_SECOND_P MINVALUE MINEXTENTS MODE
     MODEL MODIFY_P MONTH_P MOVE MOVEMENT MYSQL_ERRNO
     // DB4AI
     NAME_P NAMES NAN_P NATIONAL NATURAL NCHAR NEWLINE NEXT NO NOARCHIVELOG NOCACHE NOCOMPRESS NOCYCLE NODE NOLOGGING NOMAXVALUE NOMINVALUE NONE NOORDER NORELY
     NOT NOTHING NOTIFY NOTNULL NOVALIDATE NOWAIT NTH_VALUE_P NULL_P NULLCOLS NULLIF NULLS_P NUMBER_P NUMERIC NUMSTR NVARCHAR NVARCHAR2 NVL
 
-    OBJECT_P OF_P OFF OFFLINE OFFSET OIDS ON ONLINE ONLY OPERATIONS OPERATOR OPTIMIZATION OPTION OPTIONALLY OPTIONS OR
+    OBJECT_P OF_P OFF OFFLINE OFFSET OIDS ON ONLINE ONLY OPERATIONS OPERATOR OPTIMIZATION OPTINFO_LOG OPTION OPTIONALLY OPTIONS OR
     ORDER OUT_P OUTER_P OVER OVERLAPS OVERLAY OWNED OWNER ORDINALITY ORGANIZATION OUTFILE
 
-    PACKAGE PACKAGES PAGE PARALLEL PARALLEL_ENABLE PARAMETERS PARSER PARTIAL PARTITION PARTITIONS PASSING PASSWORD PASSWORD_GRACE_TIME_P PASSWORD_LIFE_TIME_P PASSWORD_LOCK_TIME_P PASSWORD_MIN_LEN_P PASSWORD_REUSE_MAX_P PASSWORD_REUSE_TIME_P PATH PCTFREE PER_P PERCENT PERFORMANCE PERM PERMANENT PLACING PLAN PLANS POLICY POSITION
+    PACKAGE PACKAGES PAGE PARALLEL PARALLELISM PARALLEL_ENABLE PARAMETERS PARSER PARTIAL PARTITION PARTITIONS PASSING PASSWORD 
+    PASSWORD_GRACE_TIME_P PASSWORD_LIFE_TIME_P PASSWORD_LOCK_TIME_P PASSWORD_MIN_LEN_P PASSWORD_REUSE_MAX_P PASSWORD_REUSE_TIME_P PATH PCTFREE PBL PER_P PERCENT PERFORMANCE PERM PERMANENT PLACING PLAN PLANS POLICY POSITION
     PIPELINED PIVOT
 /* PGXC_BEGIN */
     POOL PRECEDING PRECISION
@@ -386,25 +391,25 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 /* PGXC_BEGIN */
     PREFERRED PREFIX PRESERVE PREPARE PREPARED PRIMARY
 /* PGXC_END */
-    PRECEDES_P PRIVATE PRIOR PRIORER PRIVILEGES PRIVILEGE PROCEDURAL PROCEDURE PROFILE PUBLIC PUBLICATION PUBLISH PURGE PUNCH
+    PRECEDES_P PRIVATE PRIOR PRIORER PRIVILEGES PRIVILEGE PROCEDURAL PROCEDURE PROCESS PROFILE PUBLIC PUBLICATION PUBLISH PURGE PUNCH
 
     QUERY QUOTE
 
-    RANDOMIZED RANGE RATIO RAW READ REAL REASSIGN REBUILD RECHECK RECORDS RECURSIVE REDACTION RECYCLEBIN REDISANYVALUE REF REFERENCES REFRESH REGEXP REGEXP_LIKE REINDEX REJECT_P
-    RELATIVE_P RELEASE RELOPTIONS RELY REMOTE_P REMOVE RENAME REPEAT REPEATABLE REPLACE REPLICA REPORT
-    RESET REWRITE RESIZE RESOURCE RESPECT_P RESTART RESTRICT RETURN RETURNED_SQLSTATE RETURNING RETURNS REUSE REVERSE REVOKE RIGHT ROLE ROLES ROLLBACK ROLLUP ROTATE
-    ROTATION ROW ROW_COUNT ROWID ROWNUM ROWS ROWSCN ROWTYPE_P RULE
+    RANDOMIZED RANGE RATIO RAW READ REAL REASSIGN REBUILD RECHECK RECORDS RECURSIVE REDACTION RECYCLE RECYCLEBIN REDISANYVALUE REF REFERENCES REFRESH RELOAD REGEXP REGEXP_LIKE REINDEX REJECT_P
+    RELATIVE_P RELEASE RELOPTIONS RELY REMOTE_P REMOVE RENAME REPAIR REPAIR_COPYCTRL REPAIR_PAGE REPEAT REPEATABLE REPLACE REPLICA REPLICATION_P REPORT
+    RESET REWRITE RESIZE RESOURCE RESPECT_P RESTART RESTRICT RESTORE RETURN RETURNED_SQLSTATE RETURNING RETURNS REUSE REVERSE REVOKE RIGHT ROLE ROLES ROLLBACK ROLLUP ROTATE
+    ROTATION ROW ROW_COUNT ROWID ROWNUM ROWS ROWSCN SHAREDPOOL ROWTYPE_P RULE
 
-    SAMPLE SAVEPOINT SCHEDULE SCHEMA SCHEMA_NAME SCN SCROLL SEARCH SECOND_P SECURITY SEGMENTS SELECT SEPARATOR_P SEQUENCE SEQUENCES SHARE_MEMORY
-    SERIALIZABLE SERVER_P SESSION SESSION_USER SESSIONS_PER_USER_P SET SETS SETOF SHARE SHIPPABLE SHOW SHUTDOWN SIBLINGS SIGNED
-    SIMILAR SIMPLE SIZE SKIP SLAVE SLICE SMALLDATETIME SMALLDATETIME_FORMAT_P SMALLINT SNAPSHOT SOME SOURCE_P SPACE_P SPECIFICATION SPILL SPLIT STABLE STACKED_P STANDALONE_P START STARTS STARTWITH
-    STATEMENT STATEMENT_ID STATISTICS STDIN STDOUT STORAGE STORE_P STORED STRATIFY STREAM STRICT_P STRIP_P SUBCLASS_ORIGIN SUBPARTITION SUBPARTITIONS SUBSCRIPTION SUBSTR SUBSTRING
-    SYMMETRIC SYNONYM SYSDATE SYSID SYSTEM_P SYS_REFCURSOR SYSAUX STARTING SQL_P
+    SAMPLE SWITCH SAVEPOINT SCHEDULE SCHEMA SCHEMA_NAME SCN SCROLL SEARCH SECOND_P SECTION SECURITY SEGMENTS SELECT SEPARATOR_P SEQUENCE SEQUENCES SHARE_MEMORY
+    SERIALIZABLE SERVER_P SESSION SESSION_USER SESSIONS_PER_USER_P SET SETS SETOF SHARE SHIPPABLE SHOW SCOPE SHUTDOWN SIBLINGS SIGNED STANDBY
+    SIMILAR SIMPLE SIZE SKIP SLAVE SLICE SMALLDATETIME SMALLDATETIME_FORMAT_P SMALLINT SQLPOOL SNAPSHOT SOME SOURCE_P SPACE_P SPECIFICATION SPILL SPLIT STABLE STACKED_P STANDALONE_P START STARTS STARTWITH
+    STATEMENT STATEMENT_ID STATISTICS STDIN STDOUT STOP STORAGE STORE_P STORED STRATIFY STREAM STRICT_P STRIP_P SUBCLASS_ORIGIN SUBPARTITION SUBPARTITIONS SUBSCRIPTION SUBSTR SUBSTRING
+    SYMMETRIC SYNCPOINT SYNONYM SYSBACKUP_P SYSDBA_P SYSDATE SYSID SYSOPER_P SYSTEM_P SYS_REFCURSOR SYSAUX STARTING SQL_P
 
     SQL_CALC_FOUND_ROWS
 
-    TABLE_P TABLE_NAME TABLES TABLESAMPLE TABLESPACE TABLESPACES TARGET TEMP TEMPFILE TEMPLATE TEMPORARY TENANT TERMINATED TEXT_P THAN THEN TIME TIME_FORMAT_P TIES TIMECAPSULE TIMESTAMP TIMESTAMP_FORMAT_P TIMESTAMPDIFF TIMEZONE_HOUR_P TIMEZONE_MINUTE_P TINYINT
-    TO TRAILING TRANSACTION TRANSFORM TREAT TRIGGER TRIM TRUE_P
+    TABLE_P TABLE_NAME TABLES TABLESAMPLE TABLESPACE TABLESPACES TAG TARGET TEMP TEMPFILE TEMPLATE TEMPORARY TENANT TERMINATED TEXT_P THAN THEN THRESHOLD TIME TIME_FORMAT_P TIES TIMECAPSULE TIMESTAMP TIMESTAMP_FORMAT_P TIMESTAMPDIFF TIMEOUT TIMEZONE_HOUR_P TIMEZONE_MINUTE_P TINYINT
+    TO TRAILING TRANSACTION TRANSFORM TREAT TRIGGER TRIGGERS TRIM TRUE_P
     TRUNCATE TRUSTED TSFIELD TSTAG TSTIME TYPE_P TYPES_P
 
     UNCONDITIONAL UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLIMITED UNLISTEN UNLOCK UNLOGGED UNPIVOT UNSIGNED UNIMCSTORED
@@ -420,7 +425,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 
     YEAR_P YEAR_MONTH_P YES_P
 
-    ZONE
+    ZLIB ZSTD ZONE
 
 %token <keyword> CONSTRUCTOR FINAL MAP MEMBER MEMORY RESULT SELF STATIC_P UNDER UNDO
 
@@ -588,6 +593,18 @@ stmtmulti:
         | RevokeStmt
         | PurgeStmt
         | AlterTablespaceStmt
+        | TransactionStmt
+        | RecoverStmt
+        | OgracStmt
+        | ShutdownStmt
+        | BuildStmt
+        | RepairStmt
+        | CheckPointStmt
+        | ValidateStmt
+        | SyncPointStmt
+        | LockTableStmt
+        | AlterSystemStmt
+        | AlterSessionStmt
         | /*EMPTY*/ { $$ = NULL; }
     ;
 
@@ -3414,7 +3431,6 @@ using_clause:
             | /*EMPTY*/                         { $$ = NULL; }
         ;
 
-/* TODO: select from table list(sql_array_t) */
 from_list:
             table_ref
                 {
@@ -4191,7 +4207,7 @@ json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_on_erro
 
 join_type:	FULL_KEY join_outer                         { $$ = JOIN_TYPE_FULL; }
             | LEFT_KEY join_outer                       { $$ = JOIN_TYPE_LEFT; }
-            | RIGHT_KEY join_outer                      { $$ = KEY_WORD_RIGHT; }
+            | RIGHT_KEY join_outer                      { $$ = JOIN_TYPE_RIGHT; }
         ;
 
 join_outer: OUTER_P
@@ -7242,6 +7258,880 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                 }
         ;
 
+AlterSystemStmt:
+            ALTER SYSTEM_P SWITCH LOGFILE
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_SWITCHLOG;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P SET IDENT '=' alter_param_value opt_set_scope
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->is_coord_conn = IS_COORD_CONN(stmt->session);
+                    sys_def->action = ALTER_SYS_SET_PARAM;
+                    BISON_MEM_STRDUP(sys_def->param, $4);
+                    cm_str_upper(sys_def->param);
+                    BISON_MEM_STRDUP(sys_def->value, $6);
+                    sys_def->scope = $7;
+
+                    if (sql_bison_verify_sys_param(&stmt->session->knl_session, sys_def) != OG_SUCCESS) {
+                        parser_yyerror("verify system parameter failed");
+                    }
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P SET REPLICATION_P ON SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    BISON_MEM_STRDUP(sys_def->value, $6);
+
+                    sys_def->action = ALTER_SYS_MODIFY_REPLICA;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P SET REPLICATION_P OFF
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_STOP_REPLICA;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P LOAD DICTIONARY FOR any_name
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    name_with_owner *name_owner = $6;
+                    text_t owner_name;
+                    text_t object_name;
+
+                    if (CM_IS_EMPTY(&name_owner->owner)) {
+                        cm_str2text(stmt->session->curr_schema, &owner_name);
+                    } else {
+                        owner_name = name_owner->owner;
+                    }
+
+                    if (sql_copy_prefix_tenant(stmt, &owner_name, &object_name, sql_copy_name) != OG_SUCCESS) {
+                        parser_yyerror("copy prefix tenant failed");
+                    }
+                    if (cm_text2str(&object_name, sys_def->param, OG_NAME_BUFFER_SIZE) != OG_SUCCESS) {
+                        parser_yyerror("copy user name failed");
+                    }
+                    if (sql_copy_name(stmt->context, &name_owner->name, &object_name) != OG_SUCCESS) {
+                        parser_yyerror("copy object name failed");
+                    }
+                    if (cm_text2str(&object_name, sys_def->value, OG_PARAM_BUFFER_SIZE) != OG_SUCCESS) {
+                        parser_yyerror("copy object name failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_LOAD_DC;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P INIT DICTIONARY
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_INIT_ENTRY;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P FLUSH BUFFER_P
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_FLUSH_BUFFER;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P FLUSH SQLPOOL
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_FLUSH_SQLPOOL;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P RECYCLE SHAREDPOOL opt_force
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_RECYCLE_SHAREDPOOL;
+                    sys_def->force_recycle = $5;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DUMP DATAFILE ICONST PAGE ICONST opt_dump_to_file
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_DUMP_PAGE;
+                    sys_def->page_id.file = $5;
+                    sys_def->page_id.page = $7;
+
+                    if ($8 != NULL && $8->len > 0) {
+                        BISON_MEM_STRDUP(sys_def->out_file.str, $8->str);
+                        sys_def->out_file.len = strlen($8->str);
+
+                        char real_name[OG_MAX_FILE_PATH_LENGH] = { 0x00 };
+                        if (sql_get_real_path(&sys_def->out_file, real_name) != OG_SUCCESS) {
+                            OG_THROW_ERROR_EX(ERR_CAPABILITY_NOT_SUPPORT, "datafile name [%s] fmt", T2S(&sys_def->out_file));
+                            YYABORT;
+                        }
+                    }
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DUMP CTRLFILE opt_dump_to_file
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_DUMP_CTRLPAGE;
+
+                    if ($5 != NULL && $5->len > 0) {
+                        BISON_MEM_STRDUP(sys_def->out_file.str, $5->str);
+                        sys_def->out_file.len = strlen($5->str);
+                        
+                        char real_name[OG_MAX_FILE_PATH_LENGH] = { 0x00 };
+                        if (sql_get_real_path(&sys_def->out_file, real_name) != OG_SUCCESS) {
+                            OG_THROW_ERROR_EX(ERR_CAPABILITY_NOT_SUPPORT, "datafile name [%s] fmt", T2S(&sys_def->out_file));
+                            YYABORT;
+                        }
+                    }
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DUMP CATALOG_P TABLE_P any_name opt_dump_to_file
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_DUMP_DC;
+                    sys_def->dump_info.dump_type = DC_DUMP_TABLE;
+
+                    name_with_owner *name_owner = $6;
+                    text_t owner_name;
+
+                    if (CM_IS_EMPTY(&name_owner->owner)) {
+                        cm_str2text(stmt->session->curr_schema, &owner_name);
+                    } else {
+                        owner_name = name_owner->owner;
+                    }
+
+                    if (sql_copy_prefix_tenant(stmt, &owner_name, &sys_def->dump_info.user_name,
+                        sql_copy_name) != OG_SUCCESS) {
+                        parser_yyerror("copy prefix tenant failed");
+                    }
+                    if (sql_copy_name(stmt->context, &name_owner->name, &sys_def->dump_info.table_name)
+                        != OG_SUCCESS) {
+                        parser_yyerror("copy table name failed");
+                    }
+                    if (sql_check_dump_priv(stmt, sys_def) != OG_SUCCESS) {
+                        parser_yyerror("check dump priv failed");
+                    }
+
+                    if ($7 != NULL && $7->len > 0) {
+                        BISON_MEM_STRDUP(sys_def->dump_info.dump_file.str, $7->str);
+                        sys_def->dump_info.dump_file.len = strlen($7->str);
+
+                        char real_name[OG_MAX_FILE_PATH_LENGH] = { 0x00 };
+                        if (sql_get_real_path(&sys_def->dump_info.dump_file, real_name) != OG_SUCCESS) {
+                            OG_THROW_ERROR_EX(ERR_CAPABILITY_NOT_SUPPORT, "datafile name [%s] fmt",
+                                T2S(&sys_def->dump_info.dump_file));
+                            YYABORT;
+                        }
+                    }
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DUMP CATALOG_P USER IDENT opt_dump_to_file
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_DUMP_DC;
+                    sys_def->dump_info.dump_type = DC_DUMP_USER;
+
+                    text_t text;
+                    cm_str2text($6, &text);
+                    if (sql_copy_prefix_tenant(stmt, &text, &sys_def->dump_info.user_name, sql_copy_name)
+                        != OG_SUCCESS) {
+                        parser_yyerror("copy prefix tenant failed");
+                    }
+                    if (sql_check_dump_priv(stmt, sys_def) != OG_SUCCESS) {
+                        parser_yyerror("check dump priv failed");
+                    }
+
+                    if ($7 != NULL && $7->len > 0) {
+                        BISON_MEM_STRDUP(sys_def->dump_info.dump_file.str, $7->str);
+                        sys_def->dump_info.dump_file.len = strlen($7->str);
+
+                        char real_name[OG_MAX_FILE_PATH_LENGH] = { 0x00 };
+                        if (sql_get_real_path(&sys_def->dump_info.dump_file, real_name) != OG_SUCCESS) {
+                            OG_THROW_ERROR_EX(ERR_CAPABILITY_NOT_SUPPORT, "datafile name [%s] fmt",
+                                T2S(&sys_def->dump_info.dump_file));
+                            YYABORT;
+                        }
+                    }
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P KILL SESSION SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t sid_str;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    cm_str2text($5, &sid_str);
+                    if (sql_parse_sid_serial_bison(&sid_str, @5.loc, &sys_def->session_id, &sys_def->serial_id, &sys_def->node_id) != OG_SUCCESS) {
+                        parser_yyerror("parse sid serial failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_KILL_SESSION;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P RESET STATISTICS
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_RESET_STATISTIC;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P CHECKPOINT opt_ckpt_type
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_CHECKPOINT;
+                    sys_def->ckpt_type = $4;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P ARCHIVE_SET IDENT '=' alter_param_value opt_set_scope opt_arch_set_type
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->is_coord_conn = IS_COORD_CONN(stmt->session);
+                    sys_def->action = ALTER_SYS_ARCHIVE_SET;
+                    BISON_MEM_STRDUP(sys_def->param, $4);
+                    cm_str_upper(sys_def->param);
+                    BISON_MEM_STRDUP(sys_def->value, $6);
+                    sys_def->scope = $7;
+                    sys_def->arch_set_type = $8;
+
+                    if (sql_bison_verify_sys_param(&stmt->session->knl_session, sys_def) != OG_SUCCESS) {
+                        parser_yyerror("verify system parameter failed");
+                    }
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P ARCHIVE_SET REPLICATION_P ON SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    BISON_MEM_STRDUP(sys_def->value, $6);
+                    sys_def->action = ALTER_SYS_MODIFY_REPLICA;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P ARCHIVE_SET REPLICATION_P OFF
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_STOP_REPLICA;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P RELOAD HBA CONFIG
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_RELOAD_HBA;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P RELOAD PBL CONFIG
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_RELOAD_PBL;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P REFRESH SYSDBA_P PRIVILEGE
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_REFRESH_SYSDBA;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P ADD_P HBA ENTRY SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t hba_text;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    cm_str2text($6, &hba_text);
+                    if (hba_text.len > HBA_MAX_LINE_SIZE) {
+                        OG_THROW_ERROR(ERR_LINE_SIZE_TOO_LONG, 1);
+                        YYABORT;
+                    }
+                    if (cm_check_hba_entry_legality($6) != OG_SUCCESS) {
+                        parser_yyerror("check hba entry legality failed");
+                    }
+                    errno_t ret = memcpy_s(sys_def->hba_node, HBA_MAX_LINE_SIZE, $6, hba_text.len);
+                    knl_securec_check(ret);
+                    sys_def->hba_node[hba_text.len] = '\0';
+
+                    sys_def->action = ALTER_SYS_ADD_HBA_ENTRY;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P ADD_P LSNR_ADDR SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    BISON_MEM_STRDUP(sys_def->value, $5);
+
+                    sys_def->action = ALTER_SYS_ADD_LSNR_ADDR;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DELETE_P HBA ENTRY SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t hba_text;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    cm_str2text($6, &hba_text);
+                    if (hba_text.len > HBA_MAX_LINE_SIZE) {
+                        OG_THROW_ERROR(ERR_LINE_SIZE_TOO_LONG, 1);
+                        YYABORT;
+                    }
+                    if (cm_check_hba_entry_legality($6) != OG_SUCCESS) {
+                        parser_yyerror("check hba entry legality failed");
+                    }
+                    errno_t ret = memcpy_s(sys_def->hba_node, HBA_MAX_LINE_SIZE, $6, hba_text.len);
+                    knl_securec_check(ret);
+                    sys_def->hba_node[hba_text.len] = '\0';
+
+                    sys_def->action = ALTER_SYS_DEL_HBA_ENTRY;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DELETE_P LSNR_ADDR SCONST
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    BISON_MEM_STRDUP(sys_def->value, $5);
+
+                    sys_def->action = ALTER_SYS_DELETE_LSNR_ADDR;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P DEBUG MODE IDENT '=' debug_mode_value
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    BISON_MEM_STRDUP(sys_def->param, $5);
+                    cm_str_upper(sys_def->param);
+                    BISON_MEM_STRDUP(sys_def->value, $7);
+
+                    sys_def->action = ALTER_SYS_DEBUG_MODE;
+                    debug_config_item_t *debug_params = NULL;
+                    debug_config_item_t *item = NULL;
+                    uint32 count;
+
+                    srv_get_debug_config_info(&debug_params, &count);
+
+                    for (uint32 i = 0; i < count; i++) {
+                        if (cm_str_equal_ins(debug_params[i].name, sys_def->param)) {
+                            item = &debug_params[i];
+                            break;
+                        }
+                    }
+
+                    if (item == NULL) {
+                        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, sys_def->param);
+                        YYABORT;
+                    }
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P STOP BUILD
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_STOP_BUILD;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+            | ALTER SYSTEM_P REPAIR CATALOG_P
+                {
+                    knl_alter_sys_def_t *sys_def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    SQL_SET_IGNORE_PWD(stmt->session);
+                    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+                    stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    sys_def->action = ALTER_SYS_REPAIR_CATALOG;
+
+                    stmt->context->entry = sys_def;
+                    $$ = sys_def;
+                }
+        ;
+
+AlterSessionStmt:
+            ALTER SESSION SET altsession_set_key '=' altsession_set_value
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_SET;
+                    if (sql_parse_altses_set_bison(stmt, &def->setting, $4, $6, @4.loc) != OG_SUCCESS) {
+                        parser_yyerror("parse alter session set failed");
+                    }
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION DISABLE_P TRIGGERS
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_DISABLE;
+                    def->setable.enable = OG_FALSE;
+                    def->setable.able_type = ABLE_TRIGGERS;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION DISABLE_P INTERACTIVE TIMEOUT
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_DISABLE;
+                    def->setable.enable = OG_FALSE;
+                    def->setable.able_type = ABLE_INAV_TO;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION DISABLE_P NOLOGGING
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_DISABLE;
+                    def->setable.enable = OG_FALSE;
+                    def->setable.able_type = ABLE_NOLOGGING;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION DISABLE_P OPTINFO_LOG
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_DISABLE;
+                    def->setable.enable = OG_FALSE;
+                    def->setable.able_type = ABLE_OPTINFO;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION ENABLE_P TRIGGERS
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_ENABLE;
+                    def->setable.enable = OG_TRUE;
+                    def->setable.able_type = ABLE_TRIGGERS;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION ENABLE_P INTERACTIVE TIMEOUT
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_ENABLE;
+                    def->setable.enable = OG_TRUE;
+                    def->setable.able_type = ABLE_INAV_TO;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION ENABLE_P NOLOGGING
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_ENABLE;
+                    def->setable.enable = OG_TRUE;
+                    def->setable.able_type = ABLE_NOLOGGING;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+            | ALTER SESSION ENABLE_P OPTINFO_LOG
+                {
+                    alter_session_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    def->action = ALTSES_ENABLE;
+                    def->setable.enable = OG_TRUE;
+                    def->setable.able_type = ABLE_OPTINFO;
+
+                    stmt->context->entry = def;
+                    $$ = def;
+                }
+        ;
+
 opt_drop_tbsp:
             INCLUDING CONTENTS opt_drop_behavior
                 {
@@ -7258,6 +8148,80 @@ opt_drop_tbsp:
             | /* EMPTY */
                 {
                     $$ = 0;
+                }
+        ;
+
+opt_set_scope:
+            /*
+             * Native ALTER SYSTEM accepts scope values that may be scanned as
+             * keywords, for example BOTH and MEMORY.
+             */
+            SCOPE '=' ColLabel
+                {
+                    if (cm_str_equal_ins($3, "memory")) {
+                        $$ = CONFIG_SCOPE_MEMORY;
+                    } else if (cm_str_equal_ins($3, "pfile")) {
+                        $$ = CONFIG_SCOPE_DISK;
+                    } else if (cm_str_equal_ins($3, "both")) {
+                        $$ = CONFIG_SCOPE_BOTH;
+                    } else {
+                        parser_yyerror("invalid scope value");
+                        $$ = CONFIG_SCOPE_BOTH;
+                    }
+                }
+            | /* EMPTY */
+                {
+                    $$ = CONFIG_SCOPE_BOTH;
+                }
+        ;
+
+opt_dump_to_file:
+            TO SCONST
+                {
+                    char *tmp = NULL;
+                    BISON_MEM_STRDUP(tmp, $2);
+                    text_t *text_ptr = NULL;
+                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                        sizeof(text_t), (void **)&text_ptr) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    text_ptr->str = tmp;
+                    text_ptr->len = strlen(tmp);
+                    $$ = text_ptr;
+                }
+            | /* EMPTY */
+                {
+                    $$ = NULL;
+                }
+        ;
+
+opt_arch_set_type:
+            GLOBAL
+                {
+                    $$ = ARCH_SET_TYPE_GLOBAL;
+                }
+            | LOCAL
+                {
+                    $$ = ARCH_SET_TYPE_LOCAL;
+                }
+            | /* EMPTY */
+                {
+                    $$ = ARCH_SET_TYPE_LOCAL;
+                }
+        ;
+
+opt_ckpt_type:
+            GLOBAL
+                {
+                    $$ = CKPT_TYPE_GLOBAL;
+                }
+            | LOCAL
+                {
+                    $$ = CKPT_TYPE_LOCAL;
+                }
+            | /* EMPTY */
+                {
+                    $$ = CKPT_TYPE_LOCAL;
                 }
         ;
 
@@ -9448,17 +10412,12 @@ sys_priv_spec:
             | UNLIMITED TABLESPACE              { $$ = UNLIMITED_TABLESPACE; }
             | UPDATE ANY TABLE_P                { $$ = UPDATE_ANY_TABLE; }
             | USE_P ANY TABLESPACE              { $$ = USE_ANY_TABLESPACE; }
+            | SYSBACKUP_P                       { $$ = SYSBACKUP; }
+            | SYSDBA_P                          { $$ = SYSDBA; }
+            | SYSOPER_P                         { $$ = SYSOPER; }
             | ColId
                 {
-                    if (strcmp($1, "SYSBACKUP") == 0) {
-                        $$ = SYSBACKUP;
-                    } else if (strcmp($1, "SYSDBA") == 0) {
-                        $$ = SYSDBA;
-                    } else if (strcmp($1, "SYSOPER") == 0) {
-                        $$ = SYSOPER;
-                    } else {
-                        $$ = OG_SYS_PRIVS_COUNT;
-                    }
+                    $$ = OG_SYS_PRIVS_COUNT;
                 }
         ;
 
@@ -12462,6 +13421,1492 @@ subprogram_body: {
             }
         ;
 
+XID: 
+            SCONST
+                {
+                    text_t xid_src;
+                    cm_str2text($1, &xid_src);
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_parse_gtid(stmt, &xid_src) != OG_SUCCESS) {
+                        parser_yyerror("invalid XID");
+                    }
+                    $$ = stmt->context->entry;
+                }
+        ;
+
+LTID: 
+            SCONST
+                {
+                    knl_xid_t *xid = NULL;
+                    text_t ltid_src;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    cm_str2text($1, &ltid_src);
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_xid_t), (void **)&xid) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (sql_parse_ltid(&ltid_src, xid) != OG_SUCCESS) {
+         ///////////////////               cm_try_set_error_loc(word->text.loc);
+                        parser_yyerror("invalid LTID");
+                    }
+                    $$ = xid;
+                }
+        ;
+
+opt_transaction:
+            TRANSACTION                                 {}
+            | /*EMPTY*/                                 {}
+        ;
+
+opt_backup_opts:
+            backup_opts                                   { $$ = $1; }
+            | /* EMPTY */                               { $$ = NULL; }
+        ;
+
+backup_opts:
+            backup_opt
+                {
+                    galist_t *list = NULL;
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (cm_galist_insert(list, $1) != OG_SUCCESS) {
+                        parser_yyerror("insert backup opt failed");
+                    }
+                    $$ = list;
+                }
+            | backup_opts backup_opt
+                {
+                    galist_t *list = $1;
+                    if (cm_galist_insert(list, $2) != OG_SUCCESS) {
+                        parser_yyerror("insert backup opt failed");
+                    }
+                    $$ = list;
+                }
+        ;
+
+opt_compress_level:
+            LEVEL ICONST                                { $$ = $2; }
+            | /* EMPTY */                               { $$ = Z_BEST_SPEED; }
+
+compress_algo:
+            LZ4                                         { $$ = COMPRESS_LZ4; }
+            | ZLIB                                      { $$ = COMPRESS_ZLIB; }
+            | ZSTD                                      { $$ = COMPRESS_ZSTD; }
+            | /* EMPTY */                               { $$ = COMPRESS_ZSTD; }
+
+backup_opt:
+            /*
+             * Keep bison aligned with the native parser, which fetches FORMAT
+             * using the string path parser.
+             */
+            FORMAT SCONST
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_FORMAT_OPT;
+                    opt->loc = @2.loc;
+                    opt->dest_format = $2;
+                    $$ = opt;
+                }
+            | AS compress_algo COMPRESSED BACKUPSET opt_compress_level
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_AS_OPT;
+                    opt->compress_algo = $2;
+                    opt->compress_level = $5;
+                    opt->loc = @5.loc;
+                    $$ = opt;
+                }
+            | TAG SCONST
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_TAG_OPT;
+                    opt->loc = @2.loc;
+                    opt->tag = $2;
+                    $$ = opt;
+                }
+            | BUFFER_P SIZE num_size
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_BUFFER_OPT;
+                    opt->size = $3;
+                    opt->loc = @3.loc;
+                    $$ = opt;
+                }
+            | FULL
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_FULL_OPT;
+                    opt->loc = @1.loc;
+                    $$ = opt;
+                }
+            | INCREMENTAL LEVEL ICONST
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_INCREMENTAL_OPT;
+                    opt->incremental_level = $3;
+                    opt->loc = @3.loc;
+                    $$ = opt;
+                }
+            | INCREMENTAL
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_INCREMENTAL_NO_LEVEL_OPT;
+                    opt->loc = @1.loc;
+                    $$ = opt;
+                }
+            | COMPRESS compress_algo opt_compress_level
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_COMPRESS_OPT;
+                    opt->compress_algo = $2;
+                    opt->compress_level = $3;
+                    opt->loc = @3.loc;
+                    $$ = opt;
+                }
+            | PARALLELISM ICONST
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_PARALLELISM_OPT;
+                    opt->parallelism = $2;
+                    opt->loc = @2.loc;
+                    $$ = opt;
+                }
+            | SECTION THRESHOLD num_size
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_SECTION_OPT;
+                    opt->size = $3;
+                    opt->loc = @3.loc;
+                    $$ = opt;
+                }
+            | EXCLUDE FOR TABLESPACE tablespace_name_list
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_EXCLUDE_OPT;
+                    opt->space_list = $4;
+                    opt->loc = @4.loc;
+                    $$ = opt;
+                }
+            | PASSWORD user_password
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_PASSWORD_OPT;
+                    opt->passwd = $2;
+                    opt->loc = @2.loc;
+                    $$ = opt;
+                }
+            | COPY OF_P TABLESPACE tablespace_name_list
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_COPY_OPT;
+                    opt->space_list = $4;
+                    opt->loc = @4.loc;
+                    $$ = opt;
+                }
+            | PREPARE
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_PREPARE_OPT;
+                    opt->loc = @1.loc;
+                    $$ = opt;
+                }
+            | FINISH SCN BigintOnly
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_FINISH_OPT;
+                    opt->scn = $3;
+                    opt->loc = @3.loc;
+                    $$ = opt;
+                }
+            | CUMULATIVE
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_CUMULATIVE_OPT;
+                    opt->loc = @1.loc;
+                    $$ = opt;
+                }
+            | SKIP BADBLOCK
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_SKIP_BADBLOCK_OPT;
+                    opt->loc = @1.loc;
+                    $$ = opt;
+                }
+            | DISCONNECT FROM SESSION
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_DISCONNET_OPT;
+                    opt->loc = @1.loc;
+                    $$ = opt;
+                }
+            | TABLESPACE tablespace_name
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_TABLESPACE_OPT;
+                    opt->loc = @2.loc;
+                    opt->space_name = $2;
+                    $$ = opt;
+                }
+            | REPAIR TYPE_P IDENT
+                {
+                    backup_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = BACKUP_REPAIR_OPT;
+                    opt->loc = @3.loc;
+                    opt->repair_type = $3;
+                    $$ = opt;
+                }
+        ;
+
+TransactionStmt:
+            PREPARE TRANSACTION XID
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_COMMIT_PHASE1;
+
+                    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
+                        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "prepare transaction on coordinator");
+                        YYABORT;
+                    }
+                    $$ = $3;
+                }
+            | COMMIT opt_transaction
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_COMMIT;
+
+                    $$ = NULL;
+                }
+            | COMMIT PREPARED XID
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_COMMIT_PHASE2;
+                    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
+                        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "commit prepared on coordinator");
+                        YYABORT;
+                    }
+                    $$ = $3;
+                }
+            | COMMIT FORCE LTID
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_COMMIT;
+
+                    $$ = $3;
+                }
+            | ROLLBACK opt_transaction
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_ROLLBACK;
+                    $$ = NULL;
+                }
+            | ROLLBACK opt_transaction TO IDENT
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_ROLLBACK_TO;
+                    
+                    text_t *name = NULL;
+                    if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    text_t src;
+                    cm_str2text($4, &src);
+
+                    if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
+                        parser_yyerror("copy object name failed");
+                    }
+                    $$ = name;
+                }
+            | ROLLBACK opt_transaction TO SAVEPOINT IDENT
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_ROLLBACK_TO;
+                    
+                    text_t *name = NULL;
+                    if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    text_t src;
+                    cm_str2text($5, &src);
+
+                    if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
+                        parser_yyerror("copy object name failed");
+                    }
+                    $$ = name;
+                }
+            | ROLLBACK PREPARED XID
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    
+                    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+                    stmt->context->type = OGSQL_TYPE_ROLLBACK_PHASE2;
+
+                    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
+                        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "rollback prepared on coordinator");
+                        YYABORT;
+                    }
+                    $$ = $3;
+                }
+            | SAVEPOINT IDENT
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SAVEPOINT;
+
+                    text_t *name = NULL;
+                    if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    text_t src;
+                    cm_str2text($2, &src);
+
+                    if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
+                        parser_yyerror("copy object name failed");
+                    }
+                    $$ = name;
+                }
+            | RELEASE SAVEPOINT IDENT
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RELEASE_SAVEPOINT;
+
+                    text_t *name = NULL;
+                    if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+
+                    text_t src;
+                    cm_str2text($3, &src);
+
+                    if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
+                        parser_yyerror("copy object name failed");
+                    }
+                    $$ = name;
+                }
+            | SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+                {
+                    isolation_level_t *isolevel = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SET_TRANS;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(isolation_level_t), (void **)&isolevel) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    *isolevel = ISOLATION_SERIALIZABLE;
+                    $$ = isolevel;
+                }
+            | SET TRANSACTION ISOLATION LEVEL READ COMMITTED
+                {
+                    isolation_level_t *isolevel = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SET_TRANS;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(isolation_level_t), (void **)&isolevel) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    *isolevel = ISOLATION_READ_COMMITTED;
+                    $$ = isolevel;
+                }
+            | SET TRANSACTION ISOLATION LEVEL CURRENT_P COMMITTED
+                {
+                    isolation_level_t *isolevel = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SET_TRANS;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(isolation_level_t), (void **)&isolevel) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    *isolevel = ISOLATION_CURR_COMMITTED;
+                    $$ = isolevel;
+                }
+            | BACKUP_P ARCHIVELOG ALL opt_backup_opts
+                {
+                    knl_backup_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BACKUP;
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->finish_scn = OG_INVALID_ID64;
+                    
+                    if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    param->target_info.target = TARGET_ARCHIVE;
+                    param->type = BACKUP_MODE_ARCHIVELOG;
+                    param->target_info.backup_arch_mode = ARCHIVELOG_ALL;
+                    if (og_parse_backup_archivelog(stmt, param, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse backup archivelog failed");
+                    }
+                    if (sql_check_backup_param(stmt, param) != OG_SUCCESS) {
+                        parser_yyerror("parse check backup param failed");
+                    }
+                    $$ = param;
+                }
+            | BACKUP_P ARCHIVELOG FROM ASN ICONST opt_backup_opts
+                {
+                    knl_backup_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BACKUP;
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->finish_scn = OG_INVALID_ID64;
+                    
+                    if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    param->target_info.target = TARGET_ARCHIVE;
+                    param->type = BACKUP_MODE_ARCHIVELOG;
+                    param->target_info.backup_arch_mode = ARCHIVELOG_FROM;
+                    param->target_info.backup_begin_asn = $5;
+
+                    if (og_parse_backup_archivelog(stmt, param, $6) != OG_SUCCESS) {
+                        parser_yyerror("parse backup archivelog failed");
+                    }
+                    if (sql_check_backup_param(stmt, param) != OG_SUCCESS) {
+                        parser_yyerror("parse check backup param failed");
+                    }
+                    $$ = param;
+                }
+            | BACKUP_P CANCEL CURRENT_P PROCESS
+                {
+                    knl_backup_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BACKUP;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    param->finish_scn = OG_INVALID_ID64;
+                    param->type = BACKUP_MODE_INVALID;
+                    if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    param->force_cancel = OG_TRUE;
+                    $$ = param;
+                }
+            | BACKUP_P DATABASE opt_backup_opts
+                {
+                    knl_backup_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BACKUP;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    param->finish_scn = OG_INVALID_ID64;
+                    param->type = BACKUP_MODE_INVALID;
+                    if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (og_parse_backup_database(stmt, param, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse backup database failed");
+                    }
+                    if (sql_check_backup_param(stmt, param) != OG_SUCCESS) {
+                        parser_yyerror("parse check backup param failed");
+                    }
+                    $$ = param;
+                }
+            | RESTORE DATABASE FROM SCONST opt_backup_opts
+                {
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+
+                    if (og_parse_restore(stmt, param, $5) != OG_SUCCESS) {
+                        parser_yyerror("parse restore failed");
+                    }
+                    $$ = param;
+                }
+            | RESTORE BLOCKRECOVER DATAFILE ICONST PAGE ICONST FROM SCONST
+                {
+                    if (!IS_CTRST_INSTANCE) {
+                        parser_yyerror("BLOCKRECOVER is not supported in non-CTRST instance");
+                    }
+
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    if (sql_parse_restore_blockrecover_bison(stmt, $4, $6, param) != OG_SUCCESS) {
+                        parser_yyerror("parse restore blockrecover failed");
+                    }
+
+                    if (sql_parse_restore_from_bison(stmt, $8, @8.loc, param, OG_TRUE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    $$ = param;
+                }
+            | RESTORE BLOCKRECOVER DATAFILE ICONST PAGE ICONST FROM SCONST UNTIL LFN BigintOnly
+                {
+                    if (!IS_CTRST_INSTANCE) {
+                        parser_yyerror("BLOCKRECOVER is not supported in non-CTRST instance");
+                    }
+
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    if (sql_parse_restore_blockrecover_bison(stmt, $4, $6, param) != OG_SUCCESS) {
+                        parser_yyerror("parse restore blockrecover failed");
+                    }
+
+                    if (sql_parse_restore_from_bison(stmt, $8, @8.loc, param, OG_TRUE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    param->lfn = $11;
+                    $$ = param;
+                }
+            | RESTORE FILERECOVER FILENAME SCONST FROM SCONST 
+                {
+                    if (IS_CTRST_INSTANCE) {
+                        parser_yyerror("filerecover is not supported in CTRST instance");
+                    }
+
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->file_type = RESTORE_DATAFILE;
+                    text_t file_name;
+                    cm_str2text($4, &file_name);
+                    if (sql_copy_file_name(stmt->context, &file_name, &param->file_repair_name) != OG_SUCCESS) {
+                        parser_yyerror("copy file name failed");
+                    }
+                    param->file_repair = OG_INVALID_FILEID;
+
+                    if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    param->buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
+                    $$ = param;
+                }
+            | RESTORE FILERECOVER FILEID ICONST FROM SCONST backup_opt
+                {
+                    if (IS_CTRST_INSTANCE) {
+                        parser_yyerror("filerecover is not supported in CTRST instance");
+                    }
+
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    param->file_type = RESTORE_DATAFILE;
+                    if ($4 >= INVALID_FILE_ID) {
+                        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "fileid value should be in [%u, %u]", (uint32)0,
+                            (uint32)(INVALID_FILE_ID - 1));
+                        YYABORT;
+                    }
+                    param->file_repair = $4;
+
+                    if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    if ($7->type != BACKUP_BUFFER_OPT) {
+                        parser_yyerror("buffer expected but unknown restore option");
+                    }
+                    if (og_parse_backup_buffer(stmt, &param->buffer_size, $7) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                    $$ = param;
+                }
+            | RESTORE FILERECOVER FILEID ICONST FROM SCONST 
+                {
+                    if (IS_CTRST_INSTANCE) {
+                        parser_yyerror("filerecover is not supported in CTRST instance");
+                    }
+
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->file_type = RESTORE_DATAFILE;
+                    if ($4 >= INVALID_FILE_ID) {
+                        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "fileid value should be in [%u, %u]", (uint32)0,
+                            (uint32)(INVALID_FILE_ID - 1));
+                        YYABORT;
+                    }
+                    param->file_repair = $4;
+
+                    if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    param->buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
+                    $$ = param;
+                }
+            | RESTORE FILERECOVER FILENAME SCONST FROM SCONST backup_opt
+                {
+                    if (IS_CTRST_INSTANCE) {
+                        parser_yyerror("filerecover is not supported in CTRST instance");
+                    }
+
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    param->file_type = RESTORE_DATAFILE;
+                    text_t file_name;
+                    cm_str2text($4, &file_name);
+                    if (sql_copy_file_name(stmt->context, &file_name, &param->file_repair_name) != OG_SUCCESS) {
+                        parser_yyerror("copy file name failed");
+                    }
+                    param->file_repair = OG_INVALID_FILEID;
+
+                    if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    if ($7->type != BACKUP_BUFFER_OPT) {
+                        parser_yyerror("buffer expected but unknown restore option");
+                    }
+                    if (og_parse_backup_buffer(stmt, &param->buffer_size, $7) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                    $$ = param;
+                }
+            | RESTORE ARCHIVELOG FROM SCONST
+                {
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    param->file_type = RESTORE_ARCHFILE;
+
+                    if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    param->buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
+                    $$ = param;
+                }
+            | RESTORE ARCHIVELOG FROM SCONST backup_opt
+                {
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    param->file_type = RESTORE_ARCHFILE;
+
+                    if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    if ($5->type != BACKUP_BUFFER_OPT) {
+                        parser_yyerror("buffer expected but unknown restore option");
+                    }
+                    if (og_parse_backup_buffer(stmt, &param->buffer_size, $5) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                    $$ = param;
+                }
+            | RESTORE FLUSHPAGE FROM SCONST opt_backup_opts
+                {
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    param->file_type = RESTORE_FLUSHPAGE;
+
+                    if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    if (og_parse_restore(stmt, param, $5) != OG_SUCCESS) {
+                        parser_yyerror("parse restore failed");
+                    }
+                    $$ = param;
+                }
+            | RESTORE COPYCTRL TO SCONST opt_backup_opts
+                {
+                    knl_restore_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RESTORE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    
+                    param->file_type = RESTORE_COPYCTRL;
+
+                    if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("parse restore from failed");
+                    }
+                    if (og_parse_restore(stmt, param, $5) != OG_SUCCESS) {
+                        parser_yyerror("parse restore failed");
+                    }
+                    $$ = param;
+                }
+        ;
+
+RecoverStmt:
+            RECOVER DATABASE
+                {
+                    knl_recover_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RECOVER;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    param->time.tv_sec = (long)OG_INVALID_INT64;
+                    param->time.tv_usec = 0;
+                    param->action = RECOVER_NORMAL;
+                    $$ = param;
+                }
+            | RECOVER DATABASE UNTIL TIME SCONST
+                {
+                    knl_recover_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t fmt_text;
+                    date_t date;
+
+                    stmt->context->type = OGSQL_TYPE_RECOVER;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    param->time.tv_sec = (long)OG_INVALID_INT64;
+                    param->time.tv_usec = 0;
+
+                    sql_session_nlsparam_geter(stmt, NLS_DATE_FORMAT, &fmt_text);
+                    text_t until_time;
+                    cm_str2text($5, &until_time);
+                    if (cm_text2date(&until_time, &fmt_text, &date) != OG_SUCCESS) {
+                        parser_yyerror("invalid date format");
+                    }
+
+                    cm_date2timeval(date, &param->time);
+                    param->action = RECOVER_UNTIL_TIME;
+                    $$ = param;
+                }
+            | RECOVER DATABASE UNTIL SCN BigintOnly
+                {
+                    knl_recover_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RECOVER;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    param->time.tv_sec = (long)OG_INVALID_INT64;
+                    param->time.tv_usec = 0;
+                    param->scn = $5;
+                    param->action = RECOVER_UNTIL_SCN;
+                    $$ = param;
+                }
+            | RECOVER DATABASE UNTIL CANCEL
+                {
+                    knl_recover_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_RECOVER;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+                    param->time.tv_sec = (long)OG_INVALID_INT64;
+                    param->time.tv_usec = 0;
+                    param->action = RECOVER_UNTIL_CANCEL;
+                    $$ = param;
+                }
+        ;
+
+OgracStmt:
+            OGRAC RECOVER ICONST START ICONST COUNT ICONST
+                {
+                    knl_ograc_recover_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_OGRAC;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_ograc_recover_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_ograc_recover_t), 0, sizeof(knl_ograc_recover_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->full = $3;
+                    if (param->full > 1) {
+                        parser_yyerror("recover mode should be 1(if recover) or 0(if analysis)");
+                    }
+
+                    param->start = $5;
+                    if (param->start >= OG_MAX_INSTANCES) {
+                        parser_yyerror("start node id should be in [0, OG_MAX_INSTANCES - 1]");
+                    }
+
+                    param->count = $7;
+                    if (param->count > OG_MAX_INSTANCES) {
+                        parser_yyerror("node count should be less or equal than OG_MAX_INSTANCES");
+                    }
+
+                    $$ = param;
+                }
+        ;
+
+ShutdownStmt:
+            SHUTDOWN
+                {
+                    shutdown_context_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SHUTDOWN;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(shutdown_context_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(shutdown_context_t), 0, sizeof(shutdown_context_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->mode = SHUTDOWN_MODE_NORMAL;
+
+                    $$ = param;
+                }
+            | SHUTDOWN IMMEDIATE
+                {
+                    shutdown_context_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SHUTDOWN;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(shutdown_context_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(shutdown_context_t), 0, sizeof(shutdown_context_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->mode = SHUTDOWN_MODE_IMMEDIATE;
+
+                    $$ = param;
+                }
+            | SHUTDOWN ABORT_P
+                {
+                    shutdown_context_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SHUTDOWN;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(shutdown_context_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(shutdown_context_t), 0, sizeof(shutdown_context_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->mode = SHUTDOWN_MODE_ABORT;
+
+                    $$ = param;
+                }
+        ;
+
+BuildStmt:
+            BUILD DATABASE opt_backup_opts
+                {
+                    knl_build_def_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BUILD;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->build_type = BUILD_AUTO;
+
+                    if (og_parse_build(stmt, param, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse build database failed");
+                    }
+
+                    $$ = param;
+                }
+            | BUILD CASCADED STANDBY DATABASE opt_backup_opts
+                {
+                    knl_build_def_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BUILD;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->build_type = BUILD_CASCADED_STANDBY;
+
+                    if (og_parse_build(stmt, param, $5) != OG_SUCCESS) {
+                        parser_yyerror("parse build database failed");
+                    }
+
+                    $$ = param;
+                }
+            | BUILD STANDBY DATABASE opt_backup_opts
+                {
+                    knl_build_def_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BUILD;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->build_type = BUILD_STANDBY;
+
+                    if (og_parse_build(stmt, param, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse build database failed");
+                    }
+
+                    $$ = param;
+                }
+            | BUILD REPAIR DATABASE opt_backup_opts
+                {
+                    knl_build_def_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_BUILD;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->build_type = BUILD_AUTO;
+                    param->param_ctrl.is_repair = OG_TRUE;
+
+                    if (og_parse_build(stmt, param, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse build database failed");
+                    }
+
+                    $$ = param;
+                }
+        ;
+
+RepairStmt:
+            REPAIR_PAGE
+                {
+                    og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_REPAIR_PAGE;
+                    $$ = NULL;
+                }
+            | REPAIR_COPYCTRL
+                {
+                    og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_REPAIR_COPYCTRL;
+                    $$ = NULL;
+                }
+        ;
+
+CheckPointStmt:
+            CHECKPOINT
+                {
+                    parser_yyerror("not support checkpoint");
+                    og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_CHECKPOINT;
+                    $$ = NULL;
+                }
+        ;
+
+ValidateStmt:
+            VALIDATE DATAFILE ICONST PAGE ICONST
+                {
+                    knl_validate_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_VALIDATE;
+
+                    if ($3 >= INVALID_FILE_ID) {
+                        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "datafile value should be in [%u, %u]", (uint32)0,
+                            (uint32)(INVALID_FILE_ID - 1));
+                        YYABORT;
+                    }
+
+                    if ($5 == 0) {
+                        parser_yyerror("page value should not be 0");
+                    }
+
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_validate_t), (void **)&param) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(param, sizeof(knl_validate_t), 0, sizeof(knl_validate_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    param->validate_type = VALIDATE_DATAFILE_PAGE;
+                    param->page_id.file = $3;
+                    param->page_id.page = $5;
+
+                    $$ = param;
+                }
+            | VALIDATE BACKUPSET ICONST
+                {
+                    knl_validate_t *param = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_VALIDATE;
+                    OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "validate backupset not supported");
+                    YYABORT;
+                    $$ = param;
+                }
+        ;
+
+SyncPointStmt:
+            SYNCPOINT RESET
+                {
+#ifdef DB_DEBUG_VERSION
+                    syncpoint_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SYNCPOINT;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(syncpoint_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(def, sizeof(syncpoint_def_t), 0, sizeof(syncpoint_def_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    $$ = def;
+#else
+                    parser_yyerror("syncpoint not supported");
+                    $$ = NULL;
+                    YYABORT;
+#endif
+                }
+            | SYNCPOINT IDENT
+                {
+#ifdef DB_DEBUG_VERSION
+                    syncpoint_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_SYNCPOINT;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(syncpoint_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    if (memset_s(def, sizeof(syncpoint_def_t), 0, sizeof(syncpoint_def_t)) != EOK) {
+                        parser_yyerror("memset failed");
+                    }
+
+                    text_t syncpoint_name;
+                    cm_str2text($2, &syncpoint_name);
+                    if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &syncpoint_name,
+                        &def->syncpoint_name) != OG_SUCCESS) {
+                        parser_yyerror("copy name failed");
+                    }
+
+                    $$ = def;
+#else
+                    parser_yyerror("syncpoint not supported");
+                    $$ = NULL;
+                    YYABORT;
+#endif
+                }
+        ;
+
+LockTableStmt:
+            LOCK_P TABLE_P any_name_list opt_lock_table_in lock_mode MODE opt_wait_time
+                {
+                    lock_tables_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    stmt->context->type = OGSQL_TYPE_LOCK_TABLE;
+
+                    if (sql_alloc_mem(stmt->context, sizeof(lock_tables_def_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    cm_galist_init(&def->tables, stmt->context, sql_alloc_mem);
+
+                    if (sql_parse_table_defs_bison(stmt, def, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse create lock table failed");
+                    }
+                    def->lock_mode = $5;
+                    def->wait_time = $7;
+                    if (def->wait_time == 0) {
+                        def->wait_mode = WAIT_MODE_NO_WAIT;
+                    } else {
+                        def->wait_mode = WAIT_MODE_WAIT;
+                    }
+                    $$ = def;
+                }
+        ;
+
+opt_lock_table_in:
+            IN_P
+            | /* EMPTY */
+        ;
+
+lock_mode:
+            SHARE
+                {
+                    $$ = LOCK_MODE_SHARE;
+                }
+            | EXCLUSIVE
+                {
+                    $$ = LOCK_MODE_EXCLUSIVE;
+                }
+        ;
+
+any_name_list:
+            any_name
+                {
+                    lock_table_t *table = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(lock_table_t), (void **)&table) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    table->name = $1->name;
+                    table->schema = $1->owner;
+                    
+                    galist_t *list = NULL;
+                    if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                        parser_yyerror("create list failed");
+                    }
+                    if (cm_galist_insert(list, table) != OG_SUCCESS) {
+                        parser_yyerror("insert any_name opt failed");
+                    }
+                    $$ = list;
+                }
+            | any_name_list ',' any_name
+                {
+                    lock_table_t *table = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(lock_table_t), (void **)&table) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    table->name = $3->name;
+                    table->schema = $3->owner;
+
+                    if (cm_galist_insert($1, table) != OG_SUCCESS) {
+                        parser_yyerror("insert any_name opt failed");
+                    }
+                    $$ = $1;
+                }
+        ;
+
+opt_wait_time:
+            NOWAIT
+                {
+                    $$ = 0;
+                }
+            | WAIT ICONST
+                {
+                    if ($2 < 0) {
+                        OG_SRC_THROW_ERROR_EX(@2.loc, ERR_SQL_SYNTAX_ERROR, "missing or invalid WAIT interval");
+                        YYABORT;
+                    }
+                    $$ = $2;
+                }
+            | /*EMPTY*/
+                {
+                    $$ = OG_INVALID_ID32;
+                }
+        ;
+
+debug_mode_value:
+            IDENT
+                {
+                    $$ = $1;
+                }
+            | SCONST
+                {
+                    $$ = $1;
+                }
+        ;
+
+altsession_set_key:
+            IDENT
+                {
+                    $$ = $1;
+                }
+            | CURRENT_SCHEMA
+                {
+                    $$ = "current_schema";
+                }
+            | TENANT
+                {
+                    $$ = "tenant";
+                }
+        ;
+
+altsession_set_value:
+            alter_param_value
+                {
+                    $$ = $1;
+                }
+        ;
+
+alter_param_value:
+            ColLabel
+                {
+                    $$ = $1;
+                }
+            | SCONST
+                {
+                    $$ = $1;
+                }
+            | FCONST
+                {
+                    $$ = $1;
+                }
+            | FCONST_F
+                {
+                    $$ = $1;
+                }
+            | FCONST_D
+                {
+                    $$ = $1;
+                }
+            | SignedIconst
+                {
+                    char tmp_buf[OG_MAX_INT64_STRLEN + 1] = { 0 };
+                    if (snprintf_s(tmp_buf, sizeof(tmp_buf), OG_MAX_INT64_STRLEN, PRINT_FMT_BIGINT, $1) < 0) {
+                        parser_yyerror("format alter parameter value failed");
+                    }
+                    char *tmp = NULL;
+                    BISON_MEM_STRDUP(tmp, tmp_buf);
+                    $$ = tmp;
+                }
+        ;
+
 unreserved_keyword:
               ABORT_P
             | ABSENT
@@ -12481,8 +14926,10 @@ unreserved_keyword:
             | APPENDONLY
             | APPLY
             | ARCHIVE_P
+            | ARCHIVE_SET
             | ARCHIVELOG
             | ASF
+            | ASN
             | ASOF_P
             | ASSERTION
             | ASSIGNMENT
@@ -12495,7 +14942,10 @@ unreserved_keyword:
             | AUTOPURGE
             | AUTO_INCREMENT
             | AUTOALLOCATE
+            | BACKUP_P
+            | BACKUPSET
             | BACKWARD
+            | BADBLOCK
             | BARRIER
             | BEFORE
             | BEGIN_P
@@ -12503,14 +14953,17 @@ unreserved_keyword:
             | BLANKS
             | BLOB_P
             | BLOCKCHAIN
+            | BLOCKRECOVER
             | BOLCKSIZE
             | BODY_P
+            | BUFFER_P
             | BUILD
             | BY
             | BYTE_P
             | CACHE
             | CALL
             | CALLED
+            | CANCEL
             | CANCELABLE
             | CASCADE
             | CASCADED
@@ -12545,13 +14998,16 @@ unreserved_keyword:
             | COMPILE
             | COMPLETION
             | COMPRESS
+            | COMPRESSED
             | COMPUTE
             | CONDITION
             | CONDITIONAL
             | CONFIGURATION
+            | CONFIG
             | CONNECT
             | CONNECTION
             | CONSISTENT
+            | COUNT
             | CONSTANT
             | CONSTRAINT_CATALOG
             | CONSTRAINT_NAME
@@ -12567,10 +15023,12 @@ unreserved_keyword:
             | COORDINATOR
             | COORDINATORS
             | COPY
+            | COPYCTRL
             | COST
             | CSV
             | CTRLFILE
             | CUBE
+            | CUMULATIVE
             | CURRENT_P
             | CURRENT_DATE
             | CURRENT_TIMESTAMP
@@ -12590,6 +15048,7 @@ unreserved_keyword:
             | DAY_P
             | DAY_SECOND_P
             | DBA_RECYCLEBIN
+            | DEBUG
             | DBCOMPATIBILITY_P
             | DEALLOCATE
             | DECLARE
@@ -12616,6 +15075,7 @@ unreserved_keyword:
             | DOMAIN_P
             | DOUBLE_P
             | DROP
+            | DUMP
             | DUMPFILE
             | DUPLICATE
             | EACH
@@ -12629,6 +15089,7 @@ unreserved_keyword:
             | ENCRYPTION
             | ENCRYPTION_TYPE
             | ENDS
+            | ENTRY
             | ENFORCED
             | ENUM_P
             | EOL
@@ -12661,13 +15122,19 @@ unreserved_keyword:
             | FENCED
             | FIELDS
             | FILEHEADER_P
+            | FILEID
+            | FILENAME
+            | FILERECOVER
             | FILLER
             | FILL_MISSING_FIELDS
             | FILTER
             | FINAL
+            | FINISH
             | FIRST_P
             | FIXED_P
             | FLASHBACK
+            | FLUSH
+            | FLUSHPAGE
             | FOLLOWING
             | FOLLOWS_P
             | FORCE
@@ -12711,6 +15178,7 @@ unreserved_keyword:
             | INSTANCE
             | INSTEAD
             | INTERNAL
+            | INTERACTIVE
             | INVISIBLE
             | INVOKER
             | IP
@@ -12739,6 +15207,7 @@ unreserved_keyword:
             | LOAD
             | LOADER_P
             | LOB
+            | LSNR_ADDR
             | LOCAL
             | LOCALTIMESTAMP
             | LOCATION
@@ -12747,10 +15216,12 @@ unreserved_keyword:
             | LOG_P
             | LOGFILE
             | LOGGING
+            | SWITCH
             | LOGIN_ANY
             | LOGIN_FAILURE
             | LOGIN_SUCCESS
             | LOGOUT
+            | LZ4
             | LOOP
             | MAP
             | MAPPING
@@ -12804,11 +15275,13 @@ unreserved_keyword:
             | OBJECT_P
             | OF_P
             | OFF
+            | OGRAC
             | OFFLINE
             | OIDS
             | OPERATIONS
             | OPERATOR
             | OPTIMIZATION
+            | OPTINFO_LOG
             | OPTION
             | OPTIONALLY
             | OPTIONS
@@ -12822,6 +15295,7 @@ unreserved_keyword:
             | PACKAGES
             | PAGE
             | PARALLEL
+            | PARALLELISM
             | PARALLEL_ENABLE
             | PARAMETERS
             | PARSER
@@ -12838,6 +15312,7 @@ unreserved_keyword:
             | PASSWORD_REUSE_TIME_P
             | PATH
             | PCTFREE
+            | PBL
             | PER_P
             | PERCENT
             | PERM
@@ -12861,6 +15336,7 @@ unreserved_keyword:
             | PRIVILEGE
             | PRIVILEGES
             | PROCEDURAL
+            | PROCESS
             | PROFILE
             | PUBLIC
             | PUBLICATION
@@ -12878,10 +15354,13 @@ unreserved_keyword:
             | REBUILD
             | RECHECK
             | RECORDS
+            | RECOVER
             | RECURSIVE
+            | RECYCLE
             | REDISANYVALUE
             | REF
             | REFRESH
+            | RELOAD
             | REGEXP
             | REGEXP_LIKE %prec UMINUS
             | REINDEX
@@ -12892,10 +15371,14 @@ unreserved_keyword:
             | REMOTE_P
             | REMOVE
             | RENAME
+            | REPAIR
+            | REPAIR_COPYCTRL
+            | REPAIR_PAGE
             | REPEAT
             | REPEATABLE
             | REPLACE
             | REPLICA
+            | REPLICATION_P
             | REPORT
             | RESET
             | RESIZE
@@ -12904,6 +15387,7 @@ unreserved_keyword:
             | RESTART
             | RESTRICT
             | RESULT
+            | RESTORE
             | RETURN
             | RETURNED_SQLSTATE
             | RETURNS
@@ -12929,6 +15413,7 @@ unreserved_keyword:
             | SCROLL
             | SEARCH
             | SECOND_P
+            | SECTION
             | SECURITY
             | SEGMENTS
             | SELF
@@ -12944,6 +15429,7 @@ unreserved_keyword:
             | SHARE
             | SHIPPABLE
             | SHOW
+            | SCOPE
             | SHUTDOWN
             | SIBLINGS
             | SIGNED
@@ -12953,6 +15439,7 @@ unreserved_keyword:
             | SLAVE
             | SLICE
             | SMALLDATETIME_FORMAT_P
+            | SQLPOOL
             | SNAPSHOT
             | SOURCE_P
             | SPACE_P
@@ -12963,6 +15450,7 @@ unreserved_keyword:
             | SQL_CALC_FOUND_ROWS
             | STABLE
             | STACKED_P
+            | STANDBY
             | STANDALONE_P
             | START
             | STARTING
@@ -12973,6 +15461,7 @@ unreserved_keyword:
             | STATISTICS
             | STDIN
             | STDOUT
+            | STOP
             | STORAGE
             | STORE_P
             | STORED
@@ -12984,6 +15473,7 @@ unreserved_keyword:
             | SUBPARTITION
             | SUBPARTITIONS
             | SUBSCRIPTION
+            | SYNCPOINT
             | SYNONYM
             | SYSID
             | SYS_REFCURSOR                    { $$ = "refcursor"; }
@@ -12993,6 +15483,7 @@ unreserved_keyword:
             | TABLES
             | TABLESPACE
             | TABLESPACES
+            | TAG
             | TARGET
             | TEMP
             | TEMPFILE
@@ -13002,6 +15493,7 @@ unreserved_keyword:
             | TERMINATED
             | TEXT_P
             | THAN
+            | THRESHOLD
             | TIES
             | TIMESTAMP_FORMAT_P
             | TIMEZONE_HOUR_P
@@ -13010,6 +15502,7 @@ unreserved_keyword:
             | TRANSACTION
             | TRANSFORM
             | TRIGGER
+            | TRIGGERS
             | TRUNCATE
             | TRUSTED
             | TSFIELD
@@ -13062,6 +15555,8 @@ unreserved_keyword:
             | YEAR_MONTH_P
             | YEAR_P
             | YES_P
+            | ZLIB
+            | ZSTD
             | ZONE
             | BETWEEN
             | BINARY_DOUBLE_INF
@@ -13092,6 +15587,7 @@ unreserved_keyword:
             | SMALLDATETIME
             | TIME
             | TIMESTAMPDIFF
+            | TIMEOUT
             | TREAT
             | XMLATTRIBUTES
             | XMLCONCAT
@@ -13120,6 +15616,7 @@ unreserved_keyword:
             | INNER_P
             | JOIN
             | LEFT
+            | LFN
             | LIKE
             | NATURAL
             | NOTNULL
@@ -13165,7 +15662,6 @@ col_name_keyword:
             | NVARCHAR
             | NVARCHAR2
             | REAL
-            | SMALLINT
             | SUBSTR
             | SUBSTRING
             | TIMESTAMP
@@ -13231,9 +15727,11 @@ reserved_keyword:
             | GROUP_P
             | GROUPPARENT
             | HAVING
+            | HBA
             | IMCSTORED
             | IN_P
             | INDEX_P
+            | INIT
             | INITIALLY
             | INSERT
             | INTERSECT_P
@@ -13264,12 +15762,16 @@ reserved_keyword:
             | ROWID
             | ROWNUM
             | ROWSCN
+            | SHAREDPOOL
             | SHARE_MEMORY
             | SELECT
             | SESSION_USER
             | SHRINK
             | SOME
             | SYMMETRIC
+            | SYSBACKUP_P
+            | SYSDBA_P
+            | SYSOPER_P
             | SYSDATE
             | TABLE_P
             | THEN
@@ -13606,4 +16108,3 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 #ifdef SCANINC
 #include "scan.inc"
 #endif
-

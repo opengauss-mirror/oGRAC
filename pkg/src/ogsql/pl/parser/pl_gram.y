@@ -326,7 +326,7 @@ label_stmt:
             | stmt_return
             | stmt_if
                 {
-                    /* todo：g_plc_compile_lines_map里其余语句 */
+                    /* todo: g_plc_compile_lines_map里其余语句 */
                 }
         ;
 
@@ -590,7 +590,7 @@ decl_stmt:
                             parser_yyerror("try compile local type failed");
                         }
 
-                        /* todo：userdef global type */
+                        /* todo: userdef global type */
 
                         if (!result) {
                             decl->type = PLV_VAR;
@@ -613,7 +613,7 @@ decl_stmt:
                 }
             | K_TYPE decl_varname K_IS K_RECORD '(' record_attr_list ')' ';'
                 {
-                    /* todo：参考plc_compile_block_decls，实现pragma,cursor,type还有ref,varry,table */
+                    /* todo: 参考plc_compile_block_decls，实现pragma,cursor,type还有ref,varry,table */
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     if (plc_bison_compile_type_def(compiler, $2, $6, @1.loc, MATCH_RECORD) != OG_SUCCESS) {
                         parser_yyerror("parse record type failed");

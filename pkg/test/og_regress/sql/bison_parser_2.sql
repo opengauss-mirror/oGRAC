@@ -485,170 +485,40 @@ END convert1;
 select convert1(1,1);
 drop function convert1;
 
-purge recyclebin;
+DROP TRIGGER IF EXISTS insert_readonly_view;
+DROP TRIGGER IF EXISTS update_readonly_view;
+DROP TRIGGER IF EXISTS delete_readonly_view;
 
-drop table if exists bison_part_t1;
-create table bison_part_t1(f1 number2, f2 number2)
-PARTITION BY hash(f1) SUBPARTITION BY RANGE(f2)
-(
-PARTITION p1
-(
-SUBPARTITION PART_11 VALUES LESS THAN(20),
-SUBPARTITION PART_13 VALUES LESS THAN(MAXVALUE)
-),
-PARTITION p2
-(
-SUBPARTITION PART_21 VALUES LESS THAN(1E-5),
-SUBPARTITION PART_23 VALUES LESS THAN(MAXVALUE)
-)
+DROP VIEW IF EXISTS read_only_view;
+
+DROP TABLE IF EXISTS test_table;
+
+CREATE TABLE test_table (
+                            id INT PRIMARY KEY,
+                            name VARCHAR(50),
+                            age INT
 );
-create indexcluster (index bison_part_t1_idx1 on bison_part_t1(f1), index bison_part_t1_idx1 on bison_part_t1(f2)); --error
-create indexcluster (index bison_part_t1_idx1 on bison_part_t1(f1) parallel 5, index bison_part_t1_idx2 on bison_part_t1(f2) parallel 5);
 
-CREATE OR REPLACE FUNCTION convert1 (
-    p_num1 IN NUMBER := 2,
-    p_num2 IN NUMBER := 3
-)
-RETURN NUMBER IS
-    v_result NUMBER;
-BEGIN
-    v_result := p_num1 + p_num2;
-    RETURN v_result;
-END convert1;
-/
+INSERT INTO test_table VALUES (1, '张三', 25);
+INSERT INTO test_table VALUES (2, '李四', 30);
+INSERT INTO test_table VALUES (3, '王五', 28);
 
-select convert1();
+CREATE VIEW read_only_view WITH READ ONLY AS
+SELECT id, name, age FROM test_table;
 
-drop table if exists bison_t1;
-create table bison_t1 (a int, b int);
+SELECT * FROM read_only_view;
 
-CREATE OR REPLACE FUNCTION convert1 (
-    p_num1 IN bison_t1.a%TYPE
-)
-RETURN NUMBER IS
-    v_result NUMBER;
-BEGIN
-    v_result := p_num1;
-    RETURN v_result;
-END convert1;
-/
+INSERT INTO read_only_view VALUES (5, '钱七', 40);
 
--- todo: 目前仅支持识别p_num1，p_num1.a还不支持(见sql_create_columnref_expr)
-CREATE OR REPLACE FUNCTION convert1 (
-    p_num1 IN bison_t1%ROWTYPE
-)
-RETURN NUMBER IS
-    v_result NUMBER;
-BEGIN
-    v_result := p_num1.a;
-    RETURN v_result;
-END convert1;
-/
+UPDATE read_only_view SET age = 31 WHERE id = 2;
 
-CREATE OR REPLACE FUNCTION convert1 (
-    p_num1 NUMBER
-)
-RETURN NUMBER IS
-    v_result NUMBER;
-BEGIN
-    IF p_num1 > 0 THEN
-        v_result := 1;
-    elsif p_num1 < 0 THEN
-        v_result := -1;
-    ELSE
-        v_result := 0;
-    END IF;
-    RETURN v_result;
-END convert1;
-/
+DELETE FROM read_only_view WHERE id = 2;
 
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-    type v_type is record (a bison_t1%ROWTYPE);
-    v_result v_type;
-BEGIN
-    RETURN 1;
-END convert1;
-/
+SELECT * FROM test_table;
 
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-    type v_type is record (a bison_t1.a%TYPE);
-    v_result number;
-BEGIN
-    RETURN 1;
-END convert1;
-/
+DROP VIEW read_only_view;
 
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-    type v_type is record (a number);
-    v_result v_type; -- todo: 查找自定义类型
-BEGIN
-    RETURN 1;
-END convert1;
-/
-
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-    v_result NUMBER not null default 1;
-BEGIN
-    RETURN v_result;
-END convert1;
-/
-
--- todo：支持label
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-BEGIN
-    <<main>>
-    declare
-        type v_type is record (a int, b int);
-    BEGIN
-        declare
-            v_result main.v_type;
-        BEGIN
-            DBE_OUTPUT.PRINT_LINE('proc');
-        END;
-    end;
-    RETURN 1;
-END convert1;
-/
-
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-    v_result bison_t1.a%TYPE;
-BEGIN
-    v_result := 1;
-    RETURN v_result;
-END convert1;
-/
-
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-    v_result bison_t1%ROWTYPE;
-BEGIN
-    RETURN 1;
-END convert1;
-/
-
-
-CREATE OR REPLACE FUNCTION convert1 ()
-RETURN NUMBER IS
-BEGIN
-    <<main>>
-    declare
-        a number;
-    BEGIN
-        declare
-            v_result main.a%TYPE;
-        BEGIN
-            DBE_OUTPUT.PRINT_LINE('proc');
-        END;
-    end;
-    RETURN 1;
-END convert1;
-/
+DROP TABLE test_table;
 
 alter system set use_bison_parser = false;
 drop table if exists native_desc_idx_t;

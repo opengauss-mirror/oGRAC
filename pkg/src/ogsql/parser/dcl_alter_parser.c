@@ -87,6 +87,37 @@ static status_t sql_parse_match_config(knl_session_t *se, knl_alter_sys_def_t *d
     return OG_SUCCESS;
 }
 
+static status_t sql_bison_normalize_sys_param_value(config_item_t *item, knl_alter_sys_def_t *def)
+{
+    if (item->datatype == NULL) {
+        return OG_SUCCESS;
+    }
+
+    /*
+     * Native ALTER SYSTEM boolean verification stores OG_FALSE/OG_TRUE in
+     * def->value[0]. The bison path keeps textual values first, so normalize
+     * them here before the shared notify callbacks consume def->value.
+     */
+    if (!cm_str_equal_ins(item->datatype, "OG_TYPE_BOOLEAN")) {
+        return OG_SUCCESS;
+    }
+
+    if (cm_str_equal_ins(def->value, "TRUE")) {
+        def->value[0] = (char)OG_TRUE;
+        def->value[1] = '\0';
+        return OG_SUCCESS;
+    }
+
+    if (cm_str_equal_ins(def->value, "FALSE")) {
+        def->value[0] = (char)OG_FALSE;
+        def->value[1] = '\0';
+        return OG_SUCCESS;
+    }
+
+    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+    return OG_ERROR;
+}
+
 static status_t sql_parse_alsys_modify_replica(lex_t *lex, knl_alter_sys_def_t *def)
 {
     word_t word;
@@ -1405,6 +1436,299 @@ status_t sql_parse_dcl_alter(sql_stmt_t *stmt)
     }
 
     return status;
+}
+
+status_t sql_bison_verify_sys_param(knl_session_t *se, knl_alter_sys_def_t *def)
+{
+    config_item_t *item = NULL;
+
+    if (IS_LOG_MODE(def->param)) {
+        text_t name = {
+            .str = "_LOG_LEVEL",
+            .len = sizeof("_LOG_LEVEL") - 1
+        };
+        item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
+    } else {
+        text_t name = {
+            .str = def->param,
+            .len = (uint32)strlen(def->param)
+        };
+        item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
+    }
+
+    if (item == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, def->param);
+        return OG_ERROR;
+    }
+
+    def->param_id = item->id;
+
+    if (se->kernel->db.ctrl.core.lrep_mode == LOG_REPLICATION_ON &&
+        strcmp(def->param, "ARCH_TIME") == 0) {
+        OG_THROW_ERROR(ERR_NOT_COMPATIBLE, "arch time while lrep_mode is LOG_REPLICATION_ON");
+        return OG_ERROR;
+    }
+
+    return sql_bison_normalize_sys_param_value(item, def);
+}
+
+status_t sql_parse_altses_set_bison(sql_stmt_t *stmt, altset_def_t *def, const char *key, const char *value,
+    source_location_t loc)
+{
+    text_t key_text;
+    text_t value_text;
+    uint32 uint32_value;
+    char buf[OG_PARAM_BUFFER_SIZE];
+
+    cm_str2text((char *)key, &key_text);
+    cm_str2text((char *)value, &value_text);
+
+    if (sql_copy_text(stmt->context, &key_text, &def->pkey) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "commit_wait") || cm_text_str_equal_ins(&key_text, "commit_wait_logging")) {
+        if (cm_text_str_equal_ins(&value_text, "WAIT")) {
+            def->commit.nowait = OG_FALSE;
+        } else if (cm_text_str_equal_ins(&value_text, "NOWAIT")) {
+            def->commit.nowait = OG_TRUE;
+        } else {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_COMMIT;
+        def->commit.action = COMMIT_WAIT;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "commit_logging") || cm_text_str_equal_ins(&key_text, "commit_mode")) {
+        if (cm_text_str_equal_ins(&value_text, "IMMEDIATE")) {
+            def->commit.batch = OG_FALSE;
+        } else if (cm_text_str_equal_ins(&value_text, "BATCH")) {
+            def->commit.batch = OG_TRUE;
+        } else {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_COMMIT;
+        def->commit.action = COMMIT_LOGGING;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "lock_wait_timeout")) {
+        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_LOCKWAIT_TIMEOUT;
+        def->lock_wait_timeout.lock_wait_timeout = uint32_value;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "current_schema")) {
+        text_t schema;
+        if (value_text.len == 0) {
+            OG_SRC_THROW_ERROR(loc, ERR_EMPTY_STRING_NOT_ALLOWED);
+            return OG_ERROR;
+        }
+        if (cm_text2str(&value_text, buf, OG_NAME_BUFFER_SIZE) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (sql_user_prefix_tenant(stmt->session, buf) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        cm_str2text(buf, &schema);
+        def->set_type = SET_SCHEMA;
+        return sql_copy_name(stmt->context, &schema, &def->curr_schema);
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "time_zone")) {
+        def->set_type = SET_SESSION_TIMEZONE;
+        return sql_copy_name(stmt->context, &value_text, &def->timezone_offset_name);
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "_show_explain_predicate")) {
+        if (cm_text_str_equal_ins(&value_text, "FALSE")) {
+            def->on_off = OG_FALSE;
+        } else if (cm_text_str_equal_ins(&value_text, "TRUE")) {
+            def->on_off = OG_TRUE;
+        } else {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_SHOW_EXPLAIN_PREDICATE;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "shd_socket_timeout")) {
+        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        if (uint32_value > OG_MAX_TIMEOUT_VALUE) {
+            OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "SHD_SOCKET_TIMEOUT", (int64)0, (int64)OG_MAX_TIMEOUT_VALUE);
+            return OG_ERROR;
+        }
+        def->set_type = SET_SHD_SOCKET_TIMEOUT;
+        def->shd_socket_timeout = uint32_value;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "tenant")) {
+        def->set_type = SET_TENANT;
+        return sql_copy_name(stmt->context, &value_text, &def->tenant);
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "_outer_join_optimization")) {
+        if (cm_text_str_equal_ins(&value_text, "OFF")) {
+            def->on_off = OG_FALSE;
+        } else if (cm_text_str_equal_ins(&value_text, "ON")) {
+            def->on_off = OG_TRUE;
+        } else {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_OUTER_JOIN_OPT;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "cbo_index_caching")) {
+        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        if (uint32_value > CBO_MAX_INDEX_CACHING) {
+            OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_INDEX_CACHING", (int64)CBO_MAX_INDEX_CACHING);
+            return OG_ERROR;
+        }
+        def->set_type = SET_CBO_INDEX_CACHING;
+        def->cbo_index_caching = uint32_value;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "cbo_index_cost_adj")) {
+        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        if (uint32_value > CBO_MAX_INDEX_COST_ADJ) {
+            OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_INDEX_COST_ADJ", (int64)CBO_MAX_INDEX_COST_ADJ);
+            return OG_ERROR;
+        }
+        if (uint32_value < CBO_MIN_INDEX_COST_ADJ) {
+            OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "CBO_INDEX_COST_ADJ", (int64)CBO_MIN_INDEX_COST_ADJ);
+            return OG_ERROR;
+        }
+        def->set_type = SET_CBO_INDEX_COST_ADJ;
+        def->cbo_index_cost_adj = uint32_value;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "_withas_subquery")) {
+        if (cm_text_str_equal_ins(&value_text, "OPTIMIZER")) {
+            def->withas_subquery = 0;
+        } else if (cm_text_str_equal_ins(&value_text, "MATERIALIZE")) {
+            def->withas_subquery = 1;
+        } else if (cm_text_str_equal_ins(&value_text, "INLINE")) {
+            def->withas_subquery = 2;
+        } else {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_WITHAS_SUBQUERY;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "_cursor_sharing")) {
+        if (cm_text_str_equal_ins(&value_text, "OFF")) {
+            def->on_off = OG_FALSE;
+        } else if (cm_text_str_equal_ins(&value_text, "ON")) {
+            def->on_off = OG_TRUE;
+        } else {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+            return OG_ERROR;
+        }
+        def->set_type = SET_CURSOR_SHARING;
+        return OG_SUCCESS;
+    }
+
+    if (cm_text_str_equal_ins(&key_text, "plan_display_format")) {
+        uint32 plan_display_format = 0;
+        if (cm_text2str(&value_text, buf, sizeof(buf)) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        sql_set_plan_display_format(buf, &plan_display_format);
+        def->set_type = SET_PLAN_DISPLAY_FORMAT;
+        def->plan_display_format = plan_display_format;
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < NLS__MAX_PARAM_NUM; i++) {
+        if (cm_text_equal_ins(&key_text, &g_nlsparam_items[i].key)) {
+            def->set_type = SET_NLS_PARAMS;
+            def->nls_seting.id = g_nlsparam_items[i].id;
+            return sql_copy_text(stmt->context, &value_text, &def->nls_seting.value);
+        }
+    }
+
+    OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "missing or invalid parameter");
+    return OG_ERROR;
+}
+
+status_t sql_parse_sid_serial_bison(text_t *src, source_location_t loc, uint32 *sid, uint32 *serial, uint32 *nodeid)
+{
+    text_t text = *src;
+    text_t text1 = *src;
+    int32 arrint0;
+    int32 arrint1;
+    int32 arrint2 = 0;
+
+    if (OG_SUCCESS != sql_parse_int_until(&arrint0, &text, ",")) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid session id '%s'", T2S(src));
+        return OG_ERROR;
+    }
+
+    if (OG_SUCCESS != sql_parse_int_until(&arrint1, &text, ",")) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid session id '%s'", T2S(src));
+        return OG_ERROR;
+    }
+
+    if (text.len == 0) {
+        // only have sid and serial
+        // 2 find two comma
+        if (sql_parse_num_match_splitter(&text1, 2, ',')) {
+            // The parsing str should have one splitter
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid session id '%s'", T2S(src));
+            return OG_ERROR;
+        }
+    } else {
+        // have sid and serial and nodeid
+        if (!IS_COORDINATOR) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "not support to kill other session on DN node");
+            return OG_ERROR;
+        }
+        if (text.str[0] != '@') {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid session id '%s'", T2S(src));
+            return OG_ERROR;
+        }
+        ++text.str;
+        --text.len;
+        if (OG_SUCCESS != sql_parse_int_until(&arrint2, &text, NULL)) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid session id '%s'", T2S(src));
+            return OG_ERROR;
+        }
+    }
+
+    if (arrint0 < 0 || arrint1 < 0 || arrint2 < 0) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid session id '%s'", T2S(src));
+        return OG_ERROR;
+    }
+
+    *sid = (uint32)arrint0;
+    *serial = (uint32)arrint1;
+    *nodeid = (uint32)arrint2;
+
+    return OG_SUCCESS;
 }
 
 #ifdef __cplusplus

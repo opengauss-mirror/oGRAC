@@ -34,6 +34,9 @@
 #include "pl_memory.h"
 #include "pl_compiler.h"
 #include "ddl_space_parser.h"
+#include "dcl_alter_parser.h"
+#include "dcl_database_parser.h"
+#include "dcl_transaction_parser.h"
 
 /*
  * NB: include gram.h only AFTER including scanner.h, because scanner.h

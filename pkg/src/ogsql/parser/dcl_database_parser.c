@@ -24,8 +24,10 @@
  */
 
 #include "srv_instance.h"
+#include "ddl_user_parser.h"
 #include "ddl_parser.h"
 #include "dml_parser.h"
+#include "dcl_database_parser.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -329,6 +331,35 @@ static status_t sql_set_backup_password(sql_stmt_t *stmt, char *password, bool32
     return sql_verify_backup_passwd(password);
 }
 
+static status_t og_set_backup_password(sql_stmt_t *stmt, const char *src_password, source_location_t loc,
+    char *password, bool32 is_backup)
+{
+    text_t pwd_text;
+
+    if (src_password == NULL) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "The password must be identifier or string");
+        return OG_ERROR;
+    }
+
+    cm_str2text((char *)src_password, &pwd_text);
+    if (pwd_text.len == 0) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid identifier, length 0");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_text2str(&pwd_text, password, OG_PASSWORD_BUFFER_SIZE));
+
+    /*
+     * In the bison path the password has already been reduced into a detached
+     * string value, so we must not fetch it again from stmt->session->lex.
+     */
+    if (!is_backup) {
+        return OG_SUCCESS;
+    }
+
+    return sql_verify_backup_passwd(password);
+}
+
 static status_t sql_set_backup_encrypt(sql_stmt_t *stmt, knl_backup_cryptinfo_t *crypt_info, bool32 is_backup)
 {
     status_t status;
@@ -391,7 +422,7 @@ static status_t sql_set_backup_parallelism(sql_stmt_t *stmt, uint32 *paral_num)
     return OG_SUCCESS;
 }
 
-static status_t sql_check_backup_param(sql_stmt_t *stmt, knl_backup_t *param)
+status_t sql_check_backup_param(sql_stmt_t *stmt, knl_backup_t *param)
 {
     bool32 result;
     uint32 buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
@@ -615,7 +646,7 @@ static status_t sql_parse_repair_type(sql_stmt_t *stmt, restore_repair_type_t *r
     return OG_SUCCESS;
 }
 
-static status_t sql_parse_backup_arch_from(sql_stmt_t *stmt, knl_backup_t *param)
+status_t sql_parse_backup_arch_from(sql_stmt_t *stmt, knl_backup_t *param)
 {
     if (lex_expected_fetch_word(stmt->session->lex, "asn") != OG_SUCCESS) {
         return OG_ERROR;
@@ -1259,6 +1290,618 @@ status_t sql_parse_ograc(sql_stmt_t *stmt)
 
     return lex_expected_end(stmt->session->lex);
 }
+static status_t og_parse_backup_format(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    text_t sub_param;
+    text_t value;
+    cm_str2text(opt->dest_format, &value);
+    if (param->format.len > 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set format more than once");
+        return OG_ERROR;
+    }
+
+    if (!cm_fetch_text(&value, ':', '\0', &sub_param)) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid format, can not find policy name");
+        return OG_ERROR;
+    }
+
+    if (value.len > 0) {
+        if (!cm_compare_text_str(&sub_param, "nbu")) {
+            param->device = DEVICE_UDS;
+            if (!cm_fetch_text(&value, ':', '\0', &param->policy)) {
+                OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid format, can not find policy name");
+                return OG_ERROR;
+            }
+
+            if (param->policy.len >= OG_BACKUP_PARAM_SIZE) {
+                OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR,
+                    "policy name exceeded the maximum length %u", OG_BACKUP_PARAM_SIZE);
+                return OG_ERROR;
+            }
+        } else if (cm_compare_text_str(&sub_param, "disk")) {
+            OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid device type:%s", T2S(&sub_param));
+            return OG_ERROR;
+        }
+
+        if (!cm_fetch_text(&value, ':', '\0', &sub_param)) {
+            OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid format, no dest path specified");
+            return OG_ERROR;
+        }
+    }
+
+    OG_RETURN_IFERR(sql_copy_file_name(stmt->context, &sub_param, &param->format));
+
+    if (cm_fetch_text(&value, ':', '\0', &sub_param)) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid format, %s value is invalid",
+            T2S(&sub_param));
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_as(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->compress_algo != COMPRESS_NONE) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set compressed more than once");
+        return OG_ERROR;
+    }
+    param->compress_algo = opt->compress_algo;
+    if (opt->compress_level < Z_BEST_SPEED || opt->compress_level > Z_BEST_COMPRESSION) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "level value should be in [1, 9]");
+        return OG_ERROR;
+    }
+    param->compress_level = opt->compress_level;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_tag(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    text_t value;
+    cm_str2text(opt->tag, &value);
+    if (strlen(param->tag) > 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set tag more than once");
+        return OG_ERROR;
+    }
+    if (value.len > OG_MAX_NAME_LEN) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "tag name exceed max name lengths %u", OG_MAX_NAME_LEN);
+        return OG_ERROR;
+    }
+    if (value.len == 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "tag name can not set empty string");
+        return OG_ERROR;
+    }
+
+    return cm_text2str(&value, param->tag, OG_NAME_BUFFER_SIZE);
+}
+
+status_t og_parse_backup_buffer(sql_stmt_t *stmt, uint32 *buffer_size, backup_opt *opt)
+{
+    *buffer_size = opt->size;
+
+    if (*buffer_size < OG_MIN_BACKUP_BUF_SIZE || *buffer_size > OG_MAX_BACKUP_BUF_SIZE) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "BACKUP_BUFFER_SIZE", (int64)OG_MIN_BACKUP_BUF_SIZE,
+            (int64)OG_MAX_BACKUP_BUF_SIZE);
+        return OG_ERROR;
+    }
+    if ((*buffer_size) % (uint32)SIZE_M(8) != 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "buffer size (%u) is not an integral multiple of 8M.",
+            *buffer_size);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_full(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->type != BACKUP_MODE_INVALID) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "can not contain backup type more than once");
+        return OG_ERROR;
+    }
+
+    param->type = BACKUP_MODE_FULL;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_incremental(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (sql_set_backup_type(param, BACKUP_MODE_INCREMENTAL) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (opt->incremental_level != 0 && opt->incremental_level != 1) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "level must be 0 or 1");
+        return OG_ERROR;
+    }
+
+    param->level = opt->incremental_level;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_prepare(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->finish_scn != OG_INVALID_ID64) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "can not set prepare and finish at the same time");
+        return OG_ERROR;
+    }
+
+    param->prepare = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_finish(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->prepare) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set prepare and finish at the same time");
+        return OG_ERROR;
+    }
+    if (param->finish_scn != OG_INVALID_ID64) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set finish more than once");
+        return OG_ERROR;
+    }
+    param->finish_scn = opt->scn;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_cumulative(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->cumulative) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "can not set cumulative more than once");
+        return OG_ERROR;
+    }
+
+    param->cumulative = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_section(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->section_threshold > 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set section threshold more than once");
+        return OG_ERROR;
+    }
+
+    if (opt->size < BAK_MIN_SECTION_THRESHOLD || opt->size > BAK_MAX_SECTION_THRESHOLD) {
+        return OG_ERROR;
+    }
+
+    param->section_threshold = opt->size;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_parallelism(sql_stmt_t *stmt, uint32 *paral_num, backup_opt *opt)
+{
+    if (*paral_num > 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set parallelism more than once");
+        return OG_ERROR;
+    }
+    *paral_num = opt->parallelism;
+    if (*paral_num < 1 || *paral_num > (OG_MAX_BACKUP_PROCESS - BAK_PARAL_LOG_PROC_NUM - 1)) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "parallelism value should be in [%u, %u]", (uint32)1,
+            (uint32)(OG_MAX_BACKUP_PROCESS - BAK_PARAL_LOG_PROC_NUM - 1));
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_exclude(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->exclude_spcs->count > 0) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set exclude more than once");
+        return OG_ERROR;
+    }
+
+    char *name = NULL;
+    text_t *spc_name = NULL;
+    text_t tmp;
+    for (uint32 i = 0; i < opt->space_list->count; i++) {
+        name = (char*)cm_galist_get(opt->space_list, i);
+        cm_str2text(name, &tmp);
+        if (sql_find_space_in_list(param->exclude_spcs, &tmp)) {
+            OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "tablespace %s is already exists", name);
+            return OG_ERROR;
+        }
+        if (cm_galist_new(param->exclude_spcs, sizeof(text_t), (pointer_t *)&spc_name) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (sql_copy_name(stmt->context, &tmp, spc_name) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        if (param->exclude_spcs->count >= OG_MAX_SPACES) {
+            OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "exclude spaces number out of max spaces number");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_password(sql_stmt_t *stmt, knl_backup_cryptinfo_t *crypt_info, backup_opt *opt, bool32 is_backup)
+{
+    SQL_SET_IGNORE_PWD(stmt->session);
+    if (crypt_info->encrypt_alg != ENCRYPT_NONE) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "can not set encrypted more than once");
+        return OG_ERROR;
+    }
+    status_t status = og_set_backup_password(stmt, opt->passwd, opt->loc, crypt_info->password, is_backup);
+    crypt_info->encrypt_alg = AES_256_GCM;
+
+    return status;
+}
+
+static status_t og_parse_backup_copy(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->type != BACKUP_MODE_INVALID && param->type != BACKUP_MODE_FULL) {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_INVALID_OPERATION, ", because there has a incompatible backup type for tablespace");
+        return OG_ERROR;
+    }
+
+    char *name = NULL;
+    text_t *spc_name = NULL;
+    text_t tmp;
+    for (uint32 i = 0; i < opt->space_list->count; i++) {
+        name = (char*)cm_galist_get(opt->space_list, i);
+        cm_str2text(name, &tmp);
+        if (sql_find_space_in_list(param->target_info.target_list, &tmp)) {
+            OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "tablespace %s is already exists", name);
+            return OG_ERROR;
+        }
+        if (cm_galist_new(param->target_info.target_list, sizeof(text_t), (pointer_t *)&spc_name) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (sql_copy_name(stmt->context, &tmp, spc_name) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        if (param->target_info.target_list->count >= OG_MAX_SPACES) {
+            OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "copy spaces number out of max spaces number");
+            return OG_ERROR;
+        }
+    }
+
+    param->type = BACKUP_MODE_TABLESPACE;
+    param->target_info.target = TARGET_TABLESPACE;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_skip_badblock(sql_stmt_t *stmt, knl_backup_t *param, backup_opt *opt)
+{
+    if (param->skip_badblock == OG_TRUE) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "can not set skip badblock more than once");
+        return OG_ERROR;
+    }
+    param->skip_badblock = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+status_t og_parse_backup_archivelog(sql_stmt_t *stmt, knl_backup_t *param, galist_t *backup_opts)
+{
+    status_t status;
+
+    if (backup_opts == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < backup_opts->count; i++) {
+        backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
+        switch (opt->type) {
+            case BACKUP_FORMAT_OPT:
+                status = og_parse_backup_format(stmt, param, opt);
+                break;
+            case BACKUP_AS_OPT:
+                status = og_parse_backup_as(stmt, param, opt);
+                break;
+            case BACKUP_TAG_OPT:
+                status = og_parse_backup_tag(stmt, param, opt);
+                break;
+            case BACKUP_BUFFER_OPT:
+                status = og_parse_backup_buffer(stmt, &param->buffer_size, opt);
+                break;
+            default:
+                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown backup archivelog option");
+                return OG_ERROR;
+        }
+        OG_RETURN_IFERR(status);
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t og_parse_backup_database(sql_stmt_t *stmt, knl_backup_t *param, galist_t *backup_opts)
+{
+    status_t status;
+
+    if (backup_opts == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < backup_opts->count; i++) {
+        backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
+        switch (opt->type) {
+            case BACKUP_FULL_OPT:
+                status = og_parse_backup_full(stmt, param, opt);
+                break;
+            case BACKUP_INCREMENTAL_OPT:
+                status = og_parse_backup_incremental(stmt, param, opt);
+                break;
+            case BACKUP_FORMAT_OPT:
+                status = og_parse_backup_format(stmt, param, opt);
+                break;
+            case BACKUP_PREPARE_OPT:
+                status = og_parse_backup_prepare(stmt, param, opt);
+                break;
+            case BACKUP_FINISH_OPT:
+                status = og_parse_backup_finish(stmt, param, opt);
+                break;
+            case BACKUP_TAG_OPT:
+                status = og_parse_backup_tag(stmt, param, opt);
+                break;
+            case BACKUP_CUMULATIVE_OPT:
+                status = og_parse_backup_cumulative(stmt, param, opt);
+                break;
+            case BACKUP_AS_OPT:
+                status = og_parse_backup_as(stmt, param, opt);
+                break;
+            case BACKUP_SECTION_OPT:
+                status = og_parse_backup_section(stmt, param, opt);
+                break;
+            case BACKUP_PARALLELISM_OPT:
+                status = og_parse_backup_parallelism(stmt, &param->parallelism, opt);
+                break;
+            case BACKUP_EXCLUDE_OPT:
+                status = og_parse_backup_exclude(stmt, param, opt);
+                break;
+            case BACKUP_PASSWORD_OPT:
+                status = og_parse_backup_password(stmt, &param->crypt_info, opt, OG_TRUE);
+                break;
+            case BACKUP_COPY_OPT:
+                status = og_parse_backup_copy(stmt, param, opt);
+                break;
+            case BACKUP_BUFFER_OPT:
+                status = og_parse_backup_buffer(stmt, &param->buffer_size, opt);
+                break;
+            case BACKUP_SKIP_BADBLOCK_OPT:
+                status = og_parse_backup_skip_badblock(stmt, param, opt);
+                break;
+            default:
+                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown backup database option");
+                return OG_ERROR;
+        }
+        OG_RETURN_IFERR(status);
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_restore_disconnect(sql_stmt_t *stmt, knl_restore_t *param, backup_opt *opt)
+{
+    if (param->disconnect == OG_TRUE) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "can not set disconnect more than once");
+        return OG_ERROR;
+    }
+    param->disconnect = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_tablespace(sql_stmt_t *stmt, knl_restore_t *param, backup_opt *opt)
+{
+    text_t space_name;
+    cm_str2text(opt->space_name, &space_name);
+    OG_RETURN_IFERR(sql_copy_name(stmt->context, &space_name, &param->spc_name));
+    return OG_SUCCESS;
+}
+
+static status_t og_parse_backup_repair(sql_stmt_t *stmt, restore_repair_type_t *repair_type, backup_opt *opt)
+{
+    if (strcmp(opt->repair_type, "RETURN_ERROR") == 0) {
+        *repair_type = RESTORE_REPAIR_TYPE_NULL;
+    } else if (strcmp(opt->repair_type, "REPLACE_CHECKSUM") == 0) {
+        *repair_type = RESTORE_REPAIR_REPLACE_CHECKSUN;
+    } else if (strcmp(opt->repair_type, "DISCARD_BADBLOCK") == 0) {
+        *repair_type = RESTORE_REPAIR_DISCARD_BADBLOCK;
+    } else {
+        OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR,
+            "%s or %s or %s expected", "RETURN_ERROR", "REPLACE_CHECKSUM", "DISCARD_BADBLOCK");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t og_parse_restore(sql_stmt_t *stmt, knl_restore_t *param, galist_t *backup_opts)
+{
+    status_t status;
+
+    if (backup_opts == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < backup_opts->count; i++) {
+        backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
+        switch (opt->type) {
+            case BACKUP_DISCONNET_OPT:
+                status = og_parse_restore_disconnect(stmt, param, opt);
+                break;
+            case BACKUP_PARALLELISM_OPT:
+                status = og_parse_backup_parallelism(stmt, &param->parallelism, opt);
+                break;
+            case BACKUP_PASSWORD_OPT:
+                status = og_parse_backup_password(stmt, &param->crypt_info, opt, OG_FALSE);
+                break;
+            case BACKUP_TABLESPACE_OPT:
+                status = og_parse_backup_tablespace(stmt, param, opt);
+                break;
+            case BACKUP_BUFFER_OPT:
+                status = og_parse_backup_buffer(stmt, &param->buffer_size, opt);
+                break;
+            case BACKUP_REPAIR_OPT:
+                status = og_parse_backup_repair(stmt, &param->repair_type, opt);
+                break;
+            default:    
+                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown restore option");
+                return OG_ERROR;
+        }
+        OG_RETURN_IFERR(status);
+    }
+    uint32 buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
+
+    if (param->type != RESTORE_FROM_PATH) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "backup set path is not specified");
+        return OG_ERROR;
+    }
+
+    if (param->buffer_size == 0) {
+        param->buffer_size = buffer_size;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t og_parse_build(sql_stmt_t *stmt, knl_build_def_t *param, galist_t *backup_opts)
+{
+    status_t status;
+
+    if (backup_opts == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < backup_opts->count; i++) {
+        backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
+        switch (opt->type) {
+            case BACKUP_INCREMENTAL_NO_LEVEL_OPT:
+                param->param_ctrl.is_increment = OG_TRUE;
+                status = OG_SUCCESS;
+                break;
+            case BACKUP_COMPRESS_OPT:
+                param->param_ctrl.compress = opt->compress_algo;
+                param->param_ctrl.compress_level = opt->compress_level;
+                status = OG_SUCCESS;
+                break;
+            case BACKUP_PARALLELISM_OPT:
+                status = og_parse_backup_parallelism(stmt, &param->param_ctrl.parallelism, opt);
+                break;
+            case BACKUP_BUFFER_OPT:
+                status = og_parse_backup_buffer(stmt, &param->param_ctrl.buffer_size, opt);
+                break;
+            default:
+                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown build option");
+                return OG_ERROR;
+        }
+        OG_RETURN_IFERR(status);
+    }
+    
+    uint32 buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
+
+    if (param->param_ctrl.buffer_size == 0) {
+        param->param_ctrl.buffer_size = buffer_size;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_restore_from_bison(sql_stmt_t *stmt,
+    char *str, source_location_t loc, knl_restore_t *param, bool32 block_recover)
+{
+    text_t sub_param;
+    text_t value;
+    cm_str2text(str, &value);
+    
+    (void)cm_fetch_text(&value, ':', '\0', &sub_param);
+    if (value.len > 0) {
+        if (!cm_compare_text_str(&sub_param, "nbu")) {
+            param->device = DEVICE_UDS;
+            if (!cm_fetch_text(&value, ':', '\0', &param->policy)) {
+                OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid format, can not find policy name");
+                return OG_ERROR;
+            }
+
+            if (param->policy.len >= OG_BACKUP_PARAM_SIZE) {
+                OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR,
+                    "policy name exceeded the maximum length %u", OG_BACKUP_PARAM_SIZE);
+                return OG_ERROR;
+            }
+        } else if (cm_compare_text_str(&sub_param, "disk")) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid device type:%s", T2S(&sub_param));
+            return OG_ERROR;
+        }
+
+        if (!cm_fetch_text(&value, ':', '\0', &sub_param)) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid format, no dest path specified");
+            return OG_ERROR;
+        }
+    }
+
+    OG_RETURN_IFERR(sql_copy_file_name(stmt->context, &sub_param, &param->path));
+
+    if (cm_fetch_text(&value, ':', '\0', &sub_param)) {
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid format, %s value is invalid",
+            T2S(&sub_param));
+        return OG_ERROR;
+    }
+
+    param->type = block_recover ? RESTORE_BLOCK_RECOVER : RESTORE_FROM_PATH;
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_restore_blockrecover_bison(sql_stmt_t *stmt, int32 file, int32 page, knl_restore_t *param)
+{
+    param->type = RESTORE_BLOCK_RECOVER;
+
+    if (file >= INVALID_FILE_ID) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "datafile value should be in [%u, %u]", (uint32)0,
+            (uint32)(INVALID_FILE_ID - 1));
+        return OG_ERROR;
+    }
+
+    param->page_need_repair.file = file;
+
+    if (page == 0) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "page value should not be 0");
+        return OG_ERROR;
+    }
+
+    param->page_need_repair.page = page;
+    return OG_SUCCESS;
+}
+
+status_t sql_parse_table_defs_bison(sql_stmt_t *stmt, lock_tables_def_t *def, galist_t *table_list)
+{
+    lock_table_t *src_table = NULL;
+    lock_table_t *table = NULL;
+    lock_table_t *existing = NULL;
+    text_t curr_schema;
+    text_t schema;
+
+    cm_str2text(stmt->session->curr_schema, &curr_schema);
+
+    for (uint32 i = 0; i < table_list->count; i++) {
+        src_table = (lock_table_t *)cm_galist_get(table_list, i);
+        schema = (src_table->schema.len == 0) ? curr_schema : src_table->schema;
+
+        /*
+         * Keep lock-table object names aligned with the native parser path:
+         * unqualified names inherit current_schema, and object names are
+         * copied into stmt->context before execution.
+         */
+        for (uint32 j = 0; j < def->tables.count; j++) {
+            existing = (lock_table_t *)cm_galist_get(&def->tables, j);
+            if (cm_text_equal(&existing->schema, &schema) && cm_text_equal(&existing->name, &src_table->name)) {
+                OG_THROW_ERROR(ERR_DUPLICATE_TABLE, T2S(&schema), T2S(&src_table->name));
+                return OG_ERROR;
+            }
+        }
+
+        if (cm_galist_new(&def->tables, sizeof(lock_table_t), (pointer_t *)&table) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        OG_RETURN_IFERR(sql_copy_name(stmt->context, &schema, &table->schema));
+        OG_RETURN_IFERR(sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src_table->name, &table->name));
+    }
+
+    return OG_SUCCESS;
+}
+
 
 #ifdef __cplusplus
 }

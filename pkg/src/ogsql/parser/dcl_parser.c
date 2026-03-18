@@ -1029,45 +1029,121 @@ static status_t sql_dispatch_dcl_parse(sql_stmt_t *stmt, key_wid_t key_wid)
 {
     switch (key_wid) {
         case KEY_WORD_PREPARE:
-            return sql_parse_prepare_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_prepare_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_ALTER:
-            return sql_parse_alter_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_alter_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_COMMIT:
-            return sql_parse_commit_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_commit_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_ROLLBACK:
-            return sql_parse_rollback_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_rollback_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_SAVEPOINT:
-            return sql_parse_savepoint_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_savepoint_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_RELEASE:
-            return sql_parse_release_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_release_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_SET:
-            return sql_parse_set_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_set_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_BACKUP:
-            return sql_parse_backup_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_backup_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_RESTORE:
-            return sql_parse_restore_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_restore_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_RECOVER:
-            return sql_parse_recover_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_recover_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_OGRAC:
-            return sql_parse_ograc_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_ograc_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_SHUTDOWN:
-            return sql_parse_shutdown_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_shutdown_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_BUILD:
-            return sql_parse_build_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_build_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_REPAIR_PAGE:
-            return sql_parse_repair_page_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_repair_page_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_REPAIR_COPYCTRL:
-            return sql_parse_repair_copyctrl_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_repair_copyctrl_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
 #ifdef DB_DEBUG_VERSION
         case KEY_WORD_SYNCPOINT:
-            return sql_parse_syncpoint_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_syncpoint_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
 #endif
         case KEY_WORD_LOCK:
-            return sql_parse_lock_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_lock_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_CHECKPOINT:
-            return sql_parse_checkpoint_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_checkpoint_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         case KEY_WORD_VALIDATE:
-            return sql_parse_validate_dcl(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                return sql_parse_validate_dcl(stmt);
+            } else {
+                return raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
         default:
             OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected");
             return OG_ERROR;

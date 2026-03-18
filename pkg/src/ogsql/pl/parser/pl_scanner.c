@@ -192,7 +192,7 @@ int plsql_yylex(core_yyscan_t yyscanner)
     if (token == IDENT) {
         if (parse_var_word(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
             token = T_DATUM;
-        } else if((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
+        } else if ((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
             aux.lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);
             token = UnreservedPLKeywordTokens[kwnum];
         } else {
