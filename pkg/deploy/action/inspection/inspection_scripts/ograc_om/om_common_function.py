@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import subprocess
 import platform
 import os
@@ -39,4 +40,3 @@ def exec_popen(cmd, values=None):
         stderr = stderr[:-1]
 
     return pobj.returncode, stdout, stderr
-

@@ -1,8 +1,19 @@
+#!/usr/bin/env python3
 import os
 import shlex
 import subprocess
 import json
+import sys
 from pathlib import Path
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+
+from config import get_config
+
+_cfg = get_config()
+_paths = _cfg.paths
 
 
 class OmChecker:
@@ -10,10 +21,10 @@ class OmChecker:
     def __init__(self):
         self.decode_mod = 'utf-8'
         self.component_check_order = ['cms', 'ograc', 'ograc_exporter']
-        self.check_file_parent_path = '/opt/ograc/action'
+        self.check_file_parent_path = _paths.action_dir
         self.check_file = 'check_status.sh'
-        self.check_daemon_cmd = 'pgrep -f ograc_daemon'
-        self.check_timer_cmd = 'systemctl is-active ograc.timer'
+        self.check_daemon_cmd = f'pgrep -f "{_paths.ograc_daemon_script}"'
+        self.check_timer_cmd = f'systemctl is-active {_paths.daemon_timer_unit}'
         self.check_res_flag = True
         self.check_note = {
             'cms': 'unknown',

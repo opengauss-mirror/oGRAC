@@ -1,9 +1,17 @@
+#!/usr/bin/env python3
 import sys
 import os
 import subprocess
 
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.join(CUR_PATH, "../dbstor"))
+sys.path.insert(0, CUR_PATH)
+
+from config import get_config
+
+_cfg = get_config()
+_paths = _cfg.paths
+
+sys.path.append(os.path.join(CUR_PATH, "../ograc_common"))
 from kmc_adapter import CApiWrapper
 
 NEW_MARK = "/"
@@ -41,8 +49,8 @@ def _exec_popen(cmd, values=None):
 
 
 def resolve_kmc_pwd(encrypt_pwd):
-    primary_keystore = "/opt/ograc/common/config/primary_keystore_bak.ks"
-    standby_keystore = "/opt/ograc/common/config/standby_keystore_bak.ks"
+    primary_keystore = _paths.primary_keystore
+    standby_keystore = _paths.standby_keystore
     kmc_adapter = CApiWrapper(primary_keystore, standby_keystore)
     kmc_adapter.initialize()
     try:
@@ -50,7 +58,7 @@ def resolve_kmc_pwd(encrypt_pwd):
     except Exception as error:
         raise Exception("Failed to decrypt password of user [sys]. Error: %s" % str(error)) from error
     split_env = os.environ['LD_LIBRARY_PATH'].split(":")
-    filtered_env = [single_env for single_env in split_env if "/opt/ograc/dbstor/lib" not in single_env]
+    filtered_env = [single_env for single_env in split_env if _paths.dbstor_lib not in single_env]
     os.environ['LD_LIBRARY_PATH'] = ":".join(filtered_env)
     return passwd
 
@@ -89,9 +97,6 @@ def run_upgrade_modify_sys_tables_ogsql(encrypt_pwd):
                 if line == NEW_MARK:
                     cmd = "ogsql sys/{}@{}:{} -q -c {}".format(passwd, ip, port, sql)
                     ret_code, stdout, stderr = _exec_popen(cmd)
-                    # for reupdate sys table when crashed, if the error code represents that an entry already exists, do not return error
-                    # OG-00743 is like: entry id 1044 already exists, this is not caused by reupdate,
-                    # but because of wrong sys table id (wrong sql), thus still need to return error
                     if ret_code:
                         if (not "exist" in stderr) or (stderr.startswith("OG-00743")):
                             return str(stderr)

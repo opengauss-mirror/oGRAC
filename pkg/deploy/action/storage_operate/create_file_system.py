@@ -1,4 +1,4 @@
-# coding=utf-8
+#!/usr/bin/env python3
 import json
 import argparse
 import re
@@ -8,6 +8,9 @@ import os
 import pathlib
 import ipaddress
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 
@@ -50,12 +53,7 @@ ID_NAS_DEFAULT = 11
 
 
 def is_valid_string(string):
-    """
-    文件系统名 只支持数字、字母、下划线和中文字符，特殊字符支持“.”、“-”.长度：1-255
-    定义正则表达式模式，匹配数字、字母、下划线、中文字符、特殊字符 . 和 -
-    :param string:
-    :return:
-    """
+    """Validate filesystem name: alphanumeric, underscore, Chinese chars, '.', '-', length 1-255."""
     pattern = r'^[\w\u4e00-\u9fa5.-]{1,255}$'
     match = re.match(pattern, string)
     return match is not None
@@ -86,11 +84,7 @@ class CreateFS(object):
 
     @staticmethod
     def check_capacity(capacity):
-        """
-        检查容量填写是否符合要求
-        :param capacity: 容量,exp:300GB/30TB/3PB
-        :return: bool
-        """
+        """Check if capacity format is valid (e.g. 300GB/30TB/3PB)."""
         if capacity.endswith(("GB", "TB", "PB")):
             capacity_digit = re.findall(r"\d+", capacity)
             if capacity_digit:
@@ -99,11 +93,7 @@ class CreateFS(object):
 
     @staticmethod
     def compute_capacity(capacity):
-        """
-        计算容量，返回单位为sectors的容量，扇区大小是512bytes
-        :param capacity: 容量GB/TB/PB
-        :return: sectors
-        """
+        """Convert capacity (GB/TB/PB) to sectors (512 bytes each)."""
         capacity_digit = re.findall(r"\d+", capacity)[0]
         capacity_unit = re.findall(r"[A-Z]+", capacity)[0]
         convert_dict = {
@@ -407,7 +397,7 @@ class CreateFS(object):
     def _add_nfs_client(self, nfs_share_id, fs_type):
         """
         add nfs client
-        :param nfs_share_id: 共享id
+        :param nfs_share_id: NFS share ID
         :return: nfs client id
         """
         data = self._get_share_client_info(nfs_share_id, fs_type)

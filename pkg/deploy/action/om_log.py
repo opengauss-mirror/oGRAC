@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import logging
 from logging import LogRecord
@@ -45,9 +46,9 @@ class DefaultLogFilter(logging.Filter):
 
 def setup(project_name, console_info=True):
     """
-    init log config
-    :param console_info:设置屏显是否打印info日志
-    :param project_name:
+    Init log config.
+    :param project_name: Project name
+    :param console_info: Whether to print info logs to console
     """
     set_info = logging.INFO if console_info else logging.ERROR
     console = logging.StreamHandler()

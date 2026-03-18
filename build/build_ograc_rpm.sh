@@ -42,9 +42,9 @@ function buildRPM() {
     cp -arf "${OGDB_CODE_PATH}"/pkg/deploy/config ${ROOT_RPMTAR_PATH}
     cp -arf "${OGDB_CODE_PATH}"/common ${ROOT_RPMTAR_PATH}
     cp -arf "${CURRENT_PATH}"/versions.yml ${ROOT_RPMTAR_PATH}/
-    sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${ROOT_RPMTAR_PATH}/action/dbstor/check_usr_pwd.sh
-    sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${ROOT_RPMTAR_PATH}/action/dbstor/check_dbstor_compat.sh
-    sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${ROOT_RPMTAR_PATH}/action/inspection/inspection_scripts/kernal/check_link_cnt.sh
+    sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${ROOT_RPMTAR_PATH}/action/storage_deploy/dbstor/check_usr_pwd.sh
+    sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${ROOT_RPMTAR_PATH}/action/storage_deploy/dbstor/check_dbstor_compat.sh
+    sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${ROOT_RPMTAR_PATH}/action/storage_deploy/inspection/inspection_scripts/kernal/check_link_cnt.sh
 
     echo "Prepare cms"
     mkdir -p ${ROOT_RPMTAR_PATH}/cms/service

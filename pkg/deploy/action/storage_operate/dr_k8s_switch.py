@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import copy
 import getpass
 import json
@@ -13,6 +14,9 @@ from datetime import datetime
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(CURRENT_PATH, ".."))
@@ -28,11 +32,11 @@ from utils.config.rest_constant import (DataIntegrityStatus, MetroDomainRunningS
 EXEC_SQL = "/ogdb/ograc_install/ograc_connector/action/ograc_common/exec_sql.py"
 OGRAC_DATABASE_ROLE_CHECK = ("echo -e 'select DATABASE_ROLE from DV_LRPL_DETAIL;' | "
                                "su -s /bin/bash - %s -c 'source ~/.bashrc && "
-                               "export LD_LIBRARY_PATH=/opt/ograc/dbstor/lib:${LD_LIBRARY_PATH} && "
+                               "export LD_LIBRARY_PATH=" + _paths.dbstor_lib + ":${LD_LIBRARY_PATH} && "
                                "python3 -B %s'")
 
-DBSTOR_CHECK_VERSION_FILE = "/opt/ograc/dbstor/tools/cs_baseline.sh"
-DEPLOY_LOG_FILE = "/opt/ograc/log/deploy/deploy.log"
+DBSTOR_CHECK_VERSION_FILE = _paths.cs_baseline_sh
+DEPLOY_LOG_FILE = _paths.deploy_log
 
 
 class LogGer:
@@ -264,9 +268,6 @@ class K8sDRContainer:
         return True
 
     def init_k8s_config(self):
-        """
-        Initialize the switching configuration file and provide error prompts for empty field data
-        """
         if not os.path.exists(self.k8s_config_path):
             err_msg = f"k8s_config_path does not exist, path: {self.k8s_config_path}"
             LOG.error(err_msg)
@@ -333,8 +334,8 @@ class K8sDRContainer:
                             if configMap.get("name") == config.get("metadata").get("name").strip():
                                 configMap["node_id"] = deploy_param.get("node_id")
                                 break
-                        if "run_user" in value:
-                            continue
+                            if "run_user" in value:
+                                continue
                     value["storage_dbstor_fs"] = deploy_param.get("storage_dbstor_fs")
                     value["run_user"] = deploy_param.get("deploy_user").strip().split(":")[0]
                     value["cluster_name"] = deploy_param.get("cluster_name").strip()
@@ -548,6 +549,7 @@ class K8sDRContainer:
                         self.ulog_pair_list.append(pair)
         LOG.info("get_ulog_pair_info_list finish")
 
+
     def match_config_and_pair_with_fs_name(self, ip, index, ulog_pair_info):
         log_fs_name = ulog_pair_info.get("LOCALOBJNAME").strip()
         vstore_id = ulog_pair_info.get("vstoreId").strip()
@@ -707,7 +709,6 @@ class K8sDRContainer:
             ssh_client.close_client()
 
     def apply_pods(self, ip, ssh_client, value, islocal=False):
-
         ograc_yaml = value.get("ograc_yaml", "")
         config_yaml = value.get("config_yaml", "")
         cmd = f"kubectl apply -f {config_yaml} -f {ograc_yaml}"
@@ -1510,4 +1511,3 @@ if __name__ == '__main__':
     except Exception as err:
         LOG.error(f"err[{err}], [{traceback.format_exc(limit=-1)}]")
         raise err
-

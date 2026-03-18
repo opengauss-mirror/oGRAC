@@ -1,13 +1,20 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 import os
 import json
 import sys
 from pathlib import Path
-sys.path.append('/opt/ograc/action/inspection')
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+
+from config import get_config
 from log_tool import setup
 from common_func import _exec_popen
+
+_cfg = get_config()
+_paths = _cfg.paths
 
 
 def fetch_cms_version(logger):
@@ -16,7 +23,7 @@ def fetch_cms_version(logger):
     ret_code, output, stderr = _exec_popen(cmd)
     if ret_code:
         logger.error("get cms help information failed, std_err: %s", stderr)
-    cmd_yml = "cat /opt/ograc/versions.yml | grep -oP 'Version: \K\d+\.\d+'"
+    cmd_yml = "cat %s | grep -oP 'Version: \K\d+\.\d+'" % _paths.versions_yml
     ret_code_yml, output_yml, stderr_yml = _exec_popen(cmd_yml)
     if ret_code_yml != 0:
         logger.error("Get cms version failed.")
@@ -38,8 +45,7 @@ def fetch_cms_version(logger):
 
 
 def fetch_cls_stat():
-    # check if user is root
-    ograc_log = setup('ograc') 
+    ograc_log = setup('ograc')
     if(os.getuid() == 0):
         ograc_log.error("Cannot use root user for this operation!")
         sys.exit(1)

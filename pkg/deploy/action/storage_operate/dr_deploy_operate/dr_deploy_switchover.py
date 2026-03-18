@@ -1,9 +1,13 @@
-#!/usr/bin/python3
-# coding=utf-8
+#!/usr/bin/env python3
 import json
 import os
 import time
 import argparse
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 from logic.common_func import read_json_config, get_status, exec_popen
 from logic.storage_operate import StorageInf
@@ -21,9 +25,9 @@ LOGICREP_APPCTL_FILE = os.path.join(CURRENT_PATH, "../../logicrep/appctl.sh")
 EXEC_SQL = os.path.join(CURRENT_PATH, "../../ograc_common/exec_sql.py")
 OGRAC_DISASTER_RECOVERY_STATUS_CHECK = 'echo -e "select DATABASE_ROLE from DV_LRPL_DETAIL;" | '\
                                          'su -s /bin/bash - %s -c \'source ~/.bashrc && '\
-                                         'export LD_LIBRARY_PATH=/opt/ograc/dbstor/lib:${LD_LIBRARY_PATH} && '\
+                                         'export LD_LIBRARY_PATH=' + _paths.dbstor_lib + ':${LD_LIBRARY_PATH} && '\
                                          'python3 -B %s\'' % (RUN_USER, EXEC_SQL)
-DBSTOR_CHECK_VERSION_FILE = "/opt/ograc/dbstor/tools/cs_baseline.sh"
+DBSTOR_CHECK_VERSION_FILE = _paths.cs_baseline_sh
 
 
 def load_json_file(file_path):
@@ -46,10 +50,7 @@ class SwitchOver(object):
         self.run_user = RUN_USER
 
     def check_cluster_status(self, target_node=None, log_type="error", check_time=100):
-        """
-        cms 命令拉起oGRAC后检查集群状态
-        :return:
-        """
+        """Check cluster status after starting oGRAC via CMS."""
         check_count = 5
         if check_time < 20:
             check_count = 1
@@ -75,7 +76,6 @@ class SwitchOver(object):
                 node_id, online, work_stat = node_stat.split(" ")
                 if (online != "ONLINE" or work_stat != "1") and target_node is None:
                     online_flag = False
-                # 只检查当前节点，不影响容灾切换
                 if (online != "ONLINE" or work_stat != "1") and node_id == target_node:
                     online_flag = False
             if not online_flag:
@@ -188,12 +188,7 @@ class SwitchOver(object):
             raise Exception(err_msg)
 
     def standby_set_iof(self, iof=0):
-        """
-        recover 阵列正常状态，ograc拉起前需要用户手动执行命令进行iof
-            0： 取消iof
-            1： 设置iof
-        :return:
-        """
+        """Set or cancel IO fencing (0=cancel, 1=set)."""
         LOG.info(f"Standby set iof[{iof}].")
         cmd = "su -s /bin/bash - %s -c \"source ~/.bashrc && "\
               "dbstor --io-forbidden %s\"" % (self.run_user, iof)
@@ -205,10 +200,7 @@ class SwitchOver(object):
         LOG.info(f"Standby set iof[{iof}] success.")
 
     def init_storage_opt(self):
-        """
-        从配置文件中读取参数，初始化操作，登录DM
-        :return:
-        """
+        """Read config, initialize storage operations, and login to DM."""
         dm_ip = self.dr_deploy_info.get("dm_ip")
         dm_user = self.dr_deploy_info.get("dm_user")
         dm_passwd = input()
@@ -217,10 +209,7 @@ class SwitchOver(object):
         self.dr_deploy_opt = DRDeployCommon(storage_opt)
 
     def query_database_role(self):
-        """
-        查询当前站点数据库角色
-        :return:
-        """
+        """Query the current site's database role."""
         LOG.info("Start querying the replay.")
         while True:
             return_code, output, stderr = exec_popen(OGRAC_DISASTER_RECOVERY_STATUS_CHECK, timeout=20)
@@ -236,24 +225,7 @@ class SwitchOver(object):
         LOG.info("Query the replay success.")
 
     def execute(self):
-        """
-        step:
-            1、检查双活，复制数据是否完整
-            2、检查当前双活域状态：
-                1）、正常
-                    ①、停止oGRAC
-                    ②、分裂文件系统双活域
-                    ③、取消远程复制从资源写保护
-                    ④、主从切换
-                        Ⅰ）、双活域主备切换
-                        Ⅱ）、远程复制主备切换
-                    ⑤、恢复远程复制从资源写保护
-                    ⑥、page远程复制主备切换（元数据非归一，metadata_fs）
-                    ⑦、启动oGRAC
-                2）、分裂
-                2）、故障退出
-        :return:
-        """
+        """Execute active/standby switchover: check data integrity, split domain, swap roles, restart."""
         LOG.info("Active/standby switch start.")
         self.check_cluster_status(target_node=self.node_id)
         self.init_storage_opt()
@@ -311,10 +283,7 @@ class DRRecover(SwitchOver):
         self.single_write = None
 
     def check_cluster_status_for_recover(self, check_time=20):
-        """
-        cms 命令拉起oGRAC后检查集群状态
-        :return:
-        """
+        """Check cluster readiness for DR recovery."""
         check_time_step = 2
         LOG.info("Check cluster status.")
         cmd_srv = "su -s /bin/bash - %s -c \"cms stat -server | " \
@@ -324,7 +293,6 @@ class DRRecover(SwitchOver):
         
         while check_time:
             check_time -= check_time_step
-            # 检查所有节点cms正常
             srv_stat= self.query_cluster_status(cmd_srv)
             ready_flag = False
             if len(srv_stat)>1:
@@ -441,32 +409,7 @@ class DRRecover(SwitchOver):
             raise Exception(err_msg)
 
     def execute(self):
-        """
-        step:
-            1、检查当前双活域状态：
-                1）故障报错退出
-                2）分裂：
-                    ① 判断主备、主节点进行主备切换
-                    ② 设置从资源保护
-                    ③ 回复双活域，如果报错pass
-                    ④ 查询双活文件系统同步状态，如果暂停状态超过五分钟，报错退出
-                3）正常：
-                    ① 查询双活文件系统同步状态，如果暂停状态超过五分钟，报错退出
-                4） 其他
-            2、检查远程复制pair状态
-                1) 主：
-                    ① 主从切换
-                    ② 设置从资源保护
-                    ③ 回复，同步数据（增量）
-                    ④ 分裂
-                    ⑤ 取消从资源保护
-                2) 备：
-                    ① pair状态分裂
-                        Ⅰ） oGRAC状态异常 -> 1）② -> ⑤
-                        Ⅱ）oGRAC状态正常 -> end
-                    ②pair状态正常 -> 1）③ -> ⑤
-        :return:
-        """
+        """Execute DR recovery: check domain status, handle split/normal, sync replication pairs, restart."""
         LOG.info("DR recover start.")
         self.check_cluster_status_for_recover()
         self.init_storage_opt()
@@ -520,14 +463,7 @@ class FailOver(SwitchOver):
         super(FailOver, self).__init__()
 
     def execute(self):
-        """
-        step:
-            1、检查双活域角色
-            2、检查当前双活域状态
-            3、重拉节点
-            4、检查oGRAC状态
-            5、取消从资源保护
-        """
+        """Execute failover: check domain role/status, split if needed, enable write access, start."""
         LOG.info("Cancel secondary resource protection start.")
         self.init_storage_opt()
         domain_info = self.dr_deploy_opt.query_hyper_metro_domain_info(self.hyper_domain_id)

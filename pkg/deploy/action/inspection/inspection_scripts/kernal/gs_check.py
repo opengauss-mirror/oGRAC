@@ -1,6 +1,4 @@
-# !/usr/bin/env python
-# -*- coding:utf-8 -*-
-# coding: UTF-8
+#!/usr/bin/env python3
 
 import sys
 import subprocess
@@ -11,9 +9,20 @@ import socket
 import pwd
 import json
 from abc import abstractmethod
-sys.path.append("/opt/ograc/action/ograc")
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+_ACTION_DIR = os.path.abspath(os.path.join(_INSPECTION_DIR, ".."))
+_OGRAC_ACTION_DIR = os.path.join(_ACTION_DIR, "ograc")
+sys.path.insert(0, _OGRAC_ACTION_DIR)
+sys.path.insert(0, _INSPECTION_DIR)
+
+from config import get_config
 from ograc_funclib import Execution
 from ograc_funclib import get_abs_path
+
+_cfg = get_config()
+_paths = _cfg.paths
 
 sys.dont_write_bytecode = True
 
@@ -25,8 +34,6 @@ CURRENT_OS = platform.system()
 
 gPyVersion = platform.python_version()
 
-# Python3 does not support imp module but importlib
-# Python2.6.9 and below does not support importlib module but imp
 if gPyVersion[0] == "3":
     import importlib
 
@@ -44,7 +51,6 @@ class CheckContext:
         """
         Constructor
         """
-        # Initialize the self.clusterInfo variable
         curr_path = os.path.realpath(__file__)
         self.base_path = os.path.join(os.path.split(curr_path)[0], 'inspection')
         self.user = None
@@ -67,8 +73,8 @@ class CheckContext:
         self.local_nodes = None
         self.mpprc = None
         self.check_id = None
-        self.app_path = "/opt/ograc/ograc/server/"
-        self.data_path = "/mnt/dbdata/local/ograc/tmp/data/"
+        self.app_path = _paths.ograc_server + "/"
+        self.data_path = _paths.data_path + "/"
         self.out_path = None
         self.log_file = None
         self.tmp_path = "/tmp"
@@ -76,9 +82,6 @@ class CheckContext:
         self.cluster_ver = ""
 
 
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Exception class
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 class CheckException(Exception):
     '''
     base class of exception
@@ -118,7 +121,6 @@ def get_current_user():
     '''
     get current user
     '''
-    # Get the current user
     return pwd.getpwuid(os.getuid())[0]
 
 
@@ -126,11 +128,9 @@ def check_legality(parameter_string):
     '''
     Check for illegal characters
     '''
-    # the list of invalid characters
     value_check_list = ["|", ";", "&", "$", "<", ">", "`", "\\", "'", "\"",
                         "{", "}", "(", ")", "[", "]", "~", "*",
                         "?", "!", "\n", " "]
-    # judge illegal characters
     for ch in value_check_list:
         if parameter_string.find(ch) >= 0:
             msg = "the parameter value contains invalid characters: '%s'" % ch
@@ -156,7 +156,6 @@ class SharedFuncs:
             if not isinstance(state, int):
                 return -1, "parameter [array] is illegal"
 
-        # prevent parameter anomalies
         if max(array) > len(cmd.split("|")) - 1:
             return -1, "parameter [array] is illegal"
 
@@ -164,18 +163,14 @@ class SharedFuncs:
             cmd = "source '%s'; %s" % (mpprc_file, cmd)
 
         cmd = cmd + "; echo ${PIPESTATUS[*]}"
-        # change user but can not be root user
         if (user and user != get_current_user()):
             cmd = "su -s /bin/bash - %s -c 'source ~/.bashrc; %s'" % (user, cmd)
 
-        # execute cmd
         p = subprocess.Popen(['bash', '-c', cmd],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
 
-        # get normal and abnormal output
         (stdoutdata, stderrdata) = p.communicate()
-        # get the overall execution status
         status = p.returncode
 
         if gPyVersion[0] == "3":
@@ -188,7 +183,6 @@ class SharedFuncs:
             stderrdata = stderrdata.decode()
 
         if not status:
-            # all states executed are displayed in normal output
             for state in array:
                 state_str = stdoutdata.strip("").strip("\n")
                 state_str = state_str.split("\n")[-1].strip().split()[state]
@@ -198,12 +192,10 @@ class SharedFuncs:
                     state_out = stdoutdata.strip().strip("\n")
                     state_out = "".join(state_out.split("\n")[:-1])
                     return state_int, state_out + stderrdata
-            # no exception return
             result = stdoutdata.strip("").strip("\n").split("\n")[:-1]
             return 0, "\n".join(result)
 
         else:
-            # overall state abnormality
             return status, stdoutdata + stderrdata
 
     def get_abs_path(self, _file):
@@ -336,7 +328,6 @@ class SharedFuncs:
         if not (dbuser and dbpwd):
             raise Exception("[ERROR]: Username and password cannot be empty")
         check_legality(dbuser)
-        # execute the command to verify the database connection
         status, output = self.run_sql_cmd(sql,
                                         dbuser,
                                         dbpwd,
@@ -455,12 +446,9 @@ class LocalItemResult(object):
             rst = "\033[0;32m%s\033[0m" % ResultStatus.OK
 
         detail_result["data"]["RESULT"] = self.rst
-        # because of the python version of the problem, you need to
-        # deal with the character format separately
         detail_result["data"]["HOST"] = self.host
         val = json.loads(self.val)
 
-        # modify the encoding format to utf-8
         detail_result["data"]["VALUE"] = val
         detail_result["data"]["EXPECT"] = self.epv
         detail_result["data"]["SUGGEST"] = self.sug
@@ -556,7 +544,6 @@ class BaseItem(object):
         self.result.sug = self.suggestion
         self.result.epv = self.epv
         self.result.des = self.title
-        # new host without cluster installed
         if (not self.user):
             self.host = socket.gethostname()
             self.result.host = socket.gethostname()
@@ -593,20 +580,17 @@ class BaseItem(object):
         except_val = {}
         self.init_form(context)
         try:
-            # Perform the inspection
             logger.info(f"Start to run {self.name}")
             self.do_check()
             logger.info(f"finish to run {self.name}")
         except CheckNAException:
             self.result.rst = ResultStatus.NA
-        # An internal error occurred while executing code
         except Exception:
             except_val["except"] = str(Exception)
             self.result.rst = ResultStatus.ERROR
             self.result.val = json.dumps(except_val)
             logger.error("Exception occur when running {}:\n{}".format(self.name, str(Exception)))
         finally:
-            # output result
             content = self.result.output(context.out_path)
             self.result.to_json()
         return content

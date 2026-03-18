@@ -1,11 +1,15 @@
-#!/usr/bin/python3
-# coding=utf-8
+#!/usr/bin/env python3
 import argparse
 import datetime
 import json
 import os
 import stat
 import time
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 from utils.config.rest_constant import SecresAccess, HealthStatus, ReplicationRunningStatus, MetroDomainRunningStatus, \
     ConfigRole, Constant
@@ -17,7 +21,7 @@ from get_config_info import get_env_info
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 FULL_SYNC_PROGRESS = os.path.join(CURRENT_PATH, "../../../config/full_sync_progress.json")
-ZSQL_INI_PATH = '/mnt/dbdata/local/ograc/tmp/data/cfg/ogsql.ini'
+ZSQL_INI_PATH = _paths.ogsql_ini
 LOCK_INSTANCE = "lock instance for backup;"
 UNLOCK_INSTANCE = "unlock instance;"
 FLUSH_TABLE = "flush table with read lock;"
@@ -41,10 +45,7 @@ class FullSyncRepPair(DRDeploy):
 
     @staticmethod
     def check_cluster_status():
-        """
-        cms 命令拉起oGRAC后检查集群状态
-        :return:
-        """
+        """Check cluster status after starting oGRAC via CMS."""
         check_time = 100
         LOG.info("Check ograc status.")
         cmd = "su -s /bin/bash - ograc -c \"cms stat | " \
@@ -78,28 +79,7 @@ class FullSyncRepPair(DRDeploy):
             raise Exception(err_msg)
 
     def record_deploy_process_init(self):
-        """
-        当前部署状态记录文件初始化
-        状态文件.json:
-            {
-                data:
-                {
-                    sync_metro_fs_pair: default/start/running/success/failed,
-                    sync_rep_meta_fs_pair: default/start/running/success/failed,
-                    sync_rep_page_fs_pair: default/start/running/success/failed,
-                    standby_install: default/start/running/success/failed,
-                    standby_start: default/start/running/success/failed,
-                    ...
-                    dr_deploy: default/start/running/success/failed
-                }
-                error:
-                {
-                    "code": 0,  错误码：0 正常，其他不正常
-                    "description": "xxx" 异常情况描述，code=0时表示无异常
-                }
-            }
-        :return:
-        """
+        """Initialize the full-sync progress record file."""
         active_record_dict = {
             "do_lock_instance_for_backup": "default",
             "do_full_check_point": "default",
@@ -136,17 +116,7 @@ class FullSyncRepPair(DRDeploy):
             json.dump(result, fp, indent=4)
 
     def do_full_sync(self, pair_id: str) -> None:
-        """
-        step:
-            1、根据pair_id查询当前pair状态
-            2、pair为从端可读写状态，启用从端写资源保护，触发全量同步
-            3、记录full_sync_process.json文件
-            {
-
-            }
-        :param pair_id:
-        :return:
-        """
+        """Trigger full sync: enable secondary write lock and start full copy."""
         remote_replication_pair_info = self.dr_deploy_opt.query_remote_replication_pair_info_by_pair_id(
             pair_id=pair_id)
         secres_access = remote_replication_pair_info.get("SECRESACCESS")
@@ -157,11 +127,7 @@ class FullSyncRepPair(DRDeploy):
                                                                        is_full_copy=True)
 
     def query_full_sync_status(self, pair_id: str) -> tuple:
-        """
-        查询当前同步状态
-        :param pair_id:
-        :return:
-        """
+        """Query current full-sync status for a replication pair."""
         remote_replication_pair_info = self.dr_deploy_opt.query_remote_replication_pair_info_by_pair_id(
             pair_id=pair_id)
         replication_progress = remote_replication_pair_info.get("REPLICATIONPROGRESS")
@@ -244,18 +210,7 @@ class FullSyncRepPair(DRDeploy):
         self.record_deploy_process("standby_start", "success")
 
     def full_sync_active(self):
-        """
-        触发全量同步
-        主端：
-            1、检查运行状态和角色
-            2、加备份锁
-            3、flush table
-            4、full check point
-            5、全量同步
-            6、全量同步时间过长，触发增量同步
-            7、解备份锁
-        :return:
-        """
+        """Active-site full sync: lock, checkpoint, full sync, split, unlock."""
         domain_id = self.dr_deploy_info.get("hyper_domain_id")
         domain_info = self.dr_deploy_opt.query_hyper_metro_domain_info(domain_id=domain_id)
         running_status = domain_info.get("RUNNINGSTATUS")
@@ -296,14 +251,7 @@ class FullSyncRepPair(DRDeploy):
         self.do_unlock_instance_for_backup()
 
     def full_sync_standby(self):
-        """
-        备端：
-            1、检查运行状态和角色
-            2、查看cms状态，最后状态变化时间
-            3、查询恢复状态，如果是在线并且最后状态变化时间大于同步完成的时间，直接返回
-            4、启动oGRAC
-        :return:
-        """
+        """Standby-site full sync: check status, wait for sync, restart oGRAC."""
         domain_id = self.dr_deploy_info.get("hyper_domain_id")
         domain_info = self.dr_deploy_opt.query_hyper_metro_domain_info(domain_id=domain_id)
         running_status = domain_info.get("RUNNINGSTATUS")
@@ -339,11 +287,7 @@ class FullSyncRepPair(DRDeploy):
         self.query_ograc_disaster_recovery_status()
 
     def wait_rep_pair_sync_end(self, meta_access):
-        """
-        循环检查rep pair状态
-        :param meta_access:
-        :return:
-        """
+        """Poll replication pair status until both are read-write."""
         while True:
             _, page_pair_progress, page_access = self.query_full_sync_status(self.page_fs_pair_id)
             self.record_deploy_process("sync_rep_page_fs_pair", page_pair_progress)

@@ -1,21 +1,20 @@
+#!/usr/bin/env python3
+"""Deploy parameter validation."""
+
 import json
 import os
-
+import sys
 
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
-DEPLOY_PARAM_FILE = os.path.join(CUR_PATH, '../../config/deploy_param.json')
+sys.path.insert(0, CUR_PATH)
+from config import cfg as _cfg
+_paths = _cfg.paths
+
+DEPLOY_PARAM_FILE = _paths.deploy_param_json
 CHECK_LIST = [
-    "cluster_id",
-    "cluster_name",
-    "storage_dbstor_fs",
-    "storage_dbstor_page_fs",
-    "storage_share_fs",
-    "storage_archive_fs",
-    "storage_metadata_fs",
-    "mes_type",
-    "mes_ssl_switch",
-    "link_type",
-    "db_type"
+    "cluster_id", "cluster_name", "storage_dbstor_fs", "storage_dbstor_page_fs",
+    "storage_share_fs", "storage_archive_fs", "storage_metadata_fs",
+    "mes_type", "mes_ssl_switch", "link_type", "db_type",
 ]
 
 
@@ -28,7 +27,9 @@ def read_file(file_path):
 def check_deploy_param():
     local_deploy_params = read_file(DEPLOY_PARAM_FILE)
     storage_metadata_fs = local_deploy_params.get("storage_metadata_fs")
-    remote_deploy_file = f"/mnt/dbdata/remote/metadata_{storage_metadata_fs}/deploy_param.json"
+    remote_deploy_file = os.path.join(
+        _paths.data_root, "remote", f"metadata_{storage_metadata_fs}", "deploy_param.json"
+    )
     if not os.path.exists(remote_deploy_file):
         err_msg = "%s is not exists, please check:\n" \
                   "\t1、node 0 has been successfully installed.\n" \

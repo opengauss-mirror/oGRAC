@@ -1,58 +1,73 @@
+#!/usr/bin/env python3
+"""DSS upgrade rollback check."""
+
 import os
 import sys
 import traceback
-from file_utils import read_dss_file
-CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(CURRENT_PATH, "..", ".."))
-from update_config import _exec_popen
-from dss.dssctl import LOG
+
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CUR_DIR)
+if PARENT_DIR not in sys.path:
+    sys.path.insert(0, PARENT_DIR)
+
+from log_config import get_logger
+from common.dss_cmd import vg_list_files
+from common.file_utils import read_dss_file
+
+LOG = get_logger()
+
+UPGRADE_VG_PATH = "+vg1/upgrade"
+STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
-class DssLocalStatusfile(object):            
-    def rollback_check_files(self, file):
-        vg_file_path = os.path.join("+vg1/upgrade/cluster_and_node_status", file)
-        context = read_dss_file(vg_file_path)
-        if context != "commit":
-            raise Exception(f"Rolling upgrade is currently in progress, \
-                            Offline rollback cannot be performed by {file}.") 
+class DssRollbackChecker:
+    """Check if offline rollback can be executed."""
 
-    def check_vg_to_path(self, path):
-        cmd = f"dsscmd ls -p {path}"
-        code, stdout, stderr = _exec_popen(cmd)
+    def _check_file_content(self, file_name):
+        """Check if status file content is 'commit'."""
+        vg_path = os.path.join(STATUS_VG_PATH, file_name)
+        content = read_dss_file(vg_path)
+        if content != "commit":
+            raise RuntimeError(
+                f"Rolling upgrade in progress, offline rollback blocked by {file_name}"
+            )
 
-        if code != 0:
+    def _check_vg_directory(self, path):
+        """Check upgrade status in VG directory."""
+        lines = vg_list_files(path)
+        if lines is None or len(lines) == 0:
             return
-        
-        lines = stdout.strip().splitlines()
-        if len(lines) < 2:
-            raise Exception(f"file is not complete")
-    
+
         for line in lines:
-            if "written_size" not in line:
-                if "updatesys.success" in line or "updatesys.failed" in line:
-                    values = line.strip().split()
-                    raise Exception(f"Rolling upgrade is currently in progress, \
-                                    Offline rollback cannot be performed by {values[5]}.")
-                if "cluster_status.txt" in line:
-                    values = line.strip().split()
-                    self.rollback_check_files(values[5])
-        
-    def upgrade_local_status_file_by_dss(self):
-        self.check_vg_to_path("+vg1/upgrade")
-        self.check_vg_to_path("+vg1/upgrade/cluster_and_node_status")
-        
- 
+            if "written_size" in line:
+                continue
+            parts = line.strip().split()
+            file_name = parts[5] if len(parts) >= 6 else parts[-1] if parts else ""
+
+            if "updatesys.success" in line or "updatesys.failed" in line:
+                raise RuntimeError(
+                    f"Rolling upgrade in progress, offline rollback blocked by {file_name}"
+                )
+            if "cluster_status.txt" in line:
+                self._check_file_content(file_name)
+
+    def check(self):
+        """Execute rollback check."""
+        self._check_vg_directory(UPGRADE_VG_PATH)
+        self._check_vg_directory(STATUS_VG_PATH)
+        LOG.info("Rollback pre-check passed")
+
+
 def main():
-    dss_local_status = DssLocalStatusfile()
     try:
-        dss_local_status.upgrade_local_status_file_by_dss()
+        DssRollbackChecker().check()
     except Exception as e:
-        LOG.error(f"Failed with local file when upgrade {traceback.format_exc(limit=-1)}")
-        raise e
+        LOG.error(f"Rollback check failed: {traceback.format_exc(limit=-1)}")
+        raise
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as err:
-        exit(str(err))
+        sys.exit(str(err))

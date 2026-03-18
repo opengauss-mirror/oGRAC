@@ -1,53 +1,15 @@
-# -*- coding: UTF-8 -*-
+#!/usr/bin/env python3
+"""Deploy parameter lookup for docker module."""
 import sys
 import os
-import json
 
-INSTALL_SCPRIT_DIR = os.path.dirname(os.path.abspath(__file__))
-PKG_DIR = os.path.abspath(os.path.join(INSTALL_SCPRIT_DIR, "../.."))
-INSTALL_CONFIG_FILE = os.path.join(INSTALL_SCPRIT_DIR, "../ograc/install_config.json")
-CONFIG_PARAMS_FILE = os.path.join(PKG_DIR, "config", "deploy_param.json")
-ENV_FILE = os.path.join(PKG_DIR, "action", "env.sh")
-info = {}
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, CUR_DIR)
 
-with open(CONFIG_PARAMS_FILE, encoding="utf-8") as f:
-    _tmp = f.read()
-    info = json.loads(_tmp)
-
-
-with open(ENV_FILE, "r", encoding="utf-8") as f:
-    env_config = f.readlines()
-
-
-with open(INSTALL_CONFIG_FILE, "r", encoding="utf-8") as f:
-    install_config = json.loads(f.read())
-
-
-def get_value(param):
-    if param == "deploy_user":
-        for line in env_config:
-            if line.startswith("ograc_user"):
-                return line.split("=")[1].strip("\n").strip('"')
-    if param == "deploy_group":
-        for line in env_config:
-            if line.startswith("ograc_group"):
-                return line.split("=")[1].strip("\n").strip('"')
-    if param == "M_RUNING_MODE":
-        return install_config.get("M_RUNING_MODE")
-
-    keys = param.split('.')
-    value = info
-    try:
-        for key in keys:
-            if value == "":
-                return value
-            value = value.get(key, "")
-        return value
-    except (KeyError, TypeError):
-        return ""
+from config import get_value
 
 
 if __name__ == "__main__":
-    _param = sys.argv[1]
+    _param = sys.argv[1] if len(sys.argv) > 1 else ""
     res = get_value(_param)
     print(res)

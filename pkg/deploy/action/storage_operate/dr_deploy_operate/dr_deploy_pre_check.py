@@ -1,5 +1,4 @@
-#!/usr/bin/python
-# coding=utf-8
+#!/usr/bin/env python3
 import copy
 import json
 import os
@@ -8,6 +7,10 @@ import re
 import shutil
 import sys
 import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 from pre_install import PreInstall
 from logic.storage_operate import StorageInf
@@ -18,29 +21,21 @@ from utils.config.rest_constant import SystemRunningStatus, \
     RepFileSystemNameRule
 from om_log import LOGGER as LOG
 from get_config_info import get_env_info
-from obtains_lsid import LSIDGenerate
+from ograc_common.obtains_lsid import LSIDGenerate
 from logic.common_func import exec_popen, read_json_config, write_json_config, get_status
 
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 DR_DEPLOY_PARAM_FILE = os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json")
-DEPLOY_POLICY_FILE = os.path.join(CURRENT_PATH, "../../deploy_policy_config.json")
 DEFAULT_PARAM_FILE = os.path.join(CURRENT_PATH, "../../config_params.json")
 DR_PROCESS_RECORD_FILE = os.path.join(CURRENT_PATH, "../../../config/dr_process_record.json")
 OGRAC_STOP_SUCCESS_FLAG = os.path.join(CURRENT_PATH, "../../../config/.stop_success")
-DEPLOY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
-DEPLOY_POLICY_CONFIG_FILE = os.path.join(CURRENT_PATH, "../../deploy_policy_config.json")
+DEPLOY_PARAM_FILE = _paths.deploy_param_json
 DOMAIN_LIMITS = 4
 
 
 def get_config_values(key):
     default_config = read_json_config(DEFAULT_PARAM_FILE)
-    if default_config.get("deploy_policy") != "default":
-        deploy_policy = default_config["deploy_policy"]
-        policy_config = read_json_config(DEPLOY_POLICY_CONFIG_FILE).get(deploy_policy)
-        if policy_config:
-            if key in policy_config["config"]:
-                return policy_config["config"][key]
     return default_config.get(key, "")
 
 
@@ -67,10 +62,7 @@ class DRDeployPreCheck(object):
 
     @staticmethod
     def clean_env():
-        """
-        部署前清理环境
-        :return:
-        """
+        """Clean up environment before deployment."""
         file_list = [DR_PROCESS_RECORD_FILE, DR_DEPLOY_PARAM_FILE, OGRAC_STOP_SUCCESS_FLAG]
         for file in file_list:
             if os.path.exists(file):
@@ -78,10 +70,7 @@ class DRDeployPreCheck(object):
 
     @staticmethod
     def check_dr_process():
-        """
-        检查当前环境是否在进行容灾搭建、全量同步、容灾拆除操作。存在报错退出
-        :return:
-        """
+        """Check if DR deploy/sync/undeploy is already running."""
         deploy_proc_name = "/storage_operate/dr_operate_interface.py deploy"
         check_deploy_cmd = "ps -ef | grep -v grep | grep '%s'" % deploy_proc_name
         undeploy_proc_name = "/storage_operate/dr_operate_interface.py undeploy"
@@ -102,10 +91,7 @@ class DRDeployPreCheck(object):
             raise Exception(err_msg)
 
     def check_master_ograc_status(self) -> list:
-        """
-        主端检查oGRAC集群状态
-        :return:
-        """
+        """Check active-site oGRAC cluster status."""
         err_msg = []
         node_id = self.deploy_params.get("node_id")
         cmd = "su -s /bin/bash - %s -c \"cms stat | " \
@@ -123,16 +109,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_storage_system_info(self) -> list:
-        """
-        检查存储系统状态:
-        HEALTHSTATUS：系统健康状态。参数取值：1：正常；2：故障。
-        RUNNINGSTATUS：系统运行状态。参数取值：1：正常；3：未运行；12：正在上电；47：正在下电；51：正在升级
-        PRODUCTVERSION：产品版本。
-        PRODUCTMODE：产品型号。
-        pointRelease: 当前版本版本号
-        productModeString: 产品型号字符串
-        :return: list
-        """
+        """Check storage system health and running status."""
         LOG.info("Check storage system info start.")
         err_msg = []
         system_info = self.deploy_operate.query_storage_system_info()
@@ -160,13 +137,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_remote_device_info(self) -> list:
-        """
-        检查远端设备状态：
-        HEALTHSTATUS: 健康状态。参数取值：1：正常；2：故障；14 ：失效。
-        RUNNINGSTATUS: 运行状态。参数取值：10：已连接；11：未连接；31：已禁用；101：正在连接。
-        DEVICEMODEL：远端设备型号。
-        :return: bool
-        """
+        """Check remote device health and running status."""
         LOG.info("Check remote device info start.")
         err_msg = []
         remote_esn = self.remote_conf_params.get("esn")
@@ -191,12 +162,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_file_system_status(self, fs_name: str, vstore_id: str) -> list:
-        """
-        检查主端文件系统健康状态，当前如果是备端直接返回
-        HEALTHSTATUS：健康状态。参数取值：1： 正常
-        RUNNINGSTATUS：运行状态。参数取值：27：在线；28：不在线；35：失效；53：初始化中
-        :return: bool
-        """
+        """Check active-site filesystem health and running status."""
         LOG.info("Check master filesystem[%s] status start.", fs_name)
         file_system_info = self.storage_opt.query_filesystem_info(fs_name, vstore_id)
         err_msg = []
@@ -216,10 +182,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_standby_pool_info(self):
-        """
-        检查远端存储池信息
-        :return:
-        """
+        """Check remote (standby) storage pool info."""
         err_msg = []
         if self.site == "standby":
             return err_msg
@@ -245,12 +208,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_standby_filesystem(self) -> list:
-        """
-        检查备端ulog文件系统所在租户下文件系统个数，要求为空。当前如果是主端直接返回
-        检查备站点dbstor page文件系统是否存在
-        元数据非归一场景检查元数据文件系统是否存在
-        :return:
-        """
+        """Check standby filesystems: vstore should be empty, page/metadata fs should not exist."""
         err_msg = []
         if self.site == "standby":
             return err_msg
@@ -302,12 +260,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_license_effectivity(self) -> list:
-        """
-        检查license有效性：远程复制（HyperReplication）和NAS基础特性（NAS Foundation）有效
-        data 返回json array 特性的license状态信息。参数取值：各个json对象由特性名称、特性状态键值对组成。
-        License的状态枚举：1：有效；2：过期；3：无效。备注：license过期后，有60天试用期。
-        :return: bool
-        """
+        """Check license validity for HyperReplication and NAS Foundation."""
         LOG.info("Check license effectivity start.")
         license_info = self.deploy_operate.query_license_info()
         nas_foundation = False
@@ -326,10 +279,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_disaster_exist(self) -> list:
-        """
-        检查当前文件系统，租户。双活域是否存在，存在就报错
-        :return: bool
-        """
+        """Check if metro domain, vstore pair, or replication pair already exist."""
         err_msg = []
         if self.site == "standby":
             return err_msg
@@ -446,10 +396,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def check_active_exist_params(self):
-        """
-        主端检查配置文件与安装部署文件信息是否一致
-        :return:
-        """
+        """Verify active-site config matches the deployed parameters."""
         err_msg = []
         check_list = [
             "cluster_id",
@@ -476,12 +423,7 @@ class DRDeployPreCheck(object):
         return err_msg
 
     def params_parse(self):
-        """
-        检查参数：
-           1、检查本端阵列登录ip、用户、阵列是否正确
-           2、检查配置文件中cluster name是否一致
-        :return:
-        """
+        """Parse and validate configuration parameters."""
         LOG.info("Parse config params start.")
         if not os.path.isfile(self.conf):
             err_msg = "Config file[%s] is not exist." % self.conf
@@ -508,18 +450,10 @@ class DRDeployPreCheck(object):
             })
         self.remote_conf_params = copy.deepcopy(conf_params)
         self.remote_conf_params.update(remote_dr_deploy_param)
-        deploy_policy = self.local_conf_params.get("deploy_policy", "default")
-        if deploy_policy != "default":
-            deploy_policy_param = read_json_config(DEPLOY_POLICY_FILE)
-            new_config = deploy_policy_param.get(deploy_policy).get("config")
-            self.local_conf_params.update(new_config)
         LOG.info("Parse config params end.")
 
     def record_config(self):
-        """
-        记录配置信息到配置文件
-        :return:
-        """
+        """Save parsed configuration to the DR deploy config file."""
         dr_params = {
             "dm_ip": self.local_conf_params.get("dm_ip"),
             "dm_user": self.local_conf_params.get("dm_user"),
@@ -565,7 +499,7 @@ class DRDeployPreCheck(object):
         if self.site == "standby":
             return check_result
         if not os.path.exists(os.path.join(CURRENT_PATH, "../../../config/deploy_param.json")):
-            shutil.copy("/opt/ograc/config/deploy_param.json", os.path.join(CURRENT_PATH, "../../../config"))
+            shutil.copy(_paths.deploy_param_json, os.path.join(CURRENT_PATH, "../../../config"))
             return check_result
         self.deploy_params = read_json_config(DEPLOY_PARAM_FILE)
         check_result.extend(self.check_master_ograc_status())
@@ -583,7 +517,7 @@ class DRDeployPreCheck(object):
         return check_result
 
     def check_nfs_lif_info(self):
-        """检查share、archive、meta文件系统是否存在，逻辑端口是否存在, 检查nfs协议是否开启"""
+        """Check share/archive/meta filesystem and logical port existence, verify NFS enabled."""
         check_result = []
         err_msg = "Param [%s: %s] is incorrect."
         db_type = self.local_conf_params.get("db_type")
@@ -618,16 +552,7 @@ class DRDeployPreCheck(object):
         return check_result
 
     def check_standby_params(self):
-        """
-        备端搭建前检查参数：
-            1、检查dbstor ulog文件系统所在租户id是否一致。租户是否存在
-            2、检查share、archive、meta文件系统是否存在
-            3、检查逻辑端口是否存在
-            4、检查文件系统与逻辑端口是否在同一租户
-            5、检查share租户是否开启nfs服务
-            6、storage_vlan_ip连通性检查
-        :return:
-        """
+        """Pre-check standby params: vstore consistency, filesystem/port existence, NFS service."""
         check_result = []
         if self.site == "active":
             return check_result
@@ -668,8 +593,8 @@ class DRDeployPreCheck(object):
         conf_params = read_json_config(self.conf)
         if self.site == "active" or conf_params.get("ograc_in_container") != "0":
             return check_result
-        ograc_installed = os.path.isdir("/opt/ograc/image") and os.listdir("/opt/ograc/image")
-        og_om_installed = os.path.isdir("/opt/ograc/og_om") and os.listdir("/opt/ograc/og_om")
+        ograc_installed = os.path.isdir(_paths.image_dir) and os.listdir(_paths.image_dir)
+        og_om_installed = os.path.isdir(_paths.og_om_dir) and os.listdir(_paths.og_om_dir)
         if ograc_installed or og_om_installed:
             check_result.append("oGRAC standby has been installed, please check!")
         return check_result
@@ -710,9 +635,7 @@ class ParamCheck(object):
         self.dr_deploy_params = read_json_config(DR_DEPLOY_PARAM_FILE)
 
     def check_dm_pwd(self, dm_pwd: str) -> None:
-        """
-        检查DM密码是否正确，登录成功后退出
-        """
+        """Verify DM password by attempting login."""
         local_login_ip = self.dr_deploy_params.get("dm_ip")
         local_login_user = self.dr_deploy_params.get("dm_user")
         storage_operate = StorageInf((local_login_ip, local_login_user, dm_pwd))

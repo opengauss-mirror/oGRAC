@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import re
 import sys
@@ -10,9 +11,14 @@ from datetime import timezone
 import json
 
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(CUR_PATH)
+sys.path.insert(0, CUR_PATH)
+
+from config import get_config
 import log_tool
 from generate_html_results import GenHtmlRes
+
+_cfg = get_config()
+_paths = _cfg.paths
 
 LOG = log_tool.setup('om')
 
@@ -23,7 +29,7 @@ FAIL = 'fail'
 SUCCESS = 'success'
 SUCCESS_ENUM = [0, '0']
 OGSQL_IP = "127.0.0.1"
-DEPLY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
+DEPLY_PARAM_FILE = _paths.deploy_param_json
 LOG_DIRECTORY = f'{CUR_PATH}/inspection_task_log'
 
 
@@ -48,8 +54,7 @@ class InspectionTask:
         self.user_map = {
             'ograc': self.deply_user,
             'cms': self.deply_user,
-            'dbstor': self.deply_user,
-            'ogmgr': 'ogmgruser',
+            'ogmgr': _cfg.ogmgr_user,
             'og_om': 'root'
         }
 
@@ -133,11 +138,12 @@ class InspectionTask:
 
     @staticmethod
     def decrypt_password():
-        primary_keystore = "/opt/ograc/common/config/primary_keystore_bak.ks"
-        standby_keystore = "/opt/ograc/common/config/standby_keystore_bak.ks"
-        sys.path.append("/opt/ograc/action/dbstor")
+        primary_keystore = _paths.primary_keystore
+        standby_keystore = _paths.standby_keystore
+        _dbstor_action = os.path.abspath(os.path.join(CUR_PATH, "..", "ograc_common"))
+        sys.path.insert(0, _dbstor_action)
         from kmc_adapter import CApiWrapper
-        ogsql_ini_path = '/mnt/dbdata/local/ograc/tmp/data/cfg/ogsql.ini'
+        ogsql_ini_path = _paths.ogsql_ini
         kmc_decrypt = CApiWrapper(primary_keystore=primary_keystore, standby_keystore=standby_keystore)
         kmc_decrypt.initialize()
         ogsql_ini_data = file_reader(ogsql_ini_path)
@@ -149,7 +155,7 @@ class InspectionTask:
         finally:
             kmc_decrypt.finalize()
         split_env = os.environ['LD_LIBRARY_PATH'].split(":")
-        filtered_env = [single_env for single_env in split_env if "/opt/ograc/dbstor/lib" not in single_env]
+        filtered_env = [single_env for single_env in split_env if _paths.dbstor_lib not in single_env]
         os.environ['LD_LIBRARY_PATH'] = ":".join(filtered_env)
         return kmc_decrypt_pwd
 
@@ -160,6 +166,12 @@ class InspectionTask:
         """
         with open(self.inspection_json_file, encoding='utf-8') as file:
             inspection_map = json.load(file)
+
+        base_dir = os.path.dirname(os.path.abspath(self.inspection_json_file))
+        for key, detail in inspection_map.items():
+            fp = detail.get('inspection_file_path', '')
+            if fp and not os.path.isabs(fp):
+                detail['inspection_file_path'] = os.path.join(base_dir, fp)
 
         return inspection_map
 
@@ -211,7 +223,6 @@ class InspectionTask:
             temp_path = str(Path(self.audit_path + "/" + str(audit_list[0])))
             shutil.rmtree(temp_path)
             audit_list.pop(0)
-        # 生成html格式巡检结果
         GenHtmlRes(self.inspection_result, audit_file_path, node_info).generate_html_zh()
         GenHtmlRes(self.inspection_result, audit_file_path, node_info).generate_html_en()
 
@@ -333,12 +344,9 @@ def change_mode_back():
 
 
 def main(input_val):
-    # 运行期间修改日志路径为777，确保各模块可以在日志路径内创建日志文件
     os.chmod(LOG_DIRECTORY, 0o777)
     from declear_env import DeclearEnv
-    # 获取当前ograc容器
     current_env = DeclearEnv().get_env_type()
-    # 获取执行当前进程的用户名
     current_executor = DeclearEnv().get_executor()
     if current_env == "ograc":
         from inspection_ograc import oGRACInspection
