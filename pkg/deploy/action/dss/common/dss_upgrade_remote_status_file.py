@@ -1,86 +1,63 @@
+#!/usr/bin/env python3
+"""DSS upgrade remote status file management."""
+
 import os
 import sys
 import traceback
-from file_utils import pad_file_to_512
-CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(CURRENT_PATH, "..", ".."))
-from update_config import _exec_popen
-from dss.dssctl import LOG
+
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CUR_DIR)
+if PARENT_DIR not in sys.path:
+    sys.path.insert(0, PARENT_DIR)
+
+from log_config import get_logger
+from common.dss_cmd import vg_file_exists, vg_rm, vg_cp, vg_mkdir
+from common.file_utils import pad_file_to_512
+
+LOG = get_logger()
+
+UPGRADE_VG_PATH = "+vg1/upgrade"
+STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
-class DssRemoteStatusfile(object):
-    def __init__(self):
-        self.node_remote_status_file_name = None
-        self.node_remote_status_file_path = None
-        self.vg_remote_file_path = None   
-        
-    def file_exits(self, vg_path):
-        cmd = f'dsscmd ls -p {vg_path}'
-        code, _, _ = _exec_popen(cmd)
+class DssRemoteStatus:
+    """Remote status file upload management."""
 
-        if code == 0:
-            return True
-        return False
-    
-    def detele_file(self, vg_path):
-        cmd = f'dsscmd rm -p {vg_path}'
-        code, _, stderr = _exec_popen(cmd)
+    @staticmethod
+    def _upload_to_vg(local_path, vg_path):
+        """Upload file to VG (remove then copy)."""
+        if vg_file_exists(vg_path):
+            vg_rm(vg_path)
+        vg_cp(local_path, vg_path)
 
-        if code != 0:
-            raise Exception(f"`dsscmd rm remote` failed: {stderr}")
-                
-    def cp_remote_status_file_to_path(self):
-        
-        if self.file_exits(self.vg_remote_file_path):
-            self.detele_file(self.vg_remote_file_path)
-        cmd = f'dsscmd cp -s {self.node_remote_status_file_path} -d {self.vg_remote_file_path}'
-        code, _, stderr = _exec_popen(cmd)
-        
-        if code != 0:
-            raise Exception(f"`dsscmd cp remote` failed: {stderr}")
+    def upload(self, remote_status_file):
+        """Upload remote status file."""
+        file_name = os.path.basename(remote_status_file)
+        pad_file_to_512(remote_status_file)
 
-    def mkdir_vg_path(self):
-        if self.file_exits("+vg1/upgrade/cluster_and_node_status"):
-            return
-        cmd = f'dsscmd mkdir -p +vg1/upgrade -d cluster_and_node_status'
-        code, _, stderr = _exec_popen(cmd)
-        
-        if code != 0:
-            raise Exception(f"`dsscmd mkdir remote` failed: {stderr}")
-    
-    def upgrade_remote_status_file_by_dss(self, remote_status_file):
         if "cluster_and_node_status" in remote_status_file:
-            self.node_remote_status_file_name = os.path.basename(remote_status_file)
-            self.node_remote_status_file_path = remote_status_file
-            self.vg_remote_file_path = os.path.join("+vg1/upgrade/cluster_and_node_status", 
-                                                    self.node_remote_status_file_name)
-            self.mkdir_vg_path()
-            pad_file_to_512(self.node_remote_status_file_path)
-            self.cp_remote_status_file_to_path()
+            vg_path = os.path.join(STATUS_VG_PATH, file_name)
+            if not vg_file_exists(STATUS_VG_PATH):
+                vg_mkdir(UPGRADE_VG_PATH, "cluster_and_node_status")
         else:
-            self.node_remote_status_file_name = os.path.basename(remote_status_file)
-            self.node_remote_status_file_path = remote_status_file
-            self.vg_remote_file_path = os.path.join("+vg1/upgrade", self.node_remote_status_file_name)
+            vg_path = os.path.join(UPGRADE_VG_PATH, file_name)
 
-            pad_file_to_512(self.node_remote_status_file_path)
-            self.cp_remote_status_file_to_path()
-        return
+        self._upload_to_vg(remote_status_file, vg_path)
+        LOG.info(f"Remote status uploaded: {file_name}")
 
 
 def main():
-    dss_remote_status = DssRemoteStatusfile()
-    if len(sys.argv) < 1:
-        raise Exception("remote not input")
-    input_file = sys.argv[1]
+    if len(sys.argv) < 2:
+        raise RuntimeError("Usage: dss_upgrade_remote_status_file.py <file>")
     try:
-        dss_remote_status.upgrade_remote_status_file_by_dss(input_file)
+        DssRemoteStatus().upload(sys.argv[1])
     except Exception as e:
-        LOG.error(f"Failed to input file when upgrade {traceback.format_exc(limit=-1)}")
-        raise e
+        LOG.error(f"Failed to upload status: {traceback.format_exc(limit=-1)}")
+        raise
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as err:
-        exit(str(err))
+        sys.exit(str(err))

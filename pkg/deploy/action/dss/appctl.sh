@@ -1,168 +1,59 @@
 #!/bin/bash
 ################################################################################
-# 【功能说明】
-# 1.appctl.sh由管控面调用
-# 2.完成如下流程
-#     服务初次安装顺序:pre_install->install->start->check_status
-#     服务带配置安装顺序:pre_install->install->restore->start->check_status
-#     服务卸载顺序:stop->uninstall
-#     服务带配置卸载顺序:backup->stop->uninstall
-#     服务重启顺序:stop->start->check_status
-
-#     服务A升级到B版本:pre_upgrade(B)->stop(A)->update(B)->start(B)->check_status(B)
-#                      update(B)=备份A数据，调用A脚本卸载，调用B脚本安装，恢复A数据(升级数据)
-#     服务B回滚到A版本:stop(B)->rollback(B)->start(A)->check_status(A)->online(A)
-#                      rollback(B)=根据升级失败标志调用A或是B的卸载脚本，调用A脚本安装，数据回滚特殊处理
-# 3.典型流程路线：install(A)-upgrade(B)-upgrade(C)-rollback(B)-upgrade(C)-uninstall(C)
-# 【返回】
-# 0：成功
-# 1：失败
+# DSS 部署入口（重构版）
 #
-# 【注意事项】
-# 1.所有的操作需要支持失败可重入
+# 【重构说明】
+# 原 appctl.sh 约 168 行 shell 代码，现精简为薄壳入口：
+#   1. 路径解耦: 所有路径通过 dss_config.json 配置
+#   2. Python 化: 核心逻辑全部在 dss_deploy.py 中
+#
+# 【调用方式】
+#   sh appctl.sh <action> [args...]
 ################################################################################
+
 set +x
-#当前路径
-CURRENT_PATH=$(dirname $(readlink -f "$0"))
+set -e -u
 
-#脚本名称
-PARENT_DIR_NAME=$(pwd | awk -F "/" '{print $NF}')
-SCRIPT_NAME=${PARENT_DIR_NAME}/$(basename "$0")
-DSS_SOURCE=${CURRENT_PATH}/../../dss
+CURRENT_PATH=$(dirname "$(readlink -f "$0")")
+SCRIPT_NAME="dss/$(basename "$0")"
 
-# We must get vg info from 
-CONFIG_FILE=${CURRENT_PATH}/../../config/deploy_param.json
-dss_scripts=/opt/ograc/action/dss
+# ---- 读取配置路径 ----
+if ! eval "$(python3 "${CURRENT_PATH}/config.py" --shell-env)"; then
+    echo "Failed to resolve DSS environment from config_params_lun.json/module_config." >&2
+    exit 1
+fi
 
-#依赖文件
-source "${CURRENT_PATH}"/../log4sh.sh
-source "${CURRENT_PATH}"/../env.sh
+LOG_FILE="${DSS_LOG_DIR}/dss_deploy.log"
 
-function usage()
-{
-    echo "Usage: ${0##*/} {start|startup|shutdown|stop|install|uninstall|pre_upgrade|
-                           upgrade_backup|upgrade|rollback|check_status|init_container}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-    return 1
+# ---- 确保日志目录存在 ----
+mkdir -p "${DSS_LOG_DIR}" 2>/dev/null || true
+if [ ! -f "${LOG_FILE}" ]; then
+    touch "${LOG_FILE}" 2>/dev/null || true
+    chmod 640 "${LOG_FILE}" 2>/dev/null || true
+fi
+
+# ---- 用法提示 ----
+usage() {
+    echo "Usage: ${0##*/} {start|stop|install|uninstall|pre_install|" \
+         "pre_upgrade|check_status|upgrade|rollback|upgrade_backup}" \
+         "[Line:${LINENO}, File:${SCRIPT_NAME}]"
+    exit 1
 }
 
-function log() {
-	printf "[%s] %s\n" "`date -d today \"+%Y-%m-%d %H:%M:%S.%N\"`" "$1"
-}
-
-# 通用入口
-function do_deploy()
-{
-    local action=$1
-    local mode=$2
-    su -s /bin/bash - "${ograc_user}" -c "python3 -B ${CURRENT_PATH}/dssctl.py ${action} ${mode}"
-    ret=$?
-    if [ $ret -ne 0 ]; then
-        echo "Execute ${COMPONENTNAME} dssctl.py return ${ret}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-        return 1
-    fi
-    return 0
-}
-
-function permission_opt() {
-    chmod 500 "${DSS_SOURCE}"/bin/*
-    chown -hR "${ograc_user}":"${ograc_group}" "${DSS_SOURCE}"
-    chown -hR "${ograc_user}":"${ograc_group}" "${CURRENT_PATH}"/*
-    chown root:root "${CURRENT_PATH}"/appctl.sh
-    if [[ ! -d /opt/ograc/log/dss ]]; then
-        mkdir -p /opt/ograc/log/dss
-    fi
-    touch /opt/ograc/log/dss/dss_deploy.log
-    chmod -R 750 /opt/ograc/log/dss/
-    chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/log/dss/
-    if [[ ! -d /opt/ograc/dss/ ]]; then
-        mkdir -m 750 -p /opt/ograc/dss/
-    fi
-    chown -hR "${ograc_user}":"${ograc_group}" /opt/ograc/dss/
-}
-pkg/src/server/srv_instance.hpkg/src/server/srv_instance.hpkg/src/server/srv_instance.h
-function copy_dss_scripts()
-{
-    echo "copying the cms scripts"
-    clean_dss_scripts
-    mkdir -p ${dss_scripts}
-    chmod 755 ${dss_scripts}
-    cp -arf ${CURRENT_PATH}/* ${dss_scripts}/
-}
-
-function clean_dss_scripts()
-{
-    if [ -d ${dss_scripts} ]; then
-        rm -rf ${dss_scripts}
-    fi
-}
+# ---- 参数解析 ----
+if [ $# -lt 1 ]; then
+    usage
+fi
 
 ACTION=$1
-if [ $# -gt 1 ]; then
-    BACKUP_UPGRADE_PATH=$2
-    BIN_PATH=$2
-    START_MODE=$2
-fi
-if [ $# -gt 2 ]; then
-    BACKUP_UPGRADE_PATH=$3
+shift
+
+# ---- 调度到 Python 部署编排器 ----
+python3 "${CURRENT_PATH}/dss_deploy.py" "${ACTION}" "$@" 2>&1 | tee -a "${LOG_FILE}"
+exit_code=${PIPESTATUS[0]}
+
+if [ ${exit_code} -ne 0 ]; then
+    echo "DSS ${ACTION} failed (exit code: ${exit_code}). [Line:${LINENO}, File:${SCRIPT_NAME}]"
 fi
 
-
-function main()
-{
-    case "$ACTION" in
-        start)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        stop)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        pre_install)
-            permission_opt
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        install)
-            permission_opt
-            if [ ! -f /opt/ograc/installed_by_rpm ]; then
-                copy_dss_scripts
-            fi
-            do_deploy "--action=${ACTION} --mode=${START_MODE}"
-            exit $?
-            ;;
-        uninstall)
-            permission_opt
-            do_deploy "--action=${ACTION} --mode=${START_MODE}"
-            exit $?
-            ;;
-        backup)
-            exit 0
-            ;;
-        pre_upgrade)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        upgrade_backup)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        upgrade)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        rollback)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        check_status)
-            do_deploy "--action=${ACTION}"
-            exit $?
-            ;;
-        *)
-            usage
-            exit $?
-            ;;
-    esac
-}
-main
+exit ${exit_code}

@@ -6,11 +6,18 @@ import stat
 import subprocess
 from datetime import datetime
 
+CUR_PATH = os.path.dirname(os.path.realpath(__file__))
+import sys
+sys.path.insert(0, CUR_PATH)
+
+from config import get_config, get_value
 from docker_common.kubernetes_service import KubernetesService
-from get_config_info import get_value
+
+_cfg = get_config()
+_paths = _cfg.paths
 
 UNREADY_THRESHOLD_SECONDS = 600
-CUR_PATH = os.path.dirname(os.path.realpath(__file__))
+
 
 def _exec_popen(cmd, values=None):
     """
@@ -55,11 +62,11 @@ def get_pod_name_from_info(pod_info, pod_name):
 
     return None
 
+
 def backup_log():
-    """备份日志函数，unready的pod会被重复检测，只有首次打印备份日志，后续直接返回"""
-    healthy_file = '/opt/ograc/healthy'
+    """Backup log; unready pods are rechecked, only first prints backup log."""
+    healthy_file = _paths.healthy_file
     if os.path.exists(healthy_file):
-        # 读文件内参数
         with open(healthy_file, 'r') as fread:
             data = fread.read()
         try:
@@ -75,7 +82,6 @@ def backup_log():
         else:
             return
     else:
-        # healthy文件不存在说明pod状态异常，会有其他处理，直接返回
         return
 
     cluster_name = get_value('cluster_name')
@@ -87,6 +93,7 @@ def backup_log():
     ret_code, _, stderr = _exec_popen(cmd)
     if ret_code:
         raise Exception("failed to backup log. output:%s" % str(stderr))
+
 
 def monitor_pods(k8s_service, pod_name):
     pod = k8s_service.get_pod_by_name(pod_name)
@@ -110,12 +117,13 @@ def monitor_pods(k8s_service, pod_name):
                     k8s_service.delete_pod(name=pod_name, namespace=pod["metadata"]["namespace"])
                     return
 
+
 if __name__ == "__main__":
     pod_name = os.getenv("HOSTNAME")
     if not pod_name:
         exit(1)
 
-    kube_config_path = os.path.expanduser("~/.kube/config")
+    kube_config_path = _paths.kube_config
     k8s_service = KubernetesService(kube_config_path)
     service_name = k8s_service.get_service_by_pod_name(pod_name)
 

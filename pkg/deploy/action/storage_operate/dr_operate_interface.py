@@ -1,7 +1,12 @@
-#!/usr/bin/python
-# coding=utf-8
+#!/usr/bin/env python3
 import traceback
 import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import cfg as _cfg
+_paths = _cfg.paths
+
 from om_log import LOGGER as LOG
 from storage_operate.dr_deploy_operate.dr_deploy_pre_check import DRDeployPreCheck, ParamCheck
 from storage_operate.dr_deploy_operate.dr_deploy import DRDeploy

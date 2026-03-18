@@ -1,0 +1,17 @@
+FROM {{ .Values.images.ograc_base }}
+
+ARG user=ogdba
+RUN useradd -m ${user} -u 5000
+WORKDIR /ogdb/ograc_install
+RUN rm -rf *
+
+COPY oGRAC_2*_RELEASE.tgz .
+
+RUN tar -zxf oGRAC_2*_RELEASE.tgz && rm -rf oGRAC_2*_RELEASE.tgz && \
+    jq '. + {"ograc_in_container": "1", "deploy_mode": "file", "link_type": "0"}' ograc_connector/action/config_params_file.json > temp && mv temp ograc_connector/action/config_params_file.json && \
+    cd ograc_connector/action && sh appctl.sh install config_params_file.json
+
+RUN ln -s /ogdb/ograc_install/ograc_connector/action/docker/ograc_initer.sh /usr/local/bin/ograc-init && \
+    chmod +x /ogdb/ograc_install/ograc_connector/action/docker/ograc_initer.sh
+
+CMD ["ograc-init"]

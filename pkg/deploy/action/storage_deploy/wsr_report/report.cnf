@@ -1,0 +1,9 @@
+system_user_name="ogracdba"
+
+ogsql_user_name="sys"
+ogsql_user_passwd=""
+ogsql_server_ip="127.0.0.1"
+ogsql_server_port="1611"
+ogsql_snapshot_time=60
+# 该目录需要有system_user_name的写权限,不存在会自动创建
+report_output_dir="/home/regress"

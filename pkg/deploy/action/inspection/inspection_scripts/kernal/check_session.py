@@ -1,12 +1,16 @@
-#!/usr/bin/env python
-# coding: UTF-8
+#!/usr/bin/env python3
 import json
 import os
 import sys
-from og_check import CheckContext
-from og_check import BaseItem
-from og_check import ResultStatus
-sys.path.append('/opt/ograc/action/inspection')
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+sys.path.insert(0, _CUR_DIR)
+
+from ograc_check import CheckContext
+from ograc_check import BaseItem
+from ograc_check import ResultStatus
 from log_tool import setup
 
 
@@ -118,7 +122,6 @@ class CheckSession(BaseItem):
         self.result.rst = ResultStatus.OK
 
         self.check_session(vals)
-        # add resault to json
         self.result.val = json.dumps(vals)
 
 
@@ -126,13 +129,11 @@ if __name__ == '__main__':
     '''
     main
     '''
-    # check if user is root
-    ograc_log = setup('ograc') 
+    ograc_log = setup('ograc')
     if(os.getuid() == 0):
         ograc_log.error("Cannot use root user for this operation!")
         sys.exit(1)
 
-    # main function
     checker = CheckSession()
     checker_context = CheckContext()
     db_user = input()
@@ -144,5 +145,5 @@ if __name__ == '__main__':
     for argv in sys.argv[1:]:
         setattr(checker_context, context_attr[item_index], argv)
         item_index += 1
- 
+
     checker.run_check(checker_context, ograc_log)

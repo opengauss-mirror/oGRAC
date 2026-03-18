@@ -1,9 +1,14 @@
+#!/usr/bin/env python3
 import json
 import sys
 import pathlib
 import time
 import traceback
 import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 sys.path.append(str(pathlib.Path(CUR_PATH).parent))
@@ -24,33 +29,18 @@ class MigrateFileSystem(StorageInf):
             self.old_config_info = json.loads(read_helper(old_config))
 
     def umount_share_file_system(self, share_file_system_name):
-        """
-        取消挂载
-        :param share_file_system_name: 文件系统名称
-        :return:
-        """
+        """Unmount the share filesystem."""
         mount_dir = f"share_{share_file_system_name}"
         self.umount_file_system(mount_dir)
 
     def mount_share_file_system(self, file_system_name, logic_ip):
-        """
-        挂载
-        :param file_system_name: 文件系统名称
-        :param logic_ip: 挂载ip
-        :return:
-        """
+        """Mount the share filesystem."""
         kerberos_type = self.new_config_info.get("kerberos_key")
         params = f" -o sec={kerberos_type},timeo=50,nosuid,nodev "
         self.mount_file_system(file_system_name, logic_ip, prefix="share", params=params)
 
     def create_share_file_system_nfs_share(self, share_fs_id, share_path, vstore_id):
-        """
-        创建共享
-        :param share_fs_id: 文件系统id
-        :param share_path: 共享路径
-        :param vstore_id: 租户id
-        :return: 共享id
-        """
+        """Create NFS share for the filesystem."""
         data = {
             "SHAREPATH": f"/{share_path}/",
             "vstoreId": vstore_id,
@@ -70,12 +60,7 @@ class MigrateFileSystem(StorageInf):
         self.add_nfs_client(data)
 
     def config_mandatory_lock_switch(self, vstore_id):
-        """
-        配置租户强制锁
-
-        :param vstore_id: 租户ID
-        :return:
-        """
+        """Configure mandatory lock for the vstore."""
         def _exec_cmd():
             _cmd = f"change vstore view id={vstore_id}"
             res = self.ssh_client.execute_cmd(_cmd, expect=":/>", timeout=10)
@@ -102,12 +87,7 @@ class MigrateFileSystem(StorageInf):
             self.ssh_client.close_client()
 
     def pre_upgrade(self):
-        """
-        升级前检查
-            1、检查当前租户下是否存在对应逻辑端口，不存在报错
-            2、检查当前克隆文件系统是否存在，存在报错
-        :return:
-        """
+        """Pre-upgrade check: verify logical port and clone filesystem state."""
         LOGGER.info("begin to check migrate share fs info")
         clone_file_system_name = self.new_config_info.get("storage_share_fs")
         clone_file_system_share_logic_ip = self.new_config_info.get("share_logic_ip")
@@ -128,18 +108,7 @@ class MigrateFileSystem(StorageInf):
         LOGGER.info("Success to check migrate share fs info")
 
     def upgrade(self):
-        """
-        step:
-            1、克隆share文件系统
-            2、分裂share文件系统
-            3、创建共享
-            4、查询原共享客户端
-            5、添加客户端
-            6、取消挂载
-            7、挂载
-            8、打开前置锁开关
-        :return:
-        """
+        """Upgrade: clone/split share fs, create share, add client, remount, enable lock."""
         file_system_conf_key = [("storage_share_fs", "share_logic_ip")]
         clone_file_system_vstore_id = self.new_config_info.get("vstore_id")
         for fs_type_key, logic_ip_key in file_system_conf_key:
@@ -186,15 +155,7 @@ class MigrateFileSystem(StorageInf):
             self.config_mandatory_lock_switch(clone_file_system_vstore_id)
 
     def rollback(self):
-        """
-        step:
-           1、取消挂载
-           2、挂载
-           3、查询原share文件系统，确认当前clone文件系统是否为原share文件系统克隆文件系统，是执行后续删除操作，否则报错
-           3、删除克隆文件系统共享
-           4、删除克隆文件系统
-        :return:
-        """
+        """Rollback: unmount clone, remount original, delete clone share and fs."""
         file_system_conf_key = [("storage_share_fs", "share_logic_ip")]
         clone_share_file_system_vstore_id = self.new_config_info.get("vstore_id")
         for fs_type_key, logic_key in file_system_conf_key:

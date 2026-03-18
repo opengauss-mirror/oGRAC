@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import json
 import sys
 import os
@@ -5,6 +6,10 @@ import pathlib
 import traceback
 import time
 import shutil
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 sys.path.append(str(pathlib.Path(CUR_PATH).parent))
@@ -28,12 +33,7 @@ class StorageFileSystemSplit(StorageInf):
 
     @staticmethod
     def _move_files(src_path, dst_path):
-        """
-        循环遍历文件夹，移动所有文件
-        :param src_path: 源目录
-        :param dst_path: 目标目录
-        :return:
-        """
+        """Move all files from src_path to dst_path."""
         files = os.listdir(src_path)
         for file_name in files:
             temp_src = os.path.join(src_path, file_name)
@@ -41,12 +41,8 @@ class StorageFileSystemSplit(StorageInf):
 
     @staticmethod
     def _remove_mount_file_path(fs_name):
-        """
-        删除dbstor文件系统挂载目录
-        :param fs_name: 文件系统名称
-        :return:
-        """
-        mount_dir = f"/mnt/dbdata/remote/{fs_name}"
+        """Remove dbstor filesystem mount directory."""
+        mount_dir = os.path.join(_paths.remote_data, fs_name)
         rmdir_cmd = f"if [ -d {mount_dir} ];then rm -rf {mount_dir};fi"
         return_code, _, stderr = exec_popen(rmdir_cmd)
         if return_code:
@@ -54,20 +50,10 @@ class StorageFileSystemSplit(StorageInf):
             raise Exception(err_msg)
 
     def tailor_file_system(self):
-        """
-        裁剪文件系统目录
-        steps:
-             1、挂载文件系统
-             2、裁剪log所在文件系统
-             3、裁剪page所在文件系统
-             4、取消挂载
-        :return:
-        """
+        """Trim filesystem directories: mount, trim log/page fs, then unmount."""
         LOGGER.info("Start to tailor dbstor fs.")
-        # sleep 避免nfs server 繁忙报错
         time.sleep(2)
         self.mount_file_system(self.storage_dbstor_fs, self.metadata_logic_ip)
-        # sleep 避免nfs server 繁忙报错
         time.sleep(2)
         self.mount_file_system(self.storage_dbstor_page_fs, self.metadata_logic_ip)
         self.tailor_log_file_system()
@@ -82,14 +68,8 @@ class StorageFileSystemSplit(StorageInf):
         LOGGER.info("Success to tailor dbstor fs.")
 
     def tailor_log_file_system(self):
-        """
-        裁剪log所在文件系统
-        steps:
-            1、删除page_pool_root_dir目录
-            2、将ulog_root_dir内部目录上移一层，然后删除ulog_root_di
-        :return:
-        """
-        log_namespace_path = f"/mnt/dbdata/remote/{self.storage_dbstor_fs}/{self.namespace}"
+        """Trim log filesystem: remove page_pool_root_dir, flatten ulog_root_dir."""
+        log_namespace_path = os.path.join(_paths.remote_data, self.storage_dbstor_fs, self.namespace)
         page_pool_root_dir = os.path.join(log_namespace_path, "page_pool_root_dir")
         ulog_root_dir = os.path.join(log_namespace_path, "ulog_root_dir")
         if os.path.exists(page_pool_root_dir):
@@ -99,15 +79,8 @@ class StorageFileSystemSplit(StorageInf):
             shutil.rmtree(ulog_root_dir)
 
     def tailor_page_file_system(self):
-        """
-        裁剪page所在文件系统
-        steps:
-            1、将namespace同名文件删除
-            2、删除ulog_root_dir目录
-            3、将page_pool_root_dir内的目录上移后，删除page_pool_root_dir
-        :return:
-        """
-        page_namespace_path = f"/mnt/dbdata/remote/{self.storage_dbstor_page_fs}/{self.namespace}"
+        """Trim page filesystem: remove namespace file, ulog_root_dir, flatten page_pool_root_dir."""
+        page_namespace_path = os.path.join(_paths.remote_data, self.storage_dbstor_page_fs, self.namespace)
         namespace_file = os.path.join(page_namespace_path, self.namespace)
         page_pool_root_dir = os.path.join(page_namespace_path, "page_pool_root_dir")
         ulog_root_dir = os.path.join(page_namespace_path, "ulog_root_dir")
@@ -131,12 +104,7 @@ class StorageFileSystemSplit(StorageInf):
         self.add_nfs_client(data)
 
     def create_clone_share(self, clone_fs_id, share_path):
-        """
-        创建克隆文件系统共享路径
-        :param clone_fs_id: 克隆文件系统id
-        :param share_path: 共享路劲
-        :return:
-        """
+        """Create NFS share for the cloned filesystem."""
         clone_share_info = self.query_nfs_info(clone_fs_id, vstore_id=self.vstore_id)
         if clone_share_info:
             _share_id = clone_share_info[0].get("ID")
@@ -150,12 +118,7 @@ class StorageFileSystemSplit(StorageInf):
         return share_id
 
     def clear_dbstor_nfs_share(self, fs_id, clone_fs_id):
-        """
-        删除文件系统共享
-        :param fs_id:文件系统id
-        :param clone_fs_id:克隆文件系统ID
-        :return:
-        """
+        """Delete NFS shares for the given filesystem IDs."""
         LOGGER.info("Begin to clear dbstor nfs share.fs_name:[%s], clone_fs_name:[%s]", self.storage_dbstor_fs,
                     self.storage_dbstor_page_fs)
         for _id in [fs_id, clone_fs_id]:
@@ -175,21 +138,7 @@ class StorageFileSystemSplit(StorageInf):
         LOGGER.info("Success to check dbstor page fs info")
 
     def upgrade(self):
-        """
-        分裂dbstor文件系统
-        steps:
-           1、登录DM
-           2、查询storage_dbstor_fs信息
-           3、查询storage_dbstor_page_fs信息，不存在执行步骤4，存在判断：正在分裂执行步骤6，没有分裂执行步骤5
-           4、克隆文件系统
-           5、分裂文件系统
-           6、查询分裂进度
-           7、创建共享
-           8、添加客户端
-           9、裁剪文件目录
-           10、删除共享
-        :return:
-        """
+        """Split dbstor filesystem: clone, split, create shares, trim dirs, cleanup."""
         fs_info = self.query_filesystem_info(self.storage_dbstor_fs, vstore_id=self.vstore_id)
         fs_id = fs_info.get("ID")
 
@@ -223,15 +172,16 @@ class StorageFileSystemSplit(StorageInf):
         self.delete_file_system(file_system_id)
 
     def _change_group_recursive(self):
-        file_path = os.path.join(CUR_PATH, "..", "env.sh")
-        env_conf = read_helper(file_path).split("\n")
-        ograc_user = ""
-        ograc_group = ""
-        for i in env_conf:
-            ograc_user = i.split("=")[1] if "ograc_user" in i else ograc_user
-            ograc_group = i.split("=")[1] if "ograc_group" in i else ograc_group
-        dbstor_fs_path = f"/mnt/dbdata/remote/{self.storage_dbstor_fs}/{self.namespace}"
-        dbstor_page_fs_path = f"/mnt/dbdata/remote/{self.storage_dbstor_page_fs}/{self.namespace}"
+        import importlib.util
+        _action_dir = os.path.abspath(os.path.join(CUR_PATH, ".."))
+        _spec = importlib.util.spec_from_file_location("_action_config", os.path.join(_action_dir, "config.py"))
+        _ac = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_ac)
+        _env = _ac.load_env_defaults()
+        ograc_user = _env["ograc_user"]
+        ograc_group = _env["ograc_group"]
+        dbstor_fs_path = os.path.join(_paths.remote_data, self.storage_dbstor_fs, self.namespace)
+        dbstor_page_fs_path = os.path.join(_paths.remote_data, self.storage_dbstor_page_fs, self.namespace)
         LOGGER.info("Start change owner of %s and %s", dbstor_fs_path, dbstor_page_fs_path)
         cmd = f"chown -hR {ograc_user}:{ograc_group} {dbstor_fs_path} &&" \
               f" chown -hR {ograc_user}:{ograc_group} {dbstor_page_fs_path}"

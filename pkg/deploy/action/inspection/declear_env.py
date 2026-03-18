@@ -1,23 +1,27 @@
+#!/usr/bin/env python3
 import os
 import pwd
+import sys
 from pathlib import Path
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _CUR_DIR)
+
+from config import get_config
+
+_cfg = get_config()
+_paths = _cfg.paths
 
 
 class DeclearEnv:
     def __init__(self):
-        self.version_file = str(Path("/opt/ograc/versions.yml"))
+        self.version_file = str(Path(_paths.versions_yml))
         self.root_id = 0
 
     @staticmethod
     def get_run_user():
-        with open("/opt/ograc/action/env.sh", "r", encoding="utf-8") as f:
-            env_config = f.readlines()
-        run_user = "ograc"
-        for line in env_config:
-            if line.startswith("ograc_user"):
-                run_user = line.split("=")[1].strip("\n").strip('"')
-                break
-        return run_user
+        _cfg_local = get_config()
+        return _cfg_local.ograc_user
 
     def get_env_type(self):
         """
@@ -45,4 +49,4 @@ class DeclearEnv:
         if user_id == user_info.pw_uid:
             return run_user
 
-        raise ValueError("[error] executor must be root or deploy_user")
+        raise ValueError("[error] executor must be root or ograc service user")

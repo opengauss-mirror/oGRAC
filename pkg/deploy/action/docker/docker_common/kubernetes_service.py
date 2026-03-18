@@ -8,7 +8,6 @@ import base64
 import requests
 import urllib3
 
-# 禁用 InsecureRequestWarning 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 

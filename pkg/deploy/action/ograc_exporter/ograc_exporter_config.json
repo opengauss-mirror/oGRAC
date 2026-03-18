@@ -1,0 +1,28 @@
+{
+  "_comment": "ograc_exporter 部署路径配置文件 - 所有路径可自定义，不再硬编码 /opt/ograc",
+
+  "ograc_home": "",
+  "user": "ograc",
+  "group": "ograc",
+
+  "_comment_service": "ograc_exporter 运行态路径",
+  "service": {
+    "base_dir": "og_om/service/ograc_exporter",
+    "scripts_dir": "og_om/service/ograc_exporter/scripts",
+    "exporter_dir": "og_om/service/ograc_exporter/exporter",
+    "data_dir": "og_om/service/ograc_exporter/exporter_data",
+    "execute_py": "og_om/service/ograc_exporter/exporter/execute.py"
+  },
+
+  "_comment_timeout": "操作超时(秒) - 低配机器可按需调大; 0 表示不设超时",
+  "timeout": {
+    "default": 600,
+    "start": 120,
+    "stop": 120,
+    "check_status": 60,
+    "install": 600,
+    "uninstall": 300,
+    "upgrade": 600,
+    "rollback": 600
+  }
+}

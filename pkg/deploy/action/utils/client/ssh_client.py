@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import time
 import os
 import sys
@@ -14,11 +15,7 @@ SSH_RECV_BUFFER = 65535
 
 
 def convert(code):
-    """
-    python3 bytes字符转str
-    :param code:
-    :return:
-    """
+    """Decode bytes to str (UTF-8, ignore errors)."""
     code = code.decode('utf-8', errors='ignore') if isinstance(code, bytes) else code
     return code
 
@@ -153,4 +150,3 @@ class SshClient(object):
         finally:
             if sftp is not None:
                 sftp.close()
-

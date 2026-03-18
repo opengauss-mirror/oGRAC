@@ -1,20 +1,25 @@
+#!/usr/bin/env python3
 import json
+import os
 import re
 import sys
 from datetime import datetime
 
-sys.path.append('/opt/ograc/action/inspection')
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
 
+from config import get_config
 from log_tool import setup
 from om_common_function import exec_popen
 
+_cfg = get_config()
+_paths = _cfg.paths
 
 LOG = setup("og_om")
-# 检查ntp服务器有没有开启
-# 检查某个路径的flag有没有 告警提示 打印多节点时间不相同的时间差时间点。也就是打印跳变。
 CHECK_PATTERN = "(\[NTP_TIME_WARN\])(.*)(us)"
-LOG_FILE_PATH = "/opt/ograc/log/ograc/run/*log"
-LOG_ZIP_FILE_PATH = "/opt/ograc/log/ograc/run/*tar.gz"
+LOG_FILE_PATH = _paths.ograc_log_run + "/*log"
+LOG_ZIP_FILE_PATH = _paths.ograc_log_run + "/*tar.gz"
 
 
 class NtpChecker:
@@ -114,4 +119,3 @@ class NtpChecker:
 if __name__ == '__main__':
     far = NtpChecker()
     print(json.dumps(far.get_format_output()))
-

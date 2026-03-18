@@ -1,11 +1,21 @@
+#!/usr/bin/env python3
+"""INI configuration query and modification tool."""
+
 import os
 import stat
 import json
 import argparse
 import traceback
 
+import sys
+CUR_PATH = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, CUR_PATH)
+from config import cfg as _cfg
+_paths = _cfg.paths
+
+
 def opt_ini_conf(file_path, action, key, value):
-    with open(file_path, "r", encoding="utf-8")as fp:
+    with open(file_path, "r", encoding="utf-8") as fp:
         config = fp.readlines()
     for i, item in enumerate(config):
         if "=" not in item:
@@ -29,34 +39,26 @@ def opt_ini_conf(file_path, action, key, value):
 
 
 def ograc_opt_ini_conf(action, key, value):
-    file_path = "/mnt/dbdata/local/ograc/tmp/data/cfg/ogracd.ini"
+    file_path = _paths.ogracd_ini
     opt_ini_conf(file_path, action, key, value)
 
 
 def cms_opt_ini_conf(action, key, value):
-    file_path = "/opt/ograc/cms/cfg/cms.ini"
+    file_path = _paths.cms_ini
     opt_ini_conf(file_path, action, key, value)
 
 
 def main():
     update_parse = argparse.ArgumentParser()
     update_parse.add_argument("-c", "--component", dest="component",
-                              choices=["cms", "ograc"],
-                              required=True)
+                              choices=["cms", "ograc"], required=True)
     update_parse.add_argument("-a", "--action", dest="action", choices=["query", "modify"],
                               required=True)
     update_parse.add_argument("-k", "--key", dest="key", required=True)
     update_parse.add_argument("-v", "--value", dest="value", required=False)
     args = update_parse.parse_args()
-    component = args.component
-    action = args.action
-    key = args.key
-    value = args.value
-    func_dict = {
-        "ograc": ograc_opt_ini_conf,
-        "cms": cms_opt_ini_conf,
-    }
-    func_dict.get(component)(action, key, value)
+    func_dict = {"ograc": ograc_opt_ini_conf, "cms": cms_opt_ini_conf}
+    func_dict.get(args.component)(args.action, args.key, args.value)
 
 
 if __name__ == "__main__":

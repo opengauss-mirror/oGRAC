@@ -1,12 +1,14 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 import os
 import json
 import sys
 from pathlib import Path
 
-sys.path.append('/opt/ograc/action/inspection')
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+
 from log_tool import setup
 from common_func import _exec_popen
 
@@ -69,7 +71,6 @@ def fetch_cms_stat(logger):
 
 
 def fetch_cls_stat():
-    # check if user is root
     ograc_log = setup('ograc')
     if os.getuid() == 0:
         ograc_log.error("Cannot use root user for this operation!")

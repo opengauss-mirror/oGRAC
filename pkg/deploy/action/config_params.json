@@ -1,18 +1,17 @@
 {
-  "deploy_policy": "ModeC",
-  "deploy_user": "ogdba:ogdba",
+  "deploy_policy": "default",
   "cluster_id": "0",
   "cluster_name": "cluster123",
   "remote_cluster_name": "cluster123",
   "node_id": "0",
   "ograc_vlan_ip": "10.77.77.100;10.77.77.101",
-  "storage_vlan_ip": "10.77.77.102",
   "cms_ip": "192.168.86.1;192.168.86.2",
-  "storage_dbstor_fs": "foo",
-  "storage_dbstor_page_fs": "foo_page",
   "storage_share_fs": "share",
   "storage_archive_fs": "archive",
-  "dbstor_fs_vstore_id": "0",
+  "storage_metadata_fs": "metadata",
+  "share_logic_ip": "127.0.0.1",
+  "archive_logic_ip": "127.0.0.1",
+  "metadata_logic_ip": "127.0.0.1",
   "mes_type": "UC",
   "mes_ssl_switch": true,
   "MAX_ARCH_FILES_SIZE": "300G",
@@ -27,8 +26,7 @@
       "dm_ip": "",
       "dm_user": "",
       "esn": "",
-      "pool_id": "",
-      "dbstor_fs_vstore_id": ""
+      "pool_id": ""
     }
   }
 }

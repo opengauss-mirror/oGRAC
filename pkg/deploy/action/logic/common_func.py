@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Common utility functions."""
+
 import json
 import os
 import signal
@@ -5,7 +8,6 @@ import stat
 import subprocess
 import time
 from functools import wraps
-
 
 FAIL = 1
 TIME_OUT = 5
@@ -20,13 +22,11 @@ def close_child_process(proc):
         return 'success'
     except Exception as err:
         return str(err)
-
     return 'success'
 
 
 def retry(retry_times, log, task, wait_times):
     def decorate(func):
-
         @wraps(func)
         def wrapper(*args, **kwargs):
             err = ""
@@ -45,11 +45,7 @@ def retry(retry_times, log, task, wait_times):
 
 
 def exec_popen(cmd, timeout=TIME_OUT):
-    """
-    subprocess.Popen in python3.
-    param cmd: commands need to execute
-    return: status code, standard output, error output
-    """
+    """Execute command via subprocess; on timeout, kill process group to avoid zombies."""
     bash_cmd = ["bash"]
     pobj = subprocess.Popen(bash_cmd, shell=False, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
@@ -57,18 +53,27 @@ def exec_popen(cmd, timeout=TIME_OUT):
     pobj.stdin.write(os.linesep.encode())
     try:
         stdout, stderr = pobj.communicate(timeout=timeout)
-    except Exception as err:
-        return pobj.returncode, "", str(err)
-    finally:
-        return_code = pobj.returncode
+    except subprocess.TimeoutExpired:
         close_child_process(pobj)
+        try:
+            pobj.communicate(timeout=5)
+        except Exception:
+            pass
+        return -1, "", f"Command timed out after {timeout}s"
+    except Exception as err:
+        close_child_process(pobj)
+        try:
+            pobj.communicate(timeout=5)
+        except Exception:
+            pass
+        return pobj.returncode, "", str(err)
 
+    return_code = pobj.returncode
     stdout, stderr = stdout.decode(), stderr.decode()
     if stdout[-1:] == os.linesep:
         stdout = stdout[:-1]
     if stderr[-1:] == os.linesep:
         stderr = stderr[:-1]
-
     return return_code, stdout, stderr
 
 

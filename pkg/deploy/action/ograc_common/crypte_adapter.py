@@ -1,27 +1,23 @@
+#!/usr/bin/env python3
+"""KMC password encryption adapter."""
+
 import os
 import sys
 
-
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(CURRENT_PATH, "../"))
+sys.path.insert(0, CURRENT_PATH)
 
-from dbstor.kmc_adapter import CApiWrapper
+from kmc_adapter import CApiWrapper
+from config import cfg as _cfg
+_paths = _cfg.paths
 
-
-PRIMARY_KEYSTORE = "/opt/ograc/common/config/primary_keystore_bak.ks"
-STANDBY_KEYSTORE = "/opt/ograc/common/config/standby_keystore_bak.ks"
+PRIMARY_KEYSTORE = _paths.primary_keystore
+STANDBY_KEYSTORE = _paths.standby_keystore
 
 
 class KmcResolve(object):
-
     @staticmethod
     def kmc_resolve_password(mode, plain_text):
-        """
-        密码解密
-        :param mode:  encrypted/decrypted
-        :param plain_text: 加解密内容
-        :return:
-        """
         ret_pwd = ""
         kmc_adapter = CApiWrapper(PRIMARY_KEYSTORE, STANDBY_KEYSTORE)
         kmc_adapter.initialize()
@@ -34,8 +30,8 @@ class KmcResolve(object):
             raise Exception("Failed to %s password of user [sys]. Error: %s" % (mode, str(error))) from error
         finally:
             kmc_adapter.finalize()
-        split_env = os.environ['LD_LIBRARY_PATH'].split(":")
-        filtered_env = [single_env for single_env in split_env if "/opt/ograc/dbstor/lib" not in single_env]
+        split_env = os.environ.get('LD_LIBRARY_PATH', '').split(":")
+        filtered_env = [e for e in split_env if _paths.dbstor_lib not in e]
         os.environ['LD_LIBRARY_PATH'] = ":".join(filtered_env)
         return ret_pwd
 

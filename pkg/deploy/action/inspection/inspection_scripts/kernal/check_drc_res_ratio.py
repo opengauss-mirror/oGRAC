@@ -1,12 +1,16 @@
-#!/usr/bin/env python
-# coding: UTF-8
+#!/usr/bin/env python3
 import json
 import os
 import sys
-from og_check import CheckContext
-from og_check import BaseItem
-from og_check import ResultStatus
-sys.path.append('/opt/ograc/action/inspection')
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+sys.path.insert(0, _CUR_DIR)
+
+from ograc_check import CheckContext
+from ograc_check import BaseItem
+from ograc_check import ResultStatus
 from log_tool import setup
 
 class CheckDRCResRatio(BaseItem):
@@ -33,7 +37,6 @@ class CheckDRCResRatio(BaseItem):
         self.result.raw = sql.replace("\$", "$")
 
         res_ratio_dict = {}
-        # Execute sql command
         status, records = self.get_sql_result(sql)
 
         if (status == 0):
@@ -51,7 +54,6 @@ class CheckDRCResRatio(BaseItem):
             self.result.rst = ResultStatus.ERROR
             res_ratio_dict["except"] = records
 
-        # add result to json
         self.result.val = json.dumps(res_ratio_dict)
 
 
@@ -59,13 +61,11 @@ if __name__ == '__main__':
     '''
     main
     '''
-    # check if user is root
     ograc_log = setup('ograc')
     if(os.getuid() == 0):
         ograc_log.error("Cannot use root user for this operation!")
         sys.exit(1)
 
-    # main function
     checker = CheckDRCResRatio()
     checker_context = CheckContext()
     db_user = input()

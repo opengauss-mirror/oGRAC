@@ -1,14 +1,23 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import shlex
 import pwd
 import json
+import sys
 from pathlib import Path
 
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _CUR_DIR)
+
+from config import get_config
 from declear_env import DeclearEnv
 from inspection_task import InspectionTask
 
-DEPLOY_CONFIG_FILE = str(Path('/opt/ograc/config/deploy_param.json'))
+_cfg = get_config()
+_paths = _cfg.paths
+
+DEPLOY_CONFIG_FILE = _paths.deploy_param_json
 DIR_NAME, _ = os.path.split(os.path.abspath(__file__))
 INSPECTION_JSON_FILE = str(Path('{}/inspection_config.json'.format(DIR_NAME)))
 

@@ -1,14 +1,22 @@
+#!/usr/bin/env python3
+"""oGRAC password encryption and update."""
+
 import stat
 import sys
 import os
 import json
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dbstor"))
+CUR_PATH = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, CUR_PATH)
+from config import cfg as _cfg
+_paths = _cfg.paths
+
+sys.path.append(os.path.join(CUR_PATH, "..", "ograc_common"))
 from kmc_adapter import CApiWrapper
 
 
 def set_mes_passwd(passwd):
-    file_path = "/opt/ograc/common/config/certificates/mes.pass"
+    file_path = _paths.mes_pass
     flags = os.O_RDWR | os.O_CREAT | os.O_TRUNC
     modes = stat.S_IRWXU | stat.S_IROTH | stat.S_IRGRP
     with os.fdopen(os.open(file_path, flags, modes), "w") as file_obj:
@@ -30,8 +38,8 @@ def update_config(file_path, pwd):
 
 
 def update_mes_key_pwd(plain_text):
-    primary_keystore = "/opt/ograc/common/config/primary_keystore_bak.ks"
-    standby_keystore = "/opt/ograc/common/config/standby_keystore_bak.ks"
+    primary_keystore = _paths.primary_keystore
+    standby_keystore = _paths.standby_keystore
     kmc_adapter = CApiWrapper(primary_keystore, standby_keystore)
     kmc_adapter.initialize()
     try:
@@ -39,8 +47,8 @@ def update_mes_key_pwd(plain_text):
     except Exception as error:
         raise Exception("Failed to encrypt password of user [sys]. Error: %s" % str(error)) from error
 
-    ograc_config = "/mnt/dbdata/local/ograc/tmp/data/cfg/ogracd.ini"
-    cms_config = "/opt/ograc/cms/cfg/cms.ini"
+    ograc_config = _paths.ogracd_ini
+    cms_config = _paths.cms_ini
     update_config(ograc_config, ret_pwd)
     update_config(cms_config, ret_pwd)
     set_mes_passwd(ret_pwd)
@@ -49,7 +57,5 @@ def update_mes_key_pwd(plain_text):
 if __name__ == "__main__":
     passwd = input()
     action = sys.argv[1]
-    options = {
-        "update_mes_key_pwd": update_mes_key_pwd
-    }
+    options = {"update_mes_key_pwd": update_mes_key_pwd}
     options.get(action)(passwd.strip())

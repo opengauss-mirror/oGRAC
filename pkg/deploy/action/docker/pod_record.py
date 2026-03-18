@@ -2,15 +2,23 @@
 import os
 import sys
 from datetime import datetime
+
+CUR_PATH = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, CUR_PATH)
+
+from config import get_config
+
+_cfg = get_config()
+_paths = _cfg.paths
+
 from docker_common.file_utils import open_and_lock_csv, write_and_unlock_csv
 
-sys.path.append('/ogdb/ograc_install/ograc_connector/action')
+sys.path.append(os.path.join(CUR_PATH, ".."))
 
 from delete_unready_pod import KubernetesService, get_pod_name_from_info
 from om_log import LOGGER as LOG
 
-POD_RECORD_FILE_PATH = "/home/mfdb_core/POD-RECORD/ograc-pod-record.csv"
-# 重启次数阈值，超过该次数则触发漂移
+POD_RECORD_FILE_PATH = _paths.pod_record_file
 RESTART_THRESHOLD = 6
 
 
@@ -43,7 +51,7 @@ def update_pod_restart_record(k8s_service, pod_name_full, pod_namespace):
 
 def main():
     short_hostname = os.getenv("HOSTNAME")
-    kube_config_path = os.path.expanduser("~/.kube/config")
+    kube_config_path = _paths.kube_config
 
     k8s_service = KubernetesService(kube_config_path)
 
