@@ -62,20 +62,27 @@ typedef struct st_remote_sga {
 
 #pragma pack(push, 1)
 typedef struct st_remote_page_info {
-    uintptr_t lock_ptr;
+    uint64 lock_ptr;
     uint64 head_lsn;
-    uint64 page_id;
-    uint64 page_access_count;
-    uint16 log_owner_node;
-    uint8 log_owner_node_timeline_id[6];
+    uint32 file_id;   // page_identifier
+    uint16 page_id;    // page_identifier
+    uint8 gbp_owner_id;
+    uint16 xlog_owner_node;
+    uint8 xlog_owner_node_timeline_id[6];
 } remote_page_info_t;
 
 #pragma pack(pop)
 
+typedef enum buffer_type {
+    DATA_TYPE,
+    LOCK_TYPE,
+    LOCK_QUEUE,
+} buffer_type_t;
+
 status_t drc_init_remote_buffer();
 void broadcast_remote_buf_allocated();
 EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
-status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
+status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id, char *data_buf_name, buffer_type_t flag);
 
 
 #ifdef __cplusplus

@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <pwd.h>
 #include "cm_common_module.h"
 #include "knl_database.h"
 #include "cm_file.h"
@@ -38,6 +39,7 @@
 #include "cm_dss_iofence.h"
 #include "srv_view.h"
 #include "cm_ubs_mem.h"
+#include "dtc_remote_lock.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -997,24 +999,69 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
         // self map remote shared buffer of other nodes
         drc_res_ctx_t *ogx = DRC_RES_CTX;
         cluster_view_t view;
-        OG_LOG_RUN_WAR("[DRC]mmap remote data buf start, map status: %d", ogx->remote_sga.map_success[0]);
+        int ret;
+        struct passwd *pwd;
+        pwd = getpwuid(getuid());
+        char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
+
         for (uint32 node_id = 0; node_id < g_dtc->profile.node_count; node_id++) {
             rc_get_cluster_view(&view, OG_FALSE);
             if (!rc_bitmap64_exist(&view.bitmap, node_id)) {
                 continue;
             }
 
+            if (g_rc_ctx->self_id == node_id) {
+                continue;
+            }
+
+            OG_LOG_RUN_WAR("[DRC-GBP]mmap remote data buf start, current id: %d, remote_id: %d, map status: %d.",
+                                   g_rc_ctx->self_id, node_id,  ogx->remote_sga.map_success[0]);
             if (ogx->remote_sga.map_success[node_id] == OG_FALSE) {
-                int ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
+                ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, node_id);
+                if (ret < EOK) {
+                    OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote data buf name fail, return error:%d", ret);
+                    return ret;
+                }
+                ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id, data_buf_name, DATA_TYPE);
                 if (ret != UBSM_OK) {
-                    OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node failed, remote_id: %d, ret: %d",
-                                   node_id, ret);
+                    OG_LOG_RUN_ERR("[DRC-GBP]mmap remote data buf failed, current id: %d, remote_id: %d, ret: %d",
+                                   g_rc_ctx->self_id, node_id, ret);
+                }
+            }
+
+            if (ogx->remote_lock.map_success[node_id] == OG_FALSE) {
+                ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_lock_buf_part_%d", pwd->pw_name, node_id);
+                if (ret < EOK) {
+                    OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote lock buf name fail, return error:%d", ret);
+                    return ret;
+                }
+                ret = dtc_mmap_remote_data_buf(&ogx->remote_lock, node_id, data_buf_name, LOCK_TYPE);
+                if (ret != UBSM_OK) {
+                    OG_LOG_RUN_ERR("[DRC-GBP]mmap remote data buf failed, current id: %d, remote_id: %d, ret: %d",
+                                   g_rc_ctx->self_id, node_id, ret);
+                }
+            }
+
+            if (ogx->remote_queue.map_success[node_id] == OG_FALSE) {
+                ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_queue_buf_part_%d", pwd->pw_name, node_id);
+                if (ret < EOK) {
+                    OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote lock queue buf name fail, return error:%d", ret);
+                    return ret;
+                }
+                ret = dtc_mmap_remote_data_buf(&ogx->remote_queue, node_id, data_buf_name, LOCK_QUEUE);
+                if (ret != UBSM_OK) {
+                    OG_LOG_RUN_ERR("[DRC-GBP]mmap remote data buf failed, current id: %d, remote_id: %d, ret: %d",
+                                   g_rc_ctx->self_id, node_id, ret);
                 }
             }
         }
+
         // tell others to map owner remote shared buffer
         broadcast_remote_buf_allocated();
     }
+
+    // lock communication queue initialiaze
+    init_lock_comm_queue();
 
     if (log_check_asn(session, options->ignore_logs) != OG_SUCCESS) {
         dls_unlatch(session, ctrl_latch, NULL);
