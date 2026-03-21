@@ -628,12 +628,31 @@ def _write_cluster_conf(dp, ogracd_configs, user, group, password):
     cluster_size = 1 if dp.running_mode.lower() == "ogracd" else 2
     user_home = pwd.getpwnam(user).pw_dir
 
+    ograc_home = paths.ograc_home
+    cms_home = os.path.join(ograc_home, "cms")
+    dss_home = os.path.join(ograc_home, "dss")
+
+    ld_required = [
+        os.path.join(install_path, "lib"),
+        os.path.join(install_path, "add-ons"),
+        os.path.join(ograc_home, "cms", "service", "lib"),
+        os.path.join(ograc_home, "cms", "service", "add-ons"),
+        os.path.join(ograc_home, "dss", "lib"),
+        os.path.join(ograc_home, "dss", "add-ons"),
+    ]
+    seen = set()
+    ld_paths = []
+    for p in ld_required + os.environ.get("LD_LIBRARY_PATH", "").split(":"):
+        if p and p not in seen:
+            seen.add(p)
+            ld_paths.append(p)
+
     params = {
         "LSNR_PORT[0]": dp.ograc_port,
         "LSNR_PORT[1]": dp.ograc_port,
         "REPORT_FILE": log_file,
         "STATUS_LOG": os.path.join(data_path, "log", "ogracstatus.log"),
-        "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+        "LD_LIBRARY_PATH": ":".join(ld_paths),
         "USER_HOME": user_home,
         "USE_GSS": dp.use_gss,
         "CLUSTER_SIZE": cluster_size,
@@ -652,6 +671,10 @@ def _write_cluster_conf(dp, ogracd_configs, user, group, password):
         "RUNNING_MODE": dp.running_mode,
         "LOG_HOME": ogracd_configs.get("LOG_HOME", log_dir),
         "SYS_PASSWORD": password or "",
+        "CMS_HOME": cms_home,
+        "DSS_HOME": dss_home,
+        "OGDB_HOME": install_path,
+        "OGDB_DATA": data_path,
     }
 
     _write_ini_params(conf_file, params)
@@ -1120,8 +1143,10 @@ def action_start():
                     raise RuntimeError(
                         "ogracd process exited during initialization, "
                         "check ogracd run log for details")
-            _create_database(dp, ogracd_configs_for_start)
-            _create_3rd_pkg()
+            db_status = _read_start_status().get("db_create_status", "default")
+            if db_status != "done":
+                _create_database(dp, ogracd_configs_for_start)
+                _create_3rd_pkg()
 
         _check_db_open(timeout=600)
 

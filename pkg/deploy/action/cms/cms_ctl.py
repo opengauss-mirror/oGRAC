@@ -368,8 +368,13 @@ class CmsCtl:
             ld_paths.append(os.environ["LD_LIBRARY_PATH"])
 
         log_file = self.paths.cms_deploy_log
+        ograc_home = self.paths.ograc_home
+        cms_home = os.path.join(ograc_home, "cms")
+        dss_home = os.path.join(ograc_home, "dss")
+
         params = {
             "GCC_HOME": gcc_home,
+            "GCC_DIR": gcc_dir,
             "REPORT_FILE": log_file,
             "STATUS_LOG": os.path.join(self.paths.cms_log_dir, "CmsStatus.log"),
             "LD_LIBRARY_PATH": ":".join(ld_paths),
@@ -385,6 +390,8 @@ class CmsCtl:
             "LSNR_NODE_IP[1]": node_ip[1],
             "USER": self.user,
             "GROUP": self.group,
+            "CMS_HOME": cms_home,
+            "DSS_HOME": dss_home,
         }
         self._clean_old_conf(list(params.keys()), conf_file)
         self._set_new_conf(params, conf_file)
