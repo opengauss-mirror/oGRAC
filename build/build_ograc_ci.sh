@@ -100,9 +100,9 @@ function newPackageTarget() {
   cp -arf "${OGDB_CODE_PATH}"/dss/* ${pkg_real_path}/dss/
   echo "目录内容:"
 
-  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_usr_pwd.sh
-  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/dbstor/check_dbstor_compat.sh
-  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/inspection/inspection_scripts/kernal/check_link_cnt.sh
+  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/storage_deploy/dbstor/check_usr_pwd.sh
+  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/storage_deploy/dbstor/check_dbstor_compat.sh
+  sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/storage_deploy/inspection/inspection_scripts/kernal/check_link_cnt.sh
 
   echo "Start pkg ${pkg_name}..."
   cd ${TMP_PKG_PATH}

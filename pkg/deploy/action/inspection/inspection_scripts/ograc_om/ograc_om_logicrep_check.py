@@ -1,14 +1,21 @@
+#!/usr/bin/env python3
 import json
 import os
 import sys
 
-sys.path.append('/opt/ograc/action/inspection')
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
 
+from config import get_config
 from om_common_function import exec_popen
 
+_cfg = get_config()
+_paths = _cfg.paths
+
 CHECK_PATTERN = "thread aborted\|Logic Replication"
-LOG_FILE_PATH = "/opt/software/tools/logicrep/logicrep/logicrep/alarm/alarm.log"
-FLAG_FILE = "/opt/software/tools/logicrep/enable.success"
+LOG_FILE_PATH = _paths.logicrep_alarm
+FLAG_FILE = _paths.logicrep_enable
 
 
 class LogicrepChecker:

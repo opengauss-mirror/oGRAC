@@ -1,6 +1,6 @@
 {
   "logicrep_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/og_om/ograc_om_logicrep_check.py",
+    "inspection_file_path": "inspection_scripts/ograc_om/ograc_om_logicrep_check.py",
     "component": "og_om",
     "description_zn": "logicrep服务检查",
     "description_en": "Logicrep server check",
@@ -20,7 +20,7 @@
     "need_ip": false
   },
   "ntp_server_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/og_om/ograc_om_ntp_check.py",
+    "inspection_file_path": "inspection_scripts/ograc_om/ograc_om_ntp_check.py",
     "component": "og_om",
     "description_zn": "Ntp服务检查",
     "description_en": "Ntp server check",
@@ -40,7 +40,7 @@
     "need_ip": false
   },
   "ograc_status": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/og_om/ograc_om_check.py",
+    "inspection_file_path": "inspection_scripts/ograc_om/ograc_om_check.py",
     "component": "og_om",
     "description_zn": "集群状态检查",
     "description_en": "Checking the Cluster Status",
@@ -60,7 +60,7 @@
     "need_ip": false
   },
   "session_used_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/kernal/check_session.py",
+    "inspection_file_path": "inspection_scripts/kernal/check_session.py",
     "component": "ograc",
     "description_zn": "session使用量检查",
     "description_en": "Session usage",
@@ -80,7 +80,7 @@
     "need_ip": true
   },
   "long_transaction_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/kernal/check_transaction.py",
+    "inspection_file_path": "inspection_scripts/kernal/check_transaction.py",
     "component": "ograc",
     "description_zn": "长事务检查",
     "description_en": "Long transaction check",
@@ -100,7 +100,7 @@
     "need_ip": true
   },
   "db_version_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/kernal/check_db_version.py",
+    "inspection_file_path": "inspection_scripts/kernal/check_db_version.py",
     "component": "ograc",
     "description_zn": "版本检查",
     "description_en": "version check",
@@ -120,7 +120,7 @@
     "need_ip": true
   },
   "drc_res_ratio_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/kernal/check_drc_res_ratio.py",
+    "inspection_file_path": "inspection_scripts/kernal/check_drc_res_ratio.py",
     "component": "ograc",
     "description_zn": "drc资源使用率",
     "description_en": "DRC resource usage",
@@ -140,7 +140,7 @@
     "need_ip": true
   },
   "cms_res_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/cms/cms_res_check.py",
+    "inspection_file_path": "inspection_scripts/cms/cms_res_check.py",
     "component": "cms",
     "description_zn": "节点资源列表检查",
     "description_en": "Check the node resource list",
@@ -160,7 +160,7 @@
     "need_ip": false
   },
   "cms_stat_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/cms/cms_stat_check.py",
+    "inspection_file_path": "inspection_scripts/cms/cms_stat_check.py",
     "component": "cms",
     "description_zn": "CMS集群状态检查",
     "description_en": "Checking the cms Cluster Status",
@@ -180,7 +180,7 @@
     "need_ip": false
   },
   "cms_version_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/cms/cms_version_check.py",
+    "inspection_file_path": "inspection_scripts/cms/cms_version_check.py",
     "component": "cms",
     "description_zn": "cms版本检查",
     "description_en": "Check the CMS version",
@@ -200,7 +200,7 @@
     "need_ip": false
   },
   "archive_status_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/kernal/check_archive_status.py",
+    "inspection_file_path": "inspection_scripts/kernal/check_archive_status.py",
     "component": "ograc",
     "description_zn": "检查归档状态",
     "description_en": "Check the archive status",
@@ -220,7 +220,7 @@
     "need_ip": false
   },
   "dbs_redundant_links_check": {
-    "inspection_file_path": "/opt/ograc/action/inspection/inspection_scripts/kernal/check_redundant_links.py",
+    "inspection_file_path": "inspection_scripts/kernal/check_redundant_links.py",
     "component": "dbstor",
     "description_zn": "链路状态检查",
     "description_en": "Check the link status.",

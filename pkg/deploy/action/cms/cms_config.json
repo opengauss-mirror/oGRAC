@@ -1,0 +1,32 @@
+{
+    "_comment": "CMS 部署路径配置文件 - 所有路径可自定义，不再硬编码 /opt/ograc",
+
+    "ograc_home": "/opt/ograc",
+    "data_root": "/mnt/dbdata",
+    "user": "ograc",
+
+    "_comment_instance": "实例/隔离配置 - user 为隔离主键，cgroup/shm 等公共资源按 user 分割",
+    "instance": {
+        "cgroup": {
+            "memory_base": "/sys/fs/cgroup/memory",
+            "memory_limit_gb": 10
+        },
+        "shm": {
+            "base": "/dev/shm",
+            "prefix": "ograc"
+        }
+    },
+
+    "_comment_timeout": "操作超时(秒) - 低配机器可按需调大; 0 表示不设超时",
+    "timeout": {
+        "default":       1800,
+        "install":       3600,
+        "uninstall":     1800,
+        "upgrade":       3600,
+        "pre_install":   1800,
+        "start":          600,
+        "stop":           600,
+        "check_status":   120,
+        "backup":        7200
+    }
+}

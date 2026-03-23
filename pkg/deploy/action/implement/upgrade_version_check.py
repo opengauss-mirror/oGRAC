@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Upgrade version validation."""
+
 import os
 import sys
 from pathlib import Path
@@ -6,6 +9,8 @@ from string import digits
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(CUR_PATH, "../"))
 from om_log import LOGGER as LOG
+
+from config import cfg as _cfg
 
 VERSION_PREFIX = 'Version:'
 SUB_VERSION_PREFIX = ('B', 'SP')
@@ -16,14 +21,13 @@ class UpgradeVersionCheck:
     def __init__(self, white_list=None, upgrade_mode=None):
         self.white_list_file = white_list
         self.upgrade_mode = upgrade_mode
-        self.source_version_file = str(Path('/opt/ograc/versions.yml'))
-        self.white_list_dict = {}  # 格式：{SOURCE-VERSION: [UPGRADE-MODE, CHANGE-SYSTEM]}
+        self.source_version_file = str(Path(_cfg.paths.versions_yml))
+        self.white_list_dict = {}
         self.source_version = ''
 
     def process_white_list(self):
         with open(self.white_list_file, 'r', encoding='utf-8') as file:
             white_list_info = file.readlines()
-
         for white_list_detail in white_list_info[1:]:
             if not white_list_detail.strip():
                 continue
@@ -34,11 +38,9 @@ class UpgradeVersionCheck:
         version = ''
         with open(self.source_version_file, 'r', encoding='utf-8') as file:
             source_version_info = file.readlines()
-
         for line in source_version_info:
             if VERSION_PREFIX in line:
                 version = line.split()[-1]
-
         self.source_version = version
 
     def source_version_check(self):
@@ -50,19 +52,15 @@ class UpgradeVersionCheck:
             *source_main_version, source_sub_version = self.source_version.split('.')
             if source_main_version != white_main_version:
                 continue
-
             if white_sub_version == '*' or white_sub_version == source_sub_version:
                 result = "{} {} {}".format(self.source_version, white_list_detail[0], white_list_detail[1])
                 break
-
             if '-' in white_sub_version:
                 min_version, max_version = white_sub_version.split('-')
                 trans_map = str.maketrans('', '', digits)
                 source_pre_fix = source_sub_version.translate(trans_map)
-
-                if source_pre_fix not in SUB_VERSION_PREFIX:  # 源版本号开头不是B或者SPH返回结果为空
+                if source_pre_fix not in SUB_VERSION_PREFIX:
                     break
-
                 sub_version_min_num = min_version.replace(source_pre_fix, '')
                 sub_version_max_num = max_version.replace(source_pre_fix, '')
                 sub_source_version_num = source_sub_version.replace(source_pre_fix, '')
@@ -71,7 +69,6 @@ class UpgradeVersionCheck:
                         and int(sub_version_max_num) >= int(sub_source_version_num) >= int(sub_version_min_num):
                     result = "{} {} {}".format(self.source_version, white_list_detail[0], white_list_detail[1])
                     break
-
         return result
 
 
@@ -84,7 +81,6 @@ if __name__ == '__main__':
     except Exception as err:
         LOG.error('obtain source version white list failed with error: %s', str(err))
         exit('')
-
     try:
         version_check.read_source_version_info()
     except Exception as err:

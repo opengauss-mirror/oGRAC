@@ -1,10 +1,14 @@
-#!/usr/bin/python3
-# coding=utf-8
+#!/usr/bin/env python3
 import datetime
 import json
 import os
 import stat
 import argparse
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 from storage_operate.dr_deploy_operate.dr_deploy_common import DRDeployCommon
 from logic.common_func import read_json_config
@@ -71,7 +75,7 @@ class DrDeployQuery(object):
                 error["code"] = -1
                 if description == "":
                     error["description"] = "The process exits abnormally," \
-                                           "see /opt/ograc/log/deploy/om_deploy/dr_deploy.log for more details."
+                                           "see %s for more details." % _paths.dr_deploy_log
             table_data = self.table_format(process_data)
             json_data = json.dumps(process_data, indent=4)
             return json_data if is_json_display else table_data
@@ -179,7 +183,7 @@ class DrStatusCheck(object):
             return "Unknown"
 
     def query_dr_status_file(self):
-        file_dir = "/opt/ograc/config"
+        file_dir = _paths.config_dir
         file_name = "dr_deploy_param.json"
         try:
             if not os.path.exists(os.path.join(file_dir, file_name)):
@@ -192,7 +196,8 @@ class DrStatusCheck(object):
                        f"--fs-name={storage_fs} --file-dir=/' | grep 'dr_deploy_param.json' | wc -l")
             else:
                 storage_fs = self.dr_deploy_info.get("storage_metadata_fs")
-                if os.path.exists(f"/mnt/dbdata/remote/metadata_{storage_fs}/dr_deploy_param.json"):
+                metadata_path = os.path.join(_paths.remote_data, f"metadata_{storage_fs}", "dr_deploy_param.json")
+                if os.path.exists(metadata_path):
                     return "Normal"
                 return "Abnormal"
             code, count, err = exec_popen(cmd, timeout=180)
@@ -291,7 +296,7 @@ class FullSyncProgress(DrDeployQuery):
                 error["code"] = -1
                 if description == "":
                     error["description"] = "The process exits abnormally," \
-                                           "see /opt/ograc/log/deploy/om_deploy/dr_deploy.log for more details."
+                                           "see %s for more details." % _paths.dr_deploy_log
             table_data = self.table_format(process_data)
             json_data = json.dumps(process_data, indent=4)
             return json_data if is_json_display else table_data

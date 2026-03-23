@@ -1,0 +1,40 @@
+{
+  "_comment": "logicrep 部署路径配置文件 - 所有路径可自定义，不再硬编码",
+
+  "ograc_home": "/opt/ograc",
+  "data_root": "/mnt/dbdata",
+  "user": "ograc",
+  "group": "ograc",
+
+  "_comment_logicrep": "logicrep 运行态路径",
+  "logicrep_home": "/opt/software/tools/logicrep",
+  "logicrep_tools_root": "/opt/software/tools",
+  "logicrep_pkg_rel": "zlogicrep/build/oGRAC_PKG/file",
+
+  "_comment_so": "依赖 so 库名称映射",
+  "so_names": {
+    "libssl.so": "libssl.so.10",
+    "libcrypto.so": "libcrypto.so.10",
+    "libstdc++.so": "libstdc++.so.6",
+    "libsql2bl.so": "libsql2bl.so"
+  },
+  "driver_name": "com.huawei.ograc.jdbc.ogracDriver-ograc.jar",
+
+  "_comment_timeout": "操作超时(秒) - 低配机器可按需调大; 0 表示不设超时",
+  "timeout": {
+    "default": 1800,
+    "install": 1800,
+    "start": 600,
+    "startup": 900,
+    "stop": 300,
+    "shutdown": 600,
+    "check_status": 120,
+    "uninstall": 300,
+    "pre_upgrade": 600,
+    "upgrade_backup": 1800,
+    "upgrade": 1800,
+    "rollback": 1800,
+    "init_container": 1800,
+    "set_resource_limit": 300
+  }
+}

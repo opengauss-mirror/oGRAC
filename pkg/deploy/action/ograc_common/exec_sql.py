@@ -1,13 +1,19 @@
+#!/usr/bin/env python3
+"""SQL execution utilities."""
+
 import subprocess
 import sys
 import os
 import signal
+
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(CURRENT_PATH, "../"))
-from ograc_common.crypte_adapter import KmcResolve
+sys.path.insert(0, CURRENT_PATH)
 
+from crypte_adapter import KmcResolve
+from config import cfg as _cfg
 
-ZSQL_INI_PATH = '/mnt/dbdata/local/ograc/tmp/data/cfg/ogsql.ini'
+ZSQL_INI_PATH = _cfg.paths.ogsql_ini
 TIME_OUT = 5
 
 
@@ -19,21 +25,14 @@ def file_reader(file_path):
 def close_child_process(proc):
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError as err:
-        _ = err
+    except ProcessLookupError:
         return 'success'
     except Exception as err:
         return str(err)
-
     return 'success'
 
 
 def exec_popen(cmd, timeout=TIME_OUT):
-    """
-    subprocess.Popen in python3.
-    param cmd: commands need to execute
-    return: status code, standard output, error output
-    """
     bash_cmd = ["bash"]
     pobj = subprocess.Popen(bash_cmd, shell=False, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
@@ -41,18 +40,27 @@ def exec_popen(cmd, timeout=TIME_OUT):
     pobj.stdin.write(os.linesep.encode())
     try:
         stdout, stderr = pobj.communicate(timeout=timeout)
-    except Exception as err:
-        return pobj.returncode, "", str(err)
-    finally:
-        return_code = pobj.returncode
+    except subprocess.TimeoutExpired:
         close_child_process(pobj)
+        try:
+            pobj.communicate(timeout=5)
+        except Exception:
+            pass
+        return -1, "", f"Command timed out after {timeout}s"
+    except Exception as err:
+        close_child_process(pobj)
+        try:
+            pobj.communicate(timeout=5)
+        except Exception:
+            pass
+        return pobj.returncode, "", str(err)
 
+    return_code = pobj.returncode
     stdout, stderr = stdout.decode(), stderr.decode()
     if stdout[-1:] == os.linesep:
         stdout = stdout[:-1]
     if stderr[-1:] == os.linesep:
         stderr = stderr[:-1]
-
     return return_code, stdout, stderr
 
 
@@ -85,4 +93,3 @@ if __name__ == '__main__':
         print(exec_sql.execute())
     except Exception as e:
         exit(str(e))
-

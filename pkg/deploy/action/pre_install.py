@@ -1,4 +1,6 @@
-# -*- coding: UTF-8 -*-
+#!/usr/bin/env python3
+"""oGRAC pre-install checks and config generation."""
+
 import abc
 import os
 import re
@@ -10,179 +12,106 @@ import stat
 import json
 import collections
 from pathlib import Path
-from logic.common_func import exec_popen
-from om_log import LOGGER as LOG
 
-INSTALL_PATH = "/opt/ograc"
-NEEDED_SIZE = 20580  # M
-NEEDED_MEM_SIZE = 16 * 1024  # M
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+if CUR_DIR not in sys.path:
+    sys.path.insert(0, CUR_DIR)
 
-dir_name, _ = os.path.split(os.path.abspath(__file__))
-PKG_DIR = os.path.abspath(os.path.join(dir_name, ".."))
-OGRAC_MEM_SPEC_FILE = os.path.join(dir_name, "config", "container_conf", "init_conf", "mem_spec")
-OGRACD_INI_FILE = "/mnt/dbdata/local/ograc/tmp/data/cfg/ogracd.ini"
-RPMINSTALLED_TAG = "/opt/ograc/installed_by_rpm"
+from log_config import get_logger
+from config import get_config, get_module_config
 
-SINGLE_DOUBLE_PROCESS_MAP = {
-    "0": "ogracd_in_cluster"
-}
+LOG = get_logger("deploy")
+cfg = get_config()
 
-ip_check_element = {
-    'ograc_vlan_ip',
-    'storage_vlan_ip',
-    'cms_ip'
-}
+INSTALL_PATH = cfg.paths.ograc_home
+OGRACD_INI_FILE = cfg.paths.ogracd_ini
+RPMINSTALLED_TAG = cfg.paths.rpm_flag
+OGRAC_MEM_SPEC_FILE = os.path.join(
+    CUR_DIR, "config", "container_conf", "init_conf", "mem_spec")
 
+NEEDED_SIZE = 20580
+NEEDED_MEM_SIZE = 16 * 1024
+
+ip_check_element = {'ograc_vlan_ip', 'cms_ip'}
 ping_check_element = {
-    'ograc_vlan_ip',
-    'storage_vlan_ip',
-    'cms_ip',
-    'share_logic_ip',
-    'archive_logic_ip',
-    'metadata_logic_ip',
-    'storage_logic_ip'
-}
-
-vg_check_element = {
-    'dss_vg_list',
-    'gcc_home'
+    'ograc_vlan_ip', 'cms_ip',
+    'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip',
 }
 
 kernel_element = {
-    'TEMP_BUFFER_SIZE',
-    'DATA_BUFFER_SIZE',
-    'SHARED_POOL_SIZE',
-    'LOG_BUFFER_SIZE',
-    'SESSIONS',
-    'VARIANT_MEMORY_AREA_SIZE',
-    '_INDEX_BUFFER_SIZE'
+    'TEMP_BUFFER_SIZE', 'DATA_BUFFER_SIZE', 'SHARED_POOL_SIZE',
+    'LOG_BUFFER_SIZE', 'SESSIONS', 'VARIANT_MEMORY_AREA_SIZE',
+    '_INDEX_BUFFER_SIZE',
 }
-use_dbstor = ["dbstor", "combined"]
-UnitConversionInfo = collections.namedtuple('UnitConversionInfo', ['tmp_gb', 'tmp_mb', 'tmp_kb', 'key', 'value',
-                                                                   'sga_buff_size', 'temp_buffer_size',
-                                                                   'data_buffer_size', 'shared_pool_size',
-                                                                   'log_buffer_size'])
+
+UnitConversionInfo = collections.namedtuple(
+    'UnitConversionInfo',
+    ['tmp_gb', 'tmp_mb', 'tmp_kb', 'key', 'value',
+     'sga_buff_size', 'temp_buffer_size', 'data_buffer_size',
+     'shared_pool_size', 'log_buffer_size'])
+
 
 class ConfigChecker:
-    """
-    对oGRAC安装的配置文件中内容进行校验的反射类
-    * 方法名：与配置文件中的key一致
-    """
-
     @staticmethod
     def node_id(value):
-        node_id_enum = {'0', '1'}
-        if value not in node_id_enum:
-            return False
-
-        return True
+        return value in {'0', '1'}
 
     @staticmethod
     def install_type(value):
-        install_type_enum = {'override', 'reserve'}
-        if value not in install_type_enum:
-            return False
-
-        return True
+        return value in {'override', 'reserve'}
 
     @staticmethod
     def link_type(value):
-        link_type_enum = {'1', '0', '2'}  # 1为rdma 0为tcp 2为rdma 1823
-        if value not in link_type_enum:
-            return False
-
-        return True
+        return value in {'1', '0', '2'}
 
     @staticmethod
     def db_type(value):
-        db_type_enum = {'0', '1', '2'}
-        if value not in db_type_enum:
-            return False
-
-        return True
-
-    @staticmethod
-    def kerberos_key(value):
-        kerberos_key_enum = {"krb5", "krb5i", "krb5p", "sys"}
-        if value not in kerberos_key_enum:
-            return False
-
-        return True
+        return value in {'0', '1', '2'}
 
     @staticmethod
     def deploy_mode(value):
-        deploy_mode_enum = {"file", "combined", "dbstor", "dss"}
-        if value not in deploy_mode_enum:
-            return False
+        return value in {"file", "dss"}
 
-        return True
-    
     @staticmethod
     def ograc_in_container(value):
-        ograc_in_container_enum = {'0', '1', '2'}
-        if value not in ograc_in_container_enum:
-            return False
-        
-        return True
+        return value in {'0', '1', '2'}
 
     @staticmethod
     def cluster_id(value):
         try:
-            value = int(value)
-        except Exception as error:
-            LOG.error('cluster id type must be int : %s', str(error))
+            v = int(value)
+        except (ValueError, TypeError):
             return False
-
-        if value < 0 or value > 255:
-            LOG.error('cluster id cannot be less than 0 or more than 255')
-            return False
-
-        return True
+        return 0 <= v <= 255
 
     @staticmethod
     def cluster_name(value):
-        if len(value) > 64 or not value:
-            LOG.error('cluster name cannot be more than 64 or less than 1 in length')
-            return False
-        return True
+        return bool(value) and len(value) <= 64
 
     @staticmethod
     def mes_type(value):
-        if value not in ["UC", "TCP", "UC_RDMA"]:
-            return False
-        return True
-    
+        return value in {"UC", "TCP", "UC_RDMA"}
+
     @staticmethod
     def mes_ssl_switch(value):
-        if not isinstance(value, bool):
-            return False
-        return True
+        return isinstance(value, bool)
 
     @staticmethod
     def redo_num(value):
         try:
-            if int(value) <= 0:
-                return False
-        except Exception as error:
-            LOG.error('redo_num type must be int : %s', str(error))
+            v = int(value)
+        except (ValueError, TypeError):
             return False
-        if int(value) < 3 or int(value) > 256:
-            LOG.error('redo_num cannot be less than 3 or more than 256')
-            return False
-        return True
+        return 3 <= v <= 256
 
     @staticmethod
     def redo_size(value):
         if not value.endswith("G"):
             return False
-        int_value = value.strip("G")
         try:
-            if int(int_value) <= 0:
-                return False
-        except Exception as error:
-            LOG.error('redo_size type must be int : %s', str(error))
+            return int(value.strip("G")) > 0
+        except (ValueError, TypeError):
             return False
-        return True
 
     @staticmethod
     def ca_path(value):
@@ -197,30 +126,8 @@ class ConfigChecker:
         return os.path.exists(value)
 
     @staticmethod
-    def mes_type(value):
-        mes_type_enum = {"TCP", "UC", "UC_RDMA"}
-        if value not in mes_type_enum:
-            return False
-
-        return True
-
-    @staticmethod
-    def dbstor_fs_vstore_id(value):
-        try:
-            value = int(value)
-
-        except Exception as error:
-            LOG.error('dbstor_fs_vstore id type must be int : %s', str(error))
-            return False
-        return True
-    
-    @staticmethod
     def auto_tune(value):
-        auto_tune_enum = {'0', '1'}
-        if value not in auto_tune_enum:
-            LOG.error('auto_tune type must be bool')
-            return False
-        return True
+        return value in {'0', '1'}
 
 
 class CheckBase(metaclass=abc.ABCMeta):
@@ -240,36 +147,24 @@ class CheckBase(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def get_result(self, *args, **kwargs):
-        """
-        子类实现
-        """
         return True
 
 
 class CheckMem(CheckBase):
     def __init__(self):
-        super().__init__('memory available size smaller than {}M'.format(NEEDED_MEM_SIZE),
-                         'current memory size {}M'.format(self.get_mem_available()))
+        super().__init__(
+            f'memory available size smaller than {NEEDED_MEM_SIZE}M',
+            f'current memory size {self.get_mem_available()}M')
 
     @staticmethod
     def get_mem_available():
-        """
-        获取可用内存
-        return:单位M
-        """
         res = 0
-        with open('/proc/meminfo') as file_path:
-            for line in file_path.readlines():
+        with open('/proc/meminfo') as fp:
+            for line in fp:
                 if "MemFree:" in line:
-                    mem_free = line.split(':')[1].strip()
-                    mem_free = mem_free.split(" ")[0]
-                    res += int(mem_free) // 1024
-
+                    res += int(line.split(':')[1].strip().split()[0]) // 1024
                 if "MemAvailable" in line:
-                    mem_avail = line.split(':')[1].strip()
-                    mem_avail = mem_avail.split(" ")[0]
-                    res += int(mem_avail) // 1024
-
+                    res += int(line.split(':')[1].strip().split()[0]) // 1024
         return res
 
     def get_result(self, *args, **kwargs):
@@ -278,27 +173,20 @@ class CheckMem(CheckBase):
 
 class CheckDisk(CheckBase):
     def __init__(self):
-        super().__init__('disk capacity available size smaller than {}M'.format(NEEDED_SIZE),
-                         'current disk capacity {}M'.format(self.get_disk_available()))
+        super().__init__(
+            f'disk capacity available size smaller than {NEEDED_SIZE}M',
+            f'current disk capacity {self.get_disk_available()}M')
 
     @staticmethod
     def find_dir_path():
-        """
-        获取最上级目录
-        """
         _path = INSTALL_PATH
         while not os.path.isdir(_path):
             _path = os.path.dirname(_path)
         return _path
 
     def get_disk_available(self):
-        """
-        获取可用磁盘剩余容量
-        return:单位M
-        """
         fs_info = os.statvfs(self.find_dir_path())
-        avail = fs_info.f_bavail * fs_info.f_frsize
-        return avail / (1024 * 1024)
+        return fs_info.f_bavail * fs_info.f_frsize / (1024 * 1024)
 
     def get_result(self, *args, **kwargs):
         return self.get_disk_available() >= NEEDED_SIZE
@@ -309,96 +197,74 @@ class CheckInstallPath(CheckBase):
         super().__init__("check install path is right.", "please check install path")
 
     def get_result(self, *args, **kwargs):
-        """
-        当安装路径已存在，且不是文件夹是报错
-        """
         return not (os.path.exists(INSTALL_PATH) and not os.path.isdir(INSTALL_PATH))
 
 
 class CheckInstallConfig(CheckBase):
     def __init__(self, config_path=None):
-        super().__init__("check config param", 'please check params in json file {}'.format(config_path))
+        super().__init__(
+            "check config param",
+            f'please check params in json file {config_path}')
         self.config_path = config_path
         self.value_checker = ConfigChecker
+
         self.config_key = {
-            'deploy_user', 'node_id', 'cms_ip', 'storage_dbstor_fs', 'storage_share_fs', 'storage_archive_fs',
-            'storage_metadata_fs', 'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip', 'db_type',
-            'MAX_ARCH_FILES_SIZE', 'storage_logic_ip', 'deploy_mode',
-            'mes_ssl_switch', 'ograc_in_container', 'deploy_policy', 'link_type', 'ca_path', 'crt_path', 'key_path'
+            'node_id', 'cms_ip',
+            'storage_share_fs', 'storage_archive_fs', 'storage_metadata_fs',
+            'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip',
+            'db_type', 'MAX_ARCH_FILES_SIZE', 'deploy_mode',
+            'mes_ssl_switch', 'ograc_in_container', 'deploy_policy',
+            'link_type', 'ca_path', 'crt_path', 'key_path',
         }
 
+        self.dss_config_key = {
+            'node_id', 'cms_ip', 'db_type',
+            'ograc_in_container', 'MAX_ARCH_FILES_SIZE',
+            'deploy_mode', 'mes_ssl_switch', 'redo_num', 'redo_size',
+            'auto_tune', 'dss_vg_list', 'gcc_home',
+            'cms_port', 'dss_port', 'ograc_port', 'interconnect_port',
+        }
         if os.path.exists(RPMINSTALLED_TAG):
-            self.dss_config_key = {
-                'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
-                'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune', 'dss_vg_list', 'gcc_home',
-                'cms_port', 'dss_port', 'ograc_port'}
-        else:
-            self.dss_config_key = {
-                'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
-                'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune', 'dss_vg_list', 'gcc_home',
-                'cms_port', 'dss_port', 'ograc_port'}
+            self.dss_config_key.add('SYS_PASSWORD')
 
-        self.dbstor_config_key = {
-            'cluster_name', 'ograc_vlan_ip', 'storage_vlan_ip', 'link_type', 'storage_dbstor_page_fs',
-            'kerberos_key', 'cluster_id', 'mes_type', "vstore_id", "dbstor_fs_vstore_id"
-        }
-        self.file_config_key = {
-            "redo_num", "redo_size"
-        }
-        self.vg_config_key = {
-            'dss_vg_list', 'gcc_home'
-        }
+        self.file_config_key = {"redo_num", "redo_size"}
         self.mes_type_key = {"ca_path", "crt_path", "key_path"}
         self.config_params = {}
         self.cluster_name = None
-        self.ping_timeout = 3
 
     @staticmethod
     def check_ipv4(_ip):
-        """
-        ipv4合法校验
-        """
         try:
             socket.inet_pton(socket.AF_INET, _ip)
-        except AttributeError:
-            try:
-                socket.inet_aton(_ip)
-            except socket.error:
-                return False
-            return _ip.count('.') == 3
-        except socket.error:
+            return True
+        except (AttributeError, socket.error):
             return False
-        return True
 
     @staticmethod
     def check_ipv6(_ip):
-        """
-        ipv6合法校验.
-        """
         try:
             socket.inet_pton(socket.AF_INET6, _ip)
+            return True
         except socket.error:
             return False
-        return True
 
     @staticmethod
     def execute_cmd(cmd):
         cmd_list = cmd.split("|")
         process_list = []
-        for index, cmd in enumerate(cmd_list):
-            if index == 0:
-                _p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
-            else:
-                _p = subprocess.Popen(shlex.split(cmd), stdin=process_list[index - 1].stdout,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+        for index, c in enumerate(cmd_list):
+            stdin = process_list[index - 1].stdout if index > 0 else None
+            _p = subprocess.Popen(
+                shlex.split(c), stdin=stdin,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
             process_list.append(_p)
         try:
             stdout, stderr = process_list[-1].communicate(timeout=30)
         except Exception as err:
             return -1, str(err), -1
-        return stdout.decode().strip("\n"), stderr.decode().strip("\n"), process_list[-1].returncode
+        return (stdout.decode().strip("\n"),
+                stderr.decode().strip("\n"),
+                process_list[-1].returncode)
 
     @staticmethod
     def check_ograc_mem_spec():
@@ -406,448 +272,322 @@ class CheckInstallConfig(CheckBase):
             with open(OGRAC_MEM_SPEC_FILE, encoding="utf-8") as f:
                 mem_spec = json.load(f)
             if mem_spec not in ["0", "1", "2", "3"]:
-                LOG.error("Check mem spec failed, current value[%s], " \
-                          "value range [\"0\", \"1\", \"2\", \"3\"]", mem_spec)
+                LOG.error("Check mem spec failed, current value[%s]", mem_spec)
                 return False
-        return True
-
-    @staticmethod
-    def check_storage_ograc_vlan_ip_scale(install_config_params):
-        """
-        检查storage_vlan_ip 与 ograc_vlan_ip对个数是否符合要求
-        exp:
-            storage_vlan_ip: item1|item2|item3
-            ograc_vlan_ip: item3|item4|item5
-            item :127.0.0.1;127.0.0.2
-            scale: len(storage_vlan_ip.split("|")) == len(ograc_vlan_ip.split("|"))
-                   sum = len(item1.split(";") * len(item3.split(";")) + ...
-                   sum <= 32
-        :param install_config_params:
-        :return:
-        """
-        ograc_vlan_ips = install_config_params.get("ograc_vlan_ip").split("|")
-        storage_vlan_ips = install_config_params.get("storage_vlan_ip").split("|")
-        if len(ograc_vlan_ips) != len(storage_vlan_ips):
-            LOG.error("ograc_vlan_ip and storage_vlan_ip should have same length.")
-            return False
-        scale = 0
-        for i in range(len(ograc_vlan_ips)):
-            scale += len(ograc_vlan_ips[i].split(";")) * len(storage_vlan_ips[i].split(";"))
-        if scale > 32:
-            LOG.error("ograc_vlan_ip and storage_vlan_ip scale should be less than 32.")
-            return False
         return True
 
     def read_install_config(self):
         try:
-            with open(self.config_path, 'r', encoding='utf8') as file_path:
-                json_data = json.load(file_path)
-                return json_data
+            with open(self.config_path, 'r', encoding='utf8') as fp:
+                return json.load(fp)
         except Exception as error:
-            LOG.error('load %s error, error: %s', self.config_path, str(error))
-
+            LOG.error('load %s error: %s', self.config_path, str(error))
         return {}
 
     def check_install_config_params(self, install_config):
-        install_config_keys = install_config.keys()
-        not_in_either = install_config_keys ^ self.config_key
-        # 如果 config_key中存在的关键字install_config.json中没有，报错。
-        for element in not_in_either:
-            # 去nas忽略部分参数
-            dbstor_ignore_params = {"storage_metadata_fs", "share_logic_ip", "archive_logic_ip", "metadata_logic_ip",
-                                    "vstore_id", "kerberos_key", "ca_path", "crt_path", "key_path"}
-            combined_ignore_params = {"share_logic_ip", "vstore_id"}
-            if element in dbstor_ignore_params and install_config['deploy_mode'] == "dbstor":
-                continue
-            if element in combined_ignore_params and install_config['deploy_mode'] == "combined":
-                continue
-            if element not in install_config_keys:
+        for element in self.config_key:
+            if element not in install_config:
                 LOG.error('config_params.json need param %s', element)
                 return False
         return True
 
     def check_install_config_param(self, key, value):
         if hasattr(self.value_checker, key):
-            target_checker = getattr(self.value_checker, key)
-            if not target_checker(value):
+            if not getattr(self.value_checker, key)(value):
                 return False
 
         if key in ip_check_element:
-            ip_list = re.split(r"[;,|]", value)
-            for single_ip in ip_list:
+            for single_ip in re.split(r"[;,|]", value):
                 if not self.check_ipv4(single_ip) and not self.check_ipv6(single_ip):
                     return False
 
-        # 适配域名部署方式检查当前域名是否能ping通
         if key in ping_check_element:
-            ip_list = re.split(r"[;,|]", value)
-            for node_ip in ip_list:
+            for node_ip in re.split(r"[;,|]", value):
                 cmd = "%s %s -i 1 -c 3 | grep ttl | wc -l"
-                ping_cmd = cmd % ("ping", node_ip)
-                ping6_cmd = cmd % ("ping6", node_ip)
                 try:
-                    ping_ret, _, ping_code = self.execute_cmd(ping_cmd)
-                except Exception as err:
-                    _ = err
-                    ping_ret = -1
+                    ret, _, _ = self.execute_cmd(cmd % ("ping", node_ip))
+                except Exception:
+                    ret = -1
                 try:
-                    ping6_ret, _, ping6_code = self.execute_cmd(ping6_cmd)
-                except Exception as err:
-                    _ = err
-                    ping6_ret = -1
-                if ping_ret != "3" and ping6_ret != "3":
+                    ret6, _, _ = self.execute_cmd(cmd % ("ping6", node_ip))
+                except Exception:
+                    ret6 = -1
+                if ret != "3" and ret6 != "3":
                     return False
         return True
 
     def write_result_to_json(self):
         modes = stat.S_IRWXU | stat.S_IROTH | stat.S_IRGRP
         flag = os.O_RDWR | os.O_CREAT | os.O_TRUNC
-        with os.fdopen(os.open(str(Path('{}/deploy_param.json'.format(dir_name))), flag, modes), 'w') as file_path:
-            config_params = json.dumps(self.config_params, indent=4)
-            file_path.write(config_params)
+        deploy_param = os.path.join(CUR_DIR, "deploy_param.json")
+        with os.fdopen(os.open(deploy_param, flag, modes), 'w') as fp:
+            fp.write(json.dumps(self.config_params, indent=4))
+
+    def generate_install_config(self):
+        """Derive and write install_config.json from ograc_config.json and module_config."""
+        ograc_cfg_file = os.path.join(CUR_DIR, "ograc", "ograc_config.json")
+        ograc_raw = {}
+        if os.path.exists(ograc_cfg_file):
+            try:
+                with open(ograc_cfg_file, encoding="utf-8") as f:
+                    ograc_raw = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        mc = get_module_config()
+        ograc_home = mc.get("ograc_home", ograc_raw.get("ograc_home", "/opt/ograc"))
+        data_root = mc.get("data_root", ograc_raw.get("data_root", "/mnt/dbdata"))
+
+        deploy_mode = self.config_params.get("deploy_mode", "file")
+        running_mode = "ogracd" if deploy_mode == "standalone" else "ogracd_in_cluster"
+
+        install_conf = {
+            "R_INSTALL_PATH": os.path.join(ograc_home, "ograc", "server"),
+            "D_DATA_PATH": os.path.join(data_root, "local", "ograc", "tmp", "data"),
+            "l_LOG_FILE": os.path.join(ograc_home, "log", "ograc", "ograc_deploy.log"),
+            "M_RUNING_MODE": running_mode,
+            "OG_CLUSTER_STRICT_CHECK": "TRUE",
+            "Z_KERNEL_PARAMETER1": "CHECKPOINT_PERIOD=1",
+            "Z_KERNEL_PARAMETER2": "OPTIMIZED_WORKER_THREADS=2000",
+        }
+
+        install_config_path = os.path.join(CUR_DIR, "ograc", "install_config.json")
+        if os.path.exists(install_config_path):
+            try:
+                with open(install_config_path, encoding="utf-8") as f:
+                    existing = json.load(f)
+                for k, v in existing.items():
+                    if k not in install_conf:
+                        install_conf[k] = v
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        ograc_dir = os.path.join(CUR_DIR, "ograc")
+        os.makedirs(ograc_dir, exist_ok=True)
+
+        modes = stat.S_IRWXU | stat.S_IROTH | stat.S_IRGRP
+        flag = os.O_RDWR | os.O_CREAT | os.O_TRUNC
+        with os.fdopen(os.open(install_config_path, flag, modes), 'w') as fp:
+            fp.write(json.dumps(install_conf, indent=4))
+        LOG.info("Generated install_config.json at %s", install_config_path)
 
     def update_config_params(self):
-        # 使用域名部署场景，share_logic_ip、archive_logic_ip、metadata_logic_ip为空时需要更新字段为cluster_name
-
-        if self.config_params.get("share_logic_ip") == "" and \
-                self.config_params.get("archive_logic_ip") == "" and \
-                self.config_params.get("metadata_logic_ip") == "":
-            self.config_params["share_logic_ip"] = self.config_params.get("cluster_name")
-            self.config_params["archive_logic_ip"] = self.config_params.get("cluster_name")
-            self.config_params["metadata_logic_ip"] = self.config_params.get("cluster_name")
+        if (self.config_params.get("share_logic_ip") == "" and
+                self.config_params.get("archive_logic_ip") == "" and
+                self.config_params.get("metadata_logic_ip") == ""):
+            self.config_params["share_logic_ip"] = self.config_params.get("cluster_name", "")
+            self.config_params["archive_logic_ip"] = self.config_params.get("cluster_name", "")
+            self.config_params["metadata_logic_ip"] = self.config_params.get("cluster_name", "")
             modes = stat.S_IRWXU | stat.S_IROTH | stat.S_IRGRP
             flag = os.O_RDWR | os.O_CREAT | os.O_TRUNC
-            config_params = json.dumps(self.config_params, indent=4)
-            with os.fdopen(os.open(self.config_path, flag, modes), 'w') as file_path:
-                file_path.write(config_params)
+            with os.fdopen(os.open(self.config_path, flag, modes), 'w') as fp:
+                fp.write(json.dumps(self.config_params, indent=4))
 
-    def do_unit_conversion(self, get_unit_conversion_info):
-        tmp_gb, tmp_mb, tmb_kb, key, value,\
-        sga_buff_size, temp_buffer_size, data_buffer_size,\
-        shared_pool_size, log_buffer_size = get_unit_conversion_info
-        if value[0: -1].isdigit() and value[-1:] in ["G", "M", "K"]:
-            unit_map = {
-                "G": tmp_gb,
-                "M": tmp_mb,
-                "K": tmb_kb,
-            }
-            size_unit = unit_map.get(value[-1:])
-            sga_buff_size += int(value[0:-1]) * size_unit
-        
-        if key == "TEMP_BUFFER_SIZE":
-            sga_buff_size -= temp_buffer_size
-        if key == "DATA_BUFFER_SIZE":
-            sga_buff_size -= data_buffer_size
-        if key == "SHARED_POOL_SIZE":
-            sga_buff_size -= shared_pool_size
-        if key == "LOG_BUFFER_SIZE":
-            sga_buff_size -= log_buffer_size
+    def do_unit_conversion(self, info):
+        tmp_gb, tmp_mb, tmp_kb, key, value, \
+            sga_buff_size, temp_buffer_size, data_buffer_size, \
+            shared_pool_size, log_buffer_size = info
+        if value[:-1].isdigit() and value[-1:] in ("G", "M", "K"):
+            unit_map = {"G": tmp_gb, "M": tmp_mb, "K": tmp_kb}
+            sga_buff_size += int(value[:-1]) * unit_map[value[-1:]]
+
+        key_subtract_map = {
+            "TEMP_BUFFER_SIZE": temp_buffer_size,
+            "DATA_BUFFER_SIZE": data_buffer_size,
+            "SHARED_POOL_SIZE": shared_pool_size,
+            "LOG_BUFFER_SIZE": log_buffer_size,
+        }
+        if key in key_subtract_map:
+            sga_buff_size -= key_subtract_map[key]
         if key == "SESSIONS":
-            buff_size_pre_session = 5.5 * tmp_gb / 1024
-            sga_buff_size += int(value) * buff_size_pre_session
-        
+            sga_buff_size += int(value) * 5.5 * tmp_gb / 1024
         return sga_buff_size
 
     def check_sga_buff_size(self):
         LOG.info("Checking sga buff size.")
-        # GB MB KB
         tmp_gb = 1024 * 1024 * 1024
         tmp_mb = 1024 * 1024
         tmp_kb = 1024
-        # The size of database
         log_buffer_size = 4 * tmp_mb
         shared_pool_size = 128 * tmp_mb
         data_buffer_size = 128 * tmp_mb
         temp_buffer_size = 32 * tmp_mb
-        sga_buff_size = (log_buffer_size + shared_pool_size + data_buffer_size + temp_buffer_size)
+        sga_buff_size = (log_buffer_size + shared_pool_size +
+                         data_buffer_size + temp_buffer_size)
 
-        # parse the value of kernel parameters
+        if not os.path.exists(OGRACD_INI_FILE):
+            LOG.warning("ogracd.ini not found, skip sga check")
+            return True
+
         modes = stat.S_IWUSR | stat.S_IRUSR
-        flags = os.O_RDONLY
-        with os.fdopen(os.open(OGRACD_INI_FILE, flags, modes), 'r') as fp:
+        with os.fdopen(os.open(OGRACD_INI_FILE, os.O_RDONLY, modes), 'r') as fp:
             for line in fp:
-                if line == "\n":
+                if line.strip() == "" or " = " not in line:
                     continue
-                (key, value) = line.split(" = ")
+                key, value = line.split(" = ", 1)
                 if key in kernel_element:
-                    # Unit consersion
-                    get_unit_conversion_info = UnitConversionInfo(tmp_gb, tmp_mb, tmp_kb, key, value.strip(),
-                                                                  sga_buff_size, temp_buffer_size, data_buffer_size,
-                                                                  shared_pool_size, log_buffer_size)
-                    sga_buff_size = self.do_unit_conversion(get_unit_conversion_info)
-        
-        # check sga buff size
-        cmd = "cat /proc/meminfo |grep -wE 'MemFree:|Buffers:|Cached:|SwapCached' |awk '{sum += $2};END {print sum}'"
-        ret_code, cur_avi_memory, stderr = exec_popen(cmd)
-        if ret_code:
-            LOG.error("cannot get shmmax parameters, command: %s, err: %s" % (cmd, stderr))
-            return False
+                    info = UnitConversionInfo(
+                        tmp_gb, tmp_mb, tmp_kb, key, value.strip(),
+                        sga_buff_size, temp_buffer_size, data_buffer_size,
+                        shared_pool_size, log_buffer_size)
+                    sga_buff_size = self.do_unit_conversion(info)
+
         if sga_buff_size < 114 * tmp_mb:
-            LOG.error("sga buffer size should not less than 114MB, please check it!")
-            return False
-        
-        # memory for share memory, Dbstor, and CMS
-        sga_buff_size += 12.2 * tmp_gb
-        if int(sga_buff_size) > int(cur_avi_memory) * tmp_kb:
-            LOG.error("sga buffer size(%.2f GB) should less than availble memory(%.2f GB), please check it!" % (int(sga_buff_size) / tmp_gb, int(cur_avi_memory) / tmp_mb))
+            LOG.error("sga buffer size should not less than 114MB")
             return False
 
-        cmd = r"cat /proc/1/environ | tr '\0' '\n' | grep MY_MEMORY_SIZE | cut -d= -f2"
-        ret_code, container_memory_limit, stderr = exec_popen(cmd)
-        if ret_code:
-            LOG.error("cannot get memory limit, command: %s, err: %s" % (cmd, stderr))
+        sga_buff_size += 2.2 * tmp_gb
+        cmd = ("cat /proc/meminfo | grep -wE 'MemFree:|Buffers:|Cached:|SwapCached' "
+               "| awk '{sum += $2};END {print sum}'")
+        proc = subprocess.Popen(
+            ["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, _ = proc.communicate(timeout=30)
+        if proc.returncode:
+            LOG.error("cannot get shmmax parameters")
             return False
-        if container_memory_limit and (int(container_memory_limit) / tmp_gb) < 28:
-            LOG.error("container memory limit(%.2f GB) cannot be less than 28GB, please check it!" % (int(container_memory_limit) / tmp_gb))
+        cur_avi_memory = stdout.decode().strip()
+        if int(sga_buff_size) > int(cur_avi_memory) * tmp_kb:
+            LOG.error("sga buffer size exceeds available memory")
             return False
-        if container_memory_limit and int(sga_buff_size) > int(container_memory_limit):
-            LOG.error("sga buffer size(%.2f GB) should less than container memory limit(%.2f GB), please check it!" % (int(sga_buff_size) / tmp_gb, int(container_memory_limit) / tmp_gb))
-            return False
-        
-        LOG.info("End check sga buffer size")
+
         return True
+
+    def install_config_params_init(self, params):
+        defaults = {
+            'link_type': '1', 'storage_archive_fs': '', 'archive_logic_ip': '',
+            'mes_type': 'UC', 'mes_ssl_switch': False, 'deploy_mode': 'file',
+            'db_type': '0', 'ograc_in_container': '0', 'auto_tune': False,
+            'cms_port': '14587', 'ograc_port': '1611',
+            'interconnect_port': '1601,1602',
+        }
+        for k, v in defaults.items():
+            if k not in params:
+                params[k] = v
+        if (params.get("mes_ssl_switch") and
+                params.get("ograc_in_container", "-1") == "0"):
+            self.config_key.update(self.mes_type_key)
+
+    @staticmethod
+    def init_config_by_deploy_policy(params):
+        deploy_policy_key = params.get("deploy_policy", "")
+        if deploy_policy_key in ("", "default"):
+            params["deploy_policy"] = "default"
+            return True
+        LOG.error("Unsupported deploy policy '%s' (only 'default' is supported)",
+                  deploy_policy_key)
+        return False
 
     def get_result(self, *args, **kwargs):
         if not self.config_path:
-            LOG.error('path of config file is not entered, example: sh install.sh xxx/xxx/xxx')
+            LOG.error('path of config file is not entered')
             return False
 
         install_config_params = self.read_install_config()
-        ret = self.init_config_by_deploy_policy(install_config_params)
-        if not ret:
+        if not install_config_params:
+            return False
+
+        if not self.init_config_by_deploy_policy(install_config_params):
             LOG.error("init deploy policy failed")
             return False
-        if install_config_params["deploy_mode"] == "dss":
+
+        if install_config_params.get("deploy_mode") == "dss":
             self.config_key = self.dss_config_key
 
-        if install_config_params.get("dss_vg_list") == "" or install_config_params.get("gcc_home") == "":
-            LOG.info("dss_vg_list or gcc_home is not set, user is not specify vg, will use default vg")
-            install_config_params["dss_vg_list"]["vg1"] = "/dev/dss-disk1"
-            install_config_params["dss_vg_list"]["vg2"] = "/dev/dss-disk2"
-            install_config_params["dss_vg_list"]["vg3"] = "/dev/dss-disk3"
-            install_config_params["gcc_home"] = "/dev/gcc-disk"
-
         self.install_config_params_init(install_config_params)
-
         self.cluster_name = install_config_params.get("cluster_name")
 
-        if install_config_params['deploy_mode'] in use_dbstor:
-            self.config_key.remove("storage_logic_ip")
-            self.config_key.update(self.dbstor_config_key)
-            ping_check_element.remove("storage_logic_ip")
-            if install_config_params['deploy_mode'] == "dbstor":
-                ping_check_element.remove("share_logic_ip")
-                install_config_params['share_logic_ip'] = "127.0.0.1"
-                # 去nas防止报错，后续版本删除
-                install_config_params['archive_logic_ip'] = "127.0.0.1"
-                install_config_params['metadata_logic_ip'] = "127.0.0.1"
-        else:
+        deploy_mode = install_config_params.get("deploy_mode", "file")
+        if deploy_mode == "file":
             self.config_params['cluster_id'] = "0"
             self.config_params['mes_type'] = "TCP"
             self.config_key.update(self.file_config_key)
 
-        # 不开启归档时不检查归档连通性
         if install_config_params.get("storage_archive_fs") == "":
-            ping_check_element.remove("archive_logic_ip")
+            ping_check_element.discard("archive_logic_ip")
 
         if install_config_params.get("ograc_in_container", "0") != '0':
-            ip_check_element.remove('cms_ip')
-            ping_check_element.remove("cms_ip")
-            ip_check_element.remove("ograc_vlan_ip")
-            ping_check_element.remove("ograc_vlan_ip")
+            ip_check_element.discard('cms_ip')
+            ping_check_element.discard("cms_ip")
+            ip_check_element.discard("ograc_vlan_ip")
+            ping_check_element.discard("ograc_vlan_ip")
 
-        if install_config_params["deploy_mode"] == "dss":
-            ip_check_element.remove("storage_vlan_ip")
-            ip_check_element.remove("ograc_vlan_ip")
-            ping_check_element.remove("ograc_vlan_ip")
-            ping_check_element.remove("storage_vlan_ip")
-            ping_check_element.remove("share_logic_ip")
-            ping_check_element.remove("metadata_logic_ip")
-            ping_check_element.remove("storage_logic_ip")
+        if deploy_mode == "dss":
+            for k in ('ograc_vlan_ip', 'cms_ip'):
+                ip_check_element.discard(k)
+                ping_check_element.discard(k)
+            for k in ('share_logic_ip', 'metadata_logic_ip'):
+                ping_check_element.discard(k)
 
-        if (install_config_params.get("archive_logic_ip", "") == ""
-                and install_config_params.get('share_logic_ip', "") == ""
-                and install_config_params.get('metadata_logic_ip', "") == ""
-                and install_config_params['deploy_mode'] in use_dbstor):
-            install_config_params['archive_logic_ip'] = self.cluster_name
-            install_config_params['share_logic_ip'] = self.cluster_name
-            install_config_params['metadata_logic_ip'] = self.cluster_name
-
-        max_arch_files_size = install_config_params.get('MAX_ARCH_FILES_SIZE', "")
-        if not max_arch_files_size:
+        max_arch = install_config_params.get('MAX_ARCH_FILES_SIZE', "")
+        if not max_arch:
             install_config_params['MAX_ARCH_FILES_SIZE'] = '300G'
 
         if not self.check_install_config_params(install_config_params):
-            return False
-        if (install_config_params['deploy_mode'] in use_dbstor and
-                not self.check_storage_ograc_vlan_ip_scale(install_config_params)):
             return False
 
         for key, value in install_config_params.items():
             if not install_config_params.get("mes_ssl_switch") and key in self.mes_type_key:
                 continue
             if key in self.config_key:
-                checked_result = self.check_install_config_param(key, value)
-                if not checked_result:
-                    LOG.error('check %s with value: %s failed', str(key), str(value))
+                if not self.check_install_config_param(key, value):
+                    LOG.error('check %s with value: %s failed', key, str(value))
                     return False
                 self.config_params[key] = value
+
         try:
             self.update_config_params()
         except Exception as error:
-            LOG.error('write config param to config_param.json failed, error: %s', str(error))
+            LOG.error('write config params failed: %s', str(error))
             return False
-        if install_config_params.get("'ograc_in_container'", "0") == '0':
+
+        if install_config_params.get("ograc_in_container", "0") == '0':
             try:
                 self.write_result_to_json()
             except Exception as error:
-                LOG.error('write config param to deploy_param.json failed, error: %s', str(error))
+                LOG.error('write deploy_param.json failed: %s', str(error))
                 return False
+
+        try:
+            self.generate_install_config()
+        except Exception as error:
+            LOG.error('generate install_config.json failed: %s', str(error))
+            return False
+
         return True
 
     def sga_buffer_check(self):
-        """
-        用于容器场景检查sga buffer size
-        """
         if not self.check_ograc_mem_spec():
             return False
-
-        if not self.check_sga_buff_size():
-            return False
-        return True
-
-    def install_config_params_init(self, install_config_params):
-        if 'link_type' not in install_config_params.keys():
-            install_config_params['link_type'] = '1'
-        if 'storage_archive_fs' not in install_config_params.keys():
-            install_config_params['storage_archive_fs'] = ''
-        if 'archive_logic_ip' not in install_config_params.keys():
-            install_config_params['archive_logic_ip'] = ''
-        if 'mes_type' not in install_config_params.keys():
-            install_config_params['mes_type'] = 'UC'
-        if 'mes_ssl_switch' not in install_config_params.keys():
-            install_config_params['mes_ssl_switch'] = False
-        if 'deploy_mode' not in install_config_params.keys():
-            install_config_params['deploy_mode'] = "combined"
-        if 'dbstor_fs_vstore_id' not in install_config_params.keys():
-            install_config_params['dbstor_fs_vstore_id'] = "0"
-        if (install_config_params.get("mes_ssl_switch") and
-                install_config_params.get("ograc_in_container", "-1") == "0"):
-            self.config_key.update(self.mes_type_key)
-        if 'db_type' not in install_config_params.keys():
-            install_config_params['db_type'] = '0'
-        if 'ograc_in_container' not in install_config_params.keys():
-            install_config_params['ograc_in_container'] = "0"
-        if 'auto_tune' not in install_config_params.keys():
-            install_config_params['auto_tune'] = False
-        if 'cms_port' not in install_config_params.keys():
-            install_config_params['cms_port'] = "14587"
-        if 'dss_port' not in install_config_params.keys():
-            install_config_params['dss_port'] = "1811"
-        if 'ograc_port' not in install_config_params.keys():
-            install_config_params['ograc_port'] = "1611"
-
-    def parse_policy_config_file(self):
-        policy_path = os.path.join(dir_name, "deploy_policy_config.json")
-        try:
-            with open(policy_path, 'r', encoding='utf8') as file_path:
-                json_data = json.load(file_path)
-                return json_data
-        except Exception as error:
-            LOG.error('load %s error, error: %s', policy_path, str(error))
-            return False
-    
-    def parse_ograc_config_file(self):
-        ograc_config_path = os.path.join(dir_name, "ograc")
-        ograc_config_path = os.path.join(ograc_config_path, "install_config.json")
-        try:
-            with open(ograc_config_path, 'r', encoding='utf8') as file_path:
-                json_data = json.load(file_path)
-                return json_data
-        except Exception as error:
-            LOG.error('load %s error, error: %s', ograc_config_path, str(error))
-            return False
-    
-    def init_config_by_deploy_policy(self, install_config_params):
-        deploy_policy_json = self.parse_policy_config_file()
-        if deploy_policy_json is False:
-            LOG.error("parse deploy_policy_config.json failed")
-            return False
-
-        ograc_config_json = self.parse_ograc_config_file()
-        if ograc_config_json is False:
-            LOG.error("parse ograc/install_config.json failed")
-            return False
-        # 根据配置文件获取配置方案
-        deploy_policy_key = install_config_params.get("deploy_policy", "")
-        # 如果配置方案为空或者默认走原安装流程，直接返回
-        if deploy_policy_key == "" or deploy_policy_key == "default":
-            LOG.info("deploy policy is default")
-            # 如果未配置套餐参数，初始化套餐参数
-            install_config_params["deploy_policy"] = "default"
-            return True
-        LOG.info("deploy policy is %s" % deploy_policy_key)       
-        # 如果配置方案未配置则返回失败，安装结束
-        deploy_policy_value = deploy_policy_json.get(deploy_policy_key, {})
-        if deploy_policy_value == {}:
-            LOG.error("can not find the deploy policy(%s)" % deploy_policy_key)
-            return False
-            
-        # 将方案中的参数写入配置文件
-        LOG.info("The package type is %s" % ograc_config_json.get("M_RUNING_MODE"))
-        tmp_config = deploy_policy_value.get("config", {})
-
-        for item in tmp_config.keys():
-            if item in self.config_key:
-                install_config_params[item] = tmp_config.get(item, "")
-            else:
-                LOG.error("deploy policy has invalid params %s" % item)
-                return False
-        return True
+        return self.check_sga_buff_size()
 
 
 class PreInstall:
     def __init__(self, install_model, config_path):
         self.config_path = config_path
         self.install_model = install_model
-        self.result = []
 
     @staticmethod
     def run_sga_buffer_check():
-        """
-        sga_buffer_check用于内存，包括容器套餐检查
-        """
         check_config = CheckInstallConfig()
-        res = check_config.sga_buffer_check()
-        if not res:
-            LOG.error('failed: %s, suggestion: %s', check_config.check_name, check_config.suggestion)
+        if not check_config.sga_buffer_check():
+            LOG.error('sga buffer check failed')
             return 1
         return 0
 
     def check_main(self):
-        """
-        存在，但是不是目录
-        """
         if self.install_model == "override":
             check_items = [CheckMem, CheckDisk, CheckInstallPath, CheckInstallConfig]
         else:
             check_items = [CheckMem, CheckDisk, CheckInstallPath]
 
         for item in check_items:
-            check_result = True
             if item is CheckInstallConfig:
                 res = item(self.config_path).get_result()
-                if not res:
-                    check_result = False
             else:
                 res = item().get_result()
-                if not res:
-                    check_result = False
-
-            if not check_result:
-                LOG.error('failed: %s, suggestion: %s', item().check_name, item().suggestion)
+            if not res:
+                LOG.error('failed: %s', item.__name__)
                 return 1
-
         return 0
 
 
@@ -855,9 +595,8 @@ if __name__ == '__main__':
     config_file = None
     install_type = sys.argv[1]
     if install_type == 'sga_buffer_check':
-        exit(PreInstall.run_sga_buffer_check())
+        sys.exit(PreInstall.run_sga_buffer_check())
     elif install_type == 'override':
         config_file = sys.argv[2]
-
         pre_install = PreInstall(install_type, config_file)
-        exit(pre_install.check_main())
+        sys.exit(pre_install.check_main())

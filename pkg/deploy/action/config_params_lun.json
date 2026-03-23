@@ -1,6 +1,5 @@
 {
     "deploy_mode": "dss",
-    "deploy_user": "ogdba:ogdba",
     "node_id": "0",
     "cms_ip": "xxx.xxx.xxx.xxx;xxx.xxx.xxx.xxx",
     "db_type": "1",
@@ -8,7 +7,7 @@
     "MAX_ARCH_FILES_SIZE": "300G",
     "redo_num": "6",
     "redo_size": "5G",
-    "auto_tune": "0",
+    "auto_tune": "1",
     "dss_vg_list": {
         "vg1": "/dev/dss-disk1",
         "vg2": "/dev/dss-disk2",
@@ -17,5 +16,12 @@
     "gcc_home": "/dev/gcc-disk",
     "cms_port": "14587",
     "dss_port": "1811",
-    "ograc_port": "1611"
-  }
+    "ograc_port": "1611",
+    "interconnect_port": "1601,1602",
+    "_SHM_KEY": 17,
+    "module_config": {
+        "ograc_home": "/opt/ograc",
+        "data_root": "/mnt/dbdata",
+        "user": "ograc"
+    }
+}

@@ -1,0 +1,18 @@
+{
+  "deploy_policy": "ModeA",
+  "deploy_user": "ogdba:ogdba",
+  "node_id": "0",
+  "cms_ip": "192.168.86.1;192.168.86.2",
+  "storage_dbstor_fs": "foo",
+  "storage_share_fs": "share",
+  "storage_archive_fs": "archive",
+  "storage_metadata_fs": "metadata",
+  "share_logic_ip": "127.0.0.1",
+  "archive_logic_ip": "127.0.0.1",
+  "metadata_logic_ip": "127.0.0.1",
+  "storage_logic_ip": "127.0.0.1",
+  "mes_ssl_switch": true,
+  "MAX_ARCH_FILES_SIZE": "300G",
+  "redo_num": "6",
+  "redo_size": "5G"
+}

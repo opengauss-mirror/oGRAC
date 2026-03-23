@@ -1,96 +1,80 @@
+#!/usr/bin/env python3
+"""DSS upgrade file deletion."""
+
 import os
 import sys
 import traceback
-CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(CURRENT_PATH, "..", ".."))
-from update_config import _exec_popen
-from dss.dssctl import LOG
+
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CUR_DIR)
+if PARENT_DIR not in sys.path:
+    sys.path.insert(0, PARENT_DIR)
+
+from log_config import get_logger
+from common.dss_cmd import (
+    vg_rm, vg_rmdir, vg_file_exists, vg_find_matching_files,
+)
+
+LOG = get_logger()
+
+UPGRADE_VG_PATH = "+vg1/upgrade"
+STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
-class DssDetele(object):
-    def __init__(self):
-        self.node_id = None
-        self.node_lock_file_name = None
-        self.node_lock_file_path = None
-        self.ograc_user = None
-        self.vg_lock_file_path = None
+class DssDelete:
+    """Upgrade-related file deletion."""
 
-    def file_exits(self, input_file=None):
-        cmd = f'dsscmd ls -p +vg1/upgrade'
-        code, stdout, _ = _exec_popen(cmd)
+    @staticmethod
+    def _delete_matching(keyword, vg_path):
+        """Delete files matching keyword in directory."""
+        matches = vg_find_matching_files(vg_path, keyword)
+        for fname in matches:
+            vg_rm(f"{vg_path}/{fname}")
+            LOG.info(f"Deleted: {vg_path}/{fname}")
 
-        if code != 0:
-            return True
-        
-        lines = stdout.strip().splitlines()
-    
-        for line in lines:
-            if input_file in line:
-                return True
-        return False
+    @staticmethod
+    def _delete_node_status_files():
+        """Delete nodeX_status.txt files."""
+        matches = vg_find_matching_files(STATUS_VG_PATH, "node")
+        for fname in matches:
+            if "status.txt" in fname:
+                vg_rm(f"{STATUS_VG_PATH}/{fname}")
+                LOG.info(f"Deleted: {STATUS_VG_PATH}/{fname}")
 
-    def delete_file(self, input_file=None, vg_path_name=None):
-        cmd = f'dsscmd rm -p {vg_path_name}/{input_file}'
-        code, _, stderr = _exec_popen(cmd)
-
-        if code != 0:
-            raise RuntimeError(f"`dsscmd rm delete` failed: {stderr}")
-        
-    def delete_special_file(self, file_name, vg_path_name):
-        cmd = f'dsscmd ls -p {vg_path_name}'
-        code, stdout, _ = _exec_popen(cmd)
-
-        if code != 0:
-            return
-        
-        lines = stdout.strip().splitlines()
-    
-        for line in lines:
-            if file_name != "node":
-                if file_name in line:
-                    values = line.strip().split()
-                    self.delete_file(values[5], vg_path_name)
-            else:
-                if "node" in line and "status.txt" in line:
-                    values = line.strip().split()
-                    self.delete_file(values[5], vg_path_name)
-
-    def delete_dir(self, input_file=None):
-        cmd = f'dsscmd rmdir -p +vg1/upgrade/{input_file} -r'
-        code, _, stderr = _exec_popen(cmd)
-
-        if code != 0:
-            raise RuntimeError(f"`dsscmd rmdir delete` failed: {stderr}")    
-                
-    def upgrade_detele_by_dss(self, input_file=None):        
+    def delete(self, input_file):
+        """Delete by file type."""
         if "updatesys" in input_file:
-            self.delete_special_file("updatesys", "+vg1/upgrade")
+            self._delete_matching("updatesys", UPGRADE_VG_PATH)
+
         elif input_file == "cluster_and_node_status":
-            self.delete_dir("cluster_and_node_status")
+            vg_rmdir(STATUS_VG_PATH)
+            LOG.info(f"Deleted directory: {STATUS_VG_PATH}")
+
         elif "cluster_and_node_status/node" in input_file:
-            self.delete_special_file("node", "+vg1/upgrade/cluster_and_node_status")
+            self._delete_node_status_files()
+
         elif "upgrade_node" in input_file:
-            self.delete_special_file("upgrade_node", "+vg1/upgrade")
+            self._delete_matching("upgrade_node", UPGRADE_VG_PATH)
+
         else:
-            if not self.file_exits(input_file):
+            if not vg_file_exists(f"{UPGRADE_VG_PATH}/{input_file}"):
                 return
-            self.delete_file(input_file, "+vg1/upgrade")
-        
+            vg_rm(f"{UPGRADE_VG_PATH}/{input_file}")
+            LOG.info(f"Deleted: {UPGRADE_VG_PATH}/{input_file}")
+
 
 def main():
-    dss_delete = DssDetele()
-    if len(sys.argv) < 1:
-        raise Exception("Failed to delete dss when upgrade input")
-    input_file = sys.argv[1]
+    if len(sys.argv) < 2:
+        raise RuntimeError("Usage: dss_upgrade_delete.py <file>")
     try:
-        dss_delete.upgrade_detele_by_dss(input_file)
+        DssDelete().delete(sys.argv[1])
     except Exception as e:
-        LOG.error(f"Failed to delete dss file when upgrade {traceback.format_exc(limit=-1)}")
-        raise e
+        LOG.error(f"Failed to delete: {traceback.format_exc(limit=-1)}")
+        raise
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as err:
-        exit(str(err))
+        sys.exit(str(err))

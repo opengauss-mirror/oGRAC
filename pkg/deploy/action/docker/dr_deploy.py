@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import getpass
 import json
 import os
@@ -11,25 +12,29 @@ import traceback
 import pwd
 import grp
 
-from get_config_info import get_value
+CUR_PATH = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, CUR_PATH)
+
+from config import get_config, get_value
 from resolve_pwd import resolve_kmc_pwd
 
-CUR_PATH = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(CUR_PATH, ".."))
 from om_log import LOGGER as LOG
 
+_cfg = get_config()
+_paths = _cfg.paths
 
-OPT_CONFIG_PATH = "/opt/ograc/config"
+OPT_CONFIG_PATH = _paths.config_dir
 SCRIPT_PATH = os.path.join(CUR_PATH, "..")
 CONFIG_PATH = os.path.join(SCRIPT_PATH, "../config")
-DORADO_CONF_PATH = "/ogdb/ograc_install/ograc_connector/config/container_conf/dorado_conf"
+DORADO_CONF_PATH = _paths.dorado_conf_path()
 DM_USER = "DMUser"
 DM_PWD = "DMPwd"
 
 
 def init_get_info_fun():
     try:
-        get_info_path = os.path.join(CUR_PATH, "../get_config_info.py")
+        get_info_path = os.path.join(CUR_PATH, "../compat/get_config_info.py")
         spec = importlib.util.spec_from_file_location("get_info_from_config", get_info_path)
         get_info_from_config = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(get_info_from_config)
@@ -143,7 +148,7 @@ def get_dr_status(dm_password=None):
     if dm_password == "":
         LOG.error("DM Password is empty.")
     cmd = (f"echo -e '{dm_password}' | sh {SCRIPT_PATH}/appctl.sh dr_operate progress_query "
-           f"--action=check --display=table 2>&1 | grep -E '^\-|^\|'")
+           f"--action=check --display=table 2>&1 | grep -E '^\\-|^\\|'")
     execute_command(cmd, raise_flag=True, timeout=30)
     data_json = get_file_json(os.path.join(CONFIG_PATH, "dr_status.json"))
     return data_json.get("dr_status")
@@ -205,7 +210,7 @@ def dr_deploy(role=None, dm_password=None, delete_flag=False):
     if not role:
         role = get_value("dr_deploy.role")
     cmd = (f"echo -e '{dm_password}' | sh {SCRIPT_PATH}/appctl.sh dr_operate pre_check {role} "
-           f"--conf=/opt/ograc/config/deploy_param.json")
+           f"--conf={_paths.deploy_param_json}")
     execute_command(cmd, raise_flag=True, timeout=300)
     LOG.info("dr_operate pre_check success.")
 
@@ -241,6 +246,7 @@ def copy_version_yaml(deploy_user, deploy_group):
            f'--fs-name={storage_share_fs} --source-dir={version_dir} --target-dir=/ --file-name=versions.yml"')
     execute_command(cmd, timeout=180)
 
+
 def dr_start_deploy():
     role = get_value("dr_deploy.role")
     dm_password = get_dm_password()
@@ -255,7 +261,8 @@ def dr_start_deploy():
         code, count, err = execute_command(cmd, timeout=180)
     else:
         storage_fs = get_value("storage_metadata_fs")
-        if os.path.exists(f"/mnt/dbdata/remote/metadata_{storage_fs}/dr_deploy_param.json"):
+        metadata_path = _paths.metadata_fs_path(storage_fs)
+        if os.path.exists(f"{metadata_path}/dr_deploy_param.json"):
             count = 1
     if not count.isdigit():
         LOG.error("get file count failed.")
@@ -272,7 +279,8 @@ def dr_start_deploy():
                    f"--source-dir=/ --target-dir={OPT_CONFIG_PATH} --file-name=dr_deploy_param.json'")
             execute_command(cmd, timeout=180)
         else:
-            copy_file(f"/mnt/dbdata/remote/metadata_{storage_fs}/dr_deploy_param.json",
+            metadata_path = _paths.metadata_fs_path(storage_fs)
+            copy_file(f"{metadata_path}/dr_deploy_param.json",
                       f"{OPT_CONFIG_PATH}/dr_deploy_param.json")
         copy_file(f"{OPT_CONFIG_PATH}/dr_deploy_param.json", f"{CONFIG_PATH}/dr_deploy_param.json")
         if get_dr_status(dm_password) != "Normal":
@@ -295,7 +303,7 @@ def dr_start_deploy():
 
 def main():
     split_env = os.environ['LD_LIBRARY_PATH'].split(":")
-    if "/opt/ograc/dbstor/lib" not in split_env:
+    if _paths.dbstor_lib not in split_env:
         LOG.error(f"ograc-dbstor-lib not found, current envpath[{os.environ['LD_LIBRARY_PATH']}]")
         raise Exception("ograc-dbstor-lib not found")
 
@@ -318,4 +326,3 @@ if __name__ == "__main__":
     except Exception as e:
         LOG.error(f"execute failed, err[{str(e)}], traceback: [{traceback.format_exc(limit=-1)}]")
         sys.exit(1)
-

@@ -1,5 +1,11 @@
+#!/usr/bin/env python3
 import os.path
 import shutil
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 from storage_operate.dr_deploy_operate.dr_deploy_common import KmcResolve
 from logic.common_func import read_json_config, exec_popen, write_json_config
@@ -10,7 +16,7 @@ from get_config_info import get_env_info
 
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-DEPLOY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
+DEPLOY_PARAM_FILE = _paths.deploy_param_json
 DR_DEPLOY_CONFIG = os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json")
 RUN_USER = get_env_info("ograc_user")
 USER_GROUP = get_env_info("ograc_group")
@@ -30,25 +36,17 @@ class UpdateDRParams(object):
 
     @staticmethod
     def restart_ograc_exporter():
-        """
-        容灾告警需要重启ograc_exporter
-        :return:
-        """
-        cmd = "ps -ef | grep \"python3 /opt/ograc/og_om/service/ograc_exporter/exporter/execute.py\"" \
+        """Restart ograc_exporter for DR alerting."""
+        cmd = "ps -ef | grep \"python3 " + _paths.exporter_execute_py + "\"" \
               " | grep -v grep | awk '{print $2}' | xargs kill -9"
         exec_popen(cmd)
 
     def copy_dr_deploy_param_file(self):
-        """
-        处理 dbstor 模式下的 dr_deploy_param.json 文件读取逻辑，
-        如果不是 dbstor 模式，则从共享路径中读取文件。
-        :return: dr_deploy_param_file 的路径
-        """
+        """Locate and copy dr_deploy_param.json from dbstor or shared path."""
         if self.deploy_mode == "dbstor":
-            remote_dir = "/opt/ograc/config/remote/"
+            remote_dir = os.path.join(_paths.config_dir, "remote")
             dr_deploy_param_file = os.path.join(remote_dir, "dr_deploy_param.json")
 
-            # 创建 remote 目录并设置权限
             if not os.path.exists(remote_dir):
                 os.makedirs(remote_dir)
                 chown_command = f'chown "{RUN_USER}":"{USER_GROUP}" "{remote_dir}"'
@@ -79,11 +77,9 @@ class UpdateDRParams(object):
                 LOG.error(err_msg)
                 raise Exception(err_msg)
         else:
-            # 处理非 dbstor 模式的逻辑
-            share_path = f"/mnt/dbdata/remote/metadata_{self.storage_metadata_fs}"
+            share_path = os.path.join(_paths.remote_data, f"metadata_{self.storage_metadata_fs}")
             dr_deploy_param_file = os.path.join(share_path, "dr_deploy_param.json")
 
-        # 检查文件是否存在
         if not os.path.exists(dr_deploy_param_file):
             err_msg = "Dr deploy param file does not exist, please check whether dr deploy is successful."
             LOG.error(err_msg)
@@ -112,7 +108,7 @@ class UpdateDRParams(object):
         finally:
             storage_operate.logout()
 
-        target_path = "/opt/ograc"
+        target_path = _paths.ograc_home
         current_real_path = os.path.realpath(CURRENT_PATH)
 
         if not current_real_path.startswith(target_path):
@@ -126,7 +122,7 @@ class UpdateDRParams(object):
         os.chmod(os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json"), mode=0o644)
         if not current_real_path.startswith(target_path):
             try:
-                shutil.copy(DR_DEPLOY_CONFIG, "/opt/ograc/config")
+                shutil.copy(DR_DEPLOY_CONFIG, _paths.config_dir)
             except Exception as _err:
                 LOG.info(f"copy DR_DEPLOY_CONFIG failed")
         LOG.info("Restart ograc_exporter process")
@@ -134,12 +130,7 @@ class UpdateDRParams(object):
         LOG.info("Update dr params success.")
 
     def check_dr_infos(self, dr_deploy_params, storage_operate):
-        """
-        检查容灾pair对信息是否存在
-        :param dr_deploy_params:
-        :param storage_operate:
-        :return:
-        """
+        """Verify that all DR pair resources exist."""
         page_fs_pair_id = dr_deploy_params.get("page_fs_pair_id")
         meta_fs_pair_id = dr_deploy_params.get("meta_fs_pair_id")
         hyper_domain_id = dr_deploy_params.get("hyper_domain_id")
@@ -154,4 +145,3 @@ class UpdateDRParams(object):
         dr_deploy_opt.query_hyper_metro_filesystem_pair_info_by_pair_id(ulog_fs_pair_id)
         LOG.info(f"begin to check remote replication pair[{page_fs_pair_id}]")
         dr_deploy_opt.query_remote_replication_pair_info_by_pair_id(page_fs_pair_id)
-

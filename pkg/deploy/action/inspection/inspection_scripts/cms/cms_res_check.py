@@ -1,11 +1,14 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 import os
 import json
 import sys
 from pathlib import Path
-sys.path.append('/opt/ograc/action/inspection')
+
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+
 from log_tool import setup
 from common_func import _exec_popen
 
@@ -19,7 +22,7 @@ def parse_cmd_result(cmd_res):
         stat_json[key] = values[idx]
     res = True
     if stat_json.get('HB_TIMEOUT(ms)') != '10000':
-        res = False 
+        res = False
     return (res)
 
 
@@ -53,8 +56,7 @@ def fetch_cms_hbtime(logger):
 
 
 def fetch_cls_stat():
-    # check if user is root
-    ograc_log = setup('ograc') 
+    ograc_log = setup('ograc')
     if(os.getuid() == 0):
         ograc_log.error("Cannot use root user for this operation!")
         sys.exit(1)

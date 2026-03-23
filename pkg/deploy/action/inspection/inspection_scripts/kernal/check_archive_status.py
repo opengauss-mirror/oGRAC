@@ -1,15 +1,24 @@
+#!/usr/bin/env python3
 import json
 import os
 import sys
 import stat
 import re
 from pathlib import Path
-from og_check import CheckContext, BaseItem, ResultStatus
 
-sys.path.append('/opt/ograc/action/inspection')
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
+sys.path.insert(0, _INSPECTION_DIR)
+sys.path.insert(0, _CUR_DIR)
+
+from config import get_config
+from ograc_check import CheckContext, BaseItem, ResultStatus
 from log_tool import setup
 
-DEPLOY_CONFIG_FILE = str(Path('/opt/ograc/config/deploy_param.json'))
+_cfg = get_config()
+_paths = _cfg.paths
+
+DEPLOY_CONFIG_FILE = _paths.deploy_param_json
 UNIT_CONVERSION_MAP = {
     "P": 1024 * 1024 * 1024 * 1024,
     "T": 1024 * 1024 * 1024,
@@ -112,7 +121,6 @@ if __name__ == '__main__':
     '''
     main
     '''
-    # check if user is root
     ograc_log = setup('ograc')
     if os.getuid() == 0:
         ograc_log.error("Cannot use root user for this operation!")

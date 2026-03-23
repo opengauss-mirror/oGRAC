@@ -1,5 +1,4 @@
-#!/usr/bin/python3
-# coding=utf-8
+#!/usr/bin/env python3
 import datetime
 import json
 import os
@@ -9,6 +8,11 @@ import shutil
 import stat
 import time
 import traceback
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 from storage_operate.dr_deploy_operate.dr_deploy_common import DRDeployCommon
 from storage_operate.dr_deploy_operate.dr_deploy_common import KmcResolve
@@ -22,26 +26,26 @@ from logic.common_func import retry
 from logic.common_func import get_status
 from om_log import DR_DEPLOY_LOG as LOG
 from get_config_info import get_env_info
-from obtains_lsid import LSIDGenerate
+from ograc_common.obtains_lsid import LSIDGenerate
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 RUN_USER = get_env_info("ograc_user")
 USER_GROUP = get_env_info("ograc_group")
 DR_DEPLOY_CONFIG = os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json")
-DEPLOY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
+DEPLOY_PARAM_FILE = _paths.deploy_param_json
 DEFAULT_PARAM_FILE = os.path.join(CURRENT_PATH, "../../config_params.json")
 EXEC_SQL = os.path.join(CURRENT_PATH, "../../ograc_common/exec_sql.py")
 LOCAL_PROCESS_RECORD_FILE = os.path.join(CURRENT_PATH, "../../../config/dr_process_record.json")
 FULL_CHECK_POINT_CMD = 'echo -e "alter system checkpoint global;" | '\
                        'su -s /bin/bash - %s -c \'source ~/.bashrc && '\
-                       'export LD_LIBRARY_PATH=/opt/ograc/dbstor/lib:${LD_LIBRARY_PATH} && '\
+                       'export LD_LIBRARY_PATH=' + _paths.dbstor_lib + ':${LD_LIBRARY_PATH} && '\
                        'python3 -B %s\'' % (RUN_USER, EXEC_SQL)
 OGRAC_DISASTER_RECOVERY_STATUS_CHECK = 'echo -e "select * from DV_LRPL_DETAIL;" | '\
                                          'su -s /bin/bash - %s -c \'source ~/.bashrc && '\
-                                         'export LD_LIBRARY_PATH=/opt/ograc/dbstor/lib:${LD_LIBRARY_PATH} && '\
+                                         'export LD_LIBRARY_PATH=' + _paths.dbstor_lib + ':${LD_LIBRARY_PATH} && '\
                                          'python3 -B %s\'' % (RUN_USER, EXEC_SQL)
-ZSQL_INI_PATH = '/mnt/dbdata/local/ograc/tmp/data/cfg/ogsql.ini'
-LOCK_INSTANCE_STEP1 = "" # to delete
+ZSQL_INI_PATH = _paths.ogsql_ini
+LOCK_INSTANCE_STEP1 = ""
 LOCK_INSTANCE_STEP2 = "lock instance for backup"
 UNLOCK_INSTANCE = "unlock instance"
 LOCK_INSTANCE_TIMEOUT = 100
@@ -49,7 +53,7 @@ FLUSH_TABLE = "flush table with read lock;unlock tables;"
 INSTALL_TIMEOUT = 900
 START_TIMEOUT = 3600
 FS_CREAT_TIMEOUT = 300
-TOTAL_CHECK_DURATION = 180    # 创建双活pair检查时间
+TOTAL_CHECK_DURATION = 180
 
 
 ACTIVE_RECORD_DICT = {
@@ -103,22 +107,13 @@ class DRDeploy(object):
 
     @staticmethod
     def restart_ograc_exporter():
-        """
-        容灾告警需要重启ograc_exporter
-        :return:
-        """
-        cmd = "ps -ef | grep \"python3 /opt/ograc/og_om/service/ograc_exporter/exporter/execute.py\"" \
+        """Restart ograc_exporter for DR alerting."""
+        cmd = "ps -ef | grep \"python3 " + _paths.exporter_execute_py + "\"" \
               " | grep -v grep | awk '{print $2}' | xargs kill -9"
         exec_popen(cmd)
 
     def record_deploy_process(self, exec_step: str, exec_status: str, code=0, description="") -> None:
-        """
-        :param exec_step: 执行步骤
-        :param exec_status: 执行状态
-        :param code:  错误码
-        :param description: 描述
-        :return:
-        """
+        """Record deployment progress for a given step."""
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         modes = stat.S_IWUSR | stat.S_IRUSR
         with open(self.record_progress_file, "r") as fp:
@@ -132,33 +127,7 @@ class DRDeploy(object):
             json.dump(result, fp, indent=4)
 
     def record_deploy_process_init(self):
-        """
-        当前部署状态记录文件初始化
-        状态文件.json:
-            {
-                data:
-                {
-                    create_metro_domain: default/start/running/success/failed,
-                    create_metro_vstore_pair: default/start/running/success/failed,
-                    create_metro_fs_pair: default/start/running/success/failed,
-                    create_rep_meta_fs_pair: default/start/running/success/failed,
-                    create_rep_page_fs_pair: default/start/running/success/failed,
-                    sync_metro_fs_pair: default/start/running/success/failed,
-                    sync_rep_meta_fs_pair: default/start/running/success/failed,
-                    sync_rep_page_fs_pair: default/start/running/success/failed,
-                    standby_install: default/start/running/success/failed,
-                    standby_start: default/start/running/success/failed,
-                    ...
-                    dr_deploy: default/start/running/success/failed
-                }
-                error:
-                {
-                    "code": 0,  错误码：0 正常，其他不正常
-                    "description": "xxx" 异常情况描述，code=0时表示无异常
-                }
-            }
-        :return:
-        """
+        """Initialize the deployment progress record file."""
         dr_record_dict = ACTIVE_RECORD_DICT if self.site == "active" else STANDBY_RECORD_DICT
 
         if not self.metadata_in_ograc:
@@ -194,18 +163,12 @@ class DRDeploy(object):
             json.dump(result, fp, indent=4)
 
     def record_disaster_recovery_info(self, key, value):
-        """
-        读取容灾配置信息，支持重试功能
-        :return:
-        """
+        """Save a key-value pair to the DR deploy config file."""
         self.dr_deploy_info[key] = value
         write_json_config(DR_DEPLOY_CONFIG, self.dr_deploy_info)
 
     def do_full_check_point(self):
-        """
-        ograc数据库full check point
-        :return:
-        """
+        """Execute full checkpoint on oGRAC database."""
         LOG.info("Start do full checkpoint.")
         self.record_deploy_process("do_full_check_point", "start")
         return_code, output, stderr = exec_popen(FULL_CHECK_POINT_CMD, timeout=100)
@@ -218,10 +181,7 @@ class DRDeploy(object):
         LOG.info("Success to do full checkpoint.")
 
     def init_storage_opt(self):
-        """
-        从配置文件中读取参数，初始化操作，登录DM
-        :return:
-        """
+        """Read config, initialize storage operations, and login to DM."""
         dm_ip = self.dr_deploy_info.get("dm_ip")
         dm_user = self.dr_deploy_info.get("dm_user")
         self.dm_passwd = input()
@@ -230,13 +190,7 @@ class DRDeploy(object):
         self.dr_deploy_opt = DRDeployCommon(storage_opt)
 
     def do_create_filesystem_hyper_metro_domain(self) -> dict:
-        """
-        读取配置文件，获取双活域id，查询当前双活域：
-            1）未获取到ID表示当前全新创建，执行创建双活域操作
-               查询远端设备信息，获取远端设备名称、esn、远端设备id
-            2）获取到ID，查询当前双活域状态，状态不正常报错
-        :return:
-        """
+        """Create or verify the HyperMetro domain."""
         self.record_deploy_process("create_metro_domain", "start")
         hyper_domain_id = self.dr_deploy_info.get("hyper_domain_id")
         cluster_id = self.dr_deploy_info.get("cluster_id")
@@ -278,11 +232,7 @@ class DRDeploy(object):
         return domain_info
 
     def do_create_hyper_metro_vstore_pair(self, domain_info: dict) -> dict:
-        """
-        查询所有双活域信息，
-        :param domain_info: 双活域信息
-        :return:
-        """
+        """Create or verify the HyperMetro vstore pair."""
         self.record_deploy_process("create_metro_vstore_pair", "start")
         health_status = None
         running_status = None
@@ -340,11 +290,7 @@ class DRDeploy(object):
         raise Exception(err_msg)
 
     def do_create_hyper_metro_filesystem_pair(self, vstore_pair_info: dict) -> dict:
-        """
-        创建文件系统双活，默认一个文件系统只有一个双活
-        :param vstore_pair_info: 双活租户pair信息
-        :return:
-        """
+        """Create HyperMetro filesystem pair (one pair per filesystem)."""
         self.record_deploy_process("create_metro_fs_pair", "start")
         vstore_pair_id = vstore_pair_info.get("ID")
         hyper_domain_id = self.dr_deploy_info.get("hyper_domain_id")
@@ -415,11 +361,7 @@ class DRDeploy(object):
         raise Exception(err_msg)
 
     def do_sync_hyper_metro_filesystem_pair(self, pair_id: str) -> bool:
-        """
-        同步双活pair
-        :param pair_id: ulog文件系统pair id
-        :return:
-        """
+        """Sync HyperMetro filesystem pair and check progress."""
         filesystem_pair_info = self.dr_deploy_opt.query_hyper_metro_filesystem_pair_info_by_pair_id(pair_id)
         running_status = filesystem_pair_info.get("RUNNINGSTATUS")
         sync_progress = filesystem_pair_info.get("SYNCPROGRESS")
@@ -451,11 +393,7 @@ class DRDeploy(object):
         return False
 
     def do_create_remote_replication_filesystem_pair(self, page_fs_id):
-        """
-        创建远程复制pair对
-        :param page_fs_id:
-        :return:
-        """
+        """Create remote replication filesystem pair."""
         remote_device_id = self.dr_deploy_info.get("remote_device_id")
         remote_pool_id = self.dr_deploy_info.get("remote_pool_id")
         name_suffix = self.dr_deploy_info.get("name_suffix", "")
@@ -479,12 +417,7 @@ class DRDeploy(object):
 
     @retry(retry_times=3, wait_times=20, log=LOG, task="do_sync_remote_replication_filesystem_pair")
     def do_sync_remote_replication_filesystem_pair(self, pair_id: str, is_page: bool) -> bool:
-        """
-        同步远程复制pair
-        :param is_page: page文件系统或者是meta文件系统
-        :param pair_id: 远程复制ID
-        :return:
-        """
+        """Sync remote replication pair and check progress."""
         exec_step = "sync_rep_meta_fs_pair" if not is_page else "sync_rep_page_fs_pair"
         remote_replication_pair_info = self.dr_deploy_opt.query_remote_replication_pair_info_by_pair_id(
             pair_id=pair_id)
@@ -494,7 +427,6 @@ class DRDeploy(object):
         end_time = remote_replication_pair_info.get("ENDTIME")
         replication_pair_health_status = remote_replication_pair_info.get("HEALTHSTATUS")
         replication_pair_running_status = remote_replication_pair_info.get("RUNNINGSTATUS")
-        # 当已经设置从端可读写状态，且为分裂状态时，直接返回
         secres_access = remote_replication_pair_info.get("SECRESACCESS")
         if not is_page:
             self.meta_fs_pair_id = replication_pair_id
@@ -537,17 +469,11 @@ class DRDeploy(object):
         return False
 
     def replication_status_check_and_sync(self, exec_step, remote_replication_pair_info):
-        """
-        检查复制pair对状态，并进行同步
-        :param exec_step:
-        :param remote_replication_pair_info:
-        :return:
-        """
+        """Check replication pair status and trigger sync if needed."""
         replication_pair_id = remote_replication_pair_info.get("ID")
         start_time = remote_replication_pair_info.get("STARTTIME")
         replication_pair_health_status = remote_replication_pair_info.get("HEALTHSTATUS")
         replication_pair_running_status = remote_replication_pair_info.get("RUNNINGSTATUS")
-        # 当复制pair对健康状态为非正常状态，并且running状态不为正常、正在同步、待恢复状态，异常退出
         if replication_pair_health_status != HealthStatus.Normal and \
                 replication_pair_running_status not in [ReplicationRunningStatus.Normal,
                                                         ReplicationRunningStatus.Synchronizing,
@@ -560,13 +486,11 @@ class DRDeploy(object):
             self.record_deploy_process(exec_step, "failed", code=-1, description=err_msg)
             LOG.error(err_msg)
             raise Exception(err_msg)
-        # 当前远程复制pair对状态为分裂且没有同步开始时间时，表示当前为首次创建还未同步，执行全量同步
         if replication_pair_running_status == ReplicationRunningStatus.Split and start_time is None:
             LOG.info("Do sync remote replication filesystem[%s] pair of full copy." % replication_pair_id)
             self.dr_deploy_opt.sync_remote_replication_filesystem_pair(pair_id=replication_pair_id,
                                                                        vstore_id="0",
                                                                        is_full_copy=True)
-        # 当前远程复制pair对状态为分裂且有同步开始时间时，表示当前为首次创建还未同步，执行增量同步
         if replication_pair_running_status in \
                 [ReplicationRunningStatus.Split, ReplicationRunningStatus.TobeRecovered] \
                 and start_time is not None:
@@ -576,14 +500,7 @@ class DRDeploy(object):
                                                                        is_full_copy=False)
 
     def do_remote_replication_filesystem_pair_cancel_secondary_write_lock(self, pair_id: str, is_page: bool) -> None:
-        """
-        远程复制pair对分裂后取消从端写锁
-              1、 查询pair对状态
-              2、分裂状态并且为有读写权限时，返回
-              3、取消从端写保护
-        :param is_page: 是否是page文件系统，否则为meta文件系统
-        :param pair_id: 远程复制pair对id
-        """
+        """Cancel secondary write lock after replication pair split."""
         exec_step = "cancel_rep_meta_fs_secondary_write_lock" if not is_page \
             else "cancel_rep_page_fs_secondary_write_lock"
         self.record_deploy_process(exec_step, "start")
@@ -599,19 +516,7 @@ class DRDeploy(object):
         self.record_deploy_process(exec_step, "success")
 
     def deploy_remote_replication_pair(self, fs_name: str, is_page: bool) -> str:
-        """
-        1、查询文件系统是否配置远程复制：已经配置场景查询，再次触发同步操作
-        2、创建远程复制
-        3、同步数据：
-           1）记录同步开始时间与结束时间
-           2）同步时间超过1h，再次出发同步
-           3）查询同步状态
-        4、分裂文件系统
-        5、取消从站点写保护
-        :param is_page: 是否为page文件系统，否则为meta文件系统
-        :param fs_name: 文件系统名
-        :return:
-        """
+        """Deploy remote replication pair for a filesystem."""
         exec_step = "create_rep_meta_fs_pair" if not is_page else "create_rep_page_fs_pair"
         self.record_deploy_process(exec_step, "start")
         LOG.info("Start to create [%s]remote replication pair success.", fs_name)
@@ -628,16 +533,7 @@ class DRDeploy(object):
         return replication_pair_id
 
     def deploy_hyper_metro_pair(self):
-        """
-        1、查询双活域
-        2、创建双活域
-        3、查询双活租户pair
-        4、创建双活租户pair
-        5、查询双活pair
-        6、创建说活pair
-        7、查询同步状态
-        :return:
-        """
+        """Deploy HyperMetro pair: create domain, vstore pair, filesystem pair, then sync."""
         try:
             domain_info = self.do_create_filesystem_hyper_metro_domain()
         except Exception as err:
@@ -661,11 +557,7 @@ class DRDeploy(object):
         self.record_disaster_recovery_info("ulog_fs_pair_id", filesystem_pair_info.get("ID"))
 
     def query_ograc_disaster_recovery_status(self):
-        """
-        查询当前oGRAC回放状态
-        1、查询当前节点是否为reformer节点
-        :return:
-        """
+        """Query oGRAC disaster recovery replay status."""
         self.record_deploy_process("ograc_disaster_recovery_status", "start")
         node_id = self.deploy_params.get("node_id")
         cms_cmd = "su -s /bin/bash - %s -c 'source ~/.bashrc " \
@@ -704,24 +596,20 @@ class DRDeploy(object):
         self.record_deploy_process("ograc_disaster_recovery_status", "success")
 
     def do_start(self, node_id):
-        """
-        本端节点启动
-        :param node_id: 节点id
-        :return:
-        """
+        """Start the local node."""
         if self.check_install_status(node_id, "start"):
             return True
         self.update_install_status(node_id, "start", "default")
         LOG.info("Start node[%s] ograc.", node_id)
         ctl_file_path = os.path.join(CURRENT_PATH, "../../")
-        cmd = "sh %s/start.sh standby" % ctl_file_path
-        _, output, stderr = exec_popen(cmd, timeout=3600)
-        if "start success" not in output:
+        cmd = "sh %s/appctl.sh start standby" % ctl_file_path
+        return_code, output, stderr = exec_popen(cmd, timeout=3600)
+        if return_code:
             self.update_install_status(node_id, "start", "failed")
             err_pattern = re.compile(".*ERROR.*")
             _err = err_pattern.findall(output + stderr)
             err_msg = "Failed to execute start, details:\n%s  for details see " \
-                      "/opt/ograc/log/deploy/deploy.log" % "\n".join(_err)
+                      "%s" % ("\n".join(_err), _paths.deploy_log)
             self.record_deploy_process("standby_start", "failed", code=-1, description=err_msg)
             raise Exception(err_msg)
         self.update_install_status(node_id, "start", "success")
@@ -729,17 +617,11 @@ class DRDeploy(object):
         return True
 
     def update_install_status(self, node_id, exec_step, exec_status):
-        """
-        更新配置文件中安装部署状态
-        1、 检查当前是否有挂载点，没有直接返回
-        :param node_id: 节点id
-        :param exec_step: 执行步骤（install/stop/start/uninstall）
-        :param exec_status: 步骤执行状态（success/failed）
-        :return:
-        """
+        """Update install/deploy status in the record file."""
         LOG.info("Start to update %s status[%s] start", exec_step, exec_status)
         share_fs_name = self.dr_deploy_info.get("storage_share_fs")
-        install_record_file = f"/mnt/dbdata/remote/share_{share_fs_name}/node{node_id}_install_record.json"
+        install_record_file = os.path.join(_paths.remote_data, f"share_{share_fs_name}",
+                                           f"node{node_id}_install_record.json")
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         modes = stat.S_IWUSR | stat.S_IRUSR
         if os.path.exists(install_record_file):
@@ -756,14 +638,10 @@ class DRDeploy(object):
         LOG.info("Update %s status[%s] success", exec_step, exec_status)
 
     def check_install_status(self, node_id, exec_step):
-        """
-        检查当前执行步骤执行状态,重入时先检查当前执行状态，如果执行结果为成功直接返回
-        :param node_id: 节点id
-        :param exec_step: 执行步骤（install/start/stop/uninstall）
-        :return:
-        """
+        """Check if a step already succeeded (for re-entrant execution)."""
         share_fs_name = self.dr_deploy_info.get("storage_share_fs")
-        install_record_file = f"/mnt/dbdata/remote/share_{share_fs_name}/node{node_id}_install_record.json"
+        install_record_file = os.path.join(_paths.remote_data, f"share_{share_fs_name}",
+                                           f"node{node_id}_install_record.json")
         if not os.path.exists(install_record_file):
             return False
         with open(install_record_file, "r") as fp:
@@ -774,11 +652,7 @@ class DRDeploy(object):
         return False
 
     def standby_check_ulog_fs_pair_ready(self, ulog_fs_pair_ready_flag):
-        """
-        备端检查ulog文件系统pair对创建进度
-        :param ulog_fs_pair_ready_flag:
-        :return:
-        """
+        """Check ulog filesystem pair creation progress on standby."""
         dbstor_fs_name = self.dr_deploy_info.get("storage_dbstor_fs")
         dbstor_fs_vstore_id = self.dr_deploy_info.get("dbstor_fs_vstore_id")
         dbstor_fs_info = self.dr_deploy_opt.storage_opt.query_filesystem_info(
@@ -819,11 +693,7 @@ class DRDeploy(object):
         return ulog_fs_pair_info, ulog_fs_pair_ready_flag
 
     def standby_check_page_fs_pair_ready(self, page_fs_pair_ready_flag):
-        """
-        备端检查page文件系统pair对创建进度
-        :param page_fs_pair_ready_flag:
-        :return:
-        """
+        """Check page filesystem pair creation progress on standby."""
         dbstor_page_fs_name = self.dr_deploy_info.get("storage_dbstor_page_fs")
         dbstor_page_fs_info = self.dr_deploy_opt.storage_opt.query_filesystem_info(
             dbstor_page_fs_name)
@@ -833,7 +703,6 @@ class DRDeploy(object):
             dbstor_page_fs_id = dbstor_page_fs_info.get("ID")
             page_fs_pair_info = self.dr_deploy_opt.query_remote_replication_pair_info(dbstor_page_fs_id)
             if page_fs_pair_info:
-                # 当已经设置从端可读写状态，且为分裂状态时，表示当前同步完成
                 page_fs_pair_id = page_fs_pair_info[0].get("ID")
                 secres_access = page_fs_pair_info[0].get("SECRESACCESS")
                 running_status = page_fs_pair_info[0].get("RUNNINGSTATUS")
@@ -849,11 +718,7 @@ class DRDeploy(object):
         return page_fs_pair_info, page_fs_pair_ready_flag
 
     def standby_check_metadata_fs_pair_ready(self, metadata_fs_ready_flag):
-        """
-        备端检查metadata文件系统pair创建进度
-        :param metadata_fs_ready_flag:
-        :return:
-        """
+        """Check metadata filesystem pair creation progress on standby."""
         metadata_fs_name = self.dr_deploy_info.get("storage_metadata_fs")
         metadata_fs_info = self.dr_deploy_opt.storage_opt.query_filesystem_info(
             metadata_fs_name)
@@ -861,13 +726,7 @@ class DRDeploy(object):
         return metadata_fs_pair_info, metadata_fs_ready_flag, metadata_fs_info
 
     def create_nfs_share_and_client(self, fs_info: dict) -> None:
-        """
-        元数据非归一场景，metadata文件系统需要创建共享
-        1、查询文件系统共享，不存在创建，存在返回
-        2、查询文件系统客户端，不存在创建，存在返回
-        :param fs_info: 文件系统信息
-        :return:
-        """
+        """Create NFS share and client for metadata filesystem if not unified."""
         if self.metadata_in_ograc:
             return
         fs_id = fs_info.get("ID")
@@ -895,15 +754,7 @@ class DRDeploy(object):
             self.dr_deploy_opt.storage_opt.add_nfs_client(client_data)
 
     def standby_do_install(self):
-        """
-        主备节点同时下发安装部署命令，0 节点安装完成后，1 节点启动安装，1 节点安装部署完成后，0 节点与1 节点同时返回成功
-        dr_deploy_install_record.json:
-             {
-                 install_status: success/failed,
-                 start_status: success/failed
-             }
-        :return:
-        """
+        """Install oGRAC engine on standby (node0 first, then node1)."""
         LOG.info("Start to install ograc engine.")
         if self.dr_deploy_info.get("ograc_in_container") == "1":
             return True
@@ -912,23 +763,14 @@ class DRDeploy(object):
             return True
         if not self.check_install_status(node_id, "install"):
             ctl_file_path = os.path.join(CURRENT_PATH, "../../")
-            dbstor_user = input()
-            dbstor_pwd = input()
-            ograc_pwd = input()
-            comfirm_ograc_pwd = input()
-            cert_encrypt_pwd = ""
-            if self.dr_deploy_info.get("mes_ssl_switch"):
-                cert_encrypt_pwd = input()
-            cmd = "echo -e \"%s\\n%s\\n%s\\n%s\\n%s\"|sh %s/install.sh %s" \
-                  % (dbstor_user, dbstor_pwd,
-                     ograc_pwd, comfirm_ograc_pwd, cert_encrypt_pwd,
-                     ctl_file_path, DEFAULT_PARAM_FILE)
-            _, output, stderr = exec_popen(cmd, timeout=600)
-            if "install success" not in output:
+            cmd = "sh %s/appctl.sh pre_install override %s && sh %s/appctl.sh install override %s" \
+                  % (ctl_file_path, DEFAULT_PARAM_FILE, ctl_file_path, DEFAULT_PARAM_FILE)
+            return_code, output, stderr = exec_popen(cmd, timeout=600)
+            if return_code:
                 err_pattern = re.compile(".*ERROR.*")
                 _err = err_pattern.findall(output + stderr)
                 err_msg = "Failed to execute install, details:\n%s, for details see " \
-                          "/opt/ograc/log/deploy/deploy.log" % "\n".join(_err)
+                          "%s" % ("\n".join(_err), _paths.deploy_log)
                 self.record_deploy_process("standby_install", "failed", code=-1, description=err_msg)
                 self.update_install_status(node_id, "install", "failed")
                 raise Exception(err_msg)
@@ -943,10 +785,7 @@ class DRDeploy(object):
         LOG.info("Start ograc engine success.")
 
     def active_dr_deploy_and_sync(self):
-        """
-        容灾同步与复制对分裂、取消从资源保护
-        :return:
-        """
+        """Sync DR pairs, split replication, and cancel secondary write lock."""
         ulog_ready, page_ready, meta_ready = True, True, True
         while True:
             try:
@@ -993,7 +832,7 @@ class DRDeploy(object):
         self.share_fs = self.dr_deploy_info.get("storage_share_fs")
         self.cluster_name = self.dr_deploy_info.get("cluster_name")
 
-        dr_deploy_param_path = "/opt/ograc/config/dr_deploy_param.json"
+        dr_deploy_param_path = os.path.join(_paths.config_dir, "dr_deploy_param.json")
 
         if self.deploy_mode == "dbstor":
             chown_command = f'chown "{run_user}":"{user_grop}" "{dr_deploy_param_path}"'
@@ -1013,7 +852,6 @@ class DRDeploy(object):
             LOG.info(f"Executing command: {dbstor_del_command}")
             return_code, output, stderr = exec_popen(dbstor_del_command, timeout=100)
 
-            # 切换到指定用户并执行 dbstor 命令
             dbstor_command = (
                 f'su -s /bin/bash - "{run_user}" -c \''
                 f'dbstor --copy-file --import --fs-name="{self.share_fs}" '
@@ -1031,32 +869,17 @@ class DRDeploy(object):
 
             LOG.info(f"Successfully executed: {dbstor_command}")
         else:
-            share_path = f"/mnt/dbdata/remote/metadata_{self.metadata_fs}"
+            share_path = os.path.join(_paths.remote_data, f"metadata_{self.metadata_fs}")
             try:
                 config_path = os.path.join(share_path, "dr_deploy_param.json")
                 if os.path.exists(config_path):
-                    # 删除文件
                     os.remove(config_path)
                 shutil.copy(os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json"), share_path)
             except Exception as _err:
                 LOG.info(f"copy dr_deploy_param failed")
 
     def active_execute(self):
-        """
-        主端灾备搭建
-        1、加备份锁
-        2、full check point
-        3、flush table
-        4、创建文件系统双活域
-        5、创建双活租户pair
-        6、创建双活pair
-        7、创建远程复制pair
-        8、同步数据
-        9、分裂文件系统
-        10、解备份锁
-        11、返回
-        :return:
-        """
+        """Active site DR deploy: lock, checkpoint, create metro/replication pairs, sync, unlock."""
         self.record_deploy_process("dr_deploy", "start")
         self.record_deploy_process("dr_deploy", "running")
         self.do_lock_instance_for_backup()
@@ -1082,15 +905,7 @@ class DRDeploy(object):
         self.record_deploy_process("dr_deploy", "success")
 
     def standby_execute(self):
-        """
-        备端灾备搭建
-        1、备端查询容灾状态
-        2、安装部署oGRAC
-        3、备站方式启动
-        4、检查oGRAC容灾状态
-        5、返回
-        :return:
-        """
+        """Standby site DR deploy: wait for pairs, install, start, verify DR status."""
         self.record_deploy_process("dr_deploy", "running")
         ulog_fs_pair_ready_flag = False
         page_fs_pair_ready_flag = False
@@ -1146,10 +961,7 @@ class DRDeploy(object):
         self.record_deploy_process("dr_deploy", "success")
 
     def execute(self):
-        """
-        deploy --site=[standby/active]
-        :return:
-        """
+        """Execute DR deploy for the specified site (active or standby)."""
         def _execute():
             action_parse = argparse.ArgumentParser()
             action_parse.add_argument("--site", dest="site", choices=["standby", "active"], required=True)
@@ -1170,12 +982,11 @@ class DRDeploy(object):
                 raise err
             finally:
                 self.dr_deploy_opt.storage_opt.logout()
-            # 安装部署完成后记录加密密码到配置文件
             encrypted_pwd = KmcResolve.kmc_resolve_password("encrypted", self.dm_passwd)
             self.record_disaster_recovery_info("dm_pwd", encrypted_pwd)
             os.chmod(os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json"), mode=0o644)
             try:
-                shutil.copy(os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json"), "/opt/ograc/config/")
+                shutil.copy(os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json"), _paths.config_dir)
             except Exception as _err:
                 LOG.info(f"copy dr_deploy_param failed")
             self.copy_param_file_to_metadata()

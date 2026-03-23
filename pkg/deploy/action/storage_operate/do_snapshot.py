@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import stat
 import sys
@@ -5,6 +6,10 @@ import json
 import time
 import traceback
 import pathlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import cfg as _cfg
+_paths = _cfg.paths
 
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 
@@ -15,7 +20,7 @@ from storage_operate.dr_deploy_operate.dr_deploy_common import DRDeployCommon
 from utils.client.rest_client import get_cur_timestamp, read_helper, write_helper
 from om_log import REST_LOG as LOG
 
-DEPLOY_PARAM_PATH = '/opt/ograc/config/deploy_param.json'
+DEPLOY_PARAM_PATH = _paths.deploy_param_json
 DR_DEPLOY_FLAG = os.path.join(CUR_PATH, '../../config/.dr_deploy_flag')
 
 NORMAL_STATE, ABNORMAL_STATE = 0, 1
@@ -39,10 +44,7 @@ class SnapShotRestClient(object):
         raise Exception(err_info)
 
     def check_dr_site(self):
-        """
-        判断当前是否为备端，不执行打快照和回滚快照
-        :return:
-        """
+        """Check if current site is standby; skip snapshot/rollback if so."""
         if not self.storage_operate.rest_client.token:
             self.storage_operate.login()
         config_params = json.loads(read_helper(DEPLOY_PARAM_PATH))
@@ -79,7 +81,6 @@ class SnapShotRestClient(object):
         return NORMAL_STATE
 
     def rollback_snapshots(self, fs_name, vstore_id=0):
-        # 若该fs_name的快照未成功创建则无需回退
         if not self.processed_fs.get(fs_name):
             return NORMAL_STATE
         snapshot_id = self.processed_fs.get(fs_name)
@@ -93,14 +94,12 @@ class SnapShotRestClient(object):
             else:
                 raise e
         rollback_status = snapshot_info.get("rollbackStatus")
-        # rollback_status == "1"表示当前正在进行回退
         if rollback_status == "1":
             return NORMAL_STATE
         self.storage_operate.rollback_file_system_snapshot(snapshot_id, vstore_id)
         return NORMAL_STATE
 
     def delete_snapshots(self, fs_name, vstore_id=0):
-        # 若该fs_name的快照未成功创建则无需回退
         if not self.processed_fs.get(fs_name):
             return NORMAL_STATE
         snapshot_id = self.processed_fs.get(fs_name)
@@ -176,7 +175,6 @@ def main(mode, ip_address, main_path):
 
     login_data = (ip_address, user_name, passwd)
     rest_client_obj = SnapShotRestClient(login_data, fs_processed_data)
-    # 检查当前是否为备端，是不打快照
     if rest_client_obj.check_dr_site():
         return NORMAL_STATE
     for fs_name, _, _vstore_id in fs_names_type:
@@ -202,12 +200,7 @@ def main(mode, ip_address, main_path):
 
 
 def query_rollback_process(fs_names_type, rest_client_obj):
-    """
-    查询文件系统回滚状态
-    :param fs_names_type:
-    :param rest_client_obj:
-    :return:
-    """
+    """Query filesystem rollback status until all complete."""
     query_list = fs_names_type
     success_list = []
     while query_list:
