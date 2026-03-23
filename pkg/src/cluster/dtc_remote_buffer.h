@@ -40,7 +40,17 @@
 extern "C" {
 #endif
 
-#define DRC_REMOTE_BUF_START_ADDR 0x80000000000
+#define DRC_SHM_SIZE (SIZE_G(8))
+#define DRC_BASE_ADDR_0 0x80000000000
+#define DRC_BASE_ADDR_1 0x90000000000
+
+#define DRC_REMOTE_BUF_SIZE (SIZE_M(256))
+#define DRC_DIST_QUE_SIZE (SIZE_M(256))
+#define DRC_DISK_LCK_SIZE (SIZE_M(256))
+
+#define DRC_REMOTE_BUF_OFFSET (uint64)0
+#define DRC_DIST_QUE_OFFSET (DRC_REMOTE_BUF_OFFSET + DRC_REMOTE_BUF_SIZE)
+#define DRC_DIST_LCK_OFFSET (DRC_DIST_QUE_OFFSET + DRC_DIST_QUE_SIZE)
 
 typedef struct st_remote_buf_context {
     buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];
@@ -82,7 +92,7 @@ typedef enum buffer_type {
 status_t drc_init_remote_buffer();
 void broadcast_remote_buf_allocated();
 EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
-status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id, char *data_buf_name, buffer_type_t flag);
+status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
 
 
 #ifdef __cplusplus

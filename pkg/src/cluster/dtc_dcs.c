@@ -1101,8 +1101,8 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             break;
 
         case DRC_REQ_OWNER_ALREADY_OWNER:
-            dcs_send_requester_already_owner(session, &page_req);
-            break;
+             dcs_send_requester_already_owner(session, &page_req);
+             break;
 
         case DRC_REQ_OWNER_WAITING:
             // do nothing.
