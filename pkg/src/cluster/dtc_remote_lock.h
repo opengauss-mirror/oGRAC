@@ -27,6 +27,7 @@
 #define DTC_REMOTE_LOCK_H
 
 #include "knl_session.h"
+#include "dtc_remote_buffer.h"
 #include "ub_dist_comm_queue.h"
 #include "ub_dist_lock.h"
 
@@ -35,6 +36,7 @@ extern "C" {
 #endif
 
 status_t init_lock_comm_queue();
+void drc_init_remote_lock(ub_rw_lock_t **ub_lock);
 
 #ifdef __cplusplus
 }

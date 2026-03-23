@@ -30,6 +30,7 @@
 #include "dtc_drc.h"
 #include "dtc_context.h"
 #include "dtc_drc_stat.h"
+#include "dtc_remote_lock.h"
 #include "cm_malloc.h"
 #include "cm_date.h"
 #include "cs_ub.h"
@@ -41,22 +42,7 @@
 #include "ub_dist_comm_queue.h"
 #include "ub_dist_lock.h"
 
-static size_t DIST_LCK_SPC_SIZE = (size_t)1024 * 1024 * 256; // 256MB
-
 static ub_rw_lock_t *g_ub_lock = NULL;
-
-static inline uint64_t ub_get_tid_u64()
-{
-    static __thread uint64_t tid = 0;
-    if (tid == 0) {
-#ifdef __linux__
-        tid = (uint64_t)syscall(SYS_gettid);
-#else
-        tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
-#endif
-    }
-    return tid;
-}
 
 // page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
 #define REMOTE_BUF_PAGE_COST (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64) + \
@@ -87,54 +73,47 @@ static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf
     return remote_sga->remote_buf_alloc_size;
 }
 
-status_t dtc_mmap_remote_data_buf(remote_sga_t *cur_remote_buf, uint32 node_id, char *data_buf_name, buffer_type_t flag)
+status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 {
     int ret = OG_ERROR;
-    void *start = (void *)DRC_REMOTE_BUF_START_ADDR;
-    void *start_temp;
-    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
-    uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
+    void *start = (void *)(node_id == 0 ? DRC_BASE_ADDR_0 : DRC_BASE_ADDR_1);
+    uint64 data_buf_size = DRC_SHM_SIZE;
 
-    remote_sga_t *remote_lock = &DRC_RES_CTX->remote_lock;
-    uint64 lock_buf_size = remote_lock->remote_buf_alloc_size;
-
-    uint64 buf_size = cur_remote_buf->remote_buf_alloc_size;
-
-    switch (flag) {
-        case DATA_TYPE:
-            start_temp = start + node_id * data_buf_size;
-            break;
-        case LOCK_TYPE:
-            start_temp = start + 2 * data_buf_size + node_id * lock_buf_size;
-            break;
-        case LOCK_QUEUE:
-            start_temp = start + 2 * data_buf_size + (2 * lock_buf_size) + node_id * lock_buf_size;
-            break;
+    char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
+    struct passwd *pwd;
+    pwd = getpwuid(getuid());
+    OG_LOG_RUN_WAR("[DRC-GBP] uid %d, name: %s", getuid(), pwd->pw_name);
+    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, node_id);
+    if (ret < EOK) {
+        OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote data buf name fail,return error:%d", ret);
+        return ret;
     }
 
-    if (cur_remote_buf->map_success[node_id] == OG_TRUE) {
+    if (remote_sga->map_success[node_id] == OG_TRUE) {
         OG_LOG_RUN_WAR("[DRC-GBP] remote data buf part %d has been mapped, skip.", node_id);
         return OG_SUCCESS;
     }
 
-    ret = ubsmem_shmem_map(start_temp, buf_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
-        data_buf_name, 0, (void **)&(cur_remote_buf->remote_buf_addr[node_id]));
+    ret = ubsmem_shmem_map(start, data_buf_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, data_buf_name, 0,
+                           (void **)&(remote_sga->remote_buf_addr[node_id]));
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote data buf addr start: %p", remote_sga->remote_buf_addr[node_id]);
     if (ret != EOK) {
-        OG_LOG_RUN_ERR("[DRC-GBP] Failed to map data buffer %s of node_id %u, buffer addr: %p, return error:%d",
-            data_buf_name, node_id, cur_remote_buf->remote_buf_addr[node_id], ret);
+        OG_LOG_RUN_ERR("[DRC-GBP] Failed to map data buffer %s on node_id %u, return error:%d", data_buf_name, node_id,
+                       ret);
         return ret;
     }
 
-    cur_remote_buf->map_success[node_id] = OG_TRUE;
-    OG_LOG_RUN_INF("[DRC-GBP] Successfully mapped data buffer %s of node_id %u, buffer addr: %p",
-                    data_buf_name, node_id, remote_sga->remote_buf_addr[node_id]);
+    remote_sga->map_success[node_id] = OG_TRUE;
+    OG_LOG_RUN_INF("[DRC-GBP-BUFFER] Successfully mapped data buffer %s on node_id %u, addr: %p", data_buf_name,
+                   node_id, remote_sga->remote_buf_addr[node_id]);
     return OG_SUCCESS;
 }
 
 static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 node_id = g_instance->kernel.id;
-    uint64 remote_buf_size = drc_calc_remote_data_buf_size(remote_sga, buf_ctx);
+    uint64 remote_buf_size = DRC_SHM_SIZE;
+    (void)drc_calc_remote_data_buf_size(remote_sga, buf_ctx);
 
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
@@ -145,7 +124,7 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remo
         return ret;
     }
 
-    char data_buf_name[MAX_SHM_NAME_LENGTH] = {0};
+    char data_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
     struct passwd *pwd;
     pwd = getpwuid(getuid());
     ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, node_id);
@@ -154,14 +133,15 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remo
         return ret;
     }
 
-    char region_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
+    char region_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
     ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", node_id);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("[DRC] sprintf remote data buf region name fail,return error:%d", ret);
         return ret;
     }
 
-    ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_buf_size, 0600, UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
+    ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_buf_size, 0600,
+                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
     if (ret == UBSM_ERR_ALREADY_EXIST) {
         OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", data_buf_name, ret);
     } else if (ret != UBSM_OK) {
@@ -170,66 +150,11 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remo
     }
 
     // after allocate remote data buf, map the buf on self node.
-    ret = dtc_mmap_remote_data_buf(remote_sga, node_id, data_buf_name, DATA_TYPE);
+    ret = dtc_mmap_remote_data_buf(remote_sga, node_id);
     if (ret != UBSM_OK) {
         OG_LOG_RUN_ERR("[DRC]mmap remote data buf %s on node %u failed, ret: %d", data_buf_name, node_id, ret);
     }
     return ret;
-}
-
-static status_t drc_alloc_remote_lock_buffer_pool(remote_sga_t *remote_lock, remote_sga_t *remote_queue,
-                                                       remote_buf_context_t *buf_ctx)
-{
-    uint32 node_id = g_instance->kernel.id;
-    uint64 remote_buf_size = DIST_LCK_SPC_SIZE;  // 256MB for lock buffer pool
-
-    /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
-    g_mes.profile.inst_count = 2;
-
-    int ret = 0;
-
-    char region_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
-    ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf region name fail,return error:%d", ret);
-        return ret;
-    }
-
-    struct passwd *pwd;
-    pwd = getpwuid(getuid());
-
-    char lock_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
-    ret = sprintf_s(lock_buf_name, sizeof(lock_buf_name), "%s_lock_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
-        return ret;
-    }
-    ret = ubsmem_shmem_allocate(region_name, lock_buf_name, remote_buf_size, 0600,
-                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
-    if (ret == UBSM_ERR_ALREADY_EXIST) {
-        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", lock_buf_name, ret);
-    } else if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", lock_buf_name, ret);
-        return ret;
-    }
-
-    char queue_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
-
-    ret = sprintf_s(queue_buf_name, sizeof(queue_buf_name), "%s_queue_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
-        return ret;
-    }
-    ret = ubsmem_shmem_allocate(region_name, queue_buf_name, remote_buf_size, 0600,
-                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
-    if (ret == UBSM_ERR_ALREADY_EXIST) {
-        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", queue_buf_name, ret);
-    } else if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", queue_buf_name, ret);
-        return ret;
-    }
-
-    return UBSM_OK;
 }
 
 static inline void drc_set_remote_buffer(char **buf, char *remote_buf_addr, uint64 size, uint64 *offset)
@@ -258,96 +183,13 @@ static void drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf
     }
 }
 
-static void drc_set_lock_buf(remote_sga_t *remote_sga)
-{
-    uint32 node_id = g_instance->kernel.id;
-    /* * allocate each data buffer part */
-    MEMS_RETVOID_IFERR(memset_s(remote_sga->remote_buf_addr[node_id], DIST_LCK_SPC_SIZE, 0xFF, DIST_LCK_SPC_SIZE));
-}
-
-static status_t remote_map_lock_comm_queue()
-{
-    uint32 node_id = g_instance->kernel.id;
-    remote_sga_t *remote_queue = &DRC_RES_CTX->remote_queue;
-    uint64 data_buf_size = DRC_RES_CTX->remote_sga.remote_buf_alloc_size;
-    uint64 lock_buf_size = DRC_RES_CTX->remote_lock.remote_buf_alloc_size;
-    remote_queue->remote_buf_alloc_size = lock_buf_size;
-    void *start = (void *)DRC_REMOTE_BUF_START_ADDR + 2 * data_buf_size + 2 * lock_buf_size + node_id * lock_buf_size;
-
-    struct passwd *pwd;
-    pwd = getpwuid(getuid());
-    char queue_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
-    int ret;
-
-    ret = sprintf_s(queue_buf_name, sizeof(queue_buf_name), "%s_queue_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote data buf name fail,return error:%d", ret);
-        return ret;
-    }
-    if (ubsmem_shmem_map(start, lock_buf_size, PROT_READ | PROT_WRITE, MAP_SHARED, queue_buf_name, 0,
-                         (void **)&remote_queue->remote_buf_addr[node_id]) != 0) {
-        OG_LOG_RUN_ERR("[DRC-GBP] ubsmem_shmem_map for comm queue failed, return error");
-        return OG_ERROR;
-    }
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock queue buf addr start: %p",
-                   remote_queue->remote_buf_addr[node_id]);
-    
-    return OG_SUCCESS;
-}
-
-static void drc_init_remote_lock()
-{
-    uint32 node_id = g_instance->kernel.id;
-    uint64 data_buf_size = DRC_RES_CTX->remote_sga.remote_buf_alloc_size;
-
-    remote_sga_t *remote_lock = &DRC_RES_CTX->remote_lock;
-    remote_lock->remote_buf_alloc_size = ALIGN_TO_128M(DIST_LCK_SPC_SIZE);
-    uint64 lock_buf_size = remote_lock->remote_buf_alloc_size;
-
-    if (remote_map_lock_comm_queue() != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC] remote_map_lock_comm_queue for send failed.");
-        return;
-    }
-    
-    void *start = (void *)DRC_REMOTE_BUF_START_ADDR;
- 	void *start_temp = start + 2 * data_buf_size + node_id * lock_buf_size;
-    char lock_buf_name[MAX_SHM_NAME_LENGTH] = {0};
-    struct passwd *pwd;
-    pwd = getpwuid(getuid());
-    int ret = sprintf_s(lock_buf_name, sizeof(lock_buf_name), "%s_lock_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf name fail,return error:%d", ret);
-        return;
-    }
-
-    if (ubsmem_shmem_map(start_temp, DIST_LCK_SPC_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, lock_buf_name, 0,
-                             (void **)&remote_lock->remote_buf_addr[node_id]) != 0) {
-        OG_LOG_RUN_ERR("[DRC] dtc_mmap_remote_lock_buf for dist lock failed.");
-        return;
-    }
-
-    g_ub_lock = (ub_rw_lock_t *)remote_lock->remote_buf_addr[node_id];
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p, start_temp: %p",
-        remote_lock->remote_buf_addr[node_id], start_temp);
-
-    ub_lock_config_t config;
-    config.lease_time = 60000;
-    config.heartbeat_timeout = 500;
-
-    ub_location_t creator;
-    creator.tid = ub_get_tid_u64();
-    creator.node_id = (uint8_t)node_id;
-
-    ub_rw_lock_create(g_ub_lock, &config, &creator);
-}
-
 static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
 
     buf_set_t *set = NULL;
     uint64 offset;
-    drc_init_remote_lock();
+    drc_init_remote_lock(&g_ub_lock);
     uint64 lock_match_start;
 
     for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
@@ -374,6 +216,8 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
             remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
             // each page corresponds to a lock in the lock buffer.
             page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
+            OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,
+                           (void *)page_info->lock_ptr);
         }
 
         knl_reset_large_memory((char *)set->buckets, (uint64)sizeof(buf_bucket_t) * set->bucket_num);
@@ -394,19 +238,7 @@ status_t drc_init_remote_buffer()
         return ret;
     }
     drc_set_data_buf(&ogx->remote_sga, &ogx->buf_ctx);
-
-    ret = drc_alloc_remote_lock_buffer_pool(&ogx->remote_lock, &ogx->remote_queue, &ogx->buf_ctx);
-    if (ret != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC]alloc mmap remote buffer pool fail,return error:%u", ret);
-        return ret;
-    }
-    OG_LOG_RUN_INF("[DRC]Successfully allocated and mapped remote buffer pool for data, lock and queue.");
-    drc_set_lock_buf(&ogx->remote_queue);
-    OG_LOG_RUN_INF("[DRC]Successfully set remote queue buffer.");
-    drc_set_lock_buf(&ogx->remote_lock);
-    OG_LOG_RUN_INF("[DRC]Successfully set remote lock buffer.");
     drc_init_remote_buf_struct(&ogx->remote_sga, &ogx->buf_ctx);
-    OG_LOG_RUN_INF("[DRC]Successfully initialized remote buffer structures.");
     return OG_SUCCESS;
 }
 
@@ -440,27 +272,5 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     }
     mes_release_message_buf(msg->buffer);
     OG_LOG_RUN_WAR("[DRC-GBP]drc_process_remote_buf_mmap, node id %u", node_id);
-    struct passwd *pwd;
-    pwd = getpwuid(getuid());
-    char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-    int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote data buf name fail, return error:%d", ret);
-        return;
-    }
-    (void)dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id, data_buf_name, DATA_TYPE);
-
-    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_lock_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote lock buf name fail, return error:%d", ret);
-        return;
-    }
-    (void)dtc_mmap_remote_data_buf(&ogx->remote_lock, node_id, data_buf_name, LOCK_TYPE);
-
-    ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_queue_buf_part_%d", pwd->pw_name, node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC-GBP] sprintf remote lock queue buf name fail, return error:%d", ret);
-        return;
-    }
-    (void)dtc_mmap_remote_data_buf(&ogx->remote_queue, node_id, data_buf_name, LOCK_QUEUE);
+    (void)dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
 }

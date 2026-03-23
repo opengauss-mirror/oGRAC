@@ -23,12 +23,10 @@
  * -------------------------------------------------------------------------
  */
 #include <stdio.h>
-#include <sys/syscall.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"
-#include "ub_dist_comm_queue.h"
-#include "ub_dist_lock.h"
+#include "dtc_remote_lock.h"
 
 static ub_shm_comm_t g_handle_send = NULL;
 static ub_shm_comm_t g_handle_recv = NULL;
@@ -37,9 +35,9 @@ status_t init_lock_comm_queue()
 {
     uint32 node_id = g_instance->kernel.id;
     bool is_master = (node_id == 0);
-    remote_sga_t *remote_queue = &DRC_RES_CTX->remote_queue;
-    char *shmA = remote_queue->remote_buf_addr[0];
-    char *shmB = remote_queue->remote_buf_addr[1];
+    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
+    char *shmA = remote_sga->remote_buf_addr[0] + DRC_DIST_QUE_OFFSET;
+    char *shmB = remote_sga->remote_buf_addr[1] + DRC_DIST_QUE_OFFSET;
 
     const size_t kInitSize = 1024;
     const size_t kRingSize = 1376640;
@@ -52,8 +50,8 @@ status_t init_lock_comm_queue()
     void *ring_region_cur = (is_master ? shmA : shmB) + kInitSize;
     void *ring_region_peer = (is_master ? shmB : shmA) + kInitSize;
 
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 0: %p", remote_queue->remote_buf_addr[0]);
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 1: %p", remote_queue->remote_buf_addr[1]);
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 0: %p", shmA);
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 1: %p", shmB);
 
     ub_ring_desc_t ring_descs[1];
     ring_descs[0].ring_capacity = 1024;
@@ -89,4 +87,22 @@ status_t init_lock_comm_queue()
         return OG_ERROR;
     }
     return OG_SUCCESS;
+}
+
+void drc_init_remote_lock(ub_rw_lock_t **ub_lock)
+{
+    uint32 node_id = g_instance->kernel.id;
+    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
+    *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p", *ub_lock);
+
+    ub_lock_config_t config;
+    config.lease_time = 60000;
+    config.heartbeat_timeout = 500;
+
+    ub_location_t creator;
+    creator.tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
+    creator.node_id = (uint8_t)node_id;
+
+    ub_rw_lock_create(*ub_lock, &config, &creator);
 }
