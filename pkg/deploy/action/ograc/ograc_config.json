@@ -18,8 +18,8 @@
   "timeout": {
     "default": 1800,
     "pre_install": 600,
-    "install": 7200,
-    "start": 1800,
+    "install": 600,
+    "start": 3600,
     "stop": 600,
     "check_status": 300,
     "uninstall": 3600,

@@ -13,13 +13,32 @@ PKG_DIR = os.path.abspath(os.path.join(CUR_DIR, ".."))
 MODULE_CONFIG_FILE = os.path.join(CUR_DIR, "config_params_lun.json")
 
 
-_TIMEOUTS = {
+_TIMEOUTS_DEFAULT = {
     "default": 1800, "install": 3600, "uninstall": 1800,
     "upgrade": 3600, "pre_install": 1800, "start": 600,
     "stop": 600, "check_status": 120, "backup": 7200,
     "rollback": 3600, "pre_upgrade": 1800, "upgrade_commit": 600,
     "init_container": 1800,
 }
+
+_OGRAC_CONFIG_FILE = os.path.join(CUR_DIR, "ograc", "ograc_config.json")
+
+
+def _load_timeouts():
+    timeouts = dict(_TIMEOUTS_DEFAULT)
+    if os.path.exists(_OGRAC_CONFIG_FILE):
+        try:
+            with open(_OGRAC_CONFIG_FILE, encoding="utf-8") as f:
+                overrides = json.load(f).get("timeout", {})
+            for k, v in overrides.items():
+                if not str(k).startswith("_"):
+                    timeouts[k] = int(v)
+        except Exception:
+            pass
+    return timeouts
+
+
+_TIMEOUTS = _load_timeouts()
 
 _module_config_cache = None
 _deploy_params_cache = None

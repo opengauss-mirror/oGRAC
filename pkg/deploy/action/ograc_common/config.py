@@ -12,6 +12,7 @@ _spec = importlib.util.spec_from_file_location("_action_config", os.path.join(_A
 _action_config = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_action_config)
 load_env_defaults = _action_config.load_env_defaults
+get_module_config = _action_config.get_module_config
 
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 PKG_DIR = os.path.abspath(os.path.join(CUR_DIR, "../.."))
@@ -47,8 +48,9 @@ def _load_deploy_param(path):
 
 class OgracCommonConfig:
     def __init__(self):
-        ograc_home = os.environ.get("OGRAC_HOME", "/opt/ograc")
-        data_root = os.environ.get("OGRAC_DATA_ROOT", "/mnt/dbdata")
+        mc = get_module_config()
+        ograc_home = os.environ.get("OGRAC_HOME", mc.get("ograc_home", "/opt/ograc"))
+        data_root = os.environ.get("OGRAC_DATA_ROOT", mc.get("data_root", "/mnt/dbdata"))
         env = load_env_defaults()
         self.user = env.get("ograc_user", "ograc")
         self.group = env.get("ograc_group", "ograc")

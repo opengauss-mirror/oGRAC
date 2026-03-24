@@ -9,9 +9,12 @@ Responsibilities:
 """
 
 import os
+import subprocess
 import sys
 
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+BIND_CPU_SCRIPT = os.path.join(
+    os.path.dirname(CUR_DIR), "ograc_common", "cpu_bind.py")
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
 
@@ -63,7 +66,47 @@ class OgracDeploy:
                 if line.strip():
                     LOG.info(line)
 
+    def _init_cpu_config(self):
+        """Initialize CPU bind config template (runs as root).
+
+        Equivalent to old storage_deploy/appctl.sh init_cpu_config():
+            python3 bind_cpu_config.py 'init_config'
+        """
+        if not os.path.isfile(BIND_CPU_SCRIPT):
+            LOG.warning("bind_cpu_config.py not found, skipping init_cpu_config")
+            return
+        LOG.info("Initializing CPU bind config")
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, BIND_CPU_SCRIPT, "init_config"],
+                cwd=os.path.dirname(BIND_CPU_SCRIPT),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            out, err = proc.communicate(timeout=60)
+            if proc.returncode != 0:
+                LOG.warning("init_cpu_config failed (rc=%d): %s",
+                            proc.returncode, err.decode("utf-8", errors="replace"))
+        except Exception as e:
+            LOG.warning("init_cpu_config exception: %s", e)
+
+    def _update_cpu_config(self):
+        """Calculate NUMA CPU binding and generate cpu_config.json (runs as ograc user).
+
+        Equivalent to old storage_deploy/appctl.sh update_cpu_config():
+            su -s /bin/bash - "${user}" -c "python3 bind_cpu_config.py"
+        """
+        if not os.path.isfile(BIND_CPU_SCRIPT):
+            LOG.warning("bind_cpu_config.py not found, skipping update_cpu_config")
+            return
+        LOG.info("Updating CPU config")
+        rc, out, err = run_python_as_user(
+            BIND_CPU_SCRIPT, [], self.ograc_user,
+            log_file=self.paths.log_file, timeout=120)
+        if rc != 0:
+            LOG.warning("update_cpu_config failed (rc=%d): %s", rc, err)
+
     def  action_pre_install(self):
+        self._init_cpu_config()
         self._run_ctl("pre_install")
 
     def action_install(self):
@@ -75,6 +118,7 @@ class OgracDeploy:
 
     def action_start(self):
         ensure_cgroup_dir()
+        self._update_cpu_config()
         self._run_ctl("start")
         pid_list = list_ogracd_pids(self.paths.d_data_path, self.ograc_user)
         if pid_list:

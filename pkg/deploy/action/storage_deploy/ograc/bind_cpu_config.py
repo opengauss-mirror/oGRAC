@@ -9,14 +9,14 @@ import pwd
 import grp
 
 from log import LOGGER
-from get_config_info import get_value
+from get_config_info import get_value, OGRAC_HOME_DIR, DATA_ROOT_DIR
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from update_config import update_dbstor_conf
 
 # 需要的路径和配置
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cpu_bind_config.json")
-CPU_CONFIG_INFO = "/opt/ograc/ograc/cfg/cpu_config.json"
-CONFIG_DIR = "/mnt/dbdata/local/ograc/tmp/data"
+CPU_CONFIG_INFO = os.path.join(OGRAC_HOME_DIR, "ograc", "cfg", "cpu_config.json")
+CONFIG_DIR = os.path.join(DATA_ROOT_DIR, "local", "ograc", "tmp", "data")
 XNET_MODULE = "NETWORK_BIND_CPU"
 MES_MODULE = "MES_BIND_CPU"
 MES_CPU_INFO = "MES_CPU_INFO"

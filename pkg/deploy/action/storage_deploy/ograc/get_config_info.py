@@ -7,11 +7,28 @@ from pathlib import Path
 INSTALL_SCPRIT_DIR = os.path.dirname(os.path.abspath(__file__))
 PKG_DIR = os.path.abspath(os.path.join(INSTALL_SCPRIT_DIR, "../.."))
 
+_CONFIG_PARAMS_LUN_FILE = os.path.join(PKG_DIR, "config_params_lun.json")
+
+
+def _read_module_config():
+    if os.path.exists(_CONFIG_PARAMS_LUN_FILE):
+        try:
+            with open(_CONFIG_PARAMS_LUN_FILE, encoding="utf-8") as _f:
+                return json.load(_f).get("module_config", {})
+        except Exception:
+            pass
+    return {}
+
+
+_mc = _read_module_config()
+OGRAC_HOME_DIR = _mc.get("ograc_home") or os.path.dirname(PKG_DIR)
+DATA_ROOT_DIR = _mc.get("data_root") or "/mnt/dbdata"
+
 CONFIG_PARAMS_FILE = os.path.join(PKG_DIR, "config", "deploy_param.json")
 OGRAC_CONFIG_PARAMS_FILE = os.path.join(PKG_DIR, "action", "ograc", "ograc_config.json")
-OGRAC_CONFIG_PARAMS_FILE_BACKUP = "/opt/ograc/backup/files/ograc/ograc_config.json"
-NUMA_CONFIG_FILE = "/opt/ograc/ograc/cfg/cpu_config.json"
-OGRAC_START_STATUS_FILE = os.path.join("/opt/ograc/ograc", "cfg", "start_status.json")
+OGRAC_CONFIG_PARAMS_FILE_BACKUP = os.path.join(OGRAC_HOME_DIR, "backup", "files", "ograc", "ograc_config.json")
+NUMA_CONFIG_FILE = os.path.join(OGRAC_HOME_DIR, "ograc", "cfg", "cpu_config.json")
+OGRAC_START_STATUS_FILE = os.path.join(OGRAC_HOME_DIR, "ograc", "cfg", "start_status.json")
 OGRAC_START_CONFIG_FILE = os.path.join(PKG_DIR, "config", "container_conf", "init_conf", "start_config.json")
 OGRAC_MEM_SPEC_FILE = os.path.join(PKG_DIR, "config", "container_conf", "init_conf", "mem_spec")
 ENV_FILE = os.path.join(PKG_DIR, "action", "env.sh")
@@ -101,6 +118,7 @@ if os.path.exists(OGRAC_MEM_SPEC_FILE):
         mem_spec = f.read()
     info_ograc_config = MEM_SPEC.get(mem_spec, "1")
 
+numa_config = {}
 if os.path.exists(NUMA_CONFIG_FILE):
     with open(NUMA_CONFIG_FILE, "r", encoding="utf-8") as f:
         numa_config = json.loads(f.read())
