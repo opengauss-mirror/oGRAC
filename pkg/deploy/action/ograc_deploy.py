@@ -484,7 +484,6 @@ class OgracDeploy:
             (CUR_DIR, 1), (os.path.join(pkg_dir, "config"), 1),
             (os.path.join(pkg_dir, "common"), None),
             (os.path.join(CUR_DIR, "implement"), None),
-            (os.path.join(CUR_DIR, "utils"), None),
             (os.path.join(CUR_DIR, "logic"), None),
             (os.path.join(CUR_DIR, "storage_operate"), None),
             (os.path.join(CUR_DIR, "inspection"), None),
@@ -499,6 +498,15 @@ class OgracDeploy:
                 cmd += f' -maxdepth {depth}'
             cmd += ' -type f -print0 | xargs -0 chmod 400'
             exec_popen(cmd)
+
+        sub_dirs = [d for d in os.listdir(CUR_DIR)
+                     if os.path.isdir(os.path.join(CUR_DIR, d)) and not d.startswith('.')]
+        for d in sub_dirs:
+            full = os.path.join(CUR_DIR, d)
+            exec_popen(f'find "{full}" -type d -exec chmod 755 {{}} +')
+            exec_popen(f'find "{full}" -type f -name "*.py" -exec chmod 644 {{}} +')
+            exec_popen(f'find "{full}" -type f -name "*.sh" -exec chmod 755 {{}} +')
+            exec_popen(f'find "{full}" -type f -name "*.json" -exec chmod 644 {{}} +')
 
         for d in (CUR_DIR, os.path.join(CUR_DIR, "logic")):
             if os.path.isdir(d):

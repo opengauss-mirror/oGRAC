@@ -1,18 +1,56 @@
 #!/bin/bash
 source ~/.bashrc
 
+SCRIPT_DIR=$(dirname $(readlink -f $0))
+OGRAC_HOME=$(dirname $(dirname $(dirname ${SCRIPT_DIR})))
+ACTION_DIR="${OGRAC_HOME}/action"
+GET_CONFIG="${ACTION_DIR}/ograc_common/get_config_info.py"
+BIND_CPU_SCRIPT="${ACTION_DIR}/ograc_common/cpu_bind.py"
+CPU_CONFIG_FILE="${OGRAC_HOME}/ograc/cfg/cpu_config.json"
+CPU_BIND_CONFIG="${ACTION_DIR}/ograc_common/cpu_bind_config.json"
+
 dbuser=`whoami`
 loguser=`whoami`
 if [ "${dbuser}" = "root" ]
 then
-	dbuser=$(grep '"U_USERNAME_AND_GROUP"' /opt/ograc/action/ograc/install_config.json | cut -d '"' -f 4 | sed 's/:.*//')
+	dbuser=$(python3 ${GET_CONFIG} "deploy_user")
 fi
-running_mode=$(grep '"M_RUNING_MODE"' /opt/ograc/action/ograc/install_config.json | cut -d '"' -f 4)
-exit_num_file="/opt/ograc/cms/cfg/exit_num.txt"
-exit_num_dir="/opt/ograc/cms/cfg"
+running_mode=$(python3 ${GET_CONFIG} "M_RUNING_MODE")
+exit_num_file="${OGRAC_HOME}/cms/cfg/exit_num.txt"
+exit_num_dir="${OGRAC_HOME}/cms/cfg"
 single_mode="multiple"
 process_to_check="ogracd"
 process_path=$OGDB_DATA
+
+function ensure_cpu_config() {
+	if [ -f "${CPU_CONFIG_FILE}" ]; then
+		return
+	fi
+	if [ ! -f "${BIND_CPU_SCRIPT}" ]; then
+		echo "Warning: bind_cpu_config.py not found: ${BIND_CPU_SCRIPT}" >&2
+		return
+	fi
+
+	local cfg_dir=$(dirname "${CPU_CONFIG_FILE}")
+	if [ ! -d "${cfg_dir}" ]; then
+		mkdir -p "${cfg_dir}" 2>/dev/null || true
+	fi
+
+	if [ ! -f "${CPU_BIND_CONFIG}" ]; then
+		echo "Initializing CPU bind config..." >&2
+		python3 "${BIND_CPU_SCRIPT}" init_config 2>&1 || echo "Warning: init_config failed (rc=$?)" >&2
+	fi
+	echo "Generating cpu_config.json..." >&2
+	if [ "${loguser}" = "root" ]; then
+		su -s /bin/bash - "${dbuser}" -c "python3 ${BIND_CPU_SCRIPT}" 2>&1 || echo "Warning: bind_cpu_config failed (rc=$?)" >&2
+	else
+		python3 "${BIND_CPU_SCRIPT}" 2>&1 || echo "Warning: bind_cpu_config failed (rc=$?)" >&2
+	fi
+
+	if [ ! -f "${CPU_CONFIG_FILE}" ]; then
+		echo "Warning: cpu_config.json was NOT generated at ${CPU_CONFIG_FILE}" >&2
+	fi
+}
 
 function usage()
 {
@@ -52,12 +90,13 @@ function check_process()
 }
 
 function start_ograc() {
+	ensure_cpu_config
 	numactl_str=" "
 	set +e
 	numactl --hardware > /dev/null 2>&1
 	if [ $? -eq 0 ]; then
 		OS_ARCH=$(uname -i)
-		deploy_mode=$(python3 /opt/ograc/action/ograc/get_config_info.py "deploy_mode")
+		deploy_mode=$(python3 ${GET_CONFIG} "deploy_mode")
 		if [[ ${OS_ARCH} =~ "aarch64" ]] && [[ x"${deploy_mode}" != x"dss" ]]; then
             CPU_CORES_NUM=`cat /proc/cpuinfo |grep "architecture" |wc -l`
             CPU_CORES_NUM=$((CPU_CORES_NUM - 1))
@@ -65,7 +104,7 @@ function start_ograc() {
 		fi
 
 		if [[ ${OS_ARCH} =~ "aarch64" ]]; then
-			result_str=$(python3 /opt/ograc/action/ograc/get_config_info.py "OGRAC_NUMA_CPU_INFO")
+			result_str=$(python3 ${GET_CONFIG} "OGRAC_NUMA_CPU_INFO")
 			if [ -z "$result_str" ]; then
 				echo "Error: OGRAC_NUMA_CPU_INFO is empty."
 				exit 1
