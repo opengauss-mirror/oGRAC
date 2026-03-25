@@ -41,10 +41,40 @@ class OgracDeploy:
         self.ograc_group = self.deploy.ograc_group
         self.user_and_group = f"{self.ograc_user}:{self.ograc_group}"
 
+    def _ensure_owned_dir_chain(self, target_dir: str, leaf_mode: int = 0o750):
+        """Ensure every dir from ograc_home to target_dir is owned by service user."""
+        base = os.path.abspath(self.paths.ograc_home)
+        target = os.path.abspath(target_dir)
+        if target != base and not target.startswith(base + os.sep):
+            ensure_dir(target, leaf_mode, self.user_and_group)
+            return
+
+        chain = []
+        cur = target
+        while True:
+            chain.append(cur)
+            if cur == base:
+                break
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+
+        for d in reversed(chain):
+            mode = leaf_mode if d == target else 0o755
+            ensure_dir(d, mode, self.user_and_group)
+
     def _prepare_root_common(self):
-        ensure_dir(self.paths.log_dir, 0o750, self.user_and_group)
+        LOG.info("prepare_root_common: ograc_home=%s, log_dir=%s, ograc_root=%s, owner=%s",
+                 self.paths.ograc_home, self.paths.log_dir,
+                 self.paths.ograc_root, self.user_and_group)
+        # Ensure service user can traverse install base dir
+        # (e.g. /data/jyn_install) before accessing ograc_home.
+        install_base = os.path.dirname(os.path.abspath(self.paths.ograc_home))
+        ensure_dir(install_base, 0o755)
+        self._ensure_owned_dir_chain(self.paths.log_dir, 0o750)
+        self._ensure_owned_dir_chain(self.paths.ograc_root, 0o750)
         ensure_file(self.paths.log_file, 0o640, self.user_and_group)
-        ensure_dir(self.paths.ograc_root, 0o750, self.user_and_group)
 
     def _run_ctl(self, action: str):
         self._prepare_root_common()
@@ -106,6 +136,7 @@ class OgracDeploy:
             LOG.warning("update_cpu_config failed (rc=%d): %s", rc, err)
 
     def  action_pre_install(self):
+        self._prepare_root_common()
         self._init_cpu_config()
         self._run_ctl("pre_install")
 
@@ -118,6 +149,7 @@ class OgracDeploy:
 
     def action_start(self):
         ensure_cgroup_dir()
+        self._prepare_root_common()
         self._update_cpu_config()
         self._run_ctl("start")
         pid_list = list_ogracd_pids(self.paths.d_data_path, self.ograc_user)

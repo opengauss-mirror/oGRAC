@@ -499,6 +499,9 @@ class OgracDeploy:
             cmd += ' -type f -print0 | xargs -0 chmod 400'
             exec_popen(cmd)
 
+        exec_popen(f'find "{CUR_DIR}"/ -maxdepth 1 -type f -name "*.py" -exec chmod 644 {{}} +')
+        exec_popen(f'find "{CUR_DIR}"/ -maxdepth 1 -type f -name "*.sh" -exec chmod 755 {{}} +')
+
         sub_dirs = [d for d in os.listdir(CUR_DIR)
                      if os.path.isdir(os.path.join(CUR_DIR, d)) and not d.startswith('.')]
         for d in sub_dirs:
@@ -563,22 +566,26 @@ class OgracDeploy:
             return 1
 
         install_base = os.path.join(self.paths.ograc_home, "image")
-        ensure_dir(install_base, mode=0o755)
-        exec_popen(f"tar -zxf {tar_files[0]} -C {install_base}")
-        exec_popen(f"chmod +x -R {install_base}")
+        ensure_dir(install_base, mode=0o755, user=self.ograc_user, group=self.ograc_group)
+        run_cmd(f"tar -zxf {tar_files[0]} -C {install_base}", "failed to extract ograc package")
+        run_cmd(f"chmod 755 {install_base}", "failed to chmod install_base")
 
         unpack_path = os.path.join(
             install_base, "ograc_connector", "ogracKernel",
             "oGRAC-DATABASE-LINUX-64bit", "oGRAC-RUN-LINUX-64bit.tar.gz")
         if os.path.exists(unpack_path):
-            exec_popen(f"tar -zxf {unpack_path} -C {install_base}")
+            run_cmd(f"tar -zxf {unpack_path} -C {install_base}", "failed to extract oGRAC-RUN package")
 
         rpm_path = os.path.join(install_base, "oGRAC-RUN-LINUX-64bit")
         if os.path.isdir(rpm_path):
-            exec_popen(f"chmod -R 750 {rpm_path}")
-            exec_popen(
-                f"chown {self.ograc_user}:{self.ograc_group} -hR {rpm_path}")
-            exec_popen(f"chown root:root {install_base}")
+            run_cmd(
+                f"chown {self.ograc_user}:{self.ograc_group} -hR {rpm_path}",
+                "failed to chown oGRAC-RUN package")
+            run_cmd(f'find "{rpm_path}" -type d -exec chmod 750 {{}} +',
+                    "failed to chmod oGRAC-RUN dirs")
+            run_cmd(f'find "{rpm_path}" -type f -exec chmod 640 {{}} +',
+                    "failed to chmod oGRAC-RUN files")
+            run_cmd(f"chmod 755 {install_base}", "failed to chmod image dir")
 
         return 0
 
