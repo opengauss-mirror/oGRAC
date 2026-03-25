@@ -15,7 +15,7 @@ MODULE_CONFIG_FILE = os.path.join(CUR_DIR, "config_params_lun.json")
 
 _TIMEOUTS_DEFAULT = {
     "default": 1800, "install": 3600, "uninstall": 1800,
-    "upgrade": 3600, "pre_install": 1800, "start": 600,
+    "upgrade": 3600, "pre_install": 1800, "start": 6000,
     "stop": 600, "check_status": 120, "backup": 7200,
     "rollback": 3600, "pre_upgrade": 1800, "upgrade_commit": 600,
     "init_container": 1800,

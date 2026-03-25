@@ -45,12 +45,21 @@ if not LOG.handlers:
     try:
         if not os.path.isdir(_log_dir):
             os.makedirs(_log_dir, exist_ok=True)
+        _log_path = os.path.join(_log_dir, "cpu_bind.log")
         _fh = logging.handlers.RotatingFileHandler(
-            os.path.join(_log_dir, "cpu_bind.log"),
-            maxBytes=6 * 1024 * 1024, backupCount=5)
+            _log_path, maxBytes=6 * 1024 * 1024, backupCount=5)
         _fh.setFormatter(logging.Formatter(
             "%(asctime)s %(levelname)s [%(funcName)s] %(message)s"))
         LOG.addHandler(_fh)
+        if os.getuid() == 0:
+            _owner = _cfg.user
+            try:
+                _pw = pwd.getpwnam(_owner)
+                for _p in (os.path.dirname(_log_dir), _log_dir, _log_path):
+                    if os.path.exists(_p):
+                        os.chown(_p, _pw.pw_uid, _pw.pw_gid)
+            except (KeyError, OSError):
+                pass
     except (PermissionError, OSError):
         pass
 
@@ -300,15 +309,22 @@ class _NumaBase:
         pointers = {nid: 0 for nid in self.available_cpu_for_binding_dict}
         count = thread_num
         while count > 0:
+            progressed = False
             for nid, avail in self.available_cpu_for_binding_dict.items():
                 if pointers[nid] < len(avail):
                     result.append(avail[pointers[nid]])
                     pointers[nid] += 1
                     count -= 1
+                    progressed = True
                     if count == 0:
                         break
+            if not progressed:
+                break
         for nid, avail in self.available_cpu_for_binding_dict.items():
             self.available_cpu_for_binding_dict[nid] = avail[pointers[nid]:]
+        if count > 0:
+            LOG.warning("Insufficient CPUs for requested thread_num=%s, allocated=%s",
+                        thread_num, len(result))
         return result
 
 
@@ -329,6 +345,22 @@ class PhysicalCpuConfig(_NumaBase):
                 LOG.error("invalid cpu id: %d (not in online list)", c)
                 return True
         return False
+
+    @staticmethod
+    def _select_bindable_cpus(cpus):
+        preferred = [c for c in cpus if c >= 12]
+        if preferred:
+            return preferred
+
+        fallback = [c for c in cpus if c >= 6]
+        if fallback:
+            LOG.warning("Low-spec topology detected, fallback to CPUs >= 6: %s",
+                        cpu_list_to_cpu_info(fallback))
+            return fallback
+
+        LOG.warning("Very low-spec topology detected, fallback to all online CPUs: %s",
+                    cpu_list_to_cpu_info(cpus))
+        return list(cpus)
 
     def init_cpu_info(self):
         rc, out, err = _exec_popen('/usr/bin/lscpu | grep -i "On-line CPU(s) list"')
@@ -351,7 +383,7 @@ class PhysicalCpuConfig(_NumaBase):
 
         self.available_cpu_for_binding_dict = {}
         for nid, cpus in list(self.numa_info_dict.items())[:BIND_NUMA_NODE_NUM]:
-            self.available_cpu_for_binding_dict[nid] = [c for c in cpus if c >= 12]
+            self.available_cpu_for_binding_dict[nid] = self._select_bindable_cpus(cpus)
 
         if not self.available_cpu_for_binding_dict or any(
                 not v for v in self.available_cpu_for_binding_dict.values()):

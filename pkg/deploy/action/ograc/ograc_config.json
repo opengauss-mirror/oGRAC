@@ -19,7 +19,7 @@
     "default": 1800,
     "pre_install": 600,
     "install": 600,
-    "start": 3600,
+    "start": 7200,
     "stop": 600,
     "check_status": 300,
     "uninstall": 3600,

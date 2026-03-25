@@ -84,6 +84,10 @@ def run_python_as_user(script, args, user, timeout=1800):
 def ensure_dir(path, mode=0o755, user=None, group=None):
     """Ensure directory exists, optionally set permissions and owner."""
     os.makedirs(path, mode=mode, exist_ok=True)
+    try:
+        os.chmod(path, mode)
+    except OSError as e:
+        LOG.warning("Failed to chmod %s: %s", path, e)
     if user and group:
         try:
             uid = pwd.getpwnam(user).pw_uid

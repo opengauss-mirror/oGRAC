@@ -12,23 +12,31 @@ def get_logger(name="ograc"):
     if log.handlers:
         return log
 
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-
-    file_handler = handlers.RotatingFileHandler(
-        cfg.paths.log_file, maxBytes=20 * 1024 * 1024, backupCount=10,
-    )
-
     fmt = logging.Formatter(
         fmt="%(asctime)s %(levelname)s [pid:%(process)d] [%(threadName)s]"
             " [tid:%(thread)d] [%(filename)s:%(lineno)d %(funcName)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    console.setFormatter(fmt)
-    file_handler.setFormatter(fmt)
 
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(fmt)
     log.addHandler(console)
-    log.addHandler(file_handler)
+
+    try:
+        import os
+        log_file = cfg.paths.log_file
+        log_dir = os.path.dirname(log_file)
+        if log_dir and not os.path.isdir(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        file_handler = handlers.RotatingFileHandler(
+            log_file, maxBytes=20 * 1024 * 1024, backupCount=10,
+        )
+        file_handler.setFormatter(fmt)
+        log.addHandler(file_handler)
+    except (PermissionError, OSError):
+        pass
+
     log.setLevel(logging.INFO)
     return log
 

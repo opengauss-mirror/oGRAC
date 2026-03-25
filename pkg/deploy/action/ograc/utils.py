@@ -96,8 +96,15 @@ def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=1800
 
 def ensure_dir(path, mode=0o750, owner=""):
     os.makedirs(path, mode=mode, exist_ok=True)
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
     if owner:
-        exec_popen(f"chown {owner} {path}")
+        rc, _, err = exec_popen(f"chown {owner} {path}")
+        if rc:
+            sys.stderr.write(f"Warning: chown {owner} {path} failed: {err}\n")
 
 
 def ensure_file(path, mode=0o640, owner=""):
@@ -105,5 +112,7 @@ def ensure_file(path, mode=0o640, owner=""):
         open(path, "a").close()
     os.chmod(path, mode)
     if owner:
-        exec_popen(f"chown {owner} {path}")
+        rc, _, err = exec_popen(f"chown {owner} {path}")
+        if rc:
+            sys.stderr.write(f"Warning: chown {owner} {path} failed: {err}\n")
 
