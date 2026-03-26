@@ -826,7 +826,8 @@ def _start_ogracd_process(dp, ogracd_configs):
     cmd = f"sh {script} -P ogracd -M {start_mode} -T {running_mode} >> {log_file} 2>&1"
     LOG.info("Starting ogracd: mode=%s, running=%s", start_mode, running_mode)
 
-    rc, stdout, stderr = _exec(cmd, timeout=1800)
+    start_timeout = _cfg.timeout.get("start") or 7200
+    rc, stdout, stderr = _exec(cmd, timeout=start_timeout)
     if rc:
         output = (stdout + stderr).replace(str(ogracd_configs.get("_SYS_PASSWORD", "")), "***")
         raise RuntimeError(f"Failed to start ogracd: {output}")
@@ -1385,5 +1386,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        LOG.error(str(e))
+        import traceback
+        LOG.error("%s\n%s", e, traceback.format_exc())
         sys.exit(1)
