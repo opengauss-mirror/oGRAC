@@ -5,8 +5,6 @@ ogracd cgroup memory limit calculation (Python port).
 Reads parameters from ogracd.ini and estimates reserved memory (MB)
 using the formula from the original ogracd_cgroup_calculate.sh.
 """
-from __future__ import annotations
-
 import os
 import re
 
@@ -60,7 +58,8 @@ def _read_ini_kv(path: str) -> dict:
     return kv
 
 
-def calculate_reserved_mem_mb(ini_path: str | None = None) -> int:
+def calculate_reserved_mem_mb(ini_path=None):
+    # type: (str) -> int
     ini_path = ini_path or cfg.paths.ogracd_ini
     if not os.path.exists(ini_path):
         LOG.warning(f"{ini_path} not exist, limited ogracd memory skipped")
