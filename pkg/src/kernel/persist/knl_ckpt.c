@@ -50,6 +50,7 @@
 #include "dtc_ckpt.h"
 #include "knl_rbp.h"
 #include "knl_ckpt.h"
+#include "dtc_remote_buffer.h"
 
 #define NEED_SYNC_LOG_INFO(ogx) ((ogx)->timed_task != CKPT_MODE_IDLE || (ogx)->trigger_task == CKPT_TRIGGER_FULL)
 
@@ -73,6 +74,13 @@ void ckpt_proc(thread_t *thread);
 void dbwr_proc(thread_t *thread);
 static status_t ckpt_perform(knl_session_t *session, ckpt_stat_items_t *stat);
 static void ckpt_page_clean(knl_session_t *session, ckpt_stat_items_t *stat);
+static void ckpt_clean_gbp_stale(knl_session_t *session, ckpt_context_t *ogx);
+
+/* GBP-backed ctrl may have DRC lock_mode NULL after load-from-gbp; still flush local copy. */
+static inline bool32 ckpt_need_check_owner(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    return (bool32)(!session->kernel->attr.enable_ubsmem || ctrl->shmem_page_meta == NULL);
+}
 
 static bool32 ckpt_ctrl_in_buffer_pool(knl_session_t *session, const buf_ctrl_t *ctrl)
 {
@@ -1616,7 +1624,14 @@ static status_t ckpt_prepare_normal(knl_session_t *session, ckpt_context_t *ogx,
                 continue;
             }
 
-            knl_panic(DCS_BUF_CTRL_IS_OWNER(session, to_flush_ctrl));
+            if (ckpt_need_check_owner(session, to_flush_ctrl)) {
+                knl_panic(DCS_BUF_CTRL_IS_OWNER(session, to_flush_ctrl));
+            } else if (!DCS_BUF_CTRL_IS_OWNER(session, to_flush_ctrl)) {
+                OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: flush gbp page without drc owner, lock_mode(%u),"
+                    "page_lsn(%llu)", to_flush_ctrl->page_id.file, to_flush_ctrl->page_id.page,
+                    (uint32)to_flush_ctrl->lock_mode, (uint64)to_flush_ctrl->page->lsn);
+            }
+
             if (to_flush_ctrl->is_remote_dirty &&
                 !dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session),
                     to_flush_ctrl->page_id,
@@ -1697,6 +1712,9 @@ static status_t ckpt_prepare_pages(knl_session_t *session, ckpt_context_t *ogx, 
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
         dcs_ckpt_clean_local_edp(session, ogx, stat);
+        if (session->kernel->attr.enable_ubsmem) {
+            ckpt_clean_gbp_stale(session, ogx);
+        }
         dtc_calculate_rcy_redo_size(session, ctrl);
     }
 
@@ -2599,6 +2617,68 @@ static void ckpt_update_write_list(knl_session_t *session)
             uint32 buf_pool_id = buf_get_pool_id(page_id, session->kernel->buf_ctx.buf_set_count);
             buf_set_t *set = &session->kernel->buf_ctx.buf_set[buf_pool_id];
             set->write_list.clean_page_count++;
+        }
+    }
+}
+
+static void ckpt_remove_gbp_stale(knl_session_t *session, buf_ctrl_t *ctrl, ckpt_context_t *ogx)
+{
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    uint64 remote_head_lsn;
+    uint64 remote_tail_lsn;
+
+    if (shmem_page_meta == NULL) {
+        return;
+    }
+
+    if (!ckpt_try_latch_ctrl(session, ctrl)) {
+        return;
+    }
+
+    remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
+    remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+    if (remote_head_lsn != remote_tail_lsn) {
+        OG_LOG_RUN_WAR("[DTC-GBP-CKPT][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn);
+        buf_unlatch(session, ctrl, OG_FALSE);
+        return;
+    }
+
+    if (remote_head_lsn > ctrl->page->lsn) {
+        OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: lsn check need remove, remote page lsn(%llu), ctrl->page->lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
+        if (ctrl->in_ckpt) {
+            ckpt_pop_page(session, ogx, ctrl);
+        }
+        CM_MFENCE;
+        ctrl->is_dirty = 0;
+        ctrl->is_remote_dirty = 0;
+        ctrl->is_edp = 0;
+    } else {
+        OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: lsn check doesn't need remove, remote page lsn(%llu),"
+            "ctrl->page->lsn(%llu), is_dirty(%u), is_remote_dirty(%u), is_edp(%d)", ctrl->page_id.file,
+            ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, (uint32)ctrl->is_dirty,
+            (uint32)ctrl->is_remote_dirty, ctrl->is_edp);
+    }
+    buf_unlatch(session, ctrl, OG_FALSE);
+}
+
+static void ckpt_clean_gbp_stale(knl_session_t *session, ckpt_context_t *ogx)
+{
+    buf_ctrl_t *ctrl_next = NULL;
+    buf_ctrl_t *ctrl = NULL;
+
+    if (ogx->queue.count == 0) {
+        return;
+    }
+
+    ctrl = ogx->queue.first;
+    while (ctrl != NULL) {
+        ctrl_next = ctrl->ckpt_next;
+        ckpt_remove_gbp_stale(session, ctrl, ogx);
+        ctrl = ctrl_next;
+        if (!ogx->ckpt_enabled) {
+            break;
         }
     }
 }
@@ -3713,7 +3793,13 @@ static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t
             return OG_SUCCESS;
         }
 
-        knl_panic(DCS_BUF_CTRL_IS_OWNER(session, shift));
+        if (ckpt_need_check_owner(session, shift)) {
+            knl_panic(DCS_BUF_CTRL_IS_OWNER(session, shift));
+        } else if (!DCS_BUF_CTRL_IS_OWNER(session, shift)) {
+            OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: clean flush gbp page without drc owner, lock_mode(%u),"
+                "page_lsn(%llu)", shift->page_id.file, shift->page_id.page, (uint32)shift->lock_mode,
+                (uint64)shift->page->lsn);
+        }
         if (shift->is_remote_dirty && !dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group,
             OG_CKPT_GROUP_SIZE(session),
                                                             shift->page_id, shift->page->lsn)) {
@@ -3788,6 +3874,9 @@ static status_t ckpt_clean_prepare_pages(knl_session_t *session, ckpt_context_t 
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
         dcs_ckpt_clean_local_edp(session, ogx, stat);
+        if (session->kernel->attr.enable_ubsmem) {
+            ckpt_clean_gbp_stale(session, ogx);
+        }
     }
 
     if (group->count >= OG_CKPT_GROUP_SIZE(session)) {
@@ -3953,6 +4042,9 @@ static status_t ckpt_clean_prepare_pages_all_set(knl_session_t *session, ckpt_co
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
         dcs_ckpt_clean_local_edp(session, ogx, stat);
+        if (session->kernel->attr.enable_ubsmem) {
+            ckpt_clean_gbp_stale(session, ogx);
+        }
     }
 
     if (group->count >= OG_CKPT_GROUP_SIZE(session)) {

@@ -14,11 +14,11 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * dtc_remote_buffer.h
+ * dtc_remote_lock.h
  *
  *
  * IDENTIFICATION
- * src/cluster/dtc_remote_buffer.h
+ * src/cluster/dtc_remote_lock.h
  *
  * -------------------------------------------------------------------------
  */

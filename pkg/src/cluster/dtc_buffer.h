@@ -44,9 +44,10 @@ typedef struct st_buf_read_assist {
     uint16          read_num;   // == 1 no prefetch, > 1 prefetch multiple pages
 } buf_read_assist_t;
 
-#define DTC_BUF_READ_ONE 1                          // read only one, no prefetch
-#define DTC_BUF_PREFETCH_EXT_NUM OG_INVALID_ID16    // prefetch by space extent_size
-                                                    // others, prefetch by given read_num
+#define DTC_BUF_READ_ONE 1  // read only one, no prefetch
+#define DTC_BUF_PREFETCH_EXT_NUM \
+    OG_INVALID_ID16  // prefetch by space extent_size
+                     // others, prefetch by given read_num
 
 #define DTC_BUF_NO_PREFETCH(read_num) ((read_num) == DTC_BUF_READ_ONE)
 #define DTC_BUF_PREFETCH_EXTENT(read_num) ((read_num) == DTC_BUF_PREFETCH_EXT_NUM)
@@ -78,6 +79,20 @@ status_t dtc_get_exclusive_owner_pages(knl_session_t *session, buf_ctrl_t **ctrl
 
 bool32 dtc_dcs_readable(knl_session_t *session, page_id_t page_id);
 bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id);
+
+// 100 same writer in 10 microsecond
+#define SAME_WRITER_COUNT_TRIGGER 100
+#define SAME_WRITER_THRESHOLD 10
+// 100 read in 10 microsecond
+#define READ_COUNT_TRIGGER 100
+#define READ_THRESHOLD 10
+
+// If any of these functions return true, a GBP-->LBP will be triggered
+// 1. Only one writer keeps writing to it. All other visitors are readers
+bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *ctrl);
+// 2. All visitors just keeps reading, no writing
+bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl);
+status_t test_gbp_dtc_read_page(knl_session_t *session, buf_read_assist_t *ra, knl_cursor_t *cursor);
 
 #ifdef __cplusplus
 }

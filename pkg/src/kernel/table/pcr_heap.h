@@ -134,6 +134,11 @@ void pcrh_compact_page(knl_session_t *session, heap_page_t *page);
 void pcrh_reset_self_changed(knl_session_t *session, heap_page_t *page, uint8 itl_id);
 void pcrh_cleanout_itls(knl_session_t *session, knl_cursor_t *cursor, heap_page_t *page, bool32 *changed);
 status_t pcrh_check_ud_row_info(heap_page_t *cr_page, undo_row_t *ud_row);
+void pcrh_log_itls_diag(knl_session_t *session, heap_page_t *page, page_id_t page_id, const char *tag);
+void pcrh_log_undo_snapshot_err(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *cr_page, pcr_itl_t *itl,
+    undo_page_t *ud_page, knl_scn_t query_scn, uint32 check_restart, const char *phase);
+void pcrh_log_local_cr_set(knl_session_t *session, cr_cursor_t *cursor, const char *phase);
+void pcrh_log_cr_route_decision(knl_session_t *session, cr_cursor_t *cursor, const char *tag, bool32 use_local);
 #ifdef __cplusplus
 }
 #endif

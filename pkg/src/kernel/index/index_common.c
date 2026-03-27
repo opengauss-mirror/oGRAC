@@ -1134,9 +1134,8 @@ void btree_concat_extent(knl_session_t *session, btree_t *btree, page_id_t exten
     buf_enter_page(session, extent, LATCH_MODE_X, ENTER_PAGE_NO_READ | ENTER_PAGE_TRY_PREFETCH);
     btree_format_page(session, segment, extent, 0, spc_ext_id_by_size(extent_size), OG_FALSE);
     buf_leave_page(session, OG_TRUE);
-
+    
     buf_enter_page(session, btree->entry, LATCH_MODE_X, ENTER_PAGE_RESIDENT);
-
     if (!IS_SAME_PAGID(btree->entry, segment->extents.last)) {
         buf_enter_page(session, segment->extents.last, LATCH_MODE_X, ENTER_PAGE_NORMAL);
     }

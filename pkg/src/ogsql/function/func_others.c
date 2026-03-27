@@ -23,6 +23,9 @@
  * -------------------------------------------------------------------------
  */
 #include "func_others.h"
+#include <errno.h>
+#include <stdlib.h>
+#include "dtc_remote_buffer.h"
 #include "dml_executor.h"
 #include "pl_executor.h"
 #include "srv_instance.h"
@@ -1718,6 +1721,15 @@ status_t sql_verify_alck_name(sql_verifier_t *verf, expr_node_t *func)
     return OG_SUCCESS;
 }
 
+status_t sql_verify_gbp_meta_addr(sql_verifier_t *verf, expr_node_t *func)
+{
+    CM_POINTER2(verf, func);
+    OG_RETURN_IFERR(sql_verify_func_node(verf, func, 1, 1, OG_INVALID_ID32));
+    func->datatype = OG_TYPE_STRING;
+    func->size = 128;
+    return OG_SUCCESS;
+}
+
 status_t sql_verify_alck_nm_and_to(sql_verifier_t *verf, expr_node_t *func)
 {
     CM_POINTER2(verf, func);
@@ -1885,6 +1897,78 @@ status_t sql_func_try_get_xact_shared_lock(sql_stmt_t *stmt, expr_node_t *func, 
     bool32 locked = OG_FALSE;
     OG_RETURN_IFERR(knl_alck_tx_try_lock_sh(stmt->session, &name.v_text, &locked));
     res->v_int = (int32)locked;
+    return OG_SUCCESS;
+}
+
+status_t sql_func_try_get_lock_by_gbp_meta_addr(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    variant_t arg;
+    uint64 meta_u64;
+    const remote_page_info_t *meta;
+    uint64 lock_ptr;
+    uint64 page_addr_u64;
+    char buf[192];
+    int32 len;
+    char *endp = NULL;
+    text_t tstr;
+
+    CM_POINTER3(stmt, func, res);
+    OG_RETURN_IFERR(sql_exec_expr(stmt, func->argument, &arg));
+    sql_keep_stack_variant(stmt, &arg);
+    SQL_CHECK_COLUMN_VAR(&arg, res);
+    if (arg.is_null) {
+        VAR_SET_NULL(res, OG_DATATYPE_OF_NULL);
+        return OG_SUCCESS;
+    }
+
+    if (OG_IS_STRING_TYPE(arg.type)) {
+        tstr = arg.v_text;
+        cm_trim_text(&tstr);
+        if (tstr.len == 0 || tstr.len >= sizeof(buf)) {
+            OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_FUNC_PARAMS,
+                               "gbp meta address string is empty or too long");
+            return OG_ERROR;
+        }
+        MEMS_RETURN_IFERR(memcpy_s(buf, sizeof(buf), tstr.str, tstr.len));
+        buf[tstr.len] = '\0';
+        errno = 0;
+        meta_u64 = strtoull(buf, &endp, 0);
+        if (endp != buf + tstr.len || (meta_u64 == ULLONG_MAX && errno == ERANGE)) {
+            OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_FUNC_PARAMS,
+                               "invalid gbp meta address (use decimal or 0x-prefixed hex uint64)");
+            return OG_ERROR;
+        }
+    } else {
+        OG_RETURN_IFERR(sql_convert_variant(stmt, &arg, OG_TYPE_BIGINT));
+        meta_u64 = (uint64)arg.v_bigint;
+    }
+
+    meta = (const remote_page_info_t *)(uintptr_t)meta_u64;
+    if (meta == NULL) {
+        VAR_SET_NULL(res, OG_DATATYPE_OF_NULL);
+        return OG_SUCCESS;
+    }
+
+    /*
+     * Layout matches drc_init_remote_buf_struct / buf_bind_compound_shmem_slot:
+     * slot = [ remote_page_info_t | page bytes | tail uint64 ]; lock_ptr field holds UB dist-lock absolute address.
+     */
+    lock_ptr = meta->lock_ptr;
+    page_addr_u64 = (uint64)(uintptr_t)((const char *)meta + sizeof(remote_page_info_t));
+
+    len = sprintf_s(buf, sizeof(buf), "lock_ptr=0x%llx,page_addr=0x%llx", (unsigned long long)lock_ptr,
+                    (unsigned long long)page_addr_u64);
+    if (len < 0 || (size_t)len >= sizeof(buf)) {
+        OG_THROW_ERROR(ERR_ASSERT_ERROR, "get_lock_by_gbp_meta_addr format");
+        return OG_ERROR;
+    }
+
+    res->type = OG_TYPE_STRING;
+    res->is_null = OG_FALSE;
+    OG_RETURN_IFERR(sql_push(stmt, (uint32)len, (void **)&res->v_text.str));
+    MEMS_RETURN_IFERR(memcpy_s(res->v_text.str, (uint32)len, buf, (uint32)len));
+    res->v_text.len = (uint32)len;
+    sql_keep_stack_variant(stmt, res);
     return OG_SUCCESS;
 }
 

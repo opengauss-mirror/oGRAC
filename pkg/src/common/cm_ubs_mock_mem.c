@@ -45,7 +45,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define BASE_PATH "/dev/shm/ub"
+#define BASE_PATH "/home/regress/ograc_data"
 #define MAX_SHM_NAME_MOCK_LEN (MAX_REGION_NAME_DESC_LENGTH+MAX_SHM_NAME_LENGTH)
 
 /* -------------------------------------------------
@@ -166,19 +166,25 @@ SHMEM_API int ubsmem_shmem_allocate(
     }
 
     int fd = open(path, O_RDWR | O_CREAT | O_EXCL, mode);
-    if (fd == -1 && errno != EEXIST) {
-        OG_LOG_RUN_ERR("open file %s failed: %s\n", path, strerror(errno));
-        return -1;
-    }
-
-    if (ftruncate(fd, size) == -1) {
-        OG_LOG_RUN_ERR("ftruncate %s failed: %s\n", path, strerror(errno));
+    if (fd >= 0) {
+        // I am the creator
+        if (ftruncate(fd, size) == -1) {
+            OG_LOG_RUN_ERR("ftruncate %s failed: %s\n", path, strerror(errno));
+            close(fd);
+            return -1;
+        }
         close(fd);
-        return -1;
+        return 0;
     }
 
-    close(fd);
-    return 0;
+    if (errno == EEXIST) {
+        // Someone else already created it — do nothing
+        return 0;
+    }
+
+    // real error
+    OG_LOG_RUN_ERR("open file %s failed: %s\n", path, strerror(errno));
+    return -1;
 }
 
 /* -------------------------------------------------

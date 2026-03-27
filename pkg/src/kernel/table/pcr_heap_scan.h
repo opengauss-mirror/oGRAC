@@ -56,7 +56,7 @@ status_t pcrh_wait_for_txn(knl_session_t *session, knl_cursor_t *cursor, cr_curs
 bool32 pcrh_chk_r_visible(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn, heap_page_t *page,
                               uint16 slot);
 status_t pcrh_chk_visible_with_undo_ss(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *cr_page,
-                                       bool32 check_restart, bool32 *is_found);
+                                       bool32 check_restart, bool32 *is_found, bool32 is_no_same_inst);
 
 /*
  * get current heap page during current page cache type

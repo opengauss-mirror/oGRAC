@@ -14,15 +14,17 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * dtc_remote_buffer.c
+ * dtc_remote_lock.c
  *
  *
  * IDENTIFICATION
- * src/cluster/dtc_remote_buffer.c
+ * src/cluster/dtc_remote_lock.c
  *
  * -------------------------------------------------------------------------
  */
 #include <stdio.h>
+#include <stdint.h>
+#include <limits.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"
@@ -43,15 +45,16 @@ void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_l
     uint32 node_id = g_instance->kernel.id;
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
     *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p", *ub_lock);
+    remote_sga->remote_pool_reserve_offset += DRC_DIST_LCK_OFFSET;
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p, reserve offset:%llu", *ub_lock,
+                   remote_sga->remote_pool_reserve_offset);
 
-    ub_lock_config_t config;
-    config.lease_time = 60000;
-    config.heartbeat_timeout = 500;
+    config->lease_time = 60000;
+    config->heartbeat_timeout = 500;
 
-    ub_location_t creator;
-    creator.tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
-    creator.node_id = (uint8_t)node_id;
+    creator->tid = (int32_t)cm_get_current_thread_id();
+    creator->node_id = (uint8_t)node_id;
+}
 
 static ub_location_t make_location(uint8 node_id)
 {

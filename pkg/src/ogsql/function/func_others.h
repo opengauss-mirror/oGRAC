@@ -79,6 +79,7 @@ status_t sql_func_is_numeric(sql_stmt_t *stmt, expr_node_t *func, variant_t *res
 status_t sql_verify_is_numeric(sql_verifier_t *verifier, expr_node_t *func);
 status_t sql_verify_alck_name(sql_verifier_t *verf, expr_node_t *func);
 status_t sql_verify_alck_nm_and_to(sql_verifier_t *verf, expr_node_t *func);
+status_t sql_verify_gbp_meta_addr(sql_verifier_t *verf, expr_node_t *func);
 status_t sql_func_get_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_func_try_get_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_func_release_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
@@ -89,6 +90,7 @@ status_t sql_func_get_xact_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *
 status_t sql_func_try_get_xact_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_func_get_xact_shared_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_func_try_get_xact_shared_lock(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
+status_t sql_func_try_get_lock_by_gbp_meta_addr(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_func_array_length(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_verify_array_length(sql_verifier_t *verifier, expr_node_t *func);
 status_t sql_verify_values(sql_verifier_t *verf, expr_node_t *func);

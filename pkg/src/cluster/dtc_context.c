@@ -49,24 +49,24 @@
 #include "cm_ubs_mem.h"
 #include "dtc_remote_buffer.h"
 
-#define DTC_BUFFER_POOL_NUM      (4)
+#define DTC_BUFFER_POOL_NUM (4)
 #define DTC_MSG_BUFFER_QUEUE_NUM (8)
-#define DTC_FIRST_BUFFER_LENGTH  (64)
+#define DTC_FIRST_BUFFER_LENGTH (64)
 #define DTC_SECOND_BUFFER_LENGTH (128)
-#define DTC_THIRD_BUFFER_LENGTH  MES_MESSAGE_BUFFER_SIZE
+#define DTC_THIRD_BUFFER_LENGTH MES_MESSAGE_BUFFER_SIZE
 #define DTC_FOURTH_BUFFER_LENGTH MES_512K_MESSAGE_BUFFER_SIZE
-#define DTC_FIRST_BUFFER_MULTIPLE   (256)
-#define DTC_SECOND_BUFFER_MULTIPLE  (128)
-#define DTC_FOURTH_BUFFER_MULTIPLE  (0.03125)
+#define DTC_FIRST_BUFFER_MULTIPLE (256)
+#define DTC_SECOND_BUFFER_MULTIPLE (128)
+#define DTC_FOURTH_BUFFER_MULTIPLE (0.03125)
 
 static dtc_instance_t g_dtc_instance;
 dtc_instance_t *g_dtc = &g_dtc_instance;
-dtc_processor_t g_processors[MES_CMD_CEIL] = {0};
+dtc_processor_t g_processors[MES_CMD_CEIL] = { 0 };
 char dtc_mes_cpu_info_str[OG_MES_MAX_CPU_STR];
 
 // add function
-static status_t dtc_register_proc_func(mes_command_t command_type, dtc_message_proc_t proc, bool32 is_enqueue, const char
-    *func_name)
+static status_t dtc_register_proc_func(mes_command_t command_type, dtc_message_proc_t proc, bool32 is_enqueue,
+                                       const char *func_name)
 {
     errno_t ret;
 
@@ -126,12 +126,16 @@ static status_t dtc_register_proc(void)
                                              "ask owner move page to GBP"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_PAGE_READY, mes_process_msg_ack, OG_FALSE, "owner ack page ready"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_PAGE_READY_GBP, mes_process_msg_ack, OG_FALSE,
+                                             "owner ack page ready in GBP to Master"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_MASTER_ACK_NEED_LOAD, mes_process_msg_ack, OG_FALSE, "master ack need load"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_ALREADY_OWNER, mes_process_msg_ack, OG_FALSE,
                                              "master ack requester already owner"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_OWNER, mes_process_msg_ack, OG_FALSE,
                                              "master ack requester other owner"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_CHECK_GBP, mes_process_msg_ack, OG_FALSE,
+                                             "master ack requester to resend request to check GBP"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_CLAIM_OWNER_REQ, dcs_process_claim_ownership_req, OG_TRUE,
                                              "claim ownership req"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_CLAIM_OWNER_REQ_BATCH, dcs_process_claim_ownership_req_batch,
@@ -174,9 +178,8 @@ static status_t dtc_register_proc(void)
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_TXN_SCN_BROADCAST, tx_process_scn_broadcast, OG_FALSE, "TXN SCN broadcast"));
 #ifdef _DEBUG
-    knl_securec_check(
-        dtc_register_proc_func(NEW_MES_CMD_TXN_SCN_BROADCAST, new_tx_process_scn_broadcast,
-            OG_FALSE, "NEW TXN SCN broadcast"));
+    knl_securec_check(dtc_register_proc_func(NEW_MES_CMD_TXN_SCN_BROADCAST, new_tx_process_scn_broadcast, OG_FALSE,
+                                             "NEW TXN SCN broadcast"));
     OG_LOG_RUN_INF("The new_tx_process_scn_broadcast is registered.");
 #endif
     knl_securec_check(
@@ -282,8 +285,8 @@ static status_t dtc_register_proc(void)
                                              "ask master to complete one remaster task"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_MGRT_MASTER_DATA, drc_process_mgrt_data, OG_FALSE,
                                              "drc process the migrated data"));
-    knl_securec_check(dtc_register_proc_func(MES_CMD_SEND_RCY_SET, dtc_process_rcy_set, OG_TRUE,
-                                             "dtc process recovery set"));
+    knl_securec_check(
+        dtc_register_proc_func(MES_CMD_SEND_RCY_SET, dtc_process_rcy_set, OG_TRUE, "dtc process recovery set"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_TARGET_PART, drc_accept_target_part, OG_TRUE,
                                              "drc accept the target partition and switch"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMASTER_DONE, drc_accept_remaster_done, OG_TRUE,
@@ -366,33 +369,34 @@ static status_t dtc_register_proc(void)
                                              OG_FALSE, "send page info ack"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_CHANGE_STATUS, rc_accept_status_change, OG_TRUE,
                                              "drc accept to change the status"));
-    knl_securec_check(dtc_register_proc_func(MES_CMD_SEND_RCY_SET_ACK, dtc_process_rcy_set_ack,
-                                             OG_TRUE, "dtc process recovery set ack"));
-    knl_securec_check(dtc_register_proc_func(MES_CMD_SEND_RCY_SET_ERR_ACK,
-        dtc_process_rcy_set_err_ack, OG_TRUE, "dtc process recovery set error ack"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_SEND_RCY_SET_ACK, dtc_process_rcy_set_ack, OG_TRUE,
+                                             "dtc process recovery set ack"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_SEND_RCY_SET_ERR_ACK, dtc_process_rcy_set_err_ack, OG_TRUE,
+                                             "dtc process recovery set error ack"));
 #ifdef DB_DEBUG_VERSION
-    knl_securec_check(dtc_register_proc_func(MES_CMD_SYNCPOINT_ABORT, dtc_proc_syncpoint_msg,
-        OG_FALSE, "syncpoint abort"));
-#endif
-    knl_securec_check(dtc_register_proc_func(MES_CMD_RECYCLE_DLS_MASTER, drc_process_recycle_lock_master, OG_TRUE, "recycle lock master"));
     knl_securec_check(
-        dtc_register_proc_func(MES_CMD_RECYCLE_DLS_MASTER_ACK, mes_process_msg_ack, OG_FALSE, "recycle lock master ack"));
+        dtc_register_proc_func(MES_CMD_SYNCPOINT_ABORT, dtc_proc_syncpoint_msg, OG_FALSE, "syncpoint abort"));
+#endif
+    knl_securec_check(dtc_register_proc_func(MES_CMD_RECYCLE_DLS_MASTER, drc_process_recycle_lock_master, OG_TRUE,
+                                             "recycle lock master"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_RECYCLE_DLS_MASTER_ACK, mes_process_msg_ack, OG_FALSE,
+                                             "recycle lock master ack"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_CLEAN_GRANTED_MAP, dls_process_lock_msg, OG_TRUE,
-        "process dls clean granted_map msg"));
+                                             "process dls clean granted_map msg"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_UPGRADE_CTRL_VERSION, dtc_process_upgrade_ctrl_version, OG_TRUE,
-        "upgrade ctrl version broadcast"));
+                                             "upgrade ctrl version broadcast"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_UPGRADE_CTRL_VERSION_ACK, mes_process_broadcast_ack, OG_FALSE,
-        "upgrade ctrl version ack"));
+                                             "upgrade ctrl version ack"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_ARCH_SET_REQ, dcs_process_arch_set_request, OG_TRUE, "arch set req"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_TIME_BROADCAST, dtc_process_time_broadcast, OG_FALSE, "TIME broadcast"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_SET_INCREMENT_UNBLOCK, dtc_bak_process_set_inc_unblock, OG_TRUE,
-        "set bak increment unblock"));
+                                             "set bak increment unblock"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_SET_INCREMENT_UNBLOCK_ACK, mes_process_msg_ack, OG_FALSE,
-        "set bak increment unblock ack"));
-    knl_securec_check(dtc_register_proc_func(MES_CMD_VERIFY_REMASTER_PARAM, drc_process_remaster_param_verify,
-                                             OG_FALSE, "drc verify remaster params"));
+                                             "set bak increment unblock ack"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_VERIFY_REMASTER_PARAM, drc_process_remaster_param_verify, OG_FALSE,
+                                             "drc verify remaster params"));
 
     knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMOTE_BUF_MMAP, drc_process_remote_buf_mmap, OG_FALSE,
                                              "REMOTE BUF MAP broadcast"));
@@ -467,10 +471,12 @@ static void dtc_set_mes_buffer_pool(mes_profile_t *profile)
     profile->buffer_pool_attr.pool_count = DTC_BUFFER_POOL_NUM;
 
     mes_buffer_attr_t buf_pool_attr[MES_MAX_BUFFER_STEP_NUM] = {
-        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_FIRST_BUFFER_LENGTH, buffer_count * DTC_FIRST_BUFFER_MULTIPLE}, // 64B buffer
-        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_SECOND_BUFFER_LENGTH, buffer_count * DTC_SECOND_BUFFER_MULTIPLE}, // 128B buffer
-        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_THIRD_BUFFER_LENGTH, buffer_count}, // 32K buffer
-        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_FOURTH_BUFFER_LENGTH, buffer_count * DTC_FOURTH_BUFFER_MULTIPLE} // 128K buffer
+        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_FIRST_BUFFER_LENGTH, buffer_count * DTC_FIRST_BUFFER_MULTIPLE },  // 64B buffer
+        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_SECOND_BUFFER_LENGTH, buffer_count * DTC_SECOND_BUFFER_MULTIPLE },  // 128B
+                                                                                                            // buffer
+        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_THIRD_BUFFER_LENGTH, buffer_count },                               // 32K buffer
+        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_FOURTH_BUFFER_LENGTH, buffer_count * DTC_FOURTH_BUFFER_MULTIPLE }  // 128K
+                                                                                                           // buffer
     };
 
     for (uint32 pool_idx = 0; pool_idx < profile->buffer_pool_attr.pool_count; pool_idx++) {
@@ -503,15 +509,15 @@ static status_t dtc_set_mes_ip(mes_profile_t *profile)
     for (int i = 0; i < profile->inst_count; i++) {
         profile->inst_lsid[i] = get_config_lsid(i);
         OG_LOG_RUN_INF("instance %d get lsid 0x%x.", i, profile->inst_lsid[i]);
-        ret = strncpy_s(profile->inst_arr[i].ip, OG_MAX_INST_IP_LEN,
-            g_dtc->profile.nodes[i], strnlen(g_dtc->profile.nodes[i], OG_MAX_INST_IP_LEN - 1));
+        ret = strncpy_s(profile->inst_arr[i].ip, OG_MAX_INST_IP_LEN, g_dtc->profile.nodes[i],
+                        strnlen(g_dtc->profile.nodes[i], OG_MAX_INST_IP_LEN - 1));
         if (ret != EOK) {
             OG_THROW_ERROR(ERR_SYSTEM_CALL, (ret));
             return OG_ERROR;
         }
         profile->inst_arr[i].port = g_dtc->profile.ports[i];
-        OG_LOG_RUN_INF("dtc init node(%u) profile ip_addrs(%s) port(%u).",
-            i, profile->inst_arr[i].ip, profile->inst_arr[i].port);
+        OG_LOG_RUN_INF("dtc init node(%u) profile ip_addrs(%s) port(%u).", i, profile->inst_arr[i].ip,
+                       profile->inst_arr[i].port);
     }
     return OG_SUCCESS;
 }
@@ -579,7 +585,7 @@ status_t dtc_startup(void)
         OG_LOG_RUN_ERR("dtc_init_proc_sessions failed.");
         return OG_ERROR;
     }
-    
+
     if (dtc_set_mes_profile() != OG_SUCCESS) {
         OG_LOG_RUN_ERR("dtc_set_mes_profile failed.");
         return OG_ERROR;
@@ -609,44 +615,45 @@ status_t dtc_startup(void)
         OG_LOG_RUN_ERR("init_dtc_rc failed.");
         return OG_ERROR;
     }
-	
+
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }
 
 static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
 {
-   bool all_unmap = true;
-   uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
+    bool all_unmap = true;
+    uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
 
-   for (uint32 i = 0; i < inst_count; i++) {
-       if (remote_sga->map_success[i] == OG_FALSE) {
-           continue;
-       }
-       char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-       int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
-       if (ret < EOK) {
-           OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
-           all_unmap = false;
-           continue;
-       }
-       ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
-       if (ret != UBSM_OK) {
-           OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret); 
-           all_unmap = false;
-           continue;
-       }
-       remote_sga->map_success[i] = OG_FALSE;
-       remote_sga->remote_buf_addr[i] = NULL;
-       OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
-   }
+    for (uint32 i = 0; i < inst_count; i++) {
+        if (remote_sga->map_success[i] == OG_FALSE) {
+            continue;
+        }
+        char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
+        int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
+        if (ret < EOK) {
+            OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
+            all_unmap = false;
+            continue;
+        }
+        ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
+        if (ret != UBSM_OK) {
+            OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i,
+                           remote_sga->remote_buf_addr[i], ret);
+            all_unmap = false;
+            continue;
+        }
+        remote_sga->map_success[i] = OG_FALSE;
+        remote_sga->remote_buf_addr[i] = NULL;
+        OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
+    }
 
-   if (!all_unmap) {
-       OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
-       return OG_ERROR;
-   }
+    if (!all_unmap) {
+        OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
+        return OG_ERROR;
+    }
 
-   return OG_SUCCESS;
+    return OG_SUCCESS;
 }
 
 static status_t drc_deinit_ubsm_mem(remote_sga_t *remote_sga, uint32 inst_count)
@@ -692,4 +699,3 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
         cms_res_inst_unregister();
     }
 }
-

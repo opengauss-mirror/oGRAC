@@ -31,12 +31,13 @@
 #include "dtc_context.h"
 #include "pcr_pool.h"
 #include "dtc_buffer.h"
+#include "dtc_remote_buffer.h"
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_tran.h"
 
-static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page, bool8
-    *fb_buf)
+static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page,
+                                           bool8 *fb_buf)
 {
     uint8 inst_id;
 
@@ -51,10 +52,12 @@ static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *
 
         inst_id = xid_get_inst_id(session, cursor->itl->xid);
         if (inst_id == session->kernel->id || cursor->local_cr) {
+            //pcrh_log_cr_route_decision(session, cursor, "heap_construct", OG_TRUE);
             if (pcrh_reorganize_with_ud_list(session, cursor, page, fb_buf) != OG_SUCCESS) {
                 return OG_ERROR;
             }
         } else {
+            //pcrh_log_cr_route_decision(session, cursor, "heap_construct", OG_FALSE);
             if (dcs_heap_request_cr_page(session, cursor, (char *)page, inst_id) != OG_SUCCESS) {
                 return OG_ERROR;
             }
@@ -66,14 +69,15 @@ static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *
     }
 }
 
-status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cursor,
-                                        heap_page_t *page, bool32 *is_found)
+status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page,
+                                        bool32 *is_found)
 {
     uint8 inst_id;
 
     if (g_dtc->profile.enable_rmo_cr) {
         /* in RMO mode, we force to check current visible in local */
         cursor->local_cr = OG_TRUE;
+        //pcrh_log_local_cr_set(session, cursor, "check_curr_visible_rmo");
     }
 
     for (;;) {
@@ -87,7 +91,11 @@ status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cur
 
         inst_id = xid_get_inst_id(session, cursor->itl->xid);
         if (inst_id == session->kernel->id || cursor->local_cr) {
-            if (pcrh_chk_visible_with_undo_ss(session, cursor, page, OG_FALSE, is_found) != OG_SUCCESS) {
+            bool32 is_no_same_inst = (inst_id != session->kernel->id);
+            if (is_no_same_inst) {
+                //pcrh_log_cr_route_decision(session, cursor, "check_curr_visible", OG_TRUE);
+            }
+            if (pcrh_chk_visible_with_undo_ss(session, cursor, page, OG_FALSE, is_found, is_no_same_inst) != OG_SUCCESS) {
                 return OG_ERROR;
             }
 
@@ -95,6 +103,7 @@ status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cur
                 return OG_SUCCESS;
             }
         } else {
+            //pcrh_log_cr_route_decision(session, cursor, "check_curr_visible_remote", OG_FALSE);
             if (dcs_check_current_visible(session, cursor, (char *)page, inst_id, is_found) != OG_SUCCESS) {
                 return OG_ERROR;
             }
@@ -134,7 +143,7 @@ static status_t dtc_heap_read_prefetch_page(knl_session_t *session, knl_cursor_t
 }
 
 static status_t dtc_heap_enter_prefetch_page(knl_session_t *session, knl_cursor_t *cursor, cr_cursor_t *cr_cursor,
-                                      char *page_buf, pcr_status_t *status)
+                                             char *page_buf, pcr_status_t *status)
 {
     page_id_t page_id = GET_ROWID_PAGE(cursor->rowid);
     uint8 dst_id;
@@ -187,8 +196,8 @@ static status_t dtc_heap_enter_prefetch_page(knl_session_t *session, knl_cursor_
     }
 }
 
-status_t dtc_heap_prefetch_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn,
-                                   char *page_buf, bool8 *fb_buf)
+status_t dtc_heap_prefetch_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn, char *page_buf,
+                                   bool8 *fb_buf)
 {
     page_id_t page_id;
     cr_cursor_t cr_cursor;
@@ -277,7 +286,8 @@ static status_t dtc_heap_read_page(knl_session_t *session, knl_cursor_t *cursor,
     return OG_SUCCESS;
 }
 
-static status_t dtc_heap_enter_page(knl_session_t *session, knl_cursor_t *cursor, cr_cursor_t *cr_cursor, pcr_status_t *status)
+static status_t dtc_heap_enter_page(knl_session_t *session, knl_cursor_t *cursor, cr_cursor_t *cr_cursor,
+                                    pcr_status_t *status)
 {
     page_id_t page_id = GET_ROWID_PAGE(cr_cursor->rowid);
     heap_page_t *page = NULL;

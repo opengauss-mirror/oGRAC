@@ -34,7 +34,7 @@ extern "C" {
 #endif
 
 status_t ub_init_ubsm_mem(void);
-status_t ub_create_shm_region(uint32 host_id, uint32 inst_count);
+status_t ub_create_shm_region(uint32 host_id, uint32 inst_count, const char *cluster_hosts);
 status_t ub_delete_shm(uint32 host_id);
 status_t ub_delete_shm_region(uint32 host_id);
 	

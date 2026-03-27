@@ -30,8 +30,215 @@
 #include "dc_part.h"
 #include "pcr_heap_scan.h"
 #include "cm_io_record.h"
+#include "dtc_remote_buffer.h"
+#include "knl_buffer.h"
+#include "knl_tran.h"
+#include "knl_cluster_module.h"
+#include "dtc_context.h"
 
 #define MAX_ITL_UNDO_SIZE             sizeof(pcrh_undo_itl_t)  // sizeof(pcrh_poly_undo_itl_t)
+
+#define PCRH_DIAG_SRC_NONE   0
+#define PCRH_DIAG_SRC_STACK  1
+#define PCRH_DIAG_SRC_LBP    2
+#define PCRH_DIAG_SRC_SHMEM  3
+#define PCRH_DIAG_SRC_CURR   4
+
+static buf_ctrl_t *pcrh_diag_find_heap_ctrl(knl_session_t *session, page_id_t heap_id, uint8 *src)
+{
+    buf_ctrl_t *ctrl = NULL;
+
+    *src = PCRH_DIAG_SRC_NONE;
+    if (IS_INVALID_PAGID(heap_id)) {
+        return NULL;
+    }
+
+    for (uint32 i = 0; i < session->page_stack.depth; i++) {
+        ctrl = session->page_stack.pages[i];
+        if (ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, heap_id)) {
+            *src = PCRH_DIAG_SRC_STACK;
+            return ctrl;
+        }
+    }
+
+    if (session->kernel->attr.enable_ubsmem) {
+        ctrl = buf_find_shmem_by_pageid(session, heap_id);
+        if (ctrl != NULL) {
+            *src = PCRH_DIAG_SRC_SHMEM;
+            return ctrl;
+        }
+    }
+
+    ctrl = buf_find_by_pageid(session, heap_id);
+    if (ctrl != NULL) {
+        *src = PCRH_DIAG_SRC_LBP;
+    }
+    return ctrl;
+}
+
+static buf_ctrl_t *pcrh_diag_find_undo_ctrl(knl_session_t *session, page_id_t undo_req, uint8 *src)
+{
+    buf_ctrl_t *ctrl = NULL;
+
+    *src = PCRH_DIAG_SRC_NONE;
+    if (IS_INVALID_PAGID(undo_req)) {
+        return NULL;
+    }
+
+    if (session->curr_page_ctrl != NULL && IS_SAME_PAGID(session->curr_page_ctrl->page_id, undo_req)) {
+        *src = PCRH_DIAG_SRC_CURR;
+        return session->curr_page_ctrl;
+    }
+
+    for (int32 i = (int32)session->page_stack.depth - 1; i >= 0; i--) {
+        ctrl = session->page_stack.pages[i];
+        if (ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, undo_req)) {
+            *src = PCRH_DIAG_SRC_STACK;
+            return ctrl;
+        }
+    }
+
+    ctrl = buf_find_by_pageid(session, undo_req);
+    if (ctrl != NULL) {
+        *src = PCRH_DIAG_SRC_LBP;
+    }
+    return ctrl;
+}
+
+void pcrh_log_local_cr_set(knl_session_t *session, cr_cursor_t *cursor, const char *phase)
+{
+    page_id_t heap_id = (cursor != NULL) ? GET_ROWID_PAGE(cursor->rowid) : INVALID_PAGID;
+    uint32 rmo_cr = 0;
+
+    if (DB_IS_CLUSTER(session)) {
+        rmo_cr = g_dtc->profile.enable_rmo_cr;
+    }
+
+    /* cursor->itl may be unset here (e.g. RMO path before fetch_invisible_itl) */
+    OG_LOG_RUN_WAR("[PCR-LOCAL-CR][%s][%u-%u] inst=%u sid=%u local_cr=1 is_remote=%u rmo_cr=%u query_scn=%llu",
+                   phase != NULL ? phase : "unknown", heap_id.file, heap_id.page, session->kernel->id, session->id,
+                   (uint32)(cursor != NULL ? cursor->is_remote : 0), rmo_cr,
+                   cursor != NULL ? cursor->query_scn : (knl_scn_t)0);
+}
+
+void pcrh_log_cr_route_decision(knl_session_t *session, cr_cursor_t *cursor, const char *tag, bool32 use_local)
+{
+    pcr_itl_t *itl = (cursor != NULL) ? cursor->itl : NULL;
+    page_id_t heap_id = (cursor != NULL) ? GET_ROWID_PAGE(cursor->rowid) : INVALID_PAGID;
+    uint8 xid_inst = (itl != NULL) ? xid_get_inst_id(session, itl->xid) : OG_INVALID_ID8;
+    uint8 heap_src = PCRH_DIAG_SRC_NONE;
+    buf_ctrl_t *heap_ctrl = pcrh_diag_find_heap_ctrl(session, heap_id, &heap_src);
+    uint32 rmo_cr = 0;
+
+    if (DB_IS_CLUSTER(session)) {
+        rmo_cr = g_dtc->profile.enable_rmo_cr;
+    }
+
+    OG_LOG_RUN_WAR("[PCR-CR-ROUTE][%s][%u-%u] inst=%u sid=%u use_local=%u local_cr=%u is_remote=%u rmo_cr=%u "
+                   "xid_inst=%u cross_node=%u heap_src=%u heap_in_gbp=%u heap_shmem=%u itl_xid=%u-%u-%u "
+                   "itl_undo=%u-%u itl_slot=%u query_scn=%llu",
+                   tag != NULL ? tag : "unknown", heap_id.file, heap_id.page, session->kernel->id, session->id,
+                   (uint32)use_local, (uint32)(cursor != NULL ? cursor->local_cr : 0),
+                   (uint32)(cursor != NULL ? cursor->is_remote : 0), rmo_cr, (uint32)xid_inst,
+                   (uint32)(itl != NULL && xid_inst != session->kernel->id), (uint32)heap_src,
+                   heap_ctrl != NULL ? (uint32)heap_ctrl->is_in_gbp : 0U,
+                   (heap_ctrl != NULL && heap_ctrl->shmem_page_meta != NULL) ? 1U : 0U,
+                   (uint32)(itl != NULL ? itl->xid.xmap.seg_id : 0), (uint32)(itl != NULL ? itl->xid.xmap.slot : 0),
+                   (uint32)(itl != NULL ? itl->xid.xnum : 0),
+                   (uint32)(itl != NULL ? PAGID_U2N(itl->undo_page).file : 0),
+                   (uint32)(itl != NULL ? PAGID_U2N(itl->undo_page).page : 0),
+                   (uint32)(itl != NULL ? itl->undo_slot : 0),
+                   cursor != NULL ? cursor->query_scn : (knl_scn_t)0);
+}
+
+void pcrh_log_itls_diag(knl_session_t *session, heap_page_t *page, page_id_t page_id, const char *tag)
+{
+    uint8 heap_src = PCRH_DIAG_SRC_NONE;
+    buf_ctrl_t *heap_ctrl = NULL;
+
+    if (!LOG_DEBUG_INF_ON || page == NULL || page->head.type != PAGE_TYPE_PCRH_DATA) {
+        return;
+    }
+
+    heap_ctrl = pcrh_diag_find_heap_ctrl(session, page_id, &heap_src);
+
+    for (uint8 i = 0; i < page->itls; i++) {
+        pcr_itl_t *itl = pcrh_get_itl(page, i);
+        page_id_t undo_pagid = PAGID_U2N(itl->undo_page);
+
+        OG_LOG_DEBUG_INF("[PCR-ITL-DIAG][%s][%u-%u] inst=%u sid=%u heap_src=%u heap_in_gbp=%u heap_shmem=%u "
+                         "heap_lsn=%llu itl=%u xid=%u-%u-%u xid_inst=%u "
+                         "undo=%u-%u slot=%u scn=%llu ssn=%u active=%u owscn=%u hist=%u "
+                         "heap_scn=%llu heap_itls=%u",
+                         tag != NULL ? tag : "unknown", page_id.file, page_id.page, session->kernel->id, session->id,
+                         (uint32)heap_src, heap_ctrl != NULL ? (uint32)heap_ctrl->is_in_gbp : 0U,
+                         (heap_ctrl != NULL && heap_ctrl->shmem_page_meta != NULL) ? 1U : 0U,
+                         heap_ctrl != NULL ? heap_ctrl->page->lsn : page->head.lsn,
+                         (uint32)i, (uint32)itl->xid.xmap.seg_id, (uint32)itl->xid.xmap.slot, (uint32)itl->xid.xnum,
+                         (uint32)xid_get_inst_id(session, itl->xid), undo_pagid.file, undo_pagid.page,
+                         (uint32)itl->undo_slot, itl->scn, itl->ssn, (uint32)itl->is_active, (uint32)itl->is_owscn,
+                         (uint32)itl->is_hist, page->scn, (uint32)page->itls);
+    }
+}
+
+void pcrh_log_undo_snapshot_err(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *cr_page, pcr_itl_t *itl,
+    undo_page_t *ud_page, knl_scn_t query_scn, uint32 check_restart, const char *phase)
+{
+    page_id_t heap_id = cr_page != NULL ? AS_PAGID(cr_page->head.id) : INVALID_PAGID;
+    page_id_t undo_pagid = PAGID_U2N(itl->undo_page);
+    page_id_t ud_pagid = ud_page != NULL ? AS_PAGID(ud_page->head.id) : INVALID_PAGID;
+    uint8 xid_inst = xid_get_inst_id(session, itl->xid);
+    uint8 heap_src = PCRH_DIAG_SRC_NONE;
+    uint8 undo_src = PCRH_DIAG_SRC_NONE;
+    buf_ctrl_t *heap_ctrl = pcrh_diag_find_heap_ctrl(session, heap_id, &heap_src);
+    buf_ctrl_t *undo_ctrl = pcrh_diag_find_undo_ctrl(session, undo_pagid, &undo_src);
+    buf_ctrl_t *heap_shmem_ctrl = NULL;
+    buf_ctrl_t *heap_lbp_ctrl = NULL;
+    page_id_t ud_ctrl_id = undo_ctrl != NULL ? undo_ctrl->page_id : INVALID_PAGID;
+    uint32 heap_temp = (heap_src == PCRH_DIAG_SRC_NONE && cr_page != NULL) ? 1U : 0U;
+    uint32 ud_match = IS_SAME_PAGID(undo_pagid, ud_pagid) ? 1U : 0U;
+    uint32 ud_ctrl_match = IS_SAME_PAGID(undo_pagid, ud_ctrl_id) ? 1U : 0U;
+    uint32 ud_frame_match = IS_SAME_PAGID(ud_ctrl_id, ud_pagid) ? 1U : 0U;
+    uint32 rmo_cr = 0;
+
+    if (session->kernel->attr.enable_ubsmem) {
+        heap_shmem_ctrl = buf_find_shmem_by_pageid(session, heap_id);
+    }
+    heap_lbp_ctrl = buf_find_by_pageid(session, heap_id);
+
+    if (DB_IS_CLUSTER(session)) {
+        rmo_cr = g_dtc->profile.enable_rmo_cr;
+    }
+
+    OG_LOG_RUN_ERR("[PCR-UNDO-DIAG][%s][%u-%u] inst=%u sid=%u query_scn=%llu check_restart=%u "
+                   "local_cr=%u is_remote=%u rmo_cr=%u xid_inst=%u cross_node=%u "
+                   "itl_xid=%u-%u-%u itl_undo=%u-%u itl_slot=%u itl_scn=%llu itl_ssn=%u itl_active=%u itl_owscn=%u "
+                   "ud_req=%u-%u ud_head=%u-%u ud_ctrl=%u-%u ud_rows=%u ud_begin_slot=%u ud_ss_time=%lld "
+                   "ud_match=%u ud_ctrl_match=%u ud_frame_match=%u undo_src=%u undo_load_st=%u "
+                   "heap_temp=%u heap_src=%u heap_scn=%llu heap_lsn=%llu heap_itls=%u "
+                   "heap_in_gbp=%u heap_gbp_gen=%u heap_shmem=%u heap_load_st=%u "
+                   "heap_shmem_pool=%u heap_lbp_pool=%u stack_depth=%u",
+                   phase != NULL ? phase : "unknown", heap_id.file, heap_id.page, session->kernel->id, session->id,
+                   query_scn, check_restart,
+                   (uint32)(cursor != NULL ? cursor->local_cr : 0), (uint32)(cursor != NULL ? cursor->is_remote : 0),
+                   rmo_cr, (uint32)xid_inst, (uint32)(xid_inst != session->kernel->id),
+                   (uint32)itl->xid.xmap.seg_id, (uint32)itl->xid.xmap.slot, (uint32)itl->xid.xnum,
+                   undo_pagid.file, undo_pagid.page, (uint32)itl->undo_slot, itl->scn, itl->ssn,
+                   (uint32)itl->is_active, (uint32)itl->is_owscn,
+                   undo_pagid.file, undo_pagid.page, ud_pagid.file, ud_pagid.page, ud_ctrl_id.file, ud_ctrl_id.page,
+                   ud_page != NULL ? (uint32)ud_page->rows : 0U, ud_page != NULL ? (uint32)ud_page->begin_slot : 0U,
+                   ud_page != NULL ? (int64)ud_page->ss_time : (int64)0,
+                   ud_match, ud_ctrl_match, ud_frame_match, (uint32)undo_src,
+                   undo_ctrl != NULL ? (uint32)undo_ctrl->load_status : 0U,
+                   heap_temp, (uint32)heap_src, cr_page != NULL ? cr_page->scn : (knl_scn_t)0,
+                   cr_page != NULL ? cr_page->head.lsn : (uint64)0, cr_page != NULL ? (uint32)cr_page->itls : 0U,
+                   heap_ctrl != NULL ? (uint32)heap_ctrl->is_in_gbp : 0U,
+                   heap_ctrl != NULL ? (uint32)heap_ctrl->gbp_reload_generation : 0U,
+                   (heap_ctrl != NULL && heap_ctrl->shmem_page_meta != NULL) ? 1U : 0U,
+                   heap_ctrl != NULL ? (uint32)heap_ctrl->load_status : 0U,
+                   heap_shmem_ctrl != NULL ? 1U : 0U, heap_lbp_ctrl != NULL ? 1U : 0U,
+                   (uint32)session->page_stack.depth);
+}
 #define PCRH_INSERT_UNDO_COUNT        2 // itl undo and insert undo
 
 /*
