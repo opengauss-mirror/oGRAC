@@ -233,6 +233,59 @@ class OgOmDeploy:
     def _regex_sub(content, pattern, replacement):
         return re.sub(pattern, replacement, content, flags=re.MULTILINE)
 
+    @staticmethod
+    def _replace_legacy_root(content, legacy_root, new_root):
+        legacy_root = legacy_root.rstrip("/")
+        new_root = new_root.rstrip("/")
+        if not legacy_root or not new_root or legacy_root == new_root:
+            return content
+
+        pattern = re.escape(legacy_root)
+        if new_root.startswith(legacy_root + os.sep):
+            suffix = new_root[len(legacy_root):].strip(os.sep)
+            first_segment = suffix.split(os.sep, 1)[0] if suffix else ""
+            if first_segment:
+                pattern += rf"(?!/{re.escape(first_segment)}(?:/|$))"
+
+        return re.sub(pattern, new_root, content)
+
+    @staticmethod
+    def _replace_legacy_root_protected(content, legacy_root, new_root, also_protect=None):
+        """Like _replace_legacy_root but also protects additional root paths from corruption."""
+        legacy_root = legacy_root.rstrip("/")
+        new_root = new_root.rstrip("/")
+        if not legacy_root or not new_root or legacy_root == new_root:
+            return content
+
+        protect_segs = set()
+        for root in [new_root] + (also_protect or []):
+            if root and root.startswith(legacy_root + os.sep):
+                seg = root[len(legacy_root):].strip(os.sep).split(os.sep, 1)[0]
+                if seg:
+                    protect_segs.add(seg)
+
+        pattern = re.escape(legacy_root)
+        if protect_segs:
+            lookaheads = "|".join(re.escape(s) for s in sorted(protect_segs))
+            pattern += rf"(?!/(?:{lookaheads})(?:/|$))"
+
+        return re.sub(pattern, new_root, content)
+
+    @staticmethod
+    def _collapse_redundant_root(content, legacy_root, new_root):
+        legacy_root = legacy_root.rstrip("/")
+        new_root = new_root.rstrip("/")
+        if not legacy_root or not new_root or not new_root.startswith(legacy_root + os.sep):
+            return content
+
+        suffix = new_root[len(legacy_root):].strip(os.sep)
+        first_segment = suffix.split(os.sep, 1)[0] if suffix else ""
+        if not first_segment:
+            return content
+
+        pattern = re.escape(legacy_root) + rf"(?:/{re.escape(first_segment)})+"
+        return re.sub(pattern, new_root, content)
+
     def _normalize_legacy_service_content(self, path):
         if not os.path.isfile(path):
             return
@@ -347,6 +400,17 @@ class OgOmDeploy:
             r'(?<![A-Za-z0-9_])[/A-Za-z0-9._-]*/log/og_om',
             p.log_dir,
         )
+        new_content = self._collapse_redundant_root(new_content, "/opt/ograc", p.ograc_home)
+        new_content = self._replace_legacy_root(
+            new_content,
+            "/opt/ograc/action/dbstor",
+            os.path.join(self.paths.ograc_home, "action", "ograc_common"),
+        )
+        new_content = self._replace_legacy_root_protected(
+            new_content, "/opt/ograc", p.ograc_home,
+            also_protect=[self.data_root],
+        )
+        new_content = self._replace_legacy_root(new_content, "/mnt/dbdata", self.data_root)
         if new_content != old_content:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(new_content)
@@ -370,9 +434,6 @@ class OgOmDeploy:
             ('python3 "${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}"&',
              'mkdir -p "${EXPORTER_LOG_DIR}"\n'
              '    nohup python3 "${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}" >> "${EXPORTER_LOG_FILE}" 2>&1 < /dev/null &'),
-            ("/mnt/dbdata", self.data_root),
-            ("/opt/ograc/action/dbstor", os.path.join(self.paths.ograc_home, "action", "ograc_common")),
-            ("/opt/ograc", self.paths.ograc_home),
         ]
         targets = [
             p.ogmgr_uds_server,
