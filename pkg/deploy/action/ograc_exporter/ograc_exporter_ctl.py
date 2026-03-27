@@ -34,7 +34,8 @@ def _exporter_running():
         result = subprocess.run(
             ["bash", "-c",
              f'ps -ef | grep "python3 {paths.execute_py}" | grep -v grep | awk \'{{print $2}}\''],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=30,
         )
         pid = result.stdout.strip()
         return bool(pid)

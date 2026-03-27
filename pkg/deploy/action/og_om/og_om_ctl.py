@@ -34,7 +34,8 @@ def _ogmgr_running():
         result = subprocess.run(
             ["bash", "-c",
              f'ps -ef | grep "{paths.ogmgr_uds_server}" | grep python | grep -v grep'],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=30,
         )
         return bool(result.stdout.strip())
     except Exception:

@@ -435,7 +435,8 @@ class OgracDeploy:
 
         exec_popen(f"usermod -a -G {common_group} {svc_user}")
         exec_popen(f"usermod -a -G {common_group} {ogmgr}")
-
+        self._append_user_to_existing_group(svc_user, "ubsmd")
+        
         import pwd
         for u in (svc_user, ogmgr):
             try:
