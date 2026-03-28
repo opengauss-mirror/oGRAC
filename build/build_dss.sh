@@ -24,8 +24,8 @@ function download_source() {
         export https_proxy=${http_proxy}
         export no_proxy=127.0.0.1,.huawei.com,localhost,local,.local
     fi
-    git clone  https://gitcode.com/opengauss/CBB.git
-    git clone  https://gitcode.com/opengauss/DSS.git
+    git clone -b 7.0.0-RC3 https://gitcode.com/opengauss/CBB.git
+    git clone -b 7.0.0-RC3 https://gitcode.com/opengauss/DSS.git
 
     echo "Clone source success"
 }
