@@ -1650,6 +1650,8 @@ status_t srv_load_kernel_params(void)
     OG_RETURN_IFERR(srv_get_param_uint32("_SHRINK_WAIT_RECYCLED_PAGES", &attr->shrink_wait_recycled_pages));
     OG_RETURN_IFERR(srv_get_param_bool32("_TEMPTABLE_SUPPORT_BATCH_INSERT", &attr->temptable_support_batch));
     OG_RETURN_IFERR(srv_get_param_uint32("_SMALL_TABLE_SAMPLING_THRESHOLD", &num32));
+    OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_REMOTE_DISTRIBUTE_LOCK", &attr->enable_remote_distribute_lock));
+    OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_UBSMEM", &attr->enable_ubsmem));
     attr->small_table_sampling_threshold = num32;
 
     /* auto block repair */

@@ -177,6 +177,8 @@ status_t sql_notify_als_ddl_lock_timeout(void *se, void *item, char *value);
 status_t sql_notify_als_ashrink_wait_time(void *se, void *item, char *value);
 status_t sql_notify_als_shrink_wait_recycled_pages(void *se, void *item, char *value);
 status_t sql_notify_als_temptable_support_batch(void *se, void *item, char *value);
+status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char *value);
+status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value);
 status_t sql_notify_als_small_table_sampling_threshold(void *se, void *item, char *value);
 status_t sql_notify_als_block_repair_enable(void *se, void *item, char *value);
 status_t sql_notify_als_block_repair_timeout(void *se, void *item, char *value);

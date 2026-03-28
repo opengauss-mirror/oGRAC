@@ -89,20 +89,16 @@ status_t init_lock_comm_queue()
     return OG_SUCCESS;
 }
 
-void drc_init_remote_lock(ub_rw_lock_t **ub_lock)
+void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator)
 {
     uint32 node_id = g_instance->kernel.id;
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
     *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
     OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p", *ub_lock);
 
-    ub_lock_config_t config;
-    config.lease_time = 60000;
-    config.heartbeat_timeout = 500;
+    config->lease_time = 60000;
+    config->heartbeat_timeout = 500;
 
-    ub_location_t creator;
-    creator.tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
-    creator.node_id = (uint8_t)node_id;
-
-    ub_rw_lock_create(*ub_lock, &config, &creator);
+    creator->tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
+    creator->node_id = (uint8_t)node_id;
 }

@@ -36,7 +36,7 @@ extern "C" {
 #endif
 
 status_t init_lock_comm_queue();
-void drc_init_remote_lock(ub_rw_lock_t **ub_lock);
+void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
 
 #ifdef __cplusplus
 }
