@@ -43,6 +43,8 @@ extern "C" {
 #endif
 
 #define BACKGROUD_LOG_INTERVAL 300 /* 5min */
+#define DB_DSS_RECOVER_CTRL_RETRY_TIMES 7
+#define DB_DSS_RECOVER_CTRL_RETRY_INTERVAL 5000
 
 static status_t db_start_daemon(knl_session_t *session);
 static char *db_get_role(database_t *db);
@@ -590,6 +592,42 @@ static status_t db_verify_systime(knl_session_t *session, bool32 ignore_systime)
     return OG_SUCCESS;
 }
 
+/*
+ * During DSS restore->recover, recover may start shortly after reghl finishes.
+ * At that moment the DSS-side volume/handle state may still be converging,
+ * so reading ctrl files can fail transiently. Retry ctrl loading only in the
+ * DSS recover-for-restore path to bridge this short unstable window.
+ */
+static status_t db_load_ctrlspace_with_retry(knl_session_t *session, text_t *ctrlfiles)
+{
+    knl_instance_t *kernel = (knl_instance_t *)session->kernel;
+    uint32 max_attempts = 1;
+
+    if (kernel->attr.enable_dss && session->kernel->db.recover_for_restore) {
+        max_attempts = DB_DSS_RECOVER_CTRL_RETRY_TIMES;
+    }
+
+    for (uint32 attempt = 1; attempt <= max_attempts; attempt++) {
+        if (db_load_ctrlspace(session, ctrlfiles) == OG_SUCCESS) {
+            if (attempt > 1) {
+                OG_LOG_RUN_INF("[DB] load control files from DSS succeeded on attempt %u.", attempt);
+            }
+            return OG_SUCCESS;
+        }
+
+        if (attempt == max_attempts) {
+            return OG_ERROR;
+        }
+
+        OG_LOG_RUN_WAR("[DB] failed to load control files from DSS during recover, retry attempt %u/%u after %u ms.",
+            attempt + 1, max_attempts, DB_DSS_RECOVER_CTRL_RETRY_INTERVAL);
+        cm_reset_error();
+        cm_sleep(DB_DSS_RECOVER_CTRL_RETRY_INTERVAL);
+    }
+
+    return OG_ERROR;
+}
+
 status_t db_mount_ctrl(knl_session_t *session)
 {
     text_t ctrlfiles;
@@ -604,7 +642,7 @@ status_t db_mount_ctrl(knl_session_t *session)
         return OG_ERROR;
     }
 
-    if (db_load_ctrlspace(session, &ctrlfiles) != OG_SUCCESS) {
+    if (db_load_ctrlspace_with_retry(session, &ctrlfiles) != OG_SUCCESS) {
         return OG_ERROR;
     }
     OG_LOG_RUN_INF("mount ctrl finish, memory usage=%lu", cm_print_memory_usage());

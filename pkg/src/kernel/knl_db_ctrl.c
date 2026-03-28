@@ -335,6 +335,7 @@ status_t db_load_ctrlspace(knl_session_t *session, text_t *files)
              */
             if (db_try_load_oldctrl(ctrlfile, kernel, &upgrade) != OG_SUCCESS) {
                 OG_LOG_RUN_ERR("[DB] failed to read %s ", ctrlfile->name);
+                OG_THROW_ERROR(ERR_LOAD_CONTROL_FILE, ctrlfile->name);
                 cm_close_device(ctrlfile->type, &ctrlfile->handle);
                 return OG_ERROR;
             }

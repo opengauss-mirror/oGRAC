@@ -29,6 +29,7 @@
 #include <sys/wait.h>
 #include <sys/prctl.h>
 #include <signal.h>
+#include <stdarg.h>
 #include "ogbackup_module.h"
 #include "ogbackup_info.h"
 #include "ogbackup.h"
@@ -61,6 +62,28 @@ const struct option ogbak_backup_options[] = {
 };
 
 #define OGSQL_CONNEOG_CLOSED_32 "tcp connection is closed, reason: 32"
+
+static status_t ogbak_append_statement(char *statement, uint64_t len, const char *format, ...)
+{
+    if (statement == NULL || format == NULL || len == 0) {
+        return OG_ERROR;
+    }
+
+    uint64_t curr_len = strlen(statement);
+    if (curr_len >= len) {
+        return OG_ERROR;
+    }
+
+    va_list args;
+    va_start(args, format);
+    errno_t ret = vsnprintf_s(statement + curr_len, len - curr_len, len - curr_len - 1, format, args);
+    va_end(args);
+    if (ret == -1) {
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
 
 status_t convert_database_string_to_ograc(char *database, char *og_database)
 {
@@ -125,44 +148,43 @@ status_t get_statement_for_ograc(ogbak_param_t* ogbak_param, uint64_t len, char 
         ret = snprintf_s(statement, len, len - 1, "%s%s%s", OGSQL_FULL_BACKUP_STATEMENT_PREFIX,
                          og_backup_dir, OGSQL_STATEMENT_QUOTE);
     }
-    FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
-    if (ogbak_param->compress_algo.str != NULL) {
-        ret = snprintf_s(statement, len, len - 1, "%s%s%s%s", statement, OGSQL_COMPRESS_OPTION_PREFIX,
-                         ogbak_param->compress_algo.str, OGSQL_COMPRESS_OPTION_SUFFIX);
-        FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
-    }
-    if (ogbak_param->parallelism.str != NULL) {
-        ret = snprintf_s(statement, len, len - 1, "%s%s%s", statement,
-                            OGSQL_PARALLELISM_OPTION, ogbak_param->parallelism.str);
-        FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
-    }
-    if (ogbak_param->databases_exclude.str != NULL) {
-        ret = snprintf_s(statement, len, len - 1, "%s%s%s", statement, OGSQL_EXCLUDE_OPTION, databases);
-        if (SECUREC_UNLIKELY(ret == -1)) {
-            OG_THROW_ERROR(ERR_SYSTEM_CALL, ret);
-            return OG_ERROR;
-        }
-        FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
-    }
-    if (ogbak_param->buffer_size.str != NULL) {
-        ret = snprintf_s(statement, len, len - 1, "%s%s%s", statement,
-                         OGSQL_BUFFER_OPTION, ogbak_param->buffer_size.str);
-        FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
-    }
-    if (ogbak_param->skip_badblock == OG_TRUE) {
-        ret = snprintf_s(statement, len, len - 1, "%s%s", statement, OGSQL_SKIP_BADBLOCK);
-        if (SECUREC_UNLIKELY(ret == -1)) {
-            OG_THROW_ERROR(ERR_SYSTEM_CALL, ret);
-            return OG_ERROR;
-        }
-        FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
-    }
-    ret = snprintf_s(statement, len, len - 1, "%s%s", statement, OGSQL_STATEMENT_END_CHARACTER);
-    if (SECUREC_UNLIKELY(ret == -1)) {
-        OG_THROW_ERROR(ERR_SYSTEM_CALL, ret);
+    if (ret == -1) {
         return OG_ERROR;
     }
-    FREE_AND_RETURN_ERROR_IF_SNPRINTF_FAILED(ret, statement);
+    if (ogbak_param->compress_algo.str != NULL) {
+        if (ogbak_append_statement(statement, len, "%s%s%s", OGSQL_COMPRESS_OPTION_PREFIX,
+            ogbak_param->compress_algo.str, OGSQL_COMPRESS_OPTION_SUFFIX) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    if (ogbak_param->parallelism.str != NULL) {
+        if (ogbak_append_statement(statement, len, "%s%s", OGSQL_PARALLELISM_OPTION,
+            ogbak_param->parallelism.str) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    if (ogbak_param->databases_exclude.str != NULL) {
+        if (ogbak_append_statement(statement, len, "%s%s", OGSQL_EXCLUDE_OPTION, databases) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, -1);
+            return OG_ERROR;
+        }
+    }
+    if (ogbak_param->buffer_size.str != NULL) {
+        if (ogbak_append_statement(statement, len, "%s%s", OGSQL_BUFFER_OPTION,
+            ogbak_param->buffer_size.str) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+    if (ogbak_param->skip_badblock == OG_TRUE) {
+        if (ogbak_append_statement(statement, len, "%s", OGSQL_SKIP_BADBLOCK) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, -1);
+            return OG_ERROR;
+        }
+    }
+    if (ogbak_append_statement(statement, len, "%s", OGSQL_STATEMENT_END_CHARACTER) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, -1);
+        return OG_ERROR;
+    }
     return OG_SUCCESS;
 }
 
@@ -208,6 +230,7 @@ status_t fill_params_for_ograc_backup(ogbak_param_t* ogbak_param, char *og_param
         OGBAK_RETURN_ERROR_IF_NULL(statement);
     }
     if (get_statement_for_ograc(ogbak_param, len, statement, databases, og_backup_dir) != OG_SUCCESS) {
+        CM_FREE_PTR(statement);
         printf("[ogbackup]get statement for oGRAC failed!\n");
         return OG_ERROR;
     }
