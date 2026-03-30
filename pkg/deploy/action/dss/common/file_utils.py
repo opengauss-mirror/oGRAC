@@ -1,65 +1,68 @@
-"""
-DSS 文件工具模块
-
-提供 VG 文件的读写、512 字节对齐、十六进制解码等功能。
-"""
-
 import os
 import re
 import sys
-
-CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(CUR_DIR)
-if PARENT_DIR not in sys.path:
-    sys.path.insert(0, PARENT_DIR)
-
-from common.dss_cmd import dsscmd
+from exec_cmd import exec_popen
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(CURRENT_PATH, "..", ".."))
+from dss.dssctl import LOG
 
 
 def pad_file_to_512(input_file, output_file=None):
     """
-    将文件填充到 512 字节对齐。
+    Pads a file to 512-byte alignment with zero bytes.
 
     Args:
-        input_file: 源文件路径
-        output_file: 目标文件路径（默认覆盖源文件）
+        input_file (str): Source file path.
+        output_file (str, optional): Destination file path  . If None, overwrites the input file.
 
     Returns:
-        填充后的总字节数
+        int: Final file size in bytes.
+
+    Raises:
+        FileNotFoundError: If the input file does not exist.
+        IOError: If read/write fails.
     """
-    if not os.path.isfile(input_file):
-        raise FileNotFoundError(f"Input file '{input_file}' not found.")
+    try:
+        if not os.path.isfile(input_file):
+            raise FileNotFoundError(f"Input file '{input_file}' not found.")
 
-    with open(input_file, 'rb') as f:
-        data = f.read()
+        with open(input_file, 'rb') as f:
+            data = f.read()
 
-    original_size = len(data)
-    pad_size = (512 - original_size % 512) % 512
-    if pad_size:
-        data += b'\x00' * pad_size
+        original_size = len(data)
+        pad_size = (512 - original_size % 512) % 512
+        if pad_size:
+            data += b'\x00' * pad_size
 
-    target = output_file or input_file
-    with open(target, 'wb') as f:
-        f.write(data)
+        if output_file is None:
+            output_file = input_file
 
-    return len(data)
+        with open(output_file, 'wb') as f:
+            f.write(data)
+
+        total_size = len(data)
+        return total_size
+
+    except Exception as e:
+        raise IOError(f"Failed to pad file '{input_file}': {e}") from e
 
 
-def parse_numeric(val):
-    """将字符串解析为整数"""
+def parse_numeric(val: str) -> int:
     try:
         return int(float(val))
     except ValueError as e:
         raise ValueError(f"Cannot convert '{val}' to integer.") from e
 
 
-def get_written_size(vg_file_path):
-    """获取 VG 文件的实际写入大小"""
-    code, stdout, stderr = dsscmd(f"ls -p {vg_file_path} -w 0")
-    no_file_result = f"The path {vg_file_path} is not exsit."
+def get_written_size(vg_file_path: str) -> int:
+    cmd = f'dsscmd ls -p {vg_file_path} -w 0'
+    code, stdout, stderr = exec_popen(cmd)
 
-    if stdout.strip() == no_file_result:
+    no_file_result = " ".join(["The path", vg_file_path, "is not exsit."])
+
+    if stdout == no_file_result:
         return 0
+
     if code != 0:
         raise RuntimeError(f"`dsscmd ls` failed: {stderr}")
 
@@ -73,14 +76,15 @@ def get_written_size(vg_file_path):
     if 'written_size' not in headers:
         raise ValueError("'written_size' column not found.")
 
-    idx = headers.index('written_size')
-    return parse_numeric(values[idx])
+    index = headers.index('written_size')
+    return parse_numeric(values[index])
 
 
-def parse_hex_dump(raw_output):
-    """解析 dsscmd examine 的十六进制输出"""
+def parse_hex_dump(raw_output: str) -> str:
     hex_bytes = []
+
     for line in raw_output.strip().splitlines():
+        # Extract exactly 16 hex bytes using regex: 2-digit hex tokens
         matches = re.findall(r'\b[0-9a-fA-F]{2}\b', line)
         if matches:
             hex_bytes.extend(matches)
@@ -92,18 +96,33 @@ def parse_hex_dump(raw_output):
         raise ValueError(f"Failed to decode hex dump: {e}") from e
 
 
-def read_dss_content(vg_file_path, size):
-    """从 VG 文件读取指定大小的内容"""
-    _, stdout, stderr = dsscmd(
-        f"examine -p {vg_file_path} -o 0 -f x -s {size}",
-        error_msg=f"dsscmd examine {vg_file_path} failed",
-    )
+def read_dss_content(vg_file_path: str, size: int) -> str:
+    cmd = f'dsscmd examine -p {vg_file_path} -o 0 -f x -s {size}'
+    code, stdout, stderr = exec_popen(cmd)
+
+    if code != 0:
+        raise RuntimeError(f"`dsscmd examine` failed: {stderr}")
+
     return parse_hex_dump(stdout)
 
 
-def read_dss_file(vg_file_path):
-    """读取 VG 文件的全部内容"""
+def read_dss_file(vg_file_path: str) -> str:
     written_size = get_written_size(vg_file_path)
     if written_size == 0:
         return "[Empty] No actual data written to this DSS file."
     return read_dss_content(vg_file_path, written_size)
+
+
+# Example usage:
+if __name__ == "__main__":
+    # Example usage for padding file to 512-byte alignment
+    try:
+        pad_file_to_512("./example.txt")
+    except Exception as e:
+        LOG.error(f"Operation failed: {e}")
+        raise e
+
+    # Example usage for reading DSS file content
+    path = '+vg1/testfile.txt'
+    content = read_dss_file(path)
+    LOG.info(content)

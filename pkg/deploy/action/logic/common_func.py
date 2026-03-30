@@ -1,5 +1,3 @@
-"""通用工具函数（refactored - exec_popen 超时修复）"""
-
 import json
 import os
 import signal
@@ -7,6 +5,7 @@ import stat
 import subprocess
 import time
 from functools import wraps
+
 
 FAIL = 1
 TIME_OUT = 5
@@ -21,11 +20,13 @@ def close_child_process(proc):
         return 'success'
     except Exception as err:
         return str(err)
+
     return 'success'
 
 
 def retry(retry_times, log, task, wait_times):
     def decorate(func):
+
         @wraps(func)
         def wrapper(*args, **kwargs):
             err = ""
@@ -46,7 +47,8 @@ def retry(retry_times, log, task, wait_times):
 def exec_popen(cmd, timeout=TIME_OUT):
     """
     subprocess.Popen in python3.
-    修复：超时后 kill 进程组 + communicate 回收，避免僵尸进程。
+    param cmd: commands need to execute
+    return: status code, standard output, error output
     """
     bash_cmd = ["bash"]
     pobj = subprocess.Popen(bash_cmd, shell=False, stdin=subprocess.PIPE,
@@ -55,27 +57,18 @@ def exec_popen(cmd, timeout=TIME_OUT):
     pobj.stdin.write(os.linesep.encode())
     try:
         stdout, stderr = pobj.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        close_child_process(pobj)
-        try:
-            pobj.communicate(timeout=5)
-        except Exception:
-            pass
-        return -1, "", f"Command timed out after {timeout}s"
     except Exception as err:
-        close_child_process(pobj)
-        try:
-            pobj.communicate(timeout=5)
-        except Exception:
-            pass
         return pobj.returncode, "", str(err)
+    finally:
+        return_code = pobj.returncode
+        close_child_process(pobj)
 
-    return_code = pobj.returncode
     stdout, stderr = stdout.decode(), stderr.decode()
     if stdout[-1:] == os.linesep:
         stdout = stdout[:-1]
     if stderr[-1:] == os.linesep:
         stderr = stderr[:-1]
+
     return return_code, stdout, stderr
 
 

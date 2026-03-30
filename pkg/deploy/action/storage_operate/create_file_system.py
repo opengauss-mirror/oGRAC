@@ -1,3 +1,4 @@
+# coding=utf-8
 import json
 import argparse
 import re
@@ -7,9 +8,6 @@ import os
 import pathlib
 import ipaddress
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import cfg as _cfg
-_paths = _cfg.paths
 
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 
@@ -53,7 +51,7 @@ ID_NAS_DEFAULT = 11
 
 def is_valid_string(string):
     """
-    文件系统名 只支持数字、字母、下划线和中文字符，特殊字符支持"."、"-".长度：1-255
+    文件系统名 只支持数字、字母、下划线和中文字符，特殊字符支持“.”、“-”.长度：1-255
     定义正则表达式模式，匹配数字、字母、下划线、中文字符、特殊字符 . 和 -
     :param string:
     :return:

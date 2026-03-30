@@ -17,7 +17,7 @@ INSPECTION_PATH = str(Path('{}/../../inspections'.format(DIR_NAME)))
 FAIL = 'fail'
 SUCCESS = 'success'
 SUCCESS_ENUM = [0, '0']
-INSPECTION_JSON_FILE = str(Path(DIR_NAME, "inspection_config.json"))
+INSPECTION_JSON_FILE = "/opt/ograc/og_om/service/ogmgr/tasks/inspection/inspection_config.json"
 
 
 class InspectionTask(TASK):

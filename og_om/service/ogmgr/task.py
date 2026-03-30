@@ -12,21 +12,6 @@ from tasks.logs_collections_task import LogsCollectionTask
 from log_tool.om_log import DEPLOY_LOG
 
 task_dir = {}  # 用于保存任务类，格式：{命令: 命令对应的类}
-CUR_DIR = Path(__file__).resolve().parent
-
-
-def _normalize_file_path(file_path):
-    if not file_path:
-        return file_path
-    path_obj = Path(str(file_path))
-    if path_obj.is_absolute():
-        old_service_root = Path("/opt/ograc/og_om/service")
-        try:
-            relative = path_obj.relative_to(old_service_root)
-        except ValueError:
-            return str(path_obj)
-        return str(CUR_DIR.parent / relative)
-    return str((CUR_DIR / path_obj).resolve())
 
 
 def build_uds_obj(recv_commend, commend_data):
@@ -65,7 +50,7 @@ def build_cmd_obj(recv_commend, commend_data):
 
 
 def build_shell_obj(recv_commend, commend_data):
-    file_path = _normalize_file_path(commend_data.get('filePath'))
+    file_path = commend_data.get('filePath')
     sh_input = commend_data.get('sh_input')
     param_check = commend_data.get('paramCheck', {})
     rest_obj = ShellTask(task_name=recv_commend, handler='shell', file_path=file_path, sh_input=sh_input,
@@ -85,7 +70,7 @@ def build_shell_obj(recv_commend, commend_data):
 
 
 def build_py_obj(recv_commend, commend_data):
-    file_path = _normalize_file_path(commend_data.get('filePath'))
+    file_path = commend_data.get('filePath')
     py_input = commend_data.get('py_input')
     param_check = commend_data.get('paramCheck', {})
     rest_obj = PyTask(task_name=recv_commend, handler='py', file_path=file_path, py_input=py_input,
@@ -105,7 +90,7 @@ def build_py_obj(recv_commend, commend_data):
 
 
 def build_audit_obj(recv_commend, commend_data):
-    file_path = _normalize_file_path(commend_data.get('filePath'))
+    file_path = commend_data.get('filePath')
     param_check = commend_data.get('paramCheck', {})
     rest_obj = AuditTask(task_name=recv_commend, handler='audit_py', file_path=file_path, py_input='',
                          params_check_dict=param_check)
@@ -132,7 +117,7 @@ def build_log_progress_query_obj(recv_commend, commend_data):
 
 
 def build_logs_collection_obj(recv_commend, commend_data):
-    log_path, input_param = _normalize_file_path(commend_data.get('filePath')), commend_data.get('py_input')
+    log_path, input_param = commend_data.get('filePath'), commend_data.get('py_input')
     param_check = commend_data.get('paramCheck', {})
     logs_collect_obj = LogsCollectionTask(task_name=recv_commend,
                                           handler='log_py',

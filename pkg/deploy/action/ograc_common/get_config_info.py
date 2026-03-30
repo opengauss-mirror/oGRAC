@@ -1,20 +1,35 @@
-"""配置参数读取（refactored - 统一使用 config 模块）"""
-
+# -*- coding: UTF-8 -*-
 import sys
 import os
+import json
 
-CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, CUR_DIR)
+INSTALL_SCPRIT_DIR = os.path.dirname(os.path.abspath(__file__))
+PKG_DIR = os.path.abspath(os.path.join(INSTALL_SCPRIT_DIR, "../.."))
 
-from config import cfg as _cfg
+CONFIG_PARAMS_FILE = os.path.join(PKG_DIR, "config", "deploy_param.json")
+ENV_FILE = os.path.join(PKG_DIR, "action", "env.sh")
+info = {}
+
+with open(CONFIG_PARAMS_FILE, encoding="utf-8") as f:
+    _tmp = f.read()
+    info = json.loads(_tmp)
+
+
+with open(ENV_FILE, "r", encoding="utf-8") as f:
+    env_config = f.readlines()
 
 
 def get_value(param):
     if param == "deploy_user":
-        return _cfg.user
+        for line in env_config:
+            if line.startswith("ograc_user"):
+                return line.split("=")[1].strip("\n").strip('"')
     if param == "deploy_group":
-        return _cfg.group
-    return _cfg.get_deploy_param(param, "")
+        for line in env_config:
+            if line.startswith("ograc_group"):
+                return line.split("=")[1].strip("\n").strip('"')
+
+    return info.get(param, "")
 
 
 if __name__ == "__main__":

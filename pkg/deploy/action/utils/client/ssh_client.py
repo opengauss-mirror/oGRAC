@@ -153,3 +153,4 @@ class SshClient(object):
         finally:
             if sftp is not None:
                 sftp.close()
+

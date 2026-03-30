@@ -1,3 +1,5 @@
+#!/usr/bin/python
+# coding=utf-8
 import copy
 import json
 import os
@@ -6,10 +8,6 @@ import re
 import shutil
 import sys
 import time
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import cfg as _cfg
-_paths = _cfg.paths
 
 from pre_install import PreInstall
 from logic.storage_operate import StorageInf
@@ -20,21 +18,29 @@ from utils.config.rest_constant import SystemRunningStatus, \
     RepFileSystemNameRule
 from om_log import LOGGER as LOG
 from get_config_info import get_env_info
-from ograc_common.obtains_lsid import LSIDGenerate
+from obtains_lsid import LSIDGenerate
 from logic.common_func import exec_popen, read_json_config, write_json_config, get_status
 
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 DR_DEPLOY_PARAM_FILE = os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json")
+DEPLOY_POLICY_FILE = os.path.join(CURRENT_PATH, "../../deploy_policy_config.json")
 DEFAULT_PARAM_FILE = os.path.join(CURRENT_PATH, "../../config_params.json")
 DR_PROCESS_RECORD_FILE = os.path.join(CURRENT_PATH, "../../../config/dr_process_record.json")
 OGRAC_STOP_SUCCESS_FLAG = os.path.join(CURRENT_PATH, "../../../config/.stop_success")
-DEPLOY_PARAM_FILE = _paths.deploy_param_json
+DEPLOY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
+DEPLOY_POLICY_CONFIG_FILE = os.path.join(CURRENT_PATH, "../../deploy_policy_config.json")
 DOMAIN_LIMITS = 4
 
 
 def get_config_values(key):
     default_config = read_json_config(DEFAULT_PARAM_FILE)
+    if default_config.get("deploy_policy") != "default":
+        deploy_policy = default_config["deploy_policy"]
+        policy_config = read_json_config(DEPLOY_POLICY_CONFIG_FILE).get(deploy_policy)
+        if policy_config:
+            if key in policy_config["config"]:
+                return policy_config["config"][key]
     return default_config.get(key, "")
 
 
@@ -502,6 +508,11 @@ class DRDeployPreCheck(object):
             })
         self.remote_conf_params = copy.deepcopy(conf_params)
         self.remote_conf_params.update(remote_dr_deploy_param)
+        deploy_policy = self.local_conf_params.get("deploy_policy", "default")
+        if deploy_policy != "default":
+            deploy_policy_param = read_json_config(DEPLOY_POLICY_FILE)
+            new_config = deploy_policy_param.get(deploy_policy).get("config")
+            self.local_conf_params.update(new_config)
         LOG.info("Parse config params end.")
 
     def record_config(self):
@@ -554,7 +565,7 @@ class DRDeployPreCheck(object):
         if self.site == "standby":
             return check_result
         if not os.path.exists(os.path.join(CURRENT_PATH, "../../../config/deploy_param.json")):
-            shutil.copy(_paths.deploy_param_json, os.path.join(CURRENT_PATH, "../../../config"))
+            shutil.copy("/opt/ograc/config/deploy_param.json", os.path.join(CURRENT_PATH, "../../../config"))
             return check_result
         self.deploy_params = read_json_config(DEPLOY_PARAM_FILE)
         check_result.extend(self.check_master_ograc_status())
@@ -657,8 +668,8 @@ class DRDeployPreCheck(object):
         conf_params = read_json_config(self.conf)
         if self.site == "active" or conf_params.get("ograc_in_container") != "0":
             return check_result
-        ograc_installed = os.path.isdir(_paths.image_dir) and os.listdir(_paths.image_dir)
-        og_om_installed = os.path.isdir(_paths.og_om_dir) and os.listdir(_paths.og_om_dir)
+        ograc_installed = os.path.isdir("/opt/ograc/image") and os.listdir("/opt/ograc/image")
+        og_om_installed = os.path.isdir("/opt/ograc/og_om") and os.listdir("/opt/ograc/og_om")
         if ograc_installed or og_om_installed:
             check_result.append("oGRAC standby has been installed, please check!")
         return check_result

@@ -5,10 +5,6 @@ import time
 import traceback
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import cfg as _cfg
-_paths = _cfg.paths
-
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 sys.path.append(str(pathlib.Path(CUR_PATH).parent))
 

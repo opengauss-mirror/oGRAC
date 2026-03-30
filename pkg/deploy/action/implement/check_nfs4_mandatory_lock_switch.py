@@ -1,5 +1,3 @@
-"""NFS4 强制锁检查（refactored - 路径解耦）"""
-
 import sys
 import os
 import pathlib
@@ -11,10 +9,8 @@ from om_log import LOGGER
 from utils.client.ssh_client import SshClient
 from utils.client.rest_client import read_helper
 
-sys.path.insert(0, CUR_PATH)
-from config import cfg as _cfg
 
-DEPLOY_PARAMS = _cfg.paths.deploy_param_json
+DEPLOY_PARAMS = os.path.join(str(pathlib.Path(CUR_PATH).parent.parent), "config/deploy_param.json")
 
 
 class CheckLockSwitch(object):
@@ -37,15 +33,12 @@ class CheckLockSwitch(object):
             err_msg = "Execute cmd[%s], details:%s" % (cmd, res)
             LOGGER.error(err_msg)
             raise Exception(err_msg)
-        cmd = "show service nfs_config"
+        cmd = f"show service nfs_config"
         res = ssh_client.execute_cmd(cmd, expect=":/>", timeout=10)
+        "NFSV4 Mandatory Lock Switch: Enabled"
         res_lines = res.split("\n")
         for line in res_lines:
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip()
+            key, value = line.split(":").strip()
             if "NFSV4 Mandatory Lock Switch" in key and "Enabled" in value:
                 break
         else:

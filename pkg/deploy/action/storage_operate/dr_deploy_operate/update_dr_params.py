@@ -1,11 +1,6 @@
 import os.path
 import shutil
 
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import cfg as _cfg
-_paths = _cfg.paths
-
 from storage_operate.dr_deploy_operate.dr_deploy_common import KmcResolve
 from logic.common_func import read_json_config, exec_popen, write_json_config
 from storage_operate.dr_deploy_operate.dr_deploy_common import DRDeployCommon
@@ -15,7 +10,7 @@ from get_config_info import get_env_info
 
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-DEPLOY_PARAM_FILE = _paths.deploy_param_json
+DEPLOY_PARAM_FILE = "/opt/ograc/config/deploy_param.json"
 DR_DEPLOY_CONFIG = os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json")
 RUN_USER = get_env_info("ograc_user")
 USER_GROUP = get_env_info("ograc_group")
@@ -39,7 +34,7 @@ class UpdateDRParams(object):
         容灾告警需要重启ograc_exporter
         :return:
         """
-        cmd = "ps -ef | grep \"python3 " + _paths.exporter_execute_py + "\"" \
+        cmd = "ps -ef | grep \"python3 /opt/ograc/og_om/service/ograc_exporter/exporter/execute.py\"" \
               " | grep -v grep | awk '{print $2}' | xargs kill -9"
         exec_popen(cmd)
 
@@ -50,9 +45,10 @@ class UpdateDRParams(object):
         :return: dr_deploy_param_file 的路径
         """
         if self.deploy_mode == "dbstor":
-            remote_dir = os.path.join(_paths.config_dir, "remote")
+            remote_dir = "/opt/ograc/config/remote/"
             dr_deploy_param_file = os.path.join(remote_dir, "dr_deploy_param.json")
 
+            # 创建 remote 目录并设置权限
             if not os.path.exists(remote_dir):
                 os.makedirs(remote_dir)
                 chown_command = f'chown "{RUN_USER}":"{USER_GROUP}" "{remote_dir}"'
@@ -83,9 +79,11 @@ class UpdateDRParams(object):
                 LOG.error(err_msg)
                 raise Exception(err_msg)
         else:
-            share_path = os.path.join(_paths.remote_data, f"metadata_{self.storage_metadata_fs}")
+            # 处理非 dbstor 模式的逻辑
+            share_path = f"/mnt/dbdata/remote/metadata_{self.storage_metadata_fs}"
             dr_deploy_param_file = os.path.join(share_path, "dr_deploy_param.json")
 
+        # 检查文件是否存在
         if not os.path.exists(dr_deploy_param_file):
             err_msg = "Dr deploy param file does not exist, please check whether dr deploy is successful."
             LOG.error(err_msg)
@@ -114,7 +112,7 @@ class UpdateDRParams(object):
         finally:
             storage_operate.logout()
 
-        target_path = _paths.ograc_home
+        target_path = "/opt/ograc"
         current_real_path = os.path.realpath(CURRENT_PATH)
 
         if not current_real_path.startswith(target_path):
@@ -128,7 +126,7 @@ class UpdateDRParams(object):
         os.chmod(os.path.join(CURRENT_PATH, "../../../config/dr_deploy_param.json"), mode=0o644)
         if not current_real_path.startswith(target_path):
             try:
-                shutil.copy(DR_DEPLOY_CONFIG, _paths.config_dir)
+                shutil.copy(DR_DEPLOY_CONFIG, "/opt/ograc/config")
             except Exception as _err:
                 LOG.info(f"copy DR_DEPLOY_CONFIG failed")
         LOG.info("Restart ograc_exporter process")
@@ -156,3 +154,4 @@ class UpdateDRParams(object):
         dr_deploy_opt.query_hyper_metro_filesystem_pair_info_by_pair_id(ulog_fs_pair_id)
         LOG.info(f"begin to check remote replication pair[{page_fs_pair_id}]")
         dr_deploy_opt.query_remote_replication_pair_info_by_pair_id(page_fs_pair_id)
+

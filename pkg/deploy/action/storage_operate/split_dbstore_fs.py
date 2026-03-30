@@ -6,10 +6,6 @@ import traceback
 import time
 import shutil
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import cfg as _cfg
-_paths = _cfg.paths
-
 CUR_PATH, _ = os.path.split(os.path.abspath(__file__))
 sys.path.append(str(pathlib.Path(CUR_PATH).parent))
 
@@ -50,7 +46,7 @@ class StorageFileSystemSplit(StorageInf):
         :param fs_name: 文件系统名称
         :return:
         """
-        mount_dir = os.path.join(_paths.remote_data, fs_name)
+        mount_dir = f"/mnt/dbdata/remote/{fs_name}"
         rmdir_cmd = f"if [ -d {mount_dir} ];then rm -rf {mount_dir};fi"
         return_code, _, stderr = exec_popen(rmdir_cmd)
         if return_code:
@@ -68,8 +64,10 @@ class StorageFileSystemSplit(StorageInf):
         :return:
         """
         LOGGER.info("Start to tailor dbstor fs.")
+        # sleep 避免nfs server 繁忙报错
         time.sleep(2)
         self.mount_file_system(self.storage_dbstor_fs, self.metadata_logic_ip)
+        # sleep 避免nfs server 繁忙报错
         time.sleep(2)
         self.mount_file_system(self.storage_dbstor_page_fs, self.metadata_logic_ip)
         self.tailor_log_file_system()
@@ -91,7 +89,7 @@ class StorageFileSystemSplit(StorageInf):
             2、将ulog_root_dir内部目录上移一层，然后删除ulog_root_di
         :return:
         """
-        log_namespace_path = os.path.join(_paths.remote_data, self.storage_dbstor_fs, self.namespace)
+        log_namespace_path = f"/mnt/dbdata/remote/{self.storage_dbstor_fs}/{self.namespace}"
         page_pool_root_dir = os.path.join(log_namespace_path, "page_pool_root_dir")
         ulog_root_dir = os.path.join(log_namespace_path, "ulog_root_dir")
         if os.path.exists(page_pool_root_dir):
@@ -109,7 +107,7 @@ class StorageFileSystemSplit(StorageInf):
             3、将page_pool_root_dir内的目录上移后，删除page_pool_root_dir
         :return:
         """
-        page_namespace_path = os.path.join(_paths.remote_data, self.storage_dbstor_page_fs, self.namespace)
+        page_namespace_path = f"/mnt/dbdata/remote/{self.storage_dbstor_page_fs}/{self.namespace}"
         namespace_file = os.path.join(page_namespace_path, self.namespace)
         page_pool_root_dir = os.path.join(page_namespace_path, "page_pool_root_dir")
         ulog_root_dir = os.path.join(page_namespace_path, "ulog_root_dir")
@@ -225,16 +223,15 @@ class StorageFileSystemSplit(StorageInf):
         self.delete_file_system(file_system_id)
 
     def _change_group_recursive(self):
-        import importlib.util
-        _action_dir = os.path.abspath(os.path.join(CUR_PATH, ".."))
-        _spec = importlib.util.spec_from_file_location("_action_config", os.path.join(_action_dir, "config.py"))
-        _ac = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_ac)
-        _env = _ac.load_env_defaults()
-        ograc_user = _env["ograc_user"]
-        ograc_group = _env["ograc_group"]
-        dbstor_fs_path = os.path.join(_paths.remote_data, self.storage_dbstor_fs, self.namespace)
-        dbstor_page_fs_path = os.path.join(_paths.remote_data, self.storage_dbstor_page_fs, self.namespace)
+        file_path = os.path.join(CUR_PATH, "..", "env.sh")
+        env_conf = read_helper(file_path).split("\n")
+        ograc_user = ""
+        ograc_group = ""
+        for i in env_conf:
+            ograc_user = i.split("=")[1] if "ograc_user" in i else ograc_user
+            ograc_group = i.split("=")[1] if "ograc_group" in i else ograc_group
+        dbstor_fs_path = f"/mnt/dbdata/remote/{self.storage_dbstor_fs}/{self.namespace}"
+        dbstor_page_fs_path = f"/mnt/dbdata/remote/{self.storage_dbstor_page_fs}/{self.namespace}"
         LOGGER.info("Start change owner of %s and %s", dbstor_fs_path, dbstor_page_fs_path)
         cmd = f"chown -hR {ograc_user}:{ograc_group} {dbstor_fs_path} &&" \
               f" chown -hR {ograc_user}:{ograc_group} {dbstor_page_fs_path}"

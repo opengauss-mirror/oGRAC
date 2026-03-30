@@ -1,12 +1,9 @@
+#!/usr/bin/python3
+# coding=utf-8
 import json
 import os
 import time
 import argparse
-
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import cfg as _cfg
-_paths = _cfg.paths
 
 from logic.common_func import read_json_config, get_status, exec_popen
 from logic.storage_operate import StorageInf
@@ -24,9 +21,9 @@ LOGICREP_APPCTL_FILE = os.path.join(CURRENT_PATH, "../../logicrep/appctl.sh")
 EXEC_SQL = os.path.join(CURRENT_PATH, "../../ograc_common/exec_sql.py")
 OGRAC_DISASTER_RECOVERY_STATUS_CHECK = 'echo -e "select DATABASE_ROLE from DV_LRPL_DETAIL;" | '\
                                          'su -s /bin/bash - %s -c \'source ~/.bashrc && '\
-                                         'export LD_LIBRARY_PATH=' + _paths.dbstor_lib + ':${LD_LIBRARY_PATH} && '\
+                                         'export LD_LIBRARY_PATH=/opt/ograc/dbstor/lib:${LD_LIBRARY_PATH} && '\
                                          'python3 -B %s\'' % (RUN_USER, EXEC_SQL)
-DBSTOR_CHECK_VERSION_FILE = _paths.cs_baseline_sh
+DBSTOR_CHECK_VERSION_FILE = "/opt/ograc/dbstor/tools/cs_baseline.sh"
 
 
 def load_json_file(file_path):
@@ -78,6 +75,7 @@ class SwitchOver(object):
                 node_id, online, work_stat = node_stat.split(" ")
                 if (online != "ONLINE" or work_stat != "1") and target_node is None:
                     online_flag = False
+                # 只检查当前节点，不影响容灾切换
                 if (online != "ONLINE" or work_stat != "1") and node_id == target_node:
                     online_flag = False
             if not online_flag:
@@ -326,6 +324,7 @@ class DRRecover(SwitchOver):
         
         while check_time:
             check_time -= check_time_step
+            # 检查所有节点cms正常
             srv_stat= self.query_cluster_status(cmd_srv)
             ready_flag = False
             if len(srv_stat)>1:

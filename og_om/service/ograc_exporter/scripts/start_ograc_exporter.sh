@@ -1,10 +1,6 @@
 #!/bin/bash
 set +x
-UPPER_LEVEL_PATH=$(dirname "$(dirname "$(readlink -f "$0")")")
-SERVICE_DIR=$(dirname "${UPPER_LEVEL_PATH}")
-OGRAC_HOME=$(dirname "$(dirname "${SERVICE_DIR}")")
-EXPORTER_LOG_DIR="${OGRAC_HOME}/log/ograc_exporter"
-EXPORTER_LOG_FILE="${EXPORTER_LOG_DIR}/ograc_exporter.log"
+UPPER_LEVEL_PATH=$(dirname $(dirname $(readlink -f $0)))
 PYTHON_HOME_DIR="service/ograc_exporter"
 PYTHON_SCRIPT_PATH="exporter/execute.py"
 CE_TESK_ID=""
@@ -16,11 +12,12 @@ WAIT_TIME=2
 #    2.2 如果PID不存在，则执行步骤1。
 
 export PYTHONPATH=${UPPER_LEVEL_PATH}
-export LD_LIBRARY_PATH=${OGRAC_HOME}/dbstor/lib:${LD_LIBRARY_PATH}
+# 导入kmc加解密需要用到的动态库
+export LD_LIBRARY_PATH=/opt/ograc/dbstor/lib:${LD_LIBRARY_PATH}
 
 function query_cetask_pid()
 {
-    CE_TESK_ID=$(ps -ef | grep "python3 ${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}" | grep -v grep | awk '{print $2}')
+    CE_TESK_ID=$(ps -ef | grep "python3 /opt/ograc/og_om/service/ograc_exporter/exporter/execute.py" | grep -v grep | awk '{print $2}')
 }
 
 function check_cetask_status()
@@ -40,8 +37,7 @@ function start_cetask()
         echo "og_exporter already in service"
         exit 0
     fi
-    mkdir -p "${EXPORTER_LOG_DIR}"
-    nohup python3 "${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}" >> "${EXPORTER_LOG_FILE}" 2>&1 < /dev/null &
+    python3 ${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}&
     sleep ${WAIT_TIME}
     check_cetask_status
     if [ $? -eq 0 ]; then

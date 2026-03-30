@@ -1,12 +1,10 @@
-"""获取源版本号（refactored - 路径解耦）"""
-
 import sys
 import os
-
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(CUR_PATH, "../"))
-from implement_refactored.upgrade_version_check import UpgradeVersionCheck
+from implement.upgrade_version_check import UpgradeVersionCheck
 from om_log import LOGGER as LOG
+
 
 if __name__ == '__main__':
     version_check = UpgradeVersionCheck()
@@ -15,4 +13,5 @@ if __name__ == '__main__':
     except Exception as err:
         LOG.error('obtain source version failed with error: %s', str(err))
         exit('')
+
     print(version_check.source_version)

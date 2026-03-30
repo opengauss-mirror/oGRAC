@@ -1,53 +1,62 @@
-"""DSS 升级解锁"""
-
 import os
 import sys
 import traceback
-
-CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(CUR_DIR)
-if PARENT_DIR not in sys.path:
-    sys.path.insert(0, PARENT_DIR)
-
-from log_config import get_logger
-from common.dss_cmd import vg_rm, vg_find_matching_files
-
-LOG = get_logger()
-
-UPGRADE_VG_PATH = "+vg1/upgrade"
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(CURRENT_PATH, "..", ".."))
+from update_config import _exec_popen
+from dss.dssctl import LOG
 
 
-class DssUnlock:
+class DssUnLock(object):
     def __init__(self):
-        self.lock_file_name = None
-        self.vg_lock_path = None
+        self.node_lock_file_name = None
+        self.vg_lock_file_path = None
 
-    def _is_locked(self):
-        matches = vg_find_matching_files(UPGRADE_VG_PATH, self.lock_file_name)
-        return len(matches) > 0
+    def is_locked(self):
+        cmd = f'dsscmd ls -p +vg1/upgrade'
+        code, stdout, stderr = _exec_popen(cmd)
 
-    def unlock(self, input_file):
-        """释放升级锁"""
-        self.lock_file_name = os.path.basename(input_file)
-        self.vg_lock_path = os.path.join(UPGRADE_VG_PATH, self.lock_file_name)
+        if code != 0:
+            raise RuntimeError(f"`dsscmd ls unlock` failed: {stderr}")
+        
+        lines = stdout.strip().splitlines()
+        if len(lines) < 2:
+            raise RuntimeError(f"no file with lock")
+    
+        for line in lines:
+            if self.node_lock_file_name in line:
+                return True
+        return False
 
-        if self._is_locked():
-            vg_rm(self.vg_lock_path)
-            LOG.info(f"Lock released: {self.lock_file_name}")
+    def unlock_node(self):
+        cmd = f'dsscmd rm -p {self.vg_lock_file_path}'
+        code, _, stderr = _exec_popen(cmd)
+
+        if code != 0:
+            raise RuntimeError(f"`dsscmd rm unlock` failed: {stderr}")
+                
+    def upgrade_unlock_by_dss(self, input_file=None):
+        self.node_lock_file_name = os.path.basename(input_file)
+        self.vg_lock_file_path = os.path.join("+vg1/upgrade", self.node_lock_file_name)
+        if self.is_locked():  
+            self.unlock_node()
+        return
 
 
 def main():
-    if len(sys.argv) < 2:
-        raise RuntimeError("Usage: dss_upgrade_unlock.py <lock_file>")
+    dss_unlock = DssUnLock()
+    if len(sys.argv) < 1:
+        raise Exception("Failed to unlock dss when upgrade input")
+    input_file = sys.argv[1]
     try:
-        DssUnlock().unlock(sys.argv[1])
+        dss_unlock.upgrade_unlock_by_dss(input_file)
     except Exception as e:
-        LOG.error(f"Failed to unlock: {traceback.format_exc(limit=-1)}")
-        raise
+        LOG.error(f"Failed to unlock dss when upgrade {traceback.format_exc(limit=-1)}")
+        raise e
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as err:
-        sys.exit(str(err))
+        exit(str(err))

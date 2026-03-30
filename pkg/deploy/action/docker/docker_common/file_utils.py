@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import os
 import json
 import csv
@@ -8,11 +10,9 @@ import sys
 import pwd
 import grp
 import stat
-
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, os.path.join(CUR_PATH, ".."))
-
-from config import get_value
+sys.path.append(os.path.join(CUR_PATH, "../../"))
+from ograc.get_config_info import get_value
 
 
 def timeout_handler():
@@ -180,8 +180,10 @@ def write_file(filepath, content):
             f.writelines(content)
             fcntl.flock(f, fcntl.LOCK_UN)
 
+        # Replace the original file with the temporary file
         shutil.move(temp_file, filepath)
 
+        # Restore permissions and ownership
         os.chmod(filepath, original_mode)
         os.chown(filepath, original_uid, original_gid)
 

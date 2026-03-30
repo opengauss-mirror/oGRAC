@@ -1,14 +1,11 @@
+#!/usr/bin/python3
+# coding=utf-8
 import argparse
 import datetime
 import json
 import os
 import stat
 import time
-
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import cfg as _cfg
-_paths = _cfg.paths
 
 from utils.config.rest_constant import SecresAccess, HealthStatus, ReplicationRunningStatus, MetroDomainRunningStatus, \
     ConfigRole, Constant
@@ -20,7 +17,7 @@ from get_config_info import get_env_info
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 FULL_SYNC_PROGRESS = os.path.join(CURRENT_PATH, "../../../config/full_sync_progress.json")
-ZSQL_INI_PATH = _paths.ogsql_ini
+ZSQL_INI_PATH = '/mnt/dbdata/local/ograc/tmp/data/cfg/ogsql.ini'
 LOCK_INSTANCE = "lock instance for backup;"
 UNLOCK_INSTANCE = "unlock instance;"
 FLUSH_TABLE = "flush table with read lock;"

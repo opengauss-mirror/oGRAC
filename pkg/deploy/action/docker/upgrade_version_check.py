@@ -2,15 +2,8 @@ import sys
 import os
 import re
 from pathlib import Path
-
+from get_config_info import get_value
 CUR_PATH = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, CUR_PATH)
-
-from config import get_config, get_value
-
-_cfg = get_config()
-_paths = _cfg.paths
-
 sys.path.append(os.path.join(CUR_PATH, ".."))
 from om_log import LOGGER as LOG
 
@@ -23,8 +16,7 @@ class UpgradeVersionCheck:
 
     def __init__(self):
         self.white_list_file = str(Path(os.path.join(CUR_PATH, "white_list.txt")))
-        metadata_path = _paths.metadata_fs_path(METADATA_FS)
-        self.source_version_file = str(Path(os.path.join(metadata_path, "versions.yml")))
+        self.source_version_file = str(Path(os.path.join("/mnt/dbdata/remote/metadata_" + METADATA_FS, "versions.yml")))
         self.white_list_dict = {}
         self.source_version = ''
         self.err = {'read_failed': 'white list or source version read failed',
@@ -40,7 +32,7 @@ class UpgradeVersionCheck:
     def execption_handler(err_msg):
         LOG.error(err_msg)
         return 'False {}'.format(err_msg)
-
+    
     def process_white_list(self):
         with open(self.white_list_file, 'r', encoding='utf-8') as file:
             white_list_info = file.readlines()
@@ -76,7 +68,6 @@ class UpgradeVersionCheck:
 
         err_msg = "source version '{}' not in white list.".format(self.source_version)
         return self.execption_handler(err_msg)
-
 
 if __name__ == '__main__':
     version_check = UpgradeVersionCheck()

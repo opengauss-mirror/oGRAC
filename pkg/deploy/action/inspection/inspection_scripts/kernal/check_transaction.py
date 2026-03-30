@@ -1,17 +1,15 @@
+#!/usr/bin/env python
+# coding: UTF-8
 import json
 import os
 import sys
-
-_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
-sys.path.insert(0, _INSPECTION_DIR)
-sys.path.insert(0, _CUR_DIR)
-
-from ograc_check import CheckContext
-from ograc_check import BaseItem
-from ograc_check import ResultStatus
+from og_check import CheckContext
+from og_check import BaseItem
+from og_check import ResultStatus
+sys.path.append('/opt/ograc/action/inspection')
 from log_tool import setup
 
+# minutes converted to microseconds
 MAX_MICRO_TIME = 3 * 60 * 1000000
 
 
@@ -39,6 +37,7 @@ it is recommended that the user modify the SQL statement."
         self.result.epv = self.epv
         self.result.rst = ResultStatus.OK
 
+        # Check transactions greater than 3 minutes, check if they do not exist
         if self.copyright:
             sql = "SELECT COUNT(1) FROM DV_TRANSACTIONS WHERE STATUS = 'ACTIVE'"
             sql += " AND EXEC_TIME > %d;" % MAX_MICRO_TIME
@@ -47,9 +46,11 @@ it is recommended that the user modify the SQL statement."
             sql += " AND EXEC_TIME > %d;" % MAX_MICRO_TIME
         self.result.raw = sql.replace("\$", "$")
 
+        # Execute sql command
         status, records = self.get_sql_result(sql)
         if (status == 0):
             count = records["records"][0][0]
+            # expect value : 0
             if int(count) == self.result.epv:
                 self.result.rst = ResultStatus.OK
             else:
@@ -59,6 +60,7 @@ it is recommended that the user modify the SQL statement."
             self.result.rst = ResultStatus.ERROR
             vals["except"] = records
 
+        # add resault to json
         self.result.val = json.dumps(vals)
 
 
@@ -67,11 +69,13 @@ if __name__ == '__main__':
     '''
     main
     '''
-    ograc_log = setup('ograc')
+    # check if user is root
+    ograc_log = setup('ograc') 
     if(os.getuid() == 0):
         ograc_log.error("Cannot use root user for this operation!")
         sys.exit(1)
 
+    # main function
     checker = CheckTransaction()
     checker_context = CheckContext()
     db_user = input()

@@ -1,57 +1,70 @@
-"""DSS 升级 YAML 文件管理"""
-
 import os
 import sys
 import traceback
-
-CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(CUR_DIR)
-if PARENT_DIR not in sys.path:
-    sys.path.insert(0, PARENT_DIR)
-
-from log_config import get_logger
-from common.dss_cmd import vg_rm, vg_cp, vg_find_matching_files
-from common.file_utils import pad_file_to_512
-
-LOG = get_logger()
+from file_utils import pad_file_to_512
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(CURRENT_PATH, "..", ".."))
+from update_config import _exec_popen
+from dss.dssctl import LOG
 
 
-class DssYaml:
+class DssYaml(object):
     def __init__(self):
-        self.file_name = None
-        self.local_path = None
-        self.vg_path = None
+        self.node_yaml_file_name = None
+        self.node_yaml_file_path = None
+        self.vg_yaml_file_path = None
 
-    def _remove_existing(self):
-        """如果 VG 中已存在同名文件，先删除"""
-        matches = vg_find_matching_files("+vg1", self.file_name)
-        if matches:
-            vg_rm(self.vg_path)
+    def detele_file(self, vg_path):
+        cmd = f'dsscmd rm -p {vg_path}'
+        code, _, stderr = _exec_popen(cmd)
 
-    def upload(self, input_file):
-        """将 YAML 文件上传到 VG（对齐到 512 字节）"""
-        self.file_name = os.path.basename(input_file)
-        self.local_path = input_file
-        self.vg_path = os.path.join("+vg1", self.file_name)
+        if code != 0:
+            raise RuntimeError(f"`dsscmd rm yaml` failed: {stderr}")
 
-        pad_file_to_512(self.local_path)
-        self._remove_existing()
-        vg_cp(self.local_path, self.vg_path)
-        LOG.info(f"YAML uploaded: {self.file_name}")
+    def file_exits(self):
+        cmd = f'dsscmd ls -p +vg1'
+        code, stdout, _ = _exec_popen(cmd)
+
+        if code != 0:
+            return
+        
+        lines = stdout.strip().splitlines()
+    
+        for line in lines:
+            if self.node_yaml_file_name in line:
+                self.detele_file(self.vg_yaml_file_path)
+                break
+
+    def cp_yaml_file_to_path(self):
+        self.file_exits()
+        cmd = f'dsscmd cp -s {self.node_yaml_file_path} -d {self.vg_yaml_file_path}'
+        code, _, stderr = _exec_popen(cmd)
+        
+        if code != 0:
+            raise RuntimeError(f"`dsscmd cp yaml` failed: {stderr}")
+    
+    def upgrade_yaml_by_dss(self, input_file=None):
+        self.node_yaml_file_name = os.path.basename(input_file)
+        self.node_yaml_file_path = input_file
+        self.vg_yaml_file_path = os.path.join("+vg1", self.node_yaml_file_name)
+        pad_file_to_512(self.node_yaml_file_path)
+        self.cp_yaml_file_to_path()
+        return
 
 
 def main():
-    if len(sys.argv) < 2:
-        raise RuntimeError("Usage: dss_upgrade_yaml.py <yaml_file>")
+    dss_yaml = DssYaml()
+    if len(sys.argv) < 1:
+        raise Exception("Failed to cp yaml when upgrade input")
+    input_file = sys.argv[1]
     try:
-        DssYaml().upload(sys.argv[1])
+        dss_yaml.upgrade_yaml_by_dss(input_file)
     except Exception as e:
-        LOG.error(f"Failed to upload YAML: {traceback.format_exc(limit=-1)}")
-        raise
-
+        LOG.error(f"Failed to cp yaml when upgrade {traceback.format_exc(limit=-1)}")
+        raise e
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as err:
-        sys.exit(str(err))
+        exit(str(err))

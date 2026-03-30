@@ -1,8 +1,7 @@
 import json
 import socket
-from pathlib import Path
 
-SERVER_ADDRESS = str(Path(__file__).resolve().parents[1] / 'og_om.sock')
+SERVER_ADDRESS = '/opt/ograc/og_om/service/og_om.sock'
 SOCKET_TYPE = socket.SOCK_STREAM
 SOCKET_FAMILY = socket.AF_UNIX
 RECEIVE_DATA_SIZE = 1024

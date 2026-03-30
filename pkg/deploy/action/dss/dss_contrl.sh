@@ -4,13 +4,7 @@ source ~/.bashrc
 USER=`whoami`
 if [ "${USER}" = "root" ]
 then
-	if [ -n "${OGRAC_USER:-}" ]; then
-		USER="${OGRAC_USER}"
-	elif [ -n "${DSS_HOME:-}" ] && [ -e "${DSS_HOME}" ]; then
-		USER=$(stat -c %U "${DSS_HOME}")
-	else
-		USER=$(stat -c %U "$(dirname "$(readlink -f "$0")")")
-	fi
+	USER=$(grep '"U_USERNAME_AND_GROUP"' /opt/ograc/action/ograc/install_config.json | cut -d '"' -f 4 | sed 's/:.*//')
 fi
 
 DSS_BIN=dssserver

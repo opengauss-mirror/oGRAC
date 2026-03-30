@@ -2,14 +2,8 @@
 set +x
 CURRENT_PATH=$(dirname $(readlink -f $0))
 SCRIPT_NAME=${PARENT_DIR_NAME}/$(basename $0)
-OGRAC_HOME=$(readlink -f "${CURRENT_PATH}/../..")
-ACTION_DIR="${OGRAC_HOME}/action"
-CONFIG_PY="${ACTION_DIR}/config.py"
-if [ -f "${CONFIG_PY}" ]; then
-    eval "$(python3 "${CONFIG_PY}" --shell-env 2>/dev/null)" || true
-fi
 source ${CURRENT_PATH}/log4sh.sh
-LOCK_NAME="${CURRENT_PATH}/rerun.lock"
+LOCK_NAME="/opt/ograc/common/script/rerun.lock"
 
 
 ACTION=$1
@@ -21,24 +15,24 @@ case "$ACTION" in
             logAndEchoInfo "[rerun] begin to start service. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             systemctl daemon-reload
 
-            systemctl start "${OGRAC_DAEMON_TIMER}"
+            systemctl start ograc.timer
             if [ $? -eq 0 ]; then
-                logAndEchoInfo "[rerun] start ${OGRAC_DAEMON_TIMER} success. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+                logAndEchoInfo "[rerun] start ograc.timer success. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             else
-                logAndEchoError "[rerun] start ${OGRAC_DAEMON_TIMER} failed. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+                logAndEchoError "[rerun] start ograc.timer failed. [Line:${LINENO}, File:${SCRIPT_NAME}]"
                 exit 1
             fi
-            systemctl status "${OGRAC_DAEMON_TIMER}"
+            systemctl status ograc.timer
 
 
-            systemctl enable "${OGRAC_DAEMON_TIMER}"
+            systemctl enable ograc.timer
             if [ $? -eq 0 ]; then
-                logAndEchoInfo "[rerun] enable ${OGRAC_DAEMON_TIMER} success. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+                logAndEchoInfo "[rerun] enable ograc.timer success. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             else
-                logAndEchoError "[rerun] enable ${OGRAC_DAEMON_TIMER} failed. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+                logAndEchoError "[rerun] enable ograc.timer failed. [Line:${LINENO}, File:${SCRIPT_NAME}]"
                 exit 1
             fi
-            systemctl is-enabled "${OGRAC_DAEMON_TIMER}"
+            systemctl is-enabled ograc.timer
 
             ### 正常流程结束
 
@@ -61,7 +55,7 @@ case "$ACTION" in
             logAndEchoInfo "[rerun] begin to stop service. [Line:${LINENO}, File:${SCRIPT_NAME}]"
 
             ### 开始正常流程
-            sh "${ACTION_DIR}/appctl.sh" stop
+            sh /opt/ograc/action/appctl.sh stop
             if [ $? -eq 0 ]; then
                 logAndEchoInfo "[rerun] stop service success. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             else

@@ -1,20 +1,13 @@
+#!/usr/bin/env python
+# coding: UTF-8
 import json
 import os
 import sys
-
-_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-_INSPECTION_DIR = os.path.abspath(os.path.join(_CUR_DIR, "../.."))
-sys.path.insert(0, _INSPECTION_DIR)
-sys.path.insert(0, _CUR_DIR)
-
-from config import get_config
-from ograc_check import CheckContext
-from ograc_check import BaseItem
-from ograc_check import ResultStatus
+from og_check import CheckContext
+from og_check import BaseItem
+from og_check import ResultStatus
+sys.path.append('/opt/ograc/action/inspection')
 from log_tool import setup
-
-_cfg = get_config()
-_paths = _cfg.paths
 
 
 class CheckDBVersion(BaseItem):
@@ -41,7 +34,7 @@ class CheckDBVersion(BaseItem):
         status, output = self.get_cmd_result(cmd, self.user)
         if (status == 0):
             vals["db_version"] = output
-            cmd = "cat %s | grep -oP 'Version: \K\d+\.\d+'" % _paths.versions_yml
+            cmd = "cat /opt/ograc/versions.yml | grep -oP 'Version: \K\d+\.\d+'"
             status, output = self.get_cmd_result(cmd, self.user)
             version_info = vals.get("db_version").strip()
             if version_info and version_info != output.strip(" "):
@@ -52,6 +45,7 @@ class CheckDBVersion(BaseItem):
         else:
             self.result.rst = ResultStatus.ERROR
             vals["except"] = output
+        # add resault to json
         self.result.val = json.dumps(vals)
 
 
@@ -59,11 +53,13 @@ if __name__ == '__main__':
     '''
     main
     '''
+    # check if user is root
     ograc_log = setup('ograc')
     if os.getuid() == 0:
         ograc_log.error("Cannot use root user for this operation!")
         sys.exit(1)
 
+    # main function
     checker = CheckDBVersion()
     checker_context = CheckContext()
     db_user = input()
