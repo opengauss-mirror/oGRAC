@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import getpass
 import glob
 import json
 import os
@@ -553,21 +552,8 @@ def _build_ogracd_configs(dp):
     return c
 
 
-def _prompt_sys_password():
-    if not sys.stdin.isatty():
-        raise RuntimeError("password should be set in interactive terminal。")
-    prompt = "please input ograc password: "
-    confirm_prompt = "please confirm the password: "
-    pwd1 = getpass.getpass(prompt)
-    if not pwd1:
-        raise RuntimeError("password cannot be empty。")
-    pwd2 = getpass.getpass(confirm_prompt)
-    if pwd1 != pwd2:
-        raise RuntimeError("the password entered twice does not match, please re-execute the installation。")
-    return pwd1
-
-
 def _write_cluster_conf(dp, ogracd_configs, user, group, password):
+    """写入 cluster.ini + ograc_config.json"""
     conf_file = os.path.join(data_path, "cfg", "cluster.ini")
     _exec(f"echo >> {conf_file}")
 
@@ -605,8 +591,7 @@ def _write_cluster_conf(dp, ogracd_configs, user, group, password):
     }
 
     _write_ini_params(conf_file, params)
-    params_for_json = {**params, "SYS_PASSWORD": ""}
-    _write_json(OGRAC_CONF_FILE, params_for_json)
+    _write_json(OGRAC_CONF_FILE, params)
 
 
 def _encrypt_password(plain_password):
@@ -925,17 +910,13 @@ def action_install():
     ogracd_configs = _build_ogracd_configs(dp)
 
     sys_password = ""
-    pw_file = os.environ.get("OGRAC_SYS_PASSWORD_FILE")
-    if pw_file and os.path.isfile(pw_file):
-        try:
-            with open(pw_file, "r", encoding="utf-8") as f:
-                sys_password = f.read().strip()
-        except OSError as e:
-            raise RuntimeError(f"failed to read SYS password file {pw_file}: {e}") from e
+    if install_type == "override":
+        sys_password = get_value("SYS_PASSWORD")
     else:
-        sys_password = _prompt_sys_password()
+        sys_password = get_value("SYS_PASSWORD")
+        if not sys_password:
+            raise RuntimeError("SYS_PASSWORD NOT FOUND")
 
-    if install_type != "override":
         for fname in ("ogracd.ini", "ogsql.ini"):
             src = os.path.join(backup_dir, fname)
             dst = os.path.join(data_path, "cfg", fname)

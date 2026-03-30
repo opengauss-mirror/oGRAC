@@ -10,15 +10,11 @@ oGRAC 部署编排器（重构版）
 已剔除 dbstor 逻辑，保证容器流程正常。
 """
 
-import getpass
-import grp
 import os
-import pwd
 import shlex
 import shutil
 import sys
 import subprocess
-import tempfile
 
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CUR_DIR)
@@ -90,45 +86,6 @@ class OgracDeploy:
             LOG.info("%s %s success", module, action)
         return ret
 
-    def _prompt_sys_password_and_write_file(self):
-        if not sys.stdin.isatty():
-            LOG.error("password set error, please run sh appctl.sh install config_params_lun.json")
-            raise RuntimeError("password should be set in interactive terminal。")
-        prompt = "please input ograc password: "
-        confirm = "please confirm the password: "
-        pwd1 = getpass.getpass(prompt)
-        if not pwd1:
-            raise RuntimeError("password cannot be empty。")
-        pwd2 = getpass.getpass(confirm)
-        if pwd1 != pwd2:
-            raise RuntimeError("the password entered twice does not match, please re-execute the installation。")
-        fd, path = tempfile.mkstemp(prefix="ograc_sys_pwd.", dir="/tmp")
-        try:
-            os.write(fd, pwd1.encode("utf-8"))
-            os.close(fd)
-            fd = None
-            os.chmod(path, 0o600)
-            try:
-                uid = pwd.getpwnam(self.ograc_user).pw_uid
-                gid = grp.getgrnam(self.ograc_group).gr_gid
-                os.chown(path, uid, gid)
-            except (KeyError, OSError) as e:
-                os.unlink(path)
-                raise RuntimeError(f"failed to set password file owner ({self.ograc_user}:{self.ograc_group}): {e}") from e
-            return path
-        except Exception:
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-            if os.path.isfile(path):
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-            raise
-
     def pre_install(self, install_type="override", config_file=""):
         LOG.info("Begin pre_install, install_type=%s", install_type)
 
@@ -183,30 +140,16 @@ class OgracDeploy:
         self._install_ograc_package()
         self._copy_resources()
 
-        sys_password_file = None
-        if "ograc" in INSTALL_ORDER and sys.stdin.isatty():
-            sys_password_file = self._prompt_sys_password_and_write_file()
-            if sys_password_file:
-                os.environ["OGRAC_SYS_PASSWORD_FILE"] = sys_password_file
-
-        try:
-            for module in INSTALL_ORDER:
-                LOG.info("Installing %s", module)
-                if module == "ograc":
-                    ret = self._call_module(module, "install")
-                else:
-                    ret = self._call_module(module, "install")
-                if ret != 0:
-                    LOG.error("Install %s failed", module)
-                    return 1
-                LOG.info("Install %s success", module)
-        finally:
-            if sys_password_file and os.path.isfile(sys_password_file):
-                try:
-                    os.unlink(sys_password_file)
-                except OSError:
-                    pass
-            os.environ.pop("OGRAC_SYS_PASSWORD_FILE", None)
+        for module in INSTALL_ORDER:
+            LOG.info("Installing %s", module)
+            if module == "ograc":
+                ret = self._call_module(module, "install")
+            else:
+                ret = self._call_module(module, "install")
+            if ret != 0:
+                LOG.error("Install %s failed", module)
+                return 1
+            LOG.info("Install %s success", module)
 
         self._config_security_limits()
         self._show_version()
