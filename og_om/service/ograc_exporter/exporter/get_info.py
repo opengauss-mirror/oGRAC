@@ -9,45 +9,24 @@ import signal
 import traceback
 import subprocess
 import glob
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from datetime import datetime
 from exporter.log import EXPORTER_LOG as LOG
 from exporter.tool import SimpleSql
 from exporter.tool import _exec_popen
-
-
-def _load_module_config():
-    config_file = OGRAC_HOME / "action" / "config_params_lun.json"
-    if not config_file.exists():
-        return {}
-    try:
-        with open(config_file, encoding="utf-8") as f:
-            return json.load(f).get("module_config", {})
-    except (OSError, ValueError):
-        return {}
-
-
-OGRAC_HOME = Path(__file__).resolve().parents[4]
-MODULE_CONFIG = _load_module_config()
-DATA_ROOT = MODULE_CONFIG.get("data_root", "/mnt/dbdata")
-OGRACD_DATA_DIR = str(Path(DATA_ROOT) / 'local' / 'ograc' / 'tmp' / 'data')
-CMS_LOG_GLOB = str(OGRAC_HOME / 'log' / 'cms' / 'run' / '*')
-DBSTOR_LIB_PATH = str(OGRAC_HOME / 'dbstor' / 'lib')
-DBSTOR_INFO_PATH = str(OGRAC_HOME / 'common' / 'data' / 'dbstor_info.json')
-
-sys.path.append(str(OGRAC_HOME / 'action' / 'dbstor'))
+sys.path.append('/opt/ograc/action/dbstor')
 from kmc_adapter import CApiWrapper
 
 cur_abs_path, _ = os.path.split(os.path.abspath(__file__))
 OLD_OGRACD_DATA_SAVE_PATH = Path(cur_abs_path, 'ogracd_report_data_saves.json')
-DEPLOY_PARAM_PATH = str(OGRAC_HOME / 'config' / 'deploy_param.json')
-INSTALL_CONFIG_PATH = str(OGRAC_HOME / 'action' / 'ograc' / 'install_config.json')
-OGRACD_INI_PATH = str(Path(DATA_ROOT) / 'local' / 'ograc' / 'tmp' / 'data' / 'cfg' / 'ogracd.ini')
-OGRACD_LOG_PATH = str(OGRAC_HOME / 'log' / 'ograc' / 'run' / 'ogracd.rlog')
-OGSQL_INI_PATH = str(Path(DATA_ROOT) / 'local' / 'ograc' / 'tmp' / 'data' / 'cfg' / '*sql.ini')
-PRIMARY_KEYSTORE = str(OGRAC_HOME / "common" / "config" / "primary_keystore_bak.ks")
-STANDBY_KEYSTORE = str(OGRAC_HOME / "common" / "config" / "standby_keystore_bak.ks")
+DEPLOY_PARAM_PATH = '/opt/ograc/config/deploy_param.json'
+INSTALL_CONFIG_PATH = '/opt/ograc/action/ograc/install_config.json'
+OGRACD_INI_PATH = '/mnt/dbdata/local/ograc/tmp/data/cfg/ogracd.ini'
+OGRACD_LOG_PATH = '/opt/ograc/log/ograc/run/ogracd.rlog'
+OGSQL_INI_PATH = '/mnt/dbdata/local/ograc/tmp/data/cfg/*sql.ini'
+PRIMARY_KEYSTORE = "/opt/ograc/common/config/primary_keystore_bak.ks"
+STANDBY_KEYSTORE = "/opt/ograc/common/config/standby_keystore_bak.ks"
 LOGICREP_START_TIME_PATH = "/opt/software/tools/logicrep/log/start_time"
 TIME_OUT = 5
 ABNORMAL_STATE, NORMAL_STATE = 1, 0
@@ -171,7 +150,7 @@ class GetNodesInfo:
             返回一个字典，键同dict_data，值为ograc进程当前生效的值
         """
         cmd = "ps -ef | grep -v grep | grep ogracd | grep -w '\-D " \
-              f"{OGRACD_DATA_DIR}' | awk '{{print $2}}'"
+              "/mnt/dbdata/local/ograc/tmp/data' | awk '{print $2}'"
         err_code, pidof_ogracd, _ = _exec_popen(cmd)
 
         if err_code or not pidof_ogracd:
@@ -235,7 +214,7 @@ class GetNodesInfo:
             "write failed"
         """
         check_cmd = "zgrep -E \"(cms_disk_lock timeout.|read failed|write failed)\" " \
-                    f"{CMS_LOG_GLOB} | grep -oE \"[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}} [0-9:]+\" | sort"
+                    "/opt/ograc/log/cms/run/* | grep -oE \"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]+\" | sort"
         _, output, _ = _exec_popen(check_cmd)
         # 存在加解锁失败问题
         if output:
@@ -412,7 +391,7 @@ class GetNodesInfo:
         res.update(self.sql_info_query())
 
     def get_tmp_archive_count(self, res):
-        archive_log_path = f"{DATA_ROOT}/remote/archive_{self.storage_archive_fs}"
+        archive_log_path = f"/mnt/dbdata/remote/archive_{self.storage_archive_fs}"
         count = 0
         for filename in os.listdir(archive_log_path):
             if f"{self.node_id}arch_file.tmp" in filename:
@@ -420,7 +399,7 @@ class GetNodesInfo:
         return count
 
     def get_tmp_archive_size(self, res):
-        tmp_archive_path = f"{DATA_ROOT}/remote/archive_{self.storage_archive_fs}/{self.node_id}arch_file.tmp"
+        tmp_archive_path = f"/mnt/dbdata/remote/archive_{self.storage_archive_fs}/{self.node_id}arch_file.tmp"
         if os.path.exists(tmp_archive_path):
             return os.path.getsize(tmp_archive_path)
         else:
@@ -709,7 +688,7 @@ class GetNodesInfo:
 
         # 恢复环境变量，避免cms命令执行失败
         split_env = os.environ['LD_LIBRARY_PATH'].split(":")
-        filtered_env = [single_env for single_env in split_env if DBSTOR_LIB_PATH not in single_env]
+        filtered_env = [single_env for single_env in split_env if "/opt/ograc/dbstor/lib" not in single_env]
         os.environ['LD_LIBRARY_PATH'] = ":".join(filtered_env)
 
         try:
@@ -753,7 +732,7 @@ class GetDbstorInfo:
                     'fsId': '', 'linkState': ''
                 }
         }
-        self.info_file_path = DBSTOR_INFO_PATH
+        self.info_file_path = '/opt/ograc/common/data/dbstor_info.json'
         self.index = 0
         self.max_index = 10
         self.last_time_stamp = None

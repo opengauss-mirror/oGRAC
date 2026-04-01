@@ -1,4 +1,5 @@
-"""inspection 统一配置（refactored）"""
+#!/usr/bin/env python3
+"""inspection unified configuration module."""
 import json
 import os
 import posixpath
@@ -42,7 +43,7 @@ class PathConfig:
 
 
 def _load_deploy_param(path):
-    """加载 deploy_param.json"""
+    """Load deploy_param.json."""
     if not os.path.exists(path):
         return {}
     try:
@@ -54,7 +55,7 @@ def _load_deploy_param(path):
 
 
 class InspectionConfig:
-    """inspection 模块的统一配置入口"""
+    """Unified config entry for inspection module."""
 
     def __init__(self):
         ograc_home = os.environ.get("OGRAC_HOME", "/opt/ograc")
@@ -83,7 +84,7 @@ _global_cfg = None
 
 
 def get_config():
-    """获取全局 InspectionConfig 单例"""
+    """Get global InspectionConfig singleton."""
     global _global_cfg
     if _global_cfg is None:
         _global_cfg = InspectionConfig()
@@ -91,7 +92,7 @@ def get_config():
 
 
 class _LazyCfg:
-    """延迟代理，方便模块级使用 cfg.paths.xxx"""
+    """Lazy proxy for module-level cfg.paths.xxx."""
     def __getattr__(self, name):
         return getattr(get_config(), name)
 

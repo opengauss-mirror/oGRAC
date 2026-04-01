@@ -1,6 +1,5 @@
 {
   "deploy_policy": "ModeA",
-  "deploy_user": "ogdba:ogdba",
   "node_id": "0",
   "cms_ip": "192.168.86.1;192.168.86.2",
   "storage_dbstor_fs": "foo",

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import re
 import sys
@@ -139,7 +140,7 @@ class InspectionTask:
     def decrypt_password():
         primary_keystore = _paths.primary_keystore
         standby_keystore = _paths.standby_keystore
-        _dbstor_action = os.path.abspath(os.path.join(CUR_PATH, "..", "dbstor"))
+        _dbstor_action = os.path.abspath(os.path.join(CUR_PATH, "..", "ograc_common"))
         sys.path.insert(0, _dbstor_action)
         from kmc_adapter import CApiWrapper
         ogsql_ini_path = _paths.ogsql_ini

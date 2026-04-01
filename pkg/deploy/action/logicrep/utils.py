@@ -1,4 +1,5 @@
-"""logicrep 工具库（refactored）"""
+#!/usr/bin/env python3
+"""logicrep utilities."""
 
 import os
 import subprocess

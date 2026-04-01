@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 
 import os
 import json
@@ -63,7 +64,7 @@ def get_pod_name_from_info(pod_info, pod_name):
 
 
 def backup_log():
-    """备份日志函数，unready的pod会被重复检测，只有首次打印备份日志，后续直接返回"""
+    """Backup log; unready pods are rechecked, only first prints backup log."""
     healthy_file = _paths.healthy_file
     if os.path.exists(healthy_file):
         with open(healthy_file, 'r') as fread:

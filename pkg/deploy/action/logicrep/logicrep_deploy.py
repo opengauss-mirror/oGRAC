@@ -1,10 +1,5 @@
-"""
-logicrep 部署编排器（root 身份运行）
-
-把原 appctl.sh（428 行 shell）全部 Python 化：
-copy_logicrep、safe_update、copy_bin、check_status、
-check_startup_status、chown_mod_scripts 等
-"""
+#!/usr/bin/env python3
+"""logicrep deploy orchestrator (runs as root)."""
 
 import glob
 import os
@@ -105,7 +100,7 @@ class LogicrepDeploy:
             exec_popen(f'find "{zlogicrep}" -type d -print0 | xargs -0 chmod 700')
 
     def _get_newest_so(self, so_path):
-        """从 so_path 获取最新版本的 so 文件"""
+        """Get newest so files from so_path."""
         so_map = self._cfg.so_names
         result = {}
         if not os.path.isdir(so_path):
@@ -119,7 +114,7 @@ class LogicrepDeploy:
         return result
 
     def _copy_bin(self, so_path):
-        """复制依赖 so 和 jar 到 logicrep/lib"""
+        """Copy dependency so and jar to logicrep/lib."""
         if not so_path:
             return
         p = self.paths
@@ -143,7 +138,7 @@ class LogicrepDeploy:
         chown_recursive(p.tools_root, self.user_group)
 
     def _copy_logicrep(self):
-        """原 copy_logicrep 函数 Python 化"""
+        """Python port of copy_logicrep."""
         p = self.paths
         ensure_dir(p.tools_root, 0o750)
         exec_popen(f'chmod 755 "{os.path.dirname(p.tools_root)}"')
@@ -214,7 +209,7 @@ class LogicrepDeploy:
         chown_recursive(p.tools_root, self.user_group)
 
     def _safe_update(self, so_path=""):
-        """原 safe_update 函数 Python 化"""
+        """Python port of safe_update."""
         p = self.paths
         version_first = "0"
         if os.path.isfile(p.versions_yml):
@@ -275,7 +270,7 @@ class LogicrepDeploy:
             self.action_install()
 
     def _check_startup_status(self):
-        """等待 logicrep 启动完成"""
+        """Wait for logicrep startup to complete."""
         timeout = 900
         while timeout > 0:
             time.sleep(1)
@@ -292,7 +287,7 @@ class LogicrepDeploy:
         return False
 
     def _check_status(self):
-        """原 check_status 函数"""
+        """Check status (Python port)."""
         p = self.paths
         if os.path.isfile(p.flag_file) and not self._watchdog_running():
             raise RuntimeError("Logicrep watchdog process is offline.")

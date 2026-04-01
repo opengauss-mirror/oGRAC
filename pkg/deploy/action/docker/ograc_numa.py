@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import re
 import sys
@@ -46,10 +47,7 @@ class CPUAllocator:
 
     @staticmethod
     def _parse_cpu_list(cpu_list_str):
-        """
-        解析CPU列表字符串，处理范围和单个数字的组合
-        例如输入 '0-25'，输出 [0, 1, 2, ..., 25]
-        """
+        """Parse CPU list string (ranges and single numbers). E.g. '0-25' -> [0..25]."""
         cpu_list = []
         for part in cpu_list_str.split(','):
             if '-' in part:
@@ -102,9 +100,7 @@ class CPUAllocator:
         self.execute_cmd(taskset_cmd)
 
     def get_numa_nodes_for_cpus(self, cpus):
-        """
-        根据 CPU 列表确定属于哪个 NUMA 节点，跨 NUMA 节点时返回对应的 NUMA 节点范围。
-        """
+        """Determine NUMA nodes for CPU list; return node range if cross-NUMA."""
         total_cpus, numa_nodes, cpu_info = self.get_numa_info()
 
         nodes = set()
@@ -173,9 +169,7 @@ class CPUAllocator:
         return 0, []
 
     def update_available_cpus(self, numa_data, cpu_info, bound_cpus):
-        """
-        更新 numa_data 中可用 CPU 的信息
-        """
+        """Update available CPU info in numa_data."""
         for node, info in cpu_info.items():
             node_str = str(node)
 
@@ -188,9 +182,7 @@ class CPUAllocator:
                 numa_data[self.numa_info_key][node_str]["available_cpus"])
 
     def clean_up_json(self, numa_data, pod_info, hostname_pattern):
-        """
-        清理不存在的 Pod 绑定信息，并将绑定的 CPU 恢复到 numa_info 中。
-        """
+        """Clean non-existent Pod bindings and restore CPUs to numa_info."""
         matching_pods = [pod['pod_name'] for pod in pod_info if re.match(hostname_pattern, pod['pod_name'])]
 
         keys_to_delete = [key for key in numa_data.keys() if key not in matching_pods and key != self.numa_info_key]
@@ -218,9 +210,7 @@ class CPUAllocator:
 
     @staticmethod
     def restore_cpus_to_numa_info(numa_data, bind_cpus):
-        """
-        将已绑定的 CPU 恢复到 numa_info 中。
-        """
+        """Restore bound CPUs to numa_info."""
         cpu_list = CPUAllocator._parse_cpu_list(bind_cpus)
 
         for cpu in cpu_list:
@@ -233,9 +223,7 @@ class CPUAllocator:
                     break
 
     def execute_binding(self, cpu_num, hostname, numa_data, cpu_info):
-        """
-        执行绑核操作，检查是否已经绑核成功，已绑核则跳过。
-        """
+        """Execute CPU binding; skip if already bound."""
         if self.numa_info_key not in numa_data:
             numa_data[self.numa_info_key] = {}
 
@@ -308,9 +296,7 @@ class CPUAllocator:
 
 
 def format_cpu_ranges(cpu_list):
-    """
-    将 CPU 列表格式化为范围形式（例如：0-31,64-95）
-    """
+    """Format CPU list as ranges (e.g. 0-31,64-95)."""
     if not cpu_list:
         return ""
 
@@ -339,9 +325,7 @@ def format_cpu_ranges(cpu_list):
 
 
 def show_numa_binding_info(numa_info_path):
-    """
-    查询 numa-pod.json 文件中每个 Pod 的绑核信息，并以表格形式显示。
-    """
+    """Query and display NUMA binding info for each Pod from numa-pod.json."""
     try:
         numa_data, file_handle = open_and_lock_json(numa_info_path)
     except Exception as err:

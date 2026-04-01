@@ -1,12 +1,5 @@
-"""
-CMS 控制器 (重构自 cmsctl.py)
-
-重构要点:
-  1. 路径解耦: 所有路径从 config.py 获取, 不再硬编码 /opt/ograc
-  2. 代码复用: 命令执行、日志等使用 utils.py 公共模块
-  3. 错误处理: 统一异常机制, 替代大量 if FORCE_UNINSTALL != "force" 模式
-  4. 简化结构: 去除 Python2 兼容代码, 使用现代 Python3 特性
-"""
+#!/usr/bin/env python3
+"""CMS core controller."""
 
 import sys
 import os
@@ -44,7 +37,7 @@ DIR_MODE_750 = 0o750
 
 
 def _raise_unless_force(msg, exc_type=Exception):
-    """统一的错误处理: 非 force 模式抛出异常, force 模式仅记录日志"""
+    """Raise on error unless force mode (then log only)."""
     LOGGER.error(msg)
     if FORCE_UNINSTALL != "force":
         raise exc_type(msg)
@@ -52,7 +45,7 @@ def _raise_unless_force(msg, exc_type=Exception):
 
 
 def check_platform():
-    """检查操作系统平台"""
+    """Check OS platform."""
     import platform
     current_os = platform.system()
     LOGGER.info(f"check current os: {current_os}")
@@ -61,7 +54,7 @@ def check_platform():
 
 
 def check_runner():
-    """检查脚本运行者和所有者是否匹配"""
+    """Check script runner matches owner."""
     owner_uid = os.stat(__file__).st_uid
     runner_uid = os.getuid()
     LOGGER.info(f"check runner/owner uid: {runner_uid}/{owner_uid}")
@@ -76,7 +69,7 @@ def check_runner():
 
 
 def check_user(user, group):
-    """验证用户和组的合法性"""
+    """Validate user and group."""
     LOGGER.info(f"check user/group: {user}:{group}")
     try:
         user_info = pwd.getpwnam(user)
@@ -103,14 +96,14 @@ def check_user(user, group):
 
 
 def check_path(path_str):
-    """检查路径合法性"""
+    """Check path validity."""
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 /_-.")
     return all(c in allowed for c in path_str)
 
 
 
 def _build_cms_config():
-    """构建 CMS 配置字典"""
+    """Build CMS config dict."""
     _cfg = get_config()
     mes_ssl_switch = _cfg.deploy.get("mes_ssl_switch", "False")
 
@@ -158,9 +151,7 @@ CLUSTER_SIZE = 2
 
 
 class CmsCtl:
-    """
-    CMS 控制器 - 核心业务逻辑。
-    """
+    """CMS core controller."""
 
     def __init__(self):
         self._cfg = get_config()
@@ -212,7 +203,7 @@ class CmsCtl:
 
 
     def parse_parameters(self, config_file):
-        """从 JSON 配置文件加载参数"""
+        """Load params from JSON config."""
         if not os.path.exists(config_file):
             _raise_unless_force(f"Config file not found: {config_file}")
             return
@@ -229,9 +220,6 @@ class CmsCtl:
         self._load_port_config(params)
 
     def _load_user_config(self, d):
-        if "deploy_user" in d:
-            self.user = self._cfg.deploy.ograc_user
-            self.group = self._cfg.deploy.ograc_group
         if "user" in d:
             self.user = d["user"]
         if "group" in d:
@@ -302,7 +290,7 @@ class CmsCtl:
 
 
     def set_cms_conf(self):
-        """保存 CMS 运行配置到 cms.json"""
+        """Save CMS run config to cms.json."""
         conf = {
             "user": self.user, "group": self.group,
             "node_id": self.node_id, "cluster_id": self.cluster_id,
@@ -333,7 +321,7 @@ class CmsCtl:
             _raise_unless_force(f"Failed to write config: {e}")
 
     def set_conf(self, config, filename):
-        """写入 INI 风格的配置文件（cms.ini 等）"""
+        """Write INI-style config (cms.ini etc)."""
         conf_file = os.path.join(self.cms_home, "cfg", filename)
         run_cmd(f"echo >> {conf_file}", f"failed to write {filename}")
 
@@ -357,7 +345,7 @@ class CmsCtl:
         self._set_new_conf(params, conf_file)
 
     def set_cluster_conf(self):
-        """写入 cluster.ini"""
+        """Write cluster.ini."""
         conf_file = os.path.join(self.cms_home, "cfg", "cluster.ini")
         run_cmd(f"echo >> {conf_file}", f"failed to write cluster.ini")
 
@@ -380,8 +368,13 @@ class CmsCtl:
             ld_paths.append(os.environ["LD_LIBRARY_PATH"])
 
         log_file = self.paths.cms_deploy_log
+        ograc_home = self.paths.ograc_home
+        cms_home = os.path.join(ograc_home, "cms")
+        dss_home = os.path.join(ograc_home, "dss")
+
         params = {
             "GCC_HOME": gcc_home,
+            "GCC_DIR": gcc_dir,
             "REPORT_FILE": log_file,
             "STATUS_LOG": os.path.join(self.paths.cms_log_dir, "CmsStatus.log"),
             "LD_LIBRARY_PATH": ":".join(ld_paths),
@@ -397,6 +390,8 @@ class CmsCtl:
             "LSNR_NODE_IP[1]": node_ip[1],
             "USER": self.user,
             "GROUP": self.group,
+            "CMS_HOME": cms_home,
+            "DSS_HOME": dss_home,
         }
         self._clean_old_conf(list(params.keys()), conf_file)
         self._set_new_conf(params, conf_file)
@@ -421,7 +416,7 @@ class CmsCtl:
 
 
     def _check_ip_valid(self, nodeip):
-        """检查 IP 有效性"""
+        """Check IP validity."""
         LOGGER.info(f"check IP: {nodeip}")
         ograc_in_container = self._cfg.deploy.ograc_in_container
         if ograc_in_container == "0":
@@ -440,7 +435,7 @@ class CmsCtl:
             _raise_unless_force(f"Cannot reach IP: {nodeip}")
 
     def _check_share_logic_ip(self, node_ip):
-        """检查 NFS 逻辑 IP"""
+        """Check NFS logic IP."""
         if self.deploy_mode != "file":
             return
         LOGGER.info(f"check share logic IP: {node_ip}")
@@ -451,7 +446,7 @@ class CmsCtl:
         _raise_unless_force(f"Cannot reach share logic IP: {node_ip}")
 
     def _check_port(self, port_value, node_ip):
-        """检查端口是否可用"""
+        """Check port availability."""
         LOGGER.info(f"check port: {port_value}")
         if not port_value:
             _raise_unless_force("Port is empty")
@@ -476,7 +471,7 @@ class CmsCtl:
         sock.close()
 
     def check_parameter_install(self):
-        """安装参数校验"""
+        """Validate install params."""
         ograc_in_container = self._cfg.deploy.ograc_in_container
         if self.ip_cluster:
             ip_list = self.ip_cluster.split(";")
@@ -501,7 +496,7 @@ class CmsCtl:
 
 
     def copy_app_files(self):
-        """复制安装文件"""
+        """Copy install files."""
         if not os.path.exists(self.install_path):
             os.makedirs(self.install_path, DIR_MODE_700)
 
@@ -512,7 +507,7 @@ class CmsCtl:
             run_cmd(cmd, "failed to copy CMS files")
 
     def change_app_permission(self):
-        """设置应用文件权限"""
+        """Set app file permissions."""
         cmd = f"chmod 700 {self.install_path} -R"
         cmd += f" && find '{self.install_path}'/add-ons -type f | xargs chmod 500"
         cmd += f" && find '{self.install_path}'/admin -type f | xargs chmod 400"
@@ -536,25 +531,44 @@ class CmsCtl:
         run_cmd(cmd, f"failed to chown gcc dir")
 
     def export_user_env(self):
-        """导出用户环境变量到 .bashrc"""
+        """Export user env vars to .bashrc (after shebang, before interactive guard)."""
+        lib_path = (
+            f'"{os.path.join(self.install_path, "lib")}"'
+            f':"{os.path.join(self.install_path, "add-ons")}"'
+        )
+        env_lines = [
+            f'export CMS_HOME="{self.cms_home}"\n',
+            f'export PATH="{os.path.join(self.install_path, "bin")}":$PATH\n',
+            f'export GCC_HOME="{self.gcc_home}"\n',
+            f"export LD_LIBRARY_PATH={lib_path}:$LD_LIBRARY_PATH\n",
+        ]
         try:
-            fd = os.open(self.user_profile,
-                         os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-                         stat.S_IWUSR | stat.S_IRUSR)
-            with os.fdopen(fd, "a") as f:
-                f.write(f'export CMS_HOME="{self.cms_home}"\n')
-                f.write(f'export PATH="{os.path.join(self.install_path, "bin")}":$PATH\n')
-                f.write(f'export GCC_HOME="{self.gcc_home}"\n')
-                lib_path = f'"{os.path.join(self.install_path, "lib")}":"{os.path.join(self.install_path, "add-ons")}"'
-                if "LD_LIBRARY_PATH" in os.environ:
-                    f.write(f"export LD_LIBRARY_PATH={lib_path}:$LD_LIBRARY_PATH\n")
+            lines = []
+            if os.path.isfile(self.user_profile):
+                with open(self.user_profile, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+            for env_line in env_lines:
+                while env_line in lines:
+                    lines.remove(env_line)
+
+            insert_pos = 0
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped == "" or stripped.startswith("#") or stripped.startswith("#!/"):
+                    insert_pos = i + 1
                 else:
-                    f.write(f"export LD_LIBRARY_PATH={lib_path}\n")
+                    break
+            for j, env_line in enumerate(env_lines):
+                lines.insert(insert_pos + j, env_line)
+
+            with open(self.user_profile, "w", encoding="utf-8") as f:
+                f.writelines(lines)
         except OSError as e:
             _raise_unless_force(f"Failed to export user env: {e}")
 
     def check_old_install(self):
-        """检查是否已安装"""
+        """Check if already installed."""
         LOGGER.info("check old install...")
         try:
             pw = pwd.getpwnam(self.user)
@@ -571,7 +585,7 @@ class CmsCtl:
         self._check_profile()
 
     def _check_profile(self):
-        """检查 .bashrc 中是否已有 CMS_HOME"""
+        """Check if .bashrc already has CMS_HOME."""
         if not os.path.isfile(self.user_profile):
             LOGGER.info(".bashrc not found at %s, skipping profile check", self.user_profile)
             return
@@ -591,7 +605,7 @@ class CmsCtl:
             _raise_unless_force(f"Failed to check profile: {e}")
 
     def prepare_gccdata_dir(self):
-        """准备 GCC 数据目录"""
+        """Prepare GCC data dir."""
         self._check_share_logic_ip(self.share_logic_ip)
         if (self.deploy_mode == "file" or os.path.exists(self.paths.youmai_demo)):
             if not os.path.exists(self.gcc_home):
@@ -599,7 +613,7 @@ class CmsCtl:
 
 
     def pre_install(self):
-        """预安装"""
+        """Pre-install."""
         check_platform()
         check_runner()
         if self.install_type not in ("override", "reserve"):
@@ -633,7 +647,7 @@ class CmsCtl:
         LOGGER.info("===== pre_install cms done =====")
 
     def _setup_files(self):
-        """内部：文件复制、权限设置、配置生成（不含 GCC 初始化）"""
+        """Copy files, set permissions, generate config (no GCC init)."""
         self.copy_app_files()
         ograc_in_container = self._cfg.deploy.ograc_in_container
         if ograc_in_container == "0":
@@ -644,7 +658,7 @@ class CmsCtl:
         self.set_conf(_build_cms_config(), "cms.ini")
 
     def _setup_gcc(self):
-        """内部：GCC 初始化 + 节点注册（调用前须确保 cms binary 已具备 CAP_SYS_RAWIO）"""
+        """GCC init + node registration (cms binary must have CAP_SYS_RAWIO before this)."""
         from cms_startup import CmsStartup
         startup = CmsStartup()
         startup.install_cms()
@@ -652,9 +666,7 @@ class CmsCtl:
         self.set_cms_conf()
 
     def setup_files(self):
-        """Action: 文件准备阶段——仅复制文件与生成配置，不执行 GCC 操作。
-        DSS 模式下由 root 在此之后调用 setcap，再调用 setup_gcc，
-        与旧代码 start_cms.sh install_cms() 中 setcap 先于 gcc-reset/node-add 的顺序一致。"""
+        """Copy files and generate config only; no GCC ops. Root calls setcap before setup_gcc."""
         LOGGER.info("===== begin setup_files cms =====")
         if self.install_step == 2:
             LOGGER.info("CMS already installed, skip setup_files")
@@ -666,8 +678,7 @@ class CmsCtl:
         LOGGER.info("===== setup_files cms done =====")
 
     def setup_gcc(self):
-        """Action: GCC 初始化阶段——gcc -reset + node -add（需 CAP_SYS_RAWIO 已设置）。
-        对应旧代码 start_cms.sh install_cms() 中 prepare_cms_gcc + set_cms 部分。"""
+        """GCC init: gcc -reset + node -add (requires CAP_SYS_RAWIO on cms binary)."""
         LOGGER.info("===== begin setup_gcc cms =====")
         if self.install_step == 2:
             LOGGER.info("CMS already installed")
@@ -676,7 +687,7 @@ class CmsCtl:
         LOGGER.info("===== setup_gcc cms done =====")
 
     def install(self):
-        """安装 CMS（非 DSS 模式或向后兼容入口，合并 setup_files + setup_gcc）"""
+        """Install CMS (non-DSS or legacy entry; combines setup_files + setup_gcc)."""
         LOGGER.info("===== begin install cms =====")
         if self.install_step == 2:
             LOGGER.info("CMS already installed")
@@ -689,7 +700,7 @@ class CmsCtl:
         LOGGER.info("===== install cms done =====")
 
     def start(self):
-        """启动 CMS"""
+        """Start CMS."""
         LOGGER.info("===== begin start cms =====")
         if self.install_step <= 1:
             _raise_unless_force("Please run install first")
@@ -708,7 +719,7 @@ class CmsCtl:
         LOGGER.info("===== start cms done =====")
 
     def _check_start_status(self):
-        """启动后检查状态"""
+        """Check status after start."""
         cmd = (f"source ~/.bashrc && cms stat -server {self.node_id} "
                f"| grep -v NODE_ID | awk '{{print $2}}'")
         for _ in range(300):
@@ -749,7 +760,7 @@ class CmsCtl:
             _raise_unless_force("CMS voting status check timeout")
 
     def check_status(self):
-        """检查 CMS 状态"""
+        """Check CMS status."""
         LOGGER.info("===== check cms status =====")
         if self.install_step <= 1:
             _raise_unless_force("CMS not installed")
@@ -764,7 +775,7 @@ class CmsCtl:
         _raise_unless_force("CMS status check failed")
 
     def stop(self):
-        """停止 CMS"""
+        """Stop CMS."""
         LOGGER.info("===== begin stop cms =====")
         processes = ["cms server", "cms_ctl.py start", "cms_startup.py"]
         for proc in processes:
@@ -775,7 +786,7 @@ class CmsCtl:
         LOGGER.info("===== stop cms done =====")
 
     def uninstall(self):
-        """卸载 CMS"""
+        """Uninstall CMS."""
         LOGGER.info("===== begin uninstall cms =====")
         ograc_in_container = self._cfg.deploy.ograc_in_container
 
@@ -798,7 +809,7 @@ class CmsCtl:
         LOGGER.info("===== uninstall cms done =====")
 
     def _uninstall_gcc(self, ograc_in_container):
-        """卸载 GCC 数据"""
+        """Uninstall GCC data."""
         if ograc_in_container == "0":
             self._check_share_logic_ip(self.share_logic_ip)
 
@@ -816,7 +827,7 @@ class CmsCtl:
             run_cmd(str_cmd, "failed to zero gcc", FORCE_UNINSTALL)
 
     def _clean_install_path(self):
-        """清理安装路径"""
+        """Clean install path."""
         LOGGER.info("cleaning install path...")
         for path in (
             self.install_path,
@@ -826,7 +837,7 @@ class CmsCtl:
                 shutil.rmtree(path)
 
     def _clean_environment(self):
-        """清理用户环境变量"""
+        """Clean user env vars."""
         LOGGER.info("cleaning user environment variables...")
         if not self.user_profile:
             self.user_profile = os.path.join("/home", self.user, ".bashrc")
@@ -857,7 +868,7 @@ class CmsCtl:
             _raise_unless_force(f"failed to clean env vars: {e}")
 
     def backup(self):
-        """备份配置"""
+        """Backup config."""
         LOGGER.info("===== begin backup =====")
         config_json = os.path.join(self.cms_home, "cfg/cms.json")
         if os.path.exists(config_json):
@@ -868,12 +879,12 @@ class CmsCtl:
         LOGGER.info("===== backup done =====")
 
     def upgrade(self):
-        """升级配置"""
+        """Upgrade config."""
         LOGGER.info("===== begin upgrade config =====")
         LOGGER.info("===== upgrade config done =====")
 
     def init_container(self):
-        """容器初始化"""
+        """Container init."""
         LOGGER.info("===== begin init container =====")
         if ProcessManager.is_running("cms server -start"):
             LOGGER.info("CMS already running")

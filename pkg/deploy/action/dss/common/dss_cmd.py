@@ -1,9 +1,5 @@
-"""
-DSS 命令统一封装
-
-替代原来各升级模块中分散的 dsscmd 调用，消除重复代码。
-所有 dsscmd 操作收敛到此模块，业务模块只调用高级 API。
-"""
+#!/usr/bin/env python3
+"""DSS command wrapper."""
 
 import os
 import subprocess
@@ -23,7 +19,7 @@ _DEFAULT_TIMEOUT = 60
 
 
 def exec_popen(cmd, timeout=_DEFAULT_TIMEOUT):
-    """统一命令执行函数"""
+    """Execute a shell command."""
     proc = subprocess.Popen(
         ["bash", "-c", cmd],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -43,18 +39,18 @@ def exec_popen(cmd, timeout=_DEFAULT_TIMEOUT):
 
 def dsscmd(subcmd, error_msg=None, timeout=_DEFAULT_TIMEOUT):
     """
-    执行 dsscmd 子命令。
+    Execute dsscmd subcommand.
 
     Args:
-        subcmd: 子命令 (不含 dsscmd 前缀)，如 "ls -p +vg1/upgrade"
-        error_msg: 失败时的错误描述，为 None 时不抛异常
-        timeout: 超时秒数
+        subcmd: Subcommand (without dsscmd prefix), e.g. "ls -p +vg1/upgrade"
+        error_msg: Error description on failure; None to suppress exception
+        timeout: Timeout in seconds
 
     Returns:
         (return_code, stdout, stderr)
 
     Raises:
-        RuntimeError: 如果 error_msg 不为 None 且命令失败
+        RuntimeError: If error_msg is not None and command fails
     """
     cmd = f"dsscmd {subcmd}"
     code, stdout, stderr = exec_popen(cmd, timeout)
@@ -65,18 +61,18 @@ def dsscmd(subcmd, error_msg=None, timeout=_DEFAULT_TIMEOUT):
 
 
 def vg_ls(vg_path, timeout=_DEFAULT_TIMEOUT):
-    """列出 VG 目录内容，返回 (code, stdout, stderr)"""
+    """List VG directory contents, return (code, stdout, stderr)."""
     return dsscmd(f"ls -p {vg_path}", timeout=timeout)
 
 
 def vg_file_exists(vg_path):
-    """检查 VG 文件/目录是否存在"""
+    """Check if VG file/directory exists."""
     code, _, _ = vg_ls(vg_path)
     return code == 0
 
 
 def vg_list_files(vg_path):
-    """列出 VG 目录中的文件名列表"""
+    """List filenames in VG directory."""
     code, stdout, _ = vg_ls(vg_path)
     if code != 0:
         return None
@@ -87,43 +83,40 @@ def vg_list_files(vg_path):
 
 
 def vg_mkdir(parent_path, dir_name):
-    """在 VG 中创建目录"""
+    """Create directory in VG."""
     dsscmd(f"mkdir -p {parent_path} -d {dir_name}",
            error_msg=f"dsscmd mkdir {parent_path}/{dir_name} failed")
 
 
 def vg_touch(vg_path):
-    """在 VG 中创建空文件"""
+    """Create empty file in VG."""
     dsscmd(f"touch -p {vg_path}",
            error_msg=f"dsscmd touch {vg_path} failed")
 
 
 def vg_rm(vg_path):
-    """删除 VG 文件"""
+    """Remove VG file."""
     dsscmd(f"rm -p {vg_path}",
            error_msg=f"dsscmd rm {vg_path} failed")
 
 
 def vg_rmdir(vg_path, recursive=True):
-    """删除 VG 目录"""
+    """Remove VG directory."""
     r_flag = " -r" if recursive else ""
     dsscmd(f"rmdir -p {vg_path}{r_flag}",
            error_msg=f"dsscmd rmdir {vg_path} failed")
 
 
 def vg_cp(src, dst):
-    """在 VG 中拷贝文件"""
+    """Copy file in VG."""
     dsscmd(f"cp -s {src} -d {dst}",
            error_msg=f"dsscmd cp {src} → {dst} failed")
 
 
 def vg_find_matching_files(vg_path, keyword):
     """
-    在 VG 目录中查找包含 keyword 的文件，返回文件名列表。
-
-    dsscmd ls 输出格式示例：
-        written_size   block_size   flag   ...   name
-        512            1024         0      ...   upgrade_lock_0
+    Find files containing keyword in VG directory, return filename list.
+    dsscmd ls output format: written_size block_size flag ... name
     """
     lines = vg_list_files(vg_path)
     if lines is None or len(lines) == 0:

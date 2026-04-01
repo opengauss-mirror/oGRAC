@@ -1,4 +1,5 @@
-"""DSS 升级远程状态文件管理"""
+#!/usr/bin/env python3
+"""DSS upgrade remote status file management."""
 
 import os
 import sys
@@ -20,17 +21,17 @@ STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
 class DssRemoteStatus:
-    """远程状态文件的上传管理"""
+    """Remote status file upload management."""
 
     @staticmethod
     def _upload_to_vg(local_path, vg_path):
-        """上传文件到 VG（先删后拷贝）"""
+        """Upload file to VG (remove then copy)."""
         if vg_file_exists(vg_path):
             vg_rm(vg_path)
         vg_cp(local_path, vg_path)
 
     def upload(self, remote_status_file):
-        """上传远程状态文件"""
+        """Upload remote status file."""
         file_name = os.path.basename(remote_status_file)
         pad_file_to_512(remote_status_file)
 

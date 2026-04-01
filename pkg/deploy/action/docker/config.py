@@ -1,4 +1,5 @@
-"""docker 工具库统一配置（refactored）"""
+#!/usr/bin/env python3
+"""docker unified configuration module."""
 import json
 import os
 import posixpath
@@ -19,7 +20,7 @@ INSTALL_CONFIG_FILE = os.path.join(PKG_DIR, "action", "ograc", "install_config.j
 
 
 class PathConfig:
-    """所有容器内路径的单一来源，不再散布 hardcode。"""
+    """Single source for all container paths, no scattered hardcode."""
 
     def __init__(self, ograc_home="/opt/ograc", data_root="/mnt/dbdata"):
         self.ograc_home = ograc_home
@@ -133,16 +134,16 @@ class DockerConfig:
         self._install_config = _load_install_config()
 
     @property
-    def deploy_user(self):
+    def ograc_user(self):
         return self._env.get("ograc_user", "ograc")
 
     @property
-    def deploy_group(self):
+    def ograc_group(self):
         return self._env.get("ograc_group", "ograc")
 
     @property
     def ograc_common_group(self):
-        return self._env.get("ograc_common_group", f"{self.deploy_user}group")
+        return self._env.get("ograc_common_group", f"{self.ograc_user}group")
 
     @property
     def deploy_params(self):
@@ -154,10 +155,10 @@ class DockerConfig:
 
     def get(self, key, default=""):
         """Dot-notation lookup into deploy_param.json."""
-        if key == "deploy_user":
-            return self.deploy_user
-        if key == "deploy_group":
-            return self.deploy_group
+        if key in ("ograc_user", "deploy_user"):
+            return self.ograc_user
+        if key in ("ograc_group", "deploy_group"):
+            return self.ograc_group
         if key == "M_RUNING_MODE":
             return self._install_config.get("M_RUNING_MODE", default)
         keys = key.split(".")
@@ -203,8 +204,8 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--shell-env":
         _cfg = get_config()
         print(f'OGRAC_HOME="{_cfg.paths.ograc_home}"')
-        print(f'DEPLOY_USER="{_cfg.deploy_user}"')
-        print(f'DEPLOY_GROUP="{_cfg.deploy_group}"')
+        print(f'DEPLOY_USER="{_cfg.ograc_user}"')
+        print(f'DEPLOY_GROUP="{_cfg.ograc_group}"')
     else:
         key = sys.argv[1] if len(sys.argv) > 1 else ""
         print(get_value(key))

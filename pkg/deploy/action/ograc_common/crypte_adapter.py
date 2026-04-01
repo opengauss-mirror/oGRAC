@@ -1,13 +1,13 @@
-"""KMC 密码加解密适配器（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""KMC password encryption adapter."""
 
 import os
 import sys
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(CURRENT_PATH, "../"))
 sys.path.insert(0, CURRENT_PATH)
 
-from dbstor.kmc_adapter import CApiWrapper
+from kmc_adapter import CApiWrapper
 from config import cfg as _cfg
 _paths = _cfg.paths
 

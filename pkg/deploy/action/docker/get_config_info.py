@@ -1,8 +1,5 @@
-"""
-get_config_info.py (refactored)
-
-Drop-in replacement that delegates to config.DockerConfig.
-"""
+#!/usr/bin/env python3
+"""Deploy parameter lookup for docker module."""
 import sys
 import os
 

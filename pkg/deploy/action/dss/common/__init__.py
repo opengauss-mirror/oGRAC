@@ -1,1 +1,1 @@
-"""DSS common 模块"""
+"""DSS common module."""

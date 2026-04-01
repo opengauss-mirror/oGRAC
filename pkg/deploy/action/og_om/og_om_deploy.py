@@ -1,16 +1,16 @@
+#!/usr/bin/env python3
 """
-og_om 部署编排器（root 身份运行）
+og_om deploy orchestrator (runs as root).
 
-按 REFACTOR_SPEC 要求，把原 appctl.sh（322 行）+ install.sh / uninstall.sh /
-pre_install.sh / upgrade.sh / rollback.sh / post_upgrade.sh 中的 root 级
-shell 逻辑全部 Python 化。
+Replaces appctl.sh (322 lines) + install/uninstall/pre_install/upgrade/
+rollback/post_upgrade shell scripts with Python per REFACTOR_SPEC.
 
-职责：
-  - cgroup 创建/清理
-  - ogctl 命令创建
-  - 权限管理
-  - 安装/卸载/升级（tar 包解压/删除）
-  - 通过 run_python_as_user / run_shell_as_user 调用 og_om_ctl.py 执行业务动作
+Responsibilities:
+  - cgroup create/cleanup
+  - ogctl command creation
+  - permission management
+  - install/uninstall/upgrade (tar extract/delete)
+  - invoke og_om_ctl.py via run_python_as_user / run_shell_as_user
 """
 
 import glob
@@ -71,7 +71,7 @@ class OgOmDeploy:
             LOG.info(f"cgroup not exist: {cgroup_path}")
 
     def _limit_cgroup_mem(self, cgroup_path, mem_limit):
-        """设置 cgroup memory.limit_in_bytes"""
+        """Set cgroup memory.limit_in_bytes."""
         limit_file = os.path.join(cgroup_path, "memory.limit_in_bytes")
         rc, _, err = exec_popen(f'sh -c "echo {mem_limit} > {limit_file}"')
         if rc != 0:
@@ -99,17 +99,16 @@ class OgOmDeploy:
         LOG.info(f"ogctl created at {p.ogctl_path}")
 
     def _correct_files_mod(self):
-        """原 correct_ctom_files_mod + og_om_file_mod.sh
+        """Set file permissions (replaces correct_ctom_files_mod + og_om_file_mod.sh).
 
-        使用 440（属主+同组可读）而非 400，确保同公共组的 ogmgr_user
-        也能读取 action 目录中的 .py 脚本（chmod 400 仅属主可读，导致
-        _run_ctl_as_ogmgr 以 ogmgr_user 身份运行时 Permission denied）。
+        Uses 440 (owner+group readable) instead of 400 so ogmgr_user in the
+        common group can also read .py scripts in the action directory.
         """
         exec_popen(f'chmod 440 "{CUR_DIR}"/*')
         exec_popen(f'chmod 755 "{CUR_DIR}"')
 
     def _correct_files_ownmod(self):
-        """原 correct_ctom_files_ownmod（~25 行 chmod/chown → Python）"""
+        """Set file ownership and modes (replaces correct_ctom_files_ownmod)."""
         p = self.paths
         ogmgr = f"{self.ogmgr_user}:{self.group}"
         user_cgroup = f"{self.user}:{self.common_group}"
@@ -183,7 +182,7 @@ class OgOmDeploy:
         LOG.info("og_om install success")
 
     def _extract_package(self, target_dir, version=None, repo_dir=None):
-        """解压 og_om 包"""
+        """Extract og_om package."""
         version = version or self.version
         repo = repo_dir or os.path.join(os.path.dirname(os.path.dirname(CUR_DIR)), "repo")
 
@@ -233,6 +232,59 @@ class OgOmDeploy:
     @staticmethod
     def _regex_sub(content, pattern, replacement):
         return re.sub(pattern, replacement, content, flags=re.MULTILINE)
+
+    @staticmethod
+    def _replace_legacy_root(content, legacy_root, new_root):
+        legacy_root = legacy_root.rstrip("/")
+        new_root = new_root.rstrip("/")
+        if not legacy_root or not new_root or legacy_root == new_root:
+            return content
+
+        pattern = re.escape(legacy_root)
+        if new_root.startswith(legacy_root + os.sep):
+            suffix = new_root[len(legacy_root):].strip(os.sep)
+            first_segment = suffix.split(os.sep, 1)[0] if suffix else ""
+            if first_segment:
+                pattern += rf"(?!/{re.escape(first_segment)}(?:/|$))"
+
+        return re.sub(pattern, new_root, content)
+
+    @staticmethod
+    def _replace_legacy_root_protected(content, legacy_root, new_root, also_protect=None):
+        """Like _replace_legacy_root but also protects additional root paths from corruption."""
+        legacy_root = legacy_root.rstrip("/")
+        new_root = new_root.rstrip("/")
+        if not legacy_root or not new_root or legacy_root == new_root:
+            return content
+
+        protect_segs = set()
+        for root in [new_root] + (also_protect or []):
+            if root and root.startswith(legacy_root + os.sep):
+                seg = root[len(legacy_root):].strip(os.sep).split(os.sep, 1)[0]
+                if seg:
+                    protect_segs.add(seg)
+
+        pattern = re.escape(legacy_root)
+        if protect_segs:
+            lookaheads = "|".join(re.escape(s) for s in sorted(protect_segs))
+            pattern += rf"(?!/(?:{lookaheads})(?:/|$))"
+
+        return re.sub(pattern, new_root, content)
+
+    @staticmethod
+    def _collapse_redundant_root(content, legacy_root, new_root):
+        legacy_root = legacy_root.rstrip("/")
+        new_root = new_root.rstrip("/")
+        if not legacy_root or not new_root or not new_root.startswith(legacy_root + os.sep):
+            return content
+
+        suffix = new_root[len(legacy_root):].strip(os.sep)
+        first_segment = suffix.split(os.sep, 1)[0] if suffix else ""
+        if not first_segment:
+            return content
+
+        pattern = re.escape(legacy_root) + rf"(?:/{re.escape(first_segment)})+"
+        return re.sub(pattern, new_root, content)
 
     def _normalize_legacy_service_content(self, path):
         if not os.path.isfile(path):
@@ -340,14 +392,25 @@ class OgOmDeploy:
         )
         new_content = self._regex_sub(
             new_content,
-            r'(?<![A-Za-z0-9_])[^"\s]*/log/ograc_exporter',
+            r'(?<![A-Za-z0-9_])[/A-Za-z0-9._-]*/log/ograc_exporter',
             exporter_log_dir,
         )
         new_content = self._regex_sub(
             new_content,
-            r'(?<![A-Za-z0-9_])[^"\s]*/log/og_om',
+            r'(?<![A-Za-z0-9_])[/A-Za-z0-9._-]*/log/og_om',
             p.log_dir,
         )
+        new_content = self._collapse_redundant_root(new_content, "/opt/ograc", p.ograc_home)
+        new_content = self._replace_legacy_root(
+            new_content,
+            "/opt/ograc/action/dbstor",
+            os.path.join(self.paths.ograc_home, "action", "ograc_common"),
+        )
+        new_content = self._replace_legacy_root_protected(
+            new_content, "/opt/ograc", p.ograc_home,
+            also_protect=[self.data_root],
+        )
+        new_content = self._replace_legacy_root(new_content, "/mnt/dbdata", self.data_root)
         if new_content != old_content:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(new_content)
@@ -371,7 +434,6 @@ class OgOmDeploy:
             ('python3 "${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}"&',
              'mkdir -p "${EXPORTER_LOG_DIR}"\n'
              '    nohup python3 "${UPPER_LEVEL_PATH}/${PYTHON_SCRIPT_PATH}" >> "${EXPORTER_LOG_FILE}" 2>&1 < /dev/null &'),
-            ("/mnt/dbdata", self.data_root),
         ]
         targets = [
             p.ogmgr_uds_server,
@@ -391,6 +453,8 @@ class OgOmDeploy:
             os.path.join(p.ogmgr_logs_collection, "config.json"),
             os.path.join(p.ogmgr_tasks_inspection, "inspection_task.py"),
             os.path.join(p.ogmgr_tasks_inspection, "inspection_config.json"),
+            os.path.join(p.ogmgr_logs_collection, "logs_collection.py"),
+            os.path.join(p.exporter_query_dir, "get_dr_info.py"),
         ]
         for path in targets:
             self._replace_file_content(path, replacements)
@@ -461,12 +525,11 @@ class OgOmDeploy:
         LOG.info("Post upgrade check ok")
 
     def _ensure_log_dir(self):
-        """确保日志目录存在且属主正确，install/start/stop 等所有 ctl 操作前调用。
+        """Ensure log directory exists with correct ownership; called before all ctl ops.
 
-        关键：og_om_ctl.py 以 ogmgr_user 身份运行，必须能够遍历到
-        log_dir 的每一级父目录。因此：
-          - log 根目录对当前实例管理用户可遍历
-          - og_om 子目录归当前实例管理用户所有
+        og_om_ctl.py runs as ogmgr_user and must be able to traverse every
+        parent directory up to log_dir. The log root is traversable by the
+        instance management user; the og_om subdirectory is owned by it.
         """
         p = self.paths
         ogmgr_log = f"{self.ogmgr_user}:{self.group}"
@@ -524,7 +587,7 @@ class OgOmDeploy:
         self._run_ctl_as_ogmgr("check_status")
 
     def action_install(self):
-        """原 appctl.sh install 分支"""
+        """Install action (replaces appctl.sh install branch)."""
         self._create_ogctl()
         self._correct_files_mod()
         self._mod_prepare()
@@ -535,21 +598,21 @@ class OgOmDeploy:
             exec_popen(f'chmod 600 "{p.exporter_logicrep_sql}"')
 
     def action_uninstall(self):
-        """原 appctl.sh uninstall 分支"""
+        """Uninstall action (replaces appctl.sh uninstall branch)."""
         force = len(sys.argv) > 2 and sys.argv[2] == "force"
         self._uninstall_og_om(force=force)
         self._rm_cgroup(self.cgroup.exporter_cgroup)
         self._rm_cgroup(self.cgroup.ogmgr_cgroup)
 
     def action_upgrade(self):
-        """原 appctl.sh upgrade 分支"""
+        """Upgrade action (replaces appctl.sh upgrade branch)."""
         self._correct_files_mod()
         self._mod_prepare()
         self._upgrade_og_om()
         self._correct_files_ownmod()
 
     def action_rollback(self):
-        """原 appctl.sh rollback 分支"""
+        """Rollback action (replaces appctl.sh rollback branch)."""
         if len(sys.argv) < 3:
             raise RuntimeError("rollback requires backup directory path argument")
         backup_dir = sys.argv[2]

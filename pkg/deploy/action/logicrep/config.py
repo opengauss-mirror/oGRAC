@@ -1,8 +1,5 @@
-"""
-logicrep 统一配置管理模块（refactored）
-
-路径解耦 + 可配置超时 + shell-env 输出
-"""
+#!/usr/bin/env python3
+"""logicrep unified configuration module."""
 
 import importlib.util
 import json
@@ -153,11 +150,11 @@ cfg = _LazyCfg()
 
 
 def get_value(param):
-    """兼容旧 get_config_info.py"""
+    """Get a deploy parameter by key."""
     c = get_config()
-    if param == "deploy_user":
+    if param in ("ograc_user",):
         return c.user
-    if param == "deploy_group":
+    if param in ("ograc_group",):
         return c.group
     return c.get_deploy_param(param, "")
 

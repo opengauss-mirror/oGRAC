@@ -1,14 +1,5 @@
-"""
-DSS 部署编排器（root 身份运行）
-
-职责：
-  - 权限设置（chmod/chown）
-  - 日志与安装目录创建
-  - 脚本复制到安装目录（install 时）
-  - 以业务用户身份调用 dss_ctl.py 执行具体操作
-
-由 appctl.sh 调用：python3 dss_deploy.py <action> [args...]
-"""
+#!/usr/bin/env python3
+"""DSS deploy orchestrator (runs as root). Called by appctl.sh."""
 
 import os
 import subprocess
@@ -25,7 +16,7 @@ LOG = get_logger()
 
 
 def _exec(cmd, timeout=300):
-    """执行 shell 命令，超时后回收进程"""
+    """Execute shell command, reclaim process on timeout."""
     proc = subprocess.Popen(
         ["bash", "-c", cmd],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -52,7 +43,7 @@ def _run_cmd(cmd, error_msg=""):
 
 
 class DssDeploy:
-    """DSS 部署编排器"""
+    """DSS deploy orchestrator."""
 
     def __init__(self):
         self._cfg = get_config()
@@ -66,7 +57,7 @@ class DssDeploy:
 
 
     def _prepare_dirs(self):
-        """创建日志和安装目录，设置权限"""
+        """Create log and install dirs, set permissions."""
         log_dir = self.paths.dss_log_dir
         os.makedirs(log_dir, mode=0o750, exist_ok=True)
         log_file = self.paths.dss_deploy_log
@@ -86,7 +77,7 @@ class DssDeploy:
         )
 
     def _set_permissions(self):
-        """设置安装目录和脚本权限"""
+        """Set install dir and script permissions."""
         dss_home = self.paths.dss_home
         if os.path.isdir(os.path.join(dss_home, "bin")):
             _run_cmd(f"chmod 500 {dss_home}/bin/* 2>/dev/null || true")
@@ -98,7 +89,7 @@ class DssDeploy:
         self._config_perctrl_caps()
 
     def _config_perctrl_caps(self):
-        """以 root 身份设置 perctrl capabilities（必须在 chown 之后）。"""
+        """Set perctrl capabilities as root (must be after chown)."""
         perctrl = os.path.join(self.paths.dss_home, "bin", "perctrl")
         if not os.path.isfile(perctrl):
             LOG.warning("perctrl not found at %s, skip setcap", perctrl)
@@ -110,7 +101,7 @@ class DssDeploy:
         LOG.info("perctrl capabilities configured")
 
     def _copy_scripts(self):
-        """复制 DSS 脚本到安装目录（源与目标相同时跳过）"""
+        """Copy DSS scripts to install dir (skip if src == dst)."""
         scripts_dir = self.paths.dss_scripts_dir
         if os.path.realpath(CUR_DIR) == os.path.realpath(scripts_dir):
             LOG.info("DSS scripts already in install path, skip copy")
@@ -124,7 +115,7 @@ class DssDeploy:
 
 
     def _run_ctl(self, action, mode=""):
-        """以业务用户身份调用 dss_ctl.py"""
+        """Invoke dss_ctl.py as business user."""
         self._prepare_dirs()
         self._set_permissions()
 
@@ -150,7 +141,7 @@ class DssDeploy:
         self._run_ctl("pre_install")
 
     def _ensure_user_profile_writable(self):
-        """确保 ograc 用户的 .bashrc 存在且可写（以 root 身份修正 ownership）"""
+        """Ensure ograc user .bashrc exists and is writable (fix ownership as root)."""
         import pwd as _pwd
         try:
             home = _pwd.getpwnam(self.ograc_user).pw_dir
@@ -164,7 +155,7 @@ class DssDeploy:
         os.chmod(bashrc, 0o644)
 
     def _prepare_source(self):
-        """以 root 身份拷贝 DSS bin/lib 到安装目录。"""
+        """Copy DSS bin/lib to install dir as root."""
         import shutil as _shutil
         source_dir = self.paths.source_dir
         dss_home = self.paths.dss_home
@@ -201,6 +192,9 @@ class DssDeploy:
 
     def action_backup(self):
         self._run_ctl("backup")
+
+    def action_restore(self):
+        LOG.info("restore: no-op for DSS")
 
     def action_pre_upgrade(self):
         self._run_ctl("pre_upgrade")
@@ -239,7 +233,7 @@ def main():
             mode = args[0] if args else ""
             deployer.action_uninstall(mode)
         elif action in ("start", "stop", "pre_install", "check_status",
-                        "backup", "pre_upgrade", "upgrade_backup",
+                        "backup", "restore", "pre_upgrade", "upgrade_backup",
                         "upgrade", "rollback"):
             getattr(deployer, f"action_{action}")()
         else:

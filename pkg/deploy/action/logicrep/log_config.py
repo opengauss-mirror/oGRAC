@@ -1,4 +1,5 @@
-"""logicrep 日志配置模块（refactored）"""
+#!/usr/bin/env python3
+"""logicrep log configuration."""
 
 import logging
 import os

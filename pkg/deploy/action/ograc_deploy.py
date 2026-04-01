@@ -1,14 +1,5 @@
-"""
-oGRAC 部署编排器（重构版）
-
-以 root 身份运行，负责：
-  - 调度各子操作（pre_install, install, start, stop, uninstall, ...）
-  - 调用各组件模块的 appctl.sh
-  - 权限管理、用户创建
-  - 通过 run_python_as_user 切换用户执行业务逻辑
-
-已剔除 dbstor 逻辑，保证容器流程正常。
-"""
+#!/usr/bin/env python3
+"""oGRAC deployment orchestrator."""
 
 import getpass
 import grp
@@ -19,6 +10,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
+import time
 
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CUR_DIR)
@@ -34,11 +26,12 @@ from utils import (
 LOG = get_logger("deploy")
 
 PRE_INSTALL_ORDER = ["ograc", "cms", "dss"]
-INSTALL_ORDER = ["cms", "dss", "ograc"]
-START_ORDER = ["cms", "dss", "ograc"]
-STOP_ORDER = ["cms", "dss", "ograc"]
-UNINSTALL_ORDER = ["ograc", "dss", "cms"]
+INSTALL_ORDER = ["cms", "dss", "ograc", "og_om", "ograc_exporter"]
+START_ORDER = ["cms", "dss", "ograc", "og_om", "ograc_exporter"]
+STOP_ORDER = ["cms", "dss", "ograc", "og_om", "ograc_exporter"]
+UNINSTALL_ORDER = ["og_om", "ograc_exporter", "ograc", "dss", "cms"]
 BACKUP_ORDER = ["ograc", "dss", "cms", "og_om"]
+RESTORE_ORDER = ["og_om", "cms", "dss", "ograc"]
 CHECK_STATUS_ORDER = ["ograc", "cms", "dss", "og_om", "ograc_exporter"]
 PRE_UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
@@ -48,7 +41,7 @@ INIT_CONTAINER_ORDER = ["cms", "ograc"]
 
 
 class OgracDeploy:
-    """oGRAC 部署编排器。"""
+    """oGRAC deployment orchestrator."""
 
     def __init__(self):
         self.cfg = get_config()
@@ -68,7 +61,7 @@ class OgracDeploy:
         self.node_id = self.deploy.node_id
 
     def _call_module(self, module, action, *extra_args):
-        """调用子模块的 appctl.sh。"""
+        """Invoke submodule appctl.sh."""
         appctl = os.path.join(self.paths.action_dir, module, "appctl.sh")
         if not os.path.exists(appctl):
             appctl = os.path.join(CUR_DIR, module, "appctl.sh")
@@ -93,15 +86,15 @@ class OgracDeploy:
     def _prompt_sys_password_and_write_file(self):
         if not sys.stdin.isatty():
             LOG.error("password set error, please run sh appctl.sh install config_params_lun.json")
-            raise RuntimeError("password should be set in interactive terminal。")
+            raise RuntimeError("password should be set in interactive terminal.")
         prompt = "please input ograc password: "
         confirm = "please confirm the password: "
         pwd1 = getpass.getpass(prompt)
         if not pwd1:
-            raise RuntimeError("password cannot be empty。")
+            raise RuntimeError("password cannot be empty.")
         pwd2 = getpass.getpass(confirm)
         if pwd1 != pwd2:
-            raise RuntimeError("the password entered twice does not match, please re-execute the installation。")
+            raise RuntimeError("the password entered twice does not match, please re-execute the installation.")
         fd, path = tempfile.mkstemp(prefix="ograc_sys_pwd.", dir="/tmp")
         try:
             os.write(fd, pwd1.encode("utf-8"))
@@ -114,7 +107,9 @@ class OgracDeploy:
                 os.chown(path, uid, gid)
             except (KeyError, OSError) as e:
                 os.unlink(path)
-                raise RuntimeError(f"failed to set password file owner ({self.ograc_user}:{self.ograc_group}): {e}") from e
+                raise RuntimeError(
+                    f"failed to set password file owner ({self.ograc_user}:{self.ograc_group}): {e}"
+                ) from e
             return path
         except Exception:
             if fd is not None:
@@ -192,10 +187,7 @@ class OgracDeploy:
         try:
             for module in INSTALL_ORDER:
                 LOG.info("Installing %s", module)
-                if module == "ograc":
-                    ret = self._call_module(module, "install")
-                else:
-                    ret = self._call_module(module, "install")
+                ret = self._call_module(module, "install")
                 if ret != 0:
                     LOG.error("Install %s failed", module)
                     return 1
@@ -311,12 +303,72 @@ class OgracDeploy:
 
     def backup(self):
         LOG.info("Begin backup")
+        backup_root = self.paths.backup_dir
+        timestamp = time.strftime("%Y%m%d%H%M%S")
+        current_backup = os.path.join(backup_root, timestamp)
+        link_path = os.path.join(backup_root, "files")
+
+        ensure_dir(current_backup, mode=0o750)
+        chown_recursive(backup_root, self.ograc_user, self.ograc_group)
+
+        if os.path.islink(link_path) or os.path.exists(link_path):
+            os.remove(link_path)
+        os.symlink(current_backup, link_path)
+        LOG.info("Backup dir: %s, symlink: files -> %s", current_backup, timestamp)
+
+        deploy_param = os.path.join(self.paths.config_dir, "deploy_param.json")
+        if os.path.isfile(deploy_param):
+            shutil.copy2(deploy_param, current_backup)
+            LOG.info("Backed up deploy_param.json")
+
         for module in BACKUP_ORDER:
             ret = self._call_module(module, "backup")
             if ret != 0:
                 LOG.error("Backup %s failed", module)
                 return 1
+
+        self._cleanup_old_backups(backup_root, max_keep=5)
         LOG.info("backup completed successfully")
+        return 0
+
+    def _cleanup_old_backups(self, backup_root, max_keep=5):
+        if not os.path.isdir(backup_root):
+            return
+        dirs = sorted([
+            d for d in os.listdir(backup_root)
+            if os.path.isdir(os.path.join(backup_root, d)) and d.isdigit()
+        ])
+        while len(dirs) > max_keep:
+            oldest = dirs.pop(0)
+            target = os.path.join(backup_root, oldest)
+            LOG.info("Cleaning old backup: %s", target)
+            shutil.rmtree(target, ignore_errors=True)
+
+    def restore(self):
+        LOG.info("Begin restore")
+        backup_root = self.paths.backup_dir
+        link_path = os.path.join(backup_root, "files")
+
+        if not os.path.exists(link_path):
+            LOG.error("No backup found at %s", link_path)
+            return 1
+
+        LOG.info("Restoring from %s", os.path.realpath(link_path))
+
+        deploy_param_bak = os.path.join(link_path, "deploy_param.json")
+        if os.path.isfile(deploy_param_bak):
+            dst = os.path.join(self.paths.config_dir, "deploy_param.json")
+            ensure_dir(self.paths.config_dir, mode=0o750)
+            shutil.copy2(deploy_param_bak, dst)
+            LOG.info("Restored deploy_param.json")
+
+        for module in RESTORE_ORDER:
+            ret = self._call_module(module, "restore")
+            if ret != 0:
+                LOG.error("Restore %s failed", module)
+                return 1
+
+        LOG.info("restore completed successfully")
         return 0
 
     def init_container(self):
@@ -371,8 +423,6 @@ class OgracDeploy:
 
     def _init_user_and_group(self):
         LOG.info("Initializing users and groups")
-        deploy_user = self.deploy.get("deploy_user")
-        deploy_group = self.deploy.get("deploy_group")
         svc_user = self.ograc_user
         svc_group = self.ograc_group
         common_group = self.ograc_common_group
@@ -383,12 +433,10 @@ class OgracDeploy:
         self._ensure_user(svc_user, svc_group, f"/home/{svc_user}")
         self._ensure_user(ogmgr, svc_group, f"/home/{ogmgr}")
 
-        exec_popen(f"usermod -a -G {common_group} {deploy_user}")
         exec_popen(f"usermod -a -G {common_group} {svc_user}")
         exec_popen(f"usermod -a -G {common_group} {ogmgr}")
-        exec_popen(f"usermod -a -G {deploy_group} {svc_user}")
         self._append_user_to_existing_group(svc_user, "ubsmd")
-
+        
         import pwd
         for u in (svc_user, ogmgr):
             try:
@@ -437,7 +485,6 @@ class OgracDeploy:
             (CUR_DIR, 1), (os.path.join(pkg_dir, "config"), 1),
             (os.path.join(pkg_dir, "common"), None),
             (os.path.join(CUR_DIR, "implement"), None),
-            (os.path.join(CUR_DIR, "utils"), None),
             (os.path.join(CUR_DIR, "logic"), None),
             (os.path.join(CUR_DIR, "storage_operate"), None),
             (os.path.join(CUR_DIR, "inspection"), None),
@@ -452,6 +499,18 @@ class OgracDeploy:
                 cmd += f' -maxdepth {depth}'
             cmd += ' -type f -print0 | xargs -0 chmod 400'
             exec_popen(cmd)
+
+        exec_popen(f'find "{CUR_DIR}"/ -maxdepth 1 -type f -name "*.py" -exec chmod 644 {{}} +')
+        exec_popen(f'find "{CUR_DIR}"/ -maxdepth 1 -type f -name "*.sh" -exec chmod 755 {{}} +')
+
+        sub_dirs = [d for d in os.listdir(CUR_DIR)
+                     if os.path.isdir(os.path.join(CUR_DIR, d)) and not d.startswith('.')]
+        for d in sub_dirs:
+            full = os.path.join(CUR_DIR, d)
+            exec_popen(f'find "{full}" -type d -exec chmod 755 {{}} +')
+            exec_popen(f'find "{full}" -type f -name "*.py" -exec chmod 644 {{}} +')
+            exec_popen(f'find "{full}" -type f -name "*.sh" -exec chmod 755 {{}} +')
+            exec_popen(f'find "{full}" -type f -name "*.json" -exec chmod 644 {{}} +')
 
         for d in (CUR_DIR, os.path.join(CUR_DIR, "logic")):
             if os.path.isdir(d):
@@ -498,7 +557,7 @@ class OgracDeploy:
         exec_popen(f"chown {user_group} {data_local}")
 
     def _install_ograc_package(self):
-        """安装 oGRAC 软件包 —— 已剔除 dbstor 安装逻辑。"""
+        """Install oGRAC package."""
         LOG.info("Installing oGRAC package")
         tar_pattern = os.path.join(os.path.dirname(CUR_DIR), "repo", "ograc-*.tar.gz")
         import glob
@@ -508,33 +567,31 @@ class OgracDeploy:
             return 1
 
         install_base = os.path.join(self.paths.ograc_home, "image")
-        ensure_dir(install_base, mode=0o755)
-        exec_popen(f"tar -zxf {tar_files[0]} -C {install_base}")
-        exec_popen(f"chmod +x -R {install_base}")
+        ensure_dir(install_base, mode=0o755, user=self.ograc_user, group=self.ograc_group)
+        run_cmd(f"tar -zxf {tar_files[0]} -C {install_base}", "failed to extract ograc package")
+        run_cmd(f"chmod 755 {install_base}", "failed to chmod install_base")
 
         unpack_path = os.path.join(
             install_base, "ograc_connector", "ogracKernel",
             "oGRAC-DATABASE-LINUX-64bit", "oGRAC-RUN-LINUX-64bit.tar.gz")
         if os.path.exists(unpack_path):
-            exec_popen(f"tar -zxf {unpack_path} -C {install_base}")
+            run_cmd(f"tar -zxf {unpack_path} -C {install_base}", "failed to extract oGRAC-RUN package")
 
         rpm_path = os.path.join(install_base, "oGRAC-RUN-LINUX-64bit")
         if os.path.isdir(rpm_path):
-            exec_popen(f"chmod -R 750 {rpm_path}")
-            exec_popen(
-                f"chown {self.ograc_user}:{self.ograc_group} -hR {rpm_path}")
-            exec_popen(f"chown root:root {install_base}")
+            run_cmd(
+                f"chown {self.ograc_user}:{self.ograc_group} -hR {rpm_path}",
+                "failed to chown oGRAC-RUN package")
+            run_cmd(f'find "{rpm_path}" -type d -exec chmod 750 {{}} +',
+                    "failed to chmod oGRAC-RUN dirs")
+            run_cmd(f'find "{rpm_path}" -type f -exec chmod 640 {{}} +',
+                    "failed to chmod oGRAC-RUN files")
+            run_cmd(f"chmod 755 {install_base}", "failed to chmod image dir")
 
         return 0
 
     def _copy_resources(self):
-        """将部署包 action/ 整体拷贝到安装目录 /opt/ograc/action/。
-
-        包含：
-          - 顶层共享模块（config.py, utils.py, log_config.py …）
-          - 所有组件子目录（cms/, dss/, ograc/, og_om/, …）
-          - config/ 与 common/ 辅助目录
-        """
+        """Copy action/ directory to install path (shared modules, component subdirs, config/, common/)."""
         LOG.info("Copying resources to install path")
         if os.path.isfile(self.paths.rpm_flag):
             return
@@ -576,14 +633,7 @@ class OgracDeploy:
         self._fix_action_permissions(action_dst)
 
     def _fix_action_permissions(self, action_dst):
-        """设置安装目录下脚本的属主和权限。
-
-        root 调用 appctl.sh → xxx_deploy.py（root 身份）
-        xxx_deploy.py 通过 run_python_as_user 切换到 ograc_user 运行 xxx_ctl.py
-        因此：
-          - 目录和 .py 文件属主 = ograc_user，权限 owner 读 + group 读（root 也能读）
-          - appctl.sh 属主 = root
-        """
+        """Set ownership and permissions for action scripts (ograc_user for dirs/py, root for appctl.sh)."""
         user_group = f"{self.ograc_user}:{self.ograc_group}"
 
         exec_popen(f'find "{action_dst}" -type d -exec chmod 755 {{}} +')
@@ -594,13 +644,13 @@ class OgracDeploy:
         exec_popen(f'chown -R {user_group} "{action_dst}"')
 
         for module in ("cms", "dss", "ograc", "og_om", "ograc_exporter",
-                        "logicrep", "dbstor", "docker"):
+                        "logicrep", "docker"):
             appctl = os.path.join(action_dst, module, "appctl.sh")
             if os.path.isfile(appctl):
                 exec_popen(f"chown root:root {appctl}")
 
     def _mount_fs(self):
-        """挂载文件系统 —— 已剔除 dbstor 特有的挂载逻辑。"""
+        """Mount file systems."""
         if self.ograc_in_container != "0":
             return
         if self.deploy_mode in ("dbstor", "dss"):
@@ -639,7 +689,7 @@ class OgracDeploy:
                     f"{share_ip}:/{storage_share_fs} {share_dir}")
 
     def _umount_fs(self):
-        """卸载文件系统。"""
+        """Unmount file systems."""
         if self.ograc_in_container != "0":
             return
         LOG.info("Unmounting file systems")
@@ -652,7 +702,7 @@ class OgracDeploy:
                 safe_remove(mount_point)
 
     def _copy_certificate(self):
-        """复制证书文件。"""
+        """Copy certificate files."""
         if self.ograc_in_container != "0":
             return
         LOG.info("Copying certificates")
@@ -669,7 +719,7 @@ class OgracDeploy:
         chown_recursive(cert_dir, self.ograc_user, self.ograc_group)
 
     def _config_security_limits(self):
-        """配置 /etc/security/limits.conf。"""
+        """Configure /etc/security/limits.conf."""
         LOG.info("Configuring security limits")
         limits_file = "/etc/security/limits.conf"
         if not os.path.exists(limits_file):
@@ -691,7 +741,7 @@ class OgracDeploy:
             LOG.warning("Failed to configure limits: %s", e)
 
     def _clear_security_limits(self):
-        """清理当前实例写入的 limits 条目。"""
+        """Clear limits entries written by this instance."""
         LOG.info("Clearing security limits")
         limits_file = "/etc/security/limits.conf"
         if not os.path.exists(limits_file):
@@ -706,7 +756,7 @@ class OgracDeploy:
             exec_popen(f"sed -i '{pattern}' {limits_file}")
 
     def _show_version(self):
-        """写入版本信息到 /usr/local/bin/show。"""
+        """Write version info to /usr/local/bin/show."""
         LOG.info("Writing version info")
         versions_file = self.paths.versions_yml
         version = read_version(versions_file)
@@ -726,7 +776,7 @@ echo "Product Version : {version}"
             pass
 
     def _start_daemon(self):
-        """启动守护进程。"""
+        """Start daemon."""
         LOG.info("Starting daemon")
         cms_reg = os.path.join(self.paths.action_dir, "cms", "cms_reg.sh")
         run_as_user(f"sh {cms_reg} enable", self.ograc_user)
@@ -735,7 +785,7 @@ echo "Product Version : {version}"
             exec_popen(f"sh {daemon_script} start")
 
     def _stop_daemon(self):
-        """停止守护进程。"""
+        """Stop daemon."""
         LOG.info("Stopping daemon")
         daemon_script = self.paths.ograc_service_script
         self._kill_user_processes(f"sh {daemon_script} start")
@@ -763,7 +813,7 @@ echo "Product Version : {version}"
         return ret == 0 and bool(stdout.strip())
 
     def _install_systemd_units(self):
-        """根据 cfg.paths 动态生成 systemd unit 文件，消除硬编码路径。"""
+        """Generate systemd unit files from cfg.paths."""
         service_script = self.paths.ograc_service_script
         logs_script = os.path.join(self.paths.common_script_dir, "logs_handler", "execute.py")
         units = {
@@ -853,7 +903,7 @@ echo "Product Version : {version}"
             exec_popen(f"systemctl disable {timer}")
 
     def _init_limits_config(self):
-        """配置 openfile 限制。"""
+        """Configure openfile limits."""
         limits_file = "/etc/security/limits.conf"
         open_file_num = 102400
         if not os.path.exists(limits_file):
@@ -865,7 +915,7 @@ echo "Product Version : {version}"
             f.write(f"\n{self.ograc_user} soft nofile {open_file_num}")
 
     def _clear_residual_files(self):
-        """清理残留文件。"""
+        """Clear residual files."""
         LOG.info("Clearing residual files")
         storage_metadata_fs = self.deploy.storage_metadata_fs
         if storage_metadata_fs:
@@ -879,43 +929,69 @@ echo "Product Version : {version}"
         safe_remove("/opt/backup_note")
 
     @staticmethod
-    def _cleanup_sysv_shm_for_user(user):
-        ret, stdout, stderr = exec_popen("ipcs -m")
-        if ret != 0:
-            LOG.warning("Failed to list shared memory: %s%s", stdout, stderr)
-            return
-        for line in stdout.splitlines():
-            parts = line.split()
-            if len(parts) < 6 or parts[0] == "key" or parts[0].startswith("------"):
-                continue
-            owner = parts[2]
-            shm_id = parts[1]
-            nattch = parts[5]
-            if owner != user:
-                continue
-            if nattch != "0":
-                LOG.info("Skip attached shm segment %s owned by %s", shm_id, user)
-                continue
-            ret, _, err = exec_popen(f"ipcrm -m {shm_id}")
+    def _cleanup_sysv_ipc_for_user(user, force=False):
+        ipc_types = [
+            ("-m", "ipcrm -m", "shm", 5),
+            ("-s", "ipcrm -s", "sem", -1),
+            ("-q", "ipcrm -q", "msg", -1),
+        ]
+        for list_flag, rm_prefix, label, nattch_col in ipc_types:
+            ret, stdout, stderr = exec_popen(f"ipcs {list_flag}")
             if ret != 0:
-                LOG.warning("Failed to remove shm %s for %s: %s", shm_id, user, err)
-            else:
-                LOG.info("Removed shm %s for %s", shm_id, user)
+                LOG.warning("Failed to list %s: %s%s", label, stdout, stderr)
+                continue
+            for line in stdout.splitlines():
+                parts = line.split()
+                if len(parts) < 3 or parts[0] == "key" or parts[0].startswith("------"):
+                    continue
+                owner = parts[2]
+                ipc_id = parts[1]
+                if owner != user:
+                    continue
+                if nattch_col >= 0 and len(parts) > nattch_col:
+                    nattch = parts[nattch_col]
+                    if nattch != "0" and not force:
+                        LOG.info("Skip attached %s %s owned by %s", label, ipc_id, user)
+                        continue
+                    if nattch != "0":
+                        LOG.info("Force removing attached %s %s owned by %s (nattch=%s)",
+                                 label, ipc_id, user, nattch)
+                ret, _, err = exec_popen(f"{rm_prefix} {ipc_id}")
+                if ret != 0:
+                    LOG.warning("Failed to remove %s %s for %s: %s", label, ipc_id, user, err)
+                else:
+                    LOG.info("Removed %s %s for %s", label, ipc_id, user)
 
-    def _cleanup_instance_shm(self):
+    @staticmethod
+    def _kill_all_user_processes(user):
+        ret, _, _ = exec_popen(f"id -u {user}")
+        if ret != 0:
+            return
+        exec_popen(f"pkill -9 -u {user}")
+        for _ in range(10):
+            ret, stdout, _ = exec_popen(f"ps -u {user} -o pid= 2>/dev/null")
+            if ret != 0 or not stdout.strip():
+                return
+            time.sleep(0.5)
+        LOG.warning("Some processes of user %s are still alive after kill", user)
+
+    def _cleanup_instance_ipc(self, force=False):
+        if force:
+            for user in (self.ograc_user, self.ogmgr_user):
+                self._kill_all_user_processes(user)
         for user in (self.ograc_user, self.ogmgr_user):
-            self._cleanup_sysv_shm_for_user(user)
+            self._cleanup_sysv_ipc_for_user(user, force=force)
             safe_remove(os.path.join("/dev/shm", user))
 
     def _cleanup_override(self):
-        """override 模式下的清理。"""
+        """Cleanup for override mode."""
         LOG.info("Cleaning up override resources")
         if self.ograc_in_container == "0":
             self._stop_systemd_timers()
         safe_remove(os.path.join(self.paths.common_dir, "data"))
         safe_remove(os.path.join(self.paths.common_dir, "socket"))
         safe_remove(self.paths.common_config_dir)
-        self._cleanup_instance_shm()
+        self._cleanup_instance_ipc(force=True)
 
         for user in (self.ograc_user, self.ogmgr_user):
             exec_popen(f"id -u {user} > /dev/null 2>&1 && userdel -rf {user}")
@@ -973,14 +1049,7 @@ _KNOWN_INSTALL_TYPES = {"override", "reserve"}
 
 
 def _parse_install_args(args):
-    """
-    兼容多种调用约定，正确拆分 (install_type, config_file)。
-
-      appctl.sh pre_install override config.json  → ("override", "config.json")
-      appctl.sh pre_install override              → ("override", "")
-      appctl.sh install config_params.json        → ("override", "config_params.json")
-      appctl.sh pre_install                       → ("override", "")
-    """
+    """Parse (install_type, config_file) from various appctl.sh call conventions."""
     if len(args) >= 2:
         return args[0], args[1]
     if len(args) == 1:
@@ -991,13 +1060,7 @@ def _parse_install_args(args):
 
 
 def _parse_uninstall_args(args):
-    """
-    兼容多种调用约定，正确拆分 (uninstall_type, force_type)。
-
-      appctl.sh uninstall override force  → ("override", "force")
-      appctl.sh uninstall override        → ("override", "")
-      appctl.sh uninstall                 → ("override", "")
-    """
+    """Parse (uninstall_type, force_type) from various appctl.sh call conventions."""
     if len(args) >= 2:
         return args[0], args[1]
     if len(args) == 1:
@@ -1025,6 +1088,7 @@ def main():
         "uninstall": lambda: deployer.uninstall(*_parse_uninstall_args(args)),
         "check_status": lambda: deployer.check_status(),
         "backup": lambda: deployer.backup(),
+        "restore": lambda: deployer.restore(),
         "init_container": lambda: deployer.init_container(),
         "certificate": lambda: deployer.certificate(*args),
         "config_opt": lambda: deployer.config_opt(*args),
@@ -1050,7 +1114,7 @@ def main():
 
 
 def _run_upgrade_action(action, args):
-    """委托升级相关操作到 ograc_upgrade.py。"""
+    """Delegate upgrade actions to ograc_upgrade.py."""
     upgrade_script = os.path.join(CUR_DIR, "upgrade", "ograc_upgrade.py")
     cmd = f"python3 {upgrade_script} {action} " + " ".join(args)
     ret, _, stderr = exec_popen(cmd, timeout=7200)

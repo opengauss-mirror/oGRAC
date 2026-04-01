@@ -1,10 +1,10 @@
+#!/usr/bin/env python3
 """
-ogracd cgroup 内存限制计算（Python 化）
+ogracd cgroup memory limit calculation (Python port).
 
-从 ogracd.ini 读取相关参数，按原 ogracd_cgroup_calculate.sh 的公式估算内存预留（单位 MB）。
+Reads parameters from ogracd.ini and estimates reserved memory (MB)
+using the formula from the original ogracd_cgroup_calculate.sh.
 """
-from __future__ import annotations
-
 import os
 import re
 
@@ -29,10 +29,7 @@ GLOBAL_DLS_RES_SIZE = 120
 
 
 def _parse_mb(value: str) -> int:
-    """
-    支持形如 512M / 1G / 1024 的输入。
-    原脚本只处理 G；这里兼容 M/G/纯数字。
-    """
+    """Parse memory value like 512M / 1G / 1024 (plain number). Supports M/G/digits."""
     v = value.strip()
     m = re.match(r"^(\d+)([MmGg])?$", v)
     if not m:
@@ -61,7 +58,8 @@ def _read_ini_kv(path: str) -> dict:
     return kv
 
 
-def calculate_reserved_mem_mb(ini_path: str | None = None) -> int:
+def calculate_reserved_mem_mb(ini_path=None):
+    # type: (str) -> int
     ini_path = ini_path or cfg.paths.ogracd_ini
     if not os.path.exists(ini_path):
         LOG.warning(f"{ini_path} not exist, limited ogracd memory skipped")

@@ -1,8 +1,5 @@
-"""
-logic 工具库统一配置（refactored）
-
-提供路径解耦。
-"""
+#!/usr/bin/env python3
+"""logic unified configuration module."""
 
 import importlib.util
 import json

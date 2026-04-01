@@ -1,19 +1,130 @@
-"""配置参数读取（refactored - 统一使用 config 模块）"""
+#!/usr/bin/env python3
+"""Deploy parameter lookup."""
 
-import sys
+import json
 import os
+import subprocess
+import sys
 
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CUR_DIR)
 
 from config import cfg as _cfg
 
+_OGRAC_CFG_DIR = os.path.join(_cfg.paths.ograc_dir, "cfg")
+_ACTION_DIR = os.path.abspath(os.path.join(CUR_DIR, ".."))
+
+_NUMA_PARAMS = ("OGRAC_NUMA_CPU_INFO", "KERNEL_NUMA_CPU_INFO")
+_NUMA_CONFIG_FILE = os.path.join(_OGRAC_CFG_DIR, "cpu_config.json")
+
+_START_STATUS_FILE = os.path.join(_OGRAC_CFG_DIR, "start_status.json")
+_START_STATUS_PARAMS = {
+    "OGRAC_EVER_START": "ever_started",
+    "OGRAC_START_STATUS": "start_status",
+    "OGRAC_DB_CREATE_STATUS": "db_create_status",
+}
+
+_INSTALL_CONFIG_FILE = os.path.join(_ACTION_DIR, "ograc", "install_config.json")
+
+
+def _load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+_install_config_cache = None
+
+
+def _exec_cmd(cmd):
+    try:
+        proc = subprocess.Popen(
+            ["bash", "-c", cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        out, _ = proc.communicate(timeout=30)
+        if proc.returncode != 0:
+            return ""
+        return out.decode("utf-8", errors="replace").strip()
+    except Exception:
+        return ""
+
+
+def _cpu_list_to_info(cpu_list):
+    if not cpu_list:
+        return ""
+    cpu_list = sorted(set(int(cpu) for cpu in cpu_list))
+    ranges = []
+    start = cpu_list[0]
+    end = cpu_list[0]
+    for cpu in cpu_list[1:]:
+        if cpu == end + 1:
+            end = cpu
+            continue
+        ranges.append(str(start) if start == end else f"{start}-{end}")
+        start = end = cpu
+    ranges.append(str(start) if start == end else f"{start}-{end}")
+    return ",".join(ranges)
+
+
+def _fallback_online_cpu_info():
+    out = _exec_cmd("/usr/bin/lscpu | grep -i 'On-line CPU(s) list'")
+    if out and ":" in out:
+        return out.split(":", 1)[1].strip()
+    cpu_count = os.cpu_count() or 0
+    if cpu_count <= 0:
+        return ""
+    return _cpu_list_to_info(list(range(cpu_count)))
+
+
+def _fallback_kernel_numa_info():
+    out = _exec_cmd("/usr/bin/lscpu | grep -i 'NUMA node[0-9] CPU(s)'")
+    if not out:
+        return ""
+    groups = []
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        groups.append(line.split(":", 1)[1].strip())
+    return " ".join(group for group in groups if group)
+
+
+def _get_numa_value(param):
+    numa_cfg = _load_json(_NUMA_CONFIG_FILE)
+    value = numa_cfg.get(param, "")
+    if value:
+        return value
+    if param == "OGRAC_NUMA_CPU_INFO":
+        return _fallback_online_cpu_info()
+    if param == "KERNEL_NUMA_CPU_INFO":
+        return _fallback_kernel_numa_info() or _fallback_online_cpu_info()
+    return ""
+
+
+def _get_install_config():
+    global _install_config_cache
+    if _install_config_cache is None:
+        _install_config_cache = _load_json(_INSTALL_CONFIG_FILE)
+    return _install_config_cache
+
 
 def get_value(param):
-    if param == "deploy_user":
+    if param in ("deploy_user", "ograc_user"):
         return _cfg.user
-    if param == "deploy_group":
+    if param in ("deploy_group", "ograc_group"):
         return _cfg.group
+    if param in _NUMA_PARAMS:
+        return _get_numa_value(param)
+    if param in _START_STATUS_PARAMS:
+        return _load_json(_START_STATUS_FILE).get(_START_STATUS_PARAMS[param], "")
+    ic = _get_install_config()
+    if param in ic:
+        return ic[param]
     return _cfg.get_deploy_param(param, "")
 
 

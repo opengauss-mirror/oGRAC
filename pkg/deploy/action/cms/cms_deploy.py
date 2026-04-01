@@ -1,19 +1,5 @@
-"""
-CMS 部署编排器
-
-主入口由 appctl.sh 调用，替代原 appctl.sh 中的大量 shell 逻辑：
-  - 所有路径从 config.py 读取（路径解耦）
-  - 重复代码已归一到 utils.py
-  - 清晰的 Python 错误处理
-
-用法:
-    python3 cms_deploy.py <action> [args...]
-
-支持的 action:
-    start, stop, pre_install, install, uninstall,
-    check_status, backup, restore, init_container,
-    pre_upgrade, upgrade_backup, upgrade, rollback, post_upgrade
-"""
+#!/usr/bin/env python3
+"""CMS deployment orchestrator."""
 
 import os
 import sys
@@ -38,16 +24,7 @@ LOGGER = get_logger()
 
 
 class CmsDeploy:
-    """
-    CMS 部署编排器。
-
-    替代原 appctl.sh 中 802 行 shell 代码，包括：
-      - cgroup 管理
-      - iptables 管理
-      - 用户权限管理
-      - 升级 / 回滚 / 备份的编排逻辑
-      - 调用 cms_ctl.py（原 cmsctl.py）执行具体操作
-    """
+    """CMS deployment orchestrator (cgroup, iptables, user permissions, upgrade/rollback/backup)."""
 
     def __init__(self):
         self._cfg = get_config()
@@ -64,7 +41,6 @@ class CmsDeploy:
         self.storage_share_fs = self.deploy.storage_share_fs
         self.storage_archive_fs = self.deploy.storage_archive_fs
         self.cluster_name = self.deploy.cluster_name
-        self.d_user = self._parse_deploy_user()
 
         self.cgroup = CGroupManager(
             self.paths.cgroup_memory_path,
@@ -73,16 +49,8 @@ class CmsDeploy:
 
         self.log_file = self.paths.cms_deploy_log
 
-    def _parse_deploy_user(self):
-        """解析 deploy_user 中的用户名（格式 group:user）"""
-        raw = self.deploy.get("deploy_user", "")
-        if ":" in raw:
-            return raw.split(":")[1]
-        return raw
-
-
     def _run_cms_ctl(self, action, *extra_args):
-        """以 ograc 用户身份调用 cms_ctl.py（结构化参数，按操作超时）"""
+        """Invoke cms_ctl.py as ograc user (structured args, per-action timeout)."""
         script = os.path.join(CUR_DIR, "cms_ctl.py")
         args = [action] + [str(a) for a in extra_args]
         op_timeout = self.timeout.get(action)
@@ -96,14 +64,14 @@ class CmsDeploy:
         return stdout
 
     def _ensure_cms_home(self):
-        """确保 CMS 主目录结构存在"""
+        """Ensure CMS home dir structure exists."""
         ensure_dir(self.paths.cms_home, 0o750, self.user_and_group)
         ensure_dir(self.paths.cms_cfg_dir, 0o750, self.user_and_group)
         ensure_dir(self.paths.cms_log_dir, 0o750, self.user_and_group)
         ensure_file(self.log_file, 0o640, self.user_and_group)
 
     def _check_old_install(self):
-        """检查是否已有 RPM 安装"""
+        """Check for existing RPM install."""
         if os.path.isfile(self.paths.rpm_flag):
             return
         if os.path.isdir(self.paths.cms_service_dir):
@@ -115,7 +83,7 @@ class CmsDeploy:
             run_cmd(f"find {self.paths.cms_log_dir} -type f | xargs chmod 640")
 
     def _chown_mod_scripts(self):
-        """设置脚本权限"""
+        """Set script permissions."""
         LOGGER.info(f"Setting script permissions for user: {self.ograc_user}")
         run_cmd(
             f"chown -h {self.user_and_group} {CUR_DIR}/*.py {CUR_DIR}/appctl.sh 2>/dev/null; "
@@ -125,7 +93,7 @@ class CmsDeploy:
         )
 
     def _ensure_user_profile_writable(self):
-        """确保 ograc 用户的 .bashrc 存在且可写（以 root 身份修正 ownership）"""
+        """Ensure ograc user .bashrc exists and is writable (fix ownership as root)."""
         import pwd as _pwd
         try:
             home = _pwd.getpwnam(self.ograc_user).pw_dir
@@ -140,7 +108,7 @@ class CmsDeploy:
         os.chmod(bashrc, 0o644)
 
     def _copy_cms_scripts(self):
-        """复制 CMS 脚本到安装目录（源与目标相同时跳过）"""
+        """Copy CMS scripts to install dir (skip if src == dst)."""
         dst = self.paths.cms_scripts
         if os.path.realpath(CUR_DIR) == os.path.realpath(dst):
             LOGGER.info("CMS scripts already in install path, skip copy")
@@ -153,11 +121,11 @@ class CmsDeploy:
 
 
     def _read_link_type(self):
-        """从 deploy_param.json 读取 link_type（替代 awk 手工解析）"""
+        """Read link_type from deploy_param.json."""
         return self.deploy.get("link_type", "")
 
     def _read_deploy_mode_from_backup(self, backup_path):
-        """从备份目录的 deploy_param.json 读取 deploy_mode"""
+        """Read deploy_mode from backup deploy_param.json."""
         bak_config = os.path.join(backup_path, "config", "deploy_param.json")
         if os.path.exists(bak_config):
             try:
@@ -168,7 +136,7 @@ class CmsDeploy:
         return ""
 
     def _update_cms_service(self, link_type):
-        """更新 CMS 服务文件（bin/lib）"""
+        """Update CMS service files (bin/lib)."""
         LOGGER.info(f"Updating CMS service files in {self.paths.cms_service_dir}")
         pkg = self.paths.cms_pkg_dir
 
@@ -192,7 +160,7 @@ class CmsDeploy:
         run_cmd(f"cp -arf {addons}/kmc_shared/lib* {addons}/")
 
     def _chown_mod_cms_service(self):
-        """设置 CMS 服务文件权限"""
+        """Set CMS service file permissions."""
         LOGGER.info("Setting CMS service file permissions")
         for base_dir, sub_dir in [
             (self.paths.cms_home, "service"),
@@ -214,15 +182,15 @@ class CmsDeploy:
             run_cmd(f'setcap CAP_SYS_RAWIO+ep "{self.paths.cms_service_dir}/bin/cms"')
 
     def _update_cms_config_upgrade(self, deploy_mode_backup):
-        """升级时更新 CMS 配置"""
+        """Update CMS config on upgrade."""
         self._run_cms_ctl("upgrade")
 
     def _update_cms_gcc_file(self, deploy_mode_backup):
-        """升级时更新 GCC 文件（仅在 backup 模式变更时触发）"""
+        """Update GCC files on upgrade (only when backup mode changes)."""
         LOGGER.info("No GCC file update needed")
 
     def _record_cms_info(self, backup_dir):
-        """记录升级前的 CMS 文件信息"""
+        """Record pre-upgrade CMS file info."""
         LOGGER.info("Recording CMS module info before upgrade")
         cms_bak = os.path.join(backup_dir, "cms")
         os.makedirs(cms_bak, mode=0o750, exist_ok=True)
@@ -234,7 +202,7 @@ class CmsDeploy:
             f.write("cms backup information for upgrade\n")
             ret, time_str, _ = exec_popen("date")
             f.write(f"time: {time_str}\n")
-            f.write(f"deploy_user: {self.user_and_group}\n")
+            f.write(f"ograc_user: {self.user_and_group}\n")
             ret, size_str, _ = exec_popen(f"du -sh {self.paths.cms_home}")
             f.write(f"cms_home: total_size={size_str}\n")
             ret, size_str, _ = exec_popen(f"du -sh {self.paths.cms_scripts}")
@@ -242,7 +210,7 @@ class CmsDeploy:
 
 
     def _check_cms_node_and_res_list(self):
-        """检查 CMS 节点和资源列表"""
+        """Check CMS node and resource list."""
         LOGGER.info("Checking CMS node and resource list")
         base_cmd = "source ~/.bashrc && cms"
 
@@ -262,7 +230,7 @@ class CmsDeploy:
 
 
     def action_start(self):
-        """启动 CMS"""
+        """Start CMS."""
         LOGGER.info("========== START CMS ==========")
         self.cgroup.setup()
         IPTablesManager.accept(self.paths.cms_ini)
@@ -272,14 +240,14 @@ class CmsDeploy:
         LOGGER.info("========== START CMS DONE ==========")
 
     def action_stop(self):
-        """停止 CMS"""
+        """Stop CMS."""
         LOGGER.info("========== STOP CMS ==========")
         self._run_cms_ctl("stop")
         IPTablesManager.delete(self.paths.cms_ini)
         LOGGER.info("========== STOP CMS DONE ==========")
 
     def action_pre_install(self, install_type=""):
-        """预安装"""
+        """Pre-install."""
         LOGGER.info("========== PRE_INSTALL CMS ==========")
         if install_type == "reserve":
             update_cfg = os.path.join(CUR_DIR, "..", "compat", "update_config.py")
@@ -294,7 +262,7 @@ class CmsDeploy:
         LOGGER.info("========== PRE_INSTALL CMS DONE ==========")
 
     def _prepare_gcc_device(self):
-        """以 root 身份准备 GCC 设备权限（仅 DSS 模式 + 非容器场景）"""
+        """Prepare GCC device permissions as root (DSS mode, non-container only)."""
         if self.ograc_in_container != "0":
             return
         gcc_home = self._cfg.deploy.get("gcc_home", "")
@@ -312,13 +280,8 @@ class CmsDeploy:
             run_cmd(f"chown {self.user_and_group} {gcc_home} 2>/dev/null || true")
 
     def _patch_cms_rpath(self):
-        """将实例库路径嵌入 cms binary 的 RUNPATH，解决 setcap 后 ld.so 忽略 LD_LIBRARY_PATH 的问题。
-
-        Linux 安全机制：具有 file capabilities 的二进制文件，动态链接器会忽略 LD_LIBRARY_PATH，
-        但仍遵守 ELF 自身的 DT_RUNPATH。用 patchelf 将实例的 lib/add-ons 写入二进制，
-        不修改任何系统文件、不影响全局链接顺序、多实例互不干扰。
-        注意：patchelf 会清除已有 capabilities，因此必须在 setcap 之前调用。
-        """
+        """Embed instance lib paths into cms binary RUNPATH (setcap makes ld.so ignore LD_LIBRARY_PATH).
+        Must run before setcap since patchelf clears capabilities."""
         cms_bin = os.path.join(self.paths.cms_service_dir, "bin", "cms")
         lib_dir = os.path.join(self.paths.cms_service_dir, "lib")
         addons_dir = os.path.join(self.paths.cms_service_dir, "add-ons")
@@ -355,7 +318,7 @@ class CmsDeploy:
             return 0
 
     def action_install(self, install_type=""):
-        """安装 CMS"""
+        """Install CMS."""
         LOGGER.info("========== INSTALL CMS ==========")
         if (self.ograc_in_container == "0"
                 and self.deploy_mode != "dss"):
@@ -376,14 +339,9 @@ class CmsDeploy:
             self._prepare_gcc_device()
 
         if self.deploy_mode == "dss":
-            # DSS 模式分三步，与旧代码 start_cms.sh install_cms() 保持一致：
-            #   1. setup_files: 以 ograc 用户复制 cms binary 及配置
-            #   2. setcap:      root 阶段对 cms binary 设置 CAP_SYS_RAWIO
-            #   3. setup_gcc:   以 ograc 用户执行 gcc -reset 和 node -add
-            # 旧代码执行顺序：sudo setcap → dd → gcc-reset → node-add
-            # 若颠倒为 gcc-reset/node-add 先于 setcap，cms binary 缺少 CAP_SYS_RAWIO，
-            # cm_dl_getowner(LUN) 返回非 OG_INVALID_ID64，node -add 误判为有 server
-            # 在运行，转而走 UDS 路径，因 UDS 文件不存在而报 errno 2。
+            # DSS mode: setup_files -> setcap -> setup_gcc. Order matters: gcc-reset/node-add
+            # before setcap causes errno 2 (cms binary lacks CAP_SYS_RAWIO, node-add
+            # wrongly takes UDS path when UDS file is missing).
             self._run_cms_ctl("setup_files")
             self._patch_cms_rpath()
             run_cmd(f'setcap CAP_SYS_RAWIO+ep "{self.paths.cms_service_dir}/bin/cms"')
@@ -402,26 +360,51 @@ class CmsDeploy:
         LOGGER.info("========== INSTALL CMS DONE ==========")
 
     def action_uninstall(self, uninstall_type="", force_uninstall=""):
-        """卸载 CMS"""
+        """Uninstall CMS."""
         LOGGER.info("========== UNINSTALL CMS ==========")
         self._run_cms_ctl("uninstall", uninstall_type, force_uninstall)
         self.cgroup.clean()
         LOGGER.info("========== UNINSTALL CMS DONE ==========")
 
     def action_check_status(self):
-        """检查状态"""
+        """Check status."""
         self._run_cms_ctl("check_status")
 
     def action_backup(self):
-        """备份"""
+        """Backup."""
         self._run_cms_ctl("backup")
 
     def action_restore(self):
-        """恢复"""
-        LOGGER.info("CMS restore not implemented via cms_ctl")
+        """Restore CMS config from backup."""
+        LOGGER.info("========== RESTORE CMS ==========")
+        backup_cfg_dir = os.path.join(self.paths.backup_dir, "files")
+        cms_cfg_dir = os.path.join(self.paths.cms_home, "cfg")
+
+        if not os.path.isdir(backup_cfg_dir):
+            LOGGER.error("Backup directory not found: %s", backup_cfg_dir)
+            raise RuntimeError(f"CMS backup not found: {backup_cfg_dir}")
+
+        cms_json_bak = os.path.join(backup_cfg_dir, "cms.json")
+        if not os.path.isfile(cms_json_bak):
+            LOGGER.warning("cms.json not found in backup, skipping restore")
+            return
+
+        if os.path.isdir(cms_cfg_dir):
+            shutil.rmtree(cms_cfg_dir)
+        os.makedirs(cms_cfg_dir, mode=0o750, exist_ok=True)
+
+        for name in os.listdir(backup_cfg_dir):
+            src = os.path.join(backup_cfg_dir, name)
+            if os.path.isfile(src) and name.endswith((".json", ".ini")):
+                shutil.copy2(src, os.path.join(cms_cfg_dir, name))
+                LOGGER.info("Restored CMS config: %s", name)
+
+        exec_popen(
+            f"chown -hR {self.user_and_group} {cms_cfg_dir}")
+        LOGGER.info("========== RESTORE CMS DONE ==========")
 
     def action_init_container(self):
-        """容器初始化 —— 替代 init_container.sh，包含配置修改 + cms_ctl"""
+        """Container init (config changes + cms_ctl)."""
         LOGGER.info("========== INIT CONTAINER CMS ==========")
         from cms_container_init import CmsContainerInit
         init = CmsContainerInit()
@@ -429,10 +412,10 @@ class CmsDeploy:
         LOGGER.info("========== INIT CONTAINER CMS DONE ==========")
 
     def action_pre_upgrade(self):
-        """升级前检查"""
+        """Pre-upgrade check."""
         LOGGER.info("========== PRE_UPGRADE CMS ==========")
         version_first = get_version_major(self.paths.versions_yml)
-        ograc_user = self.d_user if version_first == 2 else self.ograc_user
+        ograc_user = self.ograc_user
 
         self._chown_mod_scripts()
 
@@ -457,10 +440,10 @@ class CmsDeploy:
         LOGGER.info("========== PRE_UPGRADE CMS DONE ==========")
 
     def action_upgrade_backup(self, backup_path):
-        """升级备份"""
+        """Upgrade backup."""
         LOGGER.info("========== UPGRADE_BACKUP CMS ==========")
         version_first = get_version_major(self.paths.versions_yml)
-        ograc_user = self.d_user if version_first == 2 else self.ograc_user
+        ograc_user = self.ograc_user
 
         ret, owner, _ = exec_popen(f"stat -c %U {self.paths.cms_home}")
         if ret == 0 and owner.strip() != ograc_user:
@@ -495,7 +478,7 @@ class CmsDeploy:
         LOGGER.info("========== UPGRADE_BACKUP CMS DONE ==========")
 
     def action_upgrade(self, upgrade_type="", backup_path=""):
-        """升级 CMS"""
+        """Upgrade CMS."""
         LOGGER.info("========== UPGRADE CMS ==========")
         link_type = self._read_link_type()
         deploy_mode_backup = self._read_deploy_mode_from_backup(backup_path)
@@ -526,7 +509,7 @@ class CmsDeploy:
         LOGGER.info("========== UPGRADE CMS DONE ==========")
 
     def action_rollback(self, rollback_type="", backup_path=""):
-        """回滚 CMS"""
+        """Rollback CMS."""
         LOGGER.info("========== ROLLBACK CMS ==========")
 
         versions_file = os.path.join(CUR_DIR, "../../versions.yml")
@@ -563,7 +546,7 @@ class CmsDeploy:
         LOGGER.info("========== ROLLBACK CMS DONE ==========")
 
     def action_post_upgrade(self):
-        """升级后检查"""
+        """Post-upgrade check."""
         LOGGER.info("========== POST_UPGRADE CMS ==========")
 
         if not os.listdir(self.paths.cms_service_dir):

@@ -1,16 +1,5 @@
-"""
-CMS 统一配置管理模块
-
-功能：
-  1. 路径解耦：所有路径从 cms_config.json 读取，支持自定义安装目录
-  2. 统一配置读取：一次性加载 config_params_lun.json，替代 100+ 次 python3 调用
-  3. 替代原 get_config_info.py，提供更清晰的 API
-
-用法：
-  from config import cfg
-  print(cfg.cms_home)           # 路径属性
-  print(cfg.get("deploy_mode")) # 部署参数
-"""
+#!/usr/bin/env python3
+"""CMS unified configuration module."""
 
 import os
 import sys
@@ -33,13 +22,7 @@ CMS_CONFIG_FILE = os.path.join(CUR_DIR, "cms_config.json")
 
 
 class InstanceConfig:
-    """
-    实例配置 —— 以 user（系统用户名）为主键，管理多用户部署时的资源隔离。
-
-    所有用户一视同仁，统一按 user 做子目录分割：
-      - cgroup:  /sys/fs/cgroup/memory/cms/{user}
-      - shm:     /dev/shm/{user}/
-    """
+    """Instance config: user as key for multi-user resource isolation."""
 
     def __init__(self, user="ograc",
                  cgroup_memory_base="/sys/fs/cgroup/memory",
@@ -66,12 +49,7 @@ class InstanceConfig:
 
 
 class TimeoutConfig:
-    """
-    操作超时配置 —— 按操作类型分别设置超时秒数。
-
-    低配机器可在 cms_config.json 中调大对应值；设为 0 表示不限超时（None）。
-    未配置的操作使用 default 值。
-    """
+    """Operation timeout config. Set 0 for no limit. Unconfigured uses default."""
 
     _DEFAULTS = {
         "default":       1800,
@@ -93,15 +71,7 @@ class TimeoutConfig:
                     self._timeouts[k] = v
 
     def get(self, operation):
-        """
-        获取指定操作的超时秒数。
-
-        Args:
-            operation: 操作名称，如 "install", "start", "check_status"
-
-        Returns:
-            超时秒数(int)，或 None（表示不限超时）
-        """
+        """Get timeout seconds for operation. Returns int or None for no limit."""
         seconds = self._timeouts.get(operation, self._timeouts["default"])
         return None if seconds == 0 else int(seconds)
 
@@ -110,10 +80,7 @@ class TimeoutConfig:
 
 
 class PathConfig:
-    """
-    从 ograc_home / data_root / instance 推导全部路径，实现路径解耦。
-    所有原来硬编码 /opt/ograc 的地方，都从这里获取。
-    """
+    """Derive all paths from ograc_home/data_root/instance for path decoupling."""
 
     def __init__(self, ograc_home="/opt/ograc", data_root="/mnt/dbdata",
                  instance=None):
@@ -144,7 +111,7 @@ class PathConfig:
         self.cms_pkg_dir = os.path.join(self.image_dir, "oGRAC-RUN-LINUX-64bit")
         self.rpm_flag = os.path.join(ograc_home, "installed_by_rpm")
 
-        self.backup_dir = os.path.join(ograc_home, "backup")
+        self.backup_dir = os.path.join(data_root, "backup")
         self.cms_old_config = os.path.join(self.backup_dir, "files", "cms.json")
 
         self.common_config_dir = os.path.join(ograc_home, "common", "config")
@@ -170,30 +137,28 @@ class PathConfig:
         ]
 
     def share_path(self, fs_name):
-        """共享存储挂载点: /mnt/dbdata/remote/share_{fs}"""
+        """Share storage mount: /mnt/dbdata/remote/share_{fs}"""
         return os.path.join(self.data_remote, "share_" + fs_name)
 
     def archive_path(self, fs_name):
-        """归档存储挂载点: /mnt/dbdata/remote/archive_{fs}"""
+        """Archive storage mount: /mnt/dbdata/remote/archive_{fs}"""
         return os.path.join(self.data_remote, "archive_" + fs_name)
 
     def metadata_path(self, fs_name):
-        """元数据存储: /mnt/dbdata/remote/metadata_{fs}"""
+        """Metadata storage: /mnt/dbdata/remote/metadata_{fs}"""
         return os.path.join(self.data_remote, "metadata_" + fs_name)
 
     def gcc_home_path(self, deploy_mode, storage_share_fs):
-        """根据部署模式推导 gcc_home"""
+        """Derive gcc_home from deploy mode."""
         return os.path.join(self.share_path(storage_share_fs), "gcc_home")
 
     def cms_gcc_bak_path(self, deploy_mode, storage_archive_fs):
-        """根据部署模式推导 cms_gcc_bak"""
+        """Derive cms_gcc_bak from deploy mode."""
         return self.archive_path(storage_archive_fs)
 
 
 class DeployConfig:
-    """
-    统一从根 config 的 load_deploy_params() 读取 config_params_lun.json + load_env_defaults()。
-    """
+    """Load from root config load_deploy_params() + load_env_defaults()."""
 
     def __init__(self, env_file=None):
         self._params = dict(load_deploy_params())
@@ -201,28 +166,28 @@ class DeployConfig:
         self._load_env()
 
     def _load_env(self):
-        """从 root config 加载用户/组信息（user 推导 group/common_group）"""
+        """Load user/group from root config."""
         self._env = load_env_defaults()
 
     def get(self, key, default=""):
-        """获取部署参数（来自 config_params_lun.json）"""
-        if key == "deploy_user":
+        """Get deploy param from config_params_lun.json."""
+        if key in ("ograc_user",):
             return self._env.get("ograc_user", default)
-        if key == "deploy_group":
+        if key in ("ograc_group",):
             return self._env.get("ograc_group", default)
         if key == "install_step":
             return self._get_cms_install_step(default)
         return self._params.get(key, default)
 
     def get_required(self, key):
-        """获取必要参数，不存在则抛出异常"""
+        """Get required param, raise if missing."""
         value = self.get(key)
         if value == "" or value is None:
             raise ValueError(f"Required config key not found: {key}")
         return value
 
     def _get_cms_install_step(self, default=0):
-        """从 cms.json 读取安装步骤"""
+        """Read install step from cms.json."""
         cms_json = os.path.join(
             _global_config.paths.cms_cfg_dir, "cms.json"
         ) if _global_config else "/opt/ograc/cms/cfg/cms.json"
@@ -276,10 +241,7 @@ class DeployConfig:
 
 
 class CmsConfig:
-    """
-    CMS 配置入口 - 合并路径配置和部署参数。
-    全局单例，所有模块通过 from config import cfg 使用。
-    """
+    """CMS config entry - merge path config and deploy params. Global singleton."""
 
     def __init__(self, cms_config_file=None, deploy_param_file=None, env_file=None):
         self.paths, self.timeout = self._load_cms_config(cms_config_file or CMS_CONFIG_FILE)
@@ -287,7 +249,7 @@ class CmsConfig:
 
     @staticmethod
     def _load_cms_config(config_file):
-        """从 cms_config.json 加载路径配置和超时配置"""
+        """Load path and timeout config from cms_config.json."""
         ograc_home = "/opt/ograc"
         data_root = "/mnt/dbdata"
         user = "ograc"
@@ -364,7 +326,7 @@ class CmsConfig:
         return paths, timeout
 
     def get(self, key, default=""):
-        """兼容旧版 get_value() 接口"""
+        """Get a deploy parameter by key."""
         return self.deploy.get(key, default)
 
 
@@ -372,7 +334,7 @@ _global_config = None
 
 
 def get_config(cms_config_file=None, deploy_param_file=None, env_file=None):
-    """获取或创建全局配置单例"""
+    """Get or create global config singleton."""
     global _global_config
     if _global_config is None:
         _global_config = CmsConfig(cms_config_file, deploy_param_file)
@@ -380,13 +342,13 @@ def get_config(cms_config_file=None, deploy_param_file=None, env_file=None):
 
 
 def reset_config():
-    """重置全局配置（用于测试）"""
+    """Reset global config (for testing)."""
     global _global_config
     _global_config = None
 
 
 class _LazyConfig:
-    """延迟初始化代理，首次访问时才创建 CmsConfig"""
+    """Lazy init proxy, create CmsConfig on first access."""
     def __getattr__(self, name):
         return getattr(get_config(), name)
 
@@ -395,10 +357,7 @@ cfg = _LazyConfig()
 
 
 def get_value(param):
-    """
-    向后兼容旧版 get_config_info.py 的 get_value() 函数。
-    新代码请使用 cfg.get() 或 cfg.deploy.xxx。
-    """
+    """Get a deploy parameter by key."""
     return get_config().get(param)
 
 

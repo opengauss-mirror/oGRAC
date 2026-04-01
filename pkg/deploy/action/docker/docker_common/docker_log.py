@@ -1,8 +1,5 @@
-"""
-docker_log.py (refactored from docker_log.sh)
-
-Provides deploy-level logging functions equivalent to the shell log4sh helpers.
-"""
+#!/usr/bin/env python3
+"""Docker logging utilities."""
 import os
 import sys
 import inspect

@@ -1,11 +1,5 @@
-"""
-CMS 日志配置模块
-
-重构自原 log.py:
-  - 路径从 config.py 读取，不再硬编码 /opt/ograc
-  - 敏感信息过滤保留
-  - 支持自定义日志目录
-"""
+#!/usr/bin/env python3
+"""CMS log configuration."""
 
 import os
 import logging
@@ -30,7 +24,7 @@ SENSITIVE_KEYWORDS = [
 
 
 class SensitiveFilter(logging.Filter):
-    """过滤包含敏感关键词的日志消息"""
+    """Filter log messages containing sensitive keywords."""
     def filter(self, record: LogRecord) -> bool:
         msg_upper = record.getMessage().upper()
         return not any(kw.upper() in msg_upper for kw in SENSITIVE_KEYWORDS)
@@ -38,15 +32,15 @@ class SensitiveFilter(logging.Filter):
 
 def setup_logger(log_file, name="cms_deploy", level=logging.INFO):
     """
-    初始化日志器。
+    Initialize logger.
 
     Args:
-        log_file: 日志文件完整路径
-        name: 日志器名称
-        level: 日志级别
+        log_file: Full path to log file
+        name: Logger name
+        level: Log level
 
     Returns:
-        logging.Logger 实例
+        logging.Logger instance
     """
     log_dir = os.path.dirname(log_file)
 
@@ -83,9 +77,8 @@ def setup_logger(log_file, name="cms_deploy", level=logging.INFO):
 
 def get_logger(log_file=None):
     """
-    获取 CMS 部署日志器。
-
-    若未指定 log_file，则从 config 读取路径。
+    Get CMS deploy logger.
+    If log_file is not specified, read path from config.
     """
     if log_file is None:
         try:

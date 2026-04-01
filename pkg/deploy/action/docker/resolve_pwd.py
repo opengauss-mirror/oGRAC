@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 import subprocess
@@ -10,7 +11,7 @@ from config import get_config
 _cfg = get_config()
 _paths = _cfg.paths
 
-sys.path.append(os.path.join(CUR_PATH, "../dbstor"))
+sys.path.append(os.path.join(CUR_PATH, "../ograc_common"))
 from kmc_adapter import CApiWrapper
 
 NEW_MARK = "/"

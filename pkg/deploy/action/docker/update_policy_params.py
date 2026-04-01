@@ -1,9 +1,5 @@
-"""
-容器内部署策略参数更新（简化版）
-
-deploy_policy_config.json 已移除（dbstor 策略废弃），
-仅支持 default 策略，直接回写 deploy_param.json。
-"""
+#!/usr/bin/env python3
+"""Container deploy policy param update (simplified). Only default policy, write to deploy_param.json."""
 import os
 import json
 import stat

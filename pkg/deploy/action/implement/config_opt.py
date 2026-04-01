@@ -1,4 +1,5 @@
-"""INI 配置查询/修改工具（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""INI configuration query and modification tool."""
 
 import os
 import stat

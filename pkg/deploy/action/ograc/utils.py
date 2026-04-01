@@ -1,4 +1,5 @@
-"""oGRAC 工具库（refactored）"""
+#!/usr/bin/env python3
+"""oGRAC utilities."""
 
 import os
 import subprocess
@@ -15,7 +16,7 @@ class CommandError(Exception):
 
 
 def exec_popen(cmd, timeout=1800):
-    """统一命令执行"""
+    """Execute a shell command."""
     pobj = subprocess.Popen(
         ["bash"], shell=False,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -41,7 +42,7 @@ def run_cmd(cmd, timeout=1800, error_msg="Command failed"):
 
 
 def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=1800):
-    """以指定用户身份执行 Python 脚本（结构化参数，无 shell 拼接）"""
+    """Run a Python script as the specified user."""
     import pwd
 
     pw = pwd.getpwnam(user)
@@ -95,8 +96,15 @@ def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=1800
 
 def ensure_dir(path, mode=0o750, owner=""):
     os.makedirs(path, mode=mode, exist_ok=True)
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
     if owner:
-        exec_popen(f"chown {owner} {path}")
+        rc, _, err = exec_popen(f"chown {owner} {path}")
+        if rc:
+            sys.stderr.write(f"Warning: chown {owner} {path} failed: {err}\n")
 
 
 def ensure_file(path, mode=0o640, owner=""):
@@ -104,5 +112,7 @@ def ensure_file(path, mode=0o640, owner=""):
         open(path, "a").close()
     os.chmod(path, mode)
     if owner:
-        exec_popen(f"chown {owner} {path}")
+        rc, _, err = exec_popen(f"chown {owner} {path}")
+        if rc:
+            sys.stderr.write(f"Warning: chown {owner} {path} failed: {err}\n")
 

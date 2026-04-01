@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import os
 import json
@@ -86,9 +87,7 @@ class UNDeploy(object):
             LOG.info("Delete file system %s success!", fs_name)
 
     def delete_hyper_metro_filesystem(self):
-        """
-        删除双活pair 文件系统的pair id
-        """
+        """Delete HyperMetro filesystem pair."""
         dbstor_fs_vstore_id = self.dr_deploy_info.get("dbstor_fs_vstore_id")
         if not dbstor_fs_vstore_id:
             return
@@ -113,9 +112,7 @@ class UNDeploy(object):
         LOG.info("Delete Hyper Metro filesystem pair id success")
 
     def delete_hyper_metro_filesystem_vstore_id(self):
-        """
-        删除双活租户pair id
-        """
+        """Delete HyperMetro vstore pair."""
         hyper_metro_vstore_pair_id = self.dr_deploy_info.get("vstore_pair_id")
         if not hyper_metro_vstore_pair_id:
             return False
@@ -142,9 +139,7 @@ class UNDeploy(object):
         return True
 
     def delete_hyper_metro_domain(self):
-        """
-        分裂双活域，删除双活域
-        """
+        """Split and delete HyperMetro domain."""
         hyper_domain_id = self.dr_deploy_info.get("hyper_domain_id")
         if not hyper_domain_id:
             return

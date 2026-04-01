@@ -1,4 +1,5 @@
-"""存储操作接口（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""Storage operation interface."""
 
 import os
 import sys

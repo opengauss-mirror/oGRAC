@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 mount.py (Pythonized from mount.sh)
 

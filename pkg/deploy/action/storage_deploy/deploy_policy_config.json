@@ -1,0 +1,33 @@
+{
+    "default": {},
+    "ModeA": {
+        "config": {
+            "ograc_in_container": "0",
+            "link_type": "0",
+            "db_type": "1",
+            "deploy_mode": "file",
+            "ca_path": "/opt/certificate/ca.crt",
+            "crt_path": "/opt/certificate/mes.crt",
+            "key_path": "/opt/certificate/mes.key"
+        }
+    },
+    "ModeB": {
+        "config": {
+            "ograc_in_container": "1",
+            "link_type": "1",
+            "db_type": "1",
+            "deploy_mode": "dbstor"
+        }
+    },
+    "ModeC": {
+        "config": {
+            "ograc_in_container": "0",
+            "link_type": "1",
+            "db_type": "1",
+            "deploy_mode": "dbstor",
+            "ca_path": "/opt/certificate/ca.crt",
+            "crt_path": "/opt/certificate/mes.crt",
+            "key_path": "/opt/certificate/mes.key"
+        }
+    }
+}

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import stat
 import sys
@@ -43,10 +44,7 @@ class SnapShotRestClient(object):
         raise Exception(err_info)
 
     def check_dr_site(self):
-        """
-        判断当前是否为备端，不执行打快照和回滚快照
-        :return:
-        """
+        """Check if current site is standby; skip snapshot/rollback if so."""
         if not self.storage_operate.rest_client.token:
             self.storage_operate.login()
         config_params = json.loads(read_helper(DEPLOY_PARAM_PATH))
@@ -202,12 +200,7 @@ def main(mode, ip_address, main_path):
 
 
 def query_rollback_process(fs_names_type, rest_client_obj):
-    """
-    查询文件系统回滚状态
-    :param fs_names_type:
-    :param rest_client_obj:
-    :return:
-    """
+    """Query filesystem rollback status until all complete."""
     query_list = fs_names_type
     success_list = []
     while query_list:

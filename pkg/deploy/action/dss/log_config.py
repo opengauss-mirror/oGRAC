@@ -1,4 +1,5 @@
-"""DSS 日志配置模块"""
+#!/usr/bin/env python3
+"""DSS log configuration module."""
 
 import logging
 from logging import handlers
@@ -6,7 +7,7 @@ from config import cfg
 
 
 def get_logger(name="dss"):
-    """获取 DSS 日志实例"""
+    """Get DSS logger instance."""
     log = logging.getLogger(name)
     if log.handlers:
         return log

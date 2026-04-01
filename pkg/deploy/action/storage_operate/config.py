@@ -1,4 +1,5 @@
-"""storage_operate 统一配置（refactored）"""
+#!/usr/bin/env python3
+"""storage_operate unified configuration module."""
 import importlib.util
 import json
 import os
@@ -36,11 +37,11 @@ class PathConfig:
             ograc_home, "og_om", "service", "ograc_exporter", "exporter", "execute.py"
         )
         self.install_path = ograc_home
-        self.backup_path = posixpath.join(ograc_home, "backup")
+        self.backup_path = posixpath.join(data_root, "backup")
 
 
 def _load_deploy_param(path):
-    """读取 deploy_param.json"""
+    """Read deploy_param.json."""
     if not os.path.exists(path):
         return {}
     try:
@@ -52,7 +53,7 @@ def _load_deploy_param(path):
 
 
 class StorageOperateConfig:
-    """storage_operate 模块的统一配置入口"""
+    """Unified configuration entry for storage_operate module."""
 
     def __init__(self, config_file=None):
         raw = {}

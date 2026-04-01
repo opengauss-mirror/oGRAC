@@ -1,8 +1,5 @@
-"""
-DSS 文件工具模块
-
-提供 VG 文件的读写、512 字节对齐、十六进制解码等功能。
-"""
+#!/usr/bin/env python3
+"""DSS file utilities: VG read/write, 512-byte alignment, hex decode."""
 
 import os
 import re
@@ -18,14 +15,9 @@ from common.dss_cmd import dsscmd
 
 def pad_file_to_512(input_file, output_file=None):
     """
-    将文件填充到 512 字节对齐。
-
-    Args:
-        input_file: 源文件路径
-        output_file: 目标文件路径（默认覆盖源文件）
-
-    Returns:
-        填充后的总字节数
+    Pad file to 512-byte alignment.
+    Args: input_file, output_file (default overwrites input).
+    Returns: total bytes after padding.
     """
     if not os.path.isfile(input_file):
         raise FileNotFoundError(f"Input file '{input_file}' not found.")
@@ -46,7 +38,7 @@ def pad_file_to_512(input_file, output_file=None):
 
 
 def parse_numeric(val):
-    """将字符串解析为整数"""
+    """Parse string to integer."""
     try:
         return int(float(val))
     except ValueError as e:
@@ -54,7 +46,7 @@ def parse_numeric(val):
 
 
 def get_written_size(vg_file_path):
-    """获取 VG 文件的实际写入大小"""
+    """Get actual written size of VG file."""
     code, stdout, stderr = dsscmd(f"ls -p {vg_file_path} -w 0")
     no_file_result = f"The path {vg_file_path} is not exsit."
 
@@ -78,7 +70,7 @@ def get_written_size(vg_file_path):
 
 
 def parse_hex_dump(raw_output):
-    """解析 dsscmd examine 的十六进制输出"""
+    """Parse hex output from dsscmd examine."""
     hex_bytes = []
     for line in raw_output.strip().splitlines():
         matches = re.findall(r'\b[0-9a-fA-F]{2}\b', line)
@@ -93,7 +85,7 @@ def parse_hex_dump(raw_output):
 
 
 def read_dss_content(vg_file_path, size):
-    """从 VG 文件读取指定大小的内容"""
+    """Read specified size from VG file."""
     _, stdout, stderr = dsscmd(
         f"examine -p {vg_file_path} -o 0 -f x -s {size}",
         error_msg=f"dsscmd examine {vg_file_path} failed",
@@ -102,7 +94,7 @@ def read_dss_content(vg_file_path, size):
 
 
 def read_dss_file(vg_file_path):
-    """读取 VG 文件的全部内容"""
+    """Read full content of VG file."""
     written_size = get_written_size(vg_file_path)
     if written_size == 0:
         return "[Empty] No actual data written to this DSS file."

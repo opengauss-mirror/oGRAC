@@ -1,8 +1,5 @@
-"""
-logicrep 核心控制器（业务用户身份运行）
-
-把原 logicrep_ctl.py 的业务逻辑路径解耦 + 消除硬编码。
-"""
+#!/usr/bin/env python3
+"""logicrep core controller (runs as business user)."""
 
 import argparse
 import glob
@@ -26,7 +23,7 @@ paths = _cfg.paths
 
 PKG_ACTION_DIR = os.path.abspath(os.path.join(CUR_DIR, ".."))
 sys.path.append(os.path.join(PKG_ACTION_DIR, "inspection", "inspection_scripts", "og_om"))
-sys.path.append(os.path.join(PKG_ACTION_DIR, "dbstor"))
+sys.path.append(os.path.join(PKG_ACTION_DIR, "ograc_common"))
 sys.path.append(os.path.join(PKG_ACTION_DIR, "ograc"))
 
 from kmc_adapter import CApiWrapper

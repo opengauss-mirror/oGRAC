@@ -1,4 +1,5 @@
-"""部署参数校验（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""Deploy parameter validation."""
 
 import json
 import os

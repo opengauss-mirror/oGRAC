@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 dbstor_tool_opt_common.py (Pythonized from dbstor_tool_opt_common.sh)
 

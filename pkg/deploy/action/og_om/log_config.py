@@ -1,4 +1,5 @@
-"""og_om 日志配置模块（refactored）"""
+#!/usr/bin/env python3
+"""og_om log configuration."""
 
 import logging
 import os

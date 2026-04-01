@@ -1,11 +1,5 @@
-"""
-oGRAC 配置更新工具（重构版）
-
-重构要点：
-  1. 剔除 dbstor 相关配置更新（update_dbstor_conf 已移除）
-  2. 路径从 config.py 读取，不再硬编码
-  3. 使用统一日志和工具模块
-"""
+#!/usr/bin/env python3
+"""oGRAC configuration updater."""
 import os
 import sys
 import stat

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 dr_deploy_wrapper.py (Pythonized from dr_deploy.sh)
 

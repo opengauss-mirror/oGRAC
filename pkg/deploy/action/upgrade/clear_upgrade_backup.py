@@ -1,8 +1,5 @@
-"""
-清理升级备份（重构版）
-
-路径从 config.py 读取，使用统一日志。
-"""
+#!/usr/bin/env python3
+"""Clear upgrade backup files."""
 import os
 import copy
 import sys

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 CONSOLE_CONF = {
     "log": {
         "use_syslog": False,

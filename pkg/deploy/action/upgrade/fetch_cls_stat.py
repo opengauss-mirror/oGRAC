@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 
 import os
 import sys
@@ -53,12 +54,6 @@ def _exec_popen(cmd, values=None):
         stderr = stderr[:-1]
 
     return pobj.returncode, stdout, stderr
-
-
-def get_user():
-    config_path = Path(CONFIG_PATH)
-    config_list = json.loads(config_path.read_text())
-    return config_list["deploy_user"].split(':')[0]
 
 
 def parse_node_stat(node_stat):

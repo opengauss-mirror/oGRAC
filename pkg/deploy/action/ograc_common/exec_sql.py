@@ -1,4 +1,5 @@
-"""SQL 执行工具（refactored - 路径解耦 + exec_popen 超时修复）"""
+#!/usr/bin/env python3
+"""SQL execution utilities."""
 
 import subprocess
 import sys

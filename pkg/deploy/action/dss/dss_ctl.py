@@ -1,11 +1,5 @@
-"""
-DSS 核心控制器（业务用户身份运行）
-
-替代原 dssctl.py，主要变更：
-  - 所有路径从 config.py 获取，消除 9 处硬编码 /opt/ograc
-  - 使用统一日志（log_config.py）
-  - 超时从配置读取，不再硬编码
-"""
+#!/usr/bin/env python3
+"""DSS core controller."""
 
 import argparse
 import datetime
@@ -31,7 +25,7 @@ LOG = get_logger()
 
 
 def _copytree_compat(src, dst, **kwargs):
-    """shutil.copytree 兼容包装：Python < 3.8 不支持 dirs_exist_ok。"""
+    """shutil.copytree compat: Python < 3.8 lacks dirs_exist_ok."""
     kwargs.pop("dirs_exist_ok", None)
     if os.path.isdir(dst):
         for item in os.listdir(src):
@@ -46,7 +40,7 @@ def _copytree_compat(src, dst, **kwargs):
 
 
 def exec_popen(cmd, timeout=60):
-    """统一命令执行"""
+    """Execute a shell command."""
     pobj = subprocess.Popen(
         ["bash"], shell=False,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -65,7 +59,7 @@ def exec_popen(cmd, timeout=60):
 
 
 class ComOpt:
-    """INI 文件读写工具"""
+    """INI file read/write utility."""
 
     @staticmethod
     def write_ini(file_path, contents, split="="):
@@ -85,10 +79,8 @@ class ComOpt:
 
 class DssCtl:
     """
-    DSS 核心控制器。
-
-    以业务用户（如 ograc）身份运行。
-    所有路径从 config.py 获取，不再硬编码。
+    DSS core controller.
+    Runs as business user (e.g. ograc). All paths from config.py.
     """
 
     CAP_WIO = "CAP_SYS_RAWIO"
@@ -126,7 +118,8 @@ class DssCtl:
 
 
     def modify_env(self, action="add"):
-        """修改用户环境变量（DSS_HOME, LD_LIBRARY_PATH, PATH）"""
+        """Modify user env vars (DSS_HOME, LD_LIBRARY_PATH, PATH).
+        Write after shebang/comment lines in .bashrc for non-interactive shells."""
         import pwd as _pwd
         try:
             home_dir = _pwd.getpwnam(self.deploy.ograc_user).pw_dir
@@ -146,10 +139,19 @@ class DssCtl:
         ]
 
         for env_line in env_lines:
-            if action == "add" and env_line not in lines:
-                lines.append(env_line)
-            elif action == "delete" and env_line in lines:
+            while env_line in lines:
                 lines.remove(env_line)
+
+        if action == "add":
+            insert_pos = 0
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped == "" or stripped.startswith("#") or stripped.startswith("#!/"):
+                    insert_pos = i + 1
+                else:
+                    break
+            for j, env_line in enumerate(env_lines):
+                lines.insert(insert_pos + j, env_line)
 
         modes = stat.S_IWUSR | stat.S_IRUSR
         flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
@@ -158,7 +160,7 @@ class DssCtl:
 
 
     def _dss_cmd(self, subcmd, timeout=None):
-        """执行 DSS 命令（自动 source bashrc）"""
+        """Execute DSS command (auto source bashrc)."""
         timeout = timeout or self.cmd_timeout
         full = f"source ~/.bashrc 2>/dev/null; {subcmd}"
         ret, stdout, stderr = exec_popen(full, timeout=timeout)
@@ -187,20 +189,24 @@ class DssCtl:
                         f'"{cms_bin}" {args}')
         return f'export LD_LIBRARY_PATH="{lib_path}:$LD_LIBRARY_PATH"; "{cms_bin}" {args}'
 
-    def kill_cmd(self, cmd):
+    def _kill_pids(self, cmd, label="process"):
         ret, stdout, stderr = exec_popen(cmd, timeout=self.cmd_timeout)
         if ret:
-            LOG.info(f"Dssserver is offline: {stdout}{stderr}")
-        if stdout:
-            LOG.info(f"dss server pid is [{stdout}]")
-            for line in re.split(r'\n\s', stdout):
-                pid = line.strip()
-                if pid:
-                    exec_popen(f"kill -9 {pid}", timeout=self.cmd_timeout)
+            LOG.info(f"{label} is offline: {stdout}{stderr}")
+            return
+        if not stdout or not stdout.strip():
+            LOG.info(f"{label}: no PID found")
+            return
+        LOG.info(f"{label} pid(s): [{stdout.strip()}]")
+        for pid in stdout.strip().splitlines():
+            pid = pid.strip()
+            if pid and pid.isdigit():
+                exec_popen(f"kill -9 {pid}", timeout=self.cmd_timeout)
+                LOG.info(f"Sent SIGKILL to {pid}")
 
 
     def prepare_dss_disk(self):
-        """初始化磁盘（仅 node 0）"""
+        """Initialize disk (node 0 only)."""
         if self.node_id != "0":
             LOG.info(f"No need to init lun for node [{self.node_id}]")
             return
@@ -214,7 +220,7 @@ class DssCtl:
         LOG.info("All LUNs initialized")
 
     def dss_cmd_add_vg(self):
-        """创建卷组（仅 node 0）"""
+        """Create volume group (node 0 only)."""
         if self.node_id != "0":
             LOG.info(f"No need to create VG for node [{self.node_id}]")
             return
@@ -227,7 +233,7 @@ class DssCtl:
         LOG.info("All VGs created")
 
     def reghl_dss_disk(self):
-        """注册磁盘"""
+        """Register disk."""
         LOG.info("Start to reghl disk")
         if self.check_is_reg():
             self.kick_node()
@@ -254,7 +260,7 @@ class DssCtl:
 
 
     def prepare_cfg(self):
-        """生成 DSS 配置文件"""
+        """Generate DSS config files."""
         os.makedirs(self.dss_home, exist_ok=True)
         os.makedirs(self.dss_cfg_dir, exist_ok=True)
 
@@ -274,7 +280,7 @@ class DssCtl:
         ComOpt.write_ini(self.dss_inst_ini, INST_CONFIG)
 
     def prepare_source(self):
-        """检查 DSS bin/lib 是否已就位（由 dss_deploy.py 以 root 身份拷贝）"""
+        """Verify DSS bin/lib in place (copied by dss_deploy.py as root)."""
         for subdir in ("bin", "lib"):
             d = os.path.join(self.dss_home, subdir)
             if not os.path.isdir(d):
@@ -284,7 +290,7 @@ class DssCtl:
 
 
     def cms_add_dss_res(self):
-        """向 CMS 注册 DSS 资源"""
+        """Register DSS resource with CMS."""
         os.chmod(self.control_script, 0o700)
         dst = os.path.join(self.dss_home, "dss_contrl.sh")
         shutil.copyfile(self.control_script, dst)
@@ -300,7 +306,7 @@ class DssCtl:
         LOG.info("dss control script copied")
 
     def config_perctrl_permission(self):
-        """验证 perctrl capabilities（实际设置由 dss_deploy.py 以 root 完成）"""
+        """Verify perctrl capabilities (set by dss_deploy.py as root)."""
         path = f"{self.dss_home}/bin/perctrl"
         if not os.path.isfile(path):
             LOG.warning("perctrl not found at %s", path)
@@ -313,7 +319,7 @@ class DssCtl:
 
 
     def wait_dss_instance_started(self):
-        """轮询日志等待 DSS 启动"""
+        """Poll log until DSS starts."""
         LOG.info("Waiting for dss_instance to start...")
         timeout = 60
         while timeout > 0:
@@ -342,41 +348,48 @@ class DssCtl:
 
         raise RuntimeError("Start dss server timeout")
 
-    def clean_shm(self):
-        """清理共享内存"""
-        LOG.info("Cleaning shared memory for current DSS instance")
+    def clean_ipc(self):
+        """Clean all System V IPC resources (shm, sem, msg) for DSS user."""
+        LOG.info("Cleaning IPC resources for current DSS instance")
         try:
             uid = pwd.getpwnam(self.deploy.ograc_user).pw_uid
         except KeyError:
-            LOG.warning("Skip shm cleanup because user %s does not exist", self.deploy.ograc_user)
+            LOG.warning("Skip IPC cleanup because user %s does not exist", self.deploy.ograc_user)
             return
 
-        ret, stdout, stderr = exec_popen("ipcs -m", timeout=self.cmd_timeout)
-        if ret:
-            raise RuntimeError(f"Failed to list shm: {stdout}{stderr}")
-
-        shm_ids = []
-        for line in stdout.splitlines():
-            parts = line.split()
-            if len(parts) < 6 or not parts[1].isdigit():
-                continue
-            owner = parts[2]
-            nattch = parts[5]
-            if owner not in (str(uid), self.deploy.ograc_user):
-                continue
-            if nattch != "0":
-                continue
-            shm_ids.append(parts[1])
-
-        for shm_id in shm_ids:
-            ret, _, err = exec_popen(f"ipcrm -m {shm_id}", timeout=self.cmd_timeout)
+        user = self.deploy.ograc_user
+        ipc_types = [
+            ("-m", "ipcrm -m", "shm", 5),
+            ("-s", "ipcrm -s", "sem", -1),
+            ("-q", "ipcrm -q", "msg", -1),
+        ]
+        for list_flag, rm_prefix, label, nattch_col in ipc_types:
+            ret, stdout, stderr = exec_popen(f"ipcs {list_flag}", timeout=self.cmd_timeout)
             if ret:
-                LOG.warning("Failed to remove shm %s: %s", shm_id, err)
+                LOG.warning("Failed to list %s: %s%s", label, stdout, stderr)
                 continue
-            LOG.info("Removed shm segment %s", shm_id)
+            for line in stdout.splitlines():
+                parts = line.split()
+                if len(parts) < 3 or not parts[1].isdigit():
+                    continue
+                owner = parts[2]
+                if owner not in (str(uid), user):
+                    continue
+                if nattch_col >= 0 and len(parts) > nattch_col and parts[nattch_col] != "0":
+                    continue
+                ipc_id = parts[1]
+                ret, _, err = exec_popen(f"{rm_prefix} {ipc_id}", timeout=self.cmd_timeout)
+                if ret:
+                    LOG.warning("Failed to remove %s %s: %s", label, ipc_id, err)
+                else:
+                    LOG.info("Removed %s segment %s", label, ipc_id)
+
+    def clean_shm(self):
+        """Backward-compat alias."""
+        self.clean_ipc()
 
     def clean_soft(self):
-        """清理软件（bin/lib/cfg，保留日志）"""
+        """Clean software (bin/lib/cfg, keep logs)."""
         LOG.info("Cleaning software")
         for subdir in ("lib", "bin"):
             path = os.path.join(self.dss_home, subdir)
@@ -416,7 +429,7 @@ class DssCtl:
         LOG.info("===== install done =====")
 
     def _specify_dss_vg(self, dss_vg_list):
-        """从部署参数更新 VG 配置"""
+        """Update VG config from deploy params."""
         LOG.info("Specifying VG from user configuration")
         if dss_vg_list:
             for vg_name, vg_path in dss_vg_list.items():
@@ -439,11 +452,22 @@ class DssCtl:
 
     def stop(self, *args):
         LOG.info("===== stop dss server =====")
-        self.kill_cmd(f"ps -ef | grep dssserver | grep -v grep | grep {self.dss_home} | awk '{{print $2}}'")
+        escaped = re.escape(self.dss_home)
+        self._kill_pids(
+            f"ps -eo pid=,args= | grep '[d]ssserver' | grep -E '{escaped}' | awk '{{print $1}}'",
+            label="dssserver")
+        for _ in range(10):
+            if not self.check_status():
+                break
+            import time
+            time.sleep(1)
+        else:
+            LOG.warning("dssserver still alive after kill, trying pidof")
+            self._kill_pids("pidof dssserver", label="dssserver(pidof)")
         LOG.info("dssserver stopped")
-        self.kill_cmd(
-            f"ps -ef | grep perctrl | grep -v grep | grep {self.dss_home} | awk '{{print $2}}'"
-        )
+        self._kill_pids(
+            f"ps -eo pid=,args= | grep '[p]erctrl' | grep -E '{escaped}' | awk '{{print $1}}'",
+            label="perctrl")
         LOG.info("perctrl stopped")
         self.clean_shm()
 
@@ -456,8 +480,35 @@ class DssCtl:
         LOG.info("dssserver is offline")
         return False
 
+    def _cms_del_dss_res(self):
+        """Remove DSS resource from CMS (node 0 only)."""
+        if self.node_id != "0":
+            return
+        LOG.info("Removing dss resource from CMS")
+        cmd = self._cms_exec("res -del dss")
+        ret, stdout, stderr = self._dss_cmd(cmd)
+        if ret:
+            LOG.warning("Failed to del dss res (may already be removed): %s%s", stdout, stderr)
+        else:
+            LOG.info("dss res removed from CMS")
+
+    def _unreghl_dss_disk(self):
+        """Unregister disk."""
+        if not self.check_is_reg():
+            LOG.info("Disk not registered, skip unreghl")
+            return
+        LOG.info("Unregistering disk")
+        cmd = f"dsscmd unreghl -D {self.dss_home}"
+        ret, stdout, stderr = self._dss_cmd(cmd)
+        if ret:
+            LOG.warning("unreghl failed (non-fatal): %s%s", stdout, stderr)
+        else:
+            LOG.info("unreghl disk success")
+
     def uninstall(self, *args):
         LOG.info("===== uninstall start =====")
+        self._cms_del_dss_res()
+        self._unreghl_dss_disk()
         self.modify_env(action="delete")
         self.clean_shm()
         if not os.path.exists(self.rpm_flag):

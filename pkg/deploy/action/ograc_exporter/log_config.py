@@ -1,4 +1,5 @@
-"""ograc_exporter 日志配置模块（refactored）"""
+#!/usr/bin/env python3
+"""ograc_exporter log configuration."""
 
 import logging
 import os

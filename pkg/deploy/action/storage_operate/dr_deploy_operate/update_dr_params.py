@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os.path
 import shutil
 
@@ -35,20 +36,13 @@ class UpdateDRParams(object):
 
     @staticmethod
     def restart_ograc_exporter():
-        """
-        容灾告警需要重启ograc_exporter
-        :return:
-        """
+        """Restart ograc_exporter for DR alerting."""
         cmd = "ps -ef | grep \"python3 " + _paths.exporter_execute_py + "\"" \
               " | grep -v grep | awk '{print $2}' | xargs kill -9"
         exec_popen(cmd)
 
     def copy_dr_deploy_param_file(self):
-        """
-        处理 dbstor 模式下的 dr_deploy_param.json 文件读取逻辑，
-        如果不是 dbstor 模式，则从共享路径中读取文件。
-        :return: dr_deploy_param_file 的路径
-        """
+        """Locate and copy dr_deploy_param.json from dbstor or shared path."""
         if self.deploy_mode == "dbstor":
             remote_dir = os.path.join(_paths.config_dir, "remote")
             dr_deploy_param_file = os.path.join(remote_dir, "dr_deploy_param.json")
@@ -136,12 +130,7 @@ class UpdateDRParams(object):
         LOG.info("Update dr params success.")
 
     def check_dr_infos(self, dr_deploy_params, storage_operate):
-        """
-        检查容灾pair对信息是否存在
-        :param dr_deploy_params:
-        :param storage_operate:
-        :return:
-        """
+        """Verify that all DR pair resources exist."""
         page_fs_pair_id = dr_deploy_params.get("page_fs_pair_id")
         meta_fs_pair_id = dr_deploy_params.get("meta_fs_pair_id")
         hyper_domain_id = dr_deploy_params.get("hyper_domain_id")

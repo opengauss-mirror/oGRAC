@@ -1,11 +1,5 @@
-"""
-oGRAC 日志配置模块（重构版）
-
-重构自原 om_log.py / om_log_config.py:
-  - 路径从 config.py 读取，不再硬编码
-  - 敏感信息过滤保留
-  - 各模块日志隔离
-"""
+#!/usr/bin/env python3
+"""oGRAC log configuration."""
 
 import os
 import logging

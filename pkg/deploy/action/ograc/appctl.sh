@@ -17,9 +17,18 @@ eval "$(python3 "${CURRENT_PATH}/config.py" --shell-env)" || true
 
 LOG_DIR="${OGRAC_LOG_DIR:-/opt/ograc/log/ograc}"
 LOG_FILE="${OGRAC_LOG_FILE:-${LOG_DIR}/ograc_deploy.log}"
+OGRAC_OWNER="${OGRAC_USER:-ograc}"
 
 mkdir -p "${LOG_DIR}" 2>/dev/null || true
 touch "${LOG_FILE}" 2>/dev/null || true
+LOG_PARENT=$(dirname "${LOG_DIR}")
+if [ -d "${LOG_PARENT}" ]; then
+  chown "${OGRAC_OWNER}" "${LOG_PARENT}" 2>/dev/null || true
+  chmod 755 "${LOG_PARENT}" 2>/dev/null || true
+fi
+chown -R "${OGRAC_OWNER}" "${LOG_DIR}" 2>/dev/null || true
+chmod 750 "${LOG_DIR}" 2>/dev/null || true
+chmod 640 "${LOG_FILE}" 2>/dev/null || true
 
 usage() {
   echo "Usage: ${0##*/} {start|stop|pre_install|install|uninstall|check_status|backup|init_container|pre_upgrade|upgrade_backup|upgrade|rollback|post_upgrade}. [File:${SCRIPT_NAME}]"

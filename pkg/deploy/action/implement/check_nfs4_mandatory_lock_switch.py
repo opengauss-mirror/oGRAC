@@ -1,4 +1,5 @@
-"""NFS4 强制锁检查（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""NFS4 mandatory lock check."""
 
 import sys
 import os

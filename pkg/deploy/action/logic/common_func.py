@@ -1,4 +1,5 @@
-"""通用工具函数（refactored - exec_popen 超时修复）"""
+#!/usr/bin/env python3
+"""Common utility functions."""
 
 import json
 import os
@@ -44,10 +45,7 @@ def retry(retry_times, log, task, wait_times):
 
 
 def exec_popen(cmd, timeout=TIME_OUT):
-    """
-    subprocess.Popen in python3.
-    修复：超时后 kill 进程组 + communicate 回收，避免僵尸进程。
-    """
+    """Execute command via subprocess; on timeout, kill process group to avoid zombies."""
     bash_cmd = ["bash"]
     pobj = subprocess.Popen(bash_cmd, shell=False, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)

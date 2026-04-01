@@ -1,4 +1,5 @@
-"""oGRAC cgroup 管理（refactored）"""
+#!/usr/bin/env python3
+"""oGRAC cgroup management."""
 
 import os
 import re
@@ -32,12 +33,25 @@ def remove_cgroup_dir():
     LOG.info("ogracd cgroup config is removed.")
 
 
+def _resolve_uid(user: str) -> str:
+    """Convert username to UID string; return as-is if already numeric or lookup fails."""
+    if user.isdigit():
+        return user
+    try:
+        import pwd as _pwd
+        return str(_pwd.getpwnam(user).pw_uid)
+    except (KeyError, ImportError):
+        return ""
+
+
 def list_ogracd_pids(data_path: str, user: str = ""):
-    """按实例数据目录精确匹配 ogracd pid，避免同机多实例误判。"""
+    """Find ogracd PIDs matching the given data directory."""
     escaped = re.escape(data_path)
-    cmd = "ps -eo pid=,user=,args= | grep '[o]gracd'"
+    cmd = "ps -eo pid=,uid=,args= | grep '[o]gracd'"
     if user:
-        cmd += f" | awk '$2==\"{user}\" {{print}}'"
+        uid = _resolve_uid(user)
+        if uid:
+            cmd += f" | awk '$2=={uid} {{print}}'"
     cmd += f" | grep -E -- '-D[[:space:]]+{escaped}([[:space:]]|$)' | awk '{{print $1}}'"
     rc, out, err = exec_popen(cmd, timeout=30)
     if rc not in (0, 1):
@@ -47,7 +61,7 @@ def list_ogracd_pids(data_path: str, user: str = ""):
 
 
 def attach_ogracd_pid(pid):
-    """把一个或多个 ogracd pid 写入 tasks"""
+    """Write ogracd PIDs into cgroup tasks file."""
     path = cfg.paths.instance.cgroup_memory_path
     tasks = os.path.join(path, "tasks")
     pid_list = pid if isinstance(pid, (list, tuple)) else str(pid).split()
@@ -64,7 +78,7 @@ def attach_ogracd_pid(pid):
 
 
 def set_memory_limit_mb(limit_mb: int):
-    """设置 memory.limit_in_bytes（cgroup v1）"""
+    """Set memory.limit_in_bytes (cgroup v1)."""
     if limit_mb <= 0:
         return
     path = cfg.paths.instance.cgroup_memory_path

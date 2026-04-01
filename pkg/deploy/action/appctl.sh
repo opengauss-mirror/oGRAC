@@ -43,6 +43,21 @@ usage() {
 ACTION="$1"; shift
 [ -z "${ACTION}" ] && usage
 
+STORAGE_DEPLOY="${CURRENT_PATH}/storage_deploy"
+deploy_mode=$(python3 -c "
+import json, os
+f = os.path.join('${CURRENT_PATH}', 'config_params_lun.json')
+if not os.path.isfile(f):
+    f = os.path.join('${CURRENT_PATH}', 'config_params.json')
+if os.path.isfile(f):
+    print(json.load(open(f)).get('deploy_mode', ''))
+" 2>/dev/null)
+
+if [[ "${deploy_mode}" == "dbstor" ]] || [[ "${deploy_mode}" == "combined" ]]; then
+    log_info "deploy_mode=${deploy_mode}, routing to storage_deploy flow"
+    exec sh "${STORAGE_DEPLOY}/appctl.sh" "${ACTION}" "$@"
+fi
+
 case "${ACTION}" in
     dr_operate)
         export PYTHONPATH="${CURRENT_PATH}:${CURRENT_PATH}/compat"

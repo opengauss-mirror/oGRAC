@@ -1,8 +1,5 @@
-"""
-implement 工具库统一配置（refactored）
-
-提供路径解耦，所有硬编码路径从此处派生。
-"""
+#!/usr/bin/env python3
+"""implement unified configuration module."""
 
 import json
 import os

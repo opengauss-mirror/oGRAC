@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 upgrade_commit.py (Pythonized from upgrade_commit.sh)
 

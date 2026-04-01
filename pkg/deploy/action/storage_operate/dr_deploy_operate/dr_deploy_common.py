@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import time
@@ -95,7 +96,7 @@ class RemoteStorageOPT(object):
         return fs_info
 
     def query_remote_storage_pool_info(self, pool_id: str) -> dict:
-        """查询远端存储池信息"""
+        """Query remote storage pool info."""
         url = Constant.REMOTE_EXECUTE
         remote_url = Constant.QUERY_POOL
         data = {
@@ -116,12 +117,7 @@ class RemoteStorageOPT(object):
 class KmcResolve(object):
     @staticmethod
     def kmc_resolve_password(mode, plain_text):
-        """
-        密码解密
-        :param mode:  encrypted/decrypted
-        :param plain_text: 加解密内容
-        :return:
-        """
+        """Encrypt or decrypt password via KMC."""
         run_user = get_env_info("ograc_user")
         resolve_file_path = os.path.join(CURRENT_PATH, "../../ograc_common/crypte_adapter.py")
         cmd = "su -s /bin/bash - %s -c \"export LD_LIBRARY_PATH=%s:${LD_LIBRARY_PATH} " \

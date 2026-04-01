@@ -1,10 +1,9 @@
+#!/usr/bin/env python3
 """
-向后兼容入口 —— 所有逻辑已迁移至 config.py
+Backward-compatible entry point -- all logic migrated to config.py.
 
-保留此文件仅为兼容 shell 脚本中 `python3 get_config_info.py <param>` 的调用方式。
-新代码请直接使用:
-    from config import cfg
-    value = cfg.get("param_name")
+Kept only for shell scripts calling `python3 get_config_info.py <param>`.
+New code should use: from config import cfg; value = cfg.get("param_name")
 """
 import sys
 import os

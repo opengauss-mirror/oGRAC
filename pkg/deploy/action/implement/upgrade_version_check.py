@@ -1,4 +1,5 @@
-"""版本升级校验（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""Upgrade version validation."""
 
 import os
 import sys

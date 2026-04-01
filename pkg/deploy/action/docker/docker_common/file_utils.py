@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import json
 import csv
@@ -16,12 +17,12 @@ from config import get_value
 
 
 def timeout_handler():
-    """超时处理函数，直接抛出异常"""
+    """Timeout handler that raises an exception."""
     raise Exception("Operation timed out, releasing lock")
 
 
 class LockFile:
-    """阻塞式文件锁实现，支持超时机制，避免死等"""
+    """Blocking file lock with timeout to avoid deadlocks."""
 
     @staticmethod
     def lock_with_timeout(handle, timeout=20):
@@ -37,7 +38,7 @@ class LockFile:
 
     @staticmethod
     def unlock(handle):
-        """释放文件锁"""
+        """Release file lock."""
         fcntl.flock(handle, fcntl.LOCK_UN)
 
     @staticmethod
@@ -55,7 +56,7 @@ class LockFile:
 
 
 def open_and_lock_json(filepath, timeout=20):
-    """加载或初始化 JSON 文件，并使用文件锁保护文件操作，结合超时机制。"""
+    """Load or initialize a JSON file with file-lock protection and timeout."""
     directory = os.path.dirname(filepath)
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
@@ -84,7 +85,7 @@ def open_and_lock_json(filepath, timeout=20):
 
 
 def write_and_unlock_json(data, file):
-    """写入 JSON 文件，操作完成后释放锁并关闭文件。"""
+    """Write JSON data to file, then release lock and close."""
     try:
         file.seek(0)
         json.dump(data, file, indent=4)
@@ -95,7 +96,7 @@ def write_and_unlock_json(data, file):
 
 
 def open_and_lock_csv(filepath, timeout=20):
-    """加载或初始化 CSV 文件，并使用文件锁保护文件操作，结合超时机制。"""
+    """Load or initialize a CSV file with file-lock protection and timeout."""
     directory = os.path.dirname(filepath)
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
@@ -125,7 +126,7 @@ def open_and_lock_csv(filepath, timeout=20):
 
 
 def write_and_unlock_csv(rows, file):
-    """将记录写入 CSV 文件，并使用文件锁保护文件操作。"""
+    """Write rows to CSV file with file-lock protection."""
     try:
         file.seek(0)
         writer = csv.writer(file)

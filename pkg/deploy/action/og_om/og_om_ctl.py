@@ -1,12 +1,5 @@
-"""
-og_om 核心控制器（以 ogmgr 用户身份运行）
-
-按 REFACTOR_SPEC 要求，把原 start.sh / stop.sh / check_status.sh 中的
-shell 逻辑全部 Python 化。
-
-注意：start/stop/check_status 以 ogmgr 用户身份运行；
-      install/uninstall/upgrade/rollback 以 root 身份运行（在 deploy 层直接处理）。
-"""
+#!/usr/bin/env python3
+"""og_om core controller."""
 
 import argparse
 import os
@@ -36,12 +29,13 @@ def _log_script_output(output):
 
 
 def _ogmgr_running():
-    """检查 ogmgr 的 uds_server.py 是否在运行"""
+    """Check if ogmgr uds_server.py is running."""
     try:
         result = subprocess.run(
             ["bash", "-c",
              f'ps -ef | grep "{paths.ogmgr_uds_server}" | grep python | grep -v grep'],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=30,
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -88,7 +82,7 @@ def _run_start_script(start_sh, process_name, is_running, timeout=120):
 
 
 def action_check_status():
-    """原 check_status.sh（23 行 shell → Python）"""
+    """Check ogmgr service status."""
     if _ogmgr_running():
         LOG.info("ogmgr is running")
         return
@@ -96,10 +90,7 @@ def action_check_status():
 
 
 def action_start():
-    """原 start.sh（24 行 shell → Python）
-
-    调用服务层 start_ogmgr.sh（组件二进制自带脚本，保留调用）
-    """
+    """Start ogmgr service."""
     LOG.info("Begin to start ogmgr")
 
     start_sh = paths.start_ogmgr_sh
@@ -114,7 +105,7 @@ def action_start():
 
 
 def action_stop():
-    """原 stop.sh（27 行 shell → Python）"""
+    """Stop ogmgr service."""
     LOG.info("Begin to stop ogmgr")
 
     if not _ogmgr_running():
@@ -149,7 +140,7 @@ ACTION_MAP = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description="og_om controller (refactored)")
+    parser = argparse.ArgumentParser(description="og_om controller")
     parser.add_argument("action", choices=list(ACTION_MAP.keys()))
     args, _ = parser.parse_known_args()
 

@@ -1,16 +1,17 @@
+#!/usr/bin/env python3
 """
-CMS 启动模块 —— 全面替代 start_cms.sh + cms_start2.sh
+CMS startup module -- full replacement for start_cms.sh + cms_start2.sh.
 
-职责:
-  - install_cms:    GCC 准备 + 节点注册（首次安装）
-  - start_cms:      启动 CMS server 后台进程
-  - init_container: 容器场景的 GCC 准备 + 节点注册
-  - start2 / stop2 / check2: 日常运维快捷启停（原 cms_start2.sh）
+Actions:
+  - install_cms:    GCC preparation + node registration (first install)
+  - start_cms:      Start CMS server background process
+  - init_container: Container-mode GCC preparation + node registration
+  - start2 / stop2 / check2: Daily start/stop shortcuts (replaces cms_start2.sh)
 
-调用方式:
-  1. 模块导入:  from cms_startup import CmsStartup; CmsStartup(cfg).start_cms()
-  2. CLI:       python3 cms_startup.py --process start_cms
-  3. CLI (v2):  python3 cms_startup.py -start / -stop / -check
+Usage:
+  1. Module import: from cms_startup import CmsStartup; CmsStartup(cfg).start_cms()
+  2. CLI:           python3 cms_startup.py --process start_cms
+  3. CLI (v2):      python3 cms_startup.py -start / -stop / -check
 """
 
 import os
@@ -34,9 +35,9 @@ LOGGER = get_logger()
 
 class ClusterConfig:
     """
-    解析 cluster.ini（INI 风格但带 shell 数组语法）。
+    Parse cluster.ini (INI-style with shell array syntax).
 
-    格式示例:
+    Example format:
         NODE_ID = 0
         CLUSTER_SIZE = 2
         NODE_IP[0] = 192.168.1.1
@@ -77,7 +78,7 @@ class ClusterConfig:
         return int(v) if v is not None else default
 
     def get_array(self, key):
-        """返回有序列表，按索引排列"""
+        """Return ordered list sorted by index."""
         arr = self._arrays.get(key, {})
         if not arr:
             return []
@@ -91,9 +92,9 @@ class ClusterConfig:
 
 class CmsStartup:
     """
-    CMS 启动操作 —— 完整替代 start_cms.sh 的全部逻辑。
+    CMS startup operations -- full replacement for start_cms.sh logic.
 
-    初始化时加载 cluster.ini 和 deploy 配置。
+    Loads cluster.ini and deploy configuration on init.
     """
 
     def __init__(self, cluster_config_path=None, is_rerun=False):
@@ -130,7 +131,7 @@ class CmsStartup:
         self._ensure_ld_library_path()
 
     def _ensure_ld_library_path(self):
-        """将 cms lib/add-ons 注入当前进程 os.environ，确保所有子进程继承"""
+        """Inject cms lib/add-ons into LD_LIBRARY_PATH for all child processes."""
         lib_dir = os.path.join(self.cms_install_path, "lib")
         addons_dir = os.path.join(self.cms_install_path, "add-ons")
         existing = os.environ.get("LD_LIBRARY_PATH", "")
@@ -142,12 +143,12 @@ class CmsStartup:
         os.environ["LD_LIBRARY_PATH"] = ":".join(parts)
 
     def _cms_cmd(self, subcmd):
-        """执行 cms 命令（自动 source .bashrc 以加载环境）"""
+        """Execute a cms command (sources .bashrc for environment)."""
         full = f"source ~/.bashrc 2>/dev/null; {self.cms_bin} {subcmd}"
         return run_cmd(full, f"cms {subcmd} failed")
 
     def _wait_for_success(self, attempts, check_fn, label=""):
-        """等待某个检查函数返回 True，最多 attempts 秒"""
+        """Wait for check_fn to return True, up to `attempts` seconds."""
         for i in range(attempts):
             if check_fn():
                 return True
@@ -159,11 +160,11 @@ class CmsStartup:
 
 
     def prepare_gcc(self):
-        """准备 GCC 存储（仅 node0 执行）
+        """Prepare GCC storage (node0 only).
 
-        DSS 模式下 gcc_home 是块设备（如 /dev/gcc-disk），dd/chmod 需要
-        root 权限，已由 cms_deploy.py._prepare_gcc_device() 在 root 阶段完成。
-        此处仅执行 file 模式的准备和 gcc -reset。
+        In DSS mode gcc_home is a block device (e.g. /dev/gcc-disk); dd/chmod
+        requires root and is handled by cms_deploy.py._prepare_gcc_device().
+        Here we only handle file-mode preparation and gcc -reset.
         """
         if self.is_rerun:
             return
@@ -185,7 +186,7 @@ class CmsStartup:
 
 
     def _check_node_in_cluster(self):
-        """检查当前节点是否已注册"""
+        """Check if the current node is registered in the cluster."""
         ret, stdout, _ = exec_popen(
             f"source ~/.bashrc 2>/dev/null; {self.cms_bin} node -list"
         )
@@ -194,7 +195,7 @@ class CmsStartup:
             raise RuntimeError(f"CHECK NODE LIST FAILED: {expected} not found")
 
     def _check_res_in_cluster(self):
-        """检查资源是否已注册"""
+        """Check if resources are registered in the cluster."""
         ret, stdout, _ = exec_popen(
             f"source ~/.bashrc 2>/dev/null; {self.cms_bin} res -list"
         )
@@ -202,10 +203,12 @@ class CmsStartup:
             raise RuntimeError("CHECK RES LIST FAILED")
 
     def _is_node1_joined(self):
-        ret, stdout, _ = exec_popen(
+        ret, stdout, stderr = exec_popen(
             f"source ~/.bashrc 2>/dev/null; {self.cms_bin} node -list"
         )
-        return "node1" in stdout
+        if ret != 0:
+            LOGGER.warning("cms node -list failed (rc=%d): %s %s", ret, stdout, stderr)
+        return ret == 0 and "node1" in stdout
 
     def _is_gcc_initialized(self):
         ret, stdout, _ = exec_popen(
@@ -218,7 +221,7 @@ class CmsStartup:
         self._wait_for_success(180, self._is_node1_joined, "node1 join")
 
     def setup_cms(self):
-        """注册节点和资源"""
+        """Register nodes and resources."""
         LOGGER.info(f"===== setup cms node {self.node_id} =====")
         youmai_demo = self.paths.youmai_demo
 
@@ -248,7 +251,7 @@ class CmsStartup:
 
 
     def install_cms(self):
-        """安装 CMS（GCC 准备 + 节点注册）"""
+        """Install CMS (GCC preparation + node registration)."""
         LOGGER.info("===== install_cms =====")
         if self.ograc_in_container == "0":
             self.prepare_gcc()
@@ -256,7 +259,7 @@ class CmsStartup:
         LOGGER.info("===== install_cms done =====")
 
     def start_cms(self):
-        """启动 CMS server 进程"""
+        """Start the CMS server process."""
         LOGGER.info(f"===== start cms node {self.node_id} =====")
         self._check_node_in_cluster()
         self._cms_cmd("node -list")
@@ -282,7 +285,7 @@ class CmsStartup:
         LOGGER.info(f"===== start cms node {self.node_id} done =====")
 
     def init_container(self):
-        """容器初始化"""
+        """Container initialization."""
         self.prepare_gcc()
         self.setup_cms()
         flag = os.path.join(self.cms_home, "cfg", "container_flag")
@@ -291,7 +294,7 @@ class CmsStartup:
 
 
     def _wait_for_cms_server_ready(self, pid, timeout=120):
-        """等待 cms server 启动就绪"""
+        """Wait for cms server to become ready."""
         for _ in range(timeout):
             ret, current_pid, _ = exec_popen(
                 "ps -ef | grep 'cms server -start' | grep -v grep | awk '{print $2}' | head -n 1"
@@ -314,7 +317,7 @@ class CmsStartup:
         raise TimeoutError("cms server start timeout")
 
     def start2(self):
-        """日常启动（原 cms_start2.sh -start）"""
+        """Daily start (replaces cms_start2.sh -start)."""
         LOGGER.info(f"===== start2 cms node {self.node_id} =====")
         run_cmd(
             f"source ~/.bashrc 2>/dev/null; "
@@ -343,7 +346,7 @@ class CmsStartup:
         LOGGER.info("===== start2 done =====")
 
     def stop2(self):
-        """日常停止（原 cms_start2.sh -stop）"""
+        """Daily stop (replaces cms_start2.sh -stop)."""
         LOGGER.info("===== stop2 cms =====")
         user = os.environ.get("USER", "")
         ret, count, _ = exec_popen(
@@ -359,7 +362,7 @@ class CmsStartup:
         LOGGER.info("===== stop2 done =====")
 
     def check2(self):
-        """检查 CMS 进程数（原 cms_start2.sh -check）"""
+        """Check CMS process count (replaces cms_start2.sh -check)."""
         user = os.environ.get("USER", "")
         ret, stdout, _ = exec_popen(
             f"ps -fu {user} | grep 'cms server -start' | grep -vE '(grep|defunct)' | wc -l"

@@ -1,15 +1,5 @@
-"""
-CMS 守护进程管理 —— 全面替代 cms_reg.sh
-
-职责:
-  - enable:  创建 cms_enable 标志文件，清理残留 DSS 进程
-  - disable: 删除 cms_enable 标志文件
-
-调用方式:
-  1. 模块导入:  from cms_daemon import CmsDaemon; CmsDaemon().enable()
-  2. CLI:       python3 cms_daemon.py enable
-  3. CMS 二进制回调: _STOP_RERUN_CMS_SCRIPT 指向本文件
-"""
+#!/usr/bin/env python3
+"""CMS daemon management."""
 
 import os
 import sys
@@ -30,7 +20,7 @@ LOOP_TIME = 1
 
 
 class CmsDaemon:
-    """CMS 守护进程 enable/disable 管理"""
+    """CMS daemon enable/disable management."""
 
     def __init__(self):
         cfg = get_config()
@@ -39,7 +29,7 @@ class CmsDaemon:
         self.dss_home = os.path.join(cfg.paths.ograc_home, "dss")
 
     def _log(self, msg):
-        """写入 daemon 日志"""
+        """Write to daemon log."""
         LOGGER.info(msg)
         try:
             log_dir = os.path.dirname(self.daemon_log)
@@ -55,18 +45,18 @@ class CmsDaemon:
 
     @staticmethod
     def _is_process_running(name):
-        """检查进程是否存在"""
+        """Check if process exists."""
         ret, stdout, _ = exec_popen(f"pgrep -u $(id -u) -f '{name}' 2>/dev/null || true")
         return bool(stdout.strip())
 
     @staticmethod
     def _is_exact_process_running(name):
-        """精确匹配进程名"""
+        """Exact match process name."""
         ret, stdout, _ = exec_popen(f"pgrep -u $(id -u) -x '{name}' 2>/dev/null || true")
         return bool(stdout.strip())
 
     def _clean_residual_dss(self):
-        """清理残留的 dssserver 进程"""
+        """Clean residual dssserver processes."""
         if self._is_process_running("cms server -start"):
             return
         if not self._is_process_running(f"dssserver -D {self.dss_home}"):
@@ -92,7 +82,7 @@ class CmsDaemon:
 
 
     def enable(self):
-        """启用 CMS 守护进程"""
+        """Enable CMS daemon."""
         self._log("[cms reg] begin to set cms daemon enable")
         if not os.path.exists(self.cms_enable_flag):
             self._clean_residual_dss()
@@ -111,7 +101,7 @@ class CmsDaemon:
         return True
 
     def disable(self):
-        """禁用 CMS 守护进程"""
+        """Disable CMS daemon."""
         self._log("[cms reg] begin to set cms daemon disable")
         if os.path.exists(self.cms_enable_flag):
             try:

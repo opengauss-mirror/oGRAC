@@ -1,12 +1,5 @@
-"""
-oGRAC 核心控制器（业务用户身份运行）
-
-按 REFACTOR_SPEC 要求，把原 install.sh / start.sh / stop.sh / uninstall.sh /
-pre_install.sh / check_status.sh / backup.sh 中的 shell 逻辑全部 Python 化。
-
-旧 ograc_install.py 中的核心逻辑已内联到各 action 函数中（不再调用外部脚本）。
-"""
-from __future__ import annotations
+#!/usr/bin/env python3
+"""oGRAC core controller."""
 
 import argparse
 import base64
@@ -54,7 +47,7 @@ def _write_json(path, data):
 
 
 def _read_ini(path):
-    """读取 KEY = VALUE 格式的 ini 文件"""
+    """Read ini file (KEY = VALUE format)."""
     result = {}
     if not os.path.isfile(path):
         return result
@@ -71,7 +64,7 @@ def _read_ini(path):
 
 
 def _write_ini_params(conf_file, params):
-    """清除旧参数并追加新参数到 ini 文件"""
+    """Clear old params and append new params to ini file."""
     existing = []
     if os.path.isfile(conf_file):
         with open(conf_file, encoding="utf-8") as f:
@@ -98,7 +91,7 @@ def _write_ini_params(conf_file, params):
 
 
 def _exec(cmd, timeout=1800):
-    """执行 shell 命令"""
+    """Execute shell command."""
     proc = subprocess.Popen(
         ["bash"], shell=False,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -149,7 +142,7 @@ USE_LUN = ("dss",)
 
 
 class DeployParams:
-    """从 config_params_lun.json（经组件 config） + install_config.json 加载部署参数"""
+    """Load deploy params from config_params_lun.json and install_config.json."""
 
     def __init__(self):
         dp = _cfg.deploy.raw_params
@@ -187,6 +180,7 @@ class DeployParams:
             self.archive_location = f"location=/mnt/dbdata/remote/archive_{storage_archive_fs}"
 
         self.running_mode = ic.get("M_RUNING_MODE", "ogracd").strip()
+        self.compatibility_mode = ic.get("DBCOMPATIBILITY", "A").strip()
         self.log_file_cfg = ic.get("l_LOG_FILE", "").strip()
         self.install_path = ic.get("R_INSTALL_PATH", "").strip()
         self.data_path = ic.get("D_DATA_PATH", "").strip()
@@ -210,7 +204,7 @@ log_file     = paths.log_file
 log_dir      = paths.log_dir
 cfg_dir      = paths.ograc_cfg_dir
 
-backup_dir   = os.path.join(ograc_home, "backup", "files", "ograc")
+backup_dir   = os.path.join(paths.backup_dir, "files", "ograc")
 rpm_flag     = os.path.join(ograc_home, "installed_by_rpm")
 rpm_unpack   = os.path.join(ograc_home, "image", "oGRAC-RUN-LINUX-64bit")
 
@@ -231,7 +225,7 @@ def _update_start_status(updates):
 
 
 def _decrypt_db_passwd():
-    """从 ogsql.ini 解码 base64 密码"""
+    """Decode base64 password from ogsql.ini."""
     files = glob.glob(os.path.join(data_path, "cfg", "*sql.ini"))
     if not files:
         raise FileNotFoundError("No ogsql ini found in %s/cfg/" % data_path)
@@ -252,7 +246,7 @@ def _find_ogsql_bin():
 
 
 def _execute_sql(sql, message="execute sql", timeout=600):
-    """通过 ogsql sysdba 执行 SQL"""
+    """Execute SQL via ogsql sysdba."""
     ogsql = _find_ogsql_bin()
     cmd = f'source ~/.bashrc && {ogsql} / as sysdba -q -D {data_path} -c "{sql}"'
     rc, stdout, stderr = _exec(cmd, timeout=timeout)
@@ -266,7 +260,7 @@ def _execute_sql(sql, message="execute sql", timeout=600):
 
 
 def _execute_sql_file(sql_file, timeout=3600):
-    """通过 ogsql sysdba 执行 SQL 文件"""
+    """Execute SQL file via ogsql sysdba."""
     ogsql = _find_ogsql_bin()
     cmd = f"source ~/.bashrc && {ogsql} / as sysdba -q -D {data_path} -f {sql_file}"
     rc, stdout, stderr = _exec(cmd, timeout=timeout)
@@ -280,13 +274,16 @@ def _execute_sql_file(sql_file, timeout=3600):
 
 
 def _check_db_open(timeout=600):
-    """循环检查数据库状态为 OPEN"""
+    """Poll until DB status is OPEN; raise if ogracd process is missing."""
     sql = "SELECT NAME, STATUS, OPEN_STATUS FROM DV_DATABASE"
     db_status = ""
     remaining = timeout
     while remaining > 0:
         remaining -= 10
         time.sleep(10)
+        if not _instance_ogracd_pids():
+            raise RuntimeError(
+                "ogracd process exited unexpectedly, check log for details")
         try:
             res = _execute_sql(sql, "check db status")
         except Exception as err:
@@ -307,7 +304,7 @@ def _check_db_open(timeout=600):
 
 
 def _check_archive_dir(dp):
-    """检查归档目录"""
+    """Check archive directory."""
     if dp.db_type not in ("0", "1", "2"):
         raise RuntimeError(f"Invalid db_type: {dp.db_type}")
     if dp.db_type == "0" or dp.install_type == "reserve":
@@ -333,7 +330,7 @@ def _check_archive_dir(dp):
 
 
 def _auto_tune_memory(c):
-    """根据物理内存自动调整 SGA 相关参数（对齐原版 retune_param_by_memory）"""
+    """Auto-tune SGA params from physical memory."""
     threshold_gb = 31
     small_ratios = (0.20, 0.10, 0.10)
     large_ratios = (0.40, 0.10, 0.05)
@@ -390,8 +387,58 @@ def _auto_tune_memory(c):
     c["CR_POOL_SIZE"] = f"{cr_pool_mb}M"
 
 
+def _parse_size_bytes(val):
+    """Parse size string (e.g. 200G, 110M) to bytes; return 0 if invalid."""
+    if not isinstance(val, str) or len(val) < 2:
+        return 0
+    unit = val[-1].upper()
+    num = val[:-1]
+    if not num.isdigit() or unit not in ("G", "M", "K"):
+        return 0
+    multiplier = {"G": 1 << 30, "M": 1 << 20, "K": 1 << 10}
+    return int(num) * multiplier[unit]
+
+
+def _check_sga_memory(configs, in_container=False):
+    """Validate SGA buffer size does not exceed available memory."""
+    if in_container:
+        return
+
+    sga_keys = ("DATA_BUFFER_SIZE", "TEMP_BUFFER_SIZE",
+                "SHARED_POOL_SIZE", "LOG_BUFFER_SIZE")
+    sga_total = sum(_parse_size_bytes(str(configs.get(k, ""))) for k in sga_keys)
+
+    min_sga = 114 * (1 << 20)
+    if sga_total < min_sga:
+        raise RuntimeError(
+            f"SGA buffer total ({sga_total / (1 << 20):.0f}MB) is less than "
+            f"minimum requirement (114MB)")
+
+    try:
+        with open("/proc/meminfo") as f:
+            avail_kb = 0
+            for line in f:
+                if any(line.startswith(k) for k in
+                       ("MemFree:", "Buffers:", "Cached:", "SwapCached:")):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        avail_kb += int(parts[1])
+    except OSError:
+        LOG.warning("Cannot read /proc/meminfo, skip SGA memory check")
+        return
+
+    avail_bytes = avail_kb * 1024
+    if sga_total > avail_bytes:
+        sga_gb = sga_total / (1 << 30)
+        avail_gb = avail_bytes / (1 << 30)
+        raise RuntimeError(
+            f"SGA buffer total ({sga_gb:.1f}GB) exceeds available memory "
+            f"({avail_gb:.1f}GB). Consider setting auto_tune=1 or reducing "
+            f"DATA_BUFFER_SIZE/TEMP_BUFFER_SIZE/SHARED_POOL_SIZE manually.")
+
+
 def _detect_cpu_group_info(use_gss):
-    """检测 NUMA 拓扑，返回 CPU_GROUP_INFO 字符串（如 '0-23 24-47'）"""
+    """Detect NUMA topology, return CPU_GROUP_INFO string (e.g. '0-23 24-47')."""
     if not os.path.exists("/usr/bin/lscpu"):
         LOG.warning("lscpu not found, skip CPU_GROUP_INFO detection")
         return ""
@@ -429,7 +476,7 @@ def _detect_cpu_group_info(use_gss):
 
 
 def _build_ogracd_configs(dp):
-    """构建 ogracd.ini 的完整参数字典（对齐原版 ograc_funclib.OGRACD_CONFIG）"""
+    """Build full ogracd.ini config dict."""
     is_uc = dp.mes_type in ("UC", "UC_RDMA")
     is_file_mode = dp.deploy_mode == "file"
     node_addr = dp.cms_ip.split(";")[dp.node_id] if dp.cms_ip else "127.0.0.1"
@@ -550,20 +597,22 @@ def _build_ogracd_configs(dp):
     if dp.auto_tune == "1":
         _auto_tune_memory(c)
 
+    _check_sga_memory(c, in_container=dp.ograc_in_container)
+
     return c
 
 
 def _prompt_sys_password():
     if not sys.stdin.isatty():
-        raise RuntimeError("password should be set in interactive terminal。")
+        raise RuntimeError("password should be set in interactive terminal.")
     prompt = "please input ograc password: "
     confirm_prompt = "please confirm the password: "
     pwd1 = getpass.getpass(prompt)
     if not pwd1:
-        raise RuntimeError("password cannot be empty。")
+        raise RuntimeError("password cannot be empty.")
     pwd2 = getpass.getpass(confirm_prompt)
     if pwd1 != pwd2:
-        raise RuntimeError("the password entered twice does not match, please re-execute the installation。")
+        raise RuntimeError("the password entered twice does not match, please re-execute the installation.")
     return pwd1
 
 
@@ -578,12 +627,31 @@ def _write_cluster_conf(dp, ogracd_configs, user, group, password):
     cluster_size = 1 if dp.running_mode.lower() == "ogracd" else 2
     user_home = pwd.getpwnam(user).pw_dir
 
+    ograc_home = paths.ograc_home
+    cms_home = os.path.join(ograc_home, "cms")
+    dss_home = os.path.join(ograc_home, "dss")
+
+    ld_required = [
+        os.path.join(install_path, "lib"),
+        os.path.join(install_path, "add-ons"),
+        os.path.join(ograc_home, "cms", "service", "lib"),
+        os.path.join(ograc_home, "cms", "service", "add-ons"),
+        os.path.join(ograc_home, "dss", "lib"),
+        os.path.join(ograc_home, "dss", "add-ons"),
+    ]
+    seen = set()
+    ld_paths = []
+    for p in ld_required + os.environ.get("LD_LIBRARY_PATH", "").split(":"):
+        if p and p not in seen:
+            seen.add(p)
+            ld_paths.append(p)
+
     params = {
         "LSNR_PORT[0]": dp.ograc_port,
         "LSNR_PORT[1]": dp.ograc_port,
         "REPORT_FILE": log_file,
         "STATUS_LOG": os.path.join(data_path, "log", "ogracstatus.log"),
-        "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+        "LD_LIBRARY_PATH": ":".join(ld_paths),
         "USER_HOME": user_home,
         "USE_GSS": dp.use_gss,
         "CLUSTER_SIZE": cluster_size,
@@ -602,6 +670,10 @@ def _write_cluster_conf(dp, ogracd_configs, user, group, password):
         "RUNNING_MODE": dp.running_mode,
         "LOG_HOME": ogracd_configs.get("LOG_HOME", log_dir),
         "SYS_PASSWORD": password or "",
+        "CMS_HOME": cms_home,
+        "DSS_HOME": dss_home,
+        "OGDB_HOME": install_path,
+        "OGDB_DATA": data_path,
     }
 
     _write_ini_params(conf_file, params)
@@ -610,7 +682,7 @@ def _write_cluster_conf(dp, ogracd_configs, user, group, password):
 
 
 def _encrypt_password(plain_password):
-    """使用 ogencrypt 加密密码，失败时直接抛出异常中止安装（与原版行为一致）"""
+    """Encrypt password with ogencrypt; raises on failure."""
     ogencrypt_bin = os.path.join(install_path, "bin", "ogencrypt")
     if not os.path.isfile(ogencrypt_bin):
         raise RuntimeError(
@@ -655,7 +727,7 @@ def _encrypt_password(plain_password):
 
 
 def _set_user_env(user):
-    """设置用户环境变量（写 profile + os.environ）"""
+    """Set user env vars (profile + os.environ)."""
     user_home = pwd.getpwnam(user).pw_dir
     profile = os.path.join(user_home, ".bashrc")
     if os.path.isfile(profile):
@@ -680,7 +752,7 @@ def _set_user_env(user):
 
 
 def _prepare_data_dir(dp, user, group):
-    """创建数据目录结构并移动 cfg"""
+    """Create data dir structure and move cfg."""
     user_info = f"{user}:{group}"
     _exec(f"chmod 700 {data_path}")
 
@@ -715,7 +787,7 @@ def _prepare_data_dir(dp, user, group):
 
 
 def _add_hba_whitelist(dp, ogracd_configs):
-    """向 oghba.conf 添加 INTERCONNECT_ADDR 白名单"""
+    """Add INTERCONNECT_ADDR whitelist to oghba.conf."""
     cthba_file = os.path.join(data_path, "cfg", "oghba.conf")
     if not os.path.isfile(cthba_file):
         return
@@ -735,7 +807,7 @@ def _add_hba_whitelist(dp, ogracd_configs):
 
 
 def _start_ogracd_process(dp, ogracd_configs):
-    """调用 installdb.sh 拉起 ogracd 进程"""
+    """Invoke installdb.sh to start ogracd process."""
     status = _read_start_status()
     db_create_done = status.get("db_create_status", "default") == "done"
 
@@ -753,22 +825,29 @@ def _start_ogracd_process(dp, ogracd_configs):
     cmd = f"sh {script} -P ogracd -M {start_mode} -T {running_mode} >> {log_file} 2>&1"
     LOG.info("Starting ogracd: mode=%s, running=%s", start_mode, running_mode)
 
-    rc, stdout, stderr = _exec(cmd, timeout=1800)
+    start_timeout = _cfg.timeout.get("start") or 7200
+    rc, stdout, stderr = _exec(cmd, timeout=start_timeout)
     if rc:
         output = (stdout + stderr).replace(str(ogracd_configs.get("_SYS_PASSWORD", "")), "***")
         raise RuntimeError(f"Failed to start ogracd: {output}")
 
-    for _ in range(300):
+    consecutive_missing = 0
+    for i in range(300):
         time.sleep(3)
-        rc, out, _ = _exec(f'ps aux | grep -v grep | grep {data_path} | awk \'{{print $2}}\'')
-        if rc == 0 and out.strip():
-            LOG.info("ogracd process detected (pid=%s)", out.strip().split()[0])
+        pids = _instance_ogracd_pids()
+        if pids:
+            LOG.info("ogracd process detected (pid=%s)", pids[0])
             return
+        consecutive_missing += 1
+        if consecutive_missing >= 10:
+            raise RuntimeError(
+                "ogracd process not found 30s after startup script returned, "
+                "check ogracd run log for details")
     raise RuntimeError("ogracd process not found after startup")
 
 
 def _patch_create_sql(sql_file, dp):
-    """根据部署模式修改建库 SQL 中的文件路径（对齐原版 _sed_file 逻辑）"""
+    """Patch create-db SQL file paths per deploy mode."""
     redo_num = _cfg.deploy.get("redo_num", "")
     redo_size = _cfg.deploy.get("redo_size", "")
     if redo_num and redo_size:
@@ -792,7 +871,7 @@ def _sed_replace(sql_file, pattern, replacement):
 
 
 def _patch_redo_config(sql_file, redo_num, redo_size):
-    """按用户配置调整 redo 数量和大小（在 sed 路径替换之前调用）"""
+    """Adjust redo count/size per user config (call before path sed)."""
     with open(sql_file, "r", encoding="utf-8") as f:
         content = f.read()
     matches = re.findall(r"logfile (\(.*\n{0,}.*\))", content)
@@ -814,7 +893,7 @@ def _patch_redo_config(sql_file, redo_num, redo_size):
 
 
 def _create_database(dp, ogracd_configs):
-    """首次启动时建库（仅 node0）"""
+    """Create DB on first start (node0 only)."""
     if dp.node_id != 0:
         return
 
@@ -824,7 +903,16 @@ def _create_database(dp, ogracd_configs):
 
     _update_start_status({"db_create_status": "creating"})
 
-    sql_dir = os.path.join(install_path, "admin", "scripts")
+    mode = dp.compatibility_mode
+    if mode == "B":
+        sql_dir = os.path.join(install_path, "admin", "dialect_b_scripts")
+    elif mode == "C":
+        sql_dir = os.path.join(install_path, "admin", "dialect_c_scripts")
+    elif mode == "A":
+        sql_dir = os.path.join(install_path, "admin", "scripts")
+    else:
+        raise ValueError(f"Only Support A or B or C compatibility mode, got '{mode}'.")
+
     if dp.running_mode.lower() == "ogracd_in_cluster":
         base_name = "create_cluster_database.sample.sql"
     else:
@@ -845,15 +933,25 @@ def _create_database(dp, ogracd_configs):
 
     _patch_create_sql(sql_file, dp)
 
-    LOG.info("Creating database with %s", sql_file)
+    LOG.info("Creating database with dbcompatibility '%s', sql: %s", dp.compatibility_mode, sql_file)
     _execute_sql_file(sql_file)
     _update_start_status({"db_create_status": "done"})
     LOG.info("Database created successfully")
 
 
+def _create_3rd_pkg():
+    """Run 3rd-party package creation script after DB create."""
+    sql_file = os.path.join(install_path, "admin", "scripts", "create_3rd_pkg.sql")
+    if not os.path.isfile(sql_file):
+        LOG.warning("create_3rd_pkg.sql not found, skipping")
+        return
+    LOG.info("Creating third package ...")
+    _execute_sql_file(sql_file)
+    LOG.info("Creating third package succeed.")
+
 
 def action_pre_install():
-    """原 pre_install.sh + ograc_pre_install.py 逻辑"""
+    """pre_install logic."""
     LOG.info("===== pre_install =====")
 
     if platform.system() != "Linux":
@@ -874,7 +972,7 @@ def action_pre_install():
 
 
 def action_install():
-    """原 install.sh + ograc_install.py 逻辑（全面 Python 化）"""
+    """install logic."""
     LOG.info("===== install =====")
 
     dp = DeployParams()
@@ -984,7 +1082,7 @@ def action_install():
 
 
 def action_start():
-    """原 start.sh + ograc_start.py 逻辑（全面 Python 化）"""
+    """start logic."""
     LOG.info("===== start =====")
 
     dp = DeployParams()
@@ -1039,8 +1137,16 @@ def action_start():
 
         if dp.node_id == 0:
             LOG.info("Waiting for ogracd threads...")
-            time.sleep(20)
-            _create_database(dp, ogracd_configs_for_start)
+            for _ in range(4):
+                time.sleep(5)
+                if not _instance_ogracd_pids():
+                    raise RuntimeError(
+                        "ogracd process exited during initialization, "
+                        "check ogracd run log for details")
+            db_status = _read_start_status().get("db_create_status", "default")
+            if db_status != "done":
+                _create_database(dp, ogracd_configs_for_start)
+                _create_3rd_pkg()
 
         _check_db_open(timeout=600)
 
@@ -1071,7 +1177,7 @@ def action_start():
 
 
 def action_stop():
-    """原 stop.sh + ograc_stop.py 逻辑"""
+    """stop logic."""
     LOG.info("===== stop =====")
 
     start_status = _read_start_status().get("start_status", "default")
@@ -1127,14 +1233,14 @@ def action_stop():
 
 
 def action_check_status():
-    """原 check_status.sh 逻辑"""
+    """check_status logic."""
     LOG.info("===== check_status =====")
     _check_db_open(timeout=300)
     LOG.info("check_status done")
 
 
 def action_uninstall():
-    """原 uninstall.sh 逻辑"""
+    """uninstall logic."""
     LOG.info("===== uninstall =====")
 
     user = _cfg.deploy.ograc_user
@@ -1173,7 +1279,7 @@ def action_uninstall():
 
 
 def action_backup():
-    """原 backup.sh 逻辑"""
+    """backup logic."""
     LOG.info("===== backup =====")
 
     _ensure_dir(backup_dir, 0o700)
@@ -1197,8 +1303,40 @@ def action_backup():
     LOG.info("backup done")
 
 
+def action_restore():
+    """Restore ograc config from backup dir."""
+    LOG.info("===== restore =====")
+
+    if not os.path.isdir(backup_dir):
+        raise RuntimeError(f"Backup directory not found: {backup_dir}")
+
+    for fname in ("ogracd.ini", "ogsql.ini"):
+        src = os.path.join(backup_dir, fname)
+        dst = os.path.join(data_path, "cfg", fname)
+        _ensure_dir(os.path.dirname(dst), 0o750)
+        if os.path.isfile(src):
+            shutil.copy2(src, dst)
+            LOG.info("Restored %s", fname)
+
+    backup_cfg_dir = os.path.join(backup_dir, "cfg")
+    data_cfg_path = os.path.join(data_path, "cfg")
+    if os.path.isdir(backup_cfg_dir):
+        if os.path.isdir(data_cfg_path):
+            shutil.rmtree(data_cfg_path)
+        shutil.copytree(backup_cfg_dir, data_cfg_path)
+        LOG.info("Restored cfg directory")
+
+    backup_cfg_json = os.path.join(backup_dir, "ograc_config.json")
+    if os.path.isfile(backup_cfg_json):
+        _ensure_dir(cfg_dir, 0o750)
+        shutil.copy2(backup_cfg_json, os.path.join(cfg_dir, "ograc_config.json"))
+        LOG.info("Restored ograc_config.json")
+
+    LOG.info("restore done")
+
+
 def action_post_upgrade():
-    """原 ograc_post_upgrade.py 逻辑"""
+    """post_upgrade logic."""
     LOG.info("===== post_upgrade =====")
 
     try:
@@ -1225,12 +1363,13 @@ ACTION_MAP = {
     "stop":           action_stop,
     "check_status":   action_check_status,
     "backup":         action_backup,
+    "restore":        action_restore,
     "post_upgrade":   action_post_upgrade,
 }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="oGRAC controller (refactored)")
+    parser = argparse.ArgumentParser(description="oGRAC controller")
     parser.add_argument("action", type=str, choices=list(ACTION_MAP.keys()) + [
         "pre_upgrade", "upgrade_backup", "upgrade", "rollback", "init_container",
     ])
@@ -1246,5 +1385,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        LOG.error(str(e))
+        import traceback
+        LOG.error("%s\n%s", e, traceback.format_exc())
         sys.exit(1)

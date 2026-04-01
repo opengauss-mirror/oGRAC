@@ -1,4 +1,5 @@
-"""获取源版本号（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""Get source version."""
 
 import sys
 import os

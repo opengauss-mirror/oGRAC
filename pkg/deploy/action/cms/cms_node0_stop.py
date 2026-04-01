@@ -1,68 +1,78 @@
-"""
-CMS Node0 停止脚本（重构版）
-
-重构要点:
-  - 使用 config.py 统一配置（路径解耦）
-  - 使用 utils.py 公共工具（代码复用，替代独立的 _exec_popen）
-  - 更清晰的错误处理
-"""
+#!/usr/bin/env python3
 
 import os
 import sys
 import subprocess
+import platform
+from get_config_info import get_value
+from log import LOGGER
 
-CUR_DIR = os.path.dirname(os.path.abspath(__file__))
-if CUR_DIR not in sys.path:
-    sys.path.insert(0, CUR_DIR)
 
-from config import cfg, get_config
-from log_config import get_logger
-from utils import exec_popen
+def _exec_popen(cmd, values=None):
+    if not values:
+        values = []
+    bash_cmd = ["bash"]
+    pobj = subprocess.Popen(bash_cmd, shell=False, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-LOGGER = get_logger()
+    py_version = platform.python_version()
+    if py_version[0] == "3":
+        pobj.stdin.write(cmd.encode())
+        pobj.stdin.write(os.linesep.encode())
+        for value in values:
+            pobj.stdin.write(value.encode())
+            pobj.stdin.write(os.linesep.encode())
+        stdout, stderr = pobj.communicate(timeout=100)
+        stdout = stdout.decode()
+        stderr = stderr.decode()
+    else:
+        pobj.stdin.write(cmd)
+        pobj.stdin.write(os.linesep)
+        for value in values:
+            pobj.stdin.write(value)
+            pobj.stdin.write(os.linesep)
+        stdout, stderr = pobj.communicate(timeout=100)
+
+    if stdout[-1:] == os.linesep:
+        stdout = stdout[:-1]
+    if stderr[-1:] == os.linesep:
+        stderr = stderr[:-1]
+
+    return pobj.returncode, stdout, stderr
 
 
 def stop_services():
-    """停止 Node0 CMS 服务"""
-    _cfg = get_config()
-    cms_enable_flag = _cfg.paths.cms_enable_flag
-
-    LOGGER.info("Stopping node0 CMS services...")
-
-    ret, _, stderr = exec_popen(f"rm -rf {cms_enable_flag}")
-    if ret != 0:
+    LOGGER.info("Stopping node0 cms services...")
+    returncode, stdout, stderr = _exec_popen("rm -rf /opt/ograc/cms/cfg/cms_enable")
+    if returncode != 0:
         LOGGER.error(f"Error removing cms_enable: {stderr}")
 
-    ret, _, stderr = exec_popen("kill -9 $(pidof cms)")
-    if ret != 0:
+    returncode, stdout, stderr = _exec_popen("kill -9 $(pidof cms)")
+    if returncode != 0:
         LOGGER.error(f"Error stopping CMS process: {stderr}")
 
 
 def ping_kubernetes_service():
-    """检查 Kubernetes 服务是否可达"""
     try:
-        subprocess.check_output(
-            ["timeout", "1", "ping", "-c", "1", "kubernetes.default.svc"],
-            stderr=subprocess.STDOUT,
-        )
+        subprocess.check_output(["timeout", "1", "ping", "-c", "1", "kubernetes.default.svc"], stderr=subprocess.STDOUT)
         return True
     except subprocess.CalledProcessError:
         return False
 
 
 def main():
-    _cfg = get_config()
-    node_id = _cfg.deploy.node_id
-    ograc_in_container = _cfg.deploy.ograc_in_container
+    node_id = get_value('node_id')
+    ograc_in_container = get_value('ograc_in_container')
 
-    if str(node_id) == "0" and ograc_in_container in ("1", "2"):
+    if node_id == "0" and ograc_in_container in ["1", "2"]:
         if not ping_kubernetes_service():
-            LOGGER.info("Kubernetes service is not reachable. Stopping CMS services...")
+            LOGGER.info("Kubernetes service is not reachable. Stopping cms services...")
             stop_services()
+            return
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as err:
-        LOGGER.error(f"Error: {err}")
+        LOGGER.error(f"Error stopping CMS process: {err}")

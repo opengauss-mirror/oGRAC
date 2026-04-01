@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 import re
@@ -33,7 +34,7 @@ class UpgradeVersionCheck:
 
     @staticmethod
     def update_system_version():
-        """预留接口，用于更新系统版本号"""
+        """Reserved interface for updating system version."""
         return True
 
     @staticmethod

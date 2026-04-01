@@ -1,15 +1,5 @@
-"""
-CMS 容器初始化模块 —— 全面替代 init_container.sh
-
-职责:
-  - 修改 cluster.ini / cms.ini 的 IP、FS、节点参数（替代 sed 操作）
-  - 创建 GCC 目录
-  - 调用 cms_ctl.py init_container
-
-调用方式:
-  1. 模块导入: from cms_container_init import CmsContainerInit; CmsContainerInit().run()
-  2. CLI:      python3 cms_container_init.py
-"""
+#!/usr/bin/env python3
+"""CMS container initialization."""
 
 import os
 import sys
@@ -28,7 +18,7 @@ LOGGER = get_logger()
 
 
 class CmsContainerInit:
-    """CMS 容器初始化（替代 init_container.sh 的全部 sed 操作）"""
+    """Initialize CMS configuration for container deployment."""
 
     CLUSTER_CONFIG_NAME = "cluster.ini"
     CMS_CONFIG_NAME = "cms.ini"
@@ -72,12 +62,7 @@ class CmsContainerInit:
 
     @staticmethod
     def _ini_replace(filepath, key_pattern, new_value):
-        """
-        在 INI 文件中替换匹配 key 的值。
-
-        匹配格式: KEY = VALUE  →  KEY = new_value
-        key_pattern 支持正则，例如 r'NODE_IP\\[0\\]'
-        """
+        """Replace matching key value in INI file. Format: KEY = VALUE -> KEY = new_value."""
         if not os.path.exists(filepath):
             LOGGER.warning(f"INI file not found: {filepath}")
             return False
@@ -101,7 +86,7 @@ class CmsContainerInit:
 
 
     def set_cms_ip(self):
-        """设置 CMS IP（替代 init_container.sh::set_cms_ip）"""
+        """Set CMS IP addresses in cluster.ini and cms.ini."""
         LOGGER.info("setting CMS IP addresses")
         parts = self.cms_ip.split(";") if self.cms_ip else []
         node_domain_0 = parts[0].strip() if len(parts) > 0 else ""
@@ -118,7 +103,7 @@ class CmsContainerInit:
             self._ini_replace(self.cms_ini, r".*_IP", node_domain_1)
 
     def set_fs(self):
-        """设置 FS 路径（替代 init_container.sh::set_fs）"""
+        """Set FS paths (GCC_HOME, GCC_DIR, etc.) in config files."""
         LOGGER.info("setting FS paths")
         gcc_home = self.gcc_home
         cms_gcc_bak = self.cms_gcc_bak
@@ -130,7 +115,7 @@ class CmsContainerInit:
         self._ini_replace(self.cms_ini, r"FS_NAME", self.storage_share_fs)
 
     def set_cms_cfg(self):
-        """设置 CMS 配置参数（替代 init_container.sh::set_cms_cfg）"""
+        """Set CMS config parameters (NODE_ID, CLUSTER_ID, SSL, etc.)."""
         LOGGER.info("setting CMS config parameters")
         self._ini_replace(self.cms_ini, r"NODE_ID", str(self.node_id))
         self._ini_replace(self.cluster_ini, r"NODE_ID", str(self.node_id))
@@ -154,7 +139,7 @@ class CmsContainerInit:
 
 
     def run(self):
-        """执行完整的容器初始化"""
+        """Execute full container initialization."""
         LOGGER.info("===== Container Init Start =====")
 
         self.set_cms_ip()

@@ -1,15 +1,5 @@
-"""
-ograc_exporter 部署编排器（root 身份运行）
-
-按 REFACTOR_SPEC 要求，把原 appctl.sh + pre_install.sh 中的 root 级
-shell 逻辑全部 Python 化。
-
-职责：
-  - 权限管理：文件属主 / 目录权限
-  - 日志目录准备
-  - 文件拷贝（非 RPM 场景）
-  - 通过 run_python_as_user 调用 ograc_exporter_ctl.py 执行业务动作
-"""
+#!/usr/bin/env python3
+"""ograc_exporter deploy orchestrator (runs as root)."""
 
 import os
 import shutil
@@ -41,7 +31,7 @@ class ExporterDeploy:
         self.user_cgroup = f"{self.user}:{self.common_group}"
 
     def _mod_prepare(self, action_type=""):
-        """原 pre_install.sh 全部 Python 化"""
+        """Pre-install logic (Python port of pre_install.sh)."""
         p = self.paths
 
         ctl_dir = CUR_DIR
@@ -76,6 +66,10 @@ class ExporterDeploy:
         ensure_dir(p.log_dir, 0o750)
         ensure_file(p.log_file, 0o640)
 
+        og_om_log_dir = os.path.join(p.ograc_home, "log", "og_om")
+        ensure_dir(og_om_log_dir, 0o750)
+        chown_recursive(og_om_log_dir, self.user_group)
+
         if os.path.isdir(p.deploy_logs_dir):
             exec_popen(f'chmod 755 "{p.deploy_logs_dir}"')
 
@@ -104,10 +98,13 @@ class ExporterDeploy:
                     LOG.info(line)
 
     def action_start(self):
-        """原 appctl.sh start 逻辑"""
+        """Start logic (from appctl.sh)."""
         p = self.paths
-        if os.path.isdir(p.data_dir):
-            chown_recursive(p.data_dir, self.user_cgroup)
+        ensure_dir(p.data_dir, 0o750)
+        chown_recursive(p.data_dir, self.user_cgroup)
+        og_om_log_dir = os.path.join(p.ograc_home, "log", "og_om")
+        ensure_dir(og_om_log_dir, 0o750)
+        chown_recursive(og_om_log_dir, self.user_group)
         self._run_ctl("start")
 
     def action_stop(self):
@@ -117,11 +114,11 @@ class ExporterDeploy:
         self._run_ctl("check_status")
 
     def action_install(self):
-        """原 appctl.sh install 逻辑"""
+        """Install logic (from appctl.sh)."""
         self._mod_prepare()
 
     def action_uninstall(self):
-        """no-op，与原脚本一致"""
+        """No-op, same as original script."""
         LOG.info("uninstall: no-op")
 
     def action_upgrade(self):

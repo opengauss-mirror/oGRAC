@@ -1,11 +1,5 @@
-"""
-oGRAC 统一配置管理模块（refactored）
-
-目标：
-  - 路径解耦：所有路径由 ograc_config.json + install_config.json 推导
-  - 多用户隔离：cgroup 等系统资源按 user 分割
-  - 兼容旧逻辑：提供 get_value() 读取 config_params_lun.json/install_config.json 的常见字段
-"""
+#!/usr/bin/env python3
+"""oGRAC unified configuration module."""
 
 import json
 import os
@@ -75,14 +69,7 @@ class InstanceConfig:
 
 
 class PathConfig:
-    """
-    PathConfig 以 ograc_home/data_root + install_config.json 推导最终路径。
-
-    install_config.json 是管控侧下发的“安装参数”，优先级更高：
-      - R_INSTALL_PATH (例如 /opt/ograc/ograc/server)
-      - D_DATA_PATH    (例如 /mnt/dbdata/local/ograc/tmp/data)
-      - l_LOG_FILE     (例如 /opt/ograc/log/ograc/ograc_deploy.log)
-    """
+    """Derive paths from ograc_home/data_root + install_config.json."""
 
     def __init__(self, ograc_home="/opt/ograc", data_root="/mnt/dbdata",
                  install_conf=None, instance=None):
@@ -106,6 +93,8 @@ class PathConfig:
         self.ogracd_ini = posixpath.join(self.data_cfg_dir, "ogracd.ini")
 
         self.scripts_dir = posixpath.join(self.ograc_home, "action", "ograc")
+
+        self.backup_dir = posixpath.join(data_root, "backup")
 
         self.log_dir = posixpath.dirname(self.log_file)
 
@@ -131,7 +120,7 @@ class DeployConfig:
             setattr(self, target, {})
 
     def _load_env(self):
-        """从 root config 加载用户/组信息（user 推导 group/common_group）"""
+        """Load user/group from root config."""
         self._env = load_env_defaults()
 
     @property
@@ -147,7 +136,7 @@ class DeployConfig:
 
     @property
     def raw_params(self):
-        """部署参数字典，供 ograc_ctl 等使用。"""
+        """Deploy params dict for ograc_ctl etc."""
         return dict(self._params)
 
     def uninstall_get(self, key, default=""):
@@ -210,14 +199,11 @@ cfg = _LazyCfg()
 
 
 def get_value(param):
-    """
-    兼容旧脚本的 get_value。
-    优先返回 config_params_lun.json 的字段；少量常用字段从 env/install_config.json 推导。
-    """
+    """Get a deploy parameter by key."""
     _cfg = get_config()
-    if param in ("deploy_user",):
+    if param in ("ograc_user",):
         return _cfg.deploy.ograc_user
-    if param in ("deploy_group",):
+    if param in ("ograc_group",):
         return _cfg.deploy.ograc_group
     if param in ("R_INSTALL_PATH", "D_DATA_PATH", "l_LOG_FILE"):
         install = {

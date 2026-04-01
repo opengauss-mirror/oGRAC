@@ -1,4 +1,5 @@
-"""密码校验（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""Password validation."""
 
 import json
 import sys

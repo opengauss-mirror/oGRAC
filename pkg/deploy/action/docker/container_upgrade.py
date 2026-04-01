@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 container_upgrade.py (Pythonized from container_upgrade.sh)
 

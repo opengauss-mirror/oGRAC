@@ -1,4 +1,5 @@
-"""DSS 升级提交验证"""
+#!/usr/bin/env python3
+"""DSS upgrade commit validation."""
 
 import os
 import sys
@@ -19,13 +20,13 @@ STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
 class DssUpgradeCommit:
-    """验证升级提交条件"""
+    """Validate upgrade commit conditions."""
 
     def __init__(self):
         self.node_status_count = 0
 
     def _count_status_files(self):
-        """统计 status 文件数量"""
+        """Count status files."""
         lines = vg_list_files(STATUS_VG_PATH)
         if lines is None:
             raise RuntimeError(f"dsscmd ls {STATUS_VG_PATH} failed")
@@ -37,7 +38,7 @@ class DssUpgradeCommit:
                 self.node_status_count += 1
 
     def _verify_node_count(self, expected_nodes):
-        """验证节点 status 文件数量与 CMS 节点数一致"""
+        """Verify node status file count matches CMS node count."""
         if expected_nodes != self.node_status_count:
             LOG.error(f"Status files: {self.node_status_count}, expected: {expected_nodes}")
             if expected_nodes > self.node_status_count:
@@ -45,7 +46,7 @@ class DssUpgradeCommit:
             raise RuntimeError("Too many status files in cluster_and_node_status")
 
     def _verify_file_contents(self, node_count):
-        """验证每个节点的 status 文件内容"""
+        """Verify each node's status file content."""
         for i in range(node_count):
             path = os.path.join(STATUS_VG_PATH, f"node{i}_status.txt")
             content = read_dss_file(path)
@@ -53,7 +54,7 @@ class DssUpgradeCommit:
                 raise RuntimeError(f"Node {i} rollup result error: {content}")
 
     def commit(self, expected_nodes):
-        """执行提交验证"""
+        """Execute commit validation."""
         self._count_status_files()
         self._verify_node_count(expected_nodes)
         self._verify_file_contents(expected_nodes)

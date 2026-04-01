@@ -1,4 +1,5 @@
-"""DSS 升级文件删除"""
+#!/usr/bin/env python3
+"""DSS upgrade file deletion."""
 
 import os
 import sys
@@ -21,11 +22,11 @@ STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
 class DssDelete:
-    """升级相关文件的删除操作"""
+    """Upgrade-related file deletion."""
 
     @staticmethod
     def _delete_matching(keyword, vg_path):
-        """删除目录中匹配关键字的文件"""
+        """Delete files matching keyword in directory."""
         matches = vg_find_matching_files(vg_path, keyword)
         for fname in matches:
             vg_rm(f"{vg_path}/{fname}")
@@ -33,7 +34,7 @@ class DssDelete:
 
     @staticmethod
     def _delete_node_status_files():
-        """删除 nodeX_status.txt 文件"""
+        """Delete nodeX_status.txt files."""
         matches = vg_find_matching_files(STATUS_VG_PATH, "node")
         for fname in matches:
             if "status.txt" in fname:
@@ -41,7 +42,7 @@ class DssDelete:
                 LOG.info(f"Deleted: {STATUS_VG_PATH}/{fname}")
 
     def delete(self, input_file):
-        """根据文件类型执行删除"""
+        """Delete by file type."""
         if "updatesys" in input_file:
             self._delete_matching("updatesys", UPGRADE_VG_PATH)
 

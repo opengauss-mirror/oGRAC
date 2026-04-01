@@ -1,15 +1,11 @@
 #!/bin/bash
 
-CURRENT_PATH=$(dirname "$(readlink -f "$0")")
-SCRIPT_NAME=${CURRENT_PATH}/$(basename "$0")
-OGMGR_DIR=$(dirname "${CURRENT_PATH}")
-SERVICE_DIR=$(dirname "${OGMGR_DIR}")
-SOCKET_SCRIPT="${OGMGR_DIR}/uds_server.py"
-SOCKET_FILE="${SERVICE_DIR}/og_om.sock"
+CURRENT_PATH=$(dirname $(readlink -f $0))
+SCRIPT_NAME=${CURRENT_PATH}/$(basename $0)
 source ${CURRENT_PATH}/log4sh.sh
 
 function check_status() {
-    active_service=$(ps -ef | grep "python3 ${SOCKET_SCRIPT}" | grep -v grep)
+    active_service=$(ps -ef | grep /opt/ograc/og_om/service/ogmgr/uds_server.py | grep python)
     if [[ ${active_service} != "" ]]; then
         return 0
     else
@@ -19,10 +15,10 @@ function check_status() {
 
 check_status
 if [ $? -eq 0 ]; then
-    ogmgr_pid=$(ps -ef | grep "python3 ${SOCKET_SCRIPT}" | grep -v grep | awk '{print $2}')
+    ogmgr_pid=$(ps -ef | grep "/opt/ograc/og_om/service/ogmgr/uds_server.py" | grep -v grep | awk '{print $2}')
     kill -9 ${ogmgr_pid}
     if [ $? -eq 0 ]; then
-        rm -rf "${SOCKET_FILE}"
+        rm -rf /opt/ograc/og_om/service/og_om.sock
         logAndEchoInfo "success stop ogmgr"
         exit 0
     else

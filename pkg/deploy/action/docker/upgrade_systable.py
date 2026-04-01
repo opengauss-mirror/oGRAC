@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 upgrade_systable.py (Pythonized from upgrade_systable.sh)
 

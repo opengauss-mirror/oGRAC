@@ -1,8 +1,5 @@
-"""
-og_om 统一配置管理模块（refactored）
-
-路径解耦 + cgroup 配置 + 可配置超时 + shell-env 输出
-"""
+#!/usr/bin/env python3
+"""og_om unified configuration module."""
 
 import importlib.util
 import json
@@ -105,7 +102,7 @@ class PathConfig:
 
 
 def _parse_version(versions_file):
-    """从 versions.yml 解析版本号"""
+    """Parse version from versions.yml."""
     if not os.path.exists(versions_file):
         return ""
     try:

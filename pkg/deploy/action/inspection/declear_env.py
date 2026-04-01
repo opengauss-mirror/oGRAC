@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import pwd
 import sys
@@ -48,4 +49,4 @@ class DeclearEnv:
         if user_id == user_info.pw_uid:
             return run_user
 
-        raise ValueError("[error] executor must be root or deploy_user")
+        raise ValueError("[error] executor must be root or ograc service user")

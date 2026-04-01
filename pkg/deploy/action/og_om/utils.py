@@ -1,4 +1,5 @@
-"""og_om 工具库（refactored）"""
+#!/usr/bin/env python3
+"""og_om utilities."""
 
 import os
 import subprocess
@@ -15,7 +16,7 @@ class CommandError(Exception):
 
 
 def exec_popen(cmd, timeout=600):
-    """统一 shell 命令执行"""
+    """Execute a shell command."""
     pobj = subprocess.Popen(
         ["bash", "-c", cmd],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -41,7 +42,7 @@ def run_cmd(cmd, timeout=600, error_msg="Command failed"):
 
 
 def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=600):
-    """以指定用户身份执行 Python 脚本"""
+    """Run a Python script as the specified user."""
     import pwd
 
     pw = pwd.getpwnam(user)
@@ -104,7 +105,7 @@ def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=600)
 
 
 def run_shell_as_user(cmd, user, timeout=600):
-    """以指定用户身份执行 shell 命令（使用 su）"""
+    """Run a shell command as the specified user via su."""
     rc, _, _ = exec_popen(f"id -u {user}", timeout=10)
     if rc != 0:
         raise CommandError(f"id -u {user}", rc, "", f"user {user} not exist")

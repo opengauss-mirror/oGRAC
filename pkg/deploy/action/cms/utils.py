@@ -1,12 +1,5 @@
-"""
-CMS 公共工具模块
-
-重复代码归一：
-  - exec_popen / run_cmd: 统一命令执行（替代 cmsctl.py 和 cms_node0_stop.py 中的重复实现）
-  - check_backup_files / check_rollback_files: 统一备份校验（替代 appctl.sh 中的重复函数）
-  - CGroup / IPTables / 进程管理: 统一系统操作
-  - run_as_user: 用户切换执行
-"""
+#!/usr/bin/env python3
+"""CMS shared utilities."""
 
 import os
 import sys
@@ -22,7 +15,7 @@ LOGGER = get_logger()
 
 
 class CommandError(Exception):
-    """命令执行失败的异常"""
+    """Exception when command execution fails."""
     def __init__(self, cmd, returncode, stdout="", stderr=""):
         self.cmd = cmd
         self.returncode = returncode
@@ -35,18 +28,7 @@ class CommandError(Exception):
 
 
 def exec_popen(cmd, timeout=1800):
-    """
-    统一的子进程执行函数。
-
-    替代 cmsctl.py 和 cms_node0_stop.py 中各自独立的 _exec_popen()。
-
-    Args:
-        cmd: 要执行的 bash 命令字符串
-        timeout: 超时秒数（默认 1800 秒）
-
-    Returns:
-        (returncode, stdout, stderr) 三元组
-    """
+    """Execute shell command via subprocess, return (returncode, stdout, stderr)."""
     pobj = subprocess.Popen(
         ["bash"],
         shell=False,
@@ -70,22 +52,7 @@ def exec_popen(cmd, timeout=1800):
 
 
 def run_cmd(cmd, error_msg="Command failed", force_uninstall=None):
-    """
-    执行命令并检查返回值，失败时抛出异常。
-
-    统一替代 cmsctl.py 中的 run_cmd()。
-
-    Args:
-        cmd: bash 命令
-        error_msg: 失败时的错误消息
-        force_uninstall: 若为 "force" 则失败不抛出异常
-
-    Returns:
-        stdout 字符串
-
-    Raises:
-        CommandError: 命令失败且 force_uninstall != "force"
-    """
+    """Execute command and check return code; raise CommandError on failure unless force_uninstall=='force'."""
     ret_code, stdout, stderr = exec_popen(cmd)
     if ret_code:
         output = stdout + stderr
@@ -96,20 +63,7 @@ def run_cmd(cmd, error_msg="Command failed", force_uninstall=None):
 
 
 def run_as_user(cmd, user, log_file=None):
-    """
-    以指定用户身份执行 shell 命令。
-
-    适用于需要 shell 特性（source、管道、通配符）的场景。
-    对于 Python-to-Python 调用，请使用 run_python_as_user()。
-
-    Args:
-        cmd: 要执行的 shell 命令字符串
-        user: 目标用户
-        log_file: 可选的日志重定向文件
-
-    Returns:
-        (returncode, stdout, stderr)
-    """
+    """Execute shell command as specified user. Returns (returncode, stdout, stderr)."""
     if log_file:
         full_cmd = f'su -s /bin/bash - {user} -c "{cmd} >> {log_file} 2>&1"'
     else:
@@ -118,35 +72,14 @@ def run_as_user(cmd, user, log_file=None):
 
 
 def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=1800):
-    """
-    以指定用户身份执行 Python 脚本（结构化参数，无 shell 字符串拼接）。
-
-    替代 run_as_user("python3 script arg1 arg2", user) 的反模式。
-    使用 subprocess.Popen + preexec_fn 直接切换 uid/gid，参数以列表传递。
-
-    优势：
-      - 无 shell 注入风险
-      - 参数包含空格/特殊字符时无需转义
-      - 调用方传入结构化数据而非拼接字符串
-
-    Args:
-        script: Python 脚本路径
-        args:   参数列表, 如 ["pre_install", "install"]
-        user:   目标系统用户名
-        log_file: 可选日志文件路径（stdout/stderr 追加写入）
-        cwd:    工作目录（默认为脚本所在目录）
-        timeout: 超时秒数（默认 1800）
-
-    Returns:
-        (returncode, stdout, stderr) 三元组
-    """
+    """Execute Python script as specified user via subprocess with uid/gid switch. Returns (returncode, stdout, stderr)."""
     import pwd
 
     pw = pwd.getpwnam(user)
     uid, gid, home = pw.pw_uid, pw.pw_gid, pw.pw_dir
 
     def _demote():
-        """preexec_fn: 在子进程 exec 前切换为目标用户"""
+        """preexec_fn: switch to target user before child exec."""
         os.setgid(gid)
         os.initgroups(user, gid)
         os.setuid(uid)
@@ -192,12 +125,7 @@ def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=1800
 
 
 def _parse_backup_list_line(line):
-    """
-    解析备份文件列表中的一行。
-
-    Returns:
-        (record_size, file_path) 或 (None, None) 如果行无效
-    """
+    """Parse one line of backup file list. Returns (record_size, file_path) or (None, None) if invalid."""
     line = line.strip()
     if not line:
         return None, None
@@ -215,51 +143,24 @@ def _parse_backup_list_line(line):
 
 
 def check_backup_files(backup_list_file, dest_dir, orig_dir):
-    """
-    检查备份文件完整性。
-
-    统一替代 appctl.sh 中 check_backup_files() 和 check_rollback_files() 的重复逻辑。
-
-    Args:
-        backup_list_file: 备份文件列表路径
-        dest_dir: 备份目标目录
-        orig_dir: 原始目录
-
-    Raises:
-        FileCheckError: 文件校验失败
-    """
+    """Verify backup file integrity. Raises FileCheckError on failure."""
     LOGGER.info(f"check backup files in {dest_dir} from {orig_dir}")
     _do_file_check(backup_list_file, dest_dir, orig_dir, mode="backup")
 
 
 def check_rollback_files(backup_list_file, dest_dir, orig_dir):
-    """
-    检查回滚文件完整性。
-
-    Args:
-        backup_list_file: 备份文件列表路径
-        dest_dir: 备份目标目录
-        orig_dir: 原始目录
-
-    Raises:
-        FileCheckError: 文件校验失败
-    """
+    """Verify rollback file integrity. Raises FileCheckError on failure."""
     LOGGER.info(f"check rollback files in {dest_dir} from {orig_dir}")
     _do_file_check(backup_list_file, dest_dir, orig_dir, mode="rollback")
 
 
 class FileCheckError(Exception):
-    """文件校验失败"""
+    """File verification failed."""
     pass
 
 
 def _do_file_check(backup_list_file, dest_dir, orig_dir, mode="backup"):
-    """
-    统一的文件校验实现。
-
-    合并了原 check_backup_files 和 check_rollback_files 两个几乎一样的函数，
-    通过 mode 参数区分 "backup"（检查dest是否存在）和 "rollback"（检查orig是否存在）。
-    """
+    """Unified file check: mode 'backup' checks dest exists, 'rollback' checks orig exists."""
     with open(backup_list_file, "r") as f:
         for line in f:
             record_size, orig_path = _parse_backup_list_line(line)
@@ -300,19 +201,19 @@ def _do_file_check(backup_list_file, dest_dir, orig_dir, mode="backup"):
 
 
 class CGroupManager:
-    """CGroup 内存隔离管理"""
+    """CGroup memory isolation management."""
 
     def __init__(self, cgroup_path, mem_size_gb=10):
         self.cgroup_path = cgroup_path
         self.mem_size_gb = mem_size_gb
 
     def create(self):
-        """创建 cgroup 路径"""
+        """Create cgroup path."""
         os.makedirs(self.cgroup_path, exist_ok=True)
         LOGGER.info(f"cgroup path created: {self.cgroup_path}")
 
     def configure(self, process_keyword="cms server -start"):
-        """设置内存限制并将进程加入"""
+        """Set memory limit and add process."""
         limit_file = os.path.join(self.cgroup_path, "memory.limit_in_bytes")
         tasks_file = os.path.join(self.cgroup_path, "tasks")
 
@@ -330,7 +231,7 @@ class CGroupManager:
             LOGGER.info(f"added pid {pid} to cgroup")
 
     def clean(self):
-        """清理 cgroup"""
+        """Clean cgroup."""
         if os.path.isdir(self.cgroup_path):
             try:
                 os.rmdir(self.cgroup_path)
@@ -341,7 +242,7 @@ class CGroupManager:
             LOGGER.info("cgroup path does not exist, skip cleaning")
 
     def setup(self, process_keyword="cms server -start"):
-        """完整的 cgroup 设置流程: clean -> create -> configure"""
+        """Full cgroup setup: clean -> create -> configure"""
         try:
             self.clean()
         except Exception:
@@ -351,7 +252,7 @@ class CGroupManager:
 
 
 class IPTablesManager:
-    """IPTables 规则管理"""
+    """IPTables rule management."""
 
     @staticmethod
     def _get_iptables_path():
@@ -363,7 +264,7 @@ class IPTablesManager:
 
     @staticmethod
     def _rule_exists(chain, port):
-        """检查规则是否已存在"""
+        """Check if rule exists."""
         ret, stdout, _ = exec_popen(
             f"iptables -L {chain} -w 60 | grep ACCEPT | grep {port} | grep tcp | wc -l"
         )
@@ -371,10 +272,7 @@ class IPTablesManager:
 
     @classmethod
     def accept(cls, cms_config_file):
-        """
-        添加 iptables ACCEPT 规则。
-        统一替代 appctl.sh 中的 iptables_accept()。
-        """
+        """Add iptables ACCEPT rules for CMS port."""
         port = cls._read_port(cms_config_file)
         if not port:
             LOGGER.warning("cannot read CMS port, skip iptables")
@@ -391,10 +289,7 @@ class IPTablesManager:
 
     @classmethod
     def delete(cls, cms_config_file):
-        """
-        删除 iptables ACCEPT 规则。
-        统一替代 appctl.sh 中的 iptables_delete()。
-        """
+        """Remove iptables ACCEPT rules for CMS port."""
         port = cls._read_port(cms_config_file)
         if not port:
             return
@@ -409,7 +304,7 @@ class IPTablesManager:
 
     @staticmethod
     def _read_port(config_file):
-        """从 cms.ini 中读取端口"""
+        """Read port from cms.ini."""
         if not os.path.exists(config_file):
             return ""
         try:
@@ -424,14 +319,14 @@ class IPTablesManager:
 
 
 class ProcessManager:
-    """进程管理工具"""
+    """Process management utility."""
 
     CHECK_MAX_TIMES = 7
     CHECK_INTERVAL = 5
 
     @staticmethod
     def get_pid(process_name):
-        """获取进程 PID"""
+        """Get process PID."""
         cmd = (
             f"ps -u $(id -un) -o pid=,args= | grep '{process_name}' | "
             "grep -v grep | awk '{print $1}'"
@@ -444,7 +339,7 @@ class ProcessManager:
 
     @staticmethod
     def kill_process(process_name):
-        """杀死指定进程"""
+        """Kill specified process."""
         kill_cmd = (
             f"proc_pid_list=$(ps -u $(id -un) -o pid=,args= | grep '{process_name}' | "
             "grep -v grep | awk '{print $1}') && "
@@ -455,7 +350,7 @@ class ProcessManager:
 
     @classmethod
     def ensure_stopped(cls, process_name, force_uninstall=None):
-        """确保进程已停止，最多等待 CHECK_MAX_TIMES * CHECK_INTERVAL 秒"""
+        """Ensure process stopped, wait up to CHECK_MAX_TIMES * CHECK_INTERVAL seconds."""
         for i in range(cls.CHECK_MAX_TIMES):
             pid = cls.get_pid(process_name)
             if not pid:
@@ -471,18 +366,12 @@ class ProcessManager:
 
     @staticmethod
     def is_running(process_name):
-        """检查进程是否在运行"""
+        """Check if process is running."""
         return bool(ProcessManager.get_pid(process_name))
 
     @staticmethod
     def clear_shm(shm_home="/dev/shm", shm_pattern="ograc.[0-9]*"):
-        """
-        清理共享内存（当 ogracd 未运行时）。
-
-        Args:
-            shm_home:    shm 目录（多实例时为隔离子目录，如 /dev/shm/ograc_alice）
-            shm_pattern: 文件匹配模式（来自 InstanceConfig.shm_pattern）
-        """
+        """Clear shared memory when ogracd not running. Args: shm_home, shm_pattern."""
         shm_dir_name = os.path.basename(os.path.normpath(shm_home))
         cmd = ("ps -eo args= | grep '[o]gracd' "
                f"| grep '/dev/shm/{shm_dir_name}/'")
@@ -505,15 +394,7 @@ class ProcessManager:
 
     @staticmethod
     def ensure_shm_dir(shm_home, user_and_group=""):
-        """
-        确保用户的 shm 子目录存在且权限正确（0700）。
-
-        所有用户统一在 /dev/shm/{user}/ 下隔离，启动前自动创建。
-
-        Args:
-            shm_home:       用户的 shm 目录路径，如 /dev/shm/ograc
-            user_and_group: 所有者，格式 "user:group"
-        """
+        """Ensure user shm subdir exists with correct permissions (0700). Args: shm_home, user_and_group."""
         if not os.path.isdir(shm_home):
             os.makedirs(shm_home, mode=0o700, exist_ok=True)
             LOGGER.info(f"created shm directory: {shm_home} (mode=0700)")
@@ -524,14 +405,14 @@ class ProcessManager:
 
 
 def ensure_dir(path, mode=0o750, owner=None):
-    """确保目录存在并设置权限"""
+    """Ensure directory exists and set permissions."""
     os.makedirs(path, mode=mode, exist_ok=True)
     if owner:
         run_cmd(f"chown {owner} -hR {path}", f"failed to chown {path}")
 
 
 def ensure_file(path, mode=0o640, owner=None):
-    """确保文件存在并设置权限"""
+    """Ensure file exists and set permissions."""
     if not os.path.exists(path):
         with open(path, "w"):
             pass
@@ -541,7 +422,7 @@ def ensure_file(path, mode=0o640, owner=None):
 
 
 def safe_remove(path):
-    """安全删除文件或目录"""
+    """Safely remove file or directory."""
     if os.path.isfile(path) or os.path.islink(path):
         os.remove(path)
     elif os.path.isdir(path):
@@ -550,7 +431,7 @@ def safe_remove(path):
 
 
 def copy_tree(src, dest, owner=None):
-    """复制目录树"""
+    """Copy directory tree."""
     run_cmd(f"cp -arf {src} {dest}", f"failed to copy {src} to {dest}")
     if owner:
         run_cmd(f"chown -hR {owner} {dest}", f"failed to chown {dest}")
@@ -558,7 +439,7 @@ def copy_tree(src, dest, owner=None):
 
 
 def read_version(versions_yml_path):
-    """从 versions.yml 读取版本号"""
+    """Read version from versions.yml."""
     if not os.path.exists(versions_yml_path):
         return ""
     with open(versions_yml_path, "r") as f:
@@ -570,7 +451,7 @@ def read_version(versions_yml_path):
 
 
 def get_version_major(versions_yml_path):
-    """获取主版本号（第一位数字）"""
+    """Get major version (first digit)."""
     version = read_version(versions_yml_path)
     if version:
         return int(version.split(".")[0])

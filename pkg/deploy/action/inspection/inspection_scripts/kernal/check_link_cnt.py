@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 check_link_cnt.py — Python equivalent of check_link_cnt.sh
 

@@ -1,4 +1,5 @@
-"""DSS 升级 YAML 文件管理"""
+#!/usr/bin/env python3
+"""DSS upgrade YAML file management."""
 
 import os
 import sys
@@ -23,13 +24,13 @@ class DssYaml:
         self.vg_path = None
 
     def _remove_existing(self):
-        """如果 VG 中已存在同名文件，先删除"""
+        """Remove existing file in VG if same name exists."""
         matches = vg_find_matching_files("+vg1", self.file_name)
         if matches:
             vg_rm(self.vg_path)
 
     def upload(self, input_file):
-        """将 YAML 文件上传到 VG（对齐到 512 字节）"""
+        """Upload YAML file to VG (aligned to 512 bytes)."""
         self.file_name = os.path.basename(input_file)
         self.local_path = input_file
         self.vg_path = os.path.join("+vg1", self.file_name)

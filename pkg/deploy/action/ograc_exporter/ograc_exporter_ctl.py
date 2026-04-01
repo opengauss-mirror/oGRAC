@@ -1,9 +1,5 @@
-"""
-ograc_exporter 核心控制器（业务用户身份运行）
-
-按 REFACTOR_SPEC 要求，把原 start.sh / stop.sh / check_status.sh 中的
-shell 逻辑全部 Python 化。不调用任何旧 shell 脚本。
-"""
+#!/usr/bin/env python3
+"""ograc_exporter controller."""
 
 import argparse
 import os
@@ -33,17 +29,42 @@ def _log_script_output(output):
 
 
 def _exporter_running():
-    """检查 ograc_exporter 的 execute.py 是否在运行"""
+    """Check if ograc_exporter execute.py is running."""
     try:
         result = subprocess.run(
             ["bash", "-c",
              f'ps -ef | grep "python3 {paths.execute_py}" | grep -v grep | awk \'{{print $2}}\''],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=30,
         )
         pid = result.stdout.strip()
         return bool(pid)
     except Exception:
         return False
+
+
+def _read_log_tail(filepath, n=30):
+    try:
+        if not os.path.isfile(filepath):
+            return ""
+        with open(filepath, "r", errors="replace") as f:
+            lines = f.readlines()
+            return "".join(lines[-n:])
+    except Exception:
+        return ""
+
+
+def _gather_start_diagnostics():
+    diag_files = [paths.log_file]
+    og_om_log = os.path.join(paths.ograc_home, "log", "og_om", "exporter.log")
+    if og_om_log != paths.log_file:
+        diag_files.append(og_om_log)
+    parts = []
+    for fpath in diag_files:
+        tail = _read_log_tail(fpath)
+        if tail.strip():
+            parts.append(f"--- {fpath} (last lines) ---\n{tail}")
+    return "\n".join(parts)
 
 
 def _run_start_script(start_script, process_name, is_running, timeout=60):
@@ -86,7 +107,7 @@ def _run_start_script(start_script, process_name, is_running, timeout=60):
 
 
 def action_check_status():
-    """原 check_status.sh 逻辑（22 行 shell → Python）"""
+    """Check if ograc_exporter is running."""
     if _exporter_running():
         LOG.info("ograc_exporter is running")
         return
@@ -94,28 +115,35 @@ def action_check_status():
 
 
 def action_start():
-    """原 start.sh 逻辑（39 行 shell → Python）
-
-    调用服务层 start_ograc_exporter.sh（这是组件二进制自带的启动脚本，
-    不属于部署脚本，需保留调用）
-    """
+    """Start ograc_exporter via component start script."""
     LOG.info("Begin to start og_exporter")
 
     start_script = paths.start_script
     if not os.path.isfile(start_script):
         raise FileNotFoundError(f"start script not found: {start_script}")
 
-    _run_start_script(start_script, "ograc_exporter", _exporter_running, timeout=60)
+    try:
+        _run_start_script(start_script, "ograc_exporter", _exporter_running, timeout=60)
+    except RuntimeError as e:
+        diag = _gather_start_diagnostics()
+        if diag:
+            raise RuntimeError(f"{e}\n{diag}") from None
+        raise
+
     time.sleep(3)
 
     if not _exporter_running():
-        raise RuntimeError("ograc_exporter failed to start (process not found after 3s)")
+        diag = _gather_start_diagnostics()
+        msg = "ograc_exporter failed to start (process not found after 3s)"
+        if diag:
+            msg += f"\n{diag}"
+        raise RuntimeError(msg)
 
     LOG.info("Success to start og_exporter")
 
 
 def action_stop():
-    """原 stop.sh 逻辑（36 行 shell → Python）"""
+    """Stop ograc_exporter via component stop script."""
     LOG.info("Begin to stop og_exporter")
 
     if not _exporter_running():
@@ -150,7 +178,7 @@ ACTION_MAP = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ograc_exporter controller (refactored)")
+    parser = argparse.ArgumentParser(description="ograc_exporter controller")
     parser.add_argument("action", choices=list(ACTION_MAP.keys()))
     args, _ = parser.parse_known_args()
 

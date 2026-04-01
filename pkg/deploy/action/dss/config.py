@@ -1,16 +1,5 @@
-"""
-DSS 统一配置管理模块
-
-功能：
-  1. 路径解耦：所有路径从 dss_config.json 读取，支持自定义安装目录
-  2. 统一配置读取：一次性加载 config_params_lun.json，替代多次 get_value 调用
-  3. 多用户隔离：cgroup/shm 等公共资源按 user 分割
-
-用法：
-  from config import cfg
-  print(cfg.paths.dss_home)
-  print(cfg.deploy.get("node_id"))
-"""
+#!/usr/bin/env python3
+"""DSS unified configuration module."""
 
 import os
 import sys
@@ -35,7 +24,7 @@ _MAX_SHM_KEY = 0x7FFFFFFF
 
 
 def _resolve_pkg_dir():
-    """获取部署包根目录：优先读标记文件，回退到相对路径推导。"""
+    """Get deploy package root: prefer marker file, fallback to relative path."""
     marker = os.path.join(os.path.dirname(CUR_DIR), ".deploy_pkg_dir")
     if os.path.isfile(marker):
         with open(marker) as f:
@@ -74,9 +63,7 @@ def _resolve_required_ograc_user(legacy_value=""):
 
 
 class InstanceConfig:
-    """
-    实例配置 —— 以 user 为主键，管理多用户部署时的资源隔离。
-    """
+    """Instance config: user as key for multi-user resource isolation."""
 
     def __init__(self, user,
                  cgroup_memory_base="/sys/fs/cgroup/memory",
@@ -102,7 +89,7 @@ class InstanceConfig:
 
 
 class TimeoutConfig:
-    """操作超时配置"""
+    """Operation timeout config."""
 
     _DEFAULTS = {
         "default":       1800,
@@ -129,9 +116,7 @@ class TimeoutConfig:
 
 
 class PathConfig:
-    """
-    从 ograc_home 推导全部路径，实现路径解耦。
-    """
+    """Derive all paths from ograc_home for path decoupling."""
 
     def __init__(self, ograc_home, data_root,
                  instance=None):
@@ -162,7 +147,7 @@ class PathConfig:
 
         self.source_dir = os.path.join(_resolve_pkg_dir(), "dss")
 
-        self.backup_dir = os.path.join(ograc_home, "backup", "files", "dss")
+        self.backup_dir = os.path.join(data_root, "backup", "files", "dss")
 
         self.install_config = os.path.join(_ACTION_DIR, "config_params_lun.json")
         self.rpm_flag = os.path.join(ograc_home, "installed_by_rpm")
@@ -173,7 +158,7 @@ class PathConfig:
 
 
 class DssSpecificConfig:
-    """DSS 组件专用配置（重试次数、命令超时等）"""
+    """DSS-specific config (retry count, cmd timeout, etc.)."""
 
     def __init__(self, retry_times=20, cmd_timeout=60, init_disk_timeout=300):
         self.retry_times = retry_times
@@ -182,7 +167,7 @@ class DssSpecificConfig:
 
 
 class DeployConfig:
-    """统一从根 config 的 load_deploy_params() 读取 config_params_lun.json + load_env_defaults()"""
+    """Load from root config load_deploy_params() + load_env_defaults()."""
 
     def __init__(self, env_file=None):
         self._params = dict(load_deploy_params())
@@ -190,13 +175,13 @@ class DeployConfig:
         self._load_env()
 
     def _load_env(self):
-        """从 root config 加载用户/组信息（user 推导 group/common_group）"""
+        """Load user/group from root config (user derives group/common_group)."""
         self._env = load_env_defaults()
 
     def get(self, key, default=""):
-        if key == "deploy_user":
+        if key in ("ograc_user",):
             return self._env.get("ograc_user", default)
-        if key == "deploy_group":
+        if key in ("ograc_group",):
             return self._env.get("ograc_group", default)
         return self._params.get(key, default)
 
@@ -246,7 +231,7 @@ class DeployConfig:
 
 
 class DssConfig:
-    """DSS 配置入口 - 全局单例"""
+    """DSS config entry - global singleton."""
 
     def __init__(self, dss_config_file=None, deploy_param_file=None, env_file=None):
         self.paths, self.timeout, self.dss, self._user = self._load_dss_config(

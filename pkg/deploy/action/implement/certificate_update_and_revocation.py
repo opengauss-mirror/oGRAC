@@ -1,4 +1,5 @@
-"""证书更新与吊销管理（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""Certificate update and revocation management."""
 
 import json
 import os

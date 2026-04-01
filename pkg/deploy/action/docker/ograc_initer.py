@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 ograc_initer.py (Pythonized from ograc_initer.sh – 483 lines)
 

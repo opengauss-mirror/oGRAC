@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 log_backup.py (Pythonized from log_backup.sh)
 
@@ -40,7 +41,7 @@ def delete_log_if_too_much(dir_path):
 
 
 def _copytree_compat(src, dst, **kwargs):
-    """shutil.copytree 兼容包装：Python < 3.8 不支持 dirs_exist_ok。"""
+    """shutil.copytree compat: Python < 3.8 lacks dirs_exist_ok."""
     kwargs.pop("dirs_exist_ok", None)
     if os.path.isdir(dst):
         for item in os.listdir(src):

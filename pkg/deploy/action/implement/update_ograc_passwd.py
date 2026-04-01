@@ -1,4 +1,5 @@
-"""oGRAC 密码加密与更新（refactored - 路径解耦）"""
+#!/usr/bin/env python3
+"""oGRAC password encryption and update."""
 
 import stat
 import sys
@@ -10,7 +11,7 @@ sys.path.insert(0, CUR_PATH)
 from config import cfg as _cfg
 _paths = _cfg.paths
 
-sys.path.append(os.path.join(CUR_PATH, "..", "dbstor"))
+sys.path.append(os.path.join(CUR_PATH, "..", "ograc_common"))
 from kmc_adapter import CApiWrapper
 
 

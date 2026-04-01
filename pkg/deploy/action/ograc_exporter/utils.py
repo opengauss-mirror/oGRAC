@@ -1,4 +1,5 @@
-"""ograc_exporter 工具库（refactored）"""
+#!/usr/bin/env python3
+"""ograc_exporter utilities."""
 
 import os
 import subprocess
@@ -15,7 +16,7 @@ class CommandError(Exception):
 
 
 def exec_popen(cmd, timeout=600):
-    """统一 shell 命令执行"""
+    """Execute a shell command."""
     pobj = subprocess.Popen(
         ["bash", "-c", cmd],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -41,7 +42,7 @@ def run_cmd(cmd, timeout=600, error_msg="Command failed"):
 
 
 def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=600):
-    """以指定用户身份执行 Python 脚本"""
+    """Run a Python script as the specified user."""
     import pwd
 
     pw = pwd.getpwnam(user)
@@ -110,10 +111,10 @@ def ensure_file(path, mode=0o640, owner=""):
 
 
 def chown_recursive(path, owner):
-    """递归修改属主"""
+    """Recursively change file ownership."""
     exec_popen(f"chown -hR {owner} {path}")
 
 
 def chmod_recursive(path, mode):
-    """递归修改权限"""
+    """Recursively change file permissions."""
     exec_popen(f"chmod -Rf {mode} {path}")

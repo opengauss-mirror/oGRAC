@@ -1,24 +1,5 @@
-"""
-oGRAC 统一配置管理模块
-
-config_params_lun.json 的 module_config 块声明可变量：
-  ograc_home, data_root, user
-其余从 user 自动推导，保证多用户部署解耦：
-  group = user, common_group = "{user}group"
-
-用法：
-  from config import cfg
-  cfg.paths.ograc_home        # /opt/ograc
-  cfg.paths.action_dir        # /opt/ograc/action
-  cfg.logs.log_file("deploy") # /opt/ograc/log/deploy/deploy.log
-  cfg.timeout("install")      # 3600
-  cfg.get("deploy_mode")      # 从 config_params_lun.json 读
-
-子模块兼容旧 _load_env() 的替代方案：
-  from config import load_env_defaults
-  env = load_env_defaults()
-  env["ograc_user"]           # "ograc"
-"""
+#!/usr/bin/env python3
+"""oGRAC unified configuration module."""
 
 import os
 import sys
@@ -32,13 +13,32 @@ PKG_DIR = os.path.abspath(os.path.join(CUR_DIR, ".."))
 MODULE_CONFIG_FILE = os.path.join(CUR_DIR, "config_params_lun.json")
 
 
-_TIMEOUTS = {
+_TIMEOUTS_DEFAULT = {
     "default": 1800, "install": 3600, "uninstall": 1800,
-    "upgrade": 3600, "pre_install": 1800, "start": 600,
+    "upgrade": 3600, "pre_install": 1800, "start": 6000,
     "stop": 600, "check_status": 120, "backup": 7200,
     "rollback": 3600, "pre_upgrade": 1800, "upgrade_commit": 600,
     "init_container": 1800,
 }
+
+_OGRAC_CONFIG_FILE = os.path.join(CUR_DIR, "ograc", "ograc_config.json")
+
+
+def _load_timeouts():
+    timeouts = dict(_TIMEOUTS_DEFAULT)
+    if os.path.exists(_OGRAC_CONFIG_FILE):
+        try:
+            with open(_OGRAC_CONFIG_FILE, encoding="utf-8") as f:
+                overrides = json.load(f).get("timeout", {})
+            for k, v in overrides.items():
+                if not str(k).startswith("_"):
+                    timeouts[k] = int(v)
+        except Exception:
+            pass
+    return timeouts
+
+
+_TIMEOUTS = _load_timeouts()
 
 _module_config_cache = None
 _deploy_params_cache = None
@@ -51,7 +51,7 @@ def _derive_instance_tag(ograc_home):
 
 
 def _load_config_params_lun_raw():
-    """读取 config_params_lun.json 完整内容。"""
+    """Read full content of config_params_lun.json."""
     if not os.path.exists(MODULE_CONFIG_FILE):
         return {}
     try:
@@ -62,10 +62,7 @@ def _load_config_params_lun_raw():
 
 
 def load_deploy_params():
-    """
-    从 config_params_lun.json 读取部署参数（排除 module_config 块）。
-    供各组件 config 使用，作为唯一部署参数源。
-    """
+    """Read deploy params from config_params_lun.json (excl module_config)."""
     global _deploy_params_cache
     if _deploy_params_cache is not None:
         return _deploy_params_cache
@@ -84,38 +81,17 @@ def _get_module_config():
 
 
 def get_module_config():
-    """供各组件 config 使用：返回 config_params_lun.json 的 module_config 块。"""
+    """Return module_config block from config_params_lun.json."""
     return _get_module_config()
 
 
 _DEFAULT_NFS_PORT = 36729
 
 
-def _parse_user_from_deploy_user(raw):
-    if ":" in str(raw) and raw:
-        return raw.split(":", 1)[0]
-    return raw or ""
-
-
 def load_env_defaults():
-    """
-    替代旧 env.sh 的公共函数。
-
-    所有用户/组信息均从 module_config.user 隐式推导；未显式配置时，
-    回退到 deploy_user，不暴露额外配置项：
-      user          -> module_config.user | deploy_user (默认 "ograc")
-      group         -> 与 user 同名 (Linux 默认主组)
-      common_group  -> "{user}group" (跨服务共享组)
-      ogmgr_user    -> "{user}mgr" (og_om 管理用户)
-      deploy_user   -> config_params_lun.deploy_user | 当前系统用户
-      nfs_port      -> 36729 (固定)
-
-    多实例并行部署时，不同 user 自然产生不同的派生用户，
-    UID/GID 由系统自动分配，不写死，不暴露。
-    """
+    """Derive user/group/common_group/ogmgr_user from module_config."""
     mc = _get_module_config()
-    deploy_user = _parse_user_from_deploy_user(load_deploy_params().get("deploy_user", ""))
-    user = os.environ.get("OGRAC_USER") or mc.get("user") or deploy_user or "ograc"
+    user = os.environ.get("OGRAC_USER") or mc.get("user") or "ograc"
     group = os.environ.get("OGRAC_GROUP", user)
     common_group = f"{user}group"
     ogmgr_user = f"{user}mgr"
@@ -129,7 +105,7 @@ def load_env_defaults():
 
 
 class InstanceConfig:
-    """cgroup / shm 隔离，以 user 为主键推导。"""
+    """cgroup/shm isolation, user as key."""
 
     def __init__(self, user="ograc"):
         self.user = user
@@ -142,7 +118,7 @@ class InstanceConfig:
 
 
 class LogConfig:
-    """日志隔离：log_root/<module>/<module>.log，自动推导。"""
+    """Log isolation: log_root/<module>/<module>.log."""
 
     def __init__(self, log_root):
         self.log_root = log_root
@@ -155,7 +131,7 @@ class LogConfig:
 
 
 class PathConfig:
-    """从 ograc_home + data_root + user 推导全部路径。相对目录结构写死。"""
+    """Derive all paths from ograc_home + data_root + user."""
 
     def __init__(self, ograc_home, data_root, user):
         self.ograc_home = ograc_home
@@ -167,7 +143,7 @@ class PathConfig:
         self.action_dir = os.path.join(ograc_home, "action")
         self.config_dir = os.path.join(ograc_home, "config")
         self.image_dir = os.path.join(ograc_home, "image")
-        self.backup_dir = os.path.join(ograc_home, "backup")
+        self.backup_dir = os.path.join(data_root, "backup")
         self.common_dir = os.path.join(ograc_home, "common")
         self.common_script_dir = os.path.join(self.common_dir, "script")
         self.common_config_dir = os.path.join(ograc_home, "common", "config")
@@ -219,7 +195,7 @@ class PathConfig:
 
 
 class DeployConfig:
-    """统一读取 config_params_lun.json（部署参数 + module_config 用户信息）。"""
+    """Load config_params_lun.json (deploy params + module_config)."""
 
     def __init__(self, deploy_param_file=None):
         self._params = {}
@@ -231,20 +207,6 @@ class DeployConfig:
         self._params = dict(load_deploy_params())
 
     def get(self, key, default=""):
-        if key == "deploy_user":
-            raw = self._params.get("deploy_user", "")
-            if ":" in str(raw) and raw:
-                return raw.split(":")[0]
-            if raw:
-                return raw
-            return os.environ.get("USER", os.environ.get("LOGNAME", "root"))
-        if key == "deploy_group":
-            raw = self._params.get("deploy_user", "")
-            if ":" in str(raw) and raw:
-                return raw.split(":")[1]
-            if raw:
-                return raw
-            return os.environ.get("USER", os.environ.get("LOGNAME", "root"))
         if key == "cluster_scale":
             cms_ip = self._params.get("cms_ip", "")
             return len(cms_ip.split(";")) if cms_ip else 0
@@ -324,7 +286,7 @@ class DeployConfig:
 
 
 class OgracConfig:
-    """配置总入口。"""
+    """Config entry point."""
 
     def __init__(self, module_config_file=None, deploy_param_file=None):
         mc = _get_module_config()
@@ -350,7 +312,7 @@ _global_config = None
 
 
 def get_config(module_config_file=None, deploy_param_file=None, env_file=None):
-    """env_file 参数保留但已忽略，仅为兼容旧调用签名。"""
+    """Return the singleton OgracConfig instance."""
     global _global_config
     if _global_config is None:
         _global_config = OgracConfig(module_config_file, deploy_param_file)
@@ -373,7 +335,7 @@ cfg = _LazyConfig()
 
 
 def get_value(param):
-    """向后兼容：替代原 get_config_info.py 的 get_value()"""
+    """Get a deploy parameter by key."""
     return get_config().get(param)
 
 

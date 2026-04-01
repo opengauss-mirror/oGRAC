@@ -1,13 +1,5 @@
-"""
-oGRAC 预安装检查与配置生成
-
-在 appctl 调用各组件 pre_install 之前运行，负责：
-  1. 校验 config_params_lun.json 中的部署参数（IP/端口/模式等）
-  2. 生成 deploy_param.json（校验后的部署参数快照，中间产物）
-  3. 生成 install_config.json（ograc 安装路径/运行模式，中间产物）
-
-deploy_mode 仅保留 "file" 和 "dss" 两种模式（已剔除 dbstor）。
-"""
+#!/usr/bin/env python3
+"""oGRAC pre-install checks and config generation."""
 
 import abc
 import os
@@ -217,7 +209,7 @@ class CheckInstallConfig(CheckBase):
         self.value_checker = ConfigChecker
 
         self.config_key = {
-            'deploy_user', 'node_id', 'cms_ip',
+            'node_id', 'cms_ip',
             'storage_share_fs', 'storage_archive_fs', 'storage_metadata_fs',
             'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip',
             'db_type', 'MAX_ARCH_FILES_SIZE', 'deploy_mode',
@@ -226,7 +218,7 @@ class CheckInstallConfig(CheckBase):
         }
 
         self.dss_config_key = {
-            'deploy_user', 'node_id', 'cms_ip', 'db_type',
+            'node_id', 'cms_ip', 'db_type',
             'ograc_in_container', 'MAX_ARCH_FILES_SIZE',
             'deploy_mode', 'mes_ssl_switch', 'redo_num', 'redo_size',
             'auto_tune', 'dss_vg_list', 'gcc_home',
@@ -332,17 +324,7 @@ class CheckInstallConfig(CheckBase):
             fp.write(json.dumps(self.config_params, indent=4))
 
     def generate_install_config(self):
-        """
-        从 ograc_config.json + module_config 推导并写出 install_config.json。
-
-        install_config.json 是 ograc 内核安装的中间产物，包含：
-          - R_INSTALL_PATH / D_DATA_PATH / l_LOG_FILE（路径）
-          - M_RUNING_MODE（运行模式）
-          - Z_KERNEL_PARAMETER*（内核参数）
-          - OG_CLUSTER_STRICT_CHECK
-        如果 ograc_config.json 中已有自定义值，作为默认保留；
-        module_config 的 ograc_home / data_root 优先级更高。
-        """
+        """Derive and write install_config.json from ograc_config.json and module_config."""
         ograc_cfg_file = os.path.join(CUR_DIR, "ograc", "ograc_config.json")
         ograc_raw = {}
         if os.path.exists(ograc_cfg_file):

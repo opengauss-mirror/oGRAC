@@ -1,4 +1,5 @@
-"""DSS 升级回滚检查"""
+#!/usr/bin/env python3
+"""DSS upgrade rollback check."""
 
 import os
 import sys
@@ -20,10 +21,10 @@ STATUS_VG_PATH = "+vg1/upgrade/cluster_and_node_status"
 
 
 class DssRollbackChecker:
-    """检查是否可以执行离线回滚"""
+    """Check if offline rollback can be executed."""
 
     def _check_file_content(self, file_name):
-        """检查状态文件内容是否为 'commit'"""
+        """Check if status file content is 'commit'."""
         vg_path = os.path.join(STATUS_VG_PATH, file_name)
         content = read_dss_file(vg_path)
         if content != "commit":
@@ -32,7 +33,7 @@ class DssRollbackChecker:
             )
 
     def _check_vg_directory(self, path):
-        """检查 VG 目录中的升级状态"""
+        """Check upgrade status in VG directory."""
         lines = vg_list_files(path)
         if lines is None or len(lines) == 0:
             return
@@ -51,7 +52,7 @@ class DssRollbackChecker:
                 self._check_file_content(file_name)
 
     def check(self):
-        """执行回滚检查"""
+        """Execute rollback check."""
         self._check_vg_directory(UPGRADE_VG_PATH)
         self._check_vg_directory(STATUS_VG_PATH)
         LOG.info("Rollback pre-check passed")

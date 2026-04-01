@@ -1,9 +1,5 @@
-"""
-oGRAC 升级/回滚/提交编排器（重构版）
-
-处理 pre_upgrade, upgrade, rollback, upgrade_commit, check_point 等操作。
-已剔除 dbstor 相关逻辑。
-"""
+#!/usr/bin/env python3
+"""oGRAC upgrade/rollback orchestrator."""
 
 import os
 import sys
@@ -346,9 +342,7 @@ class OgracUpgrade:
         rpm_path = os.path.join(install_base, "oGRAC-RUN-LINUX-64bit")
         if os.path.isdir(rpm_path):
             exec_popen(f"chmod -R 750 {rpm_path}")
-            deploy_user = self.deploy.get("deploy_user")
-            deploy_group = self.deploy.get("deploy_group")
-            exec_popen(f"chown {deploy_user}:{deploy_group} -hR {rpm_path}")
+            exec_popen(f"chown {self.ograc_user}:{self.ograc_group} -hR {rpm_path}")
             exec_popen(f"chown root:root {install_base}")
 
     def _update_config_after_upgrade(self):

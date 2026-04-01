@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 readiness_probe.py (Pythonized from readiness_probe.sh)
 

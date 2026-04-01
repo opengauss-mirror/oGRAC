@@ -1,6 +1,5 @@
 {
   "deploy_policy": "default",
-  "deploy_user": "ogdba:ogdba",
   "cluster_id": "0",
   "cluster_name": "cluster123",
   "remote_cluster_name": "cluster123",

@@ -1,4 +1,5 @@
-"""DSS 升级锁管理"""
+#!/usr/bin/env python3
+"""DSS upgrade lock management."""
 
 import os
 import sys
@@ -24,7 +25,7 @@ class DssLock:
         self.lock_status = None
 
     def _check_lock_status(self):
-        """检查升级锁状态"""
+        """Check upgrade lock status."""
         lines = vg_list_files(UPGRADE_VG_PATH)
 
         if lines is None:
@@ -45,7 +46,7 @@ class DssLock:
         self.lock_status = "not_locked"
 
     def lock(self, input_file):
-        """获取升级锁"""
+        """Acquire upgrade lock."""
         self.lock_file_name = os.path.basename(input_file)
         self.vg_lock_path = os.path.join(UPGRADE_VG_PATH, self.lock_file_name)
 

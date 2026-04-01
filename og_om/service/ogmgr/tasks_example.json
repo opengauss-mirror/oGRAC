@@ -45,7 +45,7 @@
         "arrayLength": "0~3"
       }
     },
-    "filePath": "logs_collection/execute.py",
+    "filePath": "/opt/ograc/og_om/service/ogmgr/logs_collection/execute.py",
     "py_input": "-p ${log_dir} -t ${type}",
     "description": ""
   }

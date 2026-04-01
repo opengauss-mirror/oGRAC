@@ -1,8 +1,5 @@
-"""
-ograc_exporter 统一配置管理模块（refactored）
-
-路径解耦 + 可配置超时 + shell-env 输出
-"""
+#!/usr/bin/env python3
+"""ograc_exporter unified configuration module."""
 
 import importlib.util
 import json

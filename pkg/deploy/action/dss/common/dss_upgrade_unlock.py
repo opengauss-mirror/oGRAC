@@ -1,4 +1,5 @@
-"""DSS 升级解锁"""
+#!/usr/bin/env python3
+"""DSS upgrade unlock."""
 
 import os
 import sys
@@ -27,7 +28,7 @@ class DssUnlock:
         return len(matches) > 0
 
     def unlock(self, input_file):
-        """释放升级锁"""
+        """Release upgrade lock."""
         self.lock_file_name = os.path.basename(input_file)
         self.vg_lock_path = os.path.join(UPGRADE_VG_PATH, self.lock_file_name)
 

@@ -1,0 +1,266 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ograc-service-1
+  labels:
+    app: ograc-1
+  namespace: ograc
+spec:
+  selector:
+    app: ograc-1
+  ports:
+    - protocol: TCP
+      port: 33060
+      targetPort: 3306
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ograc-svc-1
+  labels:
+    app: ograc-1
+  namespace: ograc
+spec:
+  publishNotReadyAddresses: true
+  clusterIP: None
+  selector:
+    app: ograc-1
+  ports:
+    - protocol: TCP
+      port: 33060
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ograc-1-node0
+  namespace: ograc
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: ograc-1
+  template:
+    metadata:
+      labels:
+        app: ograc-1
+      annotations:
+        k8s.v1.cni.cncf.io/networks: kube-system/rdma-sriov-net1, kube-system/rdma-sriov-net2
+    spec:
+      hostname: ograc-1-node0
+      subdomain: ograc-svc-1
+      nodeSelector:
+        sriov: enabled
+      containers:
+        - name: ograc-1
+          image: {{ .Values.images.ograc }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["ALL"]
+            seccompProfile:
+              type: Unconfined
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: localtime
+              mountPath: /etc/localtime
+            - name: mfdb-core
+              mountPath: /home/mfdb_core
+            - name: deploy-volume
+              mountPath: /ogdb/ograc_install/ograc_connector/config/container_conf
+            - name: config-volume
+              mountPath: /ogdb/ograc_install/ograc_connector/config/container_conf/init_conf/
+            - name: kube-config-volume
+              mountPath: /root/.kube
+            - name: shared-memory
+              mountPath: /dev/shm
+          resources:
+            requests:
+              memory: "40Gi"
+              cpu: "12"
+              huawei.io/rdma1: '1'
+              huawei.io/rdma2: '1'
+            limits:
+              memory: "64Gi"
+              cpu: "12"
+              huawei.io/rdma1: '1'
+              huawei.io/rdma2: '1'
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - /ogdb/ograc_install/ograc_connector/action/docker/readiness_probe.sh
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "[ -f /opt/ograc/healthy ]"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          env:
+            - name: MY_MEMORY_SIZE
+              valueFrom:
+                resourceFieldRef:
+                  containerName: ograc-1
+                  resource: limits.memory
+            - name: MY_CPU_NUM
+              valueFrom:
+                resourceFieldRef:
+                  containerName: ograc-1
+                  resource: limits.cpu
+      volumes:
+        - name: localtime
+          hostPath:
+            path: /etc/localtime
+        - name: mfdb-core
+          hostPath:
+            path: /home/mfdb_core
+        - name: deploy-volume
+          hostPath:
+            path: /home/k8s-node/container_conf
+        - name: config-volume
+          configMap:
+            name: node0-config-1
+        - name: kube-config-volume
+          hostPath:
+            path: /root/.kube
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+            sizeLimit: "5120Mi"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: ograc-1
+              topologyKey: "kubernetes.io/hostname"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ograc-1-node1
+  namespace: ograc
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: ograc-1
+  template:
+    metadata:
+      labels:
+        app: ograc-1
+      annotations:
+        k8s.v1.cni.cncf.io/networks: kube-system/rdma-sriov-net1, kube-system/rdma-sriov-net2
+    spec:
+      hostname: ograc-1-node1
+      subdomain: ograc-svc-1
+      nodeSelector:
+        sriov: enabled
+      containers:
+        - name: ograc-1
+          image: {{ .Values.images.ograc }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["ALL"]
+            seccompProfile:
+              type: Unconfined
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: localtime
+              mountPath: /etc/localtime
+            - name: mfdb-core
+              mountPath: /home/mfdb_core
+            - name: deploy-volume
+              mountPath: /ogdb/ograc_install/ograc_connector/config/container_conf
+            - name: config-volume
+              mountPath: /ogdb/ograc_install/ograc_connector/config/container_conf/init_conf/
+            - name: kube-config-volume
+              mountPath: /root/.kube
+            - name: shared-memory
+              mountPath: /dev/shm
+          resources:
+            requests:
+              memory: "40Gi"
+              cpu: "12"
+              huawei.io/rdma1: '1'
+              huawei.io/rdma2: '1'
+            limits:
+              memory: "64Gi"
+              cpu: "12"
+              huawei.io/rdma1: '1'
+              huawei.io/rdma2: '1'
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - /ogdb/ograc_install/ograc_connector/action/docker/readiness_probe.sh
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "[ -f /opt/ograc/healthy ]"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          env:
+            - name: MY_MEMORY_SIZE
+              valueFrom:
+                resourceFieldRef:
+                  containerName: ograc-1
+                  resource: limits.memory
+            - name: MY_CPU_NUM
+              valueFrom:
+                resourceFieldRef:
+                  containerName: ograc-1
+                  resource: limits.cpu
+      volumes:
+        - name: localtime
+          hostPath:
+            path: /etc/localtime
+        - name: mfdb-core
+          hostPath:
+            path: /home/mfdb_core
+        - name: deploy-volume
+          hostPath:
+            path: /home/k8s-node/container_conf
+        - name: config-volume
+          configMap:
+            name: node1-config-1
+        - name: kube-config-volume
+          hostPath:
+            path: /root/.kube
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+            sizeLimit: "5120Mi"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: ograc-1
+              topologyKey: "kubernetes.io/hostname"
