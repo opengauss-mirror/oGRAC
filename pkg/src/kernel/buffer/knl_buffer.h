@@ -134,6 +134,10 @@ typedef enum st_buf_transfer_status {
     BUF_TRANS_REL_OWNER,  // means curr node is releasing owner
 } buf_transfer_status;
 
+// Forward declare it. The full declaration is in dtc_remote_buffer.h
+typedef struct st_remote_page_info remote_page_info_t;
+typedef struct st_remote_buf_context remote_buf_context_t;
+
 #ifdef WIN32
 typedef struct st_buf_ctrl
 #else
@@ -159,7 +163,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 lock_mode;  // used only in DTC, 0: Null, 1: Shared lock, 2: Exclusive lock
 
     volatile uint8 is_edp;  // used only in DTC, 0: no, 1: yes, this page is old version, can be discard only after
-                            // latest version in other instance is cleaned
+                            // latest version in other instance is cleaned. Not dirty, but stale.
     volatile bool8 force_request;  // force to request page from remote
     volatile uint8 remote_access;  // remote access statistics
     volatile uint8 transfer_status;   // page transfer status, used only in TDC
@@ -176,7 +180,16 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
 
     volatile uint8 is_fixed;  // true means this control has been fixed according to buf res after recovery
                               // reset to 0 when get page ownership
-    uint8 align[7];
+    uint8 align[1];
+    uint8 consecutive_read_count;
+    uint8 consecutive_same_writer_count;
+    bool32 is_hot;
+
+    date_t consecutive_read_start_time;
+    date_t consecutive_same_writer_start_time;
+    remote_page_info_t *shmem_page_meta;  // points to the metadata of a compound page in shared memory
+    page_head_t *shmem_page_addr;
+
     struct st_buf_ctrl *ckpt_prev;
     struct st_buf_ctrl *ckpt_next;
     struct st_buf_ctrl *prev;       // for LRU queue or free control list
@@ -286,14 +299,6 @@ typedef struct st_edp_page_info {
 
 static const buf_lru_list_t g_init_list_t = {0};
 
-static inline void buf_init_list(buf_set_t *set)
-{
-    for (uint32 i = 0; i < LRU_LIST_TYPE_COUNT; i++) {
-        set->list[i] = g_init_list_t;
-        set->list[i].type = i;
-    }
-}
-
 static inline uint32 hash_page(uint32 hash)
 {
     /* a hash algorithm */
@@ -357,12 +362,16 @@ status_t buf_init(knl_session_t *session);
 uint32 buf_expire_cache(knl_session_t *session, buf_set_t *set);
 void buf_expire_page(knl_session_t *session, page_id_t page_id);
 buf_ctrl_t *buf_find_by_pageid(knl_session_t *session, page_id_t page_id);
-buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options);
+buf_ctrl_t *buf_find_shmem_by_pageid(knl_session_t *session, page_id_t page_id);
+buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options,
+                           bool32 in_shmem);
 buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options,
-                               buf_add_pos_t add_pos);
+                               buf_add_pos_t add_pos, bool32 in_shmem);
 buf_ctrl_t *buf_alloc_compress(knl_session_t *session, page_id_t wanted_page, latch_mode_t mode, uint32 options);
 buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page, latch_mode_t mode, uint32 options,
                                    buf_add_pos_t add_pos);
+/** Evict a page from shmem: invalidate metadata, remove from hash, and demote in LRU. */
+status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta);
 void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos);
 void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl);
 void buf_reset_cleaned_pages(buf_set_t *set, buf_lru_list_t *list);
@@ -375,6 +384,7 @@ status_t pcb_get_buf(knl_session_t *session, pcb_assist_t *pcb_assist);
 void pcb_release_buf(knl_session_t *session, pcb_assist_t *pcb_assist);
 status_t pcb_init_ctx(knl_session_t *session);
 status_t buf_invalidate_page(knl_session_t *session, page_id_t page_id);
+EXTER_ATTACK status_t buf_claim_shmem_ctrl2hot(knl_session_t *session, page_id_t page_id, uint64 req_version);
 EXTER_ATTACK status_t buf_invalidate_page_with_version(knl_session_t *session, page_id_t page_id, uint64 req_version);
 EXTER_ATTACK status_t buf_invalidate_page_owner(knl_session_t *session, page_id_t page_id, uint64 req_version);
 bool32 buf_clean_edp(knl_session_t *session, edp_page_info_t page);
@@ -384,6 +394,7 @@ void buf_unlatch_page(knl_session_t *session, buf_ctrl_t *ctrl);
 void buf_dec_ref(knl_session_t *session, buf_ctrl_t *ctrl);
 void buf_set_force_request(knl_session_t *session, page_id_t page_id);
 buf_bucket_t *buf_find_bucket(knl_session_t *session, page_id_t page_id);
+buf_bucket_t *buf_find_bucket_in_remote_ctx(knl_session_t *session, page_id_t page_id, remote_buf_context_t *ctx);
 
 #ifdef __cplusplus
 }

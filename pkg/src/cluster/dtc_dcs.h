@@ -44,7 +44,8 @@ typedef enum en_mes_flags {
     MES_FLAG_NEED_LOAD = 0x04,          // need load page from disk
     MES_FLAG_READONLY2X = 0x8,          // readonly to x
     MES_FLAG_OWNER = 0x10,              // invalidate page owner
-    MES_FLAG_CEIL = 0x20
+    MES_FLAG_CEIL = 0x20,
+    MES_FLAG_MOVED_TO_GBP = 0x40,  // This page has been moved from owner's lbp to master's gbp
 } en_mes_flags;
 
 typedef struct st_msg_page_req {
@@ -56,6 +57,13 @@ typedef struct st_msg_page_req {
     uint64 lsn;
     uint8 action;
     bool8 is_retry;
+    // we need this when we request the owner to upgrade a page from LBP to GBP, but some of the info will need to
+    // retrieve from master's global resources, so lets pass it to the owner by msg first
+    remote_page_info_t master_shmem_page_info;
+    uint8 gbp_owner_id;  // the node whose UBSM segment hosts the GBP slot (normally master_id)
+    uint8 reserved_gbp[7];
+    uint64 shmem_page_meta_off;                // offset from remote_sga->remote_buf_addr[gbp_owner_id]
+    drc_page_gdp_move_action_type gbp_to_lbp;  // whether master needs to move page from GBP to LBP
 } msg_page_req_t;
 
 typedef struct st_msg_page_req_batch {
@@ -147,6 +155,7 @@ typedef struct st_msg_claim_owner {
     drc_lock_mode_e mode;  // lock mode
     uint64 lsn;
     uint64 req_version;
+    uint64_t shmem_page_meta;
 } msg_claim_owner_t;
 
 typedef struct st_msg_claim_owner_batch {
@@ -163,6 +172,9 @@ typedef struct st_msg_ack_owner {
     uint64 lsn;
     uint8 action;
     uint8 req_mode;
+    uint8 gbp_owner_id;
+    uint8 reserved_gbp[7];
+    uint64 shmem_page_meta_off;
 } msg_ack_owner_t;
 
 // msg for notifying instance load page from disk
@@ -179,6 +191,9 @@ typedef struct st_msg_ask_page_ack {
     knl_scn_t scn;
     drc_lock_mode_e mode;
     uint64 req_version;
+    uint8 gbp_owner_id;
+    uint8 reserved_gbp[7];
+    uint64 shmem_page_meta_off;
 } msg_ask_page_ack_t;
 
 typedef struct st_msg_edpinfo_req {
@@ -272,6 +287,7 @@ status_t dcs_invalidate_page_owner(knl_session_t *session, page_id_t page_id, ui
 EXTER_ATTACK void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg);
 void dcs_process_try_ask_master_for_page(void *sess, mes_message_t *receive_msg);
 EXTER_ATTACK void dcs_process_ask_owner_for_page(void *sess, mes_message_t *receive_msg);
+EXTER_ATTACK void dcs_process_ask_owner_for_page_to_gbp(void *sess, mes_message_t *receive_msg);
 EXTER_ATTACK void dcs_process_claim_ownership_req(void *sess, mes_message_t *receive_msg);
 EXTER_ATTACK void dcs_process_claim_ownership_req_batch(void *sess, mes_message_t *receive_msg);
 void dcs_process_release_owner(void *sess, mes_message_t *receive_msg);

@@ -121,14 +121,20 @@ static status_t dtc_register_proc(void)
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_TRY_ASK_MASTER_ACK, mes_process_msg_ack, OG_FALSE, "try ask master ack"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_ASK_OWNER, dcs_process_ask_owner_for_page, OG_TRUE, "ask owner"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_ASK_OWNER_TO_GBP, dcs_process_ask_owner_for_page_to_gbp, OG_TRUE,
+                                             "ask owner move page to GBP"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_PAGE_READY, mes_process_msg_ack, OG_FALSE, "owner ack page ready"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_PAGE_READY_GBP, mes_process_msg_ack, OG_FALSE,
+                                             "owner ack page ready in GBP to Master"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_MASTER_ACK_NEED_LOAD, mes_process_msg_ack, OG_FALSE, "master ack need load"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_ALREADY_OWNER, mes_process_msg_ack, OG_FALSE,
                                              "master ack requester already owner"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_OWNER, mes_process_msg_ack, OG_FALSE,
                                              "master ack requester other owner"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_CHECK_GBP, mes_process_msg_ack, OG_FALSE,
+                                             "master ack requester to resend request to check GBP"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_CLAIM_OWNER_REQ, dcs_process_claim_ownership_req, OG_TRUE,
                                              "claim ownership req"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_CLAIM_OWNER_REQ_BATCH, dcs_process_claim_ownership_req_batch,
@@ -602,44 +608,44 @@ status_t dtc_startup(void)
         OG_LOG_RUN_ERR("init_dtc_rc failed.");
         return OG_ERROR;
     }
-	
+
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }
 
 static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
 {
-   bool all_unmap = true;
-   uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
+    bool all_unmap = true;
+    uint64 data_buf_size = remote_sga->remote_buf_alloc_size;
 
-   for (uint32 i = 0; i < inst_count; i++) {
-       if (remote_sga->map_success[i] == OG_FALSE) {
-           continue;
-       }
-       char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-       int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
-       if (ret < EOK) {
-           OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
-           all_unmap = false;
-           continue;
-       }
-       ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
-       if (ret != UBSM_OK) {
-           OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret); 
-           all_unmap = false;
-           continue;
-       }
-       remote_sga->map_success[i] = OG_FALSE;
-       remote_sga->remote_buf_addr[i] = NULL;
-       OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
-   }
+    for (uint32 i = 0; i < inst_count; i++) {
+        if (remote_sga->map_success[i] == OG_FALSE) {
+            continue;
+        }
+        char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
+        int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", i);
+        if (ret < EOK) {
+            OG_LOG_RUN_ERR("Failed to format data buffer name. error:%d", ret);
+            all_unmap = false;
+            continue;
+        }
+        ret = ubsmem_shmem_unmap(remote_sga->remote_buf_addr[i], data_buf_size);
+        if (ret != UBSM_OK) {
+            OG_LOG_RUN_ERR("Failed to unmap data buffer %s on node_id %u, addr: %p , error:%d", data_buf_name, i, remote_sga->remote_buf_addr[i], ret);
+            all_unmap = false;
+            continue;
+        }
+        remote_sga->map_success[i] = OG_FALSE;
+        remote_sga->remote_buf_addr[i] = NULL;
+        OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
+    }
 
-   if (!all_unmap) {
-       OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
-       return OG_ERROR;
-   }
+    if (!all_unmap) {
+        OG_LOG_RUN_ERR("Failed to unmap all data buffers.");
+        return OG_ERROR;
+    }
 
-   return OG_SUCCESS;
+    return OG_SUCCESS;
 }
 
 static status_t drc_deinit_ubsm_mem(remote_sga_t *remote_sga, uint32 inst_count)

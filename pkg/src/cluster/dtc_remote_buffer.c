@@ -183,6 +183,14 @@ static void drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf
     }
 }
 
+static void buf_init_list(buf_set_t *set)
+{
+    for (uint32 i = 0; i < LRU_LIST_TYPE_COUNT; i++) {
+        set->list[i] = g_init_list_t;
+        set->list[i].type = i;
+    }
+}
+
 static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);

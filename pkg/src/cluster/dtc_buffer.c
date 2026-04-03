@@ -34,7 +34,7 @@
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
-    *ctrl = buf_alloc_ctrl(session, ra->page_id, ra->mode, ra->options);
+    *ctrl = buf_alloc_ctrl(session, ra->page_id, ra->mode, ra->options, OG_FALSE);
     if (SECUREC_UNLIKELY(*ctrl == NULL)) {
         knl_panic(ra->options & ENTER_PAGE_TRY);
         session->curr_page = NULL;
@@ -367,4 +367,43 @@ bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id)
     }
     bool32 lock_need_recover = dtc_lock_in_rcy_space_set(uid);
     return !lock_need_recover;
+}
+
+bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    // This function should be called when this remote page is locked
+    // TOODO: use shmem API to load the last writer's node id and page_id from shared_mem
+    uint8 last_writer = ctrl->shmem_page_meta->claimed_owner;
+    // we need to check page_id to make sure this page hasn't been evicted already
+    uint64_t raw_remote = *(uint64_t *)(&ctrl->shmem_page_meta->page_id);
+    uint64_t raw_local = *(uint64_t *)&ctrl->page_id;
+
+    if (DCS_SELF_INSTID(session) == last_writer && raw_remote == raw_local) {
+        ctrl->consecutive_same_writer_count++;
+        if (ctrl->consecutive_same_writer_count == SAME_WRITER_COUNT_TRIGGER) {
+            return (KNL_NOW(session) - ctrl->consecutive_same_writer_start_time) > SAME_WRITER_THRESHOLD;
+        }
+    } else {
+        ctrl->consecutive_same_writer_start_time = KNL_NOW(session);
+        ctrl->consecutive_same_writer_count = 0;
+    }
+    return false;
+}
+bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    // TOODO: use UB API to load the lsn and page_id from remote
+    uint64_t raw_remote = *(uint64_t *)(&ctrl->shmem_page_meta->page_id);
+    uint64_t raw_local = *(uint64_t *)&ctrl->page_id;
+    // we need to check page_id to make sure this page hasn't been evicted already
+    uint32 remote_head_lsn = ctrl->shmem_page_meta->head_lsn;
+    if (remote_head_lsn == ctrl->page->lsn && raw_remote == raw_local) {
+        ctrl->consecutive_read_count++;
+        if (ctrl->consecutive_read_count == READ_COUNT_TRIGGER) {
+            return (KNL_NOW(session) - ctrl->consecutive_read_start_time) > READ_THRESHOLD;
+        }
+    } else {
+        ctrl->consecutive_read_count = 0;
+        ctrl->consecutive_read_start_time = KNL_NOW(session);
+    }
+    return false;
 }
