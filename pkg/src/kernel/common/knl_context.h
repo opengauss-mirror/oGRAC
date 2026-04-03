@@ -250,6 +250,8 @@ typedef struct st_knl_attr {
     uint32 undo_usage_alarm_threshold;
     uint32 txn_undo_usage_alarm_threshold;
     bool32 temptable_support_batch;
+    bool32 enable_remote_distribute_lock;
+    bool32 enable_ubsmem;
     bool32 enable_abr;
     uint32 abr_timeout;
     uint32 stats_cost_limit;

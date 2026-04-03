@@ -483,7 +483,9 @@ status_t drc_init(void)
     }
 
     // remote buffer pool init, LRU lists init, hash table/bucket init
-    ret = drc_init_remote_buffer();
+    if (ogx->kernel->attr.enable_ubsmem) {
+        ret = drc_init_remote_buffer();
+    }
     if (ret != OG_SUCCESS) {
         drc_destroy();
         OG_LOG_RUN_ERR("[DRC]remote buf pool init fail,return error:%u", ret);

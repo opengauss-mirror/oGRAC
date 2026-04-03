@@ -994,38 +994,42 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
         dtc_wait_reform();
         OG_LOG_RUN_INF("[DB OPEN] dtc_wait_reform finished");
     }
-    
-    if (!rc_is_master()) {
-        // self map remote shared buffer of other nodes
-        drc_res_ctx_t *ogx = DRC_RES_CTX;
-        cluster_view_t view;
-        int ret;
-        for (uint32 node_id = 0; node_id < g_dtc->profile.node_count; node_id++) {
-            rc_get_cluster_view(&view, OG_FALSE);
-            if (!rc_bitmap64_exist(&view.bitmap, node_id)) {
-                continue;
-            }
 
-            if (g_rc_ctx->self_id == node_id) {
-                continue;
-            }
+    if (session->kernel->attr.enable_ubsmem) {
+        if (!rc_is_master()) {
+            // self map remote shared buffer of other nodes
+            drc_res_ctx_t *ogx = DRC_RES_CTX;
+            cluster_view_t view;
+            int ret;
+            for (uint32 node_id = 0; node_id < g_dtc->profile.node_count; node_id++) {
+                rc_get_cluster_view(&view, OG_FALSE);
+                if (!rc_bitmap64_exist(&view.bitmap, node_id)) {
+                    continue;
+                }
 
-            OG_LOG_RUN_WAR("[DRC-GBP]mmap remote data buf start, current id: %d, remote_id: %d, map status: %d.",
-                                   g_rc_ctx->self_id, node_id,  ogx->remote_sga.map_success[0]);
-            if (ogx->remote_sga.map_success[node_id] == OG_FALSE) {
-                ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
-                if (ret != UBSM_OK) {
-                    OG_LOG_RUN_ERR("[DRC-GBP]mmap remote data buf failed, current id: %d, remote_id: %d, ret: %d",
-                                   g_rc_ctx->self_id, node_id, ret);
+                if (g_rc_ctx->self_id == node_id) {
+                    continue;
+                }
+
+                OG_LOG_RUN_WAR("[DRC-GBP]mmap remote data buf start, current id: %d, remote_id: %d, map status: %d.",
+                               g_rc_ctx->self_id, node_id, ogx->remote_sga.map_success[0]);
+                if (ogx->remote_sga.map_success[node_id] == OG_FALSE) {
+                    ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
+                    if (ret != UBSM_OK) {
+                        OG_LOG_RUN_ERR("[DRC-GBP]mmap remote data buf failed, current id: %d, remote_id: %d, ret: %d",
+                                       g_rc_ctx->self_id, node_id, ret);
+                    }
                 }
             }
+
+            // tell others to map owner remote shared buffer
+            broadcast_remote_buf_allocated();
         }
 
-        // tell others to map owner remote shared buffer
-        broadcast_remote_buf_allocated();
+        if (session->kernel->attr.enable_remote_distribute_lock) {
+            init_lock_comm_queue();
+        }
     }
-
-    init_lock_comm_queue();
 
     if (log_check_asn(session, options->ignore_logs) != OG_SUCCESS) {
         dls_unlatch(session, ctrl_latch, NULL);
