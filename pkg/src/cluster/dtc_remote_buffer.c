@@ -40,7 +40,7 @@
 #include "knl_buffer.h"
 
 #include "ub_dist_comm_queue.h"
-#include "ub_dist_lock.h"
+#include "dtc_remote_lock.h"
 
 static ub_rw_lock_t *g_ub_lock = NULL;
 static ub_lock_config_t g_ub_lock_config = { 0 };
