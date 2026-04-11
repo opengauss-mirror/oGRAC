@@ -89,6 +89,7 @@ bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id);
 bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *ctrl);
 // 2. All visitors just keeps reading, no writing
 bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl);
+status_t test_gbp_dtc_read_page(knl_session_t *session, buf_read_assist_t *ra, knl_cursor_t *cursor);
 
 #ifdef __cplusplus
 }

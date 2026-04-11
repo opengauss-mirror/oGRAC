@@ -1555,6 +1555,7 @@ static void inline reset_page_hot_stat(knl_session_t *session, drc_buf_res_t *bu
     buf_res->page_hot_stat.start_time = KNL_NOW(session);
     buf_res->page_hot_stat.owner_changed_number = 0;
     buf_res->page_hot_stat.is_in_gbp = OG_FALSE;
+    buf_res->page_hot_stat.shmem_page_addr = NULL;
 }
 
 // Request page owner in master's drc_ctx and update the page owner conversion count.
@@ -1799,7 +1800,43 @@ allocated:
         }
         return OG_ERROR;
     }
-    // If we reach here, ret is OG_SUCCESS
+
+    /* page in gbp, requster have no remote addr, two case:
+     * （1) first request page after page move to gbp
+     *  (2) invalid page addr for requester after gbp lru victim
+     */
+    if (session->kernel->attr.enable_ubsmem && can_cvt && buf_res->page_hot_stat.is_in_gbp) {
+        if (buf_res->page_hot_stat.shmem_page_addr == NULL) {
+            DTC_DRC_DEBUG_ERR("[DRC][%u-%u][req page from gbp]: is_in_gbp is true, but shmem_page_addr is invalid, "
+                        "request id=%d, readonly_copies=%llu, ret=%d",
+                        pagid.file, pagid.page, req_info->inst_id, result->readonly_copies, ret);
+        }
+
+        result->type = DRC_REQ_OWNER_IN_GBP;             // no ping-pong owner, page in GBP
+        result->curr_owner_id = buf_res->claimed_owner;  // OG_INVALID_ID8
+
+        result->gbp_buf_ctrl->shmem_page_addr = buf_res->page_hot_stat.shmem_page_addr;
+        CM_ASSERT(buf_res->readonly_copies == 0);
+        CM_ASSERT(buf_res->claimed_owner == OG_INVALID_ID8);
+
+        DTC_DRC_DEBUG_INF(
+            "[DRC][%u-%u][req page in gbp]: return remote buf addr directly, req_id=%u, req_sid=%u, req_rsn=%u, "
+            "req_mode=%u, curr_mode=%u, edp map=%llu, readonly copies=%llu",
+            pagid.file, pagid.page, req_info->inst_id, req_info->inst_sid, req_info->rsn, req_info->req_mode,
+            req_info->curr_mode, buf_res->edp_map, buf_res->readonly_copies);
+
+        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+        
+        // free_slot
+        if (free_slot) {
+            drc_res_pool_free_item(buf_res_pool, idx);
+        }
+
+        return OG_SUCCESS;
+    }
+
+     // If we reach here, ret is OG_SUCCESS
     if (can_cvt) {
         /* CONVERTING: The current owner exists and can be asked to hand over the lock. */
         // now there is one claimed owner, who can process page request, and requester can be converted
@@ -1855,6 +1892,7 @@ allocated:
             cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
         }
     }
+
     if (can_cvt && ret == OG_SUCCESS && req_info->req_mode == DRC_LOCK_EXCLUSIVE) {
         // Successfuly made an ownership conversion for a cold page
         buf_res->page_hot_stat.owner_changed_number++;

@@ -158,7 +158,9 @@ typedef struct st_page_hot_stat {
     date_t start_time;
     uint32 owner_changed_number;  // how many times has the owner been changed since start time
     bool8 is_in_gbp;
+    page_head_t *shmem_page_addr; // when lbp->gbp, need to update this addr
 } drc_page_hot_stat_t;
+
 /* page buffer resource management structure */
 typedef struct st_drc_buf_res {
     uint32 next;  // should be the first field
@@ -465,13 +467,14 @@ typedef enum en_drc_req_owner_result_type {
     DRC_REQ_OWNER_CONVERTING = 3,
     DRC_REQ_OWNER_WAITING = 4,
     DRC_REQ_OWNER_TRANSFERRED = 5,
-    DRC_REQ_OWNER_CONVERTING_TO_GBP
+    DRC_REQ_OWNER_CONVERTING_TO_GBP = 6,
+    DRC_REQ_OWNER_IN_GBP,
 } drc_req_owner_result_type;
 
 typedef enum en_drc_page_gdp_move_action {
     DRC_NEED_MOVE_TO_GBP = 0,
     DRC_NEED_MOVE_TO_LBP = 1,
-    DRC_NEED_NO_MOVE = 2
+    DRC_NEED_NO_MOVE = 2,
 } drc_page_gdp_move_action_type;
 
 typedef struct st_drc_req_owner_result {

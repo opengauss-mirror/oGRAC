@@ -399,6 +399,8 @@ static status_t dtc_register_proc(void)
 
     knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMOTE_BUF_MMAP, drc_process_remote_buf_mmap,
                                              OG_FALSE, "REMOTE BUF MAP broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_ALREADY_IN_GBP, mes_process_msg_ack,
+                                             OG_FALSE, "notify requester get page from gbp"));
 
     for (uint32 i = 0; i < MES_CMD_CEIL; i++) {
         mes_set_msg_enqueue(i, g_processors[i].is_enqueue);

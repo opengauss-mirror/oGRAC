@@ -70,8 +70,9 @@ static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf
     }
     g_dtc->profile.remote_data_buf_part_size = g_dtc->profile.remote_data_buf_size / buf_ctx->buf_set_count;
     g_dtc->profile.remote_data_buf_part_align_size = drc_calc_buf_size(g_dtc->profile.remote_data_buf_part_size);
-    remote_sga->remote_buf_alloc_size = ALIGN_TO_128M(
-        g_dtc->profile.remote_data_buf_part_align_size * buf_ctx->buf_set_count);
+    remote_sga->remote_buf_alloc_size =
+        g_dtc->profile.remote_data_buf_part_size * buf_ctx->buf_set_count;
+    remote_sga->remote_pool_reserve_offset = remote_sga->remote_buf_alloc_size;
     return remote_sga->remote_buf_alloc_size;
 }
 
@@ -79,8 +80,7 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 {
     int ret = OG_ERROR;
     void *start = (void *)(node_id == 0 ? DRC_BASE_ADDR_0 : DRC_BASE_ADDR_1);
-    uint64 data_buf_size = DRC_SHM_SIZE;
-
+    remote_sga->remote_total_pool_size = ALIGN_TO_128M(DRC_SHM_SIZE);
     char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
     struct passwd *pwd;
     pwd = getpwuid(getuid());
@@ -96,8 +96,8 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
         return OG_SUCCESS;
     }
 
-    ret = ubsmem_shmem_map(start, data_buf_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, data_buf_name, 0,
-                           (void **)&(remote_sga->remote_buf_addr[node_id]));
+    ret = ubsmem_shmem_map(start, remote_sga->remote_total_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
+            data_buf_name, 0, (void **)&(remote_sga->remote_buf_addr[node_id]));
     OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote data buf addr start: %p", remote_sga->remote_buf_addr[node_id]);
     if (ret != EOK) {
         OG_LOG_RUN_ERR("[DRC-GBP] Failed to map data buffer %s on node_id %u, return error:%d", data_buf_name, node_id,
@@ -111,12 +111,10 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
     return OG_SUCCESS;
 }
 
-static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
 {
     uint32 node_id = g_instance->kernel.id;
-    uint64 remote_buf_size = DRC_SHM_SIZE;
-    (void)drc_calc_remote_data_buf_size(remote_sga, buf_ctx);
-
+    remote_sga->remote_total_pool_size = ALIGN_TO_128M(DRC_SHM_SIZE);
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
 
@@ -142,7 +140,7 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga, remo
         return ret;
     }
 
-    ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_buf_size, 0600,
+    ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_sga->remote_total_pool_size, 0600,
                                 UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
     if (ret == UBSM_ERR_ALREADY_EXIST) {
         OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", data_buf_name, ret);
@@ -196,7 +194,6 @@ static void buf_init_list(buf_set_t *set)
 static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
-
     buf_set_t *set = NULL;
     uint64 offset;
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
@@ -220,11 +217,11 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         offset += (uint64)set->capacity * sizeof(buf_ctrl_t);
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
-        
-        if (g_dtc->kernel->attr.enable_remote_distribute_lock) { 
+
+        if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
             lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
         }
-        
+
         for (uint32 j = 0; j < set->capacity; j++) {
             char *page_addr = set->page_buf + j * page_size;
             remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
@@ -233,7 +230,7 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
                 ub_rw_lock_create((ub_rw_lock_t *)(page_info->lock_ptr), &g_ub_lock_config, &g_ub_lock_creator);
                 OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,
-                               (void *)page_info->lock_ptr);
+                            (void *)page_info->lock_ptr);
             }
         }
 
@@ -249,11 +246,13 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
 status_t drc_init_remote_buffer()
 {
     drc_res_ctx_t *ogx = DRC_RES_CTX;
-    status_t ret = drc_alloc_mmap_remote_buffer_pool(&ogx->remote_sga, &ogx->buf_ctx);
+    status_t ret = drc_alloc_mmap_remote_buffer_pool(&ogx->remote_sga);
     if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DRC]alloc mmap remote buffer pool fail,return error:%u", ret);
         return ret;
     }
+
+    (void)drc_calc_remote_data_buf_size(&ogx->remote_sga, &ogx->buf_ctx);
     drc_set_data_buf(&ogx->remote_sga, &ogx->buf_ctx);
     drc_init_remote_buf_struct(&ogx->remote_sga, &ogx->buf_ctx);
     return OG_SUCCESS;
