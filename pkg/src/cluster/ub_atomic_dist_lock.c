@@ -1,6 +1,6 @@
-/* -------------------------------------------------------------------------
- *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+/*
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd. All rights reserved.
+ * This file is part of the oGRAC project.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -14,11 +14,11 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * dtc_atomic_dist_lock.c
+ * ub_atomic_dist_lock.c
  *
  *
  * IDENTIFICATION
- * src/cluster/dtc_atomic_dist_lock.c
+ * src/cluster/ub_atomic_dist_lock.c
  *
  * -------------------------------------------------------------------------
  */
@@ -145,14 +145,11 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
 ub_lock_result_t ub_rw_lock_x_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
 {
     (void)policy;
-
     uint32_t nodeId = (uint32_t)location->node_id;
     uint32_t currentOwner  = atomic_load_explicit(&lock->ownerNode, memory_order_relaxed);
-
     if (currentOwner  != nodeId) {
         return UB_LOCK_ERROR;
     }
-
     atomic_store_explicit(&lock->ownerNode, 0, memory_order_relaxed);
 
     int expected = INT32_MIN;
@@ -161,7 +158,6 @@ ub_lock_result_t ub_rw_lock_x_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t 
             memory_order_release, memory_order_relaxed)) {
         return UB_LOCK_ERROR;
     }
-
     return UB_LOCK_SUCCESS;
 }
  

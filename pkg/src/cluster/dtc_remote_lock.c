@@ -92,6 +92,15 @@ status_t init_lock_comm_queue()
     return OG_SUCCESS;
 }
 
+#else  /* USE_ATOMIC_LOCK */
+
+status_t init_lock_comm_queue()
+{
+    return OG_SUCCESS;
+}
+
+#endif /* USE_ATOMIC_LOCK */
+
 void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator)
 {
     uint32 node_id = g_instance->kernel.id;
@@ -116,12 +125,12 @@ static ub_location_t make_location(uint8 node_id)
 
     return loc;
 }
-
-status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode)
+// The following API implementation are same with atmoic lock
+status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode)
 {
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_offset;
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to get lock address for offset: %llu", lock_offset);
+        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
         return OG_ERROR;
     }
 
@@ -149,9 +158,9 @@ status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_offset, pag
     return OG_SUCCESS;
 }
 
-status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode)
+status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode)
 {
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_offset;
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire lock for page");
         return OG_ERROR;
@@ -180,109 +189,4 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_offset, p
         lock_type, page_id.file, page_id.page, ret);
     return OG_SUCCESS;
 }
-#else  /* USE_ATOMIC_LOCK */
 
-static ub_location_t g_lock_location = {
-    .tid = 0,
-    .node_id = OG_INVALID_ID8,
-};
-
-status_t init_lock_comm_queue()
-{
-    return OG_SUCCESS;
-}
-
-void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator)
-{
-    uint32 node_id = g_instance->kernel.id;
-    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
-    *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] (atomic-locks) remote lock buf addr start: %p", *ub_lock);
-
-    config->lease_time = 60000;
-    config->heartbeat_timeout = 500;
-
-    creator->tid = (int32_t)(pthread_self() & 0x7FFFFFFF);
-    creator->node_id = (uint8_t)node_id;
-
-    g_lock_location = *creator;
-}
-
-status_t drc_page_lock(page_id_t page_id, uint64 lock_ptr, drc_lock_mode_e mode)
-{
-    uint8 master_node = OG_INVALID_ID8;
-    (void)drc_get_page_master_id(page_id, &master_node);
-
-    OG_LOG_RUN_WAR("[DRC-LOCK] drc_page_lock: page=(%u-%u), master=%u, cur_node=%u, lock_ptr=%llu, mode=%d",
-                   page_id.file, page_id.page, master_node, g_lock_location.node_id,
-                   (unsigned long long)lock_ptr, (int)mode);
-
-    if (lock_ptr == 0) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] drc_page_lock: null lock_ptr for page (%u-%u)", page_id.file, page_id.page);
-        return OG_ERROR;
-    }
-
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_ptr;
-    ub_lock_result_t ret;
-
-    if (mode == DRC_LOCK_EXCLUSIVE) {
-        ret = ub_rw_lock_x_lock(lock, NULL, &g_lock_location);
-    } else {
-        ret = ub_rw_lock_s_lock(lock, NULL, &g_lock_location);
-    }
-
-    if (ret != UB_LOCK_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] drc_page_lock: failed to acquire lock (mode=%d) for page (%u-%u), ret=%d",
-                       (int)mode, page_id.file, page_id.page, (int)ret);
-        return OG_ERROR;
-    }
-
-    OG_LOG_DEBUG_INF("[DRC-LOCK] drc_page_lock: acquired lock (mode=%d) for page (%u-%u), ptr=%llu",
-                     (int)mode, page_id.file, page_id.page, (unsigned long long)lock_ptr);
-    return OG_SUCCESS;
-}
-
-status_t drc_page_unlock(page_id_t page_id, uint64 lock_ptr, drc_lock_mode_e mode)
-{
-    if (lock_ptr == 0) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] drc_page_unlock: null lock_ptr for page (%u-%u)",
-                       page_id.file, page_id.page);
-        return OG_ERROR;
-    }
-
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_ptr;
-    ub_lock_result_t ret;
-
-    if (mode == DRC_LOCK_EXCLUSIVE) {
-        ret = ub_rw_lock_x_unlock(lock, NULL, &g_lock_location);
-    } else {
-        ret = ub_rw_lock_s_unlock(lock, NULL, &g_lock_location);
-    }
-
-    if (ret != UB_LOCK_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] drc_page_unlock: failed to release lock (mode=%d) for page (%u-%u), ret=%d",
-                       (int)mode, page_id.file, page_id.page, (int)ret);
-        return OG_ERROR;
-    }
-
-    OG_LOG_DEBUG_INF("[DRC-LOCK] drc_page_unlock: released lock (mode=%d) for page (%u-%u), ptr=%llu",
-                     (int)mode, page_id.file, page_id.page, (unsigned long long)lock_ptr);
-    return OG_SUCCESS;
-}
-
-status_t drc_page_free_lock(page_id_t page_id, uint64 lock_ptr)
-{
-    if (lock_ptr == 0) {
-        return OG_SUCCESS;
-    }
-
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_ptr;
-
-    ub_rw_lock_free(lock, &g_lock_location);
-
-    OG_LOG_DEBUG_INF("[DRC-LOCK] drc_page_free_lock: reset lock for page (%u-%u), ptr=%llu",
-                     page_id.file, page_id.page, (unsigned long long)lock_ptr);
-    return OG_SUCCESS;
-}
-
-#endif /* USE_ATOMIC_LOCK */

@@ -10,8 +10,9 @@ include_directories(
 
 aux_source_directory(. CLUSTER_SRC)
 
+option(USE_ATOMIC_LOCK "Enable atomic lock" OFF)
 if (NOT USE_ATOMIC_LOCK)
-	list(REMOVE_ITEM CLUSTER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/dtc_atomic_dist_lock.c")
+	list(REMOVE_ITEM CLUSTER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/ub_atomic_dist_lock.c")
 endif()
 
 link_directories(${OGRACDB_LIB} "${OGRACDB_LIBRARY}/protobuf/lib")
@@ -23,7 +24,7 @@ endif(USE_FUZZASAN)
 
 if (USE_ATOMIC_LOCK)
 	target_compile_definitions(ogcluster PRIVATE USE_ATOMIC_LOCK=1)
-    target_link_libraries(ogcluster PRIVATE ogrc ogtms ogfdsa hcom ubsm_sdk)
+    target_link_libraries(ogcluster PRIVATE ogrc ogtms ogfdsa)
 else()
 	target_compile_definitions(ogcluster PRIVATE USE_ATOMIC_LOCK=0)
     target_link_libraries(ogcluster PRIVATE ogrc ogtms ogfdsa hcom ubsm_sdk ubturbo_tdsql)

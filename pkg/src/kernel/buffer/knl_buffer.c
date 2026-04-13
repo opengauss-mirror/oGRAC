@@ -32,7 +32,7 @@
 #include "dtc_context.h"
 #include "dtc_recovery.h"
 #include "dtc_database.h"
-#include "dtc_global_atomic_lock.h"
+#include "dtc_remote_lock.h"
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define GBP_COMPOUND_SLOT_SIZE (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64))
@@ -451,8 +451,8 @@ static bool32 buf_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_ty
 {
     // TOODO: This should be an atomic load from shmem with UB API
     remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
-    uint16 ref_num = atomic_load_explicit(&shmem_meta->ref_num, memory_order_relaxed);
-    uint16 touch_num = atomic_load_explicit(&shmem_meta->touch_number, memory_order_relaxed);
+    uint16 ref_num = shmem_meta->ref_num;
+    uint16 touch_num = shmem_meta->touch_number;
     ctrl->ref_num = ref_num;
     ctrl->touch_number = touch_num;
     if (expire_type == BUF_EVICT) {
@@ -614,8 +614,7 @@ static uint32 buf_expire_normal_shmem(knl_session_t *session, buf_set_t *set, bu
     remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
     if (!buf_can_expire_shmem(ctrl, expire_type)) {
         // TOODO: this should be an atomic UB store
-        atomic_store_explicit(&shmem_meta->touch_number, ctrl->touch_number / BUF_AGE_DECREASE_FACTOR,
-                              memory_order_release);
+        shmem_meta->touch_number = ctrl->touch_number / BUF_AGE_DECREASE_FACTOR;
         return 0;  // fail
     }
 
@@ -801,10 +800,10 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
         return OG_ERROR;
     }
 
-    uint32 lock_offset = shmem_ctrl->shmem_page_meta->lock_ptr;
+    uint64 lock_ptr = shmem_ctrl->shmem_page_meta->lock_ptr;
 
     // Acquire global lock
-    status_t ret = drc_hot_page_lock(shmem_ctrl->page_id, lock_offset, DRC_LOCK_EXCLUSIVE);
+    status_t ret = drc_gbp_distribute_lock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
     if (ret != OG_SUCCESS) {
         return ret;
     }
@@ -820,12 +819,11 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
     knl_securec_check(err);
 
     // Release and free global lock
-    ret = drc_hot_page_unlock(shmem_ctrl->page_id, lock_offset, DRC_LOCK_EXCLUSIVE);
+    ret = drc_gbp_distribute_unlock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
     if (ret != OG_SUCCESS) {
         return ret;
     }
 
-    ret = drc_hot_page_free_lock(shmem_ctrl->page_id, lock_offset);
     if (ret != OG_SUCCESS) {
         return ret;
     }
@@ -1012,11 +1010,11 @@ static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_se
     // Now we find the item to reuse, lock the global metadata first before we invalidate the shmem page to avoid
     // anybody else using it
     remote_page_info_t *shmem_meta = item->shmem_page_meta;
-    uint32 lock_offset = shmem_meta->lock_ptr;
+    uint64 lock_ptr = shmem_meta->lock_ptr;
     status_t ret;
 
     do {
-        ret = drc_hot_page_lock(item->page_id, lock_offset, DRC_LOCK_EXCLUSIVE);
+        ret = drc_gbp_distribute_lock(session, lock_ptr, item->page_id, LATCH_MODE_X);
         if (ret != OG_SUCCESS) {
             cm_sleep(1);  // sleep 1 ms to avoid busy spinning
         }
@@ -1037,7 +1035,7 @@ static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_se
     cm_spin_unlock(&list->lock);
 
     // Release and free global lock
-    ret = drc_hot_page_unlock(item->page_id, lock_offset, DRC_LOCK_EXCLUSIVE);
+    ret = drc_gbp_distribute_unlock(session, lock_ptr, item->page_id, LATCH_MODE_X);
 
     // Return the free block to the caller.
     return item;

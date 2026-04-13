@@ -41,7 +41,7 @@
 #include "dtc_recovery.h"
 #include "dtc_trace.h"
 #include "dtc_ckpt.h"
-#include "dtc_global_atomic_lock.h"
+#include "dtc_remote_lock.h"
 
 bool32 dcs_page_latch_usable[][DRC_LOCK_MODE_MAX] = {
     // DRC_LOCK_NULL,  DRC_LOCK_SHARE, DRC_LOCK_EXCLUSIVE, DRC_LOCK_MODE_MAX
@@ -217,14 +217,11 @@ static status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctr
 {
     knl_panic(shmem_page_addr != NULL);
     knl_panic(shmem_page_meta != NULL);
-
-    // TOODO: Here it might be more complicated, since it is not a spin_lock
-    // We need to treat the situation of waiting for lock.
-
-    uint32 lock_offset = shmem_page_meta->lock_ptr;
+    latch_mode_t latch_mode = mode == DRC_LOCK_EXCLUSIVE ? LATCH_MODE_X : LATCH_MODE_S;
+    uint64 lock_ptr = shmem_page_meta->lock_ptr;
 
     // Acquire global lock
-    status_t ret = drc_hot_page_lock(ctrl->page_id, lock_offset, mode);
+    status_t ret = drc_gbp_distribute_lock(session, lock_ptr, ctrl->page_id, latch_mode);
     if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DCS][%u-%u] failed to lock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
         return ret;
@@ -236,9 +233,7 @@ static status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctr
 
     // This page is invalid in shared_mem now.
     if ((raw_remote != raw_local) || (remote_head_lsn < ctrl->page->lsn)) {
-        // TOODO, when we find the page is invalid, the case (remote_head_lsn < ctrl->page->lsn) needs to get handle
-        // specially.
-        drc_hot_page_unlock(ctrl->page_id, lock_offset, mode);
+        drc_gbp_distribute_unlock(session, lock_ptr, ctrl->page_id,  latch_mode);
         return OG_ERROR;
     }
 
@@ -250,7 +245,7 @@ static status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctr
     ctrl->shmem_page_meta = shmem_page_meta;
 
     // Release global lock
-    ret = drc_hot_page_unlock(ctrl->page_id, lock_offset, mode);
+    ret = drc_gbp_distribute_unlock(session, lock_ptr, ctrl->page_id, latch_mode);
     if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
         return ret;
@@ -1332,36 +1327,14 @@ static status_t dcs_owner_transfer_page_to_gbp(knl_session_t *session, uint8 mas
     remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + page_req->shmem_page_meta_off);
     page_head_t *shmem_page_addr = (page_head_t *)(base + page_req->shmem_page_meta_off + sizeof(remote_page_info_t));
     // Acquire global lock
-    uint32 lock_offset = shmem_page_meta->lock_ptr;
-    bool32 need_alloc_lock = (lock_offset == DRC_INVALID_LOCK_OFFSET);  // TOODO: Update default value at initialization
-
-    if (need_alloc_lock) {
-        // Allocate a lock from the global lock pool
-        ret = drc_hot_page_alloc_lock(page_req->page_id, &lock_offset);
-        if (ret != OG_SUCCESS) {
-            mes_send_error_msg(&page_req->head);
-            dcs_leave_page(session);
-            return ret;
-        }
-    } else {
-        // Page was already hot, lock already allocated
-        // TOODO: This technically should never be the case in normal flow... or can it?
-        // There could be a case that this happens. When page was demoted to cold and the page's global lock failed to
-        // be freed due to some unexpected error. We could reuse this lock but it might not be ideal, leave it as TOODO
-        // now
-        OG_LOG_DEBUG_WAR("[DCS][%u-%u]: Reusing existing global lock at offset 0x%X", page_req->page_id.file,
-                         page_req->page_id.page, lock_offset);
-    }
+    uint64 lock_ptr = shmem_page_meta->lock_ptr;
 
     knl_panic(page_req->req_mode == DRC_LOCK_EXCLUSIVE);
     knl_panic(!ctrl->is_marked && !ctrl->is_readonly);
-    ret = drc_hot_page_lock(page_req->page_id, lock_offset, DRC_LOCK_EXCLUSIVE);
+    ret = drc_gbp_distribute_lock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
     if (ret != OG_SUCCESS) {
-        if (need_alloc_lock) {
-            drc_hot_page_free_lock(page_req->page_id, lock_offset);
-        }
-        OG_LOG_DEBUG_ERR("[DCS][%u-%u]: Failed to acquire global lock for page transfer, offset=0x%X",
-                         page_req->page_id.file, page_req->page_id.page, lock_offset);
+        OG_LOG_DEBUG_ERR("[DCS][%u-%u]: Failed to acquire global lock for page transfer, offset=%llu",
+                         page_req->page_id.file, page_req->page_id.page, lock_ptr);
 
         mes_send_error_msg(&page_req->head);
         dcs_leave_page(session);
@@ -1369,7 +1342,7 @@ static status_t dcs_owner_transfer_page_to_gbp(knl_session_t *session, uint8 mas
     }
 
     remote_page_info_t master_shmem_page_meta;
-    master_shmem_page_meta.lock_ptr = lock_offset;
+    master_shmem_page_meta.lock_ptr = lock_ptr;
     master_shmem_page_meta.page_id = *(uint64_t *)&page_req->page_id;
     master_shmem_page_meta.head_lsn = ctrl->page->lsn;
     master_shmem_page_meta.xlog_owner_node = page_req->head.src_inst;
@@ -1386,7 +1359,7 @@ static status_t dcs_owner_transfer_page_to_gbp(knl_session_t *session, uint8 mas
     // Release global Lock
     OG_LOG_DEBUG_INF("[DCS][%u-%u]: Releasing exclusive lock after write", page_req->page_id.file,
                      page_req->page_id.page);
-    drc_hot_page_unlock(page_req->page_id, lock_offset, DRC_LOCK_EXCLUSIVE);
+    drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
 
     knl_begin_session_wait(session, DCS_TRANSFER_SHMEM_ADDR, OG_TRUE);
     SYNC_POINT_GLOBAL_START(OGRAC_DCS_TRANSFER_BEFORE_SEND_ABORT, NULL, 0);

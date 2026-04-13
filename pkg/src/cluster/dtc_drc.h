@@ -54,6 +54,14 @@ extern "C" {
         24, 6, 0, 4                          \
     }
 
+// lock item structures
+typedef enum en_drc_lock_mode {
+    DRC_LOCK_NULL = 0,
+    DRC_LOCK_SHARE = 1,
+    DRC_LOCK_EXCLUSIVE = 2,
+    DRC_LOCK_MODE_MAX = 3,
+} drc_lock_mode_e;
+
 typedef struct st_drc_req_info {
     uint8 inst_id;
     uint8 req_mode;
