@@ -29,9 +29,11 @@
 #include "knl_cluster_module.h"
 #include "cm_defs.h"
 #include "dtc_drc.h"
+#include "dtc_dcs.h"
 #include "dtc_context.h"
 #include "dtc_drc_stat.h"
 #include "dtc_remote_lock.h"
+#include "dtc_database.h"
 #include "cm_malloc.h"
 #include "cm_date.h"
 #include "cs_ub.h"
@@ -99,7 +101,7 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 
     ret = ubsmem_shmem_map(start, remote_sga->remote_total_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
             data_buf_name, 0, (void **)&(remote_sga->remote_buf_addr[node_id]));
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote data buf addr start: %p", remote_sga->remote_buf_addr[node_id]);
+    OG_LOG_RUN_WAR("[DRC-GBP] sprintf remote data buf addr start: %p", remote_sga->remote_buf_addr[node_id]);
     if (ret != EOK) {
         OG_LOG_RUN_ERR("[DRC-GBP] Failed to map data buffer %s on node_id %u, return error:%d", data_buf_name, node_id,
                        ret);
@@ -287,4 +289,156 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     mes_release_message_buf(msg->buffer);
     OG_LOG_RUN_WAR("[DRC-GBP]drc_process_remote_buf_mmap, node id %u", node_id);
     (void)dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
+}
+
+static inline status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    char *page = (char *)ctrl->shmem_page_addr;
+    errno_t err = memcpy_s(ctrl->page, DEFAULT_PAGE_SIZE(session), page, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
+
+    return OG_SUCCESS;
+}
+
+status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode)
+{
+    // TODO: Here it might be more complicated, since it is not a spin_lock
+    // We need to treat the situation of waiting for lock.
+    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    uint64 lock_offset = shmem_page_meta->lock_ptr;
+    status_t ret;
+
+    uint8 gbp_owner_id = shmem_page_meta->claimed_owner;
+
+    if (gbp_owner_id != DCS_SELF_INSTID(session)) {
+        if (remote_sga->map_success[gbp_owner_id] != OG_TRUE) {
+            int ret = dtc_mmap_remote_data_buf(remote_sga, gbp_owner_id);
+            if (ret != UBSM_OK) {
+                OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node %u failed, ret: %d", gbp_owner_id, ret);
+            }
+        }
+    }
+    
+    // to do, if mode is S, not lock; if mode is X, need lock
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        // Acquire remote global lock
+        ret = drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, mode);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_WAR("[DCS-GBP][%u-%u] failed to lock shmem page, return",
+                ctrl->page_id.file, ctrl->page_id.page);
+            return ret;
+        }
+    }
+
+    // check page identifier of remote buf meta with ctrl->page_id
+    if (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
+        datafile_t *df = NULL;
+        df = DATAFILE_GET(session, ctrl->page_id.file);
+        OG_LOG_RUN_ERR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
+                       shmem_page_meta->file_id, shmem_page_meta->page_id,
+                       ctrl->page_id.file, ctrl->page_id.page, df->ctrl->name);
+        // to do: unlock remote mate
+        return OG_ERROR;
+    }
+
+    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
+    uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+
+    // to do: check remote_head_lsn, remote_tail_lsn is max and no set, need to set
+    if (remote_head_lsn != remote_tail_lsn) {
+        OG_LOG_RUN_WAR("[DTC-GBP-COPY][%llu-%llu] failed to check lsn, return", remote_head_lsn, remote_tail_lsn);
+        // TODO: when we find the page is invalid, unlock remote mate and return error
+    }
+
+    // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
+    if (remote_head_lsn < ctrl->page->lsn) {
+        OG_LOG_RUN_WAR(
+                "[[DTC-GBP-COPY][%u-%u]: owner transfer page failed, invalid req->lsn(%llu), ctrl->page->lsn(%llu)",
+                ctrl->page_id.file, ctrl->page_id.page, ctrl->page->lsn, remote_head_lsn);
+        // TODO: when we find the page is invalid, unlock remote mate and return error
+    }
+
+    dcs_copy_page_from_shmem(session, ctrl);
+
+    heap_page_t *heap_page = (heap_page_t *)ctrl->page;
+    OG_LOG_RUN_WAR("[DTC_HEAP_COPY_GBP] page[%u-%u], oid: %d, page addr: %p, page_lsn %llu, page addr by meta: %p",
+                AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page, heap_page->oid,
+                ctrl->shmem_page_addr, heap_page->head.lsn,
+                GET_PAGE_ADRR_IN_GBP((char *)shmem_page_meta));
+
+    // check page identifier of remote buf meta with remote page
+    if (shmem_page_meta->file_id != AS_PAGID(heap_page->head.id).file ||
+        shmem_page_meta->page_id != AS_PAGID(heap_page->head.id).page) {
+        datafile_t *df = NULL;
+        df = DATAFILE_GET(session, ctrl->page_id.file);
+        OG_LOG_RUN_WAR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
+                       shmem_page_meta->file_id, shmem_page_meta->page_id,
+                       ctrl->page_id.file, ctrl->page_id.page, df->ctrl->name);
+        // TODO: when we find the page is invalid, unlock remote mate and return error
+    }
+
+    // to do: Release global lock, if mode is X, no need to unlock, lock after write finished
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
+            return ret;
+        }
+    }
+
+    // to do: dtc_update_lsn(session, remote_head_lsn), need to think how to set.
+    // to do：dtc_update_scn(session, ctrl->scn); need to think how to set.
+    dtc_update_lsn(session, remote_head_lsn);
+    // to do: check ctrl->lock_mode how to set
+    ctrl->lock_mode = mode;
+    // ctrl->load_status need to set BUF_IS_LOADED, because commit need to check this status
+    ctrl->load_status = (uint8)BUF_IS_LOADED;
+
+    return OG_SUCCESS;
+}
+
+status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
+{
+    buf_ctrl_t *ctrl = session->curr_page_ctrl;
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    page_head_t *shmem_page_addr = ctrl->shmem_page_addr;
+    uint8 curr_node_id = DCS_SELF_INSTID(session);
+
+    // to do: check local ctrl page lsn and remote page lsn
+    uint64 ctrl_page_lsn = ctrl->page->lsn;
+    uint64 remote_page_lsn = curr_lsn;
+    OG_LOG_RUN_WAR("[LBP-COPY-TO-GBP][%llu-%llu] check lsn", ctrl_page_lsn, remote_page_lsn);
+
+    // Has acquired global lock  when copy from gbp ->local
+    remote_page_info_t new_shmem_page_meta;
+    new_shmem_page_meta.lock_ptr = ctrl->shmem_page_meta->lock_ptr;
+    new_shmem_page_meta.head_lsn = remote_page_lsn;
+    new_shmem_page_meta.file_id = ctrl->page_id.file;
+    new_shmem_page_meta.page_id = ctrl->page_id.page;
+    new_shmem_page_meta.claimed_owner = ctrl->shmem_page_meta->claimed_owner;
+    new_shmem_page_meta.touch_number += 1;
+    new_shmem_page_meta.ref_num = 0;
+    new_shmem_page_meta.xlog_owner_node = curr_node_id;
+    new_shmem_page_meta.xlog_owner_node_timeline_id[curr_node_id] = curr_node_id;
+
+    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
+    uint64 page_tail_lsn = remote_page_lsn;
+
+    errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &new_shmem_page_meta,
+                            sizeof(remote_page_info_t));
+    knl_securec_check(err);
+
+    err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
+
+    // tail lsn
+    err = memcpy_s(page_tail_lsn_addr, DEFAULT_PAGE_SIZE(session), &page_tail_lsn, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
+    
+    // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
+    OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u]: Success to copy page to gbp", ctrl->page_id.file,
+                        ctrl->page_id.page);
+
+    return OG_SUCCESS;
 }

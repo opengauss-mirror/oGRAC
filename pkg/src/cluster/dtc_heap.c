@@ -31,6 +31,7 @@
 #include "dtc_context.h"
 #include "pcr_pool.h"
 #include "dtc_buffer.h"
+#include "dtc_remote_buffer.h"
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_tran.h"

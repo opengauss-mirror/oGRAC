@@ -89,19 +89,19 @@ function prepare() {
     echo "compiling multiple process"
     if [[ ${BUILD_TYPE} == "debug" ]]; then
       echo "compiling multiple process debug"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" "${MAKEFILE_EXTRA_ARGS[@]}"
     else
       echo "compiling multiple process release"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" "${MAKEFILE_EXTRA_ARGS[@]}"
     fi
   elif [[ ${BUILD_MODE} == "single" ]]; then
     echo "compiling single process"
     if [[ ${BUILD_TYPE} == "debug" ]]; then
       echo "compiling single process debug"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" "${MAKEFILE_EXTRA_ARGS[@]}"
     else
       echo "compiling single process release"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" "${MAKEFILE_EXTRA_ARGS[@]}"
     fi
   else
     echo "unsupported build mode"
@@ -122,9 +122,14 @@ if [[ ${BUILD_TYPE} != "debug" ]] && [[ ${BUILD_TYPE} != "release" ]]; then
 fi
 
 
-if [ $# -ge 2 ] && [ "$2" = "--with-dss" ]; then
-  DSSENABLED="TRUE"
-fi
+MAKEFILE_EXTRA_ARGS=()
+for arg in "${@:2}"; do
+  if [ "$arg" = "--with-dss" ]; then
+    DSSENABLED="TRUE"
+  else
+    MAKEFILE_EXTRA_ARGS+=("$arg")
+  fi
+done
 
 OG_BUILD_TYPE="package-${BUILD_TYPE}"
 

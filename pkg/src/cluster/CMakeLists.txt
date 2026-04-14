@@ -24,7 +24,7 @@ endif(USE_FUZZASAN)
 
 if (USE_ATOMIC_LOCK)
 	target_compile_definitions(ogcluster PRIVATE USE_ATOMIC_LOCK=1)
-    target_link_libraries(ogcluster PRIVATE ogrc ogtms ogfdsa)
+    target_link_libraries(ogcluster PRIVATE ogrc ogtms ogfdsa hcom ubsm_sdk)
 else()
 	target_compile_definitions(ogcluster PRIVATE USE_ATOMIC_LOCK=0)
     target_link_libraries(ogcluster PRIVATE ogrc ogtms ogfdsa hcom ubsm_sdk ubturbo_tdsql)

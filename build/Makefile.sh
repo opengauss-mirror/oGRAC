@@ -725,6 +725,10 @@ func_making_package_test()
 main()
 {
     echo "Main Function : "
+    if [[ "${USE_ATOMIC_LOCK:-}" == "ON" ]] || [[ "${USE_ATOMIC_LOCK:-}" == "1" ]]; then
+        COMPILE_OPTS="${COMPILE_OPTS} -DUSE_ATOMIC_LOCK=ON"
+        echo "USE_ATOMIC_LOCK=ON (from environment) passed to CMake"
+    fi
     arg0=$0
     arg1=$1
 
@@ -799,6 +803,10 @@ main()
         '--without-deps')
             echo "no need for 3rdparty dependency compilation"
             WITHOUT_DEPS="true"
+            ;;
+        'atomic_lock=1')
+            echo "atomic_lock enable (USE_ATOMIC_LOCK)"
+            COMPILE_OPTS="${COMPILE_OPTS} -DUSE_ATOMIC_LOCK=ON"
             ;;
         *)
             echo "Wrong compile options"

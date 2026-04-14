@@ -30,6 +30,7 @@
 #include "dc_part.h"
 #include "pcr_heap_scan.h"
 #include "cm_io_record.h"
+#include "dtc_remote_buffer.h"
 
 #define MAX_ITL_UNDO_SIZE             sizeof(pcrh_undo_itl_t)  // sizeof(pcrh_poly_undo_itl_t)
 #define PCRH_INSERT_UNDO_COUNT        2 // itl undo and insert undo
@@ -1017,6 +1018,11 @@ static status_t pcrh_simple_insert(knl_session_t *session, knl_cursor_t *cursor,
     buf_leave_page(session, OG_TRUE);
 
     log_atomic_op_end(session);
+
+    // copy ctrl->page to gbp after write ctrl->page and log, and update remote page mate
+    if (session->kernel->attr.enable_ubsmem && session->curr_page_ctrl->shmem_page_meta != NULL) {
+        dtc_buf_try_store_to_gbp(session, session->curr_lsn);
+    }
 
     heap_try_change_map(session, heap, page_id);
 
