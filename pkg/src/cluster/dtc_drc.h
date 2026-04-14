@@ -36,6 +36,7 @@
 #include "dtc_drc_stat.h"
 #include "dtc_buffer.h"
 #include "dtc_remote_buffer.h"
+#include "dtc_remote_lock.h"
 
 #ifdef __cplusplus
 extern "C" {

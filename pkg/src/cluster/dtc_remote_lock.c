@@ -14,11 +14,11 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * dtc_remote_buffer.c
+ * dtc_remote_lock.c
  *
  *
  * IDENTIFICATION
- * src/cluster/dtc_remote_buffer.c
+ * src/cluster/dtc_remote_lock.c
  *
  * -------------------------------------------------------------------------
  */
@@ -27,6 +27,8 @@
 #include "dtc_dcs.h"
 #include "knl_session.h"
 #include "dtc_remote_lock.h"
+
+#if !USE_ATOMIC_LOCK
 
 static ub_shm_comm_t g_handle_send = NULL;
 static ub_shm_comm_t g_handle_recv = NULL;
@@ -90,6 +92,15 @@ status_t init_lock_comm_queue()
     return OG_SUCCESS;
 }
 
+#else  /* USE_ATOMIC_LOCK */
+
+status_t init_lock_comm_queue()
+{
+    return OG_SUCCESS;
+}
+
+#endif /* USE_ATOMIC_LOCK */
+
 void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator)
 {
     uint32 node_id = g_instance->kernel.id;
@@ -114,12 +125,12 @@ static ub_location_t make_location(uint8 node_id)
 
     return loc;
 }
-
-status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode)
+// The following API implementation are same with atmoic lock
+status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode)
 {
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_offset;
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to get lock address for offset: %llu", lock_offset);
+        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
         return OG_ERROR;
     }
 
@@ -147,9 +158,9 @@ status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_offset, pag
     return OG_SUCCESS;
 }
 
-status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode)
+status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode)
 {
-    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_offset;
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire lock for page");
         return OG_ERROR;
@@ -178,3 +189,4 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_offset, p
         lock_type, page_id.file, page_id.page, ret);
     return OG_SUCCESS;
 }
+

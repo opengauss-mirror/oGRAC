@@ -40,7 +40,7 @@
 #include "knl_buffer.h"
 
 #include "ub_dist_comm_queue.h"
-#include "ub_dist_lock.h"
+#include "dtc_remote_lock.h"
 
 static ub_rw_lock_t *g_ub_lock = NULL;
 static ub_lock_config_t g_ub_lock_config = { 0 };
@@ -199,7 +199,6 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
         drc_init_remote_lock(&g_ub_lock, &g_ub_lock_config, &g_ub_lock_creator);
     }
-    uint64 lock_match_start;
 
     for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
         set = &buf_ctx->buf_set[i];
@@ -218,15 +217,12 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
 
-        if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
-            lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
-        }
-
         for (uint32 j = 0; j < set->capacity; j++) {
             char *page_addr = set->page_buf + j * page_size;
             remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
             if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
                 // each page corresponds to a lock in the lock buffer.
+                uint64 lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
                 ub_rw_lock_create((ub_rw_lock_t *)(page_info->lock_ptr), &g_ub_lock_config, &g_ub_lock_creator);
                 OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,

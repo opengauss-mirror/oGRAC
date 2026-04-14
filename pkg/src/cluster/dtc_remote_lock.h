@@ -14,11 +14,11 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * dtc_remote_buffer.h
+ * dtc_remote_lock.h
  *
  *
  * IDENTIFICATION
- * src/cluster/dtc_remote_buffer.h
+ * src/cluster/dtc_remote_lock.h
  *
  * -------------------------------------------------------------------------
  */
@@ -34,8 +34,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode);
-status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_offset, page_id_t page_id, latch_mode_t mode);
+
+status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode);
+status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode);
+
 status_t init_lock_comm_queue();
 void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
 
