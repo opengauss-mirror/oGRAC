@@ -145,6 +145,105 @@ static status_t dtc_buf_try_prefetch(knl_session_t *session, buf_read_assist_t *
     return OG_SUCCESS;
 }
 
+static inline status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    char *page = (char *)ctrl->shmem_page_addr;
+    errno_t err = memcpy_s(ctrl->page, DEFAULT_PAGE_SIZE(session), page, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
+
+    return OG_SUCCESS;
+}
+
+#define DTC_WAIT_PEER_FLUSH_INTERVAL 1  // unit: ms
+
+static status_t dtc_wait_peer_flush_lsn(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (ctrl->shmem_page_meta == NULL) {
+        return OG_SUCCESS;
+    }
+
+    uint16 peer_id = ctrl->shmem_page_meta->xlog_owner_node;
+    uint64 page_lsn = ctrl->page->lsn;
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+
+    if (peer_id >= OG_MAX_INSTANCES || peer_id == DCS_SELF_INSTID(session)) {
+        return OG_SUCCESS;
+    }
+
+    /* peer flush lsn wait is not supported in no-CMS mode */
+    if (DB_CLUSTER_NO_CMS) {
+        return OG_SUCCESS;
+    }
+
+    cluster_view_t view;
+    rc_get_cluster_view(&view, OG_FALSE);
+
+    if (!rc_bitmap64_exist(&view.bitmap, peer_id)) {
+        OG_LOG_RUN_WAR("[DTC_BUFFER][%u-%u] peer node %u is not alive, wait for reform", ctrl->page_id.file,
+                       ctrl->page_id.page, peer_id);
+        return OG_ERROR;
+    }
+
+    if (rsga->map_success[peer_id] != OG_TRUE) {
+        int mmap_ret = dtc_mmap_remote_data_buf(rsga, peer_id);
+        if (mmap_ret != UBSM_OK || rsga->map_success[peer_id] != OG_TRUE) {
+            OG_LOG_RUN_ERR("[DTC_BUFFER][%u-%u] failed to mmap remote data buf for node %u, ret: %d",
+                           ctrl->page_id.file, ctrl->page_id.page, peer_id, mmap_ret);
+            return OG_ERROR;
+        }
+    }
+
+    uint64 page_timeline_id = remote_page_info_get_timeline_id(ctrl->shmem_page_meta);
+    uint64 peer_timeline_id = drc_get_node_timeline_id(rsga, peer_id);
+
+    if (peer_timeline_id == 0) {
+        OG_LOG_RUN_WAR("[DTC_BUFFER][%u-%u] peer %u timeline id not initialized yet, wait aborted", ctrl->page_id.file,
+                       ctrl->page_id.page, peer_id);
+        return OG_ERROR;
+    }
+
+    if (peer_timeline_id != page_timeline_id) {
+        OG_LOG_RUN_WAR("[DTC_BUFFER][%u-%u] peer %u timeline id mismatch "
+                       "(peer=%llu, page=%llu), old incarnation detected",
+                       ctrl->page_id.file, ctrl->page_id.page, peer_id, peer_timeline_id, page_timeline_id);
+        return OG_ERROR;
+    }
+
+    knl_begin_session_wait(session, DTC_WAIT_PEER_FLUSH_LSN, OG_TRUE);
+    for (uint32 i = 0; i < g_instance->kernel.attr.peer_flush_lsn_timeout_ms; i++) {
+        uint64 peer_flush_lsn = drc_get_node_flush_lsn(rsga, peer_id);
+
+        if (peer_flush_lsn >= page_lsn) {
+            OG_LOG_DEBUG_INF("[DTC_BUFFER][%u-%u] wait peer %u flush lsn success, page_lsn=%llu, cost_ms=%u",
+                             ctrl->page_id.file, ctrl->page_id.page, peer_id, page_lsn, i);
+            knl_end_session_wait(session, DTC_WAIT_PEER_FLUSH_LSN);
+            return OG_SUCCESS;
+        }
+
+        if (RC_REFORM_IN_PROGRESS) {
+            OG_LOG_RUN_WAR("[DTC_BUFFER][%u-%u] reform in progress while waiting peer %u flush lsn", ctrl->page_id.file,
+                           ctrl->page_id.page, peer_id);
+            knl_end_session_wait(session, DTC_WAIT_PEER_FLUSH_LSN);
+            return OG_ERROR;
+        }
+
+        rc_get_cluster_view(&view, OG_FALSE);
+        if (!rc_bitmap64_exist(&view.bitmap, peer_id)) {
+            OG_LOG_RUN_WAR("[DTC_BUFFER][%u-%u] peer node %u became not alive while waiting", ctrl->page_id.file,
+                           ctrl->page_id.page, peer_id);
+            knl_end_session_wait(session, DTC_WAIT_PEER_FLUSH_LSN);
+            return OG_ERROR;
+        }
+
+        cm_sleep(DTC_WAIT_PEER_FLUSH_INTERVAL);
+    }
+
+    OG_LOG_RUN_ERR("[DTC_BUFFER][%u-%u] timeout waiting peer %u flush lsn, page_lsn=%llu", ctrl->page_id.file,
+                   ctrl->page_id.page, peer_id, page_lsn);
+    knl_end_session_wait(session, DTC_WAIT_PEER_FLUSH_LSN);
+    return OG_ERROR;
+}
+
 static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl,
                                knl_buf_wait_t *temp_stat)
 {
@@ -273,6 +372,12 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
                 (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
             }
             OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
+            if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL &&
+                ctrl->gbp_lock_mode != DRC_LOCK_NULL) {
+                drc_gbp_distribute_unlock(session, ctrl->shmem_page_meta->lock_ptr, ctrl->page_id,
+                                          ctrl->gbp_lock_mode);
+                ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+            }
             buf_unlatch(session, ctrl, OG_TRUE);
             return OG_ERROR;
         }
@@ -307,6 +412,23 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
     session->curr_page = (char *)ctrl->page;
     session->curr_page_ctrl = ctrl;
     session->stat->buffer_gets++;
+
+    if (ra->mode == LATCH_MODE_X && ctrl->shmem_page_meta != NULL &&
+        ctrl->shmem_page_meta->xlog_owner_node != DCS_SELF_INSTID(session) && ctrl->page->lsn != 0) {
+        status_t wait_ret = dtc_wait_peer_flush_lsn(session, ctrl);
+        if (wait_ret != OG_SUCCESS) {
+            if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL &&
+                ctrl->gbp_lock_mode != DRC_LOCK_NULL) {
+                drc_gbp_distribute_unlock(session, ctrl->shmem_page_meta->lock_ptr, ctrl->page_id,
+                                          ctrl->gbp_lock_mode);
+                ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+            }
+            buf_unlatch(session, ctrl, OG_TRUE);
+            session->curr_page = NULL;
+            session->curr_page_ctrl = NULL;
+            return OG_ERROR;
+        }
+    }
 
     if (SECUREC_UNLIKELY(ctrl->page->type == PAGE_TYPE_UNDO)) {
         session->stat->undo_buf_reads++;

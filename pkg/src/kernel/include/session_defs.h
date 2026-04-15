@@ -147,6 +147,7 @@ typedef enum en_wait_event {
     BROADCAST_ROOT_PAGE,
     CKPT_DISABLE_WAIT,
     LOG_WRITE_RESERVE_SPACE,
+    DTC_WAIT_PEER_FLUSH_LSN,
     WAIT_EVENT_COUNT,
 } wait_event_t;
 

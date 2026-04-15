@@ -143,17 +143,14 @@ static status_t drc_check_remote_lock_capacity(remote_sga_t *remote_sga, remote_
 
 static status_t drc_check_remote_pool_layout(remote_sga_t *remote_sga)
 {
-    uint64 layout_end = remote_sga->remote_buf_alloc_size + DRC_DIST_QUE_SIZE;
-
-    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
-        layout_end = drc_get_dist_lck_offset(remote_sga) + remote_sga->remote_lock_alloc_size;
-    }
+    uint64 layout_end = drc_get_node_flush_lsn_offset(remote_sga) + DRC_NODE_FLUSH_LSN_SIZE;
 
     if (layout_end > remote_sga->remote_total_pool_size) {
         OG_LOG_RUN_ERR("[DRC-GBP] remote pool layout %llu exceeds total pool size %llu, "
-                       "data_region %llu, que_size %llu, lock_alloc_size %llu",
+                       "data_region %llu, que_size %llu, lock_alloc_size %llu, node_flush_lsn_size %llu",
                        layout_end, remote_sga->remote_total_pool_size, remote_sga->remote_buf_alloc_size,
-                       (uint64)DRC_DIST_QUE_SIZE, remote_sga->remote_lock_alloc_size);
+                       (uint64)DRC_DIST_QUE_SIZE, remote_sga->remote_lock_alloc_size,
+                       (uint64)DRC_NODE_FLUSH_LSN_SIZE);
         OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_DATA_BUF_SIZE", (int64)remote_sga->remote_total_pool_size);
         return OG_ERROR;
     }
@@ -285,7 +282,6 @@ static status_t drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t 
             return ret;
         }
     }
-
     if (offset > remote_sga->remote_buf_alloc_size) {
         OG_LOG_RUN_ERR("[DRC-GBP] remote data buf actual size %llu exceeds reserved data region %llu",
                        offset, remote_sga->remote_buf_alloc_size);
@@ -380,6 +376,18 @@ status_t drc_init_remote_buffer()
         return ret;
     }
     drc_init_remote_buf_struct(&ogx->remote_sga, &ogx->buf_ctx);
+
+    uint32 node_id = g_instance->kernel.id;
+    uint64 node_flush_lsn_offset = drc_get_node_flush_lsn_offset(&ogx->remote_sga);
+    ogx->remote_sga.node_flush_lsn = ogx->remote_sga.remote_buf_addr[node_id] + node_flush_lsn_offset;
+    ogx->remote_sga.remote_pool_reserve_offset = node_flush_lsn_offset + DRC_NODE_FLUSH_LSN_SIZE;
+
+    if (ogx->remote_sga.node_flush_lsn != NULL) {
+        knl_reset_large_memory(ogx->remote_sga.node_flush_lsn, sizeof(atomic_t) * 2);
+        uint32 self_id = g_instance->kernel.id;
+        uint64 my_timeline_id = g_instance->kernel.db.ctrl.core.instance_timeline_id[self_id];
+        drc_set_node_timeline_id(&ogx->remote_sga, my_timeline_id);
+    }
     return OG_SUCCESS;
 }
 
@@ -1053,7 +1061,8 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     new_shmem_page_meta.touch_number = shmem_page_meta->touch_number + 1;
     new_shmem_page_meta.ref_num = 0;
     new_shmem_page_meta.xlog_owner_node = curr_node_id;
-    new_shmem_page_meta.xlog_owner_node_timeline_id[curr_node_id] = curr_node_id;
+    remote_page_info_set_timeline_id(&new_shmem_page_meta,
+                                     session->kernel->db.ctrl.core.instance_timeline_id[curr_node_id]);
 
     char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
     uint64 page_tail_lsn = remote_page_lsn;

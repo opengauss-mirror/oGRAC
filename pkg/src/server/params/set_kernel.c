@@ -2388,6 +2388,14 @@ status_t sql_notify_als_ckpt_wait_timeout(void *se, void *item, char *value)
     return OG_SUCCESS;
 }
 
+status_t sql_notify_als_peer_flush_lsn_timeout_ms(void *se, void *item, char *value)
+{
+    uint32 timeout = 0;
+    OG_RETURN_IFERR(cm_str2uint32(value, &timeout));
+    g_instance->kernel.attr.peer_flush_lsn_timeout_ms = (uint32)timeout;
+    return OG_SUCCESS;
+}
+
 status_t sql_notify_event_tracking_stats(bool32 *param, char *value)
 {
     status_t ret = OG_SUCCESS;

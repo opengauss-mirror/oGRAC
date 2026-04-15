@@ -210,6 +210,7 @@ status_t sql_notify_als_private_row_locks(void *se, void *item, char *value);
 status_t sql_notify_als_private_key_locks(void *se, void *item, char *value);
 status_t sql_notify_als_page_clean_wait_timeout(void *se, void *item, char *value);
 status_t sql_notify_als_ckpt_wait_timeout(void *se, void *item, char *value);
+status_t sql_notify_als_peer_flush_lsn_timeout_ms(void *se, void *item, char *value);
 status_t sql_notify_password_verify(void *se, void *item, char *value);
 status_t sql_notify_ograc_stats(void *se, void *item, char *value);
 status_t sql_notify_event_tracking_stats(void *se, void *item, char *value);

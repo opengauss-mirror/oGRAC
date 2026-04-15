@@ -1616,12 +1616,6 @@ static bool32 ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_
         cm_spin_lock(&rbp_ctx->buf_read_lock[rbp_lock_id], NULL);
     }
 
-    /* concurrent with knl_read_page_from_gbp when buf_enter_page with LATCH_S lock */
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel))) {
-        gbp_lock_id = ctrl->page_id.page % OG_GBP_RD_LOCK_COUNT;
-        cm_spin_lock(&gbp_ctx->buf_read_lock[gbp_lock_id], NULL);
-    }
-
     knl_panic_log(IS_SAME_PAGID(to_flush_ctrl->page_id, AS_PAGID(to_flush_ctrl->page->id)),
         "to_flush_ctrl's page_id and to_flush_ctrl page's id are not same, panic info: page_id %u-%u type %u, "
         "page id %u-%u type %u", to_flush_ctrl->page_id.file, to_flush_ctrl->page_id.page,
@@ -2369,7 +2363,7 @@ static status_t dbwr_flush_async_io(knl_session_t *session, dbwr_context_t *dbwr
     for (uint16 i = dbwr->begin; i <= dbwr->end; i++) {
         group->items[i].ctrl->is_marked = 0;
     }
-    
+
     ckpt_finish_flushed_range(ogx, dbwr->begin, dbwr->end);
 
     return OG_SUCCESS;
@@ -2855,68 +2849,6 @@ static void ckpt_update_write_list(knl_session_t *session)
             uint32 buf_pool_id = buf_get_pool_id(page_id, session->kernel->buf_ctx.buf_set_count);
             buf_set_t *set = &session->kernel->buf_ctx.buf_set[buf_pool_id];
             set->write_list.clean_page_count++;
-        }
-    }
-}
-
-static void ckpt_remove_gbp_stale(knl_session_t *session, buf_ctrl_t *ctrl, ckpt_context_t *ogx)
-{
-    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
-    uint64 remote_head_lsn;
-    uint64 remote_tail_lsn;
-
-    if (shmem_page_meta == NULL) {
-        return;
-    }
-
-    if (!ckpt_try_latch_ctrl(session, ctrl)) {
-        return;
-    }
-
-    remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
-    if (remote_head_lsn != remote_tail_lsn) {
-        OG_LOG_RUN_WAR("[DTC-GBP-CKPT][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu)",
-            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn);
-        buf_unlatch(session, ctrl, OG_FALSE);
-        return;
-    }
-
-    if (remote_head_lsn > ctrl->page->lsn) {
-        OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: lsn check need remove, remote page lsn(%llu), ctrl->page->lsn(%llu)",
-            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
-        if (ctrl->in_ckpt) {
-            ckpt_pop_page(session, ogx, ctrl);
-        }
-        CM_MFENCE;
-        ctrl->is_dirty = 0;
-        ctrl->is_remote_dirty = 0;
-        ctrl->is_edp = 0;
-    } else {
-        OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: lsn check doesn't need remove, remote page lsn(%llu),"
-            "ctrl->page->lsn(%llu), is_dirty(%u), is_remote_dirty(%u), is_edp(%d)", ctrl->page_id.file,
-            ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, (uint32)ctrl->is_dirty,
-            (uint32)ctrl->is_remote_dirty, ctrl->is_edp);
-    }
-    buf_unlatch(session, ctrl, OG_FALSE);
-}
-
-static void ckpt_clean_gbp_stale(knl_session_t *session, ckpt_context_t *ogx)
-{
-    buf_ctrl_t *ctrl_next = NULL;
-    buf_ctrl_t *ctrl = NULL;
-
-    if (ogx->queue.count == 0) {
-        return;
-    }
-
-    ctrl = ogx->queue.first;
-    while (ctrl != NULL) {
-        ctrl_next = ctrl->ckpt_next;
-        ckpt_remove_gbp_stale(session, ctrl, ogx);
-        ctrl = ctrl_next;
-        if (!ogx->ckpt_enabled) {
-            break;
         }
     }
 }

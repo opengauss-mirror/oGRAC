@@ -319,6 +319,7 @@ typedef struct st_knl_attr {
     bool32 enable_quick_ckpt;
     bool32 enable_para_log_flush;
     bool32 enable_para_log_dfx;
+    uint32 peer_flush_lsn_timeout_ms;
 } knl_attr_t;
 
 typedef struct st_sys_name_context {  // for system name

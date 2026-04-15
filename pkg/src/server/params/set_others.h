@@ -53,6 +53,7 @@ status_t sql_verify_als_repl_port(void *se, void *lex, void *def);
 status_t sql_verify_als_merge_batch_size(void *se, void *lex, void *def);
 status_t sql_verify_als_convert(void *se, void *lex, void *def);
 status_t sql_verify_als_ckpt_wait_timeout(void *se, void *lex, void *def);
+status_t sql_verify_als_peer_flush_lsn_timeout_ms(void *se, void *lex, void *def);
 status_t sql_verify_als_mem_pool_init_size(void *se, void *lex, void *def);
 status_t sql_verify_als_mem_pool_max_size(void *se, void *lex, void *def);
 status_t sql_verify_als_rbp_ip(void *se, void *lex, void *def);

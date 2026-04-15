@@ -247,6 +247,7 @@ const wait_event_desc_t g_wait_event_desc[] = {
     { "broadcast btree root page", "", "Cluster" },
     { "ckpt disable wait", "", "Commit" },
     { "log write reserve space", "", "Commit" },
+    { "dtc: wait peer flush lsn", "", "Cluster" },
 };
 
 #ifdef WIN32

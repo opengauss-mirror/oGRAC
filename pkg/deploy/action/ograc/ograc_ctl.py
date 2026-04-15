@@ -619,6 +619,7 @@ def _build_ogracd_configs(dp):
         "INTERCONNECT_CHANNEL_NUM": 3 if is_uc and not is_file_mode else 32,
         "_UNDO_AUTO_SHRINK": "FALSE",
         "_CHECKPOINT_TIMED_TASK_DELAY": 100,
+        "PEER_FLUSH_LSN_TIMEOUT_MS": 5000,
         "DBWR_PROCESSES": 8,
         "SESSIONS": 18432,
         "CLUSTER_DATABASE": "TRUE",

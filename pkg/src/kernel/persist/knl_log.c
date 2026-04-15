@@ -34,6 +34,7 @@
 #include "knl_ctrl_restore.h"
 #include "knl_page.h"
 #include "dtc_dcs.h"
+#include "dtc_remote_buffer.h"
 #include "dtc_database.h"
 #include "dtc_dls.h"
 #include "cm_dbs_ulog.h"
@@ -1067,6 +1068,13 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     ogx->flushed_lsn = batch->lsn;
     ogx->curr_scn = batch->scn;
     log_stat(ogx, batch->space_size);
+
+    /* node_flush_lsn is not maintained in no-CMS mode, skip updating */
+    if (!DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
+        remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+        drc_set_node_flush_lsn(rsga, ogx->flushed_lsn);
+    }
+
     cm_spin_unlock(&ogx->flush_lock);
     OG_LOG_DEBUG_INF("[DTC RCY] Flush batch %llu lsn %llu scn %llu head magic %llx point [%u-%u/%u/%llu] size %u space size %u for instance %u",
                      (uint64)batch->head.point.lfn, batch->lsn, batch->scn, batch->head.magic_num,
@@ -1219,6 +1227,11 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
         ctrl->lastest_lfn = lfn;
 
         DB_SET_LSN(ctrl->page->lsn, lsn);
+        if (ctrl->shmem_page_meta != NULL) {
+            ctrl->shmem_page_meta->xlog_owner_node = session->kernel->id;
+            remote_page_info_set_timeline_id(ctrl->shmem_page_meta,
+                session->kernel->db.ctrl.core.instance_timeline_id[session->kernel->id]);
+        }
         log_calc_checksum(session, ctrl->page, g_cks_level);
 
 #ifdef __PROTECT_BUF__

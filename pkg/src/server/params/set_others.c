@@ -1456,6 +1456,16 @@ status_t sql_verify_als_ckpt_wait_timeout(void *se, void *lex, void *def)
     return OG_SUCCESS;
 }
 
+status_t sql_verify_als_peer_flush_lsn_timeout_ms(void *se, void *lex, void *def)
+{
+    uint32 num;
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t sql_verify_als_max_remote_params(void *se, void *lex, void *def)
 {
     uint32 num;

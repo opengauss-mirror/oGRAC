@@ -47,8 +47,9 @@ extern "C" {
 
 #define DRC_DIST_QUE_SIZE (SIZE_M(256))
 #define DRC_DISK_LCK_SIZE (SIZE_G(10))  /* max lock region size */
-
 #define DRC_REMOTE_BUF_OFFSET (uint64)0
+
+#define DRC_NODE_FLUSH_LSN_SIZE align_to_128m(sizeof(atomic_t))
 
 typedef struct st_remote_buf_context {
     buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];
@@ -70,6 +71,7 @@ typedef struct st_remote_sga {
     bool map_success[OG_MAX_INSTANCES];
     char *data_buf; /* each remote data buf is managed by master node. */
     char *lock_buf;
+    char *node_flush_lsn;
 } remote_sga_t;
 
 static inline uint64 drc_get_dist_que_offset(const remote_sga_t *remote_sga)
@@ -80,6 +82,11 @@ static inline uint64 drc_get_dist_que_offset(const remote_sga_t *remote_sga)
 static inline uint64 drc_get_dist_lck_offset(const remote_sga_t *remote_sga)
 {
     return drc_get_dist_que_offset(remote_sga) + DRC_DIST_QUE_SIZE;
+}
+
+static inline uint64 drc_get_node_flush_lsn_offset(const remote_sga_t *remote_sga)
+{
+    return drc_get_dist_lck_offset(remote_sga) + remote_sga->remote_lock_alloc_size;
 }
 
 #pragma pack(push, 1)
@@ -141,6 +148,54 @@ typedef enum buffer_type {
 #define OFFSET_PAGE_ID offsetof(remote_page_info_t, page_id)
 #define OFFSET_HEAD_LSN offsetof(remote_page_info_t, head_lsn)
 #define OFFSET_TAIL_LSN sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size
+
+static inline void remote_page_info_set_timeline_id(remote_page_info_t *info, uint64 timeline_id)
+{
+    timeline_id &= 0xFFFFFFFFFFFFULL;
+    info->xlog_owner_node_timeline_id[0] = (uint8)(timeline_id);
+    info->xlog_owner_node_timeline_id[1] = (uint8)(timeline_id >> 8);
+    info->xlog_owner_node_timeline_id[2] = (uint8)(timeline_id >> 16);
+    info->xlog_owner_node_timeline_id[3] = (uint8)(timeline_id >> 24);
+    info->xlog_owner_node_timeline_id[4] = (uint8)(timeline_id >> 32);
+    info->xlog_owner_node_timeline_id[5] = (uint8)(timeline_id >> 40);
+}
+
+static inline uint64 remote_page_info_get_timeline_id(const remote_page_info_t *info)
+{
+    return ((uint64)info->xlog_owner_node_timeline_id[0]) |
+           ((uint64)info->xlog_owner_node_timeline_id[1] << 8) |
+           ((uint64)info->xlog_owner_node_timeline_id[2] << 16) |
+           ((uint64)info->xlog_owner_node_timeline_id[3] << 24) |
+           ((uint64)info->xlog_owner_node_timeline_id[4] << 32) |
+           ((uint64)info->xlog_owner_node_timeline_id[5] << 40);
+}
+
+static inline void drc_set_node_timeline_id(remote_sga_t *rsga, uint64 timeline_id)
+{
+    if (rsga->node_flush_lsn != NULL) {
+        cm_atomic_set((atomic_t *)(rsga->node_flush_lsn + sizeof(atomic_t)), (int64)timeline_id);
+    }
+}
+
+static inline uint64 drc_get_node_timeline_id(remote_sga_t *rsga, uint32 node_id)
+{
+    atomic_t *peer_timeline_id_ptr =
+        (atomic_t *)(rsga->remote_buf_addr[node_id] + drc_get_node_flush_lsn_offset(rsga) + sizeof(atomic_t));
+    return (uint64)cm_atomic_get(peer_timeline_id_ptr);
+}
+
+static inline void drc_set_node_flush_lsn(remote_sga_t *rsga, uint64 lsn)
+{
+    if (rsga->node_flush_lsn != NULL) {
+        cm_atomic_set((atomic_t *)rsga->node_flush_lsn, (int64)lsn);
+    }
+}
+
+static inline uint64 drc_get_node_flush_lsn(remote_sga_t *rsga, uint32 node_id)
+{
+    atomic_t *peer_flush_lsn_ptr = (atomic_t *)(rsga->remote_buf_addr[node_id] + drc_get_node_flush_lsn_offset(rsga));
+    return (uint64)cm_atomic_get(peer_flush_lsn_ptr);
+}
 
 status_t drc_init_remote_buffer();
 void broadcast_remote_buf_allocated();

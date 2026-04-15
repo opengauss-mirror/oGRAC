@@ -1763,6 +1763,8 @@ status_t srv_load_kernel_params(void)
     g_instance->kernel.attr.page_clean_wait_timeout = (uint32)num32;
     OG_RETURN_IFERR(srv_get_param_uint32("_CHECKPOINT_TIMED_TASK_DELAY", &num32));
     g_instance->kernel.attr.ckpt_timed_task_delay = (uint32)num32;
+    OG_RETURN_IFERR(srv_get_param_uint32("PEER_FLUSH_LSN_TIMEOUT_MS", &num32));
+    g_instance->kernel.attr.peer_flush_lsn_timeout_ms = (uint32)num32;
     OG_RETURN_IFERR(srv_get_default_page_clean_mode_param(attr));
     OG_RETURN_IFERR(srv_get_param_size_uint32("BATCH_FLUSH_CAPACITY", &attr->batch_flush_capacity));
     if (attr->batch_flush_capacity < OG_MIN_BATCH_FLUSH_CAPACITY ||

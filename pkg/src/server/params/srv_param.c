@@ -1262,6 +1262,9 @@ config_item_t g_parameters[] = {
     { "ENABLE_PARA_LOG_DFX", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_PARA_LOG_DFX, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_para_log_dfx,
       sql_notify_als_bool, NULL },
+    { "PEER_FLUSH_LSN_TIMEOUT_MS", OG_TRUE, ATTR_NONE, "5000", NULL, NULL, "-", "[1,4294967295]", "OG_TYPE_INTEGER", NULL,
+      PARAM_PEER_FLUSH_LSN_TIMEOUT_MS, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_peer_flush_lsn_timeout_ms,
+      sql_notify_als_peer_flush_lsn_timeout_ms, NULL, NULL },
 };
 
 void srv_get_config_info(config_item_t **params, uint32 *count)

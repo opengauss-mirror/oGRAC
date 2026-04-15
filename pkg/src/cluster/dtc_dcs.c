@@ -1354,7 +1354,8 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     master_shmem_page_meta.page_id = page_req->page_id.page;
     master_shmem_page_meta.head_lsn = ctrl->page->lsn;
     master_shmem_page_meta.xlog_owner_node = page_req->head.dst_inst;
-    master_shmem_page_meta.xlog_owner_node_timeline_id[0] = page_req->head.src_inst;
+    uint64 dst_timeline_id = drc_get_node_timeline_id(rsga, page_req->head.dst_inst);
+    remote_page_info_set_timeline_id(&master_shmem_page_meta, dst_timeline_id);
     master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
     errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &master_shmem_page_meta,
