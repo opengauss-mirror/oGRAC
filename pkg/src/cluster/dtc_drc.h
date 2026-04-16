@@ -160,6 +160,7 @@ typedef struct st_page_hot_stat {
     uint32 owner_changed_number;  // how many times has the owner been changed since start time
     bool8 is_in_gbp;
     page_head_t *shmem_page_addr; // when lbp->gbp, need to update this addr
+    remote_page_info_t *shmem_page_meta; // point to the metadata of hot page in shared memory
 } drc_page_hot_stat_t;
 
 /* page buffer resource management structure */
@@ -806,7 +807,7 @@ void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id);
 
 /** invalidates a shmem page. */
 status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t pagid);
-status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl);
+status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked);
 #ifdef __cplusplus
 }
 #endif

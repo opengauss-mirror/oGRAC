@@ -78,8 +78,8 @@ typedef struct st_remote_sga {
 typedef struct st_remote_page_info {
     uint64 lock_ptr;
     uint64 head_lsn;
-    uint32 file_id;   // page_identifier
-    uint16 page_id;    // page_identifier
+    uint16 file_id;   // page_identifier
+    uint32 page_id;    // page_identifier
     uint8 gbp_owner_id;
     uint8 claimed_owner;
     uint16 touch_number;

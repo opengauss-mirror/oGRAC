@@ -204,7 +204,8 @@ static status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ct
     }
 
     // todo: dtc_update_lsn(session, remote_head_lsn), need to think how to set.
-    knl_panic(mode > ctrl->lock_mode);
+    // need to think what this should be. looks like it should be >= (April.20.2026)
+    knl_panic(mode >= ctrl->lock_mode);
     ctrl->lock_mode = mode;
     // ctrl->load_status need to set BUF_IS_LOADED, because commit need to check this status
     ctrl->load_status = (uint8)BUF_IS_LOADED;
@@ -473,10 +474,13 @@ bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *c
     // TOODO: use shmem API to load the last writer's node id and page_id from shared_mem
     uint8 last_writer = ctrl->shmem_page_meta->claimed_owner;
     // we need to check page_id to make sure this page hasn't been evicted already
-    uint64_t raw_remote = *(uint64_t *)(&ctrl->shmem_page_meta->page_id);
-    uint64_t raw_local = *(uint64_t *)&ctrl->page_id;
+    uint16 raw_remote_file_id = ctrl->shmem_page_meta->file_id;
+    uint32 raw_remote_page_id = ctrl->shmem_page_meta->page_id;
+    uint16 raw_local_file_id = ctrl->page_id.file;
+    uint32 raw_local_page_id = ctrl->page_id.page;
 
-    if (DCS_SELF_INSTID(session) == last_writer && raw_remote == raw_local) {
+    if (DCS_SELF_INSTID(session) == last_writer &&
+        raw_remote_file_id == raw_local_file_id && raw_remote_page_id == raw_local_page_id) {
         ctrl->consecutive_same_writer_count++;
         if (ctrl->consecutive_same_writer_count == SAME_WRITER_COUNT_TRIGGER) {
             return (KNL_NOW(session) - ctrl->consecutive_same_writer_start_time) > SAME_WRITER_THRESHOLD;
@@ -490,11 +494,14 @@ bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *c
 bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     // TOODO: use UB API to load the lsn and page_id from remote
-    uint64_t raw_remote = *(uint64_t *)(&ctrl->shmem_page_meta->page_id);
-    uint64_t raw_local = *(uint64_t *)&ctrl->page_id;
+    uint16 raw_remote_file_id = ctrl->shmem_page_meta->file_id;
+    uint32 raw_remote_page_id = ctrl->shmem_page_meta->page_id;
+    uint16 raw_local_file_id = ctrl->page_id.file;
+    uint32 raw_local_page_id = ctrl->page_id.page;
     // we need to check page_id to make sure this page hasn't been evicted already
-    uint32 remote_head_lsn = ctrl->shmem_page_meta->head_lsn;
-    if (remote_head_lsn == ctrl->page->lsn && raw_remote == raw_local) {
+    uint64 remote_head_lsn = ctrl->shmem_page_meta->head_lsn;
+    if (remote_head_lsn == ctrl->page->lsn &&
+        raw_remote_file_id == raw_local_file_id && raw_remote_page_id == raw_local_page_id) {
         ctrl->consecutive_read_count++;
         if (ctrl->consecutive_read_count == READ_COUNT_TRIGGER) {
             return (KNL_NOW(session) - ctrl->consecutive_read_start_time) > READ_THRESHOLD;

@@ -43,8 +43,8 @@ uint32 g_cks_level;
 static const remote_page_info_t g_invalid_shmem_page_metadata = {
     .lock_ptr = OG_INVALID_ID64,
     .head_lsn = 0,
-    .page_id = 0,
-    .file_id = OG_INVALID_ID32,
+    .page_id = OG_INVALID_ID32,
+    .file_id = OG_INVALID_ID16,
     .claimed_owner = OG_INVALID_ID8,
     .touch_number = OG_INVALID_ID16,
     .ref_num = OG_INVALID_ID16,
@@ -786,7 +786,8 @@ static bool32 buf_can_evict_general(knl_session_t *session, buf_ctrl_t *head)
     return OG_TRUE;
 }
 
-status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta)
+status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
+                         bool32 list_locked)
 {
     // retreive shmem set from global buffer context
     remote_buf_context_t *shmem_ctx = DRC_GBP_BUF_CTX;
@@ -824,10 +825,6 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
         return ret;
     }
 
-    if (ret != OG_SUCCESS) {
-        return ret;
-    }
-
     buf_lru_list_t *curr_list = &shmem_set->list[shmem_ctrl->list_id];
 
     // Remove from shmem hash bucket so future lookups won't find this page in shmem
@@ -849,11 +846,16 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
     buf_remove_from_bucket(bucket, shmem_ctrl);
     cm_spin_unlock(&bucket->lock);
 
-    // Keep ctrl in shmem LRU, but move it to the tail
+    // Keep ctrl in shmem LRU, but move it to the tail.
+    // If the caller already holds the list lock, do not take it again.
+    if (!list_locked) {
     cm_spin_lock(&curr_list->lock, &session->stat->spin_stat.stat_buffer);
+    }
     buf_lru_remove_ctrl(curr_list, shmem_ctrl);
     buf_lru_add_tail(curr_list, shmem_ctrl);
+    if (!list_locked) {
     cm_spin_unlock(&curr_list->lock);
+    }
 
     return OG_SUCCESS;
 }
@@ -1021,10 +1023,10 @@ static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_se
     } while (ret != OG_SUCCESS);
 
     // Now we find the item to reuse, we call drc_invalidate_shmem_page_by_ctrl to invalidate the shmem and demote the
-    // page to cold Then move the ctrl to the end of LRU list After this, the item is ready to be reused.
+    // page to cold. The caller already holds the LRU list lock, so the invalidate path must not re-lock it.
     if (DB_IS_CLUSTER(session) && (item != NULL) && item->is_hot == OG_TRUE) {
         // Master mark it in its own DRC, global meta data will also be cleaned
-        drc_invalidate_shmem_page_by_ctrl(session, item);
+        drc_invalidate_shmem_page_by_ctrl(session, item, OG_TRUE);
     }
 
     // 9. Update LRU metadata (like list length) and unlock.
