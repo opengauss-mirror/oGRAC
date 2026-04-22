@@ -80,11 +80,10 @@ typedef struct st_remote_page_info {
     uint64 head_lsn;
     uint16 file_id;   // page_identifier
     uint32 page_id;    // page_identifier
-    uint8 gbp_owner_id;
     uint8 claimed_owner;
     uint16 touch_number;
     uint16 ref_num;
-    uint16 xlog_owner_node;
+    uint16 xlog_owner_node;   // last repair node
     uint8 xlog_owner_node_timeline_id[6];
 } remote_page_info_t;
 
@@ -99,12 +98,14 @@ typedef enum buffer_type {
 #define GET_PAGE_ADRR_IN_GBP(addr) ((addr) + sizeof(remote_page_info_t))
 #define OFFSET_PAGE_ID offsetof(remote_page_info_t, page_id)
 #define OFFSET_HEAD_LSN offsetof(remote_page_info_t, head_lsn)
+#define OFFSET_TAIL_LSN sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size
 
 status_t drc_init_remote_buffer();
 void broadcast_remote_buf_allocated();
 EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
-
+status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode);
+status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn);
 
 #ifdef __cplusplus
 }

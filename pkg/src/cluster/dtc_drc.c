@@ -1234,7 +1234,11 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
         // At this point we want to make sure the requester who sent the request is still waiting on the shmem page and
         // will own the XLOCK on the shmem addr.
         drc_gbp_distribute_unlock(session, lock_ptr, *remote_page_id, LATCH_MODE_X);
-        drc_gbp_distribute_lock(session, lock_ptr, *remote_page_id, converting_req->req_mode);
+        /* In the current process, the requester waits until the claim is completed
+         * and the master sends a response back to the requester, before performing
+         * read or write operations on the GBP page.
+         * drc_gbp_distribute_lock(session, lock_ptr, *remote_page_id, converting_req->req_mode);
+         */
     } else {
         // else we will have to clean the requester and send it a fail msg to let it start over.
         drc_bitmap64_set(&requester_bits, converting_req->inst_id);
@@ -1742,6 +1746,41 @@ allocated:
         cm_sleep(5);
         return OG_ERROR;
     }
+
+    /* page in gbp, requster have no remote addr, two case:
+     * （1) first request page after page move to gbp
+     *  (2) invalid page addr for requester after gbp lru victim
+     */
+    if (session->kernel->attr.enable_ubsmem && buf_res->page_hot_stat.is_in_gbp) {
+        if (buf_res->page_hot_stat.shmem_page_addr == NULL) {
+            DTC_DRC_DEBUG_ERR("[DRC][%u-%u][req page from gbp]: is_in_gbp is true, but shmem_page_addr is invalid, "
+                        "request id=%d, readonly_copies=%llu",
+                        pagid.file, pagid.page, req_info->inst_id, result->readonly_copies);
+        }
+
+        result->type = DRC_REQ_OWNER_IN_GBP;             // no ping-pong owner, page in GBP
+        result->curr_owner_id = buf_res->claimed_owner;  // OG_INVALID_ID8
+
+        result->gbp_buf_ctrl->shmem_page_addr = buf_res->page_hot_stat.shmem_page_addr;
+        CM_ASSERT(buf_res->readonly_copies == 0);
+
+        DTC_DRC_DEBUG_INF(
+            "[DRC][%u-%u][req page in gbp]: return remote buf addr directly, req_id=%u, req_sid=%u, req_rsn=%u, "
+            "req_mode=%u, curr_mode=%u, edp map=%llu, readonly copies=%llu",
+            pagid.file, pagid.page, req_info->inst_id, req_info->inst_sid, req_info->rsn, req_info->req_mode,
+            req_info->curr_mode, buf_res->edp_map, buf_res->readonly_copies);
+
+        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+        
+        // free_slot
+        if (free_slot) {
+            drc_res_pool_free_item(buf_res_pool, idx);
+        }
+
+        return OG_SUCCESS;
+    }
+
     /* Case B: Resource exists but owner is invalid (stale/cleaned up during recovery) */
     if (buf_res->claimed_owner == OG_INVALID_ID8) {
         if (OGRAC_SESSION_IN_RECOVERY(session) || g_rc_ctx->status >= REFORM_RECOVER_DONE ||
@@ -1779,74 +1818,6 @@ allocated:
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
 
-        if (free_slot) {
-            drc_res_pool_free_item(buf_res_pool, idx);
-        }
-
-        return OG_SUCCESS;
-    }
-    
-    /* page in gbp, requster have no remote addr : To go into this path, the following cond must be true
-     * （1) first request page after page move to gbp
-     *  (2) the page have an owner and owner must be the Master. buf_res_t correctly marked the page is now in hot
-     *
-     * Handle this before drc_keep_requester_wait(). Otherwise keep_requester_wait()
-     * may create/refresh converting state for a page that is already hot in GBP,
-     * causing later requests to be pushed into WAITING and stuck forever.
-     * The intended behaviour for hot page in GBP is that converting queue of buf_res_t is never used in this path
-     */
-    if (session->kernel->attr.enable_ubsmem && buf_res->page_hot_stat.is_in_gbp) {
-        if (buf_res->page_hot_stat.shmem_page_addr == NULL) {
-            DTC_DRC_DEBUG_ERR("[DRC][%u-%u][req page from gbp]: is_in_gbp is true, but shmem_page_addr is invalid, "
-                        "request id=%d, readonly_copies=%llu",
-                        pagid.file, pagid.page, req_info->inst_id, result->readonly_copies);
-            cm_spin_unlock(&bucket->lock);
-            cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-            if (free_slot) {
-                drc_res_pool_free_item(buf_res_pool, idx);
-            }
-            return OG_ERROR;
-        }
-        if (buf_res->page_hot_stat.shmem_page_meta == NULL) {
-            DTC_DRC_DEBUG_ERR("[DRC][%u-%u][req page from gbp]: is_in_gbp is true, but shmem_page_meta is invalid, "
-                        "request id=%d, readonly_copies=%llu",
-                        pagid.file, pagid.page, req_info->inst_id, result->readonly_copies);
-            cm_spin_unlock(&bucket->lock);
-            cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-            if (free_slot) {
-                drc_res_pool_free_item(buf_res_pool, idx);
-            }
-            return OG_ERROR;
-        }
-
-        buf_ctrl_t *gbp_buf_ctrl = NULL;
-        while (gbp_buf_ctrl == NULL) {
-            // This allocation should always return an exisiting page in GBP. It should never return a new one
-            // need logic to enforce this later.
-            gbp_buf_ctrl = buf_alloc_ctrl(session, pagid, req_info->req_mode, ENTER_PAGE_NORMAL, OG_TRUE);
-        }
-        result->gbp_buf_ctrl = gbp_buf_ctrl;
-        result->gbp_buf_ctrl->shmem_page_addr = buf_res->page_hot_stat.shmem_page_addr;
-        result->gbp_buf_ctrl->shmem_page_meta = buf_res->page_hot_stat.shmem_page_meta;
-
-        result->type = DRC_REQ_OWNER_IN_GBP;             // no ping-pong owner, page in GBP
-        result->curr_owner_id = buf_res->claimed_owner;  // owner need to be Master at this point
-        
-        CM_ASSERT(buf_res->readonly_copies == 0);
-        // buf_res claimed owner should be the Master now as the page was promoted to hot in drc_claim_new_page_hot_gbp.
-        // And claimed owner is changed at that point. (Match with drc_claim_new_page_hot_gbp)
-        CM_ASSERT(buf_res->claimed_owner == DCS_SELF_INSTID(session));
-
-        DTC_DRC_DEBUG_INF(
-            "[DRC][%u-%u][req page in gbp]: return remote buf addr directly, req_id=%u, req_sid=%u, req_rsn=%u, "
-            "req_mode=%u, curr_mode=%u, edp map=%llu, readonly copies=%llu",
-            pagid.file, pagid.page, req_info->inst_id, req_info->inst_sid, req_info->rsn, req_info->req_mode,
-            req_info->curr_mode, buf_res->edp_map, buf_res->readonly_copies);
-
-        cm_spin_unlock(&bucket->lock);
-        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-        
-        // free_slot
         if (free_slot) {
             drc_res_pool_free_item(buf_res_pool, idx);
         }
