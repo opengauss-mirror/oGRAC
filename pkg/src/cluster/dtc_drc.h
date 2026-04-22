@@ -805,8 +805,9 @@ void drc_set_deposit_id(uint8 inst_id, uint8 deposit_id);
 void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id);
 
 /** invalidates a shmem page. */
-status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t pagid);
-status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked);
+status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t pagid, buf_ctrl_t *local_ctrl);
+status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, buf_ctrl_t* local_ctrl,
+                                            bool32 list_locked);
 #ifdef __cplusplus
 }
 #endif

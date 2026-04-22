@@ -78,8 +78,9 @@ typedef struct st_remote_sga {
 typedef struct st_remote_page_info {
     uint64 lock_ptr;
     uint64 head_lsn;
-    uint16 file_id;  // file_identifier
-    uint32 page_id;  // page_identifier
+    uint16 file_id;   // page_identifier
+    uint32 page_id;    // page_identifier
+    uint8 is_hot;;  // temporary pad to keep GBP metadata footprint stable across versions for testing
     uint8 claimed_owner;
     uint16 touch_number;
     uint16 ref_num;

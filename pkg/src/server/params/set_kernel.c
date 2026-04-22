@@ -2052,13 +2052,13 @@ status_t sql_notify_als_temptable_support_batch(void *se, void *item, char *valu
 status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char *value)
 {
     g_instance->kernel.attr.enable_remote_distribute_lock = (bool32)value[0];
-    return sql_notify_als_bool(se, item, value);   
+    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value)
 {
     g_instance->kernel.attr.enable_ubsmem = (bool32)value[0];
-    return sql_notify_als_bool(se, item, value);   
+    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_verify_als_small_table_sampling_threshold(void *se, void *lex, void *def)
