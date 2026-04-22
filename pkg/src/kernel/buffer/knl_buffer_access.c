@@ -1904,31 +1904,28 @@ void buf_leave_temp_page(knl_session_t *session)
 status_t buf_claim_shmem_ctrl2hot(knl_session_t *session, page_id_t page_id, uint64 req_version)
 {
     buf_bucket_t *bucket = buf_find_bucket_in_remote_ctx(session, page_id, DRC_GBP_BUF_CTX);
-    buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
+    buf_ctrl_t *ctrl = NULL;
 
+    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    ctrl = buf_find_from_bucket(bucket, page_id);
     if (ctrl == NULL) {
+        cm_spin_unlock(&bucket->lock);
         OG_LOG_DEBUG_ERR("[buffer][%u-%u][buf_claim_shmem_ctrl2hot]: not found in memory", page_id.file, page_id.page);
         return OG_ERROR;
     }
+    cm_spin_unlock(&bucket->lock);
 
     OG_LOG_DEBUG_INF("[buffer][%u-%u][buf_claim_shmem_ctrl2hot]: ctrl_dirty=%u, ctrl_remote_dirty=%u,"
-                     " ctrl_readonly=%u, in ckpt=%u, ctrl_lock_mode=%u, edp=%d",
-                     ctrl->page_id.file, ctrl->page_id.page, ctrl->is_dirty, ctrl->is_remote_dirty, ctrl->is_readonly,
-                     ctrl->in_ckpt, ctrl->lock_mode, ctrl->is_edp);
-
-    /* Try to latch page exclusively */
-    ctrl = buf_try_latchx_page(session, page_id, OG_TRUE);
-    if (ctrl == NULL) {
-        OG_LOG_RUN_ERR("[buffer][%u-%u][buf_claim_shmem_ctrl2hot failed]: not found in memory", page_id.file,
-                       page_id.page);
-        return OG_ERROR;
-    }
+                    " ctrl_readonly=%u, in ckpt=%u, ctrl_lock_mode=%u, edp=%d",
+                    ctrl->page_id.file, ctrl->page_id.page, ctrl->is_dirty, ctrl->is_remote_dirty, ctrl->is_readonly,
+                    ctrl->in_ckpt, ctrl->lock_mode, ctrl->is_edp);
 
     ctrl->load_status = BUF_IS_LOADED;
     ctrl->lock_mode = DRC_LOCK_EXCLUSIVE;
     ctrl->is_hot = OG_TRUE;
 
-    buf_unlatch_page(session, ctrl);
+    buf_unlatch_w_bucket(session, ctrl, bucket, OG_TRUE);
+
     return OG_SUCCESS;
 }
 

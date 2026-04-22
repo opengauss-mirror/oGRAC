@@ -372,7 +372,8 @@ buf_ctrl_t *buf_alloc_compress(knl_session_t *session, page_id_t wanted_page, la
 buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page, latch_mode_t mode, uint32 options,
                                    buf_add_pos_t add_pos);
 /** Evict a page from shmem: invalidate metadata, remove from hash, and demote in LRU. */
-status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta);
+status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
+                         bool32 list_locked);
 void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos);
 void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl);
 void buf_reset_cleaned_pages(buf_set_t *set, buf_lru_list_t *list);

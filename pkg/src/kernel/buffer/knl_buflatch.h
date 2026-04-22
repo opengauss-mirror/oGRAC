@@ -77,6 +77,11 @@ static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf
     uint32 count = 0;
     buf_latch_t *latch = &ctrl->latch;
 
+    // Fast path for already exclusively latched by current session.
+    if (latch->stat == LATCH_STATUS_X && latch->sid == session->id) {
+        cm_spin_unlock(&bucket->lock);
+        return;
+    }
     if (lock_needed) {
         cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     }
@@ -237,7 +242,8 @@ static inline void buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
 }
 
 // unlatch with bucket from param, for case where shmem buffer may present
-static void __attribute__((unused)) buf_unlatch_w_bucket(knl_session_t *session, buf_ctrl_t *ctrl, buf_bucket_t *bucket, bool32 release)
+static inline __attribute__((unused)) void buf_unlatch_w_bucket(
+    knl_session_t *session, buf_ctrl_t *ctrl, buf_bucket_t *bucket, bool32 release)
 {
     buf_latch_t *latch;
     latch = &ctrl->latch;

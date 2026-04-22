@@ -23,6 +23,7 @@
  * -------------------------------------------------------------------------
  */
 #include <stdio.h>
+#include <stdint.h>
 #include <pwd.h>
 #include <sys/syscall.h>
 #include "knl_cluster_module.h"
@@ -194,6 +195,7 @@ static void buf_init_list(buf_set_t *set)
 static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
+
     buf_set_t *set = NULL;
     uint64 offset;
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {

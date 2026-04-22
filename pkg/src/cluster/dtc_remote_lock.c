@@ -153,7 +153,7 @@ status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_i
         return OG_ERROR;
     }
     
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] Success to acquire %s lock for page (%u-%u):%d",
+    OG_LOG_RUN_INF("[DRC-GBP-LOCK] Success to acquire %s lock for page (%u-%u):%d",
         lock_type, page_id.file, page_id.page, ret);
     return OG_SUCCESS;
 }
@@ -185,7 +185,7 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
         return OG_ERROR;
     }
     
-    OG_LOG_RUN_ERR("[DRC-LOCK] Success to release %s lock for page (%u-%u):%d",
+    OG_LOG_RUN_INF("[DRC-LOCK] Success to release %s lock for page (%u-%u):%d",
         lock_type, page_id.file, page_id.page, ret);
     return OG_SUCCESS;
 }
