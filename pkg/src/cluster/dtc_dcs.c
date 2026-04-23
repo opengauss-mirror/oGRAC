@@ -1634,7 +1634,8 @@ static inline void dcs_send_requester_get_page_from_gbp(knl_session_t *session, 
 
     remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
     char *base = rsga->remote_buf_addr[DCS_SELF_INSTID(session)];
-    char *p_meta = (char *)result->gbp_buf_ctrl->shmem_page_meta;
+    char *p_addr = (char *)result->shmem_page_addr;
+    char *p_meta = p_addr - sizeof(remote_page_info_t);
     uint64 meta_off64 = p_meta - base;
 
     ack_to_requester.lsn = DB_CURR_LSN(session);
@@ -1941,8 +1942,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             // GBP lives on master (this function runs on master), so gbp_owner_id is self
             page_req.gbp_owner_id = DCS_SELF_INSTID(session);
             /* Validate gbp_buf_ctrl pointers */
-            if (result.gbp_buf_ctrl == NULL || result.gbp_buf_ctrl->shmem_page_addr == NULL ||
-                result.gbp_buf_ctrl->shmem_page_meta == NULL) {
+            if (result.gbp_buf_ctrl == NULL) {
                 OG_LOG_RUN_ERR("[DCS][%u-%u] gbp_buf_ctrl pointers are NULL", page_req.page_id.file,
                                page_req.page_id.page);
                 break;
@@ -1950,7 +1950,14 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             
             char *base = rsga->remote_buf_addr[page_req.gbp_owner_id];
             // IMPORTANT: result.gbp_buf_ctrl->shmem_page_* must point inside base region
-            page_req.shmem_page_meta_off = (char *)result.gbp_buf_ctrl->shmem_page_meta - base;
+            char *p_meta = (char *)result.shmem_page_addr - sizeof(remote_page_info_t);
+            page_req.shmem_page_meta_off = (char *)p_meta - base;
+
+            // test code  当前master分配ctrl后得到的地址
+ 	        char *shmem_page_addr = (char *)result.shmem_page_addr;
+ 	        OG_LOG_RUN_WAR("[DCS-GBP][%u-%u]: gbp step 3, shmem_page_addr: %p, gbp_owner_id %d, ",
+ 	            page_req.page_id.file, page_req.page_id.page,
+ 	            shmem_page_addr, page_req.gbp_owner_id);
 
             // First step: This step only involves master and owner. Master ask owner to send the page to GBP
             knl_begin_session_wait(session, DCS_REQ_OWNER4PAGE_GBP, OG_TRUE);

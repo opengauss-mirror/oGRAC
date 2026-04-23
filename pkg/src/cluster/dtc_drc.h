@@ -488,6 +488,7 @@ typedef struct st_drc_req_owner_result {
     uint64 readonly_copies;
     drc_page_gdp_move_action_type gbp_action;
     buf_ctrl_t *gbp_buf_ctrl;  // new field for GBP context
+    page_head_t *shmem_page_addr; // new field for GBP context, only used when gbp_action is not DRC_NEED_NO_MOVE
 } drc_req_owner_result_t;
 
 typedef struct st_drc_remaster_task_msg {
