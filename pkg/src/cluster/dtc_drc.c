@@ -1760,8 +1760,7 @@ allocated:
 
         result->type = DRC_REQ_OWNER_IN_GBP;             // no ping-pong owner, page in GBP
         result->curr_owner_id = buf_res->claimed_owner;  // OG_INVALID_ID8
-
-        result->gbp_buf_ctrl->shmem_page_addr = buf_res->page_hot_stat.shmem_page_addr;
+        result->shmem_page_addr = buf_res->page_hot_stat.shmem_page_addr;
         CM_ASSERT(buf_res->readonly_copies == 0);
 
         DTC_DRC_DEBUG_INF(
