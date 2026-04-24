@@ -1950,14 +1950,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             
             char *base = rsga->remote_buf_addr[page_req.gbp_owner_id];
             // IMPORTANT: result.gbp_buf_ctrl->shmem_page_* must point inside base region
-            char *p_meta = (char *)result.shmem_page_addr - sizeof(remote_page_info_t);
-            page_req.shmem_page_meta_off = (char *)p_meta - base;
-
-            // test code  当前master分配ctrl后得到的地址
- 	        char *shmem_page_addr = (char *)result.shmem_page_addr;
- 	        OG_LOG_RUN_WAR("[DCS-GBP][%u-%u]: gbp step 3, shmem_page_addr: %p, gbp_owner_id %d, ",
- 	            page_req.page_id.file, page_req.page_id.page,
- 	            shmem_page_addr, page_req.gbp_owner_id);
+            page_req.shmem_page_meta_off = (char *)result.gbp_buf_ctrl->shmem_page_meta - base;
 
             // First step: This step only involves master and owner. Master ask owner to send the page to GBP
             knl_begin_session_wait(session, DCS_REQ_OWNER4PAGE_GBP, OG_TRUE);
@@ -2398,7 +2391,8 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
             return ret;
         }
         case DRC_REQ_OWNER_IN_GBP:
-            ctrl->shmem_page_addr = (page_head_t *)(result.gbp_buf_ctrl->shmem_page_addr);
+            ctrl->shmem_page_addr = result.shmem_page_addr;
+            ctrl->shmem_page_meta = (remote_page_info_t *)((char *)result.shmem_page_addr - sizeof(remote_page_info_t));
             dcs_get_page_from_gbp(session, ctrl, result.req_mode);
             knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE);
 
