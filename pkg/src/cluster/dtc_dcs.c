@@ -556,7 +556,7 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
     ctrl->shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
 
     if (ack->gbp_owner_id != ctrl->shmem_page_meta->claimed_owner) {
-        OG_LOG_RUN_ERR("[DCS-GBP]: ack->gbp_owner_id %d, ctrl->shmem_page_meta->gbp_owner_id %d", ack->gbp_owner_id,
+        OG_LOG_RUN_ERR("[DCS-GBP]: ack->gbp_owner_id %d, ctrl->shmem_page_meta->claimed_owner %d", ack->gbp_owner_id,
                        ctrl->shmem_page_meta->claimed_owner);
         return OG_ERROR;
     }
@@ -1272,9 +1272,9 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     master_shmem_page_meta.file_id = page_req->page_id.file;
     master_shmem_page_meta.page_id = page_req->page_id.page;
     master_shmem_page_meta.head_lsn = ctrl->page->lsn;
-    master_shmem_page_meta.xlog_owner_node = page_req->head.src_inst;
+    master_shmem_page_meta.xlog_owner_node = page_req->head.dst_inst;
     master_shmem_page_meta.xlog_owner_node_timeline_id[0] = page_req->head.src_inst;
-    master_shmem_page_meta.claimed_owner = DCS_SELF_INSTID(session);  // This node, i.e. the owner;
+    master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
     errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &master_shmem_page_meta,
                            sizeof(remote_page_info_t));
