@@ -16,8 +16,8 @@ MESSAGE(STATUS ${DD_OG_LIB_VERSION})
 MESSAGE(STATUS ${DD_CT_LIB_VER_APINAME})
 
 execute_process(
-    COMMAND sh -c "cp -rn ${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts/* ${CMAKE_CURRENT_SOURCE_DIR}/admin/dialect_b_scripts/"
-	COMMAND sh -c "cp -rn ${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts/* ${CMAKE_CURRENT_SOURCE_DIR}/admin/dialect_c_scripts/"
+    COMMAND sh -c "cp -rf ${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts/* ${CMAKE_CURRENT_SOURCE_DIR}/admin/dialect_b_scripts/"
+	COMMAND sh -c "cp -rf ${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts/* ${CMAKE_CURRENT_SOURCE_DIR}/admin/dialect_c_scripts/"
     RESULT_VARIABLE RET_RESULT
 )
 
