@@ -45,7 +45,7 @@ typedef enum en_mes_flags {
     MES_FLAG_READONLY2X = 0x8,          // readonly to x
     MES_FLAG_OWNER = 0x10,              // invalidate page owner
     MES_FLAG_CEIL = 0x20,
-    MES_FLAG_MOVED_TO_GBP = 0x40,       // This page has been moved from owner's lbp to master's gbp
+    MES_FLAG_MOVED_TO_GBP = 0x40,  // This page has been moved from owner's lbp to master's gbp
 } en_mes_flags;
 
 typedef struct st_msg_page_req {

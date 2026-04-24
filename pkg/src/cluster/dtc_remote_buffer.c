@@ -50,8 +50,9 @@ static ub_lock_config_t g_ub_lock_config = { 0 };
 static ub_location_t g_ub_lock_creator = { 0 };
 
 // page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
-#define REMOTE_BUF_PAGE_COST (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64) + \
-                BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
+#define REMOTE_BUF_PAGE_COST                                                       \
+    (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64) + \
+     BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 
 static inline uint64 drc_calc_buf_size(uint64 size)
 {
@@ -66,15 +67,14 @@ static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf
         (g_dtc->profile.remote_data_buf_size < BUF_POOL_SIZE_THRESHOLD * g_dtc->profile.remote_buf_pool_num)) {
         buf_ctx->buf_set_count = MAX(1, (uint32)(g_dtc->profile.remote_data_buf_size / BUF_POOL_SIZE_THRESHOLD));
         OG_LOG_RUN_WAR("[DRC] The parameter buffer pool num (%d) is too large, reset to (%d), each buffer"
-            "pool must not be smaller than (%lld).",
-            g_dtc->profile.remote_buf_pool_num, buf_ctx->buf_set_count, BUF_POOL_SIZE_THRESHOLD);
+                       "pool must not be smaller than (%lld).",
+                       g_dtc->profile.remote_buf_pool_num, buf_ctx->buf_set_count, BUF_POOL_SIZE_THRESHOLD);
     } else {
         buf_ctx->buf_set_count = g_dtc->profile.remote_buf_pool_num;
     }
     g_dtc->profile.remote_data_buf_part_size = g_dtc->profile.remote_data_buf_size / buf_ctx->buf_set_count;
     g_dtc->profile.remote_data_buf_part_align_size = drc_calc_buf_size(g_dtc->profile.remote_data_buf_part_size);
-    remote_sga->remote_buf_alloc_size =
-        g_dtc->profile.remote_data_buf_part_size * buf_ctx->buf_set_count;
+    remote_sga->remote_buf_alloc_size = g_dtc->profile.remote_data_buf_part_size * buf_ctx->buf_set_count;
     remote_sga->remote_pool_reserve_offset = remote_sga->remote_buf_alloc_size;
     return remote_sga->remote_buf_alloc_size;
 }
@@ -100,7 +100,7 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
     }
 
     ret = ubsmem_shmem_map(start, remote_sga->remote_total_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
-            data_buf_name, 0, (void **)&(remote_sga->remote_buf_addr[node_id]));
+                           data_buf_name, 0, (void **)&(remote_sga->remote_buf_addr[node_id]));
     OG_LOG_RUN_WAR("[DRC-GBP] sprintf remote data buf addr start: %p", remote_sga->remote_buf_addr[node_id]);
     if (ret != EOK) {
         OG_LOG_RUN_ERR("[DRC-GBP] Failed to map data buffer %s on node_id %u, return error:%d", data_buf_name, node_id,
@@ -180,7 +180,7 @@ static void drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf
 
     /* * allocate each data buffer part */
     drc_set_remote_buffer(&remote_sga->data_buf, remote_sga->remote_buf_addr[node_id], data_buf_part_size, &offset);
-    
+
     for (uint32 i = 1; i < buf_ctx->buf_set_count; i++) {
         drc_set_remote_buffer(&temp_buf, remote_sga->remote_buf_addr[node_id], data_buf_part_size, &offset);
     }
@@ -208,7 +208,8 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         set = &buf_ctx->buf_set[i];
         set->lock = 0;
         set->size = g_dtc->profile.remote_data_buf_part_size;
-        set->addr = remote_sga->data_buf + i * g_dtc->profile.remote_data_buf_part_align_size;  // start addr of each buf_set in UB shm.
+        set->addr = remote_sga->data_buf + i * g_dtc->profile.remote_data_buf_part_align_size;  // start addr of each
+                                                                                                // buf_set in UB shm.
         cm_init_cond(&set->set_cond);
         /* set->size <= 32T, BUF_PAGE_COST >= 8360, set->capacity cannot overflow */
         set->capacity = (uint32)(set->size / REMOTE_BUF_PAGE_COST);
@@ -230,7 +231,7 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
                 ub_rw_lock_create((ub_rw_lock_t *)(page_info->lock_ptr), &g_ub_lock_config, &g_ub_lock_creator);
                 OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,
-                            (void *)page_info->lock_ptr);
+                               (void *)page_info->lock_ptr);
             }
         }
 
@@ -262,10 +263,10 @@ void broadcast_remote_buf_allocated()
 {
     mes_remote_buf_mmap_bcast_t bcast;
     uint64 success_inst;
-    mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_REMOTE_BUF_MMAP, sizeof(mes_remote_buf_mmap_bcast_t), OG_INVALID_ID32,
-                        g_dtc->profile.inst_id, OG_INVALID_ID8, 0, OG_INVALID_ID16);
+    mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_REMOTE_BUF_MMAP, sizeof(mes_remote_buf_mmap_bcast_t),
+                       OG_INVALID_ID32, g_dtc->profile.inst_id, OG_INVALID_ID8, 0, OG_INVALID_ID16);
     bcast.node_id = g_dtc->profile.inst_id;
-    
+
     mes_broadcast(0, MES_BROADCAST_ALL_INST, &bcast, &success_inst);
 }
 
@@ -283,7 +284,8 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     uint32 node_id = bcast->node_id;
     if (msg->head->src_inst >= OG_MAX_INSTANCES) {
         mes_release_message_buf(msg->buffer);
-        OG_LOG_RUN_ERR("[DRC]Do not process remote buf mmap broadcast, because src_inst is invalid: %u", msg->head->src_inst);
+        OG_LOG_RUN_ERR("[DRC]Do not process remote buf mmap broadcast, because src_inst is invalid: %u",
+                       msg->head->src_inst);
         return;
     }
     mes_release_message_buf(msg->buffer);
@@ -319,14 +321,14 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
             }
         }
     }
-    
+
     // to do, if mode is S, not lock; if mode is X, need lock
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
         // Acquire remote global lock
         ret = drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, mode);
         if (ret != OG_SUCCESS) {
-            OG_LOG_RUN_WAR("[DCS-GBP][%u-%u] failed to lock shmem page, return",
-                ctrl->page_id.file, ctrl->page_id.page);
+            OG_LOG_RUN_WAR("[DCS-GBP][%u-%u] failed to lock shmem page, return", ctrl->page_id.file,
+                           ctrl->page_id.page);
             return ret;
         }
     }
@@ -336,8 +338,8 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         datafile_t *df = NULL;
         df = DATAFILE_GET(session, ctrl->page_id.file);
         OG_LOG_RUN_ERR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
-                       shmem_page_meta->file_id, shmem_page_meta->page_id,
-                       ctrl->page_id.file, ctrl->page_id.page, df->ctrl->name);
+                       shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
+                       df->ctrl->name);
         // to do: unlock remote mate
         return OG_ERROR;
     }
@@ -354,8 +356,8 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
     if (remote_head_lsn < ctrl->page->lsn) {
         OG_LOG_RUN_WAR(
-                "[[DTC-GBP-COPY][%u-%u]: owner transfer page failed, invalid req->lsn(%llu), ctrl->page->lsn(%llu)",
-                ctrl->page_id.file, ctrl->page_id.page, ctrl->page->lsn, remote_head_lsn);
+            "[[DTC-GBP-COPY][%u-%u]: owner transfer page failed, invalid req->lsn(%llu), ctrl->page->lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, ctrl->page->lsn, remote_head_lsn);
         // TODO: when we find the page is invalid, unlock remote mate and return error
     }
 
@@ -363,9 +365,8 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
 
     heap_page_t *heap_page = (heap_page_t *)ctrl->page;
     OG_LOG_RUN_WAR("[DTC_HEAP_COPY_GBP] page[%u-%u], oid: %d, page addr: %p, page_lsn %llu, page addr by meta: %p",
-                AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page, heap_page->oid,
-                ctrl->shmem_page_addr, heap_page->head.lsn,
-                GET_PAGE_ADRR_IN_GBP((char *)shmem_page_meta));
+                   AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page, heap_page->oid,
+                   ctrl->shmem_page_addr, heap_page->head.lsn, GET_PAGE_ADDR_IN_GBP((char *)shmem_page_meta));
 
     // check page identifier of remote buf meta with remote page
     if (shmem_page_meta->file_id != AS_PAGID(heap_page->head.id).file ||
@@ -373,8 +374,8 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         datafile_t *df = NULL;
         df = DATAFILE_GET(session, ctrl->page_id.file);
         OG_LOG_RUN_WAR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
-                       shmem_page_meta->file_id, shmem_page_meta->page_id,
-                       ctrl->page_id.file, ctrl->page_id.page, df->ctrl->name);
+                       shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
+                       df->ctrl->name);
         // TODO: when we find the page is invalid, unlock remote mate and return error
     }
 
@@ -426,7 +427,7 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
     uint64 page_tail_lsn = remote_page_lsn;
 
     errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &new_shmem_page_meta,
-                            sizeof(remote_page_info_t));
+                           sizeof(remote_page_info_t));
     knl_securec_check(err);
 
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
@@ -435,10 +436,9 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
     // tail lsn
     err = memcpy_s(page_tail_lsn_addr, DEFAULT_PAGE_SIZE(session), &page_tail_lsn, DEFAULT_PAGE_SIZE(session));
     knl_securec_check(err);
-    
+
     // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
-    OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u]: Success to copy page to gbp", ctrl->page_id.file,
-                        ctrl->page_id.page);
+    OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u]: Success to copy page to gbp", ctrl->page_id.file, ctrl->page_id.page);
 
     return OG_SUCCESS;
 }
