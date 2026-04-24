@@ -36,8 +36,8 @@
 #include "dtc_dcs.h"
 #include "knl_tran.h"
 
-static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page, bool8
-    *fb_buf)
+static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page,
+                                           bool8 *fb_buf)
 {
     uint8 inst_id;
 
@@ -67,8 +67,8 @@ static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *
     }
 }
 
-status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cursor,
-                                        heap_page_t *page, bool32 *is_found)
+status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page,
+                                        bool32 *is_found)
 {
     uint8 inst_id;
 
@@ -135,7 +135,7 @@ static status_t dtc_heap_read_prefetch_page(knl_session_t *session, knl_cursor_t
 }
 
 static status_t dtc_heap_enter_prefetch_page(knl_session_t *session, knl_cursor_t *cursor, cr_cursor_t *cr_cursor,
-                                      char *page_buf, pcr_status_t *status)
+                                             char *page_buf, pcr_status_t *status)
 {
     page_id_t page_id = GET_ROWID_PAGE(cursor->rowid);
     uint8 dst_id;
@@ -188,8 +188,8 @@ static status_t dtc_heap_enter_prefetch_page(knl_session_t *session, knl_cursor_
     }
 }
 
-status_t dtc_heap_prefetch_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn,
-                                   char *page_buf, bool8 *fb_buf)
+status_t dtc_heap_prefetch_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn, char *page_buf,
+                                   bool8 *fb_buf)
 {
     page_id_t page_id;
     cr_cursor_t cr_cursor;
@@ -278,7 +278,8 @@ static status_t dtc_heap_read_page(knl_session_t *session, knl_cursor_t *cursor,
     return OG_SUCCESS;
 }
 
-static status_t dtc_heap_enter_page(knl_session_t *session, knl_cursor_t *cursor, cr_cursor_t *cr_cursor, pcr_status_t *status)
+static status_t dtc_heap_enter_page(knl_session_t *session, knl_cursor_t *cursor, cr_cursor_t *cr_cursor,
+                                    pcr_status_t *status)
 {
     page_id_t page_id = GET_ROWID_PAGE(cr_cursor->rowid);
     heap_page_t *page = NULL;

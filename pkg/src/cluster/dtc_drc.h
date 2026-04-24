@@ -49,10 +49,7 @@ extern "C" {
 #define DRC_FILE_EXTENT_PAGE_NUM(ogx) (DRC_FILE_EXTENT_SIZE / (ogx)->kernel->attr.page_size)
 #define DRC_RECYCLE_BUFER_SIZE_CON SIZE_G(128)  // 128G
 #define DRC_RECYCLE_MIN_NUM 8192
-#define DRC_IN_REFORMER_MODE_RELEASE_VERSION \
-    {                                        \
-        24, 6, 0, 4                          \
-    }
+#define DRC_IN_REFORMER_MODE_RELEASE_VERSION { 24, 6, 0, 4 }
 
 // lock item structures
 typedef enum en_drc_lock_mode {
@@ -159,8 +156,8 @@ typedef struct st_page_hot_stat {
     date_t start_time;
     uint32 owner_changed_number;  // how many times has the owner been changed since start time
     bool8 is_in_gbp;
-    page_head_t *shmem_page_addr; // when lbp->gbp, need to update this addr
-    remote_page_info_t *shmem_page_meta; // point to the metadata of hot page in shared memory
+    page_head_t *shmem_page_addr;         // when lbp->gbp, need to update this addr
+    remote_page_info_t *shmem_page_meta;  // point to the metadata of hot page in shared memory
 } drc_page_hot_stat_t;
 
 /* page buffer resource management structure */
@@ -487,8 +484,8 @@ typedef struct st_drc_req_owner_result {
     uint8 req_mode;
     uint64 readonly_copies;
     drc_page_gdp_move_action_type gbp_action;
-    buf_ctrl_t *gbp_buf_ctrl;  // new field for GBP context
-    page_head_t *shmem_page_addr; // new field for GBP context, only used when gbp_action is not DRC_NEED_NO_MOVE
+    buf_ctrl_t *gbp_buf_ctrl;      // new field for GBP context
+    page_head_t *shmem_page_addr;  // new field for GBP context, only used when gbp_action is not DRC_NEED_NO_MOVE
 } drc_req_owner_result_t;
 
 typedef struct st_drc_remaster_task_msg {
@@ -531,7 +528,7 @@ typedef struct st_drc_buf_res_msg {
     uint8 claimed_owner;
     uint8 latest_edp;  // the id of the latest edp
     uint64 latest_edp_lsn;
-    uint8 le_num;      // lock item num
+    uint8 le_num;  // lock item num
     page_id_t page_id;
     uint64 lsn;
     drc_edp_map_t edp_map;

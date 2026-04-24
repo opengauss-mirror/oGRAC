@@ -68,9 +68,9 @@ typedef struct st_remote_sga {
     uint64 remote_buf_alloc_size;   // data buf  remote_data_buf_size after align 4k size
     uint64 remote_lock_alloc_size;  // lock buf  remote_lock_size
     uint64 remote_pool_reserve_offset;
-    char *remote_buf_addr[OG_MAX_INSTANCES];  /* allocated in UB shared memory */
+    char *remote_buf_addr[OG_MAX_INSTANCES]; /* allocated in UB shared memory */
     bool map_success[OG_MAX_INSTANCES];
-    char *data_buf;   /* each remote data buf is managed by master node. */
+    char *data_buf; /* each remote data buf is managed by master node. */
     char *lock_buf;
 } remote_sga_t;
 
@@ -78,12 +78,12 @@ typedef struct st_remote_sga {
 typedef struct st_remote_page_info {
     uint64 lock_ptr;
     uint64 head_lsn;
-    uint16 file_id;   // page_identifier
-    uint32 page_id;    // page_identifier
+    uint16 file_id;  // file_identifier
+    uint32 page_id;  // page_identifier
     uint8 claimed_owner;
     uint16 touch_number;
     uint16 ref_num;
-    uint16 xlog_owner_node;   // last repair node
+    uint16 xlog_owner_node;  // last repair node
     uint8 xlog_owner_node_timeline_id[6];
 } remote_page_info_t;
 
@@ -95,7 +95,7 @@ typedef enum buffer_type {
     LOCK_QUEUE,
 } buffer_type_t;
 
-#define GET_PAGE_ADRR_IN_GBP(addr) ((addr) + sizeof(remote_page_info_t))
+#define GET_PAGE_ADDR_IN_GBP(addr) ((addr) + sizeof(remote_page_info_t))
 #define OFFSET_PAGE_ID offsetof(remote_page_info_t, page_id)
 #define OFFSET_HEAD_LSN offsetof(remote_page_info_t, head_lsn)
 #define OFFSET_TAIL_LSN sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size
@@ -111,5 +111,3 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn);
 }
 #endif
 #endif
-
-

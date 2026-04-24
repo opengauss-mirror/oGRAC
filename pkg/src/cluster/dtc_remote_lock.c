@@ -92,7 +92,7 @@ status_t init_lock_comm_queue()
     return OG_SUCCESS;
 }
 
-#else  /* USE_ATOMIC_LOCK */
+#else /* USE_ATOMIC_LOCK */
 
 status_t init_lock_comm_queue()
 {
@@ -107,8 +107,8 @@ void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_l
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
     *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
     remote_sga->remote_pool_reserve_offset += DRC_DIST_LCK_OFFSET;
-    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p, reserve offset:%llu",
-        *ub_lock, remote_sga->remote_pool_reserve_offset);
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p, reserve offset:%llu", *ub_lock,
+                   remote_sga->remote_pool_reserve_offset);
 
     config->lease_time = 60000;
     config->heartbeat_timeout = 500;
@@ -148,13 +148,13 @@ status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_i
     }
 
     if (ret != UB_LOCK_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire %s lock for page (%u-%u):%d",
-            lock_type, page_id.file, page_id.page, ret);
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire %s lock for page (%u-%u):%d", lock_type, page_id.file,
+                       page_id.page, ret);
         return OG_ERROR;
     }
-    
-    OG_LOG_RUN_INF("[DRC-GBP-LOCK] Success to acquire %s lock for page (%u-%u):%d",
-        lock_type, page_id.file, page_id.page, ret);
+
+    OG_LOG_RUN_INF("[DRC-GBP-LOCK] Success to acquire %s lock for page (%u-%u):%d", lock_type, page_id.file,
+                   page_id.page, ret);
     return OG_SUCCESS;
 }
 
@@ -180,13 +180,12 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
     }
 
     if (ret != UB_LOCK_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to release %s lock for page (%u-%u):%d",
-            lock_type, page_id.file, page_id.page, ret);
+        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to release %s lock for page (%u-%u):%d", lock_type, page_id.file,
+                       page_id.page, ret);
         return OG_ERROR;
     }
-    
-    OG_LOG_RUN_INF("[DRC-LOCK] Success to release %s lock for page (%u-%u):%d",
-        lock_type, page_id.file, page_id.page, ret);
+
+    OG_LOG_RUN_INF("[DRC-LOCK] Success to release %s lock for page (%u-%u):%d", lock_type, page_id.file, page_id.page,
+                   ret);
     return OG_SUCCESS;
 }
-

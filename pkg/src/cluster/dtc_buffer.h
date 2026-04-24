@@ -35,17 +35,18 @@ typedef struct st_buf_ctrl buf_ctrl_t;
 
 // pack read page parameters together
 typedef struct st_buf_read_assist {
-    page_id_t       page_id;
-    knl_scn_t       query_scn;  // if not invalid, try edp, check edp scn with query_scn
-    latch_mode_t    mode;
-    uint8           options;
-    bool8           try_edp;    // check edp if local page not usable
-    uint16          read_num;   // == 1 no prefetch, > 1 prefetch multiple pages
+    page_id_t page_id;
+    knl_scn_t query_scn;  // if not invalid, try edp, check edp scn with query_scn
+    latch_mode_t mode;
+    uint8 options;
+    bool8 try_edp;    // check edp if local page not usable
+    uint16 read_num;  // == 1 no prefetch, > 1 prefetch multiple pages
 } buf_read_assist_t;
 
-#define DTC_BUF_READ_ONE 1                          // read only one, no prefetch
-#define DTC_BUF_PREFETCH_EXT_NUM OG_INVALID_ID16    // prefetch by space extent_size
-                                                    // others, prefetch by given read_num
+#define DTC_BUF_READ_ONE 1  // read only one, no prefetch
+#define DTC_BUF_PREFETCH_EXT_NUM \
+    OG_INVALID_ID16  // prefetch by space extent_size
+                     // others, prefetch by given read_num
 
 #define DTC_BUF_NO_PREFETCH(read_num) ((read_num) == DTC_BUF_READ_ONE)
 #define DTC_BUF_PREFETCH_EXTENT(read_num) ((read_num) == DTC_BUF_PREFETCH_EXT_NUM)

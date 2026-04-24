@@ -125,8 +125,8 @@ static status_t dtc_buf_try_prefetch(knl_session_t *session, buf_read_assist_t *
     return OG_SUCCESS;
 }
 
-static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl, knl_buf_wait_t
-    *temp_stat)
+static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl,
+                               knl_buf_wait_t *temp_stat)
 {
     BUF_UNPROTECT_PAGE(ctrl->page);
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
@@ -140,8 +140,8 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         }
         if (try_load && dtc_buf_try_prefetch(session, ra, ctrl) != OG_SUCCESS) {
             session->curr_page_ctrl = ctrl;
-            OG_LOG_RUN_ERR("[DTC_BNUFFER][%u-%u][dtc buf try prefetch] failed, read num:%u",
-                ctrl->page_id.file, ctrl->page_id.page, ra->read_num);
+            OG_LOG_RUN_ERR("[DTC_BNUFFER][%u-%u][dtc buf try prefetch] failed, read num:%u", ctrl->page_id.file,
+                           ctrl->page_id.page, ra->read_num);
             return OG_ERROR;
         }
         if (ra->options & ENTER_PAGE_NO_READ) {
@@ -151,7 +151,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP) {
             dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
             OG_LOG_RUN_WAR("[DTC_GBP_BNUFFER][%u-%u][dtc buf try from gbp] read num:%u, options: %u",
-                ctrl->page_id.file, ctrl->page_id.page, ra->read_num, (unsigned int)ra->options);
+                           ctrl->page_id.file, ctrl->page_id.page, ra->read_num, (unsigned int)ra->options);
         }
 
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
@@ -182,12 +182,12 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
     //    stats_buf_record(session, &temp_stat, ctrl);
     buf_push_page(session, ctrl, ra->mode);
     buf_log_enter_page(session, ctrl, ra->mode, ra->options);
-    
-    if (DTC_BUF_PREFETCH_EXTENT(ra->read_num) &&
-        session->kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
+
+    if (DTC_BUF_PREFETCH_EXTENT(ra->read_num) && session->kernel->attr.enable_asynch &&
+        !session->kernel->attr.enable_dss) {
         if (buf_try_prefetch_next_ext(session, ctrl) != OG_SUCCESS) {
-            OG_LOG_RUN_WAR("failed to prefetch next extent file : %u , page: %llu",
-                           (uint32)ctrl->page_id.file, (uint64)ctrl->page_id.page);
+            OG_LOG_RUN_WAR("failed to prefetch next extent file : %u , page: %llu", (uint32)ctrl->page_id.file,
+                           (uint64)ctrl->page_id.page);
         }
     }
 
@@ -209,8 +209,8 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         if (!dtc_dcs_readable(session, ra->page_id)) {
             if (last_time + DCS_LOG_LIMIT_INTERVAL * MICROSECS_PER_MILLISEC <= KNL_NOW(session)) {
                 last_time = KNL_NOW(session);
-                OG_LOG_DEBUG_ERR("[DCS][%u-%u] dcs not readable, session is hanging.",
-                    ra->page_id.file, ra->page_id.page);
+                OG_LOG_DEBUG_ERR("[DCS][%u-%u] dcs not readable, session is hanging.", ra->page_id.file,
+                                 ra->page_id.page);
             }
             cm_sleep(DCS_RESEND_MSG_INTERVAL);
             continue;
@@ -367,8 +367,7 @@ bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id)
         return OG_FALSE;
     }
 
-    if (is_df_ctrl_lock(session, lock_id))
-    {
+    if (is_df_ctrl_lock(session, lock_id)) {
         return OG_TRUE;
     }
 
@@ -391,8 +390,8 @@ bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *c
     uint16 raw_local_file_id = ctrl->page_id.file;
     uint32 raw_local_page_id = ctrl->page_id.page;
 
-    if (DCS_SELF_INSTID(session) == last_writer &&
-        raw_remote_file_id == raw_local_file_id && raw_remote_page_id == raw_local_page_id) {
+    if (DCS_SELF_INSTID(session) == last_writer && raw_remote_file_id == raw_local_file_id &&
+        raw_remote_page_id == raw_local_page_id) {
         ctrl->consecutive_same_writer_count++;
         if (ctrl->consecutive_same_writer_count == SAME_WRITER_COUNT_TRIGGER) {
             return (KNL_NOW(session) - ctrl->consecutive_same_writer_start_time) > SAME_WRITER_THRESHOLD;
@@ -412,8 +411,8 @@ bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl)
     uint32 raw_local_page_id = ctrl->page_id.page;
     // we need to check page_id to make sure this page hasn't been evicted already
     uint64 remote_head_lsn = ctrl->shmem_page_meta->head_lsn;
-    if (remote_head_lsn == ctrl->page->lsn &&
-        raw_remote_file_id == raw_local_file_id && raw_remote_page_id == raw_local_page_id) {
+    if (remote_head_lsn == ctrl->page->lsn && raw_remote_file_id == raw_local_file_id &&
+        raw_remote_page_id == raw_local_page_id) {
         ctrl->consecutive_read_count++;
         if (ctrl->consecutive_read_count == READ_COUNT_TRIGGER) {
             return (KNL_NOW(session) - ctrl->consecutive_read_start_time) > READ_THRESHOLD;
