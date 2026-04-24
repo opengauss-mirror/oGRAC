@@ -41,8 +41,8 @@ extern "C" {
 #endif
 
 #define DRC_SHM_SIZE (SIZE_G(8))
-#define DRC_BASE_ADDR_0 0x80000000000
-#define DRC_BASE_ADDR_1 0x90000000000
+#define DRC_BASE_ADDR_0 0xC0000000000
+#define DRC_BASE_ADDR_1 0xD0000000000
 
 #define DRC_REMOTE_BUF_SIZE (SIZE_M(256))
 #define DRC_DIST_QUE_SIZE (SIZE_M(256))
@@ -106,6 +106,7 @@ EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
 status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode);
 status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn);
+status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode, bool32 *is_load);
 
 #ifdef __cplusplus
 }

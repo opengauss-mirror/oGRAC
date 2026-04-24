@@ -1019,11 +1019,6 @@ static status_t pcrh_simple_insert(knl_session_t *session, knl_cursor_t *cursor,
 
     log_atomic_op_end(session);
 
-    // copy ctrl->page to gbp after write ctrl->page and log, and update remote page mate
-    if (session->kernel->attr.enable_ubsmem && session->curr_page_ctrl->shmem_page_meta != NULL) {
-        dtc_buf_try_store_to_gbp(session, session->curr_lsn);
-    }
-
     heap_try_change_map(session, heap, page_id);
 
     return OG_SUCCESS;

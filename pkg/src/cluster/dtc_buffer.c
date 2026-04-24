@@ -148,10 +148,29 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             ctrl->load_status = (uint8)BUF_IS_LOADED;
         }
     } else {
-        if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP) {
+        /* case enter
+         * 1.lbp page transfer to gbp 
+         * 2.lock mode upgrade: for example, S latch lock at last time, now this session fetch X lock
+         * 3.always fetch this page in this node
+         */
+        bool32 is_load_from_gbp = false;
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
+        }
+
+        if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp) {
             dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
-            OG_LOG_RUN_WAR("[DTC_GBP_BNUFFER][%u-%u][dtc buf try from gbp] read num:%u, options: %u",
-                           ctrl->page_id.file, ctrl->page_id.page, ra->read_num, (unsigned int)ra->options);
+            OG_LOG_RUN_WAR("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u, is_load_from_gbp: %d",
+                           ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
+                           (unsigned int)ra->options, is_load_from_gbp);
+        }
+        
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL && ra->mode == LATCH_MODE_S) {
+            status_t ret;
+            ret = drc_gbp_distribute_unlock(session, ctrl->shmem_page_meta->lock_ptr, ctrl->page_id, ra->mode);
+            if (ret != OG_SUCCESS) {
+                return ret;
+            }
         }
 
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
@@ -221,6 +240,11 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         }
 
         if (dtc_buf_try_local(session, ra, ctrl)) {
+            break;
+        }
+
+        // lock mode uncampatiable
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
             break;
         }
 
