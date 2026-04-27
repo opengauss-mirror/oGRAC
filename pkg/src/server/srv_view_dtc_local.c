@@ -402,7 +402,7 @@ static status_t get_local_lock_res_view(row_assist_t *ra, drc_local_lock_res_t *
     OG_RETURN_IFERR(row_put_uint32(ra, (uint32)local_lock_res->latch_stat.stat));
     OG_RETURN_IFERR(row_put_uint32(ra, (uint32)local_lock_res->latch_stat.sid));
     OG_RETURN_IFERR(row_put_uint32(ra, (uint32)local_lock_res->is_releasing));
-    OG_RETURN_IFERR(row_put_uint32(ra, (uint32)local_lock_res->lock));
+    OG_RETURN_IFERR(row_put_uint32(ra, (uint32)local_lock_res->latch_stat.lock_mode));
     return OG_SUCCESS;
 }
 
