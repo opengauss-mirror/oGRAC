@@ -8,6 +8,7 @@ BUILD_ARGS=""
 PATCH="" # 是否在oGRAC中创建元数据
 BUILD_TYPE="release"
 USER="ogracdba"
+BIND_IP=""
 
 function prepare() {
   echo "Prepare env start."
@@ -25,7 +26,6 @@ function oGRAC_patch() {
     sed -i "s/\/home\/regress\/ogracKernel/${escaped_variable}\/ograc/g" ${WORK_DIR}/ograc/pkg/install/install.py
     sed -i "s/\/home\/regress/${escaped_variable}/g" ${CODE_PATH}/pkg/install/Common.py
     sed -i "s/\/home\/regress/${escaped_variable}/g" ${CODE_PATH}/pkg/install/funclib.py
-    sed -i "s/192.168.86.1/127.0.0.1/g" ${CODE_PATH}/pkg/install/funclib.py
 }
 
 function compile() {
@@ -57,12 +57,20 @@ function install() {
     clean
     mkdir -p "${WORK_DIR}"/ograc_data -m 755
     chown -R ${USER}:${USER} "${WORK_DIR}"/ograc_data
+    local bind_ip
+    bind_ip=$(get_bind_ip)
+    if [[ $? -ne 0 ]]; then
+        echo "Failed to determine bind IP for installation."
+        exit 1
+    fi
+
     cd ${CODE_PATH}/oGRAC-DATABASE-*-64bit || exit 1
     mkdir -p /home/${USER}/logs
     run_mode=ogracd_in_cluster
     python3 install.py -U ${USER}:${USER} -R /home/${USER}/install \
     -D /home/${USER}/data -l /home/${USER}/logs/install.log \
-    -M ${run_mode} -Z _LOG_LEVEL=255 -N 0 -W 192.168.0.1 -g \
+    -M ${run_mode} -Z _LOG_LEVEL=255 -N 0 -W ${bind_ip},127.0.0.1 \
+    -Z "LSNR_ADDR=${bind_ip}" -Z "INTERCONNECT_ADDR=${bind_ip}" -g \
     withoutroot -d -c -Z _SYS_PASSWORD=huawei@1234 -Z SESSIONS=1000
     if [[ $? -ne 0  ]]; then
         echo "install oGRAC failed."
@@ -75,12 +83,13 @@ function usage() {
     echo 'Options:'
     echo '  -b, --build_type=<type>       Build type, default is release.'
     echo '  -u, --user=<user>             User name, default is ogracdba.'
-    echo '  -h, --help                    Display thishelp and exit.'
+    echo '  -i, --bind-ip=<ip>            Explicit IPv4 address to bind the database to.'
+    echo '  -h, --help                    Display this help and exit.'
 }
 
 function parse_params()
 {
-    ARGS=$(getopt -o b:u: --long build_type:,user:, -n "$0" -- "$@")
+    ARGS=$(getopt -o b:u:i:h --long build_type:,user:,bind-ip:,help -n "$0" -- "$@")
     if [ $? != 0 ]; then
         echo "Terminating..."
         exit 1
@@ -97,16 +106,69 @@ function parse_params()
                 USER=$2
                 shift 2
                 ;;
+            -i | --bind-ip)
+                BIND_IP=$2
+                shift 2
+                ;;
+            -h | --help)
+                usage
+                exit 1
+                ;;
             --)
                 shift
                 break
                 ;;
-            -h)
-                usage
-                exit 1
-                ;;
         esac
     done
+}
+
+function validate_ipv4() {
+    local ip="$1"
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        IFS='.' read -r a b c d <<< "$ip"
+        for octet in $a $b $c $d; do
+            if [[ $octet -lt 0 || $octet -gt 255 ]]; then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    return 1
+}
+
+function get_default_ip() {
+    local ip
+    if command -v ip >/dev/null 2>&1; then
+        ip=$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{split($2,a,"/"); print a[1]; exit}')
+    else
+        ip=$(hostname -I 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i !~ /^127\./) {print $i; exit}}')
+    fi
+    if [[ -n "$ip" ]]; then
+        printf '%s' "$ip"
+        return 0
+    fi
+    return 1
+}
+
+function get_bind_ip() {
+    if [[ -n "$BIND_IP" ]]; then
+        if validate_ipv4 "$BIND_IP"; then
+            printf '%s' "$BIND_IP"
+            return 0
+        fi
+        echo "Invalid IPv4 address: $BIND_IP" >&2
+        return 1
+    fi
+
+    local default_ip
+    default_ip=$(get_default_ip)
+    if [[ -n "$default_ip" ]]; then
+        printf '%s' "$default_ip"
+        return 0
+    fi
+
+    echo "No non-loopback IPv4 address detected. Specify --bind-ip." >&2
+    return 1
 }
 
 function help() {
@@ -116,6 +178,11 @@ function help() {
     echo '  compile                       Compile oGRAC.'
     echo '  install                       Install and start oGRAC.'
     echo '  clean                         Uninstall and clean env.'
+    echo ''
+    echo 'Install command options:'
+    echo '  -b, --build_type=<type>       Build type, default is release.'
+    echo '  -u, --user=<user>             User name, default is ogracdba.'
+    echo '  -i, --bind-ip=<ip>            Explicit IPv4 address to bind the database to.'
 }
 
 function main()
