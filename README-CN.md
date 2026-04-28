@@ -34,37 +34,27 @@ oGRAC主要由五个主要部分组成：
 
 ## 编译指南
 
-1. 系统初始化
+1. 初始化编译环境
 
-    关闭 SELinux 和防火墙：
-
-    ```shell
-    setenforce 0
-    sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
-    systemctl stop firewalld
-    systemctl disable firewalld
-    ```
-
-2. 创建目录和用户
+    在仓库根目录运行交互式初始化脚本：
 
     ```shell
-    mkdir -p compile_path
-    chmod 755 -R compile_path
-    useradd user_name
-    passwd user_password
-    chown -R user_name:user_name compile_path
+    bash init.sh
     ```
 
-3. 安装必要依赖
+    该脚本会：
+    - 根据需要关闭 SELinux 和防火墙
+    - 创建并配置编译目录
+    - 创建编译用户并设置密码
+    - 安装必要的依赖
+
+    或者直接执行完整的编译与安装流程：
 
     ```shell
-    yum install -y libaio-devel openssl openssl-devel ndctl-devel \
-    ncurses ncurses-devel libtirpc-devel expect ant bison iputils \
-    iproute wget make gcc gcc-c++ gdb gdb-gdbserver python3 python3-devel \
-    git net-tools cmake automake byacc libtool --skip-broken
+    bash full_build_install.sh
     ```
 
-4. 获取源码
+2. 获取源码
 
     ```shell
     chmod 755 -R compile_path

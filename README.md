@@ -34,42 +34,32 @@ For a more detailed introduction to oGRAC architecture, please refer to [Archite
 
 ## Compilation Guide
 
-1. System Initialization
+1. Initialize compilation environment
 
-    Disable SELinux and firewall:
-
-    ```shell
-    setenforce 0
-    sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
-    systemctl stop firewalld
-    systemctl disable firewalld
-    ```
-
-2. Create Directory and User
+    Run the interactive initializer from the repository root:
 
     ```shell
-    mkdir -p compile_path
-    chmod 755 -R compile_path
-    useradd user_name
-    passwd user_password
-    chown -R user_name:user_name compile_path
+    bash init.sh
     ```
 
-3. Install Necessary Dependencies
+    The script will:
+    - disable SELinux and firewall if requested
+    - create and configure the compile directory
+    - create the compilation user and set its password
+    - install necessary dependencies
+
+    Alternatively, to perform the full compilation and installation flow in one step, run:
 
     ```shell
-    yum install -y libaio-devel openssl openssl-devel ndctl-devel \
-    ncurses ncurses-devel libtirpc-devel expect ant bison iputils \
-    iproute wget make gcc gcc-c++ gdb gdb-gdbserver python3 python3-devel \
-    git net-tools cmake automake byacc libtool unixODBC-devel --skip-broken
+    bash full_build_install.sh
     ```
 
-4. Obtain Source Code
+2. Obtain Source Code
 
     ```shell
     chmod 755 -R compile_path
     cd compile_path
-    git clone https://gitcode.com/opengauss/oGRAC.git
+    git clone https://gitcode.com/victor-akande/oGRAC.git
     ```
 
 5. Configuration Modification
