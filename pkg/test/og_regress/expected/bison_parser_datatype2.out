@@ -464,10 +464,16 @@ Succeed.
 
 SQL> insert into test2(id2) values(1);
 
-OG-00636, Invalid number 
+1 rows affected.
+
 SQL> select * from test2;
 
-OG-00636, Invalid number 
+ID                   ID1                  ID2         
+-------------------- -------------------- ------------
+1.23                 1.23                 1           
+
+1 rows fetched.
+
 SQL> 
 SQL> select 1.17549E-38;
 
