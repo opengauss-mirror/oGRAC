@@ -4627,6 +4627,53 @@ SQL> drop table test_array2;
 
 Succeed.
 
+SQL> drop table if exists bison_corr_depts;
+
+Succeed.
+
+SQL> drop table if exists bison_corr_emps;
+
+Succeed.
+
+SQL> create table bison_corr_depts(dept_id int, dept_name varchar2(50));
+
+Succeed.
+
+SQL> create table bison_corr_emps(emp_id int, dept_id int);
+
+Succeed.
+
+SQL> insert into bison_corr_depts values (1, 'IT'), (2, 'HR'), (3, 'FINANCE');
+
+3 rows affected.
+
+SQL> insert into bison_corr_emps values (1, 1), (2, 2), (3, 3);
+
+3 rows affected.
+
+SQL> create table bison_corr_result as
+  2 select dept_id, dept_name
+  3 from bison_corr_depts d
+  4 where exists (
+  5     select 1
+  6     from bison_corr_emps e
+  7     where e.dept_id = d.dept_id
+  8 );
+
+Succeed.
+
+SQL> drop table bison_corr_result;
+
+Succeed.
+
+SQL> drop table bison_corr_emps;
+
+Succeed.
+
+SQL> drop table bison_corr_depts;
+
+Succeed.
+
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
