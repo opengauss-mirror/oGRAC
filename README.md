@@ -61,7 +61,7 @@ For a more detailed introduction to oGRAC architecture, please refer to [Archite
     yum install -y libaio-devel openssl openssl-devel ndctl-devel \
     ncurses ncurses-devel libtirpc-devel expect ant bison iputils \
     iproute wget make gcc gcc-c++ gdb gdb-gdbserver python3 python3-devel \
-    git net-tools cmake automake byacc libtool --skip-broken
+    git net-tools cmake automake byacc libtool unixODBC-devel --skip-broken
     ```
 
 4. Obtain Source Code
