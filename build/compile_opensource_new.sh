@@ -195,7 +195,7 @@ cp ${PLATFORM}/HuaweiSecureC/include/* ${PLATFORM}/huawei_security/include/
 cd ${OPEN_SOURCE}/googletest
 mkdir -p ${OPEN_SOURCE}/googletest/build
 cd  ${OPEN_SOURCE}/googletest/build
-cmake -DBUILD_SHARED_LIBS=ON ..
+cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_FLAGS="-Wno-error -Wno-maybe-uninitialized" ..
 make
 mkdir -p ${LIBRARY}/googletest/lib/
 cp ${OPEN_SOURCE}/googletest/build/googlemock/*.so ${LIBRARY}/googletest/lib/

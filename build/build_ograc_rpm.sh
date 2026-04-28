@@ -20,9 +20,18 @@ function buildRPM() {
     echo "Prepare path for tar of source"
 
     echo "Get run dir name"
-    cd ${OGRACDB_OUTPUT}/bin/oGRAC-RUN*
+    # Find the run directory, prefer the most recent one
+    local run_dir
+    run_dir=$(find "${OGRACDB_OUTPUT}/bin" -maxdepth 1 -type d -name "oGRAC-RUN*" -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+    
+    if [[ -z "${run_dir}" ]]; then
+        echo "No oGRAC-RUN* directory found in ${OGRACDB_OUTPUT}/bin"
+        return 1
+    fi
+    
+    cd "${run_dir}"
     if [ $? -ne 0 ]; then
-        echo "too many oGRAC-RUN dir or dir not found"
+        echo "Failed to cd to ${run_dir}"
         return 1
     fi
 

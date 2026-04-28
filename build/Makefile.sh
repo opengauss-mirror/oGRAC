@@ -165,11 +165,11 @@ func_all()
 
     cd ${OG_SRC_BUILD_DIR}
     set +e
-    make all -sj 8
+    make all -j 8
     if [ $? -ne 0 ]; then
         ls -al ${OGRACDB_LIB}
-        ls -al /home/regress
-        ls -al /home/regress/ogracKernel/build
+        ls -al ${WORKSPACE}
+        ls -al ${OGDB_CODE_PATH}/build
         exit 1
     fi
     set -e
@@ -641,11 +641,11 @@ func_regress_test()
     func_prepare_debug
     cd ${OG_SRC_BUILD_DIR}
     set +e
-    make all -sj 8
+    make all -j 8
     if [ $? -ne 0 ]; then
         ls -al ${OGRACDB_LIB}
-        ls -al /home/regress
-        ls -al /home/regress/ogracKernel/build
+        ls -al ${WORKSPACE}
+        ls -al ${OGDB_CODE_PATH}/build
         exit 1
     fi
     set -e
@@ -667,11 +667,11 @@ func_make_test_debug()
     func_prepare_debug
     cd ${OG_SRC_BUILD_DIR}
     set +e
-    make all -sj 8
+    make all -j 8
     if [ $? -ne 0 ]; then
         ls -al ${OGRACDB_LIB}
-        ls -al /home/regress
-        ls -al /home/regress/ogracKernel/build
+        ls -al ${WORKSPACE}
+        ls -al ${OGDB_CODE_PATH}/build
         exit 1
     fi
     set -e

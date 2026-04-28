@@ -113,10 +113,15 @@ elif [[ -f "${OPENEULER_VERSION_PATH}" ]]; then
         OS_SUFFIX="OPENEULER2203"
     elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '22.09') ]]; then
         OS_SUFFIX="OPENEULER2209"
-    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '22.03') ]]; then
+    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '23.03') ]]; then
         OS_SUFFIX="OPENEULER2303"
     elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '23.09') ]]; then
         OS_SUFFIX="OPENEULER2309"
+    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '24.03') ]]; then
+        OS_SUFFIX="OPENEULER2403"
+    else
+        # Fallback for unknown openEuler versions
+        OS_SUFFIX="OPENEULER"
     fi
 else
     echo "Unsupported OS System"

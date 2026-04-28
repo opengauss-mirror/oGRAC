@@ -1349,14 +1349,14 @@ class Installer:
         self.dirName = os.path.dirname(installFile)
 
         # get run.tar.gz package
-        run_pattern = ("^(%s|%s)-[A-Z0-9]+-64bit.tar.gz$"
+        run_pattern = ("^(%s|%s)-[A-Z0-9]*-64bit.tar.gz$"
                        % (self.RUN_VERSION_A, self.RUN_VERSION_B))
         self.runFile = self.find_file(self.dirName, run_pattern)
         if not self.runFile:
             raise Exception("Can not get correct run package in path %s"
                             % self.dirName)
         # get run.sha256 file
-        sha256_pattern = ("^(%s|%s)-[A-Z0-9]+-64bit.sha256$"
+        sha256_pattern = ("^(%s|%s)-[A-Z0-9]*-64bit.sha256$"
                           % (self.RUN_VERSION_A, self.RUN_VERSION_B))
         self.runSha256File = self.find_file(self.dirName, sha256_pattern)
         if not self.runSha256File:
