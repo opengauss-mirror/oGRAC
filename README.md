@@ -1,42 +1,42 @@
-## 什么是oGRAC
+## What is oGRAC
 
-oGRAC是openGauss社区经过多年的技术沉淀和探索，秉承着做最具创新力的技术根社区的精神，以做高性能、高安全、高可用、高智能的满足客户诉求的数据库为初心，在架构、事务、优化器和存储引擎上从零自主创新，打造的业界首个开源的多主关系型数据库。
+oGRAC is the industry's first open-source multi-master relational database, developed by the openGauss community through years of technological accumulation and exploration. Guided by the spirit of creating the most innovative technology community, with the mission of delivering high-performance, high-security, high-availability, and high-intelligence databases that meet customer needs, oGRAC achieves zero-to-one innovation in architecture, transactions, optimizer, and storage engine.
 
-RAC是“Real Application Clusters”的缩写，是集中式数据库的一种典型架构，一般采用了存算分离的架构，计算任务在各个节点上执行，存储节点通过共享的集中式存储来实现。RAC架构下集群具备强一致的应用透明多写能力，用户可以像使用单机数据库使用集群；同时提供了集群的高可用能力，只要有任一存活节点，集群仍可提供正常的服务。
+RAC stands for "Real Application Clusters", a typical architecture for centralized databases that generally adopts a compute-storage separation design. Compute tasks are executed on various nodes, while storage nodes are implemented through shared centralized storage. Under the RAC architecture, clusters possess strong consistency and application-transparent multi-write capabilities, allowing users to use the cluster like a single-machine database; it also provides cluster high availability, ensuring normal service as long as any node survives.
 
-oGRAC使用存算分离架构，实现计算、内存、存储三层池化。通过全局分布式缓存技术、分布式MVCC、分布式锁、多主集群高可用等关键技术，支持集群多读多写能力。
+oGRAC uses a compute-storage separation architecture to achieve three-layer pooling of compute, memory, and storage. Through key technologies such as global distributed caching, distributed MVCC, distributed locking, and multi-master cluster high availability, it supports cluster multi-read and multi-write capabilities.
 
-## oGRAC架构
+## oGRAC Architecture
 
-oGRAC主要由五个主要部分组成：
+oGRAC mainly consists of five major components:
 
--   CMS（Cluster Manager Service）: 负责集群管理。
--   SQL引擎：oGRAC的SQL引擎通过基于规则的查询重写和基于代价的物理优化生成最优的执行计划。
--   存储引擎：oGRAC存储引擎是基于共享存储的支持多主的存储引擎，各个节点在架构上对等，从任何一个节点都可以对数据库做DDL/DML/DCL等操作。任何一个节点做的修改，其他节点都可以看到满足其事务一致性的数据，所有计算节点共享和读写存储上同一份用户数据。
--   DSS（Distribute Storage Service）：分布式存储服务，给数据库提供统一的底层存储接口，向下管理不同类型的存储形态，支持集中式和分布式存储。
--   工具：包括备份恢复工具、运维管理工具等。
+-   CMS (Cluster Manager Service): Responsible for cluster management.
+-   SQL Engine: oGRAC's SQL engine generates optimal execution plans through rule-based query rewriting and cost-based physical optimization.
+-   Storage Engine: oGRAC's storage engine is a multi-master storage engine based on shared storage. All nodes are architecturally equivalent, allowing DDL/DML/DCL operations on the database from any node. Modifications made by any node can be seen by other nodes with data that satisfies transactional consistency, and all compute nodes share and read/write the same user data on storage.
+-   DSS (Distributed Storage Service): Distributed storage service provides a unified underlying storage interface for the database, managing different storage types downward, supporting both centralized and distributed storage.
+-   Tools: Including backup and recovery tools, operation and maintenance management tools, etc.
 
-更详细的oGRAC架构介绍，请参考[架构描述](https://docs.opengauss.org/zh/docs/latest/ograc/about_ograc/product_architecture/architecture_description.html)。
+For a more detailed introduction to oGRAC architecture, please refer to [Architecture Description](https://docs.opengauss.org/zh/docs/latest/ograc/about_ograc/product_architecture/architecture_description.html).
 
-## 工程说明
+## Project Description
 
--   编程语言：C
--   编译工程：cmake或make，建议使用cmake
--   目录说明：
+-   Programming Language: C
+-   Build Project: cmake or make, recommend using cmake
+-   Directory Description:
 
-|目录名称   | 说明  |
+| Directory Name | Description |
 |---|---|
-|build | 编译构建oGRAC数据库的脚本 |
-|og_om | 安装部署脚本。|
-|docker | 构建、启动oGRAC容器镜像的相关脚本。|
-|library | 编译oGRAC需要的一些三方库头文件。|
-|pkg | oGRAC源代码目录，子目录代表不同的功能模块。|
+|build | Scripts for compiling and building the oGRAC database |
+|og_om | Installation and deployment scripts.|
+|docker | Scripts related to building and starting oGRAC container images.|
+|library | Third-party library header files needed for compiling oGRAC.|
+|pkg | oGRAC source code directory, subdirectories represent different functional modules.|
 
-## 编译指南
+## Compilation Guide
 
-1. 系统初始化
+1. System Initialization
 
-    关闭 SELinux 和防火墙：
+    Disable SELinux and firewall:
 
     ```shell
     setenforce 0
@@ -45,7 +45,7 @@ oGRAC主要由五个主要部分组成：
     systemctl disable firewalld
     ```
 
-2. 创建目录和用户
+2. Create Directory and User
 
     ```shell
     mkdir -p compile_path
@@ -55,7 +55,7 @@ oGRAC主要由五个主要部分组成：
     chown -R user_name:user_name compile_path
     ```
 
-3. 安装必要依赖
+3. Install Necessary Dependencies
 
     ```shell
     yum install -y libaio-devel openssl openssl-devel ndctl-devel \
@@ -64,7 +64,7 @@ oGRAC主要由五个主要部分组成：
     git net-tools cmake automake byacc libtool --skip-broken
     ```
 
-4. 获取源码
+4. Obtain Source Code
 
     ```shell
     chmod 755 -R compile_path
@@ -72,16 +72,16 @@ oGRAC主要由五个主要部分组成：
     git clone https://gitcode.com/opengauss/oGRAC.git
     ```
 
-5. 配置修改
+5. Configuration Modification
 
-    如需关闭保护虚拟内存选项(如果编译安装的是debug版本建议关闭保护虚拟内存选项)：
+    If need to disable protect virtual memory option (if compiling debug version, suggest disabling protect virtual memory option):
     
     ```shell
     cd oGRAC/build
     sed -i 's/DUSE_PROTECT_VM=ON/DUSE_PROTECT_VM=OFF/g' Makefile.sh
     ```
 
-6. 编译
+6. Compile
 
     ```shell
     cd build
@@ -89,15 +89,15 @@ oGRAC主要由五个主要部分组成：
     sh local_install.sh compile -b debug
     ```
     
-    - `-b, --build_type=<type>`：指定编译类型（release/debug，默认release）
+    - `-b, --build_type=<type>`: Specify compile type (release/debug, default release)
 
-7. 生成目录
+7. Output Directory
 
-    输出包位于：`oGRAC/oGRAC-DATABASE-*-64bit`
+    Output package located at: `oGRAC/oGRAC-DATABASE-*-64bit`
 
-## 容器化安装指南
+## Containerized Installation Guide
 
-1.下载 docker 镜像
+1. Download docker image
 
     ```shell
     wget https://repo.openeuler.org/openEuler-22.03-LTS/docker_img/aarch64/openEuler-docker.aarch64.tar.xz
@@ -105,65 +105,65 @@ oGRAC主要由五个主要部分组成：
     docker load < ./openEuler-docker.aarch64.tar.xz
     ```
 
-2. 启动 docker
+2. Start docker
 
     ```shell
     docker run --name mirror_name -itd -v /home/uer_name/docker/data:/home --privileged=true --network=host --shm-size=128g IMAGE_ID
     ```
     
-    - -v 是 docker 的挂载，将宿主机的 `/home/uer_name/docker/data` 目录挂载到容器内的 `/home` 目录下
-    - --shm-size 是 docker 的共享内存大小，这里设置为 128g，建议不要小于128g
-    - IMAGE_ID 是 docker 镜像的 ID，可以通过 `docker images` 查看
+    - -v is docker mount, mounting the host's `/home/uer_name/docker/data` directory to the container's `/home` directory
+    - --shm-size is docker shared memory size, set to 128g here, suggest not less than 128g
+    - IMAGE_ID is the docker image ID, can be viewed with `docker images`
 
-3. Docker 镜像内配置
+3. Docker image configuration
 
-    安装依赖：
+    Install dependencies:
     ```shell
     yum install -y git unzip vim
     ```
 
-4. 查看镜像文件
+4. View image files
 
-    在 root 用户下输入：
+    Input under root user:
     
     ```shell
     docker images
     ```
     
-    正常情况下会回显如下信息：
+    Normally will echo the following information:
     
     ```shell
     REPOSITORY    TAG        TMAGE ID        CREATED                 SIZE
     mirror_name   lastest    xxxx            About a minute ago      3.71GB
     ```
 
-5. 创建并进入新的容器
+5. Create and enter new container
 
     ```shell
     docker run -it --name=mirror_namenode mirror_name /bin/bash
     
-    --name=mirror_namenode表示规定容器的名字是什么；
+    --name=mirror_namenode specifies the container name;
     
-    mirror_name表示以哪个镜像实例化
+    mirror_name specifies which image to instantiate
     ```
 
-6. 在容器内编译 oGRAC
+6. Compile oGRAC inside container
 
-    下载源码
+    Download source code
  
     ```shell
      git clone https://gitcode.com/opengauss/oGRAC.git
     ```
  
-    修改 Makefile.sh
+    Modify Makefile.sh
     
     ```shell
     sed -i 's+USE_PROTECT_VM=ON+USE_PROTECT_VM=OFF+' Makefile.sh
     ```
 
-7. 编译安装 oGRAC
+7. Compile and install oGRAC
 
-    在 build 目录下执行下面的命令进行编译安装，示例为编译的 debug 版本，不指定 -b 默认是编   译 release 版本；-u 指定安装用户名
+    Execute the following commands in the build directory for compilation and installation. The example is for the debug version; not specifying -b defaults to the release version; -u specifies the installation username
     
     ```shell
     sh local_install.sh prepare
@@ -173,29 +173,29 @@ oGRAC主要由五个主要部分组成：
     sh local_install.sh install -u user_name
     ```
 
-## 文档
+## Documentation
 
-更多安装指南、教程和API请参考[用户文档](https://docs.opengauss.org/zh/docs/latest/ograc/about_ograc/product_description/ograc_overview.html)。
+For more installation guides, tutorials, and API, please refer to [User Documentation](https://docs.opengauss.org/zh/docs/latest/ograc/about_ograc/product_description/ograc_overview.html).
 
-## 下载
+## Download
 
-下载体验oGRAC请参考[下载](https://download-opengauss.osinfra.cn/archive_test/oGRAC/)
+To download and experience oGRAC, please refer to [Download](https://download-opengauss.osinfra.cn/archive_test/oGRAC/).
 
-## 社区
+## Community
 
-### 治理
+### Governance
 
-查看openGauss是如何实现开放[治理](https://gitcode.com/opengauss/community/blob/master/governance.md)。
+View how openGauss implements open [Governance](https://gitcode.com/opengauss/community/blob/master/governance.md).
 
-### 交流
+### Communication
 
-- 线上交流：https://opengauss.org/zh/community/onlineCommunication/
-- 社区论坛：https://discuss.opengauss.org/
+- Online communication: https://opengauss.org/zh/community/onlineCommunication/
+- Community forum: https://discuss.opengauss.org/
 
-## 贡献
+## Contribution
 
-欢迎大家来参与贡献。详情请参阅我们的[社区贡献](https://opengauss.org/zh/contribution/)。
+Everyone is welcome to contribute. For details, please refer to our [Community Contribution](https://opengauss.org/zh/contribution/).
 
-## 许可证
+## License
 
 [MulanPSL-2.0](http://license.coscl.org.cn/MulanPSL2)
