@@ -1,0 +1,392 @@
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> 
+SQL> commit;
+
+Succeed.
+
+SQL> PREPARE TRANSACTION '1.A1B2C3';
+
+OG-01502, Specified branch does not exists
+SQL> COMMIT PREPARED '1.A1B2C3';
+
+OG-01502, Specified branch does not exists
+SQL> rollback;
+
+Succeed.
+
+SQL> 
+SQL> SAVEPOINT bison_dcl_t1;
+
+Succeed.
+
+SQL> ROLLBACK TO bison_dcl_t1;
+
+Succeed.
+
+SQL> ROLLBACK TRANSACTION TO bison_dcl_t1;
+
+Succeed.
+
+SQL> ROLLBACK TO SAVEPOINT bison_dcl_t1;
+
+Succeed.
+
+SQL> ROLLBACK TRANSACTION TO SAVEPOINT bison_dcl_t1;
+
+Succeed.
+
+SQL> ROLLBACK PREPARED '1.A1B2C3';
+
+OG-01502, Specified branch does not exists
+SQL> 
+SQL> RELEASE SAVEPOINT bison_dcl_t1;
+
+OG-00736, The savepoint 'BISON_DCL_T1' does not exist.
+SQL> 
+SQL> SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+
+Succeed.
+
+
+SQL> SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+OG-00733, Error occurred when the transaction is in progress, set transaction must be first statement of transaction
+
+SQL> SET TRANSACTION ISOLATION LEVEL CURRENT COMMITTED;
+
+
+OG-00733, Error occurred when the transaction is in progress, set transaction must be first statement of transaction
+
+SQL> 
+SQL> -- Test BACKUP ARCHIVELOG statements
+SQL> -- backup archivelog all;
+SQL> -- backup archivelog all format 'bison_dcl_t1';
+SQL> -- backup archivelog all as lz4 compressed backupset;
+SQL> -- backup archivelog all as lz4 compressed backupset level 2;
+SQL> -- backup archivelog all tag 'bison_dcl_t1';
+SQL> -- backup archivelog all buffer size 128m;
+SQL> -- backup archivelog from asn 23333 format 'bison_dcl_t1';
+SQL> 
+SQL> -- Test BACKUP DATABASE statements
+SQL> -- backup database full exclude for tablespace bison_dcl_t2,bison_dcl_t1;
+SQL> -- backup database full exclude for tablespace bison_dcl_t2,bison_dcl_t1,bison_dcl_t2;
+SQL> -- backup database full skip badblock;
+SQL> -- backup database full skip badblock skip badblock;
+SQL> -- backup database INCREMENTAL LEVEL 2;
+SQL> -- backup database INCREMENTAL LEVEL 1;
+SQL> -- backup database FORMAT 'bison_dcl_t1';
+SQL> -- backup database as lz4 compressed backupset;
+SQL> -- backup database as lz4 compressed backupset level 2;
+SQL> -- backup database tag 'bison_dcl_t1';
+SQL> -- backup database PARALLELISM 9;
+SQL> -- backup database SECTION THRESHOLD 134217728;
+SQL> -- backup database SECTION THRESHOLD 256m;
+SQL> -- backup database copy of tablespace bison_dcl_t1,bison_dcl_t2;
+SQL> -- backup database PASSWORD 'Huawei@123';
+SQL> -- backup database PREPARE;
+SQL> -- backup database FINISH SCN 123124125412351;
+SQL> -- backup database buffer size 128m;
+SQL> 
+SQL> -- backup cancel current process;
+SQL> 
+SQL> -- Test RESTORE DATABASE statements
+SQL> -- restore database from 'bison_dcl_t1';
+SQL> -- restore database from 'bison_dcl_t1' disconnect from session;
+SQL> -- restore database from 'bison_dcl_t1' PARALLELISM 9;
+SQL> -- restore database from 'bison_dcl_t1' tablespace bison_dcl_t1;
+SQL> -- restore database from 'bison_dcl_t1' PASSWORD 'Huawei@123';
+SQL> -- restore database from 'bison_dcl_t1' BUFFER SIZE 128m;
+SQL> -- restore database from 'bison_dcl_t1' repair type RETURN_ERROR;
+SQL> -- restore database from 'bison_dcl_t1' repair type REPLACE_CHECKSUM;
+SQL> -- restore database from 'bison_dcl_t1' repair type DISCARD_BADBLOCK;
+SQL> 
+SQL> -- Test RESTORE BLOCKRECOVER statements
+SQL> -- restore blockrecover datafile 1 page 100 from 'bison_dcl_t1';
+SQL> -- restore blockrecover datafile 1 page 100 from 'bison_dcl_t1' until lfn 123124125412351;
+SQL> 
+SQL> -- Test RESTORE FILE/ARCHIVELOG statements
+SQL> -- restore filerecover filename 'bison_dcl_t1' from 'bison_dcl_t1';
+SQL> -- restore filerecover fileid 1000 from 'bison_dcl_t1';
+SQL> -- restore filerecover filename 'bison_dcl_t1' from 'bison_dcl_t1' BUFFER SIZE 128m;
+SQL> -- restore filerecover fileid 1000 from 'bison_dcl_t1' BUFFER SIZE 128m;
+SQL> -- restore archivelog from 'bison_dcl_t1';
+SQL> -- restore archivelog from 'bison_dcl_t1' BUFFER SIZE 128m;
+SQL> -- restore FLUSHPAGE from 'bison_dcl_t1';
+SQL> -- restore COPYCTRL to 'bison_dcl_t1';
+SQL> 
+SQL> -- Test RECOVER statements
+SQL> -- recover database;
+SQL> -- recover database until time '2023-01-01 00:00:00';
+SQL> -- recover database until scn 1234567890;
+SQL> -- recover database until cancel;
+SQL> 
+SQL> -- Test OGRAC statements
+SQL> -- ograc recover 1 start 0 count 1;
+SQL> -- ograc recover 0 start 0 count 1;
+SQL> 
+SQL> -- Test SHUTDOWN statements
+SQL> -- shutdown;
+SQL> -- shutdown immediate;
+SQL> -- shutdown abort;
+SQL> 
+SQL> -- Test BUILD statements
+SQL> -- build database;
+SQL> -- build cascaded standby database;
+SQL> -- build standby database;
+SQL> -- build repair database;
+SQL> 
+SQL> -- Test SYNCPOINT statements
+SQL> -- syncpoint reset;
+SQL> -- syncpoint my_syncpoint;
+SQL> -- syncpoint reset;
+SQL> 
+SQL> -- Test REPAIR statements
+SQL> -- repair_page;
+SQL> -- repair_copyctrl;
+SQL> 
+SQL> -- Test LOCK TABLE statements
+SQL> drop table if exists bison_lock_t1;
+
+Succeed.
+
+SQL> drop table if exists bison_lock_t2;
+
+Succeed.
+
+SQL> create table bison_lock_t1(id int);
+
+Succeed.
+
+SQL> create table bison_lock_t2(id int);
+
+Succeed.
+
+SQL> lock table bison_lock_t1 in share mode;
+
+Succeed.
+
+SQL> lock table bison_lock_t1 in  exclusive mode;
+
+Succeed.
+
+SQL> lock table bison_lock_t1, bison_lock_t2 in share mode;
+
+Succeed.
+
+SQL> lock table bison_lock_t1 in share mode nowait;
+
+Succeed.
+
+SQL> -- lock table bison_lock_t1 in exclusive mode wait 10;
+SQL> commit;
+
+Succeed.
+
+SQL> drop table if exists bison_lock_t1;
+
+Succeed.
+
+SQL> drop table if exists bison_lock_t2;
+
+Succeed.
+
+SQL> 
+SQL> -- Test VALIDATE statements
+SQL> validate datafile 1 page 100;
+
+Succeed.
+
+SQL> validate backupset 1;
+
+OG-00601, Sql syntax error: validate backupset not supported
+SQL> 
+SQL> -- Test ALTER SYSTEM statements
+SQL> alter system set use_bison_parser = 'true';
+
+Succeed.
+
+SQL> -- alter system set use_bison_parser = 'true' scope = both;
+SQL> -- alter system switch logfile;
+SQL> -- alter system checkpoint;
+SQL> -- alter system checkpoint global;
+SQL> -- alter system checkpoint local;
+SQL> -- alter system flush buffer;
+SQL> -- alter system flush sqlpool;
+SQL> alter system kill session '123,456';
+
+OG-00683, The session ID was missing or invalid
+SQL> alter system reset statistics;
+
+Succeed.
+
+SQL> alter system reload hba config;
+
+Succeed.
+
+SQL> -- alter system reload pbl config;
+SQL> alter system refresh sysdba privilege;
+
+Succeed.
+
+SQL> alter system set replication on 'value';
+
+OG-00601, Sql syntax error: the port must be entered
+SQL> -- alter system set replication off;
+SQL> alter system load dictionary for appuser.apptable;
+
+OG-00130, Operation load sys dictionary is not supported on non-sys user
+SQL> alter system init dictionary;
+
+OG-00130, Operation of initializing entry for upgrade mode is not supported on non-upgrade mode
+SQL> -- alter system recycle sharedpool;
+SQL> -- alter system recycle sharedpool force;
+SQL> -- alter system dump datafile 1 page 100;
+SQL> alter system dump datafile 1 page 100 to '/path/to/file';
+
+OG-00003, Failed to create the file /path/to/file, the error code was 2
+SQL> -- alter system dump ctrlfile;
+SQL> alter system dump ctrlfile to '/path/to/file';
+
+OG-00003, Failed to create the file /path/to/file, the error code was 2
+SQL> alter system dump catalog table appuser.apptable to '/path/to/file';
+
+OG-00843, The table or view APPUSER.APPTABLE does not exist.
+SQL> alter system dump catalog user username to '/path/to/file';
+
+OG-00781, The user USERNAME does not exist.
+SQL> alter system archive_set param = 'value' global;
+
+OG-00201, [1:42]The parameter name "PARAM" was invalid
+SQL> alter system archive_set replication on 'arch_dest';
+
+OG-00601, Sql syntax error: the port must be entered
+SQL> -- alter system archive_set replication off;
+SQL> alter system add lsnr_addr 'address';
+
+OG-00259, IP address address is not local ip, please check your ifconfig
+SQL> alter system delete lsnr_addr 'address';
+
+OG-00708, The object lsnr address does not exist
+SQL> alter system add hba entry 'hba_entry_value';
+
+OG-00220, [1:28]Hba line(1) format is not correct
+SQL> alter system delete hba entry 'hba_entry_value';
+
+OG-00220, [1:31]Hba line(1) format is not correct
+SQL> alter system debug mode param = 'value';
+
+OG-00201, The parameter name "PARAM" was invalid
+SQL> alter system debug mode param = normal;
+
+OG-00201, The parameter name "PARAM" was invalid
+SQL> -- alter system stop build;
+SQL> alter system repair catalog;
+
+OG-01110, The operation repairing catalog with non-restrict or non-upgrade mode was not allowed
+SQL> 
+SQL> -- Test ALTER SESSION statements
+SQL> alter session set nls_date_format = 'YYYY-MM-DD';
+
+Succeed.
+
+SQL> alter session set commit_wait = wait;
+
+Succeed.
+
+SQL> alter session set commit_logging = immediate;
+
+Succeed.
+
+SQL> alter session set lock_wait_timeout = 10;
+
+Succeed.
+
+SQL> alter session set current_schema = sys;
+
+Succeed.
+
+SQL> alter session set time_zone = '+08:00';
+
+Succeed.
+
+SQL> alter session set _show_explain_predicate = true;
+
+Succeed.
+
+SQL> alter session set shd_socket_timeout = 30;
+
+OG-00129, Invalid dcl command
+SQL> alter session set tenant = tenant1;
+
+OG-01394, The tenant TENANT1 does not exist.
+SQL> alter session set _outer_join_optimization = on;
+
+Succeed.
+
+SQL> alter session set cbo_index_caching = 80;
+
+Succeed.
+
+SQL> alter session set cbo_index_cost_adj = 100;
+
+Succeed.
+
+SQL> alter session set _withas_subquery = optimizer;
+
+Succeed.
+
+SQL> alter session set _cursor_sharing = off;
+
+Succeed.
+
+SQL> alter session set plan_display_format = basic;
+
+Succeed.
+
+SQL> alter session set nls_timestamp_format = 'YYYY-MM-DD HH24:MI:SS';
+
+Succeed.
+
+SQL> alter session disable triggers;
+
+Succeed.
+
+SQL> alter session disable interactive timeout;
+
+Succeed.
+
+SQL> alter session disable nologging;
+
+Succeed.
+
+SQL> alter session disable optinfo_log;
+
+Succeed.
+
+SQL> alter session enable triggers;
+
+Succeed.
+
+SQL> alter session enable interactive timeout;
+
+Succeed.
+
+SQL> alter session enable nologging;
+
+Succeed.
+
+SQL> alter session enable optinfo_log;
+
+Succeed.
+
+SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL>

@@ -266,6 +266,7 @@ lang_type_t sql_diag_lang_type(sql_stmt_t *stmt, sql_text_t *sql, word_t *leader
         case KEY_WORD_OGRAC:
         case KEY_WORD_SHUTDOWN:
         case KEY_WORD_BUILD:
+        // case KEY_WORD_CHECKPOINT:
         case KEY_WORD_VALIDATE:
         case KEY_WORD_REPAIR_PAGE:
         case KEY_WORD_REPAIR_COPYCTRL:

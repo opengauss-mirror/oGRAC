@@ -79,11 +79,15 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             break;
         }
         case KEY_WORD_PUBLIC: {
-            if (lex_expected_fetch_word(stmt->session->lex, "SYNONYM") != OG_SUCCESS) {
-                return OG_ERROR;
-            }
+            if (!g_instance->sql.use_bison_parser) {
+                if (lex_expected_fetch_word(stmt->session->lex, "SYNONYM") != OG_SUCCESS) {
+                    return OG_ERROR;
+                }
 
-            status = sql_parse_create_synonym(stmt, SYNONYM_IS_PUBLIC + SYNONYM_IS_REPLACE);
+                status = sql_parse_create_synonym(stmt, SYNONYM_IS_PUBLIC + SYNONYM_IS_REPLACE);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         }
         case KEY_WORD_PACKAGE:
@@ -264,7 +268,11 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             }
             break;
         case KEY_WORD_INDEXCLUSTER:
-            status = sql_parse_create_indexes(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_create_indexes(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_SEQUENCE:
             if (!g_instance->sql.use_bison_parser) {
@@ -438,7 +446,11 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             break;
 
         case KEY_WORD_TABLESPACE:
-            status = sql_parse_alter_space(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_space(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_DATABASE:
@@ -948,7 +960,11 @@ status_t sql_parse_ddl(sql_stmt_t *stmt, word_t *leader_word)
             }
             break;
         case KEY_WORD_PURGE:
-            status = sql_parse_purge(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_purge(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_COMMENT:
             if (!g_instance->sql.use_bison_parser) {
@@ -1368,6 +1384,61 @@ status_t og_parse_revoke(sql_stmt_t *stmt, knl_revoke_def_t **revoke_def, priv_t
 
     status = sql_check_privs_type(stmt, &def->privs, def->priv_type, def->objtype, &def->type_name);
     OG_RETURN_IFERR(status);
+
+    return OG_SUCCESS;
+}
+
+status_t og_parse_purge(sql_stmt_t *stmt, knl_purge_def_t **purge_def, purge_type_t purge_type,
+    name_with_owner *name_owner, char *single_name)
+{
+    knl_purge_def_t *def = NULL;
+
+    stmt->context->type = OGSQL_TYPE_PURGE;
+
+    if (sql_alloc_mem(stmt->context, sizeof(knl_purge_def_t), (void **)purge_def) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    def = *purge_def;
+    def->part_name.len = 0;
+    def->part_name.str = NULL;
+    def->type = purge_type;
+
+    if (purge_type == PURGE_RECYCLEBIN) {
+        stmt->context->entry = def;
+        return OG_SUCCESS;
+    }
+
+    switch (purge_type) {
+        case PURGE_TABLE:
+        case PURGE_INDEX:
+            if (name_owner->owner.len > 0) {
+                def->owner = name_owner->owner;
+            } else {
+                cm_str2text(stmt->session->curr_schema, &def->owner);
+            }
+            def->name = name_owner->name;
+            break;
+        case PURGE_PART:
+            if (name_owner->owner.len > 0) {
+                def->owner = name_owner->owner;
+            } else {
+                cm_str2text(stmt->session->curr_schema, &def->owner);
+            }
+            def->name = name_owner->name;
+            cm_str2text(single_name, &def->part_name);
+            break;
+        case PURGE_TABLE_OBJECT:
+        case PURGE_INDEX_OBJECT:
+            cm_str2text(stmt->session->curr_schema, &def->owner);
+            cm_str2text(single_name, &def->name);
+            break;
+        case PURGE_PART_OBJECT:
+        case PURGE_TABLESPACE:
+            cm_str2text(single_name, &def->name);
+            break;
+        default:
+            break;
+    }
 
     return OG_SUCCESS;
 }

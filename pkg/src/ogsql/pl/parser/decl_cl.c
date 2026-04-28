@@ -193,6 +193,7 @@ static void plc_translate_variant(pl_compiler_t *compiler, word_t *word, plc_var
         return;
     }
 
+    // 触发器变量，例如:new.a, :old.b
     if (IS_TRIGGER_WORD_TYPE(word)) {
         *var_type = PLC_TRIGGER_VAR;
         variant_name->block_name.len = 0;
@@ -201,8 +202,10 @@ static void plc_translate_variant(pl_compiler_t *compiler, word_t *word, plc_var
         return;
     }
 
+    // 带多个.的，例如a.b
     if (word->ex_count >= 1) {
         plc_concat_text_upper_by_type(&variant_name->block_name, OG_MAX_NAME_LEN, &word->text.value, word->type);
+        // 先找a是不是label，可能是兄弟label，也可能是父子label
         plc_find_label(compiler, &variant_name->block_name, &line, &is_label);
         if (is_label) {
             *var_type = PLC_BLOCK_VAR;
@@ -227,7 +230,7 @@ void plc_find_decl_ex(pl_compiler_t *compiler, word_t *word, uint32 types, plc_v
     char name_buf[OG_NAME_BUFFER_SIZE];
     plc_variant_name_t variant_name;
     *decl = NULL;
-    PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types);
+    PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types); // 初始化plc_variant_name_t对象
     plc_translate_variant(compiler, word, &variant_name, &type);
 
     if (var_type != NULL) {
@@ -238,6 +241,7 @@ void plc_find_decl_ex(pl_compiler_t *compiler, word_t *word, uint32 types, plc_v
         return;
     }
     if (type == PLC_BLOCK_VAR) {
+        // 往上找父块是否有匹配的
         plc_find_block_decl(compiler, &variant_name, decl);
         if (*decl == NULL) {
             type = PLC_MULTIEX_VAR;
@@ -545,6 +549,135 @@ status_t plc_compile_complex_type(pl_compiler_t *compiler, plv_decl_t *decl, plv
             break;
         default:
             break;
+    }
+    return OG_SUCCESS;
+}
+
+status_t plc_bison_compile_default_def(pl_compiler_t *compiler, plv_decl_t *decl, expr_tree_t *expr)
+{
+    if (expr == NULL) {
+        return OG_SUCCESS;
+    }
+
+    if (decl->drct == PLV_DIR_OUT || decl->drct == PLV_DIR_INOUT) {
+        OG_THROW_ERROR(ERR_PL_OUT_PARAM_WITH_DFT);
+        return OG_ERROR;
+    }
+
+    if (expr->root->type == EXPR_NODE_PRIOR) {
+        OG_THROW_ERROR(ERR_PL_ENCOUNT_PRIOR);
+        return OG_ERROR;
+    }
+
+    decl->default_expr = expr;
+    OG_RETURN_IFERR(plc_verify_expr(compiler, decl->default_expr));
+    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &decl->default_expr));
+
+    return OG_SUCCESS;
+}
+
+static void plc_bison_translate_variant(pl_compiler_t *compiler, plc_variant_name_t *variant_name,
+    plc_var_type_t *var_type, text_t *name, galist_t *sub_names)
+{
+    pl_line_ctrl_t *line = NULL;
+    bool32 is_label = OG_FALSE;
+
+    if (sub_names == NULL) {
+        *var_type = PLC_NORMAL_VAR;
+        variant_name->block_name.len = 0;
+        plc_concat_text_upper_by_type(&variant_name->name, OG_MAX_NAME_LEN, name, WORD_TYPE_VARIANT);
+        return;
+    }
+
+    // todo: trigger variant
+
+    if (sub_names != NULL) {
+        plc_concat_text_upper_by_type(&variant_name->block_name, OG_MAX_NAME_LEN, name, WORD_TYPE_VARIANT);
+        plc_find_label(compiler, &variant_name->block_name, &line, &is_label);
+        if (is_label) {
+            *var_type = PLC_BLOCK_VAR;
+            plc_concat_text_upper_by_type(&variant_name->name, OG_MAX_NAME_LEN, (text_t*)cm_galist_get(sub_names, 0),
+                WORD_TYPE_VARIANT);
+            return;
+        } else {
+            variant_name->block_name.len = 0;
+            plc_concat_text_upper_by_type(&variant_name->name, OG_MAX_NAME_LEN, name, WORD_TYPE_VARIANT);
+        }
+    }
+    *var_type = PLC_MULTIEX_VAR;
+}
+
+void plc_bison_find_decl_ex(pl_compiler_t *compiler, uint32 types, plc_var_type_t *var_type, plv_decl_t **decl,
+    char *first_name, galist_t *sub_names)
+{
+    text_t name;
+    cm_str2text(first_name, &name);
+    plc_var_type_t type;
+    char block_name_buf[OG_NAME_BUFFER_SIZE];
+    char name_buf[OG_NAME_BUFFER_SIZE];
+    plc_variant_name_t variant_name;
+    *decl = NULL;
+    PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types);
+    plc_bison_translate_variant(compiler, &variant_name, &type, &name, sub_names);
+
+    if (var_type != NULL) {
+        *var_type = type;
+    }
+    if (type == PLC_NORMAL_VAR || type == PLC_TRIGGER_VAR) {
+        plc_find_block_decl(compiler, &variant_name, decl);
+        return;
+    }
+    if (type == PLC_BLOCK_VAR) {
+        plc_find_block_decl(compiler, &variant_name, decl);
+        if (*decl == NULL) {
+            type = PLC_MULTIEX_VAR;
+            variant_name.block_name.len = 0;
+            variant_name.name.len = 0;
+            plc_concat_text_upper_by_type(&variant_name.name, OG_MAX_NAME_LEN, &name, WORD_TYPE_VARIANT);
+        } else {
+            if (sub_names->count == 1) {
+                return;
+            }
+            if (var_type != NULL) {
+                *var_type = PLC_BLOCK_MULTIEX_VAR;
+            }
+            return;
+        }
+    }
+
+    if (var_type != NULL) {
+        *var_type = type;
+    }
+    plc_find_block_decl(compiler, &variant_name, decl);
+}
+
+status_t plc_bison_extract_table_column(pl_compiler_t *compiler, var_udo_t *obj, text_t *column, type_word_t *type)
+{
+    session_t *cmpl_session = compiler->stmt->session;
+    if (type->typemode == NULL || (type->typemode->count >= MAX_EXTRA_TEXTS)) {
+        OG_SRC_THROW_ERROR(type->loc, ERR_PL_ATTR_TYPE_FMT, cmpl_session->curr_schema, type->str);
+        return OG_ERROR;
+    }
+
+    if (type->typemode->count == 1) {
+        OG_RETURN_IFERR(cm_text_copy_from_str(&obj->user, cmpl_session->curr_schema, OG_NAME_BUFFER_SIZE));
+        cm_str2text(type->str, &obj->name);
+        obj->user_explicit = OG_FALSE;
+        *column = *(text_t*)cm_galist_get(type->typemode, 0);
+    } else {
+        text_t user;
+        text_t raw_user;
+        cm_str2text(type->str, &raw_user);
+        OG_RETURN_IFERR(sql_copy_prefix_tenant(compiler->stmt, &raw_user, &user, sql_copy_text));
+        cm_text_copy_upper(&obj->user, &user);
+        obj->name = *(text_t*)cm_galist_get(type->typemode, 0);
+        *column = *(text_t*)cm_galist_get(type->typemode, 1);
+        obj->user_explicit = OG_TRUE;
+    }
+
+    if (IS_CASE_INSENSITIVE) {
+        cm_text_upper(&obj->name);
+        cm_text_upper(column);
     }
     return OG_SUCCESS;
 }

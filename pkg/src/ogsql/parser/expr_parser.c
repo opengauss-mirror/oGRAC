@@ -3571,7 +3571,7 @@ status_t sql_create_select_expr(sql_stmt_t *stmt, expr_tree_t **expr, sql_select
     return OG_SUCCESS;
 }
 
-static status_t sql_parse_datatype_typemode_bison(char *user, type_word_t *type, typmode_t *v_type)
+status_t sql_parse_datatype_typemode_bison(char *user, type_word_t *type, typmode_t *v_type)
 {
     word_t typword;
     typword.text.str = type->str;

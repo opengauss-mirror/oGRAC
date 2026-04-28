@@ -65,6 +65,12 @@ status_t plc_compile_global_type_member(pl_compiler_t *compiler, plv_decl_t *dec
 status_t plc_compile_attr_options(pl_compiler_t *compiler, word_t *word, expr_tree_t **def_expr, bool8 *null);
 status_t plc_compile_global_udt_attr(pl_compiler_t *compiler, word_t *word, plv_decl_t **udt_fld, int8 *type);
 status_t plc_check_object_datatype(pl_compiler_t *compiler, plv_decl_t *decl, bool32 is_arg);
+status_t plc_bison_compile_plv_type(pl_compiler_t *compiler, plattr_assist_t *plattr_ass, type_word_t *type);
+status_t plc_check_decl_datatype(pl_compiler_t *compiler, plv_decl_t *decl, bool32 is_arg);
+status_t plc_bison_compile_type_def(pl_compiler_t *compiler, char *type_name, galist_t *record_attrs,
+    source_location_t loc, uint32 matched_id);
+status_t plc_bison_try_compile_local_type(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *type,
+    bool32 *result);
 
 #ifdef __cplusplus
 }

@@ -36,7 +36,7 @@
 #include "call_cl.h"
 #include "trigger_decl_cl.h"
 
-
+// 解析参数类型、默认值
 static status_t plc_compile_match_drct(pl_compiler_t *compiler, galist_t *decls, word_t *word, plv_decl_t *decl)
 {
     OG_RETURN_IFERR(plc_compile_variant_def(compiler, word, decl, OG_TRUE, decls, OG_TRUE));
@@ -1566,6 +1566,10 @@ static status_t plc_bison_compile_args(pl_compiler_t *compiler, function_t *func
     bool32 result = OG_FALSE;
     plv_decl_t *decl = NULL;
 
+    if (args == NULL) {
+        return OG_SUCCESS;
+    }
+
     for (uint32 i = 0; i < args->count; i++) {
         func_param = (func_parameter *)cm_galist_get(args, i);
         cm_str2text(func_param->name, &arg_name);
@@ -1581,15 +1585,29 @@ static status_t plc_bison_compile_args(pl_compiler_t *compiler, function_t *func
             return OG_ERROR;
         }
         decl->name = arg_name;
-        decl->drct = PLV_DIR_IN;
-        decl->type = PLV_VAR;
+        decl->drct = func_param->drct;
 
-        OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(decl->drct), &decl->variant.type,
-            func_param->type));
-        OG_RETURN_IFERR(plc_check_datatype(compiler, &decl->variant.type, OG_TRUE));
-        if (decl->variant.type.is_array) {
-            decl->type = PLV_ARRAY;
+        /* todo: cursor type */
+        if (func_param->type->pl_rowtype || func_param->type->pl_type) {
+            plattr_assist_t plattr_ass;
+            plattr_ass.type = DECL_INHERIT;
+            plattr_ass.decl = decl;
+            plattr_ass.decls = compiler->decls;
+            plattr_ass.is_args = OG_TRUE;
+            OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, func_param->type));
+            OG_RETURN_IFERR(plc_check_decl_datatype(compiler, decl, OG_TRUE));
+        } else {
+            /* todo: userdef type in block, userdef global type,参考plc_compile_variant_def */
+            decl->type = PLV_VAR;
+            OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(decl->drct), &decl->variant.type,
+                func_param->type));
+            OG_RETURN_IFERR(plc_check_datatype(compiler, &decl->variant.type, OG_TRUE));
+            if (decl->variant.type.is_array) {
+                decl->type = PLV_ARRAY;
+            }
         }
+
+        OG_RETURN_IFERR(plc_bison_compile_default_def(compiler, decl, func_param->def_expr));
         if (decl->drct == PLV_DIR_OUT || decl->drct == PLV_DIR_INOUT) {
             outparam_count++;
         }
@@ -1616,6 +1634,7 @@ static status_t pl_bison_compile_func_desc(pl_compiler_t *compiler, text_t *name
     func->desc.is_function = OG_TRUE;
 
     // insert return values declaration
+    // todo: return支持SYS_REFCURSOR
     OG_RETURN_IFERR(cm_galist_new(func->desc.params, sizeof(plv_decl_t), (void **)&ret));
     ret->drct = PLV_DIR_OUT;
     ret->type = PLV_VAR;
@@ -1637,6 +1656,7 @@ static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *ar
     galist_t *type_decls = NULL;
     text_t *name = &compiler->obj->name;
     pl_entity_t *entity = compiler->entity;
+    status_t status;
 
     // init function
     OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(function_t), (void **)&func));
@@ -1650,12 +1670,21 @@ static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *ar
 
     OG_RETURN_IFERR(plc_decl_insert_params(compiler, decls, func->desc.params));
 
-    OG_RETURN_IFERR(pl_parser(compiler->stmt, body));
+    /* todo: 解析language选项，参考plc_compile_language */
+
+    if (compiler->root_type == PL_FUNCTION) {
+        compiler->step = PL_COMPILE_AFTER_DECL;
+        compiler->proc = func;
+    }
+
+    status = pl_parser(compiler->stmt, body);
     func->body = (void *)compiler->body;
-    compiler->step = PL_COMPILE_AFTER_DECL;
-    compiler->proc = func;
-    
     entity->function = func;
+    OG_RETURN_IFERR(status);
+    OG_RETURN_IFERR(plc_verify_label(compiler));
+    compiler->body = NULL;
+    compiler->last_line = NULL;
+
     return OG_SUCCESS;
 }
 
@@ -1721,6 +1750,7 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
     set_inter_plc_cnt();
     plc_set_tls_plc_error();
 
+    /* todo: anonymous block, trigger, procedure, package, type 语法跟function类似 */
     status = plc_bison_compile_function(&compiler, args, ret_type, body);
     if (status != OG_SUCCESS) {
         plc_set_compiling_errors(stmt, obj);

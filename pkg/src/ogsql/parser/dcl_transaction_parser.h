@@ -39,6 +39,8 @@ status_t sql_parse_commit(sql_stmt_t *stmt);
 status_t sql_parse_rollback(sql_stmt_t *stmt);
 status_t sql_parse_release_savepoint(sql_stmt_t *stmt);
 status_t sql_parse_savepoint(sql_stmt_t *stmt);
+status_t sql_parse_gtid(sql_stmt_t *stmt, const text_t *txt_xid);
+status_t sql_parse_ltid(text_t *value, knl_xid_t *xid);
 
 #ifdef __cplusplus
 }

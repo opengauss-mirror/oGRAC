@@ -1895,6 +1895,7 @@ static status_t plc_compile_normal_ln(pl_compiler_t *compiler, word_t *word)
         return OG_ERROR;
     }
     OG_RETURN_IFERR(lex_fetch(lex, word));
+    /* todo: pl_gram.y支持PL_TERM场景 */
     if (word->type == WORD_TYPE_PL_TERM) {
         OG_RETURN_IFERR(plc_compile_call(compiler, expr, line));
         OG_RETURN_IFERR(plc_clone_expr_node(compiler, &line->proc));

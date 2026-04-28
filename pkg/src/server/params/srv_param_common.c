@@ -116,7 +116,16 @@ status_t sql_verify_als_bool(void *se, void *lex, void *def)
 
 status_t sql_notify_als_bool(void *se, void *item, char *value)
 {
-    if ((bool32)value[0] == OG_TRUE) {
+    bool32 bool_value = ((bool32)value[0] == OG_TRUE) ? OG_TRUE : OG_FALSE;
+
+    if (value[1] != '\0') {
+        bool_value = (bool32)cm_str_equal_ins(value, "TRUE");
+    }
+
+    value[0] = (char)bool_value;
+    value[1] = '\0';
+
+    if (bool_value == OG_TRUE) {
         PRTS_RETURN_IFERR(snprintf_s(value, OG_PARAM_BUFFER_SIZE, OG_PARAM_BUFFER_SIZE - 1, "TRUE"));
     } else {
         PRTS_RETURN_IFERR(snprintf_s(value, OG_PARAM_BUFFER_SIZE, OG_PARAM_BUFFER_SIZE - 1, "FALSE"));

@@ -984,7 +984,7 @@ config_item_t g_parameters[] = {
     { "_OPTIM_PRED_PUSHDOWN", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_OPTIM_PRED_PUSHDOWN, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_pred_pushdown,
       sql_notify_als_bool, NULL },
-    { "_OPTIM_IN_TRANSFORM", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "CT_TYPE_BOOLEAN", NULL,
+    { "_OPTIM_IN_TRANSFORM", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_OPTIM_IN_TRANSFORM, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_in_transform,
       sql_notify_als_bool, NULL },
     // ctrl info backup parameter
@@ -1176,7 +1176,7 @@ config_item_t g_parameters[] = {
     { "PLAN_DISPLAY_FORMAT", OG_TRUE, ATTR_NONE, "TYPICAL", NULL, NULL, "-", "SIMPLE,BASIC,TYPICAL,ALL",
       "CT_TYPE_VARCHAR", NULL, PARAM_PLAN_DISPLAY_FORMAT, EFFECT_IMMEDIATELY, CFG_INS,
       sql_verify_als_plan_display_format, sql_notify_als_plan_display_format, NULL, NULL },
-    { "_SHOW_EXPLAIN_PREDICATE", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "CT_TYPE_BOOLEAN", NULL,
+    { "_SHOW_EXPLAIN_PREDICATE", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_SHOW_EXPLAIN_PREDICATE, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_predicate,
       sql_notify_als_bool, NULL },
 };

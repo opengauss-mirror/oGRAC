@@ -26,6 +26,9 @@
 #include "ogsql_expr_def.h"
 #include "cm_text.h"
 #include "expr_parser.h"
+#include "base_compiler.h"
+#include "decl_cl.h"
+#include "pl_udt.h"
 
 #include "pl_gram.h" /* must be after parser/scanner.h */
 
@@ -77,9 +80,9 @@
 static const uint16 ReservedPLKeywordTokens[] = {
 #include "pl_reserved_kwlist.h"
 };
-/* static const uint16 UnreservedPLKeywordTokens[] = {
+static const uint16 UnreservedPLKeywordTokens[] = {
 #include "pl_unreserved_kwlist.h"
-}; */
+};
 
 #undef OG_KEYWORD
 
@@ -101,6 +104,8 @@ typedef struct {
     int leng;     /* length in bytes */
 } TokenAuxData;
 
+__thread TokenAuxData pushback_auxdata[MAX_PUSHBACKS];
+
 status_t pl_parser(sql_stmt_t *stmt, text_t *src)
 {
     core_yyscan_t yyscanner;
@@ -121,34 +126,113 @@ status_t pl_parser(sql_stmt_t *stmt, text_t *src)
 
 static int internal_yylex(TokenAuxData* auxdata, core_yyscan_t yyscanner)
 {
+    pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
     int token;
 
     errno_t rc = memset_s(auxdata, sizeof(TokenAuxData), 0, sizeof(TokenAuxData));
     knl_securec_check(rc);
 
-    token = core_yylex(&auxdata->lval.core_yystype, &auxdata->lloc, yyscanner);
-    auxdata->leng = ct_yyget_leng(yyscanner);
+    if (compiler->num_pushbacks > 0) {
+        compiler->num_pushbacks--;
+        token = compiler->pushback_token[compiler->num_pushbacks];
+        *auxdata = pushback_auxdata[compiler->num_pushbacks];
+    } else {
+        token = core_yylex(&auxdata->lval.core_yystype, &auxdata->lloc, yyscanner);
+        auxdata->leng = ct_yyget_leng(yyscanner);
+    }
 
     return token;
+}
+
+static status_t parse_var_word(sql_stmt_t *stmt, char *ident, expr_node_t **out_expr)
+{
+    text_t name;
+    cm_str2text(ident, &name);
+    expr_node_t *expr = NULL;
+    pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
+    OG_RETURN_IFERR(sql_alloc_mem(compiler->stmt->context, sizeof(expr_node_t), (void **)&expr));
+    expr->owner = NULL;
+    expr->type = EXPR_NODE_PROC;
+    expr->unary = UNARY_OPER_NONE;
+    expr->word.func.user_func_first = OG_FALSE;
+
+    uint32 types = PLV_VARIANT_AND_CUR;
+    plv_decl_t *decl = NULL;
+    plc_variant_name_t variant_name;
+    char block_name_buf[OG_NAME_BUFFER_SIZE];
+    char name_buf[OG_NAME_BUFFER_SIZE];
+    plc_var_type_t type;
+
+    PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types);
+    type = PLC_NORMAL_VAR;
+    variant_name.block_name.len = 0;
+    plc_concat_text_upper_by_type(&variant_name.name, OG_MAX_NAME_LEN, &name, WORD_TYPE_VARIANT);
+
+    if (type == PLC_NORMAL_VAR || type == PLC_TRIGGER_VAR) {
+        plc_find_block_decl(compiler, &variant_name, &decl);
+    }
+
+    if (decl == NULL) {
+        return OG_ERROR;
+    }
+    plc_build_var_address(stmt, decl, expr, UDT_STACK_ADDR);
+    *out_expr = expr;
+    return OG_SUCCESS;
 }
 
 int plsql_yylex(core_yyscan_t yyscanner)
 {
     int token;
     TokenAuxData aux;
+    int kwnum;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
 
     token = internal_yylex(&aux, yyscanner);
     if (token == IDENT) {
-        token = T_WORD;
+        if (parse_var_word(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+            token = T_DATUM;
+        } else if ((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
+            aux.lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);
+            token = UnreservedPLKeywordTokens[kwnum];
+        } else {
+            token = T_WORD;
+        }
     }
 
     plsql_yylval = aux.lval;
     plsql_yylloc = aux.lloc;
+    compiler->plsql_yyleng = aux.leng;
     return token;
 }
 
-void plsql_yyerror(core_yyscan_t yyscanner, const char* message)
+/*
+ * Push back a token to be re-read by next internal_yylex() call.
+ */
+static void push_back_token(pl_compiler_t *compiler, int token, TokenAuxData* auxdata)
 {
-    OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, message);
-    return;
+    if (compiler->num_pushbacks >= MAX_PUSHBACKS) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "too many tokens %d pushed back, max push back token is: %d",
+            compiler->num_pushbacks, MAX_PUSHBACKS);
+    }
+    compiler->pushback_token[compiler->num_pushbacks] = token;
+    pushback_auxdata[compiler->num_pushbacks] = *auxdata;
+    compiler->num_pushbacks++;
+}
+
+/*
+ * Push back a single token to be re-read by next plpgsql_yylex() call.
+ *
+ * NOTE: this does not cause yylval or yylloc to "back up".  Also, it
+ * is not a good idea to push back a token code other than what you read.
+ */
+void plsql_push_back_token(int token, core_yyscan_t yyscanner)
+{
+    pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+    TokenAuxData auxdata;
+
+    auxdata.lval = plsql_yylval;
+    auxdata.lloc = plsql_yylloc;
+    auxdata.leng = compiler->plsql_yyleng;
+    push_back_token(compiler, token, &auxdata);
 }
