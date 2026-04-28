@@ -1,0 +1,29 @@
+# oGRAC Offline Upgrade Module Requirements
+# Compatible with Python 3.7.9+
+
+# No external dependencies required for core functionality
+# Uses only Python standard library modules:
+# - argparse
+# - dataclasses
+# - datetime
+# - enum
+# - functools
+# - getpass
+# - json
+# - logging
+# - logging.handlers
+# - pathlib
+# - re
+# - shlex
+# - shutil
+# - subprocess
+# - sys
+# - tarfile
+# - time
+# - typing
+
+# Optional development dependencies (for testing/type checking)
+# pytest>=6.0.0        # For unit testing
+# mypy>=0.900          # For type checking
+# black>=21.0          # For code formatting
+# flake8>=3.9          # For linting
