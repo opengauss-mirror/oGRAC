@@ -43,6 +43,7 @@
 #endif
 #include "cond_parser.h"
 #include "func_parser.h"
+#include "dml_parser.h"
 #include "ogsql_serial.h"
 #include "cm_array.h"
 #include "pl_memory.h"
@@ -1940,6 +1941,101 @@ static status_t sql_ajust_node_type(visit_assist_t *va, expr_node_t **node)
     return OG_SUCCESS;
 }
 
+static status_t sql_make_bison_parse_text(sql_stmt_t *stmt, const char *prefix, text_t *body, const char *suffix,
+    sql_text_t *sql_text)
+{
+    uint32 prefix_len = (uint32)strlen(prefix);
+    uint32 suffix_len = (uint32)strlen(suffix);
+    uint32 sql_len = prefix_len + body->len + suffix_len;
+    char *sql_buf = NULL;
+
+    if (sql_alloc_mem(stmt->context, sql_len, (void **)&sql_buf) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (prefix_len != 0) {
+        MEMS_RETURN_IFERR(memcpy_s(sql_buf, sql_len, prefix, prefix_len));
+    }
+    if (body->len != 0) {
+        MEMS_RETURN_IFERR(memcpy_s(sql_buf + prefix_len, sql_len - prefix_len, body->str, body->len));
+    }
+    if (suffix_len != 0) {
+        MEMS_RETURN_IFERR(memcpy_s(sql_buf + prefix_len + body->len, suffix_len, suffix, suffix_len));
+    }
+
+    sql_text->str = sql_buf;
+    sql_text->len = sql_len;
+    sql_text->loc.line = 1;
+    sql_text->loc.column = 1;
+    sql_text->implicit = OG_FALSE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_cast_default_expr_tree(sql_stmt_t *stmt, knl_column_t *column, expr_tree_t **expr_tree,
+    expr_tree_t **expr_update_tree, text_t *parse_text)
+{
+    typmode_t col_data_type;
+
+    if (!KNL_COLUMN_IS_VIRTUAL(column)) {
+        col_data_type.datatype = column->datatype;
+        col_data_type.size = column->size;
+        col_data_type.precision = column->precision;
+        col_data_type.scale = column->scale;
+        col_data_type.is_array = KNL_COLUMN_IS_ARRAY(column);
+
+        if (sql_build_cast_expr(stmt, TREE_LOC(*expr_tree), *expr_tree, &col_data_type, expr_tree) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_CAST_TO_COLUMN, "default value", T2S(parse_text));
+            return OG_ERROR;
+        }
+
+        if (*expr_update_tree != NULL) {
+            if (sql_build_cast_expr(stmt, TREE_LOC(*expr_update_tree), *expr_update_tree, &col_data_type,
+                expr_update_tree) != OG_SUCCESS) {
+                OG_THROW_ERROR(ERR_CAST_TO_COLUMN, "update default value", T2S(parse_text));
+                return OG_ERROR;
+            }
+        }
+    } else {
+        visit_assist_t va;
+        sql_init_visit_assist(&va, stmt, NULL);
+        OG_RETURN_IFERR(visit_expr_tree(&va, *expr_tree, sql_ajust_node_type));
+
+        if (*expr_update_tree != NULL) {
+            OG_RETURN_IFERR(visit_expr_tree(&va, *expr_update_tree, sql_ajust_node_type));
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t sql_create_expr_tree_from_text_bison(sql_stmt_t *stmt, knl_column_t *column, expr_tree_t **expr_tree,
+    expr_tree_t **expr_update_tree, text_t parse_text)
+{
+    sql_text_t sql_text = { 0 };
+    galist_t *expr_list = NULL;
+
+    /*
+     * DEFAULT is used only as an internal bison entry selector here.  The
+     * stored catalog text remains the original expression body.
+     */
+    OG_RETURN_IFERR(sql_make_bison_parse_text(stmt, "DEFAULT ", &parse_text, "", &sql_text));
+    OG_RETURN_IFERR(raw_parser(stmt, &sql_text, (void **)&expr_list));
+
+    if (expr_list == NULL || expr_list->count != 2) {
+        OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+        return OG_ERROR;
+    }
+
+    *expr_tree = (expr_tree_t *)cm_galist_get(expr_list, 0);
+    *expr_update_tree = (expr_tree_t *)cm_galist_get(expr_list, 1);
+    if (*expr_tree == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+        return OG_ERROR;
+    }
+
+    return sql_cast_default_expr_tree(stmt, column, expr_tree, expr_update_tree, &parse_text);
+}
+
 static status_t sql_create_expr_tree_from_text(sql_stmt_t *stmt, knl_column_t *column, expr_tree_t **expr_tree,
     expr_tree_t **expr_update_tree, text_t parse_text)
 {
@@ -1949,6 +2045,11 @@ static status_t sql_create_expr_tree_from_text(sql_stmt_t *stmt, knl_column_t *c
     status_t status;
     uint32 src_lex_flags;
     CM_POINTER4(stmt, column, expr_tree, expr_update_tree);
+
+    if (g_instance->sql.use_bison_parser) {
+        return sql_create_expr_tree_from_text_bison(stmt, column, expr_tree, expr_update_tree, parse_text);
+    }
+
     word.id = RES_WORD_DEFAULT;
     lex = stmt->session->lex;
     lex->infer_numtype = USE_NATIVE_DATATYPE;
@@ -2181,6 +2282,18 @@ static status_t sql_create_cond_tree_from_text(sql_stmt_t *stmt, text_t *text, c
     word_t word;
     uint32 src_lex_flags;
     CM_POINTER3(stmt, text, tree);
+
+    if (g_instance->sql.use_bison_parser) {
+        sql_text_t sql_text = { 0 };
+        /*
+         * CHECK(...) is an internal bison entry selector for catalog condition
+         * text.  It keeps check constraint reloads on the same parser path as
+         * CREATE TABLE when use_bison_parser is enabled.
+         */
+        OG_RETURN_IFERR(sql_make_bison_parse_text(stmt, "CHECK (", text, ")", &sql_text));
+        return raw_parser(stmt, &sql_text, (void **)tree);
+    }
+
     word.id = 0xFFFFFFFF;
     lex = stmt->session->lex;
     src_lex_flags = lex->flags;

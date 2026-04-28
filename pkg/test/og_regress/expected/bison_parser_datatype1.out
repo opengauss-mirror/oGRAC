@@ -127,10 +127,16 @@ Succeed.
 
 SQL> insert into test3(id2) values(1);
 
-OG-00601, Sql syntax error: end of expression text expected but '1234' found
+1 rows affected.
+
 SQL> select * from test3;
 
-OG-00601, Sql syntax error: end of expression text expected but '1234' found
+ID         ID1        ID2         
+---------- ---------- ------------
+1234       1234       1           
+
+1 rows fetched.
+
 SQL> 
 SQL> create table test_clob(c1 clob, c2 nclob);
 

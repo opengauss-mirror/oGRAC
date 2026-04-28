@@ -198,7 +198,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
                CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateFunctionStmt compileFunctionSource
-               GrantStmt RevokeStmt PurgeStmt AlterTablespaceStmt index_cluster_item TransactionStmt RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID
+               GrantStmt RevokeStmt PurgeStmt AlterTablespaceStmt index_cluster_item TransactionStmt RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID InternalReparseStmt
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
                expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts
@@ -605,7 +605,37 @@ stmtmulti:
         | LockTableStmt
         | AlterSystemStmt
         | AlterSessionStmt
+        | InternalReparseStmt
         | /*EMPTY*/ { $$ = NULL; }
+    ;
+
+/*
+ * Internal-only parse entries used when catalog metadata is converted back to
+ * expression trees.  These are not exposed as standalone SQL statements; the
+ * callers in ogsql_stmt.c prepend the marker keywords to make the bison parser
+ * reuse the same expression/condition grammar as CREATE TABLE.
+ */
+InternalReparseStmt:
+        DEFAULT a_expr opt_column_on_update
+            {
+                galist_t *list = NULL;
+                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                    parser_yyerror("create default expr list failed.");
+                }
+                if (cm_galist_insert(list, $2) != OG_SUCCESS) {
+                    parser_yyerror("insert default expr failed.");
+                }
+                if (cm_galist_insert(list, $3) != OG_SUCCESS) {
+                    parser_yyerror("insert default update expr failed.");
+                }
+                $$ = list;
+            }
+        | CHECK '(' cond_tree_expr ')'
+            {
+                $$ = $3;
+            }
     ;
 
 opt_into:
