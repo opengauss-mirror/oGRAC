@@ -17,7 +17,7 @@ function prepare() {
   expect ant bison iputils iproute wget\
   libtirpc-devel make gcc gcc-c++ gdb gdb-gdbserver\
   python3 python3-devel git net-tools cmake automake\
-  byacc libtool unixODBC-devel --skip-broken
+  byacc libtool unixODBC-devel flex --skip-broken
   echo "Prepare env success."
 }
 
