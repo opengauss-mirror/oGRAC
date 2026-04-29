@@ -99,6 +99,7 @@ static status_t make_type_modifiers(core_yyscan_t yyscanner, galist_t **list, in
 static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr);
 static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
+static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
 static status_t strGetInt64(const char *str, int64 *value);
 static char* ds_unit_to_str(interval_unit_order_t order);
@@ -2295,10 +2296,9 @@ simple_select:
                     select_ctx->first_query->order_siblings = OG_TRUE;
                     cm_galist_copy(select_ctx->first_query->sort_items, $12);
                 }
-                if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
-                    sql_create_array(stmt->context, &select_ctx->first_query->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                    sql_array_concat(&select_ctx->first_query->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                    sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                if (attach_pending_subselects_to_query(select_ctx->first_query,
+                    &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                    parser_yyerror("attach subselects failed");
                 }
                 $$ = select_ctx;
             }
@@ -3217,9 +3217,10 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                 }
 
                 if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
-                    sql_create_array(stmt->context, &delete_ctx->query->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                    sql_array_concat(&delete_ctx->query->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                    sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                    if (attach_pending_subselects_to_query(delete_ctx->query,
+                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                        parser_yyerror("attach subselects failed");
+                    }
                 }
 
                 delete_ctx->query->cond = $6;
@@ -3284,9 +3285,10 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                 }
 
                 if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
-                    sql_create_array(stmt->context, &delete_ctx->query->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                    sql_array_concat(&delete_ctx->query->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                    sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                    if (attach_pending_subselects_to_query(delete_ctx->query,
+                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                        parser_yyerror("attach subselects failed");
+                    }
                 }
 
                 delete_ctx->query->cond = $5;
@@ -6441,9 +6443,10 @@ UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return
                 sql_remove_join_table(stmt, update_context->query);
 
                 if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
-                    sql_create_array(stmt->context, &update_context->query->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                    sql_array_concat(&update_context->query->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                    sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                    if (attach_pending_subselects_to_query(update_context->query,
+                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                        parser_yyerror("attach subselects failed");
+                    }
                 }
 
                 cm_galist_copy(update_context->pairs, $5);
@@ -15959,6 +15962,29 @@ static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr,
         expr->next = NULL;
         expr = tmp;
     }
+    return OG_SUCCESS;
+}
+
+static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending)
+{
+    if (pending->count == 0) {
+        return OG_SUCCESS;
+    }
+
+    /*
+     * The bison parser reduces subselect expressions before the owning query is
+     * built.  Attach them here so correlated subqueries can resolve parent
+     * table aliases during verification.
+     */
+    for (uint32 i = 0; i < pending->count; i++) {
+        sql_select_t *subselect = (sql_select_t *)sql_array_get(pending, i);
+        if (subselect->parent == NULL) {
+            subselect->parent = query;
+        }
+    }
+
+    OG_RETURN_IFERR(sql_array_concat(&query->ssa, pending));
+    sql_array_reset(pending);
     return OG_SUCCESS;
 }
 

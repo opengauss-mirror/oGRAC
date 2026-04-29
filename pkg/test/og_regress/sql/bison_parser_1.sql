@@ -1368,4 +1368,21 @@ create table test_array3(c1 clob[]); --error
 create table test_array4(c1 clob[5]); --error
 drop table test_array1;
 drop table test_array2;
+drop table if exists bison_corr_depts;
+drop table if exists bison_corr_emps;
+create table bison_corr_depts(dept_id int, dept_name varchar2(50));
+create table bison_corr_emps(emp_id int, dept_id int);
+insert into bison_corr_depts values (1, 'IT'), (2, 'HR'), (3, 'FINANCE');
+insert into bison_corr_emps values (1, 1), (2, 2), (3, 3);
+create table bison_corr_result as
+select dept_id, dept_name
+from bison_corr_depts d
+where exists (
+    select 1
+    from bison_corr_emps e
+    where e.dept_id = d.dept_id
+);
+drop table bison_corr_result;
+drop table bison_corr_emps;
+drop table bison_corr_depts;
 alter system set use_bison_parser = false;
