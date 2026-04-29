@@ -15,15 +15,24 @@ set(LIBRARY_OUTPUT_PATH ${OGRACDB_LIB})
 MESSAGE(STATUS ${DD_OG_LIB_VERSION})
 MESSAGE(STATUS ${DD_CT_LIB_VER_APINAME})
 
-execute_process(
-    COMMAND sh -c "cp -rf ${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts/* ${CMAKE_CURRENT_SOURCE_DIR}/admin/dialect_b_scripts/"
-	COMMAND sh -c "cp -rf ${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts/* ${CMAKE_CURRENT_SOURCE_DIR}/admin/dialect_c_scripts/"
-    RESULT_VARIABLE RET_RESULT
+set(ADMIN_SCRIPT_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/admin/scripts")
+file(GLOB_RECURSE ADMIN_SCRIPT_FILES
+    LIST_DIRECTORIES false
+    RELATIVE "${ADMIN_SCRIPT_SRC_DIR}"
+    "${ADMIN_SCRIPT_SRC_DIR}/*"
 )
 
-if(RET_RESULT)
-    message(FATAL_ERROR "Failed to copy common file from scripts to dialect_scripts.")
-endif() 	
+foreach(DIALECT_SCRIPT_DIR IN ITEMS dialect_b_scripts dialect_c_scripts)
+    foreach(ADMIN_SCRIPT_FILE IN LISTS ADMIN_SCRIPT_FILES)
+        set(SRC_FILE "${ADMIN_SCRIPT_SRC_DIR}/${ADMIN_SCRIPT_FILE}")
+        set(DST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/admin/${DIALECT_SCRIPT_DIR}/${ADMIN_SCRIPT_FILE}")
+        if(NOT EXISTS "${DST_FILE}")
+            get_filename_component(DST_DIR "${DST_FILE}" DIRECTORY)
+            file(MAKE_DIRECTORY "${DST_DIR}")
+            file(COPY "${SRC_FILE}" DESTINATION "${DST_DIR}")
+        endif()
+    endforeach()
+endforeach()
 
 if (UNIX)
     add_compile_definitions(WSEC_COMPILE_CAC_OPENSSL)
