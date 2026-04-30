@@ -101,7 +101,11 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             }
             break;
         case KEY_WORD_TRIGGER:
-            status = pl_parse_create_trigger(stmt, OG_TRUE, &word);
+            if (!g_instance->sql.use_bison_parser) {
+                status = pl_parse_create_trigger(stmt, OG_TRUE, &word);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_SYNONYM: {
             if (!g_instance->sql.use_bison_parser) {
@@ -328,10 +332,18 @@ status_t sql_parse_create(sql_stmt_t *stmt)
         case KEY_WORD_FUNCTION:
         case KEY_WORD_PACKAGE:
         case KEY_WORD_TYPE:
-            status = pl_parse_create(stmt, OG_FALSE, &word);
+            if (!g_instance->sql.use_bison_parser) {
+                status = pl_parse_create(stmt, OG_FALSE, &word);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_TRIGGER:
-            status = pl_parse_create_trigger(stmt, OG_FALSE, &word);
+            if (!g_instance->sql.use_bison_parser) {
+                status = pl_parse_create_trigger(stmt, OG_FALSE, &word);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
         case KEY_WORD_OR:
             status = sql_create_or_replace_lead(stmt);
@@ -429,6 +441,26 @@ static status_t sql_parse_alter_trigger(sql_stmt_t *stmt)
     return OG_ERROR;
 }
 
+status_t og_parse_alter_trigger(sql_stmt_t *stmt, knl_alttrig_def_t **def, name_with_owner *trigger_name, bool32 enable)
+{
+    knl_alttrig_def_t *alttrig_def = NULL;
+
+    stmt->context->type = OGSQL_TYPE_ALTER_TRIGGER;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(knl_alttrig_def_t), (void **)def));
+    alttrig_def = *def;
+
+    if (trigger_name->owner.str == NULL) {
+        cm_str2text(stmt->session->curr_schema, &alttrig_def->user);
+    } else {
+        alttrig_def->user = trigger_name->owner;
+    }
+    alttrig_def->name = trigger_name->name;
+    alttrig_def->enable = enable;
+
+    stmt->context->entry = alttrig_def;
+    return OG_SUCCESS;
+}
+
 
 static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
 {
@@ -440,9 +472,13 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
 
     switch ((uint32)word.id) {
         case KEY_WORD_TABLE:
-            status = sql_parse_alter_table(stmt);
-            OG_BREAK_IF_ERROR(status);
-            status = sql_verify_alter_table(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_table(stmt);
+                OG_BREAK_IF_ERROR(status);
+                status = sql_verify_alter_table(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_TABLESPACE:
@@ -454,11 +490,19 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             break;
 
         case KEY_WORD_DATABASE:
-            status = sql_parse_alter_database_lead(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_database_lead(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_SEQUENCE:
-            status = sql_parse_alter_sequence(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_sequence(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_INDEX:
@@ -470,25 +514,45 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             break;
 
         case RES_WORD_USER:
-            status = sql_parse_alter_user(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_user(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             OG_RETURN_IFERR(sql_clear_origin_sql_if_error(stmt, status));
             break;
 
         case KEY_WORD_TENANT:
-            status = sql_parse_alter_tenant(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_tenant(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_PROFILE:
-            status = sql_parse_alter_profile(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_profile(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_FUNCTION:
-            OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "alter function");
-            status = OG_ERROR;
+            if (!g_instance->sql.use_bison_parser) {
+                OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "alter function");
+                status = OG_ERROR;
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         case KEY_WORD_TRIGGER:
-            status = sql_parse_alter_trigger(stmt);
+            if (!g_instance->sql.use_bison_parser) {
+                status = sql_parse_alter_trigger(stmt);
+            } else {
+                status = raw_parser(stmt, &stmt->session->lex->text, &stmt->context->entry);
+            }
             break;
 
         /* fall-through */

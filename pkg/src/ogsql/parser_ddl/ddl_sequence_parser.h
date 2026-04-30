@@ -50,6 +50,8 @@ status_t sql_parse_create_synonym(sql_stmt_t *stmt, uint32 flags);
 status_t sql_parse_drop_synonym(sql_stmt_t *stmt, uint32 flags);
 status_t og_parse_create_sequence(sql_stmt_t *stmt, knl_sequence_def_t **def, name_with_owner *seq_name,
     galist_t *seq_opts);
+status_t og_parse_alter_sequence(sql_stmt_t *stmt, knl_sequence_def_t **def, name_with_owner *seq_name,
+    galist_t *seq_opts);
 status_t og_parse_create_synonym(sql_stmt_t *stmt, knl_synonym_def_t **def, name_with_owner *synonym_name,
     name_with_owner *object_name, uint32 flags);
 #ifdef __cplusplus

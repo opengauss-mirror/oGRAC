@@ -1481,6 +1481,202 @@ status_t og_parse_create_user(sql_stmt_t *stmt, knl_user_def_t **user_def, char 
     return status;
 }
 
+static status_t og_open_alter_user(sql_stmt_t *stmt, knl_user_def_t *def, char *user_name, dc_user_t **user)
+{
+    text_t owner;
+
+    if (CM_IS_EMPTY_STR(user_name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "user name is required");
+        return OG_ERROR;
+    }
+
+    MEMS_RETURN_IFERR(memcpy_sp(def->name, OG_NAME_BUFFER_SIZE - 1, user_name, strlen(user_name)));
+    def->name[OG_NAME_BUFFER_SIZE - 1] = '\0';
+    cm_str_upper(def->name);
+
+    if (contains_nonnaming_char(def->name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(sql_user_prefix_tenant(stmt->session, def->name));
+    if (stmt->session->knl_session.interactive_altpwd && !cm_str_equal_ins(def->name, stmt->session->db_user)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "illegal sql text.");
+        return OG_ERROR;
+    }
+
+    cm_str2text(def->name, &owner);
+    if (dc_open_user_direct(&stmt->session->knl_session, &owner, user) != OG_SUCCESS) {
+        if (!knl_check_sys_priv_by_name(&stmt->session->knl_session, &stmt->session->curr_user, ALTER_USER)) {
+            cm_reset_error();
+            OG_THROW_ERROR(ERR_INSUFFICIENT_PRIV);
+        }
+        return OG_ERROR;
+    }
+
+    if (((*user)->desc.astatus & ACCOUNT_SATTUS_PERMANENT) && !cm_str_equal(stmt->session->db_user, SYS_USER_NAME)) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "only sys can alter the permanent user");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t og_apply_alter_user_identified(sql_stmt_t *stmt, knl_user_def_t *def, user_option_t *option,
+    uint32 *flag)
+{
+    text_t password;
+    text_t old_password;
+
+    if (*flag & DDL_USER_PWD) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "keyword \"identified\" cannot be appear more than once");
+        return OG_ERROR;
+    }
+
+    cm_str2text(option->value, &password);
+    def->pwd_loc = option->loc.column;
+    def->pwd_len = password.len;
+    OG_RETURN_IFERR(cm_text2str(&password, def->password, OG_PASSWORD_BUFFER_SIZE));
+    OG_RETURN_IFERR(sql_replace_password(stmt, &password));
+
+    if (option->old_value != NULL) {
+        cm_str2text(option->old_value, &old_password);
+        OG_RETURN_IFERR(cm_text2str(&old_password, def->old_password, OG_PASSWORD_BUFFER_SIZE));
+        OG_RETURN_IFERR(sql_replace_password(stmt, &old_password));
+    } else if (g_instance->kernel.attr.password_verify && cm_text_str_equal(&stmt->session->curr_user, def->name) &&
+        !knl_check_sys_priv_by_name(&stmt->session->knl_session, &stmt->session->curr_user, ALTER_USER)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "need old password when the parameter REPLACE_PASSWORD_VERIFY is true");
+        return OG_ERROR;
+    }
+
+    def->mask |= USER_PASSWORD_MASK;
+    *flag |= DDL_USER_PWD;
+    stmt->session->knl_session.interactive_altpwd = OG_FALSE;
+    return OG_SUCCESS;
+}
+
+static status_t og_apply_alter_user_option(sql_stmt_t *stmt, knl_user_def_t *def, user_option_t *option, uint32 *flag)
+{
+    text_t default_profile = { DEFAULT_PROFILE_NAME, (uint32)strlen(DEFAULT_PROFILE_NAME) };
+
+    switch (option->type) {
+        case USER_OPTION_IDENTIFIED:
+            return og_apply_alter_user_identified(stmt, def, option, flag);
+
+        case USER_OPTION_DEFAULT_TABLESPACE:
+            if (*flag & DDL_USER_DEFALT_SPACE) {
+                OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "keyword \"default\" cannot be appear more than once");
+                return OG_ERROR;
+            }
+            MEMS_RETURN_IFERR(memcpy_sp(def->default_space, OG_NAME_BUFFER_SIZE - 1, option->value,
+                strlen(option->value)));
+            def->default_space[OG_NAME_BUFFER_SIZE - 1] = '\0';
+            def->mask |= USER_DATA_SPACE_MASK;
+            *flag |= DDL_USER_DEFALT_SPACE;
+            return OG_SUCCESS;
+
+        case USER_OPTION_TEMPORARY_TABLESPACE:
+            if (*flag & DDL_USER_TMP_SPACE) {
+                OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "keyword \"temporaray\" cannot be appear more than once");
+                return OG_ERROR;
+            }
+            MEMS_RETURN_IFERR(memcpy_sp(def->temp_space, OG_NAME_BUFFER_SIZE - 1, option->value,
+                strlen(option->value)));
+            def->temp_space[OG_NAME_BUFFER_SIZE - 1] = '\0';
+            def->mask |= USER_TEMP_SPACE_MASK;
+            *flag |= DDL_USER_TMP_SPACE;
+            return OG_SUCCESS;
+
+        case USER_OPTION_PASSWORD_EXPIRE:
+            if (*flag & DDL_USER_PWD_EXPIRE) {
+                OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "keyword \"password\" cannot be appear more than once");
+                return OG_ERROR;
+            }
+            def->is_expire = OG_TRUE;
+            def->mask |= USER_EXPIRE_MASK;
+            *flag |= DDL_USER_PWD_EXPIRE;
+            return OG_SUCCESS;
+
+        case USER_OPTION_ACCOUNT_LOCK:
+        case USER_OPTION_ACCOUNT_UNLOCK:
+            if (*flag & DDL_USER_ACCOUNT_LOCK) {
+                OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "keyword \"account\" cannot be appear more than once");
+                return OG_ERROR;
+            }
+            def->is_lock = (option->type == USER_OPTION_ACCOUNT_LOCK);
+            def->mask |= USER_LOCK_MASK;
+            *flag |= DDL_USER_ACCOUNT_LOCK;
+            return OG_SUCCESS;
+
+        case USER_OPTION_PROFILE:
+        case USER_OPTION_PROFILE_DEFAULT:
+            if (*flag & DDL_USER_PROFILE) {
+                OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "keyword \"profile\" cannot be appear more than once");
+                return OG_ERROR;
+            }
+            if (option->type == USER_OPTION_PROFILE_DEFAULT) {
+                OG_RETURN_IFERR(sql_copy_text(stmt->context, &default_profile, &def->profile));
+            } else {
+                cm_str2text(option->value, &def->profile);
+            }
+            def->mask |= USER_PROFILE_MASK;
+            *flag |= DDL_USER_PROFILE;
+            return OG_SUCCESS;
+
+        default:
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "illegal sql text");
+            return OG_ERROR;
+    }
+}
+
+status_t og_parse_alter_user(sql_stmt_t *stmt, knl_user_def_t **user_def, char *user_name, galist_t *options)
+{
+    status_t status = OG_SUCCESS;
+    uint32 flag = 0;
+    knl_user_def_t *def = NULL;
+    dc_user_t *user = NULL;
+
+    SQL_SET_IGNORE_PWD(stmt->session);
+    stmt->context->type = OGSQL_TYPE_ALTER_USER;
+
+    status = sql_alloc_mem(stmt->context, sizeof(knl_user_def_t), (void **)user_def);
+    OG_RETURN_IFERR(status);
+    def = *user_def;
+    def->is_readonly = OG_TRUE;
+
+    status = og_open_alter_user(stmt, def, user_name, &user);
+    OG_RETURN_IFERR(status);
+
+    if (options == NULL || options->count == 0) {
+        OG_THROW_ERROR(ERR_NO_OPTION_SPECIFIED, "alter user");
+        return OG_ERROR;
+    }
+
+    for (uint32 i = 0; i < options->count; i++) {
+        user_option_t *option = (user_option_t *)cm_galist_get(options, i);
+        status = og_apply_alter_user_option(stmt, def, option, &flag);
+        if (status != OG_SUCCESS) {
+            break;
+        }
+    }
+
+    if (status == OG_SUCCESS) {
+        stmt->context->entry = def;
+        status = sql_parse_alter_check_pwd(stmt, def, user);
+    }
+
+    if (status == OG_SUCCESS && def->mask == 0) {
+        OG_THROW_ERROR(ERR_NO_OPTION_SPECIFIED, "alter user");
+        status = OG_ERROR;
+    }
+
+    if (status != OG_SUCCESS) {
+        MEMS_RETURN_IFERR(memset_sp(def->old_password, OG_PASSWORD_BUFFER_SIZE, 0, OG_PASSWORD_BUFFER_SIZE));
+        MEMS_RETURN_IFERR(memset_sp(def->password, OG_PASSWORD_BUFFER_SIZE, 0, OG_PASSWORD_BUFFER_SIZE));
+    }
+    return status;
+}
+
 static status_t og_parse_role_passwd(sql_stmt_t *stmt, knl_role_def_t *def, text_t *pwd_text, source_location_t loc)
 {
     def->pwd_loc = loc.column;
@@ -1639,6 +1835,81 @@ status_t og_parse_create_tenant(sql_stmt_t *stmt, knl_tenant_def_t **tenant_def,
     return OG_SUCCESS;
 }
 
+static status_t og_copy_tenant_space_list(sql_stmt_t *stmt, knl_tenant_def_t *def, galist_t *space_list)
+{
+    text_t *space_name = NULL;
+    char *name = NULL;
+    text_t tmp;
+
+    cm_galist_init(&def->space_lst, stmt->context, sql_alloc_mem);
+    if (space_list == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < space_list->count; i++) {
+        name = (char *)cm_galist_get(space_list, i);
+        cm_str2text(name, &tmp);
+        cm_text_upper(&tmp);
+
+        if (sql_find_space_in_list(&def->space_lst, &tmp)) {
+            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "tablespace %s is already exists", name);
+            return OG_ERROR;
+        }
+        OG_RETURN_IFERR(cm_galist_new(&def->space_lst, sizeof(text_t), (pointer_t *)&space_name));
+        OG_RETURN_IFERR(sql_copy_name(stmt->context, &tmp, space_name));
+        if (def->space_lst.count >= OG_MAX_SPACES) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "exclude spaces number out of max spaces number");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t og_parse_alter_tenant(sql_stmt_t *stmt, knl_tenant_def_t **tenant_def, char *tenant_name, uint32 sub_type,
+    galist_t *space_list, char *default_tablespace)
+{
+    knl_tenant_def_t *def = NULL;
+
+    stmt->context->type = OGSQL_TYPE_ALTER_TENANT;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(knl_tenant_def_t), (void **)tenant_def));
+    def = *tenant_def;
+    CM_MAGIC_SET(def, knl_tenant_def_t);
+
+    if (CM_IS_EMPTY_STR(tenant_name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "tenant name is required");
+        return OG_ERROR;
+    }
+    MEMS_RETURN_IFERR(memcpy_sp(def->name, OG_TENANT_BUFFER_SIZE - 1, tenant_name, strlen(tenant_name)));
+    def->name[OG_TENANT_BUFFER_SIZE - 1] = '\0';
+    cm_str_upper(def->name);
+
+    if (contains_nonnaming_char(def->name)) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
+        return OG_ERROR;
+    }
+
+    def->sub_type = sub_type;
+    if (sub_type == ALTER_TENANT_TYPE_ADD_SPACE) {
+        OG_RETURN_IFERR(og_copy_tenant_space_list(stmt, def, space_list));
+    } else if (sub_type == ALTER_TENANT_TYPE_MODEIFY_DEFAULT) {
+        if (CM_IS_EMPTY_STR(default_tablespace)) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "tablespace name is required");
+            return OG_ERROR;
+        }
+        MEMS_RETURN_IFERR(memcpy_sp(def->default_tablespace, OG_NAME_BUFFER_SIZE - 1, default_tablespace,
+            strlen(default_tablespace)));
+        def->default_tablespace[OG_NAME_BUFFER_SIZE - 1] = '\0';
+        cm_str_upper(def->default_tablespace);
+    } else {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "illegal sql text");
+        return OG_ERROR;
+    }
+
+    stmt->context->entry = def;
+    return OG_SUCCESS;
+}
+
 static status_t og_get_profile_parameters_value(sql_stmt_t *stmt, knl_profile_def_t *def, expr_tree_t *expr, uint32 id)
 {
     dec8_t unlimit;
@@ -1680,6 +1951,48 @@ static status_t og_get_profile_parameters_value(sql_stmt_t *stmt, knl_profile_de
     return OG_SUCCESS;
 }
 
+static status_t og_apply_profile_limits(sql_stmt_t *stmt, knl_profile_def_t *profile_def, galist_t *limit_list,
+    bool32 fill_defaults)
+{
+    profile_limit_item_t *item = NULL;
+
+    if (limit_list == NULL || limit_list->count == 0) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "profile limit expected");
+        return OG_ERROR;
+    }
+
+    for (uint32 i = 0; i < limit_list->count; i++) {
+        item = (profile_limit_item_t *)cm_galist_get(limit_list, i);
+        if (OG_BIT_TEST(profile_def->mask, OG_GET_MASK(item->param_type))) {
+            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "keyword cannot appear more than once");
+            return OG_ERROR;
+        }
+        OG_BIT_SET(profile_def->mask, OG_GET_MASK(item->param_type));
+
+        if (item->param_type == PASSWORD_MIN_LEN && item->value->type == VALUE_UNLIMITED) {
+            OG_THROW_ERROR(ERR_INVALID_RESOURCE_LIMIT);
+            return OG_ERROR;
+        }
+
+        profile_def->limit[item->param_type].type = item->value->type;
+        if (item->value->type == VALUE_NORMAL &&
+            og_get_profile_parameters_value(stmt, profile_def, item->value->expr, item->param_type) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    if (fill_defaults) {
+        for (int i = FAILED_LOGIN_ATTEMPTS; i < RESOURCE_PARAM_END; i++) {
+            if (!OG_BIT_TEST(profile_def->mask, OG_GET_MASK(i))) {
+                OG_BIT_SET(profile_def->mask, OG_GET_MASK(i));
+                profile_def->limit[i].type = VALUE_DEFAULT;
+            }
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t og_parse_create_profile(sql_stmt_t *stmt, knl_profile_def_t **def, char *profile_name, bool32 is_replace,
     galist_t *limit_list)
 {
@@ -1687,7 +2000,6 @@ status_t og_parse_create_profile(sql_stmt_t *stmt, knl_profile_def_t **def, char
     knl_profile_def_t *profile_def = NULL;
     text_t default_profile = { DEFAULT_PROFILE_NAME, (uint32)strlen(DEFAULT_PROFILE_NAME) };
     bool32 is_default = (strcmp(profile_name, DEFAULT_PROFILE_NAME) == 0);
-    profile_limit_item_t *item = NULL;
 
     stmt->context->type = OGSQL_TYPE_CREATE_PROFILE;
 
@@ -1706,37 +2018,30 @@ status_t og_parse_create_profile(sql_stmt_t *stmt, knl_profile_def_t **def, char
         profile_def->name.len = strlen(profile_name);
     }
 
-    // Process parsed limit list
-    for (uint32 i = 0; i < limit_list->count; i++) {
-        item = (profile_limit_item_t *)cm_galist_get(limit_list, i);
-        // Check for duplicate parameters
-        if (OG_BIT_TEST(profile_def->mask, OG_GET_MASK(item->param_type))) {
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "keyword cannot appear more than once");
-            return OG_ERROR;
-        }
-        OG_BIT_SET(profile_def->mask, OG_GET_MASK(item->param_type));
+    return og_apply_profile_limits(stmt, profile_def, limit_list, OG_TRUE);
+}
 
-        // Check for invalid UNLIMITED on PASSWORD_MIN_LEN
-        if (item->param_type == PASSWORD_MIN_LEN && item->value->type == VALUE_UNLIMITED) {
-            OG_THROW_ERROR(ERR_INVALID_RESOURCE_LIMIT);
-            return OG_ERROR;
-        }
+status_t og_parse_alter_profile(sql_stmt_t *stmt, knl_profile_def_t **def, char *profile_name, galist_t *limit_list)
+{
+    status_t status;
+    knl_profile_def_t *profile_def = NULL;
+    text_t default_profile = { DEFAULT_PROFILE_NAME, (uint32)strlen(DEFAULT_PROFILE_NAME) };
+    bool32 is_default = (strcmp(profile_name, DEFAULT_PROFILE_NAME) == 0);
 
-        // Set the limit value
-        profile_def->limit[item->param_type].type = item->value->type;
-        if (item->value->type == VALUE_NORMAL &&
-            og_get_profile_parameters_value(stmt, profile_def, item->value->expr, item->param_type) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
+    stmt->context->type = OGSQL_TYPE_ALTER_PROFILE;
+    status = sql_alloc_mem(stmt->context, sizeof(knl_profile_def_t), (void **)def);
+    OG_RETURN_IFERR(status);
+    profile_def = *def;
+    profile_def->mask = 0;
+
+    if (is_default) {
+        status = sql_copy_text(stmt->context, &default_profile, &profile_def->name);
+        OG_RETURN_IFERR(status);
+    } else {
+        profile_def->name.str = profile_name;
+        profile_def->name.len = strlen(profile_name);
     }
 
-    // Initialize all limits to DEFAULT
-    for (int i = FAILED_LOGIN_ATTEMPTS; i < RESOURCE_PARAM_END; i++) {
-        if (!OG_BIT_TEST(profile_def->mask, OG_GET_MASK(i))) {
-            OG_BIT_SET(profile_def->mask, OG_GET_MASK(i));
-            profile_def->limit[i].type = VALUE_DEFAULT;
-        }
-    }
-
-    return OG_SUCCESS;
+    stmt->context->entry = profile_def;
+    return og_apply_profile_limits(stmt, profile_def, limit_list, OG_FALSE);
 }

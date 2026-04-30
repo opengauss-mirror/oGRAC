@@ -2486,10 +2486,12 @@ OG-00780, The tablespace BISON_T1 does not exist.
 SQL> 
 SQL> drop user if exists xbin;
 
-OG-00781, The user XBIN does not exist.
+Succeed.
+
 SQL> drop user if exists xbin cascade;
 
-OG-00781, The user XBIN does not exist.
+Succeed.
+
 SQL> 
 SQL> drop public synonym public.syn1;
 
@@ -2699,15 +2701,15 @@ OG-00601, [1:47]Sql syntax error: syntax error
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
 
-OG-00738, [1:378]The database is already in the MOUNT state
+OG-00738, The database is already in the MOUNT state
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M, 'bb' size 10M reuse autoextend off temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
 
-OG-00738, [1:414]The database is already in the MOUNT state
+OG-00738, The database is already in the MOUNT state
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M, 'bb' size 10M reuse autoextend on next 5M maxsize 100M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
 
-OG-00738, [1:434]The database is already in the MOUNT state
+OG-00738, The database is already in the MOUNT state
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' nologging undo tablespace tempfile 'a' size 10M system tablespace datafile 'st' size 128.6M sysaux tablespace datafile 'ast' size 128M default tablespace datafile 'ast' size 1M instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog MAXINSTANCES 5;
 
@@ -2715,11 +2717,11 @@ OG-00601, [1:152]Sql syntax error: syntax error
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) node 0 nologging undo tablespace tempfile 'aa' size 10M undo tablespace datafile 'bb' size 10M temporary TABLESPACE TEMPFILE 'cc' size 10M logfile ('logfile11' size 10M blocksize 512, 'logfile21' size 10M blocksize 512, 'logfile31' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 noarchivelog;
 
-OG-00601, [1:636]Sql syntax error: parse create database failed
+OG-00705, [1:331]Invalid database def because instance number error, '1' expected
 SQL> 
 SQL> create database db1 user xbin IDENTIFIED by 'Huawei@123'; --error
 
-OG-00601, [1:17]Sql syntax error: syntax error
+OG-00601, [1:26]Sql syntax error: user name SYS expected but xbin found
 SQL> 
 SQL> ------------------------------------
 SQL> --function/expression test

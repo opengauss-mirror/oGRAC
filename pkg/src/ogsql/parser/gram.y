@@ -25,6 +25,7 @@
 #include "ddl_privilege_parser.h"
 #include "ogsql_privilege.h"
 #include "pl_ddl_parser.h"
+#include "cm_error.h"
 
 /* Location tracking support --- simpler than bison's default */
 
@@ -56,6 +57,14 @@
 do {                                    \
     scanner_yyerror(msg, yyscanner);    \
     YYABORT;                            \
+} while (0)
+
+#define parser_abort_or_yyerror(msg)    \
+do {                                    \
+    if (cm_get_error_code() != 0) {     \
+        YYABORT;                        \
+    }                                   \
+    parser_yyerror(msg);                \
 } while (0)
 
 #define BISON_MEM_STRDUP(dest, src)                                             \
@@ -106,6 +115,9 @@ static char* ds_unit_to_str(interval_unit_order_t order);
 static interval_unit_t get_interval_unit(interval_unit_order_t order);
 static interval_unit_t generate_interval_unit(interval_unit_order_t from, interval_unit_order_t to);
 static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_t *alter_idx_act, knl_alindex_def_t *def);
+static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int start_offset, source_location_t loc);
+static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *body, int start_offset,
+    source_location_t loc, bool32 has_program_body);
 
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-prologue.y.h"*/
@@ -167,6 +179,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
     merge_when_clause   *merge_when;
     name_with_owner     *name_owner;
     createdb_opt        *db_opt;
+    createdb_user_token *db_user_token;
     createts_opt        *ts_opt;
     knl_device_def_t    *dev_def;
     createdb_instance_node *inode;
@@ -196,13 +209,17 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 
 %type <res>    stmtblock stmtmulti InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
                UpdateStmt select_clause MergeStmt DropStmt merge_insert merge_when_insert_clause ReplaceStmt TruncateStmt
-               FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterIndexStmt CreateTablespaceStmt
+               FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterUserStmt AlterTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
-               CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateFunctionStmt compileFunctionSource
-               GrantStmt RevokeStmt PurgeStmt AlterTablespaceStmt index_cluster_item TransactionStmt RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID InternalReparseStmt
+               CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateProcedureStmt CreateFunctionStmt
+               CreatePackageStmt CreateTypeStmt CreateTriggerStmt compileFunctionSource compileProcedureSource compileStoredBodySource
+               GrantStmt RevokeStmt PurgeStmt AlterTableStmt AlterDatabaseStmt AlterSequenceStmt AlterTablespaceStmt
+               AlterProfileStmt AlterTriggerStmt AlterFunctionStmt ddl_passthrough_tail index_cluster_item TransactionStmt
+               RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt
+               LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID InternalReparseStmt
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
-               expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts
+               expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts alterseq_opts opt_alterseq_opts
                profile_limit_list ctrlfile_opts opt_ctrlfile_opts ctrlfile_file_list ctrlfile_files OptTableElementList column_attrs
                opt_column_attrs table_attrs opt_table_attrs column_name_list opt_backup_opts backup_opts
                all_insert_into_list set_clause_list set_clause multiple_set_clause return_clause delete_target_list
@@ -225,7 +242,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                 opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior
                 opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition opt_archivelog
                 opt_reuse opt_all_in_memory opt_encrypted ignore_nulls opt_orajoin on_or_off opt_undo opt_or_replace opt_signed
-                opt_revoke_cascade opt_with_read_only
+                opt_revoke_cascade opt_with_read_only alter_trigger_enable opt_package_body opt_type_body opt_type_force
 %type <winsort_args> over_clause window_specification
 %type <windowing_args> opt_frame_clause frame_extent
 %type <query_column> target_el
@@ -259,12 +276,13 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <rowmark_type> opt_nowait_or_skip
 %type <merge_when> merge_when_list
 %type <name_owner> any_name on_list
+%type <db_user_token> createdb_user_name
 %type <db_opt> createdb_user_opt createdb_controlfile_opt createdb_charset_opt instance_node_opt createdb_instance_opt
                createdb_nologging_opt createdb_system_opt createdb_sysaux_opt createdb_default_opt createdb_maxinstance_opt
                createdb_opt createdb_archivelog_opt createdb_compatibility_opt
 %type <backup_opt> backup_opt
 %type <ctrlfile_opt> ctrlfile_opt
-%type <list> files logfiles instance_node_opts instance_nodes createdb_opts datafiles opt_user_options user_option_list
+%type <list> files logfiles instance_node_opts instance_nodes createdb_opts opt_createdb_opts datafiles opt_user_options user_option_list alter_user_options
              tablespace_name_list createts_opts opt_createts_opts index_column_list createidx_opts opt_partition_index_def
              partition_index_list opt_part_options part_options subpartition_index_list opt_subpartition_index_def opt_createidx_opts
              opt_view_column_list view_column_list table_column_list opt_constraint_states constraint_states
@@ -276,12 +294,12 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <dev_def> logfile datafile ctrlfile_file
 %type <inode> instance_node
 %type <interval_info> interval_type
-%type <str> profile_name tablespace_name user_name role_name tenant_name opt_default_tablespace common_json_func_name
+%type <str> profile_name tablespace_name user_name role_name tenant_name opt_default_tablespace opt_alter_user_replace common_json_func_name
             json_set_func_name opt_subpart_tablespace_option opt_seg_name tablespace field_terminate opt_delimited
-%type <user_opt> user_option
+%type <user_opt> user_option alter_user_option
 %type <ts_opt> createts_opt
 %type <alts_opt> alterts_opt
-%type <boolean> opt_unique opt_if_not_exists csf_or_asf opt_global opt_with_grant opt_with_admin opt_alter_ts_db
+%type <boolean> opt_unique opt_if_not_exists csf_or_asf opt_with_grant opt_with_admin opt_alter_ts_db
 %type <ival> profile_parameter
 %type <profile_limit_item> profile_limit_item
 %type <profile_limit_value> profile_limit_value
@@ -292,7 +310,7 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <storage_def> storage_opts
 %type <storage_opt> storage_opt
 %type <part_def> subpartition_index_item
-%type <seq_opt> createseq_opt
+%type <seq_opt> createseq_opt alterseq_opt
 %type <cons_state> constraint_state
 %type <res> lob_store_param table_partitioning_clause range_partitioning_clause list_partitioning_clause hash_partitioning_clause
             range_partition_item opt_subpartition_clause range_subpartition_item list_subpartition_item hash_subpartition_item
@@ -301,17 +319,17 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword
 %type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_purge_partition
-            opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name user_password
+            opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
             debug_mode_value altsession_set_key altsession_set_value alter_param_value
 
 %type <ival> opt_asc_desc opt_nulls_order opt_ckpt_type opt_charset opt_collate opt_wait opt_wait_time opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
              opt_foreign_action partition_type grant_objtype sys_priv_spec obj_priv_spec user_priv_spec
-             directory_priv_spec arg_class opt_compress_level compress_algo lock_mode opt_set_scope opt_arch_set_type
+             directory_priv_spec arg_class opt_compress_level compress_algo lock_mode opt_set_scope opt_arch_set_type create_table_prefix
 %type <sortby>  sortby
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 %type <alter_idx_act> alter_index_action
-%type <text> subprogram_body opt_dump_to_file
+%type <text> subprogram_body pl_as_is_body pl_type_body pl_trigger_body opt_dump_to_file
 
 %token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
                 OPER_CAT OPER_LSHIFT OPER_RSHIFT
@@ -576,7 +594,11 @@ stmtmulti:
         | CreateUserStmt
         | CreateRoleStmt
         | CreateTenantStmt
+        | AlterUserStmt
+        | AlterTenantStmt
         | AlterIndexStmt
+        | AlterTableStmt
+        | AlterDatabaseStmt
         | CreateTablespaceStmt
         | CreateIndexStmt
         | CreateIndexClusterStmt
@@ -588,12 +610,22 @@ stmtmulti:
         | CreateLibraryStmt
         | CreateCtrlfileStmt
         | CreateTableStmt
+        | CreateProcedureStmt
         | CreateFunctionStmt
+        | CreatePackageStmt
+        | CreateTypeStmt
+        | CreateTriggerStmt
         | compileFunctionSource
+        | compileProcedureSource
+        | compileStoredBodySource
         | GrantStmt
         | RevokeStmt
         | PurgeStmt
+        | AlterSequenceStmt
         | AlterTablespaceStmt
+        | AlterProfileStmt
+        | AlterTriggerStmt
+        | AlterFunctionStmt
         | TransactionStmt
         | RecoverStmt
         | OgracStmt
@@ -7022,11 +7054,11 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                 }
             | DROP USER opt_if_exists UserId opt_cascade
                 {
-                    knl_drop_def_t *def = NULL;
+                    knl_drop_user_t *def = NULL;
                     text_t user;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_USER;
-                    if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_drop_user_t), (void **)&def) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed ");
                     }
                     if ($3) {
@@ -7040,6 +7072,32 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                         parser_yyerror("copy prefix tenant failed");
                     }
                     def->purge = $5;
+                    $$ = def;
+                }
+            | DROP TENANT opt_if_exists tenant_name opt_cascade
+                {
+                    knl_drop_tenant_t *def = NULL;
+                    text_t tenant;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    stmt->context->type = OGSQL_TYPE_DROP_TENANT;
+                    if (sql_alloc_mem(stmt->context, sizeof(knl_drop_tenant_t), (void **)&def) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed ");
+                    }
+                    CM_MAGIC_SET(def, knl_drop_tenant_t);
+                    if ($3) {
+                        def->options |= DROP_IF_EXISTS;
+                    }
+                    if (contains_nonnaming_char($4)) {
+                        OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
+                        YYABORT;
+                    }
+                    cm_str2text($4, &tenant);
+                    if (sql_copy_name(stmt->context, &tenant, &def->name) != OG_SUCCESS) {
+                        parser_yyerror("copy name failed");
+                    }
+                    if ($5) {
+                        def->options |= DROP_CASCADE_CONS;
+                    }
                     $$ = def;
                 }
             | DROP opt_public SYNONYM opt_if_exists any_name opt_force
@@ -7270,6 +7328,12 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                         drop_def->option |= DROP_TYPE_FORCE;
                     }
                     $$ = drop_def;
+                }
+            | DROP DATABASE ddl_passthrough_tail
+                {
+                    OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "DROP DATABASE");
+                    YYABORT;
+                    $$ = NULL;
                 }
             | DROP LIBRARY opt_if_exists any_name
                 {
@@ -8599,8 +8663,24 @@ database_name:
             ColId                           { $$ = $1; }
         ;
 
+createdb_user_name:
+            UserId
+                {
+                    createdb_user_token *user = NULL;
+                    char *origin_name = og_yyget_extra(yyscanner)->core_yy_extra.origin_str;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(createdb_user_token), (void **)&user) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    user->name = $1;
+                    user->display_name = origin_name != NULL ? origin_name : $1;
+                    user->loc = @1.loc;
+                    $$ = user;
+                }
+        ;
+
 createdb_user_opt:
-            USER UserId IDENTIFIED BY SCONST
+            USER createdb_user_name IDENTIFIED BY SCONST
                 {
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8608,7 +8688,9 @@ createdb_user_opt:
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_USER_OPT;
-                    opt->user.user_name = $2;
+                    opt->user.user_name = $2->name;
+                    opt->user.display_name = $2->display_name;
+                    opt->user.user_loc = $2->loc;
                     opt->user.password = $5;
                     $$ = opt;
                 }
@@ -9031,6 +9113,7 @@ instance_node:
                         parser_yyerror("alloc mem failed.");
                     }
                     node->id = $2;
+                    node->loc = @2.loc;
                     node->opts = $3;
                     $$ = node;
                 }
@@ -9216,13 +9299,31 @@ createdb_opts:
                 }
         ;
 
+opt_createdb_opts:
+            createdb_opts                                    { $$ = $1; }
+            | /* EMPTY */                                    { $$ = NULL; }
+        ;
+
+plain_database_name:
+            IDENT                                            { $$ = $1; }
+        ;
+
 CreatedbStmt:
-            CREATE DATABASE CLUSTERED database_name createdb_opts
+            CREATE DATABASE CLUSTERED database_name opt_createdb_opts
                 {
                     knl_database_def_t *db_def = NULL;
                     if (og_parse_create_database(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
-                        &db_def, $4, $5) != OG_SUCCESS) {
-                        parser_yyerror("parse create database failed");
+                        &db_def, $4, $5, OG_TRUE) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse create database failed");
+                    }
+                    $$ = db_def;
+                }
+            | CREATE DATABASE plain_database_name opt_createdb_opts
+                {
+                    knl_database_def_t *db_def = NULL;
+                    if (og_parse_create_database(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &db_def, $3, $4, OG_FALSE) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse create database failed");
                     }
                     $$ = db_def;
                 }
@@ -9236,6 +9337,19 @@ CreateUserStmt:
                     
                     if (og_parse_create_user(stmt, &def, $3, $6, @6.loc, $7, $8) != OG_SUCCESS) {
                         parser_yyerror("parse create user failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
+AlterUserStmt:
+            ALTER USER user_name alter_user_options
+                {
+                    knl_user_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (og_parse_alter_user(stmt, &def, $3, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse alter user failed");
                     }
                     $$ = def;
                 }
@@ -9272,6 +9386,30 @@ CreateTenantStmt:
 
                     if (og_parse_create_tenant(stmt, &def, $3, $6, $8) != OG_SUCCESS) {
                         parser_yyerror("parse create tenant failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
+AlterTenantStmt:
+            ALTER TENANT tenant_name ADD_P TABLESPACES '(' tablespace_name_list ')'
+                {
+                    knl_tenant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (og_parse_alter_tenant(stmt, &def, $3, ALTER_TENANT_TYPE_ADD_SPACE, $7, NULL) != OG_SUCCESS) {
+                        parser_yyerror("parse alter tenant failed");
+                    }
+                    $$ = def;
+                }
+            | ALTER TENANT tenant_name DEFAULT TABLESPACE tablespace_name
+                {
+                    knl_tenant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (og_parse_alter_tenant(stmt, &def, $3, ALTER_TENANT_TYPE_MODEIFY_DEFAULT, NULL, $6) !=
+                        OG_SUCCESS) {
+                        parser_yyerror("parse alter tenant failed");
                     }
                     $$ = def;
                 }
@@ -9458,8 +9596,56 @@ AlterIndexStmt:
                        
  	    ;
 
+/* Consume the remaining DDL tokens before the statement semantic action runs. */
+ddl_passthrough_tail:
+            {
+                int tok = YYLEX;
+                while (tok != YYEOF) {
+                    if (tok == LEX_ERROR_TOKEN) {
+                        parser_yyerror("lex error");
+                    }
+                    tok = YYLEX;
+                }
+                $$ = NULL;
+            }
+        ;
+
+AlterTableStmt:
+            ALTER TABLE_P ddl_passthrough_tail
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    status_t status = sql_parse_alter_table(stmt);
+                    if (status == OG_SUCCESS) {
+                        status = sql_verify_alter_table(stmt);
+                    }
+                    if (status != OG_SUCCESS) {
+                        /* The native ALTER TABLE parser has already raised the precise error. */
+                        YYABORT;
+                    }
+                    $$ = stmt->context->entry;
+                }
+        ;
+
+AlterDatabaseStmt:
+            ALTER DATABASE ddl_passthrough_tail
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_parse_alter_database_lead(stmt) != OG_SUCCESS) {
+                        /* The native ALTER DATABASE parser has already raised the precise error. */
+                        YYABORT;
+                    }
+                    $$ = stmt->context->entry;
+                }
+        ;
+
 CreateTablespaceStmt:
-            CREATE opt_undo TABLESPACE tablespace_name extents_clause DATAFILE datafiles opt_createts_opts
+            CREATE TEMPORARY TABLESPACE ddl_passthrough_tail
+                {
+                    OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "create temporary lead ", "temporary tablespace");
+                    YYABORT;
+                    $$ = NULL;
+                }
+            | CREATE opt_undo TABLESPACE tablespace_name extents_clause DATAFILE datafiles opt_createts_opts
                 {
                     knl_space_def_t *def = NULL;
                     uint32 size = $5;
@@ -9759,8 +9945,26 @@ CreateSequenceStmt:
                 }
         ;
 
+AlterSequenceStmt:
+            ALTER SEQUENCE any_name opt_alterseq_opts
+                {
+                    knl_sequence_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (og_parse_alter_sequence(stmt, &def, $3, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse alter sequence failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
 opt_createseq_opts:
             createseq_opts                                  { $$ = $1; }
+            | /* EMPTY */                                   { $$ = NULL; }
+        ;
+
+opt_alterseq_opts:
+            alterseq_opts                                   { $$ = $1; }
             | /* EMPTY */                                   { $$ = NULL; }
         ;
 
@@ -9783,6 +9987,43 @@ createseq_opts:
                         parser_yyerror("insert seq opt failed.");
                     }
                     $$ = list;
+                }
+        ;
+
+alterseq_opts:
+            alterseq_opt
+                {
+                    galist_t *list = NULL;
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                        parser_yyerror("create alter seq opt list failed.");
+                    }
+                    if (cm_galist_insert(list, $1) != OG_SUCCESS) {
+                        parser_yyerror("insert alter seq opt failed.");
+                    }
+                    $$ = list;
+                }
+            | alterseq_opts alterseq_opt
+                {
+                    galist_t *list = $1;
+                    if (cm_galist_insert(list, $2) != OG_SUCCESS) {
+                        parser_yyerror("insert alter seq opt failed.");
+                    }
+                    $$ = list;
+                }
+        ;
+
+alterseq_opt:
+            createseq_opt                                    { $$ = $1; }
+            | RESTART
+                {
+                    createseq_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = CREATESEQ_RESTART_OPT;
+                    opt->value = 0;
+                    $$ = opt;
                 }
         ;
 
@@ -10030,6 +10271,19 @@ CreateProfileStmt:
                     
                     if (og_parse_create_profile(stmt, &def, $4, $2, $6) != OG_SUCCESS) {
                         parser_yyerror("parse create profile failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
+AlterProfileStmt:
+            ALTER PROFILE profile_name LIMIT profile_limit_list
+                {
+                    knl_profile_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (og_parse_alter_profile(stmt, &def, $3, $5) != OG_SUCCESS) {
+                        parser_yyerror("parse alter profile failed");
                     }
                     $$ = def;
                 }
@@ -10886,48 +11140,60 @@ ctrlfile_file:
                 }
         ;
 
+/* create_table_prefix encodes bit 0 as TEMPORARY and bit 1 as GLOBAL. */
+create_table_prefix:
+            CREATE TABLE_P                                  { $$ = 0; }
+            | CREATE TEMPORARY TABLE_P                      { $$ = 1; }
+            | CREATE GLOBAL TABLE_P                         { $$ = 2; }
+            | CREATE GLOBAL TEMPORARY TABLE_P               { $$ = 3; }
+        ;
+
 CreateTableStmt:
-            CREATE opt_global opt_temporary TABLE_P opt_if_not_exists any_name '(' OptTableElementList ')'
+            create_table_prefix opt_if_not_exists any_name '(' OptTableElementList ')'
             opt_table_attrs opt_as_select
                 {
                     knl_table_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    
-                    if ($2 && !$3) {
+                    bool32 is_temp = ($1 & 1) != 0;
+                    bool32 is_global = ($1 & 2) != 0;
+
+                    if (is_global && !is_temp) {
                         parser_yyerror("TEMPORARY expected");
                     }
-
-                    if (og_parse_create_table(stmt, &def, $3, $2, $5, $6, $8, $10, $11, NULL) != OG_SUCCESS) {
+                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, $5, $7, $8, NULL) !=
+                        OG_SUCCESS) {
                         parser_yyerror("parse create table failed");
                     }
                     $$ = def;
                 }
-            | CREATE opt_global opt_temporary TABLE_P opt_if_not_exists any_name
-              opt_table_attrs AS SelectStmt
+            | create_table_prefix opt_if_not_exists any_name opt_table_attrs AS SelectStmt
                 {
                     knl_table_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    
-                    if ($2 && !$3) {
+                    bool32 is_temp = ($1 & 1) != 0;
+                    bool32 is_global = ($1 & 2) != 0;
+
+                    if (is_global && !is_temp) {
                         parser_yyerror("TEMPORARY expected");
                     }
-
-                    if (og_parse_create_table(stmt, &def, $3, $2, $5, $6, NULL, $7, $9, NULL) != OG_SUCCESS) {
+                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, NULL, $4, $6, NULL) !=
+                        OG_SUCCESS) {
                         parser_yyerror("parse create table failed");
                     }
                     $$ = def;
                 }
-            | CREATE opt_global opt_temporary TABLE_P opt_if_not_exists any_name '(' OptTableElementList ')'
-              external_table
+            | create_table_prefix opt_if_not_exists any_name '(' OptTableElementList ')' external_table
                 {
                     knl_table_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    
-                    if ($2 && !$3) {
+                    bool32 is_temp = ($1 & 1) != 0;
+                    bool32 is_global = ($1 & 2) != 0;
+
+                    if (is_global && !is_temp) {
                         parser_yyerror("TEMPORARY expected");
                     }
-
-                    if (og_parse_create_table(stmt, &def, $3, $2, $5, $6, $8, NULL, NULL, $10) != OG_SUCCESS) {
+                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, $5, NULL, NULL, $7) !=
+                        OG_SUCCESS) {
                         parser_yyerror("parse create table failed");
                     }
                     $$ = def;
@@ -10979,11 +11245,6 @@ field_terminate:
                     }
                     $$ = $1;
                 }
-        ;
-
-opt_global:
-            GLOBAL                                   { $$ = true; }
-            | /* EMPTY */                            { $$ = false; }
         ;
 
 OptTableElementList:
@@ -13107,6 +13368,29 @@ user_option_list:
                 }
         ;
 
+alter_user_options:
+            alter_user_option
+                {
+                    galist_t *list = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                        parser_yyerror("create alter user option list failed.");
+                    }
+                    if (cm_galist_insert(list, $1) != OG_SUCCESS) {
+                        parser_yyerror("insert alter user option failed.");
+                    }
+                    $$ = list;
+                }
+            | alter_user_options alter_user_option
+                {
+                    galist_t *list = $1;
+                    if (cm_galist_insert(list, $2) != OG_SUCCESS) {
+                        parser_yyerror("insert alter user option failed.");
+                    }
+                    $$ = list;
+                }
+        ;
+
 tablespace_name_list:
             tablespace_name
                 {
@@ -13135,6 +13419,11 @@ tablespace_name_list:
 opt_default_tablespace:
             /* EMPTY */                                     { $$ = NULL; }
             | DEFAULT TABLESPACE tablespace_name            { $$ = $3; }
+        ;
+
+opt_alter_user_replace:
+            REPLACE user_password                           { $$ = $2; }
+            | /* EMPTY */                                   { $$ = NULL; }
         ;
 
 user_option:
@@ -13213,6 +13502,89 @@ user_option:
                         parser_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_PERMANENT;
+                    $$ = option;
+                }
+        ;
+
+alter_user_option:
+            IDENTIFIED BY user_password opt_alter_user_replace
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    option->type = USER_OPTION_IDENTIFIED;
+                    option->value = $3;
+                    option->old_value = $4;
+                    option->loc = @3.loc;
+                    $$ = option;
+                }
+            | DEFAULT TABLESPACE tablespace_name
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    option->type = USER_OPTION_DEFAULT_TABLESPACE;
+                    option->value = $3;
+                    $$ = option;
+                }
+            | TEMPORARY TABLESPACE tablespace_name
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    option->type = USER_OPTION_TEMPORARY_TABLESPACE;
+                    option->value = $3;
+                    $$ = option;
+                }
+            | PASSWORD EXPIRE
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    option->type = USER_OPTION_PASSWORD_EXPIRE;
+                    $$ = option;
+                }
+            | ACCOUNT LOCK_P
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    option->type = USER_OPTION_ACCOUNT_LOCK;
+                    $$ = option;
+                }
+            | ACCOUNT UNLOCK
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    option->type = USER_OPTION_ACCOUNT_UNLOCK;
+                    $$ = option;
+                }
+            | PROFILE profile_name
+                {
+                    user_option_t *option = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
+                        parser_yyerror("alloc alter user option failed");
+                    }
+                    if (strcmp($2, "DEFAULT") == 0) {
+                        option->type = USER_OPTION_PROFILE_DEFAULT;
+                    } else {
+                        option->type = USER_OPTION_PROFILE;
+                        option->value = $2;
+                    }
                     $$ = option;
                 }
         ;
@@ -13389,6 +13761,42 @@ func_args_with_defaults:
 
 proc_args:
             func_args_with_defaults                     { $$ = $1; }
+            | /* EMPTY */                               { $$ = NULL; }
+        ;
+
+opt_authid:
+            AUTHID CURRENT_USER                         {}
+            | /* EMPTY */                               {}
+        ;
+
+opt_package_body:
+            BODY_P                                      { $$ = true; }
+            | /* EMPTY */       %prec UMINUS            { $$ = false; }
+        ;
+
+opt_type_body:
+            BODY_P                                      { $$ = true; }
+            | /* EMPTY */       %prec UMINUS            { $$ = false; }
+        ;
+
+opt_type_force:
+            FORCE                                       { $$ = true; }
+            | /* EMPTY */                               { $$ = false; }
+        ;
+
+pl_as_is_body:
+            as_is subprogram_body                       { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+        ;
+
+pl_type_body:
+            as_is subprogram_body                       { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            | UNDER subprogram_body                     { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+        ;
+
+pl_trigger_body:
+            BEFORE subprogram_body                      { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            | AFTER subprogram_body                     { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            | INSTEAD subprogram_body                   { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
         ;
 
 compileFunctionSource:
@@ -13408,6 +13816,100 @@ compileFunctionSource:
                 }
         ;
 
+compileProcedureSource:
+            func_args_with_defaults opt_authid as_is subprogram_body
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (stmt->pl_context == NULL) {
+                        parser_yyerror("syntax error");
+                    }
+
+                    if (pl_bison_compile_procedure_source(stmt, $1, $4) != OG_SUCCESS) {
+                        parser_yyerror("compile procedure failed");
+                    }
+
+                    $$ = NULL;
+                }
+            | AUTHID CURRENT_USER as_is subprogram_body
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (stmt->pl_context == NULL) {
+                        parser_yyerror("syntax error");
+                    }
+
+                    if (pl_bison_compile_procedure_source(stmt, NULL, $4) != OG_SUCCESS) {
+                        parser_yyerror("compile procedure failed");
+                    }
+
+                    $$ = NULL;
+                }
+        ;
+
+compileStoredBodySource:
+            as_is subprogram_body
+                {
+                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_TRUE) != OG_SUCCESS) {
+                        parser_yyerror("compile stored PL source failed");
+                    }
+
+                    $$ = NULL;
+                }
+            | UNDER subprogram_body
+                {
+                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("compile stored PL source failed");
+                    }
+
+                    $$ = NULL;
+                }
+            | BEFORE subprogram_body
+                {
+                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("compile stored PL source failed");
+                    }
+
+                    $$ = NULL;
+                }
+            | AFTER subprogram_body
+                {
+                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("compile stored PL source failed");
+                    }
+
+                    $$ = NULL;
+                }
+            | INSTEAD subprogram_body
+                {
+                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
+                        parser_yyerror("compile stored PL source failed");
+                    }
+
+                    $$ = NULL;
+                }
+        ;
+
+CreateProcedureStmt:
+            CREATE opt_or_replace PROCEDURE {
+                if (pl_init_compiler(og_yyget_extra(yyscanner)->core_yy_extra.stmt) != OG_SUCCESS) {
+                    parser_yyerror("init pl compiler failed");
+                }
+            } opt_if_not_exists any_name proc_args opt_authid as_is subprogram_body
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t storage_source;
+                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
+                    storage_source.len = yylloc.offset - @7.offset;
+
+                    if (pl_bison_parse_create_procedure(stmt, $2, $5, $6, $7, $10, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("parse create procedure failed");
+                    }
+
+                    $$ = NULL;
+                }
+        ;
+
 CreateFunctionStmt:
             CREATE opt_or_replace FUNCTION {
                 if (pl_init_compiler(og_yyget_extra(yyscanner)->core_yy_extra.stmt) != OG_SUCCESS) {
@@ -13421,7 +13923,6 @@ CreateFunctionStmt:
                     storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
                     storage_source.len = yylloc.offset - @7.offset;
 
-                    /* todo:可能需要把subprogram_body的source_location_t传进去，即函数声明的行列信息，确保函数体语法报错时的位置信息准确 */
                     if (pl_bison_parse_create_function(stmt, $2, $5, $6, $7, $9, $11, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create function failed");
                     }
@@ -13430,14 +13931,90 @@ CreateFunctionStmt:
                 }
         ;
 
+CreatePackageStmt:
+            CREATE opt_or_replace PACKAGE opt_package_body opt_if_not_exists any_name pl_as_is_body
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t storage_source;
+                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
+                    storage_source.len = yylloc.offset - @7.offset;
+
+                    if (pl_bison_parse_create_package(stmt, $2, $4, $5, $6, $7, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("parse create package failed");
+                    }
+
+                    $$ = NULL;
+                }
+        ;
+
+CreateTypeStmt:
+            CREATE opt_or_replace TYPE_P opt_type_body opt_if_not_exists any_name opt_type_force pl_type_body
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t storage_source;
+                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @8.offset;
+                    storage_source.len = yylloc.offset - @8.offset;
+
+                    if (pl_bison_parse_create_type(stmt, $2, $4, $5, $6, $7, $8, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("parse create type failed");
+                    }
+
+                    $$ = NULL;
+                }
+        ;
+
+CreateTriggerStmt:
+            CREATE opt_or_replace TRIGGER opt_if_not_exists any_name pl_trigger_body
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    text_t storage_source;
+                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @6.offset;
+                    storage_source.len = yylloc.offset - @6.offset;
+
+                    if (pl_bison_parse_create_trigger(stmt, $2, $4, $5, $6, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("parse create trigger failed");
+                    }
+
+                    $$ = NULL;
+                }
+        ;
+
+AlterTriggerStmt:
+            ALTER TRIGGER any_name alter_trigger_enable
+                {
+                    knl_alttrig_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (og_parse_alter_trigger(stmt, &def, $3, $4) != OG_SUCCESS) {
+                        parser_yyerror("parse alter trigger failed");
+                    }
+                    $$ = def;
+                }
+        ;
+
+alter_trigger_enable:
+            ENABLE_P                                        { $$ = true; }
+            | DISABLE_P                                     { $$ = false; }
+        ;
+
+AlterFunctionStmt:
+            ALTER FUNCTION ddl_passthrough_tail
+                {
+                    OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "alter function");
+                    YYABORT;
+                    $$ = NULL;
+                }
+        ;
+
 subprogram_body: {
-                text_t *body_src = NULL;
+                sql_text_t *body_src = NULL;
                 int	tok = YYLEX;
                 int proc_b = yylloc.offset;
                 int proc_e = yylloc.offset;
+                source_location_t proc_loc = yylloc.loc;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
-                if (sql_stack_alloc(stmt, sizeof(text_t), (void**)&body_src) != OG_SUCCESS) {
+                if (sql_stack_alloc(stmt, sizeof(sql_text_t), (void**)&body_src) != OG_SUCCESS) {
                     parser_yyerror("alloc mem failed");
                 }
 
@@ -13448,9 +14025,11 @@ subprogram_body: {
                     tok = YYLEX;
                 }
 
-                body_src->str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + proc_b;
-                body_src->len = proc_e - proc_b;
-                $$ = body_src;
+                body_src->value.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + proc_b;
+                body_src->value.len = proc_e - proc_b;
+                body_src->loc = proc_loc;
+                body_src->implicit = OG_FALSE;
+                $$ = (text_t *)body_src;
             }
         ;
 
@@ -16076,9 +16655,41 @@ static interval_unit_t generate_interval_unit(interval_unit_order_t from, interv
     return itvl_fmt;
 }
 
+static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int start_offset, source_location_t loc)
+{
+    sql_text_t *body_src = (sql_text_t *)body;
+    char *start = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + start_offset;
+    char *end = body_src->value.str + body_src->value.len;
+
+    body_src->value.str = start;
+    body_src->value.len = (uint32)(end - start);
+    body_src->loc = loc;
+    return (text_t *)body_src;
+}
+
+static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *body, int start_offset,
+    source_location_t loc, bool32 has_program_body)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    text_t program_body;
+    text_t *program_body_ptr = NULL;
+    text_t *stored_body = NULL;
+
+    if (stmt->pl_context == NULL) {
+        return OG_ERROR;
+    }
+
+    if (has_program_body) {
+        program_body = *body;
+        program_body_ptr = &program_body;
+    }
+    stored_body = pl_prepend_body_start(yyscanner, body, start_offset, loc);
+    return pl_bison_compile_stored_body_source(stmt, program_body_ptr, stored_body);
+}
+
 static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_t *alter_idx_act, knl_alindex_def_t *def)
  	{
- 	    def->type = alter_idx_act->type;
+	    def->type = alter_idx_act->type;
 
         switch (alter_idx_act->type) {
             case ALINDEX_TYPE_UNUSABLE:

@@ -109,6 +109,8 @@ status_t og_parse_revoke(sql_stmt_t *stmt, knl_revoke_def_t **revoke_def, priv_t
     bool cascade_opt);
 status_t og_parse_purge(sql_stmt_t *stmt, knl_purge_def_t **purge_def, purge_type_t purge_type,
     name_with_owner *name_owner, char *single_name);
+status_t og_parse_alter_trigger(sql_stmt_t *stmt, knl_alttrig_def_t **def, name_with_owner *trigger_name,
+    bool32 enable);
 
 static inline status_t sql_replace_password(sql_stmt_t *stmt, text_t *password)
 {
