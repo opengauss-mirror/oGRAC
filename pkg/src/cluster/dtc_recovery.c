@@ -1779,6 +1779,16 @@ static status_t dtc_rcy_load_archfile(knl_session_t *session, uint32 idx, arch_f
 
 bool32 dtc_rcy_validate_batch(log_batch_t *batch)
 {
+    if (batch == NULL) {
+        OG_LOG_RUN_ERR("[DTC RCY] dtc rcy validate batch is NULL");
+        return OG_FALSE;
+    }
+    if (batch->size < sizeof(log_batch_t) || batch->space_size < batch->size ||
+        batch->size > OG_MAX_BATCH_SIZE || batch->space_size > OG_MAX_BATCH_SIZE) {
+        OG_LOG_RUN_ERR("[DTC RCY] validate batch failed: invalid size, magic=%llx size=%u space_size=%u",
+                    (uint64)batch->head.magic_num, batch->size, batch->space_size);
+        return OG_FALSE;
+    }
     log_batch_tail_t *tail = (log_batch_tail_t *)((char *)batch + batch->size - sizeof(log_batch_tail_t));
     if (tail == NULL) {
         OG_LOG_RUN_ERR("dtc rcy validate batch tail is NULL");
@@ -2246,44 +2256,45 @@ status_t dtc_update_batch(knl_session_t *session, uint32 node_id)
     return OG_SUCCESS;
 }
 
-static void find_max_lsn_and_move_point(uint32 idx, uint32 size_read)
+static void find_max_lsn_and_move_point(uint32 idx, uint32 *size_read)
 {
-    OG_LOG_DEBUG_INF("[DTC RCY] start find max lsn and move point idx=%u size_read=%u", idx, size_read);
+    OG_LOG_DEBUG_INF("[DTC RCY] start find max lsn and move point idx=%u size_read=%u", idx, *size_read);
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     dtc_rcy_node_t *rcy_node = &dtc_rcy->rcy_nodes[idx];
     log_batch_t *batch = NULL;
     log_batch_t *tmp_batch = dtc_rcy_get_curr_batch(dtc_rcy, idx, rcy_node->read_buf_write_index);
-    uint32 left_size = size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
+    uint32 left_size = *size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
     if (left_size < sizeof(log_batch_t) || tmp_batch == NULL || left_size < tmp_batch->space_size) {
-        OG_LOG_RUN_INF("[DTC RCY] find max lsn and move point left_size"
+        OG_LOG_RUN_INF("[DTC RCY] before validate batch, find max lsn and move point left_size"
                        " < sizeof(log_batch_t) || left_size < tmp_batch->space_size");
         return;
     }
     if (dtc_rcy_validate_batch(tmp_batch) == OG_FALSE) {
-        OG_LOG_RUN_ERR("[DTC RCY] find max lsn and move point batch is invalidate, read_size=%d", size_read);
+        OG_LOG_RUN_ERR("[DTC RCY] find max lsn and move point batch is invalidate, read_size=%u", *size_read);
+        *size_read = 0;
         return;
     }
     reform_rcy_node_t *rcy_log_point = &dtc_rcy->rcy_log_points[idx];
     uint32 old_read_pos = rcy_node->read_pos[rcy_node->read_buf_write_index];
     for (;;) {
-        left_size = size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
+        left_size = *size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
         if (left_size < sizeof(log_batch_t) || tmp_batch == NULL || left_size < tmp_batch->space_size) {
-            OG_LOG_RUN_INF("[DTC RCY] find max lsn and move point left_size "
+            OG_LOG_RUN_INF("[DTC RCY] after validate batch, find max lsn and move point left_size "
                            "< sizeof(log_batch_t) || left_size < tmp_batch->space_size");
             break;
         }
         batch = dtc_rcy_get_curr_batch(dtc_rcy, idx, rcy_node->read_buf_write_index);
         rcy_log_point->rcy_write_point.block_id += batch->space_size / rcy_node->blk_size;
         rcy_node->read_pos[rcy_node->read_buf_write_index] += batch->space_size;
-        left_size = size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
+        left_size = *size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
         tmp_batch = dtc_rcy_get_curr_batch(dtc_rcy, idx, rcy_node->read_buf_write_index);
         if (left_size < sizeof(log_batch_t) || tmp_batch == NULL || left_size < tmp_batch->space_size) {
-            OG_LOG_DEBUG_INF("[DTC RCY] find max lsn and move point left_size "
+            OG_LOG_DEBUG_INF("[DTC RCY] get next batch, find max lsn and move point left_size "
                              "< sizeof(log_batch_t) || left_size < tmp_batch->space_size");
             break;
         }
         if (dtc_rcy_validate_batch(tmp_batch) == OG_FALSE) {
-            OG_LOG_RUN_ERR("[DTC RCY] find max lsn and move point batch is invalidate, read_size=%d", size_read);
+            OG_LOG_RUN_ERR("[DTC RCY] find max lsn and move point batch is invalidate, read_size=%u", *size_read);
             break;
         }
     }
@@ -2297,7 +2308,7 @@ static void find_max_lsn_and_move_point(uint32 idx, uint32 size_read)
         rcy_log_point->rcy_write_point.lsn = batch->lsn;
     }
     OG_LOG_DEBUG_INF("[DTC RCY] finish find max lsn and move point idx=%u size_read=%u lsn=%llu block_id=%u", idx,
-                     size_read, rcy_log_point->lsn, rcy_log_point->rcy_point.block_id);
+                     *size_read, rcy_log_point->lsn, rcy_log_point->rcy_point.block_id);
 }
 
 static status_t dtc_read_node_log(dtc_rcy_context_t *dtc_rcy, knl_session_t *session, uint32 node_id, uint32 *read_size)
@@ -2325,7 +2336,7 @@ static status_t dtc_read_node_log(dtc_rcy_context_t *dtc_rcy, knl_session_t *ses
         rcy_node->not_finished[rcy_node->read_buf_write_index] = not_finished;
     }
     if (*read_size != 0) {
-        find_max_lsn_and_move_point(node_id, *read_size);
+        find_max_lsn_and_move_point(node_id, read_size);
     }
     return OG_SUCCESS;
 }
@@ -2415,7 +2426,7 @@ static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **ba
         uint32 left_size = rcy_node->write_pos[rcy_node->read_buf_read_index] -
                            rcy_node->read_pos[rcy_node->read_buf_read_index];
         if (left_size < sizeof(log_batch_t) || batch == NULL || left_size < batch->space_size) {
-            OG_LOG_DEBUG_INF("[DTC RCY] find max lsn and move point left_size "
+            OG_LOG_DEBUG_INF("[DTC RCY] recover fetch batch, find max lsn and move point left_size "
                              "< sizeof(log_batch_t) || left_size < tmp_batch->space_size");
             continue;
         }
