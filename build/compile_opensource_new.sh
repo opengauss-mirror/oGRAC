@@ -141,7 +141,15 @@ cd ${OPEN_SOURCE}/openssl
 tar -zxvf openssl-3.0.7.tar.gz
 cd ${OPEN_SOURCE}/openssl/openssl-3.0.7/
 mkdir -p "${OPEN_SOURCE}/openssl/install"
-./config --prefix="${OPEN_SOURCE}/openssl/install" shared
+if [[ "${OS_ARCH}" == "x86_64" ]]; then
+    OPENSSL_TARGET="linux-x86_64"
+elif [[ "${OS_ARCH}" == "aarch64" ]]; then
+    OPENSSL_TARGET="linux-aarch64"
+else
+    echo "ERROR: Unsupported architecture for OpenSSL Configure: ${OS_ARCH}"
+    exit 1
+fi
+./Configure ${OPENSSL_TARGET} --prefix="${OPEN_SOURCE}/openssl/install" shared -Wno-error
 if [[ ${OS_ARCH} =~ "x86_64" ]]; then
     export CPU_CORES_NUM_x86=`cat /proc/cpuinfo |grep "cores" |wc -l`
     make -j${CPU_CORES_NUM_x86}
@@ -187,7 +195,7 @@ cp ${PLATFORM}/HuaweiSecureC/include/* ${PLATFORM}/huawei_security/include/
 cd ${OPEN_SOURCE}/googletest
 mkdir -p ${OPEN_SOURCE}/googletest/build
 cd  ${OPEN_SOURCE}/googletest/build
-cmake -DBUILD_SHARED_LIBS=ON ..
+cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_FLAGS="-Wno-error -Wno-maybe-uninitialized" ..
 make
 mkdir -p ${LIBRARY}/googletest/lib/
 cp ${OPEN_SOURCE}/googletest/build/googlemock/*.so ${LIBRARY}/googletest/lib/
