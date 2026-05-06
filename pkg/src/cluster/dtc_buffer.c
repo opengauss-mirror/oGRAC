@@ -149,7 +149,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         }
     } else {
         /* case enter
-         * 1.lbp page transfer to gbp 
+         * 1.lbp page transfer to gbp
          * 2.lock mode upgrade: for example, S latch lock at last time, now this session fetch X lock
          * 3.always fetch this page in this node
          */

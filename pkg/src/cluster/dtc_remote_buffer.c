@@ -343,7 +343,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
 
     // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
     if (remote_head_lsn < ctrl->page->lsn) {
-        OG_LOG_RUN_ERR("[[DTC-GBP-COPY][%u-%u]: lsn check failed, remote page lsn(%llu), ctrl->page->lsn(%llu)", 
+        OG_LOG_RUN_ERR("[[DTC-GBP-COPY][%u-%u]: lsn check failed, remote page lsn(%llu), ctrl->page->lsn(%llu)",
             ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
         // Release and free global lock
         ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
