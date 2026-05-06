@@ -23,6 +23,7 @@
 #include "keywords.h"
 #include "ogsql_cond.h"
 #include "sysdba_defs.h"
+#include "db_defs.h"
 
 /*
  * The scanner returns extra data about scanned tokens in this union type.
@@ -178,8 +179,16 @@ typedef enum createdb_opt_type {
     CREATEDB_DBCOMPATIBILITY_OPT
 } createdb_opt_type;
 
+typedef struct createdb_user_token {
+    char *name;
+    char *display_name;
+    source_location_t loc;
+} createdb_user_token;
+
 typedef struct createdb_user {
     char *user_name;
+    char *display_name;
+    source_location_t user_loc;
     char *password;
 } createdb_user;
 
@@ -190,6 +199,7 @@ typedef struct createdb_space {
 
 typedef struct createdb_instance_node {
     uint32 id;
+    source_location_t loc;
     galist_t *opts;
 } createdb_instance_node;
 
@@ -241,7 +251,8 @@ typedef enum createseq_opt_type {
     CREATESEQ_CYCLE_OPT,
     CREATESEQ_NOCYCLE_OPT,
     CREATESEQ_ORDER_OPT,
-    CREATESEQ_NOORDER_OPT
+    CREATESEQ_NOORDER_OPT,
+    CREATESEQ_RESTART_OPT
 } createseq_opt_type;
 
 typedef struct createseq_opt {
@@ -264,6 +275,55 @@ typedef struct ctrlfile_opt {
         char *charset;
     };
 } ctrlfile_opt;
+
+typedef struct alterdb_datafile_opt {
+    galist_t *datafiles;
+    alter_datafile_mode_t mode;
+    uint64 size;
+    knl_autoextend_def_t autoextend;
+} alterdb_datafile_opt_t;
+
+typedef struct alterdb_logfile_opt {
+    galist_t *logfiles;
+    bool32 is_standby;
+} alterdb_logfile_opt_t;
+
+typedef struct alterdb_delete_archivelog_opt {
+    bool32 all_delete;
+    bool32 delete_abnormal;
+    bool32 force_delete;
+    char *until_time;
+    source_location_t until_loc;
+} alterdb_delete_archivelog_opt_t;
+
+typedef struct alterdb_delete_backupset_opt {
+    char *tag;
+    source_location_t tag_loc;
+    bool32 force_delete;
+} alterdb_delete_backupset_opt_t;
+
+typedef struct alterdb_convert_opt {
+    database_action_t convert_action;
+    bool32 is_cascaded;
+    bool32 is_mount;
+} alterdb_convert_opt_t;
+
+typedef struct alterdb_opt {
+    database_action_t action;
+    union {
+        db_open_opt_t open_options;
+        alterdb_datafile_opt_t datafile;
+        alterdb_logfile_opt_t logfile;
+        alterdb_delete_archivelog_opt_t delete_archivelog;
+        alterdb_delete_backupset_opt_t delete_backupset;
+        alterdb_convert_opt_t convert;
+        alter_standby_mode_t standby_mode;
+        char *timezone;
+        char *charset;
+        uint32 clear_logfile_id;
+        uint32 switchover_timeout;
+    };
+} alterdb_opt_t;
 
 typedef struct profile_limit_value {
     value_type_t type;
@@ -338,7 +398,8 @@ typedef enum {
     USER_OPTION_ACCOUNT_UNLOCK,
     USER_OPTION_PROFILE,
     USER_OPTION_PROFILE_DEFAULT,
-    USER_OPTION_PERMANENT
+    USER_OPTION_PERMANENT,
+    USER_OPTION_IDENTIFIED
 } user_option_type_t;
 
 /*
@@ -347,6 +408,8 @@ typedef enum {
 typedef struct st_user_option {
     user_option_type_t type;
     char *value;
+    char *old_value;
+    source_location_t loc;
 } user_option_t;
 
 #endif /* SCANNER_H */

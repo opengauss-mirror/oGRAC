@@ -934,7 +934,101 @@ status_t pl_parse_drop_type(sql_stmt_t *stmt, word_t *word)
     return OG_SUCCESS;
 }
 
-static status_t pl_bison_parse_create_function_core(sql_stmt_t *stmt, var_udo_t *obj, uint32 type,
+static uint16 pl_bison_make_create_option(bool32 replace, bool32 if_not_exists)
+{
+    uint16 create_option = 0;
+
+    if (replace) {
+        create_option |= CREATE_OR_REPLACE;
+    }
+
+    if (if_not_exists) {
+        create_option |= CREATE_IF_NOT_EXISTS;
+    }
+
+    return create_option;
+}
+
+static void pl_bison_copy_object_name(sql_stmt_t *stmt, name_with_owner *object_name, var_udo_t *obj)
+{
+    if (object_name->owner.str != NULL && object_name->owner.len > 0) {
+        obj->user = object_name->owner;
+        obj->user_explicit = OG_TRUE;
+    } else {
+        cm_str2text(stmt->session->curr_schema, &obj->user);
+        obj->user_explicit = OG_FALSE;
+    }
+
+    obj->name = object_name->name;
+    obj->pack = CM_NULL_TEXT;
+    obj->name_sensitive = OG_FALSE;
+    obj->pack_sensitive = OG_FALSE;
+}
+
+static void pl_bison_init_sql_text(text_t *text, sql_text_t *sql_text)
+{
+    /* subprogram_body keeps location metadata in sql_text_t while exposing text_t to grammar actions. */
+    *sql_text = *(sql_text_t *)text;
+}
+
+static status_t pl_bison_prepare_create_common(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
+    name_with_owner *object_name, uint32 type)
+{
+    pl_entity_t *pl_ctx = NULL;
+
+    OG_RETURN_IFERR(pl_init_compiler(stmt));
+    SQL_SET_IGNORE_PWD(stmt->session);
+    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+
+    pl_ctx = (pl_entity_t *)stmt->pl_context;
+    pl_bison_copy_object_name(stmt, object_name, &pl_ctx->def);
+    pl_ctx->create_def->create_option = pl_bison_make_create_option(replace, if_not_exists);
+    pl_ctx->pl_type = type;
+    plc_diag_ctx_type(stmt->context, type);
+
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_compile_create_from_current_lex(sql_stmt_t *stmt, var_udo_t *obj, uint32 type, text_t *source)
+{
+    plc_desc_t desc = { 0 };
+    word_t word = { 0 };
+    status_t compl_ret;
+    pl_entity_t *pl_ctx = stmt->pl_context;
+
+    pl_prepare_compile_desc(&desc, stmt, obj, type);
+    compl_ret = plc_compile(stmt, &desc, &word);
+    if (compl_ret != OG_SUCCESS) {
+        stmt->pl_failed = OG_TRUE;
+        pl_ctx->create_def->compl_result = OG_FALSE;
+    } else {
+        if (type == PL_TRIGGER) {
+            reset_tls_plc_error();
+        }
+        cm_reset_error();
+        pl_ctx->create_def->compl_result = OG_TRUE;
+    }
+
+    if (type == PL_TRIGGER) {
+        OG_RETURN_IFERR(pl_check_trigger_create_priv(stmt, obj));
+    }
+
+    return pl_record_source(stmt, pl_ctx, source);
+}
+
+static status_t pl_bison_compile_create_body(sql_stmt_t *stmt, var_udo_t *obj, uint32 type, text_t *body, text_t *source)
+{
+    sql_text_t body_text = { 0 };
+    status_t status;
+
+    pl_bison_init_sql_text(body, &body_text);
+    OG_RETURN_IFERR(lex_push(stmt->session->lex, &body_text));
+    status = pl_bison_compile_create_from_current_lex(stmt, obj, type, source);
+    lex_pop(stmt->session->lex);
+    return status;
+}
+
+static status_t pl_bison_parse_create_core(sql_stmt_t *stmt, var_udo_t *obj, uint32 type,
     galist_t *args, type_word_t *ret_type, text_t *body, text_t *source)
 {
     plc_desc_t desc = { 0 };
@@ -952,6 +1046,118 @@ static status_t pl_bison_parse_create_function_core(sql_stmt_t *stmt, var_udo_t 
     }
 
     return pl_record_source(stmt, pl_ctx, source);
+}
+
+status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, text_t *body)
+{
+    pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
+    plc_desc_t desc = { 0 };
+
+    desc.type = PL_PROCEDURE;
+    desc.obj = &entity->def;
+    desc.entity = entity;
+
+    if (plc_bison_compile(stmt, &desc, args, NULL, body) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (g_tls_plc_error.plc_cnt == 0) {
+        reset_tls_plc_error();
+    }
+    return OG_SUCCESS;
+}
+
+static void pl_bison_init_object_word(pl_entity_t *entity, word_t *word)
+{
+    word->type = WORD_TYPE_VARIANT;
+    word->text.value = entity->def.name;
+    word->loc.line = 1;
+    word->loc.column = 1;
+}
+
+static status_t pl_bison_compile_stored_native_body(sql_stmt_t *stmt, text_t *body)
+{
+    pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
+    plc_desc_t desc = { 0 };
+    word_t word = { 0 };
+    sql_text_t body_text = { 0 };
+    status_t status;
+
+    pl_bison_init_object_word(entity, &word);
+    pl_prepare_compile_desc(&desc, stmt, &entity->def, entity->pl_type);
+    pl_bison_init_sql_text(body, &body_text);
+
+    OG_RETURN_IFERR(lex_push(stmt->session->lex, &body_text));
+    status = plc_compile(stmt, &desc, &word);
+    lex_pop(stmt->session->lex);
+    if (status != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (g_tls_plc_error.plc_cnt == 0) {
+        reset_tls_plc_error();
+    }
+    return OG_SUCCESS;
+}
+
+status_t pl_bison_compile_stored_body_source(sql_stmt_t *stmt, text_t *program_body, text_t *stored_body)
+{
+    pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
+
+    /*
+     * SYS_PROC stores PL source after the object name.  When raw_parser() reloads
+     * that fragment, dispatch by the existing entity type instead of expecting a
+     * complete CREATE statement.
+     */
+    switch (entity->pl_type) {
+        case PL_PROCEDURE:
+            if (program_body == NULL) {
+                OG_THROW_ERROR(ERR_PL_SYNTAX_ERROR_FMT, "procedure body expected");
+                return OG_ERROR;
+            }
+            return pl_bison_compile_procedure_source(stmt, NULL, program_body);
+        case PL_PACKAGE_SPEC:
+        case PL_PACKAGE_BODY:
+        case PL_TYPE_SPEC:
+        case PL_TYPE_BODY:
+        case PL_TRIGGER:
+            return pl_bison_compile_stored_native_body(stmt, stored_body);
+        default:
+            OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "compile", "stored PLSQL source");
+            return OG_ERROR;
+    }
+}
+
+status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
+    name_with_owner *proc_name, galist_t *args, text_t *body, text_t *source)
+{
+    uint16 create_option = 0;
+    uint32 type;
+    pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
+
+    SQL_SET_IGNORE_PWD(stmt->session);
+    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
+
+    stmt->context->type = OGSQL_TYPE_CREATE_PROC;
+    type = PL_PROCEDURE;
+
+    if (replace) {
+        create_option |= CREATE_OR_REPLACE;
+    }
+
+    if (if_not_exists) {
+        create_option |= CREATE_IF_NOT_EXISTS;
+    }
+
+    if (proc_name->owner.len > 0) {
+        pl_ctx->def.user = proc_name->owner;
+    } else {
+        cm_str2text(stmt->session->curr_schema, &pl_ctx->def.user);
+    }
+    pl_ctx->def.name = proc_name->name;
+
+    pl_ctx->create_def->create_option = create_option;
+    pl_ctx->pl_type = type;
+
+    return pl_bison_parse_create_core(stmt, &pl_ctx->def, type, args, NULL, body, source);
 }
 
 status_t pl_bison_parse_create_function(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
@@ -985,7 +1191,81 @@ status_t pl_bison_parse_create_function(sql_stmt_t *stmt, bool32 replace, bool32
     pl_ctx->create_def->create_option = create_option;
     pl_ctx->pl_type = type;
 
-    return pl_bison_parse_create_function_core(stmt, &pl_ctx->def, type, args, ret_type, body, source);
+    return pl_bison_parse_create_core(stmt, &pl_ctx->def, type, args, ret_type, body, source);
+}
+
+status_t pl_bison_parse_create_package(sql_stmt_t *stmt, bool32 replace, bool32 is_body, bool32 if_not_exists,
+    name_with_owner *pkg_name, text_t *body, text_t *source)
+{
+    uint32 type = is_body ? PL_PACKAGE_BODY : PL_PACKAGE_SPEC;
+    pl_entity_t *pl_ctx = NULL;
+
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
+        OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "create package");
+        return OG_ERROR;
+    }
+#endif
+    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, pkg_name, type));
+    pl_ctx = (pl_entity_t *)stmt->pl_context;
+    OG_RETURN_IFERR(pl_check_packname_validity(&pl_ctx->def, type));
+
+    return pl_bison_compile_create_body(stmt, &pl_ctx->def, type, body, source);
+}
+
+status_t pl_bison_parse_create_type(sql_stmt_t *stmt, bool32 replace, bool32 is_body, bool32 if_not_exists,
+    name_with_owner *type_name, bool32 force, text_t *body, text_t *source)
+{
+    uint32 type = is_body ? PL_TYPE_BODY : PL_TYPE_SPEC;
+    pl_entity_t *pl_ctx = NULL;
+
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
+        OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "create type");
+        return OG_ERROR;
+    }
+#endif
+    if (is_body) {
+        stmt->context->type = OGSQL_TYPE_CREATE_TYPE_BODY;
+        OG_THROW_ERROR(ERR_PL_UNSUPPORT);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, type_name, type));
+    pl_ctx = (pl_entity_t *)stmt->pl_context;
+    if (force) {
+        pl_ctx->create_def->create_option |= CREATE_TYPE_FORCE;
+    }
+
+    return pl_bison_compile_create_body(stmt, &pl_ctx->def, type, body, source);
+}
+
+status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
+    name_with_owner *trig_name, text_t *body, text_t *source)
+{
+    word_t word = { 0 };
+    sql_text_t body_text = { 0 };
+    status_t status;
+    pl_entity_t *pl_ctx = NULL;
+
+    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, trig_name, PL_TRIGGER));
+    pl_ctx = (pl_entity_t *)stmt->pl_context;
+
+    pl_bison_init_sql_text(body, &body_text);
+    OG_RETURN_IFERR(lex_push(stmt->session->lex, &body_text));
+    status = pl_parse_trigger_desc(stmt, &pl_ctx->def, &word);
+    if (status == OG_SUCCESS) {
+        status = pl_bison_compile_create_from_current_lex(stmt, &pl_ctx->def, PL_TRIGGER, source);
+    }
+    lex_pop(stmt->session->lex);
+
+    if (status != OG_SUCCESS) {
+        sql_check_user_priv(stmt, &pl_ctx->def.user);
+        OG_THROW_ERROR(ERR_INSUFFICIENT_PRIV);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 status_t pl_init_compiler(sql_stmt_t *stmt)

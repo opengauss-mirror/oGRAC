@@ -1894,7 +1894,8 @@ static status_t og_parse_createdb_user(sql_stmt_t *stmt, knl_database_def_t *def
     user_name.str = user->user_name;
     user_name.len = strlen(user->user_name);
     if (!cm_text_str_equal(&user_name, "SYS")) {
-        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "user name SYS expected");
+        OG_SRC_THROW_ERROR_EX(user->user_loc, ERR_SQL_SYNTAX_ERROR,
+            "user name SYS expected but %s found", user->display_name);
         return OG_ERROR;
     }
 
@@ -2057,6 +2058,8 @@ static status_t og_parse_createdb_instance(sql_stmt_t *stmt, knl_database_def_t 
     for (uint32 i = 0; i < node_list->count; i++) {
         inode = (createdb_instance_node*)cm_galist_get(node_list, i);
         if (inode->id != i) {
+            OG_SRC_THROW_ERROR_EX(inode->loc, ERR_INVALID_DATABASE_DEF,
+                "instance number error, '%u' expected", i);
             return OG_ERROR;
         }
 
@@ -2100,7 +2103,29 @@ static status_t og_parse_createdb_instance(sql_stmt_t *stmt, knl_database_def_t 
     return OG_SUCCESS;
 }
 
-status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, char *db_name, galist_t *db_opts)
+static status_t og_init_default_database_node(sql_stmt_t *stmt, knl_database_def_t *db_def)
+{
+    dtc_node_def_t *node = NULL;
+
+    if (cm_galist_new(&db_def->nodes, sizeof(dtc_node_def_t), (pointer_t *)&node) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    cm_galist_init(&node->logfiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&node->undo_space.datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&node->swap_space.datafiles, stmt->context, sql_alloc_mem);
+    cm_galist_init(&node->temp_undo_space.datafiles, stmt->context, sql_alloc_mem);
+    node->undo_space.name = g_undo;
+    node->undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_DEFAULT;
+    node->swap_space.name = g_swap;
+    node->swap_space.type = SPACE_TYPE_TEMP | SPACE_TYPE_DEFAULT | SPACE_TYPE_SWAP;
+    node->temp_undo_space.name = g_temp_undo;
+    node->temp_undo_space.type = SPACE_TYPE_TEMP | SPACE_TYPE_DEFAULT | SPACE_TYPE_UNDO;
+    return OG_SUCCESS;
+}
+
+status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, char *db_name, galist_t *db_opts,
+    bool32 clustered)
 {
     status_t status;
     archive_mode_t arch_mode = ARCHIVE_LOG_OFF;
@@ -2113,7 +2138,7 @@ status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, ch
     OG_RETURN_IFERR(status);
     db_def = *def;
 
-    stmt->context->type = OGSQL_TYPE_CREATE_CLUSTERED_DATABASE;
+    stmt->context->type = clustered ? OGSQL_TYPE_CREATE_CLUSTERED_DATABASE : OGSQL_TYPE_CREATE_DATABASE;
 
     cm_galist_init(&db_def->ctrlfiles, stmt->context, sql_alloc_mem);
     cm_galist_init(&db_def->nodes, stmt->context, sql_alloc_mem);
@@ -2133,12 +2158,15 @@ status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, ch
     db_def->temp_undo_space.type = SPACE_TYPE_UNDO | SPACE_TYPE_TEMP | SPACE_TYPE_DEFAULT;
     db_def->sysaux_space.name = g_sysaux;
     db_def->sysaux_space.type = SPACE_TYPE_SYSAUX | SPACE_TYPE_DEFAULT;
-    db_def->max_instance = OG_DEFAULT_INSTANCE;
+    db_def->max_instance = clustered ? OG_DEFAULT_INSTANCE : 1;
+    if (!clustered) {
+        OG_RETURN_IFERR(og_init_default_database_node(stmt, db_def));
+    }
 
     db_def->name.str = db_name;
     db_def->name.len = strlen(db_name);
 
-    for (uint32 i = 0; i < db_opts->count; i++) {
+    for (uint32 i = 0; db_opts != NULL && i < db_opts->count; i++) {
         opt = (createdb_opt*)cm_galist_get(db_opts, i);
 
         switch (opt->type) {
@@ -2205,7 +2233,7 @@ status_t og_parse_create_database(sql_stmt_t *stmt, knl_database_def_t **def, ch
     }
 
     db_def->arch_mode = arch_mode;
-    status = sql_set_database_default(stmt, db_def, true);
+    status = sql_set_database_default(stmt, db_def, clustered);
     OG_RETURN_IFERR(status);
 
     return dtc_verify_database_def(stmt, db_def);

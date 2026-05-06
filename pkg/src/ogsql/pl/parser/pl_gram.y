@@ -90,7 +90,7 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
 %type <node> assign_var
 %type <text> expr_until_semi expr_until_then decl_rec_defval_expr
 %type <type> decl_datatype
-%type <str> decl_varname
+%type <str> decl_varname opt_block_end_name
 %type <boolean> decl_notnull
 %type <list> record_attr_list
 %type <record_attr> record_attr
@@ -289,10 +289,11 @@ pl_block:
                         compiler->body = line;
                     }
                 }
-            proc_sect K_END T_WORD ';'
+            proc_sect K_END opt_block_end_name ';'
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    if (strncmp($6.ident, compiler->obj->name.str, compiler->obj->name.len) != 0) {
+                    if ($6 != NULL && (strlen($6) != compiler->obj->name.len ||
+                        strncmp($6, compiler->obj->name.str, compiler->obj->name.len) != 0)) {
                         parser_yyerror("Undefined symbol");
                     }
                     pl_line_ctrl_t *line = NULL;
@@ -301,6 +302,11 @@ pl_block:
                     plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END, (pl_line_ctrl_t **)&line);
                     begin_line->end = line;
                 }
+        ;
+
+opt_block_end_name:
+            T_WORD                                      { $$ = $1.ident; }
+            | /* EMPTY */                               { $$ = NULL; }
         ;
 
 proc_sect:
@@ -324,9 +330,21 @@ label_stmts:
 label_stmt:
             stmt_assign
             | stmt_return
+            | stmt_null
             | stmt_if
                 {
                     /* todo: g_plc_compile_lines_map里其余语句 */
+                }
+        ;
+
+stmt_null:
+            K_NULL ';'
+                {
+                    pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    pl_line_ctrl_t *line = NULL;
+                    if (plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_NULL, &line) != OG_SUCCESS) {
+                        parser_yyerror("compile null failed");
+                    }
                 }
         ;
 

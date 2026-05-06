@@ -1647,6 +1647,61 @@ static status_t pl_bison_compile_func_desc(pl_compiler_t *compiler, text_t *name
     return OG_SUCCESS;
 }
 
+static status_t pl_bison_compile_proc_desc(pl_compiler_t *compiler, text_t *name, galist_t *args, procedure_t *proc)
+{
+    OG_RETURN_IFERR(plc_init_galist(compiler, &proc->desc.params));
+    if (!dc_get_user_id(&compiler->stmt->session->knl_session, &compiler->obj->user, &proc->desc.uid)) {
+        OG_THROW_ERROR(ERR_USER_NOT_EXIST, T2S(&compiler->obj->user));
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_text2str(name, proc->desc.name, OG_NAME_BUFFER_SIZE));
+    proc->desc.lang_type = LANG_PLSQL;
+    proc->desc.pl_type = PL_PROCEDURE;
+    proc->desc.proc_id = compiler->proc_id;
+    proc->desc.is_function = OG_FALSE;
+
+    OG_RETURN_IFERR(plc_bison_compile_args(compiler, proc, args));
+    proc->desc.arg_count = proc->desc.params->count;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_compile_procedure(pl_compiler_t *compiler, galist_t *args, text_t *body)
+{
+    procedure_t *proc = NULL;
+    compiler->type = PL_PROCEDURE;
+    galist_t *decls = NULL;
+    galist_t *type_decls = NULL;
+    text_t *name = &compiler->obj->name;
+    pl_entity_t *entity = compiler->entity;
+    status_t status;
+
+    OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(procedure_t), (void **)&proc));
+    OG_RETURN_IFERR(plc_init_galist(compiler, &decls));
+    OG_RETURN_IFERR(plc_init_galist(compiler, &type_decls));
+    compiler->type_decls = type_decls;
+    compiler->decls = decls;
+
+    OG_RETURN_IFERR(pl_bison_compile_proc_desc(compiler, name, args, proc));
+    compiler->params = proc->desc.params;
+    OG_RETURN_IFERR(plc_decl_insert_params(compiler, decls, proc->desc.params));
+
+    if (compiler->root_type == PL_PROCEDURE) {
+        compiler->step = PL_COMPILE_AFTER_DECL;
+        compiler->proc = proc;
+    }
+
+    status = pl_parser(compiler->stmt, body);
+    proc->body = (void *)compiler->body;
+    entity->procedure = proc;
+    OG_RETURN_IFERR(status);
+    OG_RETURN_IFERR(plc_verify_label(compiler));
+    compiler->body = NULL;
+    compiler->last_line = NULL;
+
+    return OG_SUCCESS;
+}
+
 static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *args, type_word_t *ret_type,
     text_t *body)
 {
@@ -1747,11 +1802,22 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
 
     set_inter_plc_cnt();
     plc_set_tls_plc_error();
-    set_inter_plc_cnt();
-    plc_set_tls_plc_error();
 
-    /* todo: anonymous block, trigger, procedure, package, type 语法跟function类似 */
-    status = plc_bison_compile_function(&compiler, args, ret_type, body);
+    switch (desc->type) {
+        case PL_FUNCTION:
+            status = plc_bison_compile_function(&compiler, args, ret_type, body);
+            break;
+
+        case PL_PROCEDURE:
+            status = plc_bison_compile_procedure(&compiler, args, body);
+            break;
+
+        default:
+            OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "compile", "bison PLSQL type");
+            status = OG_ERROR;
+            break;
+    }
+
     if (status != OG_SUCCESS) {
         plc_set_compiling_errors(stmt, obj);
     } else {

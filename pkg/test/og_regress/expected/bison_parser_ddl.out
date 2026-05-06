@@ -1,0 +1,884 @@
+
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> 
+SQL> drop trigger if exists bison_ddl_trig_stmt;
+
+Succeed.
+
+SQL> drop trigger if exists bison_ddl_trig;
+
+Succeed.
+
+SQL> drop package body if exists bison_ddl_pkg_if;
+
+Succeed.
+
+SQL> drop package if exists bison_ddl_pkg_if;
+
+Succeed.
+
+SQL> drop package body if exists bison_ddl_pkg;
+
+Succeed.
+
+SQL> drop package if exists bison_ddl_pkg;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type_arr force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type_tab force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type_force force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type force;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func_if;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func_args;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func_empty_args;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_if;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_modes;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_args;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_empty_args;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc;
+
+Succeed.
+
+SQL> drop sequence if exists bison_ddl_seq_flags;
+
+Succeed.
+
+SQL> drop sequence if exists sys.bison_ddl_seq_schema;
+
+Succeed.
+
+SQL> drop sequence if exists bison_ddl_seq;
+
+Succeed.
+
+SQL> drop sequence if exists bison_ddl_seq_empty;
+
+Succeed.
+
+SQL> drop user if exists bison_ddl_user cascade;
+
+Succeed.
+
+SQL> drop user if exists bison_ddl_user cascade;
+
+Succeed.
+
+SQL> drop tenant if exists bison_ddl_tenant cascade;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_auto_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_comp_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_hash_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_part_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_tab_renamed;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_tab;
+
+Succeed.
+
+SQL> 
+SQL> create or replace profile bison_ddl_profile limit sessions_per_user 1;
+
+Succeed.
+
+SQL> drop profile bison_ddl_profile;
+
+Succeed.
+
+SQL> 
+SQL> create table bison_ddl_tab(id int, val int);
+
+Succeed.
+
+SQL> 
+SQL> alter table bison_ddl_tab add column txt varchar(20) default 'x';
+
+Succeed.
+
+SQL> alter table bison_ddl_tab add (extra int, flag int default 0);
+
+Succeed.
+
+SQL> alter table bison_ddl_tab modify (extra bigint);
+
+Succeed.
+
+SQL> alter table bison_ddl_tab add constraint bison_ddl_ck check(id >= 0);
+
+Succeed.
+
+SQL> alter table bison_ddl_tab disable novalidate constraint bison_ddl_ck;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab enable validate constraint bison_ddl_ck;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab rename constraint bison_ddl_ck to bison_ddl_ck_new;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab drop constraint bison_ddl_ck_new;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab add constraint bison_ddl_uk unique(val);
+
+Succeed.
+
+SQL> alter table bison_ddl_tab drop constraint bison_ddl_uk cascade;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab rename column val to value_col;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab rename column value_col to val;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab pctfree 20;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab initrans 2;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab storage (initial 64K next 64K maxsize 1M);
+
+OG-00101, Capability: INITIAL storage options not supported
+SQL> alter table bison_ddl_tab appendonly on;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab appendonly off;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab enable nologging;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab disable nologging;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab drop column flag;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab drop extra;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab rename to bison_ddl_tab_renamed;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab_renamed rename to bison_ddl_tab;
+
+Succeed.
+
+SQL> 
+SQL> create table bison_ddl_auto_tab(id bigint primary key auto_increment, val int);
+
+Succeed.
+
+SQL> alter table bison_ddl_auto_tab auto_increment = 10;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_auto_tab;
+
+Succeed.
+
+SQL> 
+SQL> create table bison_ddl_part_tab(id int, val int)
+  2 partition by range(id) (
+  3     partition p1 values less than (10),
+  4     partition p2 values less than (20)
+  5 );
+
+Succeed.
+
+SQL> 
+SQL> alter table bison_ddl_part_tab add partition p3 values less than (30);
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab modify partition p2 initrans 2;
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab modify partition p2 storage (initial 64K next 64K maxsize 1M);
+
+OG-00101, Capability: INITIAL storage options not supported
+SQL> alter table bison_ddl_part_tab enable row movement;
+
+OG-00613, Invalid operation,unsupported alter table operation
+SQL> alter table bison_ddl_part_tab disable row movement;
+
+OG-00613, Invalid operation,unsupported alter table operation
+SQL> alter table bison_ddl_part_tab enable partition p2 nologging;
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab disable partition p2 nologging;
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab truncate partition p1 reuse storage;
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab drop partition p3;
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab drop partition if exists p_not_exists;
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab split partition p2 at(15) into (partition p2a, partition p2b);
+
+Succeed.
+
+SQL> alter table bison_ddl_part_tab drop partition p2a;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_part_tab;
+
+Succeed.
+
+SQL> 
+SQL> create table bison_ddl_hash_tab(id int, val int)
+  2 partition by hash(id) partitions 4;
+
+Succeed.
+
+SQL> alter table bison_ddl_hash_tab coalesce partition;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_hash_tab;
+
+Succeed.
+
+SQL> 
+SQL> create table bison_ddl_comp_tab(id int, val int)
+  2 partition by hash(id) subpartition by hash(val)
+  3 (
+  4     partition cp1 (
+  5         subpartition cp11,
+  6         subpartition cp12
+  7     ),
+  8     partition cp2 (
+  9         subpartition cp21,
+ 10         subpartition cp22
+ 11     )
+ 12 );
+
+Succeed.
+
+SQL> 
+SQL> alter table bison_ddl_comp_tab enable subpartition cp21 nologging;
+
+Succeed.
+
+SQL> alter table bison_ddl_comp_tab disable subpartition cp21 nologging;
+
+Succeed.
+
+SQL> alter table bison_ddl_comp_tab truncate subpartition cp21 reuse storage;
+
+Succeed.
+
+SQL> alter table bison_ddl_comp_tab modify partition cp2 coalesce subpartition;
+
+Succeed.
+
+SQL> alter table bison_ddl_comp_tab modify partition cp2 add subpartition cp23;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_comp_tab;
+
+Succeed.
+
+SQL> 
+SQL> create procedure bison_ddl_proc as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create procedure bison_ddl_proc_empty_args() as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create or replace procedure bison_ddl_proc_args(
+  2     p_plain int,
+  3     p_default int default 1,
+  4     p_assign int := 2
+  5 ) authid current_user is
+  6 begin
+  7     null;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> 
+SQL> create procedure bison_ddl_proc_modes(
+  2     p_in in int,
+  3     p_out out int,
+  4     p_io in out int
+  5 ) is
+  6 begin
+  7     p_out := p_in;
+  8     p_io := p_in;
+  9 end;
+ 10 /
+
+Succeed.
+
+SQL> 
+SQL> create procedure if not exists bison_ddl_proc_if as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create function bison_ddl_func return int as
+  2 begin
+  3     return 1;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create function bison_ddl_func_empty_args() return int is
+  2 begin
+  3     return 1;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create or replace function bison_ddl_func_args(
+  2     p_plain int,
+  3     p_default int default 1,
+  4     p_assign int := 2
+  5 ) return int is
+  6 begin
+  7     return p_plain;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> 
+SQL> create function if not exists bison_ddl_func_if return int as
+  2 begin
+  3     return 1;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create package bison_ddl_pkg as
+  2     procedure p;
+  3     function f return int;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create package body bison_ddl_pkg as
+  2     procedure p as
+  3     begin
+  4         null;
+  5     end;
+  6 
+  7     function f return int as
+  8     begin
+  9         return 1;
+ 10     end;
+ 11 end;
+ 12 /
+
+Succeed.
+
+SQL> 
+SQL> create or replace package bison_ddl_pkg as
+  2     procedure p;
+  3     function f return int;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> create or replace package body bison_ddl_pkg as
+  2     procedure p as
+  3     begin
+  4         null;
+  5     end;
+  6 
+  7     function f return int as
+  8     begin
+  9         return 1;
+ 10     end;
+ 11 end;
+ 12 /
+
+Succeed.
+
+SQL> 
+SQL> create package if not exists bison_ddl_pkg_if as
+  2     procedure p;
+  3 end;
+  4 /
+
+Succeed.
+
+SQL> 
+SQL> create package body if not exists bison_ddl_pkg_if as
+  2     procedure p as
+  3     begin
+  4         null;
+  5     end;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> 
+SQL> create type bison_ddl_type as object(id int);
+  2 /
+
+Succeed.
+
+SQL> 
+SQL> create or replace type bison_ddl_type force as object(id int, val int);
+  2 /
+
+Succeed.
+
+SQL> 
+SQL> create type if not exists bison_ddl_type_force force as object(id int, val int);
+  2 /
+
+Succeed.
+
+SQL> 
+SQL> create type bison_ddl_type_tab is table of int;
+  2 /
+
+Succeed.
+
+SQL> 
+SQL> create type bison_ddl_type_arr is varray(3) of bison_ddl_type_tab;
+  2 /
+
+Succeed.
+
+SQL> 
+SQL> create trigger bison_ddl_trig
+  2 before insert on bison_ddl_tab
+  3 for each row
+  4 begin
+  5     null;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> 
+SQL> create or replace trigger bison_ddl_trig
+  2 before insert on bison_ddl_tab
+  3 for each row
+  4 begin
+  5     null;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> 
+SQL> create trigger if not exists bison_ddl_trig_stmt
+  2 after update on bison_ddl_tab
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> 
+SQL> alter trigger bison_ddl_trig disable;
+
+Succeed.
+
+SQL> alter trigger bison_ddl_trig enable;
+
+Succeed.
+
+SQL> alter trigger bison_ddl_trig_stmt disable;
+
+Succeed.
+
+SQL> alter trigger bison_ddl_trig_stmt enable;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab disable all triggers;
+
+Succeed.
+
+SQL> alter table bison_ddl_tab enable all triggers;
+
+Succeed.
+
+SQL> 
+SQL> create sequence bison_ddl_seq_empty;
+
+Succeed.
+
+SQL> create sequence sys.bison_ddl_seq_schema;
+
+Succeed.
+
+SQL> alter sequence sys.bison_ddl_seq_schema restart;
+
+Succeed.
+
+SQL> create sequence bison_ddl_seq increment by 2 minvalue 1 maxvalue 100 start with 10 cache 20 cycle order;
+
+Succeed.
+
+SQL> alter sequence bison_ddl_seq increment by +3 minvalue 1 maxvalue 200 cache 10 nocycle noorder;
+
+Succeed.
+
+SQL> alter sequence bison_ddl_seq restart start with 50;
+
+Succeed.
+
+SQL> create sequence bison_ddl_seq_flags increment by -1 nominvalue nomaxvalue nocache nocycle noorder;
+
+Succeed.
+
+SQL> alter sequence bison_ddl_seq_flags restart;
+
+Succeed.
+
+SQL> 
+SQL> create profile bison_ddl_profile limit
+  2     sessions_per_user 10
+  3     password_life_time 30
+  4     password_reuse_time 10
+  5     password_reuse_max 5
+  6     password_min_len 8;
+
+Succeed.
+
+SQL> create or replace profile bison_ddl_profile limit
+  2     failed_login_attempts default
+  3     password_lock_time unlimited;
+
+Succeed.
+
+SQL> alter profile bison_ddl_profile limit
+  2     failed_login_attempts 5
+  3     password_grace_time default
+  4     sessions_per_user unlimited;
+
+Succeed.
+
+SQL> drop profile bison_ddl_profile;
+
+Succeed.
+
+SQL> 
+SQL> create user bison_ddl_user identified by 'Bison_ddl_123'
+  2     password expire account unlock profile default permanent;
+
+Succeed.
+
+SQL> alter user bison_ddl_user identified by 'Bison_ddl_456';
+
+Succeed.
+
+SQL> alter user bison_ddl_user identified by 'Bison_ddl_789' replace 'Bison_ddl_456' account lock;
+
+Succeed.
+
+SQL> alter user bison_ddl_user account unlock password expire profile default;
+
+Succeed.
+
+SQL> 
+SQL> -- ALTER TENANT requires environment-specific tablespaces, keep its bison syntax samples non-executed here.
+SQL> create tenant bison_ddl_tenant tablespaces (bison_ddl_ts1) default tablespace bison_ddl_ts1;
+
+OG-00780, The tablespace BISON_DDL_TS1 does not exist.
+SQL> alter tenant bison_ddl_tenant add tablespaces (bison_ddl_ts2);
+
+OG-01394, The tenant BISON_DDL_TENANT does not exist.
+SQL> alter tenant bison_ddl_tenant default tablespace bison_ddl_ts2;
+
+OG-01394, The tenant BISON_DDL_TENANT does not exist.
+SQL> drop tenant if exists bison_ddl_tenant cascade;
+
+Succeed.
+
+SQL> 
+SQL> -- CREATE/DROP DATABASE and temporary tablespace syntax is environment-sensitive or unsupported.
+SQL> -- Keep these samples here to cover the bison grammar paths without executing them in regress.
+SQL> create database bison_ddl_db;
+
+OG-00705, Invalid database def because TEMP_UNDO tablespace of instances %d is not specific
+SQL> create database clustered bison_ddl_db;
+
+OG-00705, Invalid database def because the number of instances is invalid
+SQL> drop database bison_ddl_db;
+
+OG-00101, Capability: DROP DATABASE not supported
+SQL> create temporary tablespace bison_ddl_temp_ts tempfile 'bison_ddl_temp_ts.dbf';
+
+OG-00130, Operation create temporary lead  is not supported on temporary tablespace
+SQL> 
+SQL> ALTER FUNCTION is unsupported by the native parser; bison keeps the same capability error.
+
+OG-00101, Capability: alter function not supported
+SQL> alter function bison_ddl_func;
+
+OG-00101, Capability: alter function not supported
+SQL> 
+SQL> alter database set time_zone='+08:00';
+
+Succeed.
+
+SQL> alter database set time_zone='+00:00';
+
+Succeed.
+
+SQL> alter database enable_logic_replication on;
+
+Succeed.
+
+SQL> alter database enable_logic_replication off;
+
+Succeed.
+
+SQL> 
+SQL> drop trigger if exists bison_ddl_trig_stmt;
+
+Succeed.
+
+SQL> drop trigger if exists bison_ddl_trig;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type_arr force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type_tab force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type_force force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_type force;
+
+Succeed.
+
+SQL> drop package body if exists bison_ddl_pkg_if;
+
+Succeed.
+
+SQL> drop package if exists bison_ddl_pkg_if;
+
+Succeed.
+
+SQL> drop package body if exists bison_ddl_pkg;
+
+Succeed.
+
+SQL> drop package if exists bison_ddl_pkg;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func_if;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func_args;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func_empty_args;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_func;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_if;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_modes;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_args;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc_empty_args;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_proc;
+
+Succeed.
+
+SQL> drop sequence if exists bison_ddl_seq_flags;
+
+Succeed.
+
+SQL> drop sequence if exists sys.bison_ddl_seq_schema;
+
+Succeed.
+
+SQL> drop sequence if exists bison_ddl_seq;
+
+Succeed.
+
+SQL> drop sequence if exists bison_ddl_seq_empty;
+
+Succeed.
+
+SQL> drop user if exists bison_ddl_user cascade;
+
+Succeed.
+
+SQL> drop user if exists bison_ddl_user cascade;
+
+Succeed.
+
+SQL> drop tenant if exists bison_ddl_tenant cascade;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_auto_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_comp_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_hash_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_part_tab;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_tab_renamed;
+
+Succeed.
+
+SQL> drop table if exists bison_ddl_tab;
+
+Succeed.
+
+SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
