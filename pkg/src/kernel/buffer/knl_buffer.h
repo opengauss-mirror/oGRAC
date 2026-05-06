@@ -162,18 +162,19 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 buf_pool_id;
     volatile uint8 in_ckpt;
     volatile uint8 lock_mode;  // used only in DTC, 0: Null, 1: Shared lock, 2: Exclusive lock
+    volatile uint8 gbp_lock_mode;
 
     volatile uint8 is_edp;  // used only in DTC, 0: no, 1: yes, this page is old version, can be discard only after
                             // latest version in other instance is cleaned. Not dirty, but stale.
-    volatile bool8 force_request;  // force to request page from remote
-    volatile uint8 remote_access;  // remote access statistics
-    volatile uint8 transfer_status;   // page transfer status, used only in TDC
+    volatile bool8 force_request;    // force to request page from remote
+    volatile uint8 remote_access;    // remote access statistics
+    volatile uint8 transfer_status;  // page transfer status, used only in TDC
 
     volatile uint16 ref_num;
-    volatile uint16 touch_number;   // touch number for LRU
+    volatile uint16 touch_number;  // touch number for LRU
 
     page_id_t page_id;
-    date_t access_time;             // last access time
+    date_t access_time;  // last access time
 
     uint32 curr_node_idx;
     log_point_t trunc_point;
@@ -199,7 +200,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
 
     page_head_t *page;
     struct st_buf_ctrl *compress_group[PAGE_GROUP_COUNT];
-    knl_scn_t edp_scn;   // set when become edp
+    knl_scn_t edp_scn;  // set when become edp
 } buf_ctrl_t;
 
 typedef struct st_buf_bucket {

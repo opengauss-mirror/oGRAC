@@ -308,6 +308,8 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     uint64 lock_offset = shmem_page_meta->lock_ptr;
     status_t ret;
 
+    ctrl->gbp_lock_mode = mode;
+
     // to do, if mode is S, not lock; if mode is X, need lock
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
         // Acquire remote global lock
@@ -345,6 +347,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
             ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
         // Release and free global lock
         ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         if (ret != OG_SUCCESS) {
             return ret;
         }
@@ -397,6 +400,7 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
                        df->ctrl->name);
         // if mode is X, no need to unlock, unlock after write finished
         ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         if (ret != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
             return ret;
@@ -459,7 +463,8 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
     // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
     OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u]: Success to copy page to gbp", ctrl->page_id.file, ctrl->page_id.page);
     
-    ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, ctrl->lock_mode);
+    ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, ctrl->gbp_lock_mode);
+    ctrl->gbp_lock_mode = DRC_LOCK_NULL;
     if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
         return ret;

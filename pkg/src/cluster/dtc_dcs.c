@@ -1295,6 +1295,7 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     OG_LOG_DEBUG_INF("[DCS][%u-%u]: Releasing exclusive lock after write", page_req->page_id.file,
                      page_req->page_id.page);
     drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
+    ctrl->gbp_lock_mode = DRC_LOCK_NULL;
 
     if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req->req_version, session, page_req->page_id)) {
         OG_LOG_RUN_ERR("[DCS][%u-%u]: reforming, owner transfer page failed, req_version=%llu, cur_version=%llu",

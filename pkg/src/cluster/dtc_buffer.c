@@ -168,6 +168,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL && ra->mode == LATCH_MODE_S) {
             status_t ret;
             ret = drc_gbp_distribute_unlock(session, ctrl->shmem_page_meta->lock_ptr, ctrl->page_id, ra->mode);
+            ctrl->gbp_lock_mode = DRC_LOCK_NULL;
             if (ret != OG_SUCCESS) {
                 return ret;
             }

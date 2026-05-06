@@ -821,6 +821,7 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
 
     // Release and free global lock
     ret = drc_gbp_distribute_unlock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
+    shmem_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
     if (ret != OG_SUCCESS) {
         return ret;
     }
@@ -1038,6 +1039,7 @@ static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_se
 
     // Release and free global lock
     ret = drc_gbp_distribute_unlock(session, lock_ptr, item->page_id, LATCH_MODE_X);
+    item->gbp_lock_mode = DRC_LOCK_NULL;
 
     // Return the free block to the caller.
     return item;
