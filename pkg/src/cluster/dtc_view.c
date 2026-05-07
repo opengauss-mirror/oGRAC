@@ -81,6 +81,17 @@ static status_t dtc_view_buffer_ctrl_open(knl_handle_t session, knl_cursor_t *cu
 
     return OG_SUCCESS;
 }
+
+static status_t dtc_view_gbp_buffer_ctrl_open(knl_handle_t session, knl_cursor_t *cursor)
+{
+    gbp_buf_ctrl_scan_t *scan = (gbp_buf_ctrl_scan_t *)cursor->page_buf;
+    cursor->rowid.vmid = 0;
+    cursor->rowid.vm_slot = 0;
+    cursor->rowid.vm_tag = 0;
+    scan->buf_set_id = 0;
+    scan->ctrl_id = 0;
+    return OG_SUCCESS;
+}
 // Colums defination of View
 knl_column_t g_converting_page_cnt_cols[] = {
     { 0, "ID", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
@@ -97,6 +108,24 @@ knl_column_t g_buffer_ctrl_cols[] = {
     { 5, "BA", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },             // page address
     { 6, "INST_ID", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
     // need to add other  information of buffer ctrl;
+};
+
+knl_column_t g_gbp_buffer_ctrl_cols[] = {
+    { 0, "ID", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 1, "ADDR", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 2, "POOL#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 3, "SLOT#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 4, "TS#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 5, "FILE#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 6, "DBABLK#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 7, "BA", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 8, "GBP_OWNER", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 9, "META_HEAD_LSN", 0, 0, OG_TYPE_BIGINT, sizeof(int64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 10, "REF_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 11, "TOUCH_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 12, "LOAD_STATUS", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 13, "IS_DIRTY", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 14, "LOCK_MODE", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
 };
 #define MAX_MES_TYPE_LEN 5
 #define MAX_MES_GROUP_ID 4
@@ -175,6 +204,12 @@ knl_column_t g_node_info_cols[] = {
 // COL_CNT of View
 #define CONVERTING_PAGE_CNT_COLS (ELEMENT_COUNT(g_converting_page_cnt_cols))
 #define BUFFER_CTRL_COLS (ELEMENT_COUNT(g_buffer_ctrl_cols))
+#define GBP_BUFFER_CTRL_COLS (ELEMENT_COUNT(g_gbp_buffer_ctrl_cols))
+
+typedef struct st_gbp_buf_ctrl_scan {
+    uint32 buf_set_id;
+    uint32 ctrl_id;
+} gbp_buf_ctrl_scan_t;
 #define MES_STAT_COLS (ELEMENT_COUNT(g_mes_stat_cols))
 #define MES_ELAPSED_COLS (ELEMENT_COUNT(g_mes_elapsed_cols))
 #define MES_QUEUE_COLS (ELEMENT_COUNT(g_mes_queue_cols))
@@ -1208,6 +1243,74 @@ static status_t dtc_view_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cursor
 
     return OG_SUCCESS;
 }
+
+static status_t dtc_view_gbp_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cursor)
+{
+    knl_session_t *session = (knl_session_t *)se;
+    gbp_buf_ctrl_scan_t *scan = (gbp_buf_ctrl_scan_t *)cursor->page_buf;
+    remote_buf_context_t *gbp = DRC_GBP_BUF_CTX;
+    row_assist_t ra;
+    char addr[ADDR_LEN];
+    uint32 id = (uint32)cursor->rowid.vmid;
+
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    while (scan->buf_set_id < gbp->buf_set_count) {
+        buf_set_t *set = &gbp->buf_set[scan->buf_set_id];
+        for (; scan->ctrl_id < set->hwm; scan->ctrl_id++) {
+            buf_ctrl_t *ctrl = &set->ctrls[scan->ctrl_id];
+            uint32 slot_idx = scan->ctrl_id;
+
+            if (ctrl->page == NULL || ctrl->load_status != (uint8)BUF_IS_LOADED) {
+                continue;
+            }
+
+            scan->ctrl_id++;
+            row_init(&ra, (char *)cursor->row, OG_MAX_ROW_SIZE, GBP_BUFFER_CTRL_COLS);
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)id));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)scan->buf_set_id));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)slot_idx));
+
+            uint32 ts_num = 0;
+            if (ctrl->page_id.file < OG_MAX_DATA_FILES) {
+                ts_num = session->kernel->db.datafiles[ctrl->page_id.file].space_id;
+            }
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ts_num));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->page_id.file));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->page_id.page));
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl->page));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+
+            uint32 gbp_owner = 255;
+            uint64 meta_head_lsn = 0;
+            if (ctrl->shmem_page_meta != NULL) {
+                gbp_owner = (uint32)ctrl->shmem_page_meta->claimed_owner;
+                meta_head_lsn = ctrl->shmem_page_meta->head_lsn;
+            }
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)gbp_owner));
+            OG_RETURN_IFERR(row_put_int64(&ra, (int64)meta_head_lsn));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->ref_num));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->touch_number));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->load_status));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->is_dirty));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->lock_mode));
+
+            cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+            cursor->rowid.vmid++;
+            return OG_SUCCESS;
+        }
+        scan->ctrl_id = 0;
+        scan->buf_set_id++;
+    }
+
+    cursor->eof = OG_TRUE;
+    return OG_SUCCESS;
+}
 /*
 Describtion of DTC view structure
 */
@@ -1222,6 +1325,12 @@ VW_DECL dtc_view_buffer_ctrl = { "SYS",
                                  g_buffer_ctrl_cols,
                                  dtc_view_buffer_ctrl_open,
                                  dtc_view_buffer_ctrl_fetch };
+VW_DECL dtc_view_gbp_buffer_ctrl = { "SYS",
+                                     "DV_GBP_BUFFER_CTRL",
+                                     GBP_BUFFER_CTRL_COLS,
+                                     g_gbp_buffer_ctrl_cols,
+                                     dtc_view_gbp_buffer_ctrl_open,
+                                     dtc_view_gbp_buffer_ctrl_fetch };
 VW_DECL dtc_view_mes_stat = {
     "SYS", "MES_STAT", MES_STAT_COLS, g_mes_stat_cols, dtc_view_mes_stat_open, dtc_view_mes_stat_fetch
 };
@@ -1254,6 +1363,8 @@ dynview_desc_t *vw_describe_dtc(uint32 id)
             return &dtc_view_converting_page_cnt;
         case DYN_VIEW_DTC_BUFFER_CTRL:
             return &dtc_view_buffer_ctrl;
+        case DYN_VIEW_GBP_BUFFER_CTRL:
+            return &dtc_view_gbp_buffer_ctrl;
         case DYN_VIEW_DTC_MES_STAT:
             return &dtc_view_mes_stat;
         case DYN_VIEW_DTC_MES_ELAPSED:

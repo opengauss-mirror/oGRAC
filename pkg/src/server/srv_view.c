@@ -7012,6 +7012,7 @@ knl_dynview_t g_dynamic_views[] = {
     { DYN_VIEW_CTRL_VERSION, vw_describe_local },
     { DYN_VIEW_LFN, vw_describe_local },
     { DYN_VIEW_LRPL_DETAIL, vw_describe_local },
+    { DYN_VIEW_GBP_BUFFER_CTRL, vw_describe_dtc },
 };
 
 knl_dynview_t g_dynamic_views_nomount[] = {
