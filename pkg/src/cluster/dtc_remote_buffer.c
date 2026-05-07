@@ -302,25 +302,13 @@ static inline status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl
     return OG_SUCCESS;
 }
 
-status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode)
+status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode, bool32 *is_load)
 {
-    // TODO: Here it might be more complicated, since it is not a spin_lock
-    // We need to treat the situation of waiting for lock.
-    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
     uint64 lock_offset = shmem_page_meta->lock_ptr;
     status_t ret;
 
-    uint8 gbp_owner_id = shmem_page_meta->claimed_owner;
-
-    if (gbp_owner_id != DCS_SELF_INSTID(session)) {
-        if (remote_sga->map_success[gbp_owner_id] != OG_TRUE) {
-            int ret = dtc_mmap_remote_data_buf(remote_sga, gbp_owner_id);
-            if (ret != UBSM_OK) {
-                OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node %u failed, ret: %d", gbp_owner_id, ret);
-            }
-        }
-    }
+    ctrl->gbp_lock_mode = mode;
 
     // to do, if mode is S, not lock; if mode is X, need lock
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
@@ -355,10 +343,44 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
 
     // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
     if (remote_head_lsn < ctrl->page->lsn) {
+        OG_LOG_RUN_ERR("[[DTC-GBP-COPY][%u-%u]: lsn check failed, remote page lsn(%llu), ctrl->page->lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
+        // Release and free global lock
+        ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+        if (ret != OG_SUCCESS) {
+            return ret;
+        }
+        return OG_ERROR;
+    }
+   
+    // there is occurs that page in gbp update, local ctrl->page is old so need to load from gbp again
+    if (remote_head_lsn > ctrl->page->lsn) {
+        *is_load = OG_TRUE;
         OG_LOG_RUN_WAR(
-            "[[DTC-GBP-COPY][%u-%u]: owner transfer page failed, invalid req->lsn(%llu), ctrl->page->lsn(%llu)",
-            ctrl->page_id.file, ctrl->page_id.page, ctrl->page->lsn, remote_head_lsn);
-        // TODO: when we find the page is invalid, unlock remote mate and return error
+            "[[DTC-LOCAL-PAGE-CHECK][%u-%u]: check local page, remote page lsn(%llu), local page lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode)
+{
+    remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    uint64 lock_offset = shmem_page_meta->lock_ptr;
+    status_t ret;
+
+    uint8 gbp_owner_id = shmem_page_meta->claimed_owner;
+
+    if (gbp_owner_id != DCS_SELF_INSTID(session)) {
+        if (remote_sga->map_success[gbp_owner_id] != OG_TRUE) {
+            int ret = dtc_mmap_remote_data_buf(remote_sga, gbp_owner_id);
+            if (ret != UBSM_OK) {
+                OG_LOG_RUN_ERR("[DRC]mmap remote data buf on node %u failed, ret: %d", gbp_owner_id, ret);
+            }
+        }
     }
 
     dcs_copy_page_from_shmem(session, ctrl);
@@ -376,18 +398,17 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         OG_LOG_RUN_WAR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
                        shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
                        df->ctrl->name);
-        // TODO: when we find the page is invalid, unlock remote mate and return error
-    }
-
-    // to do: Release global lock, if mode is X, no need to unlock, lock after write finished
-    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        // if mode is X, no need to unlock, unlock after write finished
         ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         if (ret != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
             return ret;
         }
+        return OG_ERROR;
     }
 
+    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
     // to do: dtc_update_lsn(session, remote_head_lsn), need to think how to set.
     // to do：dtc_update_scn(session, ctrl->scn); need to think how to set.
     dtc_update_lsn(session, remote_head_lsn);
@@ -404,6 +425,8 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
     buf_ctrl_t *ctrl = session->curr_page_ctrl;
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
     page_head_t *shmem_page_addr = ctrl->shmem_page_addr;
+    uint64 lock_offset = shmem_page_meta->lock_ptr;
+    status_t ret;
     uint8 curr_node_id = DCS_SELF_INSTID(session);
 
     // to do: check local ctrl page lsn and remote page lsn
@@ -439,6 +462,13 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
 
     // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
     OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u]: Success to copy page to gbp", ctrl->page_id.file, ctrl->page_id.page);
-
+    
+    ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, ctrl->gbp_lock_mode);
+    ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] failed to unlock shmem page, return", ctrl->page_id.file, ctrl->page_id.page);
+        return ret;
+    }
+    
     return OG_SUCCESS;
 }

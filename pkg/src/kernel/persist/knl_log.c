@@ -40,6 +40,7 @@
 #include "dtc_dmon.h"
 #include "dtc_database.h"
 #include "dtc_context.h"
+#include "dtc_remote_buffer.h"
 
 extern bool32 g_crc_verify;
 
@@ -1733,6 +1734,11 @@ void log_atomic_op_end(knl_session_t *session)
 
     if (session->changed_count > 0) {
         log_set_page_lsn(session, session->curr_lsn, session->curr_lfn);
+    }
+
+    // copy ctrl->page to gbp after write ctrl->page and log, and update remote page mate
+    if (session->kernel->attr.enable_ubsmem && session->curr_page_ctrl->shmem_page_meta != NULL) {
+        dtc_buf_try_store_to_gbp(session, session->curr_lsn);
     }
 
     group->size = 0;

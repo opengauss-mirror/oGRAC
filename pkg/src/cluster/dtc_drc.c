@@ -1233,6 +1233,7 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
         // At this point we want to make sure the requester who sent the request is still waiting on the shmem page and
         // will own the XLOCK on the shmem addr.
         drc_gbp_distribute_unlock(session, lock_ptr, *remote_page_id, LATCH_MODE_X);
+        session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         /* In the current process, the requester waits until the claim is completed
          * and the master sends a response back to the requester, before performing
          * read or write operations on the GBP page.
@@ -1242,6 +1243,7 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
         // else we will have to clean the requester and send it a fail msg to let it start over.
         drc_bitmap64_set(&requester_bits, converting_req->inst_id);
         drc_gbp_distribute_unlock(session, lock_ptr, *remote_page_id, converting_req->req_mode);
+        session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
     }
 
     uint32 count = buf_res->convert_q.count;
@@ -2061,6 +2063,7 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
         drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         return;
     }
 
@@ -2070,6 +2073,7 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
         drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         return;
     }
 
@@ -2079,6 +2083,7 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
         drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         return;
     }
 
@@ -7915,12 +7920,14 @@ status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *s
     remote_page_info_t out_shmem_page_meta;
     if (buf_shmem_evict(session, shmem_ctrl, &out_shmem_page_meta, list_locked) != OG_SUCCESS) {
         drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&ogx->global_buf_res.res_part_stat_lock[part_id]);
         DTC_DRC_DEBUG_INF("[DRC][%u-%u] failed to evict shmem page, return", page_id.file, page_id.page);
         return OG_ERROR;
     }
     drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+    session->curr_page_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
     reset_page_hot_stat(session, buf_res);  // set the buf_res to cold now
     // buf_res has the last valid copy by last writer of the remote page
     buf_res->claimed_owner = out_shmem_page_meta.claimed_owner;

@@ -27,6 +27,7 @@
 #include "cm_defs.h"
 #include "cm_thread.h"
 #include "knl_context.h"
+#include "knl_remote_buffer.h"
 #include "srv_instance.h"
 #include "pcr_heap.h"
 #include "pcr_heap_undo.h"
@@ -1276,6 +1277,9 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     master_shmem_page_meta.xlog_owner_node_timeline_id[0] = page_req->head.src_inst;
     master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
+    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
+    uint64 page_tail_lsn = ctrl->page->lsn;
+
     errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &master_shmem_page_meta,
                            sizeof(remote_page_info_t));
     knl_securec_check(err);
@@ -1283,12 +1287,15 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
     knl_securec_check(err);
 
-    // to do: lack of tail lsn copy
+    // tail lsn
+    err = memcpy_s(page_tail_lsn_addr, DEFAULT_PAGE_SIZE(session), &page_tail_lsn, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
 
     // Release global Lock
     OG_LOG_DEBUG_INF("[DCS][%u-%u]: Releasing exclusive lock after write", page_req->page_id.file,
                      page_req->page_id.page);
     drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
+    ctrl->gbp_lock_mode = DRC_LOCK_NULL;
 
     if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req->req_version, session, page_req->page_id)) {
         OG_LOG_RUN_ERR("[DCS][%u-%u]: reforming, owner transfer page failed, req_version=%llu, cur_version=%llu",
@@ -1954,6 +1961,8 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 // error handle logic
                 knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+                // release gdb_buf_ctrl latch, if no release, next transfer will be blocked in buf_alloc_ctrl
+                remote_buf_unlatch(session, result.gbp_buf_ctrl, OG_TRUE);
                 break;
             }
 
@@ -2355,7 +2364,9 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
                                                    &ack_from_owner_l);
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 // error handle logic here
-                knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE_GBP);
+                knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+                // release gdb_buf_ctrl latch, if no release, next transfer will be blocked in buf_alloc_ctrl
+                remote_buf_unlatch(session, result.gbp_buf_ctrl, OG_TRUE);
                 return ret;
             }
 
@@ -2368,7 +2379,7 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
                                                               &ack_to_requester);
             }
 
-            knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE_GBP);
+            knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 return ret;
             }
