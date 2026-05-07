@@ -154,21 +154,32 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
          * 3.always fetch this page in this node
          */
         bool32 is_load_from_gbp = false;
+        status_t ret;
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-            dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
+            ret = dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
+            }
+            OG_LOG_DEBUG_INF("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u,"
+                           "is_load_from_gbp: %d, mode: %u", ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
+                           (unsigned int)ra->options, is_load_from_gbp, ra->mode);
         }
 
         if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp) {
-            dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
-            OG_LOG_RUN_WAR("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u, is_load_from_gbp: %d",
-                           ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
-                           (unsigned int)ra->options, is_load_from_gbp);
+            ret = dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to load page from gbp.",
+                               ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
+            }
         }
-        
+
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL && ra->mode == LATCH_MODE_S) {
             status_t ret;
+            OG_LOG_RUN_INF("[DCS][%u-%u] dtc_buf_finish2 unlock shmem page, gbp_lock %u", ctrl->page_id.file,
+                ctrl->page_id.page, ctrl->gbp_lock_mode);
             ret = drc_gbp_distribute_unlock(session, ctrl->shmem_page_meta->lock_ptr, ctrl->page_id, ra->mode);
-            ctrl->gbp_lock_mode = DRC_LOCK_NULL;
             if (ret != OG_SUCCESS) {
                 return ret;
             }

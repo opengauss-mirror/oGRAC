@@ -38,6 +38,9 @@ extern "C" {
 status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode);
 status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode);
 
+void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly);
+bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
+
 status_t init_lock_comm_queue();
 void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
 

@@ -570,8 +570,10 @@ def _build_ogracd_configs(dp):
         "ARCHIVE_DEST_1": dp.archive_location,
         "MAX_ARCH_FILES_SIZE": dp.max_arch_files_size,
         "CLUSTER_ID": dp.cluster_id,
-        "_ENABLE_REMOTE_DISTRIBUTE_LOCK": "FALSE",
-        "_ENABLE_UBSMEM": "FALSE",
+        "_ENABLE_REMOTE_DISTRIBUTE_LOCK": "TRUE",
+        "_ENABLE_UBSMEM": "TRUE",
+        "_UB_PAGE_HOT_THRESHOLD": 100,
+        "_UB_PAGE_HOT_TIMEOUT": 2,
     }
 
     if dp.cluster_strict_check in ("FALSE", "TRUE"):

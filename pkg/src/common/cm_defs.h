@@ -615,6 +615,12 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_INDEX_RECYCLE_REUSE (uint32)172800000 /* MAXIMUM 48 hours */
 #define OG_MAX_INDEX_REBUILD_STORAGE (uint32)172800  /* MAXIMUM 48 hours */
 
+// for ub
+#define OG_MIN_UB_PAGE_HOT_THRESHOLD (int32)1
+#define OG_MAX_UB_PAGE_HOT_THRESHOLD (uint32)10000
+#define OG_MIN_UB_PAGE_HOT_TIMEOUT (uint32)1                // seconds
+#define OG_MAX_UB_PAGE_HOT_TIMEOUT (uint32)1000             // seconds
+
 /* time */
 #define OG_MONTH_PER_YEAR 12
 #define OG_SEC_PER_DAY 86400

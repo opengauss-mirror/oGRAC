@@ -130,10 +130,10 @@ status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_i
 {
     ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
         return OG_ERROR;
     }
-
+    OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] start to get lock address for offset: %p", lock);
     int ret;
     const char *lock_type;
     drc_lock_mode_e lock_mode = (mode == LATCH_MODE_S ? DRC_LOCK_SHARE : DRC_LOCK_EXCLUSIVE);
@@ -168,6 +168,7 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
 
     int ret;
     const char *lock_type;
+
     drc_lock_mode_e lock_mode = (mode == LATCH_MODE_S ? DRC_LOCK_SHARE : DRC_LOCK_EXCLUSIVE);
     ub_location_t lock_location = make_location((uint8)DCS_SELF_INSTID(session));
 
@@ -180,12 +181,12 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
     }
 
     if (ret != UB_LOCK_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC-LOCK] Failed to release %s lock for page (%u-%u):%d", lock_type, page_id.file,
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to release %s lock for page (%u-%u):%d", lock_type, page_id.file,
                        page_id.page, ret);
         return OG_ERROR;
     }
 
-    OG_LOG_RUN_INF("[DRC-LOCK] Success to release %s lock for page (%u-%u):%d", lock_type, page_id.file, page_id.page,
-                   ret);
+    OG_LOG_RUN_INF("[DRC-GBP-LOCK][%u-%u] Success to release %s lock for page: %d",
+                   page_id.file, page_id.page, lock_type, ret);
     return OG_SUCCESS;
 }

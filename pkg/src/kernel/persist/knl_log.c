@@ -29,6 +29,7 @@
 #include "cm_checksum.h"
 #include "cm_kmc.h"
 #include "knl_context.h"
+#include "knl_buffer_access.h"
 #include "repl_log_send.h"
 #include "knl_ctrl_restore.h"
 #include "knl_page.h"
@@ -41,6 +42,7 @@
 #include "dtc_database.h"
 #include "dtc_context.h"
 #include "dtc_remote_buffer.h"
+#include "dtc_remote_lock.h"
 
 extern bool32 g_crc_verify;
 
@@ -918,7 +920,7 @@ void log_proc(thread_t *thread)
 }
 
 // important: this function ensures clean read-only after set SCN
-static void log_reset_readonly(buf_ctrl_t *ctrl)
+static void log_reset_readonly(knl_session_t *session, buf_ctrl_t *ctrl)
 {
 #if !defined(__arm__) && !defined(__aarch64__)
     if (SECUREC_UNLIKELY(ctrl == NULL)) {
@@ -927,6 +929,14 @@ static void log_reset_readonly(buf_ctrl_t *ctrl)
 #endif
 
     ctrl->is_readonly = 0;
+
+    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+        remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+        ub_rw_lock_t *lock = (ub_rw_lock_t *)shmem_page_meta->lock_ptr;
+        ub_rw_lock_set_readonly(lock, OG_FALSE);
+        OG_LOG_RUN_INF("[GBP-BUF][%u-%u]clean readonly true, gbp_lock %d", ctrl->page_id.file,
+                       ctrl->page_id.page, ctrl->gbp_lock_mode);
+    }
 }
 
 static inline void log_calc_checksum(knl_session_t *session, page_head_t *page, uint32 checksum_level)
@@ -963,9 +973,18 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
         CM_MFENCE;
 #endif
         if (!DB_CLUSTER_NO_CMS) {
-            knl_panic(!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl));
+            if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+                OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u] update session lsn: %llu",
+                                 ctrl->page_id.file, ctrl->page_id.page, session->curr_lsn);
+            } else {
+                knl_panic(!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl));
+            }
         }
-        log_reset_readonly(ctrl);
+        // copy ctrl->page to gbp after write ctrl->page and log, and update remote page mate
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            dtc_buf_try_store_to_gbp(session, ctrl, session->curr_lsn);
+        }
+        log_reset_readonly(session, ctrl);
     }
 
     session->changed_count = 0;
@@ -1734,11 +1753,6 @@ void log_atomic_op_end(knl_session_t *session)
 
     if (session->changed_count > 0) {
         log_set_page_lsn(session, session->curr_lsn, session->curr_lfn);
-    }
-
-    // copy ctrl->page to gbp after write ctrl->page and log, and update remote page mate
-    if (session->kernel->attr.enable_ubsmem && session->curr_page_ctrl->shmem_page_meta != NULL) {
-        dtc_buf_try_store_to_gbp(session, session->curr_lsn);
     }
 
     group->size = 0;

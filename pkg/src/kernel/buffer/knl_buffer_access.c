@@ -33,6 +33,7 @@
 #include "dtc_context.h"
 #include "dtc_recovery.h"
 #include "dtc_database.h"
+#include "dtc_remote_lock.h"
 
 static inline void buf_free_iocb(knl_aio_iocbs_t *buf_iocbs, buf_iocb_t *buf_iocb);
 
@@ -1748,7 +1749,7 @@ status_t buf_read_prefetch_page_num(knl_session_t *session, page_id_t page_id, u
  * log_set_page_lsn is the last time modify for page when db is open,
  * but it's not the list time modify when db rcy,need checksum again when redo change page
  */
-static inline void buf_calc_checksum(knl_session_t *session, buf_ctrl_t *ctrl)
+void buf_calc_checksum(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     // checksum is invalid if page has changed
     knl_panic_log(PAGE_SIZE(*ctrl->page) != 0, "the page size is abnormal, panic info: page %u-%u type %u size %u",
@@ -1765,6 +1766,7 @@ static inline void buf_calc_checksum(knl_session_t *session, buf_ctrl_t *ctrl)
 void buf_leave_page(knl_session_t *session, bool32 changed)
 {
     buf_ctrl_t *ctrl = buf_curr_page(session);
+    remote_page_info_t *shmem_page_meta;
 
     if (SECUREC_UNLIKELY(ctrl == NULL)) {
         buf_pop_page(session);
@@ -1780,7 +1782,9 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
 #ifdef LOG_DIAG
     buf_validate_page(session, ctrl, changed);
 #endif
-
+    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+        shmem_page_meta = ctrl->shmem_page_meta;
+    }
     if (changed && !PAGE_IS_HARD_DAMAGE_ZERO(ctrl->page)) {
         knl_panic_log(PAGE_SIZE(*ctrl->page) != 0, "the page size is abnormal, panic info: page %u-%u type %u size %u",
                       ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, PAGE_SIZE(*ctrl->page));
@@ -1806,8 +1810,14 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
                           ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->changed_count);
         }
 
-        if (SECUREC_UNLIKELY(DB_NOT_READY(session))) {
-            buf_calc_checksum(session, ctrl);
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            ub_rw_lock_t *lock = (ub_rw_lock_t *)shmem_page_meta->lock_ptr;
+            ub_rw_lock_set_readonly(lock, OG_TRUE);
+            OG_LOG_RUN_INF("[GBP-BUF][%u-%u]set readonly true, gbp_lock %d", ctrl->page_id.file,
+                           ctrl->page_id.page, ctrl->gbp_lock_mode);
+            if (SECUREC_UNLIKELY(DB_NOT_READY(session))) {
+                buf_calc_checksum(session, ctrl);
+            }
         }
 
         session->stat->db_block_changes++;
@@ -1815,6 +1825,16 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
 
     buf_log_leave_page(session, ctrl, changed);
     buf_unlatch(session, ctrl, OG_TRUE);
+
+    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL &&
+        ctrl->gbp_lock_mode != DRC_LOCK_NULL && ctrl->gbp_lock_mode != DRC_LOCK_SHARE) {
+        uint64 lock_offset = shmem_page_meta->lock_ptr;
+        status_t ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, ctrl->gbp_lock_mode);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[GBP-BUF][%u-%u] failed to unlock shmem page, gbp_lock %d",
+                           ctrl->page_id.file, ctrl->page_id.page, ctrl->gbp_lock_mode);
+        }
+    }
     buf_pop_page(session);
 }
 

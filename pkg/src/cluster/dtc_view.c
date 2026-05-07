@@ -123,14 +123,16 @@ knl_column_t g_gbp_buffer_ctrl_cols[] = {
     { 4, "TS#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
     { 5, "FILE#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
     { 6, "DBABLK#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
-    { 7, "BA", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
-    { 8, "GBP_OWNER", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
-    { 9, "META_HEAD_LSN", 0, 0, OG_TYPE_BIGINT, sizeof(int64), 0, 0, OG_FALSE, 0, { 0 } },
-    { 10, "REF_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
-    { 11, "TOUCH_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
-    { 12, "LOAD_STATUS", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
-    { 13, "IS_DIRTY", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
-    { 14, "LOCK_MODE", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 7, "GBP_META_ADDR", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 8, "GBP_PAGE_ADDR", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 9, "GBP_LOCK_ADDR", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 10, "GBP_OWNER", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 11, "META_HEAD_LSN", 0, 0, OG_TYPE_BIGINT, sizeof(int64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 12, "REF_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 13, "TOUCH_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 14, "LOAD_STATUS", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 15, "IS_DIRTY", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 16, "LOCK_MODE", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
 };
 #define MAX_MES_TYPE_LEN 5
 #define MAX_MES_GROUP_ID 4
@@ -1283,7 +1285,11 @@ static status_t dtc_view_gbp_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cu
             OG_RETURN_IFERR(row_put_int32(&ra, (int32)ts_num));
             OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->page_id.file));
             OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->page_id.page));
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl->shmem_page_meta));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
             PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl->page));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", ctrl->shmem_page_meta->lock_ptr));
             OG_RETURN_IFERR(row_put_str(&ra, addr));
 
             uint32 gbp_owner = 255;
@@ -1292,6 +1298,7 @@ static status_t dtc_view_gbp_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cu
                 gbp_owner = (uint32)ctrl->shmem_page_meta->claimed_owner;
                 meta_head_lsn = ctrl->shmem_page_meta->head_lsn;
             }
+
             OG_RETURN_IFERR(row_put_int32(&ra, (int32)gbp_owner));
             OG_RETURN_IFERR(row_put_int64(&ra, (int64)meta_head_lsn));
             OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->ref_num));

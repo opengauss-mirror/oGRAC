@@ -1650,8 +1650,17 @@ status_t srv_load_kernel_params(void)
     OG_RETURN_IFERR(srv_get_param_uint32("_SHRINK_WAIT_RECYCLED_PAGES", &attr->shrink_wait_recycled_pages));
     OG_RETURN_IFERR(srv_get_param_bool32("_TEMPTABLE_SUPPORT_BATCH_INSERT", &attr->temptable_support_batch));
     OG_RETURN_IFERR(srv_get_param_uint32("_SMALL_TABLE_SAMPLING_THRESHOLD", &num32));
+    
+    // for ub gbp
     OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_REMOTE_DISTRIBUTE_LOCK", &attr->enable_remote_distribute_lock));
     OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_UBSMEM", &attr->enable_ubsmem));
+    OG_RETURN_IFERR(srv_get_param_size_uint32("_UB_PAGE_HOT_THRESHOLD", &attr->ub_page_hot_threshold));
+    if (attr->ub_page_hot_threshold < OG_MIN_UB_PAGE_HOT_THRESHOLD) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_PAGE_HOT_THRESHOLD", OG_MIN_UB_PAGE_HOT_THRESHOLD);
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(srv_get_param_uint32("_UB_PAGE_HOT_TIMEOUT", &attr->ub_page_hot_timeout));
+
     attr->small_table_sampling_threshold = num32;
 
     /* auto block repair */

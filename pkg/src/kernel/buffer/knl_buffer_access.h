@@ -76,6 +76,7 @@ status_t buf_validate_corrupted_page(knl_session_t *session, knl_validate_t *par
 status_t buf_read_page_asynch(knl_session_t *session, page_id_t page_id);
 
 void buf_leave_page(knl_session_t *session, bool32 changed);
+void buf_calc_checksum(knl_session_t *session, buf_ctrl_t *ctrl);
 void buf_unreside_page(knl_session_t *session, page_id_t page_id);
 void buf_unreside(knl_session_t *session, buf_ctrl_t *ctrl);
 
