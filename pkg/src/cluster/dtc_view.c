@@ -50,6 +50,11 @@ dtc_view_mes_channel_stat_t g_mes_channel_stat_array;
 int g_node_list_for_test[CMS_MAX_NODES_FOR_TEST] = { 1, 1, 0, 0 };  // Max node number is 4;0,1 is online. Later will
                                                                     // call CMS interface to get info.
 
+typedef struct st_gbp_buf_ctrl_scan {
+    uint32 buf_set_id;
+    uint32 ctrl_id;
+} gbp_buf_ctrl_scan_t;
+
 static status_t dtc_view_open(knl_handle_t session, knl_cursor_t *cursor)
 {
     cursor->rowid.vmid = 0;
@@ -205,11 +210,6 @@ knl_column_t g_node_info_cols[] = {
 #define CONVERTING_PAGE_CNT_COLS (ELEMENT_COUNT(g_converting_page_cnt_cols))
 #define BUFFER_CTRL_COLS (ELEMENT_COUNT(g_buffer_ctrl_cols))
 #define GBP_BUFFER_CTRL_COLS (ELEMENT_COUNT(g_gbp_buffer_ctrl_cols))
-
-typedef struct st_gbp_buf_ctrl_scan {
-    uint32 buf_set_id;
-    uint32 ctrl_id;
-} gbp_buf_ctrl_scan_t;
 #define MES_STAT_COLS (ELEMENT_COUNT(g_mes_stat_cols))
 #define MES_ELAPSED_COLS (ELEMENT_COUNT(g_mes_elapsed_cols))
 #define MES_QUEUE_COLS (ELEMENT_COUNT(g_mes_queue_cols))
