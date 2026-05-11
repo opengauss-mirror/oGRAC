@@ -1288,7 +1288,7 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     knl_securec_check(err);
 
     // tail lsn
-    err = memcpy_s(page_tail_lsn_addr, DEFAULT_PAGE_SIZE(session), &page_tail_lsn, DEFAULT_PAGE_SIZE(session));
+    err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
     knl_securec_check(err);
 
     // Release global Lock
