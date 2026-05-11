@@ -457,7 +457,7 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, uint64 curr_lsn)
     knl_securec_check(err);
 
     // tail lsn
-    err = memcpy_s(page_tail_lsn_addr, DEFAULT_PAGE_SIZE(session), &page_tail_lsn, DEFAULT_PAGE_SIZE(session));
+    err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
     knl_securec_check(err);
 
     // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
