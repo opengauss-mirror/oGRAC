@@ -3,7 +3,7 @@ set -e
 CURRENT_PATH=$(dirname $(readlink -f $0))
 source "${CURRENT_PATH}"/common.sh
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
-BUILD_PACK_NAME="openGauss_oGRAC"
+BUILD_PACK_NAME="oGRAC"
 ENV_TYPE=$(uname -p)
 BUILD_TYPE="release"
 
@@ -19,14 +19,14 @@ function buildOGRACPackage() {
 function buildRPM() {
     echo "Prepare path for tar of source"
 
-    echo "Get run dir name"
+    echo "Get run dir and cms dir"
     cd ${OGRACDB_OUTPUT}/bin/oGRAC-RUN*
     if [ $? -ne 0 ]; then
         echo "too many oGRAC-RUN dir or dir not found"
         return 1
     fi
-
     local OGRAC_RUN_DIR=`pwd`
+
     cd ${CURRENT_PATH}
     local RPMALL_TOP_DIR="${OGRACDB_OUTPUT}/rpm"
 
@@ -54,6 +54,9 @@ function buildRPM() {
     cp -arf "${OGRAC_RUN_DIR}"/cfg ${ROOT_RPMTAR_PATH}/cms/service
     cp -arf "${OGRAC_RUN_DIR}"/lib ${ROOT_RPMTAR_PATH}/cms/service
     cp -arf "${OGRAC_RUN_DIR}"/package.xml ${ROOT_RPMTAR_PATH}/cms/service
+    for unwanted in ogsql ogracd ogencrypt ogbackup ogbox ogrst; do
+        rm -f ${ROOT_RPMTAR_PATH}/cms/service/bin/${unwanted}
+    done
     echo "Prepare og_om"
     cp -arf "${OGDB_CODE_PATH}"/og_om/. ${ROOT_RPMTAR_PATH}/og_om
     echo "Prepare dss"
@@ -65,7 +68,6 @@ function buildRPM() {
     mkdir -p ${ROOT_RPMTAR_PATH}/ograc/server
     cp -rf ${OGRAC_RUN_DIR}/add-ons ${ROOT_RPMTAR_PATH}/ograc/server/
     cp -rf ${OGRAC_RUN_DIR}/bin ${ROOT_RPMTAR_PATH}/ograc/server/
-    rm -rf ${ROOT_RPMTAR_PATH}/ograc/server/bin/cms
     cp -rf ${OGRAC_RUN_DIR}/lib ${ROOT_RPMTAR_PATH}/ograc/server/
     cp -rf ${OGRAC_RUN_DIR}/admin ${ROOT_RPMTAR_PATH}/ograc/server/
     cp -rf ${OGRAC_RUN_DIR}/cfg ${ROOT_RPMTAR_PATH}/ograc/server/

@@ -1141,6 +1141,8 @@ class CmsCtl(object):
                         self.install_path))
             LOGGER.info("copy install files cmd: " + str_cmd)
             run_cmd(str_cmd, "failed to install cms lib files")
+            for unwanted in ("ogsql", "ogracd", "ogencrypt", "ogbackup", "ogbox", "ogrst"):
+                run_cmd("rm -f %s/bin/%s" % (self.install_path, unwanted))
 
         if deploy_mode in USE_DBSTOR:
             self.install_xnet_lib()

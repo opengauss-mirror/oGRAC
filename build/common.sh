@@ -3,6 +3,7 @@
 set -e
 
 declare OS_SUFFIX=""
+declare OS_DISTRO_NAME=""
 declare OS_MAJOR_VERSION=""
 declare OS_MINOR_VERSION=""
 
@@ -47,7 +48,7 @@ OG_TEST_BUILD_DIR=${OGRACDB_BUILD}/pkg/test
 
 DBG_SYMBOL_SCRIPT=seperate_dbg_symbol.sh
 
-if [[ "${OS_NAME}" -ne "Linux" ]]; then
+if [[ "${OS_NAME}" != "Linux" ]]; then
     echo "Not on Linux OS"
     exit 1
 else
@@ -75,49 +76,75 @@ if [[ -f "${SUSE_VERSION_PATH}" ]]; then
     OS_MAJOR_VERSION=$(cat ${SUSE_VERSION_PATH} | grep VERSION |cut -d ' ' -f 3)
     OS_MINOR_VERSION=$(cat ${SUSE_VERSION_PATH} | grep PATCHLEVEL |cut -d ' ' -f 3)
     OS_SUFFIX=SUSE"${OS_MAJOR_VERSION}SP${OS_MINOR_VERSION}"
+    OS_DISTRO_NAME="suse${OS_MAJOR_VERSION}sp${OS_MINOR_VERSION}"
 elif [[ -f "${KYLIN_VERSION_PATH}" ]]; then
     if [[ -n $(cat ${KYLIN_VERSION_PATH} | grep 'Kylin') ]]; then
         OS_SUFFIX=KYLIN
+        OS_DISTRO_NAME="kylin"
     fi
 elif [[ -f "${NEOKYLIN_VERSION_PATH}" ]]; then
     if [[ -n $(cat ${NEOKYLIN_VERSION_PATH} | grep 'NeoKylin') ]]; then
         OS_SUFFIX=NEOKYLINREDHAT
+        OS_DISTRO_NAME="neokylin"
     fi
 elif [[ -f "${REDHAT_VERSION_PATH}" ]]; then
-    if [[ -n $(cat ${REDHAT_VERSION_PATH} | grep 'Red Hat') ]]; then
-        OS_SUFFIX=RHEL
-    elif [[ -n $(cat ${REDHAT_VERSION_PATH} | grep '2.0 (SP3)') ]]; then
+    if [[ -n $(cat ${REDHAT_VERSION_PATH} | grep '2.0 (SP3)') ]]; then
         OS_SUFFIX=RHEL20SP3
+        OS_DISTRO_NAME="redhat20sp3"
     elif [[ -n $(cat ${REDHAT_VERSION_PATH} | grep '2.0 (SP5)') ]]; then
         OS_SUFFIX=RHEL20SP5
+        OS_DISTRO_NAME="redhat20sp5"
     elif [[ -n $(cat ${REDHAT_VERSION_PATH} | grep '2.0 (SP8)') ]]; then
         OS_SUFFIX=RHEL20SP8
+        OS_DISTRO_NAME="redhat20sp8"
     elif [[ -n $(cat ${REDHAT_VERSION_PATH} | grep '2.0 (SP9') ]]; then
         OS_SUFFIX=RHEL20SP9
+        OS_DISTRO_NAME="redhat20sp9"
     elif [[ -n $(cat ${REDHAT_VERSION_PATH} | grep '2.0 (SP10') ]]; then
         OS_SUFFIX=RHEL20SP10
+        OS_DISTRO_NAME="redhat20sp10"
+    elif [[ -n $(cat ${REDHAT_VERSION_PATH} | grep 'Red Hat') ]]; then
+        OS_SUFFIX=RHEL
+        OS_DISTRO_NAME="redhat"
     elif [[ -f "${CENTOS_VERSION_PATH}" ]]; then
         cent_os_str=$(cat ${CENTOS_VERSION_PATH} | grep 'CentOS')
         if [[ -n "${cent_os_str}" ]]; then
             OS_SUFFIX=LINUX
+            OS_DISTRO_NAME="centos"
         fi
     fi
 elif [[ -f "${EULER_VERSION_PATH}" ]]; then
     if [[ -n $(cat ${EULER_VERSION_PATH} | grep '2.0 (SP10') ]]; then
         OS_SUFFIX=EULER20SP10
+        OS_DISTRO_NAME="euler20sp10"
     fi
 elif [[ -f "${OPENEULER_VERSION_PATH}" ]]; then
-    if [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '22.03') ]]; then
+    if [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '20.03') ]]; then
+        OS_SUFFIX="OPENEULER2003"
+        OS_DISTRO_NAME="openEuler20.03"
+    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '22.03') ]]; then
         OS_SUFFIX="OPENEULER2203"
+        OS_DISTRO_NAME="openEuler22.03"
     elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '22.09') ]]; then
         OS_SUFFIX="OPENEULER2209"
-    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '22.03') ]]; then
+        OS_DISTRO_NAME="openEuler22.09"
+    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '23.03') ]]; then
         OS_SUFFIX="OPENEULER2303"
+        OS_DISTRO_NAME="openEuler23.03"
     elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '23.09') ]]; then
         OS_SUFFIX="OPENEULER2309"
+        OS_DISTRO_NAME="openEuler23.09"
+    elif [[ -n $(cat ${OPENEULER_VERSION_PATH} | grep -w '24.03') ]]; then
+        OS_SUFFIX="OPENEULER2403"
+        OS_DISTRO_NAME="openEuler24.03"
     fi
 else
     echo "Unsupported OS System"
     exit 1
+fi
+
+# Fallback: use lowercase OS_SUFFIX if OS_DISTRO_NAME not set
+if [[ -z "${OS_DISTRO_NAME}" ]]; then
+    OS_DISTRO_NAME=$(echo "${OS_SUFFIX}" | tr '[:upper:]' '[:lower:]')
 fi
 

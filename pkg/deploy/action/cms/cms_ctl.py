@@ -505,6 +505,8 @@ class CmsCtl:
             cmd = (f"cp -arf {pkg}/add-ons {pkg}/admin {pkg}/bin "
                    f"{pkg}/cfg {pkg}/lib {pkg}/package.xml {self.install_path}")
             run_cmd(cmd, "failed to copy CMS files")
+            for unwanted in ("ogsql", "ogracd", "ogencrypt", "ogbackup", "ogbox", "ogrst"):
+                run_cmd(f"rm -f {self.install_path}/bin/{unwanted}")
 
     def change_app_permission(self):
         """Set app file permissions."""

@@ -7,7 +7,7 @@ source "${CURRENT_PATH}"/common.sh
 
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="openGauss_oGRAC"
+BUILD_PACK_NAME="oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
@@ -48,11 +48,23 @@ function newPackageTarget() {
   echo "Start newPackageTarget..."
   local current_time=$(date "+%Y%m%d%H%M%S")
   local pkg_dir_name="${BUILD_TARGET_NAME}"
-  local build_type_upper=$(echo "${BUILD_TYPE}" | tr [:lower:] [:upper:])
-  local pkg_name="${BUILD_PACK_NAME}_${ENV_TYPE}_${build_type_upper}.tgz"
-  if [[ ${BUILD_MODE} == "single" ]]; then
-    pkg_name="${BUILD_PACK_NAME}_${BUILD_MODE}_${ENV_TYPE}_${build_type_upper}.tgz"
+  local ograc_version=$(grep 'Version:' "${CURRENT_PATH}"/versions.yml | awk '{print $2}')
+  local build_type_suffix=""
+  if [[ ${BUILD_TYPE} == "debug" ]]; then
+    build_type_suffix="-debug"
   fi
+  local os_distro_part="${OS_DISTRO_NAME}"
+  if [[ -z "${os_distro_part}" ]]; then
+    os_distro_part=$(echo "${OS_SUFFIX}" | tr '[:upper:]' '[:lower:]')
+  fi
+  local pkg_name="${BUILD_PACK_NAME}-${ograc_version}"
+  if [[ -n "${os_distro_part}" ]]; then
+    pkg_name="${pkg_name}-${os_distro_part}"
+  fi
+  if [[ ${BUILD_MODE} == "single" ]]; then
+    pkg_name="${pkg_name}-${BUILD_MODE}"
+  fi
+  pkg_name="${pkg_name}${build_type_suffix}-${ENV_TYPE}.tgz"
   local pkg_real_path=${TMP_PKG_PATH}/${pkg_dir_name}
   echo "Current directory: $(pwd)"
   ls -la
@@ -74,7 +86,12 @@ function newPackageTarget() {
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/storage_deploy/dbstor/check_usr_pwd.sh
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/storage_deploy/dbstor/check_dbstor_compat.sh
   sed -i "/main \$@/i CSTOOL_TYPE=${BUILD_TYPE}" ${pkg_real_path}/action/storage_deploy/inspection/inspection_scripts/kernal/check_link_cnt.sh
-  echo "Start pkg ${pkg_name}.tgz..."
+  echo "Start pkg ${pkg_name}..."
+  # Clean Python bytecode cache before packaging
+  find ${pkg_real_path} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+  find ${pkg_real_path} -name "*.pyc" -delete 2>/dev/null || true
+  find ${pkg_real_path} -name "*.pyo" -delete 2>/dev/null || true
+
   cd ${TMP_PKG_PATH}
   echo "Current directory: $(pwd)"
   ls -la
@@ -82,6 +99,36 @@ function newPackageTarget() {
   rm -rf ${TMP_PKG_PATH}/${pkg_dir_name}
   rm -rf ${pkg_dir_name}
   echo "Packing ${pkg_name} success"
+
+  # Unified symbols package: includes DSS symbols + database/CM/other component symbols
+  if [[ ${DSSENABLED} == "TRUE" ]] || [ -d "${OGDB_CODE_PATH}/output/symbol" ]; then
+    local sym_pkg_name="${BUILD_PACK_NAME}-${ograc_version}"
+    if [[ -n "${os_distro_part}" ]]; then
+      sym_pkg_name="${sym_pkg_name}-${os_distro_part}"
+    fi
+    if [[ ${BUILD_MODE} == "single" ]]; then
+      sym_pkg_name="${sym_pkg_name}-${BUILD_MODE}"
+    fi
+    sym_pkg_name="${sym_pkg_name}${build_type_suffix}-${ENV_TYPE}-symbols.tgz"
+    echo "Start packing symbols ${sym_pkg_name}..."
+
+    mkdir -p ${TMP_PKG_PATH}/${pkg_dir_name}_symbols
+    # Collect DSS symbols
+    if [[ ${DSSENABLED} == "TRUE" ]] && [ -d "${OGDB_CODE_PATH}/dss_symbols" ]; then
+      cp -arf "${OGDB_CODE_PATH}"/dss_symbols/* ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/
+    fi
+    # Collect oGRAC database/CM/other component symbols
+    if [ -d "${OGDB_CODE_PATH}/output/symbol" ]; then
+      mkdir -p ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc
+      cp -arf "${OGDB_CODE_PATH}"/output/symbol/* ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc/
+    fi
+
+    cd ${TMP_PKG_PATH}/${pkg_dir_name}_symbols
+    tar -zcf "${TMP_PKG_PATH}/${sym_pkg_name}" .
+    cd - > /dev/null
+    rm -rf ${TMP_PKG_PATH}/${pkg_dir_name}_symbols
+    echo "Packing ${sym_pkg_name} success"
+  fi
 }
 
 function prepare() {
@@ -112,7 +159,7 @@ function prepare() {
     mkdir -p "${OGDB_TARGET_PATH}"
     chmod 700 "${OGDB_TARGET_PATH}"
   fi
-  cp -arf "${OGDB_CODE_PATH}"/oGRAC-DATABASE* "${OGDB_TARGET_PATH}"/
+  cp -arf "${OGDB_CODE_PATH}"/oGRAC-DATABASE-LINUX-64bit "${OGDB_TARGET_PATH}"/
 }
 
 BUILD_TYPE=${1,,}
