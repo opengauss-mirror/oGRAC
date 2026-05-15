@@ -48,26 +48,21 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name   | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |        | 0    | 0     | 0         |       |        |
-| 1  |   START WITH              |       |        | 0    | 0     | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |        | 1    | 20008 | 20008     |       |        |
+| 1  |   CONNECT BY MATERIALIZE  |       |        | 1    | 20008 | 20008     |       |        |
 | 2  |     NESTED LOOPS          |       |        | 1    | 20000 | 0         |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T_CB_1 | 0    | 10000 | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T_CB_2 | 0    | 10000 | 0         |       |        |
-| 5  |   CONNECT BY              |       |        | 0    | 0     | 0         |       |        |
-| 6  |     NESTED LOOPS          |       |        | 1    | 20000 | 0         |       |        |
-| 7  |         TABLE ACCESS FULL | SYS   | T_CB_1 | 0    | 10000 | 0         |       |        |
-| 8  |         TABLE ACCESS FULL | SYS   | T_CB_2 | 0    | 10000 | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
+    1 - access: PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND T_CB_1.ENAME != T_CB_2.ENAME
     1 - filter: T_CB_1.ENAME != T_CB_2.ENAME                    
-    4 - filter: T_CB_1.ENAME != T_CB_2.ENAME                    
-    5 - filter: PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND T_CB_1.ENAME != T_CB_2.ENAME
 
-18 rows fetched.
+13 rows fetched.
 
 SQL> select t_cb_1.empno, t_cb_2.mgr from t_cb_1 join t_cb_2 
-  2 on t_cb_1.ename != t_cb_2.ename start with  2 > 1 connect by nocycle prior t_cb_1.empno = t_cb_2.mgr;
+  2 on t_cb_1.ename != t_cb_2.ename start with  2 > 1 connect by nocycle prior t_cb_1.empno = t_cb_2.mgr order by 1,2;
 
 EMPNO        MGR         
 ------------ ------------
@@ -81,7 +76,7 @@ SQL> create table t_cb_3 as select t_cb_1.empno, t_cb_2.mgr from t_cb_1 join t_c
 
 Succeed.
 
-SQL> select * from t_cb_3;
+SQL> select * from t_cb_3 order by 1,2;
 
 EMPNO        MGR         
 ------------ ------------

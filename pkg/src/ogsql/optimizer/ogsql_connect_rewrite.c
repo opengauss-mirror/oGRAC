@@ -58,26 +58,27 @@ status_t sql_generate_start_query(sql_stmt_t *stmt, sql_query_t *query)
     return OG_SUCCESS;
 }
 
-static inline bool32 if_cmp_used_by_connect_mtrl(cols_used_t *l_cols_used, cols_used_t *r_cols_used)
+static inline bool32 if_cmp_used_by_connect_mtrl(cols_used_t *prior_cols_used, cols_used_t *key_cols_used)
 {
-    // make sure each side has not sub-query use parent and ancestor columns
-    // this constraint can be broken when sub-query use only ancestor columns
-    // or use the columns of same table that other columns used in the expr
-    if (HAS_DYNAMIC_SUBSLCT(l_cols_used) || HAS_DYNAMIC_SUBSLCT(r_cols_used)) {
+    // Only PRIOR expr can probe the materialized hash table; dynamic subqueries may depend on recursive rows.
+    if (!HAS_PRIOR(prior_cols_used) || !HAS_NO_COLS(prior_cols_used->flags) ||
+        HAS_DYNAMIC_SUBSLCT(prior_cols_used) || HAS_ROWNUM(prior_cols_used)) {
         return OG_FALSE;
     }
 
-    // make sure left side has no cols and right side have only self columns, and belong to one table
-    if (!HAS_NO_COLS(l_cols_used->flags) || !HAS_ONLY_SELF_COLS(r_cols_used->flags) ||
-        HAS_DIFF_TABS(l_cols_used, SELF_IDX) || HAS_DIFF_TABS(r_cols_used, SELF_IDX)) {
+    if (HAS_DYNAMIC_SUBSLCT(key_cols_used) || HAS_ROWNUM(key_cols_used) || HAS_PRIOR(key_cols_used)) {
         return OG_FALSE;
     }
 
-    // make sure no ROWNUM expr node
-    if (HAS_ROWNUM(l_cols_used) || HAS_ROWNUM(r_cols_used)) {
-        return OG_FALSE;
+    /*
+     * A normal key is a same-level column expression. A static no-column expression, for example
+     * PRIOR col = ANY (SELECT MIN(col) FROM ...), is also safe: every materialized row shares the
+     * same hash key and only the matching PRIOR value opens that bucket.
+     */
+    if (HAS_NO_COLS(key_cols_used->flags)) {
+        return OG_TRUE;
     }
-    return OG_TRUE;
+    return (bool32)(HAS_ONLY_SELF_COLS(key_cols_used->flags) && !HAS_DIFF_TABS(key_cols_used, SELF_IDX));
 }
 
 static inline void clear_table_cbo_filter(sql_query_t *query)
@@ -183,6 +184,113 @@ static status_t og_handle_subslect_in_start_with(sql_stmt_t *statement, sql_quer
     return OG_SUCCESS;
 }
 
+static inline bool32 sql_cmp_type_support_connect_mtrl(cmp_type_t type)
+{
+    return (bool32)(type == CMP_TYPE_EQUAL || type == CMP_TYPE_EQUAL_ANY);
+}
+
+static bool32 sql_is_scalar_aggr_subquery(expr_tree_t *expr)
+{
+    if (expr == NULL || expr->next != NULL || expr->root->type != EXPR_NODE_SELECT) {
+        return OG_FALSE;
+    }
+
+    sql_select_t *select_ctx = (sql_select_t *)VALUE_PTR(var_object_t, &expr->root->value)->ptr;
+    if (select_ctx == NULL) {
+        return OG_FALSE;
+    }
+
+    sql_query_t *query = select_ctx->first_query;
+    return (bool32)(query != NULL && query->aggrs != NULL && query->aggrs->count > 0 &&
+        query->group_sets != NULL && query->group_sets->count == 0);
+}
+
+static status_t sql_alloc_connect_mtrl_info(sql_stmt_t *stmt, cb_mtrl_info_t **info)
+{
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(cb_mtrl_info_t), (void **)info));
+    MEMS_RETURN_IFERR(memset_s(*info, sizeof(cb_mtrl_info_t), 0, sizeof(cb_mtrl_info_t)));
+    OG_RETURN_IFERR(sql_create_list(stmt, &(*info)->prior_exprs));
+    OG_RETURN_IFERR(sql_create_list(stmt, &(*info)->key_exprs));
+    (*info)->combine_sw = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_add_connect_mtrl_key(sql_stmt_t *stmt, cb_mtrl_info_t *info, expr_tree_t *prior_src,
+    expr_tree_t *key_src)
+{
+    expr_tree_t *prior_expr = NULL;
+    expr_tree_t *key_expr = NULL;
+
+    OG_RETURN_IFERR(sql_clone_expr_tree(stmt->context, prior_src, &prior_expr, sql_alloc_mem));
+    OG_RETURN_IFERR(sql_clone_expr_tree(stmt->context, key_src, &key_expr, sql_alloc_mem));
+    OG_RETURN_IFERR(cm_galist_insert(info->prior_exprs, prior_expr));
+    return cm_galist_insert(info->key_exprs, key_expr);
+}
+
+static status_t sql_try_add_connect_mtrl_cmp(sql_stmt_t *stmt, cmp_node_t *cmp, cb_mtrl_info_t *info, bool32 *matched)
+{
+    cols_used_t left_cols_used;
+    cols_used_t right_cols_used;
+
+    OG_RETSUC_IFTRUE(!sql_cmp_type_support_connect_mtrl(cmp->type));
+    // Only scalar aggregate ANY subqueries can be used as a single materialized hash key.
+    OG_RETSUC_IFTRUE(cmp->type == CMP_TYPE_EQUAL_ANY && !sql_is_scalar_aggr_subquery(cmp->right));
+
+    init_cols_used(&left_cols_used);
+    init_cols_used(&right_cols_used);
+    sql_collect_cols_in_expr_tree(cmp->left, &left_cols_used);
+    sql_collect_cols_in_expr_tree(cmp->right, &right_cols_used);
+
+    if (if_cmp_used_by_connect_mtrl(&left_cols_used, &right_cols_used)) {
+        OG_RETURN_IFERR(sql_add_connect_mtrl_key(stmt, info, cmp->left, cmp->right));
+        *matched = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    if (cmp->type == CMP_TYPE_EQUAL && if_cmp_used_by_connect_mtrl(&right_cols_used, &left_cols_used)) {
+        OG_RETURN_IFERR(sql_add_connect_mtrl_key(stmt, info, cmp->right, cmp->left));
+        *matched = OG_TRUE;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_collect_connect_mtrl_keys(sql_stmt_t *stmt, cond_node_t *cond_node, cb_mtrl_info_t *info,
+    bool32 *matched)
+{
+    if (cond_node == NULL) {
+        return OG_SUCCESS;
+    }
+
+    switch (cond_node->type) {
+        case COND_NODE_AND:
+            OG_RETURN_IFERR(sql_collect_connect_mtrl_keys(stmt, cond_node->left, info, matched));
+            return sql_collect_connect_mtrl_keys(stmt, cond_node->right, info, matched);
+
+        case COND_NODE_COMPARE:
+            return sql_try_add_connect_mtrl_cmp(stmt, cond_node->cmp, info, matched);
+
+        default:
+            return OG_SUCCESS;
+    }
+}
+
+static status_t sql_try_transform_connect_mtrl(sql_stmt_t *statement, sql_query_t *qry)
+{
+    cb_mtrl_info_t *info = NULL;
+    bool32 matched = OG_FALSE;
+
+    if (!g_instance->sql.enable_cb_mtrl || !is_query_tables_all_normal(qry)) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_alloc_connect_mtrl_info(statement, &info));
+    OG_RETURN_IFERR(sql_collect_connect_mtrl_keys(statement, qry->connect_by_cond->root, info, &matched));
+    if (matched) {
+        qry->cb_mtrl_info = info;
+    }
+    return OG_SUCCESS;
+}
+
 status_t og_transf_connect_by_cond(sql_stmt_t *statement, sql_query_t *qry)
 {
     CM_POINTER(qry);
@@ -192,6 +300,8 @@ status_t og_transf_connect_by_cond(sql_stmt_t *statement, sql_query_t *qry)
     if (og_push_cond_2_connect_by(statement, qry) != OG_SUCCESS) {
         return OG_ERROR;
     }
+
+    OG_RETURN_IFERR(sql_try_transform_connect_mtrl(statement, qry));
 
     if (is_query_tables_all_normal(qry)) {
         OG_RETURN_IFERR(og_handle_subslect_in_start_with(statement, qry));
