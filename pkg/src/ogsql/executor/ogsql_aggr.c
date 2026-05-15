@@ -1229,11 +1229,221 @@ static inline bool32 sql_aggr_is_nullaware(sql_stmt_t *stmt, sql_cursor_t *curso
     return OG_FALSE;
 }
 
+static inline bool32 sql_aggr_cond_is_empty(cond_tree_t *cond)
+{
+    return (bool32)(cond == NULL || cond->root == NULL || cond->root->type == COND_NODE_TRUE);
+}
+
+static bool32 sql_aggr_is_count_star(expr_node_t *aggr_node)
+{
+    const sql_func_t *func = GET_AGGR_FUNC(aggr_node);
+
+    return (bool32)(func->aggr_type == AGGR_TYPE_COUNT &&
+        !aggr_node->dis_info.need_distinct &&
+        aggr_node->argument != NULL &&
+        aggr_node->argument->next == NULL &&
+        aggr_node->argument->root != NULL &&
+        aggr_node->argument->root->type == EXPR_NODE_STAR);
+}
+
+static bool32 sql_aggr_cond_has_external_ref(cond_node_t *cond, uint32 table_id)
+{
+    if (cond == NULL) {
+        return OG_FALSE;
+    }
+
+    cols_used_t cols_used;
+    init_cols_used(&cols_used);
+    sql_collect_cols_in_cond(cond, &cols_used);
+
+    if (HAS_DYNAMIC_SUBSLCT(&cols_used) || HAS_ROWNUM(&cols_used) || HAS_PRIOR(&cols_used) ||
+        HAS_PRNT_OR_ANCSTR_COLS(cols_used.flags)) {
+        return OG_TRUE;
+    }
+
+    biqueue_t *cols_que = &cols_used.cols_que[SELF_IDX];
+    biqueue_node_t *curr_node = biqueue_first(cols_que);
+    biqueue_node_t *end_node = biqueue_end(cols_que);
+
+    while (curr_node != end_node) {
+        expr_node_t *col = OBJECT_OF(expr_node_t, curr_node);
+        if (TAB_OF_NODE(col) != table_id) {
+            return OG_TRUE;
+        }
+        curr_node = curr_node->next;
+    }
+    return OG_FALSE;
+}
+
+static bool32 sql_aggr_has_param_scan(plan_node_t *plan)
+{
+    if (plan == NULL) {
+        return OG_FALSE;
+    }
+
+    switch (plan->type) {
+        case PLAN_NODE_SCAN: {
+            sql_table_t *table = plan->scan_p.table;
+            /*
+             * Parameterized rowid/index scans depend on a row produced outside
+             * this subtree. They may leave the NL join node's cond/filter empty,
+             * so they must not be counted by multiplying independent child rows.
+             */
+            return (bool32)(table != NULL &&
+                (table->scan_mode == SCAN_MODE_ROWID || table->index != NULL ||
+                sql_aggr_cond_has_external_ref(table->cond == NULL ? NULL : table->cond->root, table->id)));
+        }
+
+        case PLAN_NODE_JOIN:
+            return (bool32)(sql_aggr_has_param_scan(plan->join_p.left) ||
+                sql_aggr_has_param_scan(plan->join_p.right));
+
+        case PLAN_NODE_CONCATE:
+            if (plan->cnct_p.plans == NULL) {
+                return OG_FALSE;
+            }
+            for (uint32 i = 0; i < plan->cnct_p.plans->count; i++) {
+                if (sql_aggr_has_param_scan((plan_node_t *)cm_galist_get(plan->cnct_p.plans, i))) {
+                    return OG_TRUE;
+                }
+            }
+            return OG_FALSE;
+
+        default:
+            return OG_FALSE;
+    }
+}
+
+static bool32 sql_aggr_can_fast_count_cartesian(plan_node_t *plan)
+{
+    if (plan == NULL || plan->type != PLAN_NODE_JOIN) {
+        return OG_FALSE;
+    }
+
+    if (plan->join_p.oper != JOIN_OPER_NL) {
+        return OG_FALSE;
+    }
+
+    if (!sql_aggr_cond_is_empty(plan->join_p.cond) || !sql_aggr_cond_is_empty(plan->join_p.filter)) {
+        return OG_FALSE;
+    }
+
+    return (bool32)(!sql_aggr_has_param_scan(plan->join_p.right));
+}
+
+static status_t sql_aggr_count_plan_rows(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, uint64 *rows);
+
+static status_t sql_aggr_count_plan_rows_by_fetch(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan,
+    uint64 *rows)
+{
+    sql_cursor_t *count_cursor = NULL;
+    bool32 eof = OG_FALSE;
+    status_t status = OG_SUCCESS;
+
+    OG_RETURN_IFERR(sql_alloc_cursor(stmt, &count_cursor));
+    count_cursor->scn = cursor->scn;
+    count_cursor->ancestor_ref = cursor->ancestor_ref;
+
+    if (sql_open_query_cursor(stmt, count_cursor, cursor->query) != OG_SUCCESS) {
+        sql_free_cursor(stmt, count_cursor);
+        return OG_ERROR;
+    }
+
+    if (SQL_CURSOR_PUSH(stmt, count_cursor) != OG_SUCCESS) {
+        sql_free_cursor(stmt, count_cursor);
+        return OG_ERROR;
+    }
+
+    status = sql_execute_query_plan(stmt, count_cursor, plan);
+    while (status == OG_SUCCESS) {
+        OGSQL_SAVE_STACK(stmt);
+        status = sql_fetch_query(stmt, count_cursor, plan, &eof);
+        OGSQL_RESTORE_STACK(stmt);
+
+        if (status != OG_SUCCESS || eof) {
+            break;
+        }
+        (*rows)++;
+    }
+
+    if (sql_free_query_mtrl(stmt, count_cursor, plan) != OG_SUCCESS && status == OG_SUCCESS) {
+        status = OG_ERROR;
+    }
+
+    SQL_CURSOR_POP(stmt);
+    sql_free_cursor(stmt, count_cursor);
+    return status;
+}
+
+static status_t sql_aggr_count_plan_rows(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, uint64 *rows)
+{
+    if (!sql_aggr_can_fast_count_cartesian(plan)) {
+        return sql_aggr_count_plan_rows_by_fetch(stmt, cursor, plan, rows);
+    }
+
+    uint64 left_rows = 0;
+    uint64 right_rows = 0;
+
+    OG_RETURN_IFERR(sql_aggr_count_plan_rows(stmt, cursor, plan->join_p.left, &left_rows));
+    OG_RETURN_IFERR(sql_aggr_count_plan_rows(stmt, cursor, plan->join_p.right, &right_rows));
+
+    if (left_rows != 0 && right_rows > (uint64)OG_MAX_INT64 / left_rows) {
+        OG_THROW_ERROR(ERR_TYPE_OVERFLOW, "BIGINT");
+        return OG_ERROR;
+    }
+
+    *rows = left_rows * right_rows;
+    return OG_SUCCESS;
+}
+
+static inline bool32 sql_aggr_may_try_fast_count_cartesian(plan_node_t *plan, bool32 par_exe_flag, uint32 aggr_cnt)
+{
+    if (par_exe_flag || aggr_cnt != 1 || plan == NULL || plan->aggr.next == NULL ||
+        plan->aggr.next->type != PLAN_NODE_JOIN) {
+        return OG_FALSE;
+    }
+
+    return (bool32)(plan->aggr.next->join_p.oper == JOIN_OPER_NL);
+}
+
+static status_t sql_aggr_try_fast_count_cartesian(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan,
+    bool32 par_exe_flag, bool32 *optimized)
+{
+    expr_node_t *aggr_node = NULL;
+    aggr_var_t *aggr_var = NULL;
+    uint64 rows = 0;
+
+    *optimized = OG_FALSE;
+    if (par_exe_flag || plan->aggr.items->count != 1 || !sql_aggr_can_fast_count_cartesian(plan->aggr.next)) {
+        return OG_SUCCESS;
+    }
+
+    aggr_node = (expr_node_t *)cm_galist_get(plan->aggr.items, 0);
+    if (!sql_aggr_is_count_star(aggr_node)) {
+        return OG_SUCCESS;
+    }
+
+    /*
+     * COUNT(*) over an unqualified Cartesian nested loop only needs the child
+     * cardinalities. Counting child rows exactly avoids materializing every
+     * product row before the aggregate consumes it.
+     */
+    OG_RETURN_IFERR(sql_aggr_count_plan_rows(stmt, cursor, plan->aggr.next, &rows));
+
+    aggr_var = sql_get_aggr_addr(cursor, 0);
+    aggr_var->var.type = OG_TYPE_BIGINT;
+    aggr_var->var.is_null = OG_FALSE;
+    aggr_var->var.v_bigint = (int64)rows;
+    *optimized = OG_TRUE;
+    return sql_exec_aggr_extra(stmt, cursor, plan->aggr.items, plan);
+}
+
 status_t sql_mtrl_aggr(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan, bool32 par_exe_flag)
 {
     uint32 i;
     uint32 avgs;
     uint32 rows;
+    bool32 optimized = OG_FALSE;
     variant_t *value = NULL;
     const sql_func_t *func = NULL;
     uint32 aggr_cnt = plan->aggr.items->count;
@@ -1243,6 +1453,18 @@ status_t sql_mtrl_aggr(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan
     cursor->mtrl.cursor.type = MTRL_CURSOR_OTHERS;
     OG_RETURN_IFERR(sql_init_aggr_page(stmt, cursor, plan->aggr.items));
     OG_RETURN_IFERR(sql_init_aggr_values(stmt, cursor, plan->aggr.next, plan->aggr.items, &avgs));
+    if (sql_aggr_may_try_fast_count_cartesian(plan, par_exe_flag, aggr_cnt)) {
+        /*
+         * Keep ordinary aggregates and outer joins on the original hot path.
+         * The fast-count probe is only useful when the top child can be a pure
+         * Cartesian nested loop.
+         */
+        OG_RETURN_IFERR(sql_aggr_try_fast_count_cartesian(stmt, cursor, plan, par_exe_flag, &optimized));
+        if (optimized) {
+            return OG_SUCCESS;
+        }
+    }
+
     OG_RETURN_IFERR(sql_execute_query_plan(stmt, cursor, plan->aggr.next));
 
     if (cursor->eof) {

@@ -4160,6 +4160,23 @@ static bool32 expr_contain_invisible_table_cols(plan_assist_t *pa, expr_tree_t *
     return !biqueue_empty(&used_cols.cols_que[SELF_IDX]);
 }
 
+static inline bool32 cmp_can_use_index_access(cmp_type_t type)
+{
+    switch (type) {
+        case CMP_TYPE_NOT_EQUAL:
+        case CMP_TYPE_NOT_EQUAL_ANY:
+        case CMP_TYPE_NOT_EQUAL_ALL:
+        case CMP_TYPE_NOT_IN:
+        case CMP_TYPE_NOT_LIKE:
+        case CMP_TYPE_NOT_REGEXP:
+        case CMP_TYPE_NOT_REGEXP_LIKE:
+        case CMP_TYPE_NOT_BETWEEN:
+            return OG_FALSE;
+        default:
+            return OG_TRUE;
+    }
+}
+
 static bool32 match_cond_to_indexcol(plan_assist_t *pa, sql_table_t *table, cmp_node_t *cmp, uint16 index_col)
 {
     sql_stmt_t *stmt = pa->stmt;
@@ -4205,6 +4222,15 @@ static bool32 match_cond_to_indexcol(plan_assist_t *pa, sql_table_t *table, cmp_
 static void match_cond_to_index(plan_assist_t *pa, sql_table_t *table, index_t *index, cmp_node_t *cmp,
     galist_t **idx_cond_array, bool32 *has_matched)
 {
+    /*
+     * Negative predicates usually preserve most keys and do not describe a
+     * useful contiguous BTree boundary. Keep them as filters so CBO does not
+     * choose a parameterized near-full index range scan for joins such as <>.
+     */
+    if (!cmp_can_use_index_access(cmp->type)) {
+        return;
+    }
+
     for (uint32 col_id = 0; col_id < index->desc.column_count; col_id++) {
         if (match_cond_to_indexcol(pa, table, cmp, index->desc.columns[col_id])) {
             cm_galist_insert(idx_cond_array[col_id], cmp);
@@ -5168,7 +5194,7 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
         table->index_skip_scan = get_table_skip_index_flag(table, ca.index->id);
     }
 
-    if ((ca.index_full_scan && INDEX_ONLY_SCAN_ONLY(ca.scan_flag)) || !ca.index_full_scan) {
+    if ((ca.index_full_scan == true && INDEX_ONLY_SCAN_ONLY(ca.scan_flag)) || ca.index_full_scan == false) {
         /* compare with ffs */
         cbo_try_choose_fast_full_scan_index(stmt, pa, table, index, ca.scan_flag, table->index_dsc);
     }

@@ -1269,6 +1269,23 @@ static void sql_pre_init_jtable_cost(sql_table_t *table)
     }
 }
 
+static inline bool32 join_cmp_can_use_index_access(cmp_type_t type)
+{
+    switch (type) {
+        case CMP_TYPE_NOT_EQUAL:
+        case CMP_TYPE_NOT_EQUAL_ANY:
+        case CMP_TYPE_NOT_EQUAL_ALL:
+        case CMP_TYPE_NOT_IN:
+        case CMP_TYPE_NOT_LIKE:
+        case CMP_TYPE_NOT_REGEXP:
+        case CMP_TYPE_NOT_REGEXP_LIKE:
+        case CMP_TYPE_NOT_BETWEEN:
+            return OG_FALSE;
+        default:
+            return OG_TRUE;
+    }
+}
+
 bool32 match_joininfo_to_indexcol(sql_stmt_t *stmt, sql_table_t *table, tbl_join_info_t *jinfo, uint16 index_col)
 {
     knl_column_t *knl_col = knl_get_column(table->entry->dc.handle, index_col);
@@ -1279,6 +1296,15 @@ bool32 match_joininfo_to_indexcol(sql_stmt_t *stmt, sql_table_t *table, tbl_join
     if (jinfo == NULL || jinfo->cond == NULL || jinfo->cond->type != COND_NODE_COMPARE) {
         return OG_FALSE;
     }
+    /*
+     * A negative join predicate is still useful as a filter/cardinality input,
+     * but it is not a selective BTree access key. Avoid parameterized index
+     * paths that repeatedly scan almost the whole function index.
+     */
+    if (!join_cmp_can_use_index_access(jinfo->cond->cmp->type)) {
+        return OG_FALSE;
+    }
+
     expr_tree_t *left = jinfo->cond->cmp->left;
     expr_tree_t *right = jinfo->cond->cmp->right;
 
@@ -1359,6 +1385,10 @@ static status_t get_parameterized_path_internal(join_assist_t *ja, uint32 table_
     tmp_table->idx_equal_to = ca.strict_equal_cnt;
     tmp_table->index_dsc = ca.index_dsc;
     tmp_table->cond = cond;
+    if (!sql_bitmap_empty(&outer_rels)) {
+        /* Mark this path as parameterized so executor-side count optimizations do not treat it as independent. */
+        tmp_table->col_use_flag |= USE_SELF_JOIN_COL;
+    }
 
     if (INDEX_ONLY_SCAN(tmp_table->scan_flag)) {
         OG_RETURN_IFERR(sql_make_index_col_map(ja->pa, stmt, tmp_table));
