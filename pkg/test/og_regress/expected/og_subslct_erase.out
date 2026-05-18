@@ -293,11 +293,11 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name   | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |        | 0    | 0    | 0         |       |        |
-| 1  |     SUBSELECT               | SYS   |        | 0    | 0    | 0         |       |        |
-| 2  |       START WITH            |       |        | 0    | 0    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |        | 3    | 4    | 0         |       |        |
+| 1  |     SUBSELECT               | SYS   |        | 3    | 4    | 0         |       |        |
+| 2  |       START WITH            |       |        | 3    | 4    | 0         |       |        |
 | 3  |           TABLE ACCESS FULL | SYS   | SSE_T1 | 3    | 1    | 0         |       |        |
-| 4  |       CONNECT BY            |       |        | 0    | 0    | 0         |       |        |
+| 4  |       CONNECT BY            |       |        | 3    | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | SSE_T1 | 3    | 1    | 0         |       |        |
 ------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
@@ -397,12 +397,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name    | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |         | 0    | 0    | 0         |       |        |
-| 1  |   START WITH                |       |         | 0    | 0    | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   | SUB_QRY | 0    | 0    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |         | 3    | 4    | 0         |       |        |
+| 1  |   START WITH                |       |         | 3    | 4    | 0         |       |        |
+| 2  |       SUBSELECT             | SYS   | SUB_QRY | 3    | 1    | 0         |       |        |
 | 3  |           TABLE ACCESS FULL | SYS   | SSE_T1  | 3    | 1    | 0         |       |        |
-| 4  |   CONNECT BY                |       |         | 0    | 0    | 0         |       |        |
-| 5  |       SUBSELECT             | SYS   | SUB_QRY | 0    | 0    | 0         |       |        |
+| 4  |   CONNECT BY                |       |         | 3    | 4    | 0         |       |        |
+| 5  |       SUBSELECT             | SYS   | SUB_QRY | 3    | 1    | 0         |       |        |
 | 6  |           TABLE ACCESS FULL | SYS   | SSE_T1  | 3    | 1    | 0         |       |        |
 -------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       

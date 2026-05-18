@@ -610,11 +610,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 0    | 0    | 0         |       |        |
-| 1  |     SUBSELECT               | SYS   | SUB_Q       | 0    | 0    | 0         |       |        |
-| 2  |       START WITH            |       |             | 0    | 0    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 1    | 2    | 0         |       |        |
+| 1  |     SUBSELECT               | SYS   | SUB_Q       | 1    | 2    | 0         |       |        |
+| 2  |       START WITH            |       |             | 1    | 2    | 0         |       |        |
 | 3  |           TABLE ACCESS FULL | SYS   | PRED_DOWN_2 | 1    | 1    | 0         |       |        |
-| 4  |       CONNECT BY            |       |             | 0    | 0    | 0         |       |        |
+| 4  |       CONNECT BY            |       |             | 1    | 2    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRED_DOWN_2 | 3    | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       

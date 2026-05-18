@@ -88,17 +88,18 @@ SQL> explain select /*+index(hint_test1 t1_idx1)*/* from hint_test1 where a = 10
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name       | Rows | Cost | StartCost | Bytes | Remark |
-----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |            | 1    | 5    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | HINT_TEST1 | 1    | 5    | 0         |       |        |
-----------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                        | Owner | Name       | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                 |       |            | 1    | 5    | 0         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | HINT_TEST1 | 1    | 5    | 0         |       |        |
+| 2  |       INDEX FULL SCAN            | SYS   | T1_IDX1    | 1    | 5    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     1 - filter: A = 1000                                        
 
-9 rows fetched.
+10 rows fetched.
 
 SQL> explain select /*+full(hint_test1)*/* from hint_test1 where a = 1000;
 

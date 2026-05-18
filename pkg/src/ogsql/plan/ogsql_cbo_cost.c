@@ -3528,7 +3528,33 @@ static status_t sql_estimate_select_limit_cost(sql_stmt_t *stmt, plan_node_t *pl
 
 static status_t sql_estimate_connect_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
-    /* todo */
+    if (plan == NULL || plan->connect.next_start_with == NULL || plan->connect.next_connect_by == NULL) {
+        return OG_ERROR;
+    }
+
+    if (plan->connect.next_start_with->cost == 0 && plan->connect.next_start_with->start_cost == 0) {
+        OG_RETURN_IFERR(sql_estimate_node_cost(stmt, plan->connect.next_start_with));
+    }
+    if (plan->connect.next_connect_by->cost == 0 && plan->connect.next_connect_by->start_cost == 0) {
+        OG_RETURN_IFERR(sql_estimate_node_cost(stmt, plan->connect.next_connect_by));
+    }
+
+    plan_node_t *start_plan = plan->connect.next_start_with;
+    plan_node_t *connect_plan = plan->connect.next_connect_by;
+    double start_rows = MAX((double)start_plan->rows, 1.0);
+    double connect_rows = MAX((double)connect_plan->rows, 1.0);
+    double probe_rows = start_rows * connect_rows;
+    double matched_rows = probe_rows * CBO_DEFAULT_EQ_FF;
+
+    /*
+     * The non-materialized executor reopens the CONNECT BY child cursor for each parent row.
+     * Cost it as repeated child scans plus predicate/cycle checks so upper FILTER/AGGR nodes do
+     * not inherit a zero cost and prefer a plan that is cheap only on paper.
+     */
+    plan->rows = (int64)MAX(start_rows, start_rows + MIN(matched_rows, start_rows * DEFAULT_NUM_DISTINCT));
+    plan->start_cost = start_plan->start_cost;
+    plan->cost = start_plan->cost + start_rows * connect_plan->cost +
+        probe_rows * CBO_DEFAULT_CPU_OPERATOR_COST + plan->rows * CBO_DEFAULT_CPU_OPERATOR_COST;
     return OG_SUCCESS;
 }
 
@@ -3751,15 +3777,43 @@ static status_t sql_estimate_connect_mtrl_cost(sql_stmt_t *stmt, plan_node_t *pl
         OG_RETURN_IFERR(sql_estimate_node_cost(stmt, plan->cb_mtrl.next));
     }
 
+    double input_rows = MAX((double)plan->cb_mtrl.next->rows, 1.0);
+    double build_cost = CBO_DEFAULT_HASH_INIT_COST +
+        input_rows * (CBO_DEFAULT_CPU_HASH_BUILD_COST + CBO_DEFAULT_CPU_HASH_CALC_COST);
+    double probe_cost = input_rows * (CBO_DEFAULT_CPU_HASH_CALC_COST + CBO_DEFAULT_CPU_OPERATOR_COST);
+
+    /* CONNECT BY MATERIALIZE scans the child once to build a hash table, then probes it by PRIOR keys. */
     plan->rows = plan->cb_mtrl.next->rows;
-    plan->cost = plan->cb_mtrl.next->cost;
-    plan->start_cost = plan->cb_mtrl.next->start_cost;
+    plan->cost = plan->cb_mtrl.next->cost + build_cost + probe_cost;
+    plan->start_cost = plan->cb_mtrl.next->cost + build_cost;
     return OG_SUCCESS;
 }
 
 static status_t sql_estimate_connect_hash_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
-    /* do nothing */
+    if (plan == NULL || plan->connect.next_start_with == NULL || plan->connect.next_connect_by == NULL) {
+        return OG_ERROR;
+    }
+
+    if (plan->connect.next_start_with->cost == 0 && plan->connect.next_start_with->start_cost == 0) {
+        OG_RETURN_IFERR(sql_estimate_node_cost(stmt, plan->connect.next_start_with));
+    }
+    if (plan->connect.next_connect_by != plan->connect.next_start_with &&
+        plan->connect.next_connect_by->cost == 0 && plan->connect.next_connect_by->start_cost == 0) {
+        OG_RETURN_IFERR(sql_estimate_node_cost(stmt, plan->connect.next_connect_by));
+    }
+
+    if (plan->connect.next_start_with == plan->connect.next_connect_by) {
+        plan->rows = plan->connect.next_start_with->rows;
+        plan->cost = plan->connect.next_start_with->cost;
+        plan->start_cost = plan->connect.next_start_with->start_cost;
+    } else {
+        double start_rows = MAX((double)plan->connect.next_start_with->rows, 1.0);
+        plan->rows = MAX(plan->connect.next_start_with->rows, plan->connect.next_connect_by->rows);
+        plan->cost = plan->connect.next_start_with->cost + plan->connect.next_connect_by->cost +
+            start_rows * CBO_DEFAULT_CPU_HASH_CALC_COST;
+        plan->start_cost = plan->connect.next_start_with->start_cost + plan->connect.next_connect_by->start_cost;
+    }
     return OG_SUCCESS;
 }
 
@@ -4332,6 +4386,8 @@ static status_t judge_func_index_only(sql_stmt_t *stmt, sql_table_t *table, knl_
     uint32 *col_ref_map;
 
     OG_RETURN_IFERR(sql_stack_alloc(stmt, col_count * sizeof(uint32), (void **)&col_ref_map));
+    MEMS_RETURN_IFERR(memset_s(col_ref_map, col_count * sizeof(uint32), 0,
+        col_count * sizeof(uint32)));
 
     while (node != NULL) {
         func_expr_t *func_expr = BILIST_NODE_OF(func_expr_t, node, bilist_node);
@@ -5092,8 +5148,8 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
     determined_group_flag(stmt, pa, table, &ca);
     determined_distinct_flag(stmt, pa, table, &ca);
 
-    if (!matched && !CAN_INDEX_SORT(ca.scan_flag) && !INDEX_ONLY_SCAN(ca.scan_flag) &&
-        !CAN_INDEX_GROUP(ca.scan_flag) && !CAN_INDEX_DISTINCT(ca.scan_flag)) {
+    if (!matched && !TABLE_HAS_INDEX_HINT(table) && !CAN_INDEX_SORT(ca.scan_flag) &&
+        !INDEX_ONLY_SCAN(ca.scan_flag) && !CAN_INDEX_GROUP(ca.scan_flag) && !CAN_INDEX_DISTINCT(ca.scan_flag)) {
         return;
     }
 
@@ -5112,7 +5168,7 @@ void cbo_try_choose_index(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *tabl
         table->index_skip_scan = get_table_skip_index_flag(table, ca.index->id);
     }
 
-    if ((ca.index_full_scan = true && INDEX_ONLY_SCAN_ONLY(ca.scan_flag)) || ca.index_full_scan == false) {
+    if ((ca.index_full_scan && INDEX_ONLY_SCAN_ONLY(ca.scan_flag)) || !ca.index_full_scan) {
         /* compare with ffs */
         cbo_try_choose_fast_full_scan_index(stmt, pa, table, index, ca.scan_flag, table->index_dsc);
     }

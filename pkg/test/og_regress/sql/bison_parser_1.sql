@@ -489,7 +489,7 @@ SELECT
     employee_name,
     manager_id
 FROM employees
-CONNECT BY PRIOR employee_id = manager_id;
+CONNECT BY PRIOR employee_id = manager_id order by employee_id, manager_id;
 
 -- 目前会报错，level需要映射为EXPR_NODE_RESERVED
 SELECT 
