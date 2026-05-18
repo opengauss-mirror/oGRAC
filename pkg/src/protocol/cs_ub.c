@@ -27,6 +27,7 @@
 #include "cs_pipe.h"
 #include "cm_signal.h"
 #include "cm_ubs_mem.h"
+#include "cm_system.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,15 +81,74 @@ status_t ub_init_ubsm_mem(void)
     return OG_SUCCESS;
 }
 
-status_t ub_create_shm_region(uint32 host_id, uint32 inst_count)
+static void ub_trim_host_token(char *token)
+{
+    char *start = token;
+    while (*start == ' ' || *start == '\t') {
+        start++;
+    }
+    if (start != token) {
+        (void)memmove_s(token, strlen(start) + 1, start, strlen(start) + 1);
+    }
+    size_t len = strlen(token);
+    while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t')) {
+        token[--len] = '\0';
+    }
+}
+
+static status_t ub_get_cluster_host(const char *cluster_hosts, uint32 host_idx,
+    char *host, uint32 host_size)
+{
+    if (cluster_hosts == NULL || cluster_hosts[0] == '\0') {
+        OG_LOG_RUN_ERR("[UBS] UBS_CLUSTER_HOSTS is not configured");
+        return OG_ERROR;
+    }
+
+    char buf[MAX_HOST_NAME_DESC_LENGTH * MAX_REGION_NODE_NUM];
+    errno_t err = strncpy_s(buf, sizeof(buf), cluster_hosts, strlen(cluster_hosts));
+    if (err != EOK) {
+        return OG_ERROR;
+    }
+
+    uint32 idx = 0;
+    char *saveptr = NULL;
+    char *token = strtok_s(buf, ",", &saveptr);
+    while (token != NULL) {
+        ub_trim_host_token(token);
+        if (token[0] != '\0') {
+            if (idx == host_idx) {
+                err = strncpy_s(host, host_size, token, MAX_HOST_NAME_DESC_LENGTH - 1);
+                return (err == EOK) ? OG_SUCCESS : OG_ERROR;
+            }
+            idx++;
+        }
+        token = strtok_s(NULL, ",", &saveptr);
+    }
+
+    OG_LOG_RUN_ERR("[UBS] host index %u not found in UBS_CLUSTER_HOSTS, config: %s",
+        host_idx, cluster_hosts);
+    return OG_ERROR;
+}
+
+status_t ub_create_shm_region(uint32 host_id, uint32 inst_count, const char *cluster_hosts)
 {
     char *host_name = cm_sys_host_name();
+    char ubs_host0[MAX_HOST_NAME_DESC_LENGTH];
+    char ubs_host1[MAX_HOST_NAME_DESC_LENGTH];
     char region_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
     int ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", host_id);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("Failed to format shm region name, error:%d", ret);
         return OG_ERROR;
     }
+
+    if (ub_get_cluster_host(cluster_hosts, 0, ubs_host0, sizeof(ubs_host0)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (ub_get_cluster_host(cluster_hosts, 1, ubs_host1, sizeof(ubs_host1)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     ubsmem_region_attributes_t region;
     region.host_num = inst_count;
     errno_t err = strcpy_s(region.hosts[0].host_name, sizeof(region.hosts[0].host_name), host_name);
@@ -99,7 +159,7 @@ status_t ub_create_shm_region(uint32 host_id, uint32 inst_count)
 
     region.hosts[0].affinity = true;
     for (int i = 1; i < region.host_num; i++) {
-        host_name = strcmp(cm_sys_host_name(), "node01") == 0 ? "node02" : "node01";
+        host_name = strcmp(cm_sys_host_name(), ubs_host0) == 0 ? ubs_host1 : ubs_host0;
         err = strcpy_s(region.hosts[i].host_name, sizeof(region.hosts[i].host_name), host_name);
         if (err != EOK) {
             OG_LOG_RUN_ERR("Failed to copy host name for shm region, error:%d", err);

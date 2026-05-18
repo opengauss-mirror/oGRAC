@@ -117,6 +117,7 @@ static inline void buf_push_page(knl_session_t *session, buf_ctrl_t *page, latch
     knl_panic(session->page_stack.depth < KNL_MAX_PAGE_STACK_DEPTH);
     session->page_stack.pages[session->page_stack.depth] = page;
     session->page_stack.latch_modes[session->page_stack.depth] = mode;
+    session->page_stack.gbp_lock_modes[session->page_stack.depth] = 0;
     session->page_stack.depth++;
 }
 

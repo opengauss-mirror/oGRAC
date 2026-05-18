@@ -199,6 +199,8 @@ config_item_t g_parameters[] = {
     { "_UB_PAGE_HOT_TIMEOUT", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", "[1,1000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_TIMEOUT, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_timeout,
       sql_notify_als_ub_page_hot_timeout, NULL, NULL },
+    { "UBS_CLUSTER_HOSTS", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL,
+      PARAM_UBS_CLUSTER_HOSTS, EFFECT_REBOOT, CFG_INS, NULL, NULL, NULL, NULL },
     /* *************************************************************************
     agent parameters,
     private area size = (_AGENT_STACK_SIZE

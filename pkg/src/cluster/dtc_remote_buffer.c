@@ -36,6 +36,7 @@
 #include "dtc_database.h"
 #include "cm_malloc.h"
 #include "cm_date.h"
+#include "cm_thread.h"
 #include "cs_ub.h"
 #include "srv_sga.h"
 #include "cm_ubs_mem.h"
@@ -121,7 +122,8 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
 
-    int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count);
+    int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count,
+        g_instance->kernel.attr.ubs_cluster_hosts);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("[DRC] drc create sgm region fail, return error:%d", ret);
         return ret;
@@ -293,6 +295,26 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     (void)dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
 }
 
+#define GBP_READONLY_WAIT_MAX_TIMES 1000
+
+static status_t dtc_buf_wait_readonly_clear(ub_rw_lock_t *lock, page_id_t page_id)
+{
+    uint32 times = 0;
+
+    while (ub_rw_lock_get_readonly(lock)) {
+        times++;
+        if (SECUREC_UNLIKELY(times > GBP_READONLY_WAIT_MAX_TIMES)) {
+            OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] wait readonly clear timeout", page_id.file, page_id.page);
+            return OG_ERROR;
+        }
+        if (times % 50 == 0) {
+            cm_sleep(1);
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
 static inline status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     char *page = (char *)ctrl->shmem_page_addr;
@@ -302,16 +324,184 @@ static inline status_t dcs_copy_page_from_shmem(knl_session_t *session, buf_ctrl
     return OG_SUCCESS;
 }
 
+/*
+ * Copy page from GBP shmem; if head/tail pcn mismatch and lock is readonly,
+ * wait for readonly to clear and copy once more.
+ */
+static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
+{
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_offset;
+    status_t ret;
+
+    dcs_copy_page_from_shmem(session, ctrl);
+    if (CHECK_PAGE_PCN(ctrl->page)) {
+        return OG_SUCCESS;
+    }
+
+    if (!ub_rw_lock_get_readonly(lock)) {
+        OG_LOG_RUN_WAR("[DTC-GBP-COPY][%u-%u] page pcn mismatch without readonly, head pcn:%u, tail pcn:%u",
+            ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->page->pcn, (uint32)PAGE_TAIL(ctrl->page)->pcn);
+        return OG_ERROR;
+    }
+
+    OG_LOG_RUN_WAR("[DTC-GBP-COPY][%u-%u] page pcn mismatch while readonly, head pcn:%u, tail pcn:%u, wait and recopy",
+        ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->page->pcn, (uint32)PAGE_TAIL(ctrl->page)->pcn);
+
+    ret = dtc_buf_wait_readonly_clear(lock, ctrl->page_id);
+    if (ret != OG_SUCCESS) {
+        return ret;
+    }
+
+    dcs_copy_page_from_shmem(session, ctrl);
+    if (!CHECK_PAGE_PCN(ctrl->page)) {
+        OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] page pcn still mismatch after readonly clear, head pcn:%u, tail pcn:%u",
+            ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->page->pcn, (uint32)PAGE_TAIL(ctrl->page)->pcn);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+void dtc_buf_gbp_hold(buf_ctrl_t *ctrl, latch_mode_t mode)
+{
+    ctrl->gbp_lock_count++;
+    ctrl->gbp_lock_mode = (uint8)mode;
+}
+
+status_t dtc_buf_gbp_unhold(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode)
+{
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    status_t ret = OG_SUCCESS;
+
+    if (shmem_page_meta == NULL) {
+        return OG_SUCCESS;
+    }
+
+    ret = drc_gbp_distribute_unlock(session, shmem_page_meta->lock_ptr, ctrl->page_id, mode);
+    if (ctrl->gbp_lock_count > 0) {
+        ctrl->gbp_lock_count--;
+        if (ctrl->gbp_lock_count == 0) {
+            ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+        }
+    }
+    return ret;
+}
+
+static uint32 dtc_buf_gbp_release_session_s_locks(knl_session_t *session, buf_ctrl_t *ctrl, uint32 *saved_indices,
+    uint32 max_saved)
+{
+    uint32 saved_count = 0;
+
+    for (uint32 i = 0; i < session->page_stack.depth; i++) {
+        if (session->page_stack.pages[i] != ctrl) {
+            continue;
+        }
+        if (session->page_stack.gbp_lock_modes[i] != LATCH_MODE_S) {
+            continue;
+        }
+        if (saved_count < max_saved) {
+            saved_indices[saved_count] = i;
+        }
+        saved_count++;
+        (void)dtc_buf_gbp_unhold(session, ctrl, LATCH_MODE_S);
+        session->page_stack.gbp_lock_modes[i] = DRC_LOCK_NULL;
+    }
+    return saved_count;
+}
+
+static void dtc_buf_gbp_restore_session_s_locks(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset,
+    const uint32 *saved_indices, uint32 saved_count)
+{
+    for (uint32 j = 0; j < saved_count; j++) {
+        uint32 i = saved_indices[j];
+
+        if (session->page_stack.gbp_lock_modes[i] != DRC_LOCK_NULL) {
+            continue;
+        }
+        if (drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, LATCH_MODE_S) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC-GBP-CHECK][%u-%u] failed to restore S lock after X upgrade rollback",
+                ctrl->page_id.file, ctrl->page_id.page);
+            continue;
+        }
+        session->page_stack.gbp_lock_modes[i] = LATCH_MODE_S;
+        dtc_buf_gbp_hold(ctrl, LATCH_MODE_S);
+    }
+}
+
+static bool32 dtc_buf_session_owns_gbp_store_fence(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (!ctrl->gbp_store_pending) {
+        return OG_FALSE;
+    }
+
+    for (uint32 i = 0; i < session->changed_count; i++) {
+        if (session->changed_pages[i] == ctrl) {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static void dtc_buf_gbp_abort_x_after_upgrade(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset,
+    bool32 x_already_held, bool32 did_s_upgrade, const uint32 *saved_indices, uint32 saved_count)
+{
+    if (!x_already_held) {
+        (void)drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, LATCH_MODE_X);
+    }
+    if (did_s_upgrade) {
+        dtc_buf_gbp_restore_session_s_locks(session, ctrl, lock_offset, saved_indices, saved_count);
+    }
+}
+
+bool32 dtc_buf_gbp_should_unlock_on_leave(knl_session_t *session, buf_ctrl_t *ctrl, uint32 stack_idx,
+    latch_mode_t mode)
+{
+    if (mode != LATCH_MODE_X) {
+        return OG_TRUE;
+    }
+
+    /*
+     * UB X lock is reentrant per thread. Only the outermost X stack frame should x_unlock;
+     * inner reenter frames skip unlock to match a single gbp_lock_count increment.
+     */
+    for (uint32 i = 0; i < stack_idx; i++) {
+        if (session->page_stack.pages[i] == ctrl && session->page_stack.gbp_lock_modes[i] == LATCH_MODE_X) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
+}
+
 status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode, bool32 *is_load)
 {
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
     uint64 lock_offset = shmem_page_meta->lock_ptr;
     status_t ret;
+    bool32 x_already_held = OG_FALSE;
+    bool32 did_s_upgrade = OG_FALSE;
+    uint32 s_upgraded[KNL_MAX_PAGE_STACK_DEPTH];
+    uint32 s_upgraded_count = 0;
 
-    // to do, if mode is S, not lock; if mode is X, need lock
-    // Acquire remote global lock
-    ret = drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, mode);
+    if (mode == LATCH_MODE_X) {
+        ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_offset;
+        x_already_held = ub_rw_lock_is_x_held_by_current_thread(lock, (uint8)DCS_SELF_INSTID(session),
+            (int32)cm_get_current_thread_id());
+        s_upgraded_count = dtc_buf_gbp_release_session_s_locks(session, ctrl, s_upgraded,
+            KNL_MAX_PAGE_STACK_DEPTH);
+        did_s_upgrade = (s_upgraded_count > 0);
+    }
+
+    if (mode == LATCH_MODE_X && dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
+        OG_LOG_DEBUG_INF("[DTC-GBP-CHECK][%u-%u]: reenter X after leave(changed), bypass store fence",
+            ctrl->page_id.file, ctrl->page_id.page);
+        ret = drc_gbp_distribute_lock_reenter(session, lock_offset, ctrl->page_id);
+    } else {
+        ret = drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, mode);
+    }
     if (ret != OG_SUCCESS) {
+        if (mode == LATCH_MODE_X && did_s_upgrade) {
+            dtc_buf_gbp_restore_session_s_locks(session, ctrl, lock_offset, s_upgraded, s_upgraded_count);
+        }
         OG_LOG_RUN_WAR("[DTC-GBP-CHECK][%u-%u] failed to lock shmem page, return", ctrl->page_id.file,
                         ctrl->page_id.page);
         return ret;
@@ -325,17 +515,31 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
         OG_LOG_RUN_ERR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
                        shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
                        df->ctrl->name);
-        // to do: unlock remote mate
+        if (mode == LATCH_MODE_X) {
+            dtc_buf_gbp_abort_x_after_upgrade(session, ctrl, lock_offset, x_already_held, did_s_upgrade, s_upgraded,
+                s_upgraded_count);
+        } else {
+            (void)drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        }
         return OG_ERROR;
     }
 
     uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
     uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
 
-    // to do: check remote_head_lsn, remote_tail_lsn is max and no set, need to set
     if (remote_head_lsn != remote_tail_lsn) {
-        OG_LOG_RUN_WAR("[DTC-GBP-CHECK][%llu-%llu] failed to check lsn, return", remote_head_lsn, remote_tail_lsn);
-        // TODO: when we find the page is invalid, unlock remote mate and return error
+        OG_LOG_RUN_ERR("[DTC-GBP-CHECK][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn);
+        if (mode == LATCH_MODE_X) {
+            dtc_buf_gbp_abort_x_after_upgrade(session, ctrl, lock_offset, x_already_held, did_s_upgrade, s_upgraded,
+                s_upgraded_count);
+        } else {
+            ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+            if (ret != OG_SUCCESS) {
+                return ret;
+            }
+        }
+        return OG_ERROR;
     }
 
     // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
@@ -343,11 +547,14 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     if (remote_head_lsn < ctrl->page->lsn && readonly == false) {
         OG_LOG_RUN_ERR("[DTC-GBP-CHECK][%u-%u]: lsn check failed, remote page lsn(%llu), ctrl->page->lsn(%llu)",
             ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
-        // Release and free global lock
-        ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
-        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
-        if (ret != OG_SUCCESS) {
-            return ret;
+        if (mode == LATCH_MODE_X) {
+            dtc_buf_gbp_abort_x_after_upgrade(session, ctrl, lock_offset, x_already_held, did_s_upgrade, s_upgraded,
+                s_upgraded_count);
+        } else {
+            ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+            if (ret != OG_SUCCESS) {
+                return ret;
+            }
         }
         return OG_ERROR;
     }
@@ -361,13 +568,16 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
          * two case: ctrl->page->lsn > remote_head_lsn. current node write this page with unlock remote lock,
          *           but readonly is true, ctrl->page->lsn is newest.
          */
-        OG_LOG_DEBUG_INF(
+        OG_LOG_RUN_INF(
             "[DTC-GBP-CHECK][%u-%u]: use current local page, remote page lsn(%llu), local page lsn(%llu), mode: %u",
-            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, ctrl->gbp_lock_mode);
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, mode);
     }
-    OG_LOG_DEBUG_INF(
-            "[DTC-GBP-CHECK][%u-%u]: check local page success, remote page lsn(%llu), local page lsn(%llu), mode: %u",
-            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, ctrl->gbp_lock_mode);
+    OG_LOG_RUN_INF(
+        "[DTC-GBP-CHECK][%u-%u]: check local page success, remote page lsn(%llu), local page lsn(%llu), mode: %u",
+        ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, mode);
+    if (!(mode == LATCH_MODE_X && x_already_held)) {
+        dtc_buf_gbp_hold(ctrl, mode);
+    }
     return OG_SUCCESS;
 }
 
@@ -389,24 +599,45 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         }
     }
 
-    dcs_copy_page_from_shmem(session, ctrl);
+    ret = dtc_buf_copy_from_gbp_shmem(session, ctrl, lock_offset);
+    if (ret != OG_SUCCESS) {
+        (void)dtc_buf_gbp_unhold(session, ctrl, mode);
+        OG_LOG_RUN_WAR("[BUFFER-GBP] copy_from_gbp_shmem fail: local buffer file id %u, page id %u. "
+            "remote file %u, remote page %u",
+            shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page);
+        return OG_ERROR;
+    }
 
     heap_page_t *heap_page = (heap_page_t *)ctrl->page;
-    OG_LOG_RUN_WAR("[DTC_HEAP_COPY_GBP] page[%u-%u], oid: %d, page addr: %p, page_lsn %llu, page addr by meta: %p",
-                   AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page, heap_page->oid,
-                   ctrl->shmem_page_addr, heap_page->head.lsn, GET_PAGE_ADDR_IN_GBP((char *)shmem_page_meta));
+    OG_LOG_DEBUG_INF("[DTC_HEAP_COPY_GBP] page[%u-%u], oid: %d, page addr: %p, page_lsn %llu, page addr by meta: %p, "
+                   "meta addr: %p.", AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page,
+                   heap_page->oid, ctrl->shmem_page_addr, heap_page->head.lsn,
+                   GET_PAGE_ADDR_IN_GBP((char *)shmem_page_meta), shmem_page_meta);
 
     // check page identifier of remote buf meta with remote page
     if (shmem_page_meta->file_id != AS_PAGID(heap_page->head.id).file ||
         shmem_page_meta->page_id != AS_PAGID(heap_page->head.id).page) {
         datafile_t *df = NULL;
         df = DATAFILE_GET(session, ctrl->page_id.file);
-        OG_LOG_RUN_WAR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
+        // if mode is X, no need to unlock, unlock after write finished
+        ret = dtc_buf_gbp_unhold(session, ctrl, mode);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to unlock shmem page.", ctrl->page_id.file, ctrl->page_id.page);
+            return ret;
+        }
+        OG_LOG_RUN_ERR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
                        shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
                        df->ctrl->name);
-        // if mode is X, no need to unlock, unlock after write finished
-        ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
-        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+        return OG_ERROR;
+    }
+    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
+    uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+
+    if (remote_head_lsn != remote_tail_lsn) {
+        OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu), pcn: %u, "
+            "tail pcn: %u", ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn,
+            (ctrl->page)->pcn, PAGE_TAIL(ctrl->page)->pcn);
+        ret = dtc_buf_gbp_unhold(session, ctrl, mode);
         if (ret != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to unlock shmem page.", ctrl->page_id.file, ctrl->page_id.page);
             return ret;
@@ -414,22 +645,11 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         return OG_ERROR;
     }
 
-    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
-
-    // to do: check remote_head_lsn, remote_tail_lsn is max and no set, need to set
-    if (remote_head_lsn != remote_tail_lsn) {
-        OG_LOG_RUN_WAR("[DTC-GBP-COPY][%u-%u] failed to check remote lsn, head lsn: %llu, tail lsn %llu, pcn: %u, "
-            "tail pcn: %u", ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn,
-            (ctrl->page)->pcn, PAGE_TAIL(ctrl->page)->pcn);
-        // TODO: when we find the page is invalid, unlock remote mate and return error
-    }
-
     // to do: dtc_update_lsn(session, remote_head_lsn), need to think how to set.
     // to do：dtc_update_scn(session, ctrl->scn); need to think how to set.
     dtc_update_lsn(session, remote_head_lsn);
     // to do: check ctrl->lock_mode how to set
-    ctrl->lock_mode = mode;
+    ctrl->lock_mode = DRC_LOCK_NULL;
     // ctrl->load_status need to set BUF_IS_LOADED, because commit need to check this status
     ctrl->load_status = (uint8)BUF_IS_LOADED;
 

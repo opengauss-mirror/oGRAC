@@ -34,6 +34,7 @@
 #include "dtc_recovery.h"
 #include "dtc_database.h"
 #include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
 
 static inline void buf_free_iocb(knl_aio_iocbs_t *buf_iocbs, buf_iocb_t *buf_iocb);
 
@@ -1811,9 +1812,13 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
         }
 
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-            ub_rw_lock_t *lock = (ub_rw_lock_t *)shmem_page_meta->lock_ptr;
-            ub_rw_lock_set_readonly(lock, OG_TRUE);
-            OG_LOG_RUN_INF("[GBP-BUF][%u-%u]set readonly true, gbp_lock %d", ctrl->page_id.file,
+            if (!ctrl->gbp_store_pending) {
+                drc_gbp_begin_page_store(session, shmem_page_meta->lock_ptr);
+                ctrl->gbp_store_pending = 1;
+            } else {
+                ub_rw_lock_set_readonly((ub_rw_lock_t *)(uintptr_t)shmem_page_meta->lock_ptr, OG_TRUE);
+            }
+            OG_LOG_RUN_INF("[GBP-BUF][%u-%u]begin page store fence, gbp_lock %d", ctrl->page_id.file,
                            ctrl->page_id.page, ctrl->gbp_lock_mode);
             if (SECUREC_UNLIKELY(DB_NOT_READY(session))) {
                 buf_calc_checksum(session, ctrl);
@@ -1824,17 +1829,36 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
     }
 
     buf_log_leave_page(session, ctrl, changed);
-    buf_unlatch(session, ctrl, OG_TRUE);
 
-    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL &&
-        ctrl->gbp_lock_mode != DRC_LOCK_NULL && ctrl->gbp_lock_mode != DRC_LOCK_SHARE) {
-        uint64 lock_offset = shmem_page_meta->lock_ptr;
-        status_t ret = drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, ctrl->gbp_lock_mode);
-        if (ret != OG_SUCCESS) {
-            OG_LOG_RUN_ERR("[GBP-BUF][%u-%u] failed to unlock shmem page, gbp_lock %d",
-                           ctrl->page_id.file, ctrl->page_id.page, ctrl->gbp_lock_mode);
+    /*
+     * Scheme B: release GBP lock before local latch (reverse of enter: latch then GBP).
+     * Use per-session page_stack gbp_lock_modes so multi-session S locks on shared ctrl
+     * do not clear gbp_lock_mode for other holders.
+     * Write path re-acquires GBP X lock at commit in log_set_page_lsn.
+     */
+    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+        uint32 stack_idx = session->page_stack.depth - 1;
+        uint8 gbp_lock_mode = session->page_stack.gbp_lock_modes[stack_idx];
+
+        if (gbp_lock_mode != DRC_LOCK_NULL) {
+            if (dtc_buf_gbp_should_unlock_on_leave(session, ctrl, stack_idx, (latch_mode_t)gbp_lock_mode)) {
+                status_t ret = dtc_buf_gbp_unhold(session, ctrl, (latch_mode_t)gbp_lock_mode);
+                if (ret != OG_SUCCESS) {
+                    OG_LOG_RUN_ERR("[GBP-LEAVE-BUF][%u-%u] failed to unlock shmem page, gbp_lock %d",
+                        ctrl->page_id.file, ctrl->page_id.page, gbp_lock_mode);
+                } else {
+                    OG_LOG_RUN_INF("[GBP-LEAVE-BUF][%u-%u] unlock shmem page, gbp_lock %d, shared_count: %u, "
+                        "gbp_count: %u", ctrl->page_id.file, ctrl->page_id.page, gbp_lock_mode,
+                        ctrl->latch.shared_count, ctrl->gbp_lock_count);
+                }
+            } else {
+                OG_LOG_RUN_INF("[GBP-LEAVE-BUF][%u-%u]skip gbp unlock on X reenter, gbp_lock %d, depth: %u",
+                    ctrl->page_id.file, ctrl->page_id.page, gbp_lock_mode, stack_idx);
+            }
+            session->page_stack.gbp_lock_modes[stack_idx] = DRC_LOCK_NULL;
         }
     }
+    buf_unlatch(session, ctrl, OG_TRUE);
     buf_pop_page(session);
 }
 
@@ -1935,7 +1959,7 @@ status_t buf_claim_shmem_ctrl2hot(knl_session_t *session, page_id_t page_id, uin
     }
     cm_spin_unlock(&bucket->lock);
 
-    OG_LOG_DEBUG_INF("[buffer][%u-%u][buf_claim_shmem_ctrl2hot]: ctrl_dirty=%u, ctrl_remote_dirty=%u,"
+    OG_LOG_DEBUG_INF("[buffer][%u-%u][buf_claim_shmem_ctrl2hot]: 5-1.ctrl_dirty=%u, ctrl_remote_dirty=%u,"
                     " ctrl_readonly=%u, in ckpt=%u, ctrl_lock_mode=%u, edp=%d",
                     ctrl->page_id.file, ctrl->page_id.page, ctrl->is_dirty, ctrl->is_remote_dirty, ctrl->is_readonly,
                     ctrl->in_ckpt, ctrl->lock_mode, ctrl->is_edp);

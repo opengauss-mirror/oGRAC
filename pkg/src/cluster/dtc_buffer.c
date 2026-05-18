@@ -128,6 +128,8 @@ static status_t dtc_buf_try_prefetch(knl_session_t *session, buf_read_assist_t *
 static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl,
                                knl_buf_wait_t *temp_stat)
 {
+    bool32 gbp_held = OG_FALSE;
+
     BUF_UNPROTECT_PAGE(ctrl->page);
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
         bool32 try_load = OG_TRUE;
@@ -161,9 +163,10 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
                 OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
                 return ret;
             }
-            OG_LOG_DEBUG_INF("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u,"
+            gbp_held = OG_TRUE;
+            OG_LOG_RUN_INF("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u,"
                            "is_load_from_gbp: %d, mode: %u", ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
-                           (unsigned int)ra->options, is_load_from_gbp, ra->mode);
+                           (unsigned int)ra->options, is_load_from_gbp, ctrl->gbp_lock_mode);
         }
 
         if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp) {
@@ -175,17 +178,10 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             }
         }
 
-        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL && ra->mode == LATCH_MODE_S) {
-            status_t ret;
-            OG_LOG_RUN_INF("[DCS][%u-%u] dtc_buf_finish2 unlock shmem page, gbp_lock %u", ctrl->page_id.file,
-                ctrl->page_id.page, ctrl->gbp_lock_mode);
-            ret = drc_gbp_distribute_unlock(session, ctrl->shmem_page_meta->lock_ptr, ctrl->page_id, ra->mode);
-            if (ret != OG_SUCCESS) {
-                return ret;
-            }
-        }
-
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
+            if (gbp_held) {
+                (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
+            }
             OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
             buf_unlatch(session, ctrl, OG_TRUE);
             return OG_ERROR;
@@ -212,6 +208,9 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
     //    stats_buf_record(session, &temp_stat, ctrl);
     buf_push_page(session, ctrl, ra->mode);
+    if (gbp_held) {
+        session->page_stack.gbp_lock_modes[session->page_stack.depth - 1] = (uint8)ra->mode;
+    }
     buf_log_enter_page(session, ctrl, ra->mode, ra->options);
 
     if (DTC_BUF_PREFETCH_EXTENT(ra->read_num) && session->kernel->attr.enable_asynch &&
@@ -252,6 +251,10 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         }
 
         if (dtc_buf_try_local(session, ra, ctrl)) {
+            if (ctrl->is_in_gbp == OG_TRUE && ctrl->shmem_page_meta == NULL) {
+                OG_LOG_RUN_INF("[DTC-GBP_BUF][%u-%u] page is in gbp, but remote address is null in local node.",
+                    ra->page_id.file, ra->page_id.page);
+            }
             break;
         }
 

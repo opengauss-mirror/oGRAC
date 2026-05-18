@@ -54,6 +54,7 @@ typedef struct st_page_stack {
     uint32 depth;
     struct st_buf_ctrl *pages[KNL_MAX_PAGE_STACK_DEPTH];
     latch_mode_t latch_modes[KNL_MAX_PAGE_STACK_DEPTH];
+    uint8 gbp_lock_modes[KNL_MAX_PAGE_STACK_DEPTH]; /* 0: no GBP lock held for this stack frame */
     bool32 is_skip[KNL_MAX_PAGE_STACK_DEPTH];
     uint32 log_begin[KNL_MAX_ATOMIC_PAGES];
 } page_stack_t;

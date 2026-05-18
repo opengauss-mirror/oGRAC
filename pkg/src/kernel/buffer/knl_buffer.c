@@ -821,7 +821,6 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
 
     // Release and free global lock
     ret = drc_gbp_distribute_unlock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
-    shmem_ctrl->gbp_lock_mode = DRC_LOCK_NULL;
     if (ret != OG_SUCCESS) {
         return ret;
     }
@@ -1040,6 +1039,8 @@ static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_se
     // Release and free global lock
     ret = drc_gbp_distribute_unlock(session, lock_ptr, item->page_id, LATCH_MODE_X);
     item->gbp_lock_mode = DRC_LOCK_NULL;
+    item->gbp_lock_count = 0;
+    item->gbp_store_pending = 0;
 
     // Return the free block to the caller.
     return item;
@@ -1846,6 +1847,21 @@ void buf_balance_set_list(buf_set_t *set)
     cm_spin_unlock(&list->lock);
 }
 
+static bool32 buf_session_gbp_x_covers_s(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (ctrl == NULL || ctrl->shmem_page_meta == NULL || !session->kernel->attr.enable_ubsmem) {
+        return OG_FALSE;
+    }
+
+    for (uint32 i = 0; i < session->page_stack.depth; i++) {
+        if (session->page_stack.pages[i] == ctrl &&
+            session->page_stack.gbp_lock_modes[i] == LATCH_MODE_X) {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
 bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id)
 {
     if (DB_IS_CLUSTER(session)) {
@@ -1854,11 +1870,15 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
         cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
         buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
         if ((ctrl != NULL) &&
-            dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
-            (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
-                cm_spin_unlock(&bucket->lock);
-                return OG_TRUE;
+                dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
+                (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
+            cm_spin_unlock(&bucket->lock);
+            if (ctrl->shmem_page_meta != NULL) {
+                OG_LOG_RUN_INF("[GBP-INDEX-BUFFER][%u-%u] check page version", page_id.file, page_id.page);
+            }
+            return OG_TRUE;
         }
+
         cm_spin_unlock(&bucket->lock);
 
         uint32 depth = session->page_stack.depth;
@@ -1883,11 +1903,13 @@ bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *b
     if (DB_IS_CLUSTER(session)) {
         buf_ctrl_t *ctrl = (buf_ctrl_t *)buf_ctrl;
         if (ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, page_id) &&
-            dcs_local_page_usable(session, ctrl, LATCH_MODE_S) &&
             (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
-                if (IS_SAME_PAGID(ctrl->page_id, page_id)) {
-                    return OG_TRUE;
-                }
+            if (dcs_local_page_usable(session, ctrl, LATCH_MODE_S)) {
+                return OG_TRUE;
+            }
+            if (buf_session_gbp_x_covers_s(session, ctrl)) {
+                return OG_TRUE;
+            }
         }
     }
 

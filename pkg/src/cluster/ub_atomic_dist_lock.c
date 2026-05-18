@@ -51,22 +51,105 @@
 #endif
 
 #define SPIN_YIELD_THRESHOLD 100
-#define OWNER_NONE_INVALID UINT64_MAX /* no exclusive holder */
+
+/*
+ * lock_word layout (64-bit, single atomic CAS):
+ *   [63:40] state  (24-bit signed: 0=free, >0=S count, 0x800000=X)
+ *   [39:32] node_id (8-bit, 0xFF when no X holder; valid node_id starts from 0)
+ *   [31:0]  tid     (32-bit, -1 when no X holder)
+ */
+#define GBP_LOCK_STATE_SHIFT    40U
+#define GBP_LOCK_NODE_SHIFT     32U
+#define GBP_LOCK_STATE_MASK     0xFFFFFFULL
+#define GBP_LOCK_NODE_MASK      0xFFULL
+#define GBP_LOCK_STATE_X_RAW    0x800000U
+#define GBP_LOCK_NODE_INVALID   OG_INVALID_ID8
+#define GBP_LOCK_TID_INVALID    (-1)
 
 struct ub_rw_lock {
-    atomic_int state;                  /* 0=unlocked, >0=shared count, INT32_MIN=exclusive */
-    atomic_uint_fast64_t ownerNode;    /* node_id of the current exclusive holder */
-    atomic_uint_fast32_t writeWaiters; /* count of threads waiting for X lock */
+    atomic_uint_fast64_t lock_word;
+    atomic_uint_fast32_t writeWaiters;
     atomic_bool readonly;
-    char padding[UB_RW_LOCK_SIZE       /* UB_RW_LOCK_SIZE is originally 640 bytes */
-                 - sizeof(atomic_int) - sizeof(atomic_uint_fast64_t)
-                 - sizeof(atomic_uint_fast32_t) - sizeof(atomic_bool)];
+    char padding[UB_RW_LOCK_SIZE - sizeof(atomic_uint_fast64_t) - sizeof(atomic_uint_fast32_t) -
+                 sizeof(atomic_bool)];
 };
 
-static inline uint64_t make_global_owner(uint8_t node_id, int32_t tid)
+static inline int32 gbp_lock_state_to_external(uint32 raw24)
 {
-    return ((uint64_t)node_id << 32) | (uint32_t)tid;
+    int32 st = (int32)(raw24 | ((raw24 & 0x800000U) ? 0xFF000000U : 0U));
+
+    if (raw24 == GBP_LOCK_STATE_X_RAW) {
+        return INT32_MIN;
+    }
+    return st;
 }
+
+static inline uint32 gbp_lock_state_to_raw(int32 st)
+{
+    if (st == INT32_MIN) {
+        return GBP_LOCK_STATE_X_RAW;
+    }
+    return (uint32)(st & 0xFFFFFF);
+}
+
+static inline uint64_t gbp_lock_pack(int32 state, uint8 node_id, int32 tid)
+{
+    uint64_t w = (uint64_t)(uint32_t)tid;
+
+    w |= ((uint64_t)node_id << GBP_LOCK_NODE_SHIFT);
+    w |= ((uint64_t)gbp_lock_state_to_raw(state) << GBP_LOCK_STATE_SHIFT);
+    return w;
+}
+
+static inline void gbp_lock_unpack(uint64_t w, int32 *state, uint8 *node_id, int32 *tid)
+{
+    *tid = (int32)(uint32_t)(w & 0xFFFFFFFFULL);
+    *node_id = (uint8)((w >> GBP_LOCK_NODE_SHIFT) & GBP_LOCK_NODE_MASK);
+    *state = gbp_lock_state_to_external((uint32)((w >> GBP_LOCK_STATE_SHIFT) & GBP_LOCK_STATE_MASK));
+}
+
+static inline uint64_t gbp_lock_word_empty(void)
+{
+    return gbp_lock_pack(0, (uint8)GBP_LOCK_NODE_INVALID, GBP_LOCK_TID_INVALID);
+}
+
+static inline bool32 gbp_lock_owner_cleared(uint64_t w)
+{
+    uint8 node_id;
+    int32 tid;
+    int32 state;
+
+    gbp_lock_unpack(w, &state, &node_id, &tid);
+    (void)state;
+    (void)tid;
+    return node_id == GBP_LOCK_NODE_INVALID;
+}
+
+static inline uint64_t gbp_lock_make_x(uint8 node_id, int32 tid)
+{
+    return gbp_lock_pack(INT32_MIN, node_id, tid);
+}
+
+static inline bool32 gbp_lock_is_x_held_word(uint64_t w, uint8 node_id, int32 tid)
+{
+    int32 state;
+    uint8 n;
+    int32 t;
+
+    gbp_lock_unpack(w, &state, &n, &t);
+    return (bool32)(state == INT32_MIN && n == node_id && t == tid);
+}
+
+static inline bool32 gbp_lock_cas(atomic_uint_fast64_t *lock_word, uint64_t *expected, uint64_t desired)
+{
+    return atomic_compare_exchange_weak_explicit(lock_word, expected, desired, memory_order_acq_rel,
+        memory_order_relaxed);
+}
+
+bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
+bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid);
+static void ub_rw_lock_diag_log(const char *phase, const char *path, ub_rw_lock_t *lock,
+    const ub_location_t *location);
 
 void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly)
 {
@@ -78,13 +161,39 @@ bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock)
     return atomic_load_explicit(&lock->readonly, memory_order_relaxed) ? OG_TRUE : OG_FALSE;
 }
 
+uint64 ub_rw_lock_get_owner_node(ub_rw_lock_t *lock)
+{
+    uint64_t w = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    int32 state;
+    uint8 node_id;
+    int32 tid;
+
+    gbp_lock_unpack(w, &state, &node_id, &tid);
+    if (state != INT32_MIN) {
+        return UINT64_MAX;
+    }
+    return ((uint64)node_id << 32) | (uint32)tid;
+}
+
+int32 ub_rw_lock_get_state(ub_rw_lock_t *lock)
+{
+    uint64_t w = atomic_load_explicit(&lock->lock_word, memory_order_relaxed);
+    int32 state;
+    uint8 node_id;
+    int32 tid;
+
+    gbp_lock_unpack(w, &state, &node_id, &tid);
+    (void)node_id;
+    (void)tid;
+    return state;
+}
+
 void ub_rw_lock_create(ub_rw_lock_t *lock, const ub_lock_config_t *config, const ub_location_t *location)
 {
     (void)config;
     (void)location;
 
-    atomic_store(&lock->state, 0);
-    atomic_store(&lock->ownerNode, OWNER_NONE_INVALID);
+    atomic_store_explicit(&lock->lock_word, gbp_lock_word_empty(), memory_order_relaxed);
     atomic_store(&lock->writeWaiters, 0);
     atomic_store(&lock->readonly, false);
 }
@@ -93,8 +202,7 @@ void ub_rw_lock_free(ub_rw_lock_t *lock, const ub_location_t *location)
 {
     (void)location;
 
-    atomic_store(&lock->state, 0);
-    atomic_store(&lock->ownerNode, OWNER_NONE_INVALID);
+    atomic_store_explicit(&lock->lock_word, gbp_lock_word_empty(), memory_order_relaxed);
     atomic_store(&lock->writeWaiters, 0);
 }
 
@@ -106,16 +214,24 @@ ub_lock_result_t ub_rw_lock_s_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
     uint32_t spinCount = 0;
 
     for (;;) {
-        int state = atomic_load_explicit(&lock->state, memory_order_acquire);
-        if (state >= 0 && atomic_load_explicit(&lock->writeWaiters, memory_order_relaxed) == 0) {
-            if (atomic_compare_exchange_weak_explicit(&lock->state, &state, state + 1, memory_order_acquire,
-                                                      memory_order_relaxed)) {
+        uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+        int32 state;
+        uint8 node_id;
+        int32 tid;
+
+        gbp_lock_unpack(oldw, &state, &node_id, &tid);
+        if (state >= 0 && gbp_lock_owner_cleared(oldw) &&
+            !ub_rw_lock_get_readonly(lock) &&
+            atomic_load_explicit(&lock->writeWaiters, memory_order_relaxed) == 0) {
+            uint64_t neww = gbp_lock_pack(state + 1, (uint8)GBP_LOCK_NODE_INVALID, GBP_LOCK_TID_INVALID);
+            uint64_t expected = oldw;
+
+            if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
                 return UB_LOCK_SUCCESS;
             }
         }
 
         cpu_pause();
-
         spinCount++;
         if (spinCount > SPIN_YIELD_THRESHOLD) {
             sched_yield();
@@ -127,16 +243,125 @@ ub_lock_result_t ub_rw_lock_s_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
 ub_lock_result_t ub_rw_lock_s_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
 {
     (void)policy;
-    (void)location;
 
-    int state = atomic_load_explicit(&lock->state, memory_order_relaxed);
-    if (state <= 0) {
-        return UB_LOCK_ERROR;
+    uint32_t spinCount = 0;
+
+    for (;;) {
+        uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+        int32 state;
+        uint8 node_id;
+        int32 tid;
+
+        gbp_lock_unpack(oldw, &state, &node_id, &tid);
+        if (state <= 0) {
+            return UB_LOCK_ERROR;
+        }
+        if (!gbp_lock_owner_cleared(oldw)) {
+            return UB_LOCK_ERROR;
+        }
+
+        uint64_t neww = gbp_lock_pack(state - 1, (uint8)GBP_LOCK_NODE_INVALID, GBP_LOCK_TID_INVALID);
+        uint64_t expected = oldw;
+        if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+            OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] release s lock node:%u tid:%d state: %d",
+                location != NULL ? location->node_id : 0, location != NULL ? location->tid : 0,
+                ub_rw_lock_get_state(lock));
+            return UB_LOCK_SUCCESS;
+        }
+
+        cpu_pause();
+        spinCount++;
+        if (spinCount > SPIN_YIELD_THRESHOLD) {
+            sched_yield();
+            spinCount = 0;
+        }
     }
-    atomic_fetch_sub_explicit(&lock->state, 1, memory_order_release);
-    OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] release s lock node:%u tid:%d state: %d",
-                     location->node_id, location->tid, lock->state);
-    return UB_LOCK_SUCCESS;
+}
+
+void ub_rw_lock_begin_page_store(ub_rw_lock_t *lock)
+{
+    atomic_fetch_add_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
+    ub_rw_lock_set_readonly(lock, OG_TRUE);
+}
+
+void ub_rw_lock_end_page_store(ub_rw_lock_t *lock)
+{
+    atomic_fetch_sub_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
+    ub_rw_lock_set_readonly(lock, OG_FALSE);
+}
+
+ub_lock_result_t ub_rw_lock_x_lock_for_store(ub_rw_lock_t *lock, const ub_location_t *location)
+{
+    uint32_t spinCount = 0;
+    uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    if (gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
+        ub_rw_lock_set_readonly(lock, OG_FALSE);
+        ub_rw_lock_diag_log("for_store", "reenter", lock, location);
+        return UB_LOCK_SUCCESS;
+    }
+
+    for (;;) {
+        oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+        int32 state;
+        uint8 node_id;
+        int32 tid;
+
+        gbp_lock_unpack(oldw, &state, &node_id, &tid);
+        (void)node_id;
+        (void)tid;
+        if (state == 0 && gbp_lock_owner_cleared(oldw)) {
+            uint64_t neww = gbp_lock_make_x(location->node_id, location->tid);
+            uint64_t expected = oldw;
+
+            if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+                ub_rw_lock_set_readonly(lock, OG_FALSE);
+                ub_rw_lock_diag_log("for_store", "cas", lock, location);
+                return UB_LOCK_SUCCESS;
+            }
+        }
+
+        cpu_pause();
+        spinCount++;
+        if (spinCount > SPIN_YIELD_THRESHOLD) {
+            sched_yield();
+            spinCount = 0;
+        }
+    }
+}
+
+ub_lock_result_t ub_rw_lock_x_lock_reenter(ub_rw_lock_t *lock, const ub_location_t *location)
+{
+    uint32_t spinCount = 0;
+    uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    if (gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
+        return UB_LOCK_SUCCESS;
+    }
+
+    for (;;) {
+        oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+        int32 state;
+        uint8 node_id;
+        int32 tid;
+
+        gbp_lock_unpack(oldw, &state, &node_id, &tid);
+        (void)node_id;
+        (void)tid;
+        if (state == 0 && gbp_lock_owner_cleared(oldw)) {
+            uint64_t neww = gbp_lock_make_x(location->node_id, location->tid);
+            uint64_t expected = oldw;
+
+            if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+                return UB_LOCK_SUCCESS;
+            }
+        }
+
+        cpu_pause();
+        spinCount++;
+        if (spinCount > SPIN_YIELD_THRESHOLD) {
+            sched_yield();
+            spinCount = 0;
+        }
+    }
 }
 
 ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
@@ -144,24 +369,27 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
     (void)policy;
     uint32 times = 0;
     uint32_t spinCount = 0;
+    uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    
+    int32 cur_state;
+    uint8 cur_node_id;
+    int32 cur_tid;
 
-    uint64_t identify = make_global_owner(location->node_id, location->tid);
+    gbp_lock_unpack(oldw, &cur_state, &cur_node_id, &cur_tid);
+    OG_LOG_RUN_INF("[GBP-LOCK] X lock start, state:%d node_id:%u tid:%d", cur_state, cur_node_id, cur_tid);
 
-    /* Re-entrant X lock: same thread already holds exclusive. */
-    uint64_t ownernode = atomic_load_explicit(&lock->ownerNode, memory_order_acquire);
-    if (ownernode == identify) {
-        OG_LOG_RUN_INF("[DRC-GBP-LOCK] re enter X lock node:%u tid:%d identify:%lu owner:%lu", location->node_id,
-                       location->tid, (unsigned long)identify, (unsigned long)ownernode);
+    if (gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
+        OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] re enter X lock node:%u tid:%d", location->node_id, location->tid);
         return UB_LOCK_SUCCESS;
     }
 
     atomic_fetch_add_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
 
     for (;;) {
-        bool32 readonly = atomic_load_explicit(&lock->readonly, memory_order_relaxed);
+        bool32 readonly = ub_rw_lock_get_readonly(lock);
         while (readonly) {
-            ownernode = atomic_load_explicit(&lock->ownerNode, memory_order_acquire);
-            if (ownernode == identify) {
+            oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+            if (gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
                 break;
             }
 
@@ -170,23 +398,39 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
                 cm_sleep(100);
                 times = 0;
             }
-            readonly = atomic_load_explicit(&lock->readonly, memory_order_relaxed);
+            readonly = ub_rw_lock_get_readonly(lock);
         }
 
-        int state = atomic_load_explicit(&lock->state, memory_order_relaxed);
-        OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] X lock node:%u tid:%d identify:%lu owner:%lu, readonly: %d, state: %d",
-            location->node_id, location->tid, (unsigned long)identify, (unsigned long)ownernode, readonly, state);
+        oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+        int32 state;
+        uint8 node_id;
+        int32 tid;
+        gbp_lock_unpack(oldw, &state, &node_id, &tid);
+        OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] 11 X lock node:%u tid:%d state:%d readonly:%d",
+            node_id, tid, state, (int32)readonly);
 
-        int expected = 0;
-        if (atomic_compare_exchange_weak_explicit(&lock->state, &expected, INT32_MIN, memory_order_acquire,
-                                                  memory_order_relaxed)) {
-            atomic_store_explicit(&lock->ownerNode, identify, memory_order_relaxed);
-            atomic_fetch_sub_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
-            return UB_LOCK_SUCCESS;
+        if (state == 0 && gbp_lock_owner_cleared(oldw)) {
+            uint64_t neww = gbp_lock_make_x(location->node_id, location->tid);
+            uint64_t expected = oldw;
+
+            if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+                int32 wr_wait;
+                int32 success_state;
+                uint8 success_node_id;
+                int32 success_tid;
+                uint64_t curw;
+
+                atomic_fetch_sub_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
+                wr_wait = (int32)atomic_load_explicit(&lock->writeWaiters, memory_order_acquire);
+                curw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+                gbp_lock_unpack(curw, &success_state, &success_node_id, &success_tid);
+                OG_LOG_RUN_INF("[GBP-LOCK] X lock success, state:%d node_id:%u tid:%d, write_waiters:%d",
+                    success_state, success_node_id, success_tid, wr_wait);
+                return UB_LOCK_SUCCESS;
+            }
         }
 
         cpu_pause();
-
         spinCount++;
         if (spinCount > SPIN_YIELD_THRESHOLD) {
             sched_yield();
@@ -198,52 +442,104 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
 ub_lock_result_t ub_rw_lock_x_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
 {
     (void)policy;
-    uint64_t currentOwner = atomic_load_explicit(&lock->ownerNode, memory_order_relaxed);
-    uint64_t identify = make_global_owner(location->node_id, location->tid);
-    if (currentOwner != identify) {
-        OG_LOG_RUN_ERR("[GBP-LOCK] X unlock fail because owner is unequel node :%u tid:%d identify:%lu owner:%lu",
-                        location->node_id, location->tid, (unsigned long)identify, (unsigned long)currentOwner);
+    int32 write_waiters = (int32)atomic_load_explicit(&lock->writeWaiters, memory_order_relaxed);
+    bool32 readonly = ub_rw_lock_get_readonly(lock);
+    uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    int32 state;
+    uint8 node_id;
+    int32 tid;
+
+    gbp_lock_unpack(oldw, &state, &node_id, &tid);
+  
+    OG_LOG_RUN_INF("[GBP-LOCK] X unlock start, state:%d node_id:%u tid:%d",
+            state, node_id, tid);
+
+    if (state == 0 && gbp_lock_owner_cleared(oldw)) {
+        return UB_LOCK_SUCCESS;
+    }
+
+    if (!gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
+        OG_LOG_RUN_ERR("[GBP-LOCK] X unlock fail, node:%u tid:%d state:%d node_id:%u tid:%d "
+                       "write_waiters:%d readonly:%d",
+            location->node_id, location->tid, state, node_id, tid, write_waiters, (int32)readonly);
         return UB_LOCK_ERROR;
     }
 
-    int state = atomic_load_explicit(&lock->state, memory_order_relaxed);
-
-    int expected = INT32_MIN;
-    if (!atomic_compare_exchange_strong_explicit(&lock->state, &expected, 0, memory_order_release,
-                                                 memory_order_relaxed)) {
-        OG_LOG_RUN_ERR("[GBP-LOCK] X unlock fail, node:%u tid:%d identify:%lu owner:%lu, state:%d",
-            location->node_id, location->tid, (unsigned long)identify, (unsigned long)currentOwner, state);
+    uint64_t neww = gbp_lock_word_empty();
+    uint64_t expected = oldw;
+    if (!gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+        OG_LOG_RUN_ERR("[GBP-LOCK] X unlock CAS fail, node:%u tid:%d state:%d node_id:%u tid:%d "
+                       "write_waiters:%d readonly:%d",
+            location->node_id, location->tid, state, node_id, tid, write_waiters, (int32)readonly);
         return UB_LOCK_ERROR;
     }
-    atomic_store_explicit(&lock->ownerNode, OWNER_NONE_INVALID, memory_order_relaxed);
+
+    // test log
+    {
+        uint64_t curw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+        int32 cur_state;
+        uint8 cur_node_id;
+        int32 cur_tid;
+        gbp_lock_unpack(curw, &cur_state, &cur_node_id, &cur_tid);
+        OG_LOG_RUN_INF("[GBP-LOCK] X unlock success, state:%d node_id:%u tid:%d",
+            cur_state, cur_node_id, cur_tid);
+    }
 
     return UB_LOCK_SUCCESS;
 }
 
 ub_lock_result_t ub_rw_lock_sx_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
 {
-    /* Not implemented for atomic dist lock */
     return ub_rw_lock_x_lock(lock, policy, location);
 }
 
 ub_lock_result_t ub_rw_lock_sx_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
 {
-    /* Not implemented for atomic dist lock */
     return ub_rw_lock_x_unlock(lock, policy, location);
+}
+
+bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid)
+{
+    const struct ub_rw_lock *l = (const struct ub_rw_lock *)lock;
+    uint64_t w = atomic_load_explicit(&l->lock_word, memory_order_acquire);
+
+    return gbp_lock_is_x_held_word(w, node_id, tid);
+}
+
+static void ub_rw_lock_diag_log(const char *phase, const char *path, ub_rw_lock_t *lock,
+    const ub_location_t *location)
+{
+    uint64_t w = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    int32 state;
+    uint8 node_id;
+    int32 tid;
+    int32 write_waiters = (int32)atomic_load_explicit(&lock->writeWaiters, memory_order_relaxed);
+    bool32 readonly = ub_rw_lock_get_readonly(lock);
+    bool32 x_held = ub_rw_lock_is_x_held_by_current_thread(lock, location->node_id, location->tid);
+
+    gbp_lock_unpack(w, &state, &node_id, &tid);
+    OG_LOG_RUN_INF("[GBP-LOCK-DIAG][%s][%s] node:%u tid:%d state:%d lock_node:%u lock_tid:%d "
+                   "write_waiters:%d readonly:%d x_held:%d",
+        phase, path, location->node_id, location->tid, state, node_id, tid,
+        write_waiters, (int32)readonly, (int32)x_held);
 }
 
 void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *out_state, int32 *out_owner_node,
     int32 *out_write_waiters, int32 *out_owner_tid)
 {
     const struct ub_rw_lock *l = (const struct ub_rw_lock *)lock;
-    uint64_t owner = atomic_load_explicit(&l->ownerNode, memory_order_relaxed);
+    uint64_t w = atomic_load_explicit(&l->lock_word, memory_order_relaxed);
+    int32 state;
+    uint8 node_id;
+    int32 tid;
 
-    *out_state = (int32)atomic_load_explicit(&l->state, memory_order_relaxed);
+    gbp_lock_unpack(w, &state, &node_id, &tid);
+    *out_state = state;
     *out_write_waiters = (int32)atomic_load_explicit(&l->writeWaiters, memory_order_relaxed);
     *out_owner_node = -1;
     *out_owner_tid = -1;
-    if (owner != OWNER_NONE_INVALID) {
-        *out_owner_node = (int32)(uint8)(owner >> 32);
-        *out_owner_tid = (int32)(uint32)owner;
+    if (state == INT32_MIN) {
+        *out_owner_node = (int32)node_id;
+        *out_owner_tid = tid;
     }
 }

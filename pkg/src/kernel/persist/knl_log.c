@@ -931,9 +931,6 @@ static void log_reset_readonly(knl_session_t *session, buf_ctrl_t *ctrl)
     ctrl->is_readonly = 0;
 
     if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-        remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
-        ub_rw_lock_t *lock = (ub_rw_lock_t *)shmem_page_meta->lock_ptr;
-        ub_rw_lock_set_readonly(lock, OG_FALSE);
         OG_LOG_RUN_INF("[GBP-BUF][%u-%u]clean readonly true, gbp_lock %d", ctrl->page_id.file,
                        ctrl->page_id.page, ctrl->gbp_lock_mode);
     }
@@ -951,6 +948,45 @@ static inline void log_calc_checksum(knl_session_t *session, page_head_t *page, 
         if (IS_SYSTEM_SPACE(space) || IS_SYSAUX_SPACE(space)) {
             page_calc_checksum(page, DEFAULT_PAGE_SIZE(session));
         }
+    }
+}
+
+static status_t log_gbp_lock_before_store(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+
+    if (shmem_page_meta == NULL) {
+        return OG_SUCCESS;
+    }
+
+    status_t ret = drc_gbp_distribute_lock_for_store(session, shmem_page_meta->lock_ptr, ctrl->page_id);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[GBP-BUF][%u-%u] failed to lock shmem page before store",
+            ctrl->page_id.file, ctrl->page_id.page);
+        return ret;
+    }
+    return OG_SUCCESS;
+}
+
+static void log_gbp_unlock_after_store(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+
+    if (shmem_page_meta == NULL) {
+        return;
+    }
+
+    if (drc_gbp_distribute_unlock(session, shmem_page_meta->lock_ptr, ctrl->page_id, LATCH_MODE_X) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[GBP-BUF][%u-%u] failed to unlock shmem page after store, gbp_lock %d, "
+                       "gbp_store_pending %d, page_lsn %llu",
+            ctrl->page_id.file, ctrl->page_id.page, ctrl->gbp_lock_mode, (int32)ctrl->gbp_store_pending,
+            (uint64)ctrl->page->lsn);
+        drc_gbp_lock_diag_log_page(session, shmem_page_meta->lock_ptr, ctrl->page_id, "commit_unlock_fail");
+    }
+
+    if (ctrl->gbp_store_pending) {
+        drc_gbp_end_page_store(session, shmem_page_meta->lock_ptr);
+        ctrl->gbp_store_pending = 0;
     }
 }
 
@@ -974,19 +1010,26 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
 #endif
         if (!DB_CLUSTER_NO_CMS) {
             if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-                OG_LOG_DEBUG_INF("[LBP-COPY-TO-GBP][%u-%u] update session lsn: %llu",
-                                 ctrl->page_id.file, ctrl->page_id.page, session->curr_lsn);
+                OG_LOG_RUN_INF("[LBP-COPY-TO-GBP][%u-%u] update session lsn: %llu page_type %u page_lsn %llu",
+                               ctrl->page_id.file, ctrl->page_id.page, session->curr_lsn,
+                               (uint32)ctrl->page->type, (uint64)ctrl->page->lsn);
             } else {
                 knl_panic(!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl));
             }
         }
-        // copy ctrl->page to gbp after write ctrl->page and log, and update remote page mate
+
+        // Scheme B: re-acquire GBP X at commit, store, then unlock before clean readonly
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            if (log_gbp_lock_before_store(session, ctrl) != OG_SUCCESS) {
+                CM_ABORT(0, "[GBP-BUF] ABORT INFO: failed to lock shmem page before store %u-%u",
+                    ctrl->page_id.file, ctrl->page_id.page);
+            }
             dtc_buf_try_store_to_gbp(session, ctrl, session->curr_lsn);
+            log_gbp_unlock_after_store(session, ctrl);
         }
+
         log_reset_readonly(session, ctrl);
     }
-
     session->changed_count = 0;
 }
 
