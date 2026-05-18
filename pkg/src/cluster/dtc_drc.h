@@ -151,7 +151,8 @@ typedef enum en_drc_res_action {
 } drc_res_action_e;
 
 // Statistics for checking if this page becomes hot
-#define DRC_PAGE_HOT_THRESHOLD (UINT32_MAX)
+#define DRC_PAGE_HOT_THRESHOLD(session) session->kernel->attr.ub_page_hot_threshold
+#define DRC_PAGE_HOT_TIMEOUT(session) session->kernel->attr.ub_page_hot_timeout
 typedef struct st_page_hot_stat {
     date_t start_time;
     uint32 owner_changed_number;  // how many times has the owner been changed since start time

@@ -1175,6 +1175,7 @@ static status_t pl_verify_func_not_support_sharding(sql_verifier_t *verif, expr_
 
             case ID_FUNC_ITEM_GROUP_CONCAT:
             case ID_FUNC_ITEM_GET_LOCK:
+            case ID_FUNC_ITEM_GET_LOCK_BY_GBP_META_ADDR:
             case ID_FUNC_ITEM_RELEASE_LOCK: {
                 break;
             }

@@ -104,6 +104,8 @@ sql_func_t g_func_tab[] = {
     { { (char *)"from_unixtime", 13 }, sql_func_from_unixtime, sql_verify_from_unixtime, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_FROM_UNIXTIME, FO_USUAL, OG_FALSE },
     { { (char *)"getutcdate", 10 }, sql_func_utcdate, sql_verify_utcdate, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GETUTCDATE, FO_USUAL, OG_FALSE },
     { { (char *)"get_lock", 8 }, sql_func_get_lock, sql_verify_alck_nm_and_to, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GET_LOCK, FO_USUAL, OG_FALSE },
+    { { (char *)"get_lock_by_gbp_meta_addr", 25 }, sql_func_try_get_lock_by_gbp_meta_addr, sql_verify_gbp_meta_addr,
+    AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GET_LOCK_BY_GBP_META_ADDR, FO_USUAL, OG_FALSE },
     { { (char *)"get_shared_lock", 15 }, sql_func_get_shared_lock, sql_verify_alck_nm_and_to, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GET_SHARED_LOCK, FO_USUAL, OG_FALSE },
     { { (char *)"get_xact_lock", 13 }, sql_func_get_xact_lock, sql_verify_alck_nm_and_to, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GET_XACT_LOCK, FO_USUAL, OG_FALSE },
     { { (char *)"get_xact_shared_lock", 20 }, sql_func_get_xact_shared_lock, sql_verify_alck_nm_and_to, AGGR_TYPE_NONE, FO_NONE, ID_FUNC_ITEM_GET_XACT_SHARED_LOCK, FO_USUAL, OG_FALSE },
