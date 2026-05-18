@@ -111,6 +111,7 @@ void dtc_buf_gbp_hold(buf_ctrl_t *ctrl, latch_mode_t mode);
 status_t dtc_buf_gbp_unhold(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode);
 bool32 dtc_buf_gbp_should_unlock_on_leave(knl_session_t *session, buf_ctrl_t *ctrl, uint32 stack_idx,
     latch_mode_t mode);
+bool32 dtc_buf_session_owns_gbp_store_fence(knl_session_t *session, buf_ctrl_t *ctrl);
 
 #ifdef __cplusplus
 }

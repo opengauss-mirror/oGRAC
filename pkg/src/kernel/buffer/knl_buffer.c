@@ -33,6 +33,7 @@
 #include "dtc_recovery.h"
 #include "dtc_database.h"
 #include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define GBP_COMPOUND_SLOT_SIZE (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64))
@@ -1869,6 +1870,11 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
 
         cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
         buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
+        /*
+         * ctrl->lock_mode of page in gbp is must NULL, there is indicated that newest page is in local buffer,
+         * and others node no write at the same time(ctrl->transfer_status != BUF_TRANS_REL_OWNER), so we must
+         * read page for gbp because newest gbp page is in remote shmemory.
+         */
         if ((ctrl != NULL) &&
                 dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
                 (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
@@ -1877,6 +1883,22 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
                 OG_LOG_RUN_INF("[GBP-INDEX-BUFFER][%u-%u] check page version", page_id.file, page_id.page);
             }
             return OG_TRUE;
+        }
+
+        if (ctrl != NULL && ctrl->shmem_page_meta != NULL &&
+            ctrl->transfer_status != BUF_TRANS_REL_OWNER) {
+            if (buf_session_gbp_x_covers_s(session, ctrl)) {
+                cm_spin_unlock(&bucket->lock);
+                OG_LOG_RUN_INF("[GBP-INDEX-BUFFER][%u-%u] session GBP X covers S, skip version lock",
+                    page_id.file, page_id.page);
+                return OG_TRUE;
+            }
+            if (dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
+                cm_spin_unlock(&bucket->lock);
+                OG_LOG_RUN_INF("[GBP-INDEX-BUFFER][%u-%u] session owns store fence, skip version lock",
+                    page_id.file, page_id.page);
+                return OG_TRUE;
+            }
         }
 
         cm_spin_unlock(&bucket->lock);
@@ -1908,6 +1930,9 @@ bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *b
                 return OG_TRUE;
             }
             if (buf_session_gbp_x_covers_s(session, ctrl)) {
+                return OG_TRUE;
+            }
+            if (dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
                 return OG_TRUE;
             }
         }
