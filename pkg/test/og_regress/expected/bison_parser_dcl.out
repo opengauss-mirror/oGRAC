@@ -220,7 +220,7 @@ SQL> -- alter system flush sqlpool;
 SQL> alter system kill session '123,456';
 
 OG-00683, The session ID was missing or invalid
-SQL> alter system reset statistics;
+SQL> alter system reset statistic;
 
 Succeed.
 

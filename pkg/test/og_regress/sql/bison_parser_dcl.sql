@@ -132,7 +132,7 @@ alter system set use_bison_parser = 'true';
 -- alter system flush buffer;
 -- alter system flush sqlpool;
 alter system kill session '123,456';
-alter system reset statistics;
+alter system reset statistic;
 alter system reload hba config;
 -- alter system reload pbl config;
 alter system refresh sysdba privilege;
