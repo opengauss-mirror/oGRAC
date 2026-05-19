@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <stdint.h>
 #include "knl_cluster_module.h"
 #include "cm_base.h"
 #include "cm_log.h"
@@ -36,6 +37,8 @@
 #include "dtc_drc.h"
 #include "dtc_view.h"
 #include "knl_common.h"
+#include "dtc_remote_buffer.h"
+#include "dtc_remote_lock.h"
 
 dtc_view_mes_stat_t g_mes_stat_array[OG_MAX_INSTANCES];
 dtc_view_mes_elapsed_t g_mes_elapsed_array[OG_MAX_INSTANCES];
@@ -97,6 +100,17 @@ static status_t dtc_view_gbp_buffer_ctrl_open(knl_handle_t session, knl_cursor_t
     scan->ctrl_id = 0;
     return OG_SUCCESS;
 }
+
+static status_t dtc_view_gbp_lock_info_open(knl_handle_t session, knl_cursor_t *cursor)
+{
+    gbp_buf_ctrl_scan_t *scan = (gbp_buf_ctrl_scan_t *)cursor->page_buf;
+    cursor->rowid.vmid = 0;
+    cursor->rowid.vm_slot = 0;
+    cursor->rowid.vm_tag = 0;
+    scan->buf_set_id = 0;
+    scan->ctrl_id = 0;
+    return OG_SUCCESS;
+}
 // Colums defination of View
 knl_column_t g_converting_page_cnt_cols[] = {
     { 0, "ID", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
@@ -134,6 +148,24 @@ knl_column_t g_gbp_buffer_ctrl_cols[] = {
     { 15, "IS_DIRTY", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
     { 16, "LOCK_MODE", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
 };
+
+#define GBP_LOCK_INFO_MODE_LEN 40
+knl_column_t g_gbp_lock_info_cols[] = {
+    { 0, "ID", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 1, "POOL#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 2, "SLOT#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 3, "LOCK_ADDR", 0, 0, OG_TYPE_VARCHAR, ADDR_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 4, "ATOMIC_STATE", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 5, "X_OWNER_NODE", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 6, "WRITE_WAITERS", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 7, "LOCK_MODE", 0, 0, OG_TYPE_VARCHAR, GBP_LOCK_INFO_MODE_LEN, 0, 0, OG_FALSE, 0, { 0 } },
+    { 8, "FILE#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 9, "PAGE#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 10, "TS#", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 11, "GBP_OWNER", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 12, "THREAD_ID", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
+};
+
 #define MAX_MES_TYPE_LEN 5
 #define MAX_MES_GROUP_ID 4
 
@@ -212,6 +244,7 @@ knl_column_t g_node_info_cols[] = {
 #define CONVERTING_PAGE_CNT_COLS (ELEMENT_COUNT(g_converting_page_cnt_cols))
 #define BUFFER_CTRL_COLS (ELEMENT_COUNT(g_buffer_ctrl_cols))
 #define GBP_BUFFER_CTRL_COLS (ELEMENT_COUNT(g_gbp_buffer_ctrl_cols))
+#define GBP_LOCK_INFO_COLS (ELEMENT_COUNT(g_gbp_lock_info_cols))
 #define MES_STAT_COLS (ELEMENT_COUNT(g_mes_stat_cols))
 #define MES_ELAPSED_COLS (ELEMENT_COUNT(g_mes_elapsed_cols))
 #define MES_QUEUE_COLS (ELEMENT_COUNT(g_mes_queue_cols))
@@ -1318,6 +1351,98 @@ static status_t dtc_view_gbp_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cu
     cursor->eof = OG_TRUE;
     return OG_SUCCESS;
 }
+
+static void dtc_view_gbp_lock_info_mode_str(char *buf, uint32 cap, int32 st, int32 wr_wait)
+{
+    if (st == 0) {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "%s", wr_wait > 0 ? "FREE_WRWAIT" : "FREE"));
+    } else if (st == INT32_MIN) {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "EXCLUSIVE"));
+    } else if (st > 0) {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "%s", wr_wait > 0 ? "SHARED_WRWAIT" : "SHARED"));
+    } else {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "UNKNOWN"));
+    }
+}
+
+static status_t dtc_view_gbp_lock_info_fetch(knl_handle_t se, knl_cursor_t *cursor)
+{
+    knl_session_t *session = (knl_session_t *)se;
+    gbp_buf_ctrl_scan_t *scan = (gbp_buf_ctrl_scan_t *)cursor->page_buf;
+    remote_buf_context_t *gbp = DRC_GBP_BUF_CTX;
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+    row_assist_t ra;
+    char addr[ADDR_LEN];
+    char mode_str[GBP_LOCK_INFO_MODE_LEN];
+    uint32 id = (uint32)cursor->rowid.vmid;
+    uint32 node_id = (uint32)g_instance->kernel.id;
+
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem ||
+        !session->kernel->attr.enable_remote_distribute_lock) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    if (node_id >= OG_MAX_INSTANCES || rsga->remote_buf_addr[node_id] == NULL) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    while (scan->buf_set_id < gbp->buf_set_count) {
+        buf_set_t *set = &gbp->buf_set[scan->buf_set_id];
+        if (scan->ctrl_id >= set->capacity) {
+            scan->ctrl_id = 0;
+            scan->buf_set_id++;
+            continue;
+        }
+
+        uint32 pool = scan->buf_set_id;
+        uint32 slot = scan->ctrl_id;
+        scan->ctrl_id++;
+
+        uint32 per_page = sizeof(remote_page_info_t) + session->kernel->attr.page_size + sizeof(uint64);
+        remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(set->page_buf + (uint64)slot * (uint64)per_page);
+        uint64 lock_addr = shmem_page_meta->lock_ptr;
+        if (lock_addr == 0) {
+            continue;
+        }
+
+        int32 state = 0;
+        int32 x_owner = 0;
+        int32 wr_wait = 0;
+        int32 owner_tid = 0;
+        drc_gbp_lock_info_debug_snapshot(lock_addr, &state, &x_owner, &wr_wait, &owner_tid);
+        dtc_view_gbp_lock_info_mode_str(mode_str, GBP_LOCK_INFO_MODE_LEN, state, wr_wait);
+
+        uint32 ts_num = 0;
+        if (shmem_page_meta->file_id < OG_MAX_DATA_FILES) {
+            ts_num = session->kernel->db.datafiles[shmem_page_meta->file_id].space_id;
+        }
+
+        row_init(&ra, (char *)cursor->row, OG_MAX_ROW_SIZE, GBP_LOCK_INFO_COLS);
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)id));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)pool));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)slot));
+        PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", lock_addr));
+        OG_RETURN_IFERR(row_put_str(&ra, addr));
+        OG_RETURN_IFERR(row_put_int32(&ra, state));
+        OG_RETURN_IFERR(row_put_int32(&ra, x_owner));
+        OG_RETURN_IFERR(row_put_int32(&ra, wr_wait));
+        OG_RETURN_IFERR(row_put_str(&ra, mode_str));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->file_id));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->page_id));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)ts_num));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->claimed_owner));
+        OG_RETURN_IFERR(row_put_int32(&ra, owner_tid));
+
+        cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+        cursor->rowid.vmid++;
+        return OG_SUCCESS;
+    }
+
+    cursor->eof = OG_TRUE;
+    return OG_SUCCESS;
+}
 /*
 Describtion of DTC view structure
 */
@@ -1338,6 +1463,12 @@ VW_DECL dtc_view_gbp_buffer_ctrl = { "SYS",
                                      g_gbp_buffer_ctrl_cols,
                                      dtc_view_gbp_buffer_ctrl_open,
                                      dtc_view_gbp_buffer_ctrl_fetch };
+VW_DECL dtc_view_gbp_lock_info = { "SYS",
+                                    "DV_GBP_LOCK_INFO",
+                                    GBP_LOCK_INFO_COLS,
+                                    g_gbp_lock_info_cols,
+                                    dtc_view_gbp_lock_info_open,
+                                    dtc_view_gbp_lock_info_fetch };
 VW_DECL dtc_view_mes_stat = {
     "SYS", "MES_STAT", MES_STAT_COLS, g_mes_stat_cols, dtc_view_mes_stat_open, dtc_view_mes_stat_fetch
 };
@@ -1372,6 +1503,8 @@ dynview_desc_t *vw_describe_dtc(uint32 id)
             return &dtc_view_buffer_ctrl;
         case DYN_VIEW_GBP_BUFFER_CTRL:
             return &dtc_view_gbp_buffer_ctrl;
+        case DYN_VIEW_GBP_LOCK_INFO:
+            return &dtc_view_gbp_lock_info;
         case DYN_VIEW_DTC_MES_STAT:
             return &dtc_view_mes_stat;
         case DYN_VIEW_DTC_MES_ELAPSED:
