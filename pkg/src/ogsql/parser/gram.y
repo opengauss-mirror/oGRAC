@@ -6499,18 +6499,21 @@ ColLabel:   IDENT                                   { $$ = $1; }
                 {
                     char *tmp = NULL;
                     BISON_MEM_STRDUP(tmp, $1);
+                    cm_str_upper(tmp);
                     $$ = tmp;
                 }
             | col_name_keyword
                 {
                     char *tmp = NULL;
                     BISON_MEM_STRDUP(tmp, $1);
+                    cm_str_upper(tmp);
                     $$ = tmp;
                 }
             | reserved_keyword
                 {
                     char *tmp = NULL;
                     BISON_MEM_STRDUP(tmp, $1);
+                    cm_str_upper(tmp);
                     $$ = tmp;
                 }
         ;
@@ -7730,10 +7733,15 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P RESET STATISTICS
+            | ALTER SYSTEM_P RESET ColLabel
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+                    if (!cm_str_equal_ins($4, "STATISTIC")) {
+                        OG_SRC_THROW_ERROR_EX(@4.loc, ERR_SQL_SYNTAX_ERROR, "statistic expected");
+                        YYABORT;
+                    }
 
                     SQL_SET_IGNORE_PWD(stmt->session);
                     SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
@@ -15454,11 +15462,7 @@ opt_wait_time:
         ;
 
 debug_mode_value:
-            IDENT
-                {
-                    $$ = $1;
-                }
-            | SCONST
+            alter_param_value
                 {
                     $$ = $1;
                 }
