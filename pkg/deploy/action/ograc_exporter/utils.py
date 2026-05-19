@@ -5,6 +5,14 @@ import os
 import subprocess
 import sys
 
+_ACTION_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ACTION_ROOT not in sys.path:
+    sys.path.append(_ACTION_ROOT)
+from nofile_utils import (
+    apply_nofile_rlimit_before_setuid,
+    resolve_nofile_rlimit_for_user,
+)
+
 
 class CommandError(Exception):
     def __init__(self, cmd, returncode, stdout="", stderr=""):
@@ -48,7 +56,10 @@ def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=600)
     pw = pwd.getpwnam(user)
     uid, gid, home = pw.pw_uid, pw.pw_gid, pw.pw_dir
 
+    soft, hard = resolve_nofile_rlimit_for_user(user)
+
     def _demote():
+        apply_nofile_rlimit_before_setuid(soft, hard)
         os.setgid(gid)
         os.initgroups(user, gid)
         os.setuid(uid)

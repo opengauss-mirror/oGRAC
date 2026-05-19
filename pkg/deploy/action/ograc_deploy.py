@@ -15,6 +15,7 @@ import time
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CUR_DIR)
 
+from nofile_utils import update_limits_conf_user_nofile
 from config import get_config, cfg
 from log_config import get_logger
 from utils import (
@@ -994,13 +995,9 @@ echo "Product Version : {version}"
         """Configure openfile limits."""
         limits_file = "/etc/security/limits.conf"
         open_file_num = 102400
-        if not os.path.exists(limits_file):
-            open(limits_file, 'a').close()
-        exec_popen(f"sed -i '/hard nofile/d' {limits_file}")
-        exec_popen(f"sed -i '/soft nofile/d' {limits_file}")
-        with open(limits_file, "a") as f:
-            f.write(f"\n{self.ograc_user} hard nofile {open_file_num}")
-            f.write(f"\n{self.ograc_user} soft nofile {open_file_num}")
+        update_limits_conf_user_nofile(
+            limits_file, self.ograc_user, open_file_num
+        )
 
     def _clear_residual_files(self):
         """Clear residual files."""
