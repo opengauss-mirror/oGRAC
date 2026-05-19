@@ -15,6 +15,11 @@ from log_config import get_logger
 
 LOG = get_logger("deploy")
 
+from nofile_utils import (
+    apply_nofile_rlimit_before_setuid,
+    resolve_nofile_rlimit_for_user,
+)
+
 
 class CommandError(Exception):
     pass
@@ -60,7 +65,10 @@ def run_python_as_user(script, args, user, timeout=1800):
     except KeyError:
         raise CommandError(f"User {user} not found")
 
+    soft, hard = resolve_nofile_rlimit_for_user(user)
+
     def _set_user():
+        apply_nofile_rlimit_before_setuid(soft, hard)
         os.setgid(pw.pw_gid)
         os.initgroups(user, pw.pw_gid)
         os.setuid(pw.pw_uid)
