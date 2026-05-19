@@ -23,10 +23,16 @@
  * -------------------------------------------------------------------------
  */
 #include <stdio.h>
+#include <stdint.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"
 #include "dtc_remote_lock.h"
+
+#if USE_ATOMIC_LOCK
+void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *atomic_state, int32 *x_owner_node,
+    int32 *write_waiters, int32 *owner_tid);
+#endif
 
 #if !USE_ATOMIC_LOCK
 
@@ -189,4 +195,26 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
     OG_LOG_RUN_INF("[DRC-GBP-LOCK][%u-%u] Success to release %s lock for page: %d",
                    page_id.file, page_id.page, lock_type, ret);
     return OG_SUCCESS;
+}
+
+void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
+    int32 *write_waiters, int32 *owner_tid)
+{
+#if USE_ATOMIC_LOCK
+    if (lock_ptr == 0) {
+        *atomic_state = 0;
+        *x_owner_node = -1;
+        *write_waiters = 0;
+        *owner_tid = -1;
+        return;
+    }
+    ub_rw_lock_debug_read((const ub_rw_lock_t *)(uintptr_t)lock_ptr, atomic_state, x_owner_node, write_waiters,
+        owner_tid);
+#else
+    (void)lock_ptr;
+    *atomic_state = 0;
+    *x_owner_node = -1;
+    *write_waiters = 0;
+    *owner_tid = -1;
+#endif
 }

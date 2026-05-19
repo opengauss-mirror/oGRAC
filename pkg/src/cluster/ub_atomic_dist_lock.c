@@ -51,6 +51,7 @@
 #endif
 
 #define SPIN_YIELD_THRESHOLD 100
+#define OWNER_NONE_INVALID UINT64_MAX /* no exclusive holder */
 
 struct ub_rw_lock {
     atomic_int state;                  /* 0=unlocked, >0=shared count, INT32_MIN=exclusive */
@@ -83,7 +84,7 @@ void ub_rw_lock_create(ub_rw_lock_t *lock, const ub_lock_config_t *config, const
     (void)location;
 
     atomic_store(&lock->state, 0);
-    atomic_store(&lock->ownerNode, 0);
+    atomic_store(&lock->ownerNode, OWNER_NONE_INVALID);
     atomic_store(&lock->writeWaiters, 0);
     atomic_store(&lock->readonly, false);
 }
@@ -93,7 +94,7 @@ void ub_rw_lock_free(ub_rw_lock_t *lock, const ub_location_t *location)
     (void)location;
 
     atomic_store(&lock->state, 0);
-    atomic_store(&lock->ownerNode, 0);
+    atomic_store(&lock->ownerNode, OWNER_NONE_INVALID);
     atomic_store(&lock->writeWaiters, 0);
 }
 
@@ -214,7 +215,7 @@ ub_lock_result_t ub_rw_lock_x_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t 
             location->node_id, location->tid, (unsigned long)identify, (unsigned long)currentOwner, state);
         return UB_LOCK_ERROR;
     }
-    atomic_store_explicit(&lock->ownerNode, 0, memory_order_relaxed);
+    atomic_store_explicit(&lock->ownerNode, OWNER_NONE_INVALID, memory_order_relaxed);
 
     return UB_LOCK_SUCCESS;
 }
@@ -229,4 +230,20 @@ ub_lock_result_t ub_rw_lock_sx_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t
 {
     /* Not implemented for atomic dist lock */
     return ub_rw_lock_x_unlock(lock, policy, location);
+}
+
+void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *out_state, int32 *out_owner_node,
+    int32 *out_write_waiters, int32 *out_owner_tid)
+{
+    const struct ub_rw_lock *l = (const struct ub_rw_lock *)lock;
+    uint64_t owner = atomic_load_explicit(&l->ownerNode, memory_order_relaxed);
+
+    *out_state = (int32)atomic_load_explicit(&l->state, memory_order_relaxed);
+    *out_write_waiters = (int32)atomic_load_explicit(&l->writeWaiters, memory_order_relaxed);
+    *out_owner_node = -1;
+    *out_owner_tid = -1;
+    if (owner != OWNER_NONE_INVALID) {
+        *out_owner_node = (int32)(uint8)(owner >> 32);
+        *out_owner_tid = (int32)(uint32)owner;
+    }
 }

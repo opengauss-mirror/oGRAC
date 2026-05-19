@@ -164,6 +164,7 @@ typedef enum en_dynview_id {
     DYN_VIEW_LFN,
     DYN_VIEW_LRPL_DETAIL,
     DYN_VIEW_GBP_BUFFER_CTRL, // GBP (UB shared) pool buffer ctrl
+    DYN_VIEW_GBP_LOCK_INFO,   // GBP (UB shared) lock slot diagnostics
 } dynview_id_t;
 
 #define VW_DECL static dynview_desc_t
