@@ -91,9 +91,9 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                        | Owner | Name       | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                 |       |            | 1    | 5    | 0         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | HINT_TEST1 | 1    | 5    | 0         |       |        |
-| 2  |       INDEX FULL SCAN            | SYS   | T1_IDX1    | 1    | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT                 |       |            | 1    | 8    | 0         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | HINT_TEST1 | 1    | 8    | 0         |       |        |
+| 2  |       INDEX FULL SCAN            | SYS   | T1_IDX1    | 1    | 8    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -108,8 +108,8 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name       | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |            | 1    | 5    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | HINT_TEST1 | 1    | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |            | 1    | 8    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | HINT_TEST1 | 1    | 8    | 0         |       |        |
 ----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

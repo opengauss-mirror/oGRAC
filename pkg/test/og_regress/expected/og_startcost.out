@@ -46,8 +46,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 1000 | 7    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 1000 | 17   | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 17   | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 
 6 rows fetched.
@@ -77,8 +77,8 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------------
 | Id | Operation                          | Owner | Name           | Rows  | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                   |       |                | 10000 | 4398 | 16        |       |        |
-| 1  |   MERGE JOIN                       |       |                | 10000 | 4398 | 16        |       |        |
+| 0  | SELECT STATEMENT                   |       |                | 10000 | 4397 | 16        |       |        |
+| 1  |   MERGE JOIN                       |       |                | 10000 | 4397 | 16        |       |        |
 | 2  |       TABLE ACCESS BY INDEX ROWID  | SYS   | T_STARTCOST A1 | 1000  | 10   | 8         |       |        |
 | 3  |         INDEX FULL SCAN            | SYS   | IDX_B          | 1000  | 10   | 8         |       |        |
 | 4  |       TABLE ACCESS BY INDEX ROWID  | SYS   | T_STARTCOST A2 | 1000  | 10   | 8         |       |        |
@@ -98,9 +98,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |             | 100  | 8    | 0         |       |        |
-| 1  |   QUERY LIMIT           |       |             | 100  | 8    | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |             | 100  | 19   | 0         |       |        |
+| 1  |   QUERY LIMIT           |       |             | 100  | 19   | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 17   | 0         |       |        |
 -------------------------------------------------------------------------------------------------
 
 7 rows fetched.
@@ -112,9 +112,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |             | 10   | 13   | 6         |       |        |
-| 1  |   QUERY LIMIT           |       |             | 10   | 13   | 6         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |             | 10   | 31   | 14        |       |        |
+| 1  |   QUERY LIMIT           |       |             | 10   | 31   | 14        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 17   | 0         |       |        |
 -------------------------------------------------------------------------------------------------
 
 7 rows fetched.
@@ -127,10 +127,10 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------------
 | Id | Operation                         | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                  |       |             | 100  | 50   | 24        |       |        |
-| 1  |   INDEX GROUP BY                  |       |             | 100  | 50   | 24        |       |        |
-| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | T_STARTCOST | 1000 | 24   | 8         |       |        |
-| 3  |         INDEX FULL SCAN           | SYS   | IDX_B       | 1000 | 24   | 8         |       |        |
+| 0  | SELECT STATEMENT                  |       |             | 100  | 53   | 24        |       |        |
+| 1  |   INDEX GROUP BY                  |       |             | 100  | 53   | 24        |       |        |
+| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | T_STARTCOST | 1000 | 26   | 8         |       |        |
+| 3  |         INDEX FULL SCAN           | SYS   | IDX_B       | 1000 | 26   | 8         |       |        |
 -----------------------------------------------------------------------------------------------------------
 
 8 rows fetched.
@@ -142,10 +142,10 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------------
 | Id | Operation                         | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                  |       |             | 100  | 53   | 24        |       |        |
-| 1  |   INDEX GROUP BY                  |       |             | 100  | 53   | 24        |       |        |
-| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | T_STARTCOST | 1000 | 24   | 8         |       |        |
-| 3  |         INDEX FULL SCAN           | SYS   | IDX_B       | 1000 | 24   | 8         |       |        |
+| 0  | SELECT STATEMENT                  |       |             | 100  | 55   | 24        |       |        |
+| 1  |   INDEX GROUP BY                  |       |             | 100  | 55   | 24        |       |        |
+| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | T_STARTCOST | 1000 | 26   | 8         |       |        |
+| 3  |         INDEX FULL SCAN           | SYS   | IDX_B       | 1000 | 26   | 8         |       |        |
 -----------------------------------------------------------------------------------------------------------
 
 8 rows fetched.
@@ -157,9 +157,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |             | 400  | 49   | 10        |       |        |
-| 1  |   HASH GROUP BY         |       |             | 400  | 49   | 10        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |             | 400  | 69   | 10        |       |        |
+| 1  |   HASH GROUP BY         |       |             | 400  | 69   | 10        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST | 1000 | 17   | 0         |       |        |
 -------------------------------------------------------------------------------------------------
 
 7 rows fetched.

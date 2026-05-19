@@ -46,7 +46,7 @@ alter system set cbo =on;
 /* no use fss */
 explain select * from test_idx2 where c2 = 1000;
 alter system flush sqlpool;
-/* use fss */
+/* use fss: index_ffs grammmer no support */
 explain select /*+index_ffs(test_idx2)*/ * from test_idx2 where c2 = 1000;
 
 /* use fss */
