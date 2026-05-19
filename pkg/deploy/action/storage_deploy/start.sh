@@ -13,22 +13,30 @@ START_MODE=$1
 function initLimitsConfig() {
     nr_open=`cat /proc/sys/fs/nr_open`
     if [ ${open_file_num} -gt ${nr_open} ]; then
-        logAndEchoError "the num of openfile can not greater than nr_open, please check and reset it."
-        exit 1
+        logAndEchoWarn "openfile target ${open_file_num} exceeds fs.nr_open ${nr_open}, cap to nr_open and continue. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+        open_file_num=${nr_open}
     fi
-    sed -i '/hard nofile/d' ${LIMITS_CONFIG_PATH}
-    sed -i '/soft nofile/d' ${LIMITS_CONFIG_PATH}
-    if [ -s ${LIMITS_CONFIG_PATH} ]; then
-        sed -i '$a\'${ograc_user}' hard nofile '${open_file_num}'' ${LIMITS_CONFIG_PATH}
-    else
-        echo "${ograc_user} hard nofile ${open_file_num}" >> ${LIMITS_CONFIG_PATH}
+    if [ ! -f ${LIMITS_CONFIG_PATH} ]; then
+        touch ${LIMITS_CONFIG_PATH}
     fi
-    sed -i '$a\'${ograc_user}' soft nofile '${open_file_num}'' ${LIMITS_CONFIG_PATH}
+    local tmpfile
+    tmpfile=$(mktemp)
+    awk -v user="${ograc_user}" \
+        '!($1 == user && ($2 == "hard" || $2 == "soft") && $3 == "nofile")' \
+        "${LIMITS_CONFIG_PATH}" > "${tmpfile}" || true
+    cat "${tmpfile}" > "${LIMITS_CONFIG_PATH}"
+    rm -f "${tmpfile}"
+    echo "${ograc_user} hard nofile ${open_file_num}" >> ${LIMITS_CONFIG_PATH}
+    echo "${ograc_user} soft nofile ${open_file_num}" >> ${LIMITS_CONFIG_PATH}
 }
 
 function checkOpenFiles() {
-    exit_hard_nofile=`cat ${LIMITS_CONFIG_PATH} | grep "hard nofile ${open_file_num}"`
-    exit_soft_nofile=`cat ${LIMITS_CONFIG_PATH} | grep "soft nofile ${open_file_num}"`
+    exit_hard_nofile=`awk -v user="${ograc_user}" -v nofile="${open_file_num}" \
+        '$1 == user && $2 == "hard" && $3 == "nofile" && $4 == nofile { found=1 } END { if (found) print "1" }' \
+        "${LIMITS_CONFIG_PATH}"`
+    exit_soft_nofile=`awk -v user="${ograc_user}" -v nofile="${open_file_num}" \
+        '$1 == user && $2 == "soft" && $3 == "nofile" && $4 == nofile { found=1 } END { if (found) print "1" }' \
+        "${LIMITS_CONFIG_PATH}"`
     if [[ ${exit_hard_nofile} = '' ]] || [[ ${exit_soft_nofile} = '' ]]; then
         logAndEchoError "failed to set openfile, please check file ${LIMITS_CONFIG_PATH}"
         exit 1
