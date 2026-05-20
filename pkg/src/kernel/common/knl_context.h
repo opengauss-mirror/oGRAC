@@ -155,6 +155,8 @@ typedef struct st_knl_attr {
     bool32 undo_auto_shrink;
     bool32 undo_auto_shrink_inactive;
     uint32 undo_prefetch_page_num;
+    bool32 undo_perf_prealloc;
+    uint32 undo_prealloc_pages;
     uint32 tx_rollback_proc_num;
     bool32 serialized_commit;
     uint32 lock_wait_timeout;
@@ -439,11 +441,8 @@ typedef struct st_knl_instance {
     thread_t file_iof_thd;
 
     /* for para log flush only */
-    para_log_lsn_ctl_t para_log_lsn_ctl __attribute__((aligned(16)));
-    uint32 atomic_align3[32];
     para_log_context_t *para_log_ctx[CPU_SEG_MAX_NUM];
     bool8 para_log_init;
-    para_log_flush_lsn_bitmap_t *para_log_bitmap;
 } knl_instance_t;
 
 #define KNL_MAX_ROW_SIZE(session)     ((session)->kernel->attr.max_row_size)

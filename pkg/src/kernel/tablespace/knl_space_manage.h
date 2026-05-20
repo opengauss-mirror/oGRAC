@@ -42,6 +42,10 @@ status_t spc_try_alloc_extent(knl_session_t *session, space_t *space, page_id_t 
 
 void spc_alloc_datafile_hwm_extent(knl_session_t *session, space_t *space, uint32 id, page_id_t *extent,
     uint32 extent_size);
+bool32 spc_reserve_undo_hwm_pages(knl_session_t *session, space_t *space, uint32 pages_needed,
+    uint32 target_file_no, page_id_t *extent_start, uint32 *pages_reserved);
+bool32 spc_extend_undo_datafile_for_pages(knl_session_t *session, space_t *space, uint32 file_no,
+    uint32 pages_needed);
 status_t spc_df_alloc_extent(knl_session_t *session, space_t *space, uint32 extent_size, page_id_t *extent,
     datafile_t *df);
 

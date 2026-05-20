@@ -25,6 +25,7 @@
 #include "cm_common_module.h"
 #include "cm_hash.h"
 #include "cm_context_pool.h"
+#include "cm_atomic.h"
 
 status_t ogx_pool_create(context_pool_profile_t *profile, context_pool_t **pool)
 {
@@ -257,7 +258,8 @@ static void ogx_recycle_referred_objects(context_pool_t *pool, context_ctrl_t *c
     }
 
     cm_spin_lock(&ctrl->lock, NULL);
-    if (!ctrl->valid && ctrl->exec_count == 0) {
+    int32 exec_count = cm_atomic32_get(&ctrl->exec_count);
+    if (!ctrl->valid && exec_count == 0) {
         pool->clean(ctrl);
     }
     cm_spin_unlock(&ctrl->lock);
@@ -594,14 +596,6 @@ void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint3
 
     cm_spin_unlock(&bucket->enque_lock);
     return ctrl;
-}
-
-void ogx_dec_exec(context_ctrl_t *ctrl)
-{
-    cm_spin_lock(&ctrl->lock, NULL);
-    ctrl->exec_count--;
-    CM_ASSERT(ctrl->exec_count >= 0);
-    cm_spin_unlock(&ctrl->lock);
 }
 
 void ogx_dec_ref(context_pool_t *pool, context_ctrl_t *ctrl)

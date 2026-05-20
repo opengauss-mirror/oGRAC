@@ -295,6 +295,43 @@ status_t sql_notify_als_undo_prefetch_pages(void *se, void *item, char *value)
     return OG_SUCCESS;
 }
 
+#define UNDO_PREALLOC_PAGES_MAX (uint32)65536
+
+status_t sql_verify_als_undo_prealloc_pages(void *se, void *lex, void *def)
+{
+    uint32 num;
+
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (num > UNDO_PREALLOC_PAGES_MAX) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_UNDO_PREALLOC_PAGES", (int64)0, (int64)UNDO_PREALLOC_PAGES_MAX);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_undo_perf_prealloc(void *se, void *item, char *value)
+{
+    g_instance->kernel.attr.undo_perf_prealloc = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_undo_prealloc_pages(void *se, void *item, char *value)
+{
+    uint32 undo_prealloc_pages = 0;
+
+    OG_RETURN_IFERR(cm_str2uint32(value, &undo_prealloc_pages));
+    if (undo_prealloc_pages > UNDO_PREALLOC_PAGES_MAX) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_UNDO_PREALLOC_PAGES", (int64)0, (int64)UNDO_PREALLOC_PAGES_MAX);
+        return OG_ERROR;
+    }
+    g_instance->kernel.attr.undo_prealloc_pages = undo_prealloc_pages;
+    return OG_SUCCESS;
+}
+
 status_t sql_verify_als_rollback_proc_num(void *se, void *lex, void *def)
 {
     uint32 num;
@@ -2869,13 +2906,6 @@ status_t sql_bison_verify_cpu_node_bind(SQL_BISON_VERIFY_ARGS)
     *(uint32 *)sys_def->value = lo_num;
     *(uint32 *)(sys_def->value + sizeof(uint32)) = hi_num;
     return OG_SUCCESS;
-}
-
-status_t sql_notify_als_enable_para_log_flush(void *se, void *item, char *value)
-{
-    g_instance->kernel.attr.enable_para_log_flush = (bool32)value[0];
-    // restore value for alter config.
-    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_notify_als_enable_para_log_dfx(void *se, void *item, char *value)

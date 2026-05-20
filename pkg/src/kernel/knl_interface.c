@@ -28,6 +28,7 @@
 #include "cm_file.h"
 #include "cm_kmc.h"
 #include "cm_device.h"
+#include "cm_cpu.h"
 #include "cm_io_record.h"
 #include "cm_file_iofence.h"
 #include "cm_dss_iofence.h"
@@ -267,7 +268,7 @@ void knl_attach_cpu_core(void)
         OG_LOG_RUN_ERR("cpu_masks is NULL");
         return;
     } else {
-        mask = cpu_masks[(cm_get_current_thread_id() % CPU_SEG_MAX_NUM) % cpu_group_num];
+        mask = cpu_masks[(cm_get_current_thread_id()) % cpu_group_num];
     }
     if (pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask) != 0) {
         OG_LOG_RUN_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_60, "the thread attach cpu failed!");
@@ -285,11 +286,11 @@ void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint32 round_id, uint8 target_
     if (cpu_group_num <= 0) {
         OG_LOG_RUN_ERR("Invalid cpu_group_num is %d!", cpu_group_num);
         return;
-     } else if (cpu_masks != NULL) {
+    } else if (cpu_masks != NULL) {
         CPU_ZERO(cpuset);
         *cpuset = cpu_masks[target_numa];
         return;
-    }  else {
+    } else {
         if (cpu_info_counts[target_numa] <= 0) {
             OG_LOG_RUN_ERR("cpu_info_counts[%u] is 0, target_numa out of range or empty group", target_numa);
             return;
@@ -297,7 +298,7 @@ void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint32 round_id, uint8 target_
         CPU_SET(cpu_info[target_numa * SMALL_RECORD_SIZE + round_id % cpu_info_counts[target_numa]], &mask);
         *cpuset = mask;
     }
-    *cpuset = mask;
+    return;
 }
 
 void knl_get_cpu_set_from_session(cpu_set_t *cpuset, uint32 session_id, uint8 target_numa, uint32 cpu_id)
@@ -914,7 +915,11 @@ void knl_init_session(knl_handle_t kernel, knl_handle_t knl_session, uint32 uid,
     session->futex = 0;
     session->log_next = NULL;
     session->log_progress = LOG_COMPLETED;
-    session->commit_lsn = 0;
+    session->curr_lrc = -1;
+    session->commit_wal_group = 0;
+    ret = memset_sp(session->commit_copied_lrc, sizeof(session->commit_copied_lrc), 0xFF,
+                    sizeof(session->commit_copied_lrc));
+    knl_securec_check(ret);
     session->dist_ddl_id = NULL;
     session->is_loading = OG_FALSE;
     session->is_btree_splitting = OG_FALSE;
