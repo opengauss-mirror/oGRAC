@@ -294,11 +294,11 @@ void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint32 round_id, uint8 target_
     if (cpu_group_num <= 0) {
         OG_LOG_RUN_ERR("Invalid cpu_group_num is %d!", cpu_group_num);
         return;
-     } else if (cpu_masks != NULL) {
+    } else if (cpu_masks != NULL) {
         CPU_ZERO(cpuset);
         *cpuset = cpu_masks[target_numa];
         return;
-    }  else {
+    } else {
         if (cpu_info_counts[target_numa] <= 0) {
             OG_LOG_RUN_ERR("cpu_info_counts[%u] is 0, target_numa out of range or empty group", target_numa);
             return;
@@ -923,7 +923,11 @@ void knl_init_session(knl_handle_t kernel, knl_handle_t knl_session, uint32 uid,
     session->futex = 0;
     session->log_next = NULL;
     session->log_progress = LOG_COMPLETED;
-    session->commit_lsn = 0;
+    session->curr_lrc = -1;
+    session->commit_wal_group = 0;
+    ret = memset_sp(session->commit_copied_lrc, sizeof(session->commit_copied_lrc), 0xFF,
+                    sizeof(session->commit_copied_lrc));
+    knl_securec_check(ret);
     session->dist_ddl_id = NULL;
     session->is_loading = OG_FALSE;
     session->is_btree_splitting = OG_FALSE;

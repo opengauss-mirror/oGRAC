@@ -46,6 +46,7 @@ extern "C" {
 #define CM_FUTEX_SPIN_COUNT    100
 #define CM_FUTEX_MS_PER_SEC    1000
 #define CM_FUTEX_NS_PER_MS     1000000L
+#define CM_FUTEX_WAKE_ALL      ((uint32)0x7fffffff)
 
 typedef struct st_cm_futex_args {
     atomic32_t *uaddr;
@@ -130,6 +131,68 @@ static inline HOT_FUNCTION void cm_futex_wake(atomic32_t *futex_addr, uint32 max
     if (cm_atomic32_get(futex_addr) != CM_FUTEX_POSTED) {
         (void)cm_atomic32_cas(futex_addr, CM_FUTEX_INIT, CM_FUTEX_POSTED);
     }
+
+    args.uaddr = futex_addr;
+    args.op = FUTEX_WAKE;
+    args.val = max_wait_count;
+    args.utime = NULL;
+    args.uaddr2 = NULL;
+    args.val3 = 0;
+
+    (void)cm_futex_syscall(&args);
+}
+
+/*
+ * Generation futex: wait until the 32-bit word != expected, or timeout.
+ * expected is the raw futex word (kernel compares u32, not signed magnitude).
+ * Do not mix with cm_futex_wait/wake (those treat the word as POSTED/INIT).
+ */
+static inline HOT_FUNCTION bool32 cm_futex_wait_value(atomic32_t *futex_addr, uint32 expected, uint32 timeout_ms)
+{
+    struct timespec rel_tv;
+    struct timespec *ptv = NULL;
+    cm_futex_args_t args;
+    uint32 retry = 0;
+    int32 ret;
+
+    while (retry++ < CM_FUTEX_SPIN_COUNT) {
+        if ((uint32)cm_atomic32_get(futex_addr) != expected) {
+            return OG_TRUE;
+        }
+        CM_RELEASE_CPU;
+    }
+
+    if (timeout_ms != 0) {
+        cm_futex_rel_timeout_ms(&rel_tv, timeout_ms);
+        ptv = &rel_tv;
+    }
+
+    args.uaddr = futex_addr;
+    args.op = FUTEX_WAIT;
+    args.val = expected;
+    args.utime = ptv;
+    args.uaddr2 = NULL;
+    args.val3 = 0;
+
+    for (;;) {
+        if ((uint32)cm_atomic32_get(futex_addr) != expected) {
+            return OG_TRUE;
+        }
+
+        ret = cm_futex_syscall(&args);
+        if (ret == 0 || errno == EAGAIN) {
+            return OG_TRUE;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        return OG_FALSE;
+    }
+}
+
+static inline HOT_FUNCTION void cm_futex_wake_value(atomic32_t *futex_addr, uint32 max_wait_count)
+{
+    cm_futex_args_t args;
 
     args.uaddr = futex_addr;
     args.op = FUTEX_WAKE;

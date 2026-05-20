@@ -2908,13 +2908,6 @@ status_t sql_bison_verify_cpu_node_bind(SQL_BISON_VERIFY_ARGS)
     return OG_SUCCESS;
 }
 
-status_t sql_notify_als_enable_para_log_flush(void *se, void *item, char *value)
-{
-    g_instance->kernel.attr.enable_para_log_flush = (bool32)value[0];
-    // restore value for alter config.
-    return sql_notify_als_bool(se, item, value);
-}
-
 status_t sql_notify_als_enable_para_log_dfx(void *se, void *item, char *value)
 {
     g_instance->kernel.attr.enable_para_log_dfx = (bool32)value[0];

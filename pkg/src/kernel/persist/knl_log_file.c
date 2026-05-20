@@ -159,6 +159,19 @@ status_t db_alter_add_logfile(knl_session_t *session, knl_alterdb_def_t *def)
     errno_t err;
     logfile_set_t *logfile_set = MY_LOGFILE_SET(session);
 
+    /*
+     * Parallel log flush binds every logfile to a lane group through ctrl->group_id, which is
+     * only assigned when the logfile set is created (knl_db_create.c). A file added here would
+     * carry whatever group_id the recycled ctrl slot happened to hold, so on restart
+     * log_file_init() would either attach it to the wrong lane or reject an out-of-range id and
+     * refuse to start. Reject the operation until lane-aware add is implemented.
+     */
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "add logfile with parallel log flush");
+        OG_LOG_RUN_ERR("[LOG] add logfile is not supported with parallel log flush");
+        return OG_ERROR;
+    }
+
     if (log_precheck(session, def) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -285,6 +298,18 @@ status_t db_alter_drop_logfile(knl_session_t *session, knl_alterdb_def_t *def)
     errno_t err;
     logfile_set_t *logfile_set = MY_LOGFILE_SET(session);
     uint32 node_id;
+
+    /*
+     * log_file_can_drop() only knows the serial redo_ctx (single curr_file and the
+     * forward/backward ring), so under parallel log flush it can approve a file that some other
+     * lane is currently writing. Dropping a file would also leave its lane group short of
+     * OG_MIN_LOG_FILES, which log_file_init() cannot recover from on restart.
+     */
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "drop logfile with parallel log flush");
+        OG_LOG_RUN_ERR("[LOG] drop logfile is not supported with parallel log flush");
+        return OG_ERROR;
+    }
 
     dev_def = (knl_device_def_t *)cm_galist_get(&def->logfile.logfiles, 0);
 

@@ -108,7 +108,17 @@ typedef struct st_core_ctrl {
     bool32 inc_backup_block;
     char dbcompatibility;
 
-    char reserved[2031];                          // reserved bytes for nonclustered database
+    /*
+     * Parallel log flush is fixed at CREATE DATABASE time: logfile ctrl->group_id is only ever
+     * assigned there, so changing ENABLE_PARA_LOG_FLUSH afterwards leaves the on-disk layout and
+     * the running mode disagreeing. Recorded here so startup can refuse the mismatch.
+     * 0 means an older control file that never recorded it. Both are 1-byte types so no padding
+     * is introduced and sizeof(core_ctrl_t) is unchanged.
+     */
+    uint8 para_log_mode;   // PARA_LOG_DB_MODE_*
+    uint8 para_log_groups; // lane group count the database was created with
+
+    char reserved[2029];                          // reserved bytes for nonclustered database
     bool32 clustered;                             // is clustered database?
     uint32 node_count;                            // instance nodes
     uint32 max_nodes;                             // max instance nodes number

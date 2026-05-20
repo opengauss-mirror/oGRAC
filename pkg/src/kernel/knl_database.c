@@ -29,6 +29,8 @@
 #include "knl_db_create.h"
 #include "index_common.h"
 #include "knl_log.h"
+#include "knl_ckpt.h"
+#include "knl_parallel_log.h"
 #include "knl_ctrl_restore.h"
 #include "knl_space_ddl.h"
 #include "dtc_database.h"
@@ -477,6 +479,9 @@ void db_close(knl_session_t *session, bool32 need_ckpt)
     if (DB_TO_RECOVERY(session) && need_ckpt) {
         OG_LOG_RUN_INF("begin full checkpoint");
         ckpt_trigger(session, OG_TRUE, CKPT_TRIGGER_FULL);
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            ckpt_publish_rcy_to_lrp(session);
+        }
         OG_LOG_RUN_INF("full checkpoint completed: file:%u,point:%u,lfn:%llu", rcy_point->asn, rcy_point->block_id,
                        (uint64)rcy_point->lfn);
         OG_LOG_RUN_INF("full checkpoint completed: file:%u,point:%u,lfn:%llu", lrp_point->asn, lrp_point->block_id,
@@ -764,9 +769,12 @@ static status_t db_start_writer(knl_instance_t *kernel, ckpt_context_t *ckpt)
     // start log writer thread
     if (kernel->attr.enable_para_log_flush) {
         uint32 cluster_count = SYS_NUMA_GROUP_COUNT;
-        // start per-NUMA log writer threads
         OG_LOG_RUN_INF("[PARA LOG] start lgwr threads groups=%u", cluster_count);
         for (uint32 i = 0; i < cluster_count; i++) {
+            if (kernel->para_log_ctx[i] == NULL) {
+                OG_LOG_RUN_ERR("[PARA LOG] failed to start lgwr thread group=%u, context is null", i);
+                return OG_ERROR;
+            }
             if (cm_create_thread(para_log_proc, 0, kernel->para_log_ctx[i],
                 &kernel->para_log_ctx[i]->thread) != OG_SUCCESS) {
                 OG_LOG_RUN_ERR("[PARA LOG] failed to start lgwr thread group=%u", i);
@@ -1196,7 +1204,11 @@ static status_t db_recovery_to_initphase2(knl_session_t *session, bool32 has_off
     }
 
     if (DB_IS_PRIMARY(db)) {
-        ckpt_trigger(session, has_offline, CKPT_TRIGGER_FULL);
+        bool32 wait_ckpt = (bool32)(has_offline || ENABLE_PARA_LOG_FLUSH(session));
+        ckpt_trigger(session, wait_ckpt, CKPT_TRIGGER_FULL);
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            ckpt_publish_rcy_to_lrp(session);
+        }
     }
     dtc_my_ctrl(session)->shutdown_consistency = OG_FALSE;
     if (db_save_core_ctrl(session) != OG_SUCCESS) {
@@ -1465,6 +1477,9 @@ status_t db_recover(knl_session_t *session, knl_scn_t max_recover_scn, uint64 ma
     session->kernel->rcy_ctx.max_scn = OG_INVALID_ID64;
     session->kernel->rcy_ctx.max_lrp_lsn = OG_INVALID_ID64;
     ckpt_trigger(session, OG_TRUE, CKPT_TRIGGER_FULL);
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        ckpt_publish_rcy_to_lrp(session);
+    }
     db->ctrl.core.build_completed = OG_TRUE;
 
     if (db_clean_record_arch(session) != OG_SUCCESS) {

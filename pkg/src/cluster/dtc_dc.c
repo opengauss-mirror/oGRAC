@@ -410,12 +410,10 @@ status_t dtc_get_btree_split_status(knl_session_t *session, btree_t *btree, knl_
 
     mes_message_t msg;
     if (mes_send_data3(&bcast.head, sizeof(msg_broadcast_data_t), (void *)&btree_data) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC] dtc_get_btree_split_status send message failed");
         return OG_ERROR;
     }
 
     if (mes_recv(session->id, &msg, OG_FALSE, OG_INVALID_ID32, DTC_GET_BTREE_SPLIT_STATUS_TIMEOUT) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC] dtc_get_btree_split_status get result timeout");
         return OG_ERROR;
     }
 

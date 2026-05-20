@@ -1229,7 +1229,7 @@ config_item_t g_parameters[] = {
       PARAM_ENABLE_QUICK_CKPT, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_quick_ckpt,
       sql_notify_als_bool, NULL },
     { "ENABLE_PARA_LOG_FLUSH", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "CT_TYPE_BOOLEAN", NULL,
-      PARAM_ENABLE_PARA_LOG_FLUSH, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_para_log_flush,
+      PARAM_ENABLE_PARA_LOG_FLUSH, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, NULL,
       sql_notify_als_bool, NULL },
     { "ENABLE_PARA_LOG_DFX", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_PARA_LOG_DFX, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_para_log_dfx,

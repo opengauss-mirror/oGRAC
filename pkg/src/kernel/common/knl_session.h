@@ -46,6 +46,8 @@ extern "C" {
 #define KNL_LOGIC_LOG_BUF_SIZE 800
 #define KNL_LOGIC_LOG_FLUSH_SIZE ((KNL_LOGIC_LOG_BUF_SIZE) / 2)
 #define KNL_INVALID_SERIAL_ID    0
+/* Must match CPU_SEG_MAX_NUM in cm_cpu.h; compile-time checked in knl_parallel_log.h */
+#define KNL_PARA_LOG_MAX_GROUPS  64
 
 #define KNL_TEMP_MORE_MTRL_SEG_SIZE (sizeof(mtrl_segment_t) * (GS_MAX_TEMP_MTRL_SEGMENTS - OG_MAX_MATERIALS))
 #define KNL_MAX_USER_LOCK ((1 << 4) - 1)
@@ -406,7 +408,8 @@ typedef struct st_knl_session {
 
     atomic32_t futex;    // used by para log flush
     volatile int32 curr_lrc;
-    volatile uint64 commit_lsn;    // used by para log flush
+    uint32 commit_wal_group;
+    int32 commit_copied_lrc[KNL_PARA_LOG_MAX_GROUPS];
 
     bool8 log_encrypt; // private log need encrypt
     bool8 thread_shared; // if curr session will be thread shared

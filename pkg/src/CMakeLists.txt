@@ -9,7 +9,11 @@ execute_process(
         OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 if (OS_ARCH STREQUAL "aarch64")
-    add_compile_options(-march=armv8.2-a+crc+lse)
+    # USE_H1620 already sets -mcpu=tsv110 (or armv8.2-a+crc+lse). A later
+    # -march here would override that and drop TSV110-specific features.
+    if (NOT USE_H1620)
+        add_compile_options(-march=armv8.2-a+crc+lse)
+    endif ()
 endif()
 
 include_directories(
