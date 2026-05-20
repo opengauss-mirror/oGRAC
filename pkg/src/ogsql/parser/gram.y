@@ -110,6 +110,8 @@ static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
+static status_t strGetInt64ByLen(const char *str, size_t len, int64 *value);
+static status_t strGetPureInt64(const char *str, int64 *value);
 static status_t strGetInt64(const char *str, int64 *value);
 static char* ds_unit_to_str(interval_unit_order_t order);
 static interval_unit_t get_interval_unit(interval_unit_order_t order);
@@ -139,6 +141,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
     char                *str;
     bool                boolean;
     int64               ival64;
+    uint64              uval64;
     const char          *keyword;
     void                *res;
     galist_t            *list;
@@ -291,6 +294,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
              opt_partition_store_in_clause tablespaceList opt_interval_tablespaceList func_args_with_defaults_list
              func_args_with_defaults proc_args grantee_list sys_priv_list obj_priv_list revokee_list
 %type <ival64> num_size opt_blocksize next_size max_size extents_clause BigintOnly SignedIconst opt_punch_size opt_segments
+%type <uval64> Uint64Only
 %type <dev_def> logfile datafile ctrlfile_file
 %type <inode> instance_node
 %type <interval_info> interval_type
@@ -541,6 +545,8 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-nonassoc-ident-tokens"*/
 
+/* Plain JOIN is kept when the right table starts with '('; reduce the left table_ref first. */
+%left        JOIN
 %left        '|'    /* OPER_TYPE_BITOR */
 %left        '^'    /* OPER_TYPE_BITXOR */
 %left        '&'    /* OPER_TYPE_BITAND */
@@ -1420,6 +1426,15 @@ ctext_expr_list:
 
 ctext_expr:
             a_expr    { $$ = $1; }
+            | DEFAULT
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, RES_WORD_DEFAULT, OG_FALSE, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("init DEFAULT reserved expr failed");
+                    }
+                    $$ = expr;
+                }
         ;
 
 multi_expr_list:    expr_list_with_select ',' expr_with_select
@@ -4301,6 +4316,15 @@ joined_table:
                     }
                     $$ = join_node;
                 }
+            | table_ref join_type JOIN table_ref ON cond_tree_expr
+                {
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, $2, NULL, $6, $1, $4, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
             | table_ref INNER_JOIN table_ref ON cond_tree_expr
                 {
                     sql_join_node_t *join_node = NULL;
@@ -4328,7 +4352,25 @@ joined_table:
                     }
                     $$ = join_node;
                 }
+            | table_ref JOIN table_ref ON cond_tree_expr
+                {
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, $5, $1, $3, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
             | table_ref JOIN_KEY table_ref
+                {
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, NULL, $1, $3, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | table_ref JOIN table_ref
                 {
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -10044,7 +10086,7 @@ BigintOnly:
             FCONST
                 {
                     int64 res = 0;
-                    if (strGetInt64($1, &res) != OG_SUCCESS) {
+                    if (strGetPureInt64($1, &res) != OG_SUCCESS) {
                         parser_yyerror("get int64 failed");
                     }
                     $$ = res;
@@ -10052,7 +10094,7 @@ BigintOnly:
             | '+' FCONST
                 {
                     int64 res = 0;
-                    if (strGetInt64($2, &res) != OG_SUCCESS) {
+                    if (strGetPureInt64($2, &res) != OG_SUCCESS) {
                         parser_yyerror("get int64 failed");
                     }
                     $$ = + res;
@@ -10060,7 +10102,7 @@ BigintOnly:
             | '-' FCONST
                 {
                     int64 res = 0;
-                    if (strGetInt64($2, &res) != OG_SUCCESS) {
+                    if (strGetPureInt64($2, &res) != OG_SUCCESS) {
                         parser_yyerror("get int64 failed");
                     }
                     $$ = - res;
@@ -10068,6 +10110,33 @@ BigintOnly:
             | SignedIconst
                 {
                     $$ = $1;
+                }
+        ;
+
+Uint64Only:
+            FCONST
+                {
+                    uint64 res = 0;
+                    if (cm_str2uint64($1, &res) != OG_SUCCESS) {
+                        parser_yyerror("invalid uint64");
+                    }
+                    $$ = res;
+                }
+            | '+' FCONST
+                {
+                    uint64 res = 0;
+                    if (cm_str2uint64($2, &res) != OG_SUCCESS) {
+                        parser_yyerror("invalid uint64");
+                    }
+                    $$ = res;
+                }
+            | ICONST
+                {
+                    $$ = (uint64)$1;
+                }
+            | '+' ICONST
+                {
+                    $$ = (uint64)$2;
                 }
         ;
 
@@ -14286,7 +14355,7 @@ backup_opt:
                     opt->loc = @1.loc;
                     $$ = opt;
                 }
-            | FINISH SCN BigintOnly
+            | FINISH SCN Uint64Only
                 {
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -14708,7 +14777,7 @@ TransactionStmt:
                     }
                     $$ = param;
                 }
-            | RESTORE BLOCKRECOVER DATAFILE ICONST PAGE ICONST FROM SCONST UNTIL LFN BigintOnly
+            | RESTORE BLOCKRECOVER DATAFILE ICONST PAGE ICONST FROM SCONST UNTIL LFN Uint64Only
                 {
                     if (!IS_CTRST_INSTANCE) {
                         parser_yyerror("BLOCKRECOVER is not supported in non-CTRST instance");
@@ -15021,7 +15090,7 @@ RecoverStmt:
                     param->action = RECOVER_UNTIL_TIME;
                     $$ = param;
                 }
-            | RECOVER DATABASE UNTIL SCN BigintOnly
+            | RECOVER DATABASE UNTIL SCN Uint64Only
                 {
                     knl_recover_t *param = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -16597,10 +16666,8 @@ static inline int32 compare_int64_text(const char *str1, uint32 len1, const char
     return cm_compare_text(&text1, &text2);
 }
 
-static status_t strGetInt64(const char *str, int64 *value)
+static status_t strGetInt64ByLen(const char *str, size_t len, int64 *value)
 {
-    size_t len = strlen(str) - 1;
-
     OG_RETVALUE_IFTRUE((len > OG_MAX_INT64_PREC), OG_ERROR);
 
     if (len == OG_MAX_INT64_PREC) {
@@ -16618,6 +16685,16 @@ static status_t strGetInt64(const char *str, int64 *value)
         *value = (*value) * CM_DEFAULT_DIGIT_RADIX + CM_C2D(str[i]);
     }
     return OG_SUCCESS;
+}
+
+static status_t strGetPureInt64(const char *str, int64 *value)
+{
+    return strGetInt64ByLen(str, strlen(str), value);
+}
+
+static status_t strGetInt64(const char *str, int64 *value)
+{
+    return strGetInt64ByLen(str, strlen(str) - 1, value);
 }
 
 static interval_unit_t get_interval_unit(interval_unit_order_t order)
