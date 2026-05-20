@@ -328,7 +328,8 @@ static status_t srv_init_session_pool(void)
     g_instance->session_pool.service_count = 0;
     g_instance->session_pool.epollfd = epoll_create1(0);
     g_instance->session_pool.numa_node = 0;
-
+    g_instance->session_pool.reuse_numa = -1;
+    g_instance->session_pool.priv_reuse_numa = -1;
     return OG_SUCCESS;
 }
 
@@ -508,7 +509,7 @@ static bool32 srv_killed_session_flush_end(bool32 demote)
     }
 
     if (ctrl->state == SWITCH_WAIT_LOG_SYNC) {
-        if (log_need_flush(&session->kernel->redo_ctx)) {
+        if (log_need_flush(session)) {
             if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
                 CM_ABORT(0, "[INST] %s ABORT INFO: failed to flush redo log", demote ? "SWITCHOVER" : "RAEDONLY");
             }
@@ -1045,8 +1046,12 @@ static void srv_process_force_promote_request(void)
          * do not trigger full checkpoint when db->ctrl.core.rcy_point.rst_id == log_ctx->curr_point.rst_id
          * because trigger full point(confuse implement) maybe wait long time
          */
-        if (dtc_my_ctrl(session)->rcy_point.rst_id != log->curr_point.rst_id) {
-            ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_FULL);
+        {
+            uint32 curr_rst_id = ENABLE_PARA_LOG_FLUSH(session) ? kernel->db.ctrl.core.resetlogs.rst_id
+                                                               : log->curr_point.rst_id;
+            if (dtc_my_ctrl(session)->rcy_point.rst_id != curr_rst_id) {
+                ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_FULL);
+            }
         }
 
         if (log_switch_logfile(session, OG_INVALID_FILEID, OG_INVALID_ASN, NULL) != OG_SUCCESS) {
@@ -1058,11 +1063,15 @@ static void srv_process_force_promote_request(void)
         }
         ctrl->switch_asn = log->files[log->curr_file].head.asn;
         OG_LOG_RUN_INF("[INST] [%sFAILOVER] Log file switched to %u", force ? "FORCE " : "", ctrl->switch_asn);
-        if (dtc_my_ctrl(session)->rcy_point.rst_id != log->curr_point.rst_id) {
-            ctrl->state = SWITCH_WAIT_CKPT;
-            OG_LOG_RUN_INF("[INST] [%sFAILOVER] Need to wait for checkpoint, rcy point rst_id is %u, "
-                "current redo log point rst_id is %u",
-                force ? "FORCE " : "", dtc_my_ctrl(session)->rcy_point.rst_id, log->curr_point.rst_id);
+        {
+            uint32 curr_rst_id = ENABLE_PARA_LOG_FLUSH(session) ? kernel->db.ctrl.core.resetlogs.rst_id
+                                                               : log->curr_point.rst_id;
+            if (dtc_my_ctrl(session)->rcy_point.rst_id != curr_rst_id) {
+                ctrl->state = SWITCH_WAIT_CKPT;
+                OG_LOG_RUN_INF("[INST] [%sFAILOVER] Need to wait for checkpoint, rcy point rst_id is %u, "
+                    "current redo log point rst_id is %u",
+                    force ? "FORCE " : "", dtc_my_ctrl(session)->rcy_point.rst_id, curr_rst_id);
+            }
         }
     }
 
@@ -1076,7 +1085,8 @@ static void srv_process_force_promote_request(void)
     } else {
         // If current log file is empty and current point lies on current log file,
         // NEED to advance rcy point and lrp point to current log file.
-        db_reset_log(session, ctrl->switch_asn, (ctrl->switch_asn == log->curr_point.asn), OG_FALSE);
+        db_reset_log(session, ctrl->switch_asn,
+                     ENABLE_PARA_LOG_FLUSH(session) ? OG_FALSE : (ctrl->switch_asn == log->curr_point.asn), OG_FALSE);
         OG_LOG_RUN_INF("[INST] [%sFAILOVER] Resetlog finished", force ? "FORCE " : "");
     }
 
@@ -1316,8 +1326,12 @@ static void srv_process_force_raft_promote_request(void)
          * do not trigger full checkpoint when db->ctrl.core.rcy_point.rst_id == log_ctx->curr_point.rst_id
          * because trigger full point(confuse implement) maybe wait long time
          */
-        if (dtc_my_ctrl(session)->rcy_point.rst_id != log_ctx->curr_point.rst_id) {
-            ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_FULL);
+        {
+            uint32 curr_rst_id = ENABLE_PARA_LOG_FLUSH(session) ? kernel->db.ctrl.core.resetlogs.rst_id
+                                                               : log_ctx->curr_point.rst_id;
+            if (dtc_my_ctrl(session)->rcy_point.rst_id != curr_rst_id) {
+                ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_FULL);
+            }
         }
     }
 
@@ -1940,6 +1954,14 @@ status_t srv_instance_startup(db_startup_phase_t phase, bool32 is_coordinator, b
         srv_instance_destroy();
         OG_LOG_RUN_ERR("failed to initialize CPU instance resorces");
         return OG_ERROR;
+    }
+
+    if (hw_topo_get_info(&g_instance->attr.hw_topo_info) != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("failed to init hw topology, use safe value as default");
+        g_instance->attr.hw_topo_info.group_count = 1;
+        g_instance->attr.hw_topo_info.cpu_of_each_g = 1;
+        g_instance->attr.hw_topo_info.numa_count = 1;
+        g_instance->attr.hw_topo_info.has_cluster = OG_FALSE;
     }
 
     (void)cm_lic_init();

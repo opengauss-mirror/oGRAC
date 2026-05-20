@@ -25,8 +25,10 @@
 #ifndef __KNL_CONTEXT_H__
 #define __KNL_CONTEXT_H__
 
+#include "cm_cpu.h"
 #include "cm_defs.h"
 #include "cm_timer.h"
+#include "knl_parallel_log.h"
 #include "repl_raft.h"
 #include "cm_kmc.h"
 #include "knl_database.h"
@@ -310,6 +312,8 @@ typedef struct st_knl_attr {
     uint32 create_index_parallelism;
     bool32 enable_dss;
     bool32 enable_quick_ckpt;
+    bool32 enable_para_log_flush;
+    bool32 enable_para_log_dfx;
 } knl_attr_t;
 
 typedef struct st_sys_name_context {  // for system name
@@ -435,6 +439,13 @@ typedef struct st_knl_instance {
     ddl_exec_status_t set_dc_complete_status;
     uint32        id;   //instance id, id = 0 if under non-clustered mode
     thread_t file_iof_thd;
+
+    /* for para log flush only */
+    para_log_lsn_ctl_t para_log_lsn_ctl __attribute__((aligned(16)));
+    uint32 atomic_align3[32];
+    para_log_context_t *para_log_ctx[CPU_SEG_MAX_NUM];
+    bool8 para_log_init;
+    para_log_flush_lsn_bitmap_t *para_log_bitmap;
 } knl_instance_t;
 
 #define KNL_MAX_ROW_SIZE(session)     ((session)->kernel->attr.max_row_size)

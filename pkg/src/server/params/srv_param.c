@@ -87,7 +87,7 @@ config_item_t g_parameters[] = {
       PARAM_SQL_POOL_FACTOR, EFFECT_REBOOT, CFG_INS, sql_verify_als_sql_pool_fat, NULL, NULL, NULL },
     { "LARGE_POOL_SIZE", OG_TRUE, ATTR_NONE, "32M", NULL, NULL, "-", "[4M,32T]", "OG_TYPE_INTEGER", NULL,
       PARAM_LARGE_POOL_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_large_pool_size, NULL, NULL, NULL },
-    { "LOG_BUFFER_SIZE", OG_TRUE, ATTR_NONE, "4M", NULL, NULL, "-", "[1M,110M]", "OG_TYPE_INTEGER", NULL,
+    { "LOG_BUFFER_SIZE", OG_TRUE, ATTR_NONE, "4M", NULL, NULL, "-", "[1M,1024M]", "OG_TYPE_INTEGER", NULL,
       PARAM_LOG_BUFFER_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_log_buffer_size, NULL, NULL, NULL },
     { "LOG_BUFFER_COUNT", OG_TRUE, ATTR_NONE, "4", NULL, NULL, "-", "(0,64]", "OG_TYPE_INTEGER", NULL,
       PARAM_LOG_BUFFER_COUNT, EFFECT_REBOOT, CFG_INS, sql_verify_als_log_buffer_count, NULL, NULL, NULL },
@@ -1227,6 +1227,12 @@ config_item_t g_parameters[] = {
       sql_notify_als_bool, NULL },
     { "ENABLE_QUICK_CKPT", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "CT_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_QUICK_CKPT, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_quick_ckpt,
+      sql_notify_als_bool, NULL },
+    { "ENABLE_PARA_LOG_FLUSH", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "CT_TYPE_BOOLEAN", NULL,
+      PARAM_ENABLE_PARA_LOG_FLUSH, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_para_log_flush,
+      sql_notify_als_bool, NULL },
+    { "ENABLE_PARA_LOG_DFX", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
+      PARAM_ENABLE_PARA_LOG_DFX, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_para_log_dfx,
       sql_notify_als_bool, NULL },
 };
 

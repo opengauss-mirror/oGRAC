@@ -66,6 +66,9 @@ typedef struct st_dtc_node_ctrl {
     uint32      last_lfn;
     uint32      temp_undo_space;
     log_point_t lrep_point;  // log point when logic replication is turned on.
+    uint32 para_log_first[CPU_SEG_MAX_NUM];  // log point when logic replication is turned on.
+    uint32 para_log_last[CPU_SEG_MAX_NUM];  // log point when logic replication is turned on.
+    log_point_t para_rcy_point[CPU_SEG_MAX_NUM];
 } dtc_node_ctrl_t;
 
 typedef struct st_dtc_node_def {

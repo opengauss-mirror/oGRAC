@@ -284,8 +284,13 @@ static status_t srv_alloc_sga(sga_t *sga)
 
     if (large_pages_mode == LARGE_PAGES_ONLY || large_pages_mode == LARGE_PAGES_TRUE) {
         sga->buf = mmap(0, (size_t)sga->size + OG_MAX_ALIGN_SIZE_4K, PROT_READ | PROT_WRITE,
-            MAP_SHARED | MAP_HUGETLB | MAP_ANONYMOUS, (int)OG_INVALID_ID32, 0);
-        if (sga->buf != (char *)(int)OG_INVALID_ID32) {
+            MAP_PRIVATE | MAP_HUGETLB | MAP_ANONYMOUS, (int)OG_INVALID_ID32, 0);
+        if (sga->buf == MAP_FAILED) {
+            char errbuf[256];
+            (void)strerror_r(errno, errbuf, sizeof(errbuf));
+            OG_LOG_RUN_WAR("mmap hugesize error [%s] ", errbuf);
+        }
+        if (sga->buf != MAP_FAILED) {
             g_instance->attr.mem_alloc_from_large_page = OG_TRUE;
             return OG_SUCCESS;
         }

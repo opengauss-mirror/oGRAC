@@ -158,6 +158,7 @@ typedef struct st_instance_attr {
     bool32 disable_var_peek;
     bool32 enable_cursor_sharing;
     bool32 enable_use_spm;
+    hw_topo_info_t hw_topo_info;
 } instance_attr_t;
 
 typedef struct st_os_run_desc {
@@ -299,6 +300,10 @@ typedef struct st_promote_record {
 #define HASH_AREA_SIZE (g_instance->sql.hash_area_size)
 #define sql_pool (g_instance->sql.pool)
 #define buddy_mem_pool (&g_instance->sga.buddy_pool)
+#define SYS_NUMA_GROUP_COUNT    (g_instance->attr.hw_topo_info.group_count)
+#define SYS_CPUS_PER_GROUP    (g_instance->attr.hw_topo_info.cpu_of_each_g)
+#define SYS_NUMA_NODE_COUNT    (g_instance->attr.hw_topo_info.numa_count)
+
 
 extern instance_t *g_instance;
 extern char *g_database_home;

@@ -469,6 +469,7 @@ status_t db_alter_clear_logfile(knl_session_t *session, uint32 file_id)
     logfile->head.rst_id = db->ctrl.core.resetlogs.rst_id;
     logfile->head.asn = OG_INVALID_ASN;
     logfile->head.cmp_algorithm = COMPRESS_NONE;
+    logfile->head.rcy_off = 0;
 
     log_flush_head(session, logfile);
 
@@ -858,6 +859,11 @@ status_t db_alter_logicrep(knl_session_t *session, lrep_mode_t logic_mode)
         return OG_ERROR;
     }
 
+    if (logic_mode == LOG_REPLICATION_ON && ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "logic replication with parallel log flush");
+        return OG_ERROR;
+    }
+
     if (logic_mode == LOG_REPLICATION_ON) {
         bool32 has_nolog = OG_FALSE;
         if (knl_database_has_nolog_object(session, &has_nolog) != OG_SUCCESS) {
@@ -905,6 +911,11 @@ status_t db_alter_archivelog(knl_session_t *session, archive_mode_t archive_mode
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     database_t *db = &kernel->db;
+
+    if (archive_mode == ARCHIVE_LOG_ON && ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "archivelog with parallel log flush");
+        return OG_ERROR;
+    }
 
     if (archive_mode == ARCHIVE_LOG_OFF && arch_has_valid_arch_dest(session)) {
         OG_THROW_ERROR(ERR_CANNOT_CLOSE_ARCHIVE);

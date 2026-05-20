@@ -8,6 +8,7 @@
     "MAX_ARCH_FILES_SIZE": "300G",
     "redo_num": "6",
     "redo_size": "5G",
+    "ENABLE_PARA_LOG_FLUSH": false,
     "auto_tune": "0",
     "dss_vg_list": {
         "vg1": "/dev/dss-disk1",

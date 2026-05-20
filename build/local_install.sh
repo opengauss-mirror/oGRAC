@@ -100,7 +100,8 @@ function install() {
     python3 install.py -U ${USER}:${USER} -R /home/${USER}/install \
     -D /home/${USER}/data -l /home/${USER}/logs/install.log \
     -M ${run_mode} -Z _LOG_LEVEL=255 -N 0 -W 192.168.0.1 -g \
-    withoutroot -d -c --COMPATIBILITY_MODE=${COMPATIBILITY_MODE} -Z _SYS_PASSWORD=huawei@1234 -Z SESSIONS=1000
+    withoutroot -d -c --COMPATIBILITY_MODE=${COMPATIBILITY_MODE} \
+    -Z _SYS_PASSWORD=huawei@1234 -Z SESSIONS=1000
     if [[ $? -ne 0  ]]; then
         echo "install oGRAC failed."
         exit 1

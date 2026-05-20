@@ -1313,9 +1313,39 @@ class Installer:
 
         log("End init")
 
-    @staticmethod
-    def set_sql_redo_size_and_num(db_data_path, create_database_sql):
+    def get_hw_group_count(self):
+        """WAL lanes follow CPU clusters (hw_topo group_count), cap CPU_SEG_MAX_NUM."""
+        max_groups = 64
+        cluster0 = "/sys/devices/system/cpu/cpu0/topology/cluster_cpus_list"
+        seen = set()
+        if os.path.exists(cluster0):
+            cpu = 0
+            while os.path.isdir("/sys/devices/system/cpu/cpu%d" % cpu):
+                clist = "/sys/devices/system/cpu/cpu%d/topology/cluster_cpus_list" % cpu
+                if os.path.isfile(clist):
+                    try:
+                        with open(clist, "r") as f:
+                            seen.add(f.read().strip())
+                    except Exception:
+                        pass
+                cpu += 1
+            if seen:
+                return max(1, min(max_groups, len(seen)))
+
+        node = 0
+        while os.path.isdir("/sys/devices/system/node/node%d" % node):
+            node += 1
+        if node > 0:
+            return min(max_groups, node)
+        return 1
+
+    def set_sql_redo_size_and_num(self, db_data_path, create_database_sql):
         redo_num = 3
+        para = str(self.ogracdConfigs.get("ENABLE_PARA_LOG_FLUSH", "FALSE")).upper()
+        if para == "TRUE":
+            redo_num = 3 * self.get_hw_group_count()
+            log("ENABLE_PARA_LOG_FLUSH=TRUE, create database redo files per node: %u" % redo_num, True)
+
         redo_size = "2G"
         undo_num = 3
         undo_size = "1G"
@@ -1323,6 +1353,10 @@ class Installer:
         sql_file = os.path.join(db_data_path, create_database_sql)
         with open(sql_file, "r") as file:
             sql_content = file.read()
+
+        if para == "TRUE":
+            sql_content = re.sub(r"\barchivelog\b", "noarchivelog", sql_content, count=1, flags=re.IGNORECASE)
+            log("ENABLE_PARA_LOG_FLUSH=TRUE, create database with noarchivelog", True)
         pattern = r"logfile (\(.*\n{0,}.*\))"
         undopattern = r"undo tablespace datafile (.*size [0-9].*G autoextend on next [0-9].*M.*)"
         replace_content = re.findall(pattern, sql_content)

@@ -50,7 +50,8 @@ typedef struct st_log_file_ctrl {
     uint16 backward;
     bool8 archived;
     uint8 node_id;  // for clustered database
-    uint8 reserved[30];
+    uint32 group_id;
+    uint8 reserved[24];
 } log_file_ctrl_t;
 
 typedef struct st_reset_log {

@@ -435,8 +435,10 @@ static void lrpl_reset_single_loginfo(knl_session_t *session, uint32 file_id, ui
 
         start_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
         file->head.asn = OG_INVALID_ASN;
-        redo_ctx->free_size += (file_id == redo_ctx->curr_file) ? (file->head.write_pos - start_pos) : 0;
+        cm_atomic_add(&redo_ctx->free_size,
+            (int64)((file_id == redo_ctx->curr_file) ? (file->head.write_pos - start_pos) : 0));
         file->head.write_pos = start_pos;
+        file->head.rcy_off = 0;
         file->ctrl->status = LOG_FILE_INACTIVE;
         file->ctrl->archived = OG_FALSE;
         log_flush_head(session, file);
@@ -540,7 +542,7 @@ static void lrpl_try_repair_file_offset(knl_session_t *session)
     OG_LOG_RUN_INF("[Log Replayer] end to repair file offset");
 
     /* Add current file's remain size into free size. */
-    log_ctx->free_size += log_file_freesize(file);
+    cm_atomic_add(&log_ctx->free_size, (int64)log_file_freesize(file));
 
     /*
      * Set reconnected to true, to prevent parsing current redo file

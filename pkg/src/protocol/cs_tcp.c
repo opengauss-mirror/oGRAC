@@ -140,7 +140,7 @@ void cs_set_linger(socket_t sock, int32 l_onoff, int32 l_linger)
     (void)setsockopt(sock, SOL_SOCKET, SO_LINGER, (char *)&so_linger, sizeof(struct linger));
 }
 
-int cs_get_numaid(socket_t sock)
+int cs_get_numaid(socket_t sock, int *cpu_id)
 {
     int numa_id= -1;
     int cpuid = -1;
@@ -148,6 +148,7 @@ int cs_get_numaid(socket_t sock)
     if (getsockopt(sock, SOL_SOCKET, SO_INCOMING_CPU, (void*)&cpuid, &optlen) == 0) {
         if (cpuid >= 0) {
             numa_id = numa_node_of_cpu(cpuid);
+            *cpu_id = cpuid;
         }
     }
     return numa_id;

@@ -263,6 +263,12 @@ static status_t dtc_verify_node(sql_stmt_t *stmt, knl_database_def_t *def, uint3
         return OG_ERROR;
     }
 
+    if (ENABLE_PARA_LOG_FLUSH(stmt->session) && node->logfiles.count < OG_MIN_LOG_FILES * SYS_NUMA_GROUP_COUNT) {
+        OG_THROW_ERROR(ERR_INVALID_DATABASE_DEF, "the number of redo log files is invalid, should be in [%d, 256]",
+            OG_MIN_LOG_FILES * SYS_NUMA_GROUP_COUNT);
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 

@@ -1077,7 +1077,7 @@ static status_t raft_log_flush_to_disk(knl_session_t *session, log_context_t *og
     if (!DB_IS_PRIMARY(&session->kernel->db)) {
         knl_panic(file->head.write_pos == (uint64)offset);
         file->head.write_pos += batch->space_size;
-        ogx->free_size -= batch->space_size;
+        cm_atomic_sub(&ogx->free_size, (int64)batch->space_size);
         file->head.last = batch->scn;
         if (file->head.first == OG_INVALID_ID64) {
             file->head.first = batch->scn;

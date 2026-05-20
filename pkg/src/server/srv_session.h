@@ -336,6 +336,8 @@ typedef struct st_session_pool {
     uint32 hwm; /* high water mark */
     uint32 max_sessions;
     uint8 numa_node;
+    int reuse_numa;
+    int priv_reuse_numa;
     uint32 expanded_max_sessions; /* up to max_sessions * 1.5 */
     session_t *sessions[OG_MAX_SESSIONS];
     atomic_t service_count;

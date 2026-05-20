@@ -327,6 +327,16 @@ void ckpt_close(knl_session_t *session)
 #endif
 }
 
+// Parallel: safe point is global commit prefix (compare by lsn); serial: compare by original log_point.
+static inline int32 ckpt_cmp_point(knl_session_t *session, log_point_t *l, log_point_t *r)
+{
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        return log_cmp_point_lsn(l, r);
+    }
+
+    return log_cmp_point(l, r);
+}
+
 static bool32 ckpt_get_valid_trunc_point(knl_session_t *session, ckpt_group_t *group, log_point_t *trunc_point)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
@@ -431,8 +441,6 @@ static void ckpt_set_rbp_reset_from_lrp(knl_session_t *session, log_point_t *lrp
 static void ckpt_update_log_point(knl_session_t *session)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
-    rcy_context_t *rcy = &session->kernel->rcy_ctx;
-    log_point_t last_point = session->kernel->redo_ctx.curr_point;
     ckpt_group_t *group = &ogx->group[ogx->fid];
     log_point_t trunc_point;
     log_point_t ctrl_point;
@@ -451,7 +459,7 @@ static void ckpt_update_log_point(knl_session_t *session)
         ctrl_point = trunc_point;
         ckpt_strip_rbp_private_lsn(session, &ctrl_point);
         ctrl->rcy_point = ctrl_point;
-        if (DB_IS_CLUSTER(session) && log_cmp_point(&ogx->lrp_point, &ctrl->rcy_point) < 0) {
+        if (DB_IS_CLUSTER(session) && ckpt_cmp_point(session, &ogx->lrp_point, &ctrl->rcy_point) < 0) {
             ogx->lrp_point = ctrl->rcy_point;
             ctrl->lrp_point = ctrl->rcy_point;
             ckpt_set_rbp_lrp_point(session, &trunc_point, trunc_point.lsn);
@@ -466,25 +474,49 @@ static void ckpt_update_log_point(knl_session_t *session)
      * which means database status is ready or recover_for_restore has been set to true.
      */
     if (!DB_NOT_READY(session) || session->kernel->db.recover_for_restore) {
-        if (RCY_IGNORE_CORRUPTED_LOG(rcy) && last_point.lfn < ogx->lrp_point.lfn) {
-            ckpt_set_rbp_reset_point(session, &last_point, 0);
-            dtc_my_ctrl(session)->rcy_point = last_point;
-            return;
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            rcy_context_t *rcy = &session->kernel->rcy_ctx;
+            uint64 flushed_lsn = cm_atomic_barrier_read(&session->kernel->redo_ctx.flushed_lsn);
+
+            if (RCY_IGNORE_CORRUPTED_LOG(rcy) && flushed_lsn < ogx->lrp_point.lsn) {
+                dtc_node_ctrl_t *ctrl = dtc_my_ctrl(session);
+                ctrl->rcy_point.asn = 0;
+                ctrl->rcy_point.block_id = 0;
+                ctrl->rcy_point.rst_id = session->kernel->db.ctrl.core.resetlogs.rst_id;
+                ctrl->rcy_point.lfn = flushed_lsn;
+                ctrl->rcy_point.lsn = flushed_lsn;
+                return;
+            }
+
+            if (DB_IS_READONLY(session) &&
+                ckpt_cmp_point(session, &group->trunc_point_snapshot, &ogx->lrp_point) < 0) {
+                dtc_my_ctrl(session)->rcy_point = group->trunc_point_snapshot;
+                return;
+            }
+        } else {
+            rcy_context_t *rcy = &session->kernel->rcy_ctx;
+            log_point_t last_point = session->kernel->redo_ctx.curr_point;
+
+            if (RCY_IGNORE_CORRUPTED_LOG(rcy) && last_point.lfn < ogx->lrp_point.lfn) {
+                ckpt_set_rbp_reset_point(session, &last_point, 0);
+                dtc_my_ctrl(session)->rcy_point = last_point;
+                return;
+            }
+
+            /*
+            * Logical logs do not generate dirty pages, so lfn of lrp_point could be less than trunc_point_snapshot_lfn
+            * probablely. In this scenario, we should set rcy_point to lrp_point still.
+            */
+            if (DB_IS_READONLY(session) && group->trunc_point_snapshot.lfn < ogx->lrp_point.lfn) {
+                ckpt_set_rbp_reset_point(session, &group->trunc_point_snapshot, group->trunc_point_snapshot.lsn);
+                ctrl_point = group->trunc_point_snapshot;
+                ckpt_strip_rbp_private_lsn(session, &ctrl_point);
+                dtc_my_ctrl(session)->rcy_point = ctrl_point;
+                return;
+            }
         }
 
-        /*
-         * Logical logs do not generate dirty pages, so lfn of lrp_point could be less than trunc_point_snapshot_lfn
-         * probablely. In this scenario, we should set rcy_point to lrp_point still.
-         */
-        if (DB_IS_READONLY(session) && group->trunc_point_snapshot.lfn < ogx->lrp_point.lfn) {
-            ckpt_set_rbp_reset_point(session, &group->trunc_point_snapshot, group->trunc_point_snapshot.lsn);
-            ctrl_point = group->trunc_point_snapshot;
-            ckpt_strip_rbp_private_lsn(session, &ctrl_point);
-            dtc_my_ctrl(session)->rcy_point = ctrl_point;
-            return;
-        }
-
-        if (log_cmp_point(&(dtc_my_ctrl(session)->rcy_point), &(ogx->lrp_point)) <= 0) {
+        if (ckpt_cmp_point(session, &(dtc_my_ctrl(session)->rcy_point), &(ogx->lrp_point)) <= 0) {
             ckpt_set_rbp_reset_from_lrp(session, &ogx->lrp_point);
             dtc_my_ctrl(session)->rcy_point = ogx->lrp_point;
             dtc_my_ctrl(session)->consistent_lfn = ogx->lrp_point.lfn;
@@ -508,7 +540,7 @@ void ckpt_update_log_point_slave_role(knl_session_t *session)
     if (ogx->trigger_task == CKPT_TRIGGER_FULL_STANDBY) {
         for (uint32 i = 0; i < g_dtc->profile.node_count; i++) {
             dtc_node_ctrl_t *ctrl = dtc_get_ctrl(session, i);
-            if (DB_IS_CLUSTER(session) && log_cmp_point(&g_replay_paral_mgr.rcy_point[i], &ctrl->rcy_point) > 0) {
+            if (DB_IS_CLUSTER(session) && ckpt_cmp_point(session, &g_replay_paral_mgr.rcy_point[i], &ctrl->rcy_point) > 0) {
                 ctrl->rcy_point = g_replay_paral_mgr.rcy_point[i];
                 if (dtc_save_ctrl(session, i) != OG_SUCCESS) {
                     KNL_SESSION_CLEAR_THREADID(session);
@@ -696,6 +728,7 @@ static void ckpt_full_checkpoint(knl_session_t *session, ckpt_stat_items_t *stat
                     KNL_SESSION_CLEAR_THREADID(session);
                     CM_ABORT(0, "[CKPT] ABORT INFO: save core control file failed when perform checkpoint");
                 }
+                para_log_ckpt_flush_rcy_off(session);
             }
 
             log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);
@@ -780,6 +813,7 @@ static void ckpt_inc_checkpoint(knl_session_t *session, ckpt_stat_items_t *stat)
                 KNL_SESSION_CLEAR_THREADID(session);
                 CM_ABORT(0, "[CKPT] ABORT INFO: save core control file failed when perform checkpoint");
             }
+            para_log_ckpt_flush_rcy_off(session);
         }
     }
     uint64 task_save_ctrl_1 = KNL_NOW(session);
@@ -2487,7 +2521,7 @@ static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
         ckpt_set_rbp_lrp_point(session, &ogx->lrp_point, rbp_lrp_lsn);
     }
 
-    if (!DB_NOT_READY(session) && !DB_IS_READONLY(session)) {
+    if (!DB_NOT_READY(session) && !DB_IS_READONLY(session) && !ENABLE_PARA_LOG_FLUSH(session)) {
         if (DB_IS_RAFT_ENABLED(session->kernel)) {
             raft_wait_for_log_flush(session, (uint64)ogx->lrp_point.lfn);
         } else if (session->kernel->lsnd_ctx.standby_num > 0) {
@@ -2719,6 +2753,11 @@ void ckpt_set_trunc_point_with_rbp_lsn(knl_session_t *session, log_point_t *poin
         trunc_point.lsn = rbp_lsn;
     }
     cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
+    if (ENABLE_PARA_LOG_FLUSH(session) && ckpt_cmp_point(session, &ogx->queue.trunc_point, point) > 0) {
+        cm_spin_unlock(&ogx->queue.lock);
+        return;
+    }
+
     ogx->queue.trunc_point = trunc_point;
     cm_spin_unlock(&ogx->queue.lock);
 }
@@ -2726,15 +2765,15 @@ void ckpt_set_trunc_point_with_rbp_lsn(knl_session_t *session, log_point_t *poin
 void ckpt_set_trunc_point_slave_role(knl_session_t *session, log_point_t *point, uint32 curr_node_idx)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
-    if (log_cmp_point(&ogx->queue.trunc_point, point) > 0)
-    {
+    if (ckpt_cmp_point(session, &ogx->queue.trunc_point, point) > 0) {
         return;
-}
+    }
 
     /* do not move forward trunc point if RBP_RECOVERY is not completed */
     if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         return;
     }
+
     cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
     ogx->queue.trunc_point = *point;
     ogx->queue.curr_node_idx = curr_node_idx;
@@ -4101,6 +4140,7 @@ static status_t ckpt_perform_flush_group(knl_session_t *session)
             KNL_SESSION_CLEAR_THREADID(session);
             CM_ABORT(0, "[CKPT] ABORT INFO: save core control file failed when perform checkpoint");
         }
+        para_log_ckpt_flush_rcy_off(session);
     }
 
     log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);

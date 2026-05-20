@@ -76,6 +76,7 @@ def validate_config_params_file(config_path, template_path=None, logger=None):
         "storage_share_fs", "storage_archive_fs", "storage_metadata_fs",
         "share_logic_ip", "archive_logic_ip", "metadata_logic_ip",
         "SYS_PASSWORD", "kernel_parameters",
+        "ENABLE_PARA_LOG_FLUSH",
     }
     mes_type_keys = {"ca_path", "crt_path", "key_path"}
 

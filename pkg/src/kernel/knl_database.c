@@ -28,6 +28,7 @@
 #include "knl_context.h"
 #include "knl_db_create.h"
 #include "index_common.h"
+#include "knl_log.h"
 #include "knl_ctrl_restore.h"
 #include "knl_space_ddl.h"
 #include "dtc_database.h"
@@ -761,7 +762,19 @@ status_t db_mount(knl_session_t *session)
 static status_t db_start_writer(knl_instance_t *kernel, ckpt_context_t *ckpt)
 {
     // start log writer thread
-    if (cm_create_thread(log_proc, 0, kernel->sessions[SESSION_ID_LOGWR], &kernel->redo_ctx.thread) != OG_SUCCESS) {
+    if (kernel->attr.enable_para_log_flush) {
+        uint32 cluster_count = SYS_NUMA_GROUP_COUNT;
+        // start per-NUMA log writer threads
+        OG_LOG_RUN_INF("[PARA LOG] start lgwr threads groups=%u", cluster_count);
+        for (uint32 i = 0; i < cluster_count; i++) {
+            if (cm_create_thread(para_log_proc, 0, kernel->para_log_ctx[i],
+                &kernel->para_log_ctx[i]->thread) != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[PARA LOG] failed to start lgwr thread group=%u", i);
+                return OG_ERROR;
+            }
+        }
+    } else if (cm_create_thread(log_proc, 0, kernel->sessions[SESSION_ID_LOGWR],
+        &kernel->redo_ctx.thread) != OG_SUCCESS) {
         return OG_ERROR;
     }
 

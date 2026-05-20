@@ -22,12 +22,16 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 #include "cm_common_module.h"
 #include "cm_error.h"
 #include "cm_cpu.h"
 
 static char g_cpu_info_str[CPU_INFO_STR_SIZE];
 static int g_cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE];
+static int g_cpu_info_count[CPU_SEG_MAX_NUM];
 static int g_cpu_group_num = 0;
 static cpu_set_t g_masks[CPU_SEG_MAX_NUM];
 
@@ -51,7 +55,13 @@ char *get_g_cpu_info(void)
     return g_cpu_info_str;
 }
 
-static int init_cpu_mask(char *cpu_info_str, int *cpu_group_num, int cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE])
+int* get_cpu_info_count_ptr(void)
+{
+    return g_cpu_info_count;
+}
+
+static int init_cpu_mask(char *cpu_info_str, int *cpu_group_num, int cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE],
+    int cpu_info_count[CPU_SEG_MAX_NUM])
 {
     errno_t errcode;
     if (cpu_info_str[0] == '0' && strlen(cpu_info_str) == 1) {
@@ -89,6 +99,7 @@ static int init_cpu_mask(char *cpu_info_str, int *cpu_group_num, int cpu_info[CP
             cpu_str = strtok_r(NULL, ",", &cpu_p);
         }
         cpu_info[i][count] = -1;
+        cpu_info_count[i] = count;
     }
     return OG_SUCCESS;
 }
@@ -111,10 +122,105 @@ static void set_cpu_mask(void)
 
 status_t init_cpu_info(void)
 {
-    if (init_cpu_mask(g_cpu_info_str, &g_cpu_group_num, g_cpu_info) != 0 || g_cpu_group_num == 0) {
+    if (init_cpu_mask(g_cpu_info_str, &g_cpu_group_num, g_cpu_info, g_cpu_info_count) != 0 || g_cpu_group_num == 0) {
         OG_LOG_RUN_ERR("g_cpu_group_num init error, g_cpu_group_num is %d", g_cpu_group_num);
         return OG_ERROR;
     }
     set_cpu_mask();
+    return OG_SUCCESS;
+}
+
+static bool8 hw_topo_read_line(const char *path, char *buf, uint32 size)
+{
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return OG_FALSE;
+    }
+
+    if (fgets(buf, (int32)size, fp) == NULL) {
+        (void)fclose(fp);
+        return OG_FALSE;
+    } else {
+        (void)fclose(fp);
+        uint32 len = (uint32)strlen(buf);
+        while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) {
+            buf[--len] = '\0';
+        }
+    }
+
+    return OG_TRUE;
+}
+
+status_t hw_topo_get_info(hw_topo_info_t *info)
+{
+    if (info == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "hw_topo_get_info: null info");
+        return OG_ERROR;
+    }
+
+    info->cpu_of_each_g = 0;
+    info->group_count = 0;
+    info->numa_count = 0;
+    info->has_cluster = OG_FALSE;
+
+    char path[HW_TOPO_PATH_LEN];
+    char buf[HW_TOPO_LIST_LEN];
+    char seen[HW_TOPO_MAX_GROUPS][HW_TOPO_LIST_LEN];
+    uint32 seen_num = 0;
+    uint32 cpu = 0;
+
+    (void)snprintf_s(path, HW_TOPO_PATH_LEN, HW_TOPO_PATH_LEN - 1, HW_TOPO_CLUSTER_LIST, 0U);
+    bool8 has_cluster = (access(path, F_OK) == 0);
+
+    for (cpu = 0;; cpu++) {
+        int32 iret = snprintf_s(path, HW_TOPO_PATH_LEN, HW_TOPO_PATH_LEN - 1, HW_TOPO_CPU_DIR, cpu);
+        if (iret == -1 || access(path, F_OK) != 0) {
+            break;
+        }
+        if (has_cluster) {
+            iret = snprintf_s(path, HW_TOPO_PATH_LEN, HW_TOPO_PATH_LEN - 1, HW_TOPO_CLUSTER_LIST, cpu);
+            if (iret != -1 && hw_topo_read_line(path, buf, HW_TOPO_LIST_LEN)) {
+                bool8 dup = OG_FALSE;
+                for (uint32 k = 0; k < seen_num; k++) {
+                    if (strcmp(seen[k], buf) == 0) {
+                        dup = OG_TRUE;
+                        break;
+                    }
+                }
+                if (!dup && seen_num < HW_TOPO_MAX_GROUPS) {
+                    errno_t ret = strcpy_s(seen[seen_num], HW_TOPO_LIST_LEN, buf);
+                    MEMS_RETURN_IFERR(ret);
+                    seen_num++;
+                }
+            }
+        }
+    }
+
+    if (cpu == 0) {
+        OG_LOG_RUN_ERR("hw_topo: no cpu found under /sys/devices/system/cpu");
+        return OG_ERROR;
+    }
+
+    if (has_cluster && seen_num > 0) {
+        info->has_cluster = OG_TRUE;
+        info->group_count = seen_num;
+        info->cpu_of_each_g = cpu / seen_num;
+        OG_LOG_RUN_INF("hw_topo: cluster=%u cpu=%u", seen_num, cpu);
+        return OG_SUCCESS;
+    }
+
+    uint32 node = 0;
+    while (node < HW_TOPO_MAX_GROUPS) {
+        int32 iret = snprintf_s(path, HW_TOPO_PATH_LEN, HW_TOPO_PATH_LEN - 1, HW_TOPO_NODE_DIR, node);
+        if (iret == -1 || access(path, F_OK) != 0) {
+            break;
+        }
+        node++;
+    }
+
+    info->group_count = (node == 0) ? 1 : node;
+    info->cpu_of_each_g = cpu / info->group_count;
+    info->numa_count = info->group_count;
+    OG_LOG_RUN_INF("hw_topo: numa=%u cpu=%u", info->group_count, cpu);
     return OG_SUCCESS;
 }

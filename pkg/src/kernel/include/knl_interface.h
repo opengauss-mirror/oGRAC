@@ -885,6 +885,7 @@ uint32 knl_db_node_count(knl_handle_t session);
 
 void knl_attach_cpu_core(void);
 void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint8 target_numa);
+void knl_get_cpu_set_from_session(cpu_set_t *cpuset, uint32 session_id, uint8 target_numa, uint32 cpu_id);
 /* @} */
 #ifdef __cplusplus
 }
