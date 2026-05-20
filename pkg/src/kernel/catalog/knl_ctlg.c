@@ -494,7 +494,7 @@ static inline int32 db_encode_index_col_id(const knl_index_desc_t *desc, uint32 
 status_t db_encode_index_column_list(text_t *list, uint32 list_max_size, knl_index_desc_t *desc)
 {
     for (uint32 i = 0; i < desc->column_count; i++) {
-        cm_concat_int32(list, list_max_size, db_encode_index_col_id(desc, i));
+        cm_concat_int64(list, list_max_size, db_encode_index_col_id(desc, i));
         if (i + 1 < desc->column_count) {
             if (cm_concat_string(list, list_max_size, ",") != OG_SUCCESS) {
                 return OG_ERROR;
