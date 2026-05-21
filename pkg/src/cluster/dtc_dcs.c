@@ -3339,15 +3339,36 @@ void dcs_buf_clean_ctrl_edp(knl_session_t *session, buf_ctrl_t *ctrl, bool32 nee
     }
 }
 
-status_t dcs_alter_set_param(knl_session_t *session, const char *value, config_scope_t scope)
+static void dcs_send_arch_set_ack(mes_message_t *msg, status_t status)
+{
+    mes_message_head_t head = { 0 };
+
+    mes_init_ack_head(msg->head, &head, MES_CMD_BROADCAST_ACK, sizeof(mes_message_head_t), OG_INVALID_ID16);
+    head.status = (int8)status;
+    mes_release_message_buf(msg->buffer);
+    if (mes_send_data(&head) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS] failed to send arch set ack, status %d", status);
+    }
+}
+
+status_t dcs_alter_set_param(knl_session_t *session, const char *param, const char *value, config_scope_t scope)
 {
     msg_arch_set_request_t req = { 0 };
+    errno_t err = EOK;
+
+    CM_POINTER3(session, param, value);
     req.scope = scope;
-    error_t ret = memcpy_sp(req.value, OG_PARAM_BUFFER_SIZE, value, OG_PARAM_BUFFER_SIZE);
-    if (ret != 0) {
+    err = strcpy_s(req.param, OG_NAME_BUFFER_SIZE, param);
+    if (err != EOK) {
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, err);
         return OG_ERROR;
     }
-    OG_LOG_RUN_INF("[DCS] request to arch set params, scope %u, value %s", req.scope, req.value);
+    err = strcpy_s(req.value, OG_PARAM_BUFFER_SIZE, value);
+    if (err != EOK) {
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, err);
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_INF("[DCS] request to arch set params, param %s, scope %u, value %s", req.param, req.scope, req.value);
     mes_init_send_head(&req.head, MES_CMD_ARCH_SET_REQ, sizeof(msg_arch_set_request_t), OG_INVALID_ID32,
                        DCS_SELF_INSTID(session), 0, session->id, OG_INVALID_ID16);
     if (mes_broadcast_and_wait(session->id, MES_BROADCAST_ALL_INST, (void *)&req, MES_WAIT_MAX_TIME, NULL) !=
@@ -3362,30 +3383,33 @@ void dcs_process_arch_set_request(void *sess, mes_message_t *msg)
     OG_LOG_RUN_INF("[DCS] process request to arch set params");
     knl_session_t *session = (knl_session_t *)sess;
     msg_arch_set_request_t *req = (msg_arch_set_request_t *)msg->buffer;
-    mes_message_head_t head = { 0 };
+    status_t status = OG_SUCCESS;
 
     database_t *db = &session->kernel->db;
     config_item_t *item = NULL;
     bool32 force = OG_TRUE;
     if (db->status != DB_STATUS_MOUNT && db->status != DB_STATUS_OPEN) {
         OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "set param only work in mount or open state");
-        return;
+        status = OG_ERROR;
+        goto send_ack;
     }
 
-    char arch_set_param[OG_NAME_BUFFER_SIZE] = "ARCH_TIME";
-    text_t name = { .str = arch_set_param, .len = (uint32)strlen(arch_set_param) };
+    text_t name = { .str = req->param, .len = (uint32)strlen(req->param) };
     item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
     if (item == NULL) {
-        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, arch_set_param);
-        return;
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, req->param);
+        status = OG_ERROR;
+        goto send_ack;
     }
     if (req->scope != CONFIG_SCOPE_DISK) {
         if (item->notify && item->notify((knl_handle_t)session, (void *)item, req->value)) {
-            return;
+            status = OG_ERROR;
+            goto send_ack;
         }
     } else {
         if (item->notify_pfile && item->notify_pfile((knl_handle_t)session, (void *)item, req->value)) {
-            return;
+            status = OG_ERROR;
+            goto send_ack;
         }
     }
 
@@ -3396,16 +3420,14 @@ void dcs_process_arch_set_request(void *sess, mes_message_t *msg)
         force = OG_FALSE;  // can not alter parameter whose attr is readonly  for release
 #endif
     }
-    if (cm_alter_config(session->kernel->attr.config, arch_set_param, req->value, req->scope, force) != OG_SUCCESS) {
-        return;
+    if (cm_alter_config(session->kernel->attr.config, item->name, req->value, req->scope, force) != OG_SUCCESS) {
+        status = OG_ERROR;
+        goto send_ack;
     }
 
-    mes_init_ack_head(msg->head, &head, MES_CMD_BROADCAST_ACK, sizeof(mes_message_head_t), OG_INVALID_ID16);
-    mes_release_message_buf(msg->buffer);
-    if (mes_send_data(&head) != OG_SUCCESS) {
-        return;
-    }
     OG_LOG_RUN_INF("[DCS] done request to arch set params");
 
+send_ack:
+    dcs_send_arch_set_ack(msg, status);
     return;
 }
