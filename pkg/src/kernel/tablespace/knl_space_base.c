@@ -479,7 +479,11 @@ status_t spc_get_space_id(knl_session_t *session, const text_t *name, bool32 is_
     }
 
     if (i >= OG_MAX_SPACES) {
-        OG_THROW_ERROR(ERR_SPACE_NOT_EXIST, T2S(name));
+        if (is_for_create_db) {
+            OG_THROW_ERROR_EX(ERR_SPACE_NOT_EXIST, "%s with DB tag", T2S(name));
+        } else {
+            OG_THROW_ERROR(ERR_SPACE_NOT_EXIST, T2S(name));
+        }
         return OG_ERROR;
     }
 
