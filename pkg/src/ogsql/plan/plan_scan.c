@@ -680,7 +680,7 @@ status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_tabl
     /* try seq scan */
     double seq_cost = CBO_MAX_COST;
     if (check_apply_table_full_scan(pa, table)) {
-        seq_cost = sql_seq_scan_cost(stmt, entity, table);
+        seq_cost = sql_seq_scan_cost(stmt, pa, entity, table);
 
         sql_debug_scan_cost_info(stmt, table, "SEQ", NULL, seq_cost, NULL, NULL);
     }

@@ -541,12 +541,12 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 1    | 27913 | 27885     |       |        |
-| 1  |   MERGE JOIN              |       |      | 1    | 27913 | 27885     |       |        |
-| 2  |       TABLE ACCESS FULL   | SYS   | T7   | 2000 | 11    | 0         |       |        |
-| 3  |     MERGE JOIN            |       |      | 1    | 27763 | 243       |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 11    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 11    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 1    | 27988 | 27960     |       |        |
+| 1  |   MERGE JOIN              |       |      | 1    | 27988 | 27960     |       |        |
+| 2  |       TABLE ACCESS FULL   | SYS   | T7   | 2000 | 36    | 0         |       |        |
+| 3  |     MERGE JOIN            |       |      | 1    | 27813 | 293       |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 36    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 36    | 0         |       |        |
 ---------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -577,12 +577,12 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |           | 1    | 17785 | 139       |       |        |
-| 1  |   AGGR                              |       |           | 1    | 17785 | 139       |       |        |
-| 2  |     MERGE JOIN                      |       |           | 2001 | 17640 | 129       |       |        |
+| 0  | SELECT STATEMENT                    |       |           | 1    | 17834 | 164       |       |        |
+| 1  |   AGGR                              |       |           | 1    | 17834 | 164       |       |        |
+| 2  |     MERGE JOIN                      |       |           | 2001 | 17664 | 154       |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000 | 8     | 8         |       |        |
-| 5  |         TABLE ACCESS FULL           | SYS   | T6        | 2000 | 11    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6        | 2000 | 36    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -603,20 +603,21 @@ SQL> explain select count(*) from t5 join t6 on floor(t5.c1) = t6.c1;
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-----------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name | Rows  | Cost  | StartCost | Bytes | Remark |
-----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 1     | 18164 | 349       |       |        |
-| 1  |   AGGR                    |       |      | 1     | 18164 | 349       |       |        |
-| 2  |     MERGE JOIN            |       |      | 20000 | 17764 | 249       |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000  | 11    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000  | 11    | 0         |       |        |
-----------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------
+| Id | Operation                           | Owner | Name      | Rows  | Cost  | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                    |       |           | 1     | 18242 | 388       |       |        |
+| 1  |   AGGR                              |       |           | 1     | 18242 | 388       |       |        |
+| 2  |     MERGE JOIN                      |       |           | 20000 | 17803 | 288       |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000  | 25    | 8         |       |        |
+| 4  |           INDEX FAST FULL SCAN      | SYS   | IDX_T5_C1 | 2000  | 25    | 8         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6        | 2000  | 36    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     2 - access: FLOOR(T5.C1) = T6.C1                            
 
-12 rows fetched.
+13 rows fetched.
 
 SQL> select count(*) from t5 join t6 on floor(t5.c1) = t6.c1;
 
@@ -634,12 +635,12 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |           | 1    | 17785 | 139       |       |        |
-| 1  |   AGGR                              |       |           | 1    | 17785 | 139       |       |        |
-| 2  |     MERGE JOIN                      |       |           | 2001 | 17640 | 129       |       |        |
+| 0  | SELECT STATEMENT                    |       |           | 1    | 17834 | 164       |       |        |
+| 1  |   AGGR                              |       |           | 1    | 17834 | 164       |       |        |
+| 2  |     MERGE JOIN                      |       |           | 2001 | 17664 | 154       |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000 | 8     | 8         |       |        |
-| 5  |         TABLE ACCESS FULL           | SYS   | T6        | 2000 | 11    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6        | 2000 | 36    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -663,11 +664,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 1    | 18016 | 253       |       |        |
-| 1  |   AGGR                    |       |      | 1    | 18016 | 253       |       |        |
-| 2  |     MERGE JOIN            |       |      | 2001 | 17758 | 243       |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 11    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 11    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 1    | 18116 | 303       |       |        |
+| 1  |   AGGR                    |       |      | 1    | 18116 | 303       |       |        |
+| 2  |     MERGE JOIN            |       |      | 2001 | 17808 | 293       |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 36    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 36    | 0         |       |        |
 ---------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -691,10 +692,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                            | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |           | 1    | 289  | 130       |       |        |
-| 1  |   AGGR                               |       |           | 1    | 289  | 130       |       |        |
-| 2  |     MERGE JOIN                       |       |           | 1    | 159  | 130       |       |        |
-| 3  |         TABLE ACCESS FULL            | SYS   | T6        | 2000 | 11   | 0         |       |        |
+| 0  | SELECT STATEMENT                     |       |           | 1    | 338  | 154       |       |        |
+| 1  |   AGGR                               |       |           | 1    | 338  | 154       |       |        |
+| 2  |     MERGE JOIN                       |       |           | 1    | 183  | 154       |       |        |
+| 3  |         TABLE ACCESS FULL            | SYS   | T6        | 2000 | 36   | 0         |       |        |
 | 4  |         TABLE ACCESS BY INDEX ROWID  | SYS   | T5        | 1    | 8    | 8         |       |        |
 | 5  |           INDEX RANGE SCAN           | SYS   | IDX_T5_C1 | 1    | 8    | 8         |       |        |
 ------------------------------------------------------------------------------------------------------------
@@ -722,12 +723,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                            | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |           | 1    | 27775 | 129       |       |        |
-| 1  |   AGGR                               |       |           | 1    | 27775 | 129       |       |        |
-| 2  |     MERGE JOIN                       |       |           | 1    | 27645 | 129       |       |        |
-| 3  |         TABLE ACCESS BY INDEX ROWID  | SYS   | T5        | 2000 | 9     | 8         |       |        |
-| 4  |           INDEX FULL SCAN            | SYS   | IDX_T5_C1 | 2000 | 9     | 8         |       |        |
-| 5  |         TABLE ACCESS FULL            | SYS   | T6        | 2000 | 11    | 0         |       |        |
+| 0  | SELECT STATEMENT                     |       |           | 1    | 27824 | 154       |       |        |
+| 1  |   AGGR                               |       |           | 1    | 27824 | 154       |       |        |
+| 2  |     MERGE JOIN                       |       |           | 1    | 27669 | 154       |       |        |
+| 3  |         TABLE ACCESS BY INDEX ROWID  | SYS   | T5        | 2000 | 8     | 8         |       |        |
+| 4  |           INDEX FULL SCAN            | SYS   | IDX_T5_C1 | 2000 | 8     | 8         |       |        |
+| 5  |         TABLE ACCESS FULL            | SYS   | T6        | 2000 | 36    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -753,11 +754,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 1    | 28006 | 243       |       |        |
-| 1  |   AGGR                    |       |      | 1    | 28006 | 243       |       |        |
-| 2  |     MERGE JOIN            |       |      | 1    | 27763 | 243       |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 11    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 11    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 1    | 28106 | 293       |       |        |
+| 1  |   AGGR                    |       |      | 1    | 28106 | 293       |       |        |
+| 2  |     MERGE JOIN            |       |      | 1    | 27813 | 293       |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 36    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 36    | 0         |       |        |
 ---------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -803,12 +804,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |            | 1    | 17785 | 139       |       |        |
-| 1  |   AGGR                              |       |            | 1    | 17785 | 139       |       |        |
-| 2  |     MERGE JOIN                      |       |            | 2001 | 17640 | 129       |       |        |
+| 0  | SELECT STATEMENT                    |       |            | 1    | 17834 | 164       |       |        |
+| 1  |   AGGR                              |       |            | 1    | 17834 | 164       |       |        |
+| 2  |     MERGE JOIN                      |       |            | 2001 | 17664 | 154       |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5         | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C12 | 2000 | 8     | 8         |       |        |
-| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 11    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 36    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -832,12 +833,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |            | 1    | 17785 | 139       |       |        |
-| 1  |   AGGR                              |       |            | 1    | 17785 | 139       |       |        |
-| 2  |     MERGE JOIN                      |       |            | 2001 | 17640 | 129       |       |        |
+| 0  | SELECT STATEMENT                    |       |            | 1    | 17834 | 164       |       |        |
+| 1  |   AGGR                              |       |            | 1    | 17834 | 164       |       |        |
+| 2  |     MERGE JOIN                      |       |            | 2001 | 17664 | 154       |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5         | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C12 | 2000 | 8     | 8         |       |        |
-| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 11    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 36    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -858,20 +859,21 @@ SQL> explain select count(*) from t5 join t6 on t5.c2 = t6.c2 ;
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
----------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 1    | 18016 | 253       |       |        |
-| 1  |   AGGR                    |       |      | 1    | 18016 | 253       |       |        |
-| 2  |     MERGE JOIN            |       |      | 2001 | 17758 | 243       |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 11    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 11    | 0         |       |        |
----------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------
+| Id | Operation                           | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                    |       |            | 1    | 18098 | 294       |       |        |
+| 1  |   AGGR                              |       |            | 1    | 18098 | 294       |       |        |
+| 2  |     MERGE JOIN                      |       |            | 2001 | 17799 | 284       |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5         | 2000 | 27    | 8         |       |        |
+| 4  |           INDEX FAST FULL SCAN      | SYS   | IDX_T5_C12 | 2000 | 27    | 8         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 36    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     2 - access: T5.C2 = T6.C2                                   
 
-12 rows fetched.
+13 rows fetched.
 
 SQL> select count(*) from t5 join t6 on t5.c2 = t6.c2 ;
 
@@ -889,12 +891,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |            | 1    | 27775 | 129       |       |        |
-| 1  |   AGGR                              |       |            | 1    | 27775 | 129       |       |        |
-| 2  |     MERGE JOIN                      |       |            | 1    | 27645 | 129       |       |        |
+| 0  | SELECT STATEMENT                    |       |            | 1    | 27824 | 154       |       |        |
+| 1  |   AGGR                              |       |            | 1    | 27824 | 154       |       |        |
+| 2  |     MERGE JOIN                      |       |            | 1    | 27669 | 154       |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5         | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C12 | 2000 | 8     | 8         |       |        |
-| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 11    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 36    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -917,22 +919,23 @@ SQL> explain select count(*) from t5 join t6 on t5.c1 = t6.c1 and t5.c2 = t6.c2 
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
----------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 1    | 28006 | 243       |       |        |
-| 1  |   AGGR                    |       |      | 1    | 28006 | 243       |       |        |
-| 2  |     MERGE JOIN            |       |      | 1    | 27763 | 243       |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T5   | 2000 | 11    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T6   | 2000 | 11    | 0         |       |        |
----------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------
+| Id | Operation                           | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                    |       |            | 1    | 28088 | 284       |       |        |
+| 1  |   AGGR                              |       |            | 1    | 28088 | 284       |       |        |
+| 2  |     MERGE JOIN                      |       |            | 1    | 27804 | 284       |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5         | 2000 | 27    | 8         |       |        |
+| 4  |           INDEX FAST FULL SCAN      | SYS   | IDX_T5_C12 | 2000 | 27    | 8         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T6         | 2000 | 36    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     2 - access: T5.C2 = T6.C2                                   
         filter: T5.C1 = T6.C1                                   
-    4 - filter: T5.C1 = T6.C1                                   
+    5 - filter: T5.C1 = T6.C1                                   
 
-14 rows fetched.
+15 rows fetched.
 
 SQL> select count(*) from t5 join t6 on t5.c1 = t6.c1 and t5.c2 = t6.c2 ;
 
@@ -978,13 +981,13 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------------
 | Id | Operation                            | Owner | Name      | Rows    | Cost  | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |           | 1       | 27554 | 6682      |       |        |
-| 1  |   AGGR                               |       |           | 1       | 27554 | 6682      |       |        |
-| 2  |     MERGE JOIN                       |       |           | 1333333 | 17538 | 16        |       |        |
-| 3  |         TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000    | 16    | 8         |       |        |
-| 4  |           INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000    | 16    | 8         |       |        |
-| 5  |         TABLE ACCESS BY INDEX ONLY   | SYS   | T6        | 2000    | 16    | 8         |       |        |
-| 6  |           INDEX FULL SCAN DESCENDING | SYS   | IDX_T6_C1 | 2000    | 16    | 8         |       |        |
+| 0  | SELECT STATEMENT                     |       |           | 1       | 27556 | 6682      |       |        |
+| 1  |   AGGR                               |       |           | 1       | 27556 | 6682      |       |        |
+| 2  |     MERGE JOIN                       |       |           | 1333333 | 17540 | 16        |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000    | 17    | 8         |       |        |
+| 4  |           INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000    | 17    | 8         |       |        |
+| 5  |         TABLE ACCESS BY INDEX ONLY   | SYS   | T6        | 2000    | 17    | 8         |       |        |
+| 6  |           INDEX FULL SCAN DESCENDING | SYS   | IDX_T6_C1 | 2000    | 17    | 8         |       |        |
 ----------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1008,9 +1011,9 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |           | 1    | 17553 | 26        |       |        |
-| 1  |   AGGR                              |       |           | 1    | 17553 | 26        |       |        |
-| 2  |     MERGE JOIN                      |       |           | 2001 | 17522 | 16        |       |        |
+| 0  | SELECT STATEMENT                    |       |           | 1    | 17552 | 26        |       |        |
+| 1  |   AGGR                              |       |           | 1    | 17552 | 26        |       |        |
+| 2  |     MERGE JOIN                      |       |           | 2001 | 17521 | 16        |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000 | 8     | 8         |       |        |
 | 5  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000 | 8     | 8         |       |        |
@@ -1038,13 +1041,13 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name      | Rows    | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |           | 1       | 27554 | 6682      |       |        |
-| 1  |   AGGR                              |       |           | 1       | 27554 | 6682      |       |        |
-| 2  |     MERGE JOIN                      |       |           | 1333333 | 17538 | 16        |       |        |
-| 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000    | 16    | 8         |       |        |
-| 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000    | 16    | 8         |       |        |
-| 5  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000    | 16    | 8         |       |        |
-| 6  |           INDEX FULL SCAN           | SYS   | IDX_T6_C1 | 2000    | 16    | 8         |       |        |
+| 0  | SELECT STATEMENT                    |       |           | 1       | 27556 | 6682      |       |        |
+| 1  |   AGGR                              |       |           | 1       | 27556 | 6682      |       |        |
+| 2  |     MERGE JOIN                      |       |           | 1333333 | 17540 | 16        |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000    | 17    | 8         |       |        |
+| 4  |           INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000    | 17    | 8         |       |        |
+| 5  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000    | 17    | 8         |       |        |
+| 6  |           INDEX FULL SCAN           | SYS   | IDX_T6_C1 | 2000    | 17    | 8         |       |        |
 ---------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1109,16 +1112,16 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------------------
 | Id | Operation                             | Owner | Name      | Rows      | Cost    | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                      |       |           | 1         | 2517584 | 500024    |       |        |
-| 1  |   AGGR                                |       |           | 1         | 2517584 | 500024    |       |        |
-| 2  |     MERGE JOIN                        |       |           | 100000000 | 1767560 | 24        |       |        |
-| 3  |         TABLE ACCESS BY INDEX ONLY    | SYS   | T7        | 2000      | 16      | 8         |       |        |
-| 4  |           INDEX FULL SCAN             | SYS   | IDX_T7_C1 | 2000      | 16      | 8         |       |        |
-| 5  |       MERGE JOIN                      |       |           | 1333333   | 17538   | 16        |       |        |
-| 6  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000      | 16      | 8         |       |        |
-| 7  |             INDEX FULL SCAN           | SYS   | IDX_T6_C1 | 2000      | 16      | 8         |       |        |
-| 8  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000      | 16      | 8         |       |        |
-| 9  |             INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000      | 16      | 8         |       |        |
+| 0  | SELECT STATEMENT                      |       |           | 1         | 2517587 | 500024    |       |        |
+| 1  |   AGGR                                |       |           | 1         | 2517587 | 500024    |       |        |
+| 2  |     MERGE JOIN                        |       |           | 100000000 | 1767563 | 24        |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY    | SYS   | T7        | 2000      | 17      | 8         |       |        |
+| 4  |           INDEX FULL SCAN             | SYS   | IDX_T7_C1 | 2000      | 17      | 8         |       |        |
+| 5  |       MERGE JOIN                      |       |           | 1333333   | 17540   | 16        |       |        |
+| 6  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000      | 17      | 8         |       |        |
+| 7  |             INDEX FULL SCAN           | SYS   | IDX_T6_C1 | 2000      | 17      | 8         |       |        |
+| 8  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000      | 17      | 8         |       |        |
+| 9  |             INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000      | 17      | 8         |       |        |
 ---------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1135,16 +1138,16 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------------------
 | Id | Operation                              | Owner | Name      | Rows      | Cost    | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                       |       |           | 1         | 2517584 | 500024    |       |        |
-| 1  |   AGGR                                 |       |           | 1         | 2517584 | 500024    |       |        |
-| 2  |     MERGE JOIN                         |       |           | 100000000 | 1767560 | 24        |       |        |
-| 3  |         TABLE ACCESS BY INDEX ONLY     | SYS   | T7        | 2000      | 16      | 8         |       |        |
-| 4  |           INDEX FULL SCAN DESCENDING   | SYS   | IDX_T7_C1 | 2000      | 16      | 8         |       |        |
-| 5  |       MERGE JOIN                       |       |           | 1333333   | 17538   | 16        |       |        |
-| 6  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T6        | 2000      | 16      | 8         |       |        |
-| 7  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T6_C1 | 2000      | 16      | 8         |       |        |
-| 8  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000      | 16      | 8         |       |        |
-| 9  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000      | 16      | 8         |       |        |
+| 0  | SELECT STATEMENT                       |       |           | 1         | 2517587 | 500024    |       |        |
+| 1  |   AGGR                                 |       |           | 1         | 2517587 | 500024    |       |        |
+| 2  |     MERGE JOIN                         |       |           | 100000000 | 1767563 | 24        |       |        |
+| 3  |         TABLE ACCESS BY INDEX ONLY     | SYS   | T7        | 2000      | 17      | 8         |       |        |
+| 4  |           INDEX FULL SCAN DESCENDING   | SYS   | IDX_T7_C1 | 2000      | 17      | 8         |       |        |
+| 5  |       MERGE JOIN                       |       |           | 1333333   | 17540   | 16        |       |        |
+| 6  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T6        | 2000      | 17      | 8         |       |        |
+| 7  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T6_C1 | 2000      | 17      | 8         |       |        |
+| 8  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000      | 17      | 8         |       |        |
+| 9  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000      | 17      | 8         |       |        |
 ----------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1161,12 +1164,12 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------------------
 | Id | Operation                             | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                      |       |           | 1    | 45094 | 34        |       |        |
-| 1  |   AGGR                                |       |           | 1    | 45094 | 34        |       |        |
-| 2  |     MERGE JOIN                        |       |           | 2002 | 45055 | 24        |       |        |
+| 0  | SELECT STATEMENT                      |       |           | 1    | 45092 | 34        |       |        |
+| 1  |   AGGR                                |       |           | 1    | 45092 | 34        |       |        |
+| 2  |     MERGE JOIN                        |       |           | 2002 | 45053 | 24        |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY    | SYS   | T7        | 2000 | 8     | 8         |       |        |
 | 4  |           INDEX FULL SCAN             | SYS   | IDX_T7_C1 | 2000 | 8     | 8         |       |        |
-| 5  |       MERGE JOIN                      |       |           | 2001 | 17522 | 16        |       |        |
+| 5  |       MERGE JOIN                      |       |           | 2001 | 17521 | 16        |       |        |
 | 6  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000 | 8     | 8         |       |        |
 | 7  |             INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000 | 8     | 8         |       |        |
 | 8  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000 | 8     | 8         |       |        |
@@ -1189,16 +1192,16 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------------------
 | Id | Operation                             | Owner | Name      | Rows      | Cost    | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                      |       |           | 1         | 2520912 | 500024    |       |        |
-| 1  |   AGGR                                |       |           | 1         | 2520912 | 500024    |       |        |
-| 2  |     MERGE JOIN                        |       |           | 100000000 | 1770888 | 24        |       |        |
-| 3  |       MERGE JOIN                      |       |           | 1333333   | 17538   | 16        |       |        |
-| 4  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000      | 16      | 8         |       |        |
-| 5  |             INDEX FULL SCAN           | SYS   | IDX_T6_C1 | 2000      | 16      | 8         |       |        |
-| 6  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000      | 16      | 8         |       |        |
-| 7  |             INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000      | 16      | 8         |       |        |
-| 8  |         TABLE ACCESS BY INDEX ONLY    | SYS   | T7        | 2000      | 16      | 8         |       |        |
-| 9  |           INDEX FULL SCAN             | SYS   | IDX_T7_C1 | 2000      | 16      | 8         |       |        |
+| 0  | SELECT STATEMENT                      |       |           | 1         | 2520915 | 500024    |       |        |
+| 1  |   AGGR                                |       |           | 1         | 2520915 | 500024    |       |        |
+| 2  |     MERGE JOIN                        |       |           | 100000000 | 1770891 | 24        |       |        |
+| 3  |       MERGE JOIN                      |       |           | 1333333   | 17540   | 16        |       |        |
+| 4  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T6        | 2000      | 17      | 8         |       |        |
+| 5  |             INDEX FULL SCAN           | SYS   | IDX_T6_C1 | 2000      | 17      | 8         |       |        |
+| 6  |           TABLE ACCESS BY INDEX ONLY  | SYS   | T5        | 2000      | 17      | 8         |       |        |
+| 7  |             INDEX FULL SCAN           | SYS   | IDX_T5_C1 | 2000      | 17      | 8         |       |        |
+| 8  |         TABLE ACCESS BY INDEX ONLY    | SYS   | T7        | 2000      | 17      | 8         |       |        |
+| 9  |           INDEX FULL SCAN             | SYS   | IDX_T7_C1 | 2000      | 17      | 8         |       |        |
 ---------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1215,16 +1218,16 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------------------
 | Id | Operation                              | Owner | Name      | Rows      | Cost    | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                       |       |           | 1         | 2520912 | 500024    |       |        |
-| 1  |   AGGR                                 |       |           | 1         | 2520912 | 500024    |       |        |
-| 2  |     MERGE JOIN                         |       |           | 100000000 | 1770888 | 24        |       |        |
-| 3  |       MERGE JOIN                       |       |           | 1333333   | 17538   | 16        |       |        |
-| 4  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T6        | 2000      | 16      | 8         |       |        |
-| 5  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T6_C1 | 2000      | 16      | 8         |       |        |
-| 6  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000      | 16      | 8         |       |        |
-| 7  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000      | 16      | 8         |       |        |
-| 8  |         TABLE ACCESS BY INDEX ONLY     | SYS   | T7        | 2000      | 16      | 8         |       |        |
-| 9  |           INDEX FULL SCAN DESCENDING   | SYS   | IDX_T7_C1 | 2000      | 16      | 8         |       |        |
+| 0  | SELECT STATEMENT                       |       |           | 1         | 2520915 | 500024    |       |        |
+| 1  |   AGGR                                 |       |           | 1         | 2520915 | 500024    |       |        |
+| 2  |     MERGE JOIN                         |       |           | 100000000 | 1770891 | 24        |       |        |
+| 3  |       MERGE JOIN                       |       |           | 1333333   | 17540   | 16        |       |        |
+| 4  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T6        | 2000      | 17      | 8         |       |        |
+| 5  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T6_C1 | 2000      | 17      | 8         |       |        |
+| 6  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000      | 17      | 8         |       |        |
+| 7  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000      | 17      | 8         |       |        |
+| 8  |         TABLE ACCESS BY INDEX ONLY     | SYS   | T7        | 2000      | 17      | 8         |       |        |
+| 9  |           INDEX FULL SCAN DESCENDING   | SYS   | IDX_T7_C1 | 2000      | 17      | 8         |       |        |
 ----------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1241,16 +1244,16 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------------------
 | Id | Operation                              | Owner | Name      | Rows      | Cost    | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                       |       |           | 1         | 2520912 | 500024    |       |        |
-| 1  |   AGGR                                 |       |           | 1         | 2520912 | 500024    |       |        |
-| 2  |     MERGE JOIN                         |       |           | 100000000 | 1770888 | 24        |       |        |
-| 3  |       MERGE JOIN                       |       |           | 1333333   | 17538   | 16        |       |        |
-| 4  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T7        | 2000      | 16      | 8         |       |        |
-| 5  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T7_C1 | 2000      | 16      | 8         |       |        |
-| 6  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000      | 16      | 8         |       |        |
-| 7  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000      | 16      | 8         |       |        |
-| 8  |         TABLE ACCESS BY INDEX ONLY     | SYS   | T6        | 2000      | 16      | 8         |       |        |
-| 9  |           INDEX FULL SCAN DESCENDING   | SYS   | IDX_T6_C1 | 2000      | 16      | 8         |       |        |
+| 0  | SELECT STATEMENT                       |       |           | 1         | 2520915 | 500024    |       |        |
+| 1  |   AGGR                                 |       |           | 1         | 2520915 | 500024    |       |        |
+| 2  |     MERGE JOIN                         |       |           | 100000000 | 1770891 | 24        |       |        |
+| 3  |       MERGE JOIN                       |       |           | 1333333   | 17540   | 16        |       |        |
+| 4  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T7        | 2000      | 17      | 8         |       |        |
+| 5  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T7_C1 | 2000      | 17      | 8         |       |        |
+| 6  |           TABLE ACCESS BY INDEX ONLY   | SYS   | T5        | 2000      | 17      | 8         |       |        |
+| 7  |             INDEX FULL SCAN DESCENDING | SYS   | IDX_T5_C1 | 2000      | 17      | 8         |       |        |
+| 8  |         TABLE ACCESS BY INDEX ONLY     | SYS   | T6        | 2000      | 17      | 8         |       |        |
+| 9  |           INDEX FULL SCAN DESCENDING   | SYS   | IDX_T6_C1 | 2000      | 17      | 8         |       |        |
 ----------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1285,12 +1288,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name      | Rows | Cost   | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |           | 1    | 158424 | 454       |       |        |
-| 1  |   AGGR                              |       |           | 1    | 158424 | 454       |       |        |
-| 2  |     MERGE JOIN                      |       |           | 6000 | 157955 | 424       |       |        |
+| 0  | SELECT STATEMENT                    |       |           | 1    | 158574 | 529       |       |        |
+| 1  |   AGGR                              |       |           | 1    | 158574 | 529       |       |        |
+| 2  |     MERGE JOIN                      |       |           | 6000 | 158029 | 499       |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY  | SYS   | T8        | 6000 | 8      | 8         |       |        |
 | 4  |           INDEX FULL SCAN           | SYS   | IDX_T8_C1 | 6000 | 8      | 8         |       |        |
-| 5  |         TABLE ACCESS FULL           | SYS   | T9        | 6000 | 37     | 0         |       |        |
+| 5  |         TABLE ACCESS FULL           | SYS   | T9        | 6000 | 112    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

@@ -141,7 +141,7 @@ double sql_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, dc_e
     galist_t **idx_cond_array, int64 *card, cbo_stats_info_t* stats_info, sql_table_t *table);
 status_t compute_hist_factor_by_conds(sql_stmt_t *stmt, dc_entity_t *entity, galist_t *cond_cols,
     galist_t *conds, double *ff, cbo_stats_info_t* stats_info);
-double sql_seq_scan_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table);
+double sql_seq_scan_cost(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table);
 double sql_sort_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, uint16 scan_flag);
 double sql_group_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, uint16 scan_flag);
 double sql_distinct_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, uint16 scan_flag);
@@ -176,7 +176,7 @@ double sql_seq_scan_subpartitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, s
 
 double sql_seq_scan_partitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table);
 
-double sql_seq_scan_nopartitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table);
+double sql_seq_scan_nopartitioned_cost(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table);
 
 typedef struct st_ff_calc_ass {
     double left_nulls;
