@@ -5721,7 +5721,24 @@ static int exp_table_indexes(exp_tabs_ctx_t *ogx, const char *table, exp_cache_t
             OG_RETURN_IFERR(exp_table_func_indexes(ogx, table, org_ind_name, table_cache));
         }
 
-        OG_RETURN_IFERR(exp_cache_append_str(table_cache, ")\n"));
+        OG_RETURN_IFERR(exp_cache_append_str(table_cache, ")"));
+
+        if (ogx->reverse_index_available) {
+            OG_RETURN_IFERR(ogconn_column_as_string(STMT, 11, g_str_buf, OG_MAX_PACKET_SIZE));
+            if (g_str_buf[0] == 'Y') {
+                OG_RETURN_IFERR(exp_cache_append_str(table_cache, " REVERSE"));
+            }
+        }
+
+        if (ogconn_get_call_version(CONN) >= CS_VERSION_25) {
+            uint32 nologging_col = ogx->reverse_index_available ? 12 : 11;
+            OG_RETURN_IFERR(ogconn_column_as_string(STMT, nologging_col, g_str_buf, OG_MAX_PACKET_SIZE));
+            if (g_str_buf[0] == 'Y') {
+                OG_RETURN_IFERR(exp_cache_append_str(table_cache, " NOLOGGING"));
+            }
+        }
+
+        OG_RETURN_IFERR(exp_cache_append_str(table_cache, "\n"));
 
         OG_RETURN_IFERR(ogconn_column_as_string(STMT, 9, g_str_buf, OG_MAX_PACKET_SIZE));
 
@@ -5761,19 +5778,6 @@ static int exp_table_indexes(exp_tabs_ctx_t *ogx, const char *table, exp_cache_t
             }
         }
 
-        if (ogx->reverse_index_available) {
-            OG_RETURN_IFERR(ogconn_column_as_string(STMT, 11, g_str_buf, OG_MAX_PACKET_SIZE));
-            if (g_str_buf[0] == 'Y') {
-                OG_RETURN_IFERR(exp_cache_append_str(table_cache, "\nREVERSE"));
-            }
-        }
-
-        if (ogconn_get_call_version(CONN) >= CS_VERSION_25) {
-            OG_RETURN_IFERR(ogconn_column_as_string(STMT, 12, g_str_buf, OG_MAX_PACKET_SIZE));
-            if (g_str_buf[0] == 'Y') {
-                OG_RETURN_IFERR(exp_cache_append_str(table_cache, "\nNOLOGGING"));
-            }
-        }
         OG_RETURN_IFERR(exp_cache_append_str(table_cache, ";\n"));
     } while (OG_TRUE);
     return OG_SUCCESS;
