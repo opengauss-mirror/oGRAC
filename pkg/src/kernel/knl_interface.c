@@ -8380,7 +8380,7 @@ status_t knl_set_arch_param(knl_handle_t handle, knl_alter_sys_def_t *def)
     }
 
     if (def->arch_set_type == ARCH_SET_TYPE_GLOBAL && DB_IS_CLUSTER(session)) {
-        if(dcs_alter_set_param(session, def->value, def->scope) != OG_SUCCESS) {
+        if (dcs_alter_set_param(session, def->param, def->value, def->scope) != OG_SUCCESS) {
             return OG_ERROR;
         }
     }

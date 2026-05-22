@@ -234,6 +234,7 @@ typedef struct st_msg_page_batch_op {
 typedef struct st_msg_arch_set_request {
     mes_message_head_t head;
     uint32 scope;
+    char param[OG_NAME_BUFFER_SIZE];
     char value[OG_PARAM_BUFFER_SIZE];
 } msg_arch_set_request_t;
 
@@ -322,7 +323,7 @@ status_t dcs_send_data3_retry(mes_message_head_t *head, uint32 head_size, const 
 
 void dcs_clean_local_ctrl(knl_session_t *session, buf_ctrl_t *ctrl, drc_res_action_e action, uint64 clean_lsn);
 status_t dcs_send_txn_wait(knl_session_t *session, msg_pcr_request_t *request, xid_t wxid);
-status_t dcs_alter_set_param(knl_session_t *session, const char *value, config_scope_t scope);
+status_t dcs_alter_set_param(knl_session_t *session, const char *param, const char *value, config_scope_t scope);
 EXTER_ATTACK void dcs_process_arch_set_request(void *sess, mes_message_t *msg);
 #ifdef __cplusplus
 }
