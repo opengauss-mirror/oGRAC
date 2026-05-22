@@ -15086,8 +15086,12 @@ OgracStmt:
                     }
 
                     param->count = $7;
-                    if (param->count > OG_MAX_INSTANCES) {
-                        parser_yyerror("node count should be less or equal than OG_MAX_INSTANCES");
+                    if (param->count == 0 || param->count > OG_MAX_INSTANCES ||
+                        param->start + param->count > OG_MAX_INSTANCES) {
+                        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+                                          "node count should be in [1, %u] and start + count less or equal than %u",
+                                          OG_MAX_INSTANCES, OG_MAX_INSTANCES);
+                        YYABORT;
                     }
 
                     $$ = param;

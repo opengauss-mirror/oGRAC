@@ -2541,7 +2541,40 @@ static status_t dump_rebuild_ctrl_datafile_list(database_ctrl_t *ctrl, cm_dump_t
 
 static status_t dump_rebuild_ctrl_logfile_list(database_ctrl_t *ctrl, cm_dump_t *dump)
 {
-    knl_panic(0);
+    log_file_ctrl_t *logfile = NULL;
+    uint32 logfile_count = 0;
+    uint32 dumped_count = 0;
+    uint32 node_count = (ctrl->core.node_count == 0) ? 1 : ctrl->core.node_count;
+
+    if (node_count > OG_MAX_INSTANCES) {
+        node_count = OG_MAX_INSTANCES;
+    }
+
+    for (uint32 node_id = 0; node_id < node_count; node_id++) {
+        for (uint32 i = 0; i < OG_MAX_LOG_FILES; i++) {
+            logfile = (log_file_ctrl_t *)db_get_log_ctrl_item(ctrl->pages, i, sizeof(log_file_ctrl_t),
+                                                              ctrl->log_segment, node_id);
+            if (logfile->name[0] == '\0' || LOG_IS_DROPPED(logfile->flg)) {
+                continue;
+            }
+            logfile_count++;
+        }
+    }
+
+    for (uint32 node_id = 0; node_id < node_count; node_id++) {
+        for (uint32 i = 0; i < OG_MAX_LOG_FILES; i++) {
+            logfile = (log_file_ctrl_t *)db_get_log_ctrl_item(ctrl->pages, i, sizeof(log_file_ctrl_t),
+                                                              ctrl->log_segment, node_id);
+            if (logfile->name[0] == '\0' || LOG_IS_DROPPED(logfile->flg)) {
+                continue;
+            }
+
+            dumped_count++;
+            cm_dump(dump, "'%s'%s\n", logfile->name, (dumped_count == logfile_count) ? "" : ",");
+            CM_DUMP_WRITE_FILE(dump);
+        }
+    }
+
     return OG_SUCCESS;
 }
 
@@ -2550,9 +2583,9 @@ status_t dump_rebuild_ctrl_statement(database_ctrl_t *ctrl, cm_dump_t *dump)
     cm_dump(dump, "\n");
     cm_dump(dump, "create ctrlfile datafile(\n");
     CM_DUMP_WRITE_FILE(dump);
-    (void)dump_rebuild_ctrl_datafile_list(ctrl, dump);
+    OG_RETURN_IFERR(dump_rebuild_ctrl_datafile_list(ctrl, dump));
     cm_dump(dump, ") logfile(\n");
-    (void)dump_rebuild_ctrl_logfile_list(ctrl, dump);
+    OG_RETURN_IFERR(dump_rebuild_ctrl_logfile_list(ctrl, dump));
     cm_dump(dump, ") charset set ");
     if (ctrl->core.charset_id == CHARSET_GBK) {
         cm_dump(dump, "GBK ");
