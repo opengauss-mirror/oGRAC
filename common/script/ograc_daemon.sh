@@ -22,7 +22,7 @@ DEPLOY_DAEMON_LOG="${DEPLOY_DAEMON_LOG:-${OGRAC_HOME}/log/deploy/deploy_daemon.l
 CMS_ENABLE_FLAG="${OGRAC_HOME}/cms/cfg/cms_enable"
 CMS_CONFIG="${OGRAC_HOME}/cms/cfg/cms.json"
 CMS_REG_SCRIPT="${OGRAC_ACTION_DIR}/cms/cms_reg.sh"
-CMS_START_SCRIPT="${OGRAC_ACTION_DIR}/cms/cms_start2.sh"
+CMS_START_SCRIPT="${OGRAC_ACTION_DIR}/cms/cms_startup.py"
 EXPORTER_APPCTL="${OGRAC_ACTION_DIR}/ograc_exporter/appctl.sh"
 OGOM_APPCTL="${OGRAC_ACTION_DIR}/og_om/appctl.sh"
 EXPORTER_EXEC="${OGRAC_HOME}/og_om/service/ograc_exporter/exporter/execute.py"
@@ -93,7 +93,7 @@ start_cms_in_background()
     cms_port=$(cms_port_from_config)
     refresh_iptables_for_cms "${cms_port}"
     logAndEchoInfo "[ograc daemon] begin to start cms using ${OGRAC_USER}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
-    su -s /bin/bash - "${OGRAC_USER}" -c "sh \"${CMS_START_SCRIPT}\" -start" >> "${DEPLOY_DAEMON_LOG}" 2>&1 &
+    su -s /bin/bash - "${OGRAC_USER}" -c "python3 \"${CMS_START_SCRIPT}\" -start" >> "${DEPLOY_DAEMON_LOG}" 2>&1 &
     logAndEchoInfo "[ograc daemon] starting cms in background ${CMS_COUNT} times. [Line:${LINENO}, File:${SCRIPT_NAME}]"
 }
 
@@ -127,7 +127,13 @@ do
     fi
 
     cms_process_count=$(pgrep -u "${OGRAC_USER}" -f "cms server -start" | wc -l | tr -d ' ')
+    cms_starting_count=$(pgrep -u "${OGRAC_USER}" -f "cms_startup.py.*-start" | wc -l | tr -d ' ')
     if [ "${cms_process_count}" -ne 1 ]; then
+        if [ "${cms_starting_count}" -gt 0 ]; then
+            logAndEchoInfo "[ograc daemon] cms is starting, startup process count is ${cms_starting_count}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+            sleep "${LOOP_TIME}"
+            continue
+        fi
         if [ "${CMS_COUNT}" -le 9 ]; then
             logAndEchoInfo "[ograc daemon] cms process count is ${cms_process_count}. [Line:${LINENO}, File:${SCRIPT_NAME}]"
             CMS_COUNT=$((CMS_COUNT + 1))

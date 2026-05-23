@@ -87,6 +87,7 @@ typedef struct st_cms_hb_aync_start_t {
 #define CMS_DSS_MASTER_RETRY_TIMES 20
 #define CMS_HB_AYNC_UPDATE_INTERNAL 5000
 #define CMS_CHECK_RES_RUNING_TIMES 10
+#define CMS_WAIT_DSS_READY_TIMEOUT 600000
 #define CMS_DBS_DETECT_TIMEOUT 11
 #define CMS_LIVE_DETECT_TIMEOUT 10
 
@@ -300,6 +301,8 @@ status_t cms_stat_get_res_data(const char* res_type, uint32 slot_id, char* data,
     uint32* data_size, uint64* data_version);
 status_t cms_stat_set_res_data(const char* res_type, uint32 slot_id, char* data, uint32 data_size, uint64 old_version);
 void cms_stat_update_restart_attr(uint32 res_id);
+void cms_stat_rollback_restart_attr(uint32 res_id);
+void cms_stat_abort_restart_attr(uint32 res_id);
 void cms_stat_reset_restart_attr(uint32 res_id);
 status_t cms_get_stat_version_ex(uint64 version, cms_res_status_list_t* stat);
 status_t cms_get_cluster_res_list(uint32 res_id, cms_res_status_list_t *stat, bool full_restart);
