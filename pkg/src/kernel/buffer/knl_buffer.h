@@ -197,7 +197,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     struct st_buf_ctrl *prev;       // for LRU queue or free control list
     struct st_buf_ctrl *next;       // for LRU queue or free control list
     struct st_buf_ctrl *hash_next;  // next cache id in the same bucket
-
+    bool8 gbp_cached_valid;
     page_head_t *page;
     struct st_buf_ctrl *compress_group[PAGE_GROUP_COUNT];
     knl_scn_t edp_scn;  // set when become edp
