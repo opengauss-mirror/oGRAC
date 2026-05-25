@@ -4337,8 +4337,9 @@ status_t dtc_start_recovery(knl_session_t *session, instance_list_t *recover_lis
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     cm_spin_lock(&dtc_rcy->lock, NULL);
     if (dtc_rcy->in_progress) {
-        OG_LOG_RUN_ERR("[DTC RCY] failed to start recovery task because another one is already in progress");
         cm_spin_unlock(&dtc_rcy->lock);
+        OG_LOG_RUN_ERR("[DTC RCY] failed to start recovery task because another one is already in progress");
+        OG_THROW_ERROR(ERR_INVALID_OPERATION, ", another DTC recovery is already in progress");
         return OG_ERROR;
     }
     dtc_rcy->in_progress = OG_TRUE;

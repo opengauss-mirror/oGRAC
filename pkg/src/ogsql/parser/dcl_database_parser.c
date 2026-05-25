@@ -1283,8 +1283,11 @@ status_t sql_parse_ograc(sql_stmt_t *stmt)
     status = lex_expected_fetch_uint32(stmt->session->lex, &param->count);
     OG_RETURN_IFERR(status);
 
-    if (param->count > OG_MAX_INSTANCES) {
-        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "node count should be less or euqal than %u", OG_MAX_INSTANCES);
+    if (param->count == 0 || param->count > OG_MAX_INSTANCES ||
+        param->start + param->count > OG_MAX_INSTANCES) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+                          "node count should be in [1, %u] and start + count less or equal than %u",
+                          OG_MAX_INSTANCES, OG_MAX_INSTANCES);
         return OG_ERROR;
     }
 

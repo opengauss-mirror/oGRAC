@@ -8489,6 +8489,11 @@ status_t knl_dump_ctrl_page(knl_handle_t handle, knl_alter_sys_def_t *def)
         return OG_ERROR;
     }
 
+    if (session->kernel->db.status < DB_STATUS_MOUNT) {
+        OG_THROW_ERROR(ERR_DATABASE_NOT_MOUNT, "dump ctrlfile");
+        return OG_ERROR;
+    }
+
     uint32 ret = memset_sp(file_name, OG_MAX_FILE_NAME_LEN, 0, OG_MAX_FILE_NAME_LEN);
     knl_securec_check(ret);
 
@@ -8997,6 +9002,11 @@ status_t knl_register_iof(knl_session_t *se)
 status_t knl_recover_precheck(knl_session_t *se, knl_recover_t *param, knl_scn_t *max_recover_scn,
                               uint64 *max_recover_lrp_lsn)
 {
+    if (param->action == RECOVER_UNTIL_CANCEL && se->kernel->attr.clustered) {
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "recover database until cancel", "cluster database");
+        return OG_ERROR;
+    }
+
     if (knl_register_iof(se) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("register iof failed.");
         return OG_ERROR;
@@ -9077,12 +9087,47 @@ status_t knl_recover(knl_handle_t session, knl_recover_t *param)
     return OG_SUCCESS;
 }
 
+static status_t knl_ograc_recover_check(knl_session_t *se, knl_ograc_recover_t *param)
+{
+    if (!se->kernel->attr.clustered) {
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "cluster recover", "non-clusterd database");
+        return OG_ERROR;
+    }
+
+    if (param->count == 0 || param->count > OG_MAX_INSTANCES || param->start >= OG_MAX_INSTANCES ||
+        param->start + param->count > OG_MAX_INSTANCES) {
+        OG_THROW_ERROR(ERR_INVALID_OPERATION, ", invalid OGRAC recover instance range");
+        return OG_ERROR;
+    }
+
+    if (g_rc_ctx == NULL || !g_rc_ctx->started) {
+        OG_THROW_ERROR(ERR_INVALID_OPERATION, ", cluster reform context is not ready");
+        return OG_ERROR;
+    }
+
+    if (RC_REFORM_IN_PROGRESS) {
+        OG_THROW_ERROR(ERR_INVALID_OPERATION, ", cluster reform is in progress");
+        return OG_ERROR;
+    }
+
+    for (uint32 i = 0; i < param->count; i++) {
+        uint8 inst_id = (uint8)(param->start + i);
+        if (!check_id_in_list(inst_id, &g_rc_ctx->info.reform_list[REFORM_LIST_ABORT]) &&
+            !check_id_in_list(inst_id, &g_rc_ctx->info.reform_list[REFORM_LIST_FAIL])) {
+            OG_THROW_ERROR(ERR_INVALID_OPERATION,
+                ", OGRAC recover target instance is not in abort or fail reform list");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t knl_ograc_recover(knl_handle_t session, knl_ograc_recover_t *param)
 {
     knl_session_t *se = (knl_session_t *)session;
 
-    if (!se->kernel->attr.clustered) {
-        OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "cluster recover", "non-clusterd database");
+    if (knl_ograc_recover_check(se, param) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -9092,7 +9137,7 @@ status_t knl_ograc_recover(knl_handle_t session, knl_ograc_recover_t *param)
         rcy_list->inst_id_list[i] = (uint8)(param->start + i);
     }
 
-    status_t status = dtc_recover_crashed_nodes(se, rcy_list, (param->full == 1));
+    status_t status = dtc_start_recovery(se, rcy_list, (param->full == 1));
     cm_pop(se->stack);
     return status;
 }
