@@ -185,10 +185,21 @@ else
     export CPU_CORES_NUM=16
     make -j${CPU_CORES_NUM}
 fi
+make install
+# OpenSSL installs to lib64 on 64-bit Linux by default; detect actual path
+OPENSSL_INSTALL_LIB="${OPEN_SOURCE}/openssl/install/lib"
+if [ -d "${OPEN_SOURCE}/openssl/install/lib64" ]; then
+    OPENSSL_INSTALL_LIB="${OPEN_SOURCE}/openssl/install/lib64"
+fi
 mkdir -p ${OPEN_SOURCE}/openssl/include/
 mkdir -p ${LIBRARY}/openssl/lib/
+mkdir -p ${LIBRARY}/openssl/bin/
 cp -rf ${OPEN_SOURCE}/openssl/openssl-3.0.9/include/* ${OPEN_SOURCE}/openssl/include/
 cp -rf ${OPEN_SOURCE}/openssl/openssl-3.0.9/*.a ${LIBRARY}/openssl/lib
+# Copy shared libraries and openssl binary for runtime packaging
+cp -d ${OPENSSL_INSTALL_LIB}/libssl.so* ${LIBRARY}/openssl/lib/ 2>/dev/null || true
+cp -d ${OPENSSL_INSTALL_LIB}/libcrypto.so* ${LIBRARY}/openssl/lib/ 2>/dev/null || true
+cp -d ${OPEN_SOURCE}/openssl/install/bin/openssl ${LIBRARY}/openssl/bin/ 2>/dev/null || true
 echo "copy lib finished"
 
 # zlib (openEuler zlib spec layout)

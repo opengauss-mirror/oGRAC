@@ -271,6 +271,16 @@ func_pkg_run_basic()
     cp -d ${PCRE_LIB_PATH}/libpcre2-8.so*  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
     cp -d ${Z_LIB_PATH}/libz.so*  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
     cp -d ${ZSTD_LIB_PATH}/libzstd.so*  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
+    # Package project-built openssl binary and shared libraries (only if compiled)
+    if [ -f ${OGRACDB_LIBRARY}/openssl/bin/openssl ]; then
+        cp -d ${OGRACDB_LIBRARY}/openssl/bin/openssl ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
+    fi
+    if [ -f ${OPENSSL_LIB_PATH}/libssl.so ]; then
+        cp -d ${OPENSSL_LIB_PATH}/libssl.so* ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
+    fi
+    if [ -f ${OPENSSL_LIB_PATH}/libcrypto.so ]; then
+        cp -d ${OPENSSL_LIB_PATH}/libcrypto.so* ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
+    fi
 
     cp -R ${OGRACDB_HOME}/admin  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/
     cp -R ${OGRACDB_HOME}/cfg  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/
