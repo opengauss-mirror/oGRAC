@@ -63,6 +63,7 @@ struct st_pl_dc_assist {
 typedef struct st_load_assist {
     sql_stmt_t *sub_stmt;
     lex_t *lex_bak;
+    sql_text_t source_text;
     pl_source_pages_t source_page;
     bool32 new_page;
     uint32 old_status;

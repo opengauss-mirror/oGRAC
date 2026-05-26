@@ -2235,11 +2235,39 @@ static status_t check_dbe_param_type(dbe_func_param_t *param, const int16 type, 
  * 1.get the expr by name of this parameter.
  * 2.then get the expr by the position.
  */
-status_t sql_get_dbe_param_value_loc(sql_stmt_t *stmt, expr_node_t *func, dbe_func_param_t *dbe_param,
-    uint32 param_pos, variant_t *result, source_location_t *node_loc)
+static expr_tree_t *sql_find_dbe_param_expr(expr_node_t *func, dbe_func_param_t *param, uint32 param_pos)
 {
     expr_tree_t *expr = func->argument;
     expr_tree_t *expr_pos = NULL;
+    text_t param_name;
+
+    param_name.str = param->name;
+    param_name.len = (uint32)strlen(param->name);
+    for (uint32 i = 1; expr != NULL; expr = expr->next, i++) {
+        if (expr->arg_name.len > 0 && cm_compare_text_ins(&param_name, &expr->arg_name) == 0) {
+            return expr;
+        }
+        if (i == param_pos && expr->arg_name.len == 0) {
+            expr_pos = expr;
+        }
+    }
+    return expr_pos;
+}
+
+static source_location_t sql_dbe_param_loc(expr_node_t *func, expr_tree_t *expr)
+{
+    if (expr != NULL && expr->root != NULL) {
+        return expr->root->loc;
+    }
+    if (func->argument != NULL && func->argument->root != NULL) {
+        return func->argument->root->loc;
+    }
+    return func->loc;
+}
+
+status_t sql_get_dbe_param_value_loc(sql_stmt_t *stmt, expr_node_t *func, dbe_func_param_t *dbe_param,
+    uint32 param_pos, variant_t *result, source_location_t *node_loc)
+{
     expr_tree_t *expr_dest = NULL;
     text_t param_name;
     SQL_SET_NULL_VAR(result);
@@ -2252,22 +2280,10 @@ status_t sql_get_dbe_param_value_loc(sql_stmt_t *stmt, expr_node_t *func, dbe_fu
     param_name.str = param.name;
     param_name.len = (uint32)strlen(param.name);
     uint32 param_max_len = param.param_max_len;
-    for (uint32 i = 1; expr != NULL; expr = expr->next, i++) {
-        if (expr->arg_name.len > 0 && cm_compare_text_ins(&param_name, &expr->arg_name) == 0) {
-            expr_dest = expr;
-            break;
-        }
-        if (i == param_pos && expr->arg_name.len == 0) {
-            expr_pos = expr;
-        }
-    }
-    if (expr_dest == NULL && expr_pos != NULL) {
-        expr_dest = expr_pos;
-    }
+    source_location_t loc;
 
-    source_location_t loc = (expr_dest != NULL) ? expr_dest->root->loc : func->argument->root->loc;
-
-    /* compute the paramter value */
+    expr_dest = sql_find_dbe_param_expr(func, &param, param_pos);
+    loc = sql_dbe_param_loc(func, expr_dest);
     if (expr_dest != NULL && param.datatype != OG_TYPE_UNKNOWN) {
         OG_RETURN_IFERR(sql_exec_expr(stmt, expr_dest, result));
     }

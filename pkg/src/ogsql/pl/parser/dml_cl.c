@@ -39,6 +39,7 @@
 #include "ogsql_package.h"
 #include "lines_cl.h"
 #include "ogsql_privilege.h"
+#include "cursor_cl.h"
 
 static status_t plc_compile_select_into(pl_compiler_t *compiler, text_t *sql, word_t *word)
 {
@@ -707,6 +708,59 @@ status_t pl_compile_parse_sql(sql_stmt_t *stmt, sql_context_t **ogx, text_t *sql
     stmt->session->current_stmt = save_curr_stmt;
     *ogx = sub_stmt->context;
     pl_restore_lex(stmt, lex_bak);
+    sql_release_lob_info(sub_stmt);
+    sql_release_resource(sub_stmt, OG_TRUE);
+    return status;
+}
+
+status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *arg)
+{
+    sql_stmt_t *sub_stmt = NULL;
+    status_t status = OG_ERROR;
+    sql_text_t sql_text = { 0 };
+    sql_stmt_t *save_curr_stmt = stmt->session->current_stmt;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    galist_t *save_input = (compiler == NULL) ? NULL : compiler->current_input;
+
+    OG_RETURN_IFERR(sql_push(stmt, sizeof(sql_stmt_t), (void **)&sub_stmt));
+    sql_init_stmt(stmt->session, sub_stmt, stmt->id);
+    sub_stmt->pl_compiler = stmt->pl_compiler;
+    sub_stmt->context = NULL;
+    sub_stmt->session->current_stmt = sub_stmt;
+
+    sql_text.value = *arg->sql;
+    sql_text.loc = *arg->loc;
+    sql_text.implicit = OG_FALSE;
+
+    if (compiler != NULL) {
+        compiler->current_input = arg->input;
+    }
+
+    do {
+        if (sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text) != OG_SUCCESS) {
+            pl_check_and_set_loc(*arg->loc);
+            break;
+        }
+
+        if (sql_check_dml_privs(sub_stmt, OG_TRUE) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_INSUFFICIENT_PRIV);
+            pl_check_and_set_loc(*arg->loc);
+            sql_release_context(sub_stmt);
+            break;
+        }
+
+        if (cm_galist_insert(arg->sql_list, sub_stmt->context) != OG_SUCCESS) {
+            sql_release_context(sub_stmt);
+            break;
+        }
+        status = OG_SUCCESS;
+    } while (0);
+
+    if (compiler != NULL) {
+        compiler->current_input = save_input;
+    }
+    stmt->session->current_stmt = save_curr_stmt;
+    *arg->ogx = sub_stmt->context;
     sql_release_lob_info(sub_stmt);
     sql_release_resource(sub_stmt, OG_TRUE);
     return status;

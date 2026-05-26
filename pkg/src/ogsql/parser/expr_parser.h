@@ -49,6 +49,7 @@ typedef struct st_type_word {
     char *str;
     galist_t *typemode;
     source_location_t loc;
+    bool32 is_name_typemode;
     bool32 pl_type;
     bool32 pl_rowtype;
     union {
@@ -113,6 +114,9 @@ static inline status_t sql_word_as_table(sql_stmt_t *stmt, word_t *word, var_wor
 
 static inline status_t sql_word_as_column(sql_stmt_t *stmt, word_t *word, var_word_t *var)
 {
+    var->column.ss_start = OG_INVALID_ID32;
+    var->column.ss_end = OG_INVALID_ID32;
+
     if (word->ex_count == 0) {
         OG_RETURN_IFERR(sql_copy_object_name_loc(stmt->context, word->type, &word->text, &var->column.name));
 

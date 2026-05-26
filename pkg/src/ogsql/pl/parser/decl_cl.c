@@ -464,6 +464,10 @@ expr_node_t *plc_get_param_vid(pl_compiler_t *compiler, uint32 p_nid)
     plv_decl_t *decl = NULL;
     pl_line_ctrl_t *line_ctrl = compiler->last_line;
 
+    if (line_ctrl == NULL) {
+        return NULL;
+    }
+
     switch (line_ctrl->type) {
         case LINE_SQL:
             input = ((pl_line_sql_t *)line_ctrl)->input;
@@ -487,6 +491,10 @@ expr_node_t *plc_get_param_vid(pl_compiler_t *compiler, uint32 p_nid)
             break;
         default:
             return NULL;
+    }
+
+    if (input == NULL || p_nid >= input->count) {
+        return NULL;
     }
 
     return (expr_node_t *)cm_galist_get(input, p_nid);
@@ -589,8 +597,6 @@ static void plc_bison_translate_variant(pl_compiler_t *compiler, plc_variant_nam
         return;
     }
 
-    // todo: trigger variant
-
     if (sub_names != NULL) {
         plc_concat_text_upper_by_type(&variant_name->block_name, OG_MAX_NAME_LEN, name, WORD_TYPE_VARIANT);
         plc_find_label(compiler, &variant_name->block_name, &line, &is_label);
@@ -654,24 +660,25 @@ void plc_bison_find_decl_ex(pl_compiler_t *compiler, uint32 types, plc_var_type_
 status_t plc_bison_extract_table_column(pl_compiler_t *compiler, var_udo_t *obj, text_t *column, type_word_t *type)
 {
     session_t *cmpl_session = compiler->stmt->session;
-    if (type->typemode == NULL || (type->typemode->count >= MAX_EXTRA_TEXTS)) {
+    galist_t *name_parts = type->is_name_typemode ? type->typemode : NULL;
+    if (name_parts == NULL || (name_parts->count >= MAX_EXTRA_TEXTS)) {
         OG_SRC_THROW_ERROR(type->loc, ERR_PL_ATTR_TYPE_FMT, cmpl_session->curr_schema, type->str);
         return OG_ERROR;
     }
 
-    if (type->typemode->count == 1) {
+    if (name_parts->count == 1) {
         OG_RETURN_IFERR(cm_text_copy_from_str(&obj->user, cmpl_session->curr_schema, OG_NAME_BUFFER_SIZE));
         cm_str2text(type->str, &obj->name);
         obj->user_explicit = OG_FALSE;
-        *column = *(text_t*)cm_galist_get(type->typemode, 0);
+        *column = *(text_t*)cm_galist_get(name_parts, 0);
     } else {
         text_t user;
         text_t raw_user;
         cm_str2text(type->str, &raw_user);
         OG_RETURN_IFERR(sql_copy_prefix_tenant(compiler->stmt, &raw_user, &user, sql_copy_text));
         cm_text_copy_upper(&obj->user, &user);
-        obj->name = *(text_t*)cm_galist_get(type->typemode, 0);
-        *column = *(text_t*)cm_galist_get(type->typemode, 1);
+        obj->name = *(text_t*)cm_galist_get(name_parts, 0);
+        *column = *(text_t*)cm_galist_get(name_parts, 1);
         obj->user_explicit = OG_TRUE;
     }
 

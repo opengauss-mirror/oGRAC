@@ -42,6 +42,7 @@ status_t plc_convert_typedecl(pl_compiler_t *compiler, galist_t *decls)
         OG_RETURN_IFERR(cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl));
         type_decl = cm_galist_get(compiler->type_decls, i);
         *decl = *type_decl;
+        decl->vid.block = (int16)compiler->stack.depth;
         decl->vid.id = decls->count - 1;
     }
     return OG_SUCCESS;
@@ -1499,41 +1500,55 @@ status_t plc_compile_global_type_member(pl_compiler_t *compiler, plv_decl_t *dec
 
 static status_t plc_bison_verify_var(type_word_t *type)
 {
-    char *ex_name = NULL;
+    text_t *ex_name = NULL;
     if (strlen(type->str) > OG_MAX_NAME_LEN) {
         OG_THROW_ERROR(ERR_NAME_TOO_LONG, "variant", strlen(type->str), OG_MAX_NAME_LEN);
         return OG_ERROR;
     }
 
-    if (type->typemode == NULL) {
+    if (type->typemode == NULL || !type->is_name_typemode) {
         return OG_SUCCESS;
     }
 
     for (uint32 i = 0; i < type->typemode->count; i++) {
-        ex_name = (char*)cm_galist_get(type->typemode, i);
-        if (strlen(ex_name) > OG_MAX_NAME_LEN) {
-            OG_THROW_ERROR(ERR_NAME_TOO_LONG, "variant", strlen(ex_name), OG_MAX_NAME_LEN);
+        ex_name = (text_t*)cm_galist_get(type->typemode, i);
+        if (ex_name->len > OG_MAX_NAME_LEN) {
+            OG_THROW_ERROR(ERR_NAME_TOO_LONG, "variant", ex_name->len, OG_MAX_NAME_LEN);
             return OG_ERROR;
         }
     }
     return OG_SUCCESS;
 }
 
+static inline galist_t *plc_bison_name_typemode(type_word_t *type)
+{
+    return (type->is_name_typemode) ? type->typemode : NULL;
+}
+
+static inline bool32 plc_bison_is_datatype(type_word_t *type)
+{
+    word_t typword;
+    typword.text.str = type->str;
+    typword.text.len = strlen(type->str);
+    return (lex_try_match_datatype_bison(&typword) == OG_SUCCESS);
+}
+
 static status_t plc_bison_extract_table(pl_compiler_t *compiler, var_udo_t *obj, type_word_t *type)
 {
     session_t *cmpl_session = compiler->stmt->session;
-    if (type->typemode != NULL && type->typemode->count >= 1) {
+    galist_t *name_parts = plc_bison_name_typemode(type);
+    if (name_parts != NULL && name_parts->count > 1) {
         OG_THROW_ERROR(ERR_PL_ATTR_ROWTYPE_FMT, type->str);
         return OG_ERROR;
     }
 
-    if (type->typemode == NULL) {
+    if (name_parts == NULL) {
         OG_RETURN_IFERR(cm_text_copy_from_str(&obj->user, cmpl_session->curr_schema, OG_NAME_BUFFER_SIZE));
         cm_str2text(type->str, &obj->name);
         obj->user_explicit = OG_FALSE;
     } else {
         text_t user;
-        text_t *raw_name = (text_t*)cm_galist_get(type->typemode, 0);
+        text_t *raw_name = (text_t*)cm_galist_get(name_parts, 0);
         text_t raw_user;
         cm_str2text(type->str, &raw_user);
         OG_RETURN_IFERR(sql_copy_prefix_tenant(compiler->stmt, &raw_user, &user, sql_copy_text));
@@ -1691,6 +1706,44 @@ static status_t plc_bison_copy_table(pl_compiler_t *compiler, plattr_assist_t *p
     return OG_SUCCESS;
 }
 
+static status_t plc_bison_copy_cursor_rscols(pl_compiler_t *compiler, sql_context_t *sql_ctx, plv_record_t *record,
+    source_location_t loc)
+{
+    pl_entity_t *pl_entity = compiler->entity;
+
+    if (sql_ctx == NULL || sql_ctx->rs_columns == NULL) {
+        OG_SRC_THROW_ERROR(loc, ERR_PL_SYNTAX_ERROR_FMT,
+            "the declaration of the cursor rowtype is incomplete or malformed");
+        return OG_ERROR;
+    }
+
+    for (uint32 col_id = 0; col_id < sql_ctx->rs_columns->count; col_id++) {
+        rs_column_t *col = cm_galist_get(sql_ctx->rs_columns, col_id);
+        if (col->typmod.is_array) {
+            OG_SRC_THROW_ERROR(loc, ERR_PL_UNSUPPORT);
+            return OG_ERROR;
+        }
+
+        plv_record_attr_t *attr = udt_record_alloc_attr(pl_entity, record);
+        if (attr == NULL) {
+            pl_check_and_set_loc(loc);
+            return OG_ERROR;
+        }
+
+        OG_RETURN_IFERR(pl_copy_name_cs(pl_entity, &col->name, &attr->name, OG_FALSE));
+        attr->type = UDT_SCALAR;
+        OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(field_scalar_info_t), (void **)&attr->scalar_field));
+        attr->scalar_field->type_mode = col->typmod;
+        attr->default_expr = NULL;
+        attr->nullable = OG_FALSE;
+        if (attr->scalar_field->type_mode.datatype != OG_TYPE_UNKNOWN) {
+            OG_RETURN_IFERR(plc_check_datatype(compiler, &attr->scalar_field->type_mode, OG_FALSE));
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t plc_bison_copy_variant_rowtype(pl_compiler_t *compiler, plv_decl_t *src, plc_var_type_t var_type,
     plattr_assist_t *plattr_ass, type_word_t *type)
 {
@@ -1718,6 +1771,15 @@ status_t plc_bison_copy_variant_rowtype(pl_compiler_t *compiler, plv_decl_t *src
                 src->cursor.record = &rec_type->typdef.record;
                 rec_type->vid.block = (int16)compiler->stack.depth;
                 rec_type->vid.id = decls->count - 1;
+            }
+            if (src->cursor.record->count == 0) {
+                /*
+                 * The native path expands cursor %ROWTYPE after the cursor SQL is compiled.
+                 * Do the same here without touching lex state, so bison-declared cursor records
+                 * carry the SELECT result metadata instead of becoming empty records.
+                 */
+                OG_RETURN_IFERR(plc_bison_copy_cursor_rscols(compiler, src->cursor.ogx->context, src->cursor.record,
+                    type->loc));
             }
             switch (plattr_ass->type) {
                 case REC_FIELD_INHERIT:
@@ -1839,6 +1901,272 @@ static status_t plc_bison_copy_simple_decl_type(pl_compiler_t *compiler, plv_dec
     }
 }
 
+static status_t plc_bison_copy_simple_attr_type(pl_compiler_t *compiler, plv_decl_t *src, plv_record_attr_t *attr,
+    type_word_t *type)
+{
+    session_t *cmpl_session = compiler->stmt->session;
+    pl_entity_t *pl_entity = compiler->entity;
+
+    switch (src->type) {
+        case PLV_VAR:
+            OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(field_scalar_info_t), (void **)&attr->scalar_field));
+            attr->type = UDT_SCALAR;
+            attr->default_expr = src->default_expr;
+            attr->scalar_field->type_mode = src->variant.type;
+            return OG_SUCCESS;
+        case PLV_RECORD:
+            attr->type = UDT_RECORD;
+            attr->udt_field = src;
+            return OG_SUCCESS;
+        case PLV_OBJECT:
+            attr->type = UDT_OBJECT;
+            attr->udt_field = src;
+            return OG_SUCCESS;
+        case PLV_COLLECTION:
+            attr->type = UDT_COLLECTION;
+            attr->udt_field = src;
+            return OG_SUCCESS;
+        case PLV_ARRAY:
+            OG_SRC_THROW_ERROR(type->loc, ERR_UNSUPPORT_DATATYPE, "ARRAY");
+            return OG_ERROR;
+        default:
+            OG_SRC_THROW_ERROR(type->loc, ERR_PL_ATTR_TYPE_FMT, cmpl_session->curr_schema, type->str);
+            return OG_ERROR;
+    }
+}
+
+static status_t plc_bison_copy_simple_coll_type(pl_compiler_t *compiler, plv_decl_t *src, plv_collection_t *coll,
+    type_word_t *type)
+{
+    session_t *cmpl_session = compiler->stmt->session;
+
+    switch (src->type) {
+        case PLV_VAR:
+            coll->attr_type = UDT_SCALAR;
+            coll->type_mode = src->variant.type;
+            return OG_SUCCESS;
+        case PLV_RECORD:
+            coll->attr_type = UDT_RECORD;
+            coll->elmt_type = src;
+            return OG_SUCCESS;
+        case PLV_OBJECT:
+            coll->attr_type = UDT_OBJECT;
+            coll->elmt_type = src;
+            return OG_SUCCESS;
+        case PLV_COLLECTION:
+            coll->attr_type = UDT_COLLECTION;
+            coll->elmt_type = src;
+            return OG_SUCCESS;
+        case PLV_ARRAY:
+            OG_SRC_THROW_ERROR(type->loc, ERR_UNSUPPORT_DATATYPE, "ARRAY");
+            return OG_ERROR;
+        default:
+            OG_SRC_THROW_ERROR(type->loc, ERR_PL_ATTR_TYPE_FMT, cmpl_session->curr_schema, type->str);
+            return OG_ERROR;
+    }
+}
+
+static void plc_bison_get_attr_name(type_word_t *type, uint32 id, sql_text_t *name)
+{
+    name->value = *(text_t *)cm_galist_get(plc_bison_name_typemode(type), id);
+    name->loc = type->loc;
+}
+
+static void plc_bison_throw_ref_variable_failed(type_word_t *type, uint32 id)
+{
+    sql_text_t name;
+
+    if (plc_bison_name_typemode(type) == NULL || id >= plc_bison_name_typemode(type)->count) {
+        OG_SRC_THROW_ERROR(type->loc, ERR_PL_REF_VARIABLE_FAILED, type->str);
+        return;
+    }
+    plc_bison_get_attr_name(type, id, &name);
+    OG_SRC_THROW_ERROR(type->loc, ERR_PL_REF_VARIABLE_FAILED, T2S(&name.value));
+}
+
+static plv_record_attr_t *plc_bison_record_recurse_find_attr(sql_stmt_t *stmt, uint32 *id, plv_record_t *record,
+    type_word_t *type)
+{
+    sql_text_t name;
+    plv_record_attr_t *record_attr = NULL;
+    galist_t *name_parts = plc_bison_name_typemode(type);
+
+    if (name_parts == NULL || *id >= name_parts->count) {
+        return NULL;
+    }
+
+    plc_bison_get_attr_name(type, *id, &name);
+    record_attr = udt_seek_field_by_name(stmt, record, &name, !IS_CASE_INSENSITIVE);
+    if (record_attr == NULL) {
+        return NULL;
+    }
+    if (record_attr->type == UDT_SCALAR) {
+        if (*id != name_parts->count - 1) {
+            return NULL;
+        }
+    } else if (record_attr->type == UDT_RECORD) {
+        (*id)++;
+        record_attr = plc_bison_record_recurse_find_attr(stmt, id, &record_attr->udt_field->typdef.record, type);
+    }
+    return record_attr;
+}
+
+static plv_object_attr_t *plc_bison_object_recurse_find_attr(sql_stmt_t *stmt, uint32 *id, plv_object_t *object,
+    type_word_t *type)
+{
+    sql_text_t name;
+    plv_object_attr_t *object_attr = NULL;
+    galist_t *name_parts = plc_bison_name_typemode(type);
+
+    if (name_parts == NULL || *id >= name_parts->count) {
+        return NULL;
+    }
+
+    plc_bison_get_attr_name(type, *id, &name);
+    object_attr = udt_seek_obj_field_byname(stmt, object, &name, !IS_CASE_INSENSITIVE);
+    if (object_attr == NULL) {
+        return NULL;
+    }
+    if (object_attr->type == UDT_SCALAR) {
+        if (*id != name_parts->count - 1) {
+            return NULL;
+        }
+    } else if (object_attr->type == UDT_OBJECT) {
+        (*id)++;
+        object_attr = plc_bison_object_recurse_find_attr(stmt, id, &object_attr->udt_field->typdef.object, type);
+    }
+    return object_attr;
+}
+
+static uint32 plc_bison_attr_start(plc_var_type_t var_type)
+{
+    return (var_type == PLC_BLOCK_MULTIEX_VAR) ? 1 : 0;
+}
+
+static status_t plc_bison_copy_attr_type(pl_compiler_t *compiler, plv_decl_t *src, plc_var_type_t var_type,
+    plv_record_attr_t *attr, type_word_t *type)
+{
+    plv_record_attr_t *src_attr = NULL;
+    plv_object_attr_t *obj_attr = NULL;
+    pl_entity_t *pl_entity = compiler->entity;
+
+    if (PLV_REC_EXIST_FIELD(src, var_type)) {
+        uint32 id = plc_bison_attr_start(var_type);
+        src_attr = plc_bison_record_recurse_find_attr(compiler->stmt, &id, src->record, type);
+        if (src_attr == NULL) {
+            plc_bison_throw_ref_variable_failed(type, id);
+            return OG_ERROR;
+        }
+        if (src_attr->type == UDT_SCALAR) {
+            OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(field_scalar_info_t), (void **)&attr->scalar_field));
+            attr->type = UDT_SCALAR;
+            attr->default_expr = src_attr->default_expr;
+            attr->scalar_field->type_mode = src_attr->scalar_field->type_mode;
+            return OG_SUCCESS;
+        }
+        return plc_bison_copy_simple_attr_type(compiler, src_attr->udt_field, attr, type);
+    }
+
+    if (PLV_OBJ_EXIST_FIELD(src, var_type)) {
+        uint32 id = plc_bison_attr_start(var_type);
+        obj_attr = plc_bison_object_recurse_find_attr(compiler->stmt, &id, src->object, type);
+        if (obj_attr == NULL) {
+            plc_bison_throw_ref_variable_failed(type, id);
+            return OG_ERROR;
+        }
+        if (obj_attr->type == UDT_SCALAR) {
+            OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(field_scalar_info_t), (void **)&attr->scalar_field));
+            attr->type = UDT_SCALAR;
+            attr->default_expr = obj_attr->default_expr;
+            attr->scalar_field->type_mode = obj_attr->scalar_field->type_mode;
+            return OG_SUCCESS;
+        }
+        return plc_bison_copy_simple_attr_type(compiler, obj_attr->udt_field, attr, type);
+    }
+
+    return plc_bison_copy_simple_attr_type(compiler, src, attr, type);
+}
+
+static status_t plc_bison_copy_decl_type(pl_compiler_t *compiler, plv_decl_t *src, plc_var_type_t var_type,
+    plv_decl_t *dst, type_word_t *type)
+{
+    plv_record_attr_t *src_attr = NULL;
+    plv_object_attr_t *obj_attr = NULL;
+
+    if (PLV_REC_EXIST_FIELD(src, var_type)) {
+        uint32 id = plc_bison_attr_start(var_type);
+        src_attr = plc_bison_record_recurse_find_attr(compiler->stmt, &id, src->record, type);
+        if (src_attr == NULL) {
+            plc_bison_throw_ref_variable_failed(type, id);
+            return OG_ERROR;
+        }
+        if (src_attr->type == UDT_SCALAR) {
+            dst->type = PLV_VAR;
+            dst->default_expr = src_attr->default_expr;
+            dst->variant.type = src_attr->scalar_field->type_mode;
+            return OG_SUCCESS;
+        }
+        return plc_bison_copy_simple_decl_type(compiler, src_attr->udt_field, dst, type);
+    }
+
+    if (PLV_OBJ_EXIST_FIELD(src, var_type)) {
+        uint32 id = plc_bison_attr_start(var_type);
+        obj_attr = plc_bison_object_recurse_find_attr(compiler->stmt, &id, src->object, type);
+        if (obj_attr == NULL) {
+            plc_bison_throw_ref_variable_failed(type, id);
+            return OG_ERROR;
+        }
+        if (obj_attr->type == UDT_SCALAR) {
+            dst->type = PLV_VAR;
+            dst->default_expr = obj_attr->default_expr;
+            dst->variant.type = obj_attr->scalar_field->type_mode;
+            return OG_SUCCESS;
+        }
+        return plc_bison_copy_simple_decl_type(compiler, obj_attr->udt_field, dst, type);
+    }
+
+    return plc_bison_copy_simple_decl_type(compiler, src, dst, type);
+}
+
+static status_t plc_bison_copy_coll_attr_type(pl_compiler_t *compiler, plv_decl_t *src, plc_var_type_t var_type,
+    plv_collection_t *coll, type_word_t *type)
+{
+    plv_record_attr_t *src_attr = NULL;
+    plv_object_attr_t *obj_attr = NULL;
+
+    if (PLV_REC_EXIST_FIELD(src, var_type)) {
+        uint32 id = plc_bison_attr_start(var_type);
+        src_attr = plc_bison_record_recurse_find_attr(compiler->stmt, &id, src->record, type);
+        if (src_attr == NULL) {
+            plc_bison_throw_ref_variable_failed(type, id);
+            return OG_ERROR;
+        }
+        if (src_attr->type == UDT_SCALAR) {
+            coll->attr_type = UDT_SCALAR;
+            coll->type_mode = src_attr->scalar_field->type_mode;
+            return OG_SUCCESS;
+        }
+        return plc_bison_copy_simple_coll_type(compiler, src_attr->udt_field, coll, type);
+    }
+
+    if (PLV_OBJ_EXIST_FIELD(src, var_type)) {
+        uint32 id = plc_bison_attr_start(var_type);
+        obj_attr = plc_bison_object_recurse_find_attr(compiler->stmt, &id, src->object, type);
+        if (obj_attr == NULL) {
+            plc_bison_throw_ref_variable_failed(type, id);
+            return OG_ERROR;
+        }
+        if (obj_attr->type == UDT_SCALAR) {
+            coll->attr_type = UDT_SCALAR;
+            coll->type_mode = obj_attr->scalar_field->type_mode;
+            return OG_SUCCESS;
+        }
+        return plc_bison_copy_simple_coll_type(compiler, obj_attr->udt_field, coll, type);
+    }
+
+    return plc_bison_copy_simple_coll_type(compiler, src, coll, type);
+}
+
 static status_t plc_bison_copy_variant_type(pl_compiler_t *compiler, plv_decl_t *src, plc_var_type_t var_type,
     plattr_assist_t *plattr_ass, type_word_t *type)
 {
@@ -1849,16 +2177,13 @@ static status_t plc_bison_copy_variant_type(pl_compiler_t *compiler, plv_decl_t 
     // 找到目标变量，获取其类型
     switch (plattr_ass->type) {
         case REC_FIELD_INHERIT:
-            // todo
-            // return plc_copy_attr_type(compiler, src, var_type, plattr_ass->attr, word);
+            return plc_bison_copy_attr_type(compiler, src, var_type, plattr_ass->attr, type);
 
         case DECL_INHERIT:
-            // todo: plc_copy_decl_type里的PLV_REC_EXIST_FIELD和PLV_OBJ_EXIST_FIELD分支
-            return plc_bison_copy_simple_decl_type(compiler, src, plattr_ass->decl, type);
+            return plc_bison_copy_decl_type(compiler, src, var_type, plattr_ass->decl, type);
 
         case COLL_ATTR_INHERIT:
-            // todo
-            // return plc_copy_coll_attr_type(compiler, src, var_type, plattr_ass->coll, word);
+            return plc_bison_copy_coll_attr_type(compiler, src, var_type, plattr_ass->coll, type);
         default:
             OG_THROW_ERROR(ERR_PL_WRONG_TYPE_VALUE, "inherit type", plattr_ass->type);
             return OG_ERROR;
@@ -1882,7 +2207,8 @@ status_t plc_bison_compile_plv_type(pl_compiler_t *compiler, plattr_assist_t *pl
         r_type = PLV_CUR_TYPE;
     }
     OG_RETURN_IFERR(plc_bison_verify_var(type));
-    plc_bison_find_decl_ex(compiler, PLV_VARIANT_AND_CUR, &var_type, &decl, type->str, type->typemode);
+    plc_bison_find_decl_ex(compiler, PLV_VARIANT_AND_CUR, &var_type, &decl, type->str,
+        plc_bison_name_typemode(type));
 
     if (r_type == PLV_CUR_TYPE) {
         return plc_bison_copy_variant_type(compiler, decl, var_type, plattr_ass, type);
@@ -1891,6 +2217,293 @@ status_t plc_bison_compile_plv_type(pl_compiler_t *compiler, plattr_assist_t *pl
         return plc_bison_copy_variant_rowtype(compiler, decl, var_type, plattr_ass, type);
     }
     return OG_SUCCESS;
+}
+
+static status_t plc_bison_parse_global_type_name(pl_compiler_t *compiler, type_word_t *type, var_udo_t *obj,
+    bool32 *result)
+{
+    galist_t *name_parts = plc_bison_name_typemode(type);
+
+    *result = OG_FALSE;
+    if (type->typemode != NULL && !type->is_name_typemode) {
+        return OG_SUCCESS;
+    }
+    if (name_parts != NULL && name_parts->count > 1) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(plc_bison_verify_var(type));
+    if (name_parts != NULL && name_parts->count == 1) {
+        text_t user;
+        char buf[OG_NAME_BUFFER_SIZE];
+
+        cm_str2text(type->str, &user);
+        (void)cm_text2str(&user, buf, OG_NAME_BUFFER_SIZE);
+        (void)sql_user_prefix_tenant(compiler->stmt->session, buf);
+        cm_str2text(buf, &user);
+        cm_concat_text(&obj->user, OG_NAME_BUFFER_SIZE, &user);
+        cm_text_upper_self_name(&obj->user);
+        cm_concat_text(&obj->name, OG_NAME_BUFFER_SIZE, (text_t *)cm_galist_get(name_parts, 0));
+        obj->name_sensitive = !IS_CASE_INSENSITIVE;
+        if (!obj->name_sensitive) {
+            cm_text_upper_self_name(&obj->name);
+        }
+        obj->user_explicit = OG_TRUE;
+    } else {
+        text_t user = {
+            .str = compiler->stmt->session->curr_schema,
+            .len = (uint32)strlen(compiler->stmt->session->curr_schema)
+        };
+        text_t name;
+
+        cm_concat_text(&obj->user, OG_NAME_BUFFER_SIZE, &user);
+        cm_str2text(type->str, &name);
+        cm_concat_text(&obj->name, OG_NAME_BUFFER_SIZE, &name);
+        obj->name_sensitive = !IS_CASE_INSENSITIVE;
+        if (!obj->name_sensitive) {
+            cm_text_upper_self_name(&obj->name);
+        }
+        obj->user_explicit = OG_FALSE;
+    }
+
+    *result = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_try_find_global_type(pl_compiler_t *compiler, type_word_t *type, plv_decl_t **decl,
+    bool32 *found)
+{
+    var_udo_t obj;
+    char user[OG_NAME_BUFFER_SIZE] = { 0 };
+    char pack[OG_NAME_BUFFER_SIZE] = { 0 };
+    char name[OG_NAME_BUFFER_SIZE] = { 0 };
+    pl_dc_t type_dc = { 0 };
+    bool32 valid_name = OG_FALSE;
+
+    *decl = NULL;
+    *found = OG_FALSE;
+    sql_init_udo_with_str(&obj, user, pack, name);
+    OG_RETURN_IFERR(plc_bison_parse_global_type_name(compiler, type, &obj, &valid_name));
+    if (!valid_name) {
+        return OG_SUCCESS;
+    }
+
+    if (pl_try_find_type_dc(compiler->stmt, &obj, &type_dc, found) != OG_SUCCESS) {
+        pl_check_and_set_loc(type->loc);
+        return OG_ERROR;
+    }
+    if (*found) {
+        *decl = type_dc.entity->type_spec->decl;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_try_compile_global_type(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *type,
+    bool32 *result)
+{
+    plv_decl_t *type_recur = NULL;
+    bool32 found = OG_FALSE;
+
+    OG_RETURN_IFERR(plc_bison_try_find_global_type(compiler, type, &type_recur, &found));
+    if (!found) {
+        *result = OG_FALSE;
+        return OG_SUCCESS;
+    }
+
+    decl->type = type_recur->typdef.type;
+    if (decl->type == PLV_OBJECT) {
+        decl->object = &type_recur->typdef.object;
+    } else if (decl->type == PLV_COLLECTION) {
+        decl->collection = &type_recur->typdef.collection;
+    } else {
+        *result = OG_FALSE;
+        return OG_SUCCESS;
+    }
+    *result = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_try_compile_local_udt_attr(pl_compiler_t *compiler, type_word_t *type,
+    plv_record_attr_t *attr, bool32 *result)
+{
+    plv_decl_t *decl = NULL;
+
+    *result = OG_FALSE;
+    if (type->typemode != NULL && !type->is_name_typemode) {
+        return OG_SUCCESS;
+    }
+
+    plc_bison_find_decl_ex(compiler, PLV_TYPE, NULL, &decl, type->str, plc_bison_name_typemode(type));
+    if (decl == NULL) {
+        return OG_SUCCESS;
+    }
+
+    attr->udt_field = decl;
+    if (decl->typdef.type == PLV_RECORD) {
+        attr->type = UDT_RECORD;
+    } else if (decl->typdef.type == PLV_COLLECTION) {
+        attr->type = UDT_COLLECTION;
+    } else {
+        OG_SRC_THROW_ERROR(type->loc, ERR_UNEXPECTED_PL_VARIANT);
+        return OG_ERROR;
+    }
+    *result = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_try_compile_global_udt_attr(pl_compiler_t *compiler, type_word_t *type,
+    plv_record_attr_t *attr, bool32 *result)
+{
+    plv_decl_t *decl = NULL;
+    bool32 found = OG_FALSE;
+
+    OG_RETURN_IFERR(plc_bison_try_find_global_type(compiler, type, &decl, &found));
+    if (!found) {
+        *result = OG_FALSE;
+        return OG_SUCCESS;
+    }
+
+    attr->udt_field = decl;
+    if (decl->typdef.type == PLV_OBJECT) {
+        attr->type = UDT_OBJECT;
+    } else if (decl->typdef.type == PLV_COLLECTION) {
+        attr->type = UDT_COLLECTION;
+    } else {
+        *result = OG_FALSE;
+        return OG_SUCCESS;
+    }
+    *result = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_try_compile_local_collection(pl_compiler_t *compiler, type_word_t *type, plv_decl_t *decl,
+    bool32 *result)
+{
+    plv_decl_t *type_recur = NULL;
+
+    *result = OG_FALSE;
+    if (type->typemode != NULL && !type->is_name_typemode) {
+        return OG_SUCCESS;
+    }
+
+    plc_bison_find_decl_ex(compiler, PLV_TYPE, NULL, &type_recur, type->str, plc_bison_name_typemode(type));
+    if (type_recur == NULL) {
+        return OG_SUCCESS;
+    }
+
+    if (type_recur->typdef.type == PLV_COLLECTION) {
+        decl->typdef.collection.attr_type = UDT_COLLECTION;
+    } else if (type_recur->typdef.type == PLV_RECORD) {
+        decl->typdef.collection.attr_type = UDT_RECORD;
+    } else {
+        OG_SRC_THROW_ERROR(type->loc, ERR_UNEXPECTED_PL_VARIANT);
+        return OG_ERROR;
+    }
+    decl->typdef.collection.elmt_type = type_recur;
+    *result = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_try_compile_global_collection(pl_compiler_t *compiler, type_word_t *type, plv_decl_t *decl,
+    bool32 *result)
+{
+    plv_decl_t *type_recur = NULL;
+    bool32 found = OG_FALSE;
+
+    OG_RETURN_IFERR(plc_bison_try_find_global_type(compiler, type, &type_recur, &found));
+    if (!found) {
+        *result = OG_FALSE;
+        return OG_SUCCESS;
+    }
+
+    if (type_recur->typdef.type == PLV_COLLECTION) {
+        decl->typdef.collection.attr_type = UDT_COLLECTION;
+    } else {
+        decl->typdef.collection.attr_type = UDT_OBJECT;
+    }
+    decl->typdef.collection.elmt_type = type_recur;
+    *result = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_compile_collection_member(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *member_type)
+{
+    bool32 result = OG_FALSE;
+
+    if (member_type->pl_type || member_type->pl_rowtype) {
+        plattr_assist_t plattr_ass;
+        plattr_ass.type = COLL_ATTR_INHERIT;
+        plattr_ass.decls = compiler->decls;
+        plattr_ass.coll = &decl->typdef.collection;
+        plattr_ass.is_args = OG_FALSE;
+        OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, member_type));
+        if (decl->typdef.collection.attr_type == UDT_SCALAR && decl->typdef.collection.type_mode.is_array) {
+            OG_SRC_THROW_ERROR(member_type->loc, ERR_UNSUPPORT_DATATYPE, "ARRAY");
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
+
+    if (!plc_bison_is_datatype(member_type)) {
+        OG_RETURN_IFERR(plc_bison_try_compile_local_collection(compiler, member_type, decl, &result));
+        if (result) {
+            return OG_SUCCESS;
+        }
+        OG_RETURN_IFERR(plc_bison_try_compile_global_collection(compiler, member_type, decl, &result));
+        if (result) {
+            return OG_SUCCESS;
+        }
+    }
+
+    decl->typdef.collection.attr_type = UDT_SCALAR;
+    OG_RETURN_IFERR(sql_parse_datatype_typemode_bison(compiler->stmt->session->db_user, member_type,
+        &decl->typdef.collection.type_mode));
+    if (decl->typdef.collection.type_mode.is_array) {
+        OG_SRC_THROW_ERROR(member_type->loc, ERR_UNSUPPORT_DATATYPE, "ARRAY");
+        return OG_ERROR;
+    }
+    return plc_check_datatype(compiler, &decl->typdef.collection.type_mode, OG_FALSE);
+}
+
+static status_t plc_bison_compile_collection_index(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *index_type)
+{
+    if (index_type->pl_type || index_type->pl_rowtype) {
+        plv_collection_t collection = { 0 };
+        plattr_assist_t plattr_ass;
+        plattr_ass.type = COLL_ATTR_INHERIT;
+        plattr_ass.decls = compiler->decls;
+        plattr_ass.coll = &collection;
+        plattr_ass.is_args = OG_FALSE;
+        OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, index_type));
+        if (collection.attr_type != UDT_SCALAR) {
+            OG_SRC_THROW_ERROR(index_type->loc, ERR_PL_HSTB_INDEX_TYPE);
+            return OG_ERROR;
+        }
+        decl->typdef.collection.index_typmod = collection.type_mode;
+    } else {
+        if (!plc_bison_is_datatype(index_type)) {
+            bool32 result = OG_FALSE;
+            OG_RETURN_IFERR(plc_bison_try_compile_local_collection(compiler, index_type, decl, &result));
+            if (result) {
+                OG_SRC_THROW_ERROR(index_type->loc, ERR_PL_HSTB_INDEX_TYPE);
+                return OG_ERROR;
+            }
+            OG_RETURN_IFERR(plc_bison_try_compile_global_collection(compiler, index_type, decl, &result));
+            if (result) {
+                OG_SRC_THROW_ERROR(index_type->loc, ERR_PL_HSTB_INDEX_TYPE);
+                return OG_ERROR;
+            }
+        }
+        OG_RETURN_IFERR(sql_parse_datatype_typemode_bison(compiler->stmt->session->db_user, index_type,
+            &decl->typdef.collection.index_typmod));
+    }
+
+    if (decl->typdef.collection.index_typmod.datatype != OG_TYPE_INTEGER &&
+        decl->typdef.collection.index_typmod.datatype != OG_TYPE_VARCHAR) {
+        OG_SRC_THROW_ERROR(index_type->loc, ERR_PL_HSTB_INDEX_TYPE);
+        return OG_ERROR;
+    }
+    return plc_check_datatype(compiler, &decl->typdef.collection.index_typmod, OG_FALSE);
 }
 
 static status_t plc_bison_check_type_name(char *type_name, galist_t *decls)
@@ -1927,13 +2540,61 @@ static status_t plc_bison_check_attr_duplicate(pl_compiler_t *compiler, plv_reco
     return OG_SUCCESS;
 }
 
+static status_t plc_bison_check_record_attr_array(plv_record_attr_t *attr, source_location_t loc)
+{
+    if (attr->type == UDT_SCALAR && attr->scalar_field->type_mode.is_array) {
+        OG_SRC_THROW_ERROR(loc, ERR_UNSUPPORT_DATATYPE, "ARRAY");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_compile_inherit_record_attr(pl_compiler_t *compiler, galist_t *decls,
+    plv_record_attr_t *attr, record_attr_t *attr_def)
+{
+    plattr_assist_t plattr_ass = { 0 };
+
+    plattr_ass.type = REC_FIELD_INHERIT;
+    plattr_ass.attr = attr;
+    plattr_ass.decls = decls;
+    plattr_ass.is_args = OG_FALSE;
+    OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, attr_def->type));
+    return plc_bison_check_record_attr_array(attr, attr_def->loc);
+}
+
+static status_t plc_bison_compile_scalar_record_attr(pl_compiler_t *compiler, plv_record_attr_t *attr,
+    record_attr_t *attr_def)
+{
+    pl_entity_t *pl_entity = compiler->entity;
+
+    attr->type = UDT_SCALAR;
+    OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(field_scalar_info_t), (void **)&attr->scalar_field));
+    OG_RETURN_IFERR(sql_parse_datatype_typemode_bison(compiler->stmt->session->db_user, attr_def->type,
+        &attr->scalar_field->type_mode));
+    return plc_bison_check_record_attr_array(attr, attr_def->loc);
+}
+
+static status_t plc_bison_compile_plain_record_attr(pl_compiler_t *compiler, plv_record_attr_t *attr,
+    record_attr_t *attr_def)
+{
+    bool32 result = OG_FALSE;
+
+    if (!plc_bison_is_datatype(attr_def->type)) {
+        OG_RETURN_IFERR(plc_bison_try_compile_local_udt_attr(compiler, attr_def->type, attr, &result));
+        if (!result) {
+            OG_RETURN_IFERR(plc_bison_try_compile_global_udt_attr(compiler, attr_def->type, attr, &result));
+        }
+    }
+    return result ? OG_SUCCESS : plc_bison_compile_scalar_record_attr(compiler, attr, attr_def);
+}
+
 static status_t plc_bison_compile_type_record_def(pl_compiler_t *compiler, plv_decl_t *decl, galist_t *decls,
     galist_t *record_attrs)
 {
-    plattr_assist_t plattr_ass;
     plv_record_attr_t *attr = NULL;
     record_attr_t *attr_def = NULL;
     pl_entity_t *pl_entity = compiler->entity;
+
     decl->typdef.type = PLV_RECORD;
     decl->typdef.record.root = decl;
     decl->typdef.record.is_anonymous = OG_FALSE;
@@ -1950,29 +2611,56 @@ static status_t plc_bison_compile_type_record_def(pl_compiler_t *compiler, plv_d
         cm_str2text(attr_def->name, &attr->name);
 
         if (attr_def->type->pl_rowtype || attr_def->type->pl_type) {
-            plattr_ass.type = REC_FIELD_INHERIT;
-            plattr_ass.attr = attr;
-            plattr_ass.decls = decls;
-            plattr_ass.is_args = OG_FALSE;
-            OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, attr_def->type));
-            if (attr->scalar_field->type_mode.is_array) {
-                OG_SRC_THROW_ERROR(attr_def->loc, ERR_UNSUPPORT_DATATYPE, "ARRAY");
-                return OG_ERROR;
-            }
+            OG_RETURN_IFERR(plc_bison_compile_inherit_record_attr(compiler, decls, attr, attr_def));
         } else {
-            /* todo: 用户自定义类型 */
-            attr->type = UDT_SCALAR;
-            OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(field_scalar_info_t), (void **)&attr->scalar_field));
-            OG_RETURN_IFERR(sql_parse_datatype_typemode_bison(compiler->stmt->session->db_user, attr_def->type,
-                &attr->scalar_field->type_mode));
+            OG_RETURN_IFERR(plc_bison_compile_plain_record_attr(compiler, attr, attr_def));
         }
         attr->nullable = (bool8)attr_def->nullable;
 
+        if (!attr->nullable && attr_def->def_expr == NULL) {
+            OG_SRC_THROW_ERROR(attr_def->loc, ERR_INVALID_DATA_TYPE,
+                "type defining, not null declaration must have default value");
+            return OG_ERROR;
+        }
         if (attr_def->def_expr != NULL) {
             OG_RETURN_IFERR(plc_verify_expr(compiler, attr_def->def_expr));
             OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &attr_def->def_expr));
             attr->default_expr = attr_def->def_expr;
         }
+    }
+    return OG_SUCCESS;
+}
+
+status_t plc_bison_compile_collection_type_def(pl_compiler_t *compiler, plc_bison_collection_type_def_t *type_def)
+{
+    plv_decl_t *decl = NULL;
+    galist_t *decls = compiler->decls;
+
+    OG_RETURN_IFERR(plc_bison_check_type_name(type_def->type_name, decls));
+    OG_RETURN_IFERR(cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl));
+    cm_str2text(type_def->type_name, &decl->name);
+    decl->vid.block = (int16)compiler->stack.depth;
+    decl->vid.id = decls->count - 1;
+    decl->type = PLV_TYPE;
+    decl->loc = type_def->loc;
+    decl->typdef.type = PLV_COLLECTION;
+    decl->typdef.collection.root = decl;
+
+    if (type_def->matched_id == MATCH_VARRAY) {
+        decl->typdef.collection.type = UDT_VARRAY;
+        decl->typdef.collection.limit = type_def->limit;
+        OG_RETURN_IFERR(plc_check_array_element_size(compiler, decl));
+    } else if (type_def->matched_id == MATCH_TABLE) {
+        decl->typdef.collection.type = (type_def->index_type == NULL) ? UDT_NESTED_TABLE : UDT_HASH_TABLE;
+        decl->typdef.collection.limit = 0;
+    } else {
+        OG_SRC_THROW_ERROR(type_def->loc, ERR_PL_UNSUPPORT);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(plc_bison_compile_collection_member(compiler, decl, type_def->member_type));
+    if (type_def->index_type != NULL) {
+        OG_RETURN_IFERR(plc_bison_compile_collection_index(compiler, decl, type_def->index_type));
     }
     return OG_SUCCESS;
 }
@@ -1995,9 +2683,8 @@ status_t plc_bison_compile_type_def(pl_compiler_t *compiler, char *type_name, ga
         case MATCH_RECORD:
             return plc_bison_compile_type_record_def(compiler, decl, decls, record_attrs);
         case MATCH_REF:
-        case MATCH_VARRAY:
-        case MATCH_TABLE:
-            /* todo */
+            decl->typdef.type = PLV_CUR;
+            return OG_SUCCESS;
         default:
             OG_SRC_THROW_ERROR(loc, ERR_PL_UNSUPPORT);
             return OG_ERROR;
@@ -2009,14 +2696,19 @@ status_t plc_bison_try_compile_local_type(pl_compiler_t *compiler, plv_decl_t *d
 {
     plv_decl_t *type_recur = NULL;
 
+    *result = OG_FALSE;
+    if (type->typemode != NULL && !type->is_name_typemode) {
+        return OG_SUCCESS;
+    }
+
     OG_RETURN_IFERR(plc_bison_verify_var(type));
-    plc_bison_find_decl_ex(compiler, PLV_TYPE, NULL, &type_recur, type->str, type->typemode);
+    plc_bison_find_decl_ex(compiler, PLV_TYPE, NULL, &type_recur, type->str, plc_bison_name_typemode(type));
     if (type_recur != NULL) {
         decl->type = type_recur->typdef.type;
         OG_RETURN_IFERR(plc_compile_complex_type(compiler, decl, type_recur));
         *result = OG_TRUE;
-    } else {
-        *result = OG_FALSE;
+        return OG_SUCCESS;
     }
-    return OG_SUCCESS;
+
+    return plc_bison_try_compile_global_type(compiler, decl, type, result);
 }

@@ -331,6 +331,8 @@ typedef struct st_sql_stmt {
     uint16 gdv_mode;   // for gdv: in sql_execute_select, do not return the ruslt set.
     uint16 gdv_unused; // for gdv
     bilist_t ddl_def_list;
+    sql_text_t parser_text; // current raw parser buffer for token offsets
+    bool32 parser_text_valid;
 } sql_stmt_t;
 
 typedef enum en_cursor_type {

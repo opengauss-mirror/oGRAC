@@ -37,6 +37,7 @@
 #include "dcl_alter_parser.h"
 #include "dcl_database_parser.h"
 #include "dcl_transaction_parser.h"
+#include "dml_parser.h"
 
 /*
  * NB: include gram.h only AFTER including scanner.h, because scanner.h

@@ -59,6 +59,7 @@ bool32 sql_check_procedures(sql_stmt_t *stmt, galist_t *dc_lst);
 status_t sql_compile_synonym_by_user(sql_stmt_t *stmt, text_t *schema_name, bool32 compile_all);
 status_t sql_compile_view_by_user(sql_stmt_t *stmt, text_t *schema_name, bool32 compile_all);
 status_t sql_parse_dml_directly(sql_stmt_t *stmt, key_wid_t key_wid, sql_text_t *sql_text);
+status_t sql_parse_bison_anonymous_directly(sql_stmt_t *stmt, sql_text_t *sql_text);
 bool32 sql_compile_view_sql(sql_stmt_t *stmt, knl_dictionary_t *view_dc, text_t *owner);
 bool32 sql_check_equal_join_cond(join_cond_t *join_cond);
 

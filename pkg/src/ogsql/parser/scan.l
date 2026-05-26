@@ -1377,6 +1377,12 @@ scanner_init(const sql_text_t *sql,
     }
     memcpy(yyext->scanbuf, str, slen);
     yyext->scanbuf[slen] = yyext->scanbuf[slen + 1] = YY_END_OF_BUFFER_CHAR;
+    if (stmt->parser_text_valid) {
+        stmt->parser_text.str = yyext->scanbuf;
+        stmt->parser_text.len = (uint32)slen;
+        stmt->parser_text.loc = sql->loc;
+        stmt->parser_text.implicit = sql->implicit;
+    }
     yy_scan_buffer(yyext->scanbuf, slen + 2, scanner);
 
     /* initialize literal buffer to a reasonable but expansible size */

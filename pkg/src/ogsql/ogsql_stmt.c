@@ -627,6 +627,7 @@ static void sql_reset_stmt_resource(sql_stmt_t *stmt)
     stmt->is_reform_call = OG_FALSE;
     stmt->params_ready = OG_FALSE;
     stmt->text_shift = 0;
+    stmt->parser_text_valid = OG_FALSE;
 }
 
 status_t sql_prepare_for_multi_sql(sql_stmt_t *stmt, text_t *sql)

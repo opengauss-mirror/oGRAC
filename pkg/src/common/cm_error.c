@@ -1160,9 +1160,7 @@ void cm_set_error_pos(const char *file, uint32 line)
 #else
         filename = strrchr(file, '/');
 #endif
-        CM_ASSERT(filename != NULL);
-
-        filename++;
+        filename = (filename == NULL) ? (char *)file : filename + 1;
         (void)strncpy_s(g_tls_error.err_file, sizeof(g_tls_error.err_file), filename, strlen(filename));
         g_tls_error.err_line = line;
     }

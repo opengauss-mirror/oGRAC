@@ -37,6 +37,7 @@ status_t sql_parse_json_table(sql_stmt_t *stmt, sql_table_t *table, word_t *word
 status_t handle_json_table_data_error(json_assist_t *ja, json_error_type_t err_type, bool8 *eof);
 status_t sql_calc_json_table_column_result(json_assist_t *ja, rs_column_t *col, json_table_exec_t *exec,
     variant_t *result);
+status_t sql_init_json_table_func_node(sql_stmt_t *stmt, expr_node_t *func_node, text_t *func_name);
 status_t sql_try_switch_json_array_loc(sql_stmt_t *stmt, json_value_t *jv, json_table_exec_t *exec, uint32 temp_level,
     bool32 *switched);
 status_t sql_visit_json_value(sql_stmt_t *stmt, json_value_t *jv, json_table_exec_t *exec, uint32 temp_level,

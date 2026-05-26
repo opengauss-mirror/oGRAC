@@ -78,13 +78,54 @@ status_t pl_send_import_rows(sql_stmt_t *stmt)
     return OG_SUCCESS;
 }
 
+static status_t pl_get_parent_stmt(sql_stmt_t *stmt, sql_stmt_t **parent_stmt)
+{
+    if (stmt->parent_stmt == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL parent statement");
+        return OG_ERROR;
+    }
+    *parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
+    return OG_SUCCESS;
+}
+
+static status_t pl_check_into_coll_var(ple_var_t *var)
+{
+    if (var == NULL || var->decl == NULL || var->decl->type != PLV_COLLECTION || var->decl->collection == NULL) {
+        OG_THROW_ERROR(ERR_PL_SYNTAX_ERROR_FMT, "unexpected pl-variant occurs");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t pl_get_output_exec(sql_stmt_t *stmt, pl_executor_t **exec)
+{
+    sql_stmt_t *parent = NULL;
+
+    if (*exec == NULL || (*exec)->curr_line == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL line");
+        return OG_ERROR;
+    }
+
+    if ((*exec)->curr_line->type != LINE_EXECUTE) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(pl_get_parent_stmt(stmt, &parent));
+    if (parent->pl_exec == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL executor");
+        return OG_ERROR;
+    }
+    *exec = (pl_executor_t *)parent->pl_exec;
+    return OG_SUCCESS;
+}
+
 static status_t pl_trim_coll(sql_stmt_t *stmt, pl_into_t *into, pl_executor_t *exec)
 {
     ple_var_t *left = NULL;
     for (uint32 i = 0; i < into->output->count; i++) {
         OG_RETURN_IFERR(ple_get_output_plvar(exec, into, &left, i));
+        OG_RETURN_IFERR(pl_check_into_coll_var(left));
 
-        CM_ASSERT(left->decl->type == PLV_COLLECTION);
         if (!left->value.is_null) {
             OG_RETURN_IFERR(
                 g_coll_intr_method[left->value.v_collection.type][METHOD_INTR_TRIM](stmt, &left->value, NULL));
@@ -101,10 +142,17 @@ static status_t pl_trim_coll(sql_stmt_t *stmt, pl_into_t *into, pl_executor_t *e
     return OG_SUCCESS;
 }
 
-status_t pl_send_returning_begin(sql_stmt_t *stmt)
+static status_t pl_prepare_returning_into(sql_stmt_t *stmt, pl_executor_t **exec, bool32 *matched)
 {
-    pl_executor_t *exec = (pl_executor_t *)stmt->pl_exec;
-    pl_line_ctrl_t *line_ctrl = exec->curr_line;
+    pl_line_ctrl_t *line_ctrl;
+    sql_stmt_t *parent = NULL;
+
+    *matched = OG_FALSE;
+    if (*exec == NULL || (*exec)->curr_line == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL line");
+        return OG_ERROR;
+    }
+    line_ctrl = (*exec)->curr_line;
 
     switch (line_ctrl->type) {
         case LINE_FETCH: {
@@ -127,12 +175,30 @@ status_t pl_send_returning_begin(sql_stmt_t *stmt)
             pl_line_execute_t *sql = (pl_line_execute_t *)line_ctrl;
             OG_RETSUC_IFTRUE(sql->into.output == NULL || sql->into.output->count == 0);
             stmt->into = &sql->into;
-            sql_stmt_t *parent = (sql_stmt_t *)stmt->parent_stmt;
-            exec = (pl_executor_t *)parent->pl_exec;
+            OG_RETURN_IFERR(pl_get_parent_stmt(stmt, &parent));
+            if (parent->pl_exec == NULL) {
+                OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL executor");
+                return OG_ERROR;
+            }
+            *exec = (pl_executor_t *)parent->pl_exec;
             break;
         }
         default:
             return OG_SUCCESS;
+    }
+    *matched = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+status_t pl_send_returning_begin(sql_stmt_t *stmt)
+{
+    pl_executor_t *exec = (pl_executor_t *)stmt->pl_exec;
+    sql_stmt_t *parent = NULL;
+    bool32 matched = OG_FALSE;
+
+    OG_RETURN_IFERR(pl_prepare_returning_into(stmt, &exec, &matched));
+    if (!matched) {
+        return OG_SUCCESS;
     }
 
     pl_into_t *into = (pl_into_t *)stmt->into;
@@ -140,8 +206,8 @@ status_t pl_send_returning_begin(sql_stmt_t *stmt)
         case INTO_AS_COLL:
         case INTO_AS_COLL_REC:
             // returning coll to PL, vm_ctx should be parent_stmt's vm_ctx since it is stored in  parent_stmt's vm_ctx
-            CM_ASSERT(stmt->parent_stmt != NULL);
-            OG_RETURN_IFERR(pl_trim_coll((sql_stmt_t *)stmt->parent_stmt, into, exec));
+            OG_RETURN_IFERR(pl_get_parent_stmt(stmt, &parent));
+            OG_RETURN_IFERR(pl_trim_coll(parent, into, exec));
             break;
 
         default:
@@ -174,12 +240,11 @@ static status_t pl_send_begin_extend_coll(sql_stmt_t *stmt, pl_executor_t *exec,
     sql_stmt_t *parent_stmt = NULL;
     // Cursor's stmt and outer PL stmt are mutually independent. When passing params from cursor to PL variants,
     // we need pass the outer vm_ctx to save the complex variants.
-    CM_ASSERT(stmt->parent_stmt != NULL);
-    parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
+    OG_RETURN_IFERR(pl_get_parent_stmt(stmt, &parent_stmt));
 
     for (uint32 i = 0; i < column_count; i++) {
         OG_RETURN_IFERR(ple_get_output_plvar(exec, into, &left, i));
-        CM_ASSERT(left->decl->type == PLV_COLLECTION);
+        OG_RETURN_IFERR(pl_check_into_coll_var(left));
 
         if (left->decl->collection->type != UDT_HASH_TABLE) {
             if (left->decl->collection->attr_type != UDT_SCALAR) {
@@ -200,9 +265,9 @@ static status_t pl_send_begin_extend_coll_rec(sql_stmt_t *stmt, pl_executor_t *e
     plv_collection_t *coll_meta = NULL;
     mtrl_rowid_t row_id = g_invalid_entry;
 
-    CM_ASSERT(stmt->parent_stmt != NULL);
-    parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
+    OG_RETURN_IFERR(pl_get_parent_stmt(stmt, &parent_stmt));
     OG_RETURN_IFERR(ple_get_output_plvar(exec, pl_into, &left, 0));
+    OG_RETURN_IFERR(pl_check_into_coll_var(left));
 
     coll_meta = left->value.v_collection.coll_meta;
     if (left->decl->collection->type != UDT_HASH_TABLE) {
@@ -226,10 +291,7 @@ status_t pl_send_row_begin(sql_stmt_t *stmt, uint32 column_count)
         return OG_SUCCESS;
     }
 
-    if (exec->curr_line->type == LINE_EXECUTE) {
-        sql_stmt_t *parent = (sql_stmt_t *)stmt->parent_stmt;
-        exec = (pl_executor_t *)parent->pl_exec;
-    }
+    OG_RETURN_IFERR(pl_get_output_exec(stmt, &exec));
 
     switch ((plv_into_type_t)pl_into->into_type) {
         case INTO_AS_COLL:
@@ -254,9 +316,9 @@ static status_t pl_send_end_coll_rec(sql_stmt_t *stmt, pl_executor_t *exec, pl_i
     sql_stmt_t *parent_stmt = NULL;
     variant_t index;
 
-    CM_ASSERT(stmt->parent_stmt != NULL);
-    parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
+    OG_RETURN_IFERR(pl_get_parent_stmt(stmt, &parent_stmt));
     OG_RETURN_IFERR(ple_get_output_plvar(exec, pl_into, &left, 0));
+    OG_RETURN_IFERR(pl_check_into_coll_var(left));
     index.is_null = OG_FALSE;
     index.type = OG_TYPE_INTEGER;
     index.v_int = stmt->batch_rows + 1;
@@ -275,10 +337,7 @@ status_t pl_send_row_end(sql_stmt_t *stmt, bool32 *is_full)
         return OG_SUCCESS;
     }
 
-    if (exec->curr_line->type == LINE_EXECUTE) {
-        sql_stmt_t *parent = (sql_stmt_t *)stmt->parent_stmt;
-        exec = (pl_executor_t *)parent->pl_exec;
-    }
+    OG_RETURN_IFERR(pl_get_output_exec(stmt, &exec));
 
     if ((plv_into_type_t)pl_into->into_type == INTO_AS_COLL_REC) {
         OG_RETURN_IFERR(pl_send_end_coll_rec(stmt, exec, pl_into));
@@ -297,10 +356,7 @@ static status_t pl_column2var(sql_stmt_t *stmt, variant_t *right)
         return OG_SUCCESS;
     }
 
-    if (exec->curr_line->type == LINE_EXECUTE) {
-        sql_stmt_t *parent = (sql_stmt_t *)stmt->parent_stmt;
-        exec = (pl_executor_t *)parent->pl_exec;
-    }
+    OG_RETURN_IFERR(pl_get_output_exec(stmt, &exec));
 
     OGSQL_SAVE_STACK(stmt);
     sql_keep_stack_variant(stmt, right);

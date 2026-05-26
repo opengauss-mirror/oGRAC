@@ -44,6 +44,15 @@ typedef enum en_plc_match_type {
     MATCH_TABLE
 } plc_match_type_t;
 
+typedef struct st_plc_bison_collection_type_def {
+    char *type_name;
+    type_word_t *member_type;
+    type_word_t *index_type;
+    uint32 limit;
+    source_location_t loc;
+    uint32 matched_id;
+} plc_bison_collection_type_def_t;
+
 /*
  * @brief PLC_PMODE dedicate for the datatype belong to PLSQL object like procedure, user define function or trigger
  */
@@ -69,6 +78,7 @@ status_t plc_bison_compile_plv_type(pl_compiler_t *compiler, plattr_assist_t *pl
 status_t plc_check_decl_datatype(pl_compiler_t *compiler, plv_decl_t *decl, bool32 is_arg);
 status_t plc_bison_compile_type_def(pl_compiler_t *compiler, char *type_name, galist_t *record_attrs,
     source_location_t loc, uint32 matched_id);
+status_t plc_bison_compile_collection_type_def(pl_compiler_t *compiler, plc_bison_collection_type_def_t *type_def);
 status_t plc_bison_try_compile_local_type(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *type,
     bool32 *result);
 
