@@ -1048,6 +1048,30 @@ static status_t pl_bison_parse_create_core(sql_stmt_t *stmt, var_udo_t *obj, uin
     return pl_record_source(stmt, pl_ctx, source);
 }
 
+static status_t pl_bison_compile_trigger_body(sql_stmt_t *stmt, var_udo_t *obj, text_t *body, text_t *source)
+{
+    plc_desc_t desc = { 0 };
+    status_t compl_ret;
+    pl_entity_t *pl_ctx = stmt->pl_context;
+
+    pl_prepare_compile_desc(&desc, stmt, obj, PL_TRIGGER);
+    compl_ret = plc_bison_compile(stmt, &desc, NULL, NULL, body);
+    if (compl_ret != OG_SUCCESS) {
+        stmt->pl_failed = OG_TRUE;
+        pl_ctx->create_def->compl_result = OG_FALSE;
+    } else {
+        reset_tls_plc_error();
+        cm_reset_error();
+        pl_ctx->create_def->compl_result = OG_TRUE;
+    }
+
+    if (compl_ret == OG_SUCCESS) {
+        OG_RETURN_IFERR(pl_check_trigger_create_priv(stmt, obj));
+    }
+
+    return pl_record_source(stmt, pl_ctx, source);
+}
+
 status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, text_t *body)
 {
     pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
@@ -1118,8 +1142,10 @@ status_t pl_bison_compile_stored_body_source(sql_stmt_t *stmt, text_t *program_b
         case PL_PACKAGE_BODY:
         case PL_TYPE_SPEC:
         case PL_TYPE_BODY:
-        case PL_TRIGGER:
             return pl_bison_compile_stored_native_body(stmt, stored_body);
+        case PL_TRIGGER:
+            OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "compile", "stored trigger source without trigger descriptor");
+            return OG_ERROR;
         default:
             OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "compile", "stored PLSQL source");
             return OG_ERROR;
@@ -1240,31 +1266,117 @@ status_t pl_bison_parse_create_type(sql_stmt_t *stmt, bool32 replace, bool32 is_
     return pl_bison_compile_create_body(stmt, &pl_ctx->def, type, body, source);
 }
 
-status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *trig_name, text_t *body, text_t *source)
+static void pl_bison_set_trigger_action_loc(trig_desc_t *trig, source_location_t trigger_loc,
+    source_location_t action_loc)
 {
-    word_t word = { 0 };
-    sql_text_t body_text = { 0 };
+    trig->action_line = action_loc.line - trigger_loc.line + 1;
+    if (action_loc.line != trigger_loc.line) {
+        trig->action_col = action_loc.column;
+    } else {
+        trig->action_col = action_loc.column - trigger_loc.column + 1;
+    }
+}
+
+static status_t pl_bison_copy_trigger_columns(sql_stmt_t *stmt, trig_desc_t *trig, galist_t *columns)
+{
+    cm_galist_init(&trig->columns, stmt->pl_context, pl_alloc_mem);
+    if (columns == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < columns->count; i++) {
+        trigger_column_t *src_column = (trigger_column_t *)cm_galist_get(columns, i);
+        trigger_column_t *dest_column = NULL;
+
+        OG_RETURN_IFERR(cm_galist_new(&trig->columns, sizeof(trigger_column_t), (void **)&dest_column));
+        *dest_column = *src_column;
+    }
+    return OG_SUCCESS;
+}
+
+static void pl_bison_init_trigger_table(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def,
+    sql_text_t *tab_user, sql_text_t *tab_name)
+{
+    if (trigger_def->table_name->owner.len > 0) {
+        tab_user->value = trigger_def->table_name->owner;
+    } else {
+        cm_str2text(stmt->session->curr_schema, &tab_user->value);
+    }
+    tab_name->value = trigger_def->table_name->name;
+    tab_user->loc = trigger_def->table_loc;
+    tab_name->loc = trigger_def->table_loc;
+}
+
+static status_t pl_bison_prepare_trigger_desc(sql_stmt_t *stmt, var_udo_t *obj,
+    pl_bison_trigger_def_t *trigger_def)
+{
+    pl_entity_t *pl_ctx = stmt->pl_context;
+    trig_desc_t *trig = NULL;
+    saved_schema_t save_schema;
+    sql_text_t tab_user = { 0 };
+    sql_text_t tab_name = { 0 };
+    status_t status;
+
+    if (pl_ctx->trigger == NULL) {
+        OG_RETURN_IFERR(pl_alloc_mem(stmt->pl_context, sizeof(trigger_t), (void **)&pl_ctx->trigger));
+        MEMS_RETURN_IFERR(memset_s(pl_ctx->trigger, sizeof(trigger_t), 0, sizeof(trigger_t)));
+    }
+    pl_ctx->trigger->body = NULL;
+    pl_ctx->trigger->modified_new_cols = NULL;
+    trig = &pl_ctx->trigger->desc;
+    trig->type = trigger_def->type;
+    trig->events = trigger_def->events;
+    pl_bison_set_trigger_action_loc(trig, trigger_def->trigger_loc, trigger_def->action_loc);
+    OG_RETURN_IFERR(pl_bison_copy_trigger_columns(stmt, trig, trigger_def->columns));
+    pl_bison_init_trigger_table(stmt, trigger_def, &tab_user, &tab_name);
+
+    OG_RETURN_IFERR(sql_switch_schema_by_name(stmt, &obj->user, &save_schema));
+    status = plc_verify_trigger_tab_columns(stmt, trig, &tab_user, &tab_name);
+    if (status == OG_SUCCESS) {
+        status = plc_verify_trigger_update_cols(stmt, trig);
+    }
+    sql_restore_schema(stmt, &save_schema);
+    return status;
+}
+
+status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
+    name_with_owner *trig_name, pl_bison_trigger_def_t *trigger_def, text_t *source)
+{
     status_t status;
     pl_entity_t *pl_ctx = NULL;
 
     OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, trig_name, PL_TRIGGER));
     pl_ctx = (pl_entity_t *)stmt->pl_context;
+    OG_RETURN_IFERR(pl_bison_prepare_trigger_desc(stmt, &pl_ctx->def, trigger_def));
 
-    pl_bison_init_sql_text(body, &body_text);
-    OG_RETURN_IFERR(lex_push(stmt->session->lex, &body_text));
-    status = pl_parse_trigger_desc(stmt, &pl_ctx->def, &word);
-    if (status == OG_SUCCESS) {
-        status = pl_bison_compile_create_from_current_lex(stmt, &pl_ctx->def, PL_TRIGGER, source);
-    }
-    lex_pop(stmt->session->lex);
-
+    status = pl_bison_compile_trigger_body(stmt, &pl_ctx->def, trigger_def->body, source);
     if (status != OG_SUCCESS) {
         sql_check_user_priv(stmt, &pl_ctx->def.user);
         OG_THROW_ERROR(ERR_INSUFFICIENT_PRIV);
         return OG_ERROR;
     }
 
+    return OG_SUCCESS;
+}
+
+status_t pl_bison_compile_stored_trigger_body_source(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def)
+{
+    pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
+    plc_desc_t desc = { 0 };
+
+    if (entity == NULL || entity->pl_type != PL_TRIGGER) {
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "compile", "stored trigger source");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(pl_bison_prepare_trigger_desc(stmt, &entity->def, trigger_def));
+    pl_prepare_compile_desc(&desc, stmt, &entity->def, PL_TRIGGER);
+    if (plc_bison_compile(stmt, &desc, NULL, NULL, trigger_def->body) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (g_tls_plc_error.plc_cnt == 0) {
+        reset_tls_plc_error();
+    }
     return OG_SUCCESS;
 }
 

@@ -183,7 +183,9 @@ SQL> declare
   6 end;
   7 /
 
-OG-00601, [1:1]Sql syntax error: syntax error
+OG-00944, [9:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[4:2] PLC-00601 Sql syntax error: unexpected returning columns occurs
+
 SQL> 
 SQL> drop table bison_t1;
 

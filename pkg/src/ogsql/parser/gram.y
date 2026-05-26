@@ -99,6 +99,11 @@ typedef enum en_interval_unit_order {
     IUO_MAX
 } interval_unit_order_t;
 
+typedef struct st_pl_bison_trigger_events {
+    uint16 events;
+    galist_t *columns;
+} pl_bison_trigger_events_t;
+
 static void base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner,
                          const char *msg);
 static status_t column_list_to_column_pairs(sql_stmt_t *stmt, galist_t *colname_list, galist_t **pairs);
@@ -118,8 +123,23 @@ static interval_unit_t get_interval_unit(interval_unit_order_t order);
 static interval_unit_t generate_interval_unit(interval_unit_order_t from, interval_unit_order_t to);
 static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_t *alter_idx_act, knl_alindex_def_t *def);
 static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int start_offset, source_location_t loc);
+static text_t *pl_wrap_statement_body(core_yyscan_t yyscanner, text_t *stmt_src);
+static status_t pl_compile_anonymous_body(core_yyscan_t yyscanner, text_t *body);
 static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *body, int start_offset,
     source_location_t loc, bool32 has_program_body);
+static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
+    pl_bison_trigger_def_t *trigger_def);
+static status_t bison_parse_native_alter_table(core_yyscan_t yyscanner);
+static status_t bison_parse_native_alter_database(core_yyscan_t yyscanner);
+static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,
+    source_location_t loc);
+static pl_bison_trigger_events_t *pl_bison_make_trigger_events(core_yyscan_t yyscanner, uint16 event,
+    galist_t *columns);
+static pl_bison_trigger_events_t *pl_bison_merge_trigger_events(core_yyscan_t yyscanner,
+    pl_bison_trigger_events_t *left, pl_bison_trigger_events_t *right);
+static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner, trigger_type_t type,
+    pl_bison_trigger_events_t *events, name_with_owner *table_name, bool32 for_each_row, text_t *body,
+    source_location_t trigger_loc, source_location_t table_loc, source_location_t action_loc);
 
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-prologue.y.h"*/
@@ -218,8 +238,9 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
                CreatePackageStmt CreateTypeStmt CreateTriggerStmt compileFunctionSource compileProcedureSource compileStoredBodySource
                GrantStmt RevokeStmt PurgeStmt AlterTableStmt AlterDatabaseStmt AlterSequenceStmt AlterTablespaceStmt
                AlterProfileStmt AlterTriggerStmt AlterFunctionStmt ddl_passthrough_tail index_cluster_item TransactionStmt
-               RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt
-               LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID InternalReparseStmt
+               RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt PlAnonymousStmt
+               LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID InternalReparseStmt pl_trigger_body
+               trigger_event trigger_event_list
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
                expr_list target_list opt_target_list opt_type_modifiers opt_float opt_array_bounds createseq_opts opt_createseq_opts alterseq_opts opt_alterseq_opts
@@ -230,6 +251,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
                select_pivot_clause unpivot_in_list expr_or_implicit_row_list cube_clause rollup_clause
                group_sets_item group_sets_list grouping_sets_clause group_by_cartesian_item group_by_list group_clause any_name_list
                locked_rels_list columnref_list opt_siblings_clause replace_set_clause_list index_cluster_list attrs
+               opt_trigger_update_columns trigger_column_list
 %type <expr>   ctext_expr a_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr
                func_arg_expr func_arg_list expr_elem_list func_expr_common_subexpr substr_list multi_expr_list
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
@@ -241,7 +263,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
 %type <parse_col> columnDef
 %type <parse_cons> TableConstraint ConstraintElem
 %type <table_element> TableElement
-%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows
+%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_authid
                 opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior
                 opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition opt_archivelog
                 opt_reuse opt_all_in_memory opt_encrypted ignore_nulls opt_orajoin on_or_off opt_undo opt_or_replace opt_signed
@@ -330,10 +352,11 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
              opt_foreign_action partition_type grant_objtype sys_priv_spec obj_priv_spec user_priv_spec
              directory_priv_spec arg_class opt_compress_level compress_algo lock_mode opt_set_scope opt_arch_set_type create_table_prefix
+             trigger_timing opt_trigger_for_each_row
 %type <sortby>  sortby
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 %type <alter_idx_act> alter_index_action
-%type <text> subprogram_body pl_as_is_body pl_type_body pl_trigger_body opt_dump_to_file
+%type <text> subprogram_body pl_as_is_body pl_type_body pl_trigger_block opt_dump_to_file
 
 %token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
                 OPER_CAT OPER_LSHIFT OPER_RSHIFT
@@ -371,7 +394,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
     DROP DUPLICATE DISCONNECT DUMP DUMPFILE
 
     EACH ELASTIC ELSE EMPTY ENABLE_P ENCLOSED ENCODING ENCRYPTED ENCRYPTED_VALUE ENCRYPTION ENCRYPTION_TYPE END_P ENDS ENTRY ENFORCED ENUM_P ERROR_P ERRORS ESCAPE EOL ESCAPING ESTIMATE EXEMPT EVENT EVENTS EVERY EXCEPT EXCHANGE
-    EXCLUDE EXCLUDED EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPIRE EXPIRED_P EXPLAIN
+    EXCLUDE EXCLUDED EXCLUDING EXCLUSIVE EXEC EXECUTE EXISTS EXPIRE EXPIRED_P EXPLAIN
     EXTENSION EXTENT EXTENTS EXTERNAL EXTRACT ESCAPED
 
     FALSE_P FAILED_LOGIN_ATTEMPTS_P FAMILY FAST FENCED FETCH FIELDS FILEHEADER_P FILEID FILENAME FILERECOVER FILL_MISSING_FIELDS FINISH FILLER FILTER FIRST_P FIXED_P FLASHBACK FLUSH FLUSHPAGE FLOAT_P FOLLOWING FOLLOWS_P FOR FORCE FOREIGN FORMAT FORMATTER FORWARD
@@ -621,6 +644,7 @@ stmtmulti:
         | CreatePackageStmt
         | CreateTypeStmt
         | CreateTriggerStmt
+        | PlAnonymousStmt
         | compileFunctionSource
         | compileProcedureSource
         | compileStoredBodySource
@@ -3918,10 +3942,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                func_node->type = EXPR_NODE_FUNC;
+                text_t func_name = { $3, strlen($3) };
+                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("init json table function failed");
+                }
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_CLOB;
-                func_node->word.func.name.value.str = $3;
-                func_node->word.func.name.value.len = strlen($3);
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
                     parser_yyerror("create expr failed");
@@ -3989,10 +4014,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                func_node->type = EXPR_NODE_FUNC;
+                text_t func_name = { $3, strlen($3) };
+                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("init json table function failed");
+                }
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_JSONB;
-                func_node->word.func.name.value.str = $3;
-                func_node->word.func.name.value.len = strlen($3);
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
                     parser_yyerror("create expr failed");
@@ -4060,11 +4086,12 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                func_node->type = EXPR_NODE_FUNC;
+                text_t func_name = { $3, strlen($3) };
+                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("init json table function failed");
+                }
                 func_node->json_func_attr.return_size = JSON_FUNC_LEN_DEFAULT;
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
-                func_node->word.func.name.value.str = $3;
-                func_node->word.func.name.value.len = strlen($3);
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
                     parser_yyerror("create expr failed");
@@ -4132,14 +4159,15 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                func_node->type = EXPR_NODE_FUNC;
+                text_t func_name = { $6, strlen($6) };
+                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("init json table function failed");
+                }
                 if ($4 <= 0 || $4 > JSON_MAX_STRING_LEN) {
                     parser_yyerror("specified length invalid for its datatype");
                 }
                 func_node->json_func_attr.return_size = $4;
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
-                func_node->word.func.name.value.str = $6;
-                func_node->word.func.name.value.len = strlen($6);
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
                     parser_yyerror("create expr failed");
@@ -5777,6 +5805,9 @@ GenericType:
                     }
                     type->str = $1;
                     type->typemode = $2;
+                    type->is_name_typemode = OG_FALSE;
+                    type->pl_type = OG_FALSE;
+                    type->pl_rowtype = OG_FALSE;
                     type->loc = @1.loc;
                     $$ = type;
                 }
@@ -9663,15 +9694,11 @@ ddl_passthrough_tail:
 AlterTableStmt:
             ALTER TABLE_P ddl_passthrough_tail
                 {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    status_t status = sql_parse_alter_table(stmt);
-                    if (status == OG_SUCCESS) {
-                        status = sql_verify_alter_table(stmt);
-                    }
-                    if (status != OG_SUCCESS) {
+                    if (bison_parse_native_alter_table(yyscanner) != OG_SUCCESS) {
                         /* The native ALTER TABLE parser has already raised the precise error. */
                         YYABORT;
                     }
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     $$ = stmt->context->entry;
                 }
         ;
@@ -9679,11 +9706,11 @@ AlterTableStmt:
 AlterDatabaseStmt:
             ALTER DATABASE ddl_passthrough_tail
                 {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_parse_alter_database_lead(stmt) != OG_SUCCESS) {
+                    if (bison_parse_native_alter_database(yyscanner) != OG_SUCCESS) {
                         /* The native ALTER DATABASE parser has already raised the precise error. */
                         YYABORT;
                     }
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     $$ = stmt->context->entry;
                 }
         ;
@@ -13740,6 +13767,8 @@ func_type:
                     type->str = $1;
                     type->typemode = $2;
                     type->loc = @1.loc;
+                    type->is_name_typemode = OG_TRUE;
+                    type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
                     $$ = type;
                 }
@@ -13751,7 +13780,10 @@ func_type:
                         parser_yyerror("alloc mem failed");
                     }
                     type->str = $1;
+                    type->typemode = NULL;
                     type->loc = @1.loc;
+                    type->is_name_typemode = OG_FALSE;
+                    type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
                     $$ = type;
                 }
@@ -13765,7 +13797,9 @@ func_type:
                     type->str = $1;
                     type->typemode = $2;
                     type->loc = @1.loc;
+                    type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_TRUE;
+                    type->pl_rowtype = OG_FALSE;
                     $$ = type;
                 }
             | type_function_name '%' TYPE_P
@@ -13776,8 +13810,11 @@ func_type:
                         parser_yyerror("alloc mem failed");
                     }
                     type->str = $1;
+                    type->typemode = NULL;
                     type->loc = @1.loc;
+                    type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_TRUE;
+                    type->pl_rowtype = OG_FALSE;
                     $$ = type;
                 }
         ;
@@ -13842,8 +13879,8 @@ proc_args:
         ;
 
 opt_authid:
-            AUTHID CURRENT_USER                         {}
-            | /* EMPTY */                               {}
+            AUTHID CURRENT_USER                         { $$ = OG_TRUE; }
+            | /* EMPTY */                               { $$ = OG_FALSE; }
         ;
 
 opt_package_body:
@@ -13861,6 +13898,78 @@ opt_type_force:
             | /* EMPTY */                               { $$ = false; }
         ;
 
+PlAnonymousStmt:
+            DECLARE subprogram_body
+                {
+                    text_t *body = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc);
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile anonymous PL block failed");
+                    }
+                    $$ = NULL;
+                }
+            | BEGIN_P subprogram_body
+                {
+                    text_t *body = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc);
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile anonymous PL block failed");
+                    }
+                    $$ = NULL;
+                }
+            | BEGIN_NON_ANOYBLOCK subprogram_body
+                {
+                    text_t *body = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc);
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile anonymous PL block failed");
+                    }
+                    $$ = NULL;
+                }
+            | CALL subprogram_body
+                {
+                    text_t *body = pl_wrap_statement_body(yyscanner, $2);
+                    if (body == NULL) {
+                        parser_abort_or_yyerror("wrap CALL statement failed");
+                    }
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile CALL statement failed");
+                    }
+                    $$ = NULL;
+                }
+            | EXEC subprogram_body
+                {
+                    text_t *body = pl_wrap_statement_body(yyscanner, $2);
+                    if (body == NULL) {
+                        parser_abort_or_yyerror("wrap EXEC statement failed");
+                    }
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile EXEC statement failed");
+                    }
+                    $$ = NULL;
+                }
+            | EXECUTE IMMEDIATE subprogram_body
+                {
+                    text_t *body_src = pl_prepend_body_start(yyscanner, $3, @1.offset, @1.loc);
+                    text_t *body = pl_wrap_statement_body(yyscanner, body_src);
+                    if (body == NULL) {
+                        parser_abort_or_yyerror("wrap EXECUTE IMMEDIATE statement failed");
+                    }
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile EXECUTE IMMEDIATE statement failed");
+                    }
+                    $$ = NULL;
+                }
+            | EXECUTE subprogram_body
+                {
+                    text_t *body = pl_wrap_statement_body(yyscanner, $2);
+                    if (body == NULL) {
+                        parser_abort_or_yyerror("wrap EXECUTE statement failed");
+                    }
+                    if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
+                        parser_yyerror("compile EXECUTE statement failed");
+                    }
+                    $$ = NULL;
+                }
+        ;
+
 pl_as_is_body:
             as_is subprogram_body                       { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
         ;
@@ -13871,9 +13980,92 @@ pl_type_body:
         ;
 
 pl_trigger_body:
-            BEFORE subprogram_body                      { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
-            | AFTER subprogram_body                     { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
-            | INSTEAD subprogram_body                   { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            trigger_timing trigger_event_list ON any_name opt_trigger_for_each_row pl_trigger_block
+                {
+                    pl_bison_trigger_def_t *trigger_def = pl_bison_make_trigger_def(yyscanner, (trigger_type_t)$1,
+                        (pl_bison_trigger_events_t *)$2, $4, $5, $6, @1.loc, @4.loc, @6.loc);
+                    if (trigger_def == NULL) {
+                        parser_abort_or_yyerror("parse trigger definition failed");
+                    }
+                    $$ = trigger_def;
+                }
+        ;
+
+trigger_timing:
+            BEFORE                                      { $$ = TRIG_BEFORE_STATEMENT; }
+            | AFTER                                     { $$ = TRIG_AFTER_STATEMENT; }
+            | INSTEAD OF_P                              { $$ = TRIG_INSTEAD_OF; }
+        ;
+
+trigger_event_list:
+            trigger_event                               { $$ = $1; }
+            | trigger_event_list OR trigger_event
+                {
+                    pl_bison_trigger_events_t *events = pl_bison_merge_trigger_events(yyscanner,
+                        (pl_bison_trigger_events_t *)$1, (pl_bison_trigger_events_t *)$3);
+                    if (events == NULL) {
+                        parser_abort_or_yyerror("merge trigger events failed");
+                    }
+                    $$ = events;
+                }
+        ;
+
+trigger_event:
+            INSERT
+                {
+                    $$ = pl_bison_make_trigger_events(yyscanner, TRIG_EVENT_INSERT, NULL);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("parse insert trigger event failed");
+                    }
+                }
+            | DELETE_P
+                {
+                    $$ = pl_bison_make_trigger_events(yyscanner, TRIG_EVENT_DELETE, NULL);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("parse delete trigger event failed");
+                    }
+                }
+            | UPDATE opt_trigger_update_columns
+                {
+                    $$ = pl_bison_make_trigger_events(yyscanner, TRIG_EVENT_UPDATE, $2);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("parse update trigger event failed");
+                    }
+                }
+        ;
+
+opt_trigger_update_columns:
+            OF_P trigger_column_list                    { $$ = $2; }
+            | /* EMPTY */                               { $$ = NULL; }
+        ;
+
+trigger_column_list:
+            ColId
+                {
+                    galist_t *columns = NULL;
+                    if (pl_bison_append_trigger_column(yyscanner, &columns, $1, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("parse trigger update column failed");
+                    }
+                    $$ = columns;
+                }
+            | trigger_column_list ',' ColId
+                {
+                    if (pl_bison_append_trigger_column(yyscanner, &$1, $3, @3.loc) != OG_SUCCESS) {
+                        parser_yyerror("parse trigger update column failed");
+                    }
+                    $$ = $1;
+                }
+        ;
+
+opt_trigger_for_each_row:
+            FOR EACH ROW                                { $$ = OG_TRUE; }
+            | /* EMPTY */                               { $$ = OG_FALSE; }
+        ;
+
+pl_trigger_block:
+            DECLARE subprogram_body                     { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            | BEGIN_P subprogram_body                   { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            | BEGIN_NON_ANOYBLOCK subprogram_body       { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
         ;
 
 compileFunctionSource:
@@ -13941,25 +14133,10 @@ compileStoredBodySource:
 
                     $$ = NULL;
                 }
-            | BEFORE subprogram_body
+            | pl_trigger_body
                 {
-                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("compile stored PL source failed");
-                    }
-
-                    $$ = NULL;
-                }
-            | AFTER subprogram_body
-                {
-                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("compile stored PL source failed");
-                    }
-
-                    $$ = NULL;
-                }
-            | INSTEAD subprogram_body
-                {
-                    if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
+                    if (pl_compile_stored_trigger_body_source(yyscanner,
+                        (pl_bison_trigger_def_t *)$1) != OG_SUCCESS) {
                         parser_yyerror("compile stored PL source failed");
                     }
 
@@ -13976,8 +14153,9 @@ CreateProcedureStmt:
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
-                    storage_source.len = yylloc.offset - @7.offset;
+                    int source_offset = ($7 != NULL) ? @7.offset : ($8 ? @8.offset : @9.offset);
+                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + source_offset;
+                    storage_source.len = yylloc.offset - source_offset;
 
                     if (pl_bison_parse_create_procedure(stmt, $2, $5, $6, $7, $10, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create procedure failed");
@@ -13997,8 +14175,9 @@ CreateFunctionStmt:
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
-                    storage_source.len = yylloc.offset - @7.offset;
+                    int source_offset = ($7 == NULL) ? @8.offset : @7.offset;
+                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + source_offset;
+                    storage_source.len = yylloc.offset - source_offset;
 
                     if (pl_bison_parse_create_function(stmt, $2, $5, $6, $7, $9, $11, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create function failed");
@@ -14100,6 +14279,9 @@ subprogram_body: {
                         proc_e = yylloc.offset;
                     }
                     tok = YYLEX;
+                }
+                if (proc_e == proc_b) {
+                    proc_e = yylloc.offset;
                 }
 
                 body_src->value.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + proc_b;
@@ -15796,6 +15978,7 @@ unreserved_keyword:
             | EXCLUDE
             | EXCLUDING
             | EXCLUSIVE
+            | EXEC
             | EXECUTE
             | EXPIRE
             | EXPIRED_P
@@ -16517,6 +16700,39 @@ parser_init(base_yy_extra_type *yyext)
 
 /*$$exclude in dialect end*/
 
+static status_t bison_rewind_native_alter(core_yyscan_t yyscanner, const char *object_word)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    lex_t *lex = stmt->session->lex;
+
+    if (!stmt->parser_text_valid) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid bison alter statement text");
+        return OG_ERROR;
+    }
+
+    lex_init_for_native_type(lex, &stmt->parser_text, &stmt->session->curr_user, stmt->session->call_version,
+        USE_NATIVE_DATATYPE);
+    OG_RETURN_IFERR(lex_expected_fetch_word(lex, "ALTER"));
+    return lex_expected_fetch_word(lex, object_word);
+}
+
+static status_t bison_parse_native_alter_table(core_yyscan_t yyscanner)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    OG_RETURN_IFERR(bison_rewind_native_alter(yyscanner, "TABLE"));
+    OG_RETURN_IFERR(sql_parse_alter_table(stmt));
+    return sql_verify_alter_table(stmt);
+}
+
+static status_t bison_parse_native_alter_database(core_yyscan_t yyscanner)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    OG_RETURN_IFERR(bison_rewind_native_alter(yyscanner, "DATABASE"));
+    return sql_parse_alter_database_lead(stmt);
+}
+
 static status_t column_list_to_column_pairs(sql_stmt_t *stmt, galist_t *colname_list, galist_t **pairs)
 {
     OG_RETURN_IFERR(sql_create_list(stmt, pairs));
@@ -16541,6 +16757,9 @@ static status_t make_type_word(core_yyscan_t yyscanner, type_word_t **type, char
     (*type)->str = str;
     (*type)->typemode = typemode;
     (*type)->loc = loc;
+    (*type)->is_name_typemode = OG_FALSE;
+    (*type)->pl_type = OG_FALSE;
+    (*type)->pl_rowtype = OG_FALSE;
     return OG_SUCCESS;
 }
 
@@ -16752,6 +16971,54 @@ static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int 
     return (text_t *)body_src;
 }
 
+static void pl_trim_statement_terminator(text_t *text)
+{
+    cm_trim_text(text);
+    if (text->len > 0 && text->str[text->len - 1] == '/') {
+        text->len--;
+        cm_trim_text(text);
+    }
+    if (text->len > 0 && text->str[text->len - 1] == ';') {
+        text->len--;
+        cm_trim_text(text);
+    }
+}
+
+static text_t *pl_wrap_statement_body(core_yyscan_t yyscanner, text_t *stmt_src)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    sql_text_t *src = (sql_text_t *)stmt_src;
+    sql_text_t *body = NULL;
+    char *buffer = NULL;
+    text_t stmt_text = src->value;
+    uint32 buf_len;
+
+    pl_trim_statement_terminator(&stmt_text);
+    buf_len = (uint32)strlen("begin\n") + stmt_text.len + (uint32)strlen(";\nend;");
+    if (sql_stack_alloc(stmt, sizeof(sql_text_t), (void **)&body) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)sizeof(sql_text_t), "PL statement body");
+        return NULL;
+    }
+    if (sql_stack_alloc(stmt, buf_len + 1, (void **)&buffer) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)(buf_len + 1), "PL statement body");
+        return NULL;
+    }
+
+    body->value.str = buffer;
+    body->value.len = 0;
+    cm_concat_string(&body->value, buf_len + 1, "begin\n");
+    cm_concat_text(&body->value, buf_len + 1, &stmt_text);
+    cm_concat_string(&body->value, buf_len + 1, ";\nend;");
+    body->loc = src->loc;
+    body->implicit = OG_FALSE;
+    return (text_t *)body;
+}
+
+static status_t pl_compile_anonymous_body(core_yyscan_t yyscanner, text_t *body)
+{
+    return sql_parse_bison_anonymous_directly(og_yyget_extra(yyscanner)->core_yy_extra.stmt, (sql_text_t *)body);
+}
+
 static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *body, int start_offset,
     source_location_t loc, bool32 has_program_body)
 {
@@ -16770,6 +17037,148 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
     }
     stored_body = pl_prepend_body_start(yyscanner, body, start_offset, loc);
     return pl_bison_compile_stored_body_source(stmt, program_body_ptr, stored_body);
+}
+
+static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
+    pl_bison_trigger_def_t *trigger_def)
+{
+    return pl_bison_compile_stored_trigger_body_source(
+        og_yyget_extra(yyscanner)->core_yy_extra.stmt, trigger_def);
+}
+
+static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,
+    source_location_t loc)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    trigger_column_t *column = NULL;
+    text_t column_name;
+
+    if (*columns == NULL) {
+        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(galist_t), (void **)columns));
+        cm_galist_init(*columns, stmt->context, sql_alloc_mem);
+    }
+
+    cm_str2text(name, &column_name);
+    for (uint32 i = 0; i < (*columns)->count; i++) {
+        trigger_column_t *existing = (trigger_column_t *)cm_galist_get(*columns, i);
+        if (cm_text_str_equal_ins(&column_name, existing->col_name)) {
+            OG_SRC_THROW_ERROR(loc, ERR_PL_DUP_OBJ_FMT, name);
+            return OG_ERROR;
+        }
+    }
+
+    OG_RETURN_IFERR(cm_galist_new(*columns, sizeof(trigger_column_t), (void **)&column));
+    column->loc = loc;
+    OG_RETURN_IFERR(cm_text2str(&column_name, column->col_name, OG_NAME_BUFFER_SIZE));
+    return OG_SUCCESS;
+}
+
+static pl_bison_trigger_events_t *pl_bison_make_trigger_events(core_yyscan_t yyscanner, uint16 event,
+    galist_t *columns)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_bison_trigger_events_t *events = NULL;
+
+    if (sql_alloc_mem(stmt->context, sizeof(pl_bison_trigger_events_t), (void **)&events) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)sizeof(pl_bison_trigger_events_t), "trigger events");
+        return NULL;
+    }
+    events->events = event;
+    events->columns = columns;
+    return events;
+}
+
+static status_t pl_bison_copy_trigger_columns(sql_stmt_t *stmt, galist_t **dest, galist_t *src)
+{
+    if (*dest == NULL) {
+        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(galist_t), (void **)dest));
+        cm_galist_init(*dest, stmt->context, sql_alloc_mem);
+    }
+
+    if (src == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < src->count; i++) {
+        trigger_column_t *src_column = (trigger_column_t *)cm_galist_get(src, i);
+        trigger_column_t *dest_column = NULL;
+        text_t column_name;
+
+        cm_str2text(src_column->col_name, &column_name);
+        for (uint32 j = 0; j < (*dest)->count; j++) {
+            trigger_column_t *existing = (trigger_column_t *)cm_galist_get(*dest, j);
+            if (cm_text_str_equal_ins(&column_name, existing->col_name)) {
+                OG_SRC_THROW_ERROR(src_column->loc, ERR_PL_DUP_OBJ_FMT, src_column->col_name);
+                return OG_ERROR;
+            }
+        }
+
+        OG_RETURN_IFERR(cm_galist_new(*dest, sizeof(trigger_column_t), (void **)&dest_column));
+        *dest_column = *src_column;
+    }
+    return OG_SUCCESS;
+}
+
+static pl_bison_trigger_events_t *pl_bison_merge_trigger_events(core_yyscan_t yyscanner,
+    pl_bison_trigger_events_t *left, pl_bison_trigger_events_t *right)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (left == NULL || right == NULL) {
+        return NULL;
+    }
+    if (pl_bison_copy_trigger_columns(stmt, &left->columns, right->columns) != OG_SUCCESS) {
+        return NULL;
+    }
+    left->events |= right->events;
+    return left;
+}
+
+static trigger_type_t pl_bison_apply_trigger_row(trigger_type_t type, bool32 for_each_row, source_location_t loc)
+{
+    if (!for_each_row || type == TRIG_INSTEAD_OF) {
+        return type;
+    }
+
+    if (type == TRIG_AFTER_STATEMENT) {
+        return TRIG_AFTER_EACH_ROW;
+    }
+    if (type == TRIG_BEFORE_STATEMENT) {
+        return TRIG_BEFORE_EACH_ROW;
+    }
+
+    OG_SRC_THROW_ERROR(loc, ERR_PL_SYNTAX_ERROR_FMT, "'FOR EACH ROW' only support 'AFTER' or 'BEFORE'");
+    return type;
+}
+
+static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner, trigger_type_t type,
+    pl_bison_trigger_events_t *events, name_with_owner *table_name, bool32 for_each_row, text_t *body,
+    source_location_t trigger_loc, source_location_t table_loc, source_location_t action_loc)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_bison_trigger_def_t *trigger_def = NULL;
+    trigger_type_t actual_type = pl_bison_apply_trigger_row(type, for_each_row, trigger_loc);
+
+    if (events == NULL) {
+        return NULL;
+    }
+    if (cm_get_error_code() != 0) {
+        return NULL;
+    }
+    if (sql_alloc_mem(stmt->context, sizeof(pl_bison_trigger_def_t), (void **)&trigger_def) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)sizeof(pl_bison_trigger_def_t), "trigger definition");
+        return NULL;
+    }
+
+    trigger_def->type = actual_type;
+    trigger_def->events = events->events;
+    trigger_def->columns = events->columns;
+    trigger_def->table_name = table_name;
+    trigger_def->body = body;
+    trigger_def->trigger_loc = trigger_loc;
+    trigger_def->table_loc = table_loc;
+    trigger_def->action_loc = action_loc;
+    return trigger_def;
 }
 
 static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_t *alter_idx_act, knl_alindex_def_t *def)
