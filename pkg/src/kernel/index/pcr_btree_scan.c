@@ -87,7 +87,6 @@ int32 pcrb_compare_key(index_profile_t *profile, knl_scan_key_t *scan_key, pcrb_
         return 1;
     }
 
-    bool32 is_include_null = OG_FALSE;
     for (uint32 i = 0; i < profile->column_count; i++) {
         result = pcrb_cmp_column(profile->types[i], scan_key, i, key, &offset);
         if (result != 0) {
@@ -95,7 +94,7 @@ int32 pcrb_compare_key(index_profile_t *profile, knl_scan_key_t *scan_key, pcrb_
         }
     }
 
-    if (cmp_rowid || BTREE_KEY_IS_NULL(key) || is_include_null) {
+    if (cmp_rowid || BTREE_KEY_IS_NULL(key)) {
         result = pcrb_cmp_rowid((pcrb_key_t *)scan_key->buf, key);
     } else {
         result = 0;
@@ -435,6 +434,7 @@ static status_t pcrb_enter_locate_page(knl_session_t *session, btree_search_t *s
     knl_panic_log(level == page->level, "current page's level is incorrect, panic info: page %u-%u type %u level %u",
                   page_id.file, page_id.page, page->head.type, page->level);
     locator->page_cache = NO_PAGE_CACHE;
+
     return OG_SUCCESS;
 }
 
@@ -1775,7 +1775,6 @@ static bool32 pcrb_do_match_cond(knl_cursor_t *cursor, pcrb_key_t *key)
 
     curr_key.buf = (char *)key;
     pcrb_decode_key(profile, key, &curr_key);
-    offset = curr_key.offsets[locator->equal_cols];
     if (locator->match_left) {
         offset = curr_key.offsets[locator->equal_cols];
         for (uint8 i = locator->equal_cols; i < index->desc.column_count; i++) {

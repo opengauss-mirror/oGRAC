@@ -816,7 +816,7 @@ void dtc_smon_process_wait_tlock_msg(void *sess, mes_message_t *receive_msg)
             cm_spin_lock(&entry->lock, &session->stat->spin_stat.stat_dc_entry);
             if ((entry->ready) && (!entry->recycled)) {
                 lock = entry->sch_lock;
-                if (lock != NULL && lock->mode == LOCK_MODE_X) {
+                if (lock != NULL && cm_atomic32_get(&lock->mode) == LOCK_MODE_X) {
                     for (uint32 i = 0; i < session->kernel->rm_count; i++) {
                         if (lock->map[i] != 0) {
                             uint16 id = knl_get_rm_sid(session, i);
@@ -1024,7 +1024,7 @@ bool32 dtc_smon_push_tlock(knl_session_t *session, uint8 *w_marks, dtc_dlock_sta
                 return OG_FALSE;
             }
 
-            if (lock->mode == LOCK_MODE_X) {
+            if (cm_atomic32_get(&lock->mode) == LOCK_MODE_X) {
                 if (session->kernel->dtc_attr.inst_id == winstid) {
                     if (lock->dls_tbllock_done != OG_TRUE) {
                         continue;

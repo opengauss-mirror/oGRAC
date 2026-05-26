@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <numa.h>
 #include "srv_module.h"
 #include "cs_protocol.h"
 #include "cm_atomic.h"
@@ -194,8 +195,10 @@ static inline void srv_session_bind_cpu(session_t *session)
     } else {
         if (!rsrc_cpuset_is_equal(&agent->cpuset, &GET_RSRC_MGR->cpuset)) {
             cpu_set_t cpuset = GET_RSRC_MGR->cpuset;
-            knl_get_cpu_set_from_conf(&cpuset);
+            uint8 target_numa = session->knl_session.ass_numa;
+            knl_get_cpu_set_from_conf(&cpuset, target_numa);
             (void)rsrc_thread_bind_cpu(&agent->thread, &cpuset);
+            numa_set_localalloc();
             agent->cpuset = GET_RSRC_MGR->cpuset;
         }
     }
@@ -218,7 +221,6 @@ status_t srv_process_single_session(session_t *session)
     }
     knl_end_session_wait(&session->knl_session, MESSAGE_FROM_CLIENT);
 
-    /* bind session thread to cpu */
     srv_session_bind_cpu(session);
     init_tls_error();
     /* process request command */
@@ -392,7 +394,7 @@ static void srv_try_process_multi_sessions(agent_t *agent)
             return;
         } else if (srv_session_in_priv_resv(session)) {
             continue;
-        } else if (reactor_in_dedicated_mode(agent->reactor) && srv_session_dedicate_agent(session)) {
+        } else if (srv_session_dedicate_agent(session)) {
             continue;
         } else if (!srv_session_in_trans(session) && !knl_alck_have_se_lock(session)) {
             srv_detach_agent_and_set_oneshot(session, agent);

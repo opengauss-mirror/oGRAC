@@ -25,9 +25,9 @@ set(SHARD_TOTAL_SRC ${SHARD_SRC} ${SHD_REBALANCE_SRC} ${SHD_DDL_SRC} ${SHD_DML_S
 
 add_library(ogserver STATIC ${SERVER_SRC} ${SERVER_PARAMS_SRC}  ${SHARD_TOTAL_SRC})
 if (USE_FUZZASAN)
-target_link_libraries(ogserver PRIVATE ogcluster ogcms Secodefuzz ogracsql ogmes)
+target_link_libraries(ogserver PRIVATE ogcluster ogcms Secodefuzz ogracsql ogmes numa)
 else ()
-target_link_libraries(ogserver PRIVATE ogcluster ogcms)
+target_link_libraries(ogserver PRIVATE ogcluster ogcms numa)
 endif(USE_FUZZASAN)
 
 add_library(oGRAC SHARED ${SERVER_SRC} ${SERVER_PARAMS_SRC} ${SHARED_TOTAL_SRC} ${VERSION_SRC})

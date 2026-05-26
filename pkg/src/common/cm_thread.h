@@ -70,7 +70,7 @@ void cm_timedwait_eventfd(cm_thread_eventfd_t *etfd, int32 timeout_ms);
 void cm_wakeup_eventfd(cm_thread_eventfd_t *etfd);
 void cm_release_eventfd(cm_thread_eventfd_t *etfd);
 
-typedef struct st_cm_thread_cond {
+typedef struct __attribute__((aligned(128))) st_cm_thread_cond {
 #ifdef WIN32
     HANDLE sem;
     atomic32_t count;

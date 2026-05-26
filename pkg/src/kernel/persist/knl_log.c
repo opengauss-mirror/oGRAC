@@ -623,13 +623,13 @@ static log_batch_t *log_assemble_batch(knl_session_t *session, log_context_t *og
                 continue;
             }
 
-            if (buf->value != 0) {
+            if (buf->slot_bitmap != 0) {
                 skip_count++;
                 continue;
             }
 
             cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
-            if (buf->value != 0) {
+            if (buf->slot_bitmap != 0) {
                 cm_spin_unlock(&buf->lock);
                 skip_count++;
                 continue;
@@ -686,7 +686,7 @@ bool32 log_need_flush(log_context_t *ogx)
     for (uint32 i = 0; i < ogx->buf_count; i++) {
         log_buffer_t *buf = &ogx->bufs[i].members[wid];
 
-        if (buf->value != 0) {
+        if (buf->slot_bitmap != 0) {
             return OG_TRUE;
         }
 
@@ -702,7 +702,7 @@ static void log_switch_buffer(knl_session_t *session, log_context_t *ogx)
 {
     uint32 wid = ogx->wid;
     bool32 dbs_enabled = cm_dbs_is_enable_dbs();
-    if (dbs_enabled) {
+    if (SECUREC_UNLIKELY(dbs_enabled)) {
         for (uint32 i = 0; i < ogx->buf_count; i++) {
             log_buffer_t *buf = &ogx->bufs[i].members[wid];
             cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
@@ -712,7 +712,7 @@ static void log_switch_buffer(knl_session_t *session, log_context_t *ogx)
     ogx->wid = !ogx->wid;
     ogx->fid = !ogx->fid;
 
-    if (dbs_enabled) {
+    if (SECUREC_UNLIKELY(dbs_enabled)) {
         for (uint32 i = 0; i < ogx->buf_count; i++) {
             log_buffer_t *buf = &ogx->bufs[i].members[wid];
             cm_spin_unlock(&buf->lock);
@@ -720,13 +720,30 @@ static void log_switch_buffer(knl_session_t *session, log_context_t *ogx)
     }
 }
 
-status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, uint64 *lsn)
+status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, uint64 *lsn, uint64* queue_max_lfn)
 {
     log_context_t *ogx = &session->kernel->redo_ctx;
     raft_context_t *raft_ctx = &session->kernel->raft_ctx;
     log_batch_t *new_batch = NULL;
 
-    cm_spin_lock(&ogx->flush_lock, &session->stat->spin_stat.stat_log_flush);
+    if (queue_max_lfn != NULL) {
+        uint64 q_max_lfn = *queue_max_lfn;
+        for (;;) {
+            if (cm_atomic_barrier_read(&ogx->flushed_lfn) >= q_max_lfn) {
+                return OG_SUCCESS;
+            }
+            if (cm_spin_timed_lock(&ogx->flush_lock, 1)) {
+                break;
+            }
+        }
+
+        if (cm_atomic_barrier_read(&ogx->flushed_lfn) >= q_max_lfn) {
+            cm_spin_unlock(&ogx->flush_lock);
+            return OG_SUCCESS;
+        }
+    } else {
+        cm_spin_lock(&ogx->flush_lock, &session->stat->spin_stat.stat_log_flush);
+    }
 
     if (DB_NOT_READY(session) || DB_IS_READONLY(session)) {
         if (point != NULL && log_cmp_point(point, &ogx->curr_point) < 0) {
@@ -891,7 +908,6 @@ void log_proc(thread_t *thread)
         }
 
         uint32 wid = ogx->wid;
-
         for (uint32 i = 0; i < ogx->buf_count; i++) {
             if (ogx->bufs[i].members[wid].write_pos >= LOG_FLUSH_THRESHOLD) {
                 flush_needed = OG_TRUE;
@@ -904,7 +920,7 @@ void log_proc(thread_t *thread)
             continue;
         }
 
-        if (log_flush(session, NULL, NULL, NULL) != OG_SUCCESS) {
+        if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
             KNL_SESSION_CLEAR_THREADID(session);
             CM_ABORT(0, "[LOG] ABORT INFO: redo log task flush redo file failed.");
         }
@@ -1160,34 +1176,36 @@ static status_t log_commit_flush(knl_session_t *session)
     cm_spin_lock(&ogx->tx_queue.lock, &session->stat->spin_stat.stat_commit_queue);
     knl_session_t *begin = ogx->tx_queue.first;
     knl_session_t *end = ogx->tx_queue.last;
+    uint64 queue_max_lfn = ogx->tx_queue.max_lfn;
     ogx->tx_queue.first = NULL;
+    CM_MFENCE;
+    ogx->tx_queue.max_lfn = 0;
     cm_spin_unlock(&ogx->tx_queue.lock);
 
     log_set_commit_progress(begin, end, LOG_WAITING);
 
-    if (log_flush(session, NULL, NULL, NULL) != OG_SUCCESS) {
-        cm_spin_unlock(&ogx->commit_lock);
-        log_wake_up_waiter(session, ogx);
+    cm_spin_unlock(&ogx->commit_lock);
+    log_wake_up_waiter(session, ogx);
+
+    if (log_flush(session, NULL, NULL, NULL, &queue_max_lfn) != OG_SUCCESS) {
         return OG_ERROR;
     }
     uint64 flushed_lfn = ogx->flushed_lfn;
-    cm_spin_unlock(&ogx->commit_lock);
-    if (session->kernel->attr.enable_boc) {
-        tx_scn_broadcast(session);
-    }
-    log_wake_up_waiter(session, ogx);
-
-    if (DB_IS_RAFT_ENABLED(session->kernel)) {
-        knl_panic_log(session->kernel->raft_ctx.status == RAFT_STATUS_INITED, "the raft_ctx's status is abnormal.");
-        raft_wait_for_batch_commit_in_raft(session, flushed_lfn);
-    } else if (session->kernel->lsnd_ctx.standby_num > 0) {
-        lsnd_wait(session, flushed_lfn, &quorum_lfn);
-
-        if (quorum_lfn > 0) {
-            cm_atomic_set((atomic_t *)&session->kernel->redo_ctx.quorum_lfn, (int64)quorum_lfn);
+        if (session->kernel->attr.enable_boc) {
+            tx_scn_broadcast(session);
         }
-    }
-    log_set_commit_progress(begin, end, LOG_COMPLETED);
+
+        if (DB_IS_RAFT_ENABLED(session->kernel)) {
+        knl_panic_log(session->kernel->raft_ctx.status == RAFT_STATUS_INITED, "the raft_ctx's status is abnormal.");
+            raft_wait_for_batch_commit_in_raft(session, flushed_lfn);
+        } else if (session->kernel->lsnd_ctx.standby_num > 0) {
+            lsnd_wait(session, flushed_lfn, &quorum_lfn);
+
+            if (quorum_lfn > 0) {
+            cm_atomic_set((atomic_t *)&session->kernel->redo_ctx.quorum_lfn, (int64)quorum_lfn);
+            }
+        }
+        log_set_commit_progress(begin, end, LOG_COMPLETED);
     return OG_SUCCESS;
 }
 
@@ -1202,9 +1220,11 @@ static void log_commit_enque(knl_session_t *session)
     if (ogx->tx_queue.first == NULL) {
         ogx->tx_queue.first = session;
         ogx->tx_queue.last = session;
+        ogx->tx_queue.max_lfn = session->curr_lfn;
     } else {
         ogx->tx_queue.last->log_next = session;
         ogx->tx_queue.last = session;
+        ogx->tx_queue.max_lfn = session->curr_lfn > ogx->tx_queue.max_lfn ? session->curr_lfn : ogx->tx_queue.max_lfn;
     }
     cm_spin_unlock(&ogx->tx_queue.lock);
 }
@@ -1281,13 +1301,13 @@ static log_buffer_t *log_write_try_lock(knl_session_t *session, log_context_t *o
         uint32 wid = ogx->wid;
         log_buffer_t *buf = &ogx->bufs[buf_id].members[wid];
 
-        if (buf->value == LOG_BUF_SLOT_FULL) {
+        if (log_all_slots_occupied(&buf->slot_bitmap)) {
             cm_spin_sleep();
             continue;
         }
 
         cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
-        if (buf->value == LOG_BUF_SLOT_FULL) {
+        if (log_all_slots_occupied(&buf->slot_bitmap)) {
             cm_spin_unlock(&buf->lock);
             cm_spin_sleep();
             continue;
@@ -1345,7 +1365,7 @@ static void log_write(knl_session_t *session)
 
         cm_spin_unlock(&buf->lock);
 
-        if (log_flush(session, NULL, NULL, NULL) != OG_SUCCESS) {
+        if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
             CM_ABORT(0, "[LOG] ABORT INFO: flush redo log failed");
         }
 
@@ -1360,13 +1380,9 @@ static void log_write(knl_session_t *session)
     if (SECUREC_UNLIKELY(session->log_encrypt)) {
         buf->log_encrypt = OG_TRUE;
     }
-    for (uint8 i = 0; i < LOG_BUF_SLOT_COUNT; i++) {
-        if (buf->slots[i] == 0) {
-            buf->slots[i] = 1;
-            cur_slot = i;
-            break;
-        }
-    }
+    cur_slot = log_find_first_free_slot(&buf->slot_bitmap);
+    knl_panic_log(cur_slot != OG_INVALID_ID8, "no free log buffer slot available");
+    log_claim_slot(&buf->slot_bitmap, cur_slot);
 
     group->lsn = session->curr_lsn;
     if (group->lsn > buf->lsn) {
@@ -1377,7 +1393,7 @@ static void log_write(knl_session_t *session)
 
     log_copy(session, buf, start_pos);
     CM_MFENCE;
-    buf->slots[cur_slot] = 0;
+    log_release_slot(&buf->slot_bitmap, cur_slot);
 }
 
 static bool32 log_can_recycle(knl_session_t *session, log_file_t *file, arch_log_id_t *last_arch_log)

@@ -58,6 +58,280 @@ void spc_alloc_datafile_hwm_extent(knl_session_t *session, space_t *space,
     buf_leave_page(session, OG_TRUE);
 }
 
+static bool32 spc_try_extend_undo_datafile(knl_session_t *session, space_t *space, uint32 file_no,
+    int64 need_bytes)
+{
+    datafile_t *df = NULL;
+    int32 *handle = NULL;
+    int64 size;
+    int64 unused_size;
+    uint32 hwm;
+
+    df = DATAFILE_GET(session, space->ctrl->files[file_no]);
+    if (!DATAFILE_IS_ONLINE(df) || !DATAFILE_IS_AUTO_EXTEND(df)) {
+        return OG_FALSE;
+    }
+
+    hwm = SPACE_HEAD_RESIDENT(session, space)->hwms[file_no];
+    unused_size = df->ctrl->size - (int64)hwm * DEFAULT_PAGE_SIZE(session);
+    if (unused_size >= need_bytes) {
+        return OG_TRUE;
+    }
+
+    if (df->ctrl->size + df->ctrl->auto_extend_size > df->ctrl->auto_extend_maxsize) {
+        size = df->ctrl->auto_extend_maxsize - df->ctrl->size;
+    } else {
+        size = df->ctrl->auto_extend_size;
+    }
+
+    if (size + unused_size < need_bytes) {
+        size = need_bytes - unused_size;
+    }
+
+    if (size <= 0) {
+        return OG_FALSE;
+    }
+
+    handle = DATAFILE_FD(session, space->ctrl->files[file_no]);
+    if (spc_extend_datafile(session, df, handle, size, OG_TRUE) != OG_SUCCESS) {
+        return OG_FALSE;
+    }
+
+    return OG_TRUE;
+}
+
+static bool32 spc_reserve_undo_hwm_pages_impl(knl_session_t *session, space_t *space, uint32 pages_needed,
+    uint32 file_no, page_id_t *extent_start, uint32 *pages_reserved)
+{
+    datafile_t *df = NULL;
+    int64 need_bytes;
+    int64 unused_size;
+    int64 page_size;
+    uint32 hwm;
+    uint32 avail_pages;
+    uint32 reserve_pages;
+    rd_update_hwm_t *redo = NULL;
+    bool32 need_redo = SPACE_IS_LOGGING(space);
+
+    page_size = DEFAULT_PAGE_SIZE(session);
+    need_bytes = (int64)pages_needed * page_size;
+
+    if (file_no >= space->ctrl->file_hwm || OG_INVALID_ID32 == space->ctrl->files[file_no]) {
+        return OG_FALSE;
+    }
+
+    df = DATAFILE_GET(session, space->ctrl->files[file_no]);
+    if (!DATAFILE_IS_ONLINE(df)) {
+        return OG_FALSE;
+    }
+
+    hwm = SPACE_HEAD_RESIDENT(session, space)->hwms[file_no];
+    if (hwm >= MAX_FILE_PAGES(space->ctrl->type)) {
+        return OG_FALSE;
+    }
+
+    unused_size = df->ctrl->size - (int64)hwm * page_size;
+    if (unused_size < need_bytes) {
+        return OG_FALSE;
+    }
+
+    unused_size = df->ctrl->size - (int64)hwm * page_size;
+    avail_pages = (uint32)(unused_size / page_size);
+    if (avail_pages == 0) {
+        return OG_FALSE;
+    }
+
+    reserve_pages = pages_needed;
+    if (reserve_pages > avail_pages) {
+        reserve_pages = avail_pages;
+    }
+    if (hwm + reserve_pages > MAX_FILE_PAGES(space->ctrl->type)) {
+        reserve_pages = MAX_FILE_PAGES(space->ctrl->type) - hwm;
+    }
+    if (reserve_pages == 0) {
+        return OG_FALSE;
+    }
+
+    buf_enter_page(session, space->entry, LATCH_MODE_X, ENTER_PAGE_RESIDENT);
+    extent_start->page = space->head->hwms[file_no];
+    extent_start->file = space->ctrl->files[file_no];
+    extent_start->aligned = 0;
+    space->head->hwms[file_no] += reserve_pages;
+
+    redo = (rd_update_hwm_t *)cm_push(session->stack, sizeof(rd_update_hwm_t));
+    knl_panic(redo != NULL);
+    redo->file_no = file_no;
+    redo->file_hwm = space->head->hwms[file_no];
+    if (need_redo) {
+        log_put(session, RD_SPC_UPDATE_HWM, redo, sizeof(rd_update_hwm_t), LOG_ENTRY_FLAG_NONE);
+    }
+    cm_pop(session->stack);
+    buf_leave_page(session, OG_TRUE);
+
+    *pages_reserved = reserve_pages;
+    return OG_TRUE;
+}
+
+/*
+ * Extend one undo datafile until [hwm, size) covers pages_needed more pages.
+ * Caller must NOT hold space->lock; may perform device I/O.
+ */
+bool32 spc_extend_undo_datafile_for_pages(knl_session_t *session, space_t *space, uint32 file_no,
+    uint32 pages_needed)
+{
+    datafile_t *df = NULL;
+    int64 page_size;
+    int64 need_bytes;
+    int64 unused_size;
+    int64 prev_size;
+    uint32 hwm;
+
+    if (pages_needed == 0) {
+        return OG_TRUE;
+    }
+
+    if (file_no >= space->ctrl->file_hwm || OG_INVALID_ID32 == space->ctrl->files[file_no]) {
+        return OG_FALSE;
+    }
+
+    df = DATAFILE_GET(session, space->ctrl->files[file_no]);
+    if (!DATAFILE_IS_ONLINE(df) || !DATAFILE_IS_AUTO_EXTEND(df)) {
+        return OG_FALSE;
+    }
+
+    page_size = DEFAULT_PAGE_SIZE(session);
+    need_bytes = (int64)pages_needed * page_size;
+    hwm = SPACE_HEAD_RESIDENT(session, space)->hwms[file_no];
+    unused_size = df->ctrl->size - (int64)hwm * page_size;
+    if (unused_size >= need_bytes) {
+        return OG_TRUE;
+    }
+
+    prev_size = df->ctrl->size;
+    while (df->ctrl->size - (int64)hwm * page_size < need_bytes) {
+        unused_size = df->ctrl->size - (int64)hwm * page_size;
+        if (!spc_try_extend_undo_datafile(session, space, file_no, need_bytes - unused_size)) {
+            OG_LOG_RUN_WAR("[UNDO PREALLOC] extend %s failed, size %lld hwm %u need %u pages",
+                df->ctrl->name, (long long)df->ctrl->size, hwm, pages_needed);
+            return OG_FALSE;
+        }
+        if (df->ctrl->size <= prev_size) {
+            OG_LOG_RUN_WAR("[UNDO PREALLOC] extend %s no progress, size %lld hwm %u need %u pages",
+                df->ctrl->name, (long long)df->ctrl->size, hwm, pages_needed);
+            return OG_FALSE;
+        }
+        prev_size = df->ctrl->size;
+    }
+
+    return OG_TRUE;
+}
+
+/*
+ * Reserve a contiguous page range from undo space HWM in one shot.
+ * Caller must hold space->lock (cm_spin_lock on space->lock.lock).
+ * No page format is performed here; only HWM is advanced.
+ * @param target_file_no  when not OG_INVALID_ID32, reserve only from this datafile slot.
+ */
+bool32 spc_reserve_undo_hwm_pages(knl_session_t *session, space_t *space, uint32 pages_needed,
+    uint32 target_file_no, page_id_t *extent_start, uint32 *pages_reserved)
+{
+    datafile_t *df = NULL;
+    int64 need_bytes;
+    int64 unused_size;
+    int64 page_size;
+    uint32 file_no;
+    uint32 id;
+    uint32 hwm;
+    uint32 avail_pages;
+    uint32 reserve_pages;
+    uint32 extend_file_no;
+    int64 extend_size;
+    rd_update_hwm_t *redo = NULL;
+    bool32 need_redo = SPACE_IS_LOGGING(space);
+
+    CM_POINTER3(session, space, extent_start);
+    knl_panic(pages_reserved != NULL);
+
+    if (pages_needed == 0) {
+        return OG_FALSE;
+    }
+
+    if (target_file_no != OG_INVALID_ID32) {
+        return spc_reserve_undo_hwm_pages_impl(session, space, pages_needed, target_file_no, extent_start,
+            pages_reserved);
+    }
+
+    page_size = DEFAULT_PAGE_SIZE(session);
+    need_bytes = (int64)pages_needed * page_size;
+    extend_file_no = OG_INVALID_ID32;
+    extend_size = 0;
+
+    for (id = 0; id < space->ctrl->file_hwm; id++) {
+        if (OG_INVALID_ID32 == space->ctrl->files[id]) {
+            continue;
+        }
+
+        df = DATAFILE_GET(session, space->ctrl->files[id]);
+        if (!DATAFILE_IS_ONLINE(df)) {
+            continue;
+        }
+
+        hwm = SPACE_HEAD_RESIDENT(session, space)->hwms[id];
+        unused_size = df->ctrl->size - (int64)hwm * page_size;
+        if (unused_size < need_bytes) {
+            if (DATAFILE_IS_AUTO_EXTEND(df) && (df->ctrl->size < extend_size || extend_size == 0)) {
+                if (df->ctrl->size + need_bytes - unused_size <= df->ctrl->auto_extend_maxsize) {
+                    extend_file_no = id;
+                    extend_size = df->ctrl->size;
+                }
+            }
+            continue;
+        }
+
+        file_no = id;
+        avail_pages = (uint32)(unused_size / page_size);
+        reserve_pages = pages_needed;
+        if (reserve_pages > avail_pages) {
+            reserve_pages = avail_pages;
+        }
+        if (hwm + reserve_pages > MAX_FILE_PAGES(space->ctrl->type)) {
+            if (hwm >= MAX_FILE_PAGES(space->ctrl->type)) {
+                continue;
+            }
+            reserve_pages = MAX_FILE_PAGES(space->ctrl->type) - hwm;
+        }
+        if (reserve_pages == 0) {
+            continue;
+        }
+
+        buf_enter_page(session, space->entry, LATCH_MODE_X, ENTER_PAGE_RESIDENT);
+        extent_start->page = space->head->hwms[file_no];
+        extent_start->file = space->ctrl->files[file_no];
+        extent_start->aligned = 0;
+        space->head->hwms[file_no] += reserve_pages;
+
+        redo = (rd_update_hwm_t *)cm_push(session->stack, sizeof(rd_update_hwm_t));
+        knl_panic(redo != NULL);
+        redo->file_no = file_no;
+        redo->file_hwm = space->head->hwms[file_no];
+        if (need_redo) {
+            log_put(session, RD_SPC_UPDATE_HWM, redo, sizeof(rd_update_hwm_t), LOG_ENTRY_FLAG_NONE);
+        }
+        cm_pop(session->stack);
+        buf_leave_page(session, OG_TRUE);
+
+        *pages_reserved = reserve_pages;
+        return OG_TRUE;
+    }
+
+    if (extend_file_no == OG_INVALID_ID32) {
+        return OG_FALSE;
+    }
+
+    return spc_reserve_undo_hwm_pages_impl(session, space, pages_needed, extend_file_no, extent_start,
+        pages_reserved);
+}
+
 /*
  * update file hwm on space head if needed after alloc extent from map
  */

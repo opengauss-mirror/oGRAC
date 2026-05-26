@@ -271,9 +271,8 @@ static status_t srv_get_log_buffer_param(knl_attr_t *attr)
         return OG_ERROR;
     }
     attr->lgwr_buf_size = attr->log_buf_size / 2;
-    if (cm_get_cipher_len((uint32)attr->lgwr_buf_size, (uint32 *)&attr->lgwr_cipher_buf_size) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
+    attr->lgwr_cipher_buf_size = attr->lgwr_buf_size;
+
     knl_panic(attr->lgwr_cipher_buf_size >= attr->lgwr_buf_size);
     if (attr->lgwr_cipher_buf_size < attr->lgwr_buf_size) {
         OG_LOG_RUN_ERR("ERROR: wrong lgwr_cipher_buf_size");
@@ -1330,6 +1329,12 @@ status_t srv_load_kernel_params(void)
 
     OG_RETURN_IFERR(srv_get_param_bool32("_UNDO_AUTO_SHRINK", &attr->undo_auto_shrink));
     OG_RETURN_IFERR(srv_get_param_bool32("_UNDO_AUTO_SHRINK_INACTIVE", &attr->undo_auto_shrink_inactive));
+    OG_RETURN_IFERR(srv_get_param_bool32("_UNDO_PERF_PREALLOC", &attr->undo_perf_prealloc));
+    OG_RETURN_IFERR(srv_get_param_uint32("_UNDO_PREALLOC_PAGES", &attr->undo_prealloc_pages));
+    if (attr->undo_prealloc_pages > 65536) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_UNDO_PREALLOC_PAGES", (int64)0, (int64)65536);
+        return OG_ERROR;
+    }
     OG_RETURN_IFERR(srv_get_param_uint32("_TX_ROLLBACK_PROC_NUM", &attr->tx_rollback_proc_num));
     if (attr->tx_rollback_proc_num < OG_MIN_ROLLBACK_PROC) {
         OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "TX_ROLLBACK_PROC_NUM", (int64)OG_MIN_ROLLBACK_PROC);

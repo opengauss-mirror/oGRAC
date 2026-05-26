@@ -25,6 +25,7 @@
 #include "cs_tcp.h"
 #include "cs_pipe.h"
 #include "cm_signal.h"
+#include <numa.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -137,6 +138,19 @@ void cs_set_linger(socket_t sock, int32 l_onoff, int32 l_linger)
     so_linger.l_onoff = l_onoff;
     so_linger.l_linger = l_linger;
     (void)setsockopt(sock, SOL_SOCKET, SO_LINGER, (char *)&so_linger, sizeof(struct linger));
+}
+
+int cs_get_numaid(socket_t sock)
+{
+    int numa_id= -1;
+    int cpuid = -1;
+    socklen_t optlen = sizeof(cpuid);
+    if (getsockopt(sock, SOL_SOCKET, SO_INCOMING_CPU, (void*)&cpuid, &optlen) == 0) {
+        if (cpuid >= 0) {
+            numa_id = numa_node_of_cpu(cpuid);
+        }
+    }
+    return numa_id;
 }
 
 void cs_tcp_poll_set_fd(struct pollfd *fds, uint32 nfds, fd_set *wfds, fd_set *rfds, fd_set *efds)

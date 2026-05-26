@@ -62,11 +62,11 @@ extern "C" {
 #define LOG_FLUSH_THRESHOLD (uint32)1048576
 #define LOG_BUF_SHIFT_FACTOR (uint32)3
 #define LOG_HAS_LOGIC_DATA(s) ((s)->rm->logic_log_size != 0 || (s)->rm->large_page_id != OG_INVALID_ID32)
-#define LOG_BUF_SLOT_FULL 0x0101010101010101
+#define LOG_BUF_SLOT_ALL_FULL (~0ULL)
 #define LOG_FLAG_DROPPED 0x01
 #define LOG_FLAG_ALARMED 0x02
 #define OG_LOG_AREA_COUNT 2
-#define LOG_BUF_SLOT_COUNT 8
+#define LOG_BUF_SLOT_COUNT 64
 
 #define LOG_IS_DROPPED(flag) ((flag)&LOG_FLAG_DROPPED)
 #define LOG_SET_DROPPED(flag) CM_SET_FLAG(flag, LOG_FLAG_DROPPED)
@@ -120,6 +120,7 @@ typedef struct st_log_queue {
     spinlock_t lock;
     knl_session_t *first;
     knl_session_t *last;
+    volatile uint64 max_lfn;
 } log_queue_t;
 
 typedef struct st_log_group {
@@ -229,20 +230,62 @@ typedef struct st_log_buffer {
 #else
 typedef struct __attribute__((aligned(128))) st_log_buffer {
 #endif
-    spinlock_t lock;  // buf lock for switch and write
+    spinlock_t lock;
     bool32 log_encrypt;
     uint32 lock_align[OG_RESERVED_BYTES_14];
 
-    union {
-        volatile uint8 slots[LOG_BUF_SLOT_COUNT];
-        volatile uint64 value;
-    };
+    volatile uint64 slot_bitmap;
 
     uint32 size;
     volatile uint32 write_pos;
     volatile uint64 lsn;
     char *addr;
 } log_buffer_t;
+
+#ifdef WIN32
+static inline uint8 log_find_first_free_slot(volatile uint64 *bitmap)
+{
+    uint64 free_bits = ~(*bitmap);
+    if (free_bits == 0) {
+        return OG_INVALID_ID8;
+    }
+    unsigned long index;
+    _BitScanForward64(&index, free_bits);
+    return (uint8)index;
+}
+#else
+static inline uint8 log_find_first_free_slot(volatile uint64 *bitmap)
+{
+    uint64 free_bits = ~(*bitmap);
+    if (free_bits == 0) {
+        return OG_INVALID_ID8;
+    }
+    return (uint8)__builtin_ffsll(free_bits) - 1;
+}
+#endif
+
+static inline void log_claim_slot(volatile uint64 *bitmap, uint8 slot)
+{
+    uint64 mask = (1ULL << slot);
+    int64 old;
+    do {
+        old = cm_atomic_get((atomic_t *)bitmap);
+    } while (!cm_atomic_cas((atomic_t *)bitmap, old, (int64)((uint64)old | mask)));
+}
+
+static inline void log_release_slot(volatile uint64 *bitmap, uint8 slot)
+{
+    uint64 mask = ~(1ULL << slot);
+    int64 old;
+    do {
+        old = cm_atomic_get((atomic_t *)bitmap);
+    } while (!cm_atomic_cas((atomic_t *)bitmap, old, (int64)((uint64)old & mask)));
+}
+
+static inline bool32 log_all_slots_occupied(volatile uint64 *bitmap)
+{
+    return *bitmap == LOG_BUF_SLOT_ALL_FULL;
+}
 
 typedef struct st_log_dual_buffer {
     log_buffer_t members[OG_LOG_AREA_COUNT];
@@ -334,11 +377,11 @@ typedef struct st_rbp_analyse_result {
 } rbp_analyse_result_t;
 
 typedef struct st_log_context {
-    spinlock_t commit_lock;       // lock for commit
+    spinlock_t commit_lock;
     uint32 lock_align1[15];
-    spinlock_t flush_lock;        // buf lock for flush
+    spinlock_t flush_lock;
     uint32 lock_align2[15];
-    spinlock_t alert_lock;        // for checkpoint not completed
+    spinlock_t alert_lock;
     uint32 lock_align3[15];
     volatile uint64 flushed_lfn;  // latest global flushed batch lfn
     volatile uint64 flushed_lsn;  // latest global flushed batch lsn
@@ -347,16 +390,16 @@ typedef struct st_log_context {
     uint32 buf_count;
     volatile uint16 wid;
     volatile uint16 fid;
-    volatile bool32 alerted;       // for checkpoint not completed
+    volatile bool32 alerted;
     uint64 lfn;
-    volatile uint64 analysis_lfn;  // latest lfn which is doing analysis
+    volatile uint64 analysis_lfn;
 
     uint64 buf_lfn[OG_LOG_AREA_COUNT];
     log_dual_buffer_t bufs[OG_MAX_LOG_BUFFERS];
     log_queue_t tx_queue;
 
     char *logwr_head_buf;
-    char *logwr_buf;  // for log flush
+    char *logwr_buf;
     char *logwr_cipher_buf;
     uint32 logwr_buf_pos;
     uint32 logwr_buf_size;
@@ -373,16 +416,15 @@ typedef struct st_log_context {
     log_replay_proc replay_procs[RD_TYPE_END];
     uint8 cache_align[CACHE_LINESIZE];
 
-    uint16 curr_file;    // current used file
-    uint16 active_file;  // first active file
-    uint32 logfile_hwm;  // max logfile placeholder, may be some holes included(logfile has been dropped)
-    log_file_t *files;   // point to db logfiles
+    uint16 curr_file;
+    uint16 active_file;
+    uint32 logfile_hwm;
+    log_file_t *files;
     uint64 free_size;
 
     thread_t thread;
     thread_t async_thread;
 
-    /* for redo log analyze */
     replay_stat_t replay_stat;
     log_analysis_proc analysis_procs[RD_TYPE_END];
     log_verify_page_format_proc verify_page_format_proc[RD_TYPE_END];
@@ -507,7 +549,7 @@ void log_copy_logic_data(knl_session_t *session, log_buffer_t *buf, uint32 start
 void log_commit(knl_session_t *session);
 
 bool32 log_need_flush(log_context_t *ogx);
-status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, uint64 *lsn);
+status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, uint64 *lsn, uint64* queue_max_lfn);
 void log_recycle_file(knl_session_t *session, log_point_t *point);
 
 void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn);

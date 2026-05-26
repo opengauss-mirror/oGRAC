@@ -264,6 +264,7 @@ typedef enum en_spin_type {
     SPIN_CKPT_QUEUE,
     SPIN_BUFFER,
     SPIN_BUCKET,
+    SPIN_BUF_LATCH,
     SPIN_SPACE,
     SPIN_DC_ENTRY,
     SPIN_LOG_FLUSH,
@@ -291,6 +292,7 @@ static spin_mgr_t g_spin_mgrs[] = {
     { SPIN_CKPT_QUEUE,   "CKPT_QUEUE" },
     { SPIN_BUFFER,       "BUFFER" },
     { SPIN_BUCKET,       "BUCKET" },
+    { SPIN_BUF_LATCH,    "BUF_LATCH" },
     { SPIN_SPACE,        "SPACE" },
     { SPIN_DC_ENTRY,     "DC_ENTRY" },
     { SPIN_LOG_FLUSH,    "LOG_FLUSH" },
@@ -321,6 +323,8 @@ static spin_statis_t *vw_get_spin_info(knl_session_t *session, spin_type_t type)
             return &session->stat->spin_stat.stat_buffer;
         case SPIN_BUCKET:
             return &session->stat->spin_stat.stat_bucket;
+        case SPIN_BUF_LATCH:
+            return &session->stat->spin_stat.stat_buf_latch;
         case SPIN_SPACE:
             return &session->stat->spin_stat.stat_space;
         case SPIN_DC_ENTRY:

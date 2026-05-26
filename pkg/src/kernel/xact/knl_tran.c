@@ -230,7 +230,6 @@ static inline undo_t *tx_bind_undo(knl_session_t *session, knl_rm_t *rm)
 {
     undo_context_t *ogx = &session->kernel->undo_ctx;
     uint64 global_segid;
-
     rm->undo_page_info.undo_rid = g_invalid_undo_rowid;
     rm->undo_page_info.undo_fs = 0;
     rm->undo_page_info.encrypt_enable = OG_FALSE;

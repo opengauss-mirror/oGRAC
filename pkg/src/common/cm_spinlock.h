@@ -195,12 +195,17 @@ static inline void cm_spin_unlock(spinlock_t *lock)
     __atomic_store_n(lock, 0, __ATOMIC_SEQ_CST);
 }
 
+#define CM_RELEASE_CPU __asm__ __volatile__("isb" ::: "memory")
+
 #else
 static inline uint32 cm_spin_set(spinlock_t *ptr, uint32 value)
 {
     uint32 oldvalue = 0;
     return (uint32)__sync_val_compare_and_swap(ptr, oldvalue, value);
 }
+
+#define CM_RELEASE_CPU __asm__ __volatile__("pause")
+
 #endif
 
 static inline void cm_spin_sleep(void)
@@ -256,6 +261,126 @@ static inline void cm_spin_lock(spinlock_t *lock, spin_statis_t *stat)
         }
 #endif
     }
+}
+
+/*
+ * Buffer hash-bucket lock: relaxed spin-wait + acquire CAS + release unlock.
+ * All buf_bucket_t::lock paths must use this pair (not cm_spin_lock/unlock).
+ */
+#if defined(__arm__) || defined(__aarch64__)
+#define CM_SPIN_BUCKET_PAUSE() \
+    do {                       \
+        __asm__ volatile("yield" ::: "memory"); \
+    } while (0)
+#else
+#define CM_SPIN_BUCKET_PAUSE() fas_cpu_pause()
+#endif
+
+static inline void cm_spin_lock_bucket(spinlock_t *lock, spin_statis_t *stat)
+{
+    uint32 spin_times = 0;
+    uint32 sleep_times = 0;
+
+    if (SECUREC_UNLIKELY(lock == NULL)) {
+        return;
+    }
+
+    for (;;) {
+#if defined(__arm__) || defined(__aarch64__)
+        while (__atomic_load_n(lock, __ATOMIC_RELAXED) != 0) {
+#else
+        while (*lock != 0) {
+#endif
+            SPIN_STAT_INC(stat, spins);
+            spin_times++;
+            CM_SPIN_BUCKET_PAUSE();
+            if (SECUREC_UNLIKELY(spin_times == OG_SPIN_COUNT)) {
+                cm_spin_sleep_and_stat(stat);
+                spin_times = 0;
+            }
+        }
+
+#if defined(__arm__) || defined(__aarch64__)
+        uint32 expected = 0;
+        if (SECUREC_LIKELY(__atomic_compare_exchange_n(lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))) {
+            break;
+        }
+#else
+        if (SECUREC_LIKELY(cm_spin_set(lock, 1) == 0)) {
+            break;
+        }
+#endif
+        SPIN_STAT_INC(stat, fails);
+        sleep_times++;
+#ifndef WIN32
+        for (uint32 i = 0; i < sleep_times; i++) {
+            CM_SPIN_BUCKET_PAUSE();
+        }
+#endif
+    }
+}
+
+static inline void cm_spin_unlock_bucket(spinlock_t *lock)
+{
+    if (SECUREC_UNLIKELY(lock == NULL)) {
+        return;
+    }
+
+#ifdef WIN32
+    (void)cm_spin_set(lock, 0);
+#else
+    __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
+#endif
+}
+
+static inline bool32 cm_spin_timed_lock_bucket(spinlock_t *lock, uint32 timeout_ticks)
+{
+    uint32 spin_times = 0;
+    uint32 wait_ticks = 0;
+    uint32 sleep_times = 0;
+
+    if (SECUREC_UNLIKELY(lock == NULL)) {
+        return OG_FALSE;
+    }
+
+    for (;;) {
+#if defined(__arm__) || defined(__aarch64__)
+        while (__atomic_load_n(lock, __ATOMIC_RELAXED) != 0) {
+#else
+        while (*lock != 0) {
+#endif
+            if (SECUREC_UNLIKELY(wait_ticks >= timeout_ticks)) {
+                return OG_FALSE;
+            }
+
+            CM_SPIN_BUCKET_PAUSE();
+            spin_times++;
+            if (SECUREC_UNLIKELY(spin_times == OG_SPIN_COUNT)) {
+                cm_spin_sleep();
+                spin_times = 0;
+                wait_ticks++;
+            }
+        }
+
+#if defined(__arm__) || defined(__aarch64__)
+        uint32 expected = 0;
+        if (SECUREC_LIKELY(__atomic_compare_exchange_n(lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))) {
+            break;
+        }
+#else
+        if (SECUREC_LIKELY(cm_spin_set(lock, 1) == 0)) {
+            break;
+        }
+#endif
+        sleep_times++;
+#ifndef WIN32
+        for (uint32 i = 0; i < sleep_times; i++) {
+            CM_SPIN_BUCKET_PAUSE();
+        }
+#endif
+    }
+
+    return OG_TRUE;
 }
 
 static inline void cm_spin_lock_ex(spinlock_t *lock, spin_statis_t *stat, uint32 spin_count)

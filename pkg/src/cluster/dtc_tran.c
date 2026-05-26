@@ -26,6 +26,7 @@
 #include "dtc_tran.h"
 #include "dtc_database.h"
 #include "dtc_reform.h"
+#include "knl_log.h"
 
 status_t dtc_get_remote_txn_info(knl_session_t *session, bool32 is_scan, xid_t xid, uint8 dst_id, txn_info_t *txn_info)
 {
@@ -90,13 +91,13 @@ page_id_t dtc_get_txn_page_id(knl_session_t *session, xmap_t xmap)
 void dtc_flush_log(knl_session_t *session, page_id_t page_id)
 {
     buf_bucket_t *bucket = buf_find_bucket(session, page_id);
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
     bool32 need_flush = (ctrl != NULL) && (ctrl->is_dirty || ctrl->is_marked) && OGRAC_NEED_FLUSH_LOG(session, ctrl);
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     if (need_flush) {
-        if (log_flush(session, NULL, NULL, NULL) != OG_SUCCESS) {
+        if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
             CM_ABORT(0, "[DTC][%u-%u]: ABORT INFO: flush redo log failed", page_id.file, page_id.page);
         }
     }

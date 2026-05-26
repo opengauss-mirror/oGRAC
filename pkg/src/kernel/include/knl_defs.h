@@ -138,8 +138,8 @@ extern const undo_rowid_t g_invalid_undo_rowid;
 #define ROWID_BLOCK_NUMBER_BITS   22
 #define ROWID_ROW_NUMBER_BITS     15
 
-#define IS_SAME_PAGID(id1, id2)          ((id1).page == (id2).page && (id1).file == (id2).file)
-#define IS_SAME_PAGID_BY_ROWID(id1, id2) ((id1).page == (id2).page && (id1).file == (id2).file)
+#define IS_SAME_PAGID(id1, id2)          (PAGE_ID_VALUE(id1) == PAGE_ID_VALUE(id2))
+#define IS_SAME_PAGID_BY_ROWID(id1, id2) (PAGE_ID_VALUE(id1) == PAGE_ID_VALUE(id2))
 #define IS_SAME_TEMP_PAGEID(id1, id2)    ((id1).vmid == (id2).vmid)
 #define ROWID_LENGTH                     18 /* rowid for outer users is a string with a fixed length ROWID_LENGTH. */
 #define IS_SAME_ROWID(rid1, rid2)        ((rid1).value == (rid2).value)

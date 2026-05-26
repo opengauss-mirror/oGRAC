@@ -1006,10 +1006,7 @@ void sql_context_inc_exec(sql_context_t *sql_ctx)
         return;
     }
     ctrl = &sql_ctx->ctrl;
-    cm_spin_lock(&ctrl->lock, NULL);
-    CM_ASSERT(ctrl->exec_count >= 0);
-    ctrl->exec_count++;
-    cm_spin_unlock(&ctrl->lock);
+    (void)cm_atomic32_inc(&ctrl->exec_count);
 }
 
 void sql_context_dec_exec(sql_context_t *sql_ctx)
@@ -1020,7 +1017,7 @@ void sql_context_dec_exec(sql_context_t *sql_ctx)
         return;
     }
     ctrl = &sql_ctx->ctrl;
-    ogx_dec_exec(ctrl);
+    (void)cm_atomic32_dec(&ctrl->exec_count);
 }
 
 static unnamed_tab_info_t g_unnamed_tab_info[] = {

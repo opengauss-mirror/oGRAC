@@ -67,7 +67,7 @@ bool32 dc_is_locked(dc_entry_t *entry)
     if (IS_LTT_BY_ID(entry->id)) {
         return (entry->ltt_lock_mode != LOCK_MODE_IDLE);
     } else {
-        return (bool32)(lock != NULL && lock->mode != LOCK_MODE_IDLE);
+        return (bool32)(lock != NULL && cm_atomic32_get(&lock->mode) != LOCK_MODE_IDLE);
     }
 }
 

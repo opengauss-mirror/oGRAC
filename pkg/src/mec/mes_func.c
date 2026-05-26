@@ -34,6 +34,7 @@
 #include "mes_tcp.h"
 #include "mes_func.h"
 #include "knl_database.h"
+#include "cm_cpu.h"
 
 mes_instance_t g_mes;
 
@@ -60,6 +61,33 @@ mes_alloc_msgitem_t g_alloc_msgitem_func;
 bool32 g_enable_dbstor = OG_FALSE;
 
 ssl_auth_file_t g_mes_ssl_auth_file = {0};
+
+uint32 mes_build_cpu_bind_array(uint32 *cpu_bind_array)
+{
+    int cpu_group_num = get_cpu_group_num();
+    int *cpu_info = get_cpu_info();
+
+    if (cpu_group_num <= 0 || cpu_info == NULL) {
+        return 0;
+    }
+
+    uint32 cores_per_group = MES_CPU_BIND_TOTAL / (uint32)cpu_group_num;
+    uint32 remainder = MES_CPU_BIND_TOTAL % (uint32)cpu_group_num;
+    uint32 total_count = 0;
+
+    for (int g = 0; g < cpu_group_num && total_count < MES_CPU_BIND_TOTAL; g++) {
+        uint32 pick_count = cores_per_group + ((uint32)g < remainder ? 1 : 0);
+        for (uint32 j = 0; j < pick_count && total_count < MES_CPU_BIND_TOTAL; j++) {
+            int cpu_id = cpu_info[g * SMALL_RECORD_SIZE + j];
+            if (cpu_id < 0) {
+                break;
+            }
+            cpu_bind_array[total_count++] = (uint32)cpu_id;
+        }
+    }
+
+    return total_count;
+}
 
 #define MES_CONNECT(inst_id) g_connect_func(inst_id)
 #define MES_DISCONNECT(inst_id) g_disconnect_func(inst_id)

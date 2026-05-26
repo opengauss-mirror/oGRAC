@@ -44,6 +44,7 @@
 #include "ogsql_resource.h"
 #include "srv_sess_security.h"
 #include "cm_io_record.h"
+#include "cm_cpu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -299,10 +300,6 @@ typedef struct st_promote_record {
 #define sql_pool (g_instance->sql.pool)
 #define buddy_mem_pool (&g_instance->sga.buddy_pool)
 
-#define CPU_INFO_STR_SIZE 10240  // 配置的CPU绑核信息
-#define CPU_SEG_MAX_NUM 64
-#define SMALL_RECORD_SIZE 128
-
 extern instance_t *g_instance;
 extern char *g_database_home;
 status_t srv_instance_startup(db_startup_phase_t phase, bool32 is_coordinator, bool32 is_datanode, bool32 is_gts);
@@ -326,9 +323,6 @@ void rsrc_queue_total_inc(session_t *session);
 void srv_thread_exit(thread_t *thread, session_t *session);
 status_t srv_shutdown_wait(session_t *session, shutdown_mode_t mode, shutdown_context_t *ogx);
 void srv_unlock_db(void);
-int get_cpu_group_num(void);
-cpu_set_t* get_cpu_masks(void);
-char *get_g_cpu_info(void);
 #ifdef __cplusplus
 }
 #endif

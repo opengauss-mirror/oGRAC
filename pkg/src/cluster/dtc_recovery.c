@@ -569,16 +569,16 @@ status_t dtc_rcy_set_item_update_need_replay(rcy_set_bucket_t *bucket, page_id_t
     knl_session_t *session = g_instance->kernel.sessions[SESSION_ID_KERNEL];
     if (!DB_IS_PRIMARY(&session->kernel->db)) {
         buf_bucket_t *buf_bucket = buf_find_bucket(session, page_id);
-        cm_spin_lock(&buf_bucket->lock, NULL);
+        cm_spin_lock_bucket(&buf_bucket->lock, NULL);
         buf_ctrl_t *ctrl = buf_find_from_bucket(buf_bucket, page_id);
         if (!ctrl || ctrl->lock_mode == DRC_LOCK_NULL) {
             /* If the page is not in memory or lock mode is null, the partial recovery for that page can't be skipped,
             as the page on disk may be not the latest one. */
             curr_page_lsn = 0;
-            cm_spin_unlock(&buf_bucket->lock);
+            cm_spin_unlock_bucket(&buf_bucket->lock);
         } else {
             curr_page_lsn = (ctrl->page)->lsn;
-            cm_spin_unlock(&buf_bucket->lock);
+            cm_spin_unlock_bucket(&buf_bucket->lock);
         }
     }
     while (item != NULL) {
@@ -4117,16 +4117,16 @@ bool32 dtc_page_in_rcyset(knl_session_t *session, page_id_t page_id)
     uint64 curr_page_lsn = OG_INVALID_ID64;
     if (item != NULL && item->need_replay) {
         buf_bucket_t *buf_bucket = buf_find_bucket(session, page_id);
-        cm_spin_lock(&buf_bucket->lock, NULL);
+        cm_spin_lock_bucket(&buf_bucket->lock, NULL);
         buf_ctrl_t *ctrl = buf_find_from_bucket(buf_bucket, page_id);
         if (!ctrl || ctrl->lock_mode == DRC_LOCK_NULL) {
             /* If the page is not in memory or lock mode is null, the partial recovery for that page can't be skipped,
             as the page on disk may be not the latest one. */
             curr_page_lsn = 0;
-            cm_spin_unlock(&buf_bucket->lock);
+            cm_spin_unlock_bucket(&buf_bucket->lock);
         } else {
             curr_page_lsn = (ctrl->page)->lsn;
-            cm_spin_unlock(&buf_bucket->lock);
+            cm_spin_unlock_bucket(&buf_bucket->lock);
         }
 
         if (item->last_dirty_lsn <= curr_page_lsn) {
@@ -10154,12 +10154,12 @@ status_t dtc_add_dirtypage_for_recovery(knl_session_t *session, page_id_t page_i
         3) later the partial recovery node crash afterwards.
     */
     buf_bucket_t *bucket = buf_find_bucket(session, page_id);
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
     if (!ctrl || ctrl->lock_mode == DRC_LOCK_NULL) {
         /* If the page is not in memory or lock mode is null, the partial recovery for that page can't be skipped,
            as the page on disk may be not the latest one. */
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         OG_LOG_RUN_WAR("[DTC RCY] can't skip enter page [%u-%u] due to it's not in memory or not usable", page_id.file,
                        page_id.page);
         return OG_ERROR;
@@ -10169,7 +10169,7 @@ status_t dtc_add_dirtypage_for_recovery(knl_session_t *session, page_id_t page_i
         ctrl->is_dirty = OG_TRUE;
         ckpt_enque_one_page(session, ctrl);
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
     return OG_SUCCESS;
 }
 

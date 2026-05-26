@@ -199,6 +199,7 @@ void undo_init_impl(knl_session_t *session, undo_set_t *undo_set, uint32 lseg_no
 status_t undo_create(knl_session_t *session, uint32 inst_id, uint32 space_id, uint32 lseg_no, uint32 count);
 status_t temp_undo_create(knl_session_t *session, uint32 inst_id, uint32 space_id, uint32 lseg_no, uint32 count);
 status_t undo_preload(knl_session_t *session);
+status_t undo_perf_preload(knl_session_t *session);
 void undo_close(knl_session_t *session);
 void undo_set_release(knl_session_t *session, undo_set_t *undo_set);
 status_t undo_multi_prepare(knl_session_t *session, uint32 count, uint32 size, bool32 need_redo, bool32 need_encrypt);

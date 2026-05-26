@@ -153,6 +153,8 @@ typedef struct st_knl_attr {
     bool32 undo_auto_shrink;
     bool32 undo_auto_shrink_inactive;
     uint32 undo_prefetch_page_num;
+    bool32 undo_perf_prealloc;
+    uint32 undo_prealloc_pages;
     uint32 tx_rollback_proc_num;
     bool32 serialized_commit;
     uint32 lock_wait_timeout;

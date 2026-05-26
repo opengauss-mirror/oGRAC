@@ -637,7 +637,7 @@ static status_t drc_buf_ctrl_fetch(knl_handle_t se, knl_cursor_t *cursor)
         OG_RETURN_IFERR(row_put_uint32(&ra, (uint32)ctrl->is_edp));
         OG_RETURN_IFERR(row_put_int64(&ra, (int64)ctrl->edp_scn));
         OG_RETURN_IFERR(row_put_int64(&ra, (int64)ctrl->edp_map));
-        OG_RETURN_IFERR(row_put_uint32(&ra, (uint32)ctrl->ref_num));
+        OG_RETURN_IFERR(row_put_uint32(&ra, (uint32)cm_atomic32_get(&ctrl->ref_num)));
         OG_RETURN_IFERR(row_put_int64(&ra, (int64)ctrl->lastest_lfn));
         OG_RETURN_IFERR(row_put_int32(&ra, 0)); // buf ctrl don't need to flush
         OG_RETURN_IFERR(row_put_uint32(&ra, (uint32)(ctrl->load_status == BUF_IS_LOADED)));

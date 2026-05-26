@@ -66,6 +66,7 @@ typedef struct st_undo_page_info {
 #define ROWID_VALUE_BITS  52
  
 typedef union st_page_id {
+    uint64 value;          /* overlays page/file; compare pagids via PAGE_ID_VALUE, not raw value */
     uint32 vmid;
     struct {
         uint32 page;
