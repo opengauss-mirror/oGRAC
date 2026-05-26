@@ -364,15 +364,25 @@ static status_t pl_prepare_load_entity(sql_stmt_t *stmt, pl_entry_t *entry, pl_e
     OG_RETURN_IFERR(sql_create_list(sub_stmt, &sub_stmt->context->params));
     plc_diag_ctx_type(entity->context, entity->pl_type);
 
-    OG_RETURN_IFERR(pl_save_lex(stmt, &load_assist->lex_bak));
+    if (!g_instance->sql.use_bison_parser) {
+        OG_RETURN_IFERR(pl_save_lex(stmt, &load_assist->lex_bak));
+    }
 
     if (pl_load_sysproc_source(se, &entry->desc, &source_pages, &source, &load_assist->new_page) != OG_SUCCESS) {
-        pl_restore_lex(stmt, load_assist->lex_bak);
+        if (load_assist->lex_bak != NULL) {
+            pl_restore_lex(stmt, load_assist->lex_bak);
+        }
         return OG_ERROR;
     }
 
     load_assist->source_page = source_pages;
-    pl_init_lex(sub_stmt->session->lex, source);
+    load_assist->source_text.value = source;
+    load_assist->source_text.loc.line = 1;
+    load_assist->source_text.loc.column = 1;
+    load_assist->source_text.implicit = OG_FALSE;
+    if (!g_instance->sql.use_bison_parser) {
+        pl_init_lex(sub_stmt->session->lex, source);
+    }
 
     return OG_SUCCESS;
 }
@@ -410,6 +420,61 @@ static status_t pl_compile_object(load_assist_t *load_ass, pl_entry_t *entry, pl
     return OG_SUCCESS;
 }
 
+static inline bool32 pl_bison_stored_source_may_have_name(uint32 type)
+{
+    return (type == PL_FUNCTION || type == PL_PROCEDURE);
+}
+
+static inline bool32 pl_is_stored_source_separator(char ch)
+{
+    return (ch == '(' || ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n');
+}
+
+static void pl_advance_stored_source(sql_text_t *source, uint32 count)
+{
+    while (count > 0 && source->value.len > 0) {
+        if (*source->value.str == '\n') {
+            source->loc.line++;
+            source->loc.column = 1;
+        } else {
+            source->loc.column++;
+        }
+        source->value.str++;
+        source->value.len--;
+        count--;
+    }
+}
+
+static void pl_trim_bison_stored_source_name(pl_entry_t *entry, pl_entity_t *entity, sql_text_t *source)
+{
+    text_t prefix;
+    text_t *name = &entity->def.name;
+
+    if (!pl_bison_stored_source_may_have_name(entry->desc.type) || CM_IS_EMPTY(name) ||
+        source->value.len <= name->len) {
+        return;
+    }
+
+    prefix.str = source->value.str;
+    prefix.len = name->len;
+    if (cm_compare_text_ins(&prefix, name) != 0 || !pl_is_stored_source_separator(source->value.str[name->len])) {
+        return;
+    }
+
+    /*
+     * Older bison-created no-arg PL objects may have SYS_PROC source fragments
+     * that still start with the object name.  Stored-source reload compiles in
+     * the context of that entity, so strip only that redundant prefix before
+     * handing the fragment to the SQL bison grammar.
+     */
+    pl_advance_stored_source(source, name->len);
+    while (source->value.len > 0 &&
+        (*source->value.str == ' ' || *source->value.str == '\t' || *source->value.str == '\r' ||
+        *source->value.str == '\n')) {
+        pl_advance_stored_source(source, 1);
+    }
+}
+
 #define CONVERT_OBJ_STATUS(obj, cl_ret) (obj) = ((cl_ret) == OG_SUCCESS) ? OBJ_STATUS_VALID : OBJ_STATUS_INVALID
 
 status_t pl_load_entity(sql_stmt_t *stmt, pl_entry_t *entry, pl_entity_t **entity_out)
@@ -430,8 +495,9 @@ status_t pl_load_entity(sql_stmt_t *stmt, pl_entry_t *entry, pl_entity_t **entit
     if (!g_instance->sql.use_bison_parser) {
         status = pl_compile_object(&load_ass, entry, entity);
     } else {
-        status = raw_parser(load_ass.sub_stmt, &load_ass.sub_stmt->session->lex->text,
-            &load_ass.sub_stmt->context->entry);
+        sql_text_t bison_source = load_ass.source_text;
+        pl_trim_bison_stored_source_name(entry, entity, &bison_source);
+        status = raw_parser(load_ass.sub_stmt, &bison_source, &load_ass.sub_stmt->context->entry);
     }
     CONVERT_OBJ_STATUS(obj_status, status);
     status = pl_proc_compile_result(KNL_SESSION(stmt), entity, obj_status);
@@ -447,7 +513,9 @@ status_t pl_load_entity(sql_stmt_t *stmt, pl_entry_t *entry, pl_entity_t **entit
     sql_release_lob_info(load_ass.sub_stmt);
     sql_release_resource(load_ass.sub_stmt, OG_TRUE);
     pl_free_source_page(&load_ass.source_page, load_ass.new_page);
-    pl_restore_lex(stmt, load_ass.lex_bak);
+    if (load_ass.lex_bak != NULL) {
+        pl_restore_lex(stmt, load_ass.lex_bak);
+    }
     PLE_RESTORE_STMT(stmt);
     *entity_out = entity;
 

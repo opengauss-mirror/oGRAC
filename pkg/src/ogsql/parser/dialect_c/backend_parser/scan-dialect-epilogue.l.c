@@ -46,6 +46,12 @@ core_yyscan_t c_scanner_init(const sql_text_t *sql,
     errno_t ret = memcpy_s(yyext->scanbuf, slen + 1, str, slen);
     knl_securec_check(ret);
     yyext->scanbuf[slen] = yyext->scanbuf[slen + 1] = YY_END_OF_BUFFER_CHAR;
+    if (stmt->parser_text_valid) {
+        stmt->parser_text.str = yyext->scanbuf;
+        stmt->parser_text.len = (uint32)slen;
+        stmt->parser_text.loc = sql->loc;
+        stmt->parser_text.implicit = sql->implicit;
+    }
     yy_scan_buffer(yyext->scanbuf, slen + SCANBUF_EXTRA_SIZE, scanner);
 
     /* initialize literal buffer to a reasonable but expansible size */

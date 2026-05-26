@@ -68,6 +68,7 @@ status_t plc_compile_proc_desc(pl_compiler_t *compiler, word_t *word, text_t *na
 status_t plc_compile_package_spec(pl_compiler_t *compiler, word_t *word);
 plv_decl_t *plc_get_last_addr_decl(sql_stmt_t *stmt, var_address_pair_t *addr_pair);
 status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, type_word_t *ret_type, text_t *body);
+status_t plc_bison_compile_anonymous(sql_stmt_t *stmt, plc_desc_t *desc, text_t *body);
 status_t pl_parser(sql_stmt_t *stmt, text_t *src);
 status_t plc_bison_compile_type(pl_compiler_t *compiler, pmode_t pmod, typmode_t *typmod, type_word_t *type);
 

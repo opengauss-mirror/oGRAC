@@ -35,8 +35,18 @@ extern "C" {
 #define PLC_SAVE_KW_HOOK(compiler) plc_keyword_hook_t __kw_hook__ = (compiler)->keyword_hook
 #define PLC_RESTORE_KW_HOOK(compiler) (compiler)->keyword_hook = __kw_hook__
 
+typedef struct st_pl_bison_static_sql_arg {
+    sql_context_t **ogx;
+    text_t *sql;
+    key_wid_t key_wid;
+    source_location_t *loc;
+    galist_t *sql_list;
+    galist_t *input;
+} pl_bison_static_sql_arg_t;
+
 status_t pl_compile_parse_sql(sql_stmt_t *stmt, sql_context_t **ogx, text_t *sql, source_location_t *loc,
     galist_t *sql_list);
+status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *arg);
 status_t plc_compile_sql(pl_compiler_t *compiler, word_t *word);
 status_t plc_compile_dml(pl_compiler_t *compiler, text_t *sql, word_t *word, uint32 types, void *usrdef);
 status_t plc_compile_select(pl_compiler_t *compiler, text_t *sql, word_t *word, bool32 is_select_into);

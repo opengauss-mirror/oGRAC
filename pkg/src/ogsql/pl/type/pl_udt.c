@@ -505,7 +505,10 @@ status_t udt_into_as_value(sql_stmt_t *stmt, pl_into_t *into, void *exec, varian
         return udt_copy_array(stmt, right, node);
     }
 
-    CM_ASSERT(stmt->parent_stmt != NULL);
+    if (stmt->parent_stmt == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL parent statement");
+        return OG_ERROR;
+    }
     parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
     /* SCALAR ASSIGN */
     return udt_exec_v_addr(parent_stmt, node, NULL, right);
@@ -517,7 +520,10 @@ status_t udt_into_as_coll(sql_stmt_t *stmt, pl_into_t *into, void *exec, variant
     variant_t obj;
     ple_var_t *left = NULL;
     sql_stmt_t *parent_stmt = NULL;
-    CM_ASSERT(stmt->parent_stmt != NULL);
+    if (stmt->parent_stmt == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL parent statement");
+        return OG_ERROR;
+    }
     parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
 
     // hit scenario select col1, col2, ... bulk collect into coll_var1[c_type], coll_var2[c_type], ...,
@@ -569,7 +575,10 @@ status_t udt_into_as_record(sql_stmt_t *stmt, pl_into_t *into, void *exec, varia
     CM_ASSERT(into->output->count == 1);
     // hit scenario select col1, col2, ... bulk collect into rec_var1[r_type]
     // type r_type  is record(f1, f2, ...)
-    CM_ASSERT(stmt->parent_stmt != NULL);
+    if (stmt->parent_stmt == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL parent statement");
+        return OG_ERROR;
+    }
     parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
     expr_node_t *node = (expr_node_t *)cm_galist_get(into->output, 0);
     var_addr = NODE_VALUE_PTR(var_address_t, node);
@@ -588,7 +597,10 @@ status_t udt_into_as_coll_rec(sql_stmt_t *stmt, pl_into_t *into, void *exec, var
     ple_var_t *left = NULL;
     sql_stmt_t *parent_stmt = NULL;
 
-    CM_ASSERT(stmt->parent_stmt != NULL);
+    if (stmt->parent_stmt == NULL) {
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "unexpected PL parent statement");
+        return OG_ERROR;
+    }
     parent_stmt = (sql_stmt_t *)stmt->parent_stmt;
 
     // hit scenario select col1, col2, ... bulk collect into coll_var [c_r_type],
@@ -754,6 +766,11 @@ status_t plc_build_var_address(sql_stmt_t *stmt, plv_decl_t *decl, expr_node_t *
 {
     var_address_pair_t *addr_pair = NULL;
     pl_compiler_t *compile = (pl_compiler_t *)stmt->pl_compiler;
+
+    if (decl == NULL) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_PL_SYNTAX_ERROR_FMT, "unexpected null pl-variant");
+        return OG_ERROR;
+    }
 
     node->type = EXPR_NODE_V_ADDR;
     OG_RETURN_IFERR(plc_init_galist(compile, &node->value.v_address.pairs));

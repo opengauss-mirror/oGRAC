@@ -145,7 +145,7 @@ static status_t pl_process_lib_column(row_assist_t *ra, pl_desc_t *desc, pl_enti
     function_t *func = entity->function;
     pl_line_begin_t *begin_line = NULL;
 
-    if (entity->pl_type == PL_FUNCTION && func->desc.lang_type == LANG_C) {
+    if (entity->pl_type == PL_FUNCTION && func != NULL && func->desc.lang_type == LANG_C) {
         begin_line = (pl_line_begin_t *)func->body;
         desc->lang_type = LANG_C;
         OG_RETURN_IFERR(row_put_int32(ra, desc->flags));        // FLAGS

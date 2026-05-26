@@ -29,6 +29,7 @@
 #include "base_compiler.h"
 #include "decl_cl.h"
 #include "pl_udt.h"
+#include "trigger_decl_cl.h"
 
 #include "pl_gram.h" /* must be after parser/scanner.h */
 
@@ -102,25 +103,47 @@ typedef struct {
     YYSTYPE lval; /* semantic information */
     YYLTYPE lloc; /* offset in scanbuf */
     int leng;     /* length in bytes */
+    bool8 ident_quoted;
 } TokenAuxData;
 
 __thread TokenAuxData pushback_auxdata[MAX_PUSHBACKS];
+
+static void push_back_token(pl_compiler_t *compiler, int token, TokenAuxData* auxdata);
 
 status_t pl_parser(sql_stmt_t *stmt, text_t *src)
 {
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
     int parse_rc;
+    sql_text_t sql_text = { 0 };
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
-    yyscanner = scanner_init((sql_text_t *)src, &yyextra.core_yy_extra, &ReservedPLKeywords, ReservedPLKeywordTokens,
+    sql_text.value = *src;
+    sql_text.loc.line = 1;
+    sql_text.loc.column = 1;
+    if (compiler != NULL) {
+        sql_text.loc = compiler->line_loc;
+    }
+    sql_text.implicit = OG_FALSE;
+
+    yyscanner = scanner_init(&sql_text, &yyextra.core_yy_extra, &ReservedPLKeywords, ReservedPLKeywordTokens,
         stmt);
+    if (SECUREC_UNLIKELY(yyscanner == NULL)) {
+        stmt->parser_text = parser_text_bak;
+        stmt->parser_text_valid = parser_text_valid_bak;
+        return OG_ERROR;
+    }
 
     parse_rc = plsql_yyparse(yyscanner);
+    scanner_finish(yyscanner);
+    stmt->parser_text = parser_text_bak;
+    stmt->parser_text_valid = parser_text_valid_bak;
     if (parse_rc != 0) {
         return OG_ERROR;
     }
 
-    scanner_finish(yyscanner);
     return OG_SUCCESS;
 }
 
@@ -139,23 +162,33 @@ static int internal_yylex(TokenAuxData* auxdata, core_yyscan_t yyscanner)
     } else {
         token = core_yylex(&auxdata->lval.core_yystype, &auxdata->lloc, yyscanner);
         auxdata->leng = ct_yyget_leng(yyscanner);
+        auxdata->ident_quoted = og_yyget_extra(yyscanner)->core_yy_extra.ident_quoted;
     }
 
     return token;
 }
 
-static status_t parse_var_word(sql_stmt_t *stmt, char *ident, expr_node_t **out_expr)
+static status_t alloc_var_addr_expr(sql_stmt_t *stmt, plv_decl_t *decl, expr_node_t **out_expr)
 {
-    text_t name;
-    cm_str2text(ident, &name);
     expr_node_t *expr = NULL;
     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
+
     OG_RETURN_IFERR(sql_alloc_mem(compiler->stmt->context, sizeof(expr_node_t), (void **)&expr));
     expr->owner = NULL;
     expr->type = EXPR_NODE_PROC;
     expr->unary = UNARY_OPER_NONE;
     expr->word.func.user_func_first = OG_FALSE;
 
+    OG_RETURN_IFERR(plc_build_var_address(stmt, decl, expr, UDT_STACK_ADDR));
+    *out_expr = expr;
+    return OG_SUCCESS;
+}
+
+static status_t parse_var_ident(sql_stmt_t *stmt, char *ident, expr_node_t **out_expr)
+{
+    text_t name;
+    cm_str2text(ident, &name);
+    pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
     uint32 types = PLV_VARIANT_AND_CUR;
     plv_decl_t *decl = NULL;
     plc_variant_name_t variant_name;
@@ -175,8 +208,90 @@ static status_t parse_var_word(sql_stmt_t *stmt, char *ident, expr_node_t **out_
     if (decl == NULL) {
         return OG_ERROR;
     }
-    plc_build_var_address(stmt, decl, expr, UDT_STACK_ADDR);
-    *out_expr = expr;
+    OG_RETURN_IFERR(alloc_var_addr_expr(stmt, decl, out_expr));
+    return OG_SUCCESS;
+}
+
+static status_t parse_trigger_var_word(sql_stmt_t *stmt, word_t *word, expr_node_t **out_expr)
+{
+    pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
+    plv_decl_t *decl = NULL;
+    plc_var_type_t type;
+
+    plc_find_decl_ex(compiler, word, PLV_VARIANT_AND_CUR, &type, &decl);
+    if (decl == NULL) {
+        OG_RETURN_IFERR(plc_add_trigger_decl(compiler, 0, word, PLV_VAR, &decl));
+    }
+    if (decl == NULL) {
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(alloc_var_addr_expr(stmt, decl, out_expr));
+    return OG_SUCCESS;
+}
+
+static bool32 plsql_is_trigger_param(TokenAuxData *auxdata, core_yyscan_t yyscanner, word_type_t *word_type)
+{
+    text_t token_text;
+
+    token_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + auxdata->lloc.offset;
+    token_text.len = (uint32)auxdata->leng;
+    if (cm_text_str_equal_ins(&token_text, ":new")) {
+        *word_type = WORD_TYPE_PL_NEW_COL;
+        return OG_TRUE;
+    }
+    if (cm_text_str_equal_ins(&token_text, ":old")) {
+        *word_type = WORD_TYPE_PL_OLD_COL;
+        return OG_TRUE;
+    }
+    return OG_FALSE;
+}
+
+static status_t plsql_try_read_trigger_var(sql_stmt_t *stmt, TokenAuxData *param_aux, core_yyscan_t yyscanner,
+    bool32 *matched, expr_node_t **out_expr)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    TokenAuxData dot_aux;
+    TokenAuxData ident_aux;
+    word_type_t word_type;
+    word_t word = { 0 };
+    char *start = NULL;
+    char *end = NULL;
+    int dot_token;
+    int ident_token;
+
+    *matched = OG_FALSE;
+    if (!plsql_is_trigger_param(param_aux, yyscanner, &word_type)) {
+        return OG_SUCCESS;
+    }
+
+    dot_token = internal_yylex(&dot_aux, yyscanner);
+    if (dot_token != '.') {
+        push_back_token(compiler, dot_token, &dot_aux);
+        return OG_SUCCESS;
+    }
+
+    ident_token = internal_yylex(&ident_aux, yyscanner);
+    if (ident_token != IDENT) {
+        push_back_token(compiler, ident_token, &ident_aux);
+        push_back_token(compiler, dot_token, &dot_aux);
+        return OG_SUCCESS;
+    }
+
+    start = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + param_aux->lloc.offset;
+    end = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + ident_aux.lloc.offset + ident_aux.leng;
+    word.type = word_type;
+    word.loc = param_aux->lloc.loc;
+    word.text.value.str = start;
+    word.text.value.len = (uint32)(end - start);
+    word.text.loc = param_aux->lloc.loc;
+    word.ex_count = 1;
+    word.ex_words[0].type = ident_aux.ident_quoted ? WORD_TYPE_DQ_STRING : WORD_TYPE_VARIANT;
+    word.ex_words[0].text.value.str = ident_aux.lval.word.ident;
+    word.ex_words[0].text.value.len = (uint32)strlen(ident_aux.lval.word.ident);
+    word.ex_words[0].text.loc = ident_aux.lloc.loc;
+
+    OG_RETURN_IFERR(parse_trigger_var_word(stmt, &word, out_expr));
+    *matched = OG_TRUE;
     return OG_SUCCESS;
 }
 
@@ -189,8 +304,15 @@ int plsql_yylex(core_yyscan_t yyscanner)
     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
 
     token = internal_yylex(&aux, yyscanner);
-    if (token == IDENT) {
-        if (parse_var_word(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+    if (token == PARAM) {
+        bool32 matched = OG_FALSE;
+        if (plsql_try_read_trigger_var(stmt, &aux, yyscanner, &matched, &aux.lval.node) != OG_SUCCESS) {
+            token = LEX_ERROR_TOKEN;
+        } else if (matched) {
+            token = T_DATUM;
+        }
+    } else if (token == IDENT) {
+        if (parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
             token = T_DATUM;
         } else if ((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
             aux.lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);

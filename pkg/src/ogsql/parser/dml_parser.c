@@ -866,12 +866,16 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
     int yyresult;
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
 
     /* initialize the flex scanner */
     yyscanner = a_scanner_init(sql, &yyextra.core_yy_extra, &dialect_a_ScanKeywords, a_format_ScanKeywordTokens, stmt);
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
+        stmt->parser_text = parser_text_bak;
+        stmt->parser_text_valid = parser_text_valid_bak;
         return OG_ERROR;
     }
 
@@ -885,6 +889,8 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
 
     /* Clean up (release memory) */
     a_scanner_finish(yyscanner);
+    stmt->parser_text = parser_text_bak;
+    stmt->parser_text_valid = parser_text_valid_bak;
 
     if (SECUREC_UNLIKELY(yyresult)) { /* error */
         return OG_ERROR;
@@ -901,12 +907,16 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
     int yyresult;
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
 
     /* initialize the flex scanner */
     yyscanner = b_scanner_init(sql, &yyextra.core_yy_extra, &dialect_b_ScanKeywords, b_format_ScanKeywordTokens, stmt);
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
+        stmt->parser_text = parser_text_bak;
+        stmt->parser_text_valid = parser_text_valid_bak;
         return OG_ERROR;
     }
 
@@ -920,6 +930,8 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
 
     /* Clean up (release memory) */
     b_scanner_finish(yyscanner);
+    stmt->parser_text = parser_text_bak;
+    stmt->parser_text_valid = parser_text_valid_bak;
 
     if (SECUREC_UNLIKELY(yyresult)) { /* error */
         return OG_ERROR;
@@ -936,12 +948,16 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
     int yyresult;
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
 
     /* initialize the flex scanner */
     yyscanner = c_scanner_init(sql, &yyextra.core_yy_extra, &dialect_c_ScanKeywords, c_format_ScanKeywordTokens, stmt);
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
+        stmt->parser_text = parser_text_bak;
+        stmt->parser_text_valid = parser_text_valid_bak;
         return OG_ERROR;
     }
 
@@ -955,6 +971,8 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
 
     /* Clean up (release memory) */
     c_scanner_finish(yyscanner);
+    stmt->parser_text = parser_text_bak;
+    stmt->parser_text_valid = parser_text_valid_bak;
 
     if (SECUREC_UNLIKELY(yyresult)) { /* error */
         return OG_ERROR;
@@ -968,16 +986,26 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
 
 status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
 {
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
+    status_t status;
+
+    stmt->parser_text = *sql;
+    stmt->parser_text_valid = OG_TRUE;
+
     if (stmt->session->dbcompatibility == 'A') {
-        return a_format_raw_parser(stmt, sql, context);
+        status = a_format_raw_parser(stmt, sql, context);
+    } else if (stmt->session->dbcompatibility == 'B') {
+        status = b_format_raw_parser(stmt, sql, context);
+    } else if (stmt->session->dbcompatibility == 'C') {
+        status = c_format_raw_parser(stmt, sql, context);
+    } else {
+        status = a_format_raw_parser(stmt, sql, context);
     }
-    if (stmt->session->dbcompatibility == 'B') {
-        return b_format_raw_parser(stmt, sql, context);
-    }
-    if (stmt->session->dbcompatibility == 'C') {
-        return c_format_raw_parser(stmt, sql, context);
-    }
-    return a_format_raw_parser(stmt, sql, context);
+
+    stmt->parser_text = parser_text_bak;
+    stmt->parser_text_valid = parser_text_valid_bak;
+    return status;
 }
 
 static status_t sql_create_dml_context(sql_stmt_t *stmt, sql_text_t *sql, key_wid_t key_wid)
@@ -992,7 +1020,9 @@ static status_t sql_create_dml_context(sql_stmt_t *stmt, sql_text_t *sql, key_wi
     OG_RETURN_IFERR(sql_create_list(stmt, &ogx->ref_objects));
     OG_RETURN_IFERR(sql_create_list(stmt, &ogx->outlines));
 
-    stmt->session->lex->flags = LEX_WITH_OWNER | LEX_WITH_ARG;
+    if (!g_instance->sql.use_bison_parser && stmt->session->lex != NULL) {
+        stmt->session->lex->flags = LEX_WITH_OWNER | LEX_WITH_ARG;
+    }
 
     switch (key_wid) {
         case KEY_WORD_SELECT:
@@ -1200,8 +1230,10 @@ static status_t sql_parse_anonymous_prepare(sql_stmt_t *stmt)
 {
     pl_entity_t *pl_entity = NULL;
 
-    if (sql_alloc_context(stmt) != OG_SUCCESS) {
-        return OG_ERROR;
+    if (stmt->context == NULL) {
+        if (sql_alloc_context(stmt) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
     }
     sql_context_uncacheable(stmt->context);
     stmt->context->type = OGSQL_TYPE_ANONYMOUS_BLOCK;
@@ -1258,6 +1290,46 @@ status_t sql_parse_anonymous_directly(sql_stmt_t *stmt, word_t *leader, sql_text
     return OG_SUCCESS;
 }
 
+status_t sql_parse_bison_anonymous_directly(sql_stmt_t *stmt, sql_text_t *sql_text)
+{
+    timeval_t timeval_begin;
+    timeval_t timeval_end;
+    plc_desc_t desc;
+    status_t status = OG_ERROR;
+
+    do {
+        OG_BREAK_IF_ERROR(sql_parse_anonymous_prepare(stmt));
+        pl_entity_uncacheable(stmt->pl_context);
+        sql_init_plan_count(stmt);
+        (void)cm_gettimeofday(&timeval_begin);
+        sql_prepare_plc_desc(stmt, PL_ANONYMOUS_BLOCK, &desc);
+        OG_BREAK_IF_ERROR(pl_write_anony_desc(stmt, &sql_text->value, 0));
+        OG_BREAK_IF_ERROR(plc_bison_compile_anonymous(stmt, &desc, &sql_text->value));
+        pl_set_entity_valid((pl_entity_t *)stmt->pl_context, OG_TRUE);
+        status = OG_SUCCESS;
+    } while (OG_FALSE);
+
+    if (status != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    sql_init_context_stat(&stmt->context->stat);
+    stmt->context->stat.parse_calls = 1;
+    stmt->session->stat.hard_parses++;
+    stmt->context->stat.last_load_time = g_timer()->now;
+    (void)cm_gettimeofday(&timeval_end);
+    stmt->context->stat.parse_time = (uint64)TIMEVAL_DIFF_US(&timeval_begin, &timeval_end);
+    stmt->context->stat.last_active_time = stmt->context->stat.last_load_time;
+    stmt->context->module_kind = SESSION_CLIENT_KIND(stmt->session);
+    stmt->context->ctrl.ref_count = 0;
+    if (stmt->context->ctrl.memory != NULL) {
+        cm_atomic_add(&g_instance->library_cache_info[stmt->lang_type].pins,
+                      (int64)stmt->context->ctrl.memory->pages.count);
+        cm_atomic_inc(&g_instance->library_cache_info[stmt->lang_type].reloads);
+    }
+    return OG_SUCCESS;
+}
+
 
 static status_t sql_fetch_expl_plan_for_tokens(lex_t *lex)
 {
@@ -1277,6 +1349,15 @@ status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
     lex_t *lex = stmt->session->lex;
     sql_text_t *sql = lex->curr_text;
     lang_type_t lang_type = LANG_INVALID;
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
+    status_t status = OG_SUCCESS;
+
+    if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
+        lex_init_for_native_type(lex, &stmt->parser_text, &stmt->session->curr_user, stmt->session->call_version,
+            USE_NATIVE_DATATYPE);
+        OG_RETURN_IFERR(lex_fetch(lex, leader_word));
+    }
 
     if (sql_fetch_expl_plan_for_tokens(lex) != OG_SUCCESS) {
         return OG_ERROR;
@@ -1284,22 +1365,34 @@ status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
 
     OG_RETURN_IFERR(lex_skip_comments(lex, NULL));
 
+    sql = lex->curr_text;
     source_location_t loc = sql->loc;
     lang_type = sql_diag_lang_type(stmt, sql, leader_word);
+    if (g_instance->sql.use_bison_parser) {
+        stmt->parser_text = *sql;
+        stmt->parser_text_valid = OG_TRUE;
+    }
+
     if (lang_type == LANG_DML) {
-        OG_RETURN_IFERR(sql_parse_dml(stmt, leader_word));
+        status = sql_parse_dml(stmt, leader_word);
     } else if (lang_type == LANG_DDL && leader_word->id == KEY_WORD_CREATE) {
         loc = lex->loc;
-        OG_RETURN_IFERR(sql_parse_ddl(stmt, leader_word));
-        if (is_explain_create_type(stmt) == OG_FALSE) {
+        status = sql_parse_ddl(stmt, leader_word);
+        if (status == OG_SUCCESS && is_explain_create_type(stmt) == OG_FALSE) {
             OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
-            return OG_ERROR;
+            status = OG_ERROR;
         }
     } else {
         OG_LOG_DEBUG_ERR("the type: %d can not explain", (uint8_t)lang_type);
         OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
-        return OG_ERROR;
+        status = OG_ERROR;
     }
+
+    if (g_instance->sql.use_bison_parser) {
+        stmt->parser_text = parser_text_bak;
+        stmt->parser_text_valid = parser_text_valid_bak;
+    }
+    OG_RETURN_IFERR(status);
     stmt->is_explain = OG_TRUE;
     return OG_SUCCESS;
 }
@@ -1307,15 +1400,18 @@ status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
 status_t sql_parse_dml(sql_stmt_t *stmt, word_t *leader_word)
 {
     key_wid_t key_wid = leader_word->id;
-    OG_LOG_DEBUG_INF("Begin parse DML, SQL = %s", T2S(&stmt->session->lex->text.value));
+    sql_text_t *sql_text = (g_instance->sql.use_bison_parser && stmt->parser_text_valid) ?
+        &stmt->parser_text : &stmt->session->lex->text;
+
+    OG_LOG_DEBUG_INF("Begin parse DML, SQL = %s", T2S(&sql_text->value));
     cm_atomic_inc(&g_instance->library_cache_info[stmt->lang_type].hits);
     // maybe need load entity from proc$
     knl_set_session_scn(&stmt->session->knl_session, OG_INVALID_ID64);
 
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
-    uint32 special_word = sql_has_special_word(stmt, &stmt->session->lex->text.value);
+    uint32 special_word = sql_has_special_word(stmt, &sql_text->value);
     if (SQL_HAS_NONE != special_word || stmt->session->disable_soft_parse || g_instance->sql.use_bison_parser) {
-        OG_RETURN_IFERR(sql_parse_dml_directly(stmt, key_wid, &stmt->session->lex->text));
+        OG_RETURN_IFERR(sql_parse_dml_directly(stmt, key_wid, sql_text));
     } else {
         OG_RETURN_IFERR(og_find_then_parse_dml(stmt, key_wid, special_word));
     }

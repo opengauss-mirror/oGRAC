@@ -33,6 +33,7 @@ extern "C" {
 #endif
 
 status_t plc_build_open_cursor_args(pl_compiler_t *compiler, word_t *word, galist_t *expr_list);
+status_t plc_compile_cursor_select(pl_compiler_t *compiler, plv_decl_t *decl, word_t *word, text_t *sql_text);
 status_t plc_compile_cursor_def(pl_compiler_t *compiler, galist_t *decls, word_t *word);
 status_t plc_compile_for_cursor(pl_compiler_t *compiler, pl_line_for_t *line, word_t *word);
 status_t plc_compile_refcur(pl_compiler_t *compiler, word_t *word, plv_decl_t *decl, pl_line_open_t *line);

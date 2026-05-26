@@ -63,8 +63,18 @@ void ple_update_func_error(sql_stmt_t *stmt, expr_node_t *node)
 
 ple_var_t *ple_get_plvar(pl_executor_t *executor, plv_id_t vid)
 {
-    uint16 depth = (uint16)vid.block + executor->stack_base;
+    uint16 depth;
+    if (executor == NULL) {
+        return NULL;
+    }
+    depth = (uint16)vid.block + executor->stack_base;
+    if (depth >= executor->block_stack.depth) {
+        return NULL;
+    }
     ple_block_t *block = executor->block_stack.items[depth];
+    if (block == NULL || block->var_map.items == NULL || vid.id >= block->var_map.count) {
+        return NULL;
+    }
     ple_var_t *var = block->var_map.items[vid.id];
     return var;
 }
@@ -365,7 +375,15 @@ status_t ple_get_output_plvar(pl_executor_t *exec, pl_into_t *into, ple_var_t **
         return OG_ERROR;
     }
     var_address_pair_t *pair = (var_address_pair_t *)cm_galist_get(node->value.v_address.pairs, 0);
+    if (pair == NULL || pair->type != UDT_STACK_ADDR || pair->stack == NULL || pair->stack->decl == NULL) {
+        OG_THROW_ERROR(ERR_PL_SYNTAX_ERROR_FMT, "unexpected pl-variant occurs");
+        return OG_ERROR;
+    }
     *left = ple_get_plvar(exec, pair->stack->decl->vid);
+    if (*left == NULL) {
+        OG_THROW_ERROR(ERR_PL_SYNTAX_ERROR_FMT, "unexpected pl-variant occurs");
+        return OG_ERROR;
+    }
     return OG_SUCCESS;
 }
 

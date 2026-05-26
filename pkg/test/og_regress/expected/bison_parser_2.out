@@ -1113,8 +1113,7 @@ Succeed.
 
 SQL> alter table bison_t1 add constraint p_key primary key (b) enable disable using index (create unique index idx1 on bison_t1(b));
 
-Succeed.
-
+OG-00601, [1:41]Sql syntax error: more text expected but terminated
 SQL> 
 SQL> CREATE USER "XBIN" IDENTIFIED BY Huawei123;
 

@@ -30,6 +30,7 @@
 #include "pl_udt.h"
 #include "decl_cl.h"
 #include "typedef_cl.h"
+#include "base_compiler.h"
 #include "json/ogsql_json.h"
 
 
@@ -1385,10 +1386,72 @@ status_t sql_convert_to_cast(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word)
     return OG_SUCCESS;
 }
 
+static inline bool32 sql_func_is_pl_compile_context(sql_stmt_t *stmt)
+{
+    if ((stmt->context->type >= OGSQL_TYPE_CREATE_PROC && stmt->context->type < OGSQL_TYPE_PL_CEIL_END) ||
+        stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK) {
+        return OG_TRUE;
+    }
+
+    if (stmt->pl_compiler == NULL) {
+        return OG_FALSE;
+    }
+
+    return ((pl_compiler_t *)stmt->pl_compiler)->current_input != NULL;
+}
+
+typedef struct st_pl_collection_elem_expr_arg {
+    expr_node_t *node;
+    galist_t *func_name;
+    expr_tree_t *arg_list;
+    source_location_t loc;
+} pl_collection_elem_expr_arg_t;
+
+static status_t sql_try_create_pl_collection_elem_expr(sql_stmt_t *stmt,
+    pl_collection_elem_expr_arg_t *arg, bool32 *converted)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    plv_decl_t *decl = NULL;
+    plc_var_type_t var_type = PLC_NORMAL_VAR;
+    var_address_pair_t *addr_pair = NULL;
+    word_t word = { 0 };
+
+    *converted = OG_FALSE;
+    if (!sql_func_is_pl_compile_context(stmt) || compiler == NULL ||
+        arg->func_name->count != 1 || arg->arg_list == NULL) {
+        return OG_SUCCESS;
+    }
+
+    word.id = OG_INVALID_ID32;
+    word.type = WORD_TYPE_VARIANT;
+    word.ori_type = WORD_TYPE_VARIANT;
+    word.loc = arg->loc;
+    word.text = arg->node->word.func.name;
+
+    plc_find_decl_ex(compiler, &word, PLV_VARIANT_AND_CUR, &var_type, &decl);
+    if (decl == NULL || decl->type != PLV_COLLECTION) {
+        return OG_SUCCESS;
+    }
+
+    /* Bison parses v(i) before PL name resolution; reinterpret it as a collection element address here. */
+    OG_RETURN_IFERR(plc_build_var_address(stmt, decl, arg->node, UDT_STACK_ADDR));
+    OG_RETURN_IFERR(plc_add_udt_pair(stmt, arg->node->value.v_address.pairs, UDT_COLL_ELEMT_ADDR, &addr_pair));
+    addr_pair->coll_elemt->parent = decl->collection;
+    addr_pair->coll_elemt->id = arg->arg_list;
+    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &addr_pair->coll_elemt->id));
+    OG_RETURN_IFERR(plc_verify_limit_expr(compiler, addr_pair->coll_elemt->id));
+
+    *converted = OG_TRUE;
+    return OG_SUCCESS;
+}
+
 status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t *func_name,
     expr_tree_t *arg_list, source_location_t loc)
 {
     expr_node_t *node = NULL;
+    bool32 converted = OG_FALSE;
+    pl_collection_elem_expr_arg_t pl_arg = { 0 };
+
     if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_FUNC, loc) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -1416,7 +1479,16 @@ status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t
         }
     }
 
-    sql_expr_list_as_func(stmt, func_name, &node->word);
+    OG_RETURN_IFERR(sql_expr_list_as_func(stmt, func_name, &node->word));
+    pl_arg.node = node;
+    pl_arg.func_name = func_name;
+    pl_arg.arg_list = arg_list;
+    pl_arg.loc = loc;
+    OG_RETURN_IFERR(sql_try_create_pl_collection_elem_expr(stmt, &pl_arg, &converted));
+    if (converted) {
+        (*expr)->root = node;
+        return OG_SUCCESS;
+    }
 
     /*
      * 1. if call by user.func, build as user func.

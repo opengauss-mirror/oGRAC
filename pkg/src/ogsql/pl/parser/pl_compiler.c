@@ -1557,6 +1557,61 @@ status_t plc_bison_compile_type(pl_compiler_t *compiler, pmode_t pmod, typmode_t
     return OG_SUCCESS;
 }
 
+static bool32 plc_bison_type_is_sys_refcursor(type_word_t *type)
+{
+    return (type != NULL && type->typemode == NULL && type->str != NULL &&
+        (cm_strcmpi(type->str, "sys_refcursor") == 0 || cm_strcmpi(type->str, "refcursor") == 0));
+}
+
+static status_t plc_bison_compile_sys_refcursor(pl_compiler_t *compiler, plv_decl_t *decl)
+{
+    OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(plv_cursor_context_t), (void **)&decl->cursor.ogx));
+    decl->type = PLV_CUR;
+    decl->cursor.sql.value = CM_NULL_TEXT;
+    decl->cursor.sql.loc = decl->loc;
+    decl->cursor.sql.implicit = OG_FALSE;
+    decl->cursor.ogx->is_sysref = (bool8)OG_TRUE;
+    decl->cursor.ogx->is_err = (bool8)OG_FALSE;
+    decl->cursor.ogx->args = NULL;
+    decl->cursor.ogx->context = NULL;
+    decl->cursor.input = NULL;
+    decl->cursor.record = NULL;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_compile_decl_type(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *type,
+    bool32 is_arg)
+{
+    bool32 result = OG_FALSE;
+
+    if (plc_bison_type_is_sys_refcursor(type)) {
+        return plc_bison_compile_sys_refcursor(compiler, decl);
+    }
+
+    if (type->pl_rowtype || type->pl_type) {
+        plattr_assist_t plattr_ass;
+        plattr_ass.type = DECL_INHERIT;
+        plattr_ass.decl = decl;
+        plattr_ass.decls = compiler->decls;
+        plattr_ass.is_args = is_arg;
+        OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, type));
+        return plc_check_decl_datatype(compiler, decl, is_arg);
+    }
+
+    OG_RETURN_IFERR(plc_bison_try_compile_local_type(compiler, decl, type, &result));
+    if (result) {
+        return OG_SUCCESS;
+    }
+
+    decl->type = PLV_VAR;
+    OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(decl->drct), &decl->variant.type, type));
+    OG_RETURN_IFERR(plc_check_datatype(compiler, &decl->variant.type, is_arg));
+    if (decl->variant.type.is_array) {
+        decl->type = PLV_ARRAY;
+    }
+    return OG_SUCCESS;
+}
+
 static status_t plc_bison_compile_args(pl_compiler_t *compiler, function_t *func, galist_t *args)
 {
     galist_t *params = func->desc.params;
@@ -1587,25 +1642,7 @@ static status_t plc_bison_compile_args(pl_compiler_t *compiler, function_t *func
         decl->name = arg_name;
         decl->drct = func_param->drct;
 
-        /* todo: cursor type */
-        if (func_param->type->pl_rowtype || func_param->type->pl_type) {
-            plattr_assist_t plattr_ass;
-            plattr_ass.type = DECL_INHERIT;
-            plattr_ass.decl = decl;
-            plattr_ass.decls = compiler->decls;
-            plattr_ass.is_args = OG_TRUE;
-            OG_RETURN_IFERR(plc_bison_compile_plv_type(compiler, &plattr_ass, func_param->type));
-            OG_RETURN_IFERR(plc_check_decl_datatype(compiler, decl, OG_TRUE));
-        } else {
-            /* todo: userdef type in block, userdef global type,参考plc_compile_variant_def */
-            decl->type = PLV_VAR;
-            OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(decl->drct), &decl->variant.type,
-                func_param->type));
-            OG_RETURN_IFERR(plc_check_datatype(compiler, &decl->variant.type, OG_TRUE));
-            if (decl->variant.type.is_array) {
-                decl->type = PLV_ARRAY;
-            }
-        }
+        OG_RETURN_IFERR(plc_bison_compile_decl_type(compiler, decl, func_param->type, OG_TRUE));
 
         OG_RETURN_IFERR(plc_bison_compile_default_def(compiler, decl, func_param->def_expr));
         if (decl->drct == PLV_DIR_OUT || decl->drct == PLV_DIR_INOUT) {
@@ -1634,15 +1671,18 @@ static status_t pl_bison_compile_func_desc(pl_compiler_t *compiler, text_t *name
     func->desc.is_function = OG_TRUE;
 
     // insert return values declaration
-    // todo: return支持SYS_REFCURSOR
     OG_RETURN_IFERR(cm_galist_new(func->desc.params, sizeof(plv_decl_t), (void **)&ret));
+    ret->arg_type = PLV_NORMAL_ARG;
+    ret->vid.block = (int16)compiler->stack.depth;
+    ret->vid.id = 0;
+    ret->vid.input_id = 0;
     ret->drct = PLV_DIR_OUT;
-    ret->type = PLV_VAR;
+    ret->loc = ret_type->loc;
 
     // compile argument
     OG_RETURN_IFERR(plc_bison_compile_args(compiler, func, args));
     func->desc.arg_count = func->desc.params->count;
-    OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(ret->drct), &ret->variant.type, ret_type));
+    OG_RETURN_IFERR(plc_bison_compile_decl_type(compiler, ret, ret_type, OG_TRUE));
 
     return OG_SUCCESS;
 }
@@ -1715,6 +1755,7 @@ static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *ar
 
     // init function
     OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(function_t), (void **)&func));
+    entity->function = func;
     OG_RETURN_IFERR(plc_init_galist(compiler, &decls));
     OG_RETURN_IFERR(plc_init_galist(compiler, &type_decls));
     compiler->type_decls = type_decls;
@@ -1725,8 +1766,6 @@ static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *ar
 
     OG_RETURN_IFERR(plc_decl_insert_params(compiler, decls, func->desc.params));
 
-    /* todo: 解析language选项，参考plc_compile_language */
-
     if (compiler->root_type == PL_FUNCTION) {
         compiler->step = PL_COMPILE_AFTER_DECL;
         compiler->proc = func;
@@ -1734,12 +1773,65 @@ static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *ar
 
     status = pl_parser(compiler->stmt, body);
     func->body = (void *)compiler->body;
-    entity->function = func;
     OG_RETURN_IFERR(status);
     OG_RETURN_IFERR(plc_verify_label(compiler));
     compiler->body = NULL;
     compiler->last_line = NULL;
 
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_compile_anonymous_block(pl_compiler_t *compiler, text_t *body)
+{
+    galist_t *decls = NULL;
+    galist_t *type_decls = NULL;
+    pl_entity_t *entity = (pl_entity_t *)compiler->entity;
+    anonymous_t *anony = entity->anonymous;
+    status_t status;
+
+    compiler->type = PL_ANONYMOUS_BLOCK;
+    OG_RETURN_IFERR(plc_init_galist(compiler, &decls));
+    OG_RETURN_IFERR(plc_init_galist(compiler, &type_decls));
+    compiler->decls = decls;
+    compiler->type_decls = type_decls;
+    compiler->params = NULL;
+
+    status = pl_parser(compiler->stmt, body);
+    anony->body = (pl_line_begin_t *)compiler->body;
+    OG_RETURN_IFERR(status);
+    OG_RETURN_IFERR(plc_verify_label(compiler));
+    compiler->body = NULL;
+    compiler->last_line = NULL;
+    return OG_SUCCESS;
+}
+
+static status_t plc_bison_compile_trigger(pl_compiler_t *compiler, text_t *body)
+{
+    galist_t *decls = NULL;
+    galist_t *type_decls = NULL;
+    pl_entity_t *entity = (pl_entity_t *)compiler->entity;
+    trigger_t *trigger = entity->trigger;
+    status_t status;
+
+    compiler->type = PL_TRIGGER;
+    OG_RETURN_IFERR(plc_init_galist(compiler, &decls));
+    OG_RETURN_IFERR(plc_init_galist(compiler, &type_decls));
+    compiler->decls = decls;
+    compiler->type_decls = type_decls;
+    compiler->params = NULL;
+
+    /*
+     * Trigger columns (:new/:old) live in the synthetic outer block.  The
+     * actual BEGIN/DECLARE block parsed by pl_gram.y is linked after it.
+     */
+    OG_RETURN_IFERR(plc_init_trigger_decls(compiler));
+    status = pl_parser(compiler->stmt, body);
+    trigger->body = compiler->body;
+    OG_RETURN_IFERR(status);
+    OG_RETURN_IFERR(plc_verify_label(compiler));
+    OG_RETURN_IFERR(plc_add_modified_new_cols(compiler));
+    compiler->body = NULL;
+    compiler->last_line = NULL;
     return OG_SUCCESS;
 }
 
@@ -1778,6 +1870,35 @@ static status_t plc_bison_prepare(sql_stmt_t *stmt, pl_compiler_t *compile, plc_
     return buddy_alloc_mem(buddy_mem_pool, compile->convert_buf_size, (void **)&compile->convert_buf);
 }
 
+status_t plc_bison_compile_anonymous(sql_stmt_t *stmt, plc_desc_t *desc, text_t *body)
+{
+    status_t status;
+    pl_compiler_t compiler;
+    pl_entity_t *entity = desc->entity;
+
+    PLC_SAVE_STMT(stmt);
+    if (plc_bison_prepare(stmt, &compiler, desc, body->len) != OG_SUCCESS) {
+        PLC_RESTORE_STMT(stmt);
+        return OG_ERROR;
+    }
+    compiler.obj = NULL;
+
+    set_inter_plc_cnt();
+    plc_set_tls_plc_error();
+    status = plc_bison_compile_anonymous_block(&compiler, body);
+    if (status != OG_SUCCESS) {
+        plc_set_compiling_errors(stmt, NULL);
+    } else {
+        status = sql_append_references(&entity->ref_list, stmt->context);
+    }
+
+    reset_inter_plc_cnt();
+    plc_reset_tls_plc_error();
+    gfree(compiler.convert_buf);
+    PLC_RESTORE_STMT(stmt);
+    return status;
+}
+
 status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, type_word_t *ret_type, text_t *body)
 {
     status_t status;
@@ -1810,6 +1931,10 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
 
         case PL_PROCEDURE:
             status = plc_bison_compile_procedure(&compiler, args, body);
+            break;
+
+        case PL_TRIGGER:
+            status = plc_bison_compile_trigger(&compiler, body);
             break;
 
         default:
