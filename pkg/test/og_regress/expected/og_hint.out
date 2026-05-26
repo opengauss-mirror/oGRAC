@@ -22,27 +22,30 @@ SQL> begin
   4         insert into hint_test1 values (i, i + 4, i + 10);
   5     end loop;
   6 end;
-    7 /
+  7 /
 
-OG-00601, [1:1]Sql syntax error: syntax error
+PL/SQL procedure successfully completed.
+
 SQL> begin
-    2     insert into hint_test2 values(1,1,1);
+  2     insert into hint_test2 values(1,1,1);
   3     for i in 1000..1100 loop
   4         insert into hint_test2 values (i, i + 4, i + 10);
   5     end loop;
   6 end;
-    7 /
+  7 /
 
-OG-00601, [1:1]Sql syntax error: syntax error
+PL/SQL procedure successfully completed.
+
 SQL> begin
-    2     insert into hint_test3 values(1,1,1);
+  2     insert into hint_test3 values(1,1,1);
   3     for i in 1000..1500 loop
   4         insert into hint_test3 values (i, i + 4, i + 10);
   5     end loop;
   6 end;
   7 /
 
-OG-00601, [1:1]Sql syntax error: syntax error
+PL/SQL procedure successfully completed.
+
 SQL> 
 SQL> analyze table hint_test1 compute statistics;
 
@@ -88,9 +91,9 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                        | Owner | Name       | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                 |       |            | 1    | 0    | 0         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | HINT_TEST1 | 1    | 0    | 0         |       |        |
-| 2  |       INDEX FULL SCAN            | SYS   | T1_IDX1    | 1    | 0    | 0         |       |        |
+| 0  | SELECT STATEMENT                 |       |            | 1    | 8    | 0         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ROWID  | SYS   | HINT_TEST1 | 1    | 8    | 0         |       |        |
+| 2  |       INDEX FULL SCAN            | SYS   | T1_IDX1    | 1    | 8    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -105,8 +108,8 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name       | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |            | 1    | 0    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | HINT_TEST1 | 1    | 0    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |            | 1    | 8    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | HINT_TEST1 | 1    | 8    | 0         |       |        |
 ----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
