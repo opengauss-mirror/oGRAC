@@ -48,79 +48,8 @@ static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assis
     return OG_TRUE;
 }
 
-static inline void dtc_buf_clear_gbp_cached_markers(buf_ctrl_t *ctrl)
-{
-    if (ctrl == NULL) {
-        OG_LOG_RUN_WAR("[DTC-GBP-MARKER-CLEAR] ctrl is NULL");
-        return;
-    }
-    ctrl->gbp_cached_valid = OG_FALSE;
-    ctrl->is_hot = OG_FALSE;
-    ctrl->shmem_page_addr = NULL;
-    ctrl->shmem_page_meta = NULL;
-    ctrl->consecutive_read_count = 0;
-    ctrl->consecutive_same_writer_count = 0;
-}
-
-static inline bool32 dtc_page_is_still_hot_global(knl_session_t *session, buf_ctrl_t *ctrl)
-{
-    remote_page_info_t *meta;
-    knl_panic_log(ctrl != NULL, "[DTC-GBP-HOT-CHECK] ctrl is NULL, sid=%u", session->id);
-
-    if (ctrl->shmem_page_meta == NULL || ctrl->shmem_page_addr == NULL) {
-        return OG_FALSE;
-    }
-
-    meta = ctrl->shmem_page_meta;
-    /* Slot must still describe this page and remain valid. */
-    if (!meta->is_hot) {
-        OG_LOG_RUN_WAR("[DTC-GBP-HOT-CHECK][%u-%u] meta is not hot ctrl=%p meta=%p owner=%u sid=%u",
-                       ctrl->page_id.file, ctrl->page_id.page, ctrl, meta,
-                       (uint32)meta->claimed_owner, session->id);
-        return OG_FALSE;
-    }
-
-    if (meta->file_id != ctrl->page_id.file || meta->page_id != ctrl->page_id.page) {
-        OG_LOG_RUN_WAR("[DTC-GBP-HOT-CHECK][%u-%u] page mismatch: meta_page=%u-%u ctrl=%p meta=%p sid=%u",
-                       ctrl->page_id.file, ctrl->page_id.page, meta->file_id, meta->page_id,
-                       ctrl, meta, session->id);
-        return OG_FALSE;
-    }
-
-    if (meta->claimed_owner == OG_INVALID_ID8 || meta->claimed_owner >= OG_MAX_INSTANCES) {
-        OG_LOG_RUN_WAR("[DTC-GBP-HOT-CHECK][%u-%u] invalid owner=%u ctrl=%p meta=%p sid=%u",
-                       ctrl->page_id.file, ctrl->page_id.page, (uint32)meta->claimed_owner,
-                       ctrl, meta, session->id);
-        return OG_FALSE;
-    }
-
-    return OG_TRUE;
-}
-
 static inline bool32 dtc_buf_try_local(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl)
 {
-    if (SECUREC_UNLIKELY(ctrl == NULL)) {
-        OG_LOG_RUN_ERR("[DTC-TRY-LOCAL][%u-%u] ctrl is NULL, mode=%u options=%u sid=%u", ra->page_id.file,
-            ra->page_id.page, (uint32)ra->mode, (uint32)ra->options, session->id);
-        session->curr_page = NULL;
-        session->curr_page_ctrl = NULL;
-        return OG_FALSE;
-    }
-    if (ctrl->gbp_cached_valid == OG_TRUE) {
-        if (!dtc_page_is_still_hot_global(session, ctrl)) {
-            if (ctrl->is_dirty || ctrl->is_remote_dirty || ctrl->is_edp) {
-                dtc_buf_clear_gbp_cached_markers(ctrl);
-                return dcs_local_page_usable(session, ctrl, ra->mode);
-            }
-
-            dtc_buf_clear_gbp_cached_markers(ctrl);
-
-            ctrl->lock_mode = DRC_LOCK_NULL;
-            ctrl->load_status = (uint8)BUF_NEED_LOAD;
-            return OG_FALSE;
-        }
-    }
-
     return dcs_local_page_usable(session, ctrl, ra->mode);
 }
 
@@ -219,28 +148,18 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             ctrl->load_status = (uint8)BUF_IS_LOADED;
         }
     } else {
+        /* case enter
+         * 1.lbp page transfer to gbp
+         * 2.lock mode upgrade: for example, S latch lock at last time, now this session fetch X lock
+         * 3.always fetch this page in this node
+         */
         bool32 is_load_from_gbp = false;
         status_t ret;
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
             ret = dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
-            if (ret != OG_SUCCESS && ctrl->load_status == (uint8)BUF_LOAD_FAILED) {
-                /*
-                    The page was demoted to cold by another session. We will retry from the remote path
-                    to restart the request.
-                */
-                if (!dtc_buf_try_remote(session, ra, ctrl)) {
-                        OG_LOG_RUN_ERR("[DTC_GBP_BUFFER][%u-%u] GBP slot demoted and re-request failed",
-                                       ctrl->page_id.file, ctrl->page_id.page);
-                        return OG_ERROR;
-                }
-                // skip load from gbp again and jump to finish since we retried from the remote path
-                return dtc_buf_finish(session, ra, ctrl, temp_stat);
-            }
-
-            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
-                OG_LOG_RUN_ERR("[DTC_GBP_BUFFER][%u-%u] local page check failed. ret=%d", ctrl->page_id.file,
-                    ctrl->page_id.page, (int)ret);
-                return OG_ERROR;
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
             }
             OG_LOG_DEBUG_INF("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u,"
                            "is_load_from_gbp: %d, mode: %u", ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
@@ -271,10 +190,6 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             buf_unlatch(session, ctrl, OG_TRUE);
             return OG_ERROR;
         }
-    }
-
-    if (ctrl->shmem_page_meta != NULL && ctrl->shmem_page_addr != NULL) {
-        ctrl->gbp_cached_valid = OG_TRUE;
     }
 
     knl_panic_log(IS_SAME_PAGID(ra->page_id, ctrl->page_id),

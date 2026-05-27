@@ -23,7 +23,6 @@
  * -------------------------------------------------------------------------
  */
 #include "knl_cluster_module.h"
-#include "knl_buflatch.h"
 #include "dtc_dcs.h"
 #include "cm_defs.h"
 #include "cm_thread.h"
@@ -519,7 +518,7 @@ static inline status_t dcs_handle_ack_already_owner(knl_session_t *session, uint
     DTC_DCS_DEBUG_INF("[DCS][%u-%u][%s]: already owner, src_id=%u, dest_id=%u, ctrl_dirty=%u, "
         "ctrl_lock_mode=%u, ctrl_is_edp=%u", ctrl->page_id.file, ctrl->page_id.page, MES_CMD2NAME(msg->head->cmd),
         msg->head->src_inst, msg->head->dst_inst, ctrl->is_dirty, ctrl->lock_mode, ctrl->is_edp);
-
+   
     if (master_id != DCS_SELF_INSTID(session)) {
         (void)dcs_claim_ownership_r(session, master_id, ctrl->page_id, OG_FALSE, ack->req_mode,
                                     dtc_get_ctrl_latest_lsn(ctrl), ack->req_version);
@@ -560,7 +559,7 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
     ctrl->load_status = (uint8)BUF_NEED_LOAD_FROM_GBP;
     ctrl->shmem_page_addr = (page_head_t *)(base + ack->shmem_page_meta_off + sizeof(remote_page_info_t));
     ctrl->shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
-    ctrl->is_hot = OG_TRUE;
+
     if (ack->gbp_owner_id != ctrl->shmem_page_meta->claimed_owner) {
         OG_LOG_RUN_ERR("[DCS-GBP]: ack->gbp_owner_id %d, ctrl->shmem_page_meta->claimed_owner %d", ack->gbp_owner_id,
                        ctrl->shmem_page_meta->claimed_owner);
@@ -1319,10 +1318,6 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
         // TOODO: problem here: What if this page is dirty? Do we manually trigger a flush for it?
         ctrl->lock_mode = DRC_LOCK_NULL;
         ctrl->load_status = BUF_LOAD_FAILED;
-        ctrl->transfer_status = BUF_TRANS_NONE;
-        ctrl->is_hot = OG_FALSE;
-        ctrl->shmem_page_meta = NULL;
-        ctrl->shmem_page_addr = NULL;
         if (ctrl->is_dirty) {
             ctrl->is_edp = OG_TRUE;
             ctrl->edp_scn = DB_CURR_SCN(session);
@@ -1863,26 +1858,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
     page_id_t page_id = page_req.page_id;
     status_t ret = OG_FALSE;
     if (page_req.gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
-        buf_ctrl_t *master_local_ctrl = NULL;
-        master_local_ctrl = buf_find_by_pageid(session, page_req.page_id);
-        if (master_local_ctrl == NULL) {
-            master_local_ctrl = buf_alloc_ctrl(session, page_req.page_id,
-                                               LATCH_MODE_X,
-                                               ENTER_PAGE_NORMAL,
-                                               OG_FALSE);
-        }
-
-        if (master_local_ctrl == NULL || master_local_ctrl->page == NULL) {
-            OG_LOG_RUN_ERR("[DCS-GBP2LBP-Remote] failed to get master local ctrl: page=%u-%u "
-                           "master=%u req_inst=%u",
-                           page_req.page_id.file, page_req.page_id.page,
-                           (uint32)DCS_SELF_INSTID(session),
-                           (uint32)page_req.head.src_inst);
-            mes_send_error_msg(&page_req.head);
-            return;
-        }
-
-        ret = drc_invalidate_shmem_page(session, page_req.page_id, master_local_ctrl);
+        ret = drc_invalidate_shmem_page(session, page_req.page_id);
         if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
             OG_LOG_RUN_ERR(
                 "[DCS][%u-%u] failed to invalidate shmem page when processing gbp to lbp req, req_version=%llu,"
@@ -1891,7 +1867,6 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             mes_send_error_msg(&page_req.head);
             return;
         }
-        page_req.curr_mode = DRC_LOCK_NULL;
     }
 
     if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req.req_version, session, page_id)) {
@@ -2006,13 +1981,6 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             }
 
             knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
-            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
-                OG_LOG_RUN_ERR("[DCS][%u-%u] failed to handle owner page-ready, owner_id=%u, req_id=%u, req_sid=%u",
-                               page_req.page_id.file, page_req.page_id.page, result.curr_owner_id,
-                               page_req.head.src_inst, page_req.head.src_sid);
-                mes_send_error_msg(&page_req.head);
-                break;
-            }
             dcs_send_requester_gbp_addr(session, &page_req, &ack_to_requester);
             break;
         }
@@ -2300,19 +2268,14 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
     status_t ret = OG_ERROR;
 
     if (gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
-        ret = drc_invalidate_shmem_page(session, page_id, ctrl);
+        ret = drc_invalidate_shmem_page(session, page_id);
         if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
             OG_LOG_RUN_ERR("[DCS][%u-%u]failed to invalidate shmem page for gbp to lbp, page_id=%u-%u", page_id.file,
                            page_id.page, page_id.file, page_id.page);
             return OG_ERROR;
         }
-        ctrl->is_hot = OG_FALSE;
-        ctrl->shmem_page_meta = NULL;
-        ctrl->shmem_page_addr = NULL;
-        ctrl->consecutive_read_count = 0;
-        ctrl->consecutive_same_writer_count = 0;
-        ctrl->lock_mode = req_mode;
     }
+
     uint8 req_id = DCS_SELF_INSTID(session);
     drc_req_owner_result_t result;
 
@@ -2367,10 +2330,9 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
         case DRC_REQ_OWNER_ALREADY_OWNER: {
             dcs_set_ctrl4already_owner(session, ctrl, result.req_mode, result.action);
 
-            if (gbp_to_lbp != DRC_NEED_MOVE_TO_LBP) {
-                (void)dcs_claim_ownership_l(session, page_id, result.req_mode, OG_FALSE,
-                                            dtc_get_ctrl_latest_lsn(ctrl), req_version);
-            }
+            (void)dcs_claim_ownership_l(session, page_id, result.req_mode, OG_FALSE, dtc_get_ctrl_latest_lsn(ctrl),
+                                        req_version);
+
             knl_end_session_wait(session, DCS_REQ_MASTER4PAGE_1WAY);
             return OG_SUCCESS;
         }
@@ -2462,29 +2424,17 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
 }
 
 static status_t dcs_request_page_internal(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id,
-                                          drc_lock_mode_e req_mode)
+                                          drc_lock_mode_e req_mode, drc_page_gdp_move_action_type gbp_to_lbp)
 {
     uint8 master_id = OG_INVALID_ID8;
     (void)drc_get_page_master_id(page_id, &master_id);
     // l means requester=master, r means requester!=master
     // But owner can be requester/master/other. The page location can be master's lbp/gbp or others lbp.
     status_t ret;
-    bool32 page_turned_cold = OG_FALSE;
-
-    if (ctrl->shmem_page_addr != NULL) {
-        if (req_mode == DRC_LOCK_SHARE) {
-            page_turned_cold = update_consecutive_read_stat(session, ctrl);
-        } else if (req_mode == DRC_LOCK_EXCLUSIVE) {
-            page_turned_cold = update_consecutive_same_writer_stat(session, ctrl);
-        }
-    }
-    drc_page_gdp_move_action_type move_action =
-        page_turned_cold ? DRC_NEED_MOVE_TO_LBP : DRC_NEED_NO_MOVE;
-
     if (master_id == DCS_SELF_INSTID(session)) {
-        ret = dcs_ask_master4page_l(session, ctrl, req_mode, move_action);
+        ret = dcs_ask_master4page_l(session, ctrl, req_mode, gbp_to_lbp);
     } else {
-        ret = dcs_ask_master4page_r(session, ctrl, master_id, req_mode, move_action);
+        ret = dcs_ask_master4page_r(session, ctrl, master_id, req_mode, gbp_to_lbp);
     }
 
     return ret;
@@ -2497,7 +2447,7 @@ status_t dcs_request_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t pa
     for (;;) {
         status_t ret = OG_SUCCESS;
         SYNC_POINT_GLOBAL_START(OGRAC_DCS_REQUEST_PAGE_INTERNAL_FAIL, &ret, OG_ERROR);
-        ret = dcs_request_page_internal(session, ctrl, page_id, mode);
+        ret = dcs_request_page_internal(session, ctrl, page_id, mode, DRC_NEED_NO_MOVE);
         SYNC_POINT_GLOBAL_END;
         if (ret == OG_SUCCESS) {
             DTC_DCS_DEBUG_INF("[DCS][%u-%u][dcs request page]: leave, load_status=%u", page_id.file, page_id.page,

@@ -43,7 +43,7 @@ bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
 
 void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
     int32 *write_waiters, int32 *owner_tid);
-
+    
 status_t init_lock_comm_queue();
 void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
 
