@@ -316,24 +316,6 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
                         ctrl->page_id.page);
         return ret;
     }
-
-    // Under the GBP lock, verify the slot is still valid.
-    // The page may have been demoted (is_valid = OG_FALSE by buf_shmem_evict) between when this
-    // requester received the GBP ack and when it acquired the lock above.
-    if (!shmem_page_meta->is_hot) {
-        OG_LOG_RUN_WAR("[DCS-GBP][%u-%u] GBP slot was demoted before load; falling back to cold path",
-                       ctrl->page_id.file, ctrl->page_id.page);
-        if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
-            (void)drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
-            ctrl->gbp_lock_mode = DRC_LOCK_NULL;
-        }
-        // Reset ctrl to cold so the caller falls back to disk read.
-        ctrl->is_hot = OG_FALSE;
-        ctrl->shmem_page_meta = NULL;
-        ctrl->shmem_page_addr = NULL;
-        ctrl->load_status = (uint8)BUF_LOAD_FAILED;
-        return OG_ERROR;
-    }
     ctrl->gbp_lock_mode = mode;
 
     // check page identifier of remote buf meta with ctrl->page_id
@@ -407,14 +389,6 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         }
     }
 
-    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
-    if (SECUREC_UNLIKELY(remote_head_lsn < ctrl->page->lsn)) {
-        OG_LOG_RUN_ERR("[[DTC-GBP-COPY][%u-%u]: lsn check failed, remote page lsn(%llu), ctrl->page->lsn(%llu)",
-            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn);
-        return OG_ERROR;
-    }
-
     dcs_copy_page_from_shmem(session, ctrl);
 
     heap_page_t *heap_page = (heap_page_t *)ctrl->page;
@@ -440,6 +414,7 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         return OG_ERROR;
     }
 
+    uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
     uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
 
     // to do: check remote_head_lsn, remote_tail_lsn is max and no set, need to set
@@ -457,8 +432,6 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     ctrl->lock_mode = mode;
     // ctrl->load_status need to set BUF_IS_LOADED, because commit need to check this status
     ctrl->load_status = (uint8)BUF_IS_LOADED;
-    ctrl->gbp_cached_valid = OG_FALSE;   /* current request just loaded it */
-    ctrl->is_hot = OG_TRUE;
 
     return OG_SUCCESS;
 }
@@ -503,6 +476,6 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
 
     // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
     OG_LOG_RUN_INF("[LBP-COPY-TO-GBP][%u-%u]: Success to copy page to gbp", ctrl->page_id.file, ctrl->page_id.page);
-
+    
     return OG_SUCCESS;
 }

@@ -1037,7 +1037,7 @@ static void drc_claim_new_page_hot_gbp(knl_session_t *session, claim_info_t *cla
               buf_res->pending == DRC_RES_EXCLUSIVE_ACTION);
 
     buf_res->pending = DRC_RES_INVALID_ACTION;
-    shmem_page_meta->is_hot = OG_TRUE;
+
     // the requester should have exclusive lock on page when the page is promoted to hot
     knl_panic(claim_info->mode == DRC_LOCK_EXCLUSIVE);
 
@@ -1587,13 +1587,6 @@ status_t drc_request_page_owner(knl_session_t *session, page_id_t pagid, drc_req
     result->type = DRC_REQ_OWNER_INVALID;
     result->action = DRC_RES_INVALID_ACTION;
     result->is_retry = OG_FALSE;
-
-    result->curr_owner_id = OG_INVALID_ID8;
-    result->readonly_copies = 0;
-    result->gbp_action = DRC_NEED_NO_MOVE;
-    result->gbp_buf_ctrl = NULL;
-    result->shmem_page_addr = NULL;
-
     result->req_mode = req_info->req_mode;
     req_info->req_owner_result = DRC_REQ_OWNER_WAITING;
 
@@ -1756,50 +1749,11 @@ allocated:
         return OG_ERROR;
     }
 
-    if (buf_res->claimed_owner == req_info->inst_id) {
-        if (buf_res->mode >= req_info->req_mode) {
-            result->type = DRC_REQ_OWNER_ALREADY_OWNER;
-            result->curr_owner_id = req_info->inst_id;
-            result->readonly_copies = buf_res->readonly_copies;
-            result->action = DRC_RES_INVALID_ACTION;
-            result->req_mode = req_info->req_mode;
-
-            cm_spin_unlock(&bucket->lock);
-            cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-
-            if (free_slot) {
-                drc_res_pool_free_item(buf_res_pool, idx);
-            }
-            return OG_SUCCESS;
-        }
-
-        if (buf_res->mode == DRC_LOCK_SHARE &&
-            req_info->req_mode == DRC_LOCK_EXCLUSIVE &&
-            buf_res->readonly_copies == 0) {
-            buf_res->mode = DRC_LOCK_EXCLUSIVE;
-
-            result->type = DRC_REQ_OWNER_ALREADY_OWNER;
-            result->curr_owner_id = req_info->inst_id;
-            result->readonly_copies = 0;
-            result->action = DRC_RES_INVALID_ACTION;
-            result->req_mode = req_info->req_mode;
-
-            cm_spin_unlock(&bucket->lock);
-            cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-
-            if (free_slot) {
-                drc_res_pool_free_item(buf_res_pool, idx);
-            }
-            return OG_SUCCESS;
-            }
-    }
-
     /* page in gbp, requster have no remote addr, two case:
      * （1) first request page after page move to gbp
      *  (2) invalid page addr for requester after gbp lru victim
      */
-    if (session->kernel->attr.enable_ubsmem && buf_res->page_hot_stat.is_in_gbp &&
-        !(req_info->curr_mode == DRC_LOCK_SHARE && req_info->req_mode == DRC_LOCK_EXCLUSIVE)) {
+    if (session->kernel->attr.enable_ubsmem && buf_res->page_hot_stat.is_in_gbp) {
         if (buf_res->page_hot_stat.shmem_page_addr == NULL) {
             DTC_DRC_DEBUG_ERR("[DRC][%u-%u][req page from gbp]: is_in_gbp is true, but shmem_page_addr is invalid, "
                               "request id=%d, readonly_copies=%llu",
@@ -1939,6 +1893,7 @@ allocated:
                           pagid.file, pagid.page, req_info->inst_id, result->readonly_copies, ret);
 
         if (ret == OG_SUCCESS) {
+            /* converting buf_res won't be recycled. */
             cm_spin_lock(&g_buf_res->res_part_stat_lock[part_id], NULL);
             cm_spin_lock(&bucket->lock, NULL);
             CM_ASSERT(IS_SAME_PAGID(buf_res->page_id, pagid));
@@ -7883,53 +7838,7 @@ void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id)
     }
 }
 
-static status_t dtc_materialize_gbp_to_master_lbp(knl_session_t *session,
-                                                  buf_ctrl_t *shmem_ctrl,
-                                                  buf_ctrl_t *local_ctrl,
-                                                  remote_page_info_t *out_meta)
-{
-    errno_t err;
-
-    if (shmem_ctrl == NULL || local_ctrl == NULL || out_meta == NULL) {
-        return OG_ERROR;
-    }
-
-    if (shmem_ctrl->shmem_page_addr == NULL || shmem_ctrl->shmem_page_meta == NULL ||
-        local_ctrl->page == NULL) {
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] materialize failed: invalid ptr page=%u-%u "
-                       "local_ctrl=%p local_page=%p shmem_meta=%p shmem_addr=%p",
-                       shmem_ctrl->page_id.file, shmem_ctrl->page_id.page,
-                       local_ctrl, local_ctrl == NULL ? NULL : local_ctrl->page,
-                       shmem_ctrl->shmem_page_meta, shmem_ctrl->shmem_page_addr);
-        return OG_ERROR;
-    }
-
-    if (!IS_SAME_PAGID(local_ctrl->page_id, shmem_ctrl->page_id)) {
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] materialize failed: page mismatch local=%u-%u shmem=%u-%u",
-                       local_ctrl->page_id.file, local_ctrl->page_id.page,
-                       shmem_ctrl->page_id.file, shmem_ctrl->page_id.page);
-        return OG_ERROR;
-    }
-
-    err = memcpy_s(local_ctrl->page, DEFAULT_PAGE_SIZE(session),
-                   shmem_ctrl->shmem_page_addr, DEFAULT_PAGE_SIZE(session));
-    knl_securec_check(err);
-
-    local_ctrl->lock_mode = DRC_LOCK_EXCLUSIVE;
-    local_ctrl->load_status = (uint8)BUF_IS_LOADED; /* use real loaded enum */
-    local_ctrl->transfer_status = 0;
-    local_ctrl->is_hot = OG_FALSE;
-    local_ctrl->gbp_cached_valid = OG_FALSE;
-    local_ctrl->shmem_page_meta = NULL;
-    local_ctrl->shmem_page_addr = NULL;
-    local_ctrl->consecutive_read_count = 0;
-    local_ctrl->consecutive_same_writer_count = 0;
-    local_ctrl->is_dirty = OG_FALSE;
-
-    return OG_SUCCESS;
-}
-
-status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t page_id, buf_ctrl_t *local_ctrl)
+status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t page_id)
 {
     if (SECUREC_UNLIKELY(IS_INVALID_PAGID(page_id))) {
         OG_LOG_RUN_ERR("invalid param page_file: %d", page_id.file);
@@ -7942,51 +7851,22 @@ status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t page_id, bu
         return OG_ERROR;
     }
 
-    return drc_invalidate_shmem_page_by_ctrl(session, shmem_ctrl, local_ctrl, OG_FALSE);
+    return drc_invalidate_shmem_page_by_ctrl(session, shmem_ctrl, OG_FALSE);
 }
 
-status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl,
-                                           buf_ctrl_t *local_ctrl, bool32 list_locked)
+status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked)
 {
+    page_id_t page_id = shmem_ctrl->page_id;
     drc_res_ctx_t *ogx = DRC_RES_CTX;
     drc_global_res_t *g_buf_res = &(ogx->global_buf_res);
-    drc_res_bucket_t *bucket = NULL;
-    drc_buf_res_t *buf_res = NULL;
-    remote_page_info_t out_shmem_page_meta;
-    page_id_t page_id;
-    uint32 part_id;
-    uint8 new_owner;
-    status_t ret;
-    errno_t err;
-
-    if (shmem_ctrl == NULL) {
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] invalid shmem_ctrl NULL");
-        return OG_ERROR;
-    }
-
-    page_id = shmem_ctrl->page_id;
 
     if (SECUREC_UNLIKELY(IS_INVALID_PAGID(page_id))) {
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] invalid page id: %u-%u", page_id.file, page_id.page);
+        OG_LOG_RUN_ERR("invalid param page_file: %d", page_id.file);
         return OG_ERROR;
     }
 
-    if (shmem_ctrl->shmem_page_meta == NULL || shmem_ctrl->shmem_page_addr == NULL) {
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] invalid shmem pointers: page=%u-%u meta=%p addr=%p",
-                       page_id.file, page_id.page,
-                       shmem_ctrl->shmem_page_meta, shmem_ctrl->shmem_page_addr);
-        return OG_ERROR;
-    }
-
-    if (local_ctrl != NULL && !IS_SAME_PAGID(local_ctrl->page_id, page_id)) {
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] local ctrl page mismatch: shmem_page=%u-%u local_page=%u-%u",
-                       page_id.file, page_id.page,
-                       local_ctrl->page_id.file, local_ctrl->page_id.page);
-        return OG_ERROR;
-    }
-    bucket = drc_get_buf_map_bucket(&g_buf_res->res_map, page_id.file, page_id.page);
-    part_id = drc_page_partid(page_id);
-
+    drc_res_bucket_t *bucket = drc_get_buf_map_bucket(&g_buf_res->res_map, page_id.file, page_id.page);
+    uint32 part_id = drc_page_partid(page_id);
     cm_spin_lock(&g_buf_res->res_part_stat_lock[part_id], NULL);
     cm_spin_lock(&bucket->lock, NULL);
 
@@ -7999,7 +7879,8 @@ status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *s
         return OG_ERROR;
     }
 
-    buf_res = (drc_buf_res_t *)drc_res_map_lookup(&ogx->global_buf_res.res_map, bucket, (char *)&page_id);
+    drc_buf_res_t *buf_res = (drc_buf_res_t *)drc_res_map_lookup(&ogx->global_buf_res.res_map, bucket,
+                                                                 (char *)&page_id);
     if (buf_res == NULL) {
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
@@ -8024,93 +7905,36 @@ status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *s
     }
     // mark the page is being recycled at the moment
     buf_res->pending = DRC_RES_PENDING_ACTION;
-    /*
-     * Re-check shmem pointers after setting pending.
-     */
-    if (shmem_ctrl->shmem_page_meta == NULL || shmem_ctrl->shmem_page_addr == NULL) {
-        buf_res->pending = DRC_RES_INVALID_ACTION;
-        cm_spin_unlock(&bucket->lock);
-        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] shmem pointers became invalid: page=%u-%u meta=%p addr=%p",
-                       page_id.file, page_id.page,
-                       shmem_ctrl->shmem_page_meta, shmem_ctrl->shmem_page_addr);
-        return OG_ERROR;
-    }
-    /*
-     * Copy metadata before buf_shmem_evict() clears shmem metadata/pointers.
-     */
-    err = memcpy_s(&out_shmem_page_meta, sizeof(remote_page_info_t),
-                   shmem_ctrl->shmem_page_meta, sizeof(remote_page_info_t));
-    knl_securec_check(err);
-
-    if (out_shmem_page_meta.file_id != page_id.file ||
-        out_shmem_page_meta.page_id != page_id.page) {
-        buf_res->pending = DRC_RES_INVALID_ACTION;
-        cm_spin_unlock(&bucket->lock);
-        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-
-        OG_LOG_RUN_ERR("[DRC-GBP2LBP] shmem meta page mismatch: page=%u-%u meta_page=%u-%u",
-                       page_id.file, page_id.page,
-                       out_shmem_page_meta.file_id, out_shmem_page_meta.page_id);
-        return OG_ERROR;
-    }
-
-    /*
-     * Policy in this version:
-     *   after GBP -> LBP, master/current node becomes owner.
-     *
-     * If local_ctrl is supplied, materialize latest GBP page bytes into that exact ctrl.
-     * If local_ctrl is NULL, this is the recycle path; no local materialization is done.
-     */
-    new_owner = DCS_SELF_INSTID(session);
-
-    if (local_ctrl != NULL) {
-        ret = dtc_materialize_gbp_to_master_lbp(session, shmem_ctrl, local_ctrl, &out_shmem_page_meta);
-        if (ret != OG_SUCCESS) {
-            buf_res->pending = DRC_RES_INVALID_ACTION;
-            cm_spin_unlock(&bucket->lock);
-            cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
-
-            OG_LOG_RUN_ERR("[DRC-GBP2LBP] materialize failed: page=%u-%u ret=%d",
-                           page_id.file, page_id.page, (int32)ret);
-            return OG_ERROR;
-        }
-
-        local_ctrl->is_hot = OG_FALSE;
-        local_ctrl->gbp_cached_valid = OG_FALSE;
-        local_ctrl->shmem_page_meta = NULL;
-        local_ctrl->shmem_page_addr = NULL;
-        local_ctrl->consecutive_read_count = 0;
-        local_ctrl->consecutive_same_writer_count = 0;
-    }
-
-    /*
-     * Now evict/invalidate the GBP slot.
-     * Note: if caller already holds the shmem LRU list lock, list_locked must be OG_TRUE.
-     */
-    ret = buf_shmem_evict(session, shmem_ctrl, &out_shmem_page_meta, list_locked);
+    uint64 lock_ptr = shmem_ctrl->shmem_page_meta->lock_ptr;
+    status_t ret = drc_gbp_distribute_lock(session, lock_ptr, page_id, LATCH_MODE_X);
     if (ret != OG_SUCCESS) {
-        buf_res->pending = DRC_RES_INVALID_ACTION;
         cm_spin_unlock(&bucket->lock);
-        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+        cm_spin_unlock(&ogx->global_buf_res.res_part_stat_lock[part_id]);
+        OG_LOG_RUN_ERR("[DRC][%u-%u] failed to acquire hot page lock, shmem lock offset %llu", page_id.file,
+                       page_id.page, lock_ptr);
         return OG_ERROR;
     }
-    /*
-     * Master/current node becomes LBP owner.
-     */
-    reset_page_hot_stat(session, buf_res);
-    buf_res->claimed_owner = new_owner;
+    // we should first check if the page evict is successful, then edit the global metadata.
+    // Else the global state would be incorrect if we fail to evict the shmem
+    remote_page_info_t out_shmem_page_meta;
+    if (buf_shmem_evict(session, shmem_ctrl, &out_shmem_page_meta, list_locked) != OG_SUCCESS) {
+        drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock(&ogx->global_buf_res.res_part_stat_lock[part_id]);
+        DTC_DRC_DEBUG_INF("[DRC][%u-%u] failed to evict shmem page, return", page_id.file, page_id.page);
+        return OG_ERROR;
+    }
+    drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+    reset_page_hot_stat(session, buf_res);  // set the buf_res to cold now
+    // buf_res has the last valid copy by last writer of the remote page
+    buf_res->claimed_owner = out_shmem_page_meta.claimed_owner;
     buf_res->lsn = out_shmem_page_meta.head_lsn;
     buf_res->mode = DRC_LOCK_EXCLUSIVE;
-    buf_res->pending = DRC_RES_INVALID_ACTION;
-    buf_res->converting.req_info = g_invalid_req_info;
-    buf_res->converting.next = OG_INVALID_ID32;
-
-    DRC_MASTER_INFO_STAT(R_PO_CONVETED)++;
+    buf_res->pending = DRC_RES_INVALID_ACTION;  // recylce is completed
+    DRC_MASTER_INFO_STAT(R_PO_CONVETED)++;      // we converted the owner, so count it once here
 
     cm_spin_unlock(&bucket->lock);
-    cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+    cm_spin_unlock(&ogx->global_buf_res.res_part_stat_lock[part_id]);
     DTC_DRC_DEBUG_INF("[DRC][%u-%u] buf_res invalidated shmem page", page_id.file, page_id.page);
     return OG_SUCCESS;
 }

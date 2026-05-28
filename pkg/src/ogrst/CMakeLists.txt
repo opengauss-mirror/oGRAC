@@ -32,7 +32,7 @@ target_include_directories(ogrst PUBLIC
         "${OGRACDB_SRC}/cms/interface"
         )
 if (USE_FUZZASAN)
-    target_link_libraries(ogrst PRIVATE ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon m rt pthread dl z zstd lz4 hcom ubsm_sdk Secodefuzz)
+    target_link_libraries(ogrst PRIVATE ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon m rt pthread dl z zstd lz4 hcom ubsm_sdk Secodefuzz) 
 else()
     target_link_libraries(ogrst PRIVATE ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon m rt pthread dl z zstd lz4 hcom ubsm_sdk)
 endif(USE_FUZZASAN)
