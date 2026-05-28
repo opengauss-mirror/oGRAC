@@ -6390,7 +6390,7 @@ static status_t exp_prepare_table_func_indexes(ogconn_stmt_t *stmt)
     char cmd_buf[OGSQL_MAX_TEMP_SQL + 1];
 
     PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
-        "SELECT IF(ID < 60000, '\"' || COLUMN_NAME || '\"', DEFAULT_TEXT) "
+        "SELECT IF(ID < 60000, '\"' || COLUMN_NAME || '\"', DEFAULT_TEXT) || IF(DESCEND = 'Y', ' DESC', '') "
         "FROM %s "
         "WHERE INDEX_OWNER = UPPER(:OWNER) AND TABLE_NAME = :TABLE_NAME AND INDEX_NAME = :INDEX_NAME "
         "ORDER BY COLUMN_POSITION", exp_tabname(g_export_opts.consistent, EXP_TABAGENT_DB_IND_COLUMNS)));
