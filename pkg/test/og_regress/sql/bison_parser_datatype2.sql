@@ -136,5 +136,7 @@ insert into test1 values(1.79E+309d, 1.79E+309d); --error
 insert into test1 values(1.79E+309D, 1.79E+309D); --error
 select * from test1;
 drop table test1;
-
+drop table if exists bison_rowid_datatype_t;
+create table bison_rowid_datatype_t(a rowid);
+drop table if exists bison_rowid_datatype_t;
 alter system set use_bison_parser = false;

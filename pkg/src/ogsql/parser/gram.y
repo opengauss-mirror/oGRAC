@@ -6096,6 +6096,14 @@ CharacterWithoutLength:     character
                     }
                     $$ = type;
                 }
+               | ROWID
+                {
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, "rowid", NULL, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make type failed");
+                    }
+                    $$ = type;
+                }
         ;
 
 character:    CHARACTER opt_varying     { $$ = $2 ? "varchar": "char"; }
