@@ -33,6 +33,7 @@ extern "C" {
 
 // params verify
 status_t sql_verify_als_uds_file_path(void *se, void *lex, void *def);
+status_t sql_verify_als_dss_log_level(void *se, void *lex, void *def);
 status_t sql_verify_als_uds_file_permissions(void *se, void *lex, void *def);
 status_t sql_verify_als_bool_only_sys_allowed(void *se, void *lex, void *def);
 status_t sql_verify_als_optimized_worker_threads(void *se, void *lex, void *def);

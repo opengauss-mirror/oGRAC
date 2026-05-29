@@ -1075,6 +1075,8 @@ config_item_t g_parameters[] = {
       PARAM_MES_CRC_CHECK_SWITCH, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_bool, sql_notify_als_bool, NULL },
     { "OGSTORE_MAX_OPEN_FILES", OG_TRUE, ATTR_NONE, "1024", NULL, NULL, "-", "(0, 1000000]", "OG_TYPE_INTEGER", NULL,
       PARAM_OGSTORE_MAX_OPEN_FILES, EFFECT_REBOOT, CFG_INS, sql_verify_als_uint32, NULL, NULL, NULL },
+    { "DSS_LOG_LEVEL", OG_TRUE, ATTR_NONE, "7", NULL, NULL, "-", "[0,65535]", "OG_TYPE_INTEGER", NULL,
+      PARAM_DSS_LOG_LEVEL, EFFECT_REBOOT, CFG_INS, sql_verify_als_dss_log_level, NULL, NULL, NULL },
     { "_ENABLE_RMO_CR", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_RMO_CR, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_rmo_cr,
       sql_notify_als_bool, NULL },

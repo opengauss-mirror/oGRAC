@@ -489,6 +489,11 @@ static status_t srv_load_dss_path()
                                    OG_UNIX_PATH_MAX - 1, "%s", value),
                         "OGSTORE_INST_PATH", OG_UNIX_PATH_MAX - 1);
     }
+    OG_RETURN_IFERR(srv_get_param_uint32("DSS_LOG_LEVEL", &g_instance->kernel.dtc_attr.dss_log_level));
+    if (g_instance->kernel.dtc_attr.dss_log_level > OG_MAX_DSS_LOG_LEVEL) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "DSS_LOG_LEVEL");
+        return OG_ERROR;
+    }
     return OG_SUCCESS;
 }
 
@@ -802,7 +807,8 @@ status_t srv_load_server_params(void)
     if (enable_dss) {
         g_instance->kernel.attr.enable_dss = enable_dss;
         OG_RETURN_IFERR(srv_load_dss_path());
-        OG_RETURN_IFERR(srv_device_init(g_instance->kernel.dtc_attr.ogstore_inst_path));
+        OG_RETURN_IFERR(srv_device_init(g_instance->kernel.dtc_attr.ogstore_inst_path,
+            g_instance->kernel.dtc_attr.dss_log_level));
     }
 
     OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_LOCAL_INFILE", &g_instance->attr.enable_local_infile));

@@ -35,12 +35,14 @@ typedef enum en_dss_log_level {
     DSS_LOG_LEVEL_COUNT,
 } dss_log_level_t;
 
+#define OG_MAX_DSS_LOG_LEVEL 65535U
+
 typedef enum en_dss_log_id {
     DSS_LOG_ID_RUN = 0,
     DSS_LOG_ID_DEBUG,
     DSS_LOG_ID_COUNT,
 } dss_log_id_t;
 
-status_t srv_device_init(const char *conn_path);
+status_t srv_device_init(const char *conn_path, uint32 log_level);
 
 #endif  // __SRV_DEVICE_ADPT_H__
