@@ -301,6 +301,7 @@ static inline status_t clt_read_column_def(clt_stmt_t *stmt, clt_column_t *colum
     column->def.is_character = OG_COLUMN_IS_CHARACTER(c_def);
     column->def.is_array = OG_COLUMN_IS_ARRAY(c_def);
     column->def.is_jsonb = OG_COLUMN_IS_JSONB(c_def);
+    column->def.is_rowid_type = OG_COLUMN_IS_ROWID_TYPE(c_def);
     column->def.name_len = c_def->name_len;
     OG_RETURN_IFERR(cs_get_data(pack, c_def->name_len, (void **)&name));
 
