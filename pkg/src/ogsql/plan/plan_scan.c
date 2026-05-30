@@ -634,6 +634,22 @@ static inline bool32 check_apply_table_full_scan(plan_assist_t *pa, sql_table_t 
     return OG_TRUE;
 }
 
+static inline bool32 sql_use_system_table_size_estimate(dc_entity_t *entity)
+{
+    return entity != NULL && IS_SYS_TABLE(&entity->table);
+}
+
+static inline status_t sql_set_table_size_estimate(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table,
+    dc_entity_t *entity, cond_tree_t *cond, char *debug_info)
+{
+    OG_RETURN_IFERR(sql_init_table_scan_partition_info(stmt, pa, table));
+    table->card = sql_estimate_table_card_no_stats(pa, entity, table, cond);
+    table->cost = sql_seq_scan_cost_no_stats(stmt, pa, entity, table);
+    table->startup_cost = 0.0;
+    sql_debug_scan_cost_info(stmt, table, debug_info, NULL, table->cost, NULL, NULL);
+    return OG_SUCCESS;
+}
+
 status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, cond_tree_t *cond)
 {
     if (pa->top_pa != NULL) {
@@ -654,15 +670,19 @@ status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_tabl
 
     dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
     pa->cond = cond;
+    bool32 use_sys_size_estimate = sql_use_system_table_size_estimate(entity);
+    bool32 has_global_stats = is_analyzed_table(stmt, table) && entity->cbo_table_stats != NULL &&
+        entity->cbo_table_stats->global_stats_exist;
 
-    if (!is_analyzed_table(stmt, table) || entity->cbo_table_stats == NULL ||
-        !entity->cbo_table_stats->global_stats_exist) {
-        return OG_SUCCESS;
+    if (!has_global_stats && (!use_sys_size_estimate || entity->cbo_table_stats == NULL)) {
+        return sql_set_table_size_estimate(stmt, pa, table, entity, cond, "SEQ NO_STATS");
     }
-        
+
     OG_RETURN_IFERR(sql_init_table_scan_partition_info(stmt, pa, table));
 
-    table->card = sql_estimate_table_card(pa, entity, table, cond);
+    table->card = use_sys_size_estimate || !has_global_stats ?
+        sql_estimate_table_card_no_stats(pa, entity, table, cond) :
+        sql_estimate_table_card(pa, entity, table, cond);
 
     if (check_apply_table_index(pa, table)) {
         for (uint32 idx_id = 0; idx_id < entity->table.desc.index_count; idx_id++) {
@@ -680,9 +700,12 @@ status_t sql_check_table_indexable(sql_stmt_t *stmt, plan_assist_t *pa, sql_tabl
     /* try seq scan */
     double seq_cost = CBO_MAX_COST;
     if (check_apply_table_full_scan(pa, table)) {
-        seq_cost = sql_seq_scan_cost(stmt, pa, entity, table);
+        seq_cost = use_sys_size_estimate || !has_global_stats ?
+            sql_seq_scan_cost_no_stats(stmt, pa, entity, table) :
+            sql_seq_scan_cost(stmt, pa, entity, table);
 
-        sql_debug_scan_cost_info(stmt, table, "SEQ", NULL, seq_cost, NULL, NULL);
+        sql_debug_scan_cost_info(stmt, table, use_sys_size_estimate ? "SEQ SYS_TABLE" : "SEQ", NULL, seq_cost,
+            NULL, NULL);
     }
 
     /*

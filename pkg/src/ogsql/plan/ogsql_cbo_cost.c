@@ -30,6 +30,7 @@
 #include "plan_rbo.h"
 #include "plan_range.h"
 #include "ostat_load.h"
+#include "stats_defs.h"
 #include "cbo_base.h"
 #include "plan_scan.h"
 #include "ogsql_cbo_cost.h"
@@ -42,6 +43,8 @@ extern "C" {
 static double compute_or_conds_ff(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, galist_t *or_conds,
     cbo_stats_info_t* stats_info);
 static double compute_and_conds_ff(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, cond_node_t *cond,
+    cbo_stats_info_t* stats_info);
+static int64 sql_cal_table_card(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, cond_tree_t *cond,
     cbo_stats_info_t* stats_info);
 static inline sort_direction_t apply_hint_index_sort_scan_direction(sql_table_t *table, knl_index_desc_t *index);
 
@@ -61,6 +64,77 @@ inline static double sql_normalize_ff(double ff)
     }
 
     return ff;
+}
+
+static double sql_default_col_stats_ff(cmp_type_t cmp_type)
+{
+    double ff = CBO_MIDDLE_FF;
+
+    switch (cmp_type) {
+        case CMP_TYPE_EQUAL:
+        case CMP_TYPE_EQUAL_ANY:
+        case CMP_TYPE_EQUAL_ALL:
+        case CMP_TYPE_IN:
+            ff = CBO_DEFAULT_EQ_FF;
+            break;
+        case CMP_TYPE_NOT_EQUAL:
+        case CMP_TYPE_NOT_EQUAL_ANY:
+        case CMP_TYPE_NOT_EQUAL_ALL:
+        case CMP_TYPE_NOT_IN:
+            ff = sql_normalize_ff(1 - CBO_DEFAULT_EQ_FF - CBO_DEFAULT_NULL_FF);
+            break;
+        case CMP_TYPE_LESS:
+        case CMP_TYPE_LESS_EQUAL:
+        case CMP_TYPE_GREAT:
+        case CMP_TYPE_GREAT_EQUAL:
+        case CMP_TYPE_LESS_ANY:
+        case CMP_TYPE_LESS_ALL:
+        case CMP_TYPE_LESS_EQUAL_ANY:
+        case CMP_TYPE_LESS_EQUAL_ALL:
+        case CMP_TYPE_GREAT_ANY:
+        case CMP_TYPE_GREAT_ALL:
+        case CMP_TYPE_GREAT_EQUAL_ANY:
+        case CMP_TYPE_GREAT_EQUAL_ALL:
+            ff = CBO_DEFAULT_INEQ_FF;
+            break;
+        case CMP_TYPE_BETWEEN:
+            ff = CBO_DEFAULT_BTW_FF;
+            break;
+        case CMP_TYPE_NOT_BETWEEN:
+            ff = sql_normalize_ff(1 - CBO_DEFAULT_BTW_FF - CBO_DEFAULT_NULL_FF);
+            break;
+        case CMP_TYPE_IS_NULL:
+            ff = CBO_DEFAULT_NULL_FF;
+            break;
+        case CMP_TYPE_IS_NOT_NULL:
+            ff = sql_normalize_ff(1 - CBO_DEFAULT_NULL_FF);
+            break;
+        case CMP_TYPE_LIKE:
+        case CMP_TYPE_REGEXP:
+        case CMP_TYPE_REGEXP_LIKE:
+            ff = CBO_DEFAULT_LIKE_FF;
+            break;
+        case CMP_TYPE_NOT_LIKE:
+        case CMP_TYPE_NOT_REGEXP:
+        case CMP_TYPE_NOT_REGEXP_LIKE:
+            ff = sql_normalize_ff(1 - CBO_DEFAULT_LIKE_FF - CBO_DEFAULT_NULL_FF);
+            break;
+        default:
+            break;
+    }
+
+    return ff;
+}
+
+static cbo_stats_column_t *sql_get_column_stats_for_ff(cbo_stats_info_t *stats_info, uint32 col_id)
+{
+    if (stats_info == NULL || stats_info->cbo_table_stats == NULL ||
+        stats_info->cbo_table_stats->max_col_id == OG_INVALID_ID32 ||
+        stats_info->cbo_table_stats->max_col_id < col_id) {
+        return NULL;
+    }
+
+    return cbo_get_column_stats(stats_info->cbo_table_stats, col_id);
 }
 
 double sql_adjust_est_row(double rows)
@@ -1420,7 +1494,7 @@ static double compute_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 
     cbo_stats_column_t *column_stats, cmp_node_t *cmp, expr_node_t *node)
 {
     if (column_stats == NULL) {
-        return CBO_MIDDLE_FF;
+        return sql_default_col_stats_ff(cmp->type);
     }
     cmp_type_t cmp_type = cmp->type;
     /* const type must be INTERGER */
@@ -1642,13 +1716,13 @@ status_t compute_hist_factor_by_conds(sql_stmt_t *stmt, dc_entity_t *entity, gal
     for (cond_idx = 0; cond_idx < conds->count; cond_idx++) {
         cmp_node_t *cmp = (cmp_node_t*)cm_galist_get(conds, cond_idx);
         col_id = *(uint32*)cm_galist_get(cond_cols, cond_idx);
-        /* currently functional-index don't have statistics */
-        if (stats_info->cbo_table_stats != NULL && stats_info->cbo_table_stats->max_col_id < col_id) {
-            f1 = f1 * (cmp->type == CMP_TYPE_EQUAL ? CBO_DEFAULT_EQ_FF : CBO_DEFAULT_INEQ_FF);
+        cbo_stats_column_t *column_stats = sql_get_column_stats_for_ff(stats_info, col_id);
+        /* Range-bound merging relies on histogram-derived selectivity. */
+        if (column_stats == NULL) {
+            f1 = f1 * sql_default_col_stats_ff(cmp->type);
             continue;
         }
 
-        cbo_stats_column_t *column_stats = cbo_get_column_stats(stats_info->cbo_table_stats, col_id);
         bool32 col_on_left;
         expr_node_t *other_node = NULL;
 
@@ -1781,6 +1855,216 @@ void sql_debug_join_cost_info(sql_stmt_t *stmt, sql_join_node_t* join_tree, char
         join_type, extra_info, outer_table_name, outer_path->cost.startup_cost, outer_path->cost.cost,
         inner_table_name, inner_path->cost.startup_cost, inner_path->cost.cost,
         join_tree->cost.startup_cost, join_tree->cost.cost);
+}
+
+typedef struct st_cbo_no_stats_table_size {
+    uint64 pages;
+    uint64 rows;
+} cbo_no_stats_table_size_t;
+
+typedef struct st_cbo_no_stats_size_ctx {
+    sql_stmt_t *stmt;
+    dc_entity_t *entity;
+    sql_table_t *table;
+} cbo_no_stats_size_ctx_t;
+
+#define CBO_NO_STATS_DEFAULT_ROW_LEN 80
+#define CBO_NO_STATS_MAX_ROWS_PER_PAGE 512
+
+static inline uint32 sql_no_stats_clamp_uint32(uint64 value)
+{
+    return value > OG_MAX_UINT32 ? OG_MAX_UINT32 : (uint32)value;
+}
+
+static uint64 sql_no_stats_rows_from_pages(cbo_no_stats_size_ctx_t *ctx, uint64 pages)
+{
+    uint32 page_size = g_instance->kernel.attr.page_size;
+    if (page_size == 0) {
+        page_size = OG_VMEM_PAGE_SIZE;
+    }
+
+    uint32 row_len = ctx->entity->table.desc.estimate_len;
+    if (row_len == 0 || row_len > page_size) {
+        row_len = CBO_NO_STATS_DEFAULT_ROW_LEN;
+    }
+
+    uint64 rows_per_page = (uint64)page_size / row_len;
+    rows_per_page = MAX(1, MIN(rows_per_page, CBO_NO_STATS_MAX_ROWS_PER_PAGE));
+    return pages * rows_per_page;
+}
+
+static inline void sql_no_stats_normalize_size(cbo_no_stats_table_size_t *size)
+{
+    /* A non-empty segment still needs a positive cardinality seed. */
+    if (size->pages > 0 && size->rows == 0) {
+        size->rows = 1;
+    }
+}
+
+static inline bool32 sql_no_stats_empty_part_scan(sql_table_t *table)
+{
+    return knl_is_part_table(table->entry->dc.handle) && table->scan_part_info != NULL &&
+        (table->scan_part_info->part_cnt == 0 || PART_TABLE_EMPTY_SCAN(table));
+}
+
+static inline bool32 sql_no_stats_need_global_part_size(sql_table_t *table)
+{
+    return table->scan_part_info->scan_type == SCAN_PART_FULL;
+}
+
+static inline bool32 sql_no_stats_need_max_part_size(sql_table_t *table)
+{
+    scan_part_range_type_t scan_type = table->scan_part_info->scan_type;
+    return scan_type == SCAN_PART_ANY || scan_type == SCAN_PART_UNKNOWN ||
+        scan_type == SCAN_SUBPART_ANY || scan_type == SCAN_SUBPART_UNKNOWN;
+}
+
+static void sql_no_stats_add_part_size(cbo_no_stats_size_ctx_t *ctx, uint32 part_no, uint32 subpart_no,
+    cbo_no_stats_table_size_t *size)
+{
+    uint32 pages = 0;
+    uint32 rows = 0;
+
+    if (knl_is_compart_table(ctx->table->entry->dc.handle) && subpart_no != CBO_GLOBAL_SUBPART_NO) {
+        knl_estimate_subtable_rows(&pages, &rows, KNL_SESSION(ctx->stmt), ctx->entity, part_no, subpart_no);
+    } else {
+        knl_estimate_table_rows(&pages, &rows, KNL_SESSION(ctx->stmt), ctx->entity, part_no);
+    }
+
+    if (pages > 0 && rows == 0) {
+        rows = sql_no_stats_clamp_uint32(sql_no_stats_rows_from_pages(ctx, pages));
+    }
+
+    size->pages += pages;
+    size->rows += rows;
+}
+
+static void sql_estimate_no_stats_max_part_size(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table,
+    cbo_no_stats_table_size_t *size)
+{
+    cbo_no_stats_size_ctx_t ctx = {
+        .stmt = stmt,
+        .entity = entity,
+        .table = table
+    };
+    uint32 part_count = knl_get_part_count(entity);
+    for (uint32 part_no = 0; part_no < part_count; part_no++) {
+        cbo_no_stats_table_size_t part_size = { 0 };
+        sql_no_stats_add_part_size(&ctx, part_no, CBO_GLOBAL_SUBPART_NO, &part_size);
+        if (part_size.rows > size->rows || (part_size.rows == size->rows && part_size.pages > size->pages)) {
+            *size = part_size;
+        }
+    }
+    sql_no_stats_normalize_size(size);
+}
+
+static void sql_estimate_no_stats_table_size(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table,
+    cbo_no_stats_table_size_t *size)
+{
+    size->pages = 0;
+    size->rows = 0;
+
+    cbo_no_stats_size_ctx_t ctx = {
+        .stmt = stmt,
+        .entity = entity,
+        .table = table
+    };
+
+    if (!knl_is_part_table(table->entry->dc.handle) || table->scan_part_info == NULL) {
+        sql_no_stats_add_part_size(&ctx, CBO_GLOBAL_PART_NO, CBO_GLOBAL_SUBPART_NO, size);
+        sql_no_stats_normalize_size(size);
+        return;
+    }
+
+    uint64 part_cnt = table->scan_part_info->part_cnt;
+    if (part_cnt == 0 || PART_TABLE_EMPTY_SCAN(table)) {
+        return;
+    }
+
+    if (sql_no_stats_need_global_part_size(table)) {
+        sql_no_stats_add_part_size(&ctx, CBO_GLOBAL_PART_NO, CBO_GLOBAL_SUBPART_NO, size);
+        sql_no_stats_normalize_size(size);
+        return;
+    }
+
+    if (sql_no_stats_need_max_part_size(table)) {
+        /* Max-row partition markers are statistics, so segment size chooses the representative partition. */
+        sql_estimate_no_stats_max_part_size(stmt, entity, table, size);
+        return;
+    }
+
+    uint64 cal_part_cnt = MIN(part_cnt, MAX_CBO_CALU_PARTS_COUNT);
+    for (uint64 i = 0; i < cal_part_cnt; i++) {
+        uint32 part_no = PART_TABLE_SCAN_PART_NO(table, i);
+        uint32 subpart_no = COMPART_TABLE_SCAN_SUBPART_NO(table, i);
+        if (part_no == CBO_GLOBAL_PART_NO) {
+            size->pages = 0;
+            size->rows = 0;
+            sql_no_stats_add_part_size(&ctx, CBO_GLOBAL_PART_NO, CBO_GLOBAL_SUBPART_NO, size);
+            sql_no_stats_normalize_size(size);
+            return;
+        }
+
+        sql_no_stats_add_part_size(&ctx, part_no, subpart_no, size);
+    }
+
+    if (part_cnt > MAX_CBO_CALU_PARTS_COUNT && cal_part_cnt != 0) {
+        size->pages = size->pages * part_cnt / cal_part_cnt;
+        size->rows = size->rows * part_cnt / cal_part_cnt;
+    }
+    sql_no_stats_normalize_size(size);
+}
+
+int64 sql_estimate_table_card_no_stats(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, cond_tree_t *cond)
+{
+    if (sql_no_stats_empty_part_scan(table)) {
+        return 0;
+    }
+
+    cbo_no_stats_table_size_t size;
+    sql_estimate_no_stats_table_size(pa->stmt, entity, table, &size);
+    if (size.pages == 0 && size.rows == 0) {
+        return 0;
+    }
+
+    cbo_stats_table_t table_stats = { 0 };
+    table_stats.rows = sql_no_stats_clamp_uint32(size.rows);
+    table_stats.blocks = sql_no_stats_clamp_uint32(size.pages);
+    table_stats.max_col_id = OG_INVALID_ID32;
+    table_stats.global_stats_exist = OG_FALSE;
+
+    cbo_stats_info_t stats_info = {
+        .scan_type = SCAN_PART_FULL,
+        .table_partition_no = CBO_GLOBAL_PART_NO,
+        .table_subpartition_no = CBO_GLOBAL_SUBPART_NO,
+        .cbo_table_stats = &table_stats,
+        .index_id = OG_INVALID_ID32,
+        .index_partition_no = CBO_GLOBAL_PART_NO,
+        .index_subpartition_no = CBO_GLOBAL_SUBPART_NO,
+        .cbo_index_stats = NULL
+    };
+
+    return sql_cal_table_card(pa, entity, table, cond, &stats_info);
+}
+
+double sql_seq_scan_cost_no_stats(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table)
+{
+    if (sql_no_stats_empty_part_scan(table)) {
+        return 0.0;
+    }
+
+    cbo_no_stats_table_size_t size;
+    sql_estimate_no_stats_table_size(stmt, entity, table, &size);
+
+    double seq_cost = size.pages * CBO_DEFAULT_SEQ_PAGE_COST + size.rows * CBO_DEFAULT_CPU_OPERATOR_COST;
+    seq_cost += CBO_DEFAULT_CPU_SCAN_TUPLE_COST * table->card;
+
+    if (pa->cond != NULL && pa->cond->root != NULL && !(pa->cond->root->type == COND_NODE_TRUE ||
+        pa->cond->root->type == COND_NODE_FALSE)) {
+        seq_cost += CBO_DEFAULT_CPU_OPERATOR_COST * size.rows;
+    }
+
+    return CBO_COST_SAFETY_RET(seq_cost);
 }
 
 
@@ -2244,7 +2528,7 @@ status_t sql_initial_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree
         run_cost += (outer_path_rows - 1) * inner_rescan_run_cost;
 
     join_tree->cost.startup_cost =  CBO_COST_SAFETY_RET(startup_cost);
-    join_tree->cost.cost =  CBO_COST_SAFETY_RET(run_cost);
+    join_tree->cost.cost =  CBO_COST_SAFETY_RET(startup_cost + run_cost);
 
     /* save cost in join_cost_ws, do the initial path cut */
     join_cost_ws->startup_cost = CBO_COST_SAFETY_RET(startup_cost);
@@ -2263,8 +2547,8 @@ status_t sql_final_cost_nestloop(join_assist_t *ja, sql_join_node_t* join_tree, 
     int64 ntuples = 0;
     double cpu_per_tuple = 0;
     /* cost of the base table */
-    double run_cost = join_tree->cost.cost;
-    double startup_cost = join_tree->cost.startup_cost;
+    double run_cost = join_cost_ws->run_cost;
+    double startup_cost = join_cost_ws->startup_cost;
     double inner_rescan_run_cost = join_cost_ws->inner_rescan_run_cost;
     double qual_startup_cost = 0;
     double qual_cost = 0;
@@ -3500,8 +3784,9 @@ static status_t sql_estimate_limit_cost(sql_stmt_t *stmt, plan_node_t *plan)
     if (limit_count_var != 0) {
         plan->rows = MIN(limit_count_var, plan->rows);
         plan->rows = MAX(1, plan->rows);
-        plan->cost += plan->start_cost + (plan->limit.next->cost - plan->limit.next->start_cost) *
-            ((double)plan->rows / (double)plan->limit.next->rows);
+        plan->cost = CBO_COST_SAFETY_RET(plan->start_cost +
+            (plan->limit.next->cost - plan->limit.next->start_cost) *
+            ((double)plan->rows / (double)plan->limit.next->rows));
     }
     return OG_SUCCESS;
 }
@@ -3541,8 +3826,9 @@ static status_t sql_estimate_select_limit_cost(sql_stmt_t *stmt, plan_node_t *pl
     if (limit_count_var != 0) {
         plan->rows = MIN(limit_count_var, plan->rows);
         plan->rows = MAX(1, plan->rows);
-        plan->cost += plan->start_cost + (plan->limit.next->cost - plan->limit.next->start_cost) *
-            ((double)plan->rows / (double)plan->limit.next->rows);
+        plan->cost = CBO_COST_SAFETY_RET(plan->start_cost +
+            (plan->limit.next->cost - plan->limit.next->start_cost) *
+            ((double)plan->rows / (double)plan->limit.next->rows));
     }
     return OG_SUCCESS;
 }
@@ -3700,10 +3986,14 @@ static status_t sql_estimate_concate_cost(sql_stmt_t *stmt, plan_node_t *plan)
         sub_plan = (plan_node_t *)cm_galist_get(plan->cnct_p.plans, i++);
         OG_RETURN_IFERR(sql_estimate_node_cost(stmt, sub_plan));
 
-        plan->rows = MAX(sub_plan->rows, plan->rows);
-        plan->cost = MAX(sub_plan->cost, plan->cost);
-        plan->start_cost = MAX(sub_plan->start_cost, plan->start_cost);
+        if (i == 1) {
+            plan->start_cost = CBO_COST_SAFETY_RET(sub_plan->start_cost);
+        }
+        plan->rows = CBO_CARD_SAFETY_SET(plan->rows + sub_plan->rows);
+        plan->cost = CBO_COST_SAFETY_RET(plan->cost + sub_plan->cost);
     }
+
+    plan->cost = CBO_COST_SAFETY_RET(plan->cost + plan->rows * CBO_DEFAULT_CPU_OPERATOR_COST);
 
     return OG_SUCCESS;
 }

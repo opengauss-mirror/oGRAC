@@ -369,6 +369,14 @@ static bool32 sql_jtable_validate_jpath(sql_join_path_t* old_jpath, sql_join_pat
             jpath->cost.card >= old_jpath->cost.card;
 }
 
+static inline bool32 sql_jpath_can_prune_by_outer_rels(sql_join_path_t *kept_path, sql_join_path_t *drop_path)
+{
+    bool32 kept_parameterized = !sql_bitmap_empty(&kept_path->outer_rels);
+    bool32 drop_parameterized = !sql_bitmap_empty(&drop_path->outer_rels);
+
+    return kept_parameterized == drop_parameterized;
+}
+
 /*
  * add a path into jtable
  */
@@ -396,7 +404,8 @@ status_t sql_jtable_add_path(sql_stmt_t *stmt, sql_join_table_t *jtable, sql_joi
         /* COSTS OLD BETTER */
         if (jpath->cost.cost > old_jpath->cost.cost * fuzzy_factor) {
             /* old_path which has better costs also requires no outer rels not required by the new path. */
-            if (sql_jtable_validate_jpath(old_jpath, jpath)) {
+            if (sql_jpath_can_prune_by_outer_rels(old_jpath, jpath) &&
+                sql_jtable_validate_jpath(old_jpath, jpath)) {
                 return OG_SUCCESS;
             }
             continue;
@@ -405,7 +414,8 @@ status_t sql_jtable_add_path(sql_stmt_t *stmt, sql_join_table_t *jtable, sql_joi
         /* COSTS NEW BETTER */
         if (old_jpath->cost.cost > jpath->cost.cost * fuzzy_factor) {
             /* new_path which has better costs also requires no outer rels not required by the old path. */
-            if (sql_jtable_validate_jpath(jpath, old_jpath)) {
+            if (sql_jpath_can_prune_by_outer_rels(jpath, old_jpath) &&
+                sql_jtable_validate_jpath(jpath, old_jpath)) {
                 sql_jtable_remove_path(jtable, node);
             }
             continue;
@@ -423,10 +433,12 @@ status_t sql_jtable_add_path(sql_stmt_t *stmt, sql_join_table_t *jtable, sql_joi
             } else {
                 return OG_SUCCESS;
             }
-        } else if (sql_bitmap_subset(&jpath->outer_rels, &old_jpath->outer_rels) &&
+        } else if (sql_jpath_can_prune_by_outer_rels(jpath, old_jpath) &&
+                   sql_bitmap_subset(&jpath->outer_rels, &old_jpath->outer_rels) &&
                    jpath->cost.card <= old_jpath->cost.card) {
             sql_jtable_remove_path(jtable, node);
-        } else if (sql_bitmap_subset(&old_jpath->outer_rels, &jpath->outer_rels) &&
+        } else if (sql_jpath_can_prune_by_outer_rels(old_jpath, jpath) &&
+                   sql_bitmap_subset(&old_jpath->outer_rels, &jpath->outer_rels) &&
                    jpath->cost.card >= old_jpath->cost.card) {
             return OG_SUCCESS;
         }
@@ -1131,7 +1143,7 @@ static status_t sql_build_subselect_path_internal(plan_assist_t *parent_pa, sql_
         OG_RETURN_IFERR(sql_jtable_add_path(stmt, jtable, jnode));
     } else {
         table->cost = jnode->cost.cost;
-        table->cost = jnode->cost.startup_cost;
+        table->startup_cost = jnode->cost.startup_cost;
         table->card = jnode->cost.card;
     }
 
@@ -1514,8 +1526,9 @@ static status_t generate_parameterized_paths(join_assist_t *ja, sql_join_table_t
     }
     dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
     sql_stmt_t *stmt = ja->stmt;
-    if (!is_analyzed_table(stmt, table) || entity->cbo_table_stats == NULL ||
-        !entity->cbo_table_stats->global_stats_exist) {
+    bool32 is_sys_table = IS_SYS_TABLE(&entity->table);
+    if (entity->cbo_table_stats == NULL || (!is_sys_table &&
+        (!is_analyzed_table(stmt, table) || !entity->cbo_table_stats->global_stats_exist))) {
         return OG_SUCCESS;
     }
 
@@ -2408,16 +2421,16 @@ static status_t sql_gen_unsorted_outer_nestloop_paths(join_assist_t *ja, sql_joi
         }
 
         if (nest_join_ok) {
-            sql_join_node_t* inner_path = jtbl2->cheapest_total_path;
-            OG_RETURN_IFERR(sql_build_nestloop_path(ja, jointype, jtable, outer_path, inner_path,
-                sjoininfo, restricts, param_source_rels));
-
             bilist_node_t *inner_paths;
             BILIST_FOREACH (inner_paths, jtbl2->cheapest_parameterized_paths) {
-                inner_path = BILIST_NODE_OF(sql_join_node_t, inner_paths, bilist_node);
+                sql_join_node_t* inner_path = BILIST_NODE_OF(sql_join_node_t, inner_paths, bilist_node);
                 OG_RETURN_IFERR(sql_build_nestloop_path(ja, jointype, jtable, outer_path, inner_path,
                     sjoininfo, restricts, param_source_rels));
             }
+
+            sql_join_node_t* inner_path = jtbl2->cheapest_total_path;
+            OG_RETURN_IFERR(sql_build_nestloop_path(ja, jointype, jtable, outer_path, inner_path,
+                sjoininfo, restricts, param_source_rels));
         }
     }
     return OG_SUCCESS;
