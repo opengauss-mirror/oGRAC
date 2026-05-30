@@ -2911,12 +2911,12 @@ static int exp_check_privilege(export_options_t *exp_opts)
     char *user = NULL;
 
     if (cm_str_equal("SYS", USER_NAME)) {
+        exp_opts->is_dba = OG_TRUE;
         return OG_SUCCESS;
     }
     
-    bool8 is_dba;
-    OG_RETURN_IFERR(ogsql_check_dba_user(&is_dba));
-    if (is_dba) {
+    OG_RETURN_IFERR(ogsql_check_dba_user(&exp_opts->is_dba));
+    if (exp_opts->is_dba) {
         return OG_SUCCESS;
     }
 
@@ -5787,15 +5787,36 @@ static int exp_table_auto_increment(const char *user, const char *table, exp_cac
 {
     uint32 rows;
     char cmd_buf[OGSQL_MAX_TEMP_SQL + 1];
+    bool32 use_my_tab_columns = (g_export_opts.is_myself && !g_export_opts.is_dba);
 
-    PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
-        "SELECT COLUMN_NAME "
-        "FROM %s "
-        "WHERE OWNER = UPPER(:OWNER) AND TABLE_NAME = :TABLE_NAME AND AUTO_INCREMENT = 'Y'",
-        exp_tabname(g_export_opts.consistent, EXP_TABAGENT_DB_TAB_COLUMNS)));
+    if (g_export_opts.is_dba) {
+        PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
+            "SELECT C.NAME "
+            "FROM SYS.SYS_USERS U, SYS.SYS_TABLES T, SYS.SYS_COLUMNS C "
+            "WHERE U.ID = T.USER# AND C.USER# = T.USER# AND C.TABLE# = T.ID "
+            "AND U.NAME = UPPER(:OWNER) AND T.NAME = :TABLE_NAME "
+            "AND T.RECYCLED = 0 AND C.FLAGS & 3 = 0 AND C.FLAGS & 8 <> 0 "
+            "AND DBE_DIAGNOSE.TENANT_CHECK(0, U.TENANT_ID) "
+            "ORDER BY C.ID"));
+    } else if (use_my_tab_columns) {
+        PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
+            "SELECT COLUMN_NAME "
+            "FROM SYS.MY_TAB_COLUMNS "
+            "WHERE TABLE_NAME = :TABLE_NAME AND AUTO_INCREMENT = 'Y'"));
+    } else {
+        PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
+            "SELECT COLUMN_NAME "
+            "FROM %s "
+            "WHERE OWNER = UPPER(:OWNER) AND TABLE_NAME = :TABLE_NAME AND AUTO_INCREMENT = 'Y'",
+            exp_tabname(g_export_opts.consistent, EXP_TABAGENT_DB_TAB_COLUMNS)));
+    }
     OG_RETURN_IFERR(ogconn_prepare(STMT, (const char *)cmd_buf));
-    OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, user, (int32)strlen(user), NULL));
-    OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 1, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
+    if (use_my_tab_columns) {
+        OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
+    } else {
+        OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, user, (int32)strlen(user), NULL));
+        OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 1, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
+    }
     OG_RETURN_IFERR(ogconn_execute(STMT));
     OG_RETURN_IFERR(ogconn_fetch(STMT, &rows));
     if (rows == 0) {
