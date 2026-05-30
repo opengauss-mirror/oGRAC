@@ -676,7 +676,18 @@ SQL> drop table test1;
 
 Succeed.
 
-SQL> 
+SQL> drop table if exists bison_rowid_datatype_t;
+
+Succeed.
+
+SQL> create table bison_rowid_datatype_t(a rowid);
+
+Succeed.
+
+SQL> drop table if exists bison_rowid_datatype_t;
+
+Succeed.
+
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
