@@ -209,21 +209,22 @@ SQL> EXPLAIN SELECT * FROM DATA_DS_TEST t0, DATA_DS_TEST t1 WHERE t0.int_f0 < 20
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
---------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                 | 1    | 40000 | 0         |       |        |
-| 1  |   QUERY LIMIT             |       |                 | 1    | 40000 | 0         |       |        |
-| 2  |     NESTED LOOPS          |       |                 | 1    | 20000 | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 0    | 10000 | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 0    | 10000 | 0         |       |        |
---------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT          |       |                 | 1    | 15   | 11        |       |        |
+| 1  |   QUERY LIMIT             |       |                 | 1    | 15   | 11        |       |        |
+| 2  |     MERGE JOIN            |       |                 | 10   | 53   | 11        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 45   | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 135  | 3    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
+    2 - access: T0.ID = T1.ID                                   
     3 - filter: T0.INT_F0 < 200                                 
-    4 - filter: T0.ID = T1.ID                                   
+    4 - filter: T0.INT_F0 < 200                                 
 
-13 rows fetched.
+14 rows fetched.
 
 SQL> select table_name, num_rows, blocks, empty_blocks, avg_row_len, sample_size FROM my_tables  WHERE table_name = 'DATA_DS_TEST';
 
@@ -248,8 +249,8 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------------
 | Id | Operation                            | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |                 | 1    | 76   | 8         |       |        |
-| 1  |   QUERY LIMIT                        |       |                 | 1    | 76   | 8         |       |        |
+| 0  | SELECT STATEMENT                     |       |                 | 1    | 10   | 8         |       |        |
+| 1  |   QUERY LIMIT                        |       |                 | 1    | 10   | 8         |       |        |
 | 2  |     MERGE JOIN                       |       |                 | 21   | 65   | 8         |       |        |
 | 3  |         TABLE ACCESS BY INDEX ROWID  | SYS   | DATA_DS_TEST T0 | 65   | 4    | 4         |       |        |
 | 4  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_62    | 65   | 4    | 4         |       |        |

@@ -220,7 +220,7 @@ EXPLAIN PLAN OUTPUT
 | 1  |   AGGR                             |       |                  | 1    | 1    | 0         |       |        |
 | 2  |     KERNEL FILTER                  |       |                  | 1    | 1    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL            | SYS   | TEST_MTRL_PROJ   | 1    | 1    | 0         |       |        |
-| 4  |       QUERY LIMIT                  |       |                  | 1    | 2    | 0         |       |        |
+| 4  |       QUERY LIMIT                  |       |                  | 1    | 1    | 0         |       |        |
 | 5  |         QUERY SORT ORDER BY ROWNUM |       |                  | 1    | 1    | 0         |       |        |
 | 6  |             TABLE ACCESS FULL      | SYS   | TEST_MTRL_EMP    | 1    | 1    | 0         |       |        |
 | 7  |   QUERY SORT ORDER BY              |       |                  | 10   | 4    | 0         |       |        |
