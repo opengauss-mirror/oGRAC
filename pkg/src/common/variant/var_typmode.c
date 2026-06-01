@@ -38,6 +38,10 @@ status_t cm_typmode2text(const typmode_t *typmod, text_t *txt, uint32 max_len)
         case OG_TYPE_CHAR:
         case OG_TYPE_VARCHAR:
         case OG_TYPE_STRING:
+            if (typmod->is_rowid_type) {
+                OG_RETURN_IFERR(cm_concat_string(txt, max_len, "ROWID"));
+                return OG_SUCCESS;
+            }
             cm_concat_text(txt, max_len, get_datatype_name(typmod->datatype));
             if ((uint32)typmod->size > 0) {
                 cm_concat_fmt(txt, OG_MAX_DATATYPE_STRLEN, "(%u %s)",

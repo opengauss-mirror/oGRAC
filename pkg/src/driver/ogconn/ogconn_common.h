@@ -358,6 +358,7 @@ typedef struct st_clt_column_desc {
     bool8 is_character;
     bool8 is_array;
     bool8 is_jsonb;
+    bool8 is_rowid_type;
     uint16 name_len;
     char name[OG_NAME_BUFFER_SIZE];
 } clt_column_desc_t;

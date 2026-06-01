@@ -1584,6 +1584,7 @@ ack_sender_t *sql_get_pl_sender(void);
 
 static inline void sql_typmod_from_knl_column(typmode_t *tm, const knl_column_t *kcol)
 {
+    MEMS_RETVOID_IFERR(memset_s(tm, sizeof(typmode_t), 0, sizeof(typmode_t)));
     tm->datatype = kcol->datatype;
     tm->size = kcol->size;
     tm->precision = (uint8)kcol->precision;
@@ -1591,6 +1592,7 @@ static inline void sql_typmod_from_knl_column(typmode_t *tm, const knl_column_t 
     tm->is_array = KNL_COLUMN_IS_ARRAY(kcol);
     if (OG_IS_STRING_TYPE(tm->datatype)) {
         tm->is_char = KNL_COLUMN_IS_CHARACTER(kcol);
+        tm->is_rowid_type = KNL_COLUMN_IS_ROWID_TYPE(kcol);
     }
 }
 

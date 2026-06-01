@@ -248,8 +248,9 @@ status_t og_gen_sorted_paths(join_assist_t *ja, sql_join_table_t *jtable, sql_ta
     tbl_join_info_t *jinfo = NULL;
     dc_entity_t *entity = DC_ENTITY(&table->entry->dc);
     sql_stmt_t *stmt = ja->stmt;
-    if (!is_analyzed_table(stmt, table) || entity->cbo_table_stats == NULL ||
-        !entity->cbo_table_stats->global_stats_exist) {
+    bool32 is_sys_table = IS_SYS_TABLE(&entity->table);
+    if (entity->cbo_table_stats == NULL || (!is_sys_table &&
+        (!is_analyzed_table(stmt, table) || !entity->cbo_table_stats->global_stats_exist))) {
         return OG_SUCCESS;
     }
     cond_tree_t* cond = NULL;

@@ -47,6 +47,7 @@ typedef struct st_ctconn_inner_column_desc {
     unsigned char is_character;
     unsigned char is_array;
     unsigned char is_jsonb;
+    unsigned char is_rowid_type;
     unsigned char auto_increment;
 } ogconn_inner_column_desc_t;
 

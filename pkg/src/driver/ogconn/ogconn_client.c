@@ -634,6 +634,7 @@ static status_t clt_desc_inner_column_by_id(clt_stmt_t *stmt, uint32 id, ogconn_
         desc->is_character = column->def.is_character;
         desc->is_array = column->def.is_array;
         desc->is_jsonb = column->def.is_jsonb;
+        desc->is_rowid_type = column->def.is_rowid_type;
     }
 
     return OG_SUCCESS;

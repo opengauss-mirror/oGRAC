@@ -172,11 +172,15 @@ int64 sql_estimate_nopartitioned_table_card(plan_assist_t *pa, dc_entity_t *enti
 
 int64 sql_estimate_table_card(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, cond_tree_t *cond);
 
+int64 sql_estimate_table_card_no_stats(plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table, cond_tree_t *cond);
+
 double sql_seq_scan_subpartitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table);
 
 double sql_seq_scan_partitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table);
 
 double sql_seq_scan_nopartitioned_cost(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table);
+
+double sql_seq_scan_cost_no_stats(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table);
 
 typedef struct st_ff_calc_ass {
     double left_nulls;

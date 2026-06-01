@@ -131,18 +131,21 @@ typedef struct st_cs_prepare_ack {
 #define OG_COLUMN_FLAG_CHARACTER      0x04
 #define OG_COLUMN_FLAG_ARRAY          0x08
 #define OG_COLUMN_FLAG_JSONB          0x10
+#define OG_COLUMN_FLAG_ROWID_TYPE     0x20
 
 #define OG_COLUMN_SET_NULLABLE(col)       (col)->flag |= OG_COLUMN_FLAG_NULLABLE
 #define OG_COLUMN_SET_AUTO_INCREMENT(col) (col)->flag |= OG_COLUMN_FLAG_AUTO_INCREMENT
 #define OG_COLUMN_SET_CHARACTER(col)      (col)->flag |= OG_COLUMN_FLAG_CHARACTER
 #define OG_COLUMN_SET_ARRAY(col)          (col)->flag |= OG_COLUMN_FLAG_ARRAY
 #define OG_COLUMN_SET_JSONB(col)          (col)->flag |= OG_COLUMN_FLAG_JSONB
+#define OG_COLUMN_SET_ROWID_TYPE(col)     (col)->flag |= OG_COLUMN_FLAG_ROWID_TYPE
 
 #define OG_COLUMN_IS_NULLABLE(col)       (((col)->flag & OG_COLUMN_FLAG_NULLABLE) != 0)
 #define OG_COLUMN_IS_AUTO_INCREMENT(col) (((col)->flag & OG_COLUMN_FLAG_AUTO_INCREMENT) != 0)
 #define OG_COLUMN_IS_CHARACTER(col)      (((col)->flag & OG_COLUMN_FLAG_CHARACTER) != 0)
 #define OG_COLUMN_IS_ARRAY(col)          (((col)->flag & OG_COLUMN_FLAG_ARRAY) != 0)
 #define OG_COLUMN_IS_JSONB(col)          (((col)->flag & OG_COLUMN_FLAG_JSONB) != 0)
+#define OG_COLUMN_IS_ROWID_TYPE(col)     (((col)->flag & OG_COLUMN_FLAG_ROWID_TYPE) != 0)
 
 typedef struct st_cs_column_def {
     uint16 size;

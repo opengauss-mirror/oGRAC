@@ -1413,6 +1413,7 @@ void ogsql_exit(bool32 from_whenever, status_t status)
 
 static void ogsql_coldesc2typmode(ogconn_inner_column_desc_t *dsc, typmode_t *typmod)
 {
+    MEMS_RETVOID_IFERR(memset_s(typmod, sizeof(typmode_t), 0, sizeof(typmode_t)));
     typmod->datatype = dsc->type + OG_TYPE_BASE;
     typmod->size = dsc->size;
     typmod->precision = (int8)dsc->precision;
@@ -1420,6 +1421,7 @@ static void ogsql_coldesc2typmode(ogconn_inner_column_desc_t *dsc, typmode_t *ty
     typmod->is_array = dsc->is_array;
     if (OG_IS_STRING_TYPE(typmod->datatype)) {
         typmod->is_char = (uint8)dsc->is_character;
+        typmod->is_rowid_type = (uint8)dsc->is_rowid_type;
     }
 }
 

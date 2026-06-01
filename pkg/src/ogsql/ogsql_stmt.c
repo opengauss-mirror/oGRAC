@@ -3463,9 +3463,8 @@ status_t sql_load_first_exec_vars(sql_stmt_t *stmt)
 
 static inline void sql_get_column_def_typmod(rs_column_t *rs_col, typmode_t *typmod)
 {
+    MEMS_RETVOID_IFERR(memset_s(typmod, sizeof(typmode_t), 0, sizeof(typmode_t)));
     typmod->datatype = (uint16)(rs_col->datatype - OG_TYPE_BASE);
-    typmod->precision = 0;
-    typmod->scale = 0;
 
     switch (rs_col->datatype) {
         case OG_TYPE_UNKNOWN:
@@ -3575,6 +3574,10 @@ static void sql_set_column_attr(rs_column_t *rs_col, cs_column_def_t *col_def, t
 
     if (OG_IS_CHAR_DATATYPE(rs_col->datatype) && rs_col->typmod.is_char) {
         OG_COLUMN_SET_CHARACTER(col_def);
+    }
+
+    if (OG_IS_STRING_TYPE(rs_col->datatype) && rs_col->typmod.is_rowid_type) {
+        OG_COLUMN_SET_ROWID_TYPE(col_def);
     }
 }
 

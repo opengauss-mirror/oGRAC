@@ -2911,12 +2911,12 @@ static int exp_check_privilege(export_options_t *exp_opts)
     char *user = NULL;
 
     if (cm_str_equal("SYS", USER_NAME)) {
+        exp_opts->is_dba = OG_TRUE;
         return OG_SUCCESS;
     }
     
-    bool8 is_dba;
-    OG_RETURN_IFERR(ogsql_check_dba_user(&is_dba));
-    if (is_dba) {
+    OG_RETURN_IFERR(ogsql_check_dba_user(&exp_opts->is_dba));
+    if (exp_opts->is_dba) {
         return OG_SUCCESS;
     }
 
@@ -4732,6 +4732,11 @@ static inline int ogsql_make_column_def(ogconn_stmt_t stmt, text_t *col_def)
     typmode_t col_type;
     bool32 is_arr;
     bool32 is_jsonb = OG_FALSE;
+    bool32 is_rowid_column = OG_FALSE;
+    text_t rowid_text;
+    uint32 rowid_col_id = (ogconn_get_call_version(CONN) >= CS_VERSION_24) ? 9 : 8;
+
+    MEMS_RETURN_IFERR(memset_s(&col_type, sizeof(typmode_t), 0, sizeof(typmode_t)));
 
     // get the column name
     OG_RETURN_IFERR(ogconn_column_as_string(stmt, 0, g_str_buf, OG_MAX_PACKET_SIZE));
@@ -4740,11 +4745,19 @@ static inline int ogsql_make_column_def(ogconn_stmt_t stmt, text_t *col_def)
     // get the datatype
     OG_RETURN_IFERR(ogconn_column_as_string(stmt, 1, g_str_buf, OG_MAX_PACKET_SIZE));
     is_arr = is_arr_type();
-    col_type.datatype = get_datatype_id(g_str_buf);
+    is_rowid_column = cm_str_equal_ins(g_str_buf, "ROWID");
+    col_type.datatype = is_rowid_column ? OG_TYPE_CHAR : get_datatype_id(g_str_buf);
 
     if (ogconn_get_call_version(CONN) >= CS_VERSION_24) {
         OG_RETURN_IFERR(ogconn_get_column_by_id(stmt, 8, &data, &size, &is_null));
         is_jsonb = ((size == STR_TRUE_LEN) ? OG_TRUE : OG_FALSE);
+    }
+
+    OG_RETURN_IFERR(ogconn_column_as_string(stmt, rowid_col_id, g_str_buf, OG_MAX_PACKET_SIZE));
+    cm_str2text_safe(g_str_buf, (uint32)strlen(g_str_buf), &rowid_text);
+    cm_trim_text(&rowid_text);
+    if (cm_text_str_equal_ins(&rowid_text, "TRUE")) {
+        is_rowid_column = OG_TRUE;
     }
 
     OG_RETURN_IFERR(ogconn_get_column_by_id(stmt, 2, &data, &size, &is_null));
@@ -4759,6 +4772,10 @@ static inline int ogsql_make_column_def(ogconn_stmt_t stmt, text_t *col_def)
     if (OG_IS_STRING_TYPE(col_type.datatype)) {
         OG_RETURN_IFERR(ogconn_get_column_by_id(stmt, 7, &data, &size, &is_null));
         col_type.is_char = (((char *)data)[0] == 'C');
+    }
+    if (is_rowid_column) {
+        col_type.datatype = OG_TYPE_CHAR;
+        col_type.is_rowid_type = OG_TRUE;
     }
 
     OG_RETURN_IFERR(cm_concat_string(col_def, EXP_MAX_DDL_BUF_SZ, " "));
@@ -5787,15 +5804,36 @@ static int exp_table_auto_increment(const char *user, const char *table, exp_cac
 {
     uint32 rows;
     char cmd_buf[OGSQL_MAX_TEMP_SQL + 1];
+    bool32 use_my_tab_columns = (g_export_opts.is_myself && !g_export_opts.is_dba);
 
-    PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
-        "SELECT COLUMN_NAME "
-        "FROM %s "
-        "WHERE OWNER = UPPER(:OWNER) AND TABLE_NAME = :TABLE_NAME AND AUTO_INCREMENT = 'Y'",
-        exp_tabname(g_export_opts.consistent, EXP_TABAGENT_DB_TAB_COLUMNS)));
+    if (g_export_opts.is_dba) {
+        PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
+            "SELECT C.NAME "
+            "FROM SYS.SYS_USERS U, SYS.SYS_TABLES T, SYS.SYS_COLUMNS C "
+            "WHERE U.ID = T.USER# AND C.USER# = T.USER# AND C.TABLE# = T.ID "
+            "AND U.NAME = UPPER(:OWNER) AND T.NAME = :TABLE_NAME "
+            "AND T.RECYCLED = 0 AND C.FLAGS & 3 = 0 AND C.FLAGS & 8 <> 0 "
+            "AND DBE_DIAGNOSE.TENANT_CHECK(0, U.TENANT_ID) "
+            "ORDER BY C.ID"));
+    } else if (use_my_tab_columns) {
+        PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
+            "SELECT COLUMN_NAME "
+            "FROM SYS.MY_TAB_COLUMNS "
+            "WHERE TABLE_NAME = :TABLE_NAME AND AUTO_INCREMENT = 'Y'"));
+    } else {
+        PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
+            "SELECT COLUMN_NAME "
+            "FROM %s "
+            "WHERE OWNER = UPPER(:OWNER) AND TABLE_NAME = :TABLE_NAME AND AUTO_INCREMENT = 'Y'",
+            exp_tabname(g_export_opts.consistent, EXP_TABAGENT_DB_TAB_COLUMNS)));
+    }
     OG_RETURN_IFERR(ogconn_prepare(STMT, (const char *)cmd_buf));
-    OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, user, (int32)strlen(user), NULL));
-    OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 1, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
+    if (use_my_tab_columns) {
+        OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
+    } else {
+        OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 0, OGCONN_TYPE_STRING, user, (int32)strlen(user), NULL));
+        OG_RETURN_IFERR(ogconn_bind_by_pos(STMT, 1, OGCONN_TYPE_STRING, table, (int32)strlen(table), NULL));
+    }
     OG_RETURN_IFERR(ogconn_execute(STMT));
     OG_RETURN_IFERR(ogconn_fetch(STMT, &rows));
     if (rows == 0) {
@@ -6372,11 +6410,15 @@ static status_t exp_prepare_column_info(ogconn_stmt_t *stmt)
     char cmd_buf[OGSQL_MAX_TEMP_SQL + 1];
 
     PRTS_RETURN_IFERR(sprintf_s(cmd_buf, OGSQL_MAX_TEMP_SQL,
-        "SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, "
-        "       NULLABLE, DATA_DEFAULT, CHAR_USED %s "
-        "FROM %s "
-        "WHERE OWNER = UPPER(:O) AND TABLE_NAME = :T ORDER BY COLUMN_ID",
-        (ogconn_get_call_version(CONN) >= CS_VERSION_24) ? ", IS_JSONB" : " ",
+        "SELECT D.COLUMN_NAME, D.DATA_TYPE, D.DATA_LENGTH, D.DATA_PRECISION, D.DATA_SCALE, "
+        "       D.NULLABLE, D.DATA_DEFAULT, D.CHAR_USED%s, "
+        "       DECODE(C.FLAGS & 4096, 4096, 'TRUE', 'FALSE') "
+        "FROM %s D "
+        "LEFT JOIN SYS.SYS_USERS U ON U.NAME = D.OWNER "
+        "LEFT JOIN SYS.SYS_TABLES T ON T.USER# = U.ID AND T.NAME = D.TABLE_NAME AND T.RECYCLED = 0 "
+        "LEFT JOIN SYS.SYS_COLUMNS C ON C.USER# = T.USER# AND C.TABLE# = T.ID AND C.NAME = D.COLUMN_NAME "
+        "WHERE D.OWNER = UPPER(:O) AND D.TABLE_NAME = :T ORDER BY D.COLUMN_ID",
+        (ogconn_get_call_version(CONN) >= CS_VERSION_24) ? ", D.IS_JSONB" : "",
         exp_tabname(g_export_opts.consistent, EXP_TABAGENT_DB_TAB_COLS)));
 
     OG_RETURN_IFERR(ogconn_alloc_stmt(CONN, stmt));
