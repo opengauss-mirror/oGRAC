@@ -14935,7 +14935,7 @@ TransactionStmt:
                         parser_yyerror("parse restore from failed");
                     }
 
-                    if (og_parse_restore(stmt, param, $5) != OG_SUCCESS) {
+                    if (og_parse_restore(stmt, param, $5, @4.loc) != OG_SUCCESS) {
                         parser_yyerror("parse restore failed");
                     }
                     $$ = param;
@@ -15201,7 +15201,7 @@ TransactionStmt:
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
                         parser_yyerror("parse restore from failed");
                     }
-                    if (og_parse_restore(stmt, param, $5) != OG_SUCCESS) {
+                    if (og_parse_restore(stmt, param, $5, @4.loc) != OG_SUCCESS) {
                         parser_yyerror("parse restore failed");
                     }
                     $$ = param;
@@ -15225,7 +15225,7 @@ TransactionStmt:
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
                         parser_yyerror("parse restore from failed");
                     }
-                    if (og_parse_restore(stmt, param, $5) != OG_SUCCESS) {
+                    if (og_parse_restore(stmt, param, $5, @4.loc) != OG_SUCCESS) {
                         parser_yyerror("parse restore failed");
                     }
                     $$ = param;

@@ -775,6 +775,7 @@ void bak_reset_process(bak_process_t *ogx);
 void bak_reset_stats_and_alloc_sess(knl_session_t *session);
 void bak_reset_process_ctrl(bak_t *bak, bool32 restore);
 void bak_set_error(bak_error_t *error_info);
+void bak_set_error_msg(bak_error_t *error_info, const char *msg);
 status_t bak_set_running(knl_session_t *session, bak_context_t *ogx);
 status_t bak_set_build_running(knl_session_t *session, bak_context_t *ogx, build_progress_t *build_progress);
 void bak_unset_running(knl_session_t *session, bak_context_t *ogx);

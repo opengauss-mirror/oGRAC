@@ -1306,6 +1306,22 @@ void bak_set_error(bak_error_t *error_info)
     }
 }
 
+void bak_set_error_msg(bak_error_t *error_info, const char *msg)
+{
+    errno_t ret;
+
+    if (msg == NULL || msg[0] == '\0' || strlen(error_info->err_msg) != 0) {
+        return;
+    }
+
+    cm_spin_lock(&error_info->err_lock, NULL);
+    if (strlen(error_info->err_msg) == 0) {
+        ret = strcpy_s(error_info->err_msg, OG_MESSAGE_BUFFER_SIZE, msg);
+        knl_securec_check(ret);
+    }
+    cm_spin_unlock(&error_info->err_lock);
+}
+
 void bak_set_fail_error(bak_error_t *error_info, const char *str)
 {
     int32 err_code;
@@ -1320,8 +1336,7 @@ void bak_set_fail_error(bak_error_t *error_info, const char *str)
     }
 
     if (strlen(error_info->err_msg) == 0) {
-        errno_t ret = strcpy_s(error_info->err_msg, OG_MESSAGE_BUFFER_SIZE, "process stop");
-        knl_securec_check(ret);
+        bak_set_error_msg(error_info, "process failed without detailed error");
     }
 
     OG_THROW_ERROR(ERR_BACKUP_RESTORE, str, error_info->err_msg);

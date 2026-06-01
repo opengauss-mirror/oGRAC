@@ -92,7 +92,7 @@ typedef struct backup_opt {
 status_t og_parse_backup_buffer(sql_stmt_t *stmt, uint32 *buffer_size, backup_opt *opt);
 status_t og_parse_backup_archivelog(sql_stmt_t *stmt, knl_backup_t *param, galist_t *backup_opts);
 status_t og_parse_backup_database(sql_stmt_t *stmt, knl_backup_t *param, galist_t *backup_opts);
-status_t og_parse_restore(sql_stmt_t *stmt, knl_restore_t *param, galist_t *backup_opts);
+status_t og_parse_restore(sql_stmt_t *stmt, knl_restore_t *param, galist_t *backup_opts, source_location_t loc);
 status_t og_parse_build(sql_stmt_t *stmt, knl_build_def_t *param, galist_t *backup_opts);
 status_t sql_parse_table_defs_bison(sql_stmt_t *stmt, lock_tables_def_t *def, galist_t *table_list);
 

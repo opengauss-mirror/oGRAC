@@ -1711,45 +1711,43 @@ static status_t og_parse_backup_repair(sql_stmt_t *stmt, restore_repair_type_t *
     return OG_SUCCESS;
 }
 
-status_t og_parse_restore(sql_stmt_t *stmt, knl_restore_t *param, galist_t *backup_opts)
+status_t og_parse_restore(sql_stmt_t *stmt, knl_restore_t *param, galist_t *backup_opts, source_location_t loc)
 {
     status_t status;
 
-    if (backup_opts == NULL) {
-        return OG_SUCCESS;
-    }
-
-    for (uint32 i = 0; i < backup_opts->count; i++) {
-        backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
-        switch (opt->type) {
-            case BACKUP_DISCONNET_OPT:
-                status = og_parse_restore_disconnect(stmt, param, opt);
-                break;
-            case BACKUP_PARALLELISM_OPT:
-                status = og_parse_backup_parallelism(stmt, &param->parallelism, opt);
-                break;
-            case BACKUP_PASSWORD_OPT:
-                status = og_parse_backup_password(stmt, &param->crypt_info, opt, OG_FALSE);
-                break;
-            case BACKUP_TABLESPACE_OPT:
-                status = og_parse_backup_tablespace(stmt, param, opt);
-                break;
-            case BACKUP_BUFFER_OPT:
-                status = og_parse_backup_buffer(stmt, &param->buffer_size, opt);
-                break;
-            case BACKUP_REPAIR_OPT:
-                status = og_parse_backup_repair(stmt, &param->repair_type, opt);
-                break;
-            default:    
-                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown restore option");
-                return OG_ERROR;
+    if (backup_opts != NULL) {
+        for (uint32 i = 0; i < backup_opts->count; i++) {
+            backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
+            switch (opt->type) {
+                case BACKUP_DISCONNET_OPT:
+                    status = og_parse_restore_disconnect(stmt, param, opt);
+                    break;
+                case BACKUP_PARALLELISM_OPT:
+                    status = og_parse_backup_parallelism(stmt, &param->parallelism, opt);
+                    break;
+                case BACKUP_PASSWORD_OPT:
+                    status = og_parse_backup_password(stmt, &param->crypt_info, opt, OG_FALSE);
+                    break;
+                case BACKUP_TABLESPACE_OPT:
+                    status = og_parse_backup_tablespace(stmt, param, opt);
+                    break;
+                case BACKUP_BUFFER_OPT:
+                    status = og_parse_backup_buffer(stmt, &param->buffer_size, opt);
+                    break;
+                case BACKUP_REPAIR_OPT:
+                    status = og_parse_backup_repair(stmt, &param->repair_type, opt);
+                    break;
+                default:
+                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown restore option");
+                    return OG_ERROR;
+            }
+            OG_RETURN_IFERR(status);
         }
-        OG_RETURN_IFERR(status);
     }
     uint32 buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
 
     if (param->type != RESTORE_FROM_PATH) {
-        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "backup set path is not specified");
+        OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "backup set path is not specified");
         return OG_ERROR;
     }
 
@@ -1764,35 +1762,33 @@ status_t og_parse_build(sql_stmt_t *stmt, knl_build_def_t *param, galist_t *back
 {
     status_t status;
 
-    if (backup_opts == NULL) {
-        return OG_SUCCESS;
+    if (backup_opts != NULL) {
+        for (uint32 i = 0; i < backup_opts->count; i++) {
+            backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
+            switch (opt->type) {
+                case BACKUP_INCREMENTAL_NO_LEVEL_OPT:
+                    param->param_ctrl.is_increment = OG_TRUE;
+                    status = OG_SUCCESS;
+                    break;
+                case BACKUP_COMPRESS_OPT:
+                    param->param_ctrl.compress = opt->compress_algo;
+                    param->param_ctrl.compress_level = opt->compress_level;
+                    status = OG_SUCCESS;
+                    break;
+                case BACKUP_PARALLELISM_OPT:
+                    status = og_parse_backup_parallelism(stmt, &param->param_ctrl.parallelism, opt);
+                    break;
+                case BACKUP_BUFFER_OPT:
+                    status = og_parse_backup_buffer(stmt, &param->param_ctrl.buffer_size, opt);
+                    break;
+                default:
+                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown build option");
+                    return OG_ERROR;
+            }
+            OG_RETURN_IFERR(status);
+        }
     }
 
-    for (uint32 i = 0; i < backup_opts->count; i++) {
-        backup_opt *opt = (backup_opt *)cm_galist_get(backup_opts, i);
-        switch (opt->type) {
-            case BACKUP_INCREMENTAL_NO_LEVEL_OPT:
-                param->param_ctrl.is_increment = OG_TRUE;
-                status = OG_SUCCESS;
-                break;
-            case BACKUP_COMPRESS_OPT:
-                param->param_ctrl.compress = opt->compress_algo;
-                param->param_ctrl.compress_level = opt->compress_level;
-                status = OG_SUCCESS;
-                break;
-            case BACKUP_PARALLELISM_OPT:
-                status = og_parse_backup_parallelism(stmt, &param->param_ctrl.parallelism, opt);
-                break;
-            case BACKUP_BUFFER_OPT:
-                status = og_parse_backup_buffer(stmt, &param->param_ctrl.buffer_size, opt);
-                break;
-            default:
-                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but unknown build option");
-                return OG_ERROR;
-        }
-        OG_RETURN_IFERR(status);
-    }
-    
     uint32 buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
 
     if (param->param_ctrl.buffer_size == 0) {
