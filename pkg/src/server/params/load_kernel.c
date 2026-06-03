@@ -1661,6 +1661,21 @@ status_t srv_load_kernel_params(void)
     }
     OG_RETURN_IFERR(srv_get_param_uint32("_UB_PAGE_HOT_TIMEOUT", &attr->ub_page_hot_timeout));
 
+    {
+        char *ubs_hosts = srv_get_param("UBS_CLUSTER_HOSTS");
+        uint32 ubs_hosts_len = (uint32)strlen(ubs_hosts);
+        if (ubs_hosts_len >= sizeof(attr->ubs_cluster_hosts)) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, "UBS_CLUSTER_HOSTS");
+            return OG_ERROR;
+        }
+        if (ubs_hosts_len > 0) {
+            MEMS_RETURN_IFERR(strncpy_s(attr->ubs_cluster_hosts, sizeof(attr->ubs_cluster_hosts),
+                ubs_hosts, ubs_hosts_len));
+        } else {
+            attr->ubs_cluster_hosts[0] = '\0';
+        }
+    }
+
     attr->small_table_sampling_threshold = num32;
 
     /* auto block repair */

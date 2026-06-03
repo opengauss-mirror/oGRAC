@@ -1029,8 +1029,8 @@ static void drc_claim_new_page_hot_gbp(knl_session_t *session, claim_info_t *cla
     uint8 cur_owner = buf_res->claimed_owner;
     drc_req_info_t *converting_req = &(buf_res->converting.req_info);
 
-    DTC_DRC_DEBUG_INF("[DRC][%u-%u][claim new page hot]: current owner=%u, req_mode=%u, claim_mode=%u, master_id=%u",
-                      pagid.file, pagid.page, cur_owner, converting_req->req_mode, claim_info->mode, master_id);
+    DTC_DRC_DEBUG_INF("[DRC-GBP][%u-%u][claim new page hot]: 5-2.current owner=%u, req_mode=%u, claim_mode=%u, "
+        "master_id=%u", pagid.file, pagid.page, cur_owner, converting_req->req_mode, claim_info->mode, master_id);
 
     knl_panic(converting_req->req_mode == claim_info->mode);
     knl_panic(buf_res->pending == DRC_RES_INVALID_ACTION || buf_res->pending == DRC_RES_SHARE_ACTION ||
@@ -1225,7 +1225,7 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
     // for debug only
     drc_trace_convert_queue(buf_res);
 
-    DTC_DRC_DEBUG_INF("[DRC][%u-%u][convert_q]: count=%u, edp_map=%llu, latest_edp=%u, readonly_copies=%llu",
+    DTC_DRC_DEBUG_INF("[DRC][%u-%u][convert_q]: 5-3.count=%u, edp_map=%llu, latest_edp=%u, readonly_copies=%llu",
                       page_id.file, page_id.page, buf_res->convert_q.count, buf_res->edp_map, buf_res->latest_edp,
                       buf_res->readonly_copies);
 
@@ -1303,7 +1303,7 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
         mes_init_ack_head(&req_head, &ack_shmem_msg.head, MES_CMD_MASTER_ACK_CHECK_GBP, sizeof(msg_ask_page_ack_t),
                           DCS_SELF_SID(session));
 
-        OG_LOG_RUN_INF("[DRC][%u-%u] broadcast invalidate msg to requester in convert q, requester_bits=%llu",
+        DTC_DRC_DEBUG_INF("[DRC][%u-%u] 5-4.broadcast invalidate msg to requester in convert q, requester_bits=%llu",
                        page_id.file, page_id.page, requester_bits);
         mes_broadcast(session->id, requester_bits, (void *)&ack_shmem_msg, NULL);
     }
@@ -1934,7 +1934,7 @@ allocated:
                 }
                 result->gbp_buf_ctrl = gbp_buf_ctrl;
 
-                DTC_DRC_DEBUG_INF("[DRC-GBP][%u-%u][req owner converting to gbp]: allocated gbp buf ctrl=%p,"
+                DTC_DRC_DEBUG_INF("[DRC-GBP][%u-%u][1.req owner converting to gbp]: allocated gbp buf ctrl=%p,"
                                   "shmem_page_addr=%p, shmem_page_meta=%p",
                                   pagid.file, pagid.page, (void *)gbp_buf_ctrl, gbp_buf_ctrl->shmem_page_addr,
                                   gbp_buf_ctrl->shmem_page_meta);

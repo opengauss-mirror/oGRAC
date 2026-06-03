@@ -168,6 +168,7 @@ class DeployParams:
         self.interconnect_port = dp.get("interconnect_port", "1601,1602").strip()
         self.max_arch_files_size = dp.get("MAX_ARCH_FILES_SIZE", "").strip()
         self.cluster_id = dp.get("cluster_id", "0").strip()
+        self.ubs_cluster_hosts = dp.get("ubs_cluster_hosts", "node01,node02").strip()
         self.install_type = dp.get("install_type", "0").strip()
         self.auto_tune = dp.get("auto_tune", "")
 
@@ -572,6 +573,7 @@ def _build_ogracd_configs(dp):
         "CLUSTER_ID": dp.cluster_id,
         "_ENABLE_REMOTE_DISTRIBUTE_LOCK": "TRUE",
         "_ENABLE_UBSMEM": "TRUE",
+        "UBS_CLUSTER_HOSTS": dp.ubs_cluster_hosts,
         "_UB_PAGE_HOT_THRESHOLD": 100,
         "_UB_PAGE_HOT_TIMEOUT": 2,
     }

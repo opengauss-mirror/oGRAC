@@ -163,6 +163,8 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 in_ckpt;
     volatile uint8 lock_mode;  // used only in DTC, 0: Null, 1: Shared lock, 2: Exclusive lock
     volatile uint8 gbp_lock_mode;
+    volatile uint16 gbp_lock_count; /* outstanding GBP locks on this page (multi-session S) */
+    volatile uint8 gbp_store_pending; /* leave(changed) raised writeWaiters, cleared after store commit */
 
     volatile uint8 is_edp;  // used only in DTC, 0: no, 1: yes, this page is old version, can be discard only after
                             // latest version in other instance is cleaned. Not dirty, but stale.
@@ -191,6 +193,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     date_t consecutive_same_writer_start_time;
     remote_page_info_t *shmem_page_meta;  // points to the metadata of a compound page in shared memory
     page_head_t *shmem_page_addr;
+    bool32 is_in_gbp;
 
     struct st_buf_ctrl *ckpt_prev;
     struct st_buf_ctrl *ckpt_next;
