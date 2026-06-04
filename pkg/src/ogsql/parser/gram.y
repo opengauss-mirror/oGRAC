@@ -131,6 +131,7 @@ static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
     pl_bison_trigger_def_t *trigger_def);
 static status_t bison_parse_native_alter_table(core_yyscan_t yyscanner);
 static status_t bison_parse_native_alter_database(core_yyscan_t yyscanner);
+static status_t bison_prepare_withas_factor(core_yyscan_t yyscanner, char *name, sql_withas_factor_t **factor);
 static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,
     source_location_t loc);
 static pl_bison_trigger_events_t *pl_bison_make_trigger_events(core_yyscan_t yyscanner, uint16 event,
@@ -1528,36 +1529,19 @@ cte_list:
         ;
 
 common_table_expr:
-            ColId AS '(' SelectStmt ')'
+            ColId AS '('
                 {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
-                    sql_withas_t *withas = (sql_withas_t *)stmt->context->withas_entry;
-                    if (withas == NULL) {
-                        if (sql_alloc_mem(stmt->context, sizeof(sql_withas_t), &stmt->context->withas_entry) != OG_SUCCESS) {
-                            parser_yyerror("alloc mem failed");
-                        }
-                        withas = (sql_withas_t *)stmt->context->withas_entry;
-                        if (sql_create_list(stmt, &withas->withas_factors) != OG_SUCCESS) {
-                            parser_yyerror("create list failed");
-                        }
+                    if (bison_prepare_withas_factor(yyscanner, $1, &factor) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare common table expression failed.");
                     }
-                    if (cm_galist_new(withas->withas_factors, sizeof(sql_withas_factor_t), (void **)&factor) != OG_SUCCESS) {
-                        parser_yyerror("new factor failed");
-                    }
-                    factor->id = withas->withas_factors->count - 1;
-                    factor->prev_factor = NULL;
-                    factor->owner = NULL;
-                    withas->cur_match_idx = withas->withas_factors->count;
-
-                    text_t user_name = { stmt->session->curr_schema, (uint32)strlen(stmt->session->curr_schema) };
-                    if (sql_copy_name(stmt->context, &user_name, (text_t *)&factor->user) != OG_SUCCESS) {
-                        parser_yyerror("copy user name failed.");
-                    }
-                    factor->name.value.str = $1;
-                    factor->name.value.len = strlen($1);
-                    ((sql_select_t*)$4)->type = SELECT_AS_TABLE;
-                    factor->subquery_ctx = $4;
+                    $<withas_factor>$ = factor;
+                }
+            SelectStmt ')'
+                {
+                    sql_withas_factor_t *factor = $<withas_factor>4;
+                    ((sql_select_t*)$5)->type = SELECT_AS_TABLE;
+                    factor->subquery_ctx = $5;
 
                     $$ = factor;
                 }
@@ -16739,6 +16723,34 @@ static status_t bison_parse_native_alter_database(core_yyscan_t yyscanner)
 
     OG_RETURN_IFERR(bison_rewind_native_alter(yyscanner, "DATABASE"));
     return sql_parse_alter_database_lead(stmt);
+}
+
+static status_t bison_prepare_withas_factor(core_yyscan_t yyscanner, char *name, sql_withas_factor_t **factor)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    sql_withas_t *withas = (sql_withas_t *)stmt->context->withas_entry;
+
+    if (withas == NULL) {
+        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_withas_t), &stmt->context->withas_entry));
+        withas = (sql_withas_t *)stmt->context->withas_entry;
+        OG_RETURN_IFERR(sql_create_list(stmt, &withas->withas_factors));
+    }
+
+    uint32 factor_id = withas->withas_factors->count;
+    OG_RETURN_IFERR(cm_galist_new(withas->withas_factors, sizeof(sql_withas_factor_t), (void **)factor));
+
+    (*factor)->id = factor_id;
+    (*factor)->owner = NULL;
+    (*factor)->prev_factor = (factor_id == 0) ? NULL :
+        (sql_withas_factor_t *)cm_galist_get(withas->withas_factors, factor_id - 1);
+    withas->cur_match_idx = factor_id;
+
+    text_t user_name = { stmt->session->curr_schema, (uint32)strlen(stmt->session->curr_schema) };
+    OG_RETURN_IFERR(sql_copy_name(stmt->context, &user_name, (text_t *)&(*factor)->user));
+
+    (*factor)->name.value.str = name;
+    (*factor)->name.value.len = (uint32)strlen(name);
+    return OG_SUCCESS;
 }
 
 static status_t column_list_to_column_pairs(sql_stmt_t *stmt, galist_t *colname_list, galist_t **pairs)
