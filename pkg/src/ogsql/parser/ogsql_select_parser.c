@@ -1725,21 +1725,28 @@ status_t sql_build_select_context(sql_stmt_t *stmt, sql_select_t **ctx, galist_t
     select_ctx->chain.last->query = query;
     query->columns = columns;
 
-    word_t table_word;
+    word_t table_word = { 0 };
     sql_table_t *table = NULL;
     if (join_node == NULL) {
-        table_word.ex_count = 0;
+        table_word.id = OG_INVALID_ID32;
         table_word.type = WORD_TYPE_VARIANT;
+        table_word.loc = from_loc;
         table_word.text.str = "SYS_DUMMY";
         table_word.text.len = (uint32)strlen(table_word.text.str);
         table_word.text.loc = from_loc;
+        table_word.text.implicit = OG_TRUE;
+        table_word.ori_type = WORD_TYPE_VARIANT;
 
         OG_RETURN_IFERR(sql_array_new(&query->tables, sizeof(sql_table_t), (void **)&table));
         table->id = query->tables.count - 1;
         table->rs_nullable = OG_FALSE;
         table->ineliminable = OG_FALSE;
 
-        OG_RETURN_IFERR(sql_create_query_table(stmt, &query->tables, &query->join_assist, table, &table_word));
+        if (sql_decode_object_name(stmt, &table_word, &table->user, &table->name) != OG_SUCCESS) {
+            cm_set_error_loc(table_word.loc);
+            return OG_ERROR;
+        }
+        OG_RETURN_IFERR(sql_regist_table(stmt, table));
     } else {
         OG_RETURN_IFERR(sql_array_concat(&query->tables, &join_node->tables));
         if (join_node->type != JOIN_TYPE_NONE) {
