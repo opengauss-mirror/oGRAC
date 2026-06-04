@@ -1766,6 +1766,8 @@ static void rst_write_all_files(knl_session_t *session, bak_t *bak, bak_process_
     while (!bak->failed) {
         if (RST_NEED_RESTORE_CTRLFILE(bak)) {
             if (rst_restore_ctrlfiles(session) != OG_SUCCESS) {
+                bak_set_error(&bak->error_info);
+                bak_set_error_msg(&bak->error_info, "restore ctrl files failed");
                 bak->failed = OG_TRUE;
                 break;
             }
@@ -1773,12 +1775,16 @@ static void rst_write_all_files(knl_session_t *session, bak_t *bak, bak_process_
 
         if (RST_NEED_RESTORE_DATAFILE(bak)) {
             if (rst_create_datafiles(session, write_ctx) != OG_SUCCESS) {
+                bak_set_error(&bak->error_info);
+                bak_set_error_msg(&bak->error_info, "restore create datafiles failed");
                 bak->failed = OG_TRUE;
                 break;
             }
             OG_LOG_RUN_INF("[RESTORE] create datafiles finished");
 
             if (rst_restore_datafiles(session, ogx, write_ctx) != OG_SUCCESS) {
+                bak_set_error(&bak->error_info);
+                bak_set_error_msg(&bak->error_info, "restore datafiles failed");
                 bak->failed = OG_TRUE;
                 break;
             }
@@ -1796,6 +1802,8 @@ static void rst_write_all_files(knl_session_t *session, bak_t *bak, bak_process_
     // ensure start msg and curr_file_index have been updated with BACKUP_LOG_STAGE by read thread
     if (!bak->failed && RST_NEED_RESTORE_ARCHFILE(bak)) {
         if (rst_restore_logfiles(session, last_log_index) != OG_SUCCESS) {
+            bak_set_error(&bak->error_info);
+            bak_set_error_msg(&bak->error_info, "restore log files failed");
             bak->failed = OG_TRUE;
         }
         OG_LOG_RUN_INF("[RESTORE] restore logfiles finished, current backupset %s", rst_fetch_filename(bak));
@@ -1821,20 +1829,28 @@ static void rst_write_proc(thread_t *thread)
         }
 
         if (rst_build_wait_head(session) != OG_SUCCESS) {
+            bak_set_error(&bak->error_info);
+            bak_set_error_msg(&bak->error_info, "restore wait backupset head failed");
             bak->failed = OG_TRUE;
         }
         OG_LOG_RUN_INF("[RESTORE] all files have heen written");
 
         if (rst_delete_track_file(session, bak, OG_FALSE) != OG_SUCCESS) {
+            bak_set_error(&bak->error_info);
+            bak_set_error_msg(&bak->error_info, "restore delete track file failed");
             bak->failed = OG_TRUE;
         }
 
         if (session->kernel->attr.clustered) {
             if (dtc_rst_amend_files(session, bak->file_count - 1) != OG_SUCCESS) {
+                bak_set_error(&bak->error_info);
+                bak_set_error_msg(&bak->error_info, "restore amend files failed");
                 bak->failed = OG_TRUE;
             }
         } else {
             if (rst_amend_files(session, last_log_index) != OG_SUCCESS) {
+                bak_set_error(&bak->error_info);
+                bak_set_error_msg(&bak->error_info, "restore amend files failed");
                 bak->failed = OG_TRUE;
             }
         }
@@ -3256,6 +3272,8 @@ status_t rst_proc(knl_session_t *session)
     status_t status = OG_SUCCESS;
 
     if (rst_restore(session) != OG_SUCCESS) {
+        bak_set_error(&bak->error_info);
+        bak_set_error_msg(&bak->error_info, "restore read process failed");
         bak->failed = OG_TRUE;
         status = OG_ERROR;
     }

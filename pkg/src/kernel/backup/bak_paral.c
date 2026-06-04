@@ -1948,6 +1948,8 @@ void bak_paral_restore_task(knl_session_t *session, bak_process_t *proc)
     bak_local_t *bak_file = &assign_ctrl->bak_file;
 
     if (rst_paral_restore(session, proc) != OG_SUCCESS) {
+        bak_set_error(&bak->error_info);
+        bak_set_error_msg(&bak->error_info, "restore parallel task failed");
         bak->failed = OG_TRUE;
         OG_LOG_RUN_ERR("[RESTORE] restore task failed, proc id %u, file id %u, backup id %u, name %s",
                        proc->proc_id, assign_ctrl->file_id, assign_ctrl->bak_index, bak_file->name);
@@ -1973,6 +1975,8 @@ static void bak_paral_stream_restore_task(knl_session_t *session, bak_process_t 
     bak_local_t *bak_file = &assign_ctrl->bak_file;
 
     if (rst_paral_stream_restore(session, proc) != OG_SUCCESS) {
+        bak_set_error(&bak->error_info);
+        bak_set_error_msg(&bak->error_info, "restore parallel stream task failed");
         bak->failed = OG_TRUE;
         OG_LOG_RUN_ERR("[RESTORE] restore task failed, proc id %u, file id %u, backup id %u, name %s", proc->proc_id,
                        assign_ctrl->file_id, assign_ctrl->bak_index, bak_file->name);
@@ -1997,6 +2001,8 @@ void bak_paral_extend_task(knl_session_t *session, bak_process_t *proc)
     knl_panic(assign_ctrl->task == BAK_EXTEND_TASK);
     if (rst_extend_file(session, ctrl->name, ctrl->type, ctrl->offset,
                         proc->backup_buf.aligned_buf, BACKUP_BUFFER_SIZE(bak)) != OG_SUCCESS) {
+        bak_set_error(&bak->error_info);
+        bak_set_error_msg(&bak->error_info, "restore extend task failed");
         bak->failed = OG_TRUE;
     }
     bak_update_progress(&ogx->bak, ctrl->offset);

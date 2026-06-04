@@ -8923,7 +8923,7 @@ status_t knl_restore(knl_handle_t session, knl_restore_t *param)
     }
 
     status = rst_restore_database((knl_session_t *)session, param);
-    if (param->file_type == RESTORE_ALL) {
+    if (status == OG_SUCCESS && param->file_type == RESTORE_ALL) {
         ogx->bak.restored = OG_TRUE;
         se->kernel->db.ctrl.core.dbid = dbc_generate_dbid(se);
         db_set_ctrl_restored(se, OG_TRUE);
