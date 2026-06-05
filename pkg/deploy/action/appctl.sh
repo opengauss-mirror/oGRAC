@@ -3,15 +3,17 @@
 # oGRAC 薄壳入口（重构版）
 # 所有业务逻辑已迁移至 Python 编排器，此脚本仅负责：
 #   1. 加载配置（通过 config.py --shell-env）
-#   2. 文件锁防重入
+#   2. 按配置中的数据库运行用户（OGRAC_USER）文件锁防重入（/tmp/ograc_deploy_lock_<user>）
 #   3. 将 action 分发给 ograc_deploy.py / ograc_upgrade.py
 #   4. dr_operate 保留交互式密码输入（Python 无法安全处理 read -s）
 ################################################################################
 set +x
 CURRENT_PATH=$(dirname "$(readlink -f "$0")")
-LOCK_DIR="/tmp/ograc_deploy_lock"
 
 SHELL_ENV=$(python3 "${CURRENT_PATH}/config.py" --shell-env 2>/dev/null)
+_DEPLOY_LOCK_USER="${OGRAC_USER:-ograc}"
+[ -n "${_DEPLOY_LOCK_USER}" ] || _DEPLOY_LOCK_USER="ograc"
+LOCK_DIR="/tmp/ograc_deploy_lock_${_DEPLOY_LOCK_USER}"
 if [ $? -ne 0 ]; then
     echo "[ERROR] failed to load new-flow config from ${CURRENT_PATH}/config.py" >&2
     exit 1
@@ -25,7 +27,7 @@ log_info()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO ] $*" | tee -a "${OM_DE
 log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" | tee -a "${OM_DEPLOY_LOG_FILE}" >&2; }
 
 acquire_lock() {
-    mkdir "${LOCK_DIR}" 2>/dev/null || { log_error "Another deploy is running"; return 1; }
+     mkdir "${LOCK_DIR}" 2>/dev/null || { log_error "Another deploy is running for OGRAC_USER=${_DEPLOY_LOCK_USER}"; return 1; }
     trap 'rm -rf "${LOCK_DIR}"' EXIT
 }
 
