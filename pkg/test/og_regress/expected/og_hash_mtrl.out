@@ -94,20 +94,20 @@ SQL> explain select * from test_mtrl_emp e where salary > (select avg(salary) fr
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
----------------------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
----------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |                 | 10   | 4    | 0         |       |        |
-| 1  |   QUERY SORT ORDER BY       |       |                 | 10   | 4    | 0         |       |        |
-| 2  |     KERNEL FILTER           |       |                 | 10   | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL     | SYS   | TEST_MTRL_EMP E | 10   | 1    | 0         |       |        |
-| 4  |       HASH MATERIALIZE      |       |                 | 10   | 1    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | TEST_MTRL_EMP   | 10   | 1    | 0         |       |        |
----------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+| Id | Operation                        | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                 |       |                 | 10   | 10   | 4         |       |        |
+| 1  |   KERNEL FILTER                  |       |                 | 10   | 10   | 4         |       |        |
+| 2  |     TABLE ACCESS BY INDEX ROWID  | SYS   | TEST_MTRL_EMP E | 10   | 10   | 4         |       |        |
+| 3  |       INDEX FULL SCAN            | SYS   | _PK_SYS_1_66    | 10   | 10   | 4         |       |        |
+| 4  |     HASH MATERIALIZE             |       |                 | 10   | 1    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL        | SYS   | TEST_MTRL_EMP   | 10   | 1    | 0         |       |        |
+--------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: SALARY > (SELECT AVG(SALARY) FROM TEST_MTRL_EMP GROUP BY DEPT_ID)
-    4 - access: DEPT_ID = E.DEPT_ID                             
+    2 - filter: SALARY > (SELECT AVG(SALARY) FROM TEST_MTRL_EMP GROUP BY DEPT_ID)
+    4 - access: DEPT_ID = E.DEPT_ID                              
 
 14 rows fetched.
 
@@ -175,8 +175,8 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |                  | 7    | 20   | 8         |       |        |
-| 1  |   QUERY SORT ORDER BY       |       |                  | 7    | 20   | 8         |       |        |
+| 0  | SELECT STATEMENT            |       |                  | 7    | 21   | 8         |       |        |
+| 1  |   QUERY SORT ORDER BY       |       |                  | 7    | 21   | 8         |       |        |
 | 2  |     HAVING                  |       |                  | 7    | 18   | 8         |       |        |
 | 3  |       HASH GROUP BY         |       |                  | 7    | 18   | 8         |       |        |
 | 4  |           TABLE ACCESS FULL | SYS   | TEST_MTRL_PROJ P | 10   | 1    | 0         |       |        |
@@ -270,8 +270,8 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |                 | 7    | 20   | 8         |       |        |
-| 1  |   QUERY SORT ORDER BY           |       |                 | 7    | 20   | 8         |       |        |
+| 0  | SELECT STATEMENT                |       |                 | 7    | 21   | 8         |       |        |
+| 1  |   QUERY SORT ORDER BY           |       |                 | 7    | 21   | 8         |       |        |
 | 2  |     HAVING                      |       |                 | 7    | 18   | 8         |       |        |
 | 3  |       HASH GROUP BY             |       |                 | 7    | 18   | 8         |       |        |
 | 4  |         KERNEL FILTER           |       |                 | 10   | 1    | 0         |       |        |

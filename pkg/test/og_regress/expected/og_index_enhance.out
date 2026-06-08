@@ -160,7 +160,7 @@ SQL> alter system flush sqlpool;
 
 Succeed.
 
-SQL> /* use fss */
+SQL> /* use fss: index_ffs grammmer no support */
 SQL> explain select /*+index_ffs(test_idx2)*/ * from test_idx2 where c2 = 1000;
 
 EXPLAIN PLAN OUTPUT                                             
@@ -187,9 +187,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |           | 5000 | 25   | 8         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 25   | 8         |       |        |
-| 2  |       INDEX FAST FULL SCAN      | SYS   | T_I3      | 5000 | 25   | 8         |       |        |
+| 0  | SELECT STATEMENT                |       |           | 5000 | 54   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 54   | 8         |       |        |
+| 2  |       INDEX FAST FULL SCAN      | SYS   | T_I3      | 5000 | 54   | 8         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -205,9 +205,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |           | 5000 | 76   | 8         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 76   | 8         |       |        |
-| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 76   | 8         |       |        |
+| 0  | SELECT STATEMENT                |       |           | 5000 | 88   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 88   | 8         |       |        |
+| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 88   | 8         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -227,9 +227,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |           | 5000 | 76   | 8         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 76   | 8         |       |        |
-| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 76   | 8         |       |        |
+| 0  | SELECT STATEMENT                |       |           | 5000 | 88   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 88   | 8         |       |        |
+| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 88   | 8         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -248,9 +248,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |           | 5000 | 76   | 8         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 76   | 8         |       |        |
-| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 76   | 8         |       |        |
+| 0  | SELECT STATEMENT                |       |           | 5000 | 88   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 88   | 8         |       |        |
+| 2  |       INDEX FULL SCAN           | SYS   | T_I3      | 5000 | 88   | 8         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -266,9 +266,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |           | 5000 | 25   | 8         |       |        |
-| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 25   | 8         |       |        |
-| 2  |       INDEX FAST FULL SCAN      | SYS   | T_I3      | 5000 | 25   | 8         |       |        |
+| 0  | SELECT STATEMENT                |       |           | 5000 | 54   | 8         |       |        |
+| 1  |     TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5000 | 54   | 8         |       |        |
+| 2  |       INDEX FAST FULL SCAN      | SYS   | T_I3      | 5000 | 54   | 8         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -284,10 +284,10 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                         | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                  |       |           | 1    | 71   | 33        |       |        |
-| 1  |   AGGR                            |       |           | 1    | 71   | 33        |       |        |
-| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5002 | 25   | 8         |       |        |
-| 3  |         INDEX FAST FULL SCAN      | SYS   | T_I3      | 5002 | 25   | 8         |       |        |
+| 0  | SELECT STATEMENT                  |       |           | 1    | 100  | 33        |       |        |
+| 1  |   AGGR                            |       |           | 1    | 100  | 33        |       |        |
+| 2  |       TABLE ACCESS BY INDEX ONLY  | SYS   | TEST_IDX2 | 5002 | 54   | 8         |       |        |
+| 3  |         INDEX FAST FULL SCAN      | SYS   | T_I3      | 5002 | 54   | 8         |       |        |
 ---------------------------------------------------------------------------------------------------------
 
 8 rows fetched.

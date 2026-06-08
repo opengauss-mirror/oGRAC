@@ -104,6 +104,7 @@ extern "C" {
 
 #define CBO_MAX_DYN_SAMPLING_LEVEL (uint32)9
 
+#define CBO_DEFAULT_CPU_MTRL_START_COST (double)16.0
 
 #define CBO_INDEX_CACHING(stmt)                                                        \
     (double)(((stmt)->session->cbo_param.cbo_index_caching <= CBO_MAX_INDEX_CACHING) ? \

@@ -146,7 +146,7 @@ static inline double index_ffs_io_cost(cbo_stats_index_t *idx_stats)
     }
 
     /* IO cost: cost for index ffs is the same as index full scan nowdays for cantian */
-    double cost = blocks_fetched * CBO_DEFAULT_SEQ_PAGE_COST;
+    double cost = blocks_fetched * CBO_DEFAULT_SEQ_PAGE_COST * CBO_CF_RATE_DOUBLE;
     return CBO_COST_SAFETY_RET(cost);
 }
 
@@ -358,9 +358,7 @@ static status_t sql_calc_cost_index(sql_stmt_t *stmt, cbo_index_choose_assist_t 
     }
 
     /* index cpu cost */
-    if (index_stats->avg_leaf_key != 0) {
-        *cost += 1 / index_stats->avg_leaf_key * CBO_DEFAULT_CPU_OPERATOR_COST;
-    }
+    *cost += stats_info->cbo_table_stats->rows * index_ff * CBO_DEFAULT_CPU_OPERATOR_COST;
 
     if (INDEX_ONLY_SCAN(ca->scan_flag)) {
         return OG_SUCCESS;
@@ -1736,25 +1734,43 @@ double sql_seq_scan_partitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_
     return cost;
 }
 
-double sql_seq_scan_nopartitioned_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table)
+double sql_seq_scan_nopartitioned_cost(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table)
 {
+    double seq_cost = 0.0;
     cbo_stats_info_t stats_info;
     OG_RETURN_MAX_COST_IFERR(init_stats_info(&stats_info, SCAN_PART_FULL, CBO_GLOBAL_PART_NO, CBO_GLOBAL_SUBPART_NO,
         OG_INVALID_ID32, CBO_GLOBAL_PART_NO, CBO_GLOBAL_SUBPART_NO));
     OG_RETURN_MAX_COST_IFERR(sql_cal_table_or_partition_stats(entity, table, &stats_info, KNL_SESSION(stmt)));
-    return stats_info.cbo_table_stats->blocks * CBO_DEFAULT_SEQ_PAGE_COST +
-        stats_info.cbo_table_stats->rows * CBO_DEFAULT_CPU_OPERATOR_COST;
+    /* io cost of scan block + cpu of rows */
+    seq_cost += stats_info.cbo_table_stats->blocks * CBO_DEFAULT_SEQ_PAGE_COST +
+                stats_info.cbo_table_stats->rows * CBO_DEFAULT_CPU_OPERATOR_COST;
+
+    /* tuple scan cost of matched rows */
+    seq_cost += CBO_DEFAULT_CPU_SCAN_TUPLE_COST * table->card;
+
+    /* cpu cost of compare rows */
+    if (pa->cond != NULL && pa->cond->root != NULL && !(pa->cond->root->type == COND_NODE_TRUE ||
+        pa->cond->root->type == COND_NODE_FALSE)) {
+        seq_cost += CBO_DEFAULT_CPU_OPERATOR_COST * stats_info.cbo_table_stats->rows;
+    }
+
+    return seq_cost;
 }
 
-double sql_seq_scan_cost(sql_stmt_t *stmt, dc_entity_t *entity, sql_table_t *table)
+double sql_seq_scan_cost(sql_stmt_t *stmt, plan_assist_t *pa, dc_entity_t *entity, sql_table_t *table)
 {
     if (knl_is_compart_table(table->entry->dc.handle)) {
         return sql_seq_scan_subpartitioned_cost(stmt, entity, table);
     } else if (knl_is_part_table(table->entry->dc.handle)) {
         return sql_seq_scan_partitioned_cost(stmt, entity, table);
     } else {
-        return sql_seq_scan_nopartitioned_cost(stmt, entity, table);
+        return sql_seq_scan_nopartitioned_cost(stmt, pa, entity, table);
     }
+}
+
+static double init_mtrl_cost(void)
+{
+    return CBO_DEFAULT_CPU_MTRL_START_COST;
 }
 
 double sql_sort_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, uint16 scan_flag)
@@ -1763,8 +1779,13 @@ double sql_sort_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, ui
     if (CAN_INDEX_SORT(scan_flag)) {
         return 0.0;
     }
+
+    if (pa->query->sort_items->count <= 0) {
+        return 0.0;
+    }
+
     return table->card * (CBO_DEFAULT_CPU_QK_SORT_COST + CBO_DEFAULT_CPU_QK_INST_COST) +
-        table->card * log(table->card) * CBO_DEFAULT_CPU_QK_COMP_COST;
+        table->card * log(table->card) * CBO_DEFAULT_CPU_QK_COMP_COST + init_mtrl_cost();
 }
 
 double sql_group_cost(sql_stmt_t *stmt, plan_assist_t *pa, sql_table_t *table, uint16 scan_flag)
