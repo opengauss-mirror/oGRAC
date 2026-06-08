@@ -366,6 +366,28 @@ static status_t cm_set_log_level_value(knl_alter_sys_def_t *def)
     return OG_SUCCESS;
 }
 
+status_t sql_bison_normalize_als_log_level(knl_alter_sys_def_t *sys_def)
+{
+    text_t value_text;
+
+    cm_str2text(sys_def->value, &value_text);
+    if (IS_SLOWSQL_LOG_MODE(sys_def->param)) {
+        if (!cm_text_str_equal_ins(&value_text, "ON") && !cm_text_str_equal_ins(&value_text, "OFF")) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, sys_def->value);
+            return OG_ERROR;
+        }
+    } else if (IS_LOG_LEVEL_MODE(sys_def->param)) {
+        if (!cm_text_str_equal_ins(&value_text, "DEBUG") && !cm_text_str_equal_ins(&value_text, "WARN") &&
+            !cm_text_str_equal_ins(&value_text, "ERROR") && !cm_text_str_equal_ins(&value_text, "RUN") &&
+            !cm_text_str_equal_ins(&value_text, "FATAL")) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, sys_def->value);
+            return OG_ERROR;
+        }
+    }
+
+    return cm_set_log_level_value(sys_def);
+}
+
 static status_t sql_verify_als_log_level_value(lex_t *lex, knl_alter_sys_def_t *def)
 {
     uint32 num;

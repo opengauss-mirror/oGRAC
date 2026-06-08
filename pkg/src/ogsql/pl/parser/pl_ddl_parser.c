@@ -997,6 +997,10 @@ static status_t pl_bison_compile_create_from_current_lex(sql_stmt_t *stmt, var_u
     pl_entity_t *pl_ctx = stmt->pl_context;
 
     pl_prepare_compile_desc(&desc, stmt, obj, type);
+    word.type = WORD_TYPE_VARIANT;
+    word.text.value = obj->name;
+    word.loc.line = 1;
+    word.loc.column = 1;
     compl_ret = plc_compile(stmt, &desc, &word);
     if (compl_ret != OG_SUCCESS) {
         stmt->pl_failed = OG_TRUE;
@@ -1077,9 +1081,7 @@ status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, tex
     pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
     plc_desc_t desc = { 0 };
 
-    desc.type = PL_PROCEDURE;
-    desc.obj = &entity->def;
-    desc.entity = entity;
+    pl_prepare_compile_desc(&desc, stmt, &entity->def, PL_PROCEDURE);
 
     if (plc_bison_compile(stmt, &desc, args, NULL, body) != OG_SUCCESS) {
         return OG_ERROR;

@@ -1017,7 +1017,6 @@ select * from func_res_test_bison order by id;
 
 ------------------------------------
 --same test case for func_res_test_bison_off
-alter system set use_bison_parser = false;
 
 create table func_res_test_bison_off(id serial primary key, result varchar(1000));
 insert into func_res_test_bison_off(result) values (JSON_QUERY('[0,1,2,3,4]', '$[3]' WITH WRAPPER));
@@ -1291,7 +1290,6 @@ drop table localtimestamp;
 drop table utc_timestamp;
 drop table sessiontimezone;
 
-alter system set use_bison_parser = false;
 
 
 alter system set use_bison_parser = true;
@@ -1331,7 +1329,7 @@ INSERT INTO sales VALUES (3, '2025-06-15', 3000);
 CREATE INDEX global_idx ON sales(id);
 CREATE INDEX local_idx ON sales(sale_date) LOCAL;
 SELECT INDEX_NAME, PARTITIONED, STATUS, INI_TRANS FROM MY_INDEXES WHERE TABLE_NAME = 'SALES' order by INDEX_NAME;
-SELECT * FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
+SELECT PARTITION_NAME, STATUS, INI_TRANS FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
 ALTER INDEX global_idx REBUILD;
 ALTER INDEX global_idx UNUSABLE;
 ALTER INDEX global_idx RENAME TO global_idx_new;
@@ -1343,7 +1341,7 @@ ALTER INDEX local_idx MODIFY PARTITION p1 UNUSABLE;
 ALTER INDEX local_idx MODIFY PARTITION p2 UNUSABLE;
 ALTER INDEX local_idx MODIFY PARTITION p1 COALESCE;
 ALTER INDEX local_idx MODIFY PARTITION p2 INITRANS 3;
-SELECT * FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
+SELECT PARTITION_NAME, STATUS, INI_TRANS FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
 ALTER INDEX global_idx UNUSABLE;
 ALTER INDEX global_idx REBUILD;
 
@@ -1385,4 +1383,3 @@ where exists (
 drop table bison_corr_result;
 drop table bison_corr_emps;
 drop table bison_corr_depts;
-alter system set use_bison_parser = false;

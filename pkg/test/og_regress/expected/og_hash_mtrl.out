@@ -100,14 +100,14 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT                 |       |                 | 10   | 10   | 4         |       |        |
 | 1  |   KERNEL FILTER                  |       |                 | 10   | 10   | 4         |       |        |
 | 2  |     TABLE ACCESS BY INDEX ROWID  | SYS   | TEST_MTRL_EMP E | 10   | 10   | 4         |       |        |
-| 3  |       INDEX FULL SCAN            | SYS   | _PK_SYS_1_66    | 10   | 10   | 4         |       |        |
+| 3  |       INDEX FULL SCAN            | SYS   | _PK_SYS_1_77    | 10   | 10   | 4         |       |        |
 | 4  |     HASH MATERIALIZE             |       |                 | 10   | 1    | 0         |       |        |
 | 5  |         TABLE ACCESS FULL        | SYS   | TEST_MTRL_EMP   | 10   | 1    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     2 - filter: SALARY > (SELECT AVG(SALARY) FROM TEST_MTRL_EMP GROUP BY DEPT_ID)
-    4 - access: DEPT_ID = E.DEPT_ID                              
+    4 - access: DEPT_ID = E.DEPT_ID                             
 
 14 rows fetched.
 

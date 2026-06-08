@@ -1,3 +1,5 @@
+
+
 SQL> DROP TABLE IF EXISTS test_dy_1;
 
 Succeed.
@@ -212,11 +214,11 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                 | 1    | 15   | 11        |       |        |
-| 1  |   QUERY LIMIT             |       |                 | 1    | 15   | 11        |       |        |
-| 2  |     MERGE JOIN            |       |                 | 10   | 53   | 11        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 45   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 135  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                 | 1    | 16   | 12        |       |        |
+| 1  |   QUERY LIMIT             |       |                 | 1    | 16   | 12        |       |        |
+| 2  |     MERGE JOIN            |       |                 | 12   | 62   | 12        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 49   | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 147  | 3    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -253,16 +255,16 @@ EXPLAIN PLAN OUTPUT
 | 1  |   QUERY LIMIT                        |       |                 | 1    | 10   | 8         |       |        |
 | 2  |     MERGE JOIN                       |       |                 | 21   | 65   | 8         |       |        |
 | 3  |         TABLE ACCESS BY INDEX ROWID  | SYS   | DATA_DS_TEST T0 | 65   | 4    | 4         |       |        |
-| 4  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_62    | 65   | 4    | 4         |       |        |
+| 4  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_73    | 65   | 4    | 4         |       |        |
 | 5  |         TABLE ACCESS BY INDEX ROWID  | SYS   | DATA_DS_TEST T1 | 128  | 4    | 4         |       |        |
-| 6  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_62    | 128  | 4    | 4         |       |        |
+| 6  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_73    | 128  | 4    | 4         |       |        |
 ------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     2 - access: T0.ID = T1.ID                                   
     3 - filter: T0.INT_F0 < 200                                 
     5 - filter: T0.INT_F0 < 200                                 
-  
+
 16 rows fetched.
 
 SQL> select table_name, sample_size, CASE WHEN abs(sample_size/num_rows - 10/(CASE WHEN blocks > 10 THEN blocks ELSE 10 END)) < 0.1 THEN true ELSE false END FROM my_tables  WHERE table_name = 'DATA_DS_TEST';
@@ -276,13 +278,13 @@ DATA_DS_TEST                                                     128          TR
 SQL> 
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = 10;
 
-OG-00210, The value of parameter "_OPT_CBO_STAT_SAMPLING_LEVEL" is too large, at most 9
+OG-00210, [1:51]The value of parameter "_OPT_CBO_STAT_SAMPLING_LEVEL" is too large, at most 9
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = -1;
 
-OG-00601, Sql syntax error: Convert uint32 failed, text = -
+OG-00601, [1:51]Sql syntax error: Convert uint32 failed, text = -
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = 5.5;
 
-OG-00601, Sql syntax error: Convert uint32 failed, text = 5.5
+OG-00601, [1:52]Sql syntax error: Convert uint32 failed, text = 5.5
 SQL> 
 SQL> ANALYZE TABLE DATA_DS_TEST COMPUTE STATISTICS;
 

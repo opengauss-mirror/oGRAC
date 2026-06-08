@@ -470,7 +470,7 @@ SQL> select rownum, id, tt from rownum_test rt where rownum < 1.0000000000000000
 
 ROWNUM       ID           TT                            
 ------------ ------------ ------------------------------
-1            1            Hello 1
+1            1            Hello 1                       
 
 1 rows fetched.
 
@@ -631,11 +631,11 @@ SQL> select rownum, id, tt from rownum_test rt where rownum <> 1.000000000000000
 
 ROWNUM       ID           TT                            
 ------------ ------------ ------------------------------
-1            1            Hello 1
-2            2            Hello 2
-3            2            Hello 3
-4            4            Hello 4
-5            3            Hello 5
+1            1            Hello 1                       
+2            2            Hello 2                       
+3            2            Hello 3                       
+4            4            Hello 4                       
+5            3            Hello 5                       
 
 5 rows fetched.
 
@@ -789,7 +789,7 @@ ROWNUM       ID           TT
 
 SQL> select rt.rownum, rt.id, rt.tt from rownum_test rt;
 
-OG-00601, [1:17]Sql syntax error: expression expected but 'rownum' found
+OG-00601, [1:11]Sql syntax error: syntax error
 SQL> 
 SQL> 
 SQL> --- rownum order by
@@ -906,10 +906,10 @@ SQL>
 SQL> -- The following SQLs have effects. :)
 SQL> select * from rownum_test where id + 'sdf' < 5;
 
-OG-00636, [1:36]Invalid number -- unexpected character
+OG-00636, [1:33]Invalid number -- unexpected character
 SQL> select * from rownum_test where rownum<2 or id + 'sdf' < 5;
 
-OG-00636, [1:48]Invalid number -- unexpected character
+OG-00636, [1:45]Invalid number -- unexpected character
 SQL> -- The illegal condition id + 'sdf' < 5 can be eliminated.
 SQL> select * from rownum_test where rownum<1 and id + 'sdf' < 5;
 
@@ -920,7 +920,7 @@ ID           TT
 
 SQL> select * from rownum_test where id + 'sdf' < 5 and rownum<1;
 
-OG-00636, [1:36]Invalid number -- unexpected character
+OG-00636, [1:33]Invalid number -- unexpected character
 SQL> select * from rownum_test where (rownum = 2.3 and id + 'sdf' < 5) or rownum<3;
 
 ID           TT                            
@@ -959,7 +959,7 @@ ROWNUM       ID           TT
 SQL> 
 SQL> update rownum_test set rownum = 6 where 2 >= rownum;
 
-OG-01358, [1:24]Expect user.table.column, table.column, or column specification here
+OG-00601, [1:24]Sql syntax error: syntax error
 SQL> 
 SQL> update rownum_test set id = 7 where 2 > rownum;
 
@@ -1341,6 +1341,7 @@ SQL> DROP TABLE IF EXISTS ROWNUM_TEST_1;
 Succeed.
 
 SQL> commit;
+
 Succeed.
 
 SQL> 

@@ -28,7 +28,7 @@ Succeed.
 
 SQL> truncate table tbl_jsonb_base_test; ---table does not exist
 
-OG-00843, The table or view SYS.TBL_JSONB_BASE_TEST does not exist.
+OG-00843, [1:35]The table or view SYS.TBL_JSONB_BASE_TEST does not exist.
 SQL> create table tbl_jsonb_base_test(a jsonb, b int primary key);---Succeed.
 
 Succeed.
@@ -115,8 +115,8 @@ SQL> select jsonb_query(a, '$') as val from tbl_jsonb_base_test where jsonb_valu
 
 VAL                                                             
 ----------------------------------------------------------------
-{"AAA":"111","BBB":"222","CCC":"333"}
-{"AAA":"111","BBB":"000","CCC":"333"}
+{"AAA":"111","BBB":"222","CCC":"333"}                           
+{"AAA":"111","BBB":"000","CCC":"333"}                           
 
 2 rows fetched.
 
@@ -725,7 +725,7 @@ SQL> insert into tbl_jsonb_ft1_test values('{"ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567
 
 SQL> select jsonb_value(a, '$.ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMN') from tbl_jsonb_ft1_test where b = 3;---1 rows fetched 
 
-OG-02503, JSON path expression syntax error, the current length(86) of step name has exceeded maximum length(68) 
+OG-02503, JSON path expression syntax error, the current length(86) of step name has exceeded maximum length(68)
 SQL> insert into tbl_jsonb_ft1_test values('[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1,"z"],2],3],4],5],6],7],8],9],10],11],12],13],14],15],16],17],18],19],20],21],22],23],24],25],26],27],28],29],30],31],32],33],34],35],36],37],38],39],40],41],42],43],44],45]',4); //find troble 未校验
 
 1 rows affected.
@@ -3141,10 +3141,10 @@ JSONB_SET(A,'$.ADDR','"CHANGBANPO"')
 
 SQL> select jsonb_set(to_blob(a),'$.ho',[1,3,4,5]) from tbl_jsonb_ft3_test where b=4;
 
-OG-00601, [1:36]Sql syntax error: text is incorrect
+OG-00601, [1:36]Sql syntax error: syntax error
 SQL> select jsonb_set(a,'$.ho',[1,3,4,5]) from tbl_jsonb_ft3_test where b=4;
 
-OG-00601, [1:27]Sql syntax error: text is incorrect
+OG-00601, [1:27]Sql syntax error: syntax error
 SQL> select jsonb_set(to_blob(a),'$.ho[3].o','"LING"') from tbl_jsonb_ft3_test where b=4;
 
 JSONB_SET(TO_BLOB(A),'$.HO[3].O','"LING"')                      
@@ -3391,7 +3391,7 @@ SQL> insert into tbl_jb_eror_test_xy values('[123,]');---OG-02504, JSON syntax e
 OG-02504, JSON syntax error, unexpected ] found
 SQL> insert into tbl_jb_base_test_xy values('{"kex_1":2738937798.925638525,"kex_2":"string","kex_3":false,"kex_4":[1,2,3,4],"kex_5":{"k_1":1,"k_2":'string'}}');     --OG-00601, [1:144]Sql syntax error: , expected but string found
 
-OG-00601, [1:144]Sql syntax error: , expected but string found
+OG-00601, [1:144]Sql syntax error: syntax error
 SQL> 
 SQL> 
 SQL> insert into tbl_jb_eror_test_xy values('{"kex_1":2738937798.925638525,"kex_2":"string","kex_3":false,"kex_4":[1,2,3,4],"kex_5":{"k_1":1,"k_2":"string"}}');     --1 rows affected.
@@ -3409,7 +3409,7 @@ SQL> select jsonb_value(a, '$[0].kex_4' error on error) as jb_res from tbl_jb_er
 OG-02506, JSONB_VALUE evaluated to non-scalar value
 SQL> select jsonb_query(a, '$' ,returning varchar2(512) with wrapper ) as jbq_res from tbl_jb_eror_test_xy ; ---OG-02501, Invalid RETURNING/ON clause
 
-OG-02501, Invalid RETURNING/ON clause, 
+OG-00601, [1:27]Sql syntax error: syntax error
 SQL> select jsonb_query(a, '$.kex_1' returning varchar2(512) error on error) as jbq_res from tbl_jb_eror_test_xy ; ---OG-02506, JSONB_VALUE evaluated to scalar value
 
 OG-02506, JSONB_VALUE evaluated to scalar value
@@ -3598,25 +3598,25 @@ Succeed.
 SQL> 
 SQL> select 1 from tbl_jsonb_026 where jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[0]') is null;
 
-1
+1           
 ------------
-1
+1           
 
 1 rows fetched.
 
 SQL> select jsonb_query(jsonb_set(c_jsonb,'$[1]."s1#$%%@#"[3].a2','"故事书"' returning jsonb error on error ),'$[1]."s1#$%%@#"[3].a2'  with wrapper error on error) val from tbl_jsonb_026;
 
-VAL
+VAL                                                             
 ----------------------------------------------------------------
-["故事书"]
+["故事书"]                                                   
 
 1 rows fetched.
 
 SQL> select jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[2]') from tbl_jsonb_026;
 
-JSONB_VALUE(C_JSONB,'$[1]."S1#$%%@#"[2]')
+JSONB_VALUE(C_JSONB,'$[1]."S1#$%%@#"[2]')                       
 ----------------------------------------------------------------
--100
+-100                                                            
 
 1 rows fetched.
 
@@ -3624,16 +3624,16 @@ SQL> select NVL2(jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[0]'),jsonb_query(jsonb_set
 
 NVL2(JSONB_VALUE(C_JSONB,'$[1]."S1#$%%@#"[0]'),JSONB_QUERY(JSONB
 ----------------------------------------------------------------
--100
+-100                                                            
 
 1 rows fetched.
 
 SQL> 
 SQL> select 1 from tbl_jsonb_026 where jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[0]') is null;
 
-1
+1           
 ------------
-1
+1           
 
 1 rows fetched.
 
@@ -3641,32 +3641,32 @@ SQL> select NVL(jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[0]'),jsonb_query(jsonb_set(
 
 NVL(JSONB_VALUE(C_JSONB,'$[1]."S1#$%%@#"[0]'),JSONB_QUERY(JSONB_
 ----------------------------------------------------------------
-["故事书"]
+["故事书"]                                                   
 
 1 rows fetched.
 
 SQL> select NVL(jsonb_value(c_jsonb,'$[1]."s1#$%%@#"[0]'),100) from tbl_jsonb_026;
 
-NVL(JSONB_VALUE(C_JSONB,'$[1]."S1#$%%@#"[0]'),100)
+NVL(JSONB_VALUE(C_JSONB,'$[1]."S1#$%%@#"[0]'),100)              
 ----------------------------------------------------------------
-100
+100                                                             
 
 1 rows fetched.
 
 SQL> 
 SQL> select 1 from tbl_jsonb_026 where json_value(c_json,'$[1]."s1#$%%@#"[0]') is null;
 
-1
+1           
 ------------
-1
+1           
 
 1 rows fetched.
 
 SQL> select NVL(json_value(c_json,'$[1]."s1#$%%@#"[0]'),100) from tbl_jsonb_026;
 
-NVL(JSON_VALUE(C_JSON,'$[1]."S1#$%%@#"[0]'),100)
+NVL(JSON_VALUE(C_JSON,'$[1]."S1#$%%@#"[0]'),100)                
 ----------------------------------------------------------------
-100
+100                                                             
 
 1 rows fetched.
 
@@ -3721,3 +3721,7 @@ JSONB_QUERY(COL_2, '$' ERROR ON ERROR)
 SQL> 
 SQL> drop table tc_jsonb_001;
 Succeed.
+
+
+
+

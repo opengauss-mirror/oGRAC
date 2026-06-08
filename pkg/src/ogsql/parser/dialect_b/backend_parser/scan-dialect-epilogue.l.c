@@ -35,12 +35,29 @@ core_yyscan_t b_scanner_init(const sql_text_t *sql,
     /*
      * Make a scan buffer with special termination needed by flex.
      */
-    if (sql_alloc_mem(stmt->context, slen + SCANBUF_EXTRA_SIZE, (void **)&yyext->scanbuf) != OG_SUCCESS) {
-        return NULL;
+    size_t scanbuf_size = slen + SCANBUF_EXTRA_SIZE;
+    yyext->scanbuf_malloced = false;
+    if (scanbuf_size > stmt->context->ctrl.memory->pool->page_size) {
+        yyext->scanbuf = (char *)malloc(scanbuf_size);
+        if (yyext->scanbuf == NULL) {
+            OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)scanbuf_size, "scanner buffer");
+            return NULL;
+        }
+        yyext->scanbuf_malloced = true;
+    } else {
+        if (sql_alloc_mem(stmt->context, (uint32)scanbuf_size, (void **)&yyext->scanbuf) != OG_SUCCESS) {
+            return NULL;
+        }
     }
     yyext->scanbuflen = slen;
     yyext->stmt = stmt;
+    yyext->pending_prev_cte = NULL;
     if (sql_create_array(stmt->context, &yyext->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS) != OG_SUCCESS) {
+        if (yyext->scanbuf_malloced) {
+            free(yyext->scanbuf);
+            yyext->scanbuf = NULL;
+            yyext->scanbuf_malloced = false;
+        }
         return NULL;
     }
     errno_t ret = memcpy_s(yyext->scanbuf, slen + 1, str, slen);
@@ -56,7 +73,13 @@ core_yyscan_t b_scanner_init(const sql_text_t *sql,
 
     /* initialize literal buffer to a reasonable but expansible size */
     yyext->literalalloc = LITERAL_SIZE;
-    if (sql_alloc_mem(stmt->context, yyext->literalalloc, (void **)&yyext->literalbuf) != OG_SUCCESS) {
+    yyext->literalbuf = (char *)b_core_yyalloc(yyext->literalalloc, scanner);
+    if (yyext->literalbuf == NULL) {
+        if (yyext->scanbuf_malloced) {
+            free(yyext->scanbuf);
+            yyext->scanbuf = NULL;
+            yyext->scanbuf_malloced = false;
+        }
         return NULL;
     }
     yyext->literallen = 0;

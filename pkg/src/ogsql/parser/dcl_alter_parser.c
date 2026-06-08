@@ -28,6 +28,8 @@
 #include "cbo_base.h"
 #include "ogsql_privilege.h"
 #include "ddl_parser.h"
+#include "srv_param_common.h"
+#include "srv_params_raft_and_log.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,8 +91,29 @@ static status_t sql_parse_match_config(knl_session_t *se, knl_alter_sys_def_t *d
 
 static status_t sql_bison_normalize_sys_param_value(config_item_t *item, knl_alter_sys_def_t *def)
 {
+    if (IS_LOG_MODE(def->param)) {
+        return sql_bison_normalize_als_log_level(def);
+    }
+
     if (item->datatype == NULL) {
         return OG_SUCCESS;
+    }
+
+    if (item->verify == sql_verify_als_onoff) {
+        if (cm_str_equal_ins(def->value, "ON")) {
+            def->value[0] = (char)OG_TRUE;
+            def->value[1] = '\0';
+            return OG_SUCCESS;
+        }
+
+        if (cm_str_equal_ins(def->value, "OFF")) {
+            def->value[0] = (char)OG_FALSE;
+            def->value[1] = '\0';
+            return OG_SUCCESS;
+        }
+
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+        return OG_ERROR;
     }
 
     /*
@@ -116,6 +139,38 @@ static status_t sql_bison_normalize_sys_param_value(config_item_t *item, knl_alt
 
     OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
     return OG_ERROR;
+}
+
+static bool32 sql_bison_sys_param_needs_verify(config_item_t *item)
+{
+    return item->verify != NULL && item->datatype != NULL &&
+        !cm_str_equal_ins(item->datatype, "OG_TYPE_BOOLEAN") &&
+        !cm_str_equal_ins(item->datatype, "OG_TYPE_VARCHAR");
+}
+
+static status_t sql_bison_verify_sys_param_value(sql_stmt_t *stmt, config_item_t *item, knl_alter_sys_def_t *def)
+{
+    lex_t *lex = stmt->session->lex;
+    uint32 save_flags = lex->flags;
+    status_t status;
+    sql_text_t value_text;
+
+    value_text.str = def->value;
+    value_text.len = (uint32)strlen(def->value);
+    value_text.loc = (source_location_t){ 1, 1 };
+    value_text.implicit = OG_FALSE;
+
+    if (lex_push(lex, &value_text) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    status = item->verify((knl_handle_t)&stmt->session->knl_session, (void *)lex, (void *)def);
+    if (status == OG_SUCCESS) {
+        status = lex_expected_end(lex);
+    }
+    lex->flags = save_flags;
+    lex_pop(lex);
+    return status;
 }
 
 static status_t sql_parse_alsys_modify_replica(lex_t *lex, knl_alter_sys_def_t *def)
@@ -1438,9 +1493,10 @@ status_t sql_parse_dcl_alter(sql_stmt_t *stmt)
     return status;
 }
 
-status_t sql_bison_verify_sys_param(knl_session_t *se, knl_alter_sys_def_t *def)
+status_t sql_bison_verify_sys_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def)
 {
     config_item_t *item = NULL;
+    knl_session_t *se = &stmt->session->knl_session;
 
     if (IS_LOG_MODE(def->param)) {
         text_t name = {
@@ -1467,6 +1523,10 @@ status_t sql_bison_verify_sys_param(knl_session_t *se, knl_alter_sys_def_t *def)
         strcmp(def->param, "ARCH_TIME") == 0) {
         OG_THROW_ERROR(ERR_NOT_COMPATIBLE, "arch time while lrep_mode is LOG_REPLICATION_ON");
         return OG_ERROR;
+    }
+
+    if (sql_bison_sys_param_needs_verify(item)) {
+        return sql_bison_verify_sys_param_value(stmt, item, def);
     }
 
     return sql_bison_normalize_sys_param_value(item, def);

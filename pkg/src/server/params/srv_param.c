@@ -1169,7 +1169,7 @@ config_item_t g_parameters[] = {
       sql_notify_als_create_index_parallelism, NULL, NULL },
     { "ENABLE_DSS", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_DSS, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_bool, sql_notify_als_bool, NULL },
-    { "USE_BISON_PARSER", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
+    { "USE_BISON_PARSER", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_USE_BISON_PARSER, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool,
       sql_notify_als_use_bison_parser, sql_notify_als_bool, NULL },
     // EXPLAIN

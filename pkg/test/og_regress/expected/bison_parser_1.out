@@ -68,23 +68,23 @@ SQL> insert ignore into bison_t2 values (1,1);
 
 SQL> insert into bison_t2 values (1,1); --error
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
 SQL> 
 SQL> insert /*+parallel(10)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
 SQL> insert /*+parallel(10)*/ into bison_t2(a, b) values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
 SQL> insert /*+opt_param(abc=true)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
 SQL> insert /*+db_version(=abc)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
 SQL> insert /*+db_version(==abc)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
 SQL> 
 SQL> drop table bison_t1;
 
@@ -170,16 +170,16 @@ OG-00601, [1:71]Sql syntax error: syntax error
 SQL> 
 SQL> insert into bison_t1 values (1, 1, 1) returning a; --error
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_51, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_62, duplicate key 1
 SQL> insert into bison_t1 values (1, 1) returning a; --error
 
 OG-00601, Sql syntax error: too less value expressions
 SQL> 
 SQL> declare
-  2     tmp int;
+  2 	tmp int;
   3 begin
-  4     insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (select 1,2), c = 4 returning c into tmp;
-  5     dbe_output.print_line(tmp);
+  4 	insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (select 1,2), c = 4 returning c into tmp;
+  5 	dbe_output.print_line(tmp);
   6 end;
   7 /
 
@@ -537,7 +537,7 @@ SQL> delete from bison_t1 where a = 1;
 
 1 rows affected.
 
-SQL> delete from bison_t1 using bison_t1, bison_t2 where a = 1;
+SQL> delete from bison_t1 using bison_t1, bison_t2 where a = 1;	
 
 0 rows affected.
 
@@ -1269,7 +1269,7 @@ SQL> COMMIT;
 Succeed.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id
@@ -1293,7 +1293,7 @@ EMPLOYEE_ID                              EMPLOYEE_NAME                          
 10 rows fetched.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id
@@ -1318,7 +1318,7 @@ EMPLOYEE_ID                              EMPLOYEE_NAME                          
 
 SQL> 
 SQL> -- 原生会报错,order by前加个括号就可以执行；raw_parser加不加都可以执行，结果一致
-SQL> SELECT
+SQL> SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id
@@ -1343,7 +1343,7 @@ EMPLOYEE_ID                              EMPLOYEE_NAME                          
 
 SQL> 
 SQL> -- error
-SQL> (SELECT
+SQL> (SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id
@@ -1357,7 +1357,7 @@ SQL> select * from bison_t1 order siblings by a; -- error
 
 OG-00601, [1:43]Sql syntax error: ORDER SIBLINGS BY clause not allowed here.
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id
@@ -1381,7 +1381,7 @@ EMPLOYEE_ID                              EMPLOYEE_NAME                          
 10 rows fetched.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id
@@ -1425,7 +1425,7 @@ EMPLOYEE_ID                              EMPLOYEE_NAME                          
 
 SQL> 
 SQL> -- 目前会报错，level需要映射为EXPR_NODE_RESERVED
-SQL> SELECT
+SQL> SELECT 
   2     employee_id,
   3     employee_name,
   4     manager_id,
@@ -1506,12 +1506,12 @@ SQL> COMMIT;
 Succeed.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     region,
   3     product_category,
   4     SUM(sale_amount) AS total_sales
   5 FROM sales_data
-  6 GROUP BY GROUPING SETS (
+  6 GROUP BY GROUPING SETS ( 
   7     (region, product_category));
 
 REGION               PRODUCT_CATEGORY     TOTAL_SALES                             
@@ -1524,12 +1524,12 @@ North                Electronics          4400
 4 rows fetched.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     region,
   3     product_category,
   4     SUM(sale_amount) AS total_sales
   5 FROM sales_data
-  6 GROUP BY (
+  6 GROUP BY ( 
   7     region, product_category);
 
 REGION               PRODUCT_CATEGORY     TOTAL_SALES                             
@@ -1542,7 +1542,7 @@ North                Electronics          4400
 4 rows fetched.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     region,
   3     product_category,
   4     SUM(sale_amount) AS total_sales
@@ -1553,7 +1553,7 @@ SQL> SELECT
 OG-00601, [6:35]Sql syntax error: syntax error
 SQL> 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     region,
   3     product_category,
   4     salesperson,
@@ -1562,12 +1562,12 @@ SQL> SELECT
   7 FROM sales_data
   8 GROUP BY GROUPING SETS (
   9     (region, product_category, salesperson),
- 10     (region, product_category),
- 11     (region, salesperson),
- 12     (product_category, salesperson),
- 13     (region),
- 14     (product_category),
- 15     (salesperson),
+ 10     (region, product_category),             
+ 11     (region, salesperson),                  
+ 12     (product_category, salesperson),        
+ 13     (region),                               
+ 14     (product_category),                     
+ 15     (salesperson),                           
  16     ()
  17 );
 
@@ -1605,7 +1605,7 @@ South                                                                    8000   
 28 rows fetched.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     region,
   3     product_category,
   4     salesperson,
@@ -1635,7 +1635,7 @@ South                                                                    8000   
 13 rows fetched.
 
 SQL> 
-SQL> SELECT
+SQL> SELECT 
   2     region,
   3     product_category,
   4     salesperson,
@@ -1691,12 +1691,12 @@ Sarah                          6100
 2 rows fetched.
 
 SQL> 
-SQL> SELECT region,
+SQL> SELECT region, 
   2        SUM(sale_amount) AS total_sales,
   3        AVG(sale_amount) AS avg_sale
   4 FROM sales_data
   5 GROUP BY region
-  6 HAVING SUM(sale_amount) > 3000
+  6 HAVING SUM(sale_amount) > 3000 
   7    AND AVG(sale_amount) < 2000;
 
 REGION               TOTAL_SALES                              AVG_SALE                                
@@ -1947,7 +1947,7 @@ A
 SQL> 
 SQL> select a from bison_t1 order by a union select c from bison_t2; -- error
 
-OG-00601, [1:35]Sql syntax error: syntax error
+OG-00601, [1:35]Sql syntax error: "LIMIT" clause or "ORDER BY" clause of the subset should be placed inside the parentheses that enclose the SELECT
 SQL> (select a from bison_t1 order by a) union select c from bison_t2;
 
 A           
@@ -1987,7 +1987,7 @@ A
 SQL> 
 SQL> select a from bison_t1 limit 1 union select c from bison_t2; -- error
 
-OG-00601, [1:32]Sql syntax error: syntax error
+OG-00601, [1:32]Sql syntax error: "LIMIT" clause or "ORDER BY" clause of the subset should be placed inside the parentheses that enclose the SELECT
 SQL> (select a from bison_t1 limit 1) union select c from bison_t2;
 
 A           
@@ -2283,7 +2283,7 @@ SQL> MERGE INTO employees e
   2 USING salary_updates s
   3 ON (e.emp_id = s.emp_id)
   4 WHEN MATCHED THEN
-  5     UPDATE SET
+  5     UPDATE SET 
   6         e.salary = s.new_salary,
   7         e.last_update = s.update_date
   8     WHERE s.new_salary > e.salary
@@ -2306,7 +2306,7 @@ SQL> MERGE INTO employees e
   2 USING salary_updates s
   3 ON (e.emp_id = s.emp_id)
   4 WHEN MATCHED THEN
-  5     UPDATE SET
+  5     UPDATE SET 
   6         e.salary = s.new_salary,
   7         e.last_update = s.update_date
   8     WHERE s.new_salary > e.salary;
@@ -2320,7 +2320,7 @@ SQL> MERGE INTO employees e
   4 WHEN NOT MATCHED THEN INSERT (e.emp_id, e.name, e.salary, e.last_update)
   5     VALUES (s.emp_id, '新员工', s.new_salary, s.update_date)
   6 WHEN MATCHED THEN
-  7     UPDATE SET
+  7     UPDATE SET 
   8         e.salary = s.new_salary,
   9         e.last_update = s.update_date
  10     WHERE s.new_salary > e.salary;
@@ -3301,10 +3301,6 @@ ID                   RESULT
 SQL> 
 SQL> ------------------------------------
 SQL> --same test case for func_res_test_bison_off
-SQL> alter system set use_bison_parser = false;
-
-Succeed.
-
 SQL> 
 SQL> create table func_res_test_bison_off(id serial primary key, result varchar(1000));
 
@@ -3390,7 +3386,7 @@ SQL> insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$
 
 SQL> insert into func_res_test_bison_off(result) select JSON_EXISTS(json_col, '$.address.city' error on error) from json_col_test order by id;
 
-OG-02504, [1:66]JSON syntax error, " expected but n found
+OG-02504, JSON syntax error, " expected but n found
 SQL> 
 SQL> insert into func_res_test_bison_off(result) values (json_set('{"name":"andy", "age":18, "addr":"China", "ho":[1,2,3,4]}', '$.name'));
 
@@ -3444,7 +3440,7 @@ SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' i
 
 SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
 
-OG-00601, [1:75]Sql syntax error: the word ":" is not correct
+OG-00601, [1:75]Sql syntax error: syntax error
 SQL> insert into func_res_test_bison_off(result) SELECT JSON_ARRAY(1,2,3,4);
 
 1 rows affected.
@@ -3468,7 +3464,7 @@ SQL> insert into func_res_test_bison_off(result)  select interval '22' year;
 
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year; --error
 
-OG-00674, YEAR field exceeds the specified precision (2)
+OG-00674, [1:73]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year(4);
 
 1 rows affected.
@@ -3479,17 +3475,17 @@ SQL> insert into func_res_test_bison_off(result)  select interval '22' year to y
 
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year to year; --error
 
-OG-00674, YEAR field exceeds the specified precision (2)
+OG-00674, [1:77]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year(4) to year;
 
 1 rows affected.
 
 SQL> insert into func_res_test_bison_off(result)  select interval '22' year to MONTH; --error
 
-OG-00673, Invalid interval text -- format error
+OG-00673, [1:75]Invalid interval text -- format error
 SQL> insert into func_res_test_bison_off(result)  select interval '2022-11' year to MONTH; --error
 
-OG-00674, YEAR field exceeds the specified precision (2)
+OG-00674, [1:80]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '2022-11' year(4) to MONTH;
 
 1 rows affected.
@@ -3508,7 +3504,7 @@ SQL> insert into func_res_test_bison_off(result)  select interval '11 22:05' day
 
 SQL> insert into func_res_test_bison_off(result)  select interval '100 10' day to hour; --error
 
-OG-00674, DAY field exceeds the specified precision (2)
+OG-00674, [1:78]DAY field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '100 10' day(3) to hour;
 
 1 rows affected.
@@ -3535,10 +3531,10 @@ SQL> insert into func_res_test_bison_off(result)  select interval '8' minute;
 
 SQL> insert into func_res_test_bison_off(result)  select interval '09:30' hour to day; --error
 
-OG-00673, [1:78]Invalid interval text -- invalid field name
+OG-00601, [1:78]Sql syntax error: -- invalid field name
 SQL> insert into func_res_test_bison_off(result)  select interval '09:30' minute to hour; --error
 
-OG-00673, [1:80]Invalid interval text -- invalid field name
+OG-00601, [1:80]Sql syntax error: -- invalid field name
 SQL> insert into func_res_test_bison_off(result)  select interval '09:30' hour to minute;
 
 1 rows affected.
@@ -3562,10 +3558,10 @@ SQL> insert into func_res_test_bison_off(result) select X'573456';
 
 SQL> insert into func_res_test_bison_off(result) select X'5734567'; --error
 
-OG-00105, Invalid format of hex
+OG-00105, [1:52]Invalid format of hex
 SQL> insert into func_res_test_bison_off(result) select x'573456'; --error
 
-OG-00601, [1:53]Sql syntax error: FROM expected but '573456' found
+OG-00601, [1:53]Sql syntax error: syntax error
 SQL> 
 SQL> insert into func_res_test_bison_off(result) select 1::int;
 
@@ -3593,21 +3589,21 @@ SQL> insert into func_res_test_bison_off(result) select -5423237233838653440 >> 
 
 SQL> insert into func_res_test_bison_off(result) select 542323723383865345324532452343440 >> 32;
 
-OG-00659, [1:86]BIGINT out of range
+OG-00659, [1:52]BIGINT out of range
 SQL> insert into func_res_test_bison_off(result) select 5423237233838653440 >> 32;
 
 1 rows affected.
 
 SQL> insert into func_res_test_bison_off(result) select -542323723334534534534535838653440 >> 32;
 
-OG-00659, [1:87]BIGINT out of range
+OG-00659, [1:52]BIGINT out of range
 SQL> insert into func_res_test_bison_off(result) select -5423237233838653440 >> 30;
 
 1 rows affected.
 
 SQL> insert into func_res_test_bison_off(result) select 838653440 >> 32234444444444444444444444444444444;
 
-OG-00659, [1:62]BIGINT out of range
+OG-00659, [1:52]BIGINT out of range
 SQL> insert into func_res_test_bison_off(result) select 2147483648 + 1;
 
 1 rows affected.
@@ -3768,12 +3764,12 @@ SQL> INSERT INTO  test_func_2
 
 1 rows affected.
 
-SQL> INSERT INTO  test_func_2
+SQL> INSERT INTO  test_func_2 
   2 values (333, '王五', 'wangwu@126.com', '13312345680', to_date('01-11-1987', 'dd-mm-yyyy'), 'AD_ASST', 4400.00, 101, 10);
 
 1 rows affected.
 
-SQL> INSERT INTO  test_func_2
+SQL> INSERT INTO  test_func_2 
   2 values (444, '赵二', 'zhaoer@126.com', '13312345681', to_date('13-12-1988', 'dd-mm-yyyy'), 'AD_ASST', 3900.00, 101, 10);
 
 1 rows affected.
@@ -3830,7 +3826,7 @@ COUNT(STAFF_ID) OVER(PARTITION BY SECTION_ID ORDER BY STAFF_ID)
 
 4 rows fetched.
 
-SQL> drop table test_func_2;
+SQL> drop table test_func_2; 
 
 Succeed.
 
@@ -3841,9 +3837,9 @@ SQL> select (select id from sys_tables);  -- error
 OG-00915, [1:8]More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
 SQL> select (select id from sys_tables limit 1);
 
-ID          
-------------
-0           
+(SELECT ID FROM SYS_TABLES LIMIT 1)
+-----------------------------------
+0                                  
 
 1 rows fetched.
 
@@ -3968,7 +3964,7 @@ SQL> drop table t_second;
 Succeed.
 
 SQL> --quote
-SQL> select 1 as `1`;
+SQL> select 1 as `1`; 
 
 1           
 ------------
@@ -4374,10 +4370,6 @@ SQL> drop table sessiontimezone;
 Succeed.
 
 SQL> 
-SQL> alter system set use_bison_parser = false;
-
-Succeed.
-
 SQL> 
 SQL> 
 SQL> alter system set use_bison_parser = true;
@@ -4487,13 +4479,13 @@ LOCAL_IDX                                                        Y           VAL
 
 2 rows fetched.
 
-SQL> SELECT * FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
+SQL> SELECT PARTITION_NAME, STATUS, INI_TRANS FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
 
-INDEX_NAME                                                       COMPOSITE PARTITION_NAME                                                   PARTITION_POSITION STATUS  PCT_FREE     INI_TRANS    MAX_TRANS    BLEVEL       LEAF_BLOCKS  DISTINCT_KEYS AVG_LEAF_BLOCKS_PER_KEY AVG_DATA_BLOCKS_PER_KEY CLUSTERING_FACTOR NUM_ROWS     SAMPLE_SIZE  LAST_ANALYZED          TABLESPACE_NAME                                                 
----------------------------------------------------------------- --------- ---------------------------------------------------------------- ------------------ ------- ------------ ------------ ------------ ------------ ------------ ------------- ----------------------- ----------------------- ----------------- ------------ ------------ ---------------------- ----------------------------------------------------------------
-LOCAL_IDX                                                        NO        P1                                                               10                 VALID   8            2            255                                                                                                                                                                     SYSTEM                                                          
-LOCAL_IDX                                                        NO        P2                                                               20                 VALID   8            2            255                                                                                                                                                                     SYSTEM                                                          
-LOCAL_IDX                                                        NO        P3                                                               30                 VALID   8            2            255                                                                                                                                                                     SYSTEM                                                          
+PARTITION_NAME                                                   STATUS  INI_TRANS   
+---------------------------------------------------------------- ------- ------------
+P1                                                               VALID   2           
+P2                                                               VALID   2           
+P3                                                               VALID   2           
 
 3 rows fetched.
 
@@ -4541,13 +4533,13 @@ SQL> ALTER INDEX local_idx MODIFY PARTITION p2 INITRANS 3;
 
 Succeed.
 
-SQL> SELECT * FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
+SQL> SELECT PARTITION_NAME, STATUS, INI_TRANS FROM MY_IND_PARTITIONS WHERE INDEX_NAME='LOCAL_IDX' order by PARTITION_NAME;
 
-INDEX_NAME                                                       COMPOSITE PARTITION_NAME                                                   PARTITION_POSITION STATUS  PCT_FREE     INI_TRANS    MAX_TRANS    BLEVEL       LEAF_BLOCKS  DISTINCT_KEYS AVG_LEAF_BLOCKS_PER_KEY AVG_DATA_BLOCKS_PER_KEY CLUSTERING_FACTOR NUM_ROWS     SAMPLE_SIZE  LAST_ANALYZED          TABLESPACE_NAME                                                 
----------------------------------------------------------------- --------- ---------------------------------------------------------------- ------------------ ------- ------------ ------------ ------------ ------------ ------------ ------------- ----------------------- ----------------------- ----------------- ------------ ------------ ---------------------- ----------------------------------------------------------------
-LOCAL_IDX                                                        NO        P1                                                               10                 INVALID 8            2            255                                                                                                                                                                     SYSTEM                                                          
-LOCAL_IDX                                                        NO        P2                                                               20                 INVALID 8            3            255                                                                                                                                                                     SYSTEM                                                          
-LOCAL_IDX                                                        NO        P3                                                               30                 VALID   8            2            255                                                                                                                                                                     SYSTEM                                                          
+PARTITION_NAME                                                   STATUS  INI_TRANS   
+---------------------------------------------------------------- ------- ------------
+P1                                                               INVALID 2           
+P2                                                               INVALID 3           
+P3                                                               VALID   2           
 
 3 rows fetched.
 
@@ -4673,10 +4665,6 @@ SQL> drop table bison_corr_emps;
 Succeed.
 
 SQL> drop table bison_corr_depts;
-
-Succeed.
-
-SQL> alter system set use_bison_parser = false;
 
 Succeed.
 

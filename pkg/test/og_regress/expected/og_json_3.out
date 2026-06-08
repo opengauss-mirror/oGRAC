@@ -228,7 +228,7 @@ JSON_ARRAY('["SD","123",NULL]')
 
 SQL> select json_array('["sd","123",NULL]' FORMAT json) from SYS_DUMMY;
 
-OG-02504, [1:32]JSON syntax error, unexpected N found
+OG-02504, JSON syntax error, unexpected N found
 SQL> ---test json_object
 SQL> select json_object(key 'class' is '"05-1"' FORMAT json,key 'name' is NULL ABSENT on null) from SYS_DUMMY;
 
@@ -312,19 +312,19 @@ JSON_ARRAY_LENGTH(NULL)
 
 SQL> select json_array_length("sd":"de") from SYS_DUMMY;
 
-OG-00601, [1:30]Sql syntax error: namable char expected but " found
+OG-00601, [1:30]Sql syntax error: syntax error
 SQL> select json_array_length('["sd":"de"') from SYS_DUMMY;
 
-OG-02504, [1:32]JSON syntax error, "," expected but : found
+OG-02504, JSON syntax error, "," expected but : found
 SQL> select json_array_length('["sd":"de"]') from SYS_DUMMY;
 
-OG-02504, [1:32]JSON syntax error, "," expected but : found
+OG-02504, JSON syntax error, "," expected but : found
 SQL> select json_array_length('[{"sd":"de"]') from SYS_DUMMY;
 
-OG-02504, [1:38]JSON syntax error, "," expected but ] found
+OG-02504, JSON syntax error, "," expected but ] found
 SQL> select json_array_length('["sd":"de"}]') from SYS_DUMMY;
 
-OG-02504, [1:32]JSON syntax error, "," expected but : found
+OG-02504, JSON syntax error, "," expected but : found
 SQL> ---test json_array_length, the depth is one
 SQL> select json_array_length('["sd"]') from SYS_DUMMY;
 
@@ -558,21 +558,21 @@ SQL> insert into test values(3, 'cc
 
 SQL> select length(b) from test;
 
-LENGTH(B)
+LENGTH(B)           
 --------------------
-8
-12
-11
+8                   
+12                  
+11                  
 
 3 rows fetched.
 
 SQL> select json_object('b' is b) from test;
 
-JSON_OBJECT('B' IS B)
+JSON_OBJECT('B' IS B)                                           
 ----------------------------------------------------------------
-{"b":"aaaaaaaa"}
-{"b":"bbbb\t\t\t\tbbbb"}
-{"b":"cc\ncc\nc\nccc"}
+{"b":"aaaaaaaa"}                                                
+{"b":"bbbb\t\t\t\tbbbb"}                                        
+{"b":"cc\ncc\nc\nccc"}                                          
 
 3 rows fetched.
 
@@ -580,14 +580,16 @@ SQL> select length(json_value(json_object('b' is b), '$.b')) from test;
 
 LENGTH(JSON_VALUE(JSON_OBJECT('B' IS B), '$.B'))
 ------------------------------------------------
-8
-12
-11
+8                                               
+12                                              
+11                                              
 
 3 rows fetched.
 
 SQL> 
 SQL> --test when the length of second parameter is 32
 SQL> select json_value('[1,2,3,4]', '$[12345678901234567890123456789000]') from dual;
-	 
 OG-02503, JSON path expression syntax error, the indexes too long
+
+
+

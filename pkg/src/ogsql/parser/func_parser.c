@@ -1445,6 +1445,153 @@ static status_t sql_try_create_pl_collection_elem_expr(sql_stmt_t *stmt,
     return OG_SUCCESS;
 }
 
+static status_t sql_try_find_pl_construct_type(sql_stmt_t *stmt, text_t *name, source_location_t loc, plv_decl_t **decl,
+    bool32 *found)
+{
+    word_t word = { 0 };
+
+    *decl = NULL;
+    *found = OG_FALSE;
+    word.id = OG_INVALID_ID32;
+    word.type = WORD_TYPE_VARIANT;
+    word.ori_type = WORD_TYPE_VARIANT;
+    word.loc = loc;
+    word.text.value = *name;
+    word.text.loc = loc;
+
+    if (stmt->pl_compiler != NULL) {
+        pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+        plc_find_decl_ex(compiler, &word, PLV_TYPE, NULL, decl);
+        if (*decl != NULL) {
+            *found = OG_TRUE;
+            return OG_SUCCESS;
+        }
+        return plc_try_find_global_type(compiler, &word, decl, found);
+    }
+
+    pl_compiler_t compiler = { 0 };
+    compiler.stmt = stmt;
+    return plc_try_find_global_type(&compiler, &word, decl, found);
+}
+
+static status_t sql_try_create_pl_construct_expr(sql_stmt_t *stmt, pl_collection_elem_expr_arg_t *arg,
+    bool32 *converted)
+{
+    plv_decl_t *decl = NULL;
+    bool32 found = OG_FALSE;
+    udt_constructor_t *v_construct = NULL;
+
+    *converted = OG_FALSE;
+    if (arg->func_name->count != 1 || arg->arg_list == NULL) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_try_find_pl_construct_type(stmt, &arg->node->word.func.name.value, arg->loc, &decl, &found));
+    if (!found || decl == NULL || decl->type != PLV_TYPE) {
+        return OG_SUCCESS;
+    }
+
+    if (decl->typdef.type == PLV_COLLECTION) {
+        if (decl->typdef.collection.type == UDT_HASH_TABLE) {
+            OG_THROW_ERROR(ERR_PL_SYNTAX_ERROR_FMT, "associative arrays do not support constructor");
+            return OG_ERROR;
+        }
+        arg->node->type = EXPR_NODE_V_CONSTRUCT;
+        arg->node->value.is_null = OG_FALSE;
+        v_construct = &arg->node->value.v_construct;
+        v_construct->is_coll = OG_TRUE;
+        v_construct->meta = (void *)&decl->typdef.collection;
+    } else if (decl->typdef.type == PLV_OBJECT) {
+        arg->node->type = EXPR_NODE_V_CONSTRUCT;
+        arg->node->value.is_null = OG_FALSE;
+        v_construct = &arg->node->value.v_construct;
+        v_construct->is_coll = OG_FALSE;
+        v_construct->meta = (void *)&decl->typdef.object;
+    } else {
+        return OG_SUCCESS;
+    }
+
+    arg->node->argument = arg->arg_list;
+    *converted = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_func_name_as_word(galist_t *func_name, word_t *word, source_location_t loc)
+{
+    expr_tree_t *list_expr = NULL;
+
+    if (func_name->count == 0 || func_name->count > MAX_EXTRA_TEXTS + 1) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "improper function name");
+        return OG_ERROR;
+    }
+
+    word->id = OG_INVALID_ID32;
+    word->type = WORD_TYPE_VARIANT;
+    word->ori_type = WORD_TYPE_VARIANT;
+    word->loc = loc;
+
+    list_expr = cm_galist_get(func_name, 0);
+    word->text.value = list_expr->root->value.v_text;
+    word->text.loc = list_expr->root->loc;
+    for (uint32 i = 1; i < func_name->count; i++) {
+        list_expr = cm_galist_get(func_name, i);
+        word->ex_words[word->ex_count].type = WORD_TYPE_VARIANT;
+        word->ex_words[word->ex_count].text.value = list_expr->root->value.v_text;
+        word->ex_words[word->ex_count].text.loc = list_expr->root->loc;
+        word->ex_count++;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t sql_try_create_pl_collection_method_expr(sql_stmt_t *stmt, pl_collection_elem_expr_arg_t *arg,
+    bool32 *converted)
+{
+    const uint32 min_func_name_count = 2;
+    word_t word = { 0 };
+    expr_node_t saved_node;
+
+    *converted = OG_FALSE;
+    if (!sql_func_is_pl_compile_context(stmt) || stmt->pl_compiler == NULL ||
+        arg->func_name->count < min_func_name_count) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_bison_func_name_as_word(arg->func_name, &word, arg->loc));
+    saved_node = *arg->node;
+    OG_RETURN_IFERR(plc_try_obj_access_single(stmt, &word, arg->node));
+    if (arg->node->type != EXPR_NODE_V_METHOD) {
+        *arg->node = saved_node;
+        return OG_SUCCESS;
+    }
+
+    arg->node->argument = arg->arg_list;
+    *converted = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_try_create_pl_special_func_expr(sql_stmt_t *stmt, expr_tree_t **expr,
+    pl_collection_elem_expr_arg_t *arg, bool32 *converted)
+{
+    OG_RETURN_IFERR(sql_try_create_pl_collection_elem_expr(stmt, arg, converted));
+    if (*converted) {
+        (*expr)->root = arg->node;
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_try_create_pl_construct_expr(stmt, arg, converted));
+    if (*converted) {
+        (*expr)->root = arg->node;
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_try_create_pl_collection_method_expr(stmt, arg, converted));
+    if (*converted) {
+        (*expr)->root = arg->node;
+    }
+    return OG_SUCCESS;
+}
+
 status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t *func_name,
     expr_tree_t *arg_list, source_location_t loc)
 {
@@ -1484,9 +1631,8 @@ status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t
     pl_arg.func_name = func_name;
     pl_arg.arg_list = arg_list;
     pl_arg.loc = loc;
-    OG_RETURN_IFERR(sql_try_create_pl_collection_elem_expr(stmt, &pl_arg, &converted));
+    OG_RETURN_IFERR(sql_try_create_pl_special_func_expr(stmt, expr, &pl_arg, &converted));
     if (converted) {
-        (*expr)->root = node;
         return OG_SUCCESS;
     }
 

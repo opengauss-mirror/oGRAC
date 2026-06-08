@@ -48,10 +48,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 18   | 91   | 12        |       |        |
-| 1  |   MERGE JOIN            |       |      | 18   | 91   | 12        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 104  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 22   | 105  | 13        |       |        |
+| 1  |   MERGE JOIN            |       |      | 22   | 105  | 13        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -79,10 +79,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 1    | 5    | 0         |       |        |
-| 1  |   NESTED LOOPS          |       |      | 1    | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 1    | 6    | 0         |       |        |
+| 1  |   NESTED LOOPS          |       |      | 1    | 6    | 0         |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T2   | 1    | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -107,10 +107,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 109  | 438  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -136,12 +136,12 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 3    | 111  | 97        |       |        |
-| 1  |   MERGE JOIN              |       |      | 3    | 111  | 97        |       |        |
-| 2  |     MERGE JOIN            |       |      | 18   | 91   | 12        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T2   | 104  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 5  |       TABLE ACCESS FULL   | SYS   | T3   | 104  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 4    | 129  | 112       |       |        |
+| 1  |   MERGE JOIN              |       |      | 4    | 129  | 112       |       |        |
+| 2  |     MERGE JOIN            |       |      | 22   | 105  | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 5  |       TABLE ACCESS FULL   | SYS   | T3   | 112  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -171,10 +171,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 109  | 438  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -200,10 +200,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 109  | 438  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -229,10 +229,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 18   | 91   | 12        |       |        |
-| 1  |   MERGE JOIN            |       |      | 18   | 91   | 12        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 104  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 22   | 105  | 13        |       |        |
+| 1  |   MERGE JOIN            |       |      | 22   | 105  | 13        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -260,9 +260,9 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 109  | 12   | 0         |       |        |
-| 1  |   HASH DISTINCT         |       |      | 109  | 12   | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 12   | 0         |       |        |
+| 1  |   HASH DISTINCT         |       |      | 118  | 12   | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 
 7 rows fetched.
@@ -285,11 +285,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 10   | 893  | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |      | 10   | 893  | 8         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 11   | 1023 | 8         |       |        |
+| 1  |   HASH GROUP BY           |       |      | 11   | 1023 | 8         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -315,11 +315,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 10   | 893  | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |      | 10   | 893  | 8         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 11   | 1023 | 8         |       |        |
+| 1  |   HASH GROUP BY           |       |      | 11   | 1023 | 8         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -345,10 +345,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 104  | 446  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 104  | 446  | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T1   | 104  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 112  | 511  | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |      | 112  | 511  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 112  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -375,10 +375,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 104  | 446  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 104  | 446  | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 104  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 112  | 511  | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |      | 112  | 511  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -405,11 +405,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 109  | 438  | 0         |       |        |
-| 1  |   FILTER                  |       |      | 109  | 438  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
+| 1  |   FILTER                  |       |      | 118  | 503  | 0         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -439,7 +439,7 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT        |       |      | 1    | 6    | 0         |       |        |
 | 1  |   NESTED LOOPS          |       |      | 1    | 6    | 0         |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T2   | 1    | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -464,12 +464,12 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 109  | 2    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |      | 109  | 2    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 3  |     NESTED LOOPS          |       |      | 1    | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 2    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |      | 118  | 2    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |     NESTED LOOPS          |       |      | 1    | 6    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 1    | 1    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | T3   | 104  | 2    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | T3   | 112  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -497,11 +497,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 109  | 438  | 0         |       |        |
-| 1  |   FILTER                  |       |      | 109  | 438  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
+| 1  |   FILTER                  |       |      | 118  | 503  | 0         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -525,10 +525,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 6    | 36   | 9         |       |        |
-| 1  |   MERGE JOIN            |       |      | 6    | 36   | 9         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 36   | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 7    | 42   | 9         |       |        |
+| 1  |   MERGE JOIN            |       |      | 7    | 42   | 9         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T2   | 39   | 1    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -556,11 +556,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 109  | 438  | 0         |       |        |
-| 1  |   FILTER                  |       |      | 109  | 438  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
+| 1  |   FILTER                  |       |      | 118  | 503  | 0         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -584,10 +584,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 1    | 5    | 0         |       |        |
-| 1  |   NESTED LOOPS          |       |      | 1    | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 1    | 6    | 0         |       |        |
+| 1  |   NESTED LOOPS          |       |      | 1    | 6    | 0         |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T2   | 1    | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -614,10 +614,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 1    | 16   | 8         |       |        |
-| 1  |   MERGE JOIN            |       |      | 1    | 16   | 8         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 11   | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 2    | 18   | 8         |       |        |
+| 1  |   MERGE JOIN            |       |      | 2    | 18   | 8         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T2   | 12   | 1    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -645,10 +645,10 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 109  | 438  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -674,11 +674,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 109  | 477  | 1         |       |        |
-| 1  |   QUERY SORT ORDER BY     |       |      | 109  | 477  | 1         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 546  | 1         |       |        |
+| 1  |   QUERY SORT ORDER BY     |       |      | 118  | 546  | 1         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -704,11 +704,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 10   | 40   | 0         |       |        |
-| 1  |   QUERY LIMIT             |       |      | 10   | 40   | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 10   | 42   | 0         |       |        |
+| 1  |   QUERY LIMIT             |       |      | 10   | 42   | 0         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -734,11 +734,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 109  | 438  | 0         |       |        |
-| 1  |   FOR UPDATE              |       |      | 109  | 438  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 109  | 438  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | T1   | 109  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 109  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
+| 1  |   FOR UPDATE              |       |      | 118  | 503  | 0         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

@@ -111,10 +111,26 @@ static status_t make_type_word(core_yyscan_t yyscanner, type_word_t **type, char
     galist_t *typemode, source_location_t loc);
 static status_t make_type_modifiers(core_yyscan_t yyscanner, galist_t **list, int val, source_location_t loc);
 static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr);
+static void bison_set_select_type(sql_select_t *select_ctx, select_type_t type);
+static status_t bison_apply_table_pivot(sql_stmt_t *stmt, sql_table_t *table, galist_t *pivot_list);
 static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
+static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node);
+static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
+    expr_node_type_t node_type, source_location_t loc);
+static cmp_type_t bison_cmpop_to_cmp_type(const char *op);
+static cond_node_t *bison_make_compare_cond(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
+    cmp_type_t cmp_type, source_location_t loc);
+static cond_node_t *bison_make_in_select_cond(core_yyscan_t yyscanner, expr_tree_t *left, sql_select_t *select_ctx,
+    cmp_type_t cmp_type, source_location_t loc);
+static char *bison_copy_token_text(core_yyscan_t yyscanner, int offset);
+static void sql_bison_privilege_text(core_yyscan_t yyscanner, int start_offset, bool32 stop_on, text_t *priv_name);
+static bool32 sql_bison_lookup_role(sql_stmt_t *stmt, text_t *priv_name, char *role_buf, uint32 role_buf_len,
+    uint32 *rid);
+static status_t sql_bison_copy_cstr_if_present(sql_stmt_t *stmt, char *src, text_t *dst);
+static status_t sql_bison_copy_text_if_present(sql_stmt_t *stmt, text_t *src, text_t *dst);
 static status_t strGetInt64ByLen(const char *str, size_t len, int64 *value);
 static status_t strGetPureInt64(const char *str, int64 *value);
 static status_t strGetInt64(const char *str, int64 *value);
@@ -122,8 +138,12 @@ static char* ds_unit_to_str(interval_unit_order_t order);
 static interval_unit_t get_interval_unit(interval_unit_order_t order);
 static interval_unit_t generate_interval_unit(interval_unit_order_t from, interval_unit_order_t to);
 static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_t *alter_idx_act, knl_alindex_def_t *def);
+static bool32 pl_bison_is_body_terminator_slash(const char *scanbuf, size_t scanbuflen, int offset);
 static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int start_offset, source_location_t loc);
+static text_t *pl_prepend_body_start_keep_semicolon(core_yyscan_t yyscanner, text_t *body, int start_offset,
+    source_location_t loc);
 static text_t *pl_wrap_statement_body(core_yyscan_t yyscanner, text_t *stmt_src);
+static void pl_trim_statement_terminator(text_t *text);
 static status_t pl_compile_anonymous_body(core_yyscan_t yyscanner, text_t *body);
 static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *body, int start_offset,
     source_location_t loc, bool32 has_program_body);
@@ -141,6 +161,9 @@ static pl_bison_trigger_events_t *pl_bison_merge_trigger_events(core_yyscan_t yy
 static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner, trigger_type_t type,
     pl_bison_trigger_events_t *events, name_with_owner *table_name, bool32 for_each_row, text_t *body,
     source_location_t trigger_loc, source_location_t table_loc, source_location_t action_loc);
+static sql_array_t *bison_push_pending_ssa(core_yyscan_t yyscanner);
+static void bison_pop_pending_ssa(core_yyscan_t yyscanner);
+static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-prologue.y.h"*/
@@ -228,10 +251,11 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
     parse_column_t      *parse_col;
     parse_table_element_t *table_element;
     text_t              *text;
+    sql_array_t         *array;
     alterts_opt         *alts_opt;
 }
 
-%type <res>    stmtblock stmtmulti InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
+%type <res>    stmtblock stmtmulti ExplainStmt explain_target_stmt explain_dml_stmt InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
                UpdateStmt select_clause MergeStmt DropStmt merge_insert merge_when_insert_clause ReplaceStmt TruncateStmt
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterUserStmt AlterTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
@@ -240,7 +264,7 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
                GrantStmt RevokeStmt PurgeStmt AlterTableStmt AlterDatabaseStmt AlterSequenceStmt AlterTablespaceStmt
                AlterProfileStmt AlterTriggerStmt AlterFunctionStmt ddl_passthrough_tail index_cluster_item TransactionStmt
                RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt PlAnonymousStmt
-               LockTableStmt AlterSystemStmt AlterSessionStmt XID LTID InternalReparseStmt pl_trigger_body
+               LockTableStmt AlterSystemStmt AlterSessionStmt AlterSessionStmtValid XID LTID InternalReparseStmt pl_trigger_body
                trigger_event trigger_event_list
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
@@ -256,6 +280,7 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
 %type <expr>   ctext_expr a_expr c_expr AexprConst indirection_el columnref case_default case_expr func_application func_expr
                func_arg_expr func_arg_list expr_elem_list func_expr_common_subexpr substr_list multi_expr_list
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
+               pl_call_expr
 %type <table>  insert_target qualified_name relation_expr table_func json_table
 %type <case_pair> when_expr_clause when_cond_clause
 %type <column> insert_column_item
@@ -266,13 +291,14 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
 %type <table_element> TableElement
 %type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_authid
                 opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior
-                opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition opt_archivelog
+                opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition
                 opt_reuse opt_all_in_memory opt_encrypted ignore_nulls opt_orajoin on_or_off opt_undo opt_or_replace opt_signed
                 opt_revoke_cascade opt_with_read_only alter_trigger_enable opt_package_body opt_type_body opt_type_force
 %type <winsort_args> over_clause window_specification
 %type <windowing_args> opt_frame_clause frame_extent
 %type <query_column> target_el
 %type <windowing_border> frame_bound
+%type <array> select_scope
 %type <insert_all> all_insert_into
 %type <update_ctx> upsert_clause merge_when_update_clause merge_update
 %type <pair> single_set_clause set_target_list
@@ -285,7 +311,8 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
 %type <timezone_type> opt_timezone
 %type <trim_list> trim_list
 %type <extract_list> extract_list
-%type <expr> expr_with_select expr_list_with_select expr_list_with_select_row implicit_row opt_escape expr_list_with_paren
+%type <expr> expr_with_select expr_list_with_select expr_list_with_select_row implicit_row parenthesized_bare_expr
+             parenthesized_oper_expr opt_escape expr_list_with_paren connect_by_root_expr
              func_expr_windowless opt_column_on_update
 %type <join_node> using_clause from_list table_ref joined_table from_clause
 %type <join_type> join_type
@@ -293,7 +320,7 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
 %type <json_func_att_id> format_json_attr json_on_null json_array_wrapper json_on_error json_on_empty json_on_empty_null_or_error
 %type <json_func_attr> json_attr_all
 %type <returning_attr> json_returning
-%type <withas_factor> common_table_expr
+%type <withas_factor> common_table_expr cte_head
 %type <expr_alias> pivot_in_item_list pivot_in_item pivot_in_list_element
 %type <pivot_item> pivot_clause
 %type <expr_alias_as> unpivot_in_list_element
@@ -344,10 +371,10 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
             list_partition_item hash_partition_item opt_interval_partition_clause subpartitioning_clause opt_subpartitions_num
             subpartitions_num partitions_num external_table func_arg_with_default func_arg
 %type <keyword> unreserved_keyword
-%type <keyword> col_name_keyword reserved_keyword
+%type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
 %type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
-            debug_mode_value altsession_set_key altsession_set_value alter_param_value
+            debug_mode_value altsession_set_key altsession_set_value alter_param_value alter_session_extra_token case_invalid_word
 
 %type <ival> opt_asc_desc opt_nulls_order opt_ckpt_type opt_charset opt_collate opt_wait opt_wait_time opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
@@ -362,6 +389,7 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
 %token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
                 OPER_CAT OPER_LSHIFT OPER_RSHIFT
 %token <ival>   ICONST PARAM
+%token <ival64> I64CONST
 
 %token            LEX_ERROR_TOKEN
 %token            TYPECAST ORA_JOINOP DOT_DOT COLON_EQUALS PARA_EQUALS SET_IDENT_SESSION SET_IDENT_GLOBAL NULLS_FIRST NULLS_LAST
@@ -381,7 +409,7 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
     CHARACTER CHARACTERISTICS CHARACTERSET CHARSET CHECK CHECKPOINT CLASS CLASS_ORIGIN CLEAN CLIENT CLIENT_MASTER_KEY CLIENT_MASTER_KEYS CLOB CLOSE
     CLUSTER_P CLUSTERED COALESCE COLLATE COLLATION COLUMN COLUMN_ENCRYPTION_KEY COLUMN_ENCRYPTION_KEYS COLUMN_NAME COLUMNS COMMENT COMMENTS COMMIT
     COMMITTED COMPACT COMPATIBLE_ILLEGAL_CHARS COMPILE COMPLETE COMPLETION COMPRESS COMPRESSED COMPUTE CONCURRENTLY CONDITION CONDITIONAL CONFIGURATION CONFIG CONNECTION CONSISTENT CONSTANT CONSTRAINT CONSTRAINT_CATALOG CONSTRAINT_NAME CONSTRAINT_SCHEMA CONSTRAINTS
-    CONTENT_P CONTENTS CONTINUE_P CONTROLFILE CONTVIEW CONVERSION_P CONVERT_P CONNECT COORDINATOR COORDINATORS COPY COPYCTRL COST CREATE CRMODE
+    CONTENT_P CONTENTS CONTINUE_P CONTROLFILE CONTVIEW CONVERSION_P CONVERT_P CONNECT CONNECT_BY_ROOT COORDINATOR COORDINATORS COPY COPYCTRL COST CREATE CRMODE
     CROSS CSF CSN CSV CTRLFILE CUBE CUMULATIVE CURRENT_P
     COUNT CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA
     CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CURSOR_NAME CYCLE
@@ -499,7 +527,7 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
  */
 %token  WITH_TIME WITH_LOCAL WITHOUT_TIME WITHOUT_LOCAL PIVOT_TOK UNPIVOT_TOK UNPIVOT_INC UNPIVOT_EXC CONNECT_BY START_WITH
         PARTITION_FOR SUBPARTITION_FOR ORDER_SIBLINGS ABSENT_ON INNER_JOIN JOIN_KEY LEFT_KEY RIGHT_KEY FULL_KEY CROSS_JOIN
-        FOREIGN_KEY EXECUTE_ON_DIRECTORY EXECUTE_KEY READ_ON_DIRECTORY READ_KEY
+        PRIMARY_KEY FOREIGN_KEY EXECUTE_ON_DIRECTORY EXECUTE_KEY READ_ON_DIRECTORY READ_KEY
 
 /* Precedence: lowest to highest */
 %right       PRIOR
@@ -580,10 +608,10 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
 /* Unary Operators */
 %left        AT                /* sets precedence for AT TIME ZONE, AT LOCAL */
 %left        COLLATE
-%right        UMINUS
 %left        '[' ']'
 %left        '(' ')'
 %left        TYPECAST KEY
+%right       UMINUS
 %left        '.'
 /*
  * These might seem to be low-precedence, but actually they are not part
@@ -615,6 +643,7 @@ stmtmulti:
         | UpdateStmt
         | MergeStmt
         | ReplaceStmt
+        | ExplainStmt
         | DropStmt
         | TruncateStmt
         | FlashStmt
@@ -700,6 +729,93 @@ InternalReparseStmt:
             {
                 $$ = $3;
             }
+        | PROCEDURE pl_call_expr
+            {
+                $$ = $2;
+            }
+    ;
+
+pl_call_expr:
+        func_name '(' ')'
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $1, NULL, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("init procedure call expr failed");
+                }
+                $$ = expr;
+            }
+        | func_name '(' func_arg_list ')'
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $1, $3, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("init procedure call expr failed");
+                }
+                $$ = expr;
+            }
+        | columnref
+            {
+                $$ = $1;
+            }
+    ;
+
+ExplainStmt:
+        EXPLAIN opt_explain_plan_for explain_target_stmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->is_explain = OG_TRUE;
+                $$ = $3;
+            }
+    ;
+
+opt_explain_plan_for:
+        PLAN FOR
+        | /*EMPTY*/
+    ;
+
+explain_target_stmt:
+        explain_dml_stmt
+        | CreateTableStmt
+        | CreateIndexStmt
+        | CreateIndexClusterStmt
+        | IDENT
+            {
+                OG_SRC_THROW_ERROR(@1.loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
+                YYABORT;
+            }
+    ;
+
+explain_dml_stmt:
+        SelectStmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_SELECT;
+                $$ = $1;
+            }
+        | InsertStmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_INSERT;
+                $$ = $1;
+            }
+        | UpdateStmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_UPDATE;
+                $$ = $1;
+            }
+        | DeleteStmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_DELETE;
+                $$ = $1;
+            }
+        | MergeStmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_MERGE;
+                $$ = $1;
+            }
+        | ReplaceStmt
+            {
+                og_yyget_extra(yyscanner)->core_yy_extra.stmt->context->type = OGSQL_TYPE_REPLACE;
+                $$ = $1;
+            }
     ;
 
 opt_into:
@@ -741,10 +857,10 @@ InsertStmt:
             insert_context->table = $5;
             insert_context->pairs = $6;
             insert_context->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_context->pairs, 0))->exprs->count;
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             insert_context->ret_columns = $7;
             $$ = insert_context;
@@ -783,10 +899,10 @@ InsertStmt:
                 pair->column_name.value = column->col_name;
             }
             insert_context->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_context->pairs, 0))->exprs->count;
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             insert_context->ret_columns = $10;
             $$ = insert_context;
@@ -808,10 +924,10 @@ InsertStmt:
             if (sql_create_list(stmt, &insert_context->pairs) != OG_SUCCESS) {
                 parser_yyerror("create column pairs failed.");
             }
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             $$ = insert_context;
         }
@@ -833,10 +949,10 @@ InsertStmt:
             }
             insert_context->select_ctx = $9;
             insert_context->select_ctx->type = SELECT_AS_VALUES;
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             $$ = insert_context;
         }
@@ -858,10 +974,10 @@ InsertStmt:
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
                 parser_yyerror("put table into update_ctx failed.");
             }
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             insert_context->ret_columns = $8;
             $$ = insert_context;
@@ -904,10 +1020,10 @@ InsertStmt:
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
                 parser_yyerror("put table into update_ctx failed.");
             }
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             insert_context->ret_columns = $11;
             $$ = insert_context;
@@ -947,10 +1063,10 @@ InsertStmt:
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
                 parser_yyerror("put table into update_ctx failed.");
             }
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             insert_context->ret_columns = $8;
             $$ = insert_context;
@@ -977,10 +1093,10 @@ InsertStmt:
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
                 parser_yyerror("put table into update_ctx failed.");
             }
-            if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+            if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                sql_array_concat(&insert_context->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                sql_array_concat(&insert_context->ssa, bison_current_pending_ssa(yyscanner));
+                sql_array_reset(bison_current_pending_ssa(yyscanner));
             }
             insert_context->ret_columns = $11;
             $$ = insert_context;
@@ -1057,8 +1173,8 @@ multiple_set_clause:
                     expr_tree_t *expr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_select_t *select_ctx = $6;
-                    select_ctx->type = SELECT_AS_MULTI_VARIANT;
-                    if (sql_create_select_expr(stmt, &expr, select_ctx, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                    bison_set_select_type(select_ctx, SELECT_AS_MULTI_VARIANT);
+                    if (sql_create_select_expr(stmt, &expr, select_ctx, bison_current_pending_ssa(yyscanner),
                         @6.loc) != OG_SUCCESS) {
                         parser_yyerror("init select expr failed");
                     }
@@ -1203,24 +1319,28 @@ insert_column_item:
             ColId opt_indirection
                 {
                     column_parse_info *column = NULL;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(column_parse_info), (void **)&column) != OG_SUCCESS) {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(column_parse_info), (void **)&column) != OG_SUCCESS) {
                         parser_yyerror("init list failed");
                     }
                     if ($2 == NULL) {
-                        column->col_name.str = $1;
-                        column->col_name.len = strlen($1);
+                        if (sql_bison_copy_cstr_if_present(stmt, $1, &column->col_name) != OG_SUCCESS) {
+                            parser_yyerror("copy column name failed");
+                        }
                     } else {
                         galist_t *list = $2;
                         switch (list->count) {
                             case 1:
-                                column->table.str = $1;
-                                column->table.len = strlen($1);
+                                if (sql_bison_copy_cstr_if_present(stmt, $1, &column->table) != OG_SUCCESS) {
+                                    parser_yyerror("copy column table name failed");
+                                }
 
                                 column->col_name = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
                                 break;
                             case 2:
-                                column->owner.str = $1;
-                                column->owner.len = strlen($1);
+                                if (sql_bison_copy_cstr_if_present(stmt, $1, &column->owner) != OG_SUCCESS) {
+                                    parser_yyerror("copy column owner name failed");
+                                }
 
                                 column->table = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
                                 column->col_name = ((expr_tree_t*)cm_galist_get(list, 1))->root->value.v_text;
@@ -1241,6 +1361,58 @@ indirection_el:
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, @2.loc) != OG_SUCCESS) {
+                        parser_yyerror("init const expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '.' DELETE_P
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
+                        "DELETE", @2.loc) != OG_SUCCESS) {
+                        parser_yyerror("init const expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '.' EXISTS
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
+                        "EXISTS", @2.loc) != OG_SUCCESS) {
+                        parser_yyerror("init const expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '.' LIMIT
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
+                        "LIMIT", @2.loc) != OG_SUCCESS) {
+                        parser_yyerror("init const expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '.' PRIOR
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
+                        "PRIOR", @2.loc) != OG_SUCCESS) {
+                        parser_yyerror("init const expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '.' ROWID
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, "ROWID", @2.loc) != OG_SUCCESS) {
+                        parser_yyerror("init const expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '.' ROWSCN
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, "ROWSCN", @2.loc) != OG_SUCCESS) {
                         parser_yyerror("init const expr failed");
                     }
                     $$ = expr;
@@ -1514,13 +1686,16 @@ cte_list:
                     }
                     $$ = cte_list;
                 }
-            | cte_list ',' common_table_expr
+            | cte_list ','
                 {
                     galist_t* cte_list = $1;
-                    sql_withas_factor_t *factor = $3;
-                    if (cte_list->count > 0) {
-                        factor->prev_factor = (sql_withas_factor_t *)cm_galist_get(cte_list, cte_list->count - 1);
-                    }
+                    og_yyget_extra(yyscanner)->core_yy_extra.pending_prev_cte =
+                        cte_list->count > 0 ? (sql_withas_factor_t *)cm_galist_get(cte_list, cte_list->count - 1) : NULL;
+                }
+              common_table_expr
+                {
+                    galist_t* cte_list = $1;
+                    sql_withas_factor_t *factor = $4;
                     if (cm_galist_insert(cte_list, factor) != OG_SUCCESS) {
                         parser_yyerror("insert cte list failed.");
                     }
@@ -1529,19 +1704,26 @@ cte_list:
         ;
 
 common_table_expr:
+            cte_head SelectStmt ')'
+                {
+                    sql_withas_factor_t *factor = $1;
+                    bison_set_select_type((sql_select_t *)$2, SELECT_AS_TABLE);
+                    factor->subquery_ctx = $2;
+
+                    $$ = factor;
+                }
+        ;
+
+cte_head:
             ColId AS '('
                 {
                     sql_withas_factor_t *factor = NULL;
                     if (bison_prepare_withas_factor(yyscanner, $1, &factor) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare common table expression failed.");
                     }
-                    $<withas_factor>$ = factor;
-                }
-            SelectStmt ')'
-                {
-                    sql_withas_factor_t *factor = $<withas_factor>4;
-                    ((sql_select_t*)$5)->type = SELECT_AS_TABLE;
-                    factor->subquery_ctx = $5;
+                    factor->prev_factor = og_yyget_extra(yyscanner)->core_yy_extra.pending_prev_cte;
+                    og_yyget_extra(yyscanner)->core_yy_extra.pending_prev_cte = NULL;
+                    factor->name.loc = @1.loc;
 
                     $$ = factor;
                 }
@@ -1631,6 +1813,30 @@ select_no_parens:
                     limit->count = $3->count;
                     limit->offset = $3->offset;
                     $$ = select_ctx;
+                }
+            | select_clause sort_clause sort_clause
+                {
+                    OG_SRC_THROW_ERROR(@3.loc, ERR_SQL_SYNTAX_ERROR, "INVALID ORDER");
+                    YYABORT;
+                }
+            | select_clause opt_sort_clause limit_clause limit_clause
+                {
+                    OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR, "INVALID LIMIT");
+                    YYABORT;
+                }
+            | select_clause sort_clause set_operator select_clause
+                {
+                    OG_SRC_THROW_ERROR(@3.loc, ERR_SQL_SYNTAX_ERROR,
+                        "\"LIMIT\" clause or \"ORDER BY\" clause of "
+                        "the subset should be placed inside the parentheses that enclose the SELECT");
+                    YYABORT;
+                }
+            | select_clause opt_sort_clause select_limit set_operator select_clause
+                {
+                    OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR,
+                        "\"LIMIT\" clause or \"ORDER BY\" clause of "
+                        "the subset should be placed inside the parentheses that enclose the SELECT");
+                    YYABORT;
                 }
             | with_clause select_clause sort_clause
                 {
@@ -2311,50 +2517,60 @@ having_clause:
             | /* EMPTY */                                   { $$ = NULL; }
         ;
 
+select_scope:
+            /* EMPTY */
+                {
+                    $$ = bison_push_pending_ssa(yyscanner);
+                    if ($$ == NULL) {
+                        parser_yyerror("create pending subselect scope failed");
+                    }
+                }
+        ;
+
 simple_select:
-        SELECT hint_string opt_found_rows opt_distinct opt_target_list from_clause
+        SELECT select_scope hint_string opt_found_rows opt_distinct opt_target_list from_clause
         select_pivot_clause where_clause start_with_clause group_clause having_clause
         opt_siblings_clause
             {
                 sql_select_t *select_ctx = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                if (sql_build_select_context(stmt, &select_ctx, $5, $6, @1.loc, @6.loc) != OG_SUCCESS) {
+                if (sql_build_select_context(stmt, &select_ctx, $6, $7, @1.loc, @7.loc) != OG_SUCCESS) {
                     parser_yyerror("build select context failed");
                 }
-                if ($2) {
-                    og_get_hint_info(stmt, $2, &select_ctx->first_query->hint_info);
+                if ($3) {
+                    og_get_hint_info(stmt, $3, &select_ctx->first_query->hint_info);
                 }
-                select_ctx->calc_found_rows = select_ctx->first_query->calc_found_rows = $3;
-                select_ctx->first_query->has_distinct = $4;
+                select_ctx->calc_found_rows = select_ctx->first_query->calc_found_rows = $4;
+                select_ctx->first_query->has_distinct = $5;
 
-                if (sql_parse_pivot_clause_list(stmt, select_ctx->first_query, $7) != OG_SUCCESS) {
+                if (sql_parse_pivot_clause_list(stmt, select_ctx->first_query, $8) != OG_SUCCESS) {
                     parser_yyerror("create pivot subselect failed");
                 }
 
-                select_ctx->first_query->cond = $8;
+                select_ctx->first_query->cond = $9;
 
-                if ($9) {
-                    select_ctx->first_query->start_with_cond = $9->start_with_cond;
-                    select_ctx->first_query->connect_by_cond = $9->connect_by_cond;
-                    select_ctx->first_query->connect_by_nocycle = $9->connect_by_nocycle;
+                if ($10) {
+                    select_ctx->first_query->start_with_cond = $10->start_with_cond;
+                    select_ctx->first_query->connect_by_cond = $10->connect_by_cond;
+                    select_ctx->first_query->connect_by_nocycle = $10->connect_by_nocycle;
                 }
-                if ($10 && cm_galist_copy(select_ctx->first_query->group_sets, $10) != OG_SUCCESS) {
+                if ($11 && cm_galist_copy(select_ctx->first_query->group_sets, $11) != OG_SUCCESS) {
                     parser_yyerror("parse group by failed");
                 }
-                select_ctx->first_query->having_cond = $11;
-                if ($12) {
+                select_ctx->first_query->having_cond = $12;
+                if ($13) {
                     if (select_ctx->first_query->connect_by_cond == NULL ||
                         select_ctx->first_query->group_sets->count > 0 ||
                         select_ctx->first_query->having_cond != NULL) {
                         parser_yyerror("ORDER SIBLINGS BY clause not allowed here.");
                     }
                     select_ctx->first_query->order_siblings = OG_TRUE;
-                    cm_galist_copy(select_ctx->first_query->sort_items, $12);
+                    cm_galist_copy(select_ctx->first_query->sort_items, $13);
                 }
-                if (attach_pending_subselects_to_query(select_ctx->first_query,
-                    &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                if (attach_pending_subselects_to_query(select_ctx->first_query, $2) != OG_SUCCESS) {
                     parser_yyerror("attach subselects failed");
                 }
+                bison_pop_pending_ssa(yyscanner);
                 $$ = select_ctx;
             }
         | select_clause UNION opt_all select_clause
@@ -2402,6 +2618,13 @@ opt_all:
 opt_all_distinct:
             opt_all                     { $$ = $1; }
             | DISTINCT                  { $$ = false; }
+        ;
+
+set_operator:
+            UNION opt_all
+            | INTERSECT_P opt_all_distinct
+            | EXCEPT opt_all_distinct
+            | MINUS_P
         ;
 
 opt_nocycle:
@@ -2586,6 +2809,39 @@ cond_node:
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_VARIANT);
                 $$ = node;
             }
+            | parenthesized_oper_expr '=' expr_with_select
+            {
+                cond_node_t *node = bison_make_compare_cond(yyscanner, $1, $3, CMP_TYPE_EQUAL, @2.loc);
+                if (node == NULL) {
+                    parser_abort_or_yyerror("init compare cond failed");
+                }
+                $$ = node;
+            }
+            | parenthesized_oper_expr '>' expr_with_select
+            {
+                cond_node_t *node = bison_make_compare_cond(yyscanner, $1, $3, CMP_TYPE_GREAT, @2.loc);
+                if (node == NULL) {
+                    parser_abort_or_yyerror("init compare cond failed");
+                }
+                $$ = node;
+            }
+            | parenthesized_oper_expr '<' expr_with_select
+            {
+                cond_node_t *node = bison_make_compare_cond(yyscanner, $1, $3, CMP_TYPE_LESS, @2.loc);
+                if (node == NULL) {
+                    parser_abort_or_yyerror("init compare cond failed");
+                }
+                $$ = node;
+            }
+            | parenthesized_oper_expr CmpOp expr_with_select
+            {
+                cond_node_t *node = bison_make_compare_cond(yyscanner, $1, $3,
+                    bison_cmpop_to_cmp_type($2), @2.loc);
+                if (node == NULL) {
+                    parser_abort_or_yyerror("init compare cond failed");
+                }
+                $$ = node;
+            }
             | expr_with_select '=' sub_type select_with_parens
             {
                 cond_node_t *node = NULL;
@@ -2599,7 +2855,7 @@ cond_node:
                 }
                 node->cmp->type = $3 ? CMP_TYPE_EQUAL_ANY : CMP_TYPE_EQUAL_ALL;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $4, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
@@ -2638,7 +2894,7 @@ cond_node:
                 }
                 node->cmp->type = $3 ? CMP_TYPE_GREAT_ANY : CMP_TYPE_GREAT_ALL;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $4, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
@@ -2677,7 +2933,7 @@ cond_node:
                 }
                 node->cmp->type = $3 ? CMP_TYPE_LESS_ANY : CMP_TYPE_LESS_ALL;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $4, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
@@ -2725,7 +2981,7 @@ cond_node:
                 }
 
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $4, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
@@ -2773,12 +3029,20 @@ cond_node:
                 }
                 node->cmp->type = CMP_TYPE_IN;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $3, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $3, bison_current_pending_ssa(yyscanner),
                     @3.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                $$ = node;
+            }
+            | parenthesized_oper_expr IN_P select_with_parens
+            {
+                cond_node_t *node = bison_make_in_select_cond(yyscanner, $1, $3, CMP_TYPE_IN, @3.loc);
+                if (node == NULL) {
+                    parser_abort_or_yyerror("init in cond failed");
+                }
                 $$ = node;
             }
             | expr_with_select IN_P '(' expr_list_with_select ')'
@@ -2812,7 +3076,7 @@ cond_node:
                 }
                 node->cmp->type = CMP_TYPE_IN;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $3, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $3, bison_current_pending_ssa(yyscanner),
                     @3.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
@@ -2853,12 +3117,20 @@ cond_node:
                 }
                 node->cmp->type = CMP_TYPE_NOT_IN;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $4, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                $$ = node;
+            }
+            | parenthesized_oper_expr NOT IN_P select_with_parens
+            {
+                cond_node_t *node = bison_make_in_select_cond(yyscanner, $1, $4, CMP_TYPE_NOT_IN, @4.loc);
+                if (node == NULL) {
+                    parser_abort_or_yyerror("init not in cond failed");
+                }
                 $$ = node;
             }
             | expr_with_select NOT IN_P '(' expr_list_with_select ')'
@@ -2892,7 +3164,7 @@ cond_node:
                 }
                 node->cmp->type = CMP_TYPE_NOT_IN;
                 node->cmp->left = $1;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $4, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
@@ -3108,27 +3380,11 @@ cond_node:
                     parser_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_EXISTS;
-                if (sql_create_select_expr(stmt, &node->cmp->right, $2, &og_yyget_extra(yyscanner)->core_yy_extra.ssa,
+                if (sql_create_select_expr(stmt, &node->cmp->right, $2, bison_current_pending_ssa(yyscanner),
                     @2.loc) != OG_SUCCESS) {
                     parser_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
-                $$ = node;
-            }
-            | REGEXP_LIKE '(' expr_list_with_select ')'
-            {
-                cond_node_t *node = NULL;
-                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
-                }
-                node->type = COND_NODE_COMPARE;
-                if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
-                }
-                node->cmp->type = CMP_TYPE_REGEXP_LIKE;
-                node->cmp->right = $3;
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_VARIANT);
                 $$ = node;
             }
         ;
@@ -3148,6 +3404,62 @@ implicit_row:	'(' expr_list_with_select ',' expr_with_select ')'
                 *temp = $4;
                 $$ = expr;
             }
+        ;
+
+parenthesized_bare_expr:
+            '(' cond_node ')'
+            {
+                $$ = bison_cond_node_to_bare_expr($2);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("invalid parenthesized expression");
+                }
+            }
+        ;
+
+parenthesized_oper_expr:
+            parenthesized_bare_expr                      { $$ = $1; }
+            | parenthesized_bare_expr '+' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_ADD, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_bare_expr '-' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_SUB, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_bare_expr '*' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_MUL, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_bare_expr '/' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_DIV, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_bare_expr '%' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_MOD, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_bare_expr OPER_CAT a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_CAT, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
         ;
 
 expr_list_with_select_rows:
@@ -3271,9 +3583,9 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                     sql_array_put(&delete_ctx->query->tables, ((del_object_t *)cm_galist_get(delete_ctx->objects, 0))->table);
                 }
 
-                if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                if (bison_current_pending_ssa(yyscanner)->count > 0) {
                     if (attach_pending_subselects_to_query(delete_ctx->query,
-                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                        bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
                         parser_yyerror("attach subselects failed");
                     }
                 }
@@ -3339,9 +3651,9 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                     sql_array_put(&delete_ctx->query->tables, ((del_object_t *)cm_galist_get(delete_ctx->objects, 0))->table);
                 }
 
-                if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                if (bison_current_pending_ssa(yyscanner)->count > 0) {
                     if (attach_pending_subselects_to_query(delete_ctx->query,
-                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                        bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
                         parser_yyerror("attach subselects failed");
                     }
                 }
@@ -3465,6 +3777,33 @@ target_el:  a_expr AS ColLabel
                 }
                 $$ = query_column;
             }
+            | a_expr JSON
+            {
+                query_column_t *query_column = NULL;
+                if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &query_column, $1, "JSON", strlen("JSON"), false) != OG_SUCCESS) {
+                    parser_yyerror("create target entry failed.");
+                }
+                $$ = query_column;
+            }
+            | a_expr COLUMNS
+            {
+                query_column_t *query_column = NULL;
+                if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &query_column, $1, "COLUMNS", strlen("COLUMNS"), false) != OG_SUCCESS) {
+                    parser_yyerror("create target entry failed.");
+                }
+                $$ = query_column;
+            }
+            | a_expr OWNER
+            {
+                query_column_t *query_column = NULL;
+                if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &query_column, $1, "OWNER", strlen("OWNER"), false) != OG_SUCCESS) {
+                    parser_yyerror("create target entry failed.");
+                }
+                $$ = query_column;
+            }
             | a_expr
             {
                 uint32 alias_len = yylloc.offset == @1.offset ? 1 : yylloc.offset - @1.offset;
@@ -3553,6 +3892,95 @@ table_ref:
                     sql_table_t *table = $1;
                     table->alias.value.str = $2;
                     table->alias.value.len = strlen($2);
+
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' relation_expr ')'
+                {
+                    sql_table_t *table = $2;
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' '(' relation_expr ')' ')'
+                {
+                    sql_table_t *table = $3;
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' relation_expr pivot_clause_list ')'
+                {
+                    sql_table_t *table = $2;
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (bison_apply_table_pivot(stmt, table, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse pivot table failed.");
+                    }
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' relation_expr pivot_clause_list ')' alias_clause
+                {
+                    sql_table_t *table = $2;
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (bison_apply_table_pivot(stmt, table, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse pivot table failed.");
+                    }
+                    table->alias.value.str = $5;
+                    table->alias.value.len = strlen($5);
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' relation_expr pivot_clause_list alias_clause ')'
+                {
+                    sql_table_t *table = $2;
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (bison_apply_table_pivot(stmt, table, $3) != OG_SUCCESS) {
+                        parser_yyerror("parse pivot table failed.");
+                    }
+                    table->alias.value.str = $4;
+                    table->alias.value.len = strlen($4);
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' relation_expr alias_clause ')'
+                {
+                    sql_table_t *table = $2;
+                    table->alias.value.str = $3;
+                    table->alias.value.len = strlen($3);
+
+                    sql_join_node_t *join_node = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' '(' relation_expr alias_clause ')' ')'
+                {
+                    sql_table_t *table = $3;
+                    table->alias.value.str = $4;
+                    table->alias.value.len = strlen($4);
 
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -3700,7 +4128,7 @@ table_ref:
                     table->user.loc = @1.loc;
                     table->type = SUBSELECT_AS_TABLE;
                     table->select_ctx = $1;
-                    table->select_ctx->first_query->owner->type = SELECT_AS_TABLE;
+                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
 
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
@@ -3719,9 +4147,30 @@ table_ref:
                     table->user.loc = @1.loc;
                     table->type = SUBSELECT_AS_TABLE;
                     table->select_ctx = $1;
-                    table->select_ctx->first_query->owner->type = SELECT_AS_TABLE;
+                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
                     table->alias.value.str = $2;
                     table->alias.value.len = strlen($2);
+
+                    sql_join_node_t *join_node = NULL;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
+                        parser_yyerror("create join node failed.");
+                    }
+                    $$ = join_node;
+                }
+            | '(' select_with_parens alias_clause ')'
+                {
+                    sql_table_t *table = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                    text_t curr_schema;
+                    cm_str2text(stmt->session->curr_schema, &curr_schema);
+                    table->user.value = curr_schema;
+                    table->user.loc = @2.loc;
+                    table->type = SUBSELECT_AS_TABLE;
+                    table->select_ctx = $2;
+                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
+                    table->alias.value.str = $3;
+                    table->alias.value.len = strlen($3);
 
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
@@ -3830,6 +4279,7 @@ format_json: FORMAT JSON                            { $$ = true; }
 json_on_error_or_null:
             ERROR_ON_ERROR_P                                 { $$ = true; }
             | NULL_ON_ERROR_P                                { $$ = false; }
+            | /* EMPTY */                                    { $$ = false; }
         ;
 
 format_json_attr:
@@ -3891,6 +4341,80 @@ json_column:
                 new_col->expr->root->value.v_bigint = 0;
                 new_col->expr->root->value.is_null = OG_FALSE;
 
+                $$ = new_col;
+            }
+            | insert_column_item json_table_column_error PATH SCONST json_on_error
+            {
+                rs_column_t *new_col = NULL;
+                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
+                    parser_yyerror("alloc mem failed");
+                }
+                if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
+                    parser_yyerror("create expr failed");
+                }
+                if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
+                    parser_yyerror("alloc mem failed");
+                }
+
+                column_parse_info *column_info = $1;
+                new_col->expr->root->word.column.user.value = column_info->owner;
+                new_col->expr->root->word.column.table.value = column_info->table;
+                new_col->expr->root->word.column.name.value = column_info->col_name;
+
+                new_col->name = new_col->expr->root->word.column.name.value;
+                new_col->type = RS_COL_CALC;
+                OG_BIT_SET(new_col->rs_flag, RS_NULLABLE);
+
+                new_col->expr->loc = @1.loc;
+                new_col->expr->root->owner = new_col->expr;
+                new_col->expr->root->loc = @1.loc;
+                new_col->expr->root->dis_info.need_distinct = OG_FALSE;
+                new_col->expr->root->dis_info.idx = OG_INVALID_ID32;
+                new_col->expr->root->format_json = OG_FALSE;
+                new_col->expr->root->json_func_attr = (json_func_attr_t) { 0, 0 };
+                new_col->expr->root->typmod.is_array = OG_FALSE;
+
+                expr_node_t *func_node = new_col->expr->root;
+                text_t func_name = { $2, strlen($2) };
+                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("init json table function failed");
+                }
+                func_node->json_func_attr.return_size = JSON_FUNC_LEN_DEFAULT;
+                func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
+
+                if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
+                    parser_yyerror("create expr failed");
+                }
+                if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&func_node->argument->root) != OG_SUCCESS) {
+                    parser_yyerror("alloc mem failed");
+                }
+                func_node->argument->root->value.type = OG_TYPE_INTEGER;
+                func_node->argument->root->value.v_int = 0;
+                func_node->argument->root->value.is_null = OG_FALSE;
+                func_node->argument->root->type = EXPR_NODE_CONST;
+                if (sql_create_expr(stmt, &func_node->argument->next) != OG_SUCCESS) {
+                    parser_yyerror("create expr failed");
+                }
+                if (sql_alloc_mem(stmt->context,
+                    sizeof(expr_node_t), (void **)&new_col->expr->root->argument->next->root) != OG_SUCCESS) {
+                    parser_yyerror("alloc mem failed");
+                }
+                expr_node_t *path_node = new_col->expr->root->argument->next->root;
+                path_node->type = EXPR_NODE_CONST;
+                path_node->value.type = OG_TYPE_STRING;
+
+                char *path = $4;
+                size_t len = strlen(path);
+                if (len > OG_SHARED_PAGE_SIZE) {
+                    parser_yyerror("current json table column path is longer than the maximum 16K");
+                } else if (len == 0) {
+                    parser_yyerror("json table column path cannot be empty");
+                }
+                path_node->value.v_text.str = path;
+                path_node->value.v_text.len = len;
+
+                func_node->json_func_attr.ids |= $5;
                 $$ = new_col;
             }
             | insert_column_item CLOB json_table_column_error PATH SCONST json_on_error
@@ -4430,6 +4954,16 @@ case_expr:      CASE a_expr when_expr_clause_list case_default END_P
                         }
                         $$ = expr;
                     }
+                | CASE a_expr THEN
+                    {
+                        OG_SRC_THROW_ERROR_EX(@3.loc, ERR_SQL_SYNTAX_ERROR, "WHEN expected but %s found", "THEN");
+                        YYABORT;
+                    }
+                | CASE THEN
+                    {
+                        OG_SRC_THROW_ERROR(@2.loc, ERR_SQL_SYNTAX_ERROR, "invalid expression");
+                        YYABORT;
+                    }
         ;
 
 when_cond_clause_list:
@@ -4465,6 +4999,22 @@ when_cond_clause:
                     case_pair->when_cond = $2;
                     case_pair->value = $4;
                     $$ = case_pair;
+                }
+            | WHEN case_bad_cond_keyword
+                {
+                    OG_SRC_THROW_ERROR_EX(@2.loc, ERR_SQL_SYNTAX_ERROR,
+                        "the \"%s\" is not a correct keyword", $2);
+                    YYABORT;
+                }
+            | WHEN cond_tree_expr case_invalid_word
+                {
+                    OG_SRC_THROW_ERROR_EX(@3.loc, ERR_SQL_SYNTAX_ERROR, "the word \"%s\" is not correct", $3);
+                    YYABORT;
+                }
+            | WHEN cond_tree_expr THEN case_bad_expr_start
+                {
+                    OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR, "invalid expression");
+                    YYABORT;
                 }
         ;
 
@@ -4503,11 +5053,55 @@ when_expr_clause:
                     case_pair->value = $4;
                     $$ = case_pair;
                 }
+            | WHEN case_bad_expr_start
+                {
+                    OG_SRC_THROW_ERROR(@2.loc, ERR_SQL_SYNTAX_ERROR, "invalid expression");
+                    YYABORT;
+                }
+            | WHEN a_expr case_invalid_word
+                {
+                    OG_SRC_THROW_ERROR_EX(@3.loc, ERR_SQL_SYNTAX_ERROR, "the word \"%s\" is not correct", $3);
+                    YYABORT;
+                }
+            | WHEN a_expr THEN case_bad_expr_start
+                {
+                    OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR, "invalid expression");
+                    YYABORT;
+                }
         ;
 
 case_default:
             ELSE a_expr                                { $$ = $2; }
+            | ELSE case_bad_expr_start
+                {
+                    OG_SRC_THROW_ERROR(@2.loc, ERR_SQL_SYNTAX_ERROR, "invalid expression");
+                    YYABORT;
+                }
             | /*EMPTY*/                                { $$ = NULL; }
+        ;
+
+case_bad_expr_start:
+            THEN            { $$ = "THEN"; }
+            | WHEN          { $$ = "WHEN"; }
+            | ELSE          { $$ = "ELSE"; }
+            | END_P         { $$ = "END"; }
+        ;
+
+case_bad_cond_keyword:
+            WHEN            { $$ = "WHEN"; }
+            | ELSE          { $$ = "ELSE"; }
+            | END_P         { $$ = "END"; }
+        ;
+
+case_invalid_word:
+            ICONST
+                {
+                    char tmp_buf[64] = { 0 };
+                    if (snprintf_s(tmp_buf, sizeof(tmp_buf), sizeof(tmp_buf) - 1, "%d", $1) < 0) {
+                        parser_yyerror("format invalid case word failed");
+                    }
+                    BISON_MEM_STRDUP($$, tmp_buf);
+                }
         ;
 
 /*
@@ -4678,8 +5272,9 @@ c_expr:     columnref       { $$ = $1; }
                 {
                     expr_tree_t *expr = NULL;
                     sql_select_t *select_ctx = $1;
+                    bison_set_select_type(select_ctx, SELECT_AS_VARIANT);
                     if (sql_create_select_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, select_ctx,
-                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa, @1.loc) != OG_SUCCESS) {
+                        bison_current_pending_ssa(yyscanner), @1.loc) != OG_SUCCESS) {
                         parser_yyerror("init select expr failed");
                     }
                     $$ = expr;
@@ -4692,6 +5287,15 @@ c_expr:     columnref       { $$ = $1; }
                         parser_yyerror("init prior expr failed");
                     }
                     $$ = expr;
+                }
+            | CONNECT_BY_ROOT connect_by_root_expr %prec PRIOR
+                {
+                    if ($2->root == NULL) {
+                        parser_yyerror("init connect_by_root expr failed");
+                    }
+                    $2->root->unary = UNARY_INCLUDE_NEGATIVE($2->root) ?
+                        UNARY_OPER_ROOT_NEGATIVE : UNARY_OPER_ROOT;
+                    $$ = $2;
                 }
             | LEVEL
                 {
@@ -4722,11 +5326,69 @@ c_expr:     columnref       { $$ = $1; }
                 }
         ;
 
+connect_by_root_expr:
+            columnref       { $$ = $1; }
+            | AexprConst    { $$ = $1; }
+            | PARAM
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_paramref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, $1, @1) != OG_SUCCESS) {
+                        parser_yyerror("init paramref expr failed");
+                    }
+                    $$ = expr;
+                }
+            | '(' a_expr ')'    { $$ = $2; }
+            | case_expr         { $$ = $1; }
+            | func_expr         { $$ = $1; }
+            | select_with_parens    %prec UMINUS
+                {
+                    expr_tree_t *expr = NULL;
+                    sql_select_t *select_ctx = $1;
+                    bison_set_select_type(select_ctx, SELECT_AS_VARIANT);
+                    if (sql_create_select_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, select_ctx,
+                        bison_current_pending_ssa(yyscanner), @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("init select expr failed");
+                    }
+                    $$ = expr;
+                }
+            | LEVEL
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, RES_WORD_LEVEL, OG_FALSE, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("init LEVEL reserved expr failed");
+                    }
+                    $$ = expr;
+                }
+        ;
+
 func_application: func_name '(' ')'
                     {
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, NULL, @1.loc) != OG_SUCCESS) {
+                            parser_yyerror("init function call expr failed");
+                        }
+                        $$ = expr;
+                    }
+                | CHAR_P '(' func_arg_list ')'
+                    {
+                        galist_t *name_list = NULL;
+                        if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
+                            parser_yyerror("create function name list failed.");
+                        }
+                        expr_tree_t *name = NULL;
+                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &name, "CHAR", @1.loc) != OG_SUCCESS) {
+                            parser_yyerror("init const expr failed");
+                        }
+                        if (cm_galist_insert(name_list, name) != OG_SUCCESS) {
+                            parser_yyerror("insert function list failed.");
+                        }
+                        expr_tree_t *expr = NULL;
+                        if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &expr, name_list, $3, @1.loc) != OG_SUCCESS) {
                             parser_yyerror("init function call expr failed");
                         }
                         $$ = expr;
@@ -5611,6 +6273,16 @@ extract_list:
                     extract_list->extract_type = $1;
                     $$ = extract_list;
                 }
+            | '-' ICONST FROM a_expr
+                {
+                    OG_SRC_THROW_ERROR(@1.loc, ERR_SQL_SYNTAX_ERROR, "invalid datetime unit");
+                    YYABORT;
+                }
+            | '-' ICONST
+                {
+                    OG_SRC_THROW_ERROR(@1.loc, ERR_SQL_SYNTAX_ERROR, "not enough arguments for function");
+                    YYABORT;
+                }
         ;
 
 extract_arg:
@@ -5620,6 +6292,8 @@ extract_arg:
             | HOUR_P        { $$ = "hour"; }
             | MINUTE_P      { $$ = "minute"; }
             | SECOND_P      { $$ = "second"; }
+            | TIMEZONE_HOUR_P   { $$ = "timezone_hour"; }
+            | TIMEZONE_MINUTE_P { $$ = "timezone_minute"; }
         ;
 
 substr_func:    SUBSTR      { $$ = "substr"; }
@@ -5782,17 +6456,10 @@ SimpleTypename:
 GenericType:
             type_function_name opt_type_modifiers
                 {
-                    type_word_t *type;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make type failed");
                     }
-                    type->str = $1;
-                    type->typemode = $2;
-                    type->is_name_typemode = OG_FALSE;
-                    type->pl_type = OG_FALSE;
-                    type->pl_rowtype = OG_FALSE;
-                    type->loc = @1.loc;
                     $$ = type;
                 }
         ;
@@ -5857,10 +6524,10 @@ Numeric:     NoSignedInteger
                     }
                     $$ = type;
                 }
-            | DOUBLE_P PRECISION
+            | DOUBLE_P PRECISION opt_float
                 {
                     type_word_t *type = NULL;
-                    if (make_type_word(yyscanner, &type, "double", NULL, @1.loc) != OG_SUCCESS) {
+                    if (make_type_word(yyscanner, &type, "double", $3, @1.loc) != OG_SUCCESS) {
                         parser_yyerror("make type failed");
                     }
                     $$ = type;
@@ -6297,6 +6964,14 @@ AexprConst: ICONST
                 }
                 $$ = expr;
             }
+            | I64CONST
+            {
+                expr_tree_t *expr = NULL;
+                if (sql_create_bigint_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
+                    parser_yyerror("init const expr failed");
+                }
+                $$ = expr;
+            }
             | FCONST
             {
                 expr_tree_t *expr = NULL;
@@ -6416,7 +7091,7 @@ opt_year_month_unit:
 interval_type:
             year_month_unit opt_type_modifiers opt_year_month_unit
                 {
-                    interval_info_t info;
+                    interval_info_t info = {0};
                     int32 prec = ITVL_DEFAULT_YEAR_PREC;
                     info.type.datatype = OG_TYPE_INTERVAL_YM;
                     info.type.size = sizeof(interval_ym_t);
@@ -6438,7 +7113,7 @@ interval_type:
                 }
             | day_hour_minute_unit opt_type_modifiers
                 {
-                    interval_info_t info;
+                    interval_info_t info = {0};
                     int32 prec = ITVL_DEFAULT_DAY_PREC;
                     info.type.datatype = OG_TYPE_INTERVAL_DS;
                     info.type.size = sizeof(interval_ds_t);
@@ -6458,7 +7133,7 @@ interval_type:
                     if ($4 < $1) {
                         parser_yyerror("-- invalid field name");
                     }
-                    interval_info_t info;
+                    interval_info_t info = {0};
                     int32 day_prec = ITVL_DEFAULT_DAY_PREC;
                     info.type.datatype = OG_TYPE_INTERVAL_DS;
                     info.type.size = sizeof(interval_ds_t);
@@ -6475,7 +7150,7 @@ interval_type:
                 }
             | day_hour_minute_unit opt_type_modifiers TO SECOND_P opt_type_modifiers
                 {
-                    interval_info_t info;
+                    interval_info_t info = {0};
                     int32 day_prec = ITVL_DEFAULT_DAY_PREC;
                     int32 frac_prec = ITVL_DEFAULT_SECOND_PREC;
                     info.type.datatype = OG_TYPE_INTERVAL_DS;
@@ -6499,7 +7174,7 @@ interval_type:
                 }
             | SECOND_P opt_type_modifiers
                 {
-                    interval_info_t info;
+                    interval_info_t info = {0};
                     int32 lead_prec = ITVL_DEFAULT_DAY_PREC;
                     int32 frac_prec = ITVL_DEFAULT_SECOND_PREC;
                     info.type.datatype = OG_TYPE_INTERVAL_DS;
@@ -6539,9 +7214,9 @@ UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return
                 }
                 sql_remove_join_table(stmt, update_context->query);
 
-                if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                if (bison_current_pending_ssa(yyscanner)->count > 0) {
                     if (attach_pending_subselects_to_query(update_context->query,
-                        &og_yyget_extra(yyscanner)->core_yy_extra.ssa) != OG_SUCCESS) {
+                        bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
                         parser_yyerror("attach subselects failed");
                     }
                 }
@@ -6794,10 +7469,10 @@ ReplaceStmt:
                         pair->column_name.value = column->col_name;
                     }
                     insert_ctx->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_ctx->pairs, 0))->exprs->count;
-                    if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                    if (bison_current_pending_ssa(yyscanner)->count > 0) {
                         sql_create_array(stmt->context, &insert_ctx->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                        sql_array_concat(&insert_ctx->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                        sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                        sql_array_concat(&insert_ctx->ssa, bison_current_pending_ssa(yyscanner));
+                        sql_array_reset(bison_current_pending_ssa(yyscanner));
                     }
                     $$ = replace_ctx;
                 }
@@ -6822,10 +7497,10 @@ ReplaceStmt:
                     }
                     insert_ctx->select_ctx = $8;
                     insert_ctx->select_ctx->type = SELECT_AS_VALUES;
-                    if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                    if (bison_current_pending_ssa(yyscanner)->count > 0) {
                         sql_create_array(stmt->context, &insert_ctx->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                        sql_array_concat(&insert_ctx->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                        sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                        sql_array_concat(&insert_ctx->ssa, bison_current_pending_ssa(yyscanner));
+                        sql_array_reset(bison_current_pending_ssa(yyscanner));
                     }
                     $$ = replace_ctx;
                 }
@@ -6846,10 +7521,10 @@ ReplaceStmt:
                     insert_ctx->table = $4;
                     insert_ctx->pairs = $5;
                     insert_ctx->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_ctx->pairs, 0))->exprs->count;
-                    if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                    if (bison_current_pending_ssa(yyscanner)->count > 0) {
                         sql_create_array(stmt->context, &insert_ctx->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                        sql_array_concat(&insert_ctx->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                        sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                        sql_array_concat(&insert_ctx->ssa, bison_current_pending_ssa(yyscanner));
+                        sql_array_reset(bison_current_pending_ssa(yyscanner));
                     }
                     $$ = replace_ctx;
                 }
@@ -6870,10 +7545,10 @@ ReplaceStmt:
                     insert_ctx->table = $4;
                     insert_ctx->select_ctx = $5;
                     insert_ctx->select_ctx->type = SELECT_AS_VALUES;
-                    if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                    if (bison_current_pending_ssa(yyscanner)->count > 0) {
                         sql_create_array(stmt->context, &insert_ctx->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                        sql_array_concat(&insert_ctx->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                        sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                        sql_array_concat(&insert_ctx->ssa, bison_current_pending_ssa(yyscanner));
+                        sql_array_reset(bison_current_pending_ssa(yyscanner));
                     }
                     $$ = replace_ctx;
                 }
@@ -6909,10 +7584,10 @@ ReplaceStmt:
                     }
                     insert_ctx->pairs_count++;
                     insert_ctx->flags |= INSERT_COLS_SPECIFIED;
-                    if (og_yyget_extra(yyscanner)->core_yy_extra.ssa.count > 0) {
+                    if (bison_current_pending_ssa(yyscanner)->count > 0) {
                         sql_create_array(stmt->context, &insert_ctx->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
-                        sql_array_concat(&insert_ctx->ssa, &og_yyget_extra(yyscanner)->core_yy_extra.ssa);
-                        sql_array_reset(&og_yyget_extra(yyscanner)->core_yy_extra.ssa);
+                        sql_array_concat(&insert_ctx->ssa, bison_current_pending_ssa(yyscanner));
+                        sql_array_reset(bison_current_pending_ssa(yyscanner));
                     }
                     $$ = replace_ctx;
                 }
@@ -7462,7 +8137,7 @@ AlterSystemStmt:
                     BISON_MEM_STRDUP(sys_def->value, $6);
                     sys_def->scope = $7;
 
-                    if (sql_bison_verify_sys_param(&stmt->session->knl_session, sys_def) != OG_SUCCESS) {
+                    if (sql_bison_verify_sys_param(stmt, sys_def) != OG_SUCCESS) {
                         parser_yyerror("verify system parameter failed");
                     }
 
@@ -7861,7 +8536,7 @@ AlterSystemStmt:
                     sys_def->scope = $7;
                     sys_def->arch_set_type = $8;
 
-                    if (sql_bison_verify_sys_param(&stmt->session->knl_session, sys_def) != OG_SUCCESS) {
+                    if (sql_bison_verify_sys_param(stmt, sys_def) != OG_SUCCESS) {
                         parser_yyerror("verify system parameter failed");
                     }
 
@@ -8137,6 +8812,18 @@ AlterSystemStmt:
         ;
 
 AlterSessionStmt:
+            AlterSessionStmtValid
+                {
+                    $$ = $1;
+                }
+            | AlterSessionStmtValid alter_session_extra_token
+                {
+                    OG_SRC_THROW_ERROR_EX(@2.loc, ERR_SQL_SYNTAX_ERROR, "expected end but %s found", $2);
+                    YYABORT;
+                }
+        ;
+
+AlterSessionStmtValid:
             ALTER SESSION SET altsession_set_key '=' altsession_set_value
                 {
                     alter_session_def_t *def = NULL;
@@ -8300,6 +8987,22 @@ AlterSessionStmt:
                     stmt->context->entry = def;
                     $$ = def;
                 }
+        ;
+
+alter_session_extra_token:
+            ColLabel
+                {
+                    $$ = bison_copy_token_text(yyscanner, @1.offset);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("copy token text failed");
+                    }
+                }
+            | Op                        { $$ = $1; }
+            | CmpOp                     { $$ = $1; }
+            | OPER_CAT                  { $$ = $1; }
+            | OPER_LSHIFT               { $$ = $1; }
+            | OPER_RSHIFT               { $$ = $1; }
+            | DOT_DOT                   { $$ = ".."; }
         ;
 
 opt_drop_tbsp:
@@ -8600,20 +9303,28 @@ CommentStmt:
                     if (sql_alloc_mem(stmt->context, sizeof(knl_comment_def_t), (void **)&def) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
+                    text_t owner = $4->owner;
+                    text_t name = $4->name;
                     def->type = COMMENT_ON_TABLE;
-                    def->owner = $4->owner;
-                    def->name = $4->name;
-                    if (def->owner.str == NULL) {
-                        cm_str2text(stmt->session->curr_schema, &def->owner);
+                    if (owner.str == NULL) {
+                        cm_str2text(stmt->session->curr_schema, &owner);
+                    }
+                    if (sql_bison_copy_text_if_present(stmt, &owner, &def->owner) != OG_SUCCESS ||
+                        sql_bison_copy_text_if_present(stmt, &name, &def->name) != OG_SUCCESS) {
+                        parser_yyerror("copy comment object name failed");
                     }
                     if (strlen($6) != 0) {
                         if (strlen($6) > DDL_MAX_COMMENT_LEN) {
                             parser_yyerror("comment content cannot exceed 4000 bytes");
                         }
-                        def->comment.str = $6;
-                        def->comment.len = strlen($6);
+                        text_t comment;
+                        cm_str2text($6, &comment);
+                        if (sql_copy_text(stmt->context, &comment, &def->comment) != OG_SUCCESS) {
+                            parser_yyerror("copy comment text failed");
+                        }
                     } else {
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
+                        def->comment.len = 0;
                     }
                     $$ = def;
                 }
@@ -8625,21 +9336,30 @@ CommentStmt:
                     if (sql_alloc_mem(stmt->context, sizeof(knl_comment_def_t), (void **)&def) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
+                    text_t owner = $4->owner;
+                    text_t name = $4->table;
+                    text_t column = $4->col_name;
                     def->type = COMMENT_ON_COLUMN;
-                    def->owner = $4->owner;
-                    def->name = $4->table;
-                    def->column = $4->col_name;
-                    if (def->owner.str == NULL) {
-                        cm_str2text(stmt->session->curr_schema, &def->owner);
+                    if (owner.str == NULL) {
+                        cm_str2text(stmt->session->curr_schema, &owner);
+                    }
+                    if (sql_bison_copy_text_if_present(stmt, &owner, &def->owner) != OG_SUCCESS ||
+                        sql_bison_copy_text_if_present(stmt, &name, &def->name) != OG_SUCCESS ||
+                        sql_bison_copy_text_if_present(stmt, &column, &def->column) != OG_SUCCESS) {
+                        parser_yyerror("copy comment object name failed");
                     }
                     if (strlen($6) != 0) {
                         if (strlen($6) > DDL_MAX_COMMENT_LEN) {
                             parser_yyerror("comment content cannot exceed 4000 bytes");
                         }
-                        def->comment.str = $6;
-                        def->comment.len = strlen($6);
+                        text_t comment;
+                        cm_str2text($6, &comment);
+                        if (sql_copy_text(stmt->context, &comment, &def->comment) != OG_SUCCESS) {
+                            parser_yyerror("copy comment text failed");
+                        }
                     } else {
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
+                        def->comment.len = 0;
                     }
                     $$ = def;
                 }
@@ -8929,7 +9649,13 @@ num_size:
     ;
 
 opt_blocksize:
-            BOLCKSIZE num_size                                  { $$ = $2; }
+            BOLCKSIZE num_size
+                {
+                    if ($2 != FILE_BLOCK_SIZE_512 && $2 != FILE_BLOCK_SIZE_4096) {
+                        parser_yyerror("invalid block size");
+                    }
+                    $$ = $2;
+                }
             | /* EMPTY */                                       { $$ = 0; }
         ;
 
@@ -8947,7 +9673,8 @@ logfile:
                     }
                     log_file->size = $3;
                     log_file->block_size = $4;
-                    if (log_file->block_size != FILE_BLOCK_SIZE_512 && log_file->block_size != FILE_BLOCK_SIZE_4096) {
+                    if (log_file->block_size != 0 && log_file->block_size != FILE_BLOCK_SIZE_512 &&
+                        log_file->block_size != FILE_BLOCK_SIZE_4096) {
                         parser_yyerror("invalid block size");
                     }
                     $$ = log_file;
@@ -8976,13 +9703,8 @@ logfiles:
                 }
         ;
 
-opt_archivelog:
-            ARCHIVELOG                                              { $$ = true; }
-            | NOARCHIVELOG                                          { $$ = false; }
-        ;
-
 createdb_archivelog_opt:
-            opt_archivelog
+            ARCHIVELOG
                 {
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8990,7 +9712,18 @@ createdb_archivelog_opt:
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_ARCHIVELOG_OPT;
-                    opt->archivelog_enable = $1;
+                    opt->archivelog_enable = true;
+                    $$ = opt;
+                }
+            | NOARCHIVELOG
+                {
+                    createdb_opt *opt = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
+                        parser_yyerror("alloc mem failed");
+                    }
+                    opt->type = CREATEDB_ARCHIVELOG_OPT;
+                    opt->archivelog_enable = false;
                     $$ = opt;
                 }
         ;
@@ -9001,12 +9734,24 @@ opt_reuse:
         ;
 
 next_size:
-            NEXT num_size                                           { $$ = $2; }
+            NEXT num_size
+                {
+                    if ($2 < OG_MIN_AUTOEXTEND_SIZE) {
+                        parser_yyerror("invalid datafile autoextend next size.");
+                    }
+                    $$ = $2;
+                }
             | /* EMPTY */                                           { $$ = 0; }
         ;
 
 max_size:
-            MAXSIZE num_size                                        { $$ = $2; }
+            MAXSIZE num_size
+                {
+                    if ($2 < OG_MIN_AUTOEXTEND_SIZE) {
+                        parser_yyerror("invalid datafile autoextend max size.");
+                    }
+                    $$ = $2;
+                }
             | MAXSIZE UNLIMITED                                     { $$ = 0; }
             | /* EMPTY */                                           { $$ = 0; }
         ;
@@ -9068,11 +9813,12 @@ datafile:
                     dev_def->autoextend.enabled = OG_TRUE;
                     dev_def->autoextend.nextsize = $7;
                     dev_def->autoextend.maxsize = $8;
-                    if (dev_def->autoextend.nextsize < OG_MIN_AUTOEXTEND_SIZE) {
-                        parser_yyerror("invalid datafile autoextend next size.");
-                    }
-                    if (dev_def->autoextend.maxsize < OG_MIN_AUTOEXTEND_SIZE) {
+                    if (dev_def->autoextend.maxsize > max_filesize) {
                         parser_yyerror("invalid datafile autoextend max size.");
+                    }
+                    if (dev_def->autoextend.maxsize > 0 &&
+                        dev_def->autoextend.nextsize > dev_def->autoextend.maxsize) {
+                        parser_yyerror("invalid datafile autoextend next size.");
                     }
                     $$ = dev_def;
                 }
@@ -9802,6 +10548,7 @@ alterts_opt:
             | AUTOEXTEND ON next_size max_size
                 {
                     alterts_opt *opt = NULL;
+                    int64 max_filesize = (int64)g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("Memory allocation failed for alterts_opt");
@@ -9809,11 +10556,11 @@ alterts_opt:
                     opt->type = ALTERTS_AUTOEXTEND_ON_OPT;
                     opt->autoextend.next_size = $3;
                     opt->autoextend.max_size = $4;
-                    if (opt->autoextend.next_size < OG_MIN_AUTOEXTEND_SIZE) {
-                        parser_yyerror("invalid datafile autoextend next size.");
-                    }
-                    if (opt->autoextend.max_size < OG_MIN_AUTOEXTEND_SIZE) {
+                    if (opt->autoextend.max_size > max_filesize) {
                         parser_yyerror("invalid datafile autoextend max size.");
+                    }
+                    if (opt->autoextend.max_size > 0 && opt->autoextend.next_size > opt->autoextend.max_size) {
+                        parser_yyerror("invalid datafile autoextend next size.");
                     }
                     $$ = opt;
                 }
@@ -10099,6 +10846,9 @@ alterseq_opt:
 SignedIconst: ICONST                                { $$ = $1; }
             | '+' ICONST                            { $$ = + $2; }
             | '-' ICONST                            { $$ = - $2; }
+            | I64CONST                              { $$ = $1; }
+            | '+' I64CONST                          { $$ = + $2; }
+            | '-' I64CONST                          { $$ = - $2; }
         ;
 
 BigintOnly:
@@ -10154,6 +10904,14 @@ Uint64Only:
                     $$ = (uint64)$1;
                 }
             | '+' ICONST
+                {
+                    $$ = (uint64)$2;
+                }
+            | I64CONST
+                {
+                    $$ = (uint64)$1;
+                }
+            | '+' I64CONST
                 {
                     $$ = (uint64)$2;
                 }
@@ -10295,7 +11053,7 @@ createseq_opt:
         ;
 
 view_column_list:
-            ColId
+            ColLabel
                 {
                     galist_t *list = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
@@ -10304,7 +11062,7 @@ view_column_list:
                     cm_galist_insert(list, $1);
                     $$ = list;
                 }
-            | view_column_list ',' ColId
+            | view_column_list ',' ColLabel
                 {
                     galist_t *list = $1;
                     cm_galist_insert(list, $3);
@@ -10561,9 +11319,8 @@ sys_priv_list:
                     knl_priv_def_t *priv_def = NULL;
                     uint32 rid;
                     text_t priv_name;
-                    priv_name.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @1.offset;
-                    priv_name.len = yylloc.offset - @1.offset + ct_yyget_leng(yyscanner);
-                    cm_trim_text(&priv_name);
+                    sql_bison_privilege_text(yyscanner, @1.offset, OG_FALSE, &priv_name);
+                    char role_buf[OG_NAME_BUFFER_SIZE] = { 0 };
                     priv_type_def priv_type;
                     uint32 priv_id;
 
@@ -10572,7 +11329,7 @@ sys_priv_list:
                         priv_id = (uint32)$1;
                     } else if ($1 == OG_SYS_PRIVS_COUNT) {
                         priv_type = PRIV_TYPE_ROLE;
-                        if (knl_get_role_id(&stmt->session->knl_session, &priv_name, &rid)) {
+                        if (sql_bison_lookup_role(stmt, &priv_name, role_buf, sizeof(role_buf), &rid)) {
                             priv_id = rid;
                         } else {
                             parser_yyerror("invalid privilege or role name");
@@ -10603,9 +11360,8 @@ sys_priv_list:
                     knl_priv_def_t *priv_def = NULL;
                     uint32 rid;
                     text_t priv_name;
-                    priv_name.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @3.offset;
-                    priv_name.len = yylloc.offset - @3.offset + ct_yyget_leng(yyscanner);
-                    cm_trim_text(&priv_name);
+                    sql_bison_privilege_text(yyscanner, @3.offset, OG_FALSE, &priv_name);
+                    char role_buf[OG_NAME_BUFFER_SIZE] = { 0 };
                     priv_type_def priv_type;
                     uint32 priv_id;
 
@@ -10614,10 +11370,11 @@ sys_priv_list:
                         priv_id = (uint32)$3;
                     } else if ($3 == OG_SYS_PRIVS_COUNT) {
                         priv_type = PRIV_TYPE_ROLE;
-                        if (knl_get_role_id(&stmt->session->knl_session, &priv_name, &rid)) {
+                        if (sql_bison_lookup_role(stmt, &priv_name, role_buf, sizeof(role_buf), &rid)) {
                             priv_id = rid;
+                        } else {
+                            parser_yyerror("invalid privilege or role name");
                         }
-                        parser_yyerror("invalid privilege or role name");
                     } else {
                         priv_type = PRIV_TYPE_SYS_PRIV;
                         priv_id = (uint32)$3;
@@ -10647,9 +11404,7 @@ obj_priv_list:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     knl_priv_def_t *priv_def = NULL;
                     text_t priv_name;
-                    priv_name.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @1.offset;
-                    priv_name.len = yylloc.offset - @1.offset + ct_yyget_leng(yyscanner);
-                    cm_trim_text(&priv_name);
+                    sql_bison_privilege_text(yyscanner, @1.offset, OG_TRUE, &priv_name);
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create privilege list failed.");
@@ -10671,9 +11426,7 @@ obj_priv_list:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     knl_priv_def_t *priv_def = NULL;
                     text_t priv_name;
-                    priv_name.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @3.offset;
-                    priv_name.len = yylloc.offset - @3.offset + ct_yyget_leng(yyscanner);
-                    cm_trim_text(&priv_name);
+                    sql_bison_privilege_text(yyscanner, @3.offset, OG_TRUE, &priv_name);
 
                     if (sql_check_privs_duplicated(list, &priv_name, $3) != OG_SUCCESS) {
                         parser_yyerror("duplicate privilege listed");
@@ -11507,7 +12260,7 @@ column_attr:
         ;
     
 column_attr_cons:
-            PRIMARY KEY
+            PRIMARY_KEY
                 {
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -11789,7 +12542,7 @@ constraint_state:
         ;
 
 ConstraintElem:
-            PRIMARY KEY '(' table_column_list ')' opt_constraint_states
+            PRIMARY_KEY '(' table_column_list ')' opt_constraint_states
                 {
                     parse_constraint_t *cons = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(parse_constraint_t),
@@ -11797,8 +12550,9 @@ ConstraintElem:
                         parser_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_PRIMARY;
-                    cons->column_list = $4;
-                    cons->state_opts = $6;
+                    cons->name = NULL;
+                    cons->column_list = $3;
+                    cons->state_opts = $5;
                     $$ = cons;
                 }
             | UNIQUE '(' table_column_list ')' opt_constraint_states
@@ -11809,6 +12563,7 @@ ConstraintElem:
                         parser_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_UNIQUE;
+                    cons->name = NULL;
                     cons->column_list = $3;
                     cons->state_opts = $5;
                     $$ = cons;
@@ -11821,6 +12576,7 @@ ConstraintElem:
                         parser_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_REFERENCE;
+                    cons->name = NULL;
                     cons->cols = $3;
                     cons->ref = $6;
                     cons->ref_cols = $8;
@@ -11836,6 +12592,7 @@ ConstraintElem:
                         parser_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_CHECK;
+                    cons->name = NULL;
                     check_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @3.offset;
                     check_text.len = @4.offset - @3.offset;
                     cm_trim_text(&check_text);
@@ -13751,14 +14508,10 @@ func_type:
             Typename                                { $$ = $1; }
             | type_function_name attrs '%' ROWTYPE_P
                 {
-                    type_word_t *type;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make type failed");
                     }
-                    type->str = $1;
-                    type->typemode = $2;
-                    type->loc = @1.loc;
                     type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
@@ -13766,14 +14519,10 @@ func_type:
                 }
             | type_function_name '%' ROWTYPE_P
                 {
-                    type_word_t *type;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, $1, NULL, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make type failed");
                     }
-                    type->str = $1;
-                    type->typemode = NULL;
-                    type->loc = @1.loc;
                     type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
@@ -13781,14 +14530,10 @@ func_type:
                 }
             | type_function_name attrs '%' TYPE_P
                 {
-                    type_word_t *type;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make type failed");
                     }
-                    type->str = $1;
-                    type->typemode = $2;
-                    type->loc = @1.loc;
                     type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_TRUE;
                     type->pl_rowtype = OG_FALSE;
@@ -13796,14 +14541,10 @@ func_type:
                 }
             | type_function_name '%' TYPE_P
                 {
-                    type_word_t *type;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-                        sizeof(type_word_t), (void **)&type) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, $1, NULL, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make type failed");
                     }
-                    type->str = $1;
-                    type->typemode = NULL;
-                    type->loc = @1.loc;
                     type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_TRUE;
                     type->pl_rowtype = OG_FALSE;
@@ -13967,8 +14708,22 @@ pl_as_is_body:
         ;
 
 pl_type_body:
-            as_is subprogram_body                       { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
-            | UNDER subprogram_body                     { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
+            as_is subprogram_body
+                {
+                    text_t *body = pl_prepend_body_start_keep_semicolon(yyscanner, $2, @1.offset, @1.loc);
+                    if (body == NULL) {
+                        parser_abort_or_yyerror("prepare type body failed");
+                    }
+                    $$ = body;
+                }
+            | UNDER subprogram_body
+                {
+                    text_t *body = pl_prepend_body_start_keep_semicolon(yyscanner, $2, @1.offset, @1.loc);
+                    if (body == NULL) {
+                        parser_abort_or_yyerror("prepare type body failed");
+                    }
+                    $$ = body;
+                }
         ;
 
 pl_trigger_body:
@@ -14267,7 +15022,9 @@ subprogram_body: {
                 }
 
                 while (tok != YYEOF) {
-                    if (tok == '/') {
+                    if (tok == '/' && pl_bison_is_body_terminator_slash(
+                        og_yyget_extra(yyscanner)->core_yy_extra.scanbuf,
+                        og_yyget_extra(yyscanner)->core_yy_extra.scanbuflen, yylloc.offset)) {
                         proc_e = yylloc.offset;
                     }
                     tok = YYLEX;
@@ -16502,6 +17259,7 @@ col_name_keyword:
             | BINARY_INTEGER
             | BOOLEAN_P
             | BPCHAR
+            | BUCKETS
             | CAST
             | CHARACTER
             | CONVERT_P
@@ -16560,7 +17318,6 @@ reserved_keyword:
             | ASYMMETRIC
             | AUTHID
             | BOTH
-            | BUCKETS
             | CASE
             | CHECK
             | COLLATE
@@ -16660,6 +17417,7 @@ reserved_keyword:
             | INTEGER
             | NUMBER_P
             | CHAR_P
+            | CONNECT_BY_ROOT
             | PRIOR
             | UPDATE
             | VIEW
@@ -16774,12 +17532,11 @@ static status_t make_type_word(core_yyscan_t yyscanner, type_word_t **type, char
         sizeof(type_word_t), (void **)type) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    errno_t ret = memset_s(*type, sizeof(type_word_t), 0, sizeof(type_word_t));
+    knl_securec_check(ret);
     (*type)->str = str;
     (*type)->typemode = typemode;
     (*type)->loc = loc;
-    (*type)->is_name_typemode = OG_FALSE;
-    (*type)->pl_type = OG_FALSE;
-    (*type)->pl_rowtype = OG_FALSE;
     return OG_SUCCESS;
 }
 
@@ -16835,11 +17592,53 @@ static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr)
     return true;
 }
 
+static void bison_set_select_node_type(select_node_t *node, select_type_t type)
+{
+    if (node == NULL) {
+        return;
+    }
+
+    if (node->type == SELECT_NODE_QUERY) {
+        if (node->query != NULL && node->query->owner != NULL) {
+            node->query->owner->type = type;
+        }
+        return;
+    }
+
+    bison_set_select_node_type(node->left, type);
+    bison_set_select_node_type(node->right, type);
+}
+
+static void bison_set_select_type(sql_select_t *select_ctx, select_type_t type)
+{
+    if (select_ctx == NULL) {
+        return;
+    }
+
+    select_ctx->type = type;
+    bison_set_select_node_type(select_ctx->root, type);
+}
+
+static status_t bison_apply_table_pivot(sql_stmt_t *stmt, sql_table_t *table, galist_t *pivot_list)
+{
+    pivot_items_t *pivot_item = NULL;
+
+    if (pivot_list == NULL) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < pivot_list->count; i++) {
+        pivot_item = (pivot_items_t *)cm_galist_get(pivot_list, i);
+        OG_RETURN_IFERR(sql_create_pivot_sub_select(stmt, table, NULL, pivot_item));
+    }
+    return OG_SUCCESS;
+}
+
 static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type)
 {
     while (expr != NULL) {
         if (expr->root->type == EXPR_NODE_SELECT) {
-            ((sql_select_t*)expr->root->value.v_obj.ptr)->type = type;
+            bison_set_select_type((sql_select_t *)expr->root->value.v_obj.ptr, type);
         }
         expr = expr->next;
     }
@@ -16858,6 +17657,38 @@ static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr,
         expr = tmp;
     }
     return OG_SUCCESS;
+}
+
+static sql_array_t *bison_push_pending_ssa(core_yyscan_t yyscanner)
+{
+    sql_array_t *pending = NULL;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (sql_alloc_mem(stmt->context, sizeof(sql_array_t), (void **)&pending) != OG_SUCCESS) {
+        return NULL;
+    }
+    if (sql_create_array(stmt->context, pending, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS) != OG_SUCCESS) {
+        return NULL;
+    }
+    if (SQL_SSA_PUSH(stmt, pending) != OG_SUCCESS) {
+        return NULL;
+    }
+    return pending;
+}
+
+static void bison_pop_pending_ssa(core_yyscan_t yyscanner)
+{
+    SQL_SSA_POP(og_yyget_extra(yyscanner)->core_yy_extra.stmt);
+}
+
+static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (stmt->ssa_stack.depth > 0) {
+        return OGSQL_CURR_SSA(stmt);
+    }
+    return &og_yyget_extra(yyscanner)->core_yy_extra.ssa;
 }
 
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending)
@@ -16881,6 +17712,206 @@ static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array
     OG_RETURN_IFERR(sql_array_concat(&query->ssa, pending));
     sql_array_reset(pending);
     return OG_SUCCESS;
+}
+
+static bool32 bison_is_false_const_expr(expr_tree_t *expr)
+{
+    expr_node_t *node = (expr == NULL) ? NULL : expr->root;
+
+    return (node != NULL && node->type == EXPR_NODE_CONST && node->value.type == OG_TYPE_BOOLEAN &&
+        node->value.v_int == 0) ? OG_TRUE : OG_FALSE;
+}
+
+static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node)
+{
+    if (node == NULL || node->type != COND_NODE_COMPARE || node->cmp == NULL) {
+        return NULL;
+    }
+    if (node->cmp->type != CMP_TYPE_NOT_EQUAL || !bison_is_false_const_expr(node->cmp->left)) {
+        return NULL;
+    }
+    return node->cmp->right;
+}
+
+static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
+    expr_node_type_t node_type, source_location_t loc)
+{
+    expr_tree_t *expr = NULL;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (left == NULL || left->root == NULL || right == NULL || right->root == NULL) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "syntax error");
+        return NULL;
+    }
+    if (sql_create_oper_expr(stmt, &expr, left->root, right->root, node_type, loc) != OG_SUCCESS) {
+        return NULL;
+    }
+    return expr;
+}
+
+static cmp_type_t bison_cmpop_to_cmp_type(const char *op)
+{
+    if (strcmp(op, "<>") == 0) {
+        return CMP_TYPE_NOT_EQUAL;
+    } else if (strcmp(op, ">=") == 0) {
+        return CMP_TYPE_GREAT_EQUAL;
+    } else if (strcmp(op, "<=") == 0) {
+        return CMP_TYPE_LESS_EQUAL;
+    } else if (strcmp(op, "<=>") == 0) {
+        return CMP_TYPE_NULL_CMP_OP;
+    }
+    return CMP_TYPE_UNKNOWN;
+}
+
+static cond_node_t *bison_make_compare_cond(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
+    cmp_type_t cmp_type, source_location_t loc)
+{
+    cond_node_t *node = NULL;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (left == NULL || right == NULL || cmp_type == CMP_TYPE_UNKNOWN) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "syntax error");
+        return NULL;
+    }
+    if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
+        return NULL;
+    }
+    node->type = COND_NODE_COMPARE;
+    if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
+        return NULL;
+    }
+    node->cmp->type = cmp_type;
+    node->cmp->left = left;
+    node->cmp->right = right;
+    fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
+    fix_type_for_select_node(node->cmp->right, SELECT_AS_VARIANT);
+    return node;
+}
+
+static cond_node_t *bison_make_in_select_cond(core_yyscan_t yyscanner, expr_tree_t *left, sql_select_t *select_ctx,
+    cmp_type_t cmp_type, source_location_t loc)
+{
+    cond_node_t *node = NULL;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (left == NULL) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "syntax error");
+        return NULL;
+    }
+    if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
+        return NULL;
+    }
+    node->type = COND_NODE_COMPARE;
+    if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
+        return NULL;
+    }
+    node->cmp->type = cmp_type;
+    node->cmp->left = left;
+    if (sql_create_select_expr(stmt, &node->cmp->right, select_ctx, bison_current_pending_ssa(yyscanner),
+        loc) != OG_SUCCESS) {
+        return NULL;
+    }
+    fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
+    fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+    return node;
+}
+
+static char *bison_copy_token_text(core_yyscan_t yyscanner, int offset)
+{
+    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    sql_stmt_t *stmt = extra->stmt;
+    char *scan_end = extra->scanbuf + extra->scanbuflen;
+    char *start = NULL;
+    char *end = NULL;
+    char *text = NULL;
+    uint32 len;
+    errno_t ret;
+
+    if (offset < 0 || offset >= (int)extra->scanbuflen) {
+        return NULL;
+    }
+
+    start = extra->scanbuf + offset;
+    end = start;
+    while (end < scan_end && *end != '\0' && *end != ' ' && *end != '\t' && *end != '\r' && *end != '\n' &&
+        *end != ';' && *end != '(' && *end != ')' && *end != ',') {
+        end++;
+    }
+    len = (uint32)(end - start);
+    if (sql_alloc_mem(stmt->context, len + 1, (void **)&text) != OG_SUCCESS) {
+        return NULL;
+    }
+    ret = memcpy_s(text, len + 1, start, len);
+    knl_securec_check(ret);
+    text[len] = '\0';
+    return text;
+}
+
+static bool32 sql_bison_is_priv_word_char(char ch)
+{
+    return ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+        ch == '_' || ch == '$' || ch == '#');
+}
+
+static bool32 sql_bison_priv_stop_word(const char *scanbuf, size_t scanbuflen, uint32 pos, const char *word)
+{
+    text_t text;
+    uint32 word_len = (uint32)strlen(word);
+
+    if (pos + word_len > scanbuflen) {
+        return OG_FALSE;
+    }
+    if (pos > 0 && sql_bison_is_priv_word_char(scanbuf[pos - 1])) {
+        return OG_FALSE;
+    }
+    if (pos + word_len < scanbuflen && sql_bison_is_priv_word_char(scanbuf[pos + word_len])) {
+        return OG_FALSE;
+    }
+
+    text.str = (char *)scanbuf + pos;
+    text.len = word_len;
+    return cm_text_str_equal_ins(&text, word);
+}
+
+static void sql_bison_privilege_text(core_yyscan_t yyscanner, int start_offset, bool32 stop_on, text_t *priv_name)
+{
+    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    uint32 start = (uint32)start_offset;
+    uint32 end = start;
+
+    while (end < extra->scanbuflen) {
+        if (extra->scanbuf[end] == ',' ||
+            sql_bison_priv_stop_word(extra->scanbuf, extra->scanbuflen, end, "to") ||
+            sql_bison_priv_stop_word(extra->scanbuf, extra->scanbuflen, end, "from") ||
+            (stop_on && sql_bison_priv_stop_word(extra->scanbuf, extra->scanbuflen, end, "on")) ||
+            sql_bison_priv_stop_word(extra->scanbuf, extra->scanbuflen, end, "with")) {
+            break;
+        }
+        end++;
+    }
+
+    priv_name->str = extra->scanbuf + start;
+    priv_name->len = end - start;
+    cm_trim_text(priv_name);
+}
+
+static bool32 sql_bison_lookup_role(sql_stmt_t *stmt, text_t *priv_name, char *role_buf, uint32 role_buf_len,
+    uint32 *rid)
+{
+    text_t role_name;
+
+    if (priv_name->len >= role_buf_len) {
+        return OG_FALSE;
+    }
+    cm_text2str_with_upper(priv_name, role_buf, role_buf_len);
+
+    cm_str2text(role_buf, &role_name);
+    if (!knl_get_role_id(&stmt->session->knl_session, &role_name, rid)) {
+        return OG_FALSE;
+    }
+
+    *priv_name = role_name;
+    return OG_TRUE;
 }
 
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc)
@@ -16979,6 +18010,66 @@ static interval_unit_t generate_interval_unit(interval_unit_order_t from, interv
     return itvl_fmt;
 }
 
+static bool32 pl_bison_is_blank_before_slash(const char *scanbuf, int offset)
+{
+    int pos = offset - 1;
+
+    while (pos >= 0 && (scanbuf[pos] == ' ' || scanbuf[pos] == '\t' || scanbuf[pos] == '\r')) {
+        pos--;
+    }
+    return (pos < 0 || scanbuf[pos] == '\n') ? OG_TRUE : OG_FALSE;
+}
+
+static bool32 pl_bison_is_blank_after_slash(const char *scanbuf, size_t scanbuflen, int offset)
+{
+    size_t pos;
+
+    if (offset < 0) {
+        return OG_FALSE;
+    }
+
+    pos = (size_t)offset + 1;
+    while (pos < scanbuflen && (scanbuf[pos] == ' ' || scanbuf[pos] == '\t' || scanbuf[pos] == '\r')) {
+        pos++;
+    }
+    return (pos >= scanbuflen || scanbuf[pos] == '\n' || scanbuf[pos] == '\0') ? OG_TRUE : OG_FALSE;
+}
+
+static bool32 pl_bison_is_body_terminator_slash(const char *scanbuf, size_t scanbuflen, int offset)
+{
+    if (scanbuf == NULL || offset < 0 || (size_t)offset >= scanbuflen) {
+        return OG_FALSE;
+    }
+
+    return (pl_bison_is_blank_before_slash(scanbuf, offset) &&
+        pl_bison_is_blank_after_slash(scanbuf, scanbuflen, offset)) ? OG_TRUE : OG_FALSE;
+}
+
+static status_t sql_bison_copy_cstr_if_present(sql_stmt_t *stmt, char *src, text_t *dst)
+{
+    text_t src_text;
+
+    if (src == NULL) {
+        dst->str = NULL;
+        dst->len = 0;
+        return OG_SUCCESS;
+    }
+
+    cm_str2text(src, &src_text);
+    return sql_copy_text(stmt->context, &src_text, dst);
+}
+
+static status_t sql_bison_copy_text_if_present(sql_stmt_t *stmt, text_t *src, text_t *dst)
+{
+    if (src->str == NULL) {
+        dst->str = NULL;
+        dst->len = 0;
+        return OG_SUCCESS;
+    }
+
+    return sql_copy_text(stmt->context, src, dst);
+}
+
 static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int start_offset, source_location_t loc)
 {
     sql_text_t *body_src = (sql_text_t *)body;
@@ -16987,6 +18078,49 @@ static text_t *pl_prepend_body_start(core_yyscan_t yyscanner, text_t *body, int 
 
     body_src->value.str = start;
     body_src->value.len = (uint32)(end - start);
+    pl_trim_statement_terminator(&body_src->value);
+    body_src->loc = loc;
+    return (text_t *)body_src;
+}
+
+static text_t *pl_prepend_body_start_keep_semicolon(core_yyscan_t yyscanner, text_t *body, int start_offset,
+    source_location_t loc)
+{
+    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    sql_stmt_t *stmt = extra->stmt;
+    sql_text_t *body_src = (sql_text_t *)body;
+    char *scan_end = extra->scanbuf + extra->scanbuflen;
+    char *start = extra->scanbuf + start_offset;
+    char *end = body_src->value.str + body_src->value.len;
+    char *buffer = NULL;
+    uint32 alloc_len;
+    errno_t ret;
+
+    while (end < scan_end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
+        end++;
+    }
+    if (end < scan_end && *end == ';') {
+        end++;
+    }
+
+    body_src->value.str = start;
+    body_src->value.len = (uint32)(end - start);
+    cm_trim_text(&body_src->value);
+    if (body_src->value.len == 0 || body_src->value.str[body_src->value.len - 1] == ';') {
+        body_src->loc = loc;
+        return (text_t *)body_src;
+    }
+
+    alloc_len = body_src->value.len + 2;
+    if (sql_alloc_mem(stmt->context, alloc_len, (void **)&buffer) != OG_SUCCESS) {
+        return NULL;
+    }
+    ret = memcpy_s(buffer, alloc_len, body_src->value.str, body_src->value.len);
+    knl_securec_check(ret);
+    buffer[body_src->value.len] = ';';
+    buffer[body_src->value.len + 1] = '\0';
+    body_src->value.str = buffer;
+    body_src->value.len++;
     body_src->loc = loc;
     return (text_t *)body_src;
 }
@@ -17046,6 +18180,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
     text_t program_body;
     text_t *program_body_ptr = NULL;
     text_t *stored_body = NULL;
+    pl_entity_t *entity = NULL;
 
     if (stmt->pl_context == NULL) {
         return OG_ERROR;
@@ -17055,7 +18190,15 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
         program_body = *body;
         program_body_ptr = &program_body;
     }
-    stored_body = pl_prepend_body_start(yyscanner, body, start_offset, loc);
+    entity = (pl_entity_t *)stmt->pl_context;
+    if (entity->pl_type == PL_TYPE_SPEC || entity->pl_type == PL_TYPE_BODY) {
+        stored_body = pl_prepend_body_start_keep_semicolon(yyscanner, body, start_offset, loc);
+    } else {
+        stored_body = pl_prepend_body_start(yyscanner, body, start_offset, loc);
+    }
+    if (stored_body == NULL) {
+        return OG_ERROR;
+    }
     return pl_bison_compile_stored_body_source(stmt, program_body_ptr, stored_body);
 }
 

@@ -20,8 +20,8 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.create_plan(name => 'test_plan', comment => 'Duplicate test resource plan');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
 OG-00753, The object resource plan TEST_PLAN already exists.
 
 SQL> call DBE_RSRC_MGR.create_plan(name => 'plan_with_no_comm');
@@ -30,24 +30,24 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.create_plan(comment => 'Plan with no name');
 
-OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-00614 Parameter error: name cannot be null
+OG-00944, [5:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-00614 Parameter error: name cannot be null
 
 SQL> call DBE_RSRC_MGR.create_plan(); --plan with nothing
 
-OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-00615 Invalid argument number for CREATE_PLAN, min=1, max=3
+OG-00944, [5:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-00615 Invalid argument number for CREATE_PLAN, min=1, max=3
 
 SQL> call DBE_RSRC_MGR.create_plan(name => 'plan_with_inv_arg', comment => 'Plan with invalid argument', num_rules => 3);
 
-OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
-[1:110] PLC-00614 Parameter error: error params name 'NUM_RULES'
+OG-00944, [5:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-00614 Parameter error: error params name 'NUM_RULES'
 
 SQL> call DBE_RSRC_MGR.create_plan(name => '', comment => 'plan with empty string name');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
-[1:35] OG-00614, Parameter error: name
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
+[1:44] OG-00614, Parameter error: name
 
 SQL> call DBE_RSRC_MGR.create_plan(name => 'Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', comment => 'plan with a long name');
 
@@ -55,15 +55,15 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.create_plan(name => 'Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', comment => 'plan with too long name');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
-[1:35] OG-00748, resource plan name length is exceeded. name len = 65, max_len = 64
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
+[1:44] OG-00748, resource plan name length is exceeded. name len = 65, max_len = 64
 
 SQL> call DBE_RSRC_MGR.create_plan(name => '12345', comment => 'plan with invalid plan name');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
-[1:35] OG-00601, Sql syntax error: invalid identifier
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_PLAN) terminated with execute errors
+[1:44] OG-00601, Sql syntax error: invalid identifier
 
 SQL> SELECT NAME, NUM_RULES, DESCRIPTION FROM SYS_RSRC_PLANS ORDER BY 1;
 
@@ -108,8 +108,8 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.update_plan(); --update with nothing
 
-OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-00615 Invalid argument number for UPDATE_PLAN, min=1, max=2
+OG-00944, [5:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-00615 Invalid argument number for UPDATE_PLAN, min=1, max=2
 
 SQL> call DBE_RSRC_MGR.update_plan(name=> 'test_plan', comment => 'Plan with comment updated');
 
@@ -117,8 +117,8 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.update_plan(name => 'none_exists_plan');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.UPDATE_PLAN) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.UPDATE_PLAN) terminated with execute errors
 OG-00708, The object resource plan NONE_EXISTS_PLAN does not exist
 
 SQL> 
@@ -129,20 +129,20 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.delete_plan(name => 'plan_with_no_comm');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.DELETE_PLAN) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.DELETE_PLAN) terminated with execute errors
 OG-00708, The object resource plan PLAN_WITH_NO_COMM does not exist
 
 SQL> call DBE_RSRC_MGR.delete_plan();
 
-OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-00615 Invalid argument number for DELETE_PLAN, min=1, max=1
+OG-00944, [5:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-00615 Invalid argument number for DELETE_PLAN, min=1, max=1
 
 SQL> call DBE_RSRC_MGR.delete_plan(name => '');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.DELETE_PLAN) terminated with execute errors
-[1:35] OG-00614, Parameter error: name
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.DELETE_PLAN) terminated with execute errors
+[1:44] OG-00614, Parameter error: name
 
 SQL> SELECT NAME, NUM_RULES, DESCRIPTION FROM SYS_RSRC_PLANS order by 1;
 
@@ -165,15 +165,15 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.create_control_group(name => 'Cgroup_1', comment => 'Control group for user resmgr_user_1');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
 OG-00753, The object control group CGROUP_1 already exists.
 
 SQL> call DBE_RSRC_MGR.create_control_group(name => '', comment => 'Control group for user resmgr_user_1');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
-[1:44] OG-00614, Parameter error: name
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
+[1:53] OG-00614, Parameter error: name
 
 SQL> call DBE_RSRC_MGR.create_control_group(name => 'cgroup_3');
 
@@ -181,15 +181,15 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.create_control_group(name => 'default_groups');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
 OG-00753, The object control group DEFAULT_GROUPS already exists.
 
 SQL> call DBE_RSRC_MGR.create_control_group(name => 'consumer groups');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
-[1:44] OG-00601, Sql syntax error: invalid identifier
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.CREATE_CONTROL_GROUP) terminated with execute errors
+[1:53] OG-00601, Sql syntax error: invalid identifier
 
 SQL> 
 SQL> --unit test for update_control_group
@@ -234,8 +234,8 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.ADD_USER_TO_CONTROL_GROUP(name => 'db_user', control_group => 'cgroup_3');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.ADD_USER_TO_CONTROL_GROUP) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.ADD_USER_TO_CONTROL_GROUP) terminated with execute errors
 OG-00708, The object control group CGROUP_3 does not exist
 
 SQL> call DBE_RSRC_MGR.ADD_USER_TO_CONTROL_GROUP(name => 'username', control_group => 'cgroup_1');
@@ -356,8 +356,8 @@ SQL> call DBE_RSRC_MGR.update_plan_rule(
   7 	max_exec_time => -1
   8 );
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.UPDATE_PLAN_RULE) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.UPDATE_PLAN_RULE) terminated with execute errors
 [5:8] OG-00242, The function argument is out of range
 
 SQL> --sessions overflow
@@ -367,8 +367,8 @@ SQL> call DBE_RSRC_MGR.update_plan_rule(
   4 	sessions => -2
   5 );
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.UPDATE_PLAN_RULE) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.UPDATE_PLAN_RULE) terminated with execute errors
 [4:13] OG-00242, The function argument is out of range
 
 SQL> select * from sys_rsrc_plan_rules order by 1,2;
@@ -398,8 +398,8 @@ PL/SQL procedure successfully completed.
 
 SQL> call DBE_RSRC_MGR.VALIDATE_PLAN(name=>'test_plan');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.VALIDATE_PLAN) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.VALIDATE_PLAN) terminated with execute errors
 OG-00629, Virtual memory error,detail is 'temp buffer size of control group exceeds the maximum'
 
 SQL> call DBE_RSRC_MGR.update_plan_rule(
@@ -426,14 +426,14 @@ CGROUP_2                                                         0            0 
 
 SQL> call DBE_RSRC_MGR.delete_plan(name => 'test_plan');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.DELETE_PLAN) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.DELETE_PLAN) terminated with execute errors
 OG-00815, resource plan TEST_PLAN is being used, can not drop
 
 SQL> call DBE_RSRC_MGR.delete_control_group(name => 'cgroup_1');
 
-OG-00932, [1:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[1:2] PL/SQL(DBE_RSRC_MGR.DELETE_CONTROL_GROUP) terminated with execute errors
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_RSRC_MGR.DELETE_CONTROL_GROUP) terminated with execute errors
 OG-00815, control group CGROUP_1 is being used, can not drop
 
 SQL> 
@@ -444,18 +444,18 @@ connected.
 
 SQL> call DBE_RSRC_MGR.delete_plan(name => 'test_plan');
 
-OG-00944, PL/SQL(RESMGR_USER_1.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-01001 Permissions were insufficient
+OG-00944, [5:1]PL/SQL(RESMGR_USER_1.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-01001 Permissions were insufficient
 
 SQL> call DBE_RSRC_MGR.delete_control_group(name => 'cgroup_1');
 
-OG-00944, PL/SQL(RESMGR_USER_1.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-01001 Permissions were insufficient
+OG-00944, [5:1]PL/SQL(RESMGR_USER_1.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-01001 Permissions were insufficient
 
 SQL> call DBE_RSRC_MGR.create_plan(name => 'test_plan_1', comment => 'Resource plan created by normal user');
 
-OG-00944, PL/SQL(RESMGR_USER_1.ANONYMOUS BLOCK) terminated with compiling errors
-[1:2] PLC-01001 Permissions were insufficient
+OG-00944, [5:1]PL/SQL(RESMGR_USER_1.ANONYMOUS BLOCK) terminated with compiling errors
+[2:2] PLC-01001 Permissions were insufficient
 
 SQL> 
 SQL> conn / as sysdba

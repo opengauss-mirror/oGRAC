@@ -739,6 +739,24 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
             *llocp = cur_yylloc;
             scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
             break;
+        case PRIMARY:
+            get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
+                &cur_yylval, &cur_yylloc, yylex_func);
+            switch (next_token) {
+                case KEY:
+                    cur_token = PRIMARY_KEY;
+                    break;
+                default:
+                    /* save the lookahead token for next time */
+                    set_lookahead_token(lookahead_len, lookaheads, &next_token, lvalp, llocp, &next_yyleng,
+                        &cur_yylloc, scanbuf, cur_yyleng);
+                    /* and back up the output info to cur_token */
+                    lvalp->core_yystype = cur_yylval;
+                    *llocp = cur_yylloc;
+                    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+                    break;
+            }
+            break;
         case FOREIGN:
             get_next_token(lookahead_len, lookaheads, &next_token, &next_yyleng, lvalp, llocp, yyscanner, scanbuf,
                 &cur_yylval, &cur_yylloc, yylex_func);
@@ -876,6 +894,7 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
         stmt->parser_text = parser_text_bak;
         stmt->parser_text_valid = parser_text_valid_bak;
+        CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
 
@@ -893,6 +912,7 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     stmt->parser_text_valid = parser_text_valid_bak;
 
     if (SECUREC_UNLIKELY(yyresult)) { /* error */
+        CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
 
@@ -917,6 +937,7 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
         stmt->parser_text = parser_text_bak;
         stmt->parser_text_valid = parser_text_valid_bak;
+        CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
 
@@ -934,6 +955,7 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     stmt->parser_text_valid = parser_text_valid_bak;
 
     if (SECUREC_UNLIKELY(yyresult)) { /* error */
+        CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
 
@@ -958,6 +980,7 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
         stmt->parser_text = parser_text_bak;
         stmt->parser_text_valid = parser_text_valid_bak;
+        CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
 
@@ -975,6 +998,7 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     stmt->parser_text_valid = parser_text_valid_bak;
 
     if (SECUREC_UNLIKELY(yyresult)) { /* error */
+        CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
 
@@ -1344,6 +1368,90 @@ static status_t sql_fetch_expl_plan_for_tokens(lex_t *lex)
     return OG_SUCCESS;
 }
 
+static bool32 sql_explain_is_dml_type(uint32 type)
+{
+    switch (type) {
+        case OGSQL_TYPE_SELECT:
+        case OGSQL_TYPE_INSERT:
+        case OGSQL_TYPE_UPDATE:
+        case OGSQL_TYPE_DELETE:
+        case OGSQL_TYPE_MERGE:
+        case OGSQL_TYPE_REPLACE:
+            return OG_TRUE;
+        default:
+            return OG_FALSE;
+    }
+}
+
+static status_t sql_prepare_bison_explain_context(sql_stmt_t *stmt)
+{
+    if (stmt->context == NULL) {
+        OG_RETURN_IFERR(sql_alloc_context(stmt));
+    }
+
+    sql_context_uncacheable(stmt->context);
+    ((context_ctrl_t *)stmt->context)->uid = stmt->session->knl_session.uid;
+    sql_init_plan_count(stmt);
+    stmt->context->ctrl.hash_value = cm_hash_text(&stmt->parser_text.value, INFINITE_HASH_RANGE);
+    OG_RETURN_IFERR(ogx_write_text(&stmt->context->ctrl, &stmt->parser_text.value));
+    OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->params));
+    OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->csr_params));
+    OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->ref_objects));
+    return sql_create_list(stmt, &stmt->context->outlines);
+}
+
+static status_t sql_create_explain_dml_plan(sql_stmt_t *stmt)
+{
+    status_t status;
+    timeval_t timeval_begin;
+
+    stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
+    stmt->context->has_ltt = (sql_has_special_word(stmt, &stmt->parser_text.value) & SQL_HAS_LTT) != 0;
+    (void)cm_gettimeofday(&timeval_begin);
+
+    cm_spin_lock(&stmt->session->sess_lock, NULL);
+    stmt->session->current_sql = stmt->parser_text.value;
+    stmt->session->sql_id = stmt->context->ctrl.hash_value;
+    cm_spin_unlock(&stmt->session->sess_lock);
+
+    status = sql_verify(stmt);
+    if (status == OG_SUCCESS) {
+        check_table_stats(stmt);
+        status = ogsql_optimize_logically(stmt);
+    }
+    if (status == OG_SUCCESS) {
+        status = sql_create_dml_plan(stmt);
+    }
+
+    cm_spin_lock(&stmt->session->sess_lock, NULL);
+    stmt->session->current_sql = CM_NULL_TEXT;
+    stmt->session->sql_id = 0;
+    cm_spin_unlock(&stmt->session->sess_lock);
+
+    if (status == OG_SUCCESS) {
+        og_update_context_stat_uncached(stmt, &timeval_begin);
+    }
+    return status;
+}
+
+static status_t sql_parse_explain_sql_bison(sql_stmt_t *stmt)
+{
+    OG_RETURN_IFERR(sql_prepare_bison_explain_context(stmt));
+    OG_RETURN_IFERR(raw_parser(stmt, &stmt->parser_text, &stmt->context->entry));
+
+    if (sql_explain_is_dml_type(SQL_TYPE(stmt))) {
+        return sql_create_explain_dml_plan(stmt);
+    }
+    if (is_explain_create_type(stmt)) {
+        stmt->session->sql_audit.audit_type = SQL_AUDIT_DDL;
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_DEBUG_ERR("the type: %u can not explain", (uint32)SQL_TYPE(stmt));
+    OG_SRC_THROW_ERROR(stmt->parser_text.loc, ERR_SQL_SYNTAX_ERROR, "missing keyword");
+    return OG_ERROR;
+}
+
 status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
 {
     lex_t *lex = stmt->session->lex;
@@ -1354,9 +1462,7 @@ status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
     status_t status = OG_SUCCESS;
 
     if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
-        lex_init_for_native_type(lex, &stmt->parser_text, &stmt->session->curr_user, stmt->session->call_version,
-            USE_NATIVE_DATATYPE);
-        OG_RETURN_IFERR(lex_fetch(lex, leader_word));
+        return sql_parse_explain_sql_bison(stmt);
     }
 
     if (sql_fetch_expl_plan_for_tokens(lex) != OG_SUCCESS) {
@@ -1397,6 +1503,25 @@ status_t ogsql_parse_explain_sql(sql_stmt_t *stmt, word_t *leader_word)
     return OG_SUCCESS;
 }
 
+#define SQL_BISON_SCANBUF_EXTRA_SIZE 2
+
+static bool32 sql_dml_can_soft_parse(sql_stmt_t *stmt, sql_text_t *sql_text, uint32 special_word)
+{
+    if (SQL_HAS_NONE != special_word || stmt->session->disable_soft_parse) {
+        return OG_FALSE;
+    }
+
+    if (!g_instance->sql.use_bison_parser) {
+        return OG_TRUE;
+    }
+
+    if (sql_pool == NULL || sql_pool->memory == NULL) {
+        return OG_FALSE;
+    }
+
+    return ((uint64)sql_text->len + SQL_BISON_SCANBUF_EXTRA_SIZE <= (uint64)sql_pool->memory->page_size);
+}
+
 status_t sql_parse_dml(sql_stmt_t *stmt, word_t *leader_word)
 {
     key_wid_t key_wid = leader_word->id;
@@ -1410,10 +1535,10 @@ status_t sql_parse_dml(sql_stmt_t *stmt, word_t *leader_word)
 
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DML;
     uint32 special_word = sql_has_special_word(stmt, &sql_text->value);
-    if (SQL_HAS_NONE != special_word || stmt->session->disable_soft_parse || g_instance->sql.use_bison_parser) {
+    if (!sql_dml_can_soft_parse(stmt, sql_text, special_word)) {
         OG_RETURN_IFERR(sql_parse_dml_directly(stmt, key_wid, sql_text));
     } else {
-        OG_RETURN_IFERR(og_find_then_parse_dml(stmt, key_wid, special_word));
+        OG_RETURN_IFERR(og_find_then_parse_dml(stmt, key_wid, sql_text, special_word));
     }
     stmt->context->has_ltt = (special_word & SQL_HAS_LTT);
 
@@ -1466,14 +1591,24 @@ bool32 sql_check_equal_join_cond(join_cond_t *join_cond)
 status_t sql_parse_view_subselect(sql_stmt_t *stmt, text_t *sql, sql_select_t **select_ctx, source_location_t *loc)
 {
     sql_text_t sql_text;
+    sql_text_t saved_parser_text;
+    bool32 saved_parser_text_valid;
+    status_t status;
 
     sql_text.value = *sql;
     sql_text.loc = *loc;
 
-    if (sql_create_select_context(stmt, &sql_text, SELECT_AS_TABLE, select_ctx) != OG_SUCCESS) {
-        return OG_ERROR;
+    saved_parser_text = stmt->parser_text;
+    saved_parser_text_valid = stmt->parser_text_valid;
+    if (g_instance->sql.use_bison_parser) {
+        stmt->parser_text = sql_text;
+        stmt->parser_text_valid = OG_TRUE;
     }
-    return OG_SUCCESS;
+
+    status = sql_create_select_context(stmt, &sql_text, SELECT_AS_TABLE, select_ctx);
+    stmt->parser_text = saved_parser_text;
+    stmt->parser_text_valid = saved_parser_text_valid;
+    return status;
 }
 
 /*

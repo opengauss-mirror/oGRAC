@@ -286,6 +286,7 @@ status_t sql_init_expr_node(sql_stmt_t *stmt, expr_tree_t **expr, expr_node_t **
 status_t sql_create_expr_tree(sql_stmt_t *stmt, expr_tree_t **expr, og_type_t type, expr_node_type_t expr_type,
     source_location_t loc);
 status_t sql_create_int_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, int val, source_location_t loc);
+status_t sql_create_bigint_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, int64 val, source_location_t loc);
 status_t sql_create_float_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc);
 status_t sql_create_binary_float_double_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val,
     source_location_t loc);

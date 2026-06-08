@@ -139,7 +139,7 @@ SQL> select 100 + 9223372036854775103 from dual;
 
 SQL> select 100 + 9223372036854775803 from dual;
 
-OG-00659, [1:12]BIGINT out of range
+OG-00659, [1:8]BIGINT out of range
 SQL> select '9223371000000000000.000'::number::bigint from dual;
 
 '9223371000000000000.000'::NUMBER::BIGINT
@@ -224,7 +224,7 @@ TO_TIMESTAMP('08-JAN-2018 12:17:18','DD-MON-YYYY HH12:MI:SS')
 
 SQL> SELECT TO_TIMESTAMP('08-JAN-2018 00:17:18','DD-MON-YYYY HH12:MI:SS') FROM DUAL;
 
-OG-00146, [1:21]HOUR should be from 1 to 12
+OG-00146, [1:8]HOUR should be from 1 to 12
 SQL> SELECT TO_TIMESTAMP('08-JAN-2018 01:17:18','DD-MON-YYYY HH12:MI:SS') FROM DUAL;
 
 TO_TIMESTAMP('08-JAN-2018 01:17:18','DD-MON-YYYY HH12:MI:SS')
@@ -235,7 +235,7 @@ TO_TIMESTAMP('08-JAN-2018 01:17:18','DD-MON-YYYY HH12:MI:SS')
 
 SQL> SELECT TO_TIMESTAMP('08-JAN-2018 23:17:18','DD-MON-YYYY HH12:MI:SS') FROM DUAL;
 
-OG-00146, [1:21]HOUR should be from 1 to 12
+OG-00146, [1:8]HOUR should be from 1 to 12
 SQL> UPDATE test_temp_t1 SET f2 = 2.2;
 
 OG-00606, [1:30]Inconsistent datatypes, expected DATE - got NUMBER
@@ -287,7 +287,7 @@ SQL> insert into test_temp_t1 values(1, 2, 3, 4, 5, null, null);
 
 SQL> select f1+f2+f3+f4+f5 from test_temp_t1;
 
-OG-01320, [1:19]Undefined operator: BOOLEAN + BINARY_INTEGER
+OG-01320, [1:8]Undefined operator: BOOLEAN + BINARY_INTEGER
 SQL> insert into test_temp_t1 values(1, 2147483647, -2147483648, null, null, null,null);
 
 1 rows affected.
@@ -976,7 +976,7 @@ F_CHAR   F_VARCHAR
 
 SQL> SELECT * FROM T_CHAR_1 WHERE F_VARCHAR <<> 'ABCDEFGH; ';
 
-OG-00601, [1:40]Sql syntax error: expression error
+OG-00601, [1:40]Sql syntax error: invalid operator
 SQL> SELECT F_VARCHAR FROM T_CHAR_1 GROUP BY F_VARCHAR HAVING F_VARCHAR = 'AB';
 
 F_VARCHAR
@@ -2396,7 +2396,7 @@ SQL> insert into RQG_BOOL_TYPE_GSQL values(32, 4, 'Fa');
 OG-00601, Sql syntax error: invalid BOOLEAN text
 SQL> insert into RQG_BOOL_TYPE_GSQL values(33, 4, 'f'::binary(10));
 
-OG-00606, [1:49]Inconsistent datatypes, expected BOOLEAN - got BINARY
+OG-00606, [1:46]Inconsistent datatypes, expected BOOLEAN - got BINARY
 SQL> select * from RQG_BOOL_TYPE_GSQL where C_INTEGER = 4 order by id;
 
 ID                   C_INTEGER    C_BOOL
@@ -2846,13 +2846,13 @@ CAST(1 AS INTEGER)
 SQL> 
 SQL> select cast(1 as signed);
 
-OG-00601, [1:18]Sql syntax error: missing datatype
+OG-00601, [1:24]Sql syntax error: Invalid datatype
 SQL> select cast(1 as signed bigint);
 
-OG-00601, Sql syntax error: type INTEGER expected
+OG-00601, [1:25]Sql syntax error: syntax error
 SQL> select cast(1 as signed number);
 
-OG-00601, Sql syntax error: type INTEGER expected
+OG-00601, [1:25]Sql syntax error: syntax error
 SQL> 
 SQL> drop table if exists test_raw;
 
@@ -3414,7 +3414,7 @@ SQL> select 4294967295::uint from dual;
 
 SQL> select -1::uint from dual;
 
-OG-00659, [1:10]UNSIGNED INTEGER out of range
+OG-00659, [1:8]UNSIGNED INTEGER out of range
 SQL> select 0::uint from dual;
 
 0::UINT     
@@ -3425,10 +3425,10 @@ SQL> select 0::uint from dual;
 
 SQL> select -10::uint from dual;
 
-OG-00659, [1:11]UNSIGNED INTEGER out of range
+OG-00659, [1:8]UNSIGNED INTEGER out of range
 SQL> select -1::integer unsigned from dual;
 
-OG-00659, [1:10]UNSIGNED INTEGER out of range
+OG-00659, [1:8]UNSIGNED INTEGER out of range
 SQL> select 10::integer unsigned from dual;
 
 10::INTEGER UNSIGNED
@@ -3445,7 +3445,7 @@ Name                                Null?    Type
 
 SQL> desc -q select ifnull(null,-1::uint);
 
-OG-00659, [1:22]UNSIGNED INTEGER out of range
+OG-00659, [1:20]UNSIGNED INTEGER out of range
 
 SQL> select 1 from dual where 2::integer unsigned > 1::integer unsigned;
 
@@ -3835,7 +3835,7 @@ TO_CLOB(A+1)
 
 SQL> select to_date(a,'YYYY-MM-DD HH24:MI:SS:FF') from test_uint32 order by a;
 
-OG-00146, [1:16]MONTH should be from 1 to 12
+OG-00146, MONTH should be from 1 to 12
 SQL> select to_number(a,'0000000000') from test_uint32 where a = 4294967295;
 
 TO_NUMBER(A,'0000000000')               
@@ -3973,9 +3973,9 @@ SQL> begin
   3 end;
   4 /
 
-OG-00932, [2:1] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
-[7:2] PL/SQL(SYS.PROC_TEST_UNINT32) terminated with execute errors
-[7:2] OG-00659, UNSIGNED INTEGER out of range
+OG-00932, [0:0] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[0:0] PL/SQL(SYS.PROC_TEST_UNINT32) terminated with execute errors
+OG-00659, UNSIGNED INTEGER out of range
 
 SQL> select * from table(dba_proc_line('SYS', 'PROC_TEST_UNINT32'));
 
@@ -4423,10 +4423,10 @@ Succeed.
 
 SQL> CREATE TABLE t_date(c1 int,c2 int,c3 date,c4 timestamp with time zone unique);
 
-OG-00601, Sql syntax error: column of datatype TIMESTAMP WITH TIME ZONE cannot be unique or a primary key
+OG-00601, [1:78]Sql syntax error: column of datatype TIMESTAMP WITH TIME ZONE cannot be unique or a primary key
 SQL> CREATE TABLE t_date(c1 int,c2 int,c3 date,c4 timestamp with time zone primary key);
 
-OG-00601, Sql syntax error: column of datatype TIMESTAMP WITH TIME ZONE cannot be unique or a primary key
+OG-00601, [1:83]Sql syntax error: column of datatype TIMESTAMP WITH TIME ZONE cannot be unique or a primary key
 SQL> 
 SQL> drop table if exists t_date;
 
@@ -4909,7 +4909,7 @@ SQL> insert into t_test_bigint_sub values(123, -9223372036854775808, 234);
 
 SQL> select t1-t2 from t_test_bigint_sub;
 
-OG-00659, [1:10]BIGINT out of range
+OG-00659, [1:8]BIGINT out of range
 SQL> select t3-t2 from t_test_bigint_sub;
 
 T3-T2               
@@ -5755,6 +5755,7 @@ TO_DATE('JANUARY 15, 1989, 01:00 A.M.', 'MONTH DD, YYYY, HH:MI A
 1 rows fetched.
 
 SQL> SELECT TO_DATE('January 15, 1989, 11:59 P.M.', 'Month dd, YYYY, HH:MI P.M.', 'NLS_DATE_LANGUAGE = American');
+
 TO_DATE('JANUARY 15, 1989, 11:59 P.M.', 'MONTH DD, YYYY, HH:MI P
 ----------------------------------------------------------------
 1989-01-15 23:59:00                                             
@@ -5763,7 +5764,7 @@ TO_DATE('JANUARY 15, 1989, 11:59 P.M.', 'MONTH DD, YYYY, HH:MI P
 
 SQL> SELECT TO_DATE('january 15, 1989, 11:00 a.m.', 'Month dd, YYYY, HH:MI A.M.', 'NLS_DATE_LANGUAGE = chinese');
 
-OG-00105, [1:16]Invalid format of datetime
+OG-00105, [1:8]Invalid format of datetime
 SQL> SELECT TO_DATE('jun 15, 1989, 11:00 a.m.', 'mon dd, YYYY, HH:MI A.M.', 'NLS_DATE_LANGUAGE = American');
 
 TO_DATE('JUN 15, 1989, 11:00 A.M.', 'MON DD, YYYY, HH:MI A.M.', 
@@ -5773,8 +5774,7 @@ TO_DATE('JUN 15, 1989, 11:00 A.M.', 'MON DD, YYYY, HH:MI A.M.',
 1 rows fetched.
 
 SQL> SELECT TO_DATE('aaa 15, 1989, 11:00 a.m.', 'mon dd, YYYY, HH:MI A.M.', 'NLS_DATE_LANGUAGE = American');
-
-OG-00105, [1:16]Invalid format of datetime
+OG-00105, [1:8]Invalid format of datetime
 
 
 

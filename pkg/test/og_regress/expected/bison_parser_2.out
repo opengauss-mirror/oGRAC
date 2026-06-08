@@ -1327,10 +1327,6 @@ SQL> DROP TABLE test_table;
 Succeed.
 
 SQL> 
-SQL> alter system set use_bison_parser = false;
-
-Succeed.
-
 SQL> drop table if exists native_desc_idx_t;
 
 Succeed.

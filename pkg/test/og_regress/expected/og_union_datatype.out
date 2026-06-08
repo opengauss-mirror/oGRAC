@@ -1,3 +1,5 @@
+
+
 SQL> -- test the result set after union of null
 SQL> drop table if exists t_union_1;
 
@@ -72,7 +74,7 @@ C_CHAR                                       BINARY(10)
 
 SQL> desc -q select c_char from t_data_union_1 union select c_lob from t_data_union_2;
 
-OG-00601, [1:48]Sql syntax error: unexpected lob column occurs
+OG-00601, Sql syntax error: unexpected lob column occurs
 
 SQL> desc -q select c_char from t_data_union_1 union select c_raw from t_data_union_2;
 
@@ -107,7 +109,7 @@ C_VARCHAR                                    VARCHAR(20 BYTE)
 
 SQL> desc -q select c_varchar from t_data_union_1 union select c_lob from t_data_union_2;
 
-OG-00601, [1:51]Sql syntax error: unexpected lob column occurs
+OG-00601, Sql syntax error: unexpected lob column occurs
 
 SQL> desc -q select c_varchar from t_data_union_1 union select c_raw from t_data_union_2;
 
@@ -152,7 +154,7 @@ OG-00601, [1:40]Sql syntax error: expression must have same datatype as correspo
 
 SQL> desc -q select c_int from t_data_union_1 union select c_lob from t_data_union_2;
 
-OG-00601, [1:47]Sql syntax error: unexpected lob column occurs
+OG-00601, Sql syntax error: unexpected lob column occurs
 
 SQL> desc -q select c_int from t_data_union_1 union select c_bool from t_data_union_2;
 
@@ -241,6 +243,8 @@ SQL> drop table if exists t_data_union_1;
 Succeed.
 
 SQL> drop table if exists t_data_union_2;
-
 Succeed.
+
+
+
 

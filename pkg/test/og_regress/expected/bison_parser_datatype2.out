@@ -315,9 +315,14 @@ SQL> select 1.23d, 1.24f;
 1 rows fetched.
 
 SQL> 
-SQL> select 1.79E+308; --error
+SQL> select 1.79E+308;
 
-OG-00636, [1:8]Invalid number -- overflow
+1.79E+308           
+--------------------
+1.79e+308           
+
+1 rows fetched.
+
 SQL> select 1.79E+308f;
 
 1.79E+308F          
@@ -350,9 +355,14 @@ SQL> select 1.79E+308D;
 
 1 rows fetched.
 
-SQL> select -1.79E+308; --error 
+SQL> select -1.79E+308;
 
-OG-00636, [1:9]Invalid number -- overflow
+-1.79E+308          
+--------------------
+-1.79e+308          
+
+1 rows fetched.
+
 SQL> select -1.79E+308f;
 
 -1.79E+308F         
@@ -388,7 +398,7 @@ SQL> select -1.79E+308D;
 SQL> 
 SQL> select 1.79E+309; --error
 
-OG-00601, [1:8]Sql syntax error: number overflow
+OG-00601, [1:8]Sql syntax error: invalid number
 SQL> select 1.79E+309f; --error
 
 OG-00601, [1:8]Sql syntax error: number overflow
@@ -403,7 +413,7 @@ SQL> select 1.79E+309D; --error
 OG-00601, [1:8]Sql syntax error: number overflow
 SQL> select -1.79E+309; --error
 
-OG-00601, [1:9]Sql syntax error: number overflow
+OG-00601, [1:9]Sql syntax error: invalid number
 SQL> select -1.79E+309f; --error
 
 OG-00601, [1:9]Sql syntax error: number overflow
@@ -416,6 +426,12 @@ OG-00601, [1:9]Sql syntax error: number overflow
 SQL> select -1.79E+309D; --error
 
 OG-00601, [1:9]Sql syntax error: number overflow
+SQL> select 1.2E3E4; --error
+
+OG-00636, [1:8]Invalid number 
+SQL> select -1.2E3E4; --error
+
+OG-00636, [1:9]Invalid number 
 SQL> 
 SQL> create table testfd(id float);
 
@@ -621,18 +637,20 @@ FORMAT ASF;
 
 
 
-SQL> insert into test1 values(1.79E+308, 1.79E+308); --error
+SQL> insert into test1 values(1.79E+308, 1.79E+308);
 
-OG-00636, [1:26]Invalid number -- overflow
-SQL> insert into test1 values(-1.79E+308, -1.79E+308); --error
+1 rows affected.
 
-OG-00636, [1:27]Invalid number -- overflow
+SQL> insert into test1 values(-1.79E+308, -1.79E+308);
+
+1 rows affected.
+
 SQL> insert into test1 values(1.79E+309, 1.79E+309); --error
 
-OG-00601, [1:26]Sql syntax error: number overflow
+OG-00601, [1:26]Sql syntax error: invalid number
 SQL> insert into test1 values(-1.79E+309, -1.79E+309); --error
 
-OG-00601, [1:27]Sql syntax error: number overflow
+OG-00601, [1:27]Sql syntax error: invalid number
 SQL> insert into test1 values(1.79E+308f, 1.79E+308f);
 
 1 rows affected.
@@ -666,11 +684,13 @@ SQL> select * from test1;
 ID                   ID2                 
 -------------------- --------------------
 1.79e+308            1.79e+308           
+-1.79e+308           -1.79e+308          
+1.79e+308            1.79e+308           
 1.79e+308            1.79e+308           
 1.79e+308            1.79e+308           
 1.79e+308            1.79e+308           
 
-4 rows fetched.
+6 rows fetched.
 
 SQL> drop table test1;
 
@@ -688,10 +708,4 @@ SQL> drop table if exists bison_rowid_datatype_t;
 
 Succeed.
 
-SQL> alter system set use_bison_parser = false;
-
-Succeed.
-
 SQL> 
-
-

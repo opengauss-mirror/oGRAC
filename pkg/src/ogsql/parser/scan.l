@@ -34,6 +34,7 @@
 /*$$include "scan-dialect-prologue-top.l.h"*/
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "scanner.h"
@@ -416,6 +417,7 @@ decimalfail        {digit}+\.\.
 decimalf        ({integer}|{decimal})[fF]
 decimald        ({integer}|{decimal})[dD]
 real            ({integer}|{decimal})[Ee][-+]?{digit}+
+realbadexp      ({real})[Ee]
 realfail1        ({integer}|{decimal})[Ee]
 realfail2        ({integer}|{decimal})[Ee][-+]
 realf           ({real})[fF]
@@ -967,6 +969,10 @@ other            .
                            (yytext[nchars-1] == '+' ||
                             yytext[nchars-1] == '-'))
                     {
+                        if (nchars == 3 && yytext[0] == '|' && yytext[1] == '|') {
+                            nchars--;
+                            break;
+                        }
                         int        ic;
 
                         for (ic = nchars-2; ic >= 0; ic--)
@@ -1075,11 +1081,6 @@ other            .
                 }
 {decimal}        {
                     SET_YYLLOC();
-                    char* val = NULL;
-                    FLEX_STACK_STRDUP(val, yytext);
-                    if (handle_float_overflow(val, yyscanner, &val) != OG_SUCCESS) {
-                        yyerror("number overflow");
-                    }
                     FLEX_MEM_STRDUP(yylval->str, yytext);
                     yyextra->is_hint_str = false;
                     return FCONST;
@@ -1121,14 +1122,14 @@ other            .
                 }
 {real}            {
                     SET_YYLLOC();
-                    char *val = NULL;
-                    FLEX_STACK_STRDUP(val, yytext);
-                    if (handle_float_overflow(val, yyscanner, &val) != OG_SUCCESS) {
-                        yyerror("number overflow");
-                    }
                     FLEX_MEM_STRDUP(yylval->str, yytext);
                     yyextra->is_hint_str = false;
                     return FCONST;
+                }
+{realbadexp}      {
+                    SET_YYLLOC();
+                    OG_SRC_THROW_ERROR(yylloc->loc, ERR_INVALID_NUMBER, "");
+                    return LEX_ERROR_TOKEN;
                 }
 {realfail1}        {
                     /*
@@ -1207,6 +1208,13 @@ other            .
                     char *ident;
 
                     SET_YYLLOC();
+
+                    if (yyleng == (int)(sizeof("connect_by_root") - 1) &&
+                        cm_strcmpni(yytext, "connect_by_root", sizeof("connect_by_root") - 1) == 0) {
+                        yyextra->is_hint_str = false;
+                        yylval->keyword = "connect_by_root";
+                        return CONNECT_BY_ROOT;
+                    }
 
                     /* Is it a keyword? */
                     kwnum = ScanKeywordLookup(yytext, yyextra->keywordlist);
@@ -1289,6 +1297,126 @@ other            .
 /*$$include "scan-dialect-epilogue.l.c"*/
 
 /*$$exclude in dialect begin*/
+static bool32 scanner_is_error_word_char(char ch)
+{
+    return ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+        ch == '_' || ch == '$' || ch == '#');
+}
+
+static bool32 scanner_token_text(core_yyscan_t yyscanner, int offset, text_t *word)
+{
+    uint32 end;
+
+    if (word == NULL || offset < 0 || offset >= (int)yyextra->scanbuflen) {
+        return OG_FALSE;
+    }
+
+    end = (uint32)offset;
+    while (end < yyextra->scanbuflen && yyextra->scanbuf[end] != '\0' && yyextra->scanbuf[end] != ' ' &&
+        yyextra->scanbuf[end] != '\t' && yyextra->scanbuf[end] != '\r' && yyextra->scanbuf[end] != '\n' &&
+        yyextra->scanbuf[end] != ';' && yyextra->scanbuf[end] != '(' && yyextra->scanbuf[end] != ')' &&
+        yyextra->scanbuf[end] != ',') {
+        end++;
+    }
+
+    word->str = yyextra->scanbuf + offset;
+    word->len = end - (uint32)offset;
+    return word->len > 0 ? OG_TRUE : OG_FALSE;
+}
+
+static bool32 scanner_prev_word(core_yyscan_t yyscanner, int offset, text_t *word)
+{
+    int pos;
+    int end;
+
+    if (word == NULL || offset <= 0 || offset > (int)yyextra->scanbuflen) {
+        return OG_FALSE;
+    }
+
+    pos = offset - 1;
+    while (pos >= 0 && (yyextra->scanbuf[pos] == ' ' || yyextra->scanbuf[pos] == '\t' ||
+        yyextra->scanbuf[pos] == '\r' || yyextra->scanbuf[pos] == '\n')) {
+        pos--;
+    }
+    if (pos < 0 || !scanner_is_error_word_char(yyextra->scanbuf[pos])) {
+        return OG_FALSE;
+    }
+
+    end = pos + 1;
+    while (pos >= 0 && scanner_is_error_word_char(yyextra->scanbuf[pos])) {
+        pos--;
+    }
+    word->str = yyextra->scanbuf + pos + 1;
+    word->len = (uint32)(end - pos - 1);
+    return OG_TRUE;
+}
+
+static bool32 scanner_has_case_word_before(core_yyscan_t yyscanner, int offset)
+{
+    text_t word;
+    uint32 scan_end;
+
+    if (offset <= 0) {
+        return OG_FALSE;
+    }
+
+    scan_end = (offset < (int)yyextra->scanbuflen) ? (uint32)offset : yyextra->scanbuflen;
+    for (uint32 pos = 0; pos + 4 <= scan_end; pos++) {
+        if ((pos > 0 && scanner_is_error_word_char(yyextra->scanbuf[pos - 1])) ||
+            (pos + 4 < yyextra->scanbuflen && scanner_is_error_word_char(yyextra->scanbuf[pos + 4]))) {
+            continue;
+        }
+        word.str = yyextra->scanbuf + pos;
+        word.len = 4;
+        if (cm_text_str_equal_ins(&word, "CASE")) {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static const char *scanner_case_bad_word(text_t *word)
+{
+    if (cm_text_str_equal_ins(word, "ELSE")) {
+        return "ELSE";
+    }
+    if (cm_text_str_equal_ins(word, "WHEN")) {
+        return "WHEN";
+    }
+    if (cm_text_str_equal_ins(word, "END")) {
+        return "END";
+    }
+    return NULL;
+}
+
+static bool32 scanner_try_report_case_end_extra(const char *message, core_yyscan_t yyscanner)
+{
+    text_t curr_word;
+    text_t prev_word;
+    const char *bad_word = NULL;
+
+    if (message == NULL || strcmp(message, "syntax error") != 0) {
+        return OG_FALSE;
+    }
+    if (!scanner_token_text(yyscanner, yylloc->offset, &curr_word)) {
+        return OG_FALSE;
+    }
+
+    bad_word = scanner_case_bad_word(&curr_word);
+    if (bad_word == NULL) {
+        return OG_FALSE;
+    }
+
+    if (!scanner_prev_word(yyscanner, yylloc->offset, &prev_word) ||
+        !cm_text_str_equal_ins(&prev_word, "END") ||
+        !scanner_has_case_word_before(yyscanner, yylloc->offset)) {
+        return OG_FALSE;
+    }
+
+    OG_SRC_THROW_ERROR_EX(yylloc->loc, ERR_SQL_SYNTAX_ERROR, "the word \"%s\" is not correct", bad_word);
+    return OG_TRUE;
+}
+
 /*
  * scanner_yyerror
  *        Report a lexer or grammar error.
@@ -1304,6 +1432,9 @@ other            .
 void
 scanner_yyerror(const char *message, core_yyscan_t yyscanner)
 {
+    if (scanner_try_report_case_end_extra(message, yyscanner)) {
+        return;
+    }
     OG_SRC_THROW_ERROR(yylloc->loc, ERR_SQL_SYNTAX_ERROR, message);
     return;
 }
@@ -1367,12 +1498,29 @@ scanner_init(const sql_text_t *sql,
     /*
      * Make a scan buffer with special termination needed by flex.
      */
-    if (sql_alloc_mem(stmt->context, slen + 2, (void **)&yyext->scanbuf) != OG_SUCCESS) {
-        return NULL;
+    size_t scanbuf_size = slen + 2;
+    yyext->scanbuf_malloced = false;
+    if (scanbuf_size > stmt->context->ctrl.memory->pool->page_size) {
+        yyext->scanbuf = (char *)malloc(scanbuf_size);
+        if (yyext->scanbuf == NULL) {
+            OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)scanbuf_size, "scanner buffer");
+            return NULL;
+        }
+        yyext->scanbuf_malloced = true;
+    } else {
+        if (sql_alloc_mem(stmt->context, (uint32)scanbuf_size, (void **)&yyext->scanbuf) != OG_SUCCESS) {
+            return NULL;
+        }
     }
     yyext->scanbuflen = slen;
     yyext->stmt = stmt;
+    yyext->pending_prev_cte = NULL;
     if (sql_create_array(stmt->context, &yyext->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS) != OG_SUCCESS) {
+        if (yyext->scanbuf_malloced) {
+            free(yyext->scanbuf);
+            yyext->scanbuf = NULL;
+            yyext->scanbuf_malloced = false;
+        }
         return NULL;
     }
     memcpy(yyext->scanbuf, str, slen);
@@ -1387,7 +1535,13 @@ scanner_init(const sql_text_t *sql,
 
     /* initialize literal buffer to a reasonable but expansible size */
     yyext->literalalloc = 1024;
-    if (sql_alloc_mem(stmt->context, yyext->literalalloc, (void **)&yyext->literalbuf) != OG_SUCCESS) {
+    yyext->literalbuf = (char *)core_yyalloc(yyext->literalalloc, scanner);
+    if (yyext->literalbuf == NULL) {
+        if (yyext->scanbuf_malloced) {
+            free(yyext->scanbuf);
+            yyext->scanbuf = NULL;
+            yyext->scanbuf_malloced = false;
+        }
         return NULL;
     }
     yyext->literallen = 0;
@@ -1411,6 +1565,12 @@ scanner_init(const sql_text_t *sql,
 void
 scanner_finish(core_yyscan_t yyscanner)
 {
+    core_yy_extra_type *yyext = &og_yyget_extra(yyscanner)->core_yy_extra;
+    if (yyext->scanbuf_malloced) {
+        free(yyext->scanbuf);
+        yyext->scanbuf = NULL;
+        yyext->scanbuf_malloced = false;
+    }
 }
 /*$$exclude in dialect end*/
 
@@ -1426,8 +1586,9 @@ addlit(char *ytext, int yleng, core_yyscan_t yyscanner)
         } while ((yyextra->literallen + yleng) >= yyextra->literalalloc);
 
         /*when yytext is larger than 512M, its double will exceed 1G, so we use repalloc_huge */
-        yyextra->literalbuf = (char *) realloc(yyextra->literalbuf,
-                                                yyextra->literalalloc);
+        yyextra->literalbuf = (char *) core_yyrealloc(yyextra->literalbuf,
+                                                      yyextra->literalalloc,
+                                                      yyscanner);
     }
     /* append new data */
     memcpy(yyextra->literalbuf + yyextra->literallen, ytext, yleng);
@@ -1442,8 +1603,9 @@ addlitchar(unsigned char ychar, core_yyscan_t yyscanner)
     if ((yyextra->literallen + 1) >= yyextra->literalalloc)
     {
         yyextra->literalalloc *= 2;
-        yyextra->literalbuf = (char *) realloc(yyextra->literalbuf,
-                                                yyextra->literalalloc);
+        yyextra->literalbuf = (char *) core_yyrealloc(yyextra->literalbuf,
+                                                      yyextra->literalalloc,
+                                                      yyscanner);
     }
     /* append new data */
     yyextra->literalbuf[yyextra->literallen] = ychar;
@@ -1476,16 +1638,18 @@ process_integer_literal(const char *token, YYSTYPE *lval, core_yyscan_t yyscanne
     char       *endptr;
 
     errno = 0;
-    val = strtol(token, &endptr, 10);
-    if (*endptr != '\0' || errno == ERANGE
-        /* if long > 32 bits, check for overflow of int4 */
-        || val != (int64) ((int32) val)
-        )
-    {
-        /* integer too large, treat it as a float */
+    val = strtoll(token, &endptr, 10);
+    if (*endptr != '\0' || errno == ERANGE) {
+        /* integer too large for int64, treat it as a number */
         FLEX_MEM_STRDUP(lval->str, token);
         return FCONST;
     }
+
+    if (val != (int64)((int32)val)) {
+        lval->ival64 = val;
+        return I64CONST;
+    }
+
     lval->ival = val;
     return ICONST;
 }
@@ -1798,7 +1962,15 @@ static void flex_alloc_mem(void *context, yy_size_t size, void **buf)
 {
     void *ptr = NULL;
     yy_size_t len = size + FLEX_MEM_HEADER_SIZE;
-    sql_alloc_mem(context, len, (void **)&ptr);
+
+    *buf = NULL;
+    if (SECUREC_UNLIKELY(len < size || len > OG_MAX_UINT32)) {
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)size, "bison scanner");
+        return;
+    }
+    if (sql_alloc_mem(context, (uint32)len, (void **)&ptr) != OG_SUCCESS) {
+        return;
+    }
 
     flex_mem_header *header = (flex_mem_header*)ptr;
     header->magic_number = FLEX_MEM_MAGIC_NUMBER;
@@ -1821,6 +1993,9 @@ core_yyrealloc(void *ptr, yy_size_t bytes, core_yyscan_t yyscanner)
 {
     void *buf = NULL;
     flex_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, bytes, (void **)&buf);
+    if (buf == NULL) {
+        return NULL;
+    }
 
     if (ptr) {
         flex_mem_header *old_header = FLEX_MEM_GET_HEADER(ptr);
@@ -1881,6 +2056,11 @@ static void update_current_location(char *cur_pos, char *origin_str, lex_locatio
 static bool32 need_ignore_for_func(sql_stmt_t *stmt, char* ident, int len)
 {
     text_t user;
+    if (len == (int)(sizeof("connect_by_root") - 1) &&
+        cm_strcmpni(ident, "connect_by_root", sizeof("connect_by_root") - 1) == 0) {
+        return OG_FALSE;
+    }
+
     user.str = stmt->session->db_user;
     user.len = (uint32)strlen(stmt->session->db_user);
 

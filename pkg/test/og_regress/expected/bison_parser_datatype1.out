@@ -940,8 +940,9 @@ NCLOB_COL
 1 rows fetched.
 
 SQL> drop table nclob_table;
+
 Succeed.
 
-
+SQL> 
 
 

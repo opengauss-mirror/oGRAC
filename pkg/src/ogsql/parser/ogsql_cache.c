@@ -219,7 +219,7 @@ void og_update_context_stat_cached(sql_stmt_t *statement, timeval_t *tv_beg, ogx
     ogx->module_kind = SESSION_CLIENT_KIND(statement->session);
 }
 
-status_t og_find_then_parse_dml(sql_stmt_t *statement, key_wid_t key_wid, uint32 special_word)
+status_t og_find_then_parse_dml(sql_stmt_t *statement, key_wid_t key_wid, sql_text_t *sql_text, uint32 special_word)
 {
     OG_LOG_DEBUG_INF("Starting SQL soft parse process, stmtid=%u", statement->id);
     // 先从缓存中查找.
@@ -227,7 +227,7 @@ status_t og_find_then_parse_dml(sql_stmt_t *statement, key_wid_t key_wid, uint32
     context_bucket_t *ctx_bucket = NULL;
     ogx_stat_t stat;
     stat.parse_calls = 0;  // check if resue the stat.
-    text_t *ogsql = (text_t *)&statement->session->lex->text;
+    text_t *ogsql = &sql_text->value;
     if (og_get_context_from_cache(statement, ogsql, &hash, &ctx_bucket, &stat) == OG_SUCCESS) {
         statement->context->has_ltt = (special_word & SQL_HAS_LTT);
         return OG_SUCCESS;
@@ -251,13 +251,13 @@ status_t og_find_then_parse_dml(sql_stmt_t *statement, key_wid_t key_wid, uint32
 
     timeval_t begin_time;
     (void)cm_gettimeofday(&begin_time);
-    if (sql_create_dml_currently(statement, (sql_text_t *)ogsql, key_wid)) {
+    if (sql_create_dml_currently(statement, sql_text, key_wid)) {
         return OG_ERROR;
     }
     OG_LOG_DEBUG_INF("DML hard parsing completed successfully, stmtid=%u", statement->id);
     CM_ASSERT(ogx->cacheable);
     og_update_context_stat_cached(statement, &begin_time, &stat);
-    ret = og_cache_sql_context(statement, ctx_bucket, (sql_text_t *)ogsql, hash);
+    ret = og_cache_sql_context(statement, ctx_bucket, sql_text, hash);
     if (ret != OG_SUCCESS) {
         OG_LOG_DEBUG_ERR("Failed to cache sql context, SQL = %s.", T2S(ogsql));
         return OG_ERROR;

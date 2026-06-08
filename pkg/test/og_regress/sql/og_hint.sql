@@ -34,5 +34,3 @@ create index t1_idx2 on hint_test1(a,b,c);
 explain select * from hint_test1 where a = 1000;
 explain select /*+index(hint_test1 t1_idx1)*/* from hint_test1 where a = 1000;
 explain select /*+full(hint_test1)*/* from hint_test1 where a = 1000;
-
-alter system set use_bison_parser = false;

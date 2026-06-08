@@ -37,6 +37,9 @@ create or replace profile bison_ddl_profile limit sessions_per_user 1;
 drop profile bison_ddl_profile;
 
 create table bison_ddl_tab(id int, val int);
+comment on table sys.bison_ddl_tab is 'bison table comment';
+comment on column sys.bison_ddl_tab.id is 'bison id comment';
+comment on column sys.bison_ddl_tab.id is '';
 
 alter table bison_ddl_tab add column txt varchar(20) default 'x';
 alter table bison_ddl_tab add (extra int, flag int default 0);
@@ -357,5 +360,3 @@ drop table if exists bison_ddl_hash_tab;
 drop table if exists bison_ddl_part_tab;
 drop table if exists bison_ddl_tab_renamed;
 drop table if exists bison_ddl_tab;
-
-alter system set use_bison_parser = false;

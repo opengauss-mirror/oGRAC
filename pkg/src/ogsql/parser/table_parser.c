@@ -462,6 +462,10 @@ static status_t sql_parse_dblink(sql_stmt_t *stmt, word_t *word, sql_text_t *dbl
     lex_t *lex = stmt->session->lex;
     bool32 result;
 
+    if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
+        return OG_SUCCESS;
+    }
+
     OG_RETURN_IFERR(lex_try_fetch_database_link(lex, word, &result));
 
     if (!result) {

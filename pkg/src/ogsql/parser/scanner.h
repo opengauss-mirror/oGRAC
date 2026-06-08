@@ -32,6 +32,7 @@
  */
 typedef union core_YYSTYPE {
     int ival;            /* for integer literals */
+    int64 ival64;        /* for bigint literals */
     char* str;           /* for identifiers and non-integer literals */
     const char* keyword; /* canonical spelling of keywords */
 } core_YYSTYPE;
@@ -60,6 +61,7 @@ typedef struct st_lex_locataion {
  * the ASCII characters plus these:
  *	%token <str>	IDENT FCONST SCONST BCONST XCONST Op
  *	%token <ival>	ICONST PARAM
+ *	%token <ival64>	I64CONST
  *	%token			TYPECAST DOT_DOT COLON_EQUALS PARA_EQUALS
  * The above token definitions *must* be the first ones declared in any
  * bison parser built atop this scanner, so that they will have consistent
@@ -79,10 +81,12 @@ typedef struct core_yy_extra_type {
      */
     char* scanbuf;
     size_t scanbuflen;
+    bool8 scanbuf_malloced;
 
     sql_array_t ssa; /* for sub-selects */
     sql_stmt_t *stmt;
     object_stack_t withas_stack;
+    sql_withas_factor_t *pending_prev_cte;
     char *origin_str;
 
     /*
@@ -378,6 +382,7 @@ extern void scanner_yyerror(const char* message, core_yyscan_t yyscanner);
 extern void addErrorList(const char* message, int lines);
 extern int ct_yyget_leng(core_yyscan_t yyscanner);
 extern void *core_yyalloc(size_t bytes, core_yyscan_t yyscanner);
+extern void *core_yyrealloc(void *ptr, size_t bytes, core_yyscan_t yyscanner);
 extern void core_yyfree(void *ptr, core_yyscan_t yyscanner);
 
 typedef int (*coreYYlexFunc)(core_YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner);

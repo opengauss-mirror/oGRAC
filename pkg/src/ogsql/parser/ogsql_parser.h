@@ -42,6 +42,7 @@ typedef struct st_sql_parser {
 
 status_t sql_parse(sql_stmt_t *stmt, text_t *sql, source_location_t *loc);
 lang_type_t sql_diag_lang_type(sql_stmt_t *stmt, sql_text_t *sql, word_t *leader_word);
+sql_text_t *sql_current_parse_text(sql_stmt_t *stmt);
 
 #ifdef __cplusplus
 }
