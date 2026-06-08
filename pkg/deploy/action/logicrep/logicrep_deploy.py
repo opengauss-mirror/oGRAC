@@ -11,8 +11,12 @@ import time
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
+ACTION_ROOT = os.path.dirname(CUR_DIR)
+if ACTION_ROOT not in sys.path:
+    sys.path.append(ACTION_ROOT)
 
 from config import get_config
+from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 from utils import (
     CommandError, exec_popen, ensure_dir,
@@ -46,6 +50,11 @@ class LogicrepDeploy:
 
         pkg_dir = os.path.abspath(os.path.join(CUR_DIR, "../.."))
         self.logicrep_pkg = os.path.join(pkg_dir, "zlogicrep", "build", "oGRAC_PKG", "file")
+
+    def _diagnostic_log_specs(self):
+        specs = list(self.paths.diagnostic_log_specs())
+        specs.append({"name": "logicrep status", "path": self.startup_status_file, "kind": "file"})
+        return specs
 
     def _run_ctl(self, action, mode=""):
         p = self.paths
@@ -425,6 +434,7 @@ def main():
     try:
         fn()
     except Exception as e:
+        emit_failure_diagnostics("logicrep", action, deployer._diagnostic_log_specs(), error=e)
         LOG.error(str(e))
         sys.exit(1)
 

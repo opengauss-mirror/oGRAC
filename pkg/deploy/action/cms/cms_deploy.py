@@ -9,8 +9,12 @@ import shutil
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
+ACTION_ROOT = os.path.dirname(CUR_DIR)
+if ACTION_ROOT not in sys.path:
+    sys.path.append(ACTION_ROOT)
 
 from config import cfg, get_config
+from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 from utils import (
     exec_popen, run_cmd, run_as_user, run_python_as_user, CommandError,
@@ -21,6 +25,17 @@ from utils import (
 )
 
 LOGGER = get_logger()
+
+
+def validate_install_config():
+    """Validate config_params_lun.json before component pre_install writes config."""
+    validator = os.path.join(ACTION_ROOT, "config_param_validator.py")
+    config_file = os.path.join(ACTION_ROOT, "config_params_lun.json")
+    ret, stdout, stderr = exec_popen(
+        f"python3 {validator} {config_file}", timeout=60)
+    if ret != 0:
+        message = "\n".join(part for part in (stdout, stderr) if part)
+        raise RuntimeError(f"config validation failed: {message}")
 
 
 class CmsDeploy:
@@ -249,6 +264,7 @@ class CmsDeploy:
     def action_pre_install(self, install_type=""):
         """Pre-install."""
         LOGGER.info("========== PRE_INSTALL CMS ==========")
+        validate_install_config()
         if install_type == "reserve":
             update_cfg = os.path.join(CUR_DIR, "..", "compat", "update_config.py")
             run_python_as_user(
@@ -637,10 +653,12 @@ def main():
 
     except (CommandError, FileCheckError, RuntimeError) as e:
         LOGGER.error(f"Action '{action}' failed: {e}")
+        emit_failure_diagnostics("CMS", action, deployer.paths.diagnostic_log_specs(), error=e)
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         LOGGER.error(f"Unexpected error in action '{action}': {e}", exc_info=True)
+        emit_failure_diagnostics("CMS", action, deployer.paths.diagnostic_log_specs(), error=e)
         print(f"UNEXPECTED ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 

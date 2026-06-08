@@ -101,6 +101,8 @@ class PathConfig:
         self.log_root = os.path.join(ograc_home, "log")
         self.cms_log_dir = os.path.join(self.log_root, "cms")
         self.cms_deploy_log = os.path.join(self.cms_log_dir, "cms_deploy.log")
+        self.cms_status_log = os.path.join(self.cms_log_dir, "CmsStatus.log")
+        self.cms_runtime_log = os.path.join(self.cms_log_dir, "run", "cms_srv.rlog")
         self.deploy_log_dir = os.path.join(self.log_root, "deploy")
         self.deploy_daemon_log = os.path.join(self.deploy_log_dir, "deploy_daemon.log")
 
@@ -134,6 +136,13 @@ class PathConfig:
             os.path.join(self.cms_home, "cms_server.lck"),
             os.path.join(self.cms_home, "local"),
             os.path.join(self.cms_home, "gcc_backup"),
+        ]
+
+    def diagnostic_log_specs(self):
+        return [
+            {"name": "deploy", "path": self.cms_deploy_log, "kind": "file"},
+            {"name": "CMS status", "path": self.cms_status_log, "kind": "file"},
+            {"name": "CMS runtime", "path": self.cms_runtime_log, "kind": "file"},
         ]
 
     def share_path(self, fs_name):
@@ -369,6 +378,9 @@ if __name__ == "__main__":
             _cfg = get_config()
             print(f'OGRAC_HOME="{_cfg.paths.ograc_home}"')
             print(f'CMS_LOG_DIR="{_cfg.paths.cms_log_dir}"')
+            print(f'CMS_DEPLOY_LOG="{_cfg.paths.cms_deploy_log}"')
+            print(f'CMS_STATUS_LOG="{_cfg.paths.cms_status_log}"')
+            print(f'CMS_RUNTIME_LOG="{_cfg.paths.cms_runtime_log}"')
             print(f'OGRAC_USER="{_cfg.paths.instance.user}"')
             print(f'CGROUP_MEMORY_PATH="{_cfg.paths.instance.cgroup_memory_path}"')
             print(f'CGROUP_MEMORY_LIMIT_GB="{_cfg.paths.instance.cgroup_memory_limit_gb}"')

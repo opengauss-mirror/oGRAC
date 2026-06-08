@@ -48,6 +48,19 @@ def run_cmd(cmd, timeout=600, error_msg="Command failed"):
     return out
 
 
+def _tail_log(log_file, n=20):
+    """Read last n lines from a log file for error summary."""
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        tail = "".join(lines[-n:]).strip()
+        if tail:
+            return f"{tail}\nSee full log: {log_file}"
+    except OSError:
+        pass
+    return ""
+
+
 def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=600, env_extra=None):
     import pwd
     pw = pwd.getpwnam(user)
@@ -69,34 +82,35 @@ def run_python_as_user(script, args, user, log_file=None, cwd=None, timeout=600,
     cmd_list = [sys.executable, "-B", script] + list(args)
     work_dir = cwd or os.path.dirname(os.path.abspath(script))
 
-    log_fh = None
     try:
-        if log_file:
-            os.makedirs(os.path.dirname(log_file), exist_ok=True)
-            log_fh = open(log_file, "a", encoding="utf-8")
-            proc = subprocess.Popen(
-                cmd_list, stdout=log_fh, stderr=subprocess.STDOUT,
-                cwd=work_dir, env=env, preexec_fn=_demote,
-            )
-            proc.communicate(timeout=timeout)
-            return proc.returncode, "", ""
         proc = subprocess.Popen(
             cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=work_dir, env=env, preexec_fn=_demote,
         )
         stdout_b, stderr_b = proc.communicate(timeout=timeout)
-        return (
-            proc.returncode,
-            stdout_b.decode("utf-8", errors="replace").strip(),
-            stderr_b.decode("utf-8", errors="replace").strip(),
-        )
+        stdout = stdout_b.decode("utf-8", errors="replace").strip()
+        stderr = stderr_b.decode("utf-8", errors="replace").strip()
+
+        if log_file:
+            try:
+                os.makedirs(os.path.dirname(log_file), exist_ok=True)
+                with open(log_file, "a", encoding="utf-8") as log_fh:
+                    combined = "\n".join(part for part in (stdout, stderr) if part)
+                    if combined:
+                        log_fh.write(combined + "\n")
+            except OSError:
+                pass
+
+        if proc.returncode != 0 and not stderr and log_file:
+            fallback = _tail_log(log_file, 20)
+            if fallback:
+                stderr = fallback
+
+        return proc.returncode, stdout, stderr
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
         return -1, "", f"Timeout after {timeout}s"
-    finally:
-        if log_fh:
-            log_fh.close()
 
 
 def run_shell_as_user(cmd, user, timeout=600):

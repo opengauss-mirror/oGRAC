@@ -23,6 +23,7 @@ from utils import (
     ensure_dir, safe_remove, copy_tree, chown_recursive,
     read_version, CommandError,
 )
+from config_param_validator import ConfigParamValidationError, validate_config_params_file
 
 LOG = get_logger("deploy")
 
@@ -39,6 +40,18 @@ UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 POST_UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 ROLLBACK_ORDER = ["cms", "ograc", "og_om", "ograc_exporter"]
 INIT_CONTAINER_ORDER = ["cms", "ograc"]
+
+
+def _resolve_install_config_file(config_file=""):
+    """Resolve the config file used by pre_install."""
+    if not config_file:
+        return os.path.join(CUR_DIR, "config_params_lun.json")
+    if os.path.isabs(config_file):
+        return config_file
+    cwd_path = os.path.abspath(config_file)
+    if os.path.exists(cwd_path):
+        return cwd_path
+    return os.path.join(CUR_DIR, config_file)
 
 
 class OgracDeploy:
@@ -127,18 +140,28 @@ class OgracDeploy:
 
     def pre_install(self, install_type="override", config_file=""):
         LOG.info("Begin pre_install, install_type=%s", install_type)
+        config_file = _resolve_install_config_file(config_file)
+        try:
+            validate_config_params_file(config_file, logger=LOG)
+        except ConfigParamValidationError as error:
+            LOG.error("config validation failed: %s", str(error))
+            return 1
 
         if self.ograc_in_container not in ("1", "2"):
             pre_install_py = os.path.join(CUR_DIR, "pre_install.py")
             ret, stdout, stderr = exec_popen(
-                f"python3 {pre_install_py} {install_type} {config_file}",
+                "python3 %s %s %s" % (
+                    shlex.quote(pre_install_py),
+                    shlex.quote(install_type),
+                    shlex.quote(config_file),
+                ),
                 timeout=self.cfg.timeout("pre_install"))
             if ret != 0:
                 LOG.error("pre_install.py failed: %s", stderr)
                 return 1
         else:
-            config_path = os.path.join(CUR_DIR, config_file) if config_file else ""
-            if config_path and os.path.exists(config_path):
+            config_path = config_file
+            if os.path.exists(config_path):
                 deploy_param = os.path.join(CUR_DIR, "deploy_param.json")
                 copy_tree(config_path, deploy_param)
 
