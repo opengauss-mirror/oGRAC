@@ -630,10 +630,38 @@ status_t og_transf_optimize_exists(sql_stmt_t *statement, cond_node_t *cond)
     return og_exists_remove_rs_columns(statement, sub_qry);
 }
 
+static status_t og_process_exists_conditions_recursive(sql_stmt_t *sql_stmt, sql_query_t *query, cond_node_t *cond_node)
+{
+    status_t result = OG_SUCCESS;
+
+    switch (cond_node->type) {
+        case COND_NODE_COMPARE:
+            return og_transf_optimize_exists(sql_stmt, cond_node);
+
+        case COND_NODE_AND:
+        case COND_NODE_OR:
+            result = og_process_exists_conditions_recursive(sql_stmt, query, cond_node->left);
+            if (result != OG_SUCCESS) {
+                return result;
+            }
+            result = og_process_exists_conditions_recursive(sql_stmt, query, cond_node->right);
+            if (result != OG_SUCCESS) {
+                return result;
+            }
+            try_eval_logic_cond(sql_stmt, cond_node);
+            return OG_SUCCESS;
+
+        default:
+            break;
+    }
+
+    return result;
+}
+
 static status_t og_process_in_conditions_recursive(sql_stmt_t *sql_stmt, sql_query_t *query, cond_node_t *cond_node)
 {
     status_t result = OG_SUCCESS;
-    
+
     switch (cond_node->type) {
         case COND_NODE_COMPARE:
             result = og_in2exists(sql_stmt, query, cond_node->cmp);
@@ -641,18 +669,35 @@ static status_t og_process_in_conditions_recursive(sql_stmt_t *sql_stmt, sql_que
                 return result;
             }
             return og_transf_optimize_exists(sql_stmt, cond_node);
-        
+
         case COND_NODE_AND:
             result = og_process_in_conditions_recursive(sql_stmt, query, cond_node->left);
             if (result != OG_SUCCESS) {
                 return result;
             }
-            return og_process_in_conditions_recursive(sql_stmt, query, cond_node->right);
-        
+            result = og_process_in_conditions_recursive(sql_stmt, query, cond_node->right);
+            if (result != OG_SUCCESS) {
+                return result;
+            }
+            try_eval_logic_cond(sql_stmt, cond_node);
+            return OG_SUCCESS;
+
+        case COND_NODE_OR:
+            result = og_process_exists_conditions_recursive(sql_stmt, query, cond_node->left);
+            if (result != OG_SUCCESS) {
+                return result;
+            }
+            result = og_process_exists_conditions_recursive(sql_stmt, query, cond_node->right);
+            if (result != OG_SUCCESS) {
+                return result;
+            }
+            try_eval_logic_cond(sql_stmt, cond_node);
+            return OG_SUCCESS;
+
         default:
             break;
     }
-    
+
     return result;
 }
 
