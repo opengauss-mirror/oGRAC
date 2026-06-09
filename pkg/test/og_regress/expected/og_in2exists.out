@@ -387,12 +387,12 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 666  | 3998 | 0         |       |        |
-| 1  |   FILTER                  |       |                   | 666  | 3998 | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |                   | 666  | 3997 | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T1 | 323  | 5    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
-| 5  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 787  | 4693 | 0         |       |        |
+| 1  |   FILTER                  |       |                   | 787  | 4693 | 0         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |                   | 787  | 4691 | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T1 | 351  | 6    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
+| 5  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T2 T3 | 351  | 5    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -420,12 +420,12 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 390  | 6    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |                   | 390  | 6    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 390  | 6    | 0         |       |        |
-| 3  |     NESTED LOOPS OUTER    |       |                   | 666  | 4088 | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
+| 3  |     NESTED LOOPS OUTER    |       |                   | 787  | 4790 | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -456,12 +456,12 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 390  | 6    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |                   | 390  | 6    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 390  | 6    | 0         |       |        |
-| 3  |     NESTED LOOPS OUTER    |       |                   | 666  | 4088 | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
+| 3  |     NESTED LOOPS OUTER    |       |                   | 787  | 4790 | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -493,12 +493,12 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 390  | 6    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |                   | 390  | 6    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 390  | 6    | 0         |       |        |
-| 3  |     NESTED LOOPS OUTER    |       |                   | 666  | 4088 | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
+| 3  |     NESTED LOOPS OUTER    |       |                   | 787  | 4790 | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

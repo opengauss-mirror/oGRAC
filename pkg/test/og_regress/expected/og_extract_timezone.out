@@ -46,7 +46,7 @@ SQL> select
   3   extract(timezone_minute from to_timestamp('2026-02-26 00:00:00 -14:00')) as tzm
   4 from dual;
 
-OG-00146, [2:43]Time zone hour should be from -12 to 14
+OG-00146, Time zone hour should be from -12 to 14
 SQL> 
 SQL> select
   2   extract(timezone_hour   from to_timestamp('2026-02-26 00:00:00 +12:00')) as tzh,
@@ -121,8 +121,10 @@ TZH          TZM
 
 SQL> 
 SQL> select extract(-1) from dual;
-OG-00601, [1:8]Sql syntax error: not enough arguments for function
+
+OG-00601, [1:16]Sql syntax error: not enough arguments for function
 SQL> select extract(-1 from timestamp '2023-06-15 14:30:00') from dual;
+
 OG-00601, [1:16]Sql syntax error: invalid datetime unit
 SQL> 
 SQL> 

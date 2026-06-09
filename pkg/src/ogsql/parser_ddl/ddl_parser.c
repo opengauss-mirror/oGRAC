@@ -36,6 +36,7 @@
 #include "ddl_column_parser.h"
 #include "ddl_partition_parser.h"
 #include "ddl_view_parser.h"
+#include "ogsql_parser.h"
 #include "ddl_parser_common.h"
 #include "cm_license.h"
 #include "ogsql_privilege.h"
@@ -52,14 +53,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-static sql_text_t *sql_ddl_current_parse_text(sql_stmt_t *stmt)
-{
-    if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
-        return &stmt->parser_text;
-    }
-    return &stmt->session->lex->text;
-}
 
 static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
 {
@@ -82,7 +75,7 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_view(stmt, OG_TRUE, is_force);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         }
@@ -94,7 +87,7 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
 
                 status = sql_parse_create_synonym(stmt, SYNONYM_IS_PUBLIC + SYNONYM_IS_REPLACE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         }
@@ -105,21 +98,21 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = pl_parse_create(stmt, OG_TRUE, &word);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_TRIGGER:
             if (!g_instance->sql.use_bison_parser) {
                 status = pl_parse_create_trigger(stmt, OG_TRUE, &word);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_SYNONYM: {
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_synonym(stmt, SYNONYM_IS_REPLACE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         }
@@ -128,7 +121,7 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_directory(stmt, OG_TRUE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         }
@@ -137,7 +130,7 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_library(stmt, OG_TRUE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         }
@@ -146,7 +139,7 @@ static status_t sql_create_or_replace_lead(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_profile(stmt, OG_TRUE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         }
@@ -239,14 +232,14 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_create_database_lead(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case RES_WORD_USER:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_user(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             OG_RETURN_IFERR(sql_clear_origin_sql_if_error(stmt, status));
             break;
@@ -254,7 +247,7 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_role(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             OG_RETURN_IFERR(sql_clear_origin_sql_if_error(stmt, status));
             break;
@@ -262,77 +255,77 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_tenant(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_TABLE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_table(stmt, OG_FALSE, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_INDEX:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_index(stmt, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_INDEXCLUSTER:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_indexes(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_SEQUENCE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_sequence(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_TABLESPACE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_space(stmt, OG_FALSE, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_TEMPORARY:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_create_temporary_lead(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_GLOBAL:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_create_global_lead(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_UNIQUE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_unique_lead(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_UNDO:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_undo_space(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_VIEW:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_view(stmt, OG_FALSE, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -343,14 +336,14 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = pl_parse_create(stmt, OG_FALSE, &word);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_TRIGGER:
             if (!g_instance->sql.use_bison_parser) {
                 status = pl_parse_create_trigger(stmt, OG_FALSE, &word);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_OR:
@@ -360,42 +353,42 @@ status_t sql_parse_create(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_create_public_lead(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_SYNONYM:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_synonym(stmt, SYNONYM_IS_NULL);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_PROFILE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_profile(stmt, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_DIRECTORY:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_directory(stmt, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_CTRLFILE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_ctrlfiles(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_LIBRARY:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create_library(stmt, OG_FALSE);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         default:
@@ -485,7 +478,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
                 OG_BREAK_IF_ERROR(status);
                 status = sql_verify_alter_table(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -493,7 +486,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_space(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -501,7 +494,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_database_lead(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -509,7 +502,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_sequence(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -517,7 +510,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_index(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -525,7 +518,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_user(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             OG_RETURN_IFERR(sql_clear_origin_sql_if_error(stmt, status));
             break;
@@ -534,7 +527,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_tenant(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -542,7 +535,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_profile(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -551,7 +544,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
                 OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "alter function");
                 status = OG_ERROR;
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -559,7 +552,7 @@ static status_t sql_parse_ddl_alter(sql_stmt_t *stmt)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_alter_trigger(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
 
@@ -1001,7 +994,7 @@ status_t sql_parse_ddl(sql_stmt_t *stmt, word_t *leader_word)
 {
     status_t status;
     key_wid_t key_wid = leader_word->id;
-    text_t origin_sql = sql_ddl_current_parse_text(stmt)->value;
+    text_t origin_sql = sql_current_parse_text(stmt)->value;
     stmt->session->sql_audit.audit_type = SQL_AUDIT_DDL;
     OG_RETURN_IFERR(sql_alloc_context(stmt));
     OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->ref_objects));
@@ -1011,70 +1004,70 @@ status_t sql_parse_ddl(sql_stmt_t *stmt, word_t *leader_word)
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_create(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_DROP:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_drop(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_TRUNCATE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_truncate(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_FLASHBACK:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_flashback(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_PURGE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_purge(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_COMMENT:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_comment(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_GRANT:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_grant(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_REVOKE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_revoke(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         case KEY_WORD_ANALYZE:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_analyze(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
         default:
             if (!g_instance->sql.use_bison_parser) {
                 status = sql_parse_ddl_alter(stmt);
             } else {
-                status = raw_parser(stmt, sql_ddl_current_parse_text(stmt), &stmt->context->entry);
+                status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
             break;
     }

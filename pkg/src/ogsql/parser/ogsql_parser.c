@@ -150,7 +150,7 @@ static status_t sql_read_call_name_part(text_t *text, uint32 *pos, text_t *part)
     return OG_SUCCESS;
 }
 
-static sql_text_t *sql_current_parse_text(sql_stmt_t *stmt)
+sql_text_t *sql_current_parse_text(sql_stmt_t *stmt)
 {
     if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
         return &stmt->parser_text;
@@ -539,6 +539,7 @@ static status_t sql_parse_pl_bison_text(sql_stmt_t *stmt, sql_text_t *sql_text)
     }
 
     OG_RETURN_IFERR(sql_alloc_context(stmt));
+    OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->params));
     OG_RETURN_IFERR(sql_create_list(stmt, &stmt->context->ref_objects));
 
     status = raw_parser(stmt, sql_text, &stmt->context->entry);
@@ -864,12 +865,27 @@ static status_t sql_parse_core(sql_stmt_t *stmt, text_t *sql, source_location_t 
     return status;
 }
 
+static inline bool32 sql_bootstrap_use_native_parser(sql_stmt_t *stmt)
+{
+    /*
+     * initdb/initplsql bootstrap runs before all SYS PL entries and built-in
+     * package grants are fully visible through dictionary lookups. Keep that
+     * bootstrap script path on the native parser; after bootstrap the
+     * USE_BISON_PARSER parameter controls normal SQL parsing.
+     */
+    return g_instance->sql.use_bison_parser && KNL_SESSION(stmt)->bootstrap;
+}
+
 status_t sql_parse(sql_stmt_t *stmt, text_t *sql, source_location_t *loc)
 {
     word_t leader_word;
     status_t status;
     sql_text_t sql_text = { 0 };
-
+    bool32 use_bison_bak = g_instance->sql.use_bison_parser;
+    bool32 use_native = sql_bootstrap_use_native_parser(stmt);
+    if (use_native) {
+        g_instance->sql.use_bison_parser = OG_FALSE;
+    }
     OGSQL_SAVE_STACK(stmt);
     sql_text.value = *sql;
     sql_text.loc = *loc;
@@ -878,6 +894,9 @@ status_t sql_parse(sql_stmt_t *stmt, text_t *sql, source_location_t *loc)
     status = sql_parse_core(stmt, sql, loc);
 
     OGSQL_RESTORE_STACK(stmt);
+    if (use_native) {
+        g_instance->sql.use_bison_parser = use_bison_bak;
+    }
     return status;
 }
 

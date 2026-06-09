@@ -246,6 +246,102 @@ static bool32 plsql_is_trigger_param(TokenAuxData *auxdata, core_yyscan_t yyscan
     return OG_FALSE;
 }
 
+static bool32 plsql_is_identifier_like_token(TokenAuxData *auxdata, core_yyscan_t yyscanner)
+{
+    char *token_text = NULL;
+
+    if (auxdata->leng <= 0) {
+        return OG_FALSE;
+    }
+
+    token_text = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + auxdata->lloc.offset;
+    return (bool32)(CM_IS_LETER(token_text[0]) || token_text[0] == '_');
+}
+
+static bool32 plsql_token_text_equal(TokenAuxData *auxdata, core_yyscan_t yyscanner, const char *expected)
+{
+    uint32 expected_len = (uint32)strlen(expected);
+    char *token_text = NULL;
+
+    if (auxdata->leng != (int)expected_len) {
+        return OG_FALSE;
+    }
+
+    token_text = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + auxdata->lloc.offset;
+    return (bool32)(memcmp(token_text, expected, expected_len) == 0);
+}
+
+static status_t plsql_copy_token_word(sql_stmt_t *stmt, TokenAuxData *auxdata, core_yyscan_t yyscanner)
+{
+    char *token_text = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + auxdata->lloc.offset;
+    uint32 token_len = (uint32)auxdata->leng;
+    char *ident = NULL;
+    errno_t ret;
+
+    if (sql_stack_alloc(stmt, token_len + 1, (void **)&ident) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    ret = memcpy_s(ident, token_len + 1, token_text, token_len);
+    if (ret != EOK) {
+        return OG_ERROR;
+    }
+    ident[token_len] = '\0';
+
+    auxdata->lval.word.ident = ident;
+    auxdata->lval.word.quoted = auxdata->ident_quoted;
+    return OG_SUCCESS;
+}
+
+static bool32 plsql_match_reserved_keyword(TokenAuxData *auxdata, int *token)
+{
+    int kwnum = ScanKeywordLookup(auxdata->lval.word.ident, &ReservedPLKeywords);
+    if (kwnum < 0) {
+        return OG_FALSE;
+    }
+
+    auxdata->lval.keyword = GetScanKeyword(kwnum, &ReservedPLKeywords);
+    *token = ReservedPLKeywordTokens[kwnum];
+    return OG_TRUE;
+}
+
+static bool32 plsql_match_unreserved_keyword(TokenAuxData *auxdata, int *token)
+{
+    int kwnum = ScanKeywordLookup(auxdata->lval.word.ident, &UnreservedPLKeywords);
+    if (kwnum < 0) {
+        return OG_FALSE;
+    }
+
+    auxdata->lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);
+    *token = UnreservedPLKeywordTokens[kwnum];
+    return OG_TRUE;
+}
+
+static int plsql_remap_core_token(TokenAuxData *auxdata, core_yyscan_t yyscanner, int token)
+{
+    /*
+     * core_yylex() is generated from the SQL grammar, so scanner-only tokens
+     * have core grammar numbers.  The PL grammar declares the same token names,
+     * but bison token values are not stable across the two generated parsers.
+     * Remap scanner punctuation by lexeme instead of assuming a numeric offset.
+     */
+    if (plsql_token_text_equal(auxdata, yyscanner, "::")) {
+        return TYPECAST;
+    }
+    if (plsql_token_text_equal(auxdata, yyscanner, "(+)")) {
+        return ORA_JOINOP;
+    }
+    if (plsql_token_text_equal(auxdata, yyscanner, "..")) {
+        return DOT_DOT;
+    }
+    if (plsql_token_text_equal(auxdata, yyscanner, ":=")) {
+        return COLON_EQUALS;
+    }
+    if (plsql_token_text_equal(auxdata, yyscanner, "=>")) {
+        return PARA_EQUALS;
+    }
+    return token;
+}
+
 static status_t plsql_try_read_trigger_var(sql_stmt_t *stmt, TokenAuxData *param_aux, core_yyscan_t yyscanner,
     bool32 *matched, expr_node_t **out_expr)
 {
@@ -304,6 +400,7 @@ int plsql_yylex(core_yyscan_t yyscanner)
     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
 
     token = internal_yylex(&aux, yyscanner);
+    token = plsql_remap_core_token(&aux, yyscanner, token);
     if (token == PARAM) {
         bool32 matched = OG_FALSE;
         if (plsql_try_read_trigger_var(stmt, &aux, yyscanner, &matched, &aux.lval.node) != OG_SUCCESS) {
@@ -317,6 +414,25 @@ int plsql_yylex(core_yyscan_t yyscanner)
         } else if ((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
             aux.lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);
             token = UnreservedPLKeywordTokens[kwnum];
+        } else {
+            token = T_WORD;
+        }
+    } else if (plsql_is_identifier_like_token(&aux, yyscanner)) {
+        /*
+         * The shared SQL scanner can still return core SQL keyword tokens for
+         * datatype names such as BINARY_INTEGER.  Those token numbers are not
+         * part of the PL grammar, and they can overlap numerically with PL
+         * token values.  Reclassify by lexeme instead of trusting the core
+         * token number.
+         */
+        if (plsql_copy_token_word(stmt, &aux, yyscanner) != OG_SUCCESS) {
+            token = LEX_ERROR_TOKEN;
+        } else if (parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+            token = T_DATUM;
+        } else if (plsql_match_reserved_keyword(&aux, &token)) {
+            /* token set by plsql_match_reserved_keyword */
+        } else if (plsql_match_unreserved_keyword(&aux, &token)) {
+            /* token set by plsql_match_unreserved_keyword */
         } else {
             token = T_WORD;
         }

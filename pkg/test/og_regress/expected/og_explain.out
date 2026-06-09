@@ -19,8 +19,8 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name     | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |          | 413  | 6    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | T_EXPL_0 | 413  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |          | 449  | 6    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T_EXPL_0 | 449  | 6    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 
 6 rows fetched.
@@ -83,8 +83,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -99,8 +99,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -115,8 +115,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -131,8 +131,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -157,8 +157,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -173,8 +173,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -189,8 +189,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -207,8 +207,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -223,8 +223,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -241,8 +241,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -257,8 +257,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -275,8 +275,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -291,8 +291,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -307,8 +307,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -323,8 +323,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -341,8 +341,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -357,8 +357,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -381,8 +381,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -397,8 +397,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -421,8 +421,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -447,8 +447,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -463,8 +463,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -487,8 +487,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -511,8 +511,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -535,8 +535,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -559,8 +559,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -583,8 +583,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -609,8 +609,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -642,8 +642,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -675,8 +675,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

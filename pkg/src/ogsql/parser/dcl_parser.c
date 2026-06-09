@@ -33,6 +33,7 @@
 #include "ogsql_verifier.h"
 #include "ddl_parser.h"
 #include "table_parser.h"
+#include "ogsql_parser.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1025,14 +1026,6 @@ static status_t sql_parse_validate_dcl(sql_stmt_t *stmt)
     return sql_parse_validate(stmt);
 }
 
-static sql_text_t *sql_dcl_current_parse_text(sql_stmt_t *stmt)
-{
-    if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
-        return &stmt->parser_text;
-    }
-    return &stmt->session->lex->text;
-}
-
 static status_t sql_dispatch_dcl_parse(sql_stmt_t *stmt, key_wid_t key_wid)
 {
     switch (key_wid) {
@@ -1040,117 +1033,117 @@ static status_t sql_dispatch_dcl_parse(sql_stmt_t *stmt, key_wid_t key_wid)
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_prepare_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_ALTER:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_alter_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_COMMIT:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_commit_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_ROLLBACK:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_rollback_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_SAVEPOINT:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_savepoint_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_RELEASE:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_release_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_SET:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_set_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_BACKUP:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_backup_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_RESTORE:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_restore_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_RECOVER:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_recover_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_OGRAC:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_ograc_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_SHUTDOWN:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_shutdown_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_BUILD:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_build_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_REPAIR_PAGE:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_repair_page_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_REPAIR_COPYCTRL:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_repair_copyctrl_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
 #ifdef DB_DEBUG_VERSION
         case KEY_WORD_SYNCPOINT:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_syncpoint_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
 #endif
         case KEY_WORD_LOCK:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_lock_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_CHECKPOINT:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_checkpoint_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         case KEY_WORD_VALIDATE:
             if (!g_instance->sql.use_bison_parser) {
                 return sql_parse_validate_dcl(stmt);
             } else {
-                return raw_parser(stmt, sql_dcl_current_parse_text(stmt), &stmt->context->entry);
+                return raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
             }
         default:
             OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected");

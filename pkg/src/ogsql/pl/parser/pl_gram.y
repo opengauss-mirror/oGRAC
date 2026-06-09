@@ -56,6 +56,12 @@ typedef struct st_pl_bison_cursor_arg {
     source_location_t loc;
 } pl_bison_cursor_arg_t;
 
+typedef enum en_pl_bison_fragment_type {
+    PL_BISON_FRAGMENT_EXPR_LIST,
+    PL_BISON_FRAGMENT_EXPR_TREE,
+    PL_BISON_FRAGMENT_COND_TREE
+} pl_bison_fragment_type_t;
+
 extern int plsql_yylex(core_yyscan_t yyscanner);
 extern void plsql_push_back_token(int token, core_yyscan_t yyscanner);
 static void plsql_yyerror(core_yyscan_t yyscanner, const char* message);
@@ -91,12 +97,14 @@ static status_t find_named_loop(pl_compiler_t *compiler, source_location_t loc, 
     pl_line_ctrl_t **line);
 static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr);
 static status_t get_valid_cond_tree(sql_stmt_t *stmt, text_t *src, cond_tree_t **cond);
+static status_t get_valid_call_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr);
 static status_t pl_bison_make_parse_text(sql_stmt_t *stmt, const char *prefix, text_t *body, const char *suffix,
     sql_text_t *sql_text);
 static status_t pl_bison_column_to_proc_node(sql_stmt_t *stmt, expr_node_t *proc);
 static bool tok_is_keyword(int token, union YYSTYPE *lval, int kw_token, const char *kw_str);
 static char *pl_token_text(int token, union YYSTYPE *lval);
 static char *pl_type_token_text(core_yyscan_t yyscanner, int token, union YYSTYPE *lval);
+static bool32 pl_token_text_equal(core_yyscan_t yyscanner, int token, union YYSTYPE *lval, const char *expected);
 static status_t pl_read_interval_datatype(core_yyscan_t yyscanner, sql_stmt_t *stmt, char **typename,
     galist_t **typemode, galist_t **second_typemode, int *tok);
 static text_t *current_label_name(pl_compiler_t *compiler);
@@ -123,6 +131,7 @@ static status_t compile_open_cursor_args_stmt(core_yyscan_t yyscanner, expr_node
     source_location_t loc);
 static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc);
 static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc);
+static char *pl_bison_identifier_at(core_yyscan_t yyscanner, int offset);
 static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *index_name, source_location_t loc,
     pl_line_for_t **for_line);
 static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_name, text_t *lower_src,
@@ -183,7 +192,7 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
 %type <text> decl_rec_defval_expr cursor_query cursor_arg_defval_expr
 %type <type> decl_datatype
 %type <type> opt_collection_index
-%type <str> decl_varname simple_name label_name opt_block_end_name opt_loop_end_name opt_exit_label
+%type <str> decl_varname simple_name label_name opt_block_end_name opt_loop_end_name opt_exit_label for_index_name
 %type <boolean> decl_notnull
 %type <list> record_attr_list into_var_list case_when_list exception_choice_list cursor_arg_decls cursor_arg_list
 %type <record_attr> record_attr
@@ -371,7 +380,7 @@ pl_function:
  * treating ordinary statements as declaration prefixes.
  */
 pl_top_block:
-            opt_declare_keyword declare_sect_b pl_block_body
+            opt_declare_keyword declare_sect_b pl_top_block_body
         ;
 
 pl_block:
@@ -379,7 +388,15 @@ pl_block:
             | pl_block_body
         ;
 
+pl_top_block_body:
+            block_body_core opt_top_block_end_semi
+        ;
+
 pl_block_body:
+            block_body_core ';'
+        ;
+
+block_body_core:
             K_BEGIN
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
@@ -396,7 +413,7 @@ pl_block_body:
                         compiler->body = line;
                     }
                 }
-            proc_sect opt_exception_sect K_END opt_block_end_name ';'
+            proc_sect opt_exception_sect K_END opt_block_end_name
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     pl_line_ctrl_t *line = NULL;
@@ -423,6 +440,16 @@ pl_block_body:
                         parser_yyerror("pop block failed");
                     }
                 }
+        ;
+
+/*
+ * The outer SQL parser may consume the statement delimiter before handing PL
+ * text to this grammar.  Nested blocks keep the explicit terminator in
+ * pl_block_body.
+ */
+opt_top_block_end_semi:
+            ';'
+            | /* EMPTY */
         ;
 
 opt_declare_keyword:
@@ -611,6 +638,7 @@ stmt_assign:
                     expr_node_t *left = $1;
                     text_t *left_src = NULL;
                     text_t *expr_src = NULL;
+                    bool32 is_proc_call = OG_FALSE;
                     int tok;
 
                     if (yychar == YYEMPTY) {
@@ -621,25 +649,38 @@ stmt_assign:
                     }
                     if (tok != COLON_EQUALS) {
                         plsql_push_back_token(tok, yyscanner);
-                        left_src = read_sql_construct_from(@1.offset, COLON_EQUALS, 0, 0, 0, 0, 0, yyscanner, &tok);
-                        if (tok != COLON_EQUALS) {
+                        left_src = read_sql_construct_from(@1.offset, COLON_EQUALS, ';', 0, 0, 0, 0, yyscanner, &tok);
+                        if (tok == ';') {
+                            if (plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                                (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
+                                parser_yyerror("compile procedure call failed");
+                            }
+                            if (parse_call_from_sql(stmt, left_src, line, @1.loc) != OG_SUCCESS) {
+                                YYABORT;
+                            }
+                            if (plc_clone_expr_node(compiler, &line->proc) != OG_SUCCESS) {
+                                parser_yyerror("clone procedure call failed");
+                            }
+                            is_proc_call = OG_TRUE;
+                        } else if (tok != COLON_EQUALS) {
                             parser_yyerror("':=' expected");
-                        }
-                        if (compile_assign_left_from_sql(stmt, left_src, &left) != OG_SUCCESS) {
+                        } else if (compile_assign_left_from_sql(stmt, left_src, &left) != OG_SUCCESS) {
                             parser_yyerror("compile assignment target failed");
                         }
                     }
-                    expr_src = read_sql_expression(';', yyscanner);
-                    if (plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile assignment failed");
-                    }
-                    line->left = left;
-                    if (parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
-                        plc_clone_expr_node(compiler, &line->left) != OG_SUCCESS ||
-                        plc_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
-                        plc_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
-                        parser_yyerror("compile assignment failed");
+                    if (!is_proc_call) {
+                        expr_src = read_sql_expression(';', yyscanner);
+                        if (plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                            (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
+                            parser_yyerror("compile assignment failed");
+                        }
+                        line->left = left;
+                        if (parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
+                            plc_clone_expr_node(compiler, &line->left) != OG_SUCCESS ||
+                            plc_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
+                            plc_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
+                            parser_yyerror("compile assignment failed");
+                        }
                     }
                 }
         ;
@@ -869,11 +910,25 @@ stmt_while:
                 }
         ;
 
+for_index_name:
+            T_WORD
+                {
+                    $$ = $1.ident;
+                }
+            | T_DATUM
+                {
+                    $$ = pl_bison_identifier_at(yyscanner, @1.offset);
+                    if ($$ == NULL) {
+                        parser_yyerror("compile for loop variable failed");
+                    }
+                }
+        ;
+
 for_start:
-            K_FOR T_WORD K_IN
+            K_FOR for_index_name K_IN
                 {
                     pl_line_for_t *line = NULL;
-                    if (compile_for_start_stmt(yyscanner, $2.ident, @1.loc, &line) != OG_SUCCESS) {
+                    if (compile_for_start_stmt(yyscanner, $2, @1.loc, &line) != OG_SUCCESS) {
                         parser_yyerror("compile for loop failed");
                     }
                     $$ = line;
@@ -1501,9 +1556,12 @@ decl_stmt:
                     if (cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl) != OG_SUCCESS) {
                         parser_yyerror("alloc declaration failed");
                     }
+                    errno_t rc = memset_s(decl, sizeof(plv_decl_t), 0, sizeof(plv_decl_t));
+                    knl_securec_check(rc);
                     decl->vid.block = (int16)compiler->stack.depth;
                     decl->vid.id = (uint16)(decls->count - 1); // not overflow
                     decl->loc = @1.loc;
+                    decl->drct = PLV_DIR_NONE;
                     decl->nullable = (bool8)nullable;
                     cm_str2text($1, &name_text);
                     if (pl_copy_text(compiler->entity, &name_text, &decl->name) != OG_SUCCESS) {
@@ -1535,7 +1593,7 @@ decl_stmt:
                         if (plc_bison_compile_plv_type(compiler, &plattr_ass, type) != OG_SUCCESS) {
                             parser_yyerror("compile pl type failed");
                         }
-                        if (plc_check_decl_datatype(compiler, decl, OG_TRUE) != OG_SUCCESS) {
+                        if (plc_check_decl_datatype(compiler, decl, OG_FALSE) != OG_SUCCESS) {
                             parser_yyerror("check pl type failed");
                         }
                     } else {
@@ -1551,7 +1609,7 @@ decl_stmt:
                                 type) != OG_SUCCESS) {
                                 parser_yyerror("compile type failed");
                             }
-                            if (plc_check_datatype(compiler, &decl->variant.type, OG_TRUE) != OG_SUCCESS) {
+                            if (plc_check_datatype(compiler, &decl->variant.type, OG_FALSE) != OG_SUCCESS) {
                                 parser_yyerror("check type failed");
                             }
                             if (decl->variant.type.is_array) {
@@ -1783,6 +1841,7 @@ decl_datatype:
                     bool32 pl_rowtype = OG_FALSE;
                     bool32 is_interval = OG_FALSE;
                     bool32 is_name_typemode = OG_FALSE;
+                    bool32 is_char = OG_FALSE;
                     galist_t *typemode = NULL;
                     galist_t *second_typemode = NULL;
                     text_t *text = NULL;
@@ -1841,12 +1900,37 @@ decl_datatype:
                                     parser_yyerror("append type modifier failed");
                                 }
                                 tok = YYLEX;
+                                if (pl_token_text_equal(yyscanner, tok, &yylval, "char")) {
+                                    is_char = OG_TRUE;
+                                    tok = YYLEX;
+                                } else if (pl_token_text_equal(yyscanner, tok, &yylval, "byte")) {
+                                    is_char = OG_FALSE;
+                                    tok = YYLEX;
+                                }
                                 if (tok == ')') {
                                     break;
                                 }
                                 if (tok != ',') {
                                     parser_yyerror("expected ',' or ')' in type modifier");
                                 }
+                            }
+                            tok = YYLEX;
+                        }
+                        if (pl_token_text_equal(yyscanner, tok, &yylval, "unsigned")) {
+                            if (cm_strcmpi(typename, "integer") == 0 || cm_strcmpi(typename, "int") == 0) {
+                                typename = "uint";
+                            } else if (cm_strcmpi(typename, "smallint") == 0 || cm_strcmpi(typename, "short") == 0) {
+                                typename = "usmallint";
+                            } else if (cm_strcmpi(typename, "tinyint") == 0) {
+                                typename = "utinyint";
+                            } else if (cm_strcmpi(typename, "bigint") == 0) {
+                                typename = "ubigint";
+                            } else if (cm_strcmpi(typename, "binary_integer") == 0) {
+                                typename = "uint";
+                            } else if (cm_strcmpi(typename, "binary_bigint") == 0) {
+                                typename = "ubigint";
+                            } else {
+                                parser_yyerror("unexpected unsigned datatype");
                             }
                             tok = YYLEX;
                         }
@@ -1868,6 +1952,7 @@ decl_datatype:
                         pl_type, pl_rowtype) != OG_SUCCESS) {
                         parser_yyerror("make type failed");
                     }
+                    type->is_char = is_char;
 
                     if (is_interval) {
                         type->second_typemde = second_typemode;
@@ -2430,46 +2515,124 @@ static status_t compile_exit_or_continue_stmt(sql_stmt_t *stmt, bool32 is_contin
         find_named_loop(compiler, loc, label_name, next);
 }
 
-static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+static status_t pl_bison_clone_fragment_tree(pl_compiler_t *compiler, pl_bison_fragment_type_t type, void *raw_tree,
+    void **tree)
 {
-    sql_text_t sql_text = { 0 };
+    expr_tree_t *expr = NULL;
+    cond_tree_t *cond = NULL;
     galist_t *expr_list = NULL;
 
+    switch (type) {
+        case PL_BISON_FRAGMENT_EXPR_LIST:
+            expr_list = (galist_t *)raw_tree;
+            if (expr_list == NULL || expr_list->count == 0) {
+                OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+                return OG_ERROR;
+            }
+            expr = (expr_tree_t *)cm_galist_get(expr_list, 0);
+            if (expr == NULL) {
+                OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+                return OG_ERROR;
+            }
+            return sql_clone_expr_tree(compiler->entity, expr, (expr_tree_t **)tree, pl_alloc_mem);
+
+        case PL_BISON_FRAGMENT_EXPR_TREE:
+            expr = (expr_tree_t *)raw_tree;
+            if (expr == NULL || expr->root == NULL) {
+                OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+                return OG_ERROR;
+            }
+            return sql_clone_expr_tree(compiler->entity, expr, (expr_tree_t **)tree, pl_alloc_mem);
+
+        case PL_BISON_FRAGMENT_COND_TREE:
+            cond = (cond_tree_t *)raw_tree;
+            if (cond == NULL) {
+                OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+                return OG_ERROR;
+            }
+            return sql_clone_cond_tree(compiler->entity, cond, (cond_tree_t **)tree, pl_alloc_mem);
+
+        default:
+            OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+            return OG_ERROR;
+    }
+}
+
+static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefix, text_t *src, const char *suffix,
+    pl_bison_fragment_type_t type, void **tree)
+{
+    sql_text_t sql_text = { 0 };
+    sql_stmt_t *sub_stmt = NULL;
+    sql_stmt_t *save_curr_stmt = stmt->session->current_stmt;
+    void *raw_tree = NULL;
+    status_t status = OG_ERROR;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    sql_stmt_t *save_compiler_stmt = NULL;
+
+    if (compiler == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
+        return OG_ERROR;
+    }
+
+    *tree = NULL;
+    OGSQL_SAVE_STACK(stmt);
+    do {
+        OG_BREAK_IF_ERROR(pl_bison_make_parse_text(stmt, prefix, src, suffix, &sql_text));
+        OG_BREAK_IF_ERROR(sql_push(stmt, sizeof(sql_stmt_t), (void **)&sub_stmt));
+
+        sql_init_stmt(stmt->session, sub_stmt, stmt->id);
+        sub_stmt->pl_compiler = stmt->pl_compiler;
+        save_compiler_stmt = compiler->stmt;
+        sub_stmt->context = NULL;
+        sub_stmt->session->current_stmt = sub_stmt;
+
+        OG_BREAK_IF_ERROR(sql_alloc_context(sub_stmt));
+        sub_stmt->plsql_mode = stmt->plsql_mode;
+        sub_stmt->context->type = stmt->context->type;
+        sub_stmt->context->params = stmt->context->params;
+        sub_stmt->context->pname_count = stmt->context->pname_count;
+        compiler->stmt = sub_stmt;
+        OG_BREAK_IF_ERROR(raw_parser(sub_stmt, &sql_text, &raw_tree));
+        stmt->context->pname_count = sub_stmt->context->pname_count;
+        OG_BREAK_IF_ERROR(pl_bison_clone_fragment_tree(compiler, type, raw_tree, tree));
+        status = OG_SUCCESS;
+    } while (0);
+
+    if (save_compiler_stmt != NULL) {
+        compiler->stmt = save_compiler_stmt;
+    }
+    stmt->session->current_stmt = save_curr_stmt;
+    if (sub_stmt != NULL) {
+        sql_release_lob_info(sub_stmt);
+        sql_release_resource(sub_stmt, OG_TRUE);
+        sql_release_context(sub_stmt);
+    }
+    OGSQL_RESTORE_STACK(stmt);
+    return status;
+}
+
+static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+{
     *expr = NULL;
     /*
      * DEFAULT is an internal raw-parser entry selector. It lets PL fragments
      * reuse the bison SQL expression grammar without depending on session-owned
      * legacy parser state.
      */
-    OG_RETURN_IFERR(pl_bison_make_parse_text(stmt, "DEFAULT ", src, "", &sql_text));
-    OG_RETURN_IFERR(raw_parser(stmt, &sql_text, (void **)&expr_list));
-    if (expr_list == NULL || expr_list->count == 0) {
-        OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
-        return OG_ERROR;
-    }
-
-    *expr = (expr_tree_t *)cm_galist_get(expr_list, 0);
-    if (*expr == NULL) {
-        OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
-        return OG_ERROR;
-    }
-
-    return OG_SUCCESS;
+    return pl_bison_parse_fragment_tree(stmt, "DEFAULT ", src, "", PL_BISON_FRAGMENT_EXPR_LIST, (void **)expr);
 }
 
 static status_t get_valid_cond_tree(sql_stmt_t *stmt, text_t *src, cond_tree_t **cond)
 {
-    sql_text_t sql_text = { 0 };
-
     *cond = NULL;
-    OG_RETURN_IFERR(pl_bison_make_parse_text(stmt, "CHECK (", src, ")", &sql_text));
-    OG_RETURN_IFERR(raw_parser(stmt, &sql_text, (void **)cond));
-    if (*cond == NULL) {
-        OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
-        return OG_ERROR;
-    }
+    return pl_bison_parse_fragment_tree(stmt, "CHECK (", src, ")", PL_BISON_FRAGMENT_COND_TREE, (void **)cond);
+}
 
-    return OG_SUCCESS;
+static status_t get_valid_call_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+{
+    *expr = NULL;
+    /* PROCEDURE selects the SQL-bison entry for PL statement-level calls. */
+    return pl_bison_parse_fragment_tree(stmt, "PROCEDURE ", src, "", PL_BISON_FRAGMENT_EXPR_TREE, (void **)expr);
 }
 
 static status_t read_return_sql_construct(sql_stmt_t *stmt, text_t *src, pl_line_return_t *line)
@@ -2483,10 +2646,21 @@ static status_t pl_bison_make_parse_text(sql_stmt_t *stmt, const char *prefix, t
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     uint32 prefix_len = (uint32)strlen(prefix);
     uint32 suffix_len = (uint32)strlen(suffix);
-    uint32 sql_len = prefix_len + body->len + suffix_len;
+    uint32 sql_len;
     char *sql_buf = NULL;
 
-    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sql_len + 1, (void **)&sql_buf));
+    if (prefix_len > OG_MAX_UINT32 - suffix_len ||
+        body->len > OG_MAX_UINT32 - prefix_len - suffix_len) {
+        OG_THROW_ERROR(ERR_SQL_TOO_LONG, body->len);
+        return OG_ERROR;
+    }
+    sql_len = prefix_len + body->len + suffix_len;
+    if (sql_len == OG_MAX_UINT32) {
+        OG_THROW_ERROR(ERR_SQL_TOO_LONG, body->len);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(sql_stack_alloc(stmt, sql_len + 1, (void **)&sql_buf));
     if (prefix_len != 0) {
         MEMS_RETURN_IFERR(memcpy_s(sql_buf, sql_len + 1, prefix, prefix_len));
     }
@@ -2551,11 +2725,7 @@ static status_t parse_call_from_sql(sql_stmt_t *stmt, text_t *src, pl_line_norma
     expr_node_t *proc = NULL;
     pl_compiler_t *compiler = stmt->pl_compiler;
 
-    OG_RETURN_IFERR(get_valid_expr_tree(stmt, src, &call_expr));
-    if (call_expr == NULL || call_expr->root == NULL) {
-        OG_SRC_THROW_ERROR(line->ctrl.loc, ERR_PL_EXPECTED_FAIL_FMT, "procedure name", "EOF");
-        return OG_ERROR;
-    }
+    OG_RETURN_IFERR(get_valid_call_tree(stmt, src, &call_expr));
 
     proc = call_expr->root;
     proc->loc = loc;
@@ -2563,6 +2733,8 @@ static status_t parse_call_from_sql(sql_stmt_t *stmt, text_t *src, pl_line_norma
         OG_RETURN_IFERR(pl_bison_column_to_proc_node(stmt, proc));
     } else if (proc->type == EXPR_NODE_FUNC || proc->type == EXPR_NODE_USER_FUNC) {
         proc->type = EXPR_NODE_PROC;
+    } else if (proc->type == EXPR_NODE_V_METHOD) {
+        /* Collection methods such as x.delete(...) are verified by plc_compile_call. */
     } else if (proc->type != EXPR_NODE_PROC && proc->type != EXPR_NODE_USER_PROC) {
         OG_SRC_THROW_ERROR(proc->loc, ERR_PL_SYNTAX_ERROR_FMT, "an undefined procedure was called");
         return OG_ERROR;
@@ -2978,12 +3150,51 @@ static status_t pl_bison_compile_into_target(sql_stmt_t *stmt, text_t *src, pl_i
     return compile_into_var_list((pl_compiler_t *)stmt->pl_compiler, into->output, node, loc);
 }
 
+static status_t pl_bison_check_bulk_into_target(pl_into_t *into, uint8 *attr_type, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    var_address_pair_t *pair = NULL;
+    plv_decl_t *decl = NULL;
+
+    node = (expr_node_t *)cm_galist_get(into->output, into->output->count - 1);
+    pair = sql_get_last_addr_pair(node);
+    decl = (pair == NULL || pair->type != UDT_STACK_ADDR || pair->stack == NULL) ? NULL : pair->stack->decl;
+    if (decl == NULL || decl->type != PLV_COLLECTION || decl->collection->attr_type == UDT_COLLECTION) {
+        OG_SRC_THROW_ERROR(loc, ERR_PL_SYNTAX_ERROR_FMT,
+            "cannot mix between single row and multi-row (BULK) in INTO list");
+        return OG_ERROR;
+    }
+    if (into->output->count == 1) {
+        *attr_type = decl->collection->attr_type;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_check_bulk_into_targets(pl_into_t *into, uint8 attr_type, source_location_t loc)
+{
+    into->into_type = INTO_AS_COLL;
+    if (into->output->count != 1) {
+        return OG_SUCCESS;
+    }
+
+    if (attr_type == UDT_RECORD) {
+        into->into_type = INTO_AS_COLL_REC;
+    } else if (attr_type == UDT_OBJECT) {
+        OG_SRC_THROW_ERROR(loc, ERR_PL_SYNTAX_ERROR_FMT,
+            "type mismatch found at OBJECT type between anonymous record and INTO variables");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
 static status_t pl_bison_compile_into_targets(sql_stmt_t *stmt, text_t *src, pl_into_t *into, bool32 is_bulk,
     source_location_t loc)
 {
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     uint32 start = 0;
     int32 depth = 0;
+    uint8 attr_type = 0;
 
     OG_RETURN_IFERR(plc_init_galist(compiler, &into->output));
     into->is_bulk = is_bulk;
@@ -3017,10 +3228,16 @@ static status_t pl_bison_compile_into_targets(sql_stmt_t *stmt, text_t *src, pl_
                 .len = i - start
             };
             OG_RETURN_IFERR(pl_bison_compile_into_target(stmt, &item, into, loc));
+            if (is_bulk) {
+                OG_RETURN_IFERR(pl_bison_check_bulk_into_target(into, &attr_type, loc));
+            }
             start = i + 1;
         }
     }
 
+    if (is_bulk) {
+        return pl_bison_check_bulk_into_targets(into, attr_type, loc);
+    }
     return pl_bison_check_single_into_target(into, loc);
 }
 
@@ -3920,7 +4137,7 @@ static status_t init_for_line_common(pl_compiler_t *compiler, const char *index_
     (*for_line)->id->vid.block = (int16)compiler->stack.depth;
     (*for_line)->id->vid.id = 0;
     cm_str2text((char *)index_name, &idx_name);
-    OG_RETURN_IFERR(pl_copy_text(compiler->entity, &idx_name, &(*for_line)->id->name));
+    OG_RETURN_IFERR(pl_copy_name(compiler->entity, &idx_name, &(*for_line)->id->name));
     (*for_line)->is_cur = is_cursor;
     (*for_line)->is_push = OG_FALSE;
     (*for_line)->name = label_name;
@@ -4213,6 +4430,35 @@ static status_t make_type_word(pl_compiler_t *compiler, type_word_t **type, char
     (*type)->pl_rowtype = pl_rowtype;
     (*type)->loc = loc;
     return OG_SUCCESS;
+}
+
+static char *pl_bison_identifier_at(core_yyscan_t yyscanner, int offset)
+{
+    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    sql_stmt_t *stmt = extra->stmt;
+    uint32 start = (uint32)offset;
+    uint32 end = start;
+    char *name = NULL;
+
+    if (start >= extra->scanbuflen) {
+        return NULL;
+    }
+
+    while (end < extra->scanbuflen && pl_bison_is_ident_char(extra->scanbuf[end])) {
+        end++;
+    }
+    if (end == start) {
+        return NULL;
+    }
+
+    if (sql_alloc_mem(stmt->context, end - start + 1, (void **)&name) != OG_SUCCESS) {
+        return NULL;
+    }
+    if (memcpy_s(name, end - start + 1, extra->scanbuf + start, end - start) != EOK) {
+        return NULL;
+    }
+    name[end - start] = '\0';
+    return name;
 }
 
 static text_t *read_sql_expression(int until, core_yyscan_t yyscanner)

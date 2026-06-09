@@ -4,6 +4,7 @@ drop function if exists bison_pl_func;
 drop function if exists bison_pl_refcur;
 drop procedure if exists bison_pl_inout_proc;
 drop procedure if exists bison_pl_out_proc;
+drop procedure if exists bison_pl_noarg_proc;
 drop procedure if exists bison_pl_proc;
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
@@ -35,6 +36,12 @@ end;
 create or replace procedure bison_pl_inout_proc(p_value in out int) as
 begin
     p_value := p_value + 1;
+end;
+/
+
+create or replace procedure bison_pl_noarg_proc as
+begin
+    null;
 end;
 /
 
@@ -109,6 +116,11 @@ begin
     bison_pl_proc(4);
     execute immediate 'insert into bison_pl_t values(5, ''dynamic'')';
 end;
+/
+
+begin
+    bison_pl_noarg_proc;
+end
 /
 
 declare
@@ -299,6 +311,24 @@ begin
 end;
 /
 
+drop table if exists bison_pl_for_shadow;
+create table bison_pl_for_shadow(a int, b int, c varchar(20));
+
+create or replace procedure bison_pl_for_shadow_proc(startnum int, endnum int) is
+    i int := 99;
+begin
+    for i in startnum..endnum loop
+        insert into bison_pl_for_shadow values(i, i % 10, 'x' || i);
+    end loop;
+end;
+/
+
+call bison_pl_for_shadow_proc(1, 5);
+select * from bison_pl_for_shadow order by a;
+
+drop procedure bison_pl_for_shadow_proc;
+drop table if exists bison_pl_for_shadow;
+
 declare
     v_id int := 0;
     v_name varchar(32);
@@ -380,6 +410,70 @@ begin
 end;
 /
 
+drop table if exists bison_pl_insert_subq;
+create table bison_pl_insert_subq(id int, total int);
+
+declare
+    v_id int := 500;
+begin
+    insert into bison_pl_insert_subq values(v_id, (select count(*) from bison_pl_t));
+    insert into bison_pl_insert_subq(id, total)
+        select v_id + 1, count(*) from bison_pl_t;
+end;
+/
+
+drop table if exists bison_pl_insert_subq;
+
+drop table if exists bison_pl_reload_div_t;
+create table bison_pl_reload_div_t(a number);
+
+create or replace procedure bison_pl_reload_div_proc as
+    v_left number := 5;
+    v_right number := 3;
+    v_div number := 2;
+begin
+    insert into bison_pl_reload_div_t(a) values(round((v_left - v_right) / v_div * 100, 2));
+end;
+/
+
+alter table bison_pl_reload_div_t add b number;
+
+declare
+begin
+    bison_pl_reload_div_proc;
+end;
+/
+
+select a from bison_pl_reload_div_t;
+
+drop procedure bison_pl_reload_div_proc;
+drop table if exists bison_pl_reload_div_t;
+
+drop table if exists bison_pl_char_concat;
+create table bison_pl_char_concat(stage varchar(40), val int, info varchar(100));
+
+declare
+    v varchar(100);
+    c char(1);
+    vc varchar(1);
+begin
+    c := 'w';
+    vc := 'w';
+
+    v := '';
+    v := v || c;
+    insert into bison_pl_char_concat values('varchar concat char', nvl(length(v), -1), substr(v, 1, 20));
+
+    v := '';
+    v := v || vc;
+    insert into bison_pl_char_concat values('varchar concat varchar', nvl(length(v), -1), substr(v, 1, 20));
+end;
+/
+
+select * from bison_pl_char_concat order by stage;
+
+drop table if exists bison_pl_char_concat;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;
@@ -388,9 +482,8 @@ drop function if exists bison_pl_func;
 drop function if exists bison_pl_refcur;
 drop procedure if exists bison_pl_inout_proc;
 drop procedure if exists bison_pl_out_proc;
+drop procedure if exists bison_pl_noarg_proc;
 drop procedure if exists bison_pl_proc;
 drop table if exists bison_pl_src;
 drop table if exists bison_pl_type_t;
 drop table if exists bison_pl_t;
-
-alter system set use_bison_parser = false;

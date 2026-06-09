@@ -22,7 +22,7 @@ SQL>
 SQL> --_MAX_JSON_LEVEL is in [1M, 32T]
 SQL> alter system set _MAX_JSON_DYNAMIC_BUFFER_SIZE = 0.1M;
 
-OG-00636, [1:50]Invalid number 
+OG-00601, [1:53]Sql syntax error: size must be a positive long integer
 SQL> 
 SQL> --test single json array object, more than 1M
 SQL> drop table if exists LOAD_CLOB_TABLE;
@@ -227,9 +227,9 @@ LENGTH(C1)
 
 SQL> select 1 from LOAD_CLOB_TABLE where c1 is json;
 
-1
+1           
 ------------
-1
+1           
 
 1 rows fetched.
 
@@ -276,9 +276,9 @@ SQL> update test_json_src set a = a || lpad('dscds', 8000, 'asdcsaf');
 
 SQL> select length(a) from test_json_src;
 
-LENGTH(A)
+LENGTH(A)           
 --------------------
-56000
+56000               
 
 1 rows fetched.
 
@@ -288,17 +288,17 @@ SQL> update test_json_src set a = '{"name":"' || a || '"}';
 
 SQL> select length(a) from test_json_src;
 
-LENGTH(A)
+LENGTH(A)           
 --------------------
-56011
+56011               
 
 1 rows fetched.
 
 SQL> select 1 from test_json_src where a is json;
 
-1
+1           
 ------------
-1
+1           
 
 1 rows fetched.
 
@@ -306,7 +306,7 @@ SQL> select length(json_value(a, '$.name' returning clob)) from test_json_src;
 
 LENGTH(JSON_VALUE(A, '$.NAME' RETURNING CLOB))
 ----------------------------------------------
-56000
+56000                                         
 
 1 rows fetched.
 
@@ -314,7 +314,7 @@ SQL> select length(json_query(a, '$' returning clob)) from test_json_src;
 
 LENGTH(JSON_QUERY(A, '$' RETURNING CLOB))
 -----------------------------------------
-56011
+56011                                    
 
 1 rows fetched.
 
@@ -335,7 +335,7 @@ SQL> select length(json_value(a, '$.name' returning clob)) from test_json_dst;
 
 LENGTH(JSON_VALUE(A, '$.NAME' RETURNING CLOB))
 ----------------------------------------------
-56000
+56000                                         
 
 1 rows fetched.
 
@@ -343,7 +343,7 @@ SQL> select length(json_query(a, '$' returning clob)) from test_json_dst;
 
 LENGTH(JSON_QUERY(A, '$' RETURNING CLOB))
 -----------------------------------------
-56011
+56011                                    
 
 1 rows fetched.
 
@@ -356,3 +356,5 @@ SQL> drop table if exists test_json_dst;
 Succeed.
 
 SQL> 
+
+

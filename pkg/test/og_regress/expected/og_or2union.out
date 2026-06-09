@@ -570,20 +570,20 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------------------------------
 | Id | Operation                                 | Owner | Name             | Rows  | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                          |       |                  | 1     | 25343 | 19        |       |        |
-| 1  |   AGGR                                    |       |                  | 1     | 25343 | 19        |       |        |
-| 2  |       SUBSELECT                           |       | $FROM_ORE_0      | 700   | 25322 | 16        |       |        |
-| 3  |         HASH UNION                        |       |                  | 700   | 25322 | 16        |       |        |
-| 4  |           NESTED LOOPS                    |       |                  | 350   | 12660 | 8         |       |        |
-| 5  |               SUBSELECT                   |       | $FROM_SQ_0       | 1353  | 63    | 0         |       |        |
-| 6  |                 HASH DISTINCT             |       |                  | 1353  | 98    | 0         |       |        |
-| 7  |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T2  | 1353  | 63    | 0         |       |        |
+| 0  | SELECT STATEMENT                          |       |                  | 1     | 27527 | 19        |       |        |
+| 1  |   AGGR                                    |       |                  | 1     | 27527 | 19        |       |        |
+| 2  |       SUBSELECT                           |       | $FROM_ORE_0      | 700   | 27506 | 16        |       |        |
+| 3  |         HASH UNION                        |       |                  | 700   | 27506 | 16        |       |        |
+| 4  |           NESTED LOOPS                    |       |                  | 350   | 13752 | 8         |       |        |
+| 5  |               SUBSELECT                   |       | $FROM_SQ_0       | 1470  | 66    | 0         |       |        |
+| 6  |                 HASH DISTINCT             |       |                  | 1470  | 104   | 0         |       |        |
+| 7  |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T2  | 1470  | 66    | 0         |       |        |
 | 8  |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 8     | 8         |       |        |
 | 9  |                 INDEX RANGE SCAN          | SYS   | IND_OR_EXPAND_11 | 10000 | 8     | 8         |       |        |
-| 10 |           NESTED LOOPS                    |       |                  | 350   | 12660 | 8         |       |        |
-| 11 |               SUBSELECT                   |       | $FROM_SQ_1       | 1353  | 63    | 0         |       |        |
-| 12 |                 HASH DISTINCT             |       |                  | 1353  | 98    | 0         |       |        |
-| 13 |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T3  | 1353  | 63    | 0         |       |        |
+| 10 |           NESTED LOOPS                    |       |                  | 350   | 13752 | 8         |       |        |
+| 11 |               SUBSELECT                   |       | $FROM_SQ_1       | 1470  | 66    | 0         |       |        |
+| 12 |                 HASH DISTINCT             |       |                  | 1470  | 104   | 0         |       |        |
+| 13 |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T3  | 1470  | 66    | 0         |       |        |
 | 14 |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 8     | 8         |       |        |
 | 15 |                 INDEX RANGE SCAN          | SYS   | IND_OR_EXPAND_11 | 10000 | 8     | 8         |       |        |
 --------------------------------------------------------------------------------------------------------------------------
@@ -695,16 +695,16 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |                 | 1    | 35   | 0         |       |        |
-| 1  |   AGGR                          |       |                 | 1    | 35   | 0         |       |        |
-| 2  |       SUBSELECT                 |       | $FROM_ORE_0     | 4    | 35   | 0         |       |        |
-| 3  |         UNION ALL               |       |                 | 4    | 35   | 0         |       |        |
-| 4  |           NESTED LOOPS          |       |                 | 1    | 12   | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |                 | 1    | 38   | 0         |       |        |
+| 1  |   AGGR                          |       |                 | 1    | 38   | 0         |       |        |
+| 2  |       SUBSELECT                 |       | $FROM_ORE_0     | 4    | 38   | 0         |       |        |
+| 3  |         UNION ALL               |       |                 | 4    | 38   | 0         |       |        |
+| 4  |           NESTED LOOPS          |       |                 | 1    | 13   | 0         |       |        |
 | 5  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 1    | 1     | 0         |       |        |
-| 6  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 338  | 6    | 0         |       |        |
-| 7  |           NESTED LOOPS          |       |                 | 3    | 23   | 0         |       |        |
+| 6  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
+| 7  |           NESTED LOOPS          |       |                 | 3    | 25   | 0         |       |        |
 | 8  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 2    | 1    | 0         |       |        |
-| 9  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 338  | 6    | 0         |       |        |
+| 9  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -794,12 +794,12 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------------
 | Id | Operation                            | Owner | Name             | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |                  | 1    | 119  | 59        |       |        |
-| 1  |   AGGR                               |       |                  | 1    | 119  | 59        |       |        |
-| 2  |     MERGE JOIN                       |       |                  | 1    | 60   | 59        |       |        |
+| 0  | SELECT STATEMENT                     |       |                  | 1    | 123  | 60        |       |        |
+| 1  |   AGGR                               |       |                  | 1    | 123  | 60        |       |        |
+| 2  |     MERGE JOIN                       |       |                  | 1    | 62   | 60        |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY   | SYS   | T_OR_INDEX_1 T1  | 4    | 8    | 8         |       |        |
 | 4  |           OPTIMIZED INDEX RANGE SCAN | SYS   | IND_OR_EXPAND_11 | 4    | 8    | 8         |       |        |
-| 5  |         TABLE ACCESS FULL            | SYS   | T_OR_INDEX_2 T2  | 20   | 50   | 0         |       |        |
+| 5  |         TABLE ACCESS FULL            | SYS   | T_OR_INDEX_2 T2  | 22   | 52   | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -892,7 +892,7 @@ EXPLAIN PLAN OUTPUT
 | 1  |   KERNEL FILTER                  |       |                  | 4    | 8     | 8         |       |        |
 | 2  |     TABLE ACCESS BY INDEX ROWID  | SYS   | T_OR_INDEX_1     | 4    | 8     | 8         |       |        |
 | 3  |       INDEX RANGE SCAN           | SYS   | IND_OR_EXPAND_11 | 4    | 8     | 8         |       |        |
-| 4  |       TABLE ACCESS FULL          | SYS   | T_OR_INDEX_2     | 1353 | 63   | 0         |       |        |
+| 4  |       TABLE ACCESS FULL          | SYS   | T_OR_INDEX_2     | 1470 | 66   | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

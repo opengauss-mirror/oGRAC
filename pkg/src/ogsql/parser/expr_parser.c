@@ -1605,11 +1605,11 @@ static status_t sql_parse_native_typmod_bison(char *user, type_word_t *type, pmo
     switch (dword_id) {
         case DTYP_UINTEGER:
         case DTYP_BINARY_UINTEGER:
+        case DTYP_USMALLINT:
+        case DTYP_UTINYINT:
             typmode->datatype = OG_TYPE_UINT32;
             typmode->size = sizeof(uint32);
             return OG_SUCCESS;
-        case DTYP_USMALLINT:
-        case DTYP_UTINYINT:
         case DTYP_SMALLINT:
         case DTYP_TINYINT:
         case DTYP_INTEGER:
@@ -3218,6 +3218,19 @@ status_t sql_create_int_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, int val
     return OG_SUCCESS;
 }
 
+status_t sql_create_bigint_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, int64 val, source_location_t loc)
+{
+    expr_node_t *node = NULL;
+    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_BIGINT, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    node->value.v_bigint = val;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+
+    return OG_SUCCESS;
+}
+
 status_t sql_create_expr_tree(sql_stmt_t *stmt, expr_tree_t **expr, og_type_t type, expr_node_type_t expr_type,
     source_location_t loc)
 {
@@ -3234,11 +3247,36 @@ status_t sql_create_expr_tree(sql_stmt_t *stmt, expr_tree_t **expr, og_type_t ty
 status_t sql_create_float_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc)
 {
     expr_node_t *node = NULL;
-    if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_NUMBER, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
+    text_t text;
+    word_t word = { 0 };
+    num_errno_t err_num;
+    og_type_t type;
+
+    cm_str2text((char *)val, &text);
+    word.type = WORD_TYPE_NUMBER;
+    word.loc = loc;
+    word.text.value = text;
+    word.text.loc = loc;
+    word.np.excl_flag = NF_NONE;
+
+    err_num = cm_split_num_text(&text, &word.np);
+    if (err_num != NERR_SUCCESS) {
+        OG_SRC_THROW_ERROR(loc, ERR_INVALID_NUMBER, cm_get_num_errinfo(err_num));
         return OG_ERROR;
     }
 
-    if (cm_str_to_dec8(val, &node->value.v_dec) != OG_SUCCESS) {
+    err_num = cm_decide_numtype(&word.np, &type);
+    if (err_num != NERR_SUCCESS) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "invalid number");
+        return OG_ERROR;
+    }
+    word.id = (uint32)type;
+
+    if (sql_init_expr_node(stmt, expr, &node, type, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (word_to_variant_number(&word, &node->value) != OG_SUCCESS) {
         return OG_ERROR;
     }
     APPEND_CHAIN(&((*expr)->chain), node);
@@ -3447,6 +3485,10 @@ static status_t sql_set_columnref_indirection(expr_tree_t *expr, expr_node_t *no
         expr->star_loc.end = last_node->star_loc.end;
     }
     switch (list_count) {
+        case 0:
+            var->column.name.value.str = (char *)val;
+            var->column.name.value.len = strlen(val);
+            break;
         case 1:
             var->column.table.value.str = (char*)val;
             var->column.table.value.len = strlen(val);
@@ -3494,6 +3536,41 @@ typedef struct st_pl_columnref_expr_arg {
     source_location_t loc;
 } pl_columnref_expr_arg_t;
 
+static status_t sql_try_convert_static_pl_var_to_param(sql_stmt_t *stmt, expr_node_t *node)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    expr_node_t *input_node = NULL;
+    sql_param_mark_t *param_mark = NULL;
+    uint32 param_id;
+    uint32 pnid;
+
+    if (compiler == NULL || compiler->current_input == NULL || node->type != EXPR_NODE_V_ADDR) {
+        return OG_SUCCESS;
+    }
+
+    if (stmt->context->params == NULL) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "Current position cannot use params");
+        return OG_ERROR;
+    }
+
+    param_id = stmt->context->params->count;
+    pnid = compiler->current_input->count;
+    OG_RETURN_IFERR(cm_galist_new(compiler->current_input, sizeof(expr_node_t), (void **)&input_node));
+    *input_node = *node;
+
+    OG_RETURN_IFERR(cm_galist_new(stmt->context->params, sizeof(sql_param_mark_t), (void **)&param_mark));
+    param_mark->offset = 0;
+    param_mark->len = 0;
+    param_mark->pnid = pnid;
+    stmt->context->pname_count++;
+
+    node->type = EXPR_NODE_PARAM;
+    node->value.is_null = OG_FALSE;
+    node->value.type = OG_TYPE_INTEGER;
+    VALUE(uint32, &node->value) = param_id;
+    return OG_SUCCESS;
+}
+
 static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr,
     pl_columnref_expr_arg_t *arg, bool32 *converted)
 {
@@ -3518,6 +3595,7 @@ static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t *
 
     OG_RETURN_IFERR(sql_init_expr_node(stmt, expr, &node, OG_TYPE_COLUMN, EXPR_NODE_COLUMN, arg->loc));
     OG_RETURN_IFERR(plc_word2var(stmt, &word, node));
+    OG_RETURN_IFERR(sql_try_convert_static_pl_var_to_param(stmt, node));
     APPEND_CHAIN(&((*expr)->chain), node);
     sql_generate_expr(*expr);
     *converted = OG_TRUE;
@@ -3696,6 +3774,13 @@ status_t sql_expr_tree_to_cond_node(sql_stmt_t *stmt, expr_tree_t *expr, cond_no
 
     cmp_node_t *cmp_node = (*node)->cmp;
 
+    if (expr != NULL && expr->root != NULL && expr->root->type == EXPR_NODE_FUNC &&
+        cm_text_str_equal_ins(&expr->root->word.func.name.value, "REGEXP_LIKE")) {
+        cmp_node->right = expr->root->argument;
+        cmp_node->type = CMP_TYPE_REGEXP_LIKE;
+        return OG_SUCCESS;
+    }
+
     cmp_node->right = expr;
     cmp_node->type = CMP_TYPE_NOT_EQUAL;
 
@@ -3710,6 +3795,7 @@ status_t sql_create_select_expr(sql_stmt_t *stmt, expr_tree_t **expr, sql_select
     if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_SELECT, loc) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    node->owner = NULL;
 
     if (sql_array_put(array, select_ctx) != OG_SUCCESS) {
         return OG_ERROR;
@@ -3718,6 +3804,7 @@ status_t sql_create_select_expr(sql_stmt_t *stmt, expr_tree_t **expr, sql_select
     node->value.v_obj.id = array->count - 1;
     node->value.v_obj.ptr = select_ctx;
     APPEND_CHAIN(&((*expr)->chain), node);
+    OG_RETURN_IFERR(sql_slct_add_ref_node(stmt->context, node, sql_alloc_mem));
     sql_generate_expr(*expr);
     return OG_SUCCESS;
 }

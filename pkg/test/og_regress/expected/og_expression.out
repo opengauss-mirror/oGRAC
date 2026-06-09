@@ -53,7 +53,7 @@ SQL> select -5423237233838653440 >> 32;
 
 SQL> select 542323723383865345324532452343440 >> 32;
 
-OG-00659, [1:42]BIGINT out of range
+OG-00659, [1:8]BIGINT out of range
 SQL> select 5423237233838653440 >> 32;
 
 5423237233838653440 >> 32
@@ -64,7 +64,7 @@ SQL> select 5423237233838653440 >> 32;
 
 SQL> select -542323723334534534534535838653440 >> 32;
 
-OG-00659, [1:43]BIGINT out of range
+OG-00659, [1:8]BIGINT out of range
 SQL> select -5423237233838653440 >> 30;
 
 -5423237233838653440 >> 30
@@ -75,7 +75,7 @@ SQL> select -5423237233838653440 >> 30;
 
 SQL> select 838653440 >> 32234444444444444444444444444444444;
 
-OG-00659, [1:18]BIGINT out of range
+OG-00659, [1:8]BIGINT out of range
 SQL> 
 SQL> select 1 + (1/2 * 3) from dual;
 
@@ -418,12 +418,12 @@ SQL> select 1+to_date('2017-09-23', 'YYYY-MM-DD') from dual;
 
 SQL> select 1-to_date('2017-09-23', 'YYYY-MM-DD') from dual;  
 
-OG-01320, [1:9]Undefined operator: BINARY_INTEGER - DATE
+OG-01320, [1:8]Undefined operator: BINARY_INTEGER - DATE
 SQL> 
 SQL> -- The overflow case for int32
 SQL> select 4294967294 + 4294967292, 4294967296 * 4294967296 from dual;
 
-OG-00659, [1:44]BIGINT out of range
+OG-00659, [1:33]BIGINT out of range
 SQL> select 2147483633 + 999 from dual;
 
 2147483633 + 999    
@@ -526,10 +526,10 @@ SQL>
 SQL> --- The case for division operator
 SQL> select 3/0 from dual;
 
-OG-00637, [1:9]The divisor was zero
+OG-00637, [1:8]The divisor was zero
 SQL> select 3/0.0 from dual;
 
-OG-00637, [1:9]The divisor was zero
+OG-00637, [1:8]The divisor was zero
 SQL> select 123123/0.1 from dual;
 
 123123/0.1                              
@@ -668,7 +668,7 @@ SQL>
 SQL> --- invalid cases
 SQL> select (11||-22||33)*2 from dual;
 
-OG-00636, [1:21]Invalid number -- unexpected character
+OG-00636, [1:8]Invalid number -- unexpected character
 SQL> 
 SQL> 
 SQL> --- decimal/number and expression
@@ -743,16 +743,16 @@ SQL>
 SQL> -- Test some corner cases for multiplication
 SQL> select 4790999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;
 
-OG-01319, [1:97]High-Precision numeric overflow
+OG-01319, [1:8]High-Precision numeric overflow
 SQL> select 4789999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;
 
-OG-01319, [1:97]High-Precision numeric overflow
+OG-01319, [1:8]High-Precision numeric overflow
 SQL> select 4770999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;
 
-OG-01319, [1:97]High-Precision numeric overflow
+OG-01319, [1:8]High-Precision numeric overflow
 SQL> select 4769999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;
 
-OG-01319, [1:97]High-Precision numeric overflow
+OG-01319, [1:8]High-Precision numeric overflow
 SQL> select 999999999999999999999/1000000000000000000000;
 
 999999999999999999999/1000000000000000000000
@@ -3322,7 +3322,7 @@ CASE WHEN 1 = 0 THEN NULL - NULL ELSE 2.123 END
 
 SQL> select case when 1 = 0 then null - systimestamp else 2.123 end from dual;
 
-OG-01320, [1:34]Undefined operator: VARCHAR - TIMESTAMP_TZ
+OG-01320, [1:29]Undefined operator: VARCHAR - TIMESTAMP_TZ
 SQL> select case when 1 = 0 then systimestamp - null else 2.123 end from dual;
 
 OG-00606, [1:54]Inconsistent datatypes, expected TIMESTAMP_TZ - got NUMBER
@@ -3695,7 +3695,7 @@ SQL>
 SQL> -- the format text for to_timestamp
 SQL> select to_timestamp('""2014-04-04 04:04:04.040404', '""YYYY-MM-DD HH24:MI:SS.FF') from dual;
 
-OG-00146, [1:21]YEAR should be from 1 to 9999
+OG-00146, [1:8]YEAR should be from 1 to 9999
 SQL> select to_timestamp('2014-04-04 04:04:04.040404', '""YYYY-MM-DD HH24:MI:SS.FF') from dual;
 
 TO_TIMESTAMP('2014-04-04 04:04:04.040404', '""YYYY-MM-DD HH24:MI
@@ -3881,7 +3881,7 @@ SQL> create view ma5600tv8_PORT_DUMP_VIEW
   6 from bms_gdm_ObjectTab a left join bms_res_ptp c on (a.ID0 = c.ID0 and a.ID1 = c.ID1 and a.ID2 = c.ID2 and a.ID3 = c.ID3 and a.ID4 = c.ID4),bms_gdm_DeviceTab b 
   7 where a.ID0 = b.ID and a.MainType = 6 and b.Type = 41;
 
-OG-00843, [6:6]The table or view SYS.BMS_GDM_OBJECTTAB does not exist.
+OG-00843, [8:1]The table or view SYS.BMS_GDM_OBJECTTAB does not exist.
 SQL> 
 SQL> drop table if exists tbl_Qos_Behavior;
 

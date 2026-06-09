@@ -39,7 +39,9 @@ extern "C" {
 bool32 check_column_nullable(sql_query_t *sql_query, var_column_t *var_col)
 {
     sql_table_t *table;
+    OG_RETVALUE_IFTRUE((var_col->tab >= sql_query->tables.count), OG_FALSE);
     table = (sql_table_t *)sql_array_get(&sql_query->tables, var_col->tab);
+    OG_RETVALUE_IFTRUE((table == NULL), OG_FALSE);
     OG_RETVALUE_IFTRUE((table->rs_nullable == OG_TRUE), OG_TRUE);
 
     rs_column_t *rs_col = NULL;
@@ -91,7 +93,9 @@ static bool32 rsnode_nullablechk_reserved_word(visit_assist_t *visit_assist, exp
         return OG_TRUE;
     }
 
+    OG_RETVALUE_IFTRUE((ROWID_NODE_TAB(expr_node) >= sql_query->tables.count), OG_FALSE);
     sql_table_t *sql_table = (sql_table_t *)sql_array_get(&sql_query->tables, ROWID_NODE_TAB(expr_node));
+    OG_RETVALUE_IFTRUE((sql_table == NULL), OG_FALSE);
     return sql_table->rs_nullable;
 }
 

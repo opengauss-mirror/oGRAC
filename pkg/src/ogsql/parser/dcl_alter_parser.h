@@ -33,7 +33,7 @@ extern "C" {
 #endif
 
 status_t sql_parse_dcl_alter(sql_stmt_t *stmt);
-status_t sql_bison_verify_sys_param(knl_session_t *se, knl_alter_sys_def_t *def);
+status_t sql_bison_verify_sys_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def);
 status_t sql_parse_sid_serial_bison(text_t *src, source_location_t loc, uint32 *sid, uint32 *serial, uint32 *nodeid);
 status_t sql_parse_altses_set_bison(sql_stmt_t *stmt, altset_def_t *def, const char *key, const char *value,
     source_location_t loc);

@@ -1,3 +1,5 @@
+
+
 SQL> SELECT JSON_QUERY('{A:"B"}', '$') FROM DUAL;
 
 JSON_QUERY('{A:"B"}', '$')                                      
@@ -33,7 +35,7 @@ JSON
 SQL> 
 SQL> SELECT JSON_QUERY('{A:"B"}', '$' ERROR ON ERROR) FROM DUAL;
 
-OG-02504, [1:21]JSON syntax error, " expected but A found
+OG-02504, JSON syntax error, " expected but A found
 SQL> SELECT JSON_QUERY('{"A":"B"}', '$' ERROR ON ERROR) FROM DUAL;
 
 JSON_QUERY('{"A":"B"}', '$' ERROR ON ERROR)                     
@@ -128,10 +130,10 @@ SQL> select 1 from dual where json_value('{"name":FALSE}', '$.name') = false;
 
 SQL> select 1 from dual where json_value('{"name":TRUE}', '$.name' error on error) = 'TRUE';
 
-OG-02504, [1:46]JSON syntax error, unexpected T found
+OG-02504, JSON syntax error, unexpected T found
 SQL> select 1 from dual where json_value('{"name":FALSE}', '$.name' error on error) = 'FALSE';
 
-OG-02504, [1:46]JSON syntax error, unexpected F found
+OG-02504, JSON syntax error, unexpected F found
 SQL> 
 SQL> select RAWTOHEX(json_value('{"name":"\r\ra\rs\rdf\rdf\r\r\ras\rd\rf\rxxxx\r\r\r"}', '$.name')) from dual;
 
@@ -682,7 +684,7 @@ Succeed.
 
 SQL> CREATE TABLE T_JSON_TEST_1 ("c1" varchar2(8000), "c2" int default length(json_value("c1", '$.Aa' returning varchar2(1024) error on error)));
 
-OG-00601, [1:67]Sql syntax error: invalid column name 'c1'
+OG-00601, [1:140]Sql syntax error: invalid column name 'c1'
 SQL> SELECT COND_TEXT FROM SYS.CONSDEF$ WHERE CONS_NAME = 'CON_T_JSON_TEST_1_1';
 
 COND_TEXT                                                       
@@ -692,7 +694,7 @@ COND_TEXT
 
 SQL> DROP TABLE T_JSON_TEST_1;
 
-OG-00843, The table or view SYS.T_JSON_TEST_1 does not exist.
+OG-00843, [1:25]The table or view SYS.T_JSON_TEST_1 does not exist.
 SQL> 
 SQL> -- constraint serialization
 SQL> DROP TABLE IF EXISTS T_JSON_TEST_1;
@@ -735,7 +737,7 @@ C1
 
 1 rows fetched.
 
-SQL> SELECT 'CREATE OR REPLACE VIEW ' || U.NAME || '.' || V.NAME || ' ( '|| VC.COLUMNS || ' ) AS ', V.TEXT || ';' AS VIEWDEF FROM SYS.VIEW$ V, (SELECT USER#, VIEW#, GROUP_CONCAT(NAME ORDER BY ID) COLUMNS FROM SYS.VIEWCOL$ GROUP BY USER#, VIEW#) VC, SYS.USER$ U WHERE V.USER# = VC.USER# AND V.ID = VC.VIEW# AND V.USER# = U.ID AND V.NAME = 'V_JSON_TEST_1';
+SQL> SELECT 'CREATE OR REPLACE VIEW ' || U.NAME || '.' || V.NAME || ' ( '|| VC.COLUMNS || ' ) AS ', V.TEXT || ';' AS VIEWDEF FROM SYS.VIEW$ V, (SELECT USER#, VIEW#, GROUP_CONCAT(NAME ORDER BY ID) COLUMNS FROM SYS.VIEWCOL$ GROUP BY USER#, VIEW#) VC, SYS.USER$ U WHERE V.USER# = VC.USER# AND V.ID = VC.VIEW# AND V.USER# = U.ID AND V.NAME = 'V_JSON_TEST_1'; 
 
 'CREATE OR REPLACE VIEW ' || U.NAME || '.' || V.NAME || ' ( '||  VIEWDEF                                                         
 ---------------------------------------------------------------- ----------------------------------------------------------------
@@ -770,9 +772,9 @@ SQL> insert into json_t_mem_opt values('[1,');
 
 1 rows affected.
 
-SQL> begin
+SQL> begin 
   2 for i in 1..2000
-  3     loop
+  3     loop    
   4         update json_t_mem_opt set c = c || '1,1,1,8,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,';
   5     end loop;
   6     update json_t_mem_opt set c = c || '1]';
@@ -795,9 +797,9 @@ LENGTHB(C)
 1 rows fetched.
 
 SQL> 
-SQL> begin
+SQL> begin 
   2 for i in 1..5
-  3     loop
+  3     loop    
   4         insert into json_t_mem_opt select * from json_t_mem_opt;
   5     end loop;
   6 end;

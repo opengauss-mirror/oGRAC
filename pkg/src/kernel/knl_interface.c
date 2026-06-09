@@ -12697,7 +12697,7 @@ static void estimate_segment_rows(uint32 *pages, uint32 *rows, knl_session_t *se
         *pages = tmp_pages;
     }
 
-    if (rows != NULL) {
+    if (rows != NULL && table->desc.estimate_len != 0) {
         // pctfree is a ratio num
         *rows = ((uint64)tmp_pages *
                  (space->ctrl->block_size - sizeof(heap_page_t) - heap->cipher_reserve_size - PAGE_TAIL_SIZE) *
@@ -12769,6 +12769,13 @@ static void estimate_all_part_rows(uint32 *pages, uint32 *rows, knl_handle_t ses
 
 static void estimate_temp_table_rows(knl_session_t *session, table_t *table, uint32 *pages, uint32 *rows)
 {
+    if (pages != NULL) {
+        *pages = 0;
+    }
+    if (rows != NULL) {
+        *rows = 0;
+    }
+
     space_t *space = SPACE_GET(session, table->desc.space_id);
 
     if (!SPACE_IS_ONLINE(space) || !space->ctrl->used) {
@@ -12787,7 +12794,7 @@ static void estimate_temp_table_rows(knl_session_t *session, table_t *table, uin
     }
 
     uint64 total_size = TEMP_ESTIMATE_TOTAL_ROW_SIZE(segment, table);
-    if (rows != NULL) {
+    if (rows != NULL && table->desc.estimate_len != 0) {
         *rows = (uint32)(total_size * TEMP_ESTIMATE_ROW_SIZE_RATIO / table->desc.estimate_len);
     }
     if (pages != NULL) {

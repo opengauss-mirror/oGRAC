@@ -520,7 +520,6 @@ DROP VIEW read_only_view;
 
 DROP TABLE test_table;
 
-alter system set use_bison_parser = false;
 drop table if exists native_desc_idx_t;
 create table native_desc_idx_t(a int primary key, b int);
 create index native_desc_idx1 on native_desc_idx_t(a desc);

@@ -53,7 +53,7 @@ SQL> select * from sse_t1
   5     (a) in (select a from sse_t2 where a > 2)
   6  );
 
-OG-00601, [5:2]Sql syntax error: invalid word '(a)' found
+OG-00601, [5:1]Sql syntax error: syntax error
 SQL> 
 SQL> drop table if exists sse_t1;
 

@@ -67,10 +67,10 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |      | 338  | 19   | 0         |       |        |
-| 1  |   SORT DISTINCT             |       |      | 338  | 19   | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   | S    | 338  | 5    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | T1   | 338  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |      | 367  | 20   | 0         |       |        |
+| 1  |   SORT DISTINCT             |       |      | 367  | 20   | 0         |       |        |
+| 2  |       SUBSELECT             | SYS   | S    | 367  | 5    | 0         |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | T1   | 367  | 5    | 0         |       |        |
 ----------------------------------------------------------------------------------------------
 
 8 rows fetched.
@@ -107,10 +107,10 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |      | 338  | 19   | 0         |       |        |
-| 1  |   SORT DISTINCT             |       |      | 338  | 19   | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   | S    | 338  | 5    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | T1   | 338  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |      | 367  | 20   | 0         |       |        |
+| 1  |   SORT DISTINCT             |       |      | 367  | 20   | 0         |       |        |
+| 2  |       SUBSELECT             | SYS   | S    | 367  | 5    | 0         |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | T1   | 367  | 5    | 0         |       |        |
 ----------------------------------------------------------------------------------------------
 
 8 rows fetched.
@@ -147,11 +147,11 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 | Id | Operation                     | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |      | 338  | 143  | 4         |       |        |
-| 1  |   QUERY SORT ORDER BY         |       |      | 338  | 143  | 4         |       |        |
-| 2  |     HASH DISTINCT             |       |      | 338  | 19   | 0         |       |        |
-| 3  |         SUBSELECT             | SYS   | S    | 338  | 5    | 0         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | T1   | 338  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |      | 367  | 154  | 5         |       |        |
+| 1  |   QUERY SORT ORDER BY         |       |      | 367  | 154  | 5         |       |        |
+| 2  |     HASH DISTINCT             |       |      | 367  | 20   | 0         |       |        |
+| 3  |         SUBSELECT             | SYS   | S    | 367  | 5    | 0         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | T1   | 367  | 5    | 0         |       |        |
 ------------------------------------------------------------------------------------------------
 
 9 rows fetched.
@@ -183,7 +183,7 @@ SQL> EXPLAIN
   6      ) s
   7 ORDER BY a;
 
-OG-00601, [7:10]Sql syntax error: expression not in distinct list
+OG-00601, Sql syntax error: expression not in distinct list
 SQL> 
 SQL> SELECT DISTINCT a+0
   2 FROM (
@@ -192,7 +192,7 @@ SQL> SELECT DISTINCT a+0
   5      ) s
   6 ORDER BY a;
 
-OG-00601, [6:10]Sql syntax error: expression not in distinct list
+OG-00601, Sql syntax error: expression not in distinct list
 SQL> 
 SQL> 
 SQL> -- =========================
@@ -216,8 +216,8 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT          |       |      | 2    | 3    | 0         |       |        |
 | 1  |   KERNEL FILTER           |       |      | 2    | 3    | 0         |       |        |
 | 2  |     TABLE ACCESS FULL     | SYS   | T2   | 2    | 3    | 0         |       |        |
-| 3  |     HASH DISTINCT         |       |      | 338  | 19   | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T1   | 338  | 5    | 0         |       |        |
+| 3  |     HASH DISTINCT         |       |      | 367  | 20   | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T1   | 367  | 5    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -258,9 +258,9 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 413  | 7    | 0         |       |        |
-| 1  |   KERNEL FILTER         |       |      | 413  | 7    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL   | SYS   | T2 T | 413  | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 449  | 7    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |      | 449  | 7    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | T2 T | 449  | 7    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T1   | 2    | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
@@ -308,12 +308,12 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |      | 33   | 45   | 8         |       |        |
-| 1  |   SORT DISTINCT                 |       |      | 33   | 45   | 8         |       |        |
-| 2  |       SUBSELECT                 | SYS   | S    | 33   | 36   | 8         |       |        |
-| 3  |         HASH DISTINCT           |       |      | 33   | 36   | 8         |       |        |
-| 4  |           HASH GROUP BY         |       |      | 33   | 27   | 8         |       |        |
-| 5  |               TABLE ACCESS FULL | SYS   | T1   | 338  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |      | 36   | 46   | 8         |       |        |
+| 1  |   SORT DISTINCT                 |       |      | 36   | 46   | 8         |       |        |
+| 2  |       SUBSELECT                 | SYS   | S    | 36   | 37   | 8         |       |        |
+| 3  |         HASH DISTINCT           |       |      | 36   | 37   | 8         |       |        |
+| 4  |           HASH GROUP BY         |       |      | 36   | 28   | 8         |       |        |
+| 5  |               TABLE ACCESS FULL | SYS   | T1   | 367  | 5    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 
 10 rows fetched.
@@ -356,8 +356,8 @@ EXPLAIN PLAN OUTPUT
 | 1  |   SORT DISTINCT                 |       |      | 2    | 8    | 0         |       |        |
 | 2  |       SUBSELECT                 | SYS   | S    | 2    | 0    | 0         |       |        |
 | 3  |         QUERY LIMIT             |       |      | 2    | 0    | 0         |       |        |
-| 4  |           HASH DISTINCT         |       |      | 338  | 19   | 0         |       |        |
-| 5  |               TABLE ACCESS FULL | SYS   | T1   | 338  | 5    | 0         |       |        |
+| 4  |           HASH DISTINCT         |       |      | 367  | 20   | 0         |       |        |
+| 5  |               TABLE ACCESS FULL | SYS   | T1   | 367  | 5    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 
 10 rows fetched.
@@ -389,7 +389,7 @@ SQL> EXPLAIN
   6      ) s
   7 ORDER BY a;
 
-OG-00601, [7:10]Sql syntax error: expression not in distinct list
+OG-00601, Sql syntax error: expression not in distinct list
 SQL> 
 SQL> SELECT DISTINCT a+1
   2 FROM (
@@ -398,7 +398,7 @@ SQL> SELECT DISTINCT a+1
   5      ) s
   6 ORDER BY a;
 
-OG-00601, [6:10]Sql syntax error: expression not in distinct list
+OG-00601, Sql syntax error: expression not in distinct list
 SQL> 
 SQL> 
 SQL> -- Case10 子查询 JOIN
@@ -416,12 +416,12 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 | Id | Operation                     | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |      | 697  | 681  | 45        |       |        |
-| 1  |   SORT DISTINCT               |       |      | 697  | 681  | 45        |       |        |
-| 2  |       SUBSELECT               | SYS   | S    | 697  | 659  | 45        |       |        |
-| 3  |         MERGE JOIN            |       |      | 697  | 659  | 45        |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | T1   | 338  | 6    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | T2   | 413  | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |      | 823  | 798  | 50        |       |        |
+| 1  |   SORT DISTINCT               |       |      | 823  | 798  | 50        |       |        |
+| 2  |       SUBSELECT               | SYS   | S    | 823  | 773  | 50        |       |        |
+| 3  |         MERGE JOIN            |       |      | 823  | 773  | 50        |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | T1   | 367  | 6    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | T2   | 449  | 7    | 0         |       |        |
 ------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

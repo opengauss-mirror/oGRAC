@@ -2046,8 +2046,13 @@ status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type
 {
     pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
     plc_desc_t desc = { 0 };
+
+    desc.proc_oid = OG_INVALID_INT64;
     desc.type = PL_FUNCTION;
     desc.obj = &entity->def;
+    desc.source_pages.curr_page_id = OG_INVALID_ID32;
+    desc.source_pages.curr_page_pos = 0;
+    desc.is_synonym = OG_FALSE;
     desc.entity = entity;
 
     if (plc_bison_compile(stmt, &desc, args, ret_type, body) != OG_SUCCESS) {

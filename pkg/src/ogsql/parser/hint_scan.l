@@ -592,7 +592,8 @@ hint_scanner_init(const char *str, hint_yy_extra_type *yyext, sql_stmt_t *stmt)
 
     /* initialize literal buffer to a reasonable but expansible size */
     yyext->literalalloc = 1024;
-    if (sql_alloc_mem(stmt->context, yyext->literalalloc, (void **)&yyext->literalbuf) != OG_SUCCESS) {
+    yyext->literalbuf = (char *)yyalloc(yyext->literalalloc, scanner);
+    if (yyext->literalbuf == NULL) {
         return NULL;
     }
     yyext->literallen = 0;
@@ -605,9 +606,11 @@ hint_scanner_init(const char *str, hint_yy_extra_type *yyext, sql_stmt_t *stmt)
 static bool
 HintKeywordLookup(const char *str, uint32 *hint_id)
 {
+    size_t len = strlen(str);
     for (int i = 0; i < HINT_KEY_WORDS_COUNT; i++)	
     {
-        if (strncasecmp(g_hint_key_words[i].text.str, str, g_hint_key_words[i].text.len) == 0)
+        if (len == g_hint_key_words[i].text.len &&
+            strncasecmp(g_hint_key_words[i].text.str, str, len) == 0)
         {
             *hint_id = g_hint_key_words[i].id;
             return true;
@@ -685,8 +688,9 @@ addlit(const char *ytext, int yleng, yyscan_t yyscanner)
         } while ((yyextra->literallen + yleng) >= yyextra->literalalloc);
 
         /*when yytext is larger than 512M, its double will exceed 1G, so we use repalloc_huge */
-        yyextra->literalbuf = (char *) realloc(yyextra->literalbuf,
-                                                yyextra->literalalloc);
+        yyextra->literalbuf = (char *) yyrealloc(yyextra->literalbuf,
+                                                 yyextra->literalalloc,
+                                                 yyscanner);
     }
     /* append new data */
     memcpy(yyextra->literalbuf + yyextra->literallen, ytext, yleng);
@@ -701,8 +705,9 @@ addlitchar(unsigned char ychar, yyscan_t yyscanner)
     if ((yyextra->literallen + 1) >= yyextra->literalalloc)
     {
         yyextra->literalalloc *= 2;
-        yyextra->literalbuf = (char *) realloc(yyextra->literalbuf,
-                                                yyextra->literalalloc);
+        yyextra->literalbuf = (char *) yyrealloc(yyextra->literalbuf,
+                                                 yyextra->literalalloc,
+                                                 yyscanner);
     }
     /* append new data */
     yyextra->literalbuf[yyextra->literallen] = ychar;

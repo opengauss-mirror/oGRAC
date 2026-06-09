@@ -1,3 +1,4 @@
+alter system set use_bison_parser = true;
 create table table1(a int, b int, c varchar(100));
 create table table2(a int, b int, c varchar(100));
 

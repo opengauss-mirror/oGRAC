@@ -1,3 +1,5 @@
+
+
 SQL> --CREATE TABLE
 SQL> drop TABLE if exists salary_2025;
 
@@ -67,7 +69,7 @@ Succeed.
 
 SQL> alter index idx1 on salary_2025 rename to idx2;
 
-OG-00601, [1:18]Sql syntax error: unexpected word on found.
+OG-00601, [1:18]Sql syntax error: syntax error
 SQL> 
 SQL> --ANALYZE INDEX
 SQL> analyze table salary_2025 compute statistics;
@@ -79,7 +81,8 @@ SQL> analyze index idx1 compute statistics;
 Succeed.
 
 SQL> analyze index idx1 on salary_2025 compute statistics;
-OG-00601, [1:20]Sql syntax error: COMPUTE or ESTIMATE expected
+
+OG-00601, [1:20]Sql syntax error: syntax error
 SQL> 
 SQL> --DROP TABLE
 SQL> drop TABLE if exists salary_2025;
@@ -87,5 +90,8 @@ SQL> drop TABLE if exists salary_2025;
 Succeed.
 
 SQL> drop TABLE if exists salary_2026;
-
 Succeed.
+
+
+
+

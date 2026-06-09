@@ -5204,7 +5204,7 @@ CAST('2222222222222222222222' AS DECIMAL) / CAST('1111.111111111 TO_CHAR(CAST('2
 
 SQL> select cast('2222222222222222222222' as decimal) / cast('0' as decimal), to_char(cast('2222222222222222222222' as decimal) / cast('0' as decimal)) from dual;
 
-OG-00637, [1:50]The divisor was zero
+OG-00637, [1:8]The divisor was zero
 SQL> select cast('2222222222222222222222' as decimal) / cast('0.0001' as decimal), to_char(cast('2222222222222222222222' as decimal) / cast('0.0001' as decimal)) from dual;
 
 CAST('2222222222222222222222' AS DECIMAL) / CAST('0.0001' AS DEC TO_CHAR(CAST('2222222222222222222222' AS DECIMAL) / CAST('0.0001
@@ -5578,7 +5578,7 @@ TO_CHAR(CAST('12345678901234567890123456789012345678951234567890
 
 SQL> select to_char(cast('1234567890123456789012345678901234567895123456789012345678901234567890' as decimal) * cast('123567890123456789012345678901234567800000000000000000000001' as decimal)) from dual;
 
-OG-01319, [1:106]High-Precision numeric overflow
+OG-01319, [1:16]High-Precision numeric overflow
 SQL> select to_char(cast('1234567890123456789012345678901234567895123456789012345678901234567890' as decimal) - cast('1234567890123456789012345678901234567895123456789012345678901234567891' as decimal)) from dual;
 
 TO_CHAR(CAST('12345678901234567890123456789012345678951234567890
@@ -5621,7 +5621,7 @@ TO_CHAR(CAST('9.99999999999E+127' AS DECIMAL) + CAST('1' AS DECI
 
 SQL> select to_char(cast('9.99999999999E+127' as decimal) + cast('1e127' as decimal)) from dual;
 
-OG-01319, [1:54]High-Precision numeric overflow
+OG-01319, [1:16]High-Precision numeric overflow
 SQL> select to_char(cast('9.99999999999999999999999999999999999999E+127' as decimal)) from dual;
 
 TO_CHAR(CAST('9.99999999999999999999999999999999999999E+127' AS 
@@ -5640,7 +5640,7 @@ TO_CHAR(CAST('9.99999999999999999999999999999999999999E+127' AS
 
 SQL> select to_char(cast('9.99999999999999999999999999999999999999E+127' as decimal)/cast('1E-127' as decimal)) from dual;
 
-OG-01319, [1:80]High-Precision numeric overflow
+OG-01319, [1:16]High-Precision numeric overflow
 SQL> 
 SQL> --- Test for long text
 SQL> -- Big decimal value
@@ -6153,7 +6153,7 @@ Succeed.
 
 SQL> create table DEC_TBL_PREC_1(nn decimal(38, -99));
 
-OG-00601, [1:40]Sql syntax error: numeric scale specifier is out of range (-84 to 127)
+OG-00601, [1:49]Sql syntax error: numeric scale specifier is out of range (-84 to 127)
 SQL> 
 SQL> DROP TABLE IF EXISTS DEC_TBL_PREC_2;
 
@@ -6161,7 +6161,7 @@ Succeed.
 
 SQL> create table DEC_TBL_PREC_2(nn decimal(0));
 
-OG-00601, [1:40]Sql syntax error: precision must between 1 and 38
+OG-00601, [1:43]Sql syntax error: precision must between 1 and 38
 SQL> 
 SQL> DROP TABLE IF EXISTS DEC_TBL_PREC_2;
 
@@ -6169,7 +6169,7 @@ Succeed.
 
 SQL> create table DEC_TBL_PREC_2(nn decimal(39));
 
-OG-00601, [1:40]Sql syntax error: precision must between 1 and 38
+OG-00601, [1:44]Sql syntax error: precision must between 1 and 38
 SQL> 
 SQL> 
 SQL> --- scale > 0 & scale < prcesion
@@ -9206,7 +9206,7 @@ X
 SQL> 
 SQL> select '.' * 1 from dual;
 
-OG-00636, [1:12]Invalid number 
+OG-00636, [1:8]Invalid number 
 SQL> select '.0' * 1 from dual;
 
 '.0' * 1                                

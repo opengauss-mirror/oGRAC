@@ -1615,22 +1615,29 @@ status_t sql_create_select_context(sql_stmt_t *stmt, sql_text_t *sql, select_typ
     word_t word;
     lex_t *lex = stmt->session->lex;
     uint32 save_flags = lex->flags;
+    uint32 save_call_version = lex->call_version;
+    status_t status;
 
     OG_RETURN_IFERR(sql_stack_safe(stmt));
 
+    lex->call_version = stmt->session->call_version;
     if (lex_push(lex, sql) != OG_SUCCESS) {
+        lex->call_version = save_call_version;
         return OG_ERROR;
     }
 
     if (sql_parse_select_context(stmt, type, &word, select_ctx) != OG_SUCCESS) {
+        lex->flags = save_flags;
+        lex->call_version = save_call_version;
         lex_pop(lex);
         return OG_ERROR;
     }
 
     lex->flags = save_flags;
-    OG_RETURN_IFERR(lex_expected_end(lex));
+    status = lex_expected_end(lex);
+    lex->call_version = save_call_version;
     lex_pop(lex);
-    return OG_SUCCESS;
+    return status;
 }
 
 status_t sql_create_target_entry(sql_stmt_t *stmt, query_column_t **column, expr_tree_t *expr, char *alias_buf,

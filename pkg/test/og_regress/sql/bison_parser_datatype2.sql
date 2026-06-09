@@ -66,12 +66,12 @@ select 1.2d;
 select 1.2D;
 select 1.23d, 1.24f;
 
-select 1.79E+308; --error
+select 1.79E+308;
 select 1.79E+308f;
 select 1.79E+308F;
 select 1.79E+308d;
 select 1.79E+308D;
-select -1.79E+308; --error 
+select -1.79E+308;
 select -1.79E+308f;
 select -1.79E+308F;
 select -1.79E+308d;
@@ -87,6 +87,8 @@ select -1.79E+309f; --error
 select -1.79E+309F; --error
 select -1.79E+309d; --error
 select -1.79E+309D; --error
+select 1.2E3E4; --error
+select -1.2E3E4; --error
 
 create table testfd(id float);
 insert into testfd values(1.2);
@@ -122,8 +124,8 @@ select 1.23d + 2.4f;
 drop table if exists test1;
 create table test1(id binary_double, id2 binary_float);
 show create table test1;
-insert into test1 values(1.79E+308, 1.79E+308); --error
-insert into test1 values(-1.79E+308, -1.79E+308); --error
+insert into test1 values(1.79E+308, 1.79E+308);
+insert into test1 values(-1.79E+308, -1.79E+308);
 insert into test1 values(1.79E+309, 1.79E+309); --error
 insert into test1 values(-1.79E+309, -1.79E+309); --error
 insert into test1 values(1.79E+308f, 1.79E+308f);
@@ -139,4 +141,3 @@ drop table test1;
 drop table if exists bison_rowid_datatype_t;
 create table bison_rowid_datatype_t(a rowid);
 drop table if exists bison_rowid_datatype_t;
-alter system set use_bison_parser = false;

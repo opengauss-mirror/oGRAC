@@ -5196,7 +5196,7 @@ CAST('2222222222222222222222' AS NUMBER) / CAST('1111.1111111111 TO_CHAR(CAST('2
 
 SQL> select cast('2222222222222222222222' as number) / cast('0' as number), to_char(cast('2222222222222222222222' as number) / cast('0' as number)) from dual;
 
-OG-00637, [1:49]The divisor was zero
+OG-00637, [1:8]The divisor was zero
 SQL> select cast('2222222222222222222222' as number) / cast('0.0001' as number), to_char(cast('2222222222222222222222' as number) / cast('0.0001' as number)) from dual;
 
 CAST('2222222222222222222222' AS NUMBER) / CAST('0.0001' AS NUMB TO_CHAR(CAST('2222222222222222222222' AS NUMBER) / CAST('0.0001'
@@ -5570,7 +5570,7 @@ TO_CHAR(CAST('12345678901234567890123456789012345678951234567890
 
 SQL> select to_char(cast('1234567890123456789012345678901234567895123456789012345678901234567890' as number) * cast('123567890123456789012345678901234567800000000000000000000001' as number)) from dual;
 
-OG-01319, [1:105]High-Precision numeric overflow
+OG-01319, [1:16]High-Precision numeric overflow
 SQL> select to_char(cast('1234567890123456789012345678901234567895123456789012345678901234567890' as number) - cast('1234567890123456789012345678901234567895123456789012345678901234567891' as number)) from dual;
 
 TO_CHAR(CAST('12345678901234567890123456789012345678951234567890
@@ -5613,7 +5613,7 @@ TO_CHAR(CAST('9.99999999999E+127' AS NUMBER) + CAST('1' AS NUMBE
 
 SQL> select to_char(cast('9.99999999999E+127' as number) + cast('1e127' as number)) from dual;
 
-OG-01319, [1:53]High-Precision numeric overflow
+OG-01319, [1:16]High-Precision numeric overflow
 SQL> select to_char(cast('9.99999999999999999999999999999999999999E+127' as number)) from dual;
 
 TO_CHAR(CAST('9.99999999999999999999999999999999999999E+127' AS 
@@ -5632,7 +5632,7 @@ TO_CHAR(CAST('9.99999999999999999999999999999999999999E+127' AS
 
 SQL> select to_char(cast('9.99999999999999999999999999999999999999E+127' as number)/cast('1E-127' as number)) from dual;
 
-OG-01319, [1:79]High-Precision numeric overflow
+OG-01319, [1:16]High-Precision numeric overflow
 SQL> 
 SQL> --- Test for long text
 SQL> -- Big number value
@@ -6145,7 +6145,7 @@ Succeed.
 
 SQL> create table NUM_TBL_PREC_1(nn number(38, -99));
 
-OG-00601, [1:39]Sql syntax error: numeric scale specifier is out of range (-84 to 127)
+OG-00601, [1:48]Sql syntax error: numeric scale specifier is out of range (-84 to 127)
 SQL> 
 SQL> DROP TABLE IF EXISTS NUM_TBL_PREC_2;
 
@@ -6153,7 +6153,7 @@ Succeed.
 
 SQL> create table NUM_TBL_PREC_2(nn number(0));
 
-OG-00601, [1:39]Sql syntax error: precision must between 1 and 38
+OG-00601, [1:42]Sql syntax error: precision must between 1 and 38
 SQL> 
 SQL> 
 SQL> 
@@ -6838,16 +6838,16 @@ SQL> select '1.333E-128000000000000000000000000000000000000000000000000000000000
 
 SQL> select '1.333E-12800000000000000000000000000000000000000000000000000000000000000000000000000000000.0'::number from dual;
 
-OG-00636, [1:102]Invalid number -- unexpected character in exponent
+OG-00636, [1:8]Invalid number -- unexpected character in exponent
 SQL> select '1.333E+200'::number from dual;
 
-OG-00636, [1:20]Invalid number -- overflow
+OG-00636, [1:8]Invalid number -- overflow
 SQL> select '1.333E+20000000000000000000000000000000000000000000000000000000000'::number from dual;
 
-OG-00636, [1:76]Invalid number -- overflow
+OG-00636, [1:8]Invalid number -- overflow
 SQL> select '1.333E+20000000000000000000000000000000000000000000000000.000000000'::number from dual;
 
-OG-00636, [1:77]Invalid number -- unexpected character in exponent
+OG-00636, [1:8]Invalid number -- unexpected character in exponent
 SQL> 
 SQL> select 3.8E+126/ 3.8E+127 from dual;
 
@@ -6933,14 +6933,14 @@ Succeed.
 
 SQL> INSERT INTO test_number_overflow VALUES (99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999);
 
-OG-01319, High-Precision numeric overflow
+OG-01319, [1:42]High-Precision numeric overflow
 SQL> INSERT INTO test_number_overflow VALUES (9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999);
 
 1 rows affected.
 
 SQL> INSERT INTO test_number_overflow VALUES (-99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999);
 
-OG-01319, High-Precision numeric overflow
+OG-01319, [1:43]High-Precision numeric overflow
 SQL> INSERT INTO test_number_overflow VALUES (-9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999);
 
 1 rows affected.
@@ -6961,5 +6961,7 @@ TO_NUMBER(-2E+4,'XXXXXXXX')
 -20000                                  
 
 1 rows fetched.
+
+
 
 

@@ -1,0 +1,437 @@
+
+
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists bison_explain_src;
+
+Succeed.
+
+SQL> drop table if exists bison_explain_dst;
+
+Succeed.
+
+SQL> drop table if exists bison_explain_ctas;
+
+Succeed.
+
+SQL> drop table if exists bison_explain_plain;
+
+Succeed.
+
+SQL> 
+SQL> create table bison_explain_src(id int, val int, name varchar(20));
+
+Succeed.
+
+SQL> create table bison_explain_dst(id int, val int, name varchar(20));
+
+Succeed.
+
+SQL> 
+SQL> insert into bison_explain_src values (1, 10, 'alpha'), (2, 20, 'beta'), (3, 30, 'gamma');
+
+3 rows affected.
+
+SQL> insert into bison_explain_dst values (1, 100, 'old');
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> explain select * from bison_explain_src where id = 1;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                   | 1    | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 1    | 2    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ID = 1                                          
+
+9 rows fetched.
+
+SQL> explain /* bison comment */ plan for select name from bison_explain_src where val between 10 and 30;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                   | 29   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 29   | 2    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: VAL BETWEEN 10 AND 30                           
+
+9 rows fetched.
+
+SQL> explain plan for select s.id, d.val
+  2     from bison_explain_src s left join bison_explain_dst d on s.id = d.id
+  3     where s.val >= 10
+  4     order by s.id;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+| Id | Operation                 | Owner | Name                | Rows | Cost  | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT          |       |                     | 96   | 963  | 1         |       |        |
+| 1  |   QUERY SORT ORDER BY     |       |                     | 96   | 963  | 1         |       |        |
+| 2  |     NESTED LOOPS OUTER    |       |                     | 96   | 928  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC S | 96   | 3    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    3 - filter: S.VAL >= 10                                     
+    4 - filter: S.ID = D.ID                                     
+
+13 rows fetched.
+
+SQL> explain plan for with q as (
+  2     select id, val from bison_explain_src where val > 10
+  3 ) select * from q where id < 3;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT          |       |                   | 0    | 0     | 0         |       |        |
+| 1  |     SUBSELECT             | SYS   | Q                 | 0    | 0     | 0         |       |        |
+| 2  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 96   | 3    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ID < 3                                          
+    2 - filter: VAL > 10                                        
+
+11 rows fetched.
+
+SQL> 
+SQL> explain plan for insert into bison_explain_dst
+  2     select id + 10, val, name from bison_explain_src;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
+| Id | Operation                  | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------------
+| 0  | INSERT STATEMENT           |       |                   | 0    | 0     | 0         |       |        |
+| 1  |   LOAD TABLE CONVENTIONAL  | SYS   | BISON_EXPLAIN_DST | 0    | 0     | 0         |       |        |
+| 2  |     SUBSELECT              |       |                   | 288  | 4    | 0         |       |        |
+| 3  |         TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC | 288  | 4    | 0         |       |        |
+----------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
+
+SQL> explain insert into bison_explain_dst(id, val, name) values (9, 90, 'plain');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
+| Id | Operation                  | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------------
+| 0  | INSERT STATEMENT           |       |                   | 1    | 0    | 0         |       |        |
+| 1  |   LOAD TABLE CONVENTIONAL  | SYS   | BISON_EXPLAIN_DST | 1    | 0    | 0         |       |        |
+----------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> explain plan for update bison_explain_dst set val = val + 1 where id in (
+  2     select id from bison_explain_src
+  3 );
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | UPDATE STATEMENT        |       |                   | 288  | 5    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                   | 288  | 5    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 288  | 5    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 1    | 2    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: EXISTS(SELECT 1 FROM BISON_EXPLAIN_SRC WHERE ID = BISON_EXPLAIN_SRC.ID)
+    3 - filter: ID = BISON_EXPLAIN_SRC.ID                       
+
+12 rows fetched.
+
+SQL> explain update bison_explain_dst set val = val + 2 where id = 1;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------
+| 0  | UPDATE STATEMENT      |       |                   | 1    | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_DST | 1    | 2    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ID = 1                                          
+
+9 rows fetched.
+
+SQL> explain plan for delete from bison_explain_dst where exists (
+  2     select 1 from bison_explain_src where bison_explain_src.id = bison_explain_dst.id
+  3 );
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | DELETE STATEMENT        |       |                   | 0    | 5    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                   | 288  | 5    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 288  | 5    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 1    | 2    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: EXISTS(SELECT 1 FROM BISON_EXPLAIN_SRC WHERE BISON_EXPLAIN_SRC.ID = BISON_EXPLAIN_DST.ID)
+    3 - filter: BISON_EXPLAIN_SRC.ID = BISON_EXPLAIN_DST.ID     
+
+12 rows fetched.
+
+SQL> explain delete from bison_explain_dst where id = 2;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------
+| 0  | DELETE STATEMENT      |       |                   | 0    | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_DST | 1    | 2    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: ID = 2                                          
+
+9 rows fetched.
+
+SQL> explain plan for merge into bison_explain_dst d
+  2     using (select id, val, name from bison_explain_src) s
+  3     on (d.id = s.id)
+  4     when matched then update set d.val = s.val, d.name = s.name
+  5     when not matched then insert (id, val, name) values (s.id, s.val, s.name);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+| Id | Operation                     | Owner | Name                | Rows | Cost  | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------------
+| 0  | MERGE STATEMENT(NESTED LOOPS) |       |                     | 576  | 9    | 0         |       |        |
+| 1  |   USING TABLE                 |       |                     | 288  | 4    | 0         |       |        |
+| 2  |       SUBSELECT               | SYS   | S                   | 288  | 4    | 0         |       |        |
+| 3  |           TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_SRC   | 288  | 4    | 0         |       |        |
+| 4  |   MERGE TABLE                 |       |                     | 288  | 5    | 0         |       |        |
+| 5  |       TABLE ACCESS FULL       | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
+| 6  |   ON CONDITION                |       |                     | 288  | 5    | 0         |       |        |
+| 7  |     INSERT STATEMENT          |       |                     | 288  | 5    | 0         |       |        |
+| 8  |     UPDATE STATEMENT          |       |                     | 288  | 5    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    5 - filter: D.ID = S.ID                                     
+
+16 rows fetched.
+
+SQL> explain merge into bison_explain_dst d
+  2     using (select id, val, name from bison_explain_src where id = 1) s
+  3     on (d.id = s.id)
+  4     when matched then update set d.val = s.val, d.name = s.name
+  5     when not matched then insert (id, val, name) values (s.id, s.val, s.name);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+| Id | Operation                     | Owner | Name                | Rows | Cost  | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------------
+| 0  | MERGE STATEMENT(NESTED LOOPS) |       |                     | 289  | 7    | 0         |       |        |
+| 1  |   USING TABLE                 |       |                     | 1    | 2    | 0         |       |        |
+| 2  |       SUBSELECT               | SYS   | S                   | 1    | 2    | 0         |       |        |
+| 3  |           TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_SRC   | 1    | 2    | 0         |       |        |
+| 4  |   MERGE TABLE                 |       |                     | 288  | 5    | 0         |       |        |
+| 5  |       TABLE ACCESS FULL       | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
+| 6  |   ON CONDITION                |       |                     | 288  | 5    | 0         |       |        |
+| 7  |     INSERT STATEMENT          |       |                     | 288  | 5    | 0         |       |        |
+| 8  |     UPDATE STATEMENT          |       |                     | 288  | 5    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    3 - filter: ID = 1                                          
+    5 - filter: D.ID = S.ID                                     
+
+17 rows fetched.
+
+SQL> explain plan for replace into bison_explain_dst(id, val, name) values (4, 40, 'delta');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
+| Id | Operation                  | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------------
+| 0  | REPLACE STATEMENT          |       |                   | 1    | 0    | 0         |       |        |
+| 1  |   LOAD TABLE CONVENTIONAL  | SYS   | BISON_EXPLAIN_DST | 1    | 0    | 0         |       |        |
+----------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> explain replace into bison_explain_dst(id, val, name) values (5, 50, 'epsilon');
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
+| Id | Operation                  | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------------
+| 0  | REPLACE STATEMENT          |       |                   | 1    | 0    | 0         |       |        |
+| 1  |   LOAD TABLE CONVENTIONAL  | SYS   | BISON_EXPLAIN_DST | 1    | 0    | 0         |       |        |
+----------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> 
+SQL> explain plan for create table bison_explain_ctas as
+  2     select id, val from bison_explain_src where val > 10;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name               | Rows | Cost  | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------
+| 0  | CREATE TABLE STATEMENT  |       |                    | 96   | 3    | 0         |       |        |
+| 1  |   LOAD AS SELECT        | SYS   | BISON_EXPLAIN_CTAS | 96   | 3    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC  | 96   | 3    | 0         |       |        |
+--------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: VAL > 10                                        
+
+10 rows fetched.
+
+SQL> explain plan for create table bison_explain_plain(id int, val int);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+| Id | Operation              | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------
+| 0  | CREATE TABLE STATEMENT |       |      | 0    | 0    | 0         |       |        |
+-----------------------------------------------------------------------------------------
+
+5 rows fetched.
+
+SQL> explain create table bison_explain_plain2(id int);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+| Id | Operation              | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------
+| 0  | CREATE TABLE STATEMENT |       |      | 0    | 0    | 0         |       |        |
+-----------------------------------------------------------------------------------------
+
+5 rows fetched.
+
+SQL> explain plan for create index bison_explain_idx on bison_explain_src(id);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------
+| Id | Operation                | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------
+| 0  | CREATE INDEX STATEMENT   |       |                   | 0    | 0    | 0         |       |        |
+| 1  |   INDEX BUILD NON UNIQUE | SYS   | BISON_EXPLAIN_IDX | 0    | 0    | 0         |       |        |
+| 2  |     SORT CREATE INDEX    |       |                   | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC | 0    | 0    | 0         |       |        |
+--------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
+
+SQL> explain create index bison_explain_idx_plain on bison_explain_src(val);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+| Id | Operation                | Owner | Name                    | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------------
+| 0  | CREATE INDEX STATEMENT   |       |                         | 0    | 0    | 0         |       |        |
+| 1  |   INDEX BUILD NON UNIQUE | SYS   | BISON_EXPLAIN_IDX_PLAIN | 0    | 0    | 0         |       |        |
+| 2  |     SORT CREATE INDEX    |       |                         | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC       | 0    | 0    | 0         |       |        |
+--------------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
+
+SQL> explain plan for create indexcluster (
+  2     index bison_explain_idx1 on bison_explain_src(id),
+  3     index bison_explain_idx2 on bison_explain_src(val)
+  4 );
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                | Owner | Name               | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | CREATE INDEXES STATEMENT |       |                    | 0    | 0    | 0         |       |        |
+| 1  |   INDEX BUILD NON UNIQUE | SYS   | BISON_EXPLAIN_IDX1 | 0    | 0    | 0         |       |        |
+| 2  |     SORT CREATE INDEX    |       |                    | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC  | 0    | 0    | 0         |       |        |
+| 4  |   INDEX BUILD NON UNIQUE | SYS   | BISON_EXPLAIN_IDX2 | 0    | 0    | 0         |       |        |
+| 5  |     SORT CREATE INDEX    |       |                    | 0    | 0    | 0         |       |        |
+| 6  |       TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC  | 0    | 0    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------
+
+11 rows fetched.
+
+SQL> explain create indexcluster (
+  2     index bison_explain_idx3 on bison_explain_src(name)
+  3 );
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                | Owner | Name               | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | CREATE INDEXES STATEMENT |       |                    | 0    | 0    | 0         |       |        |
+| 1  |   INDEX BUILD NON UNIQUE | SYS   | BISON_EXPLAIN_IDX3 | 0    | 0    | 0         |       |        |
+| 2  |     SORT CREATE INDEX    |       |                    | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC  | 0    | 0    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------
+
+8 rows fetched.
+
+SQL> 
+SQL> drop table if exists bison_explain_plain;
+
+Succeed.
+
+SQL> drop table if exists bison_explain_ctas;
+
+Succeed.
+
+SQL> drop table if exists bison_explain_dst;
+
+Succeed.
+
+SQL> drop table if exists bison_explain_src;
+
+Succeed.
+
+SQL> 
+
+

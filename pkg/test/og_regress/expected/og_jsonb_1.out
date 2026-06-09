@@ -369,7 +369,7 @@ SQL> create index jsonb_value_idx_jbv_func_indx_test on jbv_func_indx_test(jsonb
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> select jsonb_value(a, '$[0].AAA') as jbv_res from jbv_func_indx_test order by jbv_res;
 
 JBV_RES                                                         
@@ -455,8 +455,8 @@ SQL> select jsonb_query(a, '$') as val from jbv_func_indx_test where jsonb_value
 
 VAL                                                             
 ----------------------------------------------------------------
-{"AAA":"111","BBB":"222","CCC":"333"}
-{"AAA":"111","BBB":"000","CCC":"333"}
+{"AAA":"111","BBB":"222","CCC":"333"}                           
+{"AAA":"111","BBB":"000","CCC":"333"}                           
 
 2 rows fetched.
 
@@ -468,7 +468,7 @@ VAL
 
 1 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop table if exists jbv_func_indx_test;
 
 Succeed.
@@ -2899,7 +2899,7 @@ JSONB_SET(A, '$.AUTO', '{"JDD":15}')
 
 SQL> select jsonb_set(a, '$.tags[8]', '["GaussDB", "oGRAC", "openGauss"]') from jsonb_set_tbl where b = 3;
 
-JSONB_SET(A, '$.TAGS[8]', '["GAUSSDB", "OGRAC", "OPENGAUSS"]') 
+JSONB_SET(A, '$.TAGS[8]', '["GAUSSDB", "OGRAC", "OPENGAUSS"]')  
 ----------------------------------------------------------------
 {"avatar":"avatar_url","nickname":"gs","tags":["python","golang","db",["GaussDB","oGRAC","openGauss"]]}
 
@@ -3789,9 +3789,9 @@ SQL> insert into tbl_jsonb_006 (id)values(1);
 
 SQL> select jsonb_query(c_jsonb, '$' returning varchar2(32767)) from tbl_jsonb_006;
 
-JSONB_QUERY(C_JSONB, '$' RETURNING VARCHAR2(32767))
+JSONB_QUERY(C_JSONB, '$' RETURNING VARCHAR2(32767))             
 ----------------------------------------------------------------
-[-10,0,null,[10,[20,[30,[40,{"k1":"good","s1":[80,90]}]]]]]
+[-10,0,null,[10,[20,[30,[40,{"k1":"good","s1":[80,90]}]]]]]     
 
 1 rows fetched.
 
@@ -3806,7 +3806,7 @@ Succeed.
 
 SQL> create table tbl_jsonb_006(a raw);
 
-OG-00601, [1:33]Sql syntax error: the column size must be specified
+OG-00601, [1:34]Sql syntax error: the column size must be specified
 SQL> create table tbl_jsonb_006(a raw(256));
 
 Succeed.
@@ -3817,9 +3817,9 @@ SQL> insert into tbl_jsonb_006 values(0x390000000111044405070A0B0B2D313030024504
 
 SQL> select jsonb_query(a, '$') from tbl_jsonb_006;
 
-JSONB_QUERY(A, '$')
+JSONB_QUERY(A, '$')                                             
 ----------------------------------------------------------------
-[-10,0,null,[10,[20,[30,[40,{"k1":"good","s1":[80,90]}]]]]]
+[-10,0,null,[10,[20,[30,[40,{"k1":"good","s1":[80,90]}]]]]]     
 
 1 rows fetched.
 
@@ -3850,7 +3850,7 @@ SQL> select IS_JSONB from adm_tab_cols where TABLE_NAME = upper('jdd_jsonb_tbl_t
 
 IS_JSONB
 --------
-TRUE
+TRUE    
 
 1 rows fetched.
 
@@ -3860,9 +3860,9 @@ SQL> insert into jdd_jsonb_tbl_test_2 values('{"name":"Andy"}');
 
 SQL> select jsonb_query(a, '$') from jdd_jsonb_tbl_test_2;
 
-JSONB_QUERY(A, '$')
+JSONB_QUERY(A, '$')                                             
 ----------------------------------------------------------------
-{"name":"Andy"}
+{"name":"Andy"}                                                 
 
 1 rows fetched.
 
@@ -3879,7 +3879,7 @@ SQL> select IS_JSONB from adm_tab_cols where TABLE_NAME = upper('jdd_jsonb_tbl_t
 
 IS_JSONB
 --------
-TRUE
+TRUE    
 
 1 rows fetched.
 
@@ -3889,9 +3889,9 @@ SQL> insert into jdd_jsonb_tbl_test_3 values('{"name":"Andy"}');
 
 SQL> select jsonb_value(a, '$.name') from jdd_jsonb_tbl_test_3;
 
-JSONB_VALUE(A, '$.NAME')
+JSONB_VALUE(A, '$.NAME')                                        
 ----------------------------------------------------------------
-Andy
+Andy                                                            
 
 1 rows fetched.
 
@@ -3931,10 +3931,10 @@ Succeed.
 
 SQL> select jsonb_query(c_jsonb,'$' with wrapper error on error ) from tbl_jsonb_025 order by id;
 
-JSONB_QUERY(C_JSONB,'$' WITH WRAPPER ERROR ON ERROR )
+JSONB_QUERY(C_JSONB,'$' WITH WRAPPER ERROR ON ERROR )           
 ----------------------------------------------------------------
 [[{"k1":[{"s1":["a","sd","-100",[0,100,[{"s2":"rr","s3":"周杰伦"}]]]},1000,"200we",{"d1":{"t1":"被子","t2":9999}}],"k2":{"q2":{"f2":"水杯","f3":"手机","f4":"fdfs","f5":["fdf",[100,200,"re",[1000,2000,[3000,{"w1":"终结者"}]]]]}},"k3":[{"g1":100},{"g2":{"g3":"nice"}},10000,{"g4":{"g5":{"g6":"2323","g7":-100000}}},"good boy","giraffe"]},{"":[null,0,-100,{"a2":null,"水果":"香蕉"},["富贵竹","panda","@#$$",[1000,"鼠标",null]]]},[100,[200,[300,[400,[500,[{"结果":"死机"}]]]]]],{"h1":{"h2":{"h3":{"h4":{"h5":["中国好娃娃"]}}}}}]]
-[["",""]]
+[["",""]]                                                       
 
 2 rows fetched.
 
@@ -3973,18 +3973,18 @@ SQL> select jsonb_mergepatch(t1.c_jsonb,'[]' returning jsonb error on error) fro
 
 JSONB_MERGEPATCH(T1.C_JSONB,'[]' RETURNING JSONB ERROR ON ERROR)
 ----------------------------------------------------------------
-01000000011100
+01000000011100                                                  
 
 1 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_mergepatch(t1.c_jsonb,'[{"k1":"lili","k2":[10,{"k3":20}],"k3":{"k4":"语文","k5":"数学"}},{"k1":"luna","k2":[100,{"k3":200}],"k3":{"k4":"物理","k5":"化学"}},{"k1":"joyh","k2":[1000,{"k3":2000}],"k3":{"k4":"高数","k5":"生物"}},{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"数学"}}]' returning jsonb error on error),'$[*]' error on error columns(c1 varchar2(10) path '$.k1',c4 varchar2(10) path '$.k3.k4',c6 for ordinality)) t2;
 
-C1                                                           C4                                                           C6
+C1                                                           C4                                                           C6                  
 ------------------------------------------------------------ ------------------------------------------------------------ --------------------
-lili                                                         语文                                                       1
-luna                                                         物理                                                       2
-joyh                                                         高数                                                       3
-esmen                                                        english                                                      4
+lili                                                         语文                                                       1                   
+luna                                                         物理                                                       2                   
+joyh                                                         高数                                                       3                   
+esmen                                                        english                                                      4                   
 
 4 rows fetched.
 
@@ -4032,33 +4032,33 @@ SQL> update test_json_src_1 set a = '{"name":"' || a || '"}';
 
 SQL> select length(a) from test_json_src_1;
 
-LENGTH(A)
+LENGTH(A)           
 --------------------
-136011
+136011              
 
 1 rows fetched.
 
 SQL> select 1 from test_json_src_1 where a is json;
 
-1
+1           
 ------------
-1
+1           
 
 1 rows fetched.
 
 SQL> select length(json_value(a, '$.name' returning clob)) val from test_json_src_1;
 
-VAL
+VAL                 
 --------------------
-136002
+136002              
 
 1 rows fetched.
 
 SQL> select length(json_query(a, '$' returning clob)) val from test_json_src_1;
 
-VAL
+VAL                 
 --------------------
-136011
+136011              
 
 1 rows fetched.
 
@@ -4077,17 +4077,17 @@ SQL> insert into test_jsonb_dst select * from test_json_src_1;
 
 SQL> select length(jsonb_value(a, '$.name' returning clob)) val from test_jsonb_dst;
 
-VAL
+VAL                 
 --------------------
-136002
+136002              
 
 1 rows fetched.
 
 SQL> select length(jsonb_query(a, '$' returning clob)) val from test_jsonb_dst;
 
-VAL
+VAL                 
 --------------------
-136011
+136011              
 
 1 rows fetched.
 
@@ -4129,47 +4129,47 @@ JSONB_SET(T1.C_JSONB,'$[4]','{"K1":"ESMEN","K2":[10000,{"K3":200
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]' columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
-esmen                                                        english                                                          4
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
 
 4 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_set(jsonb_query(jsonb_query(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]' columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
-esmen                                                        english                                                          4
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
 
 4 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_set(jsonb_query(jsonb_query(jsonb_query(jsonb_query(jsonb_set(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[5]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[6]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]' columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
-esmen                                                        english                                                          4
-esmen                                                        english                                                          5
-esmen                                                        english                                                          6
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+esmen                                                        english                                                          5                   
+esmen                                                        english                                                          6                   
 
 6 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(json_set(t1.c_json,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
-esmen                                                        english                                                          4
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
 
 4 rows fetched.
 
@@ -4183,125 +4183,125 @@ JSONB_QUERY(T1.C_JSONB,'$' RETURNING VARCHAR2(1000) ERROR ON ERR
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_query(t1.c_jsonb,'$' returning varchar2(1000) error on error),'$[*]'   columns(c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C4                                                               C6
+C4                                                               C6                  
 ---------------------------------------------------------------- --------------------
-Chinese                                                          1
-PYH                                                              2
-High                         QQ                         Math     3
+Chinese                                                          1                   
+PYH                                                              2                   
+High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_query(t1.c_jsonb,'$' returning varchar2(1000) error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_query(t1.c_jsonb,'$' returning clob error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(json_query(t1.c_json,'$' returning varchar2(1000) error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(t1.c_json,'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(jsonb_query(jsonb_query(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(c_jsonb,'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
 
 3 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
-esmen                                                        english                                                          4
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
 
 4 rows fetched.
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_set(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[5]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-C1                                                           C4                                                               C6
+C1                                                           C4                                                               C6                  
 ------------------------------------------------------------ ---------------------------------------------------------------- --------------------
-lili                                                         Chinese                                                          1
-luna                                                         PYH                                                              2
-joyh                                                         High                         QQ                         Math     3
-esmen                                                        english                                                          4
-esmen                                                        english                                                          5
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+esmen                                                        english                                                          5                   
 
 5 rows fetched.
 
@@ -4354,7 +4354,7 @@ Succeed.
 SQL> 
 SQL> select c_jsonb from tbl_jsonb_025;
 
-C_JSONB
+C_JSONB                                                         
 ----------------------------------------------------------------
 7702000001120455550B009001F9013C028355500F001100130015009C0019016B316B326B330454350B004F005300580081500600080073310433350B00...
 
@@ -4370,7 +4370,7 @@ JSONB_SET(C_JSONB,'$[1]."S1#$%%@#"[3].A2','1000' RETURNING JSONB
 
 SQL> select jsonb_set(c_jsonb,'$[1]."s1#$%%@#"[3].a2','1000' returning clob error on error ) from tbl_jsonb_025;
 
-JSONB_SET(C_JSONB,'$[1]."S1#$%%@#"[3].A2','1000' RETURNING CLOB
+JSONB_SET(C_JSONB,'$[1]."S1#$%%@#"[3].A2','1000' RETURNING CLOB 
 ----------------------------------------------------------------
 [{"k1":[{"s1":["a","sd","-100",[0,100,[{"s2":"rr","s3":"周杰伦"}]]]},1000,"200we",{"d1":{"t1":"2021-7-21 09:23:45.66","t2":9999}}],"k2":{"q2":{"f2":"水杯","f3":"手机","f4":"fdfs","f5":["fdf",[100,200,"re",[1000,2000,[-1.234,{"w1":"终结者"}]]]]}},"k3":[{"g1":100},{"g2":{"g3":"nice"}},10000,{"g4":{"g5":{"g6":"2323","g7":-100000}}},"good boy","giraffe"]},{"s1#$%%@#":[null,0,-100,{"a2":1000,"水果":"香蕉"},["富贵竹","panda","@#$$",[1000,"鼠标",null]]]},[100,[200,[300,[400,[500,[{"结果":"死机"}]]]]]],{"h1":{"h2":{"h3":{"h4":{"h5":["中国好娃娃"]}}}}}]
 
@@ -4380,7 +4380,7 @@ SQL> select jsonb_query(jsonb_set(c_jsonb,'$[1]."s1#$%%@#"[3].a2','1000' returni
 
 JSONB_QUERY(JSONB_SET(C_JSONB,'$[1]."S1#$%%@#"[3].A2','1000' RET
 ----------------------------------------------------------------
-0800000001120140040031303030
+0800000001120140040031303030                                    
 
 1 rows fetched.
 
@@ -4388,7 +4388,7 @@ SQL> select jsonb_query(jsonb_set(c_jsonb,'$[1]."s1#$%%@#"[3].a2','1000' returni
 
 JSONB_QUERY(JSONB_SET(C_JSONB,'$[1]."S1#$%%@#"[3].A2','1000' RET
 ----------------------------------------------------------------
-[1000]
+[1000]                                                          
 
 1 rows fetched.
 
@@ -4396,7 +4396,7 @@ SQL> select jsonb_value(jsonb_query(jsonb_set(c_jsonb,'$[1]."s1#$%%@#"[3].a2','1
 
 JSONB_VALUE(JSONB_QUERY(JSONB_SET(C_JSONB,'$[1]."S1#$%%@#"[3].A2
 ----------------------------------------------------------------
-1000
+1000                                                            
 
 1 rows fetched.
 
@@ -4404,7 +4404,7 @@ SQL> select json_value(json_query(json_set(c_json,'$[1]."s1#$%%@#"[3].a2','1000'
 
 JSON_VALUE(JSON_QUERY(JSON_SET(C_JSON,'$[1]."S1#$%%@#"[3].A2','1
 ----------------------------------------------------------------
-1000
+1000                                                            
 
 1 rows fetched.
 
@@ -4413,3 +4413,5 @@ SQL> drop table if exists tbl_jsonb_025;
 Succeed.
 
 SQL> 
+
+

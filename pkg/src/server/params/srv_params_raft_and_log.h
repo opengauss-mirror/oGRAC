@@ -27,6 +27,7 @@
 
 #include "cm_config.h"
 #include "cm_text.h"
+#include "persist_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,6 +61,7 @@ status_t sql_verify_log_file_size(void *se, void *lex, void *def);
 status_t sql_verify_audit_file_size(void *se, void *lex, void *def);
 status_t sql_verify_pbl_file_size(void *se, void *lex, void *def);
 status_t sql_verify_als_log_level(void *se, void *lex, void *def);
+status_t sql_bison_normalize_als_log_level(knl_alter_sys_def_t *def);
 status_t sql_verify_als_log_file(void *se, void *lex, void *def);
 status_t sql_verify_als_log_path(void *se, void *lex, void *def);
 status_t sql_verify_als_sql_stage_threshold(void *se, void *lex, void *def);

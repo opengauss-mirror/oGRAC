@@ -64,15 +64,15 @@ ID           NAME                                               AGE
 SQL> 
 SQL> INSERT INTO read_only_view VALUES (5, '钱七', 40);
 
-OG-00601, [1:13]Sql syntax error: view operation INSERT must based on instead of trigger but current view has no trigger
+OG-00601, Sql syntax error: view operation INSERT must based on instead of trigger but current view has no trigger
 SQL> 
 SQL> UPDATE read_only_view SET age = 31 WHERE id = 2;
 
-OG-00601, [1:8]Sql syntax error: view operation UPDATE must based on instead of trigger but current view has no trigger
+OG-00601, Sql syntax error: view operation UPDATE must based on instead of trigger but current view has no trigger
 SQL> 
 SQL> DELETE FROM read_only_view WHERE id = 2;
 
-OG-00601, [1:13]Sql syntax error: view operation DELETE must based on instead of trigger but current view has no trigger
+OG-00601, Sql syntax error: view operation DELETE must based on instead of trigger but current view has no trigger
 SQL> 
 SQL> SELECT * FROM test_table;
 

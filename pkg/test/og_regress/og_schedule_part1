@@ -59,4 +59,5 @@ test: bison_parser_datatype2
 test: og_rowid_insert
 test: bison_parser_dcl
 test: bison_parser_ddl
+test: bison_parser_explain
 test: bison_parser_pl

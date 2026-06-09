@@ -56,7 +56,7 @@ SQL>
 SQL> -- select aggr + connect_by_root(subqry with group list column) excepted error more than one value
 SQL> select count(f1) + connect_by_root (select f1 from tbl_part_1) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
 
-OG-00915, More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+OG-00915, [1:36]More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
 SQL> -- select aggr + connect_by_root(subqry without group list column) excepted success with null
 SQL> select count(f1) + connect_by_root (select f1 from tbl_part_2) from tbl_part_1 start with f1 = 3 connect by f1 = f2;
 
@@ -89,7 +89,7 @@ SQL>
 SQL> -- select aggr + (subqry with group list column) excepted error more than one value
 SQL> select count(t1.f1) + (select t1.f1 from tbl_part_1 t1) from tbl_part_1 t1;
 
-OG-00915, More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
+OG-00915, [1:23]More than one return value of SELECT INTO, EXECUTE IMMEDIATE, or a cursor was assigned to a common variable.
 SQL> -- select aggr + (subqry without group list column) excepted success with null
 SQL> select count(t1.f1) + (select t2.f1 from tbl_part_2 t2) from tbl_part_1 t1;
 

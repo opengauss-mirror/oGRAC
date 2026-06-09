@@ -194,6 +194,11 @@ static status_t og_verify_hint_index(sql_hint_verifier_t *verif, hint_item_t *hi
     }
 
     const uint64 curr_hint_id = hint_item->id;
+    /* Keep bison aligned with the native parser, which does not apply FFS hints. */
+    if (curr_hint_id == ID_HINT_INDEX_FFS || curr_hint_id == ID_HINT_NO_INDEX_FFS) {
+        return OG_SUCCESS;
+    }
+
     expr_tree_t *tbl_name_expr = hint_item->args;
     expr_tree_t *index_param_expr = tbl_name_expr->next;
     sql_table_t *target_table = find_table_from_array(verif->tables, &tbl_name_expr->root->value.v_text);

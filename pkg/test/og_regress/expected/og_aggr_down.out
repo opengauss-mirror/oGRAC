@@ -180,13 +180,13 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |               | 14036 | 1516 | 78        |       |        |
-| 1  |   HASH GROUP BY                 |       |               | 14036 | 1516 | 78        |       |        |
-| 2  |     NESTED LOOPS                |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
-| 5  |           HASH GROUP BY         |       |               | 12    | 21   | 8         |       |        |
-| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |               | 16632 | 1770 | 91        |       |        |
+| 1  |   HASH GROUP BY                 |       |               | 16632 | 1770 | 91        |       |        |
+| 2  |     NESTED LOOPS                |       |               | 16632 | 502  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
+| 5  |           HASH GROUP BY         |       |               | 13    | 21   | 8         |       |        |
+| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 
 11 rows fetched.
@@ -195,55 +195,55 @@ SQL> SELECT d.dept_name, MIN(e.salary) FROM employees e cross join  departments 
 
 DEPT_NAME                                          MIN(E.SALARY)                           
 -------------------------------------------------- ----------------------------------------
-Sales                                              12000                                   
 HR                                                 6500                                    
+Marketing                                          5300                                    
+HR                                                 7000                                    
+Finance                                            6200                                    
+Marketing                                          6200                                    
+Finance                                            7000                                    
+HR                                                 6800                                    
+Engineering                                        6800                                    
+Finance                                            5300                                    
+Finance                                            6500                                    
+Finance                                            6800                                    
+Finance                                            11000                                   
+Engineering                                        5300                                    
+Engineering                                        6200                                    
+Marketing                                          12000                                   
+Finance                                            8000                                    
+Marketing                                          11000                                   
+HR                                                 8000                                    
+Engineering                                        6500                                    
+Engineering                                        11000                                   
+Engineering                                        5500                                    
+Sales                                              12000                                   
 Marketing                                          8000                                    
 HR                                                 5300                                    
 HR                                                 6200                                    
 Marketing                                          5500                                    
-Marketing                                          5300                                    
 HR                                                 7500                                    
-HR                                                 7000                                    
 Marketing                                          6800                                    
-Finance                                            6200                                    
 Marketing                                          6500                                    
-Marketing                                          6200                                    
-Finance                                            7000                                    
-HR                                                 6800                                    
 Engineering                                        7000                                    
-Engineering                                        6800                                    
-Finance                                            5300                                    
 Finance                                            7500                                    
-Finance                                            6500                                    
 HR                                                 5500                                    
 Sales                                              7000                                    
 Sales                                              6200                                    
-Finance                                            6800                                    
 Finance                                            5500                                    
-Finance                                            11000                                   
 HR                                                 11000                                   
 Sales                                              7500                                    
 Sales                                              6500                                    
-Engineering                                        5300                                    
-Engineering                                        6200                                    
 Sales                                              5500                                    
 Marketing                                          7500                                    
-Marketing                                          12000                                   
 Finance                                            12000                                   
 Engineering                                        7500                                    
 Sales                                              8000                                    
 Engineering                                        12000                                   
 Marketing                                          7000                                    
-Finance                                            8000                                    
-Marketing                                          11000                                   
-HR                                                 8000                                    
 Engineering                                        8000                                    
-Engineering                                        6500                                    
 Sales                                              6800                                    
-Engineering                                        11000                                   
 Sales                                              5300                                    
 Sales                                              11000                                   
-Engineering                                        5500                                    
 HR                                                 12000                                   
 
 50 rows fetched.
@@ -256,13 +256,13 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |               | 14036 | 1516 | 78        |       |        |
-| 1  |   HASH GROUP BY                 |       |               | 14036 | 1516 | 78        |       |        |
-| 2  |     NESTED LOOPS                |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
-| 5  |           HASH GROUP BY         |       |               | 12    | 21   | 8         |       |        |
-| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |               | 16632 | 1770 | 91        |       |        |
+| 1  |   HASH GROUP BY                 |       |               | 16632 | 1770 | 91        |       |        |
+| 2  |     NESTED LOOPS                |       |               | 16632 | 502  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
+| 5  |           HASH GROUP BY         |       |               | 13    | 21   | 8         |       |        |
+| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 
 11 rows fetched.
@@ -271,55 +271,55 @@ SQL> SELECT d.dept_name, MAX(e.salary) FROM employees e cross join  departments 
 
 DEPT_NAME                                          MAX(E.SALARY)                           
 -------------------------------------------------- ----------------------------------------
-Sales                                              12000                                   
 HR                                                 6500                                    
+Marketing                                          5300                                    
+HR                                                 7000                                    
+Finance                                            6200                                    
+Marketing                                          6200                                    
+Finance                                            7000                                    
+HR                                                 6800                                    
+Engineering                                        6800                                    
+Finance                                            5300                                    
+Finance                                            6500                                    
+Finance                                            6800                                    
+Finance                                            11000                                   
+Engineering                                        5300                                    
+Engineering                                        6200                                    
+Marketing                                          12000                                   
+Finance                                            8000                                    
+Marketing                                          11000                                   
+HR                                                 8000                                    
+Engineering                                        6500                                    
+Engineering                                        11000                                   
+Engineering                                        5500                                    
+Sales                                              12000                                   
 Marketing                                          8000                                    
 HR                                                 5300                                    
 HR                                                 6200                                    
 Marketing                                          5500                                    
-Marketing                                          5300                                    
 HR                                                 7500                                    
-HR                                                 7000                                    
 Marketing                                          6800                                    
-Finance                                            6200                                    
 Marketing                                          6500                                    
-Marketing                                          6200                                    
-Finance                                            7000                                    
-HR                                                 6800                                    
 Engineering                                        7000                                    
-Engineering                                        6800                                    
-Finance                                            5300                                    
 Finance                                            7500                                    
-Finance                                            6500                                    
 HR                                                 5500                                    
 Sales                                              7000                                    
 Sales                                              6200                                    
-Finance                                            6800                                    
 Finance                                            5500                                    
-Finance                                            11000                                   
 HR                                                 11000                                   
 Sales                                              7500                                    
 Sales                                              6500                                    
-Engineering                                        5300                                    
-Engineering                                        6200                                    
 Sales                                              5500                                    
 Marketing                                          7500                                    
-Marketing                                          12000                                   
 Finance                                            12000                                   
 Engineering                                        7500                                    
 Sales                                              8000                                    
 Engineering                                        12000                                   
 Marketing                                          7000                                    
-Finance                                            8000                                    
-Marketing                                          11000                                   
-HR                                                 8000                                    
 Engineering                                        8000                                    
-Engineering                                        6500                                    
 Sales                                              6800                                    
-Engineering                                        11000                                   
 Sales                                              5300                                    
 Sales                                              11000                                   
-Engineering                                        5500                                    
 HR                                                 12000                                   
 
 50 rows fetched.
@@ -332,11 +332,11 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 14036 | 1516 | 78        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 14036 | 1516 | 78        |       |        |
-| 2  |     NESTED LOOPS          |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 16632 | 1770 | 91        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 16632 | 1770 | 91        |       |        |
+| 2  |     NESTED LOOPS          |       |               | 16632 | 502  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------
 
 9 rows fetched.
@@ -345,55 +345,55 @@ SQL> SELECT d.dept_name, SUM(e.salary) FROM employees e cross join  departments 
 
 DEPT_NAME                                          SUM(E.SALARY)                           
 -------------------------------------------------- ----------------------------------------
-Sales                                              12000                                   
 HR                                                 6500                                    
+Marketing                                          5300                                    
+HR                                                 7000                                    
+Finance                                            6200                                    
+Marketing                                          6200                                    
+Finance                                            7000                                    
+HR                                                 6800                                    
+Engineering                                        6800                                    
+Finance                                            5300                                    
+Finance                                            6500                                    
+Finance                                            6800                                    
+Finance                                            11000                                   
+Engineering                                        5300                                    
+Engineering                                        6200                                    
+Marketing                                          12000                                   
+Finance                                            8000                                    
+Marketing                                          11000                                   
+HR                                                 8000                                    
+Engineering                                        6500                                    
+Engineering                                        11000                                   
+Engineering                                        5500                                    
+Sales                                              12000                                   
 Marketing                                          8000                                    
 HR                                                 5300                                    
 HR                                                 6200                                    
 Marketing                                          5500                                    
-Marketing                                          5300                                    
 HR                                                 7500                                    
-HR                                                 7000                                    
 Marketing                                          6800                                    
-Finance                                            6200                                    
 Marketing                                          6500                                    
-Marketing                                          6200                                    
-Finance                                            7000                                    
-HR                                                 6800                                    
 Engineering                                        7000                                    
-Engineering                                        6800                                    
-Finance                                            5300                                    
 Finance                                            7500                                    
-Finance                                            6500                                    
 HR                                                 5500                                    
 Sales                                              7000                                    
 Sales                                              6200                                    
-Finance                                            6800                                    
 Finance                                            5500                                    
-Finance                                            11000                                   
 HR                                                 11000                                   
 Sales                                              7500                                    
 Sales                                              6500                                    
-Engineering                                        5300                                    
-Engineering                                        6200                                    
 Sales                                              5500                                    
 Marketing                                          7500                                    
-Marketing                                          12000                                   
 Finance                                            12000                                   
 Engineering                                        7500                                    
 Sales                                              8000                                    
 Engineering                                        12000                                   
 Marketing                                          7000                                    
-Finance                                            8000                                    
-Marketing                                          11000                                   
-HR                                                 8000                                    
 Engineering                                        8000                                    
-Engineering                                        6500                                    
 Sales                                              6800                                    
-Engineering                                        11000                                   
 Sales                                              5300                                    
 Sales                                              11000                                   
-Engineering                                        5500                                    
 HR                                                 12000                                   
 
 50 rows fetched.
@@ -406,12 +406,12 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 10    | 79   | 78        |       |        |
-| 1  |   QUERY LIMIT               |       |               | 10    | 79   | 78        |       |        |
-| 2  |     HASH GROUP BY           |       |               | 14036 | 1516 | 78        |       |        |
-| 3  |       NESTED LOOPS          |       |               | 14036 | 434  | 0         |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 10    | 92   | 91        |       |        |
+| 1  |   QUERY LIMIT               |       |               | 10    | 92   | 91        |       |        |
+| 2  |     HASH GROUP BY           |       |               | 16632 | 1770 | 91        |       |        |
+| 3  |       NESTED LOOPS          |       |               | 16632 | 502  | 0         |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 
 10 rows fetched.
@@ -420,16 +420,16 @@ SQL> SELECT d.dept_name, MIN(e.salary) FROM employees e cross join  departments 
 
 DEPT_NAME                                          MIN(E.SALARY)                           
 -------------------------------------------------- ----------------------------------------
-Sales                                              12000                                   
 HR                                                 6500                                    
-Marketing                                          8000                                    
-HR                                                 5300                                    
-HR                                                 6200                                    
-Marketing                                          5500                                    
 Marketing                                          5300                                    
-HR                                                 7500                                    
 HR                                                 7000                                    
-Marketing                                          6800                                    
+Finance                                            6200                                    
+Marketing                                          6200                                    
+Finance                                            7000                                    
+HR                                                 6800                                    
+Engineering                                        6800                                    
+Finance                                            5300                                    
+Finance                                            6500                                    
 
 10 rows fetched.
 
@@ -441,11 +441,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 4678 | 1175 | 31        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 4678 | 1175 | 31        |       |        |
-| 2  |     NESTED LOOPS          |       |               | 4678 | 474  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 5544 | 1367 | 35        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 5544 | 1367 | 35        |       |        |
+| 2  |     NESTED LOOPS          |       |               | 5544 | 550  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -518,13 +518,13 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |               | 1403  | 947  | 15        |       |        |
-| 1  |   HASH GROUP BY                 |       |               | 1403  | 947  | 15        |       |        |
-| 2  |     NESTED LOOPS                |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |               | 1663  | 1096 | 16        |       |        |
+| 1  |   HASH GROUP BY                 |       |               | 1663  | 1096 | 16        |       |        |
+| 2  |     NESTED LOOPS                |       |               | 16632 | 502  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 | 5  |           AGGR                  |       |               | 1     | 3    | 0         |       |        |
-| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 
 11 rows fetched.
@@ -549,13 +549,13 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |               | 14036 | 1516 | 113       |       |        |
-| 1  |   HASH GROUP BY                 |       |               | 14036 | 1516 | 113       |       |        |
-| 2  |     NESTED LOOPS                |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
-| 5  |           HASH GROUP BY         |       |               | 12    | 21   | 8         |       |        |
-| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |               | 16632 | 1770 | 132       |       |        |
+| 1  |   HASH GROUP BY                 |       |               | 16632 | 1770 | 132       |       |        |
+| 2  |     NESTED LOOPS                |       |               | 16632 | 502  | 0         |       |        |
+| 3  |         TABLE ACCESS FULL       | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 4  |         SUBSELECT               | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
+| 5  |           HASH GROUP BY         |       |               | 13    | 21   | 8         |       |        |
+| 6  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 
 11 rows fetched.
@@ -564,55 +564,55 @@ SQL> SELECT d.dept_name, MIN(e.salary), MAX(e.salary) FROM employees e cross joi
 
 DEPT_NAME                                          MIN(E.SALARY)                            MAX(E.SALARY)                           
 -------------------------------------------------- ---------------------------------------- ----------------------------------------
-Sales                                              12000                                    12000                                   
 HR                                                 6500                                     6500                                    
+Marketing                                          5300                                     5300                                    
+HR                                                 7000                                     7000                                    
+Finance                                            6200                                     6200                                    
+Marketing                                          6200                                     6200                                    
+Finance                                            7000                                     7000                                    
+HR                                                 6800                                     6800                                    
+Engineering                                        6800                                     6800                                    
+Finance                                            5300                                     5300                                    
+Finance                                            6500                                     6500                                    
+Finance                                            6800                                     6800                                    
+Finance                                            11000                                    11000                                   
+Engineering                                        5300                                     5300                                    
+Engineering                                        6200                                     6200                                    
+Marketing                                          12000                                    12000                                   
+Finance                                            8000                                     8000                                    
+Marketing                                          11000                                    11000                                   
+HR                                                 8000                                     8000                                    
+Engineering                                        6500                                     6500                                    
+Engineering                                        11000                                    11000                                   
+Engineering                                        5500                                     5500                                    
+Sales                                              12000                                    12000                                   
 Marketing                                          8000                                     8000                                    
 HR                                                 5300                                     5300                                    
 HR                                                 6200                                     6200                                    
 Marketing                                          5500                                     5500                                    
-Marketing                                          5300                                     5300                                    
 HR                                                 7500                                     7500                                    
-HR                                                 7000                                     7000                                    
 Marketing                                          6800                                     6800                                    
-Finance                                            6200                                     6200                                    
 Marketing                                          6500                                     6500                                    
-Marketing                                          6200                                     6200                                    
-Finance                                            7000                                     7000                                    
-HR                                                 6800                                     6800                                    
 Engineering                                        7000                                     7000                                    
-Engineering                                        6800                                     6800                                    
-Finance                                            5300                                     5300                                    
 Finance                                            7500                                     7500                                    
-Finance                                            6500                                     6500                                    
 HR                                                 5500                                     5500                                    
 Sales                                              7000                                     7000                                    
 Sales                                              6200                                     6200                                    
-Finance                                            6800                                     6800                                    
 Finance                                            5500                                     5500                                    
-Finance                                            11000                                    11000                                   
 HR                                                 11000                                    11000                                   
 Sales                                              7500                                     7500                                    
 Sales                                              6500                                     6500                                    
-Engineering                                        5300                                     5300                                    
-Engineering                                        6200                                     6200                                    
 Sales                                              5500                                     5500                                    
 Marketing                                          7500                                     7500                                    
-Marketing                                          12000                                    12000                                   
 Finance                                            12000                                    12000                                   
 Engineering                                        7500                                     7500                                    
 Sales                                              8000                                     8000                                    
 Engineering                                        12000                                    12000                                   
 Marketing                                          7000                                     7000                                    
-Finance                                            8000                                     8000                                    
-Marketing                                          11000                                    11000                                   
-HR                                                 8000                                     8000                                    
 Engineering                                        8000                                     8000                                    
-Engineering                                        6500                                     6500                                    
 Sales                                              6800                                     6800                                    
-Engineering                                        11000                                    11000                                   
 Sales                                              5300                                     5300                                    
 Sales                                              11000                                    11000                                   
-Engineering                                        5500                                     5500                                    
 HR                                                 12000                                    12000                                   
 
 50 rows fetched.
@@ -625,13 +625,13 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |               | 1403  | 947  | 15        |       |        |
-| 1  |   HASH GROUP BY                 |       |               | 1403  | 947  | 15        |       |        |
-| 2  |     NESTED LOOPS                |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         SUBSELECT               | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |           HASH GROUP BY         |       |               | 11    | 21   | 8         |       |        |
-| 5  |               TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL       | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |               | 1663  | 1096 | 16        |       |        |
+| 1  |   HASH GROUP BY                 |       |               | 1663  | 1096 | 16        |       |        |
+| 2  |     NESTED LOOPS                |       |               | 16632 | 502  | 0         |       |        |
+| 3  |         SUBSELECT               | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 4  |           HASH GROUP BY         |       |               | 12    | 21   | 8         |       |        |
+| 5  |               TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126   | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL       | SYS   | EMPLOYEES E   | 132   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 
 11 rows fetched.
@@ -656,11 +656,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 7    | 168  | 21        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 7    | 168  | 21        |       |        |
-| 2  |     MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
+| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -688,11 +688,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 10   | 242  | 25        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 10   | 242  | 25        |       |        |
-| 2  |     MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
+| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -719,11 +719,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |            | 126  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
+| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -748,11 +748,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 7    | 168  | 21        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 7    | 168  | 21        |       |        |
-| 2  |     MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
+| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -779,11 +779,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 10   | 242  | 25        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 10   | 242  | 25        |       |        |
-| 2  |     MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
+| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -811,11 +811,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |            | 126  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
+| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -844,11 +844,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 7    | 168  | 21        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 7    | 168  | 21        |       |        |
-| 2  |     MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
+| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -876,11 +876,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 10   | 242  | 25        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 10   | 242  | 25        |       |        |
-| 2  |     MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
+| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -907,11 +907,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |            | 126  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
+| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -936,11 +936,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 1    | 100  | 17        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 1    | 100  | 17        |       |        |
-| 2  |     MERGE JOIN            |       |               | 7    | 42   | 9         |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 40   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 1    | 114  | 18        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 1    | 114  | 18        |       |        |
+| 2  |     MERGE JOIN            |       |               | 9    | 49   | 10        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 44   | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -968,11 +968,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 1    | 138  | 19        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 1    | 138  | 19        |       |        |
-| 2  |     MERGE JOIN            |       |             | 11   | 61   | 11        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 62   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 1    | 157  | 20        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 1    | 157  | 20        |       |        |
+| 2  |     MERGE JOIN            |       |             | 14   | 70   | 12        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 67   | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1001,11 +1001,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 1    | 157  | 19        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 1    | 157  | 19        |       |        |
-| 2  |     MERGE JOIN            |       |            | 14   | 70   | 11        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 73   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 116  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 1    | 180  | 20        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 1    | 180  | 20        |       |        |
+| 2  |     MERGE JOIN            |       |            | 16   | 82   | 12        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 79   | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1032,11 +1032,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 1    | 28   | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |               | 1    | 28   | 8         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 1    | 29   | 8         |       |        |
+| 1  |   HASH GROUP BY           |       |               | 1    | 29   | 8         |       |        |
 | 2  |     NESTED LOOPS          |       |               | 1    | 6    | 0         |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 1    | 1    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1062,11 +1062,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 1    | 32   | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |             | 1    | 32   | 8         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 1    | 33   | 8         |       |        |
+| 1  |   HASH GROUP BY           |       |             | 1    | 33   | 8         |       |        |
 | 2  |     NESTED LOOPS          |       |             | 1    | 8    | 0         |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 1    | 1    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1091,11 +1091,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 1    | 34   | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |            | 1    | 34   | 8         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 1    | 35   | 8         |       |        |
+| 1  |   HASH GROUP BY           |       |            | 1    | 35   | 8         |       |        |
 | 2  |     NESTED LOOPS          |       |            | 1    | 9    | 0         |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 1    | 1    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 218  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1123,11 +1123,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 7    | 168  | 21        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 7    | 168  | 21        |       |        |
-| 2  |     MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
+| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1155,11 +1155,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 10   | 242  | 25        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 10   | 242  | 25        |       |        |
-| 2  |     MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
+| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1186,11 +1186,11 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |            | 126  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
+| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1215,11 +1215,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 7    | 168  | 21        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 7    | 168  | 21        |       |        |
-| 2  |     MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
+| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1247,11 +1247,11 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 10   | 242  | 25        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 10   | 242  | 25        |       |        |
-| 2  |     MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
+| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1278,13 +1278,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 6    | 310  | 97        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 6    | 310  | 97        |       |        |
-| 2  |     MERGE JOIN              |       |               | 65   | 146  | 89        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
+| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1313,13 +1313,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 6    | 378  | 131       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 6    | 378  | 131       |       |        |
-| 2  |     MERGE JOIN              |       |             | 64   | 181  | 123       |       |        |
-| 3  |       MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
+| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
+| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1347,13 +1347,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 7    | 437  | 150       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 7    | 437  | 150       |       |        |
-| 2  |     MERGE JOIN              |       |             | 76   | 210  | 142       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 126  | 131  | 19        |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 116  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
+| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1379,13 +1379,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 7    | 333  | 99        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 7    | 333  | 99        |       |        |
-| 2  |     MERGE JOIN              |       |               | 76   | 158  | 91        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 9    | 401  | 113       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 9    | 401  | 113       |       |        |
+| 2  |     MERGE JOIN              |       |               | 98   | 192  | 105       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1413,18 +1413,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 6    | 373  | 131       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 6    | 373  | 131       |       |        |
-| 2  |     MERGE JOIN              |       |             | 62   | 178  | 123       |       |        |
-| 3  |       MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | PRODUCTS P  | 116  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 445  | 151       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 445  | 151       |       |        |
+| 2  |     MERGE JOIN              |       |             | 80   | 214  | 143       |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
+| 4  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.ORDER_ID = P.PROD_ID                          
-    3 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: P.PROD_ID = O.ORDER_ID                          
+    4 - access: C.CUST_ID = O.CUST_ID                           
 
 15 rows fetched.
 
@@ -1443,13 +1443,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 7    | 437  | 150       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 7    | 437  | 150       |       |        |
-| 2  |     MERGE JOIN              |       |             | 76   | 210  | 142       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 126  | 131  | 19        |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 116  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
+| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1479,13 +1479,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 6    | 310  | 97        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 6    | 310  | 97        |       |        |
-| 2  |     MERGE JOIN              |       |               | 65   | 146  | 89        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
+| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1514,13 +1514,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 6    | 378  | 131       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 6    | 378  | 131       |       |        |
-| 2  |     MERGE JOIN              |       |             | 64   | 181  | 123       |       |        |
-| 3  |       MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
+| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
+| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1548,13 +1548,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 7    | 437  | 150       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 7    | 437  | 150       |       |        |
-| 2  |     MERGE JOIN              |       |             | 76   | 210  | 142       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 126  | 131  | 19        |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 116  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
+| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1580,13 +1580,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 1    | 141  | 63        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 1    | 141  | 63        |       |        |
-| 2  |     MERGE JOIN              |       |               | 7    | 62   | 55        |       |        |
-| 3  |       MERGE JOIN            |       |               | 7    | 42   | 9         |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 40   | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 1    | 163  | 71        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 1    | 163  | 71        |       |        |
+| 2  |     MERGE JOIN              |       |               | 10   | 73   | 63        |       |        |
+| 3  |       MERGE JOIN            |       |               | 9    | 49   | 10        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 44   | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1616,13 +1616,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 1    | 165  | 76        |       |        |
-| 1  |   HASH GROUP BY             |       |             | 1    | 165  | 76        |       |        |
-| 2  |     MERGE JOIN              |       |             | 6    | 74   | 68        |       |        |
-| 3  |       MERGE JOIN            |       |             | 11   | 61   | 11        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 62   | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 1    | 190  | 86        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 1    | 190  | 86        |       |        |
+| 2  |     MERGE JOIN              |       |             | 9    | 87   | 78        |       |        |
+| 3  |       MERGE JOIN            |       |             | 14   | 70   | 12        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 67   | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1653,13 +1653,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 1    | 186  | 86        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 1    | 186  | 86        |       |        |
-| 2  |     MERGE JOIN              |       |               | 8    | 85   | 77        |       |        |
-| 3  |       MERGE JOIN            |       |               | 14   | 70   | 11        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | SALES S       | 73   | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 116  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 1    | 214  | 97        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 1    | 214  | 97        |       |        |
+| 2  |     MERGE JOIN              |       |               | 10   | 99   | 89        |       |        |
+| 3  |       MERGE JOIN            |       |               | 16   | 82   | 12        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | SALES S       | 79   | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 126  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1686,13 +1686,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 1    | 40   | 8         |       |        |
-| 1  |   HASH GROUP BY             |       |               | 1    | 40   | 8         |       |        |
-| 2  |     NESTED LOOPS            |       |               | 1    | 12   | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 1    | 42   | 8         |       |        |
+| 1  |   HASH GROUP BY             |       |               | 1    | 42   | 8         |       |        |
+| 2  |     NESTED LOOPS            |       |               | 1    | 13   | 0         |       |        |
 | 3  |       NESTED LOOPS          |       |               | 1    | 6    | 0         |       |        |
 | 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 1    | 1    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 186  | 3    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1719,13 +1719,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 1    | 40   | 8         |       |        |
-| 1  |   HASH GROUP BY             |       |             | 1    | 40   | 8         |       |        |
-| 2  |     NESTED LOOPS            |       |             | 1    | 12   | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 1    | 42   | 8         |       |        |
+| 1  |   HASH GROUP BY             |       |             | 1    | 42   | 8         |       |        |
+| 2  |     NESTED LOOPS            |       |             | 1    | 13   | 0         |       |        |
 | 3  |       NESTED LOOPS          |       |             | 1    | 8    | 0         |       |        |
 | 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 1    | 1    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | PRODUCTS P  | 116  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1750,13 +1750,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 1    | 42   | 8         |       |        |
-| 1  |   HASH GROUP BY             |       |               | 1    | 42   | 8         |       |        |
-| 2  |     NESTED LOOPS            |       |               | 1    | 13   | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 1    | 44   | 8         |       |        |
+| 1  |   HASH GROUP BY             |       |               | 1    | 44   | 8         |       |        |
+| 2  |     NESTED LOOPS            |       |               | 1    | 14   | 0         |       |        |
 | 3  |       NESTED LOOPS          |       |               | 1    | 9    | 0         |       |        |
 | 4  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 1    | 1    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | SALES S       | 218  | 4    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1781,13 +1781,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 6    | 310  | 97        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 6    | 310  | 97        |       |        |
-| 2  |     MERGE JOIN              |       |               | 65   | 146  | 89        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
+| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1816,13 +1816,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 6    | 378  | 131       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 6    | 378  | 131       |       |        |
-| 2  |     MERGE JOIN              |       |             | 64   | 181  | 123       |       |        |
-| 3  |       MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
+| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
+| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1850,13 +1850,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 7    | 431  | 150       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 7    | 431  | 150       |       |        |
-| 2  |     MERGE JOIN              |       |               | 73   | 207  | 142       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |               | 126  | 131  | 19        |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 116  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S       | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 9    | 514  | 174       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 9    | 514  | 174       |       |        |
+| 2  |     MERGE JOIN              |       |               | 93   | 249  | 166       |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |       MERGE JOIN            |       |               | 149  | 153  | 21        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SALES S       | 237  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1880,13 +1880,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 7    | 333  | 99        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 7    | 333  | 99        |       |        |
-| 2  |     MERGE JOIN              |       |               | 76   | 158  | 91        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 9    | 401  | 113       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 9    | 401  | 113       |       |        |
+| 2  |     MERGE JOIN              |       |               | 98   | 192  | 105       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1915,13 +1915,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 6    | 378  | 131       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 6    | 378  | 131       |       |        |
-| 2  |     MERGE JOIN              |       |             | 64   | 181  | 123       |       |        |
-| 3  |       MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
+| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
+| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1949,13 +1949,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 6    | 310  | 97        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 6    | 310  | 97        |       |        |
-| 2  |     MERGE JOIN              |       |               | 65   | 146  | 89        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
+| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -1983,13 +1983,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 7    | 437  | 150       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 7    | 437  | 150       |       |        |
-| 2  |     MERGE JOIN              |       |             | 76   | 210  | 142       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 126  | 131  | 19        |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 116  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 218  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
+| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -2015,13 +2015,13 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 6    | 378  | 131       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 6    | 378  | 131       |       |        |
-| 2  |     MERGE JOIN              |       |             | 64   | 181  | 123       |       |        |
-| 3  |       MERGE JOIN            |       |             | 107  | 113  | 17        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 186  | 3    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 121  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
+| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
+| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -2050,13 +2050,13 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 6    | 310  | 97        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 6    | 310  | 97        |       |        |
-| 2  |     MERGE JOIN              |       |               | 65   | 146  | 89        |       |        |
-| 3  |       MERGE JOIN            |       |               | 70   | 76   | 13        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 186  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
+| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
+| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

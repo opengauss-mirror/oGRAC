@@ -1635,15 +1635,107 @@ static status_t og_parse_column(sql_stmt_t *stmt, knl_table_def_t *def, parse_co
     return OG_SUCCESS;
 }
 
+static bool32 og_bison_is_simple_table_column_expr(expr_tree_t *expr)
+{
+    expr_node_t *node = (expr == NULL) ? NULL : expr->root;
+
+    return (node != NULL && expr->next == NULL && node->type == EXPR_NODE_COLUMN &&
+        node->unary == UNARY_OPER_NONE && node->word.column.name.value.len > 0 &&
+        node->word.column.table.value.len == 0 && node->word.column.user.value.len == 0 &&
+        node->word.column.ss_start == (int32)OG_INVALID_ID32 &&
+        node->word.column.ss_end == (int32)OG_INVALID_ID32) ? OG_TRUE : OG_FALSE;
+}
+
+static bool32 og_bison_is_misparsed_primary_key(parse_column_t *parse_column)
+{
+    type_word_t *type = (parse_column == NULL) ? NULL : parse_column->type;
+
+    return (parse_column != NULL && parse_column->column_attrs == NULL && parse_column->col_name != NULL &&
+        type != NULL && type->str != NULL && type->typemode != NULL && type->typemode->count > 0 &&
+        cm_str_equal_ins(parse_column->col_name, "PRIMARY") && cm_str_equal_ins(type->str, "KEY")) ?
+        OG_TRUE : OG_FALSE;
+}
+
+static bool32 og_bison_primary_key_has_simple_columns(galist_t *typemode)
+{
+    expr_tree_t *expr = NULL;
+
+    for (uint32 i = 0; i < typemode->count; i++) {
+        expr = (expr_tree_t *)cm_galist_get(typemode, i);
+        if (!og_bison_is_simple_table_column_expr(expr)) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
+}
+
+static status_t og_bison_make_primary_key_columns(sql_stmt_t *stmt, galist_t *typemode, galist_t **column_list)
+{
+    galist_t *list = NULL;
+    expr_tree_t *expr = NULL;
+    knl_index_col_def_t *column = NULL;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(galist_t), (void **)&list));
+    cm_galist_init(list, stmt->context, sql_alloc_mem);
+
+    for (uint32 i = 0; i < typemode->count; i++) {
+        expr = (expr_tree_t *)cm_galist_get(typemode, i);
+        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(knl_index_col_def_t), (void **)&column));
+        MEMS_RETURN_IFERR(memset_s(column, sizeof(knl_index_col_def_t), 0, sizeof(knl_index_col_def_t)));
+        column->is_func = OG_FALSE;
+        column->func_expr = NULL;
+        column->func_text.len = 0;
+        column->mode = SORT_MODE_ASC;
+        column->name = expr->root->word.column.name.value;
+        OG_RETURN_IFERR(cm_galist_insert(list, column));
+    }
+
+    *column_list = list;
+    return OG_SUCCESS;
+}
+
+static status_t og_bison_try_convert_primary_key(sql_stmt_t *stmt, parse_column_t *parse_column,
+    parse_constraint_t **cons, bool32 *matched)
+{
+    parse_constraint_t *new_cons = NULL;
+
+    *matched = OG_FALSE;
+    *cons = NULL;
+    if (!og_bison_is_misparsed_primary_key(parse_column)) {
+        return OG_SUCCESS;
+    }
+    if (!og_bison_primary_key_has_simple_columns(parse_column->type->typemode)) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(parse_constraint_t), (void **)&new_cons));
+    MEMS_RETURN_IFERR(memset_s(new_cons, sizeof(parse_constraint_t), 0, sizeof(parse_constraint_t)));
+    new_cons->type = CONS_TYPE_PRIMARY;
+    new_cons->name = NULL;
+    new_cons->state_opts = NULL;
+    OG_RETURN_IFERR(og_bison_make_primary_key_columns(stmt, parse_column->type->typemode, &new_cons->column_list));
+
+    *cons = new_cons;
+    *matched = OG_TRUE;
+    return OG_SUCCESS;
+}
+
 status_t og_parse_column_defs(sql_stmt_t *stmt, knl_table_def_t *def, bool32 *expect_as, galist_t *table_elements)
 {
     parse_table_element_t *element = NULL;
+    parse_constraint_t *cons = NULL;
+    bool32 matched = OG_FALSE;
     for (uint32 i = 0; i < table_elements->count; i++) {
         element = (parse_table_element_t*)cm_galist_get(table_elements, i);
         if (element->is_constraint) {
             OG_RETURN_IFERR(og_try_parse_cons(stmt, def, element->cons));
         } else {
-            OG_RETURN_IFERR(og_parse_column(stmt, def, element->col, expect_as));
+            OG_RETURN_IFERR(og_bison_try_convert_primary_key(stmt, element->col, &cons, &matched));
+            if (matched) {
+                OG_RETURN_IFERR(og_try_parse_cons(stmt, def, cons));
+            } else {
+                OG_RETURN_IFERR(og_parse_column(stmt, def, element->col, expect_as));
+            }
         }
     }
     return OG_SUCCESS;
