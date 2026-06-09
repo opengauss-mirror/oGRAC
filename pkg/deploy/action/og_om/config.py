@@ -65,6 +65,8 @@ class PathConfig:
         self.service_dir = posixpath.join(self.ograc_home, svc.get("service_dir", "og_om/service"))
 
         self.ogmgr_dir = posixpath.join(self.ograc_home, svc.get("ogmgr_dir", "og_om/service/ogmgr"))
+        self.ogmgr_log_dir = posixpath.join(self.ogmgr_dir, "ogmgr_log")
+        self.ogmgr_deploy_log = posixpath.join(self.ogmgr_log_dir, "ogmgr_deploy.log")
         self.ogmgr_scripts = posixpath.join(self.ograc_home, svc.get("ogmgr_scripts", "og_om/service/ogmgr/scripts"))
         self.ogmgr_uds_server = posixpath.join(self.ograc_home, svc.get("ogmgr_uds_server", "og_om/service/ogmgr/uds_server.py"))
 
@@ -99,6 +101,14 @@ class PathConfig:
         self.ogmgr_format_note = posixpath.join(self.ogmgr_dir, "format_note.json")
         self.ogmgr_log_packing = posixpath.join(self.ogmgr_dir, "logs_collection", "log_packing_progress.json")
         self.exporter_logicrep_sql = posixpath.join(self.exporter_config_dir, "get_logicrep_info.sql")
+
+    def diagnostic_log_specs(self):
+        return [
+            {"name": "deploy", "path": self.log_file, "kind": "file"},
+            {"name": "og_om log dir", "path": self.log_dir, "kind": "dir", "pattern": "*.log"},
+            {"name": "ogmgr deploy", "path": self.ogmgr_deploy_log, "kind": "file"},
+            {"name": "ogmgr log dir", "path": self.ogmgr_log_dir, "kind": "dir", "pattern": "*.log"},
+        ]
 
 
 def _parse_version(versions_file):
@@ -180,3 +190,5 @@ if __name__ == "__main__":
         print(f'OGMGR_USER="{c.ogmgr_user}"')
         print(f'OGOM_LOG_DIR="{c.paths.log_dir}"')
         print(f'OGOM_LOG_FILE="{c.paths.log_file}"')
+        print(f'OGMGR_LOG_DIR="{c.paths.ogmgr_log_dir}"')
+        print(f'OGMGR_DEPLOY_LOG="{c.paths.ogmgr_deploy_log}"')

@@ -53,8 +53,6 @@ STORAGE_DEPLOY="${CURRENT_PATH}/storage_deploy"
 deploy_mode=$(python3 -c "
 import json, os
 f = os.path.join('${CURRENT_PATH}', 'config_params_lun.json')
-if not os.path.isfile(f):
-    f = os.path.join('${CURRENT_PATH}', 'config_params.json')
 if os.path.isfile(f):
     print(json.load(open(f)).get('deploy_mode', ''))
 " 2>/dev/null)

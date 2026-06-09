@@ -84,6 +84,13 @@ class PathConfig:
         self.ogsql_ini_glob = posixpath.join(data_root, "local", "ograc", "tmp", "data", "cfg", "*sql.ini")
         self.data_path = posixpath.join(data_root, "local", "ograc", "tmp", "data")
 
+    def diagnostic_log_specs(self):
+        return [
+            {"name": "deploy", "path": self.log_file, "kind": "file"},
+            {"name": "logicrep log dir", "path": self.log_dir, "kind": "dir", "pattern": "*.log"},
+            {"name": "logicrep home logs", "path": posixpath.join(self.logicrep_home, "*.log"), "kind": "glob", "max_files": 3},
+        ]
+
 
 def _load_deploy_param(path):
     if not os.path.exists(path):

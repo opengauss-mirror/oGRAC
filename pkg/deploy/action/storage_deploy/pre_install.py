@@ -79,10 +79,13 @@ class ConfigChecker:
 
     @staticmethod
     def install_type(value):
+        if not value:
+            LOG.error("install_type cannot be empty, must be 'override' or 'reserve'")
+            return False
         install_type_enum = {'override', 'reserve'}
         if value not in install_type_enum:
+            LOG.error("Invalid install_type '%s', must be 'override' or 'reserve'", str(value))
             return False
-
         return True
 
     @staticmethod
@@ -327,18 +330,25 @@ class CheckInstallConfig(CheckBase):
             'mes_ssl_switch', 'ograc_in_container', 'deploy_policy', 'link_type', 'ca_path', 'crt_path', 'key_path'
         }
 
+        # dss mode required params (from config_params_lun.json template)
         if os.path.exists(RPMINSTALLED_TAG):
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune', 'dss_vg_list', 'gcc_home',
-                'cms_port', 'dss_port', 'ograc_port'}
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune',
+                'dss_vg_list', 'gcc_home',
+                'cms_port', 'dss_port', 'ograc_port', 'interconnect_port',
+                '_SHM_KEY', 'module_config',
+            }
         else:
             self.dss_config_key = {
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
-                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune', 'dss_vg_list', 'gcc_home',
-                'cms_port', 'dss_port', 'ograc_port'}
+                'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune',
+                'dss_vg_list', 'gcc_home',
+                'cms_port', 'dss_port', 'ograc_port', 'interconnect_port',
+                '_SHM_KEY', 'module_config',
+            }
 
         self.dbstor_config_key = {
             'cluster_name', 'ograc_vlan_ip', 'storage_vlan_ip', 'link_type', 'storage_dbstor_page_fs',
@@ -351,6 +361,21 @@ class CheckInstallConfig(CheckBase):
             'dss_vg_list', 'gcc_home'
         }
         self.mes_type_key = {"ca_path", "crt_path", "key_path"}
+
+        # module_config required keys (from config_params_lun.json template)
+        self.module_config_required_keys = {'ograc_home', 'data_root', 'user'}
+        # module_config allowed keys (required + optional)
+        self.module_config_allowed_keys = {
+            'ograc_home', 'data_root', 'user', 'group', 'nfs_port',
+        }
+
+        # allowed keys beyond required params (auxiliary params not in template)
+        self.auxiliary_keys = {
+            'cluster_name', 'cluster_id', 'mes_type', 'install_type',
+            'ograc_vlan_ip', 'storage_vlan_ip', 'storage_dbstor_page_fs',
+            'kerberos_key', 'vstore_id', 'dbstor_fs_vstore_id',
+        }
+
         self.config_params = {}
         self.cluster_name = None
         self.ping_timeout = 3
@@ -457,13 +482,43 @@ class CheckInstallConfig(CheckBase):
             dbstor_ignore_params = {"storage_metadata_fs", "share_logic_ip", "archive_logic_ip", "metadata_logic_ip",
                                     "vstore_id", "kerberos_key", "ca_path", "crt_path", "key_path"}
             combined_ignore_params = {"share_logic_ip", "vstore_id"}
-            if element in dbstor_ignore_params and install_config['deploy_mode'] == "dbstor":
+            if element in dbstor_ignore_params and install_config.get('deploy_mode') == "dbstor":
                 continue
-            if element in combined_ignore_params and install_config['deploy_mode'] == "combined":
+            if element in combined_ignore_params and install_config.get('deploy_mode') == "combined":
                 continue
             if element not in install_config_keys:
-                LOG.error('config_params.json need param %s', element)
+                LOG.error('config_params_lun.json need %s', element)
                 return False
+        return True
+
+    def check_unknown_params(self, install_config):
+        allowed = set(self.config_key) | self.auxiliary_keys | {'module_config'}
+        if install_config.get("mes_ssl_switch"):
+            allowed |= self.mes_type_key
+        unknown = set(install_config.keys()) - allowed
+        if unknown:
+            for key in sorted(unknown):
+                LOG.error("Unknown parameter '%s' in config_params.json", key)
+            return False
+        return True
+
+    def check_module_config(self, install_config):
+        mc = install_config.get("module_config")
+        if mc is None:
+            LOG.error('config_params_lun.json need module_config')
+            return False
+        if not isinstance(mc, dict):
+            LOG.error('module_config must be a JSON object')
+            return False
+        for key in self.module_config_required_keys:
+            if key not in mc:
+                LOG.error('config_params_lun.json need module_config.%s', key)
+                return False
+        unknown = set(mc.keys()) - self.module_config_allowed_keys
+        if unknown:
+            for key in sorted(unknown):
+                LOG.error("Unknown parameter '%s' in module_config", key)
+            return False
         return True
 
     def check_install_config_param(self, key, value):
@@ -617,9 +672,22 @@ class CheckInstallConfig(CheckBase):
         if not ret:
             LOG.error("init deploy policy failed")
             return False
-        if install_config_params["deploy_mode"] == "dss":
+        if install_config_params.get("deploy_mode") == "dss":
             self.config_key = self.dss_config_key
 
+        # Step 1: unknown parameter detection
+        if not self.check_unknown_params(install_config_params):
+            return False
+
+        # Step 2: required parameter check (before defaults are filled)
+        if not self.check_install_config_params(install_config_params):
+            return False
+
+        # Step 3: module_config internal check
+        if not self.check_module_config(install_config_params):
+            return False
+
+        # Step 4: fill auxiliary defaults after required checks pass
         if install_config_params.get("dss_vg_list") == "" or install_config_params.get("gcc_home") == "":
             LOG.info("dss_vg_list or gcc_home is not set, user is not specify vg, will use default vg")
             install_config_params["dss_vg_list"]["vg1"] = "/dev/dss-disk1"
@@ -677,12 +745,11 @@ class CheckInstallConfig(CheckBase):
         if not max_arch_files_size:
             install_config_params['MAX_ARCH_FILES_SIZE'] = '300G'
 
-        if not self.check_install_config_params(install_config_params):
-            return False
         if (install_config_params['deploy_mode'] in use_dbstor and
                 not self.check_storage_ograc_vlan_ip_scale(install_config_params)):
             return False
 
+        # Step 5: value validation
         for key, value in install_config_params.items():
             if not install_config_params.get("mes_ssl_switch") and key in self.mes_type_key:
                 continue
@@ -697,7 +764,7 @@ class CheckInstallConfig(CheckBase):
         except Exception as error:
             LOG.error('write config param to config_param.json failed, error: %s', str(error))
             return False
-        if install_config_params.get("'ograc_in_container'", "0") == '0':
+        if install_config_params.get("ograc_in_container", "0") == '0':
             try:
                 self.write_result_to_json()
             except Exception as error:
@@ -717,6 +784,7 @@ class CheckInstallConfig(CheckBase):
         return True
 
     def install_config_params_init(self, install_config_params):
+        # Only fill defaults for auxiliary params not in the template
         if 'link_type' not in install_config_params.keys():
             install_config_params['link_type'] = '1'
         if 'storage_archive_fs' not in install_config_params.keys():
@@ -725,27 +793,11 @@ class CheckInstallConfig(CheckBase):
             install_config_params['archive_logic_ip'] = ''
         if 'mes_type' not in install_config_params.keys():
             install_config_params['mes_type'] = 'UC'
-        if 'mes_ssl_switch' not in install_config_params.keys():
-            install_config_params['mes_ssl_switch'] = False
-        if 'deploy_mode' not in install_config_params.keys():
-            install_config_params['deploy_mode'] = "combined"
         if 'dbstor_fs_vstore_id' not in install_config_params.keys():
             install_config_params['dbstor_fs_vstore_id'] = "0"
         if (install_config_params.get("mes_ssl_switch") and
                 install_config_params.get("ograc_in_container", "-1") == "0"):
             self.config_key.update(self.mes_type_key)
-        if 'db_type' not in install_config_params.keys():
-            install_config_params['db_type'] = '0'
-        if 'ograc_in_container' not in install_config_params.keys():
-            install_config_params['ograc_in_container'] = "0"
-        if 'auto_tune' not in install_config_params.keys():
-            install_config_params['auto_tune'] = False
-        if 'cms_port' not in install_config_params.keys():
-            install_config_params['cms_port'] = "14587"
-        if 'dss_port' not in install_config_params.keys():
-            install_config_params['dss_port'] = "1811"
-        if 'ograc_port' not in install_config_params.keys():
-            install_config_params['ograc_port'] = "1611"
 
     def parse_policy_config_file(self):
         policy_path = os.path.join(dir_name, "deploy_policy_config.json")
@@ -825,13 +877,8 @@ class PreInstall:
         return 0
 
     def check_main(self):
-        """
-        存在，但是不是目录
-        """
-        if self.install_model == "override":
-            check_items = [CheckMem, CheckDisk, CheckInstallPath, CheckInstallConfig]
-        else:
-            check_items = [CheckMem, CheckDisk, CheckInstallPath]
+        # Config validation always runs regardless of install_type
+        check_items = [CheckMem, CheckDisk, CheckInstallPath, CheckInstallConfig]
 
         for item in check_items:
             check_result = True
@@ -856,7 +903,7 @@ if __name__ == '__main__':
     install_type = sys.argv[1]
     if install_type == 'sga_buffer_check':
         exit(PreInstall.run_sga_buffer_check())
-    elif install_type == 'override':
+    elif install_type in ('override', 'reserve'):
         config_file = sys.argv[2]
 
         pre_install = PreInstall(install_type, config_file)

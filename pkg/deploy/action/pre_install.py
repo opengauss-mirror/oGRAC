@@ -19,6 +19,7 @@ if CUR_DIR not in sys.path:
 
 from log_config import get_logger
 from config import get_config, get_module_config
+from config_param_validator import ConfigParamValidationError, validate_config_params_file
 
 LOG = get_logger("deploy")
 cfg = get_config()
@@ -58,7 +59,13 @@ class ConfigChecker:
 
     @staticmethod
     def install_type(value):
-        return value in {'override', 'reserve'}
+        if not value:
+            LOG.error("install_type cannot be empty, must be 'override' or 'reserve'")
+            return False
+        if value not in {'override', 'reserve'}:
+            LOG.error("Invalid install_type '%s', must be 'override' or 'reserve'", str(value))
+            return False
+        return True
 
     @staticmethod
     def link_type(value):
@@ -128,6 +135,12 @@ class ConfigChecker:
     @staticmethod
     def auto_tune(value):
         return value in {'0', '1'}
+
+    @staticmethod
+    def dss_vg_list(value):
+        if not isinstance(value, dict) or not value:
+            return False
+        return all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in value.items())
 
 
 class CheckBase(metaclass=abc.ABCMeta):
@@ -208,29 +221,39 @@ class CheckInstallConfig(CheckBase):
         self.config_path = config_path
         self.value_checker = ConfigChecker
 
-        self.config_key = {
-            'node_id', 'cms_ip',
+        self.required_keys = self._load_template_required_keys()
+        self.lifecycle_keys = {'install_type', 'uninstall_type'}
+        self.compatibility_keys = {
+            'ograc_in_container', 'link_type', 'cluster_id', 'cluster_name',
+            'mes_type', 'deploy_policy', 'ograc_vlan_ip',
             'storage_share_fs', 'storage_archive_fs', 'storage_metadata_fs',
             'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip',
-            'db_type', 'MAX_ARCH_FILES_SIZE', 'deploy_mode',
-            'mes_ssl_switch', 'ograc_in_container', 'deploy_policy',
-            'link_type', 'ca_path', 'crt_path', 'key_path',
+            'SYS_PASSWORD',
+        }
+        self.mes_type_key = {'ca_path', 'crt_path', 'key_path'}
+        self.allowed_keys = set(self.required_keys) | self.lifecycle_keys | self.compatibility_keys
+
+        self.module_config_required_keys = {'ograc_home', 'data_root', 'user'}
+        self.module_config_allowed_keys = {
+            'ograc_home', 'data_root', 'user', 'group', 'nfs_port',
         }
 
-        self.dss_config_key = {
-            'node_id', 'cms_ip', 'db_type',
-            'ograc_in_container', 'MAX_ARCH_FILES_SIZE',
-            'deploy_mode', 'mes_ssl_switch', 'redo_num', 'redo_size',
-            'auto_tune', 'dss_vg_list', 'gcc_home',
-            'cms_port', 'dss_port', 'ograc_port', 'interconnect_port',
-        }
-        if os.path.exists(RPMINSTALLED_TAG):
-            self.dss_config_key.add('SYS_PASSWORD')
-
-        self.file_config_key = {"redo_num", "redo_size"}
-        self.mes_type_key = {"ca_path", "crt_path", "key_path"}
         self.config_params = {}
         self.cluster_name = None
+
+    @staticmethod
+    def _load_template_required_keys():
+        template_path = os.path.join(CUR_DIR, "config_params_lun.json")
+        try:
+            with open(template_path, 'r', encoding='utf8') as fp:
+                template = json.load(fp)
+        except Exception as error:
+            LOG.error('load %s error: %s', template_path, str(error))
+            return set()
+        if not isinstance(template, dict):
+            LOG.error('%s must be a JSON object', template_path)
+            return set()
+        return set(template.keys())
 
     @staticmethod
     def check_ipv4(_ip):
@@ -285,10 +308,48 @@ class CheckInstallConfig(CheckBase):
         return {}
 
     def check_install_config_params(self, install_config):
-        for element in self.config_key:
-            if element not in install_config:
-                LOG.error('config_params.json need param %s', element)
+        missing = self.required_keys - set(install_config.keys())
+        if missing:
+            for element in sorted(missing):
+                LOG.error('%s need %s', self.config_path, element)
+            return False
+        return True
+
+    def check_unknown_params(self, install_config):
+        allowed = set(self.allowed_keys)
+        if install_config.get("mes_ssl_switch"):
+            allowed |= self.mes_type_key
+        unknown = set(install_config.keys()) - allowed
+        if unknown:
+            for key in sorted(unknown):
+                LOG.error("Unknown parameter '%s' in %s", key, self.config_path)
+            return False
+        return True
+
+    def check_module_config(self, install_config):
+        mc = install_config.get("module_config")
+        if mc is None:
+            LOG.error('%s need module_config', self.config_path)
+            return False
+        if not isinstance(mc, dict):
+            LOG.error('module_config must be a JSON object')
+            return False
+        for key in self.module_config_required_keys:
+            if key not in mc:
+                LOG.error('%s need module_config.%s', self.config_path, key)
                 return False
+        unknown = set(mc.keys()) - self.module_config_allowed_keys
+        if unknown:
+            for key in sorted(unknown):
+                LOG.error("Unknown parameter '%s' in module_config", key)
+            return False
+        return True
+
+    def check_config_structure(self):
+        try:
+            validate_config_params_file(self.config_path, logger=LOG)
+        except ConfigParamValidationError:
+            return False
         return True
 
     def check_install_config_param(self, key, value):
@@ -453,19 +514,14 @@ class CheckInstallConfig(CheckBase):
         return True
 
     def install_config_params_init(self, params):
+        # Only fill defaults for auxiliary params not in the template
         defaults = {
             'link_type': '1', 'storage_archive_fs': '', 'archive_logic_ip': '',
-            'mes_type': 'UC', 'mes_ssl_switch': False, 'deploy_mode': 'file',
-            'db_type': '0', 'ograc_in_container': '0', 'auto_tune': False,
-            'cms_port': '14587', 'ograc_port': '1611',
-            'interconnect_port': '1601,1602',
+            'mes_type': 'UC', 'ograc_in_container': '0',
         }
         for k, v in defaults.items():
             if k not in params:
                 params[k] = v
-        if (params.get("mes_ssl_switch") and
-                params.get("ograc_in_container", "-1") == "0"):
-            self.config_key.update(self.mes_type_key)
 
     @staticmethod
     def init_config_by_deploy_policy(params):
@@ -486,13 +542,16 @@ class CheckInstallConfig(CheckBase):
         if not install_config_params:
             return False
 
+        # Step 1: required parameter check (before defaults are filled)
+        if not self.check_config_structure():
+            return False
+
+        # Step 4: validate and init deploy policy (after unknown param check)
         if not self.init_config_by_deploy_policy(install_config_params):
             LOG.error("init deploy policy failed")
             return False
 
-        if install_config_params.get("deploy_mode") == "dss":
-            self.config_key = self.dss_config_key
-
+        # Step 5: fill auxiliary defaults after required checks pass
         self.install_config_params_init(install_config_params)
         self.cluster_name = install_config_params.get("cluster_name")
 
@@ -500,7 +559,6 @@ class CheckInstallConfig(CheckBase):
         if deploy_mode == "file":
             self.config_params['cluster_id'] = "0"
             self.config_params['mes_type'] = "TCP"
-            self.config_key.update(self.file_config_key)
 
         if install_config_params.get("storage_archive_fs") == "":
             ping_check_element.discard("archive_logic_ip")
@@ -522,13 +580,13 @@ class CheckInstallConfig(CheckBase):
         if not max_arch:
             install_config_params['MAX_ARCH_FILES_SIZE'] = '300G'
 
-        if not self.check_install_config_params(install_config_params):
-            return False
-
+        # Step 5: value validation
         for key, value in install_config_params.items():
             if not install_config_params.get("mes_ssl_switch") and key in self.mes_type_key:
                 continue
-            if key in self.config_key:
+            if key == "module_config":
+                continue
+            if key in self.allowed_keys or key in self.mes_type_key:
                 if not self.check_install_config_param(key, value):
                     LOG.error('check %s with value: %s failed', key, str(value))
                     return False
@@ -575,10 +633,8 @@ class PreInstall:
         return 0
 
     def check_main(self):
-        if self.install_model == "override":
-            check_items = [CheckMem, CheckDisk, CheckInstallPath, CheckInstallConfig]
-        else:
-            check_items = [CheckMem, CheckDisk, CheckInstallPath]
+        # Config validation always runs regardless of install_type
+        check_items = [CheckMem, CheckDisk, CheckInstallPath, CheckInstallConfig]
 
         for item in check_items:
             if item is CheckInstallConfig:
@@ -596,7 +652,10 @@ if __name__ == '__main__':
     install_type = sys.argv[1]
     if install_type == 'sga_buffer_check':
         sys.exit(PreInstall.run_sga_buffer_check())
-    elif install_type == 'override':
+    elif install_type == 'validate_config':
+        config_file = sys.argv[2]
+        sys.exit(0 if CheckInstallConfig(config_file).check_config_structure() else 1)
+    elif install_type in ('override', 'reserve'):
         config_file = sys.argv[2]
         pre_install = PreInstall(install_type, config_file)
         sys.exit(pre_install.check_main())

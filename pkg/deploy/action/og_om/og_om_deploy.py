@@ -25,8 +25,12 @@ import tarfile
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
+ACTION_ROOT = os.path.dirname(CUR_DIR)
+if ACTION_ROOT not in sys.path:
+    sys.path.append(ACTION_ROOT)
 
 from config import get_config, _parse_version
+from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 from utils import (
     CommandError, ensure_dir, ensure_file, exec_popen,
@@ -673,6 +677,7 @@ def main():
     try:
         fn()
     except CommandError as e:
+        emit_failure_diagnostics("og_om", action, deployer.paths.diagnostic_log_specs(), error=e)
         details = "\n".join(part for part in (e.stdout.strip(), e.stderr.strip()) if part)
         if details:
             LOG.error("%s\n%s", str(e), details)
@@ -680,6 +685,7 @@ def main():
             LOG.error(str(e))
         sys.exit(1)
     except Exception as e:
+        emit_failure_diagnostics("og_om", action, deployer.paths.diagnostic_log_specs(), error=e)
         LOG.error(str(e))
         sys.exit(1)
 

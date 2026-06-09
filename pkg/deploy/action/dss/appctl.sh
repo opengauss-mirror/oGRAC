@@ -53,7 +53,7 @@ python3 "${CURRENT_PATH}/dss_deploy.py" "${ACTION}" "$@" 2>&1 | tee -a "${LOG_FI
 exit_code=${PIPESTATUS[0]}
 
 if [ ${exit_code} -ne 0 ]; then
-    echo "DSS ${ACTION} failed (exit code: ${exit_code}). [Line:${LINENO}, File:${SCRIPT_NAME}]"
+    echo "DSS ${ACTION} failed (exit code: ${exit_code}). Diagnostics emitted above. [Line:${LINENO}, File:${SCRIPT_NAME}]"
 fi
 
 exit ${exit_code}

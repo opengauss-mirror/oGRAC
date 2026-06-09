@@ -8,8 +8,12 @@ import sys
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
+ACTION_ROOT = os.path.dirname(CUR_DIR)
+if ACTION_ROOT not in sys.path:
+    sys.path.append(ACTION_ROOT)
 
 from config import get_config
+from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 
 LOG = get_logger()
@@ -40,6 +44,17 @@ def _run_cmd(cmd, error_msg=""):
         msg = error_msg or f"Command failed: {cmd}"
         raise RuntimeError(f"{msg}: {stdout} {stderr}")
     return stdout
+
+
+def validate_install_config():
+    """Validate config_params_lun.json before component pre_install writes config."""
+    validator = os.path.join(ACTION_ROOT, "config_param_validator.py")
+    config_file = os.path.join(ACTION_ROOT, "config_params_lun.json")
+    ret, stdout, stderr = _exec(
+        f"python3 {validator} {config_file}", timeout=60)
+    if ret != 0:
+        message = "\n".join(part for part in (stdout, stderr) if part)
+        raise RuntimeError(f"config validation failed: {message}")
 
 
 class DssDeploy:
@@ -138,6 +153,7 @@ class DssDeploy:
 
 
     def action_pre_install(self):
+        validate_install_config()
         self._run_ctl("pre_install")
 
     def _ensure_user_profile_writable(self):
@@ -241,6 +257,7 @@ def main():
             sys.exit(1)
 
     except Exception as e:
+        emit_failure_diagnostics("DSS", action, deployer.paths.diagnostic_log_specs(), error=e)
         LOG.error(f"Action '{action}' failed: {e}")
         sys.exit(1)
 

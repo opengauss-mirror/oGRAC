@@ -35,4 +35,8 @@ shift
 
 python3 "${CURRENT_PATH}/logicrep_deploy.py" "${ACTION}" "$@" 2>&1 | tee -a "${LOG_FILE}"
 exit_code=${PIPESTATUS[0]}
+
+if [ ${exit_code} -ne 0 ]; then
+  echo "logicrep ${ACTION} failed (exit code: ${exit_code}). Diagnostics emitted above. [Line:${LINENO}, File:${SCRIPT_NAME}]"
+fi
 exit ${exit_code}

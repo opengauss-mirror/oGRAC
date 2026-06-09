@@ -156,6 +156,12 @@ class PathConfig:
         self.cgroup_default_mem_size_gb = self.instance.cgroup_memory_limit_gb
         self.shm_home = self.instance.shm_home
 
+    def diagnostic_log_specs(self):
+        return [
+            {"name": "deploy", "path": self.dss_deploy_log, "kind": "file"},
+            {"name": "DSS runtime", "path": self.dss_run_log, "kind": "file"},
+        ]
+
 
 class DssSpecificConfig:
     """DSS-specific config (retry count, cmd timeout, etc.)."""
@@ -357,6 +363,8 @@ if __name__ == "__main__":
             print(f'OGRAC_HOME="{_cfg.paths.ograc_home}"')
             print(f'DSS_HOME="{_cfg.paths.dss_home}"')
             print(f'DSS_LOG_DIR="{_cfg.paths.dss_log_dir}"')
+            print(f'DSS_DEPLOY_LOG="{_cfg.paths.dss_deploy_log}"')
+            print(f'DSS_RUN_LOG="{_cfg.paths.dss_run_log}"')
             print(f'OGRAC_USER="{_cfg.paths.instance.user}"')
         else:
             result = get_value(param)

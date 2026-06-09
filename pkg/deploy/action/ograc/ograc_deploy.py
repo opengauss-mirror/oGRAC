@@ -17,8 +17,12 @@ BIND_CPU_SCRIPT = os.path.join(
     os.path.dirname(CUR_DIR), "ograc_common", "cpu_bind.py")
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
+ACTION_ROOT = os.path.dirname(CUR_DIR)
+if ACTION_ROOT not in sys.path:
+    sys.path.append(ACTION_ROOT)
 
 from config import get_config
+from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 from utils import ensure_dir, ensure_file, run_python_as_user, CommandError
 from common.cgroup import (
@@ -28,6 +32,25 @@ from common.cgroup import (
 from common.ogracd_memcalc import calculate_reserved_mem_mb
 
 LOG = get_logger()
+
+
+def validate_install_config():
+    """Validate config_params_lun.json before component pre_install writes config."""
+    validator = os.path.join(ACTION_ROOT, "config_param_validator.py")
+    config_file = os.path.join(ACTION_ROOT, "config_params_lun.json")
+    proc = subprocess.Popen(
+        [sys.executable, validator, config_file],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out, err = proc.communicate(timeout=60)
+    if proc.returncode != 0:
+        message = "\n".join(
+            part.decode("utf-8", errors="replace").strip()
+            for part in (out, err)
+            if part
+        )
+        raise RuntimeError(f"config validation failed: {message}")
 
 
 class OgracDeploy:
@@ -136,6 +159,7 @@ class OgracDeploy:
             LOG.warning("update_cpu_config failed (rc=%d): %s", rc, err)
 
     def  action_pre_install(self):
+        validate_install_config()
         self._prepare_root_common()
         self._init_cpu_config()
         self._run_ctl("pre_install")
@@ -229,6 +253,7 @@ def main():
     try:
         fn()
     except CommandError as e:
+        emit_failure_diagnostics("oGRAC", action, deployer.paths.diagnostic_log_specs(), error=e)
         details = "\n".join(part for part in (e.stdout.strip(), e.stderr.strip()) if part)
         if details:
             LOG.error("%s\n%s", str(e), details)
@@ -236,6 +261,7 @@ def main():
             LOG.error(str(e))
         sys.exit(1)
     except Exception as e:
+        emit_failure_diagnostics("oGRAC", action, deployer.paths.diagnostic_log_specs(), error=e)
         LOG.error(str(e))
         sys.exit(1)
 

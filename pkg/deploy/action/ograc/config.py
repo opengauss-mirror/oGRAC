@@ -97,6 +97,16 @@ class PathConfig:
         self.backup_dir = posixpath.join(data_root, "backup")
 
         self.log_dir = posixpath.dirname(self.log_file)
+        self.ograc_status_log = posixpath.join(self.d_data_path, "log", "ogracstatus.log")
+        self.ograc_runtime_log_glob = posixpath.join(self.log_dir, "run", "*.rlog")
+
+    def diagnostic_log_specs(self):
+        return [
+            {"name": "deploy", "path": self.log_file, "kind": "file"},
+            {"name": "oGRAC status", "path": self.ograc_status_log, "kind": "file"},
+            {"name": "oGRAC start status", "path": self.start_status_file, "kind": "file"},
+            {"name": "oGRAC runtime", "path": self.ograc_runtime_log_glob, "kind": "glob", "max_files": 3},
+        ]
 
 
 class DeployConfig:
@@ -225,6 +235,9 @@ if __name__ == "__main__":
         print(f'OGRAC_SCRIPTS_DIR="{_cfg.paths.scripts_dir}"')
         print(f'OGRAC_DATA_PATH="{_cfg.paths.d_data_path}"')
         print(f'OGRAC_INSTALL_PATH="{_cfg.paths.r_install_path}"')
+        print(f'OGRAC_STATUS_LOG="{_cfg.paths.ograc_status_log}"')
+        print(f'OGRAC_START_STATUS_FILE="{_cfg.paths.start_status_file}"')
+        print(f'OGRAC_RUNTIME_LOG_GLOB="{_cfg.paths.ograc_runtime_log_glob}"')
         print(f'CGROUP_MEMORY_PATH="{_cfg.paths.instance.cgroup_memory_path}"')
     else:
         key = sys.argv[1] if len(sys.argv) > 1 else ""
