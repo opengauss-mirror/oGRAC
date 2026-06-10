@@ -657,28 +657,38 @@ void plc_bison_find_decl_ex(pl_compiler_t *compiler, uint32 types, plc_var_type_
     plc_find_block_decl(compiler, &variant_name, decl);
 }
 
-status_t plc_bison_extract_table_column(pl_compiler_t *compiler, var_udo_t *obj, text_t *column, type_word_t *type)
+status_t plc_bison_extract_table_column(pl_compiler_t *compiler, var_udo_t *obj, text_t *column, char *column_buf,
+    type_word_t *type)
 {
     session_t *cmpl_session = compiler->stmt->session;
     galist_t *name_parts = type->is_name_typemode ? type->typemode : NULL;
-    if (name_parts == NULL || (name_parts->count >= MAX_EXTRA_TEXTS)) {
+    if (name_parts == NULL || name_parts->count == 0 || (name_parts->count >= MAX_EXTRA_TEXTS)) {
         OG_SRC_THROW_ERROR(type->loc, ERR_PL_ATTR_TYPE_FMT, cmpl_session->curr_schema, type->str);
         return OG_ERROR;
     }
 
+    column->str = column_buf;
+    column->len = 0;
     if (name_parts->count == 1) {
+        text_t raw_name;
+        text_t *raw_column = (text_t *)cm_galist_get(name_parts, 0);
+
         OG_RETURN_IFERR(cm_text_copy_from_str(&obj->user, cmpl_session->curr_schema, OG_NAME_BUFFER_SIZE));
-        cm_str2text(type->str, &obj->name);
+        cm_str2text(type->str, &raw_name);
+        OG_RETURN_IFERR(cm_text_copy(&obj->name, OG_NAME_BUFFER_SIZE, &raw_name));
         obj->user_explicit = OG_FALSE;
-        *column = *(text_t*)cm_galist_get(name_parts, 0);
+        OG_RETURN_IFERR(cm_text_copy(column, OG_NAME_BUFFER_SIZE, raw_column));
     } else {
         text_t user;
         text_t raw_user;
+        text_t *raw_name = (text_t *)cm_galist_get(name_parts, 0);
+        text_t *raw_column = (text_t *)cm_galist_get(name_parts, 1);
+
         cm_str2text(type->str, &raw_user);
         OG_RETURN_IFERR(sql_copy_prefix_tenant(compiler->stmt, &raw_user, &user, sql_copy_text));
         cm_text_copy_upper(&obj->user, &user);
-        obj->name = *(text_t*)cm_galist_get(name_parts, 0);
-        *column = *(text_t*)cm_galist_get(name_parts, 1);
+        OG_RETURN_IFERR(cm_text_copy(&obj->name, OG_NAME_BUFFER_SIZE, raw_name));
+        OG_RETURN_IFERR(cm_text_copy(column, OG_NAME_BUFFER_SIZE, raw_column));
         obj->user_explicit = OG_TRUE;
     }
 

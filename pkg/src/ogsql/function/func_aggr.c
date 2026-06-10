@@ -479,6 +479,10 @@ status_t sql_verify_listagg(sql_verifier_t *verif, expr_node_t *func)
     OG_RETURN_IFERR(sql_adjust_args_pos(verif->stmt, func));
 
     // verify within group(order by expr)
+    if (func->sort_items == NULL) {
+        OG_SRC_THROW_ERROR_EX(func->loc, ERR_SQL_SYNTAX_ERROR, "%s expected", "within");
+        return OG_ERROR;
+    }
     OG_RETURN_IFERR(sql_verify_listagg_order(verif, func->sort_items));
 
     func->datatype = OG_TYPE_STRING;

@@ -1817,9 +1817,10 @@ static status_t plc_bison_copy_table_column(pl_compiler_t *compiler, plattr_assi
     var_udo_t obj;
     char user_buf[OG_NAME_BUFFER_SIZE];
     char name_buf[OG_NAME_BUFFER_SIZE];
+    char column_buf[OG_NAME_BUFFER_SIZE];
 
     sql_init_udo_with_str(&obj, user_buf, NULL, name_buf);
-    OG_RETURN_IFERR(plc_bison_extract_table_column(compiler, &obj, &column, type));
+    OG_RETURN_IFERR(plc_bison_extract_table_column(compiler, &obj, &column, column_buf, type));
     OG_RETURN_IFERR(plc_bison_open_knl_dc(compiler, &obj, &column, &dc));
 
     do {

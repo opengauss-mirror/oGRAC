@@ -61,7 +61,8 @@ status_t plc_compile_complex_type(pl_compiler_t *compiler, plv_decl_t *decl, plv
 status_t plc_bison_compile_default_def(pl_compiler_t *compiler, plv_decl_t *decl, expr_tree_t *expr);
 void plc_bison_find_decl_ex(pl_compiler_t *compiler, uint32 types, plc_var_type_t *var_type, plv_decl_t **decl,
     char *first_name, galist_t *sub_names);
-status_t plc_bison_extract_table_column(pl_compiler_t *compiler, var_udo_t *obj, text_t *column, type_word_t *type);
+status_t plc_bison_extract_table_column(pl_compiler_t *compiler, var_udo_t *obj, text_t *column, char *column_buf,
+    type_word_t *type);
 
 #ifdef __cplusplus
 }
