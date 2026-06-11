@@ -1072,7 +1072,8 @@ static status_t cms_stat_from_server()
 
         for (uint32 node_id = 0; node_id < res_list.inst_count; node_id++) {
             cms_msg_res_stat_t* res_stat = &res_list.stat_list[node_id];
-            if (cm_now() > res_stat->last_check + res->hb_timeout * MICROSECS_PER_MILLISEC) {
+            if (cm_now() > res_stat->last_check + res->hb_timeout * MICROSECS_PER_MILLISEC &&
+                res_stat->target_stat != CMS_RES_OFFLINE && res_stat->cur_stat != CMS_RES_OFFLINE) {
                 res_stat->cur_stat = CMS_RES_UNKNOWN;
             }
 
@@ -1132,7 +1133,8 @@ int32 cms_stat_cluster(int32 argc, char* argv[])
                 return OG_ERROR;
             }
 
-            if (cm_now() > res_stat.last_check + res->hb_timeout * MICROSECS_PER_MILLISEC) {
+            if (cm_now() > res_stat.last_check + res->hb_timeout * MICROSECS_PER_MILLISEC &&
+                res_stat.target_stat != CMS_RES_OFFLINE && res_stat.cur_stat != CMS_RES_OFFLINE) {
                 res_stat.cur_stat = CMS_RES_UNKNOWN;
             }
 
