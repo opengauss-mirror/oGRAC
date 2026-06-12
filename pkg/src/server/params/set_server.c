@@ -29,6 +29,7 @@
 #include "srv_param_common.h"
 #include "knl_spm.h"
 #include "dtc_context.h"
+#include "srv_device_adpt.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,21 @@ status_t sql_verify_als_uds_file_path(void *se, void *lex, void *def)
     LEX_REMOVE_WRAP(&word);
     OG_RETURN_IFERR(cm_text2str((text_t *)&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE));
     return verify_uds_file_path((const char *)sys_def->value);
+}
+
+status_t sql_verify_als_dss_log_level(void *se, void *lex, void *def)
+{
+    uint32 num;
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (num > OG_MAX_DSS_LOG_LEVEL) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DSS_LOG_LEVEL", (int64)OG_MAX_DSS_LOG_LEVEL);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 status_t sql_verify_als_uds_file_permissions(void *se, void *lex, void *def)

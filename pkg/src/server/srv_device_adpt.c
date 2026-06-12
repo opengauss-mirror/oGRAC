@@ -34,26 +34,7 @@
 #define DSSAPISO "libdssapi.so"
 #endif
 
-static void srv_dss_write_log(int id, int level, const char *file_name, uint32 line_num, const char *module,
-                              const char *format, ...)
-{
-    char log_buf[OG_MAX_LOG_CONTENT_LENGTH];
-    log_id_t log_id = (log_id_t)id;
-    log_level_t log_level = (log_level_t)level;
-    va_list va_args;
-    va_start(va_args, format);
-
-    int32 ret = vsnprintf_s(log_buf, OG_MAX_LOG_CONTENT_LENGTH, OG_MAX_LOG_CONTENT_LENGTH, format, va_args);
-    if (ret < 0) {
-        va_end(va_args);
-        return;
-    }
-    va_end(va_args);
-
-    cm_dss_write_normal_log(log_id, log_level, file_name, line_num, DSSAPI, OG_TRUE, log_buf);
-}
-
-status_t srv_device_init(const char *path)
+status_t srv_device_init(const char *path, uint32 log_level)
 {
     raw_device_op_t ops = { 0 };
 
@@ -91,12 +72,14 @@ status_t srv_device_init(const char *path)
     OG_RETURN_IFERR(cm_load_symbol(ops.handle, "dss_aio_post_pwrite", (void **)&ops.aio_post_pwrite));
     OG_RETURN_IFERR(cm_load_symbol(ops.handle, "dss_set_conn_opts", (void **)&ops.dss_set_conn_opts));
     OG_RETURN_IFERR(cm_load_symbol(ops.handle, "dss_set_default_conn_timeout", (void **)&ops.dss_set_def_conn_timeout));
+    OG_RETURN_IFERR(cm_load_symbol(ops.handle, "dss_init_logger", (void **)&ops.dss_init_logger));
     OG_RETURN_IFERR(cm_load_symbol(ops.handle, "dss_get_time_stat", (void **)&ops.dss_get_time_stat));
 
     if (ops.handle != NULL) {
         cm_raw_device_register(&ops);
         ops.raw_set_svr_path(path);
-        ops.raw_regist_logger(srv_dss_write_log, cm_log_param_instance()->log_level);
+        ops.dss_init_logger(cm_log_param_instance()->log_home, log_level,
+            cm_log_param_instance()->log_backup_file_count, cm_log_param_instance()->max_log_file_size);
     }
 
     return OG_SUCCESS;

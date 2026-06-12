@@ -246,6 +246,8 @@ typedef int (*raw_stat)(const char *path, dss_stat_info_t item);
 typedef int (*raw_aio_post_pwrite)(void *iocb, int32 handle, size_t count, long long offset);
 typedef int (*raw_dss_set_conn_opts)(dss_conn_opt_key_e key, void *value);
 typedef int (*raw_dss_set_def_conn_timeout)(int timeout);
+typedef int (*raw_dss_init_logger)(
+    char *log_home, unsigned int log_level, unsigned int log_backup_file_count, unsigned long long log_max_file_size);
 typedef int (*raw_dss_get_time_stat)(dss_time_stat_item_t *time_stat, int count);
 
 typedef struct st_raw_device_op {
@@ -282,6 +284,7 @@ typedef struct st_raw_device_op {
     raw_dss_set_conn_opts dss_set_conn_opts;
     raw_dss_set_def_conn_timeout dss_set_def_conn_timeout;
     raw_fallocate_device raw_fallocate;
+    raw_dss_init_logger dss_init_logger;
     raw_dss_get_time_stat dss_get_time_stat;
 } raw_device_op_t;
 

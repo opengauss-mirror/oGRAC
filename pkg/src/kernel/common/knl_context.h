@@ -331,6 +331,7 @@ typedef struct st_encrypt_context {
 typedef struct st_dtc_attr {
     uint32    inst_id;
     char ogstore_inst_path[OG_UNIX_PATH_MAX];
+    uint32 dss_log_level;
 }dtc_attr_t;
 
 typedef struct st_knl_instance {
