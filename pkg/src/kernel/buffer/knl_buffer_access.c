@@ -1767,7 +1767,7 @@ void buf_calc_checksum(knl_session_t *session, buf_ctrl_t *ctrl)
 void buf_leave_page(knl_session_t *session, bool32 changed)
 {
     buf_ctrl_t *ctrl = buf_curr_page(session);
-    remote_page_info_t *shmem_page_meta;
+    remote_page_info_t *shmem_page_meta = NULL;
 
     if (SECUREC_UNLIKELY(ctrl == NULL)) {
         buf_pop_page(session);
@@ -1816,8 +1816,10 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
                 drc_gbp_begin_page_store(session, shmem_page_meta->lock_ptr);
                 ctrl->gbp_store_pending = 1;
             } else {
-                ub_rw_lock_set_readonly((ub_rw_lock_t *)(uintptr_t)shmem_page_meta->lock_ptr, OG_TRUE);
+                ub_rw_lock_set_readonly((ub_rw_lock_t *)(uintptr_t)shmem_page_meta->lock_ptr, OG_TRUE,
+                    "leave_reenter_fence");
             }
+
             OG_LOG_RUN_INF("[GBP-BUF][%u-%u]begin page store fence, gbp_lock %d", ctrl->page_id.file,
                            ctrl->page_id.page, ctrl->gbp_lock_mode);
             if (SECUREC_UNLIKELY(DB_NOT_READY(session))) {

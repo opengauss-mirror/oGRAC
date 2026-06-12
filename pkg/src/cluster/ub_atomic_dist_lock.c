@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include "cm_defs.h"
 #include "cm_log.h"
+#include "cm_thread.h"
 #include "knl_cluster_module.h"
 #include "ub_dist_lock.h"
 
@@ -125,11 +126,6 @@ static inline bool32 gbp_lock_owner_cleared(uint64_t w)
     return node_id == GBP_LOCK_NODE_INVALID;
 }
 
-static inline uint64_t gbp_lock_make_x(uint8 node_id, int32 tid)
-{
-    return gbp_lock_pack(INT32_MIN, node_id, tid);
-}
-
 static inline bool32 gbp_lock_is_x_held_word(uint64_t w, uint8 node_id, int32 tid)
 {
     int32 state;
@@ -146,19 +142,76 @@ static inline bool32 gbp_lock_cas(atomic_uint_fast64_t *lock_word, uint64_t *exp
         memory_order_relaxed);
 }
 
-bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
-bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid);
-static void ub_rw_lock_diag_log(const char *phase, const char *path, ub_rw_lock_t *lock,
-    const ub_location_t *location);
-
-void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly)
+static inline uint64_t gbp_lock_make_x(uint8 node_id, int32 tid)
 {
-    atomic_store_explicit(&lock->readonly, readonly ? true : false, memory_order_relaxed);
+    return gbp_lock_pack(INT32_MIN, node_id, tid);
+}
+
+bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
+int32 ub_rw_lock_get_state(ub_rw_lock_t *lock);
+bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid);
+
+void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly, const char *phase)
+{
+    bool32 oldv;
+    bool32 newv;
+    int32 state;
+
+    if (lock == NULL) {
+        OG_LOG_DEBUG_INF("[GBP-LOCK-READONLY-DIAG][%s] lock is NULL, want:%d tid:%d",
+            phase != NULL ? phase : "unknown", (int32)readonly, (int32)cm_get_current_thread_id());
+        return;
+    }
+
+    oldv = ub_rw_lock_get_readonly(lock);
+    state = ub_rw_lock_get_state(lock);
+    atomic_store_explicit(&lock->readonly, readonly ? true : false, memory_order_release);
+    newv = ub_rw_lock_get_readonly(lock);
+    OG_LOG_RUN_INF("[GBP-LOCK-READONLY-DIAG][%s] lock_ptr:%llu old:%d want:%d after:%d lock_state:%d tid:%d",
+        phase != NULL ? phase : "unknown", (uint64)(uintptr_t)lock, (int32)oldv, (int32)readonly, (int32)newv,
+        state, (int32)cm_get_current_thread_id());
 }
 
 bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock)
 {
-    return atomic_load_explicit(&lock->readonly, memory_order_relaxed) ? OG_TRUE : OG_FALSE;
+    return atomic_load_explicit(&lock->readonly, memory_order_acquire) ? OG_TRUE : OG_FALSE;
+}
+
+static inline bool32 gbp_lock_x_try_rollback(ub_rw_lock_t *lock, const ub_location_t *location)
+{
+    uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
+    uint64_t neww;
+
+    if (!gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
+        return OG_FALSE;
+    }
+
+    neww = gbp_lock_word_empty();
+    return gbp_lock_cas(&lock->lock_word, &oldw, neww);
+}
+
+/*
+ * CAS-acquire X then validate readonly (store fence). If a concurrent begin_page_store
+ * raised readonly in the window between pre-check and CAS, roll back X and retry.
+ * Not used for x_lock_for_store / x_lock_reenter: store-fence owner may hold X while readonly=1.
+ */
+static inline bool32 gbp_lock_x_cas_after_readonly_check(ub_rw_lock_t *lock, const ub_location_t *location,
+    uint64_t expected, uint64_t neww)
+{
+    if (ub_rw_lock_get_readonly(lock)) {
+        return OG_FALSE;
+    }
+
+    if (!gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+        return OG_FALSE;
+    }
+
+    if (!ub_rw_lock_get_readonly(lock)) {
+        return OG_TRUE;
+    }
+
+    (void)gbp_lock_x_try_rollback(lock, location);
+    return OG_FALSE;
 }
 
 uint64 ub_rw_lock_get_owner_node(ub_rw_lock_t *lock)
@@ -209,7 +262,6 @@ void ub_rw_lock_free(ub_rw_lock_t *lock, const ub_location_t *location)
 ub_lock_result_t ub_rw_lock_s_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy, const ub_location_t *location)
 {
     (void)policy;
-    (void)location;
 
     uint32_t spinCount = 0;
 
@@ -221,8 +273,7 @@ ub_lock_result_t ub_rw_lock_s_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
 
         gbp_lock_unpack(oldw, &state, &node_id, &tid);
         if (state >= 0 && gbp_lock_owner_cleared(oldw) &&
-            !ub_rw_lock_get_readonly(lock) &&
-            atomic_load_explicit(&lock->writeWaiters, memory_order_relaxed) == 0) {
+            atomic_load_explicit(&lock->writeWaiters, memory_order_acquire) == 0) {
             uint64_t neww = gbp_lock_pack(state + 1, (uint8)GBP_LOCK_NODE_INVALID, GBP_LOCK_TID_INVALID);
             uint64_t expected = oldw;
 
@@ -263,9 +314,6 @@ ub_lock_result_t ub_rw_lock_s_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t 
         uint64_t neww = gbp_lock_pack(state - 1, (uint8)GBP_LOCK_NODE_INVALID, GBP_LOCK_TID_INVALID);
         uint64_t expected = oldw;
         if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
-            OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] release s lock node:%u tid:%d state: %d",
-                location != NULL ? location->node_id : 0, location != NULL ? location->tid : 0,
-                ub_rw_lock_get_state(lock));
             return UB_LOCK_SUCCESS;
         }
 
@@ -280,14 +328,12 @@ ub_lock_result_t ub_rw_lock_s_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t 
 
 void ub_rw_lock_begin_page_store(ub_rw_lock_t *lock)
 {
-    atomic_fetch_add_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
-    ub_rw_lock_set_readonly(lock, OG_TRUE);
+    ub_rw_lock_set_readonly(lock, OG_TRUE, "begin_page_store");
 }
 
 void ub_rw_lock_end_page_store(ub_rw_lock_t *lock)
 {
-    atomic_fetch_sub_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
-    ub_rw_lock_set_readonly(lock, OG_FALSE);
+    ub_rw_lock_set_readonly(lock, OG_FALSE, "end_page_store");
 }
 
 ub_lock_result_t ub_rw_lock_x_lock_for_store(ub_rw_lock_t *lock, const ub_location_t *location)
@@ -295,8 +341,6 @@ ub_lock_result_t ub_rw_lock_x_lock_for_store(ub_rw_lock_t *lock, const ub_locati
     uint32_t spinCount = 0;
     uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
     if (gbp_lock_is_x_held_word(oldw, location->node_id, location->tid)) {
-        ub_rw_lock_set_readonly(lock, OG_FALSE);
-        ub_rw_lock_diag_log("for_store", "reenter", lock, location);
         return UB_LOCK_SUCCESS;
     }
 
@@ -314,8 +358,6 @@ ub_lock_result_t ub_rw_lock_x_lock_for_store(ub_rw_lock_t *lock, const ub_locati
             uint64_t expected = oldw;
 
             if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
-                ub_rw_lock_set_readonly(lock, OG_FALSE);
-                ub_rw_lock_diag_log("for_store", "cas", lock, location);
                 return UB_LOCK_SUCCESS;
             }
         }
@@ -383,7 +425,7 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
         return UB_LOCK_SUCCESS;
     }
 
-    atomic_fetch_add_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&lock->writeWaiters, 1, memory_order_release);
 
     for (;;) {
         bool32 readonly = ub_rw_lock_get_readonly(lock);
@@ -407,21 +449,20 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
         int32 tid;
         gbp_lock_unpack(oldw, &state, &node_id, &tid);
         OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] 11 X lock node:%u tid:%d state:%d readonly:%d",
-            node_id, tid, state, (int32)readonly);
+            node_id, tid, state, (int32)ub_rw_lock_get_readonly(lock));
 
         if (state == 0 && gbp_lock_owner_cleared(oldw)) {
             uint64_t neww = gbp_lock_make_x(location->node_id, location->tid);
             uint64_t expected = oldw;
 
-            if (gbp_lock_cas(&lock->lock_word, &expected, neww)) {
+            if (gbp_lock_x_cas_after_readonly_check(lock, location, expected, neww)) {
                 int32 wr_wait;
                 int32 success_state;
                 uint8 success_node_id;
                 int32 success_tid;
                 uint64_t curw;
 
-                atomic_fetch_sub_explicit(&lock->writeWaiters, 1, memory_order_relaxed);
-                wr_wait = (int32)atomic_load_explicit(&lock->writeWaiters, memory_order_acquire);
+                wr_wait = (int32)atomic_fetch_sub_explicit(&lock->writeWaiters, 1, memory_order_release) - 1;
                 curw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
                 gbp_lock_unpack(curw, &success_state, &success_node_id, &success_tid);
                 OG_LOG_RUN_INF("[GBP-LOCK] X lock success, state:%d node_id:%u tid:%d, write_waiters:%d",
@@ -450,9 +491,6 @@ ub_lock_result_t ub_rw_lock_x_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t 
     int32 tid;
 
     gbp_lock_unpack(oldw, &state, &node_id, &tid);
-  
-    OG_LOG_RUN_INF("[GBP-LOCK] X unlock start, state:%d node_id:%u tid:%d",
-            state, node_id, tid);
 
     if (state == 0 && gbp_lock_owner_cleared(oldw)) {
         return UB_LOCK_SUCCESS;
@@ -504,24 +542,6 @@ bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_i
     uint64_t w = atomic_load_explicit(&l->lock_word, memory_order_acquire);
 
     return gbp_lock_is_x_held_word(w, node_id, tid);
-}
-
-static void ub_rw_lock_diag_log(const char *phase, const char *path, ub_rw_lock_t *lock,
-    const ub_location_t *location)
-{
-    uint64_t w = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
-    int32 state;
-    uint8 node_id;
-    int32 tid;
-    int32 write_waiters = (int32)atomic_load_explicit(&lock->writeWaiters, memory_order_relaxed);
-    bool32 readonly = ub_rw_lock_get_readonly(lock);
-    bool32 x_held = ub_rw_lock_is_x_held_by_current_thread(lock, location->node_id, location->tid);
-
-    gbp_lock_unpack(w, &state, &node_id, &tid);
-    OG_LOG_RUN_INF("[GBP-LOCK-DIAG][%s][%s] node:%u tid:%d state:%d lock_node:%u lock_tid:%d "
-                   "write_waiters:%d readonly:%d x_held:%d",
-        phase, path, location->node_id, location->tid, state, node_id, tid,
-        write_waiters, (int32)readonly, (int32)x_held);
 }
 
 void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *out_state, int32 *out_owner_node,

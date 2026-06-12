@@ -1327,9 +1327,9 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
 
     if (ret != OG_SUCCESS && ctrl->transfer_status == BUF_TRANS_REL_OWNER) {
         ctrl->transfer_status = BUF_TRANS_NONE;
-        ctrl->is_in_gbp = OG_TRUE;
     }
 
+    ctrl->is_in_gbp = OG_TRUE;
     DTC_DCS_DEBUG(
         ret,
         "[DCS-GBP][%u-%u][%s]: 3-2.after owner transfer page to gbp, status=(%d), dest_id=%u, dest_sid=%u, mode=%u, "

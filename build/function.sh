@@ -6,7 +6,7 @@ set -e
 func_prepare_git_msg()
 {
   echo "start func_prepare_git_msg"
-  git_id=$(git rev-parse --short HEAD)
+  git_id=$(git rev-parse --short=8 HEAD)
   WHOLE_COMMIT_ID=$(git rev-parse HEAD)
   merge_time=$(git log | grep Date | sed -n '1p' | sed 's/^Date:\s*//g')
   oGRAC_merge_time=$(git log | grep Date | sed -n '1p' | sed 's/^Date:\s*//g')

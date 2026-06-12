@@ -981,12 +981,13 @@ static void log_gbp_unlock_after_store(knl_session_t *session, buf_ctrl_t *ctrl)
                        "gbp_store_pending %d, page_lsn %llu",
             ctrl->page_id.file, ctrl->page_id.page, ctrl->gbp_lock_mode, (int32)ctrl->gbp_store_pending,
             (uint64)ctrl->page->lsn);
-        drc_gbp_lock_diag_log_page(session, shmem_page_meta->lock_ptr, ctrl->page_id, "commit_unlock_fail");
     }
 
     if (ctrl->gbp_store_pending) {
         drc_gbp_end_page_store(session, shmem_page_meta->lock_ptr);
         ctrl->gbp_store_pending = 0;
+        OG_LOG_RUN_INF("[GBP-BUF][%u-%u]end page store fence, gbp_lock %d", ctrl->page_id.file,
+                           ctrl->page_id.page, ctrl->gbp_lock_mode);
     }
 }
 
