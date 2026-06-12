@@ -206,14 +206,35 @@ static bool32 sql_try_get_like_fixed_prefix_info(const expr_tree_t *like_pattern
     return OG_TRUE;
 }
 
-static bool32 sql_has_numeric_string_cmp(og_type_t column_type, og_type_t expr_type)
+static bool32 sql_is_numeric_text_const(const expr_tree_t *expr)
 {
-    if (OG_IS_UNKNOWN_TYPE(expr_type)) {
+    if (expr == NULL || expr->root == NULL || expr->root->type != EXPR_NODE_CONST ||
+        !OG_IS_STRING_TYPE(expr->root->datatype)) {
         return OG_FALSE;
     }
 
-    return (OG_IS_NUMERIC_TYPE(column_type) && OG_IS_STRING_TYPE(expr_type)) ||
-        (OG_IS_STRING_TYPE(column_type) && OG_IS_NUMERIC_TYPE(expr_type));
+    num_part_t np;
+    np.excl_flag = NF_NONE;
+    return cm_split_num_text(&expr->root->value.v_text, &np) == NERR_SUCCESS;
+}
+
+static bool32 sql_numeric_string_cmp_blocks_index(cmp_type_t cmp_type, og_type_t column_type,
+    const expr_tree_t *other_expr)
+{
+    if (!OG_IS_NUMERIC_TYPE(column_type) || other_expr == NULL || other_expr->root == NULL ||
+        !OG_IS_STRING_TYPE(other_expr->root->datatype)) {
+        return OG_FALSE;
+    }
+
+    if (sql_is_like_cmp(cmp_type)) {
+        return OG_TRUE;
+    }
+
+    if (other_expr->root->type != EXPR_NODE_CONST) {
+        return OG_TRUE;
+    }
+
+    return !sql_is_numeric_text_const(other_expr);
 }
 
 /*
@@ -226,13 +247,8 @@ static index_access_guard_reason_t sql_get_cmp_index_access_guard_reason(cmp_typ
 {
     uint32 prefix_len = 0;
     bool32 has_wildcard = OG_FALSE;
-    og_type_t expr_type = OG_TYPE_UNKNOWN;
 
-    if (other_expr != NULL && other_expr->root != NULL) {
-        expr_type = other_expr->root->datatype;
-    }
-
-    if (sql_has_numeric_string_cmp(datatype, expr_type)) {
+    if (sql_numeric_string_cmp_blocks_index(cmp_type, datatype, other_expr)) {
         return INDEX_ACCESS_GUARD_NUMERIC_STRING_CMP;
     }
 
