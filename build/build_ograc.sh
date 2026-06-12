@@ -5,13 +5,14 @@ set -e
 CURRENT_PATH=$(dirname $(readlink -f $0))
 source "${CURRENT_PATH}"/common.sh
 
-OGDB_CODE_PATH="${CURRENT_PATH}"/..
+OGDB_CODE_PATH=$(readlink -f "${CURRENT_PATH}/..")
 BUILD_TARGET_NAME="ograc_connector"
 BUILD_PACK_NAME="openGauss_oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
 DSSENABLED="FALSE"
+THIRD_PARTY_PATH=""
 OGRAC_IMAGE="${OGDB_CODE_PATH}/image"
 
 mkdir -p ${TMP_PKG_PATH}
@@ -41,7 +42,11 @@ function buildCtOmPackage() {
 }
 
 function buildDssPackage() {
-  sh "${CURRENT_PATH}"/build_dss.sh ${BUILD_TYPE}
+  sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}"
+}
+
+function usage() {
+  echo "Usage: ${0##*/} {debug|release} [--with-dss] [--third-party-path <path>]"
 }
 
 function newPackageTarget() {
@@ -117,16 +122,53 @@ function prepare() {
 
 BUILD_TYPE=${1,,}
 if [[ ${BUILD_TYPE} != "debug" ]] && [[ ${BUILD_TYPE} != "release" ]]; then
-  echo "Usage: ${0##*/} {debug|release}."
+  usage
   exit 0
 fi
 
+shift
 
-if [ $# -ge 2 ] && [ "$2" = "--with-dss" ]; then
-  DSSENABLED="TRUE"
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-dss)
+      DSSENABLED="TRUE"
+      shift
+      ;;
+    --third-party-path)
+      if [[ -z "$2" ]]; then
+        echo "Error: missing value for --third-party-path."
+        usage
+        exit 1
+      fi
+      THIRD_PARTY_PATH="$2"
+      shift 2
+      ;;
+    --third-party-path=*)
+      THIRD_PARTY_PATH="${1#*=}"
+      if [[ -z "${THIRD_PARTY_PATH}" ]]; then
+        echo "Error: missing value for --third-party-path."
+        usage
+        exit 1
+      fi
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 OG_BUILD_TYPE="package-${BUILD_TYPE}"
+
+if [[ ${DSSENABLED} == "TRUE" ]]; then
+  sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}" --check-only
+fi
 
 prepare
 buildCtOmPackage
