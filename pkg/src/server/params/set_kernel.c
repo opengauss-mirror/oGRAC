@@ -1997,12 +1997,6 @@ status_t sql_notify_als_ub_gbp_lock_timeout_ms(void *se, void *item, char *value
     return OG_SUCCESS;
 }
 
-status_t sql_notify_als_ub_gbp_lock_debug(void *se, void *item, char *value)
-{
-    g_instance->kernel.attr.ub_gbp_lock_debug = (bool32)value[0];
-    return sql_notify_als_bool(se, item, value);
-}
-
 status_t sql_verify_als_ashrink_wait_time(void *se, void *lex, void *def)
 {
     uint32 num = 0;

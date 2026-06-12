@@ -202,9 +202,6 @@ config_item_t g_parameters[] = {
     { "_UB_GBP_LOCK_TIMEOUT_MS", OG_TRUE, ATTR_NONE, "10000", NULL, NULL, "-", "[1000,3600000]", "OG_TYPE_INTEGER",
       NULL, PARAM__UB_GBP_LOCK_TIMEOUT_MS, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_gbp_lock_timeout_ms,
       sql_notify_als_ub_gbp_lock_timeout_ms, NULL, NULL },
-    { "_UB_GBP_LOCK_DEBUG", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "[TRUE,FALSE]", "OG_TYPE_BOOLEAN", NULL,
-      PARAM__UB_GBP_LOCK_DEBUG, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_ub_gbp_lock_debug,
-      NULL, NULL },
     { "UBS_CLUSTER_HOSTS", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL,
       PARAM_UBS_CLUSTER_HOSTS, EFFECT_REBOOT, CFG_INS, NULL, NULL, NULL, NULL },
     /* *************************************************************************

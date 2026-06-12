@@ -42,6 +42,7 @@
 #include "cm_ubs_mem.h"
 #include "knl_common.h"
 #include "knl_buffer.h"
+#include "knl_common.h"
 
 #include "ub_dist_comm_queue.h"
 #include "dtc_remote_lock.h"
@@ -185,8 +186,10 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
 
     ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_sga->remote_total_pool_size, 0600,
                                 UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
+    // to do: remove ALREADY_EXIST reattach workaround; use explicit ubsmem reattach on restart.
     if (ret == UBSM_ERR_ALREADY_EXIST) {
-        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", data_buf_name, ret);
+        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist on restart, reattach (will zero dist/page on init), ret: %d",
+                       data_buf_name, ret);
     } else if (ret != UBSM_OK) {
         OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", data_buf_name, ret);
         return ret;
@@ -279,6 +282,7 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
             char *page_addr = set->page_buf + j * page_size;
             remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
             if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+                // each page corresponds to a lock in the lock buffer.
                 uint64 lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
             }
@@ -348,6 +352,18 @@ status_t drc_init_page_locks(void)
         return OG_SUCCESS;
     }
 
+#if !USE_ATOMIC_LOCK
+    /*
+     * ubturbo requires comm_queue before ub_rw_lock_create (see ub_dist_lock_func_test.cpp:
+     * init_comm_queue -> map lock shm -> ub_rw_lock_create).
+     */
+    if (!drc_lock_comm_queue_is_inited()) {
+        OG_LOG_RUN_WAR("[DRC-GBP-LOCK] defer page_locks until comm_queue ready, node:%u",
+                       g_dtc->kernel->id);
+        return OG_SUCCESS;
+    }
+#endif
+
     drc_res_ctx_t *ogx = DRC_RES_CTX;
     status_t ret = drc_create_page_locks(&ogx->buf_ctx);
     if (ret != OG_SUCCESS) {
@@ -355,7 +371,6 @@ status_t drc_init_page_locks(void)
         return ret;
     }
     g_page_locks_inited = OG_TRUE;
-    drc_gbp_lock_log_flow("page_locks_batch_init_done");
     return OG_SUCCESS;
 }
 
@@ -420,7 +435,6 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
         if (drc_dist_comm_coordinated_init(knl_sess) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DRC-GBP] dist comm coordinated init failed after mmap, node:%u", node_id);
         }
-        drc_gbp_lock_log_flow("broadcast_mmap_comm_queue_retry");
     }
 }
 

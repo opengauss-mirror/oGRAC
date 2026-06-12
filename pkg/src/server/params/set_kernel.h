@@ -178,7 +178,6 @@ status_t sql_notify_als_ashrink_wait_time(void *se, void *item, char *value);
 status_t sql_notify_als_shrink_wait_recycled_pages(void *se, void *item, char *value);
 status_t sql_notify_als_temptable_support_batch(void *se, void *item, char *value);
 status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char *value);
-status_t sql_notify_als_ub_gbp_lock_debug(void *se, void *item, char *value);
 status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value);
 status_t sql_verify_als_ub_page_hot_threshold(void *se, void *lex, void *def);
 status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def);

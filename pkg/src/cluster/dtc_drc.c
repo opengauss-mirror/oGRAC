@@ -1908,10 +1908,13 @@ allocated:
         // Successfuly made an ownership conversion for a cold page
         buf_res->page_hot_stat.owner_changed_number++;
         // TOODO: What is a 1 "unit time"
-        if (KNL_NOW(session) - buf_res->page_hot_stat.start_time > DRC_PAGE_HOT_TIMEOUT(session)) {
-            result->gbp_action = buf_res->page_hot_stat.owner_changed_number > DRC_PAGE_HOT_THRESHOLD(session)
-                                     ? DRC_NEED_MOVE_TO_GBP
-                                     : DRC_NEED_NO_MOVE;
+        uint64 elapsed_ms = KNL_NOW(session) - buf_res->page_hot_stat.start_time;
+        uint32 hot_timeout = DRC_PAGE_HOT_TIMEOUT(session);
+        uint32 hot_threshold = DRC_PAGE_HOT_THRESHOLD(session);
+        uint64 owner_chg = buf_res->page_hot_stat.owner_changed_number;
+
+        if (elapsed_ms > hot_timeout) {
+            result->gbp_action = owner_chg > hot_threshold ? DRC_NEED_MOVE_TO_GBP : DRC_NEED_NO_MOVE;
             // reset stats when unit time is reached
             // reset_page_hot_stat(session, buf_res); Correct location of reset is here. Temporarily disabled for now
             if (result->gbp_action == DRC_NEED_MOVE_TO_GBP) {

@@ -255,7 +255,6 @@ typedef struct st_knl_attr {
     uint32 ub_page_hot_threshold;
     uint32 ub_page_hot_timeout;
     uint32 ub_gbp_lock_timeout_ms;
-    bool32 ub_gbp_lock_debug;
     char ubs_cluster_hosts[OG_HOST_NAME_BUFFER_SIZE * 16];
     bool32 enable_abr;
     uint32 abr_timeout;

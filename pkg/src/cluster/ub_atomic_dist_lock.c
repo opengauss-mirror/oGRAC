@@ -175,7 +175,7 @@ void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly, const char *ph
         state, (int32)cm_get_current_thread_id());
 }
 
-bool32 ub_rw_lock_get_readonly(const ub_rw_lock_t *lock)
+bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock)
 {
     return atomic_load_explicit(&lock->readonly, memory_order_acquire) ? OG_TRUE : OG_FALSE;
 }
@@ -246,21 +246,12 @@ int32 ub_rw_lock_get_state(ub_rw_lock_t *lock)
 
 void ub_rw_lock_create(ub_rw_lock_t *lock, const ub_lock_config_t *config, const ub_location_t *location)
 {
-    static bool32 g_atomic_create_logged = OG_FALSE;
-
     (void)config;
     (void)location;
 
     atomic_store_explicit(&lock->lock_word, gbp_lock_word_empty(), memory_order_relaxed);
     atomic_store(&lock->writeWaiters, 0);
     atomic_store(&lock->readonly, false);
-
-    if (!g_atomic_create_logged) {
-        g_atomic_create_logged = OG_TRUE;
-        OG_LOG_RUN_WAR("[GBP-LOCK-FLOW][lock_create] impl=ATOMIC-IN-TREE source=ub_atomic_dist_lock.c "
-                       "lock:%p (this log only appears when in-tree atomic lock is linked)",
-                       (void *)lock);
-    }
 }
 
 void ub_rw_lock_free(ub_rw_lock_t *lock, const ub_location_t *location)
@@ -574,16 +565,6 @@ void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *out_state, int32 *ou
         *out_owner_node = (int32)node_id;
         *out_owner_tid = tid;
     }
-}
-
-uint64 ub_rw_lock_peek_lock_word(const ub_rw_lock_t *lock)
-{
-    const struct ub_rw_lock *l = (const struct ub_rw_lock *)lock;
-
-    if (lock == NULL) {
-        return 0;
-    }
-    return atomic_load_explicit(&l->lock_word, memory_order_acquire);
 }
 
 void ub_gbp_lock_read_raw(const ub_rw_lock_t *lock, ub_gbp_lock_raw_t *raw)

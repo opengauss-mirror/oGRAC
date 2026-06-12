@@ -78,6 +78,9 @@ typedef struct st_mes_dist_comm_sync_bcast {
     uint64 epoch;
 } mes_dist_comm_sync_bcast_t;
 
+#define DRC_UB_BILLBOARD_NODE_SLOT_SIZE 128U
+#define DRC_UB_LOCK_RING_PRIORITY       0U
+
 typedef struct st_remote_sga {
     uint64 remote_total_pool_size;  // total 8G  global_buffer_pool_size after align 128 size
     uint64 remote_buf_alloc_size;   // data buf  remote_data_buf_size after align 4k size

@@ -26,7 +26,6 @@
 #include <stdint.h>
 #include <limits.h>
 #include <string.h>
-#include <dlfcn.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"
@@ -40,25 +39,100 @@
 #include "knl_buffer.h"
 #include "knl_page.h"
 
-void drc_gbp_lock_log_flow(const char *phase);
-void drc_gbp_lock_probe_impl(const char *phase);
+/*
+ * UBSM per-node pool layout (remote_sga->remote_buf_addr[node_id], see dtc_remote_buffer.h):
+ *
+ *   +-- DRC_REMOTE_BUF_OFFSET (0)
+ *   |     GBP page data: remote_page_info_t + page + tail_lsn per slot
+ *   |     size: DRC_REMOTE_BUF_SIZE (256 MiB)
+ *   +-- DRC_DIST_QUE_OFFSET (= DRC_REMOTE_BUF_SIZE)
+ *   |     Distributed comm queue (ubturbo / USE_ATOMIC_LOCK=0 only)
+ *   |     size: DRC_DIST_QUE_SIZE (256 MiB)
+ *   |     Per-node sub-layout at remote_buf_addr[N] + DRC_DIST_QUE_OFFSET:
+ *   |       +0                              init/billboard area (DRC_UB_COMM_INIT_AREA_SIZE)
+ *   |       +DRC_UB_COMM_INIT_AREA_SIZE     ring region      (DRC_UB_COMM_RING_AREA_SIZE)
+ *   |     Global billboard is pinned at node-0 init area; both nodes map the same pointer.
+ *   |     Per-node billboard slot: node_idx * DRC_UB_BILLBOARD_NODE_SLOT_SIZE (128 B):
+ *   |       +0  uint8   inited
+ *   |       +8  uint64  ring_offsets[priority]  (P0 = DRC_UB_LOCK_RING_PRIORITY)
+ *   +-- DRC_DIST_LCK_OFFSET (= DRC_DIST_QUE_OFFSET + DRC_DIST_QUE_SIZE)
+ *         Per-page ub_rw_lock objects (dense array)
+ *         size: DRC_DISK_LCK_SIZE (256 MiB)
+ *         base: drc_init_remote_lock() -> g_ub_lock (local node's lock region)
+ *         page lock_ptr: g_ub_lock + page_index * UB_RW_LOCK_SIZE
+ *
+ * ---------------------------------------------------------------------------
+ * Two-node relationship (USE_ATOMIC_LOCK=0 / ubturbo)
+ * ---------------------------------------------------------------------------
+ *
+ * Each node owns one UBSM pool (remote_buf_addr[self]) and mmap-imports the peer
+ * pool into remote_buf_addr[peer]. After DB open both nodes must satisfy
+ * drc_lock_comm_queue_prereq_met(): map_success[0/1] and remote_buf_addr[0/1] set.
+ *
+ *   Node 0 UBSM                         Node 1 UBSM
+ *   [data|comm|lock]                    [data|comm|lock]
+ *        ^                                   ^
+ *        |         cross-node mmap           |
+ *        +----------- both nodes ------------+
+ *
+ * Comm queue wiring (libubs-atomic demo, 2-node):
+ *   - Billboard (init_area): single copy at node-0 comm base; both nodes pass the
+ *     same pointer into ub_comm_queue_init.
+ *   - Rings: node-0 ring lives in node-0 comm slice; node-1 ring in node-1 slice.
+ *     Each node registers BOTH rings (local + peer) in ring_map.
+ *   - Handles: node 0 -> g_handle_send, node 1 -> g_handle_recv.
+ *
+ * Lock objects: each node initializes locks in its OWN DRC_DIST_LCK region
+ * (drc_init_remote_lock uses remote_buf_addr[self]). Cross-node GBP access uses
+ * the peer's page data via mmap; lock_ptr in page meta points to the owner's
+ * lock slot in the owner's lock region.
+ *
+ * ---------------------------------------------------------------------------
+ * Initialization timeline (ubturbo)
+ * ---------------------------------------------------------------------------
+ *
+ * Phase A — per-node local setup (drc_init_remote_buffer, no peer required):
+ *   1. ubsmem allocate local pool
+ *   2. drc_init_remote_buf_struct: data_buf layout, assign page lock_ptr offsets,
+ *      zero local GBP pages + dist areas (comm/lock) on this node
+ *   3. Page ub_rw_lock_create is NOT done yet (deferred until comm queue ready)
+ *
+ * Phase B — cross-node mmap (DB open / broadcast_remote_buf_mmap):
+ *   1. Each node mmap-imports every peer pool (dtc_mmap_remote_data_buf)
+ *   2. broadcast_remote_buf_allocated -> drc_process_remote_buf_mmap on peers
+ *   3. When all nodes mapped, prereq_met becomes true
+ *
+ * Phase C — coordinated comm queue (drc_dist_comm_coordinated_init):
+ *   Entry: knl_database.c DB open, or drc_process_remote_buf_mmap once prereq met.
+ *   Node 0 (leader) runs three MES broadcast barriers; node 1 (follower) only
+ *   executes handlers and polls g_lock_comm_queue_inited.
+ *
+ *   RESET  (all nodes):
+ *     - Clear comm+lock regions on every mapped pool (fresh start after reattach)
+ *   INIT   (all nodes, after leader's local ub_comm_queue_init):
+ *     - ub_comm_queue_init on local handle + shared billboard + both ring regions
+ *   SYNC   (all nodes):
+ *     - Verify peer billboard slot (inited + ring offset valid)
+ *     - Set g_lock_comm_queue_inited, call drc_ubturbo_on_comm_queue_ready()
+ *       -> drc_init_page_locks() -> ub_rw_lock_create for every page
+ *
+ * Phase D — runtime lock attach (drc_gbp_ensure_lock_attached):
+ *   Lazy ub_rw_lock_create on first lock acquisition if page lock was not created
+ *   during Phase C (should not happen in normal startup).
+ *
+ * USE_ATOMIC_LOCK=1: skip Phase C; drc_init_page_locks runs in Phase A because
+ * in-tree atomic locks do not need ub_comm_queue_init.
+ */
 
-static inline bool32 drc_gbp_lock_debug_on(void)
-{
-    return (g_instance != NULL && g_instance->kernel.attr.ub_gbp_lock_debug);
-}
+#if !USE_ATOMIC_LOCK
 
-static inline bool32 drc_gbp_lock_debug_sess(knl_session_t *session)
-{
-    return (session != NULL && session->kernel->attr.ub_gbp_lock_debug);
-}
+/* ub_comm_queue_init sub-regions within each node's DRC_DIST_QUE area (libubs-atomic demo layout). */
+#define DRC_UB_COMM_INIT_AREA_SIZE  1024U
+#define DRC_UB_COMM_RING_AREA_SIZE  1376640U
+#define DRC_UB_COMM_RING_CAPACITY   1024U
+#define DRC_UB_COMM_MAX_MSG_SIZE    512U
 
-#define DRC_GBP_DBG_WAR(fmt, ...) \
-    do { \
-        if (drc_gbp_lock_debug_on()) { \
-            OG_LOG_RUN_WAR(fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
+#endif /* !USE_ATOMIC_LOCK */
 
 #if USE_ATOMIC_LOCK
 void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *atomic_state, int32 *x_owner_node,
@@ -73,104 +147,17 @@ void ub_gbp_lock_read_wait_queue(const ub_rw_lock_t *lock, ub_gbp_wait_q_snap_t 
 }
 #endif
 
-void drc_gbp_lock_diag_log_page(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, const char *phase)
-{
-    int32 state = 0;
-    int32 x_owner_node = -1;
-    int32 write_waiters = 0;
-    int32 owner_tid = -1;
-    bool32 readonly = OG_FALSE;
-    bool32 x_held = OG_FALSE;
-
-    if (!drc_gbp_lock_debug_sess(session)) {
-        return;
-    }
-
-    drc_gbp_lock_info_debug_snapshot(lock_ptr, &state, &x_owner_node, &write_waiters, &owner_tid);
-    if (lock_ptr != 0) {
-        ub_gbp_lock_raw_t raw;
-        ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_ptr;
-
-        ub_gbp_lock_read_raw(lock, &raw);
-        readonly = raw.readonly;
-        x_held = ub_rw_lock_is_x_held_by_current_thread(lock, (uint8)DCS_SELF_INSTID(session),
-            (int32)cm_get_current_thread_id());
-        OG_LOG_RUN_INF("[GBP-LOCK-DIAG][%s][%u-%u] lock_ptr:%llu phase:%s g_word:%d g_wait:%u s_readers:%u "
-                       "w0:0x%016llx owner_x:0x%016llx(node:%u tid:%d) reserve:0x%016llx(node:%u) bitmap:0x%x "
-                       "readonly:%d self_node:%u self_tid:%d x_held:%d",
-                       phase, page_id.file, page_id.page, lock_ptr, raw.g_phase, raw.g_lock_word, raw.g_waiters,
-                       raw.s_readers, (unsigned long long)raw.word0, (unsigned long long)raw.owner_x,
-                       (uint32)raw.owner_x_node, raw.owner_x_tid, (unsigned long long)raw.reserve_owner,
-                       (uint32)raw.reserve_node, raw.shared_bitmap, (int32)readonly,
-                       (uint32)DCS_SELF_INSTID(session), (int32)cm_get_current_thread_id(), (int32)x_held);
-        return;
-    }
-
-    OG_LOG_RUN_INF("[GBP-LOCK-DIAG][%s][%u-%u] lock_ptr:%llu state:%d owner_node:%d owner_tid:%d "
-                   "write_waiters:%d readonly:%d self_node:%u self_tid:%d x_held:%d",
-                   phase, page_id.file, page_id.page, lock_ptr, state, x_owner_node, owner_tid, write_waiters,
-                   (int32)readonly, (uint32)DCS_SELF_INSTID(session), (int32)cm_get_current_thread_id(), (int32)x_held);
-}
-
 #if !USE_ATOMIC_LOCK
 
 static ub_shm_comm_t g_handle_send = NULL;
 static ub_shm_comm_t g_handle_recv = NULL;
 static bool32 g_lock_comm_queue_inited = OG_FALSE;
 static bool32 g_dist_comm_ub_queue_inited = OG_FALSE;
-static bool32 g_ubs_atomic_lib_log_registered = OG_FALSE;
-
-#ifndef UB_ATOMIC_LOG_FUNC_TYPEDEF
-typedef int (*ub_atomic_log_func)(int level, const char *file, const char *func, uint32 line, const char *message);
-#endif
-
-#ifndef LOG_LEVEL_ERROR
-#define LOG_LEVEL_ERROR 3
-#define LOG_LEVEL_WARN  2
-#endif
-
-static int drc_gbp_ubs_atomic_lib_log(int level, const char *file, const char *func, uint32 line, const char *message)
-{
-    (void)file;
-    if (message == NULL) {
-        return 0;
-    }
-    if (level >= LOG_LEVEL_ERROR) {
-        OG_LOG_RUN_ERR("[UB-LOCK-LIB][%s:%u] %s", (func != NULL ? func : "?"), line, message);
-    } else if (level >= LOG_LEVEL_WARN && drc_gbp_lock_debug_on()) {
-        OG_LOG_RUN_WAR("[UB-LOCK-LIB][%s:%u] %s", (func != NULL ? func : "?"), line, message);
-    }
-    return 0;
-}
-
-static void drc_gbp_ubs_atomic_try_register_lib_log(void)
-{
-    void *reg_sym;
-    void *level_sym;
-
-    if (g_ubs_atomic_lib_log_registered) {
-        return;
-    }
-    reg_sym = dlsym(RTLD_DEFAULT, "ub_atomic_register_log_func");
-    if (reg_sym == NULL) {
-        DRC_GBP_DBG_WAR("[GBP-LOCK-FLOW][ubs_atomic_log_hook] dlsym(ub_atomic_register_log_func) not found, skip");
-        return;
-    }
-    ((void (*)(ub_atomic_log_func))reg_sym)(drc_gbp_ubs_atomic_lib_log);
-    level_sym = dlsym(RTLD_DEFAULT, "ub_atomic_set_log_level");
-    if (level_sym != NULL) {
-        ((int (*)(int))level_sym)(LOG_LEVEL_WARN);
-    }
-    g_ubs_atomic_lib_log_registered = OG_TRUE;
-    DRC_GBP_DBG_WAR("[GBP-LOCK-FLOW][ubs_atomic_log_hook] registered ub_atomic_register_log_func");
-}
-
 static bool32 drc_lock_comm_queue_prereq_met(remote_sga_t *remote_sga)
 {
+    /* Both nodes must mmap-import every peer pool before comm queue init. */
     for (uint32 node_id = 0; node_id < g_mes.profile.inst_count; node_id++) {
         if (remote_sga->map_success[node_id] != OG_TRUE || remote_sga->remote_buf_addr[node_id] == NULL) {
-            DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] comm queue prereq not met, node %u map_success:%u addr:%p",
-                           node_id, (uint32)remote_sga->map_success[node_id], remote_sga->remote_buf_addr[node_id]);
             return OG_FALSE;
         }
     }
@@ -194,10 +181,11 @@ static void drc_dist_comm_coord_lock_ensure(void)
 
 static char *drc_dist_billboard_slot(void *init_region, uint32 node_idx)
 {
+    /* init_region: node-0 DRC_DIST_QUE + 0; slot stride = DRC_UB_BILLBOARD_NODE_SLOT_SIZE (128 B). */
     return (char *)init_region + (uint64)node_idx * DRC_UB_BILLBOARD_NODE_SLOT_SIZE;
 }
 
-/* libubs-atomic demo layout: global Billboard in node0 pool; both nodes map the same init_region. */
+/* Global billboard: both nodes map node-0 pool base + DRC_DIST_QUE_OFFSET. */
 static void *drc_dist_shared_billboard_init(remote_sga_t *remote_sga)
 {
     return (void *)(remote_sga->remote_buf_addr[0] + DRC_DIST_QUE_OFFSET);
@@ -222,26 +210,27 @@ static status_t drc_dist_verify_peer_billboard(remote_sga_t *remote_sga, uint32 
                        self_node, peer_node, shared_init);
         return OG_ERROR;
     }
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] peer P0 ring ready: self:%u peer:%u shared_init:%p offset:%llu",
-                   self_node, peer_node, shared_init,
-                   (unsigned long long)ring_offsets[DRC_UB_LOCK_RING_PRIORITY]);
     return OG_SUCCESS;
 }
 
 static status_t drc_dist_comm_init_queue_after_barrier(remote_sga_t *remote_sga, uint32 node_id)
 {
     bool is_master = (node_id == 0);
-    const size_t kInitSize = 1024;
-    const size_t kRingSize = 1376640;
     const uint8_t nodeA = 0;
     const uint8_t nodeB = 1;
     const uint8_t cur = is_master ? nodeA : nodeB;
     const uint8_t peer = is_master ? nodeB : nodeA;
+    /* Each node's comm shm: [init 1024 B][ring 1376640 B] within DRC_DIST_QUE_SIZE (256 MiB). */
     char *shmA = remote_sga->remote_buf_addr[0] + DRC_DIST_QUE_OFFSET;
     char *shmB = remote_sga->remote_buf_addr[1] + DRC_DIST_QUE_OFFSET;
     void *init_region_shared = drc_dist_shared_billboard_init(remote_sga);
-    void *ring_region_cur = (is_master ? (void *)shmA : (void *)shmB) + kInitSize;
-    void *ring_region_peer = (is_master ? (void *)shmB : (void *)shmA) + kInitSize;
+    void *ring_region_cur = (is_master ? (void *)shmA : (void *)shmB) + DRC_UB_COMM_INIT_AREA_SIZE;
+    void *ring_region_peer = (is_master ? (void *)shmB : (void *)shmA) + DRC_UB_COMM_INIT_AREA_SIZE;
+    /*
+     * Node 0: g_handle_send, ring on shmA, peer ring on shmB.
+     * Node 1: g_handle_recv, ring on shmB, peer ring on shmA.
+     * init_area.ptr is always node-0 billboard (shared across both mappings).
+     */
     ub_ring_desc_t ring_descs[1];
     ub_comm_conf_t conf = { 0 };
     ub_shm_area_t init_area;
@@ -250,8 +239,8 @@ static status_t drc_dist_comm_init_queue_after_barrier(remote_sga_t *remote_sga,
     ub_shm_comm_t *handle = is_master ? &g_handle_send : &g_handle_recv;
     int ret;
 
-    ring_descs[0].ring_capacity = 1024;
-    ring_descs[0].max_msg_size = 512;
+    ring_descs[0].ring_capacity = DRC_UB_COMM_RING_CAPACITY;
+    ring_descs[0].max_msg_size = DRC_UB_COMM_MAX_MSG_SIZE;
     ring_descs[0].priority = 1;
 
     conf.cpu_id = -1;
@@ -260,14 +249,14 @@ static status_t drc_dist_comm_init_queue_after_barrier(remote_sga_t *remote_sga,
     conf.num_rings = 1;
     conf.ring_descs = ring_descs;
 
-    init_area.size = kInitSize;
+    init_area.size = DRC_UB_COMM_INIT_AREA_SIZE;
     init_area.ptr = init_region_shared;
 
     infos[0].node_id = cur;
-    infos[0].region.size = kRingSize;
+    infos[0].region.size = DRC_UB_COMM_RING_AREA_SIZE;
     infos[0].region.ptr = ring_region_cur;
     infos[1].node_id = peer;
-    infos[1].region.size = kRingSize;
+    infos[1].region.size = DRC_UB_COMM_RING_AREA_SIZE;
     infos[1].region.ptr = ring_region_peer;
 
     ring_map.entries = infos;
@@ -282,21 +271,15 @@ static status_t drc_dist_comm_init_queue_after_barrier(remote_sga_t *remote_sga,
         OG_LOG_RUN_ERR("[DRC-GBP] ub_comm_queue_init failed after barrier, ret:%d node_id:%u shared_init:%p "
                        "ring_cur:%p ring_peer:%p",
                        ret, node_id, init_region_shared, ring_region_cur, ring_region_peer);
-        drc_gbp_lock_log_flow("comm_queue_init_fail");
         return OG_ERROR;
     }
 
     g_dist_comm_ub_queue_inited = OG_TRUE;
-    drc_gbp_ubs_atomic_try_register_lib_log();
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] ub_comm_queue_init ok node:%u shared_init:%p ring_cur:%p ring_peer:%p",
-                   node_id, init_region_shared, ring_region_cur, ring_region_peer);
-    drc_gbp_lock_log_flow("comm_queue_init_ok");
     return OG_SUCCESS;
 }
 
 static status_t drc_dist_comm_finalize_after_init(remote_sga_t *remote_sga, uint32 node_id)
 {
-    const size_t kInitSize = 1024;
     uint32 peer_node = (node_id == 0) ? 1U : 0U;
 
     if (!g_dist_comm_ub_queue_inited) {
@@ -304,7 +287,7 @@ static status_t drc_dist_comm_finalize_after_init(remote_sga_t *remote_sga, uint
         return OG_ERROR;
     }
 
-    if (drc_dist_verify_peer_billboard(remote_sga, node_id, peer_node, kInitSize) != OG_SUCCESS) {
+    if (drc_dist_verify_peer_billboard(remote_sga, node_id, peer_node, DRC_UB_COMM_INIT_AREA_SIZE) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] peer billboard verify failed after init barrier, self:%u peer:%u",
                        node_id, peer_node);
         return OG_ERROR;
@@ -314,9 +297,6 @@ static status_t drc_dist_comm_finalize_after_init(remote_sga_t *remote_sga, uint
         g_lock_comm_queue_inited = OG_TRUE;
         drc_ubturbo_on_comm_queue_ready();
     }
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm finalize done (shared billboard, no copy) node:%u peer:%u",
-                   node_id, peer_node);
-    drc_gbp_lock_log_flow("comm_queue_shared_billboard_ok");
     return OG_SUCCESS;
 }
 
@@ -329,7 +309,6 @@ static status_t drc_dist_comm_init_queue_local(void)
         return OG_SUCCESS;
     }
     if (!drc_lock_comm_queue_prereq_met(remote_sga)) {
-        drc_gbp_lock_log_flow("comm_queue_init_skip");
         return OG_SUCCESS;
     }
     remote_sga->remote_pool_reserve_offset += DRC_DIST_QUE_OFFSET;
@@ -345,7 +324,6 @@ static status_t drc_dist_comm_sync_local(void)
         return OG_SUCCESS;
     }
     if (!drc_lock_comm_queue_prereq_met(remote_sga)) {
-        drc_gbp_lock_log_flow("comm_queue_init_skip");
         return OG_SUCCESS;
     }
     if (!g_dist_comm_ub_queue_inited) {
@@ -357,6 +335,7 @@ static status_t drc_dist_comm_sync_local(void)
 
 static status_t drc_dist_comm_coordinated_init_follower(void)
 {
+    /* Node 1: RESET/INIT/SYNC handlers run via MES; wait until leader finishes SYNC. */
     uint32 waited_ms = 0;
 
     while (!g_lock_comm_queue_inited && waited_ms < DRC_DIST_COMM_FOLLOWER_WAIT_MS) {
@@ -373,6 +352,12 @@ static status_t drc_dist_comm_coordinated_init_follower(void)
 
 static status_t drc_dist_comm_coordinated_init_leader(knl_session_t *session)
 {
+    /*
+     * Three-phase cluster barrier (node 0 leader):
+     *   1. RESET  - zero comm+lock UBSM on all nodes
+     *   2. INIT   - each node calls ub_comm_queue_init on its DRC_DIST_QUE slice
+     *   3. SYNC   - verify peer billboard, then drc_init_page_locks()
+     */
     mes_dist_comm_reset_bcast_t reset_bcast = { 0 };
     mes_dist_comm_init_bcast_t init_bcast = { 0 };
     mes_dist_comm_sync_bcast_t sync_bcast = { 0 };
@@ -386,7 +371,6 @@ static status_t drc_dist_comm_coordinated_init_leader(knl_session_t *session)
         return OG_SUCCESS;
     }
     if (!drc_lock_comm_queue_prereq_met(remote_sga)) {
-        drc_gbp_lock_log_flow("comm_queue_init_skip");
         cm_spin_unlock(&g_dist_comm_coord_lock);
         return OG_SUCCESS;
     }
@@ -395,9 +379,6 @@ static status_t drc_dist_comm_coordinated_init_leader(knl_session_t *session)
     g_lock_comm_queue_inited = OG_FALSE;
     g_dist_comm_ub_queue_inited = OG_FALSE;
     drc_ubsm_reset_mapped_dist_for_fresh_start(remote_sga);
-    drc_gbp_lock_log_flow("ubsm_dist_fresh_reset_leader_before_broadcast");
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm reset leader epoch:%llu node:%u",
-                   (unsigned long long)epoch, (uint32)g_instance->kernel.id);
 
     mes_init_send_head(&reset_bcast.head, MES_CMD_BROADCAST_DIST_COMM_RESET, sizeof(mes_dist_comm_reset_bcast_t),
                        OG_INVALID_ID32, (uint8)g_instance->kernel.id, 0, session->id, OG_INVALID_ID16);
@@ -409,7 +390,6 @@ static status_t drc_dist_comm_coordinated_init_leader(knl_session_t *session)
         cm_spin_unlock(&g_dist_comm_coord_lock);
         return OG_ERROR;
     }
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm reset barrier done epoch:%llu", (unsigned long long)epoch);
 
     if (drc_dist_comm_init_queue_local() != OG_SUCCESS) {
         cm_spin_unlock(&g_dist_comm_coord_lock);
@@ -425,7 +405,6 @@ static status_t drc_dist_comm_coordinated_init_leader(knl_session_t *session)
         cm_spin_unlock(&g_dist_comm_coord_lock);
         return OG_ERROR;
     }
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm init barrier done epoch:%llu", (unsigned long long)epoch);
 
     if (drc_dist_comm_sync_local() != OG_SUCCESS) {
         cm_spin_unlock(&g_dist_comm_coord_lock);
@@ -443,13 +422,15 @@ static status_t drc_dist_comm_coordinated_init_leader(knl_session_t *session)
     }
 
     cm_spin_unlock(&g_dist_comm_coord_lock);
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm coordinated init done epoch:%llu node:%u",
-                   (unsigned long long)epoch, (uint32)g_instance->kernel.id);
     return OG_SUCCESS;
 }
 
 status_t drc_dist_comm_coordinated_init(knl_session_t *session)
 {
+    /*
+     * Public entry (DB open / post-mmap). Node 0 drives RESET->INIT->SYNC barriers;
+     * node 1 participates in broadcast handlers and polls completion here.
+     */
     if (g_lock_comm_queue_inited) {
         return OG_SUCCESS;
     }
@@ -465,7 +446,7 @@ status_t drc_dist_comm_coordinated_init(knl_session_t *session)
 
 void drc_process_dist_comm_reset(void *sess, mes_message_t *msg)
 {
-    mes_dist_comm_reset_bcast_t *bcast = (mes_dist_comm_reset_bcast_t *)msg->buffer;
+    /* RESET handler (all nodes): drop comm/page-lock ready flags and zero dist shm. */
     mes_message_head_t ack_head = { 0 };
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
 
@@ -476,9 +457,6 @@ void drc_process_dist_comm_reset(void *sess, mes_message_t *msg)
         mes_release_message_buf(msg->buffer);
         return;
     }
-
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm reset handler epoch:%llu node:%u",
-                   (unsigned long long)bcast->epoch, (uint32)g_instance->kernel.id);
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
         g_lock_comm_queue_inited = OG_FALSE;
         g_dist_comm_ub_queue_inited = OG_FALSE;
@@ -494,7 +472,7 @@ void drc_process_dist_comm_reset(void *sess, mes_message_t *msg)
 
 void drc_process_dist_comm_init(void *sess, mes_message_t *msg)
 {
-    mes_dist_comm_init_bcast_t *bcast = (mes_dist_comm_init_bcast_t *)msg->buffer;
+    /* INIT handler (all nodes): ub_comm_queue_init on local comm slice. */
     mes_message_head_t ack_head = { 0 };
     status_t ret = OG_SUCCESS;
 
@@ -505,9 +483,6 @@ void drc_process_dist_comm_init(void *sess, mes_message_t *msg)
         mes_release_message_buf(msg->buffer);
         return;
     }
-
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm init handler epoch:%llu node:%u",
-                   (unsigned long long)bcast->epoch, (uint32)g_instance->kernel.id);
 
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
         ret = drc_dist_comm_init_queue_local();
@@ -526,7 +501,7 @@ void drc_process_dist_comm_init(void *sess, mes_message_t *msg)
 
 void drc_process_dist_comm_sync(void *sess, mes_message_t *msg)
 {
-    mes_dist_comm_sync_bcast_t *bcast = (mes_dist_comm_sync_bcast_t *)msg->buffer;
+    /* SYNC handler (all nodes): verify peer billboard, then create page locks. */
     mes_message_head_t ack_head = { 0 };
     status_t ret = OG_SUCCESS;
 
@@ -537,9 +512,6 @@ void drc_process_dist_comm_sync(void *sess, mes_message_t *msg)
         mes_release_message_buf(msg->buffer);
         return;
     }
-
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] dist comm sync handler epoch:%llu node:%u",
-                   (unsigned long long)bcast->epoch, (uint32)g_instance->kernel.id);
 
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
         ret = drc_dist_comm_sync_local();
@@ -558,11 +530,10 @@ void drc_process_dist_comm_sync(void *sess, mes_message_t *msg)
 
 status_t init_lock_comm_queue()
 {
+    /* Legacy follower wait; primary path is drc_dist_comm_coordinated_init at DB open. */
     if (g_lock_comm_queue_inited) {
         return OG_SUCCESS;
     }
-
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] init_lock_comm_queue without session, skip leader (db_open/mmap retry)");
     if (g_instance->kernel.id == 0) {
         return OG_SUCCESS;
     }
@@ -581,29 +552,23 @@ status_t init_lock_comm_queue_old()
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
 
     if (!drc_lock_comm_queue_prereq_met(remote_sga)) {
-        DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] skip comm queue init until all node shm are mapped, node_id:%u",
-                       node_id);
-        drc_gbp_lock_log_flow("comm_queue_init_skip");
         return OG_SUCCESS;
     }
 
     char *shmA = remote_sga->remote_buf_addr[0] + DRC_DIST_QUE_OFFSET;
     char *shmB = remote_sga->remote_buf_addr[1] + DRC_DIST_QUE_OFFSET;
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 0: %p", shmA);
+    OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 1: %p", shmB);
     remote_sga->remote_pool_reserve_offset += DRC_DIST_QUE_OFFSET;
-
-    const size_t kInitSize = 1024;
-    const size_t kRingSize = 1376640;
 
     const uint8_t nodeA = 0;
     const uint8_t nodeB = 1;
     const uint8_t cur = is_master ? nodeA : nodeB;
     const uint8_t peer = is_master ? nodeB : nodeA;
     void *init_region_cur = (is_master ? shmA : shmB);
-    void *ring_region_cur = (is_master ? shmA : shmB) + kInitSize;
-    void *ring_region_peer = (is_master ? shmB : shmA) + kInitSize;
+    void *ring_region_cur = (is_master ? shmA : shmB) + DRC_UB_COMM_INIT_AREA_SIZE;
+    void *ring_region_peer = (is_master ? shmB : shmA) + DRC_UB_COMM_INIT_AREA_SIZE;
 
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 0: %p", shmA);
-    DRC_GBP_DBG_WAR("[DRC-GBP-LOCK] sprintf remote lock comm_queue addr start 1: %p", shmB);
 
     /*
      * Both nodes are mapped: zero comm+lock shm on every pool before ub_comm_queue_init /
@@ -611,11 +576,10 @@ status_t init_lock_comm_queue_old()
      * always see a clean dist-lock layer.
      */
     drc_ubsm_reset_mapped_dist_for_fresh_start(remote_sga);
-    drc_gbp_lock_log_flow("ubsm_dist_fresh_reset_before_comm_queue");
 
     ub_ring_desc_t ring_descs[1];
-    ring_descs[0].ring_capacity = 1024;
-    ring_descs[0].max_msg_size = 512;
+    ring_descs[0].ring_capacity = DRC_UB_COMM_RING_CAPACITY;
+    ring_descs[0].max_msg_size = DRC_UB_COMM_MAX_MSG_SIZE;
     ring_descs[0].priority = 1;
 
     ub_comm_conf_t conf = { 0 };
@@ -626,15 +590,15 @@ status_t init_lock_comm_queue_old()
     conf.ring_descs = ring_descs;
 
     ub_shm_area_t init_area;
-    init_area.size = kInitSize;
+    init_area.size = DRC_UB_COMM_INIT_AREA_SIZE;
     init_area.ptr = init_region_cur;
 
     ub_ring_region_info_t infos[2];
     infos[0].node_id = cur;
-    infos[0].region.size = kRingSize;
+    infos[0].region.size = DRC_UB_COMM_RING_AREA_SIZE;
     infos[0].region.ptr = ring_region_cur;
     infos[1].node_id = peer;
-    infos[1].region.size = kRingSize;
+    infos[1].region.size = DRC_UB_COMM_RING_AREA_SIZE;
     infos[1].region.ptr = ring_region_peer;
 
     ub_ring_region_map_t ring_map;
@@ -648,12 +612,9 @@ status_t init_lock_comm_queue_old()
                        "shmA:%p shmB:%p init:%p ring_cur:%p ring_peer:%p cpu_id:%d",
                        ret, node_id, (uint32)cur, (int)is_master, shmA, shmB, init_region_cur, ring_region_cur,
                        ring_region_peer, conf.cpu_id);
-        drc_gbp_lock_log_flow("comm_queue_init_fail");
         return OG_ERROR;
     }
     g_lock_comm_queue_inited = OG_TRUE;
-    drc_gbp_ubs_atomic_try_register_lib_log();
-    drc_gbp_lock_log_flow("comm_queue_init_ok");
     drc_ubturbo_on_comm_queue_ready();
     return OG_SUCCESS;
 }
@@ -782,94 +743,37 @@ status_t drc_gbp_ensure_lock_attached(knl_session_t *session, uint64 lock_ptr, p
 }
 
 #endif /* USE_ATOMIC_LOCK */
-void drc_gbp_lock_log_flow(const char *phase)
-{
-    if (!drc_gbp_lock_debug_on()) {
-        return;
-    }
 
-#if USE_ATOMIC_LOCK
-    OG_LOG_RUN_WAR("[GBP-LOCK-FLOW][%s] compile_flag USE_ATOMIC_LOCK=1 (see GBP-LOCK-IMPL for runtime proof)",
-                   phase);
-#else
-    OG_LOG_RUN_WAR("[GBP-LOCK-FLOW][%s] compile_flag USE_ATOMIC_LOCK=0 comm_queue:%s node_id:%u",
-                   phase, drc_lock_comm_queue_is_inited() ? "inited" : "not_inited",
-                   (uint32)g_instance->kernel.id);
-#endif
-}
-
-static void drc_gbp_lock_log_symbol_module(const char *phase, const char *sym_name, void *sym_addr)
-{
-    Dl_info info;
-
-    if (dladdr(sym_addr, &info) == 0) {
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] %s addr:%p dladdr_failed", phase, sym_name, sym_addr);
-        return;
-    }
-
-    OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] %s addr:%p module:%s sname:%s fbase:%p",
-                   phase, sym_name, sym_addr,
-                   info.dli_fname != NULL ? info.dli_fname : "(null)",
-                   info.dli_sname != NULL ? info.dli_sname : "(null)", info.dli_fbase);
-}
-
-void drc_gbp_lock_probe_impl(const char *phase)
-{
-    static bool32 g_impl_probed = OG_FALSE;
-    void *marker = NULL;
-    void *create_fn = dlsym(RTLD_DEFAULT, "ub_rw_lock_create");
-    void *xlock_fn = dlsym(RTLD_DEFAULT, "ub_rw_lock_x_lock");
-    void *slock_fn = dlsym(RTLD_DEFAULT, "ub_rw_lock_s_lock");
-    const char *verdict = NULL;
-    Dl_info create_info;
-
-    if (g_impl_probed) {
-        return;
-    }
-    g_impl_probed = OG_TRUE;
-
-    marker = dlsym(RTLD_DEFAULT, "ub_gbp_lock_impl_probe_marker");
 #if !USE_ATOMIC_LOCK
-    if (marker != NULL) {
-        OG_LOG_RUN_ERR("[GBP-LOCK-IMPL][%s] MISMATCH: in-tree atomic linked while USE_ATOMIC_LOCK=0", phase);
-    }
+#define DRC_GBP_ASSERT_COMM_QUEUE_READY() CM_ASSERT(g_lock_comm_queue_inited)
+#else
+#define DRC_GBP_ASSERT_COMM_QUEUE_READY()
 #endif
-    if (!drc_gbp_lock_debug_on()) {
-        return;
-    }
 
-    if (create_fn != NULL) {
-        drc_gbp_lock_log_symbol_module(phase, "ub_rw_lock_create", create_fn);
-    } else {
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] dlsym(ub_rw_lock_create) failed", phase);
-    }
-    if (xlock_fn != NULL) {
-        drc_gbp_lock_log_symbol_module(phase, "ub_rw_lock_x_lock", xlock_fn);
-    }
-    if (slock_fn != NULL) {
-        drc_gbp_lock_log_symbol_module(phase, "ub_rw_lock_s_lock", slock_fn);
-    }
+static uint32 drc_gbp_lock_timeout_ms(knl_session_t *session)
+{
+    uint32 timeout_ms = session->kernel->attr.ub_gbp_lock_timeout_ms;
 
-    if (marker != NULL) {
-        verdict = "IN-TREE-ATOMIC";
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] probe_marker=FOUND text:%s", phase, (const char *)marker);
-    } else if (create_fn != NULL && dladdr(create_fn, &create_info) != 0 && create_info.dli_fname != NULL &&
-        strstr(create_info.dli_fname, "ubs-atomic") != NULL) {
-        verdict = "UBS-ATOMIC-DYNAMIC-LIB";
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] probe_marker=NOT_FOUND module:%s", phase, create_info.dli_fname);
-    } else if (create_fn != NULL && dladdr(create_fn, &create_info) != 0 && create_info.dli_fname != NULL &&
-        strstr(create_info.dli_fname, "ubturbo") != NULL) {
-        verdict = "UBTURBO-DYNAMIC-LIB";
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] probe_marker=NOT_FOUND module:%s", phase, create_info.dli_fname);
-    } else if (create_fn != NULL && dladdr(create_fn, &create_info) != 0 && create_info.dli_fname != NULL) {
-        verdict = "CHECK-MODULE-PATH";
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] probe_marker=NOT_FOUND module:%s", phase, create_info.dli_fname);
-    } else {
-        verdict = "UNKNOWN";
-        OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] probe_marker=NOT_FOUND dlsym/dladdr failed", phase);
+    if (timeout_ms == 0) {
+        timeout_ms = OG_DEFAULT_UB_GBP_LOCK_TIMEOUT_MS;
     }
+    return timeout_ms;
+}
 
-    OG_LOG_RUN_WAR("[GBP-LOCK-IMPL][%s] VERDICT:%s", phase, verdict);
+static void drc_gbp_fill_lock_policy(knl_session_t *session, ub_lock_policy_t *policy)
+{
+    policy->timeout_ts = (time_ms_t)drc_gbp_lock_timeout_ms(session);
+    policy->allow_delay_release = false;
+    policy->recursive = false;
+}
+
+static ub_location_t make_location(uint8 node_id)
+{
+    ub_location_t loc;
+
+    loc.node_id = node_id;
+    loc.tid = (int32_t)cm_get_current_thread_id();
+    return loc;
 }
 
 static ub_lock_config_t g_ub_page_lock_config;
@@ -894,36 +798,58 @@ void drc_init_remote_lock(ub_rw_lock_t **ub_lock)
 {
     uint32 node_id = g_instance->kernel.id;
     remote_sga_t *remote_sga = &DRC_RES_CTX->remote_sga;
+
+    /*
+     * Lock pool base: local node's UBSM pool + DRC_DIST_LCK_OFFSET (256 MiB region).
+     * Each GBP page slot gets lock_ptr = base + index * UB_RW_LOCK_SIZE (assigned in
+     * drc_init_remote_buf_struct, dtc_remote_buffer.c).
+     */
     *ub_lock = (ub_rw_lock_t *)(remote_sga->remote_buf_addr[node_id] + DRC_DIST_LCK_OFFSET);
     remote_sga->remote_pool_reserve_offset += DRC_DIST_LCK_OFFSET;
     OG_LOG_RUN_WAR("[DRC-GBP-LOCK] sprintf remote lock buf addr start: %p, reserve offset:%llu", *ub_lock,
                    remote_sga->remote_pool_reserve_offset);
-    drc_gbp_lock_log_flow("mount_remote_lock_region");
-    drc_gbp_lock_probe_impl("mount_remote_lock_region");
 }
 
 status_t drc_create_page_ub_lock(ub_rw_lock_t *lock)
 {
     drc_init_ub_page_lock_create_params();
-    drc_gbp_lock_probe_impl("page_lock_create");
     ub_rw_lock_create(lock, &g_ub_page_lock_config, &g_ub_page_lock_creator);
     return OG_SUCCESS;
 }
 
-static ub_location_t make_location(uint8 node_id)
+#if !USE_ATOMIC_LOCK
+void drc_ubturbo_on_comm_queue_ready(void)
 {
-    ub_location_t loc;
-    loc.node_id = node_id;
-    loc.tid = (int32_t)cm_get_current_thread_id();
-
-    return loc;
+    /* Phase C tail: comm queue is live; create per-page locks in local DRC_DIST_LCK region. */
+    if (drc_init_page_locks() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] page_locks init after comm_queue failed");
+    }
 }
-// The following API implementation are same with atmoic lock
+
+status_t drc_gbp_ensure_lock_attached(knl_session_t *session, uint64 lock_ptr, page_id_t page_id)
+{
+    (void)page_id;
+
+    if (lock_ptr == 0) {
+        return OG_ERROR;
+    }
+
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
+    (void)drc_create_page_ub_lock((ub_rw_lock_t *)(uintptr_t)lock_ptr);
+    (void)session;
+    return OG_SUCCESS;
+}
+#endif /* !USE_ATOMIC_LOCK */
+
 status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode)
 {
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
     ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
+        return OG_ERROR;
+    }
+    if (drc_gbp_ensure_lock_attached(session, lock_ptr, page_id) != OG_SUCCESS) {
         return OG_ERROR;
     }
     OG_LOG_DEBUG_INF("[DRC-GBP-LOCK] start to get lock address for offset: %p", lock);
@@ -931,14 +857,27 @@ status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_i
     const char *lock_type;
     drc_lock_mode_e lock_mode = (mode == LATCH_MODE_S ? DRC_LOCK_SHARE : DRC_LOCK_EXCLUSIVE);
     ub_location_t lock_location = make_location((uint8)DCS_SELF_INSTID(session));
+    ub_lock_policy_t lock_policy;
 
+    drc_gbp_fill_lock_policy(session, &lock_policy);
+
+#if !USE_ATOMIC_LOCK
     if (lock_mode == DRC_LOCK_EXCLUSIVE) {
-        ret = ub_rw_lock_x_lock(lock, NULL, &lock_location);
+        ret = (int)ub_gbp_x_lock_fence(lock, &lock_policy, &lock_location);
         lock_type = "exlcusive";
     } else {
-        ret = ub_rw_lock_s_lock(lock, NULL, &lock_location);
+        ret = (int)ub_gbp_s_lock_fence(lock, &lock_policy, &lock_location);
         lock_type = "shared";
     }
+#else
+    if (lock_mode == DRC_LOCK_EXCLUSIVE) {
+        ret = ub_rw_lock_x_lock(lock, &lock_policy, &lock_location);
+        lock_type = "exlcusive";
+    } else {
+        ret = ub_rw_lock_s_lock(lock, &lock_policy, &lock_location);
+        lock_type = "shared";
+    }
+#endif
 
     if (ret != UB_LOCK_SUCCESS) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire %s lock for page (%u-%u):%d", lock_type, page_id.file,
@@ -959,6 +898,7 @@ void drc_gbp_begin_page_store(knl_session_t *session, uint64 lock_ptr)
             (int32)cm_get_current_thread_id());
         return;
     }
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
     ub_rw_lock_begin_page_store((ub_rw_lock_t *)(uintptr_t)lock_ptr);
 }
 
@@ -970,15 +910,19 @@ void drc_gbp_end_page_store(knl_session_t *session, uint64 lock_ptr)
             (int32)cm_get_current_thread_id());
         return;
     }
-
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
     ub_rw_lock_end_page_store((ub_rw_lock_t *)(uintptr_t)lock_ptr);
 }
 
 status_t drc_gbp_distribute_lock_for_store(knl_session_t *session, uint64 lock_ptr, page_id_t page_id)
 {
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
     ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
+        return OG_ERROR;
+    }
+    if (drc_gbp_ensure_lock_attached(session, lock_ptr, page_id) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -997,9 +941,13 @@ status_t drc_gbp_distribute_lock_for_store(knl_session_t *session, uint64 lock_p
 
 status_t drc_gbp_distribute_lock_reenter(knl_session_t *session, uint64 lock_ptr, page_id_t page_id)
 {
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
     ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to get lock address for offset: %llu", lock_ptr);
+        return OG_ERROR;
+    }
+    if (drc_gbp_ensure_lock_attached(session, lock_ptr, page_id) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -1018,9 +966,13 @@ status_t drc_gbp_distribute_lock_reenter(knl_session_t *session, uint64 lock_ptr
 
 status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode)
 {
+    DRC_GBP_ASSERT_COMM_QUEUE_READY();
     ub_rw_lock_t *lock = (ub_rw_lock_t *)lock_ptr;
     if (lock == NULL) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] Failed to acquire lock for page");
+        return OG_ERROR;
+    }
+    if (drc_gbp_ensure_lock_attached(session, lock_ptr, page_id) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -1041,12 +993,15 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
     OG_LOG_RUN_INF("[DRC-GBP-LOCK] gbp unlock mode %d page (%u-%u)", lock_mode, page_id.file,
                    page_id.page);
     ub_location_t lock_location = make_location((uint8)DCS_SELF_INSTID(session));
+    ub_lock_policy_t lock_policy;
+
+    drc_gbp_fill_lock_policy(session, &lock_policy);
 
     if (lock_mode == DRC_LOCK_EXCLUSIVE) {
-        ret = ub_rw_lock_x_unlock(lock, NULL, &lock_location);
+        ret = ub_rw_lock_x_unlock(lock, &lock_policy, &lock_location);
         lock_type = "exlcusive";
     } else {
-        ret = ub_rw_lock_s_unlock(lock, NULL, &lock_location);
+        ret = ub_rw_lock_s_unlock(lock, &lock_policy, &lock_location);
         lock_type = "shared";
     }
 
@@ -1075,10 +1030,24 @@ void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int3
     ub_rw_lock_debug_read((const ub_rw_lock_t *)(uintptr_t)lock_ptr, atomic_state, x_owner_node, write_waiters,
         owner_tid);
 #else
-    (void)lock_ptr;
-    *atomic_state = 0;
+    if (lock_ptr == 0) {
+        *atomic_state = 0;
+        *x_owner_node = -1;
+        *write_waiters = 0;
+        *owner_tid = -1;
+        return;
+    }
+    ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_ptr;
+    ub_gbp_lock_raw_t raw;
+
+    ub_gbp_lock_read_raw(lock, &raw);
+    *atomic_state = raw.g_lock_word;
+    *write_waiters = (int32)raw.g_waiters;
     *x_owner_node = -1;
-    *write_waiters = 0;
     *owner_tid = -1;
+    if (raw.g_lock_word == 0 && raw.owner_x != 0 && raw.owner_x != 0xFF00000000ULL) {
+        *x_owner_node = (int32)raw.owner_x_node;
+        *owner_tid = raw.owner_x_tid;
+    }
 #endif
 }

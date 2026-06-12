@@ -31,10 +31,10 @@
 #include "dtc_trace.h"
 #include "dtc_database.h"
 #include "dtc_remote_buffer.h"
+#include "dtc_remote_lock.h"
 #include "knl_datafile.h"
 #include "knl_buflatch.h"
 #include "cm_ubs_mem.h"
-#include "dtc_remote_lock.h"
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
