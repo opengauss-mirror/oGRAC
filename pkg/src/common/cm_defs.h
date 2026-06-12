@@ -620,6 +620,9 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_UB_PAGE_HOT_THRESHOLD (uint32)10000
 #define OG_MIN_UB_PAGE_HOT_TIMEOUT (uint32)1                // seconds
 #define OG_MAX_UB_PAGE_HOT_TIMEOUT (uint32)1000             // seconds
+#define OG_MIN_UB_GBP_LOCK_TIMEOUT_MS (uint32)1000          // ms, matches libubturbo minimum useful wait
+#define OG_MAX_UB_GBP_LOCK_TIMEOUT_MS (uint32)3600000       // ms, 1 hour
+#define OG_DEFAULT_UB_GBP_LOCK_TIMEOUT_MS (uint32)10000     // ms, libubturbo default when policy is NULL
 
 /* time */
 #define OG_MONTH_PER_YEAR 12

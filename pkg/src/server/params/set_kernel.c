@@ -1916,17 +1916,17 @@ status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def)
     uint32 num = 0;
     if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
         cm_reset_error();
-        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_ASHRINK_WAIT_TIME");
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_UB_PAGE_HOT_TIMEOUT");
         return OG_ERROR;
     }
 
     if (num < OG_MIN_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_ASHRINK_WAIT_TIME", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
     if (num > OG_MAX_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_ASHRINK_WAIT_TIME", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
@@ -1941,17 +1941,66 @@ status_t sql_notify_als_ub_page_hot_timeout(void *se, void *item, char *value)
     }
 
     if (num < OG_MIN_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_ASHRINK_WAIT_TIME", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
     if (num > OG_MAX_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_ASHRINK_WAIT_TIME", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
-    g_instance->kernel.attr.ashrink_wait_time = num;
+    g_instance->kernel.attr.ub_page_hot_timeout = num;
     return OG_SUCCESS;
+}
+
+status_t sql_verify_als_ub_gbp_lock_timeout_ms(void *se, void *lex, void *def)
+{
+    uint32 num = 0;
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        cm_reset_error();
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_UB_GBP_LOCK_TIMEOUT_MS");
+        return OG_ERROR;
+    }
+
+    if (num < OG_MIN_UB_GBP_LOCK_TIMEOUT_MS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_GBP_LOCK_TIMEOUT_MS", (int64)OG_MIN_UB_GBP_LOCK_TIMEOUT_MS);
+        return OG_ERROR;
+    }
+
+    if (num > OG_MAX_UB_GBP_LOCK_TIMEOUT_MS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_GBP_LOCK_TIMEOUT_MS", (int64)OG_MAX_UB_GBP_LOCK_TIMEOUT_MS);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_ub_gbp_lock_timeout_ms(void *se, void *item, char *value)
+{
+    uint32 num = 0;
+    if (cm_str2uint32(value, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (num < OG_MIN_UB_GBP_LOCK_TIMEOUT_MS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_GBP_LOCK_TIMEOUT_MS", (int64)OG_MIN_UB_GBP_LOCK_TIMEOUT_MS);
+        return OG_ERROR;
+    }
+
+    if (num > OG_MAX_UB_GBP_LOCK_TIMEOUT_MS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_GBP_LOCK_TIMEOUT_MS", (int64)OG_MAX_UB_GBP_LOCK_TIMEOUT_MS);
+        return OG_ERROR;
+    }
+
+    g_instance->kernel.attr.ub_gbp_lock_timeout_ms = num;
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_ub_gbp_lock_debug(void *se, void *item, char *value)
+{
+    g_instance->kernel.attr.ub_gbp_lock_debug = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_verify_als_ashrink_wait_time(void *se, void *lex, void *def)

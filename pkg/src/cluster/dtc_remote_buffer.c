@@ -47,8 +47,46 @@
 #include "dtc_remote_lock.h"
 
 static ub_rw_lock_t *g_ub_lock = NULL;
-static ub_lock_config_t g_ub_lock_config = { 0 };
-static ub_location_t g_ub_lock_creator = { 0 };
+
+static void drc_reset_ubsm_node_dist_areas(char *base)
+{
+    if (base == NULL) {
+        return;
+    }
+    knl_reset_large_memory(base + DRC_DIST_QUE_OFFSET, DRC_DIST_QUE_SIZE);
+    knl_reset_large_memory(base + DRC_DIST_LCK_OFFSET, DRC_DISK_LCK_SIZE);
+}
+
+static void drc_reset_ubsm_local_gbp_page_bufs(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+{
+    uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
+
+    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+        buf_set_t *set = &buf_ctx->buf_set[i];
+        uint64 bytes = (uint64)page_size * set->capacity;
+        if (set->page_buf != NULL && bytes > 0) {
+            knl_reset_large_memory(set->page_buf, bytes);
+        }
+    }
+    OG_LOG_RUN_WAR("[DRC-GBP] reset local GBP page bufs, node:%u data_buf:%p sets:%u",
+                   g_instance->kernel.id, remote_sga->data_buf, buf_ctx->buf_set_count);
+}
+
+void drc_ubsm_reset_mapped_dist_for_fresh_start(remote_sga_t *remote_sga)
+{
+    if (!g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        return;
+    }
+
+    for (uint32 node_id = 0; node_id < g_mes.profile.inst_count; node_id++) {
+        if (remote_sga->map_success[node_id] != OG_TRUE || remote_sga->remote_buf_addr[node_id] == NULL) {
+            continue;
+        }
+        drc_reset_ubsm_node_dist_areas(remote_sga->remote_buf_addr[node_id]);
+        OG_LOG_RUN_WAR("[DRC-GBP] reset UBSM comm+lock regions for fresh start, node:%u base:%p self:%u",
+                       node_id, remote_sga->remote_buf_addr[node_id], g_instance->kernel.id);
+    }
+}
 
 // page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
 #define REMOTE_BUF_PAGE_COST                                                       \
@@ -203,7 +241,7 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
     buf_set_t *set = NULL;
     uint64 offset;
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
-        drc_init_remote_lock(&g_ub_lock, &g_ub_lock_config, &g_ub_lock_creator);
+        drc_init_remote_lock(&g_ub_lock);
     }
 
     for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
@@ -223,17 +261,26 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         offset += (uint64)set->capacity * sizeof(buf_ctrl_t);
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
+    }
+
+    /*
+     * Zero local GBP page meta/data and dist areas on every startup so reattach after
+     * USE_ATOMIC_LOCK=1/0 switch or crash does not reuse stale lock/comm_queue state.
+     */
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        drc_reset_ubsm_local_gbp_page_bufs(remote_sga, buf_ctx);
+        drc_reset_ubsm_node_dist_areas(remote_sga->remote_buf_addr[g_instance->kernel.id]);
+    }
+
+    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+        set = &buf_ctx->buf_set[i];
 
         for (uint32 j = 0; j < set->capacity; j++) {
             char *page_addr = set->page_buf + j * page_size;
             remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
             if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
-                // each page corresponds to a lock in the lock buffer.
                 uint64 lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
-                ub_rw_lock_create((ub_rw_lock_t *)(page_info->lock_ptr), &g_ub_lock_config, &g_ub_lock_creator);
-                OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,
-                               (void *)page_info->lock_ptr);
             }
         }
 
@@ -244,6 +291,72 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
     cm_init_thread_lock(&buf_ctx->buf_mutex);
 
     return;
+}
+
+static status_t drc_validate_lock_region_size(remote_buf_context_t *buf_ctx)
+{
+    if (!g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        return OG_SUCCESS;
+    }
+
+    uint64 total_pages = 0;
+    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+        total_pages += buf_ctx->buf_set[i].capacity;
+    }
+
+    uint64 lock_bytes = total_pages * (uint64)UB_RW_LOCK_SIZE;
+    if (lock_bytes > DRC_DISK_LCK_SIZE) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] lock region overflow: need %llu bytes, limit %llu",
+                       lock_bytes, (uint64)DRC_DISK_LCK_SIZE);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static bool32 g_page_locks_inited = OG_FALSE;
+
+static status_t drc_create_page_locks(remote_buf_context_t *buf_ctx)
+{
+    uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
+
+    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+        buf_set_t *set = &buf_ctx->buf_set[i];
+        for (uint32 j = 0; j < set->capacity; j++) {
+            char *page_addr = set->page_buf + j * page_size;
+            remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
+            if (page_info->lock_ptr == 0) {
+                OG_LOG_RUN_ERR("[DRC-GBP-LOCK] page %u lock_ptr is NULL", j);
+                return OG_ERROR;
+            }
+            if (drc_create_page_ub_lock((ub_rw_lock_t *)(page_info->lock_ptr)) != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DRC-GBP-LOCK] page %u ub_rw_lock_create failed", j);
+                return OG_ERROR;
+            }
+            OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,
+                           (void *)page_info->lock_ptr);
+        }
+    }
+    return OG_SUCCESS;
+}
+
+status_t drc_init_page_locks(void)
+{
+    if (g_page_locks_inited) {
+        return OG_SUCCESS;
+    }
+    if (!g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        return OG_SUCCESS;
+    }
+
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    status_t ret = drc_create_page_locks(&ogx->buf_ctx);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] drc_create_page_locks failed");
+        return ret;
+    }
+    g_page_locks_inited = OG_TRUE;
+    drc_gbp_lock_log_flow("page_locks_batch_init_done");
+    return OG_SUCCESS;
 }
 
 status_t drc_init_remote_buffer()
@@ -258,7 +371,16 @@ status_t drc_init_remote_buffer()
     (void)drc_calc_remote_data_buf_size(&ogx->remote_sga, &ogx->buf_ctx);
     drc_set_data_buf(&ogx->remote_sga, &ogx->buf_ctx);
     drc_init_remote_buf_struct(&ogx->remote_sga, &ogx->buf_ctx);
+    ret = drc_validate_lock_region_size(&ogx->buf_ctx);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC] validate lock region size fail, return error:%u", ret);
+        return ret;
+    }
+#if USE_ATOMIC_LOCK
+    return drc_init_page_locks();
+#else
     return OG_SUCCESS;
+#endif
 }
 
 void broadcast_remote_buf_allocated()
@@ -293,6 +415,13 @@ void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg)
     mes_release_message_buf(msg->buffer);
     OG_LOG_RUN_WAR("[DRC-GBP]drc_process_remote_buf_mmap, node id %u", node_id);
     (void)dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        knl_session_t *knl_sess = (knl_session_t *)sess;
+        if (drc_dist_comm_coordinated_init(knl_sess) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DRC-GBP] dist comm coordinated init failed after mmap, node:%u", node_id);
+        }
+        drc_gbp_lock_log_flow("broadcast_mmap_comm_queue_retry");
+    }
 }
 
 #define GBP_READONLY_WAIT_MAX_TIMES 1000

@@ -1015,9 +1015,11 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
                                g_rc_ctx->self_id, node_id, ogx->remote_sga.map_success[0]);
                 if (ogx->remote_sga.map_success[node_id] == OG_FALSE) {
                     ret = dtc_mmap_remote_data_buf(&ogx->remote_sga, node_id);
-                    if (ret != UBSM_OK) {
+                    if (ret != OG_SUCCESS) {
                         OG_LOG_RUN_ERR("[DRC-GBP]mmap remote data buf failed, current id: %d, remote_id: %d, ret: %d",
                                        g_rc_ctx->self_id, node_id, ret);
+                        dls_unlatch(session, ctrl_latch, NULL);
+                        return OG_ERROR;
                     }
                 }
             }
@@ -1027,7 +1029,16 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
         }
 
         if (session->kernel->attr.enable_remote_distribute_lock) {
-            init_lock_comm_queue();
+            if (drc_dist_comm_coordinated_init(session) != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DB OPEN] drc_dist_comm_coordinated_init failed");
+                dls_unlatch(session, ctrl_latch, NULL);
+                return OG_ERROR;
+            }
+            if (drc_init_page_locks() != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DB OPEN] drc_init_page_locks failed");
+                dls_unlatch(session, ctrl_latch, NULL);
+                return OG_ERROR;
+            }
         }
     }
 
