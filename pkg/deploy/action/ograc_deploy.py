@@ -624,10 +624,7 @@ class OgracDeploy:
                 continue
             src = os.path.join(CUR_DIR, item)
             dst = os.path.join(action_dst, item)
-            if os.path.isdir(src):
-                copy_tree(src, dst)
-            else:
-                shutil.copy2(src, dst)
+            copy_tree(src, dst, skip_names=_SKIP)
 
         pkg_dir = os.path.dirname(CUR_DIR)
         for extra in ("config", "common"):

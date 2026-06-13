@@ -124,10 +124,7 @@ class CmsDeploy:
             LOGGER.info("CMS scripts already in install path, skip copy")
             return
         LOGGER.info("Copying CMS scripts from %s to %s", CUR_DIR, dst)
-        if os.path.isdir(dst):
-            shutil.rmtree(dst)
-        os.makedirs(dst, mode=0o755, exist_ok=True)
-        run_cmd(f"cp -arf {CUR_DIR}/* {dst}/")
+        copy_tree(CUR_DIR, dst, replace=True, skip_names={"__pycache__"})
 
 
     def _read_link_type(self):

@@ -16,6 +16,7 @@ from config import get_config
 from config_validation_runner import validate_config_params_or_raise
 from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
+from utils import copy_tree
 
 LOG = get_logger()
 
@@ -117,11 +118,7 @@ class DssDeploy:
             LOG.info("DSS scripts already in install path, skip copy")
             return
         LOG.info(f"Copying scripts from {CUR_DIR} to {scripts_dir}")
-        if os.path.isdir(scripts_dir):
-            import shutil
-            shutil.rmtree(scripts_dir)
-        os.makedirs(scripts_dir, mode=0o755, exist_ok=True)
-        _run_cmd(f"cp -arf {CUR_DIR}/* {scripts_dir}/")
+        copy_tree(CUR_DIR, scripts_dir, replace=True, skip_names={"__pycache__"})
 
 
     def _run_ctl(self, action, mode=""):
@@ -167,7 +164,6 @@ class DssDeploy:
 
     def _prepare_source(self):
         """Copy DSS bin/lib to install dir as root."""
-        import shutil as _shutil
         source_dir = self.paths.source_dir
         dss_home = self.paths.dss_home
         for subdir in ("bin", "lib"):
@@ -176,9 +172,7 @@ class DssDeploy:
             if not os.path.isdir(src):
                 LOG.warning("DSS source %s not found, skip", src)
                 continue
-            if os.path.exists(dst):
-                _shutil.rmtree(dst)
-            _shutil.copytree(src, dst)
+            copy_tree(src, dst, replace=True)
         _run_cmd(f"chown -R {self.user_and_group} {dss_home}")
         LOG.info("DSS bin/lib copied to %s", dss_home)
 
