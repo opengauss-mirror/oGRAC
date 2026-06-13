@@ -75,7 +75,7 @@ def validate_config_params_file(config_path, template_path=None, logger=None):
         "mes_type", "deploy_policy", "ograc_vlan_ip",
         "storage_share_fs", "storage_archive_fs", "storage_metadata_fs",
         "share_logic_ip", "archive_logic_ip", "metadata_logic_ip",
-        "SYS_PASSWORD",
+        "SYS_PASSWORD", "kernel_parameters",
     }
     mes_type_keys = {"ca_path", "crt_path", "key_path"}
 
