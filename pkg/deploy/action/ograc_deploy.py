@@ -23,7 +23,7 @@ from utils import (
     ensure_dir, safe_remove, copy_tree, chown_recursive,
     read_version, CommandError,
 )
-from config_param_validator import ConfigParamValidationError, validate_config_params_file
+from config_validation_runner import validate_config_params_or_raise
 
 LOG = get_logger("deploy")
 
@@ -40,18 +40,6 @@ UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 POST_UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 ROLLBACK_ORDER = ["cms", "ograc", "og_om", "ograc_exporter"]
 INIT_CONTAINER_ORDER = ["cms", "ograc"]
-
-
-def _resolve_install_config_file(config_file=""):
-    """Resolve the config file used by pre_install."""
-    if not config_file:
-        return os.path.join(CUR_DIR, "config_params_lun.json")
-    if os.path.isabs(config_file):
-        return config_file
-    cwd_path = os.path.abspath(config_file)
-    if os.path.exists(cwd_path):
-        return cwd_path
-    return os.path.join(CUR_DIR, config_file)
 
 
 class OgracDeploy:
@@ -140,11 +128,10 @@ class OgracDeploy:
 
     def pre_install(self, install_type="override", config_file=""):
         LOG.info("Begin pre_install, install_type=%s", install_type)
-        config_file = _resolve_install_config_file(config_file)
         try:
-            validate_config_params_file(config_file, logger=LOG)
-        except ConfigParamValidationError as error:
-            LOG.error("config validation failed: %s", str(error))
+            config_file = validate_config_params_or_raise(CUR_DIR, config_file, logger=LOG)
+        except RuntimeError as error:
+            LOG.error(str(error))
             return 1
 
         if self.ograc_in_container not in ("1", "2"):

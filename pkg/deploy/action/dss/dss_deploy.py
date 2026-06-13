@@ -13,6 +13,7 @@ if ACTION_ROOT not in sys.path:
     sys.path.append(ACTION_ROOT)
 
 from config import get_config
+from config_validation_runner import validate_config_params_or_raise
 from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 
@@ -48,13 +49,7 @@ def _run_cmd(cmd, error_msg=""):
 
 def validate_install_config():
     """Validate config_params_lun.json before component pre_install writes config."""
-    validator = os.path.join(ACTION_ROOT, "config_param_validator.py")
-    config_file = os.path.join(ACTION_ROOT, "config_params_lun.json")
-    ret, stdout, stderr = _exec(
-        f"python3 {validator} {config_file}", timeout=60)
-    if ret != 0:
-        message = "\n".join(part for part in (stdout, stderr) if part)
-        raise RuntimeError(f"config validation failed: {message}")
+    validate_config_params_or_raise(ACTION_ROOT, logger=LOG)
 
 
 class DssDeploy:

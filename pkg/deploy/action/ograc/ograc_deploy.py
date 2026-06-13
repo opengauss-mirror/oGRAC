@@ -22,6 +22,7 @@ if ACTION_ROOT not in sys.path:
     sys.path.append(ACTION_ROOT)
 
 from config import get_config
+from config_validation_runner import validate_config_params_or_raise
 from log_diagnostics import emit_failure_diagnostics
 from log_config import get_logger
 from utils import ensure_dir, ensure_file, run_python_as_user, CommandError
@@ -36,21 +37,7 @@ LOG = get_logger()
 
 def validate_install_config():
     """Validate config_params_lun.json before component pre_install writes config."""
-    validator = os.path.join(ACTION_ROOT, "config_param_validator.py")
-    config_file = os.path.join(ACTION_ROOT, "config_params_lun.json")
-    proc = subprocess.Popen(
-        [sys.executable, validator, config_file],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    out, err = proc.communicate(timeout=60)
-    if proc.returncode != 0:
-        message = "\n".join(
-            part.decode("utf-8", errors="replace").strip()
-            for part in (out, err)
-            if part
-        )
-        raise RuntimeError(f"config validation failed: {message}")
+    validate_config_params_or_raise(ACTION_ROOT, logger=LOG)
 
 
 class OgracDeploy:
@@ -268,4 +255,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

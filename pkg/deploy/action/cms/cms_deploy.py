@@ -23,19 +23,14 @@ from utils import (
     ensure_dir, ensure_file, copy_tree, safe_remove,
     read_version, get_version_major,
 )
+from config_validation_runner import validate_config_params_or_raise
 
 LOGGER = get_logger()
 
 
 def validate_install_config():
     """Validate config_params_lun.json before component pre_install writes config."""
-    validator = os.path.join(ACTION_ROOT, "config_param_validator.py")
-    config_file = os.path.join(ACTION_ROOT, "config_params_lun.json")
-    ret, stdout, stderr = exec_popen(
-        f"python3 {validator} {config_file}", timeout=60)
-    if ret != 0:
-        message = "\n".join(part for part in (stdout, stderr) if part)
-        raise RuntimeError(f"config validation failed: {message}")
+    validate_config_params_or_raise(ACTION_ROOT, logger=LOGGER)
 
 
 class CmsDeploy:
