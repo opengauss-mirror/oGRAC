@@ -802,8 +802,9 @@ status_t srv_load_arch_params()
         return OG_ERROR;
     }
     cm_str2text(oGRACd_get_dbversion(), &db_version);
-    (void)cm_split_rtext(&db_version, ' ', 0, &left, &right);
-    (void)cm_split_rtext(&left, ' ', 0, &left2, &right);
+    (void)cm_split_text(&db_version, ' ', 0, &left, &right);
+    (void)cm_split_text(&right, ' ', 0, &left, &left2);
+    (void)cm_split_text(&left2, ' ', 0, &right, &left);
     OG_LOG_RUN_INF("[DB] database version: %s, version number: %s", oGRACd_get_dbversion(), T2S(&right));
     OG_RETURN_IFERR(cm_text2str(&right, attr->db_version, OG_DB_NAME_LEN));
 
