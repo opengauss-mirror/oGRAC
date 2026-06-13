@@ -440,6 +440,16 @@ static status_t cms_update_local_cfg(void)
     return OG_SUCCESS;
 }
 
+static void cms_trim_version_suffix(text_t *version)
+{
+    for (uint32 i = 0; i < version->len; i++) {
+        if (version->str[i] == '-') {
+            version->len = i;
+            return;
+        }
+    }
+}
+
 static void cms_get_dbversion(upgrade_version_t *cms_version)
 {
     text_t db_version = { 0 };
@@ -454,11 +464,12 @@ static void cms_get_dbversion(upgrade_version_t *cms_version)
     uint32 revision_n = 0;
     char *version = (char *)oGRACd_get_dbversion();
     cm_str2text(version, &db_version);
-    // for release package the dbversion is like "oGRAC Release 2.0.0"
-    // for debug package the dbversion is like "oGRAC Debug 2.0.0 c11fdca072"
+    // for release package the dbversion is like "oGRAC Release 7.0.0-RC3 c11fdca072 build 2026-06-13 15:42:10"
+    // for debug package the dbversion is like "oGRAC Debug 7.0.0-RC3 c11fdca072 build 2026-06-13 15:42:10"
     (void)cm_split_text(&db_version, ' ', 0, &left, &right);
     (void)cm_split_text(&right, ' ', 0, &left, &right2);
     (void)cm_split_text(&right2, ' ', 0, &left, &right);
+    cms_trim_version_suffix(&left);
     (void)cm_split_text(&left, '.', 0, &version_main, &right);
     (void)cm_split_text(&right, '.', 0, &version_major, &version_revision);
     (void)cm_text2int(&version_main, (int32 *)&main_n);
