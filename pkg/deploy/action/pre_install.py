@@ -45,11 +45,81 @@ kernel_element = {
     '_INDEX_BUFFER_SIZE',
 }
 
+KERNEL_PARAMETER_WHITELIST = {
+    "DATA_BUFFER_SIZE": {"type": "size", "range": "[64M,32T]"},
+    "TEMP_BUFFER_SIZE": {"type": "size", "range": "[32M,4T]"},
+    "SHARED_POOL_SIZE": {"type": "size", "range": "[82M,32T]"},
+    "LOG_BUFFER_SIZE": {"type": "size", "range": "[1M,110M]"},
+    "LOG_BUFFER_COUNT": {"type": "integer", "range": "(0,16]"},
+    "CR_POOL_SIZE": {"type": "size", "range": "[16M,32T]"},
+    "CR_POOL_COUNT": {"type": "integer", "range": "[1,256]"},
+    "BUF_POOL_NUM": {"type": "integer", "range": "[1,128]"},
+    "TEMP_POOL_NUM": {"type": "integer", "range": "[1,128]"},
+    "LARGE_POOL_SIZE": {"type": "size", "range": "[4M,32T]"},
+    "VARIANT_MEMORY_AREA_SIZE": {"type": "size", "range": "[4M,32T]"},
+    "LARGE_VARIANT_MEMORY_AREA_SIZE": {"type": "size", "range": "[1M,32T]"},
+    "PMA_BUFFER_SIZE": {"type": "size", "range": "[0,1T]"},
+    "HASH_AREA_SIZE": {"type": "size", "range": "[0,1T]"},
+    "_INDEX_BUFFER_SIZE": {"type": "size", "range": "[16K,32T]"},
+    "_VARIANT_AREA_SIZE": {"type": "size", "range": "[256K,64M]"},
+    "_AGENT_STACK_SIZE": {"type": "size", "range": "[512K,4G)"},
+    "SESSIONS": {"type": "integer", "range": "[59,19380]"},
+    "OPEN_CURSORS": {"type": "integer", "range": "[1,16384]"},
+    "OPTIMIZED_WORKER_THREADS": {"type": "integer", "range": "[2,10000]"},
+    "MAX_WORKER_THREADS": {"type": "integer", "range": "[2,10000]"},
+    "MES_POOL_SIZE": {"type": "integer", "range": "[256,16384]"},
+}
+
 UnitConversionInfo = collections.namedtuple(
     'UnitConversionInfo',
     ['tmp_gb', 'tmp_mb', 'tmp_kb', 'key', 'value',
      'sga_buff_size', 'temp_buffer_size', 'data_buffer_size',
      'shared_pool_size', 'log_buffer_size'])
+
+
+def _parse_size_to_kb(value):
+    text = str(value).strip()
+    if text == "0":
+        return 0
+    match = re.fullmatch(r"(\d+)([KkMmGgTt])", text)
+    if not match:
+        return None
+    number = int(match.group(1))
+    unit = match.group(2).upper()
+    multipliers = {"K": 1, "M": 1024, "G": 1024 * 1024, "T": 1024 * 1024 * 1024}
+    return number * multipliers[unit]
+
+
+def _parse_bound(value, value_type):
+    if value_type == "size":
+        return _parse_size_to_kb(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_range(range_text, value_type):
+    match = re.fullmatch(r"([\[\(])\s*([^,]+)\s*,\s*([^\]\)]+)\s*([\]\)])", range_text)
+    if not match:
+        return None
+    lower_mark, lower_text, upper_text, upper_mark = match.groups()
+    lower = _parse_bound(lower_text, value_type)
+    upper = _parse_bound(upper_text, value_type)
+    if lower is None or upper is None:
+        return None
+    return lower_mark, lower, upper, upper_mark
+
+
+def _value_in_range(value, value_type, range_text):
+    parsed_range = _parse_range(range_text, value_type)
+    actual = _parse_bound(value, value_type)
+    if parsed_range is None or actual is None:
+        return False
+    lower_mark, lower, upper, upper_mark = parsed_range
+    lower_ok = actual >= lower if lower_mark == "[" else actual > lower
+    upper_ok = actual <= upper if upper_mark == "]" else actual < upper
+    return lower_ok and upper_ok
 
 
 class ConfigChecker:
@@ -142,6 +212,35 @@ class ConfigChecker:
             return False
         return all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in value.items())
 
+    @staticmethod
+    def kernel_parameters(value):
+        if value in ("", None):
+            return True
+        if not isinstance(value, dict):
+            LOG.error("kernel_parameters must be a JSON object")
+            return False
+        for raw_key, raw_value in value.items():
+            key = str(raw_key).strip().upper()
+            param_value = str(raw_value).strip()
+            if not key or not param_value:
+                LOG.error("kernel_parameters contains empty key or value")
+                return False
+            if any(ch in key for ch in ("=", "\n", "\r")):
+                LOG.error("kernel parameter name '%s' contains invalid characters", key)
+                return False
+            if any(ch in param_value for ch in ("\n", "\r")):
+                LOG.error("kernel parameter '%s' contains invalid value characters", key)
+                return False
+            meta = KERNEL_PARAMETER_WHITELIST.get(key)
+            if meta is None:
+                LOG.error("unsupported kernel parameter: %s", key)
+                return False
+            if not _value_in_range(param_value, meta["type"], meta["range"]):
+                LOG.error("invalid value for kernel parameter %s: %s, expected %s",
+                          key, param_value, meta["range"])
+                return False
+        return True
+
 
 class CheckBase(metaclass=abc.ABCMeta):
     def __init__(self, check_name, suggestion):
@@ -228,7 +327,7 @@ class CheckInstallConfig(CheckBase):
             'mes_type', 'deploy_policy', 'ograc_vlan_ip',
             'storage_share_fs', 'storage_archive_fs', 'storage_metadata_fs',
             'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip',
-            'SYS_PASSWORD',
+            'SYS_PASSWORD', 'kernel_parameters',
         }
         self.mes_type_key = {'ca_path', 'crt_path', 'key_path'}
         self.allowed_keys = set(self.required_keys) | self.lifecycle_keys | self.compatibility_keys
@@ -384,6 +483,25 @@ class CheckInstallConfig(CheckBase):
         with os.fdopen(os.open(deploy_param, flag, modes), 'w') as fp:
             fp.write(json.dumps(self.config_params, indent=4))
 
+    @staticmethod
+    def _is_generated_kernel_parameter(key):
+        match = re.fullmatch(r"Z_KERNEL_PARAMETER(\d+)", key)
+        return match is not None and int(match.group(1)) >= 3
+
+    def _apply_kernel_parameters(self, install_conf):
+        if "kernel_parameters" not in self.config_params:
+            return
+
+        for key in list(install_conf.keys()):
+            if self._is_generated_kernel_parameter(key):
+                install_conf.pop(key)
+
+        kernel_params = self.config_params.get("kernel_parameters") or {}
+        for index, key in enumerate(sorted(kernel_params), start=3):
+            param_name = key.strip().upper()
+            param_value = str(kernel_params[key]).strip()
+            install_conf[f"Z_KERNEL_PARAMETER{index}"] = f"{param_name}={param_value}"
+
     def generate_install_config(self):
         """Derive and write install_config.json from ograc_config.json and module_config."""
         ograc_cfg_file = os.path.join(CUR_DIR, "ograc", "ograc_config.json")
@@ -422,6 +540,8 @@ class CheckInstallConfig(CheckBase):
                         install_conf[k] = v
             except (json.JSONDecodeError, OSError):
                 pass
+
+        self._apply_kernel_parameters(install_conf)
 
         ograc_dir = os.path.join(CUR_DIR, "ograc")
         os.makedirs(ograc_dir, exist_ok=True)
