@@ -130,26 +130,39 @@ def safe_remove(path):
         LOG.warning("Failed to remove %s: %s", path, e)
 
 
-def _copytree_compat(src, dst, **kwargs):
+def _copytree_compat(src, dst, skip_names=None, **kwargs):
     """shutil.copytree compat: Python < 3.8 lacks dirs_exist_ok."""
     kwargs.pop("dirs_exist_ok", None)
+    skip_names = set(skip_names or ())
     if os.path.isdir(dst):
         for item in os.listdir(src):
+            if item in skip_names:
+                continue
             s = os.path.join(src, item)
             d = os.path.join(dst, item)
             if os.path.isdir(s):
-                _copytree_compat(s, d, **kwargs)
+                _copytree_compat(s, d, skip_names=skip_names, **kwargs)
             else:
                 shutil.copy2(s, d)
     else:
+        if skip_names and "ignore" not in kwargs:
+            kwargs["ignore"] = shutil.ignore_patterns(*skip_names)
         shutil.copytree(src, dst, **kwargs)
 
 
-def copy_tree(src, dst):
-    """Copy directory tree."""
+def copy_tree(src, dst, replace=False, skip_names=None):
+    """Copy a file or directory tree, optionally replacing the destination."""
+    if replace and os.path.exists(dst):
+        if os.path.isdir(dst) and not os.path.islink(dst):
+            shutil.rmtree(dst)
+        else:
+            os.remove(dst)
     if os.path.isdir(src):
-        _copytree_compat(src, dst)
+        _copytree_compat(src, dst, skip_names=skip_names)
     else:
+        parent = os.path.dirname(dst)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         shutil.copy2(src, dst)
 
 
