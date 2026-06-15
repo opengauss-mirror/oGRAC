@@ -880,7 +880,8 @@ def _patch_redo_config(sql_file, redo_num, redo_size):
     s = []
     for i in range(1, redo_num * 2 + 1):
         idx = f"{i:02d}" if i != 10 else "0a"
-        s.append(f"'dbfiles3/redo{idx}.dat' size {redo_size}")
+        folder = "dbfiles2" if i <= redo_num else "dbfiles3"
+        s.append(f"'{folder}/redo{idx}.dat' size {redo_size}")
     node0 = ", ".join(s[:redo_num])
     node1 = ", ".join(s[redo_num:])
     for m in matches:

@@ -1313,6 +1313,61 @@ class Installer:
 
         log("End init")
 
+    @staticmethod
+    def set_sql_redo_size_and_num(db_data_path, create_database_sql):
+        redo_num = 3
+        redo_size = "2G"
+        undo_num = 3
+        undo_size = "1G"
+        undo_extend = "256M"
+        sql_file = os.path.join(db_data_path, create_database_sql)
+        with open(sql_file, "r") as file:
+            sql_content = file.read()
+        pattern = r"logfile (\(.*\n{0,}.*\))"
+        undopattern = r"undo tablespace datafile (.*size [0-9].*G autoextend on next [0-9].*M.*)"
+        replace_content = re.findall(pattern, sql_content)
+        for item in replace_content:
+            sql_content = sql_content.replace(item, "(%s)")
+
+        s = []
+        for i in range(1, redo_num + 1):
+            redo_index = "{:02d}".format(i)
+            if i == 10:
+                redo_index = "0a"
+            s.append("'dbfiles2/redo0%s.dat' size %s" % (redo_index, redo_size))
+
+        for i in range(1, redo_num + 1):
+            redo_index = "{:02d}".format(i)
+            if i == 10:
+                redo_index = "0a"
+            s.append("'dbfiles3/redo1%s.dat' size %s" % (redo_index, "1G"))
+
+        node0_redo = ", ".join(s[:redo_num])
+        node1_redo = ", ".join(s[redo_num:])
+        data = sql_content % (node0_redo, node1_redo)
+
+        replace_content = re.findall(undopattern, data)
+        for item in replace_content:
+            data = data.replace(item, "%s")
+        s = []
+        for i in range(1, undo_num):
+            undo_index = "{:d}".format(i)
+            if i == 10:
+                undo_index = "0a"
+            s.append("'dbfiles1/undo0%s.dat' size %s autoextend on next %s" % (undo_index, undo_size, undo_extend))
+        for i in range(1, undo_num):
+            undo_index = "{:d}".format(i)
+            if i == 10:
+                undo_index = "0a"
+            s.append("'dbfiles1/undo1%s.dat' size %s autoextend on next %s" % (undo_index, "1G", "32M"))
+        node0_redo = ", ".join(s[:(undo_num-1)])
+        node1_redo = ", ".join(s[(undo_num-1):])
+        data = data % (node0_redo, node1_redo)
+        modes = stat.S_IWRITE | stat.S_IRUSR
+        flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
+        with os.fdopen(os.open(sql_file, flags, modes), 'w', encoding='utf-8') as file:
+            file.write(data)
+
     def find_file(self, path, name_pattern):
 
         file_list = os.listdir(path)
@@ -3543,6 +3598,7 @@ class Installer:
             create_database_sql = os.path.join(sql_file_path, file_name)
         else:
             dbDataPath = os.path.join(self.data, "data").replace('/', '\/')
+            self.set_sql_redo_size_and_num(dbDataPath, create_database_sql)
             self._sed_file("dbfiles1", dbDataPath, create_database_sql)
             self._sed_file("dbfiles2", dbDataPath, create_database_sql)
             self._sed_file("dbfiles3", dbDataPath, create_database_sql)
