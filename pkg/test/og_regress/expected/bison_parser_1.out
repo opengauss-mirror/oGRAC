@@ -4668,6 +4668,63 @@ SQL> drop table bison_corr_depts;
 
 Succeed.
 
-SQL> 
+SQL> alter system set use_bison_parser = true;
 
+Succeed.
+
+SQL> select regexp_count('123123123123', '123', 3, 'i') count;
+
+COUNT
+------------
+3
+
+1 rows fetched.
+
+SQL> select 1 clob;
+
+CLOB
+------------
+1
+
+1 rows fetched.
+
+SQL> select 1 jsonb;
+
+JSONB
+------------
+1
+
+1 rows fetched.
+
+SQL> create table bison_alias_print_media(ad_composite blob);
+
+Succeed.
+
+SQL> select to_blob(ad_composite) blob from bison_alias_print_media;
+
+BLOB
+----------------------------------------------------------------
+
+0 rows fetched.
+
+SQL> drop table bison_alias_print_media;
+
+Succeed.
+
+SQL> create table bison_alias_emp(empno number(4) not null, ename varchar2(10), job varchar2(9), mgr number(4), hiredate date, sal number(7, 2), comm number(7, 2), deptno number(2));
+
+Succeed.
+
+SQL> select deptno, ename, sal, dense_rank() over (partition by deptno order by sal) dense_rank from bison_alias_emp where deptno = 30 order by dense_rank, ename;
+
+DEPTNO                                   ENAME      SAL                                      DENSE_RANK
+---------------------------------------- ---------- ---------------------------------------- ------------
+
+0 rows fetched.
+
+SQL> drop table bison_alias_emp;
+
+Succeed.
+
+SQL>
 
