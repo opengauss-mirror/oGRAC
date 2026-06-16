@@ -28,10 +28,13 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <stdio.h>
 #include "cm_defs.h"
 #include "cm_log.h"
 #include "cm_thread.h"
 #include "knl_cluster_module.h"
+#include "dtc_remote_lock.h"
 #include "ub_dist_lock.h"
 
 #if defined(__x86_64__)
@@ -563,3 +566,98 @@ void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *out_state, int32 *ou
         *out_owner_tid = tid;
     }
 }
+
+void ub_gbp_lock_read_raw(const ub_rw_lock_t *lock, ub_gbp_lock_raw_t *raw)
+{
+    const struct ub_rw_lock *l = (const struct ub_rw_lock *)lock;
+    uint64 w;
+
+    (void)memset(raw, 0, sizeof(ub_gbp_lock_raw_t));
+    raw->decode_tid = -1;
+    if (lock == NULL) {
+        return;
+    }
+
+    w = atomic_load_explicit(&l->lock_word, memory_order_acquire);
+    raw->word0 = w;
+    raw->word1 = 0;
+    raw->u32_off8 = atomic_load_explicit(&l->writeWaiters, memory_order_acquire);
+    raw->st_le32 = (int32)(uint32_t)w;
+    raw->write_waiters = (int32)atomic_load_explicit(&l->writeWaiters, memory_order_relaxed);
+    raw->g_waiters = raw->u32_off8;
+    raw->readonly = ub_rw_lock_get_readonly(lock);
+    gbp_lock_unpack(w, &raw->decode_state, &raw->decode_node, &raw->decode_tid);
+    raw->state_raw24 = (uint32)((w >> GBP_LOCK_STATE_SHIFT) & GBP_LOCK_STATE_MASK);
+    raw->g_lock_word = raw->decode_state;
+    if (raw->decode_state == INT32_MIN) {
+        (void)strncpy(raw->g_phase, "X", sizeof(raw->g_phase) - 1);
+        raw->g_phase[sizeof(raw->g_phase) - 1] = '\0';
+        raw->owner_x = w;
+        raw->owner_x_node = raw->decode_node;
+        raw->owner_x_tid = raw->decode_tid;
+    } else if (raw->decode_state == 0) {
+        (void)strncpy(raw->g_phase, "IDLE", sizeof(raw->g_phase) - 1);
+        raw->g_phase[sizeof(raw->g_phase) - 1] = '\0';
+    } else if (raw->decode_state > 0) {
+        raw->s_readers = (uint32)raw->decode_state;
+        (void)snprintf(raw->g_phase, sizeof(raw->g_phase), "S%u", raw->s_readers);
+    } else {
+        (void)snprintf(raw->g_phase, sizeof(raw->g_phase), "?%d", raw->decode_state);
+    }
+}
+
+ub_lock_result_t ub_rw_lock_query_holder(ub_rw_lock_t *lock, const ub_location_t *location,
+    ub_lock_query_result_t *result)
+{
+    const struct ub_rw_lock *l = (const struct ub_rw_lock *)lock;
+    uint64_t w;
+    int32 state;
+    uint8 node_id;
+    int32 tid;
+
+    (void)location;
+    if (result == NULL) {
+        return UB_LOCK_ERROR;
+    }
+
+    result->held_mode = UB_LOCK_I;
+    result->holder_tid = -1;
+    result->node_id = 0;
+    result->recursive_count = 0;
+    result->has_shared_ref = 0;
+    result->reserve_mode = UB_LOCK_I;
+
+    if (lock == NULL) {
+        return UB_LOCK_ERROR;
+    }
+
+    w = atomic_load_explicit(&l->lock_word, memory_order_acquire);
+    gbp_lock_unpack(w, &state, &node_id, &tid);
+    if (state == 0) {
+        return UB_LOCK_SUCCESS;
+    }
+    if (state == INT32_MIN) {
+        result->held_mode = UB_LOCK_X;
+        result->holder_tid = tid;
+        result->node_id = node_id;
+        result->recursive_count = 1;
+        return UB_LOCK_SUCCESS;
+    }
+    if (state > 0) {
+        result->held_mode = UB_LOCK_S;
+        result->has_shared_ref = 1;
+        result->node_id = node_id;
+        return UB_LOCK_SUCCESS;
+    }
+    return UB_LOCK_SUCCESS;
+}
+
+/*
+ * Unique probe symbol: only linked when USE_ATOMIC_LOCK=1 compiles this file.
+ */
+#if USE_ATOMIC_LOCK
+const char *ub_gbp_lock_impl_probe_marker(void)
+{
+    return "ub_atomic_dist_lock.c";
+}
+#endif

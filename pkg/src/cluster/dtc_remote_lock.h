@@ -27,6 +27,7 @@
 #define DTC_REMOTE_LOCK_H
 
 #include "knl_session.h"
+#include "knl_buffer.h"
 #include "dtc_remote_buffer.h"
 #include "ub_dist_comm_queue.h"
 #include "ub_dist_lock.h"
@@ -46,17 +47,75 @@ void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly, const char *ph
 bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
 void ub_rw_lock_begin_page_store(ub_rw_lock_t *lock);
 void ub_rw_lock_end_page_store(ub_rw_lock_t *lock);
+void ub_gbp_wait_readonly_fence(ub_rw_lock_t *lock);
+ub_lock_result_t ub_gbp_x_lock_fence(ub_rw_lock_t *lock, const ub_lock_policy_t *policy,
+    const ub_location_t *location);
+ub_lock_result_t ub_gbp_s_lock_fence(ub_rw_lock_t *lock, const ub_lock_policy_t *policy,
+    const ub_location_t *location);
 ub_lock_result_t ub_rw_lock_x_lock_for_store(ub_rw_lock_t *lock, const ub_location_t *location);
 ub_lock_result_t ub_rw_lock_x_lock_reenter(ub_rw_lock_t *lock, const ub_location_t *location);
 uint64 ub_rw_lock_get_owner_node(ub_rw_lock_t *lock);
 int32 ub_rw_lock_get_state(ub_rw_lock_t *lock);
 bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid);
 
+typedef struct st_ub_gbp_lock_raw {
+    int32 g_lock_word;
+    uint32 g_waiters;
+    uint64 word0;
+    uint64 owner_x;
+    uint64 owner_sx;
+    uint64 reserve_owner;
+    uint32 shared_bitmap;
+    uint32 s_readers;
+    uint8 owner_x_node;
+    int32 owner_x_tid;
+    uint8 reserve_node;
+    char g_phase[12];
+    uint64 word1;
+    uint32 u32_off8;
+    int32 st_le32;
+    int32 decode_state;
+    uint8 decode_node;
+    int32 decode_tid;
+    uint32 state_raw24;
+    int32 write_waiters;
+    bool32 readonly;
+} ub_gbp_lock_raw_t;
+
+void ub_gbp_lock_read_raw(const ub_rw_lock_t *lock, ub_gbp_lock_raw_t *raw);
+
+typedef struct st_ub_gbp_wait_q_snap {
+    uint32 head;
+    uint32 tail;
+    uint32 waiters;
+    uint32 head_idx;
+    uint32 head_seq;
+    int32 head_mode;
+    uint8 head_node;
+    int32 head_tid;
+    uint32 next_seq;
+    int32 next_mode;
+    uint8 next_node;
+    int32 next_tid;
+    bool32 valid;
+} ub_gbp_wait_q_snap_t;
+
+void ub_gbp_lock_read_wait_queue(const ub_rw_lock_t *lock, ub_gbp_wait_q_snap_t *snap);
+
 void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
     int32 *write_waiters, int32 *owner_tid);
-    
+
 status_t init_lock_comm_queue();
-void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
+status_t drc_dist_comm_coordinated_init(knl_session_t *session);
+void drc_process_dist_comm_reset(void *sess, mes_message_t *msg);
+void drc_process_dist_comm_init(void *sess, mes_message_t *msg);
+void drc_process_dist_comm_sync(void *sess, mes_message_t *msg);
+bool32 drc_lock_comm_queue_is_inited(void);
+status_t drc_wait_lock_comm_queue_prereq(uint32 timeout_ms);
+void drc_init_remote_lock(ub_rw_lock_t **ub_lock);
+status_t drc_create_page_ub_lock(ub_rw_lock_t *lock);
+status_t drc_gbp_ensure_lock_attached(knl_session_t *session, uint64 lock_ptr, page_id_t page_id);
+void drc_ubturbo_on_comm_queue_ready(void);
 
 #ifdef __cplusplus
 }

@@ -63,6 +63,24 @@ typedef struct st_mes_remote_buf_mmap_bcast {
     uint32 node_id;
 } mes_remote_buf_mmap_bcast_t;
 
+typedef struct st_mes_dist_comm_reset_bcast {
+    mes_message_head_t head;
+    uint64 epoch;
+} mes_dist_comm_reset_bcast_t;
+
+typedef struct st_mes_dist_comm_init_bcast {
+    mes_message_head_t head;
+    uint64 epoch;
+} mes_dist_comm_init_bcast_t;
+
+typedef struct st_mes_dist_comm_sync_bcast {
+    mes_message_head_t head;
+    uint64 epoch;
+} mes_dist_comm_sync_bcast_t;
+
+#define DRC_UB_BILLBOARD_NODE_SLOT_SIZE 128U
+#define DRC_UB_LOCK_RING_PRIORITY       0U
+
 typedef struct st_remote_sga {
     uint64 remote_total_pool_size;  // total 8G  global_buffer_pool_size after align 128 size
     uint64 remote_buf_alloc_size;   // data buf  remote_data_buf_size after align 4k size
@@ -101,6 +119,8 @@ typedef enum buffer_type {
 #define OFFSET_TAIL_LSN sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size
 
 status_t drc_init_remote_buffer();
+status_t drc_init_page_locks(void);
+void drc_ubsm_reset_mapped_dist_for_fresh_start(remote_sga_t *remote_sga);
 void broadcast_remote_buf_allocated();
 EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);

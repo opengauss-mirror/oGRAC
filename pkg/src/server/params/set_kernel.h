@@ -182,6 +182,8 @@ status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value);
 status_t sql_verify_als_ub_page_hot_threshold(void *se, void *lex, void *def);
 status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def);
 status_t sql_notify_als_ub_page_hot_timeout(void *se, void *item, char *value);
+status_t sql_verify_als_ub_gbp_lock_timeout_ms(void *se, void *lex, void *def);
+status_t sql_notify_als_ub_gbp_lock_timeout_ms(void *se, void *item, char *value);
 status_t sql_notify_als_small_table_sampling_threshold(void *se, void *item, char *value);
 status_t sql_notify_als_block_repair_enable(void *se, void *item, char *value);
 status_t sql_notify_als_block_repair_timeout(void *se, void *item, char *value);

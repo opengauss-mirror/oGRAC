@@ -1660,6 +1660,15 @@ status_t srv_load_kernel_params(void)
         return OG_ERROR;
     }
     OG_RETURN_IFERR(srv_get_param_uint32("_UB_PAGE_HOT_TIMEOUT", &attr->ub_page_hot_timeout));
+    OG_RETURN_IFERR(srv_get_param_uint32("_UB_GBP_LOCK_TIMEOUT_MS", &attr->ub_gbp_lock_timeout_ms));
+    if (attr->ub_gbp_lock_timeout_ms < OG_MIN_UB_GBP_LOCK_TIMEOUT_MS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_GBP_LOCK_TIMEOUT_MS", OG_MIN_UB_GBP_LOCK_TIMEOUT_MS);
+        return OG_ERROR;
+    }
+    if (attr->ub_gbp_lock_timeout_ms > OG_MAX_UB_GBP_LOCK_TIMEOUT_MS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_GBP_LOCK_TIMEOUT_MS", OG_MAX_UB_GBP_LOCK_TIMEOUT_MS);
+        return OG_ERROR;
+    }
 
     {
         char *ubs_hosts = srv_get_param("UBS_CLUSTER_HOSTS");

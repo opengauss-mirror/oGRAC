@@ -399,6 +399,12 @@ static status_t dtc_register_proc(void)
 
     knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMOTE_BUF_MMAP, drc_process_remote_buf_mmap, OG_FALSE,
                                              "REMOTE BUF MAP broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_DIST_COMM_RESET, drc_process_dist_comm_reset, OG_FALSE,
+                                             "dist comm reset broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_DIST_COMM_INIT, drc_process_dist_comm_init, OG_FALSE,
+                                             "dist comm init broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_DIST_COMM_SYNC, drc_process_dist_comm_sync, OG_FALSE,
+                                             "dist comm sync broadcast"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_ALREADY_IN_GBP, mes_process_msg_ack, OG_FALSE,
                                              "notify requester get page from gbp"));
 

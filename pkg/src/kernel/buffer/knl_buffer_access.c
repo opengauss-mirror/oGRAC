@@ -1811,7 +1811,7 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
                           ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->changed_count);
         }
 
-        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+        if (session->kernel->attr.enable_ubsmem && shmem_page_meta != NULL) {
             if (!ctrl->gbp_store_pending) {
                 drc_gbp_begin_page_store(session, shmem_page_meta->lock_ptr);
                 ctrl->gbp_store_pending = 1;
