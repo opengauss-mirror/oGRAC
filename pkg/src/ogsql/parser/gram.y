@@ -372,7 +372,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
             subpartitions_num partitions_num external_table func_arg_with_default func_arg
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
-%type <str> ColId type_function_name alias_without_as param_name hint_string character character_national charset_collate_name opt_purge_partition
+%type <str> ColId type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
             debug_mode_value altsession_set_key altsession_set_value alter_param_value alter_session_extra_token case_invalid_word
 
@@ -3777,29 +3777,11 @@ target_el:  a_expr AS ColLabel
                 }
                 $$ = query_column;
             }
-            | a_expr JSON
+            | a_expr target_alias_keyword
             {
                 query_column_t *query_column = NULL;
                 if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
-                    &query_column, $1, "JSON", strlen("JSON"), false) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
-                }
-                $$ = query_column;
-            }
-            | a_expr COLUMNS
-            {
-                query_column_t *query_column = NULL;
-                if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
-                    &query_column, $1, "COLUMNS", strlen("COLUMNS"), false) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
-                }
-                $$ = query_column;
-            }
-            | a_expr OWNER
-            {
-                query_column_t *query_column = NULL;
-                if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
-                    &query_column, $1, "OWNER", strlen("OWNER"), false) != OG_SUCCESS) {
+                    &query_column, $1, $2, strlen($2), false) != OG_SUCCESS) {
                     parser_yyerror("create target entry failed.");
                 }
                 $$ = query_column;
@@ -3829,6 +3811,17 @@ target_el:  a_expr AS ColLabel
                 query_column->expr = expr;
                 $$ = query_column;
             }
+        ;
+
+target_alias_keyword:
+            BLOB_P        { $$ = "BLOB"; }
+            | CLOB        { $$ = "CLOB"; }
+            | COLUMNS     { $$ = "COLUMNS"; }
+            | COUNT       { $$ = "COUNT"; }
+            | DENSE_RANK  { $$ = "DENSE_RANK"; }
+            | JSON        { $$ = "JSON"; }
+            | JSONB       { $$ = "JSONB"; }
+            | OWNER       { $$ = "OWNER"; }
         ;
 
 /*****************************************************************************

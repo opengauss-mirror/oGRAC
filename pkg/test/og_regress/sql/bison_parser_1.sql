@@ -1383,3 +1383,13 @@ where exists (
 drop table bison_corr_result;
 drop table bison_corr_emps;
 drop table bison_corr_depts;
+alter system set use_bison_parser = true;
+select regexp_count('123123123123', '123', 3, 'i') count;
+select 1 clob;
+select 1 jsonb;
+create table bison_alias_print_media(ad_composite blob);
+select to_blob(ad_composite) blob from bison_alias_print_media;
+drop table bison_alias_print_media;
+create table bison_alias_emp(empno number(4) not null, ename varchar2(10), job varchar2(9), mgr number(4), hiredate date, sal number(7, 2), comm number(7, 2), deptno number(2));
+select deptno, ename, sal, dense_rank() over (partition by deptno order by sal) dense_rank from bison_alias_emp where deptno = 30 order by dense_rank, ename;
+drop table bison_alias_emp;
