@@ -48,7 +48,7 @@ Because oGRAC operates as a cluster, you must bring the Cluster Management Servi
 Navigate to your installation directory and start the CMS. This will mount the voting disk and register the nodes.
 
 ```bash
-cd $OGDB_HOME
+cd $OGDB_HOME/bin/
 sh installdb.sh -P cms
 ```
 
