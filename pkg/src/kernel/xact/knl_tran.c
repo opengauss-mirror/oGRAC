@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -279,6 +279,17 @@ static status_t txn_alloc(knl_session_t *session, knl_rm_t *rm)
     return OG_SUCCESS;
 }
 
+static void tx_release_temp_table_hold_rmid(knl_session_t *session)
+{
+    knl_temp_cache_t *temp_table_ptr = NULL;
+    for (uint32 i = 0; i < session->temp_table_count; i++) {
+        temp_table_ptr = &session->temp_table_cache[i];
+        if (temp_table_ptr->hold_rmid == session->rmid) {
+            temp_table_ptr->hold_rmid = OG_INVALID_ID32;
+        }
+    }
+}
+
 static void txn_release(knl_session_t *session, undo_set_t *undo_set, tx_id_t tx_id)
 {
     CM_ASSERT(tx_id.seg_id < OG_MAX_UNDO_SEGMENT);
@@ -289,13 +300,7 @@ static void txn_release(knl_session_t *session, undo_set_t *undo_set, tx_id_t tx
     }
 
     /* release temp table hold_rmid */
-    knl_temp_cache_t *temp_table_ptr = NULL;
-    for (uint32 i = 0; i < session->temp_table_count; i++) {
-        temp_table_ptr = &session->temp_table_cache[i];
-        if (temp_table_ptr->hold_rmid == session->rmid) {
-            temp_table_ptr->hold_rmid = OG_INVALID_ID32;
-        }
-    }
+    tx_release_temp_table_hold_rmid(session);
     
     cm_spin_lock(&undo->lock, &session->stat->spin_stat.stat_txn_list);
     if (undo->free_items.count == 0) {
@@ -311,6 +316,38 @@ static void txn_release(knl_session_t *session, undo_set_t *undo_set, tx_id_t tx
     }
     undo->items[tx_id.item_id].next = OG_INVALID_ID32;
     cm_spin_unlock(&undo->lock);
+}
+
+static inline txn_t *tx_area_item_txn_addr(knl_session_t *session, undo_t *undo, tx_item_t *item, uint32 seg_no)
+{
+    uint32 page_capacity = TXN_PER_PAGE(session);
+    if (page_capacity == 0) {
+        knl_panic(0);
+        return NULL;
+    }
+    uint32 page_no = item->xmap.slot / page_capacity;
+    knl_panic(XMAP_SEG_ID(item->xmap) == seg_no);
+    knl_panic(page_no < UNDO_DEF_TXN_PAGE(session));
+    knl_panic(undo->txn_pages[page_no] != NULL);
+    txn_page_t *txn_page = undo->txn_pages[page_no];
+    return &txn_page->items[item->xmap.slot % page_capacity];
+}
+
+static inline void tx_area_append_free_item(undo_t *undo, id_list_t *free_items, uint32 item_id)
+{
+    tx_item_t *item = &undo->items[item_id];
+
+    if (free_items->count == 0) {
+        free_items->first = item_id;
+        item->prev = OG_INVALID_ID32;
+    } else {
+        undo->items[free_items->last].next = item_id;
+        item->prev = free_items->last;
+    }
+
+    free_items->last = item_id;
+    free_items->count++;
+    item->next = OG_INVALID_ID32;
 }
 
 void tx_area_release_impl(knl_session_t *session, uint32 lseg_no, uint32 rseg_no, uint32 inst_id)
@@ -350,24 +387,34 @@ void tx_area_release(knl_session_t *session, undo_set_t *undo_set)
     txn_t *txn = NULL;
     uint32 i;
     uint32 seg_no;
-    tx_id_t tx_id;
+    bool32 temp_hold_released = OG_FALSE;
 
     for (seg_no = 0; seg_no < core_ctrl->undo_segments; seg_no++) {
         undo = &undo_set->undos[seg_no];
+        id_list_t seg_free_items;
+        seg_free_items.count = 0;
+        seg_free_items.first = OG_INVALID_ID32;
+        seg_free_items.last = OG_INVALID_ID32;
 
         for (i = 0; i < undo->capacity; i++) {
             item = &undo->items[i];
-            txn = txn_addr(session, item->xmap);
+            txn = tx_area_item_txn_addr(session, undo, item, seg_no);
             if (txn->status == (uint8)XACT_END) {
-                tx_id.seg_id = XMAP_SEG_ID(item->xmap);
-                tx_id.item_id = i;
-                txn_release(session, undo_set, tx_id);
+                if (!temp_hold_released && session->temp_table_count != 0) {
+                    tx_release_temp_table_hold_rmid(session);
+                    temp_hold_released = OG_TRUE;
+                }
+                tx_area_append_free_item(undo, &seg_free_items, i);
             } else {
                 item->rmid = undo_set->rb_ctx[rcy_rm_id % undo_set->assign_workers].session->rmid;
                 rcy_rm_id++;
                 need_rcy = OG_TRUE;
             }
         }
+
+        cm_spin_lock(&undo->lock, &session->stat->spin_stat.stat_txn_list);
+        undo->free_items = seg_free_items;
+        cm_spin_unlock(&undo->lock);
     }
 
     OG_LOG_RUN_INF("[tx_area_release] undo_set->active_workers=%lld, undo_ctx->active_workers=%lld",

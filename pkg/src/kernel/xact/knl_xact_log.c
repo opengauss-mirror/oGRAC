@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -342,7 +342,8 @@ void rd_tx_end(knl_session_t *session, log_entry_t *log)
     }
 
     // standby cluster update scn after replaying a log_batch
-    if ((!DB_IS_CLUSTER(session) || DB_IS_PRIMARY(&session->kernel->db)) && redo->scn > DB_CURR_SCN(session) && !SESSION_IS_LOG_ANALYZE(session)) {
+    if ((!DB_IS_CLUSTER(session) || DB_IS_PRIMARY(&session->kernel->db)) && redo->scn > DB_CURR_SCN(session) &&
+        !SESSION_IS_LOG_ANALYZE(session)) {
         KNL_SET_SCN(&session->kernel->scn, redo->scn);
     }
 
