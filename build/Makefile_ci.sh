@@ -198,6 +198,7 @@ func_release_symbol()
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogbackup
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/dbstor
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogrst
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/gbps
         mv -f ${OGRACDB_BIN}/${OGRACD_BIN}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/${OGRACD_BIN}.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/cms.${SYMBOLFIX} ${OGRACDB_SYMBOL}/cms.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/ogencrypt.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogencrypt.${SYMBOLFIX}
@@ -206,6 +207,7 @@ func_release_symbol()
         mv -f ${OGRACDB_BIN}/ogbackup.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogbackup.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/dbstor.${SYMBOLFIX} ${OGRACDB_SYMBOL}/dbstor.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/ogrst.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogrst.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/gbps.${SYMBOLFIX} ${OGRACDB_SYMBOL}/gbps.${SYMBOLFIX}
 
         ##opensource library
         for lib_file in ${Z_LIB_PATH}/libz.so.*.*; do
@@ -265,8 +267,7 @@ func_pkg_run_basic()
     func_version_run_pkg
 
     cd ${OGRACDB_BIN}
-
-    cp ogsql ogracd ogencrypt ogbackup ogbox ogrst dbstor cms ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
+    cp ogsql ogracd ogencrypt ogbackup ogbox ogrst dbstor cms gbps gbps_ctl ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cp -d ${ZSTD_LIB_PATH}/../bin/zstd ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cd ${OGRACDB_HOME}
     cp ${OGRACDB_INSTALL}/installdb.sh  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/

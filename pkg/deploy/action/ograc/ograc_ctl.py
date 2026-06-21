@@ -136,9 +136,42 @@ def _safe_copy(src, dst):
         shutil.copytree(src, dst)
 
 
-
 INSTALL_CONFIG_FILE = os.path.join(PKG_DIR, "action", "ograc", "install_config.json")
 USE_LUN = ("dss",)
+DEFAULT_GBPS_CONF = """# gbps.conf
+# Lightweight GBP server configuration. ogracd client settings stay in ogracd.ini.
+
+HOST=0.0.0.0
+PORT=2611
+
+ADMIN_HOST=127.0.0.1
+ADMIN_PORT=2711
+
+LOG_FILE=$OGDB_HOME/log/gbps/gbps.rlog
+PID_FILE=$OGDB_HOME/run/gbps.pid
+
+MAX_CACHE_PAGES=0
+READ_END_MODE=async
+READ_PHASE_TIMEOUT=300
+
+VERBOSE=false
+TIMING_DIAG=false
+"""
+
+
+def _ensure_gbps_conf_file(gbps_conf):
+    if os.path.isfile(gbps_conf):
+        return
+    _ensure_dir(os.path.dirname(gbps_conf), 0o750)
+    flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
+    modes = stat.S_IRUSR | stat.S_IWUSR
+    with os.fdopen(os.open(gbps_conf, flags, modes), "w", encoding="utf-8") as fp:
+        fp.write(DEFAULT_GBPS_CONF)
+    LOG.info("Created default gbps config: %s", gbps_conf)
+
+
+def _ensure_gbps_conf():
+    _ensure_gbps_conf_file(os.path.join(install_path, "cfg", "gbps.conf"))
 
 
 class DeployParams:
@@ -211,7 +244,6 @@ rpm_unpack   = os.path.join(ograc_home, "image", "oGRAC-RUN-LINUX-64bit")
 START_STATUS_FILE = paths.start_status_file
 OGRAC_CONF_FILE   = paths.ograc_conf_file
 INSTALL_SCRIPT    = os.path.join(CUR_DIR, "installdb.sh")
-
 
 
 def _read_start_status():
@@ -1006,6 +1038,7 @@ def action_install():
             else:
                 os.remove(cms_bin)
         LOG.info("RPM files copied")
+    _ensure_gbps_conf()
     _exec(f"chmod 700 -R {install_path}")
 
     _ensure_dir(cfg_dir, 0o750)
@@ -1035,7 +1068,7 @@ def action_install():
         sys_password = _prompt_sys_password()
 
     if install_type != "override":
-        for fname in ("ogracd.ini", "ogsql.ini"):
+        for fname in ("ogracd.ini", "ogsql.ini", "gbps.conf"):
             src = os.path.join(backup_dir, fname)
             dst = os.path.join(data_path, "cfg", fname)
             _ensure_dir(os.path.dirname(dst), 0o750)
@@ -1285,7 +1318,7 @@ def action_backup():
 
     _ensure_dir(backup_dir, 0o700)
 
-    for fname in ("ogracd.ini", "ogsql.ini"):
+    for fname in ("ogracd.ini", "ogsql.ini", "gbps.conf"):
         src = os.path.join(data_path, "cfg", fname)
         if os.path.isfile(src):
             shutil.copy2(src, backup_dir)
@@ -1311,7 +1344,7 @@ def action_restore():
     if not os.path.isdir(backup_dir):
         raise RuntimeError(f"Backup directory not found: {backup_dir}")
 
-    for fname in ("ogracd.ini", "ogsql.ini"):
+    for fname in ("ogracd.ini", "ogsql.ini", "gbps.conf"):
         src = os.path.join(backup_dir, fname)
         dst = os.path.join(data_path, "cfg", fname)
         _ensure_dir(os.path.dirname(dst), 0o750)

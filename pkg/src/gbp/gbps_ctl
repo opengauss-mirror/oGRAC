@@ -1,0 +1,249 @@
+#!/bin/sh
+
+set -u
+
+usage()
+{
+    echo "Usage: $0 {start|stop|status|restart|stats|window|exists|dump|query} [-c gbps.conf] [arg]"
+}
+
+die()
+{
+    echo "gbps_ctl: $*" >&2
+    exit 1
+}
+
+expand_value()
+{
+    value=$1
+    home=${OGDB_HOME:-}
+    data=${OGDB_DATA:-}
+    ogdb_home_var='$OGDB_HOME'
+    ogdb_home_braced='${OGDB_HOME}'
+    ogdb_data_var='$OGDB_DATA'
+    ogdb_data_braced='${OGDB_DATA}'
+    case "$value" in
+        "$ogdb_data_var"*) value="$data${value#$ogdb_data_var}" ;;
+        "$ogdb_data_braced"*) value="$data${value#$ogdb_data_braced}" ;;
+        "$ogdb_home_var"*) value="$home${value#$ogdb_home_var}" ;;
+        "$ogdb_home_braced"*) value="$home${value#$ogdb_home_braced}" ;;
+    esac
+    printf '%s' "$value"
+}
+
+default_conf_path()
+{
+    if [ -n "${OGDB_DATA:-}" ] && [ -f "${OGDB_DATA}/cfg/gbps.conf" ]; then
+        printf '%s' "${OGDB_DATA}/cfg/gbps.conf"
+        return 0
+    fi
+    if [ -n "${OGDB_HOME:-}" ] && [ -f "${OGDB_HOME}/cfg/gbps.conf" ]; then
+        printf '%s' "${OGDB_HOME}/cfg/gbps.conf"
+        return 0
+    fi
+    if [ -n "${OGDB_DATA:-}" ]; then
+        printf '%s' "${OGDB_DATA}/cfg/gbps.conf"
+        return 0
+    fi
+    if [ -n "${OGDB_HOME:-}" ]; then
+        printf '%s' "${OGDB_HOME}/cfg/gbps.conf"
+        return 0
+    fi
+    return 1
+}
+
+load_conf()
+{
+    if [ -z "$CONF" ]; then
+        CONF=$(default_conf_path) || die "missing config path; set OGDB_DATA/OGDB_HOME or pass -c"
+    fi
+    [ -f "$CONF" ] || die "config file not found: $CONF"
+
+    HOST="0.0.0.0"
+    PORT="2611"
+    ADMIN_HOST="127.0.0.1"
+    ADMIN_PORT="2711"
+    runtime_home="${OGDB_DATA:-${OGDB_HOME:-}}"
+    LOG_FILE="${runtime_home}/log/gbps/gbps.rlog"
+    PID_FILE="${runtime_home}/run/gbps.pid"
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$line" ] && continue
+        case "$line" in \#*) continue ;; esac
+        key=${line%%=*}
+        val=${line#*=}
+        key=$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]' | sed 's/[[:space:]]//g')
+        val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        case "$key" in
+            HOST) HOST=$(expand_value "$val") ;;
+            PORT) PORT=$(expand_value "$val") ;;
+            ADMIN_HOST) ADMIN_HOST=$(expand_value "$val") ;;
+            ADMIN_PORT) ADMIN_PORT=$(expand_value "$val") ;;
+            LOG_FILE) LOG_FILE=$(expand_value "$val") ;;
+            PID_FILE) PID_FILE=$(expand_value "$val") ;;
+        esac
+    done < "$CONF"
+
+    [ -n "$PID_FILE" ] || die "PID_FILE is empty"
+    [ -n "$LOG_FILE" ] || die "LOG_FILE is empty"
+    [ -n "$ADMIN_HOST" ] || die "ADMIN_HOST is empty"
+    [ -n "$ADMIN_PORT" ] || die "ADMIN_PORT is empty"
+}
+
+is_running()
+{
+    [ -f "$PID_FILE" ] || return 1
+    pid=$(cat "$PID_FILE" 2>/dev/null || true)
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+gbps_bin()
+{
+    script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+    if [ -x "$script_dir/gbps" ]; then
+        printf '%s' "$script_dir/gbps"
+    else
+        command -v gbps 2>/dev/null || true
+    fi
+}
+
+start_gbps()
+{
+    load_conf
+    if is_running; then
+        echo "gbps is already running: pid=$(cat "$PID_FILE") conf=$CONF"
+        return 0
+    fi
+    if [ -f "$PID_FILE" ]; then
+        echo "gbps_ctl: removing stale pid file $PID_FILE"
+        rm -f "$PID_FILE"
+    fi
+
+    bin=$(gbps_bin)
+    [ -n "$bin" ] || die "gbps binary not found"
+    mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
+    nohup "$bin" --config "$CONF" >> "$LOG_FILE" 2>&1 &
+    pid=$!
+    echo "$pid" > "$PID_FILE"
+    sleep 1
+    if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$PID_FILE"
+        die "gbps failed to start; check $LOG_FILE"
+    fi
+    echo "gbps started: pid=$pid listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
+}
+
+stop_gbps()
+{
+    load_conf
+    if ! is_running; then
+        [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
+        echo "gbps is not running"
+        return 0
+    fi
+    pid=$(cat "$PID_FILE")
+    kill "$pid" 2>/dev/null || true
+    i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$((i + 1))
+        [ "$i" -ge 30 ] && die "gbps did not stop within 30s: pid=$pid"
+        sleep 1
+    done
+    rm -f "$PID_FILE"
+    echo "gbps stopped: pid=$pid"
+}
+
+status_gbps()
+{
+    load_conf
+    if is_running; then
+        echo "gbps is running: pid=$(cat "$PID_FILE") listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
+    else
+        [ -f "$PID_FILE" ] && echo "gbps is not running; stale pid file=$PID_FILE"
+        [ -f "$PID_FILE" ] || echo "gbps is not running"
+    fi
+}
+
+admin_query()
+{
+    load_conf
+    bin=$(gbps_bin)
+    [ -n "$bin" ] || die "gbps binary not found"
+    "$bin" --config "$CONF" --admin-host "$ADMIN_HOST" --admin-port "$ADMIN_PORT" --admin-query "$1"
+}
+
+ACTION="${1:-}"
+[ -n "$ACTION" ] || { usage; exit 1; }
+shift
+
+CONF=""
+QUERY_ARG=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -c|--config)
+            [ "$#" -gt 1 ] || die "missing value for $1"
+            CONF=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            if [ "$ACTION" = "query" ]; then
+                if [ -z "$QUERY_ARG" ]; then
+                    QUERY_ARG=$1
+                else
+                    QUERY_ARG="$QUERY_ARG $1"
+                fi
+            else
+                [ -z "$QUERY_ARG" ] || die "too many arguments: $1"
+                QUERY_ARG=$1
+            fi
+            shift
+            ;;
+    esac
+done
+
+case "$ACTION" in
+    start)
+        [ -z "$QUERY_ARG" ] || die "start does not take an argument"
+        start_gbps
+        ;;
+    stop)
+        [ -z "$QUERY_ARG" ] || die "stop does not take an argument"
+        stop_gbps
+        ;;
+    status)
+        [ -z "$QUERY_ARG" ] || die "status does not take an argument"
+        status_gbps
+        ;;
+    restart)
+        [ -z "$QUERY_ARG" ] || die "restart does not take an argument"
+        stop_gbps
+        start_gbps
+        ;;
+    stats)
+        [ -z "$QUERY_ARG" ] || die "stats does not take an argument"
+        admin_query "STATS"
+        ;;
+    window)
+        [ -z "$QUERY_ARG" ] || die "window does not take an argument"
+        admin_query "WINDOW"
+        ;;
+    exists)
+        [ -n "$QUERY_ARG" ] || die "exists requires <file>-<page>"
+        admin_query "EXISTS $QUERY_ARG"
+        ;;
+    dump)
+        [ -n "$QUERY_ARG" ] || die "dump requires <file>-<page>"
+        admin_query "DUMP $QUERY_ARG"
+        ;;
+    query)
+        [ -n "$QUERY_ARG" ] || die "query requires COMMAND"
+        admin_query "$QUERY_ARG"
+        ;;
+    *) usage; exit 1 ;;
+esac
