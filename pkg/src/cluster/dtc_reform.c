@@ -38,12 +38,13 @@
 #include "rc_reform.h"
 #include "dtc_backup.h"
 #include "repl_log_replay.h"
+#include "dtc_gbp_rt_aly.h"
 status_t init_dtc_rc(void)
 {
     knl_session_t *session;
     OG_RETURN_IFERR(g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&session));
 
-    reform_init_t init_st;
+    reform_init_t init_st = { 0 };
     init_st.session = (void*)session;
     init_st.self_id = session->kernel->dtc_attr.inst_id;
     errno_t ret;
@@ -59,6 +60,7 @@ status_t init_dtc_rc(void)
     init_st.callback.rc_reform_cancled = (rc_cb_reform_canceled)rc_reform_cancled;
     init_st.callback.rc_start_lrpl_proc = (rc_cb_start_lrpl_proc)rc_start_lrpl_proc;
     init_st.callback.rc_notify_reform_status = (rc_cb_notify_reform_stat)rc_notify_reform_status;
+    init_st.callback.rc_after_reform_done = (rc_cb_after_reform_done)rc_after_reform_done;
 
     return init_cms_rc(&g_dtc->rf_ctx, &init_st);
 }
@@ -1246,6 +1248,17 @@ status_t rc_start_lrpl_proc(knl_session_t *session)
         }
     }
     return OG_SUCCESS;
+}
+
+void rc_after_reform_done(knl_session_t *session)
+{
+    if (session == NULL || !DB_IS_OPEN(session) || g_rc_ctx->info.role == REFORM_ROLE_LEAVE) {
+        return;
+    }
+
+    if (dtc_gbp_rt_aly_start(session) != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("[DTC GBP RT] failed to restart runtime analyzer after reform, partial recovery will fallback");
+    }
 }
 
 status_t rc_notify_reform_status(knl_session_t *session, reform_info_t *rc_info, uint32 status)

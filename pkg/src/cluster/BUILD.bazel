@@ -83,6 +83,7 @@ cc_library (
         "dtc_drc.c",
         "dtc_drc_stat.c",
         "dtc_drc_util.c",
+        "dtc_gbp_rt_aly.c",
         "dtc_heap.c",
         "dtc_log.c",
         "dtc_recovery.c",

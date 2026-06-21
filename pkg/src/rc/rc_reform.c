@@ -31,7 +31,7 @@
 
 reform_ctx_t *g_rc_ctx = NULL;
 static cluster_view_t g_cluster_view = { .is_stable = OG_TRUE };
-reform_callback_t g_rc_callback = {NULL, NULL, NULL, NULL, NULL, NULL};
+reform_callback_t g_rc_callback = { 0 };
 
 static void rc_update_cluster_view(cms_res_status_list_t *res_list)
 {
@@ -1010,6 +1010,9 @@ static void rc_check_finished(thread_t *thread)
     g_rc_ctx->status = REFORM_DONE;
     OG_LOG_RUN_INF("[RC] finish reform, reform status:%u, mode:%u, master_changed:%u,", g_rc_ctx->status,
         g_rc_ctx->mode, g_rc_ctx->info.master_changed);
+    if (g_rc_callback.rc_after_reform_done != NULL) {
+        g_rc_callback.rc_after_reform_done(session);
+    }
     g_rc_ctx->mode = REFORM_MODE_NONE;
     g_rc_ctx->info.master_changed = OG_FALSE;
 }
