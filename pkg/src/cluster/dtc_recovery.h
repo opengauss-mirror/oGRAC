@@ -441,8 +441,6 @@ typedef struct st_dtc_rcy_context {
     uint32 pcn_is_equal_num;
     int32 need_analysis_leave_page_cnt;
     bool8 rcy_create_users[OG_MAX_USERS];
-    /* multi-node: GBP redo analysis ran on LSN-merged stream (not local rcy_load only) */
-    bool8 merged_stream_gbp_redo_ok;
     /* PCN 诊断：见 DTC_PCND_ANALYZE_* / DTC_PCND_GBP_PREP_* 与 dtc_rcy_log_pcn_mismatch_diag */
     uint32 pcn_diag_analyze_path;
     uint32 pcn_diag_gbp_prepare;
@@ -607,9 +605,8 @@ extern dtc_rcy_replay_paral_node_t g_replay_paral_mgr;
 
 #define DTC_PCND_GBP_PREP_NONE                    0U
 #define DTC_PCND_GBP_PREP_SKIP_NO_GBP            1U
-#define DTC_PCND_GBP_PREP_MULTINODE_INCOMPLETE   2U
-#define DTC_PCND_GBP_PREP_MULTINODE_MERGED_OK    3U
-#define DTC_PCND_GBP_PREP_SINGLE_RCY_ANALYSIS    4U
+#define DTC_PCND_GBP_PREP_PARTIAL_UNAVAILABLE    2U
+#define DTC_PCND_GBP_PREP_PARTIAL_CHECKED        3U
 
 #define OGRAC_FULL_RECOVERY(session)             ((DTC_RCY_CONTEXT)->in_progress && (DTC_RCY_CONTEXT->full_recovery))
 #define OGRAC_PART_RECOVERY(session)             ((DTC_RCY_CONTEXT)->in_progress && !(DTC_RCY_CONTEXT->full_recovery))

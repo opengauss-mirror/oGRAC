@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include "cm_defs.h"
 #include "srv_module.h"
 #include "srv_param.h"
 #include "srv_instance.h"
@@ -2359,6 +2360,14 @@ status_t sql_verify_als_ckpt_group_size(void *se, void *lex, void *def)
     }
     return OG_SUCCESS;
 }
+
+status_t sql_notify_als_enable_quick_ckpt(void *se, void *item, char *value)
+{
+    g_instance->kernel.attr.enable_quick_ckpt = (bool32)value[0];
+    // restore value for alter config.
+    return sql_notify_als_bool(se, item, value);
+}
+
 #ifdef __cplusplus
 }
 #endif

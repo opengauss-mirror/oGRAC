@@ -240,8 +240,19 @@ void rcy_close(knl_session_t *session);
 bool32 rcy_validate_batch(log_batch_t *batch, log_batch_tail_t *tail);
 void rcy_init_log_cursor(log_cursor_t *cursor, log_batch_t *batch);
 void rcy_replay_batch(knl_session_t *session, log_batch_t *batch);
+
+/*
+ * Standby log receiver flush point always be updated by lrcv_process_batch, even current log is fetched by LFTC.
+ * log receiver and LFTC can running same time, but log receiver may send log from batch 120,
+ * LFTC send log from batch 100.
+ * If standby failover when LFTC just send log end with batch 110, the log in [110, 120] is not exsit.
+ * In this case, LRPL end point is 110, and log receiver flush point may be 130 and GBP lrp_point may be 129, GBP
+ * status is unsafe, will not use gbp. So we do not need to update log receiver flush point here when LFTC running.
+ */
 void rcy_analysis_batch(knl_session_t *session, log_batch_t *batch);
+void rcy_analysis_group(knl_session_t *session, log_context_t *ogx, log_group_t *group);
 void rcy_replay_logic(knl_session_t *session, log_entry_t *log);
+void gbp_aly_gbp_logic(knl_session_t *session, log_entry_t *log, uint64 lsn);
 void print_replay_logic(log_entry_t *log);
 void backup_logic_entry(knl_session_t *session, log_entry_t *log, bool32 *need_unblock_backup);
 const char* rcy_redo_name(log_entry_t *log);
@@ -262,6 +273,7 @@ void rcy_init_proc(knl_session_t *session);
 void rcy_close_proc(knl_session_t *session);
 void rcy_wait_preload_complete(knl_session_t *session);
 void rcy_wait_replay_complete(knl_session_t *session);
+status_t rcy_alloc_cmp(rcy_context_t *rcy);
 bool32 db_terminate_lfn_reached(knl_session_t *session, uint64 curr_lfn);
 
 void rcy_add_pages(rcy_paral_group_t *paral_group, log_group_t *group, uint32 group_slot, rcy_context_t *rcy,
@@ -272,7 +284,7 @@ void rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_t *g
 void rcy_free_buffer(rcy_context_t *rcy);
 status_t rcy_init_context(knl_session_t *session);
 void print_rcy_skip_page_limit(knl_session_t *session);
-void rcy_page_set_damage(knl_session_t *session, pcn_verify_t *log_pcns);
+void rcy_page_set_damage(knl_session_t *session, pcn_verify_t *log_pcns, log_type_t at_log_type);
 void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_t *log_pcns, uint32 log_pcns_size);
 void rcy_record_batch_scn(log_entry_t *log, rcy_paral_group_t *paral_group);
 /*

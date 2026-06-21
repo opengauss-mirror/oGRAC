@@ -34,6 +34,7 @@ extern "C" {
 #define EXPANDED_SESSIONS(sessions) (uint32)(int32)((sessions) * 1.5)
 status_t srv_load_server_params(void);
 status_t srv_load_cluster_params(void);
+status_t srv_load_gbp_params(void);
 status_t srv_load_gdv_params(void);
 
 #ifdef __cplusplus

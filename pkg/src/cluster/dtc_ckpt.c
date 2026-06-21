@@ -515,6 +515,7 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
 
     ogx->remote_edp_clean_group.count = 0;
     ckpt_clean_edp_group_t *group = &ogx->remote_edp_group;
+    ckpt_group_t *w_group = &ogx->group[ogx->wid];
     cm_spin_lock(&group->lock, NULL);
     if (group->count == 0) {
         cm_spin_unlock(&group->lock);
@@ -598,7 +599,7 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
                       AS_PAGID(ctrl->page->id).page, ctrl->page->type);
 
         /* DEFAULT_PAGE_SIZE is 8192,  ogx->group.count <= OG_CKPT_GROUP_SIZE(4096), integers cannot cross bounds */
-        ret = memcpy_sp(ogx->group.buf + DEFAULT_PAGE_SIZE(session) * ogx->group.count,
+        ret = memcpy_sp(w_group->buf + DEFAULT_PAGE_SIZE(session) * w_group->count,
                         DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
         knl_securec_check(ret);
 
@@ -609,8 +610,8 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
             ckpt_pop_page(session, ogx, ctrl);
         }
 
-        if (ogx->consistent_lfn < ctrl->lastest_lfn) {
-            ogx->consistent_lfn = ctrl->lastest_lfn;
+        if (w_group->consistent_lfn < ctrl->lastest_lfn) {
+            w_group->consistent_lfn = ctrl->lastest_lfn;
         }
 
         ctrl->is_marked = 1;
@@ -619,22 +620,22 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
         ctrl->is_remote_dirty = 0;
 
         buf_unlatch_page(session, ctrl);
-        ogx->group.items[ogx->group.count].ctrl = ctrl;
-        ogx->group.items[ogx->group.count].buf_id = ogx->group.count;
-        ogx->group.items[ogx->group.count].need_punch = OG_FALSE;
+        w_group->items[w_group->count].ctrl = ctrl;
+        w_group->items[w_group->count].buf_id = w_group->count;
+        w_group->items[w_group->count].need_punch = OG_FALSE;
 
-        if (ckpt_encrypt(session, ogx) != OG_SUCCESS) {
+        if (ckpt_encrypt(session, ogx, w_group) != OG_SUCCESS) {
             cm_spin_unlock(&group->lock);
             return OG_ERROR;
         }
-        if (ckpt_checksum(session, ogx) != OG_SUCCESS) {
+        if (ckpt_checksum(session, ogx, w_group) != OG_SUCCESS) {
             cm_spin_unlock(&group->lock);
             return OG_ERROR;
         }
         ckpt_put_to_part_group(session, ogx, ctrl);
-        ogx->group.count++;
+        w_group->count++;
 
-        if (ogx->group.count >= OG_CKPT_GROUP_SIZE(session)) {
+        if (w_group->count >= OG_CKPT_GROUP_SIZE(session)) {
             break;
         }
     }

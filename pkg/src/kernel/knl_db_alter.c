@@ -584,6 +584,7 @@ status_t db_alter_failover(knl_session_t *session, knl_alterdb_def_t *def)
     }
 
     redo_ctx->promote_begin_time = cm_now();
+    redo_ctx->last_rcy_with_gbp = OG_FALSE;
     while (!DB_IS_PRIMARY(db) || ctrl->request != SWITCH_REQ_NONE) {
         if (session->killed) {
             OG_THROW_ERROR(ERR_OPERATION_KILLED);
@@ -603,6 +604,10 @@ status_t db_alter_failover(knl_session_t *session, knl_alterdb_def_t *def)
         }
         cm_spin_unlock(&ctrl->lock);
         cm_sleep(10);
+    }
+
+    if (KNL_GBP_ENABLE(session->kernel)) {
+        gbp_reset_unsafe(session);
     }
 
     redo_ctx->promote_end_time = cm_now();

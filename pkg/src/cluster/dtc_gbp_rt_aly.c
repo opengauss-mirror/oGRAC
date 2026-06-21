@@ -2073,7 +2073,6 @@ status_t dtc_gbp_rt_aly_finish_partial(knl_session_t *session)
     if (dtc_gbp_rt_export_lfn_points(ctx) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    dtc_rcy->merged_stream_gbp_redo_ok = OG_TRUE;
     if (log_cmp_point(&session->kernel->redo_ctx.redo_end_point, &ctx->snapshot_safe_point) < 0) {
         session->kernel->redo_ctx.redo_end_point = ctx->snapshot_safe_point;
     }

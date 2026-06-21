@@ -29,6 +29,7 @@
 #include "rc_reform.h"
 #include "dtc_recovery.h"
 #include "dtc_drc.h"
+#include "knl_gbp.h"
 
 static void buf_enter_invalid_page(knl_session_t *session, latch_mode_t mode)
 {
@@ -58,7 +59,7 @@ static void abr_enter_page(knl_session_t *session, page_id_t page_id)
     session->page_stack.is_skip[session->page_stack.depth - 1] = is_skip;
 }
 
-void rd_enter_page(knl_session_t *session, log_entry_t *log)
+static void rd_enter_page_internal(knl_session_t *session, log_entry_t *log, bool32 keep_resident)
 {
     rd_enter_page_t *redo = (rd_enter_page_t *)log->data;
     datafile_t *df = DATAFILE_GET(session, redo->file);
@@ -68,6 +69,16 @@ void rd_enter_page(knl_session_t *session, log_entry_t *log)
     if (!DB_IS_CLUSTER(session) && session->kernel->db.status == DB_STATUS_OPEN) {
         /* NO_READ page does not need to be loaded from disk when standby lrpl perform */
         options = redo->options & (RD_ENTER_PAGE_MASK | ENTER_PAGE_NO_READ);
+    }
+
+    /*
+     * GBP log analysis replays txn-page redo in memory before tx logs (RD_TX_BEGIN/RD_TX_END).
+     * RD_ENTER_TXN_PAGE was originally generated from a resident txn page, so analysis must
+     * preserve ENTER_PAGE_RESIDENT here; otherwise the page is merely loaded and later txn
+     * analysis asserts on a non-resident curr_page_ctrl.
+     */
+    if (keep_resident && log->type == RD_ENTER_TXN_PAGE) {
+        options |= ENTER_PAGE_RESIDENT;
     }
 
     if (IS_BLOCK_RECOVER(session)) {
@@ -93,8 +104,7 @@ void rd_enter_page(knl_session_t *session, log_entry_t *log)
         return;
     }
 
-    // for partial recover in master node of cluster
-    if (DB_IS_CLUSTER(session) && rc_is_master()) {
+    if (DB_IS_CLUSTER(session) && rc_is_master() && !SESSION_IS_LOG_ANALYZE(session)) {
         buf_bucket_t *bucket = buf_find_bucket(session, page_id);
         drc_buf_res_t *buf_res = drc_get_buf_res_by_pageid(session, page_id);
         if (buf_res != NULL) {
@@ -106,8 +116,8 @@ void rd_enter_page(knl_session_t *session, log_entry_t *log)
                 if ((dtc_add_dirtypage_for_recovery(session, page_id) == OG_SUCCESS)) {
                     buf_enter_invalid_page(session, LATCH_MODE_X);
                     session->page_stack.is_skip[session->page_stack.depth - 1] = OG_TRUE;
-                    OG_LOG_DEBUG_INF("[DTC RCY] skip enter page [%u-%u] due to no need, pcn=%u",
-                        page_id.file, page_id.page, redo->pcn);
+                    OG_LOG_DEBUG_INF("[DTC RCY] skip enter page [%u-%u] due to no need, pcn=%u", page_id.file,
+                        page_id.page, redo->pcn);
                     return;
                 }
                 dtc_rcy_page_update_need_replay(page_id);
@@ -138,6 +148,11 @@ void rd_enter_page(knl_session_t *session, log_entry_t *log)
     OG_LOG_DEBUG_INF("[DTC RCY] rd enter page [%u-%u] skiped %d curr_lsn %llu page_lsn %llu, staus=%d", page_id.file,
         page_id.page, session->page_stack.is_skip[session->page_stack.depth - 1],
         session->curr_lsn, curr_page_lsn, status);
+}
+
+void rd_enter_page(knl_session_t *session, log_entry_t *log)
+{
+    rd_enter_page_internal(session, log, OG_FALSE);
 }
 
 void print_enter_page(log_entry_t *log)
@@ -210,6 +225,20 @@ void rd_leave_page(knl_session_t *session, log_entry_t *log)
             buf_res->need_flush = OG_TRUE;
             cm_spin_unlock(&bucket->lock);
         }
+
+        /* redo between redo->curr_point and gbp->rcy_point should be skipped */
+        if (KNL_RECOVERY_WITH_GBP(session->kernel) && session->kernel->redo_ctx.gbp_rcy_lfn != 0 &&
+            session->kernel->redo_ctx.lfn < session->kernel->redo_ctx.gbp_rcy_lfn) {
+            knl_panic_log((session->page_stack.is_skip[session->page_stack.depth - 1] == OG_TRUE),
+                          "[GBP] redo between redo->curr_point and gbp->rcy_point should be skipped");
+        }
+
+        /* should not replay log on hit page */
+        if (gbp_db_enforce_primary_style_invariants(session) && KNL_GBP_ENABLE(session->kernel) &&
+            session->curr_page_ctrl->gbp_ctrl->page_status == GBP_PAGE_HIT) {
+            knl_panic_log(0, "[GBP] should not replay log on hit page");
+        }
+
         buf_leave_page(session, OG_TRUE);
     } else {
         buf_leave_page(session, OG_FALSE);
@@ -220,4 +249,85 @@ void print_leave_page(log_entry_t *log)
 {
     bool32 changed = *(bool32 *)log->data;
     (void)printf("changed %u\n", (uint32)changed);
+}
+
+/* gbp analyze proc entry for RD_ENTER_PAGE, when gbp analyze, replay txn page */
+void gbp_aly_enter_page(knl_session_t *session, log_entry_t *log, uint64 lsn)
+{
+    log_context_t *ctx = &session->kernel->redo_ctx;
+    rd_enter_page_t *redo = (rd_enter_page_t *)log->data;
+    page_id_t page_id = MAKE_PAGID(redo->file, redo->page);
+
+    ctx->replay_stat.analyze_pages++;
+    if (redo->options & ENTER_PAGE_RESIDENT) {
+        ctx->replay_stat.analyze_resident_pages++;
+    }
+
+    /* redo txn page when do log analysis */
+    if (log->type == RD_ENTER_TXN_PAGE) {
+        rd_enter_page_internal(session, log, OG_TRUE);
+    } else {
+        buf_enter_invalid_page(session, LATCH_MODE_X);
+
+        /* must do log analysis for page's redo log, so can not skip */
+        session->page_stack.is_skip[session->page_stack.depth - 1] = OG_FALSE;
+    }
+
+    knl_panic_log(session->page_stack.depth > 0, "page_stack's depth is abnormal, panic info: page %u-%u depth %u",
+                  page_id.file, page_id.page, session->page_stack.depth);
+    session->page_stack.gbp_aly_page_id[session->page_stack.depth - 1] = page_id;
+}
+
+static void gbp_aly_set_page_backend(knl_session_t *session, page_id_t page_id, uint64 lsn, uint64 lfn)
+{
+    gbp_aly_ctx_t *aly = &session->kernel->gbp_aly_ctx;
+    rcy_context_t *rcy = &session->kernel->rcy_ctx;
+    gbp_page_bucket_t *bucket = &aly->page_bucket;
+    uint32 next = (bucket->tail + 1) % bucket->count;
+    gbp_aly_page_t item;
+
+    item.page_id = page_id;
+    item.lsn = lsn;
+    item.lfn = lfn;
+    item.node_id = gbp_aly_curr_node_id(session);
+    for (;;) {
+        if (SECUREC_UNLIKELY(next == bucket->head)) {
+            cm_spin_sleep();
+            rcy->wait_stats_view[ADD_BUCKET_TIME]++;
+        } else {
+            break;
+        }
+    }
+
+    cm_spin_lock(&bucket->lock, NULL);
+    bucket->first[bucket->tail] = item;
+    bucket->tail = next;
+    cm_spin_unlock(&bucket->lock);
+}
+
+/* gbp analyze proc entry for RD_LEAVE_PAGE, when gbp analyze, replay txn page, and set page's latest lsn */
+void gbp_aly_leave_page(knl_session_t *session, log_entry_t *log, uint64 lsn)
+{
+    log_context_t *ctx = &session->kernel->redo_ctx;
+    gbp_aly_ctx_t *aly = &session->kernel->gbp_aly_ctx;
+    bool32 changed = *((bool32 *)log->data);
+    page_id_t page_id = session->page_stack.gbp_aly_page_id[session->page_stack.depth - 1];
+
+    if (IS_INVALID_PAGID(page_id)) {
+        knl_panic_log(0, "[GBP] analysis get invalid page id, page [%u:%u]", page_id.file, page_id.page);
+    }
+
+    if (log->type == RD_LEAVE_TXN_PAGE) {
+        rd_leave_page(session, log);
+    } else {
+        buf_pop_page(session);
+    }
+
+    if (changed && !aly->is_closing) {
+        if (SECUREC_LIKELY(SESSION_IS_LOG_ANALYZE(session))) {
+            gbp_aly_set_page_backend(session, page_id, lsn, ctx->analysis_lfn);
+        } else {
+            gbp_aly_set_page_lsn(session, page_id, lsn, ctx->analysis_lfn);
+        }
+    }
 }
