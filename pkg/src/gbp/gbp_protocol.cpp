@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstring>
 #include <sstream>
+#include <utility>
 
 namespace gbp {
 
@@ -79,6 +80,21 @@ const char* page_write_op_name(PageWriteOp op) {
         default:
             return "unknown";
     }
+}
+
+bool commit_page_install(PageWritePlan& plan, GbpServerState& state, GbpShard& shard, PageRecord rec,
+                         const PageMeta& meta, bool legacy_pending, int& rejected, int& accepted,
+                         int& capacity_rejected) {
+    if (!install_page(state, shard, plan.pid_key, std::move(rec), meta, legacy_pending)) {
+        ++rejected;
+        ++capacity_rejected;
+        plan.op = PageWriteOp::Reject;
+        plan.counted_reject = true;
+        plan.reason = "capacity_full";
+        return false;
+    }
+    ++accepted;
+    return true;
 }
 
 void fill_prev_page_diag(PageWritePlan& plan, const PageRecord& prev) {
@@ -225,7 +241,7 @@ PageWritePlan plan_page_write(const PreparedPageWrite& pw, GbpShard& shard, bool
 }
 
 bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard& shard, bool strict, bool lsn_only,
-                           bool legacy_pending, int& rejected, int& accepted) {
+                           bool legacy_pending, int& rejected, int& accepted, int& capacity_rejected) {
     if (plan.op == PageWriteOp::Reject) return false;
 
     if (!page_write_passes_reset(shard, plan.lrp, lsn_only)) {
@@ -254,9 +270,8 @@ bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard&
         prev.coverage_begin = plan.coverage_begin;
         prev.coverage_lrp = plan.coverage_lrp;
         PageMeta meta = build_page_meta(plan.pid_key, prev);
-        install_page(state, shard, plan.pid_key, prev, meta, legacy_pending);
-        ++accepted;
-        return true;
+        return commit_page_install(plan, state, shard, prev, meta, legacy_pending, rejected, accepted,
+                                   capacity_rejected);
     }
 
     if (plan.op != PageWriteOp::Install || !plan.payload) {
@@ -277,9 +292,8 @@ bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard&
             rec.coverage_lrp = log_point_max(prev->second.coverage_lrp, plan.lrp, lsn_only);
         }
         PageMeta meta = build_page_meta(plan.pid_key, rec);
-        install_page(state, shard, plan.pid_key, std::move(rec), meta, legacy_pending);
-        ++accepted;
-        return true;
+        return commit_page_install(plan, state, shard, std::move(rec), meta, legacy_pending, rejected, accepted,
+                                   capacity_rejected);
     }
 
     auto prev_it = shard.page_cache.find(plan.pid_key);
@@ -288,9 +302,8 @@ bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard&
         rec.coverage_begin = plan.coverage_begin;
         rec.coverage_lrp = plan.coverage_lrp;
         PageMeta meta = build_page_meta(plan.pid_key, rec);
-        install_page(state, shard, plan.pid_key, std::move(rec), meta, legacy_pending);
-        ++accepted;
-        return true;
+        return commit_page_install(plan, state, shard, std::move(rec), meta, legacy_pending, rejected, accepted,
+                                   capacity_rejected);
     }
 
     PageRecord& prev = prev_it->second;
@@ -303,18 +316,16 @@ bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard&
         rec.coverage_begin = coverage_begin;
         rec.coverage_lrp = coverage_lrp;
         PageMeta meta = build_page_meta(plan.pid_key, rec);
-        install_page(state, shard, plan.pid_key, std::move(rec), meta, legacy_pending);
-        ++accepted;
-        return true;
+        return commit_page_install(plan, state, shard, std::move(rec), meta, legacy_pending, rejected, accepted,
+                                   capacity_rejected);
     }
     if (prev.writer_seq > plan.writer_seq ||
         (prev.writer_seq == plan.writer_seq && prev.writer_inst == plan.writer_inst)) {
         prev.coverage_begin = coverage_begin;
         prev.coverage_lrp = coverage_lrp;
         PageMeta meta = build_page_meta(plan.pid_key, prev);
-        install_page(state, shard, plan.pid_key, prev, meta, legacy_pending);
-        ++accepted;
-        return true;
+        return commit_page_install(plan, state, shard, prev, meta, legacy_pending, rejected, accepted,
+                                   capacity_rejected);
     }
 
     ++rejected;
@@ -622,8 +633,8 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Gbp
             PageWritePlan& plan = plans[i];
             const int accepted_before = out.accepted;
             const int rejected_before = out.rejected;
-            const bool applied =
-                apply_page_write_plan(plan, state, shard, strict, lsn_only, legacy_pending, out.rejected, out.accepted);
+            const bool applied = apply_page_write_plan(plan, state, shard, strict, lsn_only, legacy_pending,
+                                                       out.rejected, out.accepted, out.capacity_rejected);
             if (verbose) {
                 log_verbose_page_write_result(peer, qid, i, plan, applied, out.accepted - accepted_before,
                                               out.rejected - rejected_before, batch_begin, batch_trunc, batch_lrp,
@@ -639,7 +650,7 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Gbp
         out.apply_hold_us = us_since(hold_begin);
         out.lock_hold_us += out.apply_hold_us;
     }
-    state.maybe_start_capacity_evict();
+    if (state.config().capacity_evict_on_write) state.maybe_start_capacity_evict();
     return out;
 }
 

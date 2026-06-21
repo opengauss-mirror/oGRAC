@@ -6905,7 +6905,7 @@ static void gbp_verify_skiped_redo_pages(knl_session_t *session)
   * after pull all GBP pages to local buffer or db start, kernel notify GBP server to stop send page.
   * then close all temp connections with GBP
   */
-void gbp_knl_end_read(knl_session_t *session)
+static void gbp_knl_end_read_internal(knl_session_t *session, bool32 verify_pages, const char *reason)
 {
     gbp_context_t *gbp_context = &session->kernel->gbp_context;
     log_context_t *redo = &session->kernel->redo_ctx;
@@ -6940,7 +6940,12 @@ void gbp_knl_end_read(knl_session_t *session)
     lock_us = (uint64)(cm_now() - stage_begin);
     stage_begin = cm_now();
 
-    gbp_verify_skiped_redo_pages(session);
+    if (verify_pages) {
+        gbp_verify_skiped_redo_pages(session);
+    } else {
+        OG_LOG_RUN_WAR("[GBP] skip final verify during read phase cleanup: reason=%s",
+                       (reason == NULL) ? "unknown" : reason);
+    }
     verify_us = (uint64)(cm_now() - stage_begin);
     stage_begin = cm_now();
 
@@ -6979,16 +6984,22 @@ void gbp_knl_end_read(knl_session_t *session)
     gbp_log_read_diag_summary(gbp_context);
     gbp_log_read_anomaly_summary(gbp_context);
     OG_LOG_RUN_INF("[GBP] read phase summary: pages=%llu errors=%llu worker_active_ms=%llu owner_gap_ms=%llu "
-                   "skipped_lfn_total=%llu lock_us=%llu verify_us=%llu read_end_notify_us=%llu cleanup_us=%llu "
-                   "total_us=%llu",
+                   "skipped_lfn_total=%llu lock_us=%llu verify_us=%llu verify_pages=%u read_end_notify_us=%llu "
+                   "cleanup_us=%llu total_us=%llu reason=%s",
                    (uint64)cm_atomic_get(&gbp_context->gbp_read_pages),
                    (uint64)cm_atomic_get(&gbp_context->gbp_read_errors),
                    worker_active_ms, owner_gap_ms, gbp_dtc_read_skip_lfn_total(gbp_context),
-                   lock_us, verify_us, notify_end_us, cleanup_us, total_us);
+                   lock_us, verify_us, (uint32)verify_pages, notify_end_us, cleanup_us, total_us,
+                   (reason == NULL) ? "finish" : reason);
     (void)worker_wall_ms;
 }
 
-void gbp_knl_finish_dtc_read(knl_session_t *session)
+void gbp_knl_end_read(knl_session_t *session)
+{
+    gbp_knl_end_read_internal(session, OG_TRUE, "finish");
+}
+
+static void gbp_knl_finish_dtc_read_internal(knl_session_t *session, bool32 verify_pages, const char *reason)
 {
     gbp_context_t *gbp_context = &session->kernel->gbp_context;
     date_t begin_time;
@@ -7007,8 +7018,19 @@ void gbp_knl_finish_dtc_read(knl_session_t *session)
     if (gbp_context->gbp_read_workers_done_time == 0) {
         gbp_context->gbp_read_workers_done_time = cm_now();
     }
-    OG_LOG_RUN_INF("[GBP] DTC recovery owner finishes read phase: wait_workers_us=%llu", wait_us);
-    gbp_knl_end_read(session);
+    OG_LOG_RUN_INF("[GBP] DTC recovery owner finishes read phase: wait_workers_us=%llu reason=%s",
+                   wait_us, (reason == NULL) ? "finish" : reason);
+    gbp_knl_end_read_internal(session, verify_pages, reason);
+}
+
+void gbp_knl_finish_dtc_read(knl_session_t *session)
+{
+    gbp_knl_finish_dtc_read_internal(session, OG_TRUE, "finish");
+}
+
+void gbp_knl_abort_dtc_read(knl_session_t *session)
+{
+    gbp_knl_finish_dtc_read_internal(session, OG_FALSE, "abort");
 }
 
  /*

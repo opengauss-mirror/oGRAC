@@ -377,6 +377,7 @@ status_t cms_start_res_node(cms_packet_head_t* msg, char* err_info, uint32 err_i
     status_t ret = OG_SUCCESS;
     errno_t err = EOK;
     uint32 res_id = -1;
+    cms_res_t res = {0};
     cms_msg_req_start_res_t* req = (cms_msg_req_start_res_t*)msg;
 
     ret = cms_get_res_id_by_name(req->name, &res_id);
@@ -388,6 +389,24 @@ status_t cms_start_res_node(cms_packet_head_t* msg, char* err_info, uint32 err_i
         }
         cms_securec_check(err);
         return ret;
+    }
+    if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
+        err = strcpy_s(err_info, err_info_len, "resource is not found");
+        if (SECUREC_UNLIKELY(err != EOK)) {
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, err);
+            return OG_ERROR;
+        }
+        cms_securec_check(err);
+        return OG_ERROR;
+    }
+    if (cms_gbps_res_is_disabled(res.name, res.type)) {
+        err = strcpy_s(err_info, err_info_len, "gbps disabled by USE_GBP=FALSE");
+        if (SECUREC_UNLIKELY(err != EOK)) {
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, err);
+            return OG_ERROR;
+        }
+        cms_securec_check(err);
+        return OG_ERROR;
     }
     if (req->target_node != OG_MAX_UINT16 && g_cms_param->node_id != req->target_node) {
         ret = cms_start_res_remote(msg, res_id, err_info);
@@ -3967,6 +3986,9 @@ static void cms_proc_msg_req_res_list(cms_packet_head_t *msg)
         if (res_db->magic != CMS_GCC_RES_MAGIC) {
             continue;
         }
+        if (cms_gbps_res_is_disabled(res_db->name, res_db->type)) {
+            continue;
+        }
         if (cms_proc_msg_res_list_res_copy(gcc, res_db, &res->res_info[res_count], res->info) != OG_SUCCESS) {
             ret = OG_ERROR;
             break;
@@ -4128,6 +4150,10 @@ void cms_hb_timer_entry(thread_t* thread)
 
 static void cms_stat_chg_restart_res(cms_res_t res, cms_res_stat_t stat, date_t now_time)
 {
+    if (cms_gbps_res_is_disabled(res.name, res.type)) {
+        return;
+    }
+
     char restart_str[32];
     char now_str[32];
     cms_date2str(stat.restart_time, restart_str, sizeof(restart_str));
@@ -4184,6 +4210,29 @@ void cms_detect_osclock_abnormal(date_t now_time, date_t last_refresh_time)
     }
 }
 
+static void cms_handle_disabled_gbps_res(uint32 res_id, cms_res_stat_t *stat)
+{
+    if (stat->cur_stat == CMS_RES_ONLINE) {
+        CMS_LOG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "gbps resource is disabled by USE_GBP=FALSE, stop and keep it offline.");
+        if (cms_res_stop(res_id, OG_TRUE) == OG_SUCCESS) {
+            (void)cms_res_detect_offline(res_id, stat);
+        }
+        return;
+    }
+
+    if (stat->target_stat == CMS_RES_ONLINE) {
+        CMS_LOG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "gbps resource is disabled by USE_GBP=FALSE, mark target offline.");
+        (void)cms_res_stopped(res_id);
+        return;
+    }
+
+    if (stat->target_stat != CMS_RES_OFFLINE) {
+        (void)cms_res_stopped(res_id);
+    }
+}
+
 void cms_res_check_timer_entry(thread_t* thread)
 {
     uint32 min_interval = 1000;
@@ -4198,11 +4247,16 @@ void cms_res_check_timer_entry(thread_t* thread)
             if (cms_get_res_by_id(i, &res) != OG_SUCCESS) {
                 continue;
             }
+
+            get_cur_res_stat(i, &stat);
+            if (cms_gbps_res_is_disabled(res.name, res.type)) {
+                cms_handle_disabled_gbps_res(i, &stat);
+                continue;
+            }
             min_interval = MIN(res.check_interval, min_interval);
             min_interval = MAX(max_interval, min_interval);
 
-            get_cur_res_stat(i, &stat);
-            if (cm_strcmpi(res.name, CMS_RES_TYPE_DSS) == 0 && cms_check_dss_stat(res) == OG_SUCCESS) {
+            if (cms_res_is_script_detect_res(&res) && cms_check_script_res_stat(res) == OG_SUCCESS) {
                 cms_res_detect_online(i, &stat);
                 continue;
             }

@@ -152,6 +152,8 @@ bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& val
         opt.pid_file = value;
     } else if (key == "MAX_CACHE_PAGES") {
         return parse_int_value(value, c.max_cache_pages, err, key);
+    } else if (key == "CAPACITY_EVICT_ON_WRITE") {
+        return parse_bool_value(value, c.capacity_evict_on_write, err, key);
     } else if (key == "READ_END_MODE") {
         if (str_ieq(value.c_str(), "sync")) {
             c.read_end_mode = ReadEndMode::Sync;
@@ -223,6 +225,7 @@ void apply_env(ServerOptions& opt) {
     if ((v = std::getenv("GBPS_LOG_CMP_LSN_ONLY")) != nullptr) c.log_cmp_lsn_only = env_truthy(v);
     if ((v = std::getenv("GBPS_SMB_VERSION")) != nullptr) c.smb_version = !env_falsy(v);
     if ((v = std::getenv("GBPS_MAX_CACHE_PAGES")) != nullptr && *v) c.max_cache_pages = env_int("GBPS_MAX_CACHE_PAGES", c.max_cache_pages);
+    if ((v = std::getenv("GBPS_CAPACITY_EVICT_ON_WRITE")) != nullptr) c.capacity_evict_on_write = env_truthy(v);
     if ((v = std::getenv("GBPS_READ_END_MODE")) != nullptr) {
         if (str_ieq(v, "sync")) c.read_end_mode = ReadEndMode::Sync;
         if (str_ieq(v, "async")) c.read_end_mode = ReadEndMode::Async;
@@ -232,6 +235,7 @@ void apply_env(ServerOptions& opt) {
     if ((v = std::getenv("GBP_DEMO_LOG_CMP_LSN_ONLY")) != nullptr) c.log_cmp_lsn_only = env_truthy(v);
     if ((v = std::getenv("GBP_DEMO_SMB_VERSION")) != nullptr) c.smb_version = !env_falsy(v);
     if ((v = std::getenv("GBP_DEMO_MAX_CACHE_PAGES")) != nullptr && *v) c.max_cache_pages = env_int("GBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages);
+    if ((v = std::getenv("GBP_DEMO_CAPACITY_EVICT_ON_WRITE")) != nullptr) c.capacity_evict_on_write = env_truthy(v);
     if ((v = std::getenv("GBP_DEMO_LEGACY_BATCH_PENDING")) != nullptr) c.legacy_batch_pending = !env_falsy(v);
     if ((v = std::getenv("GBP_DEMO_CKPT_WAIT_EVICT")) != nullptr) c.ckpt_wait_evict = env_truthy(v);
     if ((v = std::getenv("GBP_DEMO_CKPT_PARITY_CHECK")) != nullptr) c.ckpt_parity_check = env_truthy(v);
@@ -266,6 +270,7 @@ void apply_cli(const CliOverrides& cli, ServerOptions& opt) {
     if (cli.log_cmp_lsn_set) opt.config.log_cmp_lsn_only = cli.log_cmp_lsn;
     if (cli.smb_version_set) opt.config.smb_version = cli.smb_version;
     if (cli.max_cache_pages_set) opt.config.max_cache_pages = cli.max_cache_pages;
+    if (cli.capacity_evict_on_write_set) opt.config.capacity_evict_on_write = cli.capacity_evict_on_write;
 }
 
 }  // namespace

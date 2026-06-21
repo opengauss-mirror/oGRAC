@@ -2,6 +2,7 @@
 
 #include "gbp_config.h"
 #include "gbp_log.h"
+#include "gbp_std_compat.h"
 #include "gbp_wire.h"
 
 #include <array>
@@ -457,7 +458,7 @@ public:
 
     int total_page_count() const { return total_pages_.load(std::memory_order_relaxed); }
     int pending_total() const { return pending_total_.load(std::memory_order_relaxed); }
-    void note_page_installed(bool replaced);
+    bool try_note_page_installed(bool replaced);
     void note_page_removed();
     void note_pending_delta(int delta);
     BatchReadDiag& read_diag() { return read_diag_; }
@@ -497,7 +498,7 @@ gbp_page_item_t wire_item_for_response(const PageRecord& rec, uint64_t pid_key);
 
 void refresh_shard_snap(GbpShard& shard);
 PageMeta build_page_meta(uint64_t pid_key, const PageRecord& rec);
-void install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
+bool install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
                   bool legacy_pending);
 void remove_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, bool record_hole,
                  const char* reason, bool log_hole);

@@ -267,7 +267,7 @@ func_pkg_run_basic()
     func_version_run_pkg
 
     cd ${OGRACDB_BIN}
-    cp ogsql ogracd ogencrypt ogbackup ogbox ogrst dbstor cms gbps gbps_ctl ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
+    cp ogsql ogracd ogencrypt ogbackup ogbox ogrst dbstor cms gbps gbps_ctl gbps_contrl.sh ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cp -d ${ZSTD_LIB_PATH}/../bin/zstd ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cd ${OGRACDB_HOME}
     cp ${OGRACDB_INSTALL}/installdb.sh  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/

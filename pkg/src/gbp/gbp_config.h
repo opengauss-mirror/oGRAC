@@ -18,6 +18,7 @@ struct Config {
     bool ckpt_wait_evict = false;
     bool ckpt_parity_check = false;
     int max_cache_pages = 0;
+    bool capacity_evict_on_write = false;
     int ckpt_wait_ms = 5000;
     int rcy_diag_lag = 0;
     int evict_sample_log = 20;
@@ -70,6 +71,8 @@ struct CliOverrides {
     bool smb_version = true;
     bool max_cache_pages_set = false;
     int max_cache_pages = 0;
+    bool capacity_evict_on_write_set = false;
+    bool capacity_evict_on_write = false;
     bool admin_query_set = false;
     std::string admin_query;
 };

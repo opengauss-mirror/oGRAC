@@ -265,6 +265,8 @@ class OgracDeploy:
 
         self._clear_security_limits()
         self._clear_residual_files()
+        if not self._stop_gbps_for_uninstall():
+            return 1
 
         for module in UNINSTALL_ORDER:
             LOG.info("Uninstalling %s", module)
@@ -831,6 +833,153 @@ echo "Product Version : {version}"
         self._kill_user_processes(f"sh {daemon_script} start")
         if os.path.exists(daemon_script):
             exec_popen(f"sh {daemon_script} stop")
+
+    def _expand_gbps_conf_value(self, value, server_home, data_path):
+        expanded = value.strip().strip('"').strip("'")
+        replacements = {
+            "$OGDB_HOME": server_home,
+            "${OGDB_HOME}": server_home,
+            "$OGDB_DATA": data_path,
+            "${OGDB_DATA}": data_path,
+        }
+        for token, replacement in replacements.items():
+            expanded = expanded.replace(token, replacement)
+        return expanded
+
+    def _collect_gbps_pid_files(self, server_home, cms_service_home, data_path):
+        pid_files = {
+            os.path.join(server_home, "run", "gbps.pid"),
+            os.path.join(cms_service_home, "run", "gbps.pid"),
+            os.path.join(data_path, "run", "gbps.pid"),
+        }
+        conf_files = [
+            os.path.join(data_path, "cfg", "gbps.conf"),
+            os.path.join(server_home, "cfg", "gbps.conf"),
+            os.path.join(cms_service_home, "cfg", "gbps.conf"),
+        ]
+        for conf_file in conf_files:
+            if not os.path.isfile(conf_file):
+                continue
+            try:
+                with open(conf_file, "r", encoding="utf-8") as fp:
+                    for line in fp:
+                        stripped = line.strip()
+                        if not stripped or stripped.startswith("#") or "=" not in stripped:
+                            continue
+                        key, _, value = stripped.partition("=")
+                        if key.strip().upper() == "PID_FILE":
+                            pid_files.add(self._expand_gbps_conf_value(value, server_home, data_path))
+                            break
+            except OSError as err:
+                LOG.warning("Failed to read GBPS config %s: %s", conf_file, err)
+        return sorted(pid for pid in pid_files if pid)
+
+    def _kill_gbps_pid_files(self, pid_files):
+        for pid_file in pid_files:
+            if not os.path.isfile(pid_file):
+                continue
+            try:
+                with open(pid_file, "r", encoding="utf-8") as fp:
+                    pid = fp.read().strip()
+            except OSError as err:
+                LOG.warning("Failed to read GBPS pid file %s: %s", pid_file, err)
+                continue
+            if pid.isdigit():
+                LOG.info("Force killing GBPS pid %s from %s", pid, pid_file)
+                exec_popen(f"kill -9 {pid} >/dev/null 2>&1 || true", timeout=10)
+            self._remove_gbps_pid_file(pid_file)
+
+    def _remove_gbps_pid_file(self, pid_file):
+        if os.path.isfile(pid_file) or os.path.islink(pid_file):
+            safe_remove(pid_file)
+
+    def _list_gbps_pids(self, server_home, cms_service_home, data_path):
+        ret, stdout, stderr = exec_popen("ps -eo pid=,user=,comm=,args=", timeout=10)
+        if ret != 0:
+            LOG.warning("Failed to list GBPS process: %s%s", stdout, stderr)
+            return []
+
+        pids = []
+        instance_markers = (server_home, cms_service_home, data_path)
+        for line in stdout.splitlines():
+            parts = line.strip().split(None, 3)
+            if len(parts) < 3:
+                continue
+            pid, user, comm = parts[:3]
+            args = parts[3] if len(parts) > 3 else ""
+            if not pid.isdigit() or comm != "gbps":
+                continue
+            if any(marker and marker in args for marker in instance_markers):
+                pids.append(pid)
+        return pids
+
+    def _kill_gbps_processes(self, server_home, cms_service_home, data_path):
+        pids = self._list_gbps_pids(server_home, cms_service_home, data_path)
+        if not pids:
+            return
+        LOG.info("Force killing GBPS processes: %s", " ".join(pids))
+        exec_popen(f"kill -9 {' '.join(pids)} >/dev/null 2>&1 || true", timeout=10)
+
+    def _stop_gbps_for_uninstall(self):
+        """Force GBPS down before appctl uninstall removes packages."""
+        server_home = os.path.join(self.paths.ograc_app_home, "server")
+        cms_service_home = os.path.join(self.paths.cms_home, "service")
+        data_path = os.path.dirname(os.path.dirname(self.paths.ogracd_ini))
+        bin_paths = [
+            os.path.join(server_home, "bin"),
+            os.path.join(cms_service_home, "bin"),
+        ]
+        lib_paths = [
+            os.path.join(server_home, "lib"),
+            os.path.join(server_home, "add-ons"),
+            os.path.join(cms_service_home, "lib"),
+            os.path.join(cms_service_home, "add-ons"),
+        ]
+        env_prefix = (
+            f"export OGDB_HOME={shlex.quote(server_home)}; "
+            f"export OGDB_DATA={shlex.quote(data_path)}; "
+            f"export PATH={shlex.quote(':'.join(bin_paths))}:$PATH; "
+            f"export LD_LIBRARY_PATH={shlex.quote(':'.join(lib_paths))}:$LD_LIBRARY_PATH; "
+        )
+        candidates = [
+            (os.path.join(server_home, "bin", "gbps_ctl"), "stop_force"),
+            (os.path.join(cms_service_home, "bin", "gbps_ctl"), "stop_force"),
+            (os.path.join(server_home, "bin", "gbps_contrl.sh"), f"-stop_force {shlex.quote(str(self.node_id))}"),
+            (os.path.join(cms_service_home, "bin", "gbps_contrl.sh"), f"-stop_force {shlex.quote(str(self.node_id))}"),
+        ]
+
+        found_control = False
+        for path, args in candidates:
+            if not os.path.isfile(path):
+                continue
+            found_control = True
+            LOG.info("Stopping GBPS before appctl uninstall: %s", path)
+            cmd = f"{env_prefix}sh {shlex.quote(path)} {args}"
+            ret, stdout, stderr = exec_popen(cmd, timeout=60)
+            if ret == 0:
+                LOG.info("Stop GBPS before appctl uninstall success: %s", stdout)
+                break
+            LOG.warning("Stop GBPS before appctl uninstall failed: %s%s", stdout, stderr)
+
+        if not found_control:
+            LOG.info("Skip GBPS stop before appctl uninstall: control script not found")
+
+        pid_files = self._collect_gbps_pid_files(server_home, cms_service_home, data_path)
+        self._kill_gbps_pid_files(pid_files)
+        self._kill_gbps_processes(server_home, cms_service_home, data_path)
+
+        for _ in range(10):
+            alive_pids = self._list_gbps_pids(server_home, cms_service_home, data_path)
+            if not alive_pids:
+                for pid_file in pid_files:
+                    self._remove_gbps_pid_file(pid_file)
+                LOG.info("GBPS is force cleaned before appctl uninstall")
+                return True
+            time.sleep(0.5)
+            self._kill_gbps_processes(server_home, cms_service_home, data_path)
+
+        LOG.error("Failed to force clean GBPS before appctl uninstall, alive pids: %s", " ".join(alive_pids))
+        return False
 
     def _kill_user_processes(self, pattern, user=None):
         target_user = user or self.ograc_user

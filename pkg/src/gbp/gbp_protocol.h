@@ -20,6 +20,7 @@ struct ConnMeta {
 struct PageWriteResult {
     int accepted = 0;
     int rejected = 0;
+    int capacity_rejected = 0;
     int pages_off = -1;
     int64_t lock_wait_us = 0;
     int64_t lock_hold_us = 0;

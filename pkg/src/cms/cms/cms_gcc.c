@@ -24,6 +24,7 @@
  */
 #include "cms_log_module.h"
 #include "cms_defs.h"
+#include "cms_interface.h"
 #include "cms_instance.h"
 #include "cms_gcc.h"
 #include "cm_disk.h"
@@ -1226,21 +1227,38 @@ static inline status_t cms_gcc_set_res(cms_res_t* res, uint32 res_id, const char
     return OG_SUCCESS;
 }
 
-static inline status_t cms_find_unused_res_id(const cms_gcc_t *gcc, uint32 *res_id)
+static inline status_t cms_find_unused_res_id_in_range(const cms_gcc_t *gcc, uint32 start, uint32 end, uint32 *res_id)
 {
-    uint32 id;
-    for (id = 0; id < CMS_MAX_RESOURCE_COUNT; id++) {
+    for (uint32 id = start; id < end; id++) {
         if (gcc->res[id].magic != CMS_GCC_RES_MAGIC) {
-            break;
+            *res_id = id;
+            return OG_SUCCESS;
         }
     }
-    if (id == CMS_MAX_RESOURCE_COUNT) {
-        OG_THROW_ERROR(ERR_CMS_NUM_EXCEED, "resource", (uint32)CMS_MAX_RESOURCE_COUNT);
-        return OG_ERROR;
+
+    return OG_ERROR;
+}
+
+static inline status_t cms_find_unused_res_id(const cms_gcc_t *gcc, uint32 *res_id)
+{
+    if (cms_find_unused_res_id_in_range(gcc, 0, CMS_MANAGED_RESOURCE_COUNT, res_id) == OG_SUCCESS) {
+        return OG_SUCCESS;
     }
 
-    *res_id = id;
-    return OG_SUCCESS;
+    OG_THROW_ERROR(ERR_CMS_NUM_EXCEED, "resource", (uint32)CMS_MANAGED_RESOURCE_COUNT);
+    return OG_ERROR;
+}
+
+static inline status_t cms_find_unused_gbps_res_id(const cms_gcc_t *gcc, uint32 *res_id)
+{
+    if (cms_find_unused_res_id_in_range(gcc, CMS_CORE_RES_STAT_LOCK_COUNT,
+        CMS_MANAGED_RESOURCE_COUNT, res_id) == OG_SUCCESS) {
+        return OG_SUCCESS;
+    }
+
+    OG_THROW_ERROR(ERR_CMS_NUM_EXCEED, "gbps resource",
+        (uint32)(CMS_MANAGED_RESOURCE_COUNT - CMS_CORE_RES_STAT_LOCK_COUNT));
+    return OG_ERROR;
 }
 
 static inline status_t cms_check_res_and_resgrp(cms_gcc_t *gcc, const char* grp, const char* res_name,
@@ -1284,13 +1302,45 @@ static inline status_t cms_check_res_and_resgrp(cms_gcc_t *gcc, const char* grp,
     return OG_SUCCESS;
 }
 
+static bool32 cms_gcc_is_gbps_res(const char *name, const char *type)
+{
+    return ((name != NULL && cm_strcmpi(name, CMS_RES_TYPE_GBPS) == 0) ||
+        (type != NULL && cm_strcmpi(type, CMS_RES_TYPE_GBPS) == 0));
+}
+
+static status_t cms_move_gbps_res_to_optional_slot(cms_gcc_t *gcc, uint32 *res_id, bool32 *changed)
+{
+    errno_t ret;
+    uint32 new_res_id;
+
+    if (*res_id >= CMS_CORE_RES_STAT_LOCK_COUNT) {
+        return OG_SUCCESS;
+    }
+
+    if (cms_find_unused_gbps_res_id(gcc, &new_res_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    gcc->res[new_res_id] = gcc->res[*res_id];
+    gcc->res[new_res_id].res_id = new_res_id;
+    ret = memset_sp(&gcc->res[*res_id], sizeof(cms_res_t), 0, sizeof(cms_res_t));
+    MEMS_RETURN_IFERR(ret);
+
+    CMS_LOG_INF("move gbps resource id from %u to %u.", *res_id, new_res_id);
+    *res_id = new_res_id;
+    *changed = OG_TRUE;
+    return OG_SUCCESS;
+}
+
 status_t cms_add_res(const char* name, const char* res_type, const char* grp, const char* attrs)
 {
     OG_RETURN_IFERR(cms_load_gcc());
     uint32 res_id;
     uint32 resgrp_id;
     cms_gcc_t* new_gcc;
+    const cms_res_t *old_res = NULL;
     errno_t ret;
+    bool32 gcc_changed = OG_FALSE;
 
     new_gcc = (cms_gcc_t *)cm_malloc_align(CMS_BLOCK_SIZE, sizeof(cms_gcc_t));
     if (new_gcc == NULL) {
@@ -1307,13 +1357,47 @@ status_t cms_add_res(const char* name, const char* res_type, const char* grp, co
         return OG_ERROR;
     }
 
+    old_res = cms_find_res(new_gcc, name);
+    if (old_res != NULL && cms_gcc_is_gbps_res(name, res_type) &&
+        cms_gcc_is_gbps_res(old_res->name, old_res->type)) {
+        res_id = old_res->res_id;
+        if (cms_move_gbps_res_to_optional_slot(new_gcc, &res_id, &gcc_changed) != OG_SUCCESS) {
+            CM_FREE_PTR(new_gcc);
+            return OG_ERROR;
+        }
+        if (strlen(attrs) != 0) {
+            if (cms_parse_res_attrs(attrs, &new_gcc->res[res_id]) != OG_SUCCESS) {
+                CM_FREE_PTR(new_gcc);
+                return OG_ERROR;
+            }
+            gcc_changed = OG_TRUE;
+        }
+        if (gcc_changed) {
+            new_gcc->head.magic = CMS_GCC_HEAD_MAGIC;
+            new_gcc->head.data_ver++;
+            if (cms_gcc_write_disk(new_gcc) != OG_SUCCESS) {
+                CM_FREE_PTR(new_gcc);
+                CMS_LOG_ERR("gcc write disk failed. name(%s), grp(%s)", name, grp);
+                return OG_ERROR;
+            }
+        }
+        CMS_LOG_INF("gbps resource already exists, refresh attrs and skip add.");
+        CM_FREE_PTR(new_gcc);
+        return OG_SUCCESS;
+    }
+
     if (cms_check_res_and_resgrp(new_gcc, grp, name, res_type, &resgrp_id) != OG_SUCCESS) {
         CM_FREE_PTR(new_gcc);
         CMS_LOG_ERR("check res and resgrp failed.");
         return OG_ERROR;
     }
 
-    if (cms_find_unused_res_id(new_gcc, &res_id) != OG_SUCCESS) {
+    if (cms_gcc_is_gbps_res(name, res_type)) {
+        ret = cms_find_unused_gbps_res_id(new_gcc, &res_id);
+    } else {
+        ret = cms_find_unused_res_id(new_gcc, &res_id);
+    }
+    if (ret != OG_SUCCESS) {
         CM_FREE_PTR(new_gcc);
         CMS_LOG_ERR("find unused res_id failed.");
         return OG_ERROR;

@@ -13,7 +13,7 @@
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
               << " [--config FILE] [--host HOST] [--port PORT] [--verbose]\n"
-              << "       [--log-cmp-lsn] [--no-smb-version] [--max-cache-pages N]\n"
+              << "       [--log-cmp-lsn] [--no-smb-version] [--max-cache-pages N] [--capacity-evict-on-write]\n"
               << "       [--admin-host HOST] [--admin-port PORT] [--log-file FILE] [--pid-file FILE]\n"
               << "       [--admin-query COMMAND]\n";
 }
@@ -47,6 +47,9 @@ int main(int argc, char** argv) {
             } else if (arg == "--max-cache-pages" && i + 1 < argc) {
                 cli.max_cache_pages = std::stoi(argv[++i]);
                 cli.max_cache_pages_set = true;
+            } else if (arg == "--capacity-evict-on-write") {
+                cli.capacity_evict_on_write = true;
+                cli.capacity_evict_on_write_set = true;
             } else if (arg == "--admin-host" && i + 1 < argc) {
                 cli.admin_host = argv[++i];
                 cli.admin_host_set = true;

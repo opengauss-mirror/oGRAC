@@ -603,7 +603,7 @@ PageMeta build_page_meta(uint64_t pid_key, const PageRecord& rec) {
     return m;
 }
 
-void install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
+bool install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
                   bool legacy_pending) {
     rec.install_gen = g_next_install_gen.fetch_add(1, std::memory_order_relaxed);
     auto old_it = shard.page_meta.find(pid_key);
@@ -619,7 +619,7 @@ void install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, Page
         shard.trunc_index_.remove(pid_key, old_it->second.trunc_lfn);
         shard.writer_index_.remove(pid_key, old_it->second.writer_seq);
     } else {
-        state.note_page_installed(false);
+        if (!state.try_note_page_installed(false)) return false;
     }
     shard.page_cache[pid_key] = std::move(rec);
     shard.page_meta[pid_key] = meta;
@@ -635,6 +635,7 @@ void install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, Page
         if (!shard.batch_pending.contains(pid_key)) state.note_pending_delta(1);
         shard.batch_pending.enqueue(pid_key);
     }
+    return true;
 }
 
 void GbpServerState::remember_evicted_hole(const log_point_t& lrp, bool log_hole) {
@@ -955,8 +956,20 @@ void GbpServerState::clear_all(int& cache_pages, int& pending_pages, int& reset_
     }
 }
 
-void GbpServerState::note_page_installed(bool replaced) {
-    if (!replaced) total_pages_.fetch_add(1, std::memory_order_relaxed);
+bool GbpServerState::try_note_page_installed(bool replaced) {
+    if (replaced) return true;
+    if (cfg_.max_cache_pages <= 0 || cfg_.capacity_evict_on_write) {
+        total_pages_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    int current = total_pages_.load(std::memory_order_relaxed);
+    while (true) {
+        if (current >= cfg_.max_cache_pages) return false;
+        if (total_pages_.compare_exchange_weak(current, current + 1, std::memory_order_relaxed,
+                                               std::memory_order_relaxed)) {
+            return true;
+        }
+    }
 }
 
 void GbpServerState::note_page_removed() {
@@ -1131,13 +1144,14 @@ void evict_worker_loop(GbpServerState* state) {
 }
 
 void GbpServerState::maybe_start_capacity_evict() {
+    if (!cfg_.capacity_evict_on_write) return;
     if (read_end_detaching_.load(std::memory_order_acquire)) return;
     if (cfg_.max_cache_pages <= 0) return;
     const int total = total_page_count();
     const int high_water = static_cast<int>(cfg_.max_cache_pages * cfg_.cache_high_water);
     if (total < high_water) return;
-    const int target = static_cast<int>(cfg_.max_cache_pages * cfg_.cache_evict_ratio);
-    if (target <= 0) return;
+    if (cfg_.cache_evict_ratio <= 0.0) return;
+    const int target = std::max(1, static_cast<int>(cfg_.max_cache_pages * cfg_.cache_evict_ratio));
     std::lock_guard<std::mutex> g(evict_state.mtx);
     if (evict_state.job_running) return;
     if (read_end_detaching_.load(std::memory_order_acquire)) return;

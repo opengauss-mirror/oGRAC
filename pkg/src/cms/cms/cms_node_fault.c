@@ -85,26 +85,26 @@ status_t cms_node_all_res_offline(uint32 node_id, bool32 *stat_changed)
         CMS_SYNC_POINT_GLOBAL_START(CMS_RES_OTHER_TO_OFFLINE_ABORT, NULL, 0);
         CMS_SYNC_POINT_GLOBAL_END;
         cm_thread_lock(&g_node_lock[node_id]);
-        if (cms_disk_lock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_WRITE) !=
-            OG_SUCCESS) {
+        cms_disk_lock_t *res_stat_lock = cms_get_res_stat_lock(node_id, res_id);
+        if (cms_disk_lock(res_stat_lock, DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_WRITE) != OG_SUCCESS) {
             CMS_LOG_ERR("cms_disk_lock timeout.");
             cm_thread_unlock(&g_node_lock[node_id]);
             return OG_ERROR;
         }
         if (cms_stat_read_from_disk(node_id, res_id, &stat) != OG_SUCCESS) {
-            cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_WRITE);
+            cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
             CMS_LOG_ERR("cms_stat_read_from_disk failed.");
             cm_thread_unlock(&g_node_lock[node_id]);
             return OG_ERROR;
         }
         cms_stat_set(stat, CMS_RES_OFFLINE, &is_changed);
         if (cms_stat_write_to_disk(node_id, res_id, stat) != OG_SUCCESS) {
-            cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_WRITE);
+            cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
             CMS_LOG_ERR("cms_stat_write_to_disk failed.");
             cm_thread_unlock(&g_node_lock[node_id]);
             return OG_ERROR;
         }
-        cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_WRITE);
+        cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
         *stat_changed |= is_changed;
         cm_thread_unlock(&g_node_lock[node_id]);
     }

@@ -9227,6 +9227,7 @@ static status_t dtc_rcy_partial_recovery(knl_session_t *session)
                    (uint32)KNL_GBP_FOR_RECOVERY(session->kernel));
     if (dtc_rcy_gbp_prepare(session) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DTC RCY][GBP][partial] gbp prepare failed before partial replay");
+        gbp_knl_abort_dtc_read(session);
         return OG_ERROR;
     }
 
@@ -9244,12 +9245,14 @@ static status_t dtc_rcy_partial_recovery(knl_session_t *session)
         if (dtc_rcy_replay_batches_paral(session) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DTC RCY] failed to do redo log batch replay in parallel");
             RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FAILED);
+            gbp_knl_abort_dtc_read(session);
             return OG_ERROR;
         }
     } else {
         if (dtc_rcy_process_batches(session) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DTC RCY] failed to do redo log batch replay");
             RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FAILED);
+            gbp_knl_abort_dtc_read(session);
             return OG_ERROR;
         }
     }

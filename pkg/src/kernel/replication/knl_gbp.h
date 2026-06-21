@@ -426,6 +426,7 @@ status_t gbp_wait_redo_visible(knl_session_t *session, thread_t *thread, uint64 
 status_t gbp_knl_begin_dtc_read(knl_session_t *session);
 void gbp_knl_end_read(knl_session_t *session);
 void gbp_knl_finish_dtc_read(knl_session_t *session);
+void gbp_knl_abort_dtc_read(knl_session_t *session);
 
  status_t gbp_knl_query_gbp_point_by_node(knl_session_t *session, uint32 node_id, gbp_read_ckpt_resp_t *response,
                                           bool32 check_end_point);

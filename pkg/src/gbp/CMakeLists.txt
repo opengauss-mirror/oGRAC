@@ -17,10 +17,13 @@ if(DEFINED OGRACDB_BIN)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/gbps_ctl
                 ${OGRACDB_BIN}/gbps_ctl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/gbps_contrl.sh
+                ${OGRACDB_BIN}/gbps_contrl.sh
     )
     if(UNIX)
         add_custom_command(TARGET gbps POST_BUILD
-            COMMAND chmod 500 ${OGRACDB_BIN}/gbps_ctl
+            COMMAND chmod 500 ${OGRACDB_BIN}/gbps_ctl ${OGRACDB_BIN}/gbps_contrl.sh
         )
     endif()
 endif()
@@ -34,5 +37,5 @@ if(WIN32)
 endif()
 
 install(TARGETS gbps RUNTIME DESTINATION bin)
-install(PROGRAMS gbps_ctl DESTINATION bin)
+install(PROGRAMS gbps_ctl gbps_contrl.sh DESTINATION bin)
 install(FILES ${GBPS_CFG_SOURCE} DESTINATION cfg)

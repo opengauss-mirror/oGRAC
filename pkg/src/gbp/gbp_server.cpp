@@ -27,20 +27,39 @@ static double now_seconds() {
     return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
 }
 
-static void read_phase_enter(ReadPhase& rp, const std::string& peer, const std::string& reason) {
-    bool was_active = false;
+ReadPhaseSnapshot get_read_phase_snapshot(ReadPhase& rp) {
+    ReadPhaseSnapshot snap;
+    const double now = now_seconds();
+    std::lock_guard<std::mutex> g(rp.mtx);
+    snap.active = rp.active;
+    snap.ending = rp.ending;
+    snap.elapsed_s = rp.active ? now - rp.started_at : 0.0;
+    snap.dropped_page_writes = rp.dropped_page_writes;
+    snap.timeout_warned = rp.timeout_warned;
+    return snap;
+}
+
+static bool read_phase_enter(ReadPhase& rp, ReadPhaseSnapshot& snap) {
+    bool entered = false;
+    const double now = now_seconds();
     {
         std::lock_guard<std::mutex> g(rp.mtx);
-        was_active = rp.active;
-        if (!was_active) {
+        if (!rp.active) {
             rp.active = true;
-            rp.started_at = now_seconds();
+            rp.started_at = now;
             rp.dropped_page_writes = 0;
             rp.timeout_warned = false;
+            rp.ending = false;
+            entered = true;
         }
+        snap.active = rp.active;
+        snap.ending = rp.ending;
+        snap.elapsed_s = rp.active ? now - rp.started_at : 0.0;
+        snap.dropped_page_writes = rp.dropped_page_writes;
+        snap.timeout_warned = rp.timeout_warned;
         rp.cv.notify_all();
     }
-    if (!was_active) gbp_run_log("READ_PHASE enter peer=" + peer + " reason=" + reason);
+    return entered;
 }
 
 static bool read_phase_drop_page_write(ReadPhase& rp, const std::string& peer, uint32_t qid, uint32_t page_num) {
@@ -60,8 +79,8 @@ static bool read_phase_drop_page_write(ReadPhase& rp, const std::string& peer, u
     return true;
 }
 
-static void end_read_phase_sync(GbpServerState& state, ReadPhase& rp, const std::string& peer, const char* reason,
-                                bool timing_diag) {
+static void clear_read_phase_state_sync(GbpServerState& state, const std::string& peer, const char* reason,
+                                        bool timing_diag) {
     state.read_diag().log_summary(peer, reason, timing_diag);
     state.selected_read_diag().log_summary(peer, reason, timing_diag);
     state.read_diag().reset();
@@ -74,79 +93,121 @@ static void end_read_phase_sync(GbpServerState& state, ReadPhase& rp, const std:
                 std::to_string(cache_pages) + " pending=" + std::to_string(pending_pages) +
                 " resets=" + std::to_string(reset_count) + " frontiers=" + std::to_string(frontier_count) +
                 " mode=sync");
-    std::lock_guard<std::mutex> g(rp.mtx);
-    rp.active = false;
-    rp.started_at = 0;
-    rp.cv.notify_all();
 }
 
-static int end_read_phase_async(GbpServerState& state, ReadPhase& rp, const std::string& peer, const char* reason,
-                                 bool timing_diag) {
+static int clear_read_phase_state_async(GbpServerState& state, const std::string& peer, const char* reason,
+                                        bool timing_diag) {
     state.read_diag().log_summary(peer, reason, timing_diag);
     state.selected_read_diag().log_summary(peer, reason, timing_diag);
     state.read_diag().reset();
     state.selected_read_diag().reset();
     RetiredReadPhaseState retired = state.detach_read_phase_generation();
     const int detached_pages = retired.detached_pages;
-    {
-        std::lock_guard<std::mutex> g(rp.mtx);
-        rp.active = false;
-        rp.started_at = 0;
-        rp.cv.notify_all();
-    }
     state.schedule_retired_destruction(std::move(retired));
     return detached_pages;
 }
 
-static void read_phase_maybe_timeout(ReadPhase& rp, GbpServerState& state, const Config& cfg,
-                                     const std::string& peer) {
-    if (cfg.read_phase_timeout <= 0) return;
-    bool expired = false;
+ReadPhaseEndResult force_read_phase_end(GbpServerState& state, ReadPhase& rp, const Config& cfg,
+                                        const std::string& peer, const char* reason) {
+    ReadPhaseEndResult result;
+    const double now = now_seconds();
     {
         std::lock_guard<std::mutex> g(rp.mtx);
-        if (rp.active && !rp.timeout_warned) {
-            const double elapsed = now_seconds() - rp.started_at;
-            if (elapsed >= cfg.read_phase_timeout) {
-                rp.timeout_warned = true;
-                expired = true;
-            }
+        result.active_before = rp.active;
+        result.ending_before = rp.ending;
+        result.elapsed_s = rp.active ? now - rp.started_at : 0.0;
+        result.dropped_page_writes = rp.dropped_page_writes;
+        if (!rp.active || rp.ending) {
+            return result;
         }
+        rp.ending = true;
     }
-    if (!expired) return;
-    gbp_run_log("READ_PHASE_TIMEOUT warning peer=" + peer + " cache_pages=" +
-                std::to_string(state.total_page_count()) + " pending=" + std::to_string(state.pending_total()) +
-                " active_preserved=1");
+
+    if (cfg.read_end_mode == ReadEndMode::Sync) {
+        clear_read_phase_state_sync(state, peer, reason, cfg.timing_diag);
+    } else {
+        result.detached_pages = clear_read_phase_state_async(state, peer, reason, cfg.timing_diag);
+    }
+
+    {
+        std::lock_guard<std::mutex> g(rp.mtx);
+        rp.active = false;
+        rp.started_at = 0;
+        rp.dropped_page_writes = 0;
+        rp.timeout_warned = false;
+        rp.ending = false;
+        rp.cv.notify_all();
+    }
+    result.cleared = true;
+    return result;
+}
+
+static bool read_phase_expired(ReadPhase& rp, const Config& cfg, ReadPhaseSnapshot& snap) {
+    if (cfg.read_phase_timeout <= 0) return false;
+    snap = get_read_phase_snapshot(rp);
+    return snap.active && !snap.ending && snap.elapsed_s >= cfg.read_phase_timeout;
+}
+
+static bool release_read_phase_if_timeout(GbpServerState& state, ReadPhase& rp, const Config& cfg,
+                                          const std::string& peer) {
+    ReadPhaseSnapshot snap;
+    if (!read_phase_expired(rp, cfg, snap)) return false;
+    gbp_run_log("READ_PHASE_TIMEOUT force_release peer=" + peer +
+                " timeout_s=" + std::to_string(cfg.read_phase_timeout) +
+                " elapsed_ms=" + std::to_string(static_cast<int>(snap.elapsed_s * 1000)) +
+                " dropped=" + std::to_string(snap.dropped_page_writes) +
+                " cache_pages=" + std::to_string(state.total_page_count()) +
+                " pending=" + std::to_string(state.pending_total()) + " active_preserved=0");
+    const ReadPhaseEndResult ended = force_read_phase_end(state, rp, cfg, peer, "READ_PHASE_TIMEOUT");
+    return ended.cleared;
+}
+
+static void read_phase_timeout_watchdog(GbpServerState& state, ReadPhase& rp, Config cfg) {
+    while (true) {
+        if (cfg.read_phase_timeout > 0) {
+            release_read_phase_if_timeout(state, rp, cfg, "watchdog");
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
 }
 
 static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr_t& hdr, const uint8_t* body,
                          size_t body_len, uint32_t conn_qid, GbpServerState& state, ReadPhase& read_phase,
                          ConnMeta& conn_meta, const Config& cfg, int64_t recv_hdr_us, int64_t recv_body_us) {
-    read_phase_maybe_timeout(read_phase, state, cfg, peer);
     if (hdr.msg_type == GBP_REQ_NOTIFY_MSG) {
         uint32_t notify = MSG_GBP_INVALID;
         if (body_len >= 4) std::memcpy(&notify, body, 4);
         if (notify == MSG_GBP_READ_BEGIN) {
-            state.read_diag().reset();
-            state.selected_read_diag().reset();
-            state.reset_batch_pending_epoch();
-            read_phase_enter(read_phase, peer, "READ_BEGIN");
+            ReadPhaseSnapshot snap;
+            const bool entered = read_phase_enter(read_phase, snap);
+            if (entered) {
+                state.read_diag().reset();
+                state.selected_read_diag().reset();
+                state.reset_batch_pending_epoch();
+            }
             send_ack(fd, hdr, ACK_GBP_READ_BEGIN);
-            gbp_run_log("READ_PHASE enter peer=" + peer + " qid=" + std::to_string(conn_qid) +
-                        " (lazy_batch_pending, direct_selected_reads_page_cache)");
-        } else if (notify == MSG_GBP_READ_END) {
-            int detached_pages = 0;
-            if (cfg.read_end_mode == ReadEndMode::Sync) {
-                end_read_phase_sync(state, read_phase, peer, "READ_END", cfg.timing_diag);
+            if (entered) {
+                gbp_run_log("READ_PHASE enter peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                            " reason=READ_BEGIN (lazy_batch_pending, direct_selected_reads_page_cache)");
             } else {
-                detached_pages = end_read_phase_async(state, read_phase, peer, "READ_END", cfg.timing_diag);
+                gbp_run_log("READ_BEGIN idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                            " elapsed_ms=" + std::to_string(static_cast<int>(snap.elapsed_s * 1000)) +
+                            " dropped=" + std::to_string(snap.dropped_page_writes));
             }
+        } else if (notify == MSG_GBP_READ_END) {
+            const ReadPhaseEndResult ended = force_read_phase_end(state, read_phase, cfg, peer, "READ_END");
             send_ack(fd, hdr, ACK_GBP_INVALID);
-            if (cfg.read_end_mode == ReadEndMode::Async) {
+            if (!ended.cleared) {
+                gbp_run_log("READ_END idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                            (ended.ending_before ? " already_ending=1" : " inactive=1"));
+            } else if (cfg.read_end_mode == ReadEndMode::Async) {
                 gbp_run_log("READ_END ack_immediate peer=" + peer + " detached_pages=" +
-                            std::to_string(detached_pages) + " mode=async scheduled_background=1");
+                            std::to_string(ended.detached_pages) + " mode=async scheduled_background=1");
             }
-            gbp_run_log("READ_PHASE leave peer=" + peer + " qid=" + std::to_string(conn_qid) +
-                        (cfg.read_end_mode == ReadEndMode::Sync ? " (state cleared)" : " (ack_sent)"));
+            if (ended.cleared) {
+                gbp_run_log("READ_PHASE leave peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                            (cfg.read_end_mode == ReadEndMode::Sync ? " (state cleared)" : " (ack_sent)"));
+            }
         } else {
             send_ack(fd, hdr, ACK_GBP_INVALID);
         }
@@ -155,6 +216,7 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
     if (hdr.msg_type == GBP_REQ_PAGE_WRITE) {
         uint32_t page_num = 0;
         if (body_len >= 4) std::memcpy(&page_num, body, 4);
+        release_read_phase_if_timeout(state, read_phase, cfg, peer);
         if (read_phase_drop_page_write(read_phase, peer, conn_qid, page_num)) {
             throw QuietDisconnect("PAGE_WRITE ignored during READ_PHASE");
         }
@@ -170,12 +232,14 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
         const bool slow_recv =
             cfg.page_write_timing_us > 0 &&
             (recv_body_us >= cfg.page_write_timing_us || apply_us >= cfg.page_write_timing_us);
-        if (cfg.verbose || reset_write || wr.pages_off < 0 || slow_apply || slow_recv) {
+        if (cfg.verbose || reset_write || wr.pages_off < 0 || wr.capacity_rejected > 0 || slow_apply || slow_recv) {
             gbp_run_log("PAGE_WRITE summary peer=" + peer + " queue=" + std::to_string(hdr.queue_id) +
                         " bytes=" + std::to_string(hdr.msg_length) + " page_num=" + std::to_string(page_num) +
                         " reset=" + std::to_string(static_cast<int>(reset_write)) +
                         " accepted=" + std::to_string(wr.accepted) +
-                        " rejected_stale=" + std::to_string(wr.rejected) +
+                        " rejected_total=" + std::to_string(wr.rejected) +
+                        " rejected_stale=" + std::to_string(wr.rejected - wr.capacity_rejected) +
+                        " rejected_capacity=" + std::to_string(wr.capacity_rejected) +
                         " pages_off=" + std::to_string(wr.pages_off) +
                         " item_size=" + std::to_string(GBP_PAGE_ITEM_SIZE) +
                         " body_len=" + std::to_string(body_len) +
@@ -193,7 +257,6 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
         return;
     }
     if (hdr.msg_type == GBP_REQ_READ_CKPT) {
-        read_phase_enter(read_phase, peer, "READ_CKPT");
         send_read_ckpt_resp(fd, hdr, body, body_len, state, cfg.verbose, peer);
         return;
     }
@@ -306,8 +369,11 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
     GbpServerState state(cfg);
     ReadPhase read_phase;
     state.start_evict_worker();
+    if (cfg.read_phase_timeout > 0) {
+        std::thread(read_phase_timeout_watchdog, std::ref(state), std::ref(read_phase), cfg).detach();
+    }
     if (admin_port > 0) {
-        std::thread(admin_server_loop, admin_host, admin_port, std::ref(state)).detach();
+        std::thread(admin_server_loop, admin_host, admin_port, std::ref(state), std::ref(read_phase), cfg).detach();
     }
 
     socket_t srv = socket(AF_INET, SOCK_STREAM, 0);

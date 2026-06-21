@@ -405,7 +405,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MALICIOUS_LOGIN_COUNT (uint32)9
 #define OG_MALICIOUS_LOGIN_ALARM (uint32)15
 #define OG_MAX_MALICIOUS_IP_COUNT (uint32)64000
-#define OG_SYS_SESSIONS (uint32)32
+#define OG_SYS_SESSIONS (uint32)33
 #define OG_MAX_AUTON_SESSIONS (uint32)256
 #define OG_MAX_UNDO_SEGMENTS (uint32)1024
 #define OG_MAX_SESSIONS (uint32)19380

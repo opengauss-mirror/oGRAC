@@ -4,7 +4,7 @@ set -u
 
 usage()
 {
-    echo "Usage: $0 {start|stop|status|restart|stats|window|exists|dump|query} [-c gbps.conf] [arg]"
+    echo "Usage: $0 {start|stop|stop_force|status|restart|stats|window|read_phase|force_read_end|exists|dump|query} [-c gbps.conf] [arg]"
 }
 
 die()
@@ -13,10 +13,65 @@ die()
     exit 1
 }
 
+script_dir()
+{
+    CDPATH= cd "$(dirname "$0")" && pwd
+}
+
+derive_ogdb_home()
+{
+    if [ -n "${OGDB_HOME:-}" ]; then
+        printf '%s' "$OGDB_HOME"
+        return 0
+    fi
+
+    dir=$(script_dir)
+    if [ -n "$dir" ] && [ -d "$dir/.." ]; then
+        CDPATH= cd "$dir/.." && pwd
+    fi
+}
+
+derive_ograc_root()
+{
+    server_home=$1
+    if [ -n "$server_home" ] && [ -d "$server_home/../.." ]; then
+        CDPATH= cd "$server_home/../.." && pwd
+        return 0
+    fi
+
+    dir=$(script_dir)
+    if [ -n "$dir" ] && [ -d "$dir/../.." ]; then
+        CDPATH= cd "$dir/../.." && pwd
+        return 0
+    fi
+
+    printf '%s' "$server_home"
+}
+
+default_log_file()
+{
+    server_home=$1
+    ograc_root=$(derive_ograc_root "$server_home")
+    printf '%s/log/gbps/gbps.log' "$ograc_root"
+}
+
+is_old_default_log_file()
+{
+    value=$1
+    server_home=$2
+    [ "$value" = "${server_home}/log/gbps/gbps.rlog" ] && return 0
+    case "$value" in
+        '$OGDB_HOME/log/gbps/gbps.rlog'|'${OGDB_HOME}/log/gbps/gbps.rlog'|*/log/gbps/gbps.rlog)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 expand_value()
 {
     value=$1
-    home=${OGDB_HOME:-}
+    home=${OGDB_HOME:-$(derive_ogdb_home)}
     data=${OGDB_DATA:-}
     ogdb_home_var='$OGDB_HOME'
     ogdb_home_braced='${OGDB_HOME}'
@@ -33,20 +88,21 @@ expand_value()
 
 default_conf_path()
 {
+    home=${OGDB_HOME:-$(derive_ogdb_home)}
     if [ -n "${OGDB_DATA:-}" ] && [ -f "${OGDB_DATA}/cfg/gbps.conf" ]; then
         printf '%s' "${OGDB_DATA}/cfg/gbps.conf"
         return 0
     fi
-    if [ -n "${OGDB_HOME:-}" ] && [ -f "${OGDB_HOME}/cfg/gbps.conf" ]; then
-        printf '%s' "${OGDB_HOME}/cfg/gbps.conf"
+    if [ -n "$home" ] && [ -f "${home}/cfg/gbps.conf" ]; then
+        printf '%s' "${home}/cfg/gbps.conf"
         return 0
     fi
     if [ -n "${OGDB_DATA:-}" ]; then
         printf '%s' "${OGDB_DATA}/cfg/gbps.conf"
         return 0
     fi
-    if [ -n "${OGDB_HOME:-}" ]; then
-        printf '%s' "${OGDB_HOME}/cfg/gbps.conf"
+    if [ -n "$home" ]; then
+        printf '%s' "${home}/cfg/gbps.conf"
         return 0
     fi
     return 1
@@ -63,8 +119,9 @@ load_conf()
     PORT="2611"
     ADMIN_HOST="127.0.0.1"
     ADMIN_PORT="2711"
-    runtime_home="${OGDB_DATA:-${OGDB_HOME:-}}"
-    LOG_FILE="${runtime_home}/log/gbps/gbps.rlog"
+    runtime_home=${OGDB_HOME:-$(derive_ogdb_home)}
+    default_log=$(default_log_file "$runtime_home")
+    LOG_FILE="$default_log"
     PID_FILE="${runtime_home}/run/gbps.pid"
 
     while IFS= read -r line || [ -n "$line" ]; do
@@ -85,6 +142,10 @@ load_conf()
         esac
     done < "$CONF"
 
+    if is_old_default_log_file "$LOG_FILE" "$runtime_home"; then
+        LOG_FILE="$default_log"
+    fi
+
     [ -n "$PID_FILE" ] || die "PID_FILE is empty"
     [ -n "$LOG_FILE" ] || die "LOG_FILE is empty"
     [ -n "$ADMIN_HOST" ] || die "ADMIN_HOST is empty"
@@ -101,9 +162,9 @@ is_running()
 
 gbps_bin()
 {
-    script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
-    if [ -x "$script_dir/gbps" ]; then
-        printf '%s' "$script_dir/gbps"
+    dir=$(script_dir)
+    if [ -x "$dir/gbps" ]; then
+        printf '%s' "$dir/gbps"
     else
         command -v gbps 2>/dev/null || true
     fi
@@ -124,7 +185,7 @@ start_gbps()
     bin=$(gbps_bin)
     [ -n "$bin" ] || die "gbps binary not found"
     mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
-    nohup "$bin" --config "$CONF" >> "$LOG_FILE" 2>&1 &
+    GBPS_LOG_FILE="$LOG_FILE" nohup "$bin" --config "$CONF" >> "$LOG_FILE" 2>&1 &
     pid=$!
     echo "$pid" > "$PID_FILE"
     sleep 1
@@ -153,6 +214,35 @@ stop_gbps()
     done
     rm -f "$PID_FILE"
     echo "gbps stopped: pid=$pid"
+}
+
+stop_gbps_force()
+{
+    load_conf
+    if ! is_running; then
+        [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
+        echo "gbps is not running"
+        return 0
+    fi
+    pid=$(cat "$PID_FILE")
+    kill "$pid" 2>/dev/null || true
+    i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$((i + 1))
+        if [ "$i" -ge 5 ]; then
+            kill -9 "$pid" 2>/dev/null || true
+            break
+        fi
+        sleep 1
+    done
+    i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$((i + 1))
+        [ "$i" -ge 5 ] && die "gbps did not stop after force kill: pid=$pid"
+        sleep 1
+    done
+    rm -f "$PID_FILE"
+    echo "gbps force stopped: pid=$pid"
 }
 
 status_gbps()
@@ -216,6 +306,10 @@ case "$ACTION" in
         [ -z "$QUERY_ARG" ] || die "stop does not take an argument"
         stop_gbps
         ;;
+    stop_force)
+        [ -z "$QUERY_ARG" ] || die "stop_force does not take an argument"
+        stop_gbps_force
+        ;;
     status)
         [ -z "$QUERY_ARG" ] || die "status does not take an argument"
         status_gbps
@@ -232,6 +326,14 @@ case "$ACTION" in
     window)
         [ -z "$QUERY_ARG" ] || die "window does not take an argument"
         admin_query "WINDOW"
+        ;;
+    read_phase)
+        [ -z "$QUERY_ARG" ] || die "read_phase does not take an argument"
+        admin_query "READ_PHASE"
+        ;;
+    force_read_end)
+        [ -z "$QUERY_ARG" ] || die "force_read_end does not take an argument"
+        admin_query "FORCE_READ_END"
         ;;
     exists)
         [ -n "$QUERY_ARG" ] || die "exists requires <file>-<page>"

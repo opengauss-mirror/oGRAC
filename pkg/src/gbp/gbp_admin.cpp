@@ -189,6 +189,8 @@ static std::string admin_window(GbpServerState& state) {
     os << "WINDOW_BEGIN\n"
        << "cache_pages=" << ckpt.cache_pages << "\n"
        << "pending_pages=" << pending_pages << "\n"
+       << "max_cache_pages=" << state.config().max_cache_pages << "\n"
+       << "capacity_evict_on_write=" << static_cast<int>(state.config().capacity_evict_on_write) << "\n"
        << "max_lsn=" << ckpt.max_lsn << "\n"
        << "begin=" << format_log_point_short(ckpt.begin) << "\n"
        << "rcy=" << format_log_point_short(ckpt.rcy) << "\n"
@@ -215,10 +217,40 @@ static std::string admin_stats(GbpServerState& state) {
         cache_total += static_cast<int>(shard.page_cache.size());
         pending_total += static_cast<int>(shard.batch_pending.size());
     }
-    return "OK cache_total=" + std::to_string(cache_total) + " pending_total=" + std::to_string(pending_total) + "\n";
+    return "OK cache_total=" + std::to_string(cache_total) + " pending_total=" + std::to_string(pending_total) +
+           " max_cache_pages=" + std::to_string(state.config().max_cache_pages) +
+           " capacity_evict_on_write=" + std::to_string(static_cast<int>(state.config().capacity_evict_on_write)) +
+           "\n";
 }
 
-void admin_server_loop(const std::string& host, int port, GbpServerState& state) {
+static std::string admin_read_phase(ReadPhase& read_phase, const Config& cfg) {
+    const ReadPhaseSnapshot snap = get_read_phase_snapshot(read_phase);
+    std::ostringstream os;
+    os << "READ_PHASE_BEGIN\n"
+       << "active=" << static_cast<int>(snap.active) << "\n"
+       << "ending=" << static_cast<int>(snap.ending) << "\n"
+       << "elapsed_ms=" << static_cast<int>(snap.elapsed_s * 1000) << "\n"
+       << "timeout_s=" << cfg.read_phase_timeout << "\n"
+       << "dropped_page_writes=" << snap.dropped_page_writes << "\n"
+       << "timeout_warned=" << static_cast<int>(snap.timeout_warned) << "\n"
+       << "READ_PHASE_END\n";
+    return os.str();
+}
+
+static std::string admin_force_read_end(GbpServerState& state, ReadPhase& read_phase, const Config& cfg) {
+    const ReadPhaseEndResult ended = force_read_phase_end(state, read_phase, cfg, "admin", "FORCE_READ_END");
+    std::ostringstream os;
+    os << "OK active_before=" << static_cast<int>(ended.active_before)
+       << " ending_before=" << static_cast<int>(ended.ending_before)
+       << " cleared=" << static_cast<int>(ended.cleared)
+       << " elapsed_ms=" << static_cast<int>(ended.elapsed_s * 1000)
+       << " dropped_page_writes=" << ended.dropped_page_writes
+       << " detached_pages=" << ended.detached_pages << "\n";
+    return os.str();
+}
+
+void admin_server_loop(const std::string& host, int port, GbpServerState& state, ReadPhase& read_phase,
+                       const Config& cfg) {
     socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(srv)) {
         gbp_run_log("admin socket create failed");
@@ -257,21 +289,22 @@ void admin_server_loop(const std::string& host, int port, GbpServerState& state)
         return;
     }
     gbp_run_log("GBPS admin listening on " + host + ":" + std::to_string(port) +
-                " (command: EXISTS|DUMP <file>-<page>, WINDOW, STATS)");
+                " (command: EXISTS|DUMP <file>-<page>, WINDOW, STATS, READ_PHASE, FORCE_READ_END)");
 
     while (true) {
         sockaddr_in client{};
         gbp_socklen_t clen = sizeof(client);
         socket_t fd = accept(srv, reinterpret_cast<sockaddr*>(&client), &clen);
         if (is_invalid_socket(fd)) continue;
-        std::thread([fd, &state]() {
+        std::thread([fd, &state, &read_phase, cfg]() {
             char buf[512];
 #if defined(_WIN32)
             const int n = recv(fd, buf, sizeof(buf) - 1, 0);
 #else
             const ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
 #endif
-            std::string out = "ERR usage: EXISTS <file>-<page> | DUMP <file>-<page> | WINDOW | STATS\n";
+            std::string out = "ERR usage: EXISTS <file>-<page> | DUMP <file>-<page> | WINDOW | STATS | "
+                              "READ_PHASE | FORCE_READ_END\n";
             if (n > 0) {
                 buf[n] = '\0';
                 std::string cmd(buf);
@@ -293,6 +326,10 @@ void admin_server_loop(const std::string& host, int port, GbpServerState& state)
                         out = admin_window(state);
                     } else if (verb == "STATS") {
                         out = admin_stats(state);
+                    } else if (verb == "READ_PHASE") {
+                        out = admin_read_phase(read_phase, cfg);
+                    } else if (verb == "FORCE_READ_END") {
+                        out = admin_force_read_end(state, read_phase, cfg);
                     }
                 } catch (const std::exception& exc) {
                     out = std::string("ERR ") + exc.what() + "\n";
