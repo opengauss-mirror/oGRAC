@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -54,6 +54,10 @@
 
 #define CMS_DSS_MASTER_LOCK_POS (1073741824)
 
+#if !defined(_WIN32)
+extern char **environ;
+#endif
+
 void cms_date2str(date_t date, char* str, uint32 max_size);
 
 typedef struct st_cms_stat_buffer {
@@ -93,6 +97,7 @@ cms_io_record_wait_t g_cms_io_record_event_wait[CMS_IO_COUNT];
 #define CMS_RES_STAT(node_id, res_id) (&g_stat->node_inf[(node_id)].res_stat[(res_id)])
 #define CMS_RES_OFFLINE_RESET_TIMEOUT (15000 * MICROSECS_PER_MILLISEC)
 #define CMS_STAT_IS_REGISTER(stat) ((stat).session_id != 0 && (stat).session_id != OG_INVALID_ID64)
+#define CMS_GBP_CONF_QUOTE_PAIR_LEN 2
 #define CMS_NODE_STAT_POS(node_id) (CMS_CLUSTER_STAT_OFFSET + \
     ((size_t) &(((cms_cluster_stat_t*)NULL)->node_inf[node_id].node_stat[node_id])))
 #define CMS_CUR_NODE_STAT (&g_stat->node_inf[g_cms_param->node_id].node_stat[g_cms_param->node_id])
@@ -1036,7 +1041,8 @@ static char *cms_trim_gbp_conf_token(char *str)
 static char *cms_strip_gbp_conf_quotes(char *str)
 {
     uint32 len = (uint32)strlen(str);
-    if (len >= 2 && ((*str == '"' && str[len - 1] == '"') || (*str == '\'' && str[len - 1] == '\''))) {
+    if (len >= CMS_GBP_CONF_QUOTE_PAIR_LEN &&
+        ((*str == '"' && str[len - 1] == '"') || (*str == '\'' && str[len - 1] == '\''))) {
         str[len - 1] = '\0';
         return str + 1;
     }
@@ -1097,13 +1103,47 @@ static bool32 cms_read_use_gbp_from_home(const char *home, bool32 *enabled)
     return cms_read_use_gbp_from_conf_file(file_name, enabled);
 }
 
+static bool32 cms_copy_env_value(const char *name, char *value, uint32 value_size)
+{
+    if (name == NULL || value == NULL || value_size == 0) {
+        return OG_FALSE;
+    }
+
+#if defined(_WIN32)
+    size_t required_size = 0;
+    if (getenv_s(&required_size, value, value_size, name) != 0 || required_size == 0 ||
+        required_size > value_size) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+#else
+    size_t name_len = strlen(name);
+    for (char **envp = environ; envp != NULL && *envp != NULL; envp++) {
+        if (strncmp(*envp, name, name_len) != 0 || (*envp)[name_len] != '=') {
+            continue;
+        }
+        const char *env_value = *envp + name_len + 1;
+        size_t env_len = strlen(env_value);
+        if (env_len >= value_size) {
+            return OG_FALSE;
+        }
+        errno_t err = strncpy_s(value, value_size, env_value, env_len);
+        return (err == EOK) ? OG_TRUE : OG_FALSE;
+    }
+    return OG_FALSE;
+#endif
+}
+
 bool32 cms_gbps_is_enabled(void)
 {
     bool32 enabled = OG_FALSE;
-    if (cms_read_use_gbp_from_home(getenv("OGDB_DATA"), &enabled)) {
+    char home[CMS_FILE_NAME_BUFFER_SIZE] = {0};
+    if (cms_copy_env_value("OGDB_DATA", home, CMS_FILE_NAME_BUFFER_SIZE) &&
+        cms_read_use_gbp_from_home(home, &enabled)) {
         return enabled;
     }
-    if (cms_read_use_gbp_from_home(getenv("OGDB_HOME"), &enabled)) {
+    if (cms_copy_env_value("OGDB_HOME", home, CMS_FILE_NAME_BUFFER_SIZE) &&
+        cms_read_use_gbp_from_home(home, &enabled)) {
         return enabled;
     }
     if (cms_read_use_gbp_from_home(g_cms_param->cms_home, &enabled)) {

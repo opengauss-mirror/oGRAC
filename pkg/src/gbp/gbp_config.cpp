@@ -1,3 +1,28 @@
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_config.cpp
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_config.cpp
+ *
+ * -------------------------------------------------------------------------
+ */
+
 #include "gbp_config.h"
 
 #include <cctype>
@@ -9,28 +34,41 @@ namespace gbp {
 
 namespace {
 
-std::string trim(const std::string& s) {
+constexpr int GBP_MIN_BUCKET_COUNT = 16;
+constexpr int GBP_MAX_TCP_PORT = 65535;
+
+std::string trim(const std::string& s)
+{
     size_t begin = 0;
-    while (begin < s.size() && std::isspace(static_cast<unsigned char>(s[begin]))) begin++;
+    while (begin < s.size() && std::isspace(static_cast<unsigned char>(s[begin]))) {
+        begin++;
+    }
     size_t end = s.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1]))) end--;
+    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
+        end--;
+    }
     return s.substr(begin, end - begin);
 }
 
-std::string upper_key(std::string s) {
+std::string upper_key(std::string s)
+{
     for (char& ch : s) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     }
     return s;
 }
 
-bool file_exists(const std::string& path) {
-    if (path.empty()) return false;
+bool file_exists(const std::string& path)
+{
+    if (path.empty()) {
+        return false;
+    }
     std::ifstream in(path);
     return in.good();
 }
 
-std::string expand_env_vars(const std::string& value) {
+std::string expand_env_vars(const std::string& value)
+{
     std::string out;
     for (size_t i = 0; i < value.size();) {
         if (value[i] != '$') {
@@ -44,7 +82,9 @@ std::string expand_env_vars(const std::string& value) {
             braced = true;
             name_begin++;
             name_end = name_begin;
-            while (name_end < value.size() && value[name_end] != '}') name_end++;
+            while (name_end < value.size() && value[name_end] != '}') {
+                name_end++;
+            }
         } else {
             while (name_end < value.size() &&
                    (std::isalnum(static_cast<unsigned char>(value[name_end])) || value[name_end] == '_')) {
@@ -57,13 +97,16 @@ std::string expand_env_vars(const std::string& value) {
         }
         std::string name = value.substr(name_begin, name_end - name_begin);
         const char* env = std::getenv(name.c_str());
-        if (env != nullptr) out += env;
+        if (env != nullptr) {
+            out += env;
+        }
         i = braced ? name_end + 1 : name_end;
     }
     return out;
 }
 
-bool parse_int_value(const std::string& text, int& out, std::string& err, const std::string& key) {
+bool parse_int_value(const std::string& text, int& out, std::string& err, const std::string& key)
+{
     try {
         size_t pos = 0;
         int value = std::stoi(text, &pos);
@@ -79,7 +122,8 @@ bool parse_int_value(const std::string& text, int& out, std::string& err, const 
     }
 }
 
-bool parse_double_value(const std::string& text, double& out, std::string& err, const std::string& key) {
+bool parse_double_value(const std::string& text, double& out, std::string& err, const std::string& key)
+{
     try {
         size_t pos = 0;
         double value = std::stod(text, &pos);
@@ -95,7 +139,8 @@ bool parse_double_value(const std::string& text, double& out, std::string& err, 
     }
 }
 
-bool parse_bool_value(const std::string& text, bool& out, std::string& err, const std::string& key) {
+bool parse_bool_value(const std::string& text, bool& out, std::string& err, const std::string& key)
+{
     if (env_truthy(text.c_str())) {
         out = true;
         return true;
@@ -108,7 +153,8 @@ bool parse_bool_value(const std::string& text, bool& out, std::string& err, cons
     return false;
 }
 
-bool load_config_file(const std::string& path, std::map<std::string, std::string>& kv, std::string& err) {
+bool load_config_file(const std::string& path, std::map<std::string, std::string>& kv, std::string& err)
+{
     std::ifstream in(path);
     if (!in.is_open()) {
         err = "failed to open config file: " + path;
@@ -119,7 +165,9 @@ bool load_config_file(const std::string& path, std::map<std::string, std::string
     while (std::getline(in, line)) {
         line_no++;
         std::string text = trim(line);
-        if (text.empty() || text[0] == '#') continue;
+        if (text.empty() || text[0] == '#') {
+            continue;
+        }
         size_t eq = text.find('=');
         if (eq == std::string::npos) {
             err = path + ":" + std::to_string(line_no) + ": expected KEY=VALUE";
@@ -136,7 +184,8 @@ bool load_config_file(const std::string& path, std::map<std::string, std::string
     return true;
 }
 
-bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& value, std::string& err) {
+bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& value, std::string& err)
+{
     Config& c = opt.config;
     if (key == "HOST") {
         opt.host = value;
@@ -210,41 +259,86 @@ bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& val
     return true;
 }
 
-void apply_env(ServerOptions& opt) {
+void apply_env(ServerOptions& opt)
+{
     Config& c = opt.config;
     const char* v = nullptr;
-    if ((v = std::getenv("GBPS_HOST")) != nullptr && *v) opt.host = v;
-    if ((v = std::getenv("GBPS_PORT")) != nullptr && *v) opt.port = env_int("GBPS_PORT", opt.port);
-    if ((v = std::getenv("GBPS_ADMIN_HOST")) != nullptr && *v) opt.admin_host = v;
-    if ((v = std::getenv("GBPS_ADMIN_PORT")) != nullptr && *v) opt.admin_port = env_int("GBPS_ADMIN_PORT", opt.admin_port);
-    if ((v = std::getenv("GBPS_LOG_FILE")) != nullptr) opt.log_file = expand_env_vars(v);
-    if ((v = std::getenv("GBPS_PID_FILE")) != nullptr) opt.pid_file = expand_env_vars(v);
-
-    if ((v = std::getenv("GBPS_VERBOSE")) != nullptr) c.verbose = env_truthy(v);
-    if ((v = std::getenv("GBPS_TIMING_DIAG")) != nullptr) c.timing_diag = env_truthy(v);
-    if ((v = std::getenv("GBPS_LOG_CMP_LSN_ONLY")) != nullptr) c.log_cmp_lsn_only = env_truthy(v);
-    if ((v = std::getenv("GBPS_SMB_VERSION")) != nullptr) c.smb_version = !env_falsy(v);
-    if ((v = std::getenv("GBPS_MAX_CACHE_PAGES")) != nullptr && *v) c.max_cache_pages = env_int("GBPS_MAX_CACHE_PAGES", c.max_cache_pages);
-    if ((v = std::getenv("GBPS_CAPACITY_EVICT_ON_WRITE")) != nullptr) c.capacity_evict_on_write = env_truthy(v);
-    if ((v = std::getenv("GBPS_READ_END_MODE")) != nullptr) {
-        if (str_ieq(v, "sync")) c.read_end_mode = ReadEndMode::Sync;
-        if (str_ieq(v, "async")) c.read_end_mode = ReadEndMode::Async;
+    if ((v = std::getenv("GBPS_HOST")) != nullptr && *v) {
+        opt.host = v;
     }
-    if ((v = std::getenv("GBPS_READ_PHASE_TIMEOUT")) != nullptr && *v) c.read_phase_timeout = env_double("GBPS_READ_PHASE_TIMEOUT", c.read_phase_timeout);
+    if ((v = std::getenv("GBPS_PORT")) != nullptr && *v) {
+        opt.port = env_int("GBPS_PORT", opt.port);
+    }
+    if ((v = std::getenv("GBPS_ADMIN_HOST")) != nullptr && *v) {
+        opt.admin_host = v;
+    }
+    if ((v = std::getenv("GBPS_ADMIN_PORT")) != nullptr && *v) {
+        opt.admin_port = env_int("GBPS_ADMIN_PORT", opt.admin_port);
+    }
+    if ((v = std::getenv("GBPS_LOG_FILE")) != nullptr) {
+        opt.log_file = expand_env_vars(v);
+    }
+    if ((v = std::getenv("GBPS_PID_FILE")) != nullptr) {
+        opt.pid_file = expand_env_vars(v);
+    }
 
-    if ((v = std::getenv("GBP_DEMO_LOG_CMP_LSN_ONLY")) != nullptr) c.log_cmp_lsn_only = env_truthy(v);
-    if ((v = std::getenv("GBP_DEMO_SMB_VERSION")) != nullptr) c.smb_version = !env_falsy(v);
-    if ((v = std::getenv("GBP_DEMO_MAX_CACHE_PAGES")) != nullptr && *v) c.max_cache_pages = env_int("GBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages);
-    if ((v = std::getenv("GBP_DEMO_CAPACITY_EVICT_ON_WRITE")) != nullptr) c.capacity_evict_on_write = env_truthy(v);
-    if ((v = std::getenv("GBP_DEMO_LEGACY_BATCH_PENDING")) != nullptr) c.legacy_batch_pending = !env_falsy(v);
-    if ((v = std::getenv("GBP_DEMO_CKPT_WAIT_EVICT")) != nullptr) c.ckpt_wait_evict = env_truthy(v);
-    if ((v = std::getenv("GBP_DEMO_CKPT_PARITY_CHECK")) != nullptr) c.ckpt_parity_check = env_truthy(v);
+    if ((v = std::getenv("GBPS_VERBOSE")) != nullptr) {
+        c.verbose = env_truthy(v);
+    }
+    if ((v = std::getenv("GBPS_TIMING_DIAG")) != nullptr) {
+        c.timing_diag = env_truthy(v);
+    }
+    if ((v = std::getenv("GBPS_LOG_CMP_LSN_ONLY")) != nullptr) {
+        c.log_cmp_lsn_only = env_truthy(v);
+    }
+    if ((v = std::getenv("GBPS_SMB_VERSION")) != nullptr) {
+        c.smb_version = !env_falsy(v);
+    }
+    if ((v = std::getenv("GBPS_MAX_CACHE_PAGES")) != nullptr && *v) {
+        c.max_cache_pages = env_int("GBPS_MAX_CACHE_PAGES", c.max_cache_pages);
+    }
+    if ((v = std::getenv("GBPS_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
+        c.capacity_evict_on_write = env_truthy(v);
+    }
+    if ((v = std::getenv("GBPS_READ_END_MODE")) != nullptr) {
+        if (str_ieq(v, "sync")) {
+            c.read_end_mode = ReadEndMode::Sync;
+        }
+        if (str_ieq(v, "async")) {
+            c.read_end_mode = ReadEndMode::Async;
+        }
+    }
+    if ((v = std::getenv("GBPS_READ_PHASE_TIMEOUT")) != nullptr && *v) {
+        c.read_phase_timeout = env_double("GBPS_READ_PHASE_TIMEOUT", c.read_phase_timeout);
+    }
+
+    if ((v = std::getenv("GBP_DEMO_LOG_CMP_LSN_ONLY")) != nullptr) {
+        c.log_cmp_lsn_only = env_truthy(v);
+    }
+    if ((v = std::getenv("GBP_DEMO_SMB_VERSION")) != nullptr) {
+        c.smb_version = !env_falsy(v);
+    }
+    if ((v = std::getenv("GBP_DEMO_MAX_CACHE_PAGES")) != nullptr && *v) {
+        c.max_cache_pages = env_int("GBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages);
+    }
+    if ((v = std::getenv("GBP_DEMO_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
+        c.capacity_evict_on_write = env_truthy(v);
+    }
+    if ((v = std::getenv("GBP_DEMO_LEGACY_BATCH_PENDING")) != nullptr) {
+        c.legacy_batch_pending = !env_falsy(v);
+    }
+    if ((v = std::getenv("GBP_DEMO_CKPT_WAIT_EVICT")) != nullptr) {
+        c.ckpt_wait_evict = env_truthy(v);
+    }
+    if ((v = std::getenv("GBP_DEMO_CKPT_PARITY_CHECK")) != nullptr) {
+        c.ckpt_parity_check = env_truthy(v);
+    }
     c.ckpt_wait_ms = env_int("GBP_DEMO_CKPT_WAIT_MS", c.ckpt_wait_ms);
     c.rcy_diag_lag = env_int("GBP_DEMO_RCY_DIAG_LAG", c.rcy_diag_lag);
     c.evict_sample_log = env_int("GBP_DEMO_EVICT_SAMPLE_LOG", c.evict_sample_log);
     c.evict_budget = std::max(1, env_int("GBP_DEMO_EVICT_BUDGET", c.evict_budget));
     c.purge_budget = std::max(1, env_int("GBP_DEMO_PURGE_BUDGET", c.purge_budget));
-    c.bucket_count = std::max(16, env_int("GBP_DEMO_BUCKET_COUNT", c.bucket_count));
+    c.bucket_count = std::max(GBP_MIN_BUCKET_COUNT, env_int("GBP_DEMO_BUCKET_COUNT", c.bucket_count));
     c.bucket_span = std::max(1, env_int("GBP_DEMO_BUCKET_SPAN", c.bucket_span));
     c.page_write_slow_us = env_int("GBP_DEMO_PAGE_WRITE_SLOW_US", c.page_write_slow_us);
     c.page_write_timing_us = env_int("GBP_DEMO_PAGE_WRITE_TIMING_US", c.page_write_timing_us);
@@ -253,41 +347,78 @@ void apply_env(ServerOptions& opt) {
     c.cache_high_water = std::min(1.0, std::max(0.0, env_double("GBP_DEMO_CACHE_HIGH_WATER", c.cache_high_water)));
     c.cache_evict_ratio = std::min(1.0, std::max(0.0, env_double("GBP_DEMO_CACHE_EVICT_RATIO", c.cache_evict_ratio)));
     if ((v = std::getenv("GBP_DEMO_READ_END_MODE")) != nullptr) {
-        if (str_ieq(v, "sync")) c.read_end_mode = ReadEndMode::Sync;
-        if (str_ieq(v, "async")) c.read_end_mode = ReadEndMode::Async;
+        if (str_ieq(v, "sync")) {
+            c.read_end_mode = ReadEndMode::Sync;
+        }
+        if (str_ieq(v, "async")) {
+            c.read_end_mode = ReadEndMode::Async;
+        }
     }
-    if ((v = std::getenv("GBP_DEMO_TIMING_DIAG")) != nullptr) c.timing_diag = env_truthy(v);
+    if ((v = std::getenv("GBP_DEMO_TIMING_DIAG")) != nullptr) {
+        c.timing_diag = env_truthy(v);
+    }
 }
 
-void apply_cli(const CliOverrides& cli, ServerOptions& opt) {
-    if (cli.host_set) opt.host = cli.host;
-    if (cli.port_set) opt.port = cli.port;
-    if (cli.admin_host_set) opt.admin_host = cli.admin_host;
-    if (cli.admin_port_set) opt.admin_port = cli.admin_port;
-    if (cli.log_file_set) opt.log_file = expand_env_vars(cli.log_file);
-    if (cli.pid_file_set) opt.pid_file = expand_env_vars(cli.pid_file);
-    if (cli.verbose_set) opt.config.verbose = cli.verbose;
-    if (cli.log_cmp_lsn_set) opt.config.log_cmp_lsn_only = cli.log_cmp_lsn;
-    if (cli.smb_version_set) opt.config.smb_version = cli.smb_version;
-    if (cli.max_cache_pages_set) opt.config.max_cache_pages = cli.max_cache_pages;
-    if (cli.capacity_evict_on_write_set) opt.config.capacity_evict_on_write = cli.capacity_evict_on_write;
+void apply_cli(const CliOverrides& cli, ServerOptions& opt)
+{
+    if (cli.host_set) {
+        opt.host = cli.host;
+    }
+    if (cli.port_set) {
+        opt.port = cli.port;
+    }
+    if (cli.admin_host_set) {
+        opt.admin_host = cli.admin_host;
+    }
+    if (cli.admin_port_set) {
+        opt.admin_port = cli.admin_port;
+    }
+    if (cli.log_file_set) {
+        opt.log_file = expand_env_vars(cli.log_file);
+    }
+    if (cli.pid_file_set) {
+        opt.pid_file = expand_env_vars(cli.pid_file);
+    }
+    if (cli.verbose_set) {
+        opt.config.verbose = cli.verbose;
+    }
+    if (cli.log_cmp_lsn_set) {
+        opt.config.log_cmp_lsn_only = cli.log_cmp_lsn;
+    }
+    if (cli.smb_version_set) {
+        opt.config.smb_version = cli.smb_version;
+    }
+    if (cli.max_cache_pages_set) {
+        opt.config.max_cache_pages = cli.max_cache_pages;
+    }
+    if (cli.capacity_evict_on_write_set) {
+        opt.config.capacity_evict_on_write = cli.capacity_evict_on_write;
+    }
 }
 
 }  // namespace
 
-std::string default_config_path() {
+std::string default_config_path()
+{
     const char* data = std::getenv("OGDB_DATA");
     if (data != nullptr && *data != '\0') {
         std::string data_config = std::string(data) + "/cfg/gbps.conf";
-        if (file_exists(data_config)) return data_config;
+        if (file_exists(data_config)) {
+            return data_config;
+        }
     }
     const char* home = std::getenv("OGDB_HOME");
-    if (home != nullptr && *home != '\0') return std::string(home) + "/cfg/gbps.conf";
-    if (data != nullptr && *data != '\0') return std::string(data) + "/cfg/gbps.conf";
+    if (home != nullptr && *home != '\0') {
+        return std::string(home) + "/cfg/gbps.conf";
+    }
+    if (data != nullptr && *data != '\0') {
+        return std::string(data) + "/cfg/gbps.conf";
+    }
     return "";
 }
 
-bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::string& err) {
+bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::string& err)
+{
     out = ServerOptions{};
     std::string config_path = cli.config_path_set ? cli.config_path : default_config_path();
     if (!config_path.empty()) {
@@ -298,9 +429,13 @@ bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::stri
             }
         } else {
             std::map<std::string, std::string> kv;
-            if (!load_config_file(config_path, kv, err)) return false;
+            if (!load_config_file(config_path, kv, err)) {
+                return false;
+            }
             for (const auto& entry : kv) {
-                if (!apply_kv(out, entry.first, entry.second, err)) return false;
+                if (!apply_kv(out, entry.first, entry.second, err)) {
+                    return false;
+                }
             }
         }
     }
@@ -310,11 +445,11 @@ bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::stri
     out.config.cache_evict_ratio = std::min(1.0, std::max(0.0, out.config.cache_evict_ratio));
     out.config.evict_budget = std::max(1, out.config.evict_budget);
     out.config.purge_budget = std::max(1, out.config.purge_budget);
-    if (out.port <= 0 || out.port > 65535) {
+    if (out.port <= 0 || out.port > GBP_MAX_TCP_PORT) {
         err = "PORT must be in range 1..65535";
         return false;
     }
-    if (out.admin_port < 0 || out.admin_port > 65535) {
+    if (out.admin_port < 0 || out.admin_port > GBP_MAX_TCP_PORT) {
         err = "ADMIN_PORT must be in range 0..65535";
         return false;
     }

@@ -1017,12 +1017,16 @@ status_t buf_try_prefetch_next_ext(knl_session_t *session, buf_ctrl_t *ctrl)
  * When DB recover with gbp, buf_load_page will try load page from GBP at first.
  * If page cannot be loaded from GBP, it will be loaded from disk
  */
-static status_t buf_load_page_from_GBP(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id)
+static status_t buf_load_page_from_GBP(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id,
+                                       bool32 *gbp_read_failed)
 {
     gbp_context_t *gbp_ctx = &session->kernel->gbp_context;
     gbp_page_status_e status;
     uint32 lock_id = page_id.page % OG_GBP_RD_LOCK_COUNT;
 
+    if (gbp_read_failed != NULL) {
+        *gbp_read_failed = OG_FALSE;
+    }
     GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP try page %u-%u sid=%u", page_id.file, page_id.page,
                       session->id);
     cm_spin_lock(&gbp_ctx->buf_read_lock[lock_id], NULL);
@@ -1039,7 +1043,14 @@ static status_t buf_load_page_from_GBP(knl_session_t *session, buf_ctrl_t *ctrl,
     knl_end_session_wait(session, DB_FILE_GBP_READ);
     cm_spin_unlock(&gbp_ctx->buf_read_lock[lock_id]);
 
-    if (status == GBP_PAGE_MISS || status == GBP_PAGE_OLD || status == GBP_PAGE_AHEAD) {
+    if (status == GBP_PAGE_ERROR) {
+        if (gbp_read_failed != NULL && gbp_knl_dtc_fallback_required(session)) {
+            *gbp_read_failed = OG_TRUE;
+        }
+        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP error page %u-%u status=%u",
+                          page_id.file, page_id.page, (uint32)status);
+        return OG_ERROR;
+    } else if (status == GBP_PAGE_MISS || status == GBP_PAGE_OLD || status == GBP_PAGE_AHEAD) {
         GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP fail page %u-%u status=%u -> load_disk", page_id.file,
                           page_id.page, (uint32)status);
         /* page not exists on gbp */
@@ -1073,18 +1084,19 @@ static inline bool32 session_need_read_gbp(knl_session_t *session)
 status_t buf_load_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id)
 {
     status_t status = OG_ERROR;
+    bool32 gbp_read_failed = OG_FALSE;
 
     knl_panic(!(ctrl->is_edp || ctrl->is_dirty) && (!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl)));
     if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) && session_need_read_gbp(session)) {
         ctrl->page->lsn = OG_INVALID_LSN; // reset page lsn to 0 here, because it is not loaded from disk
-        status = buf_load_page_from_GBP(session, ctrl, page_id);
+        status = buf_load_page_from_GBP(session, ctrl, page_id, &gbp_read_failed);
     } else if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel))) {
         GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page skip_GBP_first path page %u-%u sid=%u log_aly=%u gbp_bg=%u",
                           page_id.file, page_id.page, session->id, (uint32)SESSION_IS_LOG_ANALYZE(session),
                           (uint32)SESSION_IS_GBP_BG(session));
     }
 
-    if (status != OG_SUCCESS) {
+    if (status != OG_SUCCESS && !gbp_read_failed) {
         if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) && session_need_read_gbp(session)) {
             GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page fallback_disk page %u-%u after GBP path failed",
                               page_id.file, page_id.page);
@@ -1542,7 +1554,7 @@ bool32 buf_check_loaded_page_checksum(knl_session_t *session, buf_ctrl_t *ctrl, 
     return buf_verify_checksum(session, ctrl->page, ctrl->page_id);
 }
 
-static inline void buf_try_read_gbp_page(knl_session_t *session, buf_ctrl_t *ctrl)
+static inline status_t buf_try_read_gbp_page(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     if (ctrl->gbp_ctrl->page_status == GBP_PAGE_NOREAD) {
         ctrl->page->lsn = OG_INVALID_LSN; // page is not loaded, set lsn to 0
@@ -1550,7 +1562,7 @@ static inline void buf_try_read_gbp_page(knl_session_t *session, buf_ctrl_t *ctr
     }
 
     if (session_need_read_gbp(session)) {
-        buf_check_page_version(session, ctrl); // if local page is old, read page from gbp
+        return buf_check_page_version(session, ctrl); // if local page is old, read page from gbp
     } else {
         GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_try_read_gbp_page skip_check page %u-%u sid=%u log_aly=%u gbp_bg=%u "
                           "page_status=%u page_lsn=%llu",
@@ -1558,6 +1570,7 @@ static inline void buf_try_read_gbp_page(knl_session_t *session, buf_ctrl_t *ctr
                           (uint32)SESSION_IS_GBP_BG(session), (uint32)ctrl->gbp_ctrl->page_status,
                           (uint64)ctrl->page->lsn);
     }
+    return OG_SUCCESS;
 }
 
 static inline void buf_read_compress_update_no_read(knl_session_t *session, buf_ctrl_t *head_ctrl)
@@ -1665,8 +1678,10 @@ status_t buf_read_page(knl_session_t *session, page_id_t page_id, latch_mode_t m
                   "page_id and ctrl's page_id are not same, panic info: page %u-%u ctrl page %u-%u type %u",
                   page_id.file, page_id.page, ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
 
-    if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
-        buf_try_read_gbp_page(session, ctrl);
+    if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel)) &&
+        buf_try_read_gbp_page(session, ctrl) != OG_SUCCESS) {
+        buf_unlatch(session, ctrl, OG_TRUE);
+        return OG_ERROR;
     }
 
     session->curr_page = (char *)ctrl->page;

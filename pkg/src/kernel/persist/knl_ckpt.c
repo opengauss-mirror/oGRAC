@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <semaphore.h>
 #include "cm_debug.h"
 #include "cm_defs.h"
 #include "cm_thread.h"
@@ -31,7 +32,6 @@
 #include "knl_database.h"
 #include "knl_log_persistent.h"
 #include "knl_persist_module.h"
-#include "knl_ckpt.h"
 #include "cm_log.h"
 #include "cm_file.h"
 #include "knl_buflatch.h"
@@ -46,12 +46,14 @@
 #include "dtc_dcs.h"
 #include "dtc_ckpt.h"
 #include "knl_gbp.h"
-#include <semaphore.h>
+#include "knl_ckpt.h"
 
 #define NEED_SYNC_LOG_INFO(ogx) ((ogx)->timed_task != CKPT_MODE_IDLE || (ogx)->trigger_task == CKPT_TRIGGER_FULL)
 
 #define CKPT_WAIT_ENABLE_MS 2
 #define CKPT_FLUSH_WAIT_MS 10
+#define CKPT_QUICK_GROUP_COUNT 2
+#define CKPT_REFORM_WAIT_GROUP_IDLE_MS 200
 extern dtc_rcy_replay_paral_node_t g_replay_paral_mgr;
 static uint8 g_page_clean_finish_flag[PAGE_CLEAN_MAX_BYTES] = {0};
 bool32 g_crc_verify = 0;
@@ -204,14 +206,15 @@ static status_t ckpt_init_group(knl_session_t *session)
     knl_instance_t *kernel = session->kernel;
     ckpt_context_t *ogx = &kernel->ckpt_ctx;
 
-    knl_securec_check(memset_sp(ogx->group, 2 * sizeof(ckpt_group_t), 0, 2 * sizeof(ckpt_group_t)));
+    knl_securec_check(memset_sp(ogx->group, CKPT_QUICK_GROUP_COUNT * sizeof(ckpt_group_t), 0,
+                                CKPT_QUICK_GROUP_COUNT * sizeof(ckpt_group_t)));
     ogx->group[0].buf = kernel->attr.ckpt_buf;
     if (ckpt_init_group_buffer(session, &ogx->group[0]) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
     if (kernel->attr.enable_quick_ckpt) {
-        ogx->group[1].buf = kernel->attr.ckpt_buf + kernel->attr.dbwr_buf_size / 2;
+        ogx->group[1].buf = kernel->attr.ckpt_buf + kernel->attr.dbwr_buf_size / CKPT_QUICK_GROUP_COUNT;
         if (ckpt_init_group_buffer(session, &ogx->group[1]) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -306,7 +309,7 @@ void ckpt_close(knl_session_t *session)
     cm_close_file(ogx->dw_file);
     ogx->dw_file = OG_INVALID_HANDLE;
 #ifndef WIN32
-    for (uint32 i = 0; i < 2; i++) {
+    for (uint32 i = 0; i < CKPT_QUICK_GROUP_COUNT; i++) {
         if (ogx->group[i].iocbs_buf != NULL) {
             free(ogx->group[i].iocbs_buf);
             ogx->group[i].iocbs_buf = NULL;
@@ -2339,7 +2342,7 @@ static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
     return OG_SUCCESS;
 }
 
-void ckpt_switch_group(knl_session_t *session, ckpt_context_t *ogx)
+static void ckpt_switch_group(knl_session_t *session, ckpt_context_t *ogx)
 {
     ogx->group[ogx->wid].status = CKPT_STATUS_PENDING;
     ckpt_wait_flush_group(&ogx->group[ogx->fid]);
@@ -3961,7 +3964,7 @@ void ckpt_wait_group_fid_idle(knl_session_t *session, ckpt_context_t *ogx)
     if (session->kernel->attr.enable_quick_ckpt && DB_IS_PRIMARY(&session->kernel->db) && RC_REFORM_IN_PROGRESS) {
         uint16 fid = ogx->fid;
         if (fid == ogx->fid && ogx->group[ogx->fid].status != CKPT_STATUS_IDLE) {
-            cm_sleep(200);
+            cm_sleep(CKPT_REFORM_WAIT_GROUP_IDLE_MS);
         }
     }
 }

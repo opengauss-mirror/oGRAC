@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -24,7 +24,6 @@
  */
 
 #include "knl_cluster_module.h"
-#include "dtc_gbp_rt_aly.h"
 #include "dtc_context.h"
 #include "dtc_database.h"
 #include "dtc_drc.h"
@@ -37,6 +36,7 @@
 #include "knl_space_base.h"
 #include "knl_space_log.h"
 #include "knl_buffer_log.h"
+#include "dtc_gbp_rt_aly.h"
 
 typedef enum en_dtc_gbp_rt_read_result {
     DTC_GBP_RT_READ_OK = 0,
@@ -48,6 +48,29 @@ static status_t dtc_gbp_rt_init_local_sets(dtc_gbp_rt_aly_ctx_t *ctx);
 static void dtc_gbp_rt_clear_local_sets(dtc_gbp_rt_aly_ctx_t *ctx);
 
 #define DTC_GBP_RT_LOG_SAMPLE_LIMIT 5
+#define DTC_GBP_RT_RECOVERY_NODE_COUNT 2
+#define DTC_GBP_RT_QUEUE_ARRAY_COUNT 2
+#define DTC_GBP_RT_UNSAFE_BATCH_QUEUE_SLOT 32
+#define DTC_GBP_RT_UNSAFE_INVALID_COMMIT_SLOT 29
+#define DTC_GBP_RT_UNSAFE_READ_PEER_CTRL_PRUNE 5
+#define DTC_GBP_RT_UNSAFE_INVALID_EVENT_CHUNK_BATCH 33
+#define DTC_GBP_RT_UNSAFE_EVENT_CHUNK_BACKLOG_TIMEOUT 34
+#define DTC_GBP_RT_UNSAFE_EVENT_CHUNK_PENDING_UNDERFLOW 35
+#define DTC_GBP_RT_UNSAFE_EVENT_CHUNK_INVALID_BATCH 36
+#define DTC_GBP_RT_UNSAFE_PARSER_ANALYZE_BATCH_FAILED 25
+#define DTC_GBP_RT_UNSAFE_OWNER_RECORD_PAGE_FAILED 37
+#define DTC_GBP_RT_UNSAFE_RUNTIME_RESET_DRAIN_TIMEOUT 30
+#define DTC_GBP_RT_UNSAFE_RUNTIME_RESET_LOCAL_INIT_FAILED 31
+#define DTC_GBP_RT_UNSAFE_PEER_REDO_GAP 7
+#define DTC_GBP_RT_UNSAFE_INIT_PEER_LOGSET_FAILED 9
+#define DTC_GBP_RT_UNSAFE_READ_PEER_CTRL_FAILED 10
+#define DTC_GBP_RT_UNSAFE_REFRESH_CURRENT_FILE_HEAD_FAILED 15
+#define DTC_GBP_RT_UNSAFE_REFRESH_FILE_HEADS_FAILED 16
+#define DTC_GBP_RT_UNSAFE_PEER_REDO_FILE_NOT_FOUND 11
+#define DTC_GBP_RT_UNSAFE_REFRESH_NON_CURRENT_FILE_HEAD_FAILED 20
+#define DTC_GBP_RT_UNSAFE_READ_PEER_REDO_FAILED 12
+#define DTC_GBP_RT_UNSAFE_DRAIN_RUNTIME_QUEUE_TIMEOUT 28
+#define DTC_GBP_RT_UNSAFE_STOP_RELEASE 13
 
 static inline bool32 dtc_gbp_rt_enabled(knl_session_t *session)
 {
@@ -55,7 +78,8 @@ static inline bool32 dtc_gbp_rt_enabled(knl_session_t *session)
         return OG_FALSE;
     }
     return (bool32)(KNL_GBP_ENABLE(session->kernel) && KNL_GBP_FOR_RECOVERY(session->kernel) &&
-                    KNL_GBP_RT_ANALYSIS(session->kernel) && g_dtc->profile.node_count == 2 &&
+                    KNL_GBP_RT_ANALYSIS(session->kernel) &&
+                    g_dtc->profile.node_count == DTC_GBP_RT_RECOVERY_NODE_COUNT &&
                     !cm_dbs_is_enable_dbs());
 }
 
@@ -456,7 +480,9 @@ static log_point_t dtc_gbp_rt_make_batch_end_point(log_batch_t *batch, uint32 bl
     log_point_t end_point = batch->head.point;
 
     end_point.lsn = batch->lsn;
-    end_point.block_id += batch->space_size / block_size;
+    if (block_size != 0) {
+        end_point.block_id += batch->space_size / block_size;
+    }
     return end_point;
 }
 
@@ -489,38 +515,38 @@ static bool32 dtc_gbp_rt_has_uncommitted_batches(dtc_gbp_rt_aly_ctx_t *ctx)
 static status_t dtc_gbp_rt_enqueue_batch(knl_session_t *session, dtc_gbp_rt_aly_ctx_t *ctx, log_batch_t *batch,
     uint32 block_size)
 {
-    uint32 idx;
+    uint32 idx = OG_INVALID_INT32;
     dtc_gbp_rt_batch_slot_t *slot;
     errno_t ret;
 
     if (batch->space_size > ctx->batch_buf_size) {
-        dtc_gbp_rt_mark_unsafe(ctx, 32, "batch exceeds runtime queue slot");
+        dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_BATCH_QUEUE_SLOT, "batch exceeds runtime queue slot");
         OG_LOG_RUN_ERR("[DTC GBP RT] batch exceeds runtime queue slot, peer=%u batch_size=%u slot_size=%llu "
                        "lfn=%llu",
                        ctx->peer_node, batch->space_size, ctx->batch_buf_size, (uint64)batch->head.point.lfn);
         return OG_ERROR;
     }
 
-    for (;;) {
-        if (ctx->closing || ctx->frozen || ctx->unsafe || ctx->reset_requested) {
-            return OG_ERROR;
-        }
+    while (!ctx->closing && !ctx->frozen && !ctx->unsafe && !ctx->reset_requested) {
         idx = dtc_gbp_rt_atomic_list_pop(&ctx->free_list);
         if (idx != OG_INVALID_INT32) {
             break;
         }
         ctx->queue_full_count++;
         if (ctx->queue_full_count <= DTC_GBP_RT_LOG_SAMPLE_LIMIT) {
-            OG_LOG_RUN_INF("[DTC GBP RT] batch queue full sample[%llu/%u], throttle reader, peer=%u used=%u "
-                           "safe_lfn=%llu curr_lfn=%llu",
-                           ctx->queue_full_count, DTC_GBP_RT_LOG_SAMPLE_LIMIT, ctx->peer_node,
-                           dtc_gbp_rt_queue_depth(ctx), (uint64)ctx->safe_analyzed_point.lfn,
-                           (uint64)ctx->curr_point.lfn);
+            OG_LOG_DEBUG_INF("[DTC GBP RT] batch queue full sample[%llu/%u], throttle reader, peer=%u used=%u "
+                             "safe_lfn=%llu curr_lfn=%llu",
+                             ctx->queue_full_count, DTC_GBP_RT_LOG_SAMPLE_LIMIT, ctx->peer_node,
+                             dtc_gbp_rt_queue_depth(ctx), (uint64)ctx->safe_analyzed_point.lfn,
+                             (uint64)ctx->curr_point.lfn);
         }
         cm_sleep(1);
     }
+    if (idx == OG_INVALID_INT32) {
+        return OG_ERROR;
+    }
 
-    for (;;) {
+    while (!ctx->closing && !ctx->frozen && !ctx->unsafe && !ctx->reset_requested) {
         bool32 commit_slot_free;
 
         cm_spin_lock(&ctx->state_lock, NULL);
@@ -536,12 +562,16 @@ static status_t dtc_gbp_rt_enqueue_batch(knl_session_t *session, dtc_gbp_rt_aly_
         }
         ctx->commit_full_count++;
         if (ctx->commit_full_count <= DTC_GBP_RT_LOG_SAMPLE_LIMIT) {
-            OG_LOG_RUN_INF("[DTC GBP RT] commit window full sample[%llu/%u], throttle reader, peer=%u next_seq=%llu "
-                           "commit_seq=%llu queue_depth=%u",
-                           ctx->commit_full_count, DTC_GBP_RT_LOG_SAMPLE_LIMIT, ctx->peer_node, ctx->next_seq,
-                           ctx->commit_seq, dtc_gbp_rt_queue_depth(ctx));
+            OG_LOG_DEBUG_INF("[DTC GBP RT] commit window full sample[%llu/%u], throttle reader, peer=%u next_seq=%llu "
+                             "commit_seq=%llu queue_depth=%u",
+                             ctx->commit_full_count, DTC_GBP_RT_LOG_SAMPLE_LIMIT, ctx->peer_node, ctx->next_seq,
+                             ctx->commit_seq, dtc_gbp_rt_queue_depth(ctx));
         }
         cm_sleep(1);
+    }
+    if (ctx->closing || ctx->frozen || ctx->unsafe || ctx->reset_requested) {
+        dtc_gbp_rt_atomic_list_push(&ctx->free_list, idx);
+        return OG_ERROR;
     }
     slot = &ctx->batch_slots[idx];
     ret = memcpy_sp(slot->buf.aligned_buf, slot->buf.buf_size, batch, batch->space_size);
@@ -573,28 +603,25 @@ static status_t dtc_gbp_rt_enqueue_batch(knl_session_t *session, dtc_gbp_rt_aly_
 
 static void dtc_gbp_rt_log_progress(dtc_gbp_rt_aly_ctx_t *ctx)
 {
-    OG_LOG_RUN_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
-                         "[DTC GBP RT] analyze progress, peer=%u safe_lfn=%llu curr_lsn=%llu batches=%llu "
-                         "groups=%llu pages=%llu queue_depth=%u unsafe=%u unsafe_reason=%llu pruned=%llu",
-                         ctx->peer_node, (uint64)ctx->safe_analyzed_point.lfn, (uint64)ctx->curr_point.lsn,
-                         ctx->analyzed_batches, ctx->analyzed_groups, ctx->analyzed_pages,
-                         dtc_gbp_rt_queue_depth(ctx), (uint32)ctx->unsafe, ctx->unsafe_reason, ctx->pruned_items);
+    OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                           "[DTC GBP RT] analyze progress, peer=%u safe_lfn=%llu curr_lsn=%llu batches=%llu "
+                           "groups=%llu pages=%llu queue_depth=%u unsafe=%u unsafe_reason=%llu pruned=%llu",
+                           ctx->peer_node, (uint64)ctx->safe_analyzed_point.lfn, (uint64)ctx->curr_point.lsn,
+                           ctx->analyzed_batches, ctx->analyzed_groups, ctx->analyzed_pages,
+                           dtc_gbp_rt_queue_depth(ctx), (uint32)ctx->unsafe, ctx->unsafe_reason, ctx->pruned_items);
 }
 
 static void dtc_gbp_rt_commit_completed_batches_locked(dtc_gbp_rt_aly_ctx_t *ctx, uint32 *free_idx,
     uint32 *free_count)
 {
     *free_count = 0;
-    for (;;) {
-        uint32 map_slot = (uint32)(ctx->commit_seq % DTC_GBP_RT_BATCH_QUEUE_COUNT);
-        uint32 idx = ctx->commit_idx[map_slot];
+    uint32 map_slot = (uint32)(ctx->commit_seq % DTC_GBP_RT_BATCH_QUEUE_COUNT);
+    uint32 idx = ctx->commit_idx[map_slot];
+    while (idx != OG_INVALID_ID32) {
         dtc_gbp_rt_batch_slot_t *slot;
 
-        if (idx == OG_INVALID_ID32) {
-            break;
-        }
         if (idx >= DTC_GBP_RT_BATCH_QUEUE_COUNT) {
-            dtc_gbp_rt_mark_unsafe(ctx, 29, "invalid commit slot index");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_INVALID_COMMIT_SLOT, "invalid commit slot index");
             break;
         }
         slot = &ctx->batch_slots[idx];
@@ -609,6 +636,8 @@ static void dtc_gbp_rt_commit_completed_batches_locked(dtc_gbp_rt_aly_ctx_t *ctx
         ctx->commit_idx[map_slot] = OG_INVALID_ID32;
         free_idx[(*free_count)++] = idx;
         ctx->commit_seq++;
+        map_slot = (uint32)(ctx->commit_seq % DTC_GBP_RT_BATCH_QUEUE_COUNT);
+        idx = ctx->commit_idx[map_slot];
     }
 }
 
@@ -717,7 +746,7 @@ static void dtc_gbp_rt_prune_metadata(knl_session_t *session, dtc_gbp_rt_aly_ctx
     log_point_t safe_point;
 
     if (dtc_read_node_ctrl(session, (uint8)ctx->peer_node) != OG_SUCCESS) {
-        dtc_gbp_rt_mark_unsafe(ctx, 5, "read peer ctrl for prune failed");
+        dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_READ_PEER_CTRL_PRUNE, "read peer ctrl for prune failed");
         return;
     }
     prune_point = dtc_get_ctrl(session, ctx->peer_node)->rcy_point;
@@ -738,11 +767,11 @@ static void dtc_gbp_rt_prune_metadata(knl_session_t *session, dtc_gbp_rt_aly_ctx
     dtc_gbp_rt_prune_lfn_points(ctx, prune_point.lfn);
     cm_spin_unlock(&ctx->state_lock);
     if (prune_point.lfn > old_prune_point.lfn) {
-        OG_LOG_RUN_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
-                             "[DTC GBP RT] prune watermark advanced, peer=%u prune_lfn=%llu safe_lfn=%llu "
-                             "lfn_points=%u",
-                             ctx->peer_node, (uint64)prune_point.lfn, (uint64)safe_point.lfn,
-                             ctx->lfn_point_count);
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                               "[DTC GBP RT] prune watermark advanced, peer=%u prune_lfn=%llu safe_lfn=%llu "
+                               "lfn_points=%u",
+                               ctx->peer_node, (uint64)prune_point.lfn, (uint64)safe_point.lfn,
+                               ctx->lfn_point_count);
     }
 }
 
@@ -816,7 +845,8 @@ static status_t dtc_gbp_rt_reserve_event_chunk(dtc_gbp_rt_aly_ctx_t *ctx, uint32
 
     while (!ctx->closing && !ctx->unsafe) {
         if (batch_idx >= DTC_GBP_RT_BATCH_QUEUE_COUNT) {
-            dtc_gbp_rt_mark_unsafe(ctx, 33, "invalid event chunk batch index");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_INVALID_EVENT_CHUNK_BATCH,
+                                   "invalid event chunk batch index");
             return OG_ERROR;
         }
         cm_spin_lock(&ctx->state_lock, NULL);
@@ -831,12 +861,13 @@ static status_t dtc_gbp_rt_reserve_event_chunk(dtc_gbp_rt_aly_ctx_t *ctx, uint32
         }
         cm_spin_unlock(&ctx->state_lock);
         if (wait_ms >= DTC_GBP_RT_DRAIN_TIMEOUT_MS) {
-            dtc_gbp_rt_mark_unsafe(ctx, 34, "event chunk backlog timeout");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_EVENT_CHUNK_BACKLOG_TIMEOUT,
+                                   "event chunk backlog timeout");
             return OG_ERROR;
         }
-        OG_LOG_RUN_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
-                             "[DTC GBP RT] event chunk backlog, peer=%u outstanding=%u limit=%u",
-                             ctx->peer_node, ctx->outstanding_event_chunks, DTC_GBP_RT_EVENT_CHUNK_LIMIT);
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                               "[DTC GBP RT] event chunk backlog, peer=%u outstanding=%u limit=%u",
+                               ctx->peer_node, ctx->outstanding_event_chunks, DTC_GBP_RT_EVENT_CHUNK_LIMIT);
         cm_sleep(1);
         wait_ms++;
     }
@@ -953,12 +984,14 @@ static void dtc_gbp_rt_finish_event_chunk(dtc_gbp_rt_aly_ctx_t *ctx, dtc_gbp_rt_
         if (slot->pending_chunks > 0) {
             slot->pending_chunks--;
         } else {
-            dtc_gbp_rt_mark_unsafe(ctx, 35, "event chunk pending underflow");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_EVENT_CHUNK_PENDING_UNDERFLOW,
+                                   "event chunk pending underflow");
         }
         dtc_gbp_rt_try_finish_batch_locked(ctx, slot, free_idx, &free_count);
     } else {
         free_count = 0;
-        dtc_gbp_rt_mark_unsafe(ctx, 36, "event chunk invalid batch index");
+        dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_EVENT_CHUNK_INVALID_BATCH,
+                               "event chunk invalid batch index");
     }
     cm_spin_unlock(&ctx->state_lock);
     dtc_gbp_rt_push_committed_free(ctx, free_idx, free_count);
@@ -1144,7 +1177,7 @@ static void dtc_gbp_rt_parser_proc(thread_t *thread)
     cm_set_thread_name("dtc_gbp_rt_parse");
     KNL_SESSION_SET_CURR_THREADID(session, thread->id);
     cm_atomic32_inc(&ctx->running_parser_num);
-    OG_LOG_RUN_INF("[DTC GBP RT] parser started, parser=%u peer=%u", arg->worker_id, ctx->peer_node);
+    OG_LOG_DEBUG_INF("[DTC GBP RT] parser started, parser=%u peer=%u", arg->worker_id, ctx->peer_node);
     while (!thread->closed && !ctx->closing && !ctx->unsafe) {
         uint32 idx = dtc_gbp_rt_atomic_list_pop(&ctx->used_list);
         dtc_gbp_rt_batch_slot_t *slot;
@@ -1161,14 +1194,15 @@ static void dtc_gbp_rt_parser_proc(thread_t *thread)
         slot->state = DTC_GBP_RT_BATCH_WORKING;
         cm_spin_unlock(&ctx->state_lock);
         if (dtc_gbp_rt_process_batch_slot(session, ctx, arg->worker_id, idx, slot) != OG_SUCCESS) {
-            dtc_gbp_rt_mark_unsafe(ctx, 25, "parser analyze batch failed");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_PARSER_ANALYZE_BATCH_FAILED,
+                                   "parser analyze batch failed");
             break;
         }
         processed++;
     }
     cm_atomic32_dec(&ctx->running_parser_num);
-    OG_LOG_RUN_INF("[DTC GBP RT] parser stopped, parser=%u processed=%llu unsafe=%u reason=%llu",
-                   arg->worker_id, processed, (uint32)ctx->unsafe, ctx->unsafe_reason);
+    OG_LOG_DEBUG_INF("[DTC GBP RT] parser stopped, parser=%u processed=%llu unsafe=%u reason=%llu",
+                     arg->worker_id, processed, (uint32)ctx->unsafe, ctx->unsafe_reason);
     KNL_SESSION_CLEAR_THREADID(session);
 }
 
@@ -1181,7 +1215,7 @@ static void dtc_gbp_rt_apply_event(knl_session_t *session, dtc_gbp_rt_aly_ctx_t 
         dtc_rcy_record_space_id_into_local(local, event->space_id);
         if (dtc_rcy_record_page_into_local(session, local, event->page_id, event->lsn, event->batch_lfn,
             event->pcn, NULL, NULL) != OG_SUCCESS) {
-            dtc_gbp_rt_mark_unsafe(ctx, 37, "owner record page failed");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_OWNER_RECORD_PAGE_FAILED, "owner record page failed");
         }
         return;
     }
@@ -1203,7 +1237,7 @@ static void dtc_gbp_rt_owner_proc(thread_t *thread)
     cm_set_thread_name("dtc_gbp_rt_owner");
     KNL_SESSION_SET_CURR_THREADID(session, thread->id);
     cm_atomic32_inc(&ctx->running_owner_num);
-    OG_LOG_RUN_INF("[DTC GBP RT] owner started, owner=%u peer=%u", owner_id, ctx->peer_node);
+    OG_LOG_DEBUG_INF("[DTC GBP RT] owner started, owner=%u peer=%u", owner_id, ctx->peer_node);
     while (!thread->closed && !ctx->closing && !ctx->unsafe) {
         dtc_gbp_rt_event_chunk_t *chunk = dtc_gbp_rt_dequeue_event_chunk(ctx, owner_id);
 
@@ -1226,8 +1260,8 @@ static void dtc_gbp_rt_owner_proc(thread_t *thread)
         dtc_rcy_local_set_rebuild_active_budget(&ctx->rt_owner_rcy[owner_id], DTC_GBP_RT_ACTIVE_REBUILD_BUDGET);
     }
     cm_atomic32_dec(&ctx->running_owner_num);
-    OG_LOG_RUN_INF("[DTC GBP RT] owner stopped, owner=%u chunks=%llu events=%llu unsafe=%u reason=%llu",
-                   owner_id, chunks, events, (uint32)ctx->unsafe, ctx->unsafe_reason);
+    OG_LOG_DEBUG_INF("[DTC GBP RT] owner stopped, owner=%u chunks=%llu events=%llu unsafe=%u reason=%llu",
+                     owner_id, chunks, events, (uint32)ctx->unsafe, ctx->unsafe_reason);
     KNL_SESSION_CLEAR_THREADID(session);
 }
 
@@ -1295,12 +1329,13 @@ static status_t dtc_gbp_rt_reset_runtime_window(knl_session_t *session, dtc_gbp_
         wait_ms++;
     }
     if (!drained) {
-        dtc_gbp_rt_mark_unsafe(ctx, 30, "runtime reset drain timeout");
+        dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_RUNTIME_RESET_DRAIN_TIMEOUT, "runtime reset drain timeout");
         return OG_ERROR;
     }
 
     if (dtc_gbp_rt_reinit_local_sets(ctx) != OG_SUCCESS) {
-        dtc_gbp_rt_mark_unsafe(ctx, 31, "runtime reset local set init failed");
+        dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_RUNTIME_RESET_LOCAL_INIT_FAILED,
+                               "runtime reset local set init failed");
         return OG_ERROR;
     }
 
@@ -1338,11 +1373,11 @@ static dtc_gbp_rt_read_result_t dtc_gbp_rt_read_retry(dtc_gbp_rt_aly_ctx_t *ctx,
 {
     ctx->tail_retry_count++;
     if (ctx->tail_retry_count <= DTC_GBP_RT_LOG_SAMPLE_LIMIT) {
-        OG_LOG_RUN_INF("[DTC GBP RT] peer lrp tail not stable sample[%llu/%u], peer=%u reason=%s curr_lfn=%llu "
-                       "curr_lsn=%llu safe_lfn=%llu pos=%u size_read=%u queue_depth=%u",
-                       ctx->tail_retry_count, DTC_GBP_RT_LOG_SAMPLE_LIMIT, ctx->peer_node, reason,
-                       (uint64)ctx->curr_point.lfn, (uint64)ctx->curr_point.lsn,
-                       (uint64)ctx->safe_analyzed_point.lfn, pos, size_read, dtc_gbp_rt_queue_depth(ctx));
+        OG_LOG_DEBUG_INF("[DTC GBP RT] peer lrp tail not stable sample[%llu/%u], peer=%u reason=%s curr_lfn=%llu "
+                         "curr_lsn=%llu safe_lfn=%llu pos=%u size_read=%u queue_depth=%u",
+                         ctx->tail_retry_count, DTC_GBP_RT_LOG_SAMPLE_LIMIT, ctx->peer_node, reason,
+                         (uint64)ctx->curr_point.lfn, (uint64)ctx->curr_point.lsn,
+                         (uint64)ctx->safe_analyzed_point.lfn, pos, size_read, dtc_gbp_rt_queue_depth(ctx));
     }
     return DTC_GBP_RT_READ_RETRY;
 }
@@ -1387,7 +1422,7 @@ static dtc_gbp_rt_read_result_t dtc_gbp_rt_analyze_buffer(knl_session_t *session
         }
         if (!LFN_IS_CONTINUOUS(batch->head.point.lfn, ctx->curr_point.lfn)) {
             ctx->has_gap = OG_TRUE;
-            return dtc_gbp_rt_read_unsafe(ctx, 7, "peer redo gap", batch);
+            return dtc_gbp_rt_read_unsafe(ctx, DTC_GBP_RT_UNSAFE_PEER_REDO_GAP, "peer redo gap", batch);
         }
         if (!dtc_gbp_rt_verify_checksum_quiet(session, batch)) {
             return dtc_gbp_rt_read_retry(ctx, "batch checksum not stable", pos, size_read);
@@ -1416,14 +1451,14 @@ static dtc_gbp_rt_read_result_t dtc_gbp_rt_analyze_buffer(knl_session_t *session
 static void dtc_gbp_rt_log_caught_up_lrp(knl_session_t *session, dtc_gbp_rt_aly_ctx_t *ctx,
     const log_point_t *lrp_point)
 {
-    OG_LOG_RUN_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
-                         "[DTC GBP RT] caught up peer lrp redo, peer=%u curr_lfn=%llu curr_lsn=%llu "
-                         "safe_lfn=%llu lrp_lfn=%llu lrp_lsn=%llu batches=%llu queue_depth=%u unsafe=%u "
-                         "unsafe_reason=%llu",
-                         ctx->peer_node, (uint64)ctx->curr_point.lfn, (uint64)ctx->curr_point.lsn,
-                         (uint64)ctx->safe_analyzed_point.lfn, (uint64)lrp_point->lfn, (uint64)lrp_point->lsn,
-                         ctx->analyzed_batches, dtc_gbp_rt_queue_depth(ctx), (uint32)ctx->unsafe,
-                         ctx->unsafe_reason);
+    OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                           "[DTC GBP RT] caught up peer lrp redo, peer=%u curr_lfn=%llu curr_lsn=%llu "
+                           "safe_lfn=%llu lrp_lfn=%llu lrp_lsn=%llu batches=%llu queue_depth=%u unsafe=%u "
+                           "unsafe_reason=%llu",
+                           ctx->peer_node, (uint64)ctx->curr_point.lfn, (uint64)ctx->curr_point.lsn,
+                           (uint64)ctx->safe_analyzed_point.lfn, (uint64)lrp_point->lfn, (uint64)lrp_point->lsn,
+                           ctx->analyzed_batches, dtc_gbp_rt_queue_depth(ctx), (uint32)ctx->unsafe,
+                           ctx->unsafe_reason);
     dtc_gbp_rt_prune_metadata(session, ctx);
 }
 
@@ -1435,10 +1470,10 @@ static void dtc_gbp_rt_reader_proc(thread_t *thread)
 
     cm_set_thread_name("dtc_gbp_rt_read");
     KNL_SESSION_SET_CURR_THREADID(session, thread->id);
-    OG_LOG_RUN_INF("[DTC GBP RT] reader started, self=%u peer=%u", ctx->self_node, ctx->peer_node);
+    OG_LOG_DEBUG_INF("[DTC GBP RT] reader started, self=%u peer=%u", ctx->self_node, ctx->peer_node);
 
     if (dtc_gbp_rt_init_peer_logset(session, ctx) != OG_SUCCESS) {
-        dtc_gbp_rt_mark_unsafe(ctx, 9, "init peer logset failed");
+        dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_INIT_PEER_LOGSET_FAILED, "init peer logset failed");
         thread->closed = OG_TRUE;
         KNL_SESSION_CLEAR_THREADID(session);
         return;
@@ -1464,7 +1499,7 @@ static void dtc_gbp_rt_reader_proc(thread_t *thread)
             continue;
         }
         if (dtc_read_node_ctrl(session, (uint8)ctx->peer_node) != OG_SUCCESS) {
-            dtc_gbp_rt_mark_unsafe(ctx, 10, "read peer ctrl failed");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_READ_PEER_CTRL_FAILED, "read peer ctrl failed");
             break;
         }
         {
@@ -1478,7 +1513,8 @@ static void dtc_gbp_rt_reader_proc(thread_t *thread)
             }
             if (ctrl->log_last < LOGFILE_SET(session, ctx->peer_node)->logfile_hwm &&
                 dtc_gbp_rt_refresh_file_head(session, ctx, ctrl->log_last) != OG_SUCCESS) {
-                dtc_gbp_rt_mark_unsafe(ctx, 15, "refresh current file head failed");
+                dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_REFRESH_CURRENT_FILE_HEAD_FAILED,
+                                       "refresh current file head failed");
                 break;
             }
         }
@@ -1488,7 +1524,8 @@ static void dtc_gbp_rt_reader_proc(thread_t *thread)
 
             for (uint32 i = 0; i < log_set->logfile_hwm; i++) {
                 if (dtc_gbp_rt_refresh_file_head(session, ctx, i) != OG_SUCCESS) {
-                    dtc_gbp_rt_mark_unsafe(ctx, 16, "refresh file heads failed");
+                    dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_REFRESH_FILE_HEADS_FAILED,
+                                           "refresh file heads failed");
                     break;
                 }
             }
@@ -1499,15 +1536,16 @@ static void dtc_gbp_rt_reader_proc(thread_t *thread)
         }
         if (file_id == OG_INVALID_ID32) {
             ctx->has_gap = OG_TRUE;
-            dtc_gbp_rt_mark_unsafe(ctx, 11, "peer redo file not found");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_PEER_REDO_FILE_NOT_FOUND, "peer redo file not found");
             break;
         }
         if (!is_curr && dtc_gbp_rt_refresh_file_head(session, ctx, file_id) != OG_SUCCESS) {
-            dtc_gbp_rt_mark_unsafe(ctx, 20, "refresh non-current file head failed");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_REFRESH_NON_CURRENT_FILE_HEAD_FAILED,
+                                   "refresh non-current file head failed");
             break;
         }
         if (dtc_gbp_rt_read_online(session, ctx, file_id, &peer_lrp_point, &size_read) != OG_SUCCESS) {
-            dtc_gbp_rt_mark_unsafe(ctx, 12, "read peer redo failed");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_READ_PEER_REDO_FAILED, "read peer redo failed");
             break;
         }
         if (size_read == 0) {
@@ -1546,15 +1584,15 @@ static void dtc_gbp_rt_reader_proc(thread_t *thread)
     }
 
     dtc_gbp_rt_close_files(ctx);
-    OG_LOG_RUN_INF("[DTC GBP RT] reader stopped, peer=%u safe=[%u-%u/%u/%llu/%llu] curr_lfn=%llu curr_lsn=%llu "
-                   "batches=%llu queue_depth=%u unsafe=%u unsafe_reason=%llu queue_full=%llu commit_full=%llu "
-                   "tail_retry=%llu sample_limit=%u",
-                   ctx->peer_node, ctx->safe_analyzed_point.rst_id, ctx->safe_analyzed_point.asn,
-                   ctx->safe_analyzed_point.block_id, (uint64)ctx->safe_analyzed_point.lfn,
-                   ctx->safe_analyzed_point.lsn, (uint64)ctx->curr_point.lfn, (uint64)ctx->curr_point.lsn,
-                   ctx->analyzed_batches, dtc_gbp_rt_queue_depth(ctx), (uint32)ctx->unsafe, ctx->unsafe_reason,
-                   ctx->queue_full_count, ctx->commit_full_count, ctx->tail_retry_count,
-                   (uint32)DTC_GBP_RT_LOG_SAMPLE_LIMIT);
+    OG_LOG_DEBUG_INF("[DTC GBP RT] reader stopped, peer=%u safe=[%u-%u/%u/%llu/%llu] curr_lfn=%llu curr_lsn=%llu "
+                     "batches=%llu queue_depth=%u unsafe=%u unsafe_reason=%llu queue_full=%llu commit_full=%llu "
+                     "tail_retry=%llu sample_limit=%u",
+                     ctx->peer_node, ctx->safe_analyzed_point.rst_id, ctx->safe_analyzed_point.asn,
+                     ctx->safe_analyzed_point.block_id, (uint64)ctx->safe_analyzed_point.lfn,
+                     ctx->safe_analyzed_point.lsn, (uint64)ctx->curr_point.lfn, (uint64)ctx->curr_point.lsn,
+                     ctx->analyzed_batches, dtc_gbp_rt_queue_depth(ctx), (uint32)ctx->unsafe, ctx->unsafe_reason,
+                     ctx->queue_full_count, ctx->commit_full_count, ctx->tail_retry_count,
+                     (uint32)DTC_GBP_RT_LOG_SAMPLE_LIMIT);
     KNL_SESSION_CLEAR_THREADID(session);
     thread->closed = OG_TRUE;
 }
@@ -1615,7 +1653,7 @@ static status_t dtc_gbp_rt_init_queue(dtc_gbp_rt_aly_ctx_t *ctx)
     ctx->free_list.array = (uint32 *)malloc(size);
     ctx->used_list.array = (uint32 *)malloc(size);
     if (ctx->free_list.array == NULL || ctx->used_list.array == NULL) {
-        OG_THROW_ERROR(ERR_ALLOC_MEMORY, size * 2, "dtc gbp rt batch queue");
+        OG_THROW_ERROR(ERR_ALLOC_MEMORY, size * DTC_GBP_RT_QUEUE_ARRAY_COUNT, "dtc gbp rt batch queue");
         CM_FREE_PTR(ctx->free_list.array);
         CM_FREE_PTR(ctx->used_list.array);
         return OG_ERROR;
@@ -1717,11 +1755,11 @@ status_t dtc_gbp_rt_aly_start(knl_session_t *session)
 
     if (!dtc_gbp_rt_enabled(session)) {
         if (session != NULL && g_dtc != NULL && DB_IS_CLUSTER(session)) {
-            OG_LOG_RUN_INF("[DTC GBP RT] runtime analyzer disabled, use_gbp=%u gbp_for_recovery=%u "
-                           "gbp_rt_analysis=%u node_count=%u dbstor=%u",
-                           (uint32)KNL_GBP_ENABLE(session->kernel), (uint32)KNL_GBP_FOR_RECOVERY(session->kernel),
-                           (uint32)KNL_GBP_RT_ANALYSIS(session->kernel), g_dtc->profile.node_count,
-                           (uint32)cm_dbs_is_enable_dbs());
+            OG_LOG_DEBUG_INF("[DTC GBP RT] runtime analyzer disabled, use_gbp=%u gbp_for_recovery=%u "
+                             "gbp_rt_analysis=%u node_count=%u dbstor=%u",
+                             (uint32)KNL_GBP_ENABLE(session->kernel), (uint32)KNL_GBP_FOR_RECOVERY(session->kernel),
+                             (uint32)KNL_GBP_RT_ANALYSIS(session->kernel), g_dtc->profile.node_count,
+                             (uint32)cm_dbs_is_enable_dbs());
         }
         return OG_SUCCESS;
     }
@@ -1885,7 +1923,8 @@ static void dtc_gbp_rt_freeze_reader_workers(dtc_gbp_rt_aly_ctx_t *ctx)
         cm_spin_unlock(&ctx->state_lock);
         if (!ctx->unsafe &&
             (dtc_gbp_rt_queue_depth(ctx) != 0 || has_uncommitted || !dtc_gbp_rt_event_queues_drained(ctx))) {
-            dtc_gbp_rt_mark_unsafe(ctx, 28, "drain runtime queue timeout");
+            dtc_gbp_rt_mark_unsafe(ctx, DTC_GBP_RT_UNSAFE_DRAIN_RUNTIME_QUEUE_TIMEOUT,
+                                   "drain runtime queue timeout");
         }
     }
     for (uint32 i = 0; i < ctx->parse_worker_count; i++) {
@@ -2107,7 +2146,7 @@ void dtc_gbp_rt_aly_abort_partial(knl_session_t *session)
         return;
     }
     ctx->unsafe = OG_TRUE;
-    ctx->unsafe_reason = (ctx->unsafe_reason == 0) ? 13 : ctx->unsafe_reason;
+    ctx->unsafe_reason = (ctx->unsafe_reason == 0) ? DTC_GBP_RT_UNSAFE_STOP_RELEASE : ctx->unsafe_reason;
     dtc_gbp_rt_release_resources(ctx, DTC_GBP_RT_UNSAFE);
     (void)session;
 }

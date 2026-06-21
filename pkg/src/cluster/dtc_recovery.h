@@ -462,6 +462,10 @@ typedef struct st_dtc_rcy_context {
     log_point_t gbp_skip_points[OG_MAX_INSTANCES];
     uint64 gbp_max_lsns[OG_MAX_INSTANCES];
     uint64 gbp_global_lrp_lsn;
+    bool8 gbp_redo_fallback_used;
+    bool8 gbp_saved_max_lrp_valid;
+    uint16 gbp_fallback_reserved;
+    uint64 gbp_saved_max_lrp_lsn;
     dtc_gbp_lfn_point_map_t gbp_lfn_point_maps[OG_MAX_INSTANCES];
     gbp_partial_context_t gbp_partial_ctx;
     bool8 gbp_partial_jump_disabled[OG_MAX_INSTANCES];

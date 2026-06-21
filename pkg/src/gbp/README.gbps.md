@@ -32,14 +32,15 @@ PID_FILE=$OGDB_HOME/run/gbps.pid
 MAX_CACHE_PAGES=0
 CAPACITY_EVICT_ON_WRITE=false
 READ_END_MODE=async
-READ_PHASE_TIMEOUT=300
+READ_PHASE_TIMEOUT=3
 ```
 
 When installed under `OGDB_HOME=/usr2/ograc/ograc/server`, the GBPS log path is
 derived as `dirname(dirname($OGDB_HOME))/log/gbps/gbps.log`.
 
-`READ_PHASE_TIMEOUT` is in seconds. A positive value automatically releases an orphan READ_PHASE; `0` disables
-the timeout release.
+`READ_PHASE_TIMEOUT` is in seconds. A positive value automatically releases an orphan READ_PHASE after this idle
+time; completed PAGE_READ/BATCH_READ/META activity refreshes the timer, while an in-flight read that exceeds the
+timeout is treated as a failed/stale read phase. `0` disables the timeout release.
 
 `MAX_CACHE_PAGES=0` disables the cache page cap. With a positive cap, `CAPACITY_EVICT_ON_WRITE=false` keeps a hard
 cap: new cache pages are rejected while the cache is full, until checkpoint/reset purge frees space. Set

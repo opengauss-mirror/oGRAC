@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -1597,7 +1597,7 @@ static void buf_try_load_zero_page_from_disk(knl_session_t *session, buf_ctrl_t 
     OG_LOG_RUN_INF("[GBP] load page from disk %u-%u when GBP pull leaves zero page", page_id.file, page_id.page);
 }
 
-void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
+status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     knl_instance_t *kernel = session->kernel;
     log_context_t *redo = &kernel->redo_ctx;
@@ -1605,6 +1605,7 @@ void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
     gbp_analyse_item_t *item = NULL;
     bool32 update_gbp_read_version = OG_TRUE;
     bool32 need_disk_reload = OG_FALSE;
+    status_t status = OG_SUCCESS;
 
     /* read latest page versioin */
     if (KNL_RECOVERY_WITH_GBP(kernel) && ctrl->gbp_ctrl->gbp_read_version != KNL_GBP_READ_VER(kernel)) {
@@ -1632,7 +1633,6 @@ void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
             uint32 verify_node_id = 0;
             bool32 partial_need_gbp = (bool32)(partial_need_replay && partial_item->required &&
                 dtc_rcy_gbp_partial_item_in_jumped_window(session, partial_item, &verify_node_id));
-
             if (partial_need_replay && partial_item->required && !partial_need_gbp && ctrl->page->lsn < expect_lsn) {
                 update_gbp_read_version = OG_FALSE;
             }
@@ -1656,7 +1656,14 @@ void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
                 knl_begin_session_wait(session, DB_FILE_GBP_READ, OG_TRUE);
                 ctrl->gbp_ctrl->page_status = knl_read_page_from_gbp(session, ctrl);
                 knl_end_session_wait(session, DB_FILE_GBP_READ);
-                if (ctrl->page->lsn == OG_INVALID_LSN) {
+                if (ctrl->gbp_ctrl->page_status == GBP_PAGE_ERROR) {
+                    update_gbp_read_version = OG_FALSE;
+                    if (gbp_knl_dtc_fallback_required(session)) {
+                        status = OG_ERROR;
+                    } else if (ctrl->page->lsn == OG_INVALID_LSN) {
+                        need_disk_reload = OG_TRUE;
+                    }
+                } else if (ctrl->page->lsn == OG_INVALID_LSN) {
                     need_disk_reload = OG_TRUE;
                 }
                 GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial on_demand_pull END page %u-%u page_status=%u "
@@ -1701,7 +1708,14 @@ void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
                 knl_begin_session_wait(session, DB_FILE_GBP_READ, OG_TRUE);
                 ctrl->gbp_ctrl->page_status = knl_read_page_from_gbp(session, ctrl);
                 knl_end_session_wait(session, DB_FILE_GBP_READ);
-                if (ctrl->page->lsn == OG_INVALID_LSN) {
+                if (ctrl->gbp_ctrl->page_status == GBP_PAGE_ERROR) {
+                    update_gbp_read_version = OG_FALSE;
+                    if (gbp_knl_dtc_fallback_required(session)) {
+                        status = OG_ERROR;
+                    } else if (ctrl->page->lsn == OG_INVALID_LSN) {
+                        need_disk_reload = OG_TRUE;
+                    }
+                } else if (ctrl->page->lsn == OG_INVALID_LSN) {
                     need_disk_reload = OG_TRUE;
                 }
                 GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] on_demand_pull END page %u-%u page_status=%u page_lsn=%llu "
@@ -1737,6 +1751,9 @@ void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
         }
         cm_spin_unlock(&kernel->gbp_context.buf_read_lock[lock_id]);
 
+        if (status != OG_SUCCESS) {
+            return status;
+        }
         if (need_disk_reload) {
             buf_try_load_zero_page_from_disk(session, ctrl, page_id);
         }
@@ -1751,9 +1768,11 @@ void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
     }
 
     /* after recovery, usable page should be replayed */
-    if (ctrl->gbp_ctrl->page_status == GBP_PAGE_USABLE && buf_gbp_post_recovery_check_enabled(session)) {
+    if (redo->last_rcy_with_gbp && ctrl->gbp_ctrl->page_status == GBP_PAGE_USABLE &&
+        buf_gbp_post_recovery_check_enabled(session)) {
         knl_panic_log(0, "[GBP] usable page %u-%u is not replayed after recover", page_id.file, page_id.page);
     }
+    return OG_SUCCESS;
 }
 
 /*
@@ -1789,12 +1808,17 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
 
         if (KNL_GBP_ENABLE(session->kernel) && !SESSION_IS_LOG_ANALYZE(session) && !SESSION_IS_GBP_BG(session)) {
             buf_bucket_t *gbp_bucket = buf_find_bucket(session, page_id);
+            status_t gbp_status = OG_SUCCESS;
+
             cm_spin_lock(&gbp_bucket->lock, &session->stat->spin_stat.stat_bucket);
             buf_ctrl_t *gbp_ctrl = buf_find_from_bucket(gbp_bucket, page_id);
             if (gbp_ctrl != NULL) {
-                buf_check_page_version(session, gbp_ctrl);
+                gbp_status = buf_check_page_version(session, gbp_ctrl);
             }
             cm_spin_unlock(&gbp_bucket->lock);
+            if (gbp_status != OG_SUCCESS) {
+                return OG_FALSE;
+            }
         }
 
         buf_enter_page(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL);
@@ -1819,13 +1843,17 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
     }
 
     buf_bucket_t *bucket = buf_find_bucket(session, page_id);
+    status_t gbp_status = OG_SUCCESS;
 
     cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
     if (ctrl != NULL) {
-        buf_check_page_version(session, ctrl);
+        gbp_status = buf_check_page_version(session, ctrl);
     }
     cm_spin_unlock(&bucket->lock);
+    if (gbp_status != OG_SUCCESS) {
+        return OG_FALSE;
+    }
 
     return OG_TRUE;
 }

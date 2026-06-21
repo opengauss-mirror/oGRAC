@@ -5884,10 +5884,13 @@ static status_t sql_func_pull_gbp_page_demo(sql_stmt_t *stmt, expr_node_t *func,
     return OG_SUCCESS;
 }
 
+#define SQL_PULL_GBP_PAGE_DEMO_ARG_COUNT 2
+
 static status_t sql_verify_pull_gbp_page_demo(sql_verifier_t *verf, expr_node_t *func)
 {
     CM_POINTER2(verf, func);
-    if (sql_verify_func_node(verf, func, 2, 2, OG_INVALID_ID32) != OG_SUCCESS) {
+    if (sql_verify_func_node(verf, func, SQL_PULL_GBP_PAGE_DEMO_ARG_COUNT,
+        SQL_PULL_GBP_PAGE_DEMO_ARG_COUNT, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
     }
     func->datatype = OG_TYPE_INTEGER;

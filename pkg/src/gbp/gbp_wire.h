@@ -1,4 +1,30 @@
-#pragma once
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_wire.h
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_wire.h
+ *
+ * -------------------------------------------------------------------------
+ */
+
+#ifndef GBP_WIRE_H
+#define GBP_WIRE_H
 
 #include <algorithm>
 #include <cstddef>
@@ -13,8 +39,14 @@
 #include <ws2tcpip.h>
 using socket_t = SOCKET;
 using gbp_socklen_t = int;
-inline socket_t invalid_socket() { return INVALID_SOCKET; }
-inline bool is_invalid_socket(socket_t fd) { return fd == INVALID_SOCKET; }
+static inline socket_t invalid_socket()
+{
+    return INVALID_SOCKET;
+}
+static inline bool is_invalid_socket(socket_t fd)
+{
+    return fd == INVALID_SOCKET;
+}
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -25,8 +57,14 @@ inline bool is_invalid_socket(socket_t fd) { return fd == INVALID_SOCKET; }
 #endif
 using socket_t = int;
 using gbp_socklen_t = socklen_t;
-inline socket_t invalid_socket() { return -1; }
-inline bool is_invalid_socket(socket_t fd) { return fd < 0; }
+static inline socket_t invalid_socket()
+{
+    return -1;
+}
+static inline bool is_invalid_socket(socket_t fd)
+{
+    return fd < 0;
+}
 #endif
 
 namespace gbp {
@@ -209,14 +247,24 @@ constexpr size_t READ_META_RESP_SIZE = sizeof(gbp_read_meta_resp_t);
 constexpr size_t CKPT_READ_RESP_SIZE = sizeof(gbp_read_ckpt_resp_t);
 constexpr size_t GBP_META_ITEM_SIZE = sizeof(gbp_meta_item_t);
 constexpr size_t SHAKE_BODY_SIZE = 16;
+constexpr size_t GBP_UINT32_WIRE_SIZE = sizeof(uint32_t);
+constexpr size_t GBP_BATCH_READ_RESP_COUNT_FIELDS = 2;
+constexpr size_t WRITE_BATCH_LOG_POINT_COUNT = 3;
+constexpr size_t WRITE_BATCH_LRP_INDEX = 2;
+constexpr size_t WRITE_PAGES_OFFSET_CANDIDATE_COUNT = 2;
 
 constexpr size_t WRITE_BODY_SIZE_ALIGNED =
-    ((4 + LOG_POINT_ALIGN - 1) / LOG_POINT_ALIGN) * LOG_POINT_ALIGN + 3 * LOG_POINT_SIZE +
-    GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE + 4;
+    ((GBP_UINT32_WIRE_SIZE + LOG_POINT_ALIGN - 1) / LOG_POINT_ALIGN) * LOG_POINT_ALIGN +
+    WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE + GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE + GBP_UINT32_WIRE_SIZE;
 constexpr size_t WRITE_BODY_SIZE_TIGHT =
-    4 + 3 * LOG_POINT_SIZE + GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE + 4;
+    GBP_UINT32_WIRE_SIZE + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE +
+    GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE + GBP_UINT32_WIRE_SIZE;
 
-inline constexpr size_t align_up(size_t v, size_t a) {
+inline constexpr size_t align_up(size_t v, size_t a)
+{
+    if (a == 0) {
+        return v;
+    }
     return ((v + a - 1) / a) * a;
 }
 
@@ -227,10 +275,13 @@ constexpr size_t WRITE_BODY_SIZE_TIGHT_PAD8 =
 
 class QuietDisconnect : public std::runtime_error {
 public:
-    explicit QuietDisconnect(const std::string& msg) : std::runtime_error(msg) {}
+    explicit QuietDisconnect(const std::string& msg) : std::runtime_error(msg)
+    {
+    }
 };
 
-inline bool recv_full(socket_t fd, void* buf, size_t size) {
+inline bool recv_full(socket_t fd, void* buf, size_t size)
+{
     auto* p = static_cast<char*>(buf);
     size_t got = 0;
     while (got < size) {
@@ -239,13 +290,16 @@ inline bool recv_full(socket_t fd, void* buf, size_t size) {
 #else
         const ssize_t n = recv(fd, p + got, size - got, 0);
 #endif
-        if (n <= 0) return false;
+        if (n <= 0) {
+            return false;
+        }
         got += static_cast<size_t>(n);
     }
     return true;
 }
 
-inline bool send_full(socket_t fd, const void* buf, size_t size) {
+inline bool send_full(socket_t fd, const void* buf, size_t size)
+{
     const auto* p = static_cast<const char*>(buf);
     size_t sent = 0;
     while (sent < size) {
@@ -254,61 +308,82 @@ inline bool send_full(socket_t fd, const void* buf, size_t size) {
 #else
         const ssize_t n = send(fd, p + sent, size - sent, MSG_NOSIGNAL);
 #endif
-        if (n <= 0) return false;
+        if (n <= 0) {
+            return false;
+        }
         sent += static_cast<size_t>(n);
     }
     return true;
 }
 
-inline void send_full_or_disconnect(socket_t fd, const void* buf, size_t size, const char* what = "send") {
+inline void send_full_or_disconnect(socket_t fd, const void* buf, size_t size, const char* what = "send")
+{
     if (!send_full(fd, buf, size)) {
         throw QuietDisconnect(std::string("send failed: ") + what);
     }
 }
 
-inline std::pair<int, int> write_pages_offset_candidates() {
-    const int tight = static_cast<int>(4 + 3 * LOG_POINT_SIZE);
-    const int aligned = static_cast<int>(align_up(4, LOG_POINT_ALIGN) + 3 * LOG_POINT_SIZE);
+inline std::pair<int, int> write_pages_offset_candidates()
+{
+    const int tight = static_cast<int>(GBP_UINT32_WIRE_SIZE + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE);
+    const size_t aligned_off = align_up(GBP_UINT32_WIRE_SIZE, LOG_POINT_ALIGN);
+    const int aligned = static_cast<int>(aligned_off + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE);
     return {aligned, tight};
 }
 
-inline int resolve_write_pages_offset(const uint8_t* body, size_t body_len, uint32_t page_num) {
+inline int resolve_write_pages_offset(const uint8_t* body, size_t body_len, uint32_t page_num)
+{
     const uint32_t pn = std::min(page_num, GBP_BATCH_PAGE_NUM);
     const auto candidates = write_pages_offset_candidates();
-    if (pn == 0) return candidates.first;
+    if (pn == 0) {
+        return candidates.first;
+    }
     const size_t min_expect = std::min(WRITE_BODY_SIZE_ALIGNED, WRITE_BODY_SIZE_TIGHT);
     const size_t max_expect = std::max(WRITE_BODY_SIZE_ALIGNED_PAD8, WRITE_BODY_SIZE_TIGHT_PAD8);
-    if (body_len < min_expect || body_len > max_expect) return -1;
-    const int offsets[2] = {candidates.first, candidates.second};
+    if (body_len < min_expect || body_len > max_expect) {
+        return -1;
+    }
+    const int offsets[WRITE_PAGES_OFFSET_CANDIDATE_COUNT] = {candidates.first, candidates.second};
     for (int off : offsets) {
         const size_t need_fixed = static_cast<size_t>(off) + GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE;
-        if (need_fixed + 4 <= body_len) {
+        if (need_fixed + GBP_UINT32_WIRE_SIZE <= body_len) {
             uint32_t tail_fixed = 0;
-            std::memcpy(&tail_fixed, body + need_fixed, 4);
-            if (tail_fixed == page_num) return off;
+            std::memcpy(&tail_fixed, body + need_fixed, GBP_UINT32_WIRE_SIZE);
+            if (tail_fixed == page_num) {
+                return off;
+            }
         }
         const size_t need_var = static_cast<size_t>(off) + pn * GBP_PAGE_ITEM_SIZE;
-        if (need_var + 4 <= body_len) {
+        if (need_var + GBP_UINT32_WIRE_SIZE <= body_len) {
             uint32_t tail_var = 0;
-            std::memcpy(&tail_var, body + need_var, 4);
-            if (tail_var == page_num) return off;
+            std::memcpy(&tail_var, body + need_var, GBP_UINT32_WIRE_SIZE);
+            if (tail_var == page_num) {
+                return off;
+            }
         }
     }
     return -1;
 }
 
 inline void parse_write_batch_points(const uint8_t* body, size_t body_len, int pages_off,
-                                     log_point_t& batch_begin, log_point_t& batch_trunc, log_point_t& batch_lrp) {
+                                     log_point_t& batch_begin, log_point_t& batch_trunc, log_point_t& batch_lrp)
+{
     batch_begin = batch_trunc = batch_lrp = log_point_t{};
     const auto candidates = write_pages_offset_candidates();
     size_t base = 0;
-    if (pages_off == candidates.second) base = 4;
-    else if (pages_off == candidates.first) base = align_up(4, LOG_POINT_ALIGN);
-    else return;
-    if (body_len < base + 3 * LOG_POINT_SIZE) return;
+    if (pages_off == candidates.second) {
+        base = GBP_UINT32_WIRE_SIZE;
+    } else if (pages_off == candidates.first) {
+        base = align_up(GBP_UINT32_WIRE_SIZE, LOG_POINT_ALIGN);
+    } else {
+        return;
+    }
+    if (body_len < base + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE) {
+        return;
+    }
     std::memcpy(&batch_begin, body + base, LOG_POINT_SIZE);
     std::memcpy(&batch_trunc, body + base + LOG_POINT_SIZE, LOG_POINT_SIZE);
-    std::memcpy(&batch_lrp, body + base + 2 * LOG_POINT_SIZE, LOG_POINT_SIZE);
+    std::memcpy(&batch_lrp, body + base + WRITE_BATCH_LRP_INDEX * LOG_POINT_SIZE, LOG_POINT_SIZE);
 }
 
 static_assert(sizeof(page_id_t) == 8, "page_id_t size");
@@ -316,7 +391,7 @@ static_assert(sizeof(log_point_t) == 24, "log_point_t size");
 static_assert(sizeof(gbp_page_item_t) == 8264, "gbp_page_item_t size");
 static_assert(sizeof(gbp_read_resp_t) == 8248, "gbp_read_resp_t size");
 static_assert(sizeof(gbp_batch_read_resp_t) ==
-                  sizeof(gbp_msg_hdr_t) + sizeof(uint32_t) * 2 + GBP_MSG_LEN +
+                  sizeof(gbp_msg_hdr_t) + sizeof(uint32_t) * GBP_BATCH_READ_RESP_COUNT_FIELDS + GBP_MSG_LEN +
                       GBP_BATCH_PAGE_NUM * sizeof(gbp_page_item_t),
               "gbp_batch_read_resp_t size");
 static_assert(sizeof(gbp_read_meta_resp_t) == 32832, "gbp_read_meta_resp_t size");
@@ -324,7 +399,8 @@ static_assert(sizeof(gbp_read_ckpt_resp_t) == 168, "gbp_read_ckpt_resp_t size");
 static_assert(offsetof(gbp_read_ckpt_resp_t, begin_point) == 24, "ckpt begin offset");
 static_assert(offsetof(gbp_page_item_t, block) == 72, "page_item block offset");
 
-inline uint64_t page_id_key(uint32_t page, uint16_t file) {
+inline uint64_t page_id_key(uint32_t page, uint16_t file)
+{
     page_id_t pid{};
     pid.page = page;
     pid.file = file;
@@ -335,8 +411,11 @@ inline uint64_t page_id_key(uint32_t page, uint16_t file) {
     return key;
 }
 
-inline uint64_t page_id_key_from_raw(const page_id_t& raw) {
+inline uint64_t page_id_key_from_raw(const page_id_t& raw)
+{
     return page_id_key(raw.page, raw.file);
 }
 
 }  // namespace gbp
+
+#endif  // GBP_WIRE_H

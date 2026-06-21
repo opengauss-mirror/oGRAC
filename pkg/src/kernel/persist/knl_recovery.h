@@ -278,9 +278,9 @@ bool32 db_terminate_lfn_reached(knl_session_t *session, uint64 curr_lfn);
 
 void rcy_add_pages(rcy_paral_group_t *paral_group, log_group_t *group, uint32 group_slot, rcy_context_t *rcy,
                    bool32 *logic, rcy_paral_group_t **next_group);
-void rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral_group);
+status_t rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral_group);
 void rcy_add_replay_bucket(rcy_paral_group_t *paral_group, rcy_context_t *rcy);
-void rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_t *group);
+status_t rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_t *group);
 void rcy_free_buffer(rcy_context_t *rcy);
 status_t rcy_init_context(knl_session_t *session);
 void print_rcy_skip_page_limit(knl_session_t *session);

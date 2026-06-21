@@ -1,13 +1,29 @@
-#pragma once
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_std_compat.h
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_std_compat.h
+ *
+ * -------------------------------------------------------------------------
+ */
 
-// GCC 7 libstdc++ can enable pthread_cond_clockwait while older glibc headers
-// do not declare it. Keep std::condition_variable on the portable fallback path.
-#if defined(__has_include)
-#if __has_include(<bits/c++config.h>)
-#include <bits/c++config.h>
-#undef _GLIBCXX_USE_PTHREAD_COND_CLOCKWAIT
-#endif
-#elif defined(__GNUC__)
-#include <bits/c++config.h>
-#undef _GLIBCXX_USE_PTHREAD_COND_CLOCKWAIT
-#endif
+#ifndef GBP_STD_COMPAT_H
+#define GBP_STD_COMPAT_H
+
+#endif  // GBP_STD_COMPAT_H

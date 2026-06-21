@@ -34,6 +34,7 @@
 #include "knl_xa_persist.h"
 #include "dtc_dc.h"
 #include "dtc_buffer.h"
+#include "knl_gbp.h"
 
 void log_get_manager(log_manager_t **lmgr, uint32 *count)
 {
@@ -543,6 +544,27 @@ static void rcy_replay_group_end(knl_session_t *session)
     }
 }
 
+static void rcy_unwind_page_stack(knl_session_t *session, uint32 depth)
+{
+    while (session->page_stack.depth > depth) {
+        buf_ctrl_t *ctrl = buf_curr_page(session);
+        if (ctrl != NULL) {
+            buf_unlatch(session, ctrl, OG_TRUE);
+        }
+        buf_pop_page(session);
+    }
+    if (session->page_stack.depth == 0) {
+        session->curr_page = NULL;
+        session->curr_page_ctrl = NULL;
+    }
+}
+
+static inline bool32 rcy_gbp_fallback_required(knl_session_t *session)
+{
+    return (bool32)(SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) &&
+                    gbp_knl_dtc_fallback_required(session));
+}
+
 static status_t rcy_paral_replay_group(knl_session_t *session, rcy_bucket_t *bucket, log_context_t *ogx,
                                        rcy_paral_group_t *paral_group)
 {
@@ -551,6 +573,7 @@ static status_t rcy_paral_replay_group(knl_session_t *session, rcy_bucket_t *buc
     log_group_t *group = paral_group->group;
     pcn_verify_t log_pcns[KNL_MAX_PAGE_STACK_DEPTH] = { 0 };
     pcn_verify_list_t pcn_list;
+    uint32 stack_depth = session->page_stack.depth;
 
     pcn_list.list = log_pcns;
     pcn_list.count = KNL_MAX_PAGE_STACK_DEPTH;
@@ -559,9 +582,23 @@ static status_t rcy_paral_replay_group(knl_session_t *session, rcy_bucket_t *buc
     session->ddl_lsn_pitr = paral_group->ddl_lsn_pitr;
     offset = sizeof(log_group_t);
     session->rm->nolog_type = group->nologging_insert ? TABLE_LEVEL : LOGGING_LEVEL;
+    if (rcy_gbp_fallback_required(session)) {
+        session->rm->nolog_type = LOGGING_LEVEL;
+        return OG_ERROR;
+    }
     while (offset < LOG_GROUP_ACTUAL_SIZE(group)) {
         log = (log_entry_t *)((char *)group + offset);
         if (rcy_paral_replay_entry(session, bucket, log, paral_group, pcn_list) != OG_SUCCESS) {
+            if (rcy_gbp_fallback_required(session)) {
+                rcy_unwind_page_stack(session, stack_depth);
+                rcy_replay_group_end(session);
+            }
+            session->rm->nolog_type = LOGGING_LEVEL;
+            return OG_ERROR;
+        }
+        if (rcy_gbp_fallback_required(session)) {
+            rcy_unwind_page_stack(session, stack_depth);
+            rcy_replay_group_end(session);
             session->rm->nolog_type = LOGGING_LEVEL;
             return OG_ERROR;
         }
@@ -579,24 +616,36 @@ static status_t rcy_paral_replay_group(knl_session_t *session, rcy_bucket_t *buc
     return OG_SUCCESS;
 }
 
-void rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_t *group)
+status_t rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_t *group)
 {
     uint32 offset;
     log_entry_t *log = NULL;
     knl_session_t *se = session->kernel->sessions[SESSION_ID_KERNEL];
     pcn_verify_t log_pcns[KNL_MAX_PAGE_STACK_DEPTH] = { 0 };
+    uint32 stack_depth = se->page_stack.depth;
 
     se->dtc_session_type = session->dtc_session_type;
     se->curr_lsn = group->lsn;
     offset = sizeof(log_group_t);
     se->rm->nolog_type = group->nologging_insert ? TABLE_LEVEL : LOGGING_LEVEL;
+    if (rcy_gbp_fallback_required(se)) {
+        se->rm->nolog_type = LOGGING_LEVEL;
+        return OG_ERROR;
+    }
     while (offset < LOG_GROUP_ACTUAL_SIZE(group)) {
         log = (log_entry_t *)((char *)group + offset);
         rcy_replay_entry(se, log, log_pcns, KNL_MAX_PAGE_STACK_DEPTH);
+        if (rcy_gbp_fallback_required(se)) {
+            rcy_unwind_page_stack(se, stack_depth);
+            rcy_replay_group_end(se);
+            se->rm->nolog_type = LOGGING_LEVEL;
+            return OG_ERROR;
+        }
         offset += log->size;
     }
     se->rm->nolog_type = LOGGING_LEVEL;
     rcy_replay_group_end(se);
+    return OG_SUCCESS;
 }
 
 /* when GBP enabled, analyze standby redo log group, set page latest lsn to gbp aly item */
@@ -837,7 +886,7 @@ static void rcy_release_lock_pages(knl_session_t *session, rcy_paral_group_t *pa
     paral_group->enter_count = 0;
 }
 
-void rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral_group)
+status_t rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral_group)
 {
     knl_instance_t *kernel = session->kernel;
     log_context_t *ogx = &kernel->redo_ctx;
@@ -847,9 +896,16 @@ void rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral_gro
 
     timeval_t begin_time;
     uint64 used_time;
+    status_t status;
     ELAPSED_BEGIN(begin_time);
     for (uint32 j = 0; j < rcy->capacity; j++) {
         while (rcy->bucket[j].head != rcy->bucket[j].tail) {
+            if (rcy_gbp_fallback_required(session)) {
+                ELAPSED_END(begin_time, used_time);
+                stat->latc_rcy_logic_log_wait_time += used_time;
+                rcy_release_lock_pages(session, paral_group);
+                return OG_ERROR;
+            }
             cm_spin_sleep();
         }
     }
@@ -857,12 +913,14 @@ void rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral_gro
     stat->latc_rcy_logic_log_wait_time += used_time;
 
     ELAPSED_BEGIN(begin_time);
-    if (rcy_paral_replay_group(session, NULL, ogx, paral_group) == OG_SUCCESS) {
+    status = rcy_paral_replay_group(session, NULL, ogx, paral_group);
+    if (status == OG_SUCCESS || rcy_gbp_fallback_required(session)) {
         rcy_release_lock_pages(session, paral_group);
     }
     ELAPSED_END(begin_time, used_time);
     stat->last_rcy_logic_log_elapsed += used_time;
     stat->last_rcy_logic_log_group_count += 1;
+    return status;
 }
 
 static void rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cursor, log_batch_t *batch)
@@ -1691,6 +1749,20 @@ static void rcy_perform(knl_session_t *session, rcy_bucket_t *bucket, uint64 *rc
     cm_spin_unlock(&bucket->lock);
 
     bucket->last_replay_time = g_timer()->now;
+    if (rcy_gbp_fallback_required(session)) {
+        timeval_t calc_work_time;
+        ELAPSED_BEGIN(calc_work_time);
+        rcy_release_lock_pages(session, ctrl);
+        if (session->kernel->attr.clustered) {
+            dtc_rcy_atomic_dec_group_num(session, ctrl->group_list_idx, 1);
+        }
+        if (bucket->head != bucket->tail) {
+            bucket->head = (bucket->head + 1) % bucket->count;
+        }
+        ELAPSED_END(calc_work_time, *rcy_perform_work_time);
+        return;
+    }
+
     if (!rcy_group_pages_preloaded(rcy, ctrl->id)) {
         rcy_flexible_sleep(session, rcy, NULL);
         return;
@@ -1700,6 +1772,16 @@ static void rcy_perform(knl_session_t *session, rcy_bucket_t *bucket, uint64 *rc
     ELAPSED_BEGIN(calc_work_time);
 
     if (rcy_paral_replay_group(session, bucket, ogx, ctrl) != OG_SUCCESS) {
+        if (rcy_gbp_fallback_required(session)) {
+            rcy_release_lock_pages(session, ctrl);
+            if (session->kernel->attr.clustered) {
+                dtc_rcy_atomic_dec_group_num(session, ctrl->group_list_idx, 1);
+            }
+            if (bucket->head != bucket->tail) {
+                bucket->head = (bucket->head + 1) % bucket->count;
+            }
+            ELAPSED_END(calc_work_time, *rcy_perform_work_time);
+        }
         return;
     }
     rcy_release_lock_pages(session, ctrl);
@@ -1707,7 +1789,6 @@ static void rcy_perform(knl_session_t *session, rcy_bucket_t *bucket, uint64 *rc
     if (session->kernel->attr.clustered) {
         dtc_rcy_atomic_dec_group_num(session, ctrl->group_list_idx, 1);
     }
-
     if (bucket->head != bucket->tail) {
         bucket->head = (bucket->head + 1) % bucket->count;
     }

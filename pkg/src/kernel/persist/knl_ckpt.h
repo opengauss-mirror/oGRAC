@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -300,6 +300,7 @@ void ckpt_pop_page(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl
 status_t ckpt_checksum(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group);
 status_t ckpt_encrypt(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group);
 status_t ckpt_recover_partial_write_node(knl_session_t *session, uint32 node_id);
+void ckpt_wait_group_fid_idle(knl_session_t *session, ckpt_context_t *ogx);
 void ckpt_prepare_proc(thread_t *thread);
 
 void ckpt_put_to_part_group(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *to_flush_ctrl);

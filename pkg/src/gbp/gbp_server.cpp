@@ -1,3 +1,28 @@
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_server.cpp
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_server.cpp
+ *
+ * -------------------------------------------------------------------------
+ */
+
 #include "gbp_log.h"
 #include "gbp_server.h"
 
@@ -22,24 +47,85 @@
 
 namespace gbp {
 
-static double now_seconds() {
+namespace {
+
+constexpr int GBP_READ_PHASE_INITIAL_DROP_LOG_LIMIT = 8;
+constexpr int GBP_READ_PHASE_DROP_LOG_INTERVAL = 1024;
+constexpr int GBP_SERVER_MILLISECONDS_PER_SECOND = 1000;
+constexpr int GBP_READ_PHASE_WATCHDOG_MS = 100;
+constexpr int GBP_SERVER_LISTEN_BACKLOG = 64;
+constexpr int GBP_WINSOCK_VERSION_MAJOR = 2;
+constexpr int GBP_WINSOCK_VERSION_MINOR = 2;
+
+}  // namespace
+
+static double now_seconds()
+{
     using clock = std::chrono::steady_clock;
     return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
 }
 
-ReadPhaseSnapshot get_read_phase_snapshot(ReadPhase& rp) {
+ReadPhaseSnapshot get_read_phase_snapshot(ReadPhase& rp)
+{
     ReadPhaseSnapshot snap;
     const double now = now_seconds();
     std::lock_guard<std::mutex> g(rp.mtx);
     snap.active = rp.active;
     snap.ending = rp.ending;
     snap.elapsed_s = rp.active ? now - rp.started_at : 0.0;
+    snap.idle_s = rp.active ? now - (rp.last_activity_at > 0.0 ? rp.last_activity_at : rp.started_at) : 0.0;
+    snap.inflight_reads = rp.inflight_reads;
     snap.dropped_page_writes = rp.dropped_page_writes;
     snap.timeout_warned = rp.timeout_warned;
     return snap;
 }
 
-static bool read_phase_enter(ReadPhase& rp, ReadPhaseSnapshot& snap) {
+static bool read_phase_tracks_request(uint32_t msg_type)
+{
+    return msg_type == GBP_REQ_PAGE_READ || msg_type == GBP_REQ_BATCH_PAGE_READ ||
+           msg_type == GBP_REQ_READ_META_CHUNK || msg_type == GBP_REQ_BATCH_PAGE_READ_SELECTED;
+}
+
+class ReadPhaseActivityGuard {
+public:
+    ReadPhaseActivityGuard(ReadPhase& rp, uint32_t msg_type) : rp_(rp), active_(false)
+    {
+        if (!read_phase_tracks_request(msg_type)) {
+            return;
+        }
+        const double now = now_seconds();
+        std::lock_guard<std::mutex> g(rp_.mtx);
+        if (!rp_.active || rp_.ending) {
+            return;
+        }
+        rp_.last_activity_at = now;
+        rp_.inflight_reads++;
+        active_ = true;
+    }
+
+    ~ReadPhaseActivityGuard()
+    {
+        if (!active_) {
+            return;
+        }
+        const double now = now_seconds();
+        std::lock_guard<std::mutex> g(rp_.mtx);
+        if (rp_.inflight_reads > 0) {
+            rp_.inflight_reads--;
+        }
+        if (rp_.active) {
+            rp_.last_activity_at = now;
+        }
+        rp_.cv.notify_all();
+    }
+
+private:
+    ReadPhase& rp_;
+    bool active_;
+};
+
+static bool read_phase_enter(ReadPhase& rp, ReadPhaseSnapshot& snap)
+{
     bool entered = false;
     const double now = now_seconds();
     {
@@ -47,6 +133,8 @@ static bool read_phase_enter(ReadPhase& rp, ReadPhaseSnapshot& snap) {
         if (!rp.active) {
             rp.active = true;
             rp.started_at = now;
+            rp.last_activity_at = now;
+            rp.inflight_reads = 0;
             rp.dropped_page_writes = 0;
             rp.timeout_warned = false;
             rp.ending = false;
@@ -55,6 +143,8 @@ static bool read_phase_enter(ReadPhase& rp, ReadPhaseSnapshot& snap) {
         snap.active = rp.active;
         snap.ending = rp.ending;
         snap.elapsed_s = rp.active ? now - rp.started_at : 0.0;
+        snap.idle_s = rp.active ? now - (rp.last_activity_at > 0.0 ? rp.last_activity_at : rp.started_at) : 0.0;
+        snap.inflight_reads = rp.inflight_reads;
         snap.dropped_page_writes = rp.dropped_page_writes;
         snap.timeout_warned = rp.timeout_warned;
         rp.cv.notify_all();
@@ -62,30 +152,38 @@ static bool read_phase_enter(ReadPhase& rp, ReadPhaseSnapshot& snap) {
     return entered;
 }
 
-static bool read_phase_drop_page_write(ReadPhase& rp, const std::string& peer, uint32_t qid, uint32_t page_num) {
+static bool read_phase_drop_page_write(ReadPhase& rp, const std::string& peer, uint32_t qid, uint32_t page_num)
+{
     int dropped = 0;
     double started_at = 0;
     {
         std::lock_guard<std::mutex> g(rp.mtx);
-        if (!rp.active) return false;
+        if (!rp.active) {
+            return false;
+        }
         dropped = ++rp.dropped_page_writes;
         started_at = rp.started_at;
     }
-    if (dropped <= 8 || dropped % 1024 == 0) {
+    if (dropped <= GBP_READ_PHASE_INITIAL_DROP_LOG_LIMIT || dropped % GBP_READ_PHASE_DROP_LOG_INTERVAL == 0) {
         gbp_run_log("PAGE_WRITE ignored during READ_PHASE peer=" + peer + " qid=" + std::to_string(qid) +
                     " page_num=" + std::to_string(page_num) + " dropped=" + std::to_string(dropped) +
-                    " elapsed_ms=" + std::to_string(static_cast<int>((now_seconds() - started_at) * 1000)));
+                    " elapsed_ms=" + std::to_string(static_cast<int>((now_seconds() - started_at) *
+                                                                      GBP_SERVER_MILLISECONDS_PER_SECOND)));
     }
     return true;
 }
 
 static void clear_read_phase_state_sync(GbpServerState& state, const std::string& peer, const char* reason,
-                                        bool timing_diag) {
+                                        bool timing_diag)
+{
     state.read_diag().log_summary(peer, reason, timing_diag);
     state.selected_read_diag().log_summary(peer, reason, timing_diag);
     state.read_diag().reset();
     state.selected_read_diag().reset();
-    int cache_pages = 0, pending_pages = 0, reset_count = 0, frontier_count = 0;
+    int cache_pages = 0;
+    int pending_pages = 0;
+    int reset_count = 0;
+    int frontier_count = 0;
     state.clear_all(cache_pages, pending_pages, reset_count, frontier_count);
     state.reset_batch_pending_epoch();
     state.clear_evicted_holes();
@@ -96,7 +194,8 @@ static void clear_read_phase_state_sync(GbpServerState& state, const std::string
 }
 
 static int clear_read_phase_state_async(GbpServerState& state, const std::string& peer, const char* reason,
-                                        bool timing_diag) {
+                                        bool timing_diag)
+{
     state.read_diag().log_summary(peer, reason, timing_diag);
     state.selected_read_diag().log_summary(peer, reason, timing_diag);
     state.read_diag().reset();
@@ -108,7 +207,8 @@ static int clear_read_phase_state_async(GbpServerState& state, const std::string
 }
 
 ReadPhaseEndResult force_read_phase_end(GbpServerState& state, ReadPhase& rp, const Config& cfg,
-                                        const std::string& peer, const char* reason) {
+                                        const std::string& peer, const char* reason)
+{
     ReadPhaseEndResult result;
     const double now = now_seconds();
     {
@@ -133,6 +233,8 @@ ReadPhaseEndResult force_read_phase_end(GbpServerState& state, ReadPhase& rp, co
         std::lock_guard<std::mutex> g(rp.mtx);
         rp.active = false;
         rp.started_at = 0;
+        rp.last_activity_at = 0;
+        rp.inflight_reads = 0;
         rp.dropped_page_writes = 0;
         rp.timeout_warned = false;
         rp.ending = false;
@@ -142,19 +244,28 @@ ReadPhaseEndResult force_read_phase_end(GbpServerState& state, ReadPhase& rp, co
     return result;
 }
 
-static bool read_phase_expired(ReadPhase& rp, const Config& cfg, ReadPhaseSnapshot& snap) {
-    if (cfg.read_phase_timeout <= 0) return false;
+static bool read_phase_expired(ReadPhase& rp, const Config& cfg, ReadPhaseSnapshot& snap)
+{
+    if (cfg.read_phase_timeout <= 0) {
+        return false;
+    }
     snap = get_read_phase_snapshot(rp);
-    return snap.active && !snap.ending && snap.elapsed_s >= cfg.read_phase_timeout;
+    return snap.active && !snap.ending && snap.idle_s >= cfg.read_phase_timeout;
 }
 
 static bool release_read_phase_if_timeout(GbpServerState& state, ReadPhase& rp, const Config& cfg,
-                                          const std::string& peer) {
+                                          const std::string& peer)
+{
     ReadPhaseSnapshot snap;
-    if (!read_phase_expired(rp, cfg, snap)) return false;
+    if (!read_phase_expired(rp, cfg, snap)) {
+        return false;
+    }
     gbp_run_log("READ_PHASE_TIMEOUT force_release peer=" + peer +
                 " timeout_s=" + std::to_string(cfg.read_phase_timeout) +
-                " elapsed_ms=" + std::to_string(static_cast<int>(snap.elapsed_s * 1000)) +
+                " elapsed_ms=" + std::to_string(static_cast<int>(snap.elapsed_s *
+                                                                  GBP_SERVER_MILLISECONDS_PER_SECOND)) +
+                " idle_ms=" + std::to_string(static_cast<int>(snap.idle_s * GBP_SERVER_MILLISECONDS_PER_SECOND)) +
+                " inflight_reads=" + std::to_string(snap.inflight_reads) +
                 " dropped=" + std::to_string(snap.dropped_page_writes) +
                 " cache_pages=" + std::to_string(state.total_page_count()) +
                 " pending=" + std::to_string(state.pending_total()) + " active_preserved=0");
@@ -162,21 +273,25 @@ static bool release_read_phase_if_timeout(GbpServerState& state, ReadPhase& rp, 
     return ended.cleared;
 }
 
-static void read_phase_timeout_watchdog(GbpServerState& state, ReadPhase& rp, Config cfg) {
+static void read_phase_timeout_watchdog(GbpServerState& state, ReadPhase& rp, Config cfg)
+{
     while (true) {
         if (cfg.read_phase_timeout > 0) {
             release_read_phase_if_timeout(state, rp, cfg, "watchdog");
         }
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(GBP_READ_PHASE_WATCHDOG_MS));
     }
 }
 
 static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr_t& hdr, const uint8_t* body,
                          size_t body_len, uint32_t conn_qid, GbpServerState& state, ReadPhase& read_phase,
-                         ConnMeta& conn_meta, const Config& cfg, int64_t recv_hdr_us, int64_t recv_body_us) {
+                         ConnMeta& conn_meta, const Config& cfg, int64_t recv_hdr_us, int64_t recv_body_us)
+{
     if (hdr.msg_type == GBP_REQ_NOTIFY_MSG) {
         uint32_t notify = MSG_GBP_INVALID;
-        if (body_len >= 4) std::memcpy(&notify, body, 4);
+        if (body_len >= GBP_UINT32_WIRE_SIZE) {
+            std::memcpy(&notify, body, GBP_UINT32_WIRE_SIZE);
+        }
         if (notify == MSG_GBP_READ_BEGIN) {
             ReadPhaseSnapshot snap;
             const bool entered = read_phase_enter(read_phase, snap);
@@ -191,7 +306,8 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
                             " reason=READ_BEGIN (lazy_batch_pending, direct_selected_reads_page_cache)");
             } else {
                 gbp_run_log("READ_BEGIN idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
-                            " elapsed_ms=" + std::to_string(static_cast<int>(snap.elapsed_s * 1000)) +
+                            " elapsed_ms=" + std::to_string(static_cast<int>(
+                                snap.elapsed_s * GBP_SERVER_MILLISECONDS_PER_SECOND)) +
                             " dropped=" + std::to_string(snap.dropped_page_writes));
             }
         } else if (notify == MSG_GBP_READ_END) {
@@ -215,7 +331,9 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
     }
     if (hdr.msg_type == GBP_REQ_PAGE_WRITE) {
         uint32_t page_num = 0;
-        if (body_len >= 4) std::memcpy(&page_num, body, 4);
+        if (body_len >= GBP_UINT32_WIRE_SIZE) {
+            std::memcpy(&page_num, body, GBP_UINT32_WIRE_SIZE);
+        }
         release_read_phase_if_timeout(state, read_phase, cfg, peer);
         if (read_phase_drop_page_write(read_phase, peer, conn_qid, page_num)) {
             throw QuietDisconnect("PAGE_WRITE ignored during READ_PHASE");
@@ -256,13 +374,16 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
         }
         return;
     }
+    ReadPhaseActivityGuard read_guard(read_phase, hdr.msg_type);
     if (hdr.msg_type == GBP_REQ_READ_CKPT) {
         send_read_ckpt_resp(fd, hdr, body, body_len, state, cfg.verbose, peer);
         return;
     }
     if (hdr.msg_type == GBP_REQ_PAGE_READ) {
         page_id_t req_page_id{};
-        if (body_len >= 8) std::memcpy(&req_page_id, body, 8);
+        if (body_len >= sizeof(req_page_id)) {
+            std::memcpy(&req_page_id, body, sizeof(req_page_id));
+        }
         const uint64_t pid_key = page_id_key_from_raw(req_page_id);
         GbpShard& shard = state.shard(page_queue_id(req_page_id.page));
         log_point_t trunc{};
@@ -287,7 +408,9 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
     }
     if (hdr.msg_type == GBP_REQ_BATCH_PAGE_READ) {
         log_point_t skip{};
-        if (body_len >= sizeof(log_point_t)) std::memcpy(&skip, body, sizeof(log_point_t));
+        if (body_len >= sizeof(log_point_t)) {
+            std::memcpy(&skip, body, sizeof(log_point_t));
+        }
         bool read_active = false;
         {
             std::lock_guard<std::mutex> g(read_phase.mtx);
@@ -304,17 +427,20 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
         send_batch_selected_read_resp(fd, hdr, body, body_len, state, cfg.verbose, peer, conn_qid);
         return;
     }
-    if (hdr.msg_type == GBP_REQ_CLOSE_CONN) throw std::runtime_error("close requested");
+    if (hdr.msg_type == GBP_REQ_CLOSE_CONN) {
+        throw std::runtime_error("close requested");
+    }
     gbp_run_log("unknown msg_type=" + std::to_string(hdr.msg_type) + " len=" + std::to_string(hdr.msg_length));
 }
 
 void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, ReadPhase& read_phase,
-                 const Config& cfg) {
+                 const Config& cfg)
+{
     ConnMeta conn_meta;
     uint32_t req_qid = 0;
     try {
         uint32_t proto_code = 0;
-        if (!recv_full(fd, &proto_code, 4) || proto_code != OG_PROTO_CODE) {
+        if (!recv_full(fd, &proto_code, GBP_UINT32_WIRE_SIZE) || proto_code != OG_PROTO_CODE) {
             throw std::runtime_error("invalid proto_code");
         }
         send_cs_ready_ack(fd);
@@ -323,7 +449,9 @@ void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, Re
             throw std::runtime_error("expect shake hand");
         }
         uint32_t shake_body[4]{};
-        if (!recv_full(fd, shake_body, SHAKE_BODY_SIZE)) throw std::runtime_error("short shake body");
+        if (!recv_full(fd, shake_body, SHAKE_BODY_SIZE)) {
+            throw std::runtime_error("short shake body");
+        }
         req_qid = shake_body[0];
         send_shake_resp(fd, hdr, req_qid, shake_body[1]);
         if (cfg.verbose) {
@@ -333,22 +461,30 @@ void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, Re
         std::vector<uint8_t> body;
         while (true) {
             const auto msg_begin = std::chrono::steady_clock::now();
-            if (!recv_full(fd, &hdr, sizeof(hdr))) break;
+            if (!recv_full(fd, &hdr, sizeof(hdr))) {
+                break;
+            }
             const int64_t recv_hdr_us = us_since(msg_begin);
-            if (hdr.msg_length < HDR_SIZE) throw std::runtime_error("invalid msg_len");
+            if (hdr.msg_length < HDR_SIZE) {
+                throw std::runtime_error("invalid msg_len");
+            }
             const size_t body_len = hdr.msg_length - HDR_SIZE;
             body.resize(body_len);
             int64_t recv_body_us = 0;
             if (body_len > 0) {
                 const auto body_begin = std::chrono::steady_clock::now();
-                if (!recv_full(fd, body.data(), body_len)) break;
+                if (!recv_full(fd, body.data(), body_len)) {
+                    break;
+                }
                 recv_body_us = us_since(body_begin);
             }
             dispatch_msg(fd, peer, hdr, body.data(), body_len, req_qid, state, read_phase, conn_meta, cfg,
                          recv_hdr_us, recv_body_us);
         }
     } catch (const QuietDisconnect& exc) {
-        if (cfg.verbose) gbp_run_log("client intentionally closed peer=" + peer + " reason=" + exc.what());
+        if (cfg.verbose) {
+            gbp_run_log("client intentionally closed peer=" + peer + " reason=" + exc.what());
+        }
     } catch (const std::exception& exc) {
         gbp_run_log("client error peer=" + peer + " err=" + exc.what());
     }
@@ -359,12 +495,15 @@ void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, Re
 #endif
 }
 
-void run_server(const std::string& host, int port, const Config& cfg, int admin_port, const std::string& admin_host) {
+void run_server(const std::string& host, int port, const Config& cfg, int admin_port, const std::string& admin_host)
+{
 #if defined(_WIN32)
     WSADATA wsa{};
-    WSAStartup(MAKEWORD(2, 2), &wsa);
+    WSAStartup(MAKEWORD(GBP_WINSOCK_VERSION_MAJOR, GBP_WINSOCK_VERSION_MINOR), &wsa);
 #else
-    signal(SIGPIPE, SIG_IGN);
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        gbp_run_log("signal(SIGPIPE) failed");
+    }
 #endif
     GbpServerState state(cfg);
     ReadPhase read_phase;
@@ -404,7 +543,7 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 #endif
         std::exit(1);
     }
-    if (listen(srv, 64) != 0) {
+    if (listen(srv, GBP_SERVER_LISTEN_BACKLOG) != 0) {
         gbp_run_log("listen failed on " + host + ":" + std::to_string(port));
 #if defined(_WIN32)
         closesocket(srv);
@@ -420,7 +559,9 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
         sockaddr_in client{};
         gbp_socklen_t clen = sizeof(client);
         socket_t fd = accept(srv, reinterpret_cast<sockaddr*>(&client), &clen);
-        if (is_invalid_socket(fd)) continue;
+        if (is_invalid_socket(fd)) {
+            continue;
+        }
         char ip[INET_ADDRSTRLEN]{};
         inet_ntop(AF_INET, &client.sin_addr, ip, sizeof(ip));
         const std::string peer = std::string(ip) + ":" + std::to_string(ntohs(client.sin_port));

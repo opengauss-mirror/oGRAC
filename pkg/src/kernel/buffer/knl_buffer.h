@@ -381,7 +381,7 @@ void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctr
 void buf_reset_cleaned_pages(buf_set_t *set, buf_lru_list_t *list);
 void buf_reset_cleaned_pages_all_bufset(buf_context_t *buf_ctx, buf_lru_list_t *list);
 void buf_balance_set_list(buf_set_t *set);
-void buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl);
+status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl);
 bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id);
 bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *buf_ctrl, page_id_t page_id);
 void buf_expire_datafile_pages(knl_session_t *session, uint32 file_id);

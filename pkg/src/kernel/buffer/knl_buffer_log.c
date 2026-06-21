@@ -134,6 +134,14 @@ static void rd_enter_page_internal(knl_session_t *session, log_entry_t *log, boo
         need_skip = (!(options & ENTER_PAGE_NO_READ) && (session->curr_lsn <= curr_page_head->lsn));
         curr_page_lsn = curr_page_head->lsn;
     } else {
+        if (dtc_rcy_is_partial_replay() && KNL_RECOVERY_WITH_GBP(session->kernel) &&
+            gbp_knl_dtc_fallback_required(session)) {
+            gbp_knl_mark_dtc_fallback(session, OG_INVALID_ID32, GBP_READ_RESULT_ERROR,
+                                      GBP_DTC_FALLBACK_PAGE_READ);
+            OG_LOG_RUN_WAR("[DTC RCY][GBP] rd enter page failed during GBP replay, fallback to redo: page %u-%u",
+                           page_id.file, page_id.page);
+            return;
+        }
         need_skip = (cm_get_error_code() == ERR_PAGE_CORRUPTED && (session->curr_page_ctrl != NULL) &&
                      PAGE_IS_HARD_DAMAGE(session->curr_page_ctrl->page));
         if (need_skip) {
@@ -235,6 +243,7 @@ void rd_leave_page(knl_session_t *session, log_entry_t *log)
 
         /* should not replay log on hit page */
         if (gbp_db_enforce_primary_style_invariants(session) && KNL_GBP_ENABLE(session->kernel) &&
+            session->kernel->redo_ctx.last_rcy_with_gbp &&
             session->curr_page_ctrl->gbp_ctrl->page_status == GBP_PAGE_HIT) {
             knl_panic_log(0, "[GBP] should not replay log on hit page");
         }

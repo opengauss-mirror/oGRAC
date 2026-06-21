@@ -1,4 +1,30 @@
-#pragma once
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_protocol.h
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_protocol.h
+ *
+ * -------------------------------------------------------------------------
+ */
+
+#ifndef GBP_PROTOCOL_H
+#define GBP_PROTOCOL_H
 
 #include "gbp_wire.h"
 #include "gbp_state.h"
@@ -48,3 +74,5 @@ void send_batch_selected_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const 
                                    uint32_t conn_qid);
 
 }  // namespace gbp
+
+#endif  // GBP_PROTOCOL_H

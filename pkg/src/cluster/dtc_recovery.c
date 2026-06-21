@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -323,6 +323,7 @@ typedef struct st_dtc_rcy_replay_batch_diag {
 static bool32 dtc_rcy_gbp_window_usable(knl_session_t *session, gbp_read_ckpt_resp_t *resp);
 static status_t dtc_rcy_try_delayed_gbp_jump(knl_session_t *session);
 static status_t dtc_rcy_gbp_prepare_partial(knl_session_t *session);
+static bool32 dtc_rcy_gbp_tail_replay_active(knl_session_t *session, dtc_rcy_context_t *dtc_rcy);
 static void dtc_rcy_gbp_clear_lfn_point_maps(dtc_rcy_context_t *dtc_rcy);
 static void dtc_rcy_gbp_reset_lfn_point_maps(dtc_rcy_context_t *dtc_rcy);
 static status_t dtc_rcy_gbp_record_lfn_point(knl_session_t *session, uint32 node_id, log_batch_t *batch,
@@ -5435,226 +5436,258 @@ static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **ba
     dtc_rcy_node_t *rcy_node = NULL;
     reform_rcy_node_t *rcy_log_point = NULL;
     uint64 curr_batch_lsn = OG_INVALID_ID64;
-    uint8 curr_node;
+    uint8 curr_node = OG_INVALID_ID8;
     date_t gbp_jump_begin;
     date_t node_scan_begin;
     date_t validate_begin;
     date_t checksum_begin;
     date_t commit_begin;
     date_t lfn_map_begin;
+    bool32 retry_gbp_tail = OG_FALSE;
+    bool32 retry_fetch = OG_TRUE;
     *batch_out = NULL;
 
     if (g_dtc_rcy_fetch_diag_active != NULL) {
         g_dtc_rcy_fetch_diag_active->fetch_calls++;
     }
 
-    gbp_jump_begin = cm_now();
-    OG_RETURN_IFERR(dtc_rcy_try_delayed_gbp_jump(session));
-    DTC_RCY_FETCH_DIAG_ACCUM(gbp_jump_us, gbp_jump_begin);
+    while (retry_fetch) {
+        retry_fetch = OG_FALSE;
+        batch = NULL;
+        batch_loaded = OG_FALSE;
+        curr_batch_lsn = OG_INVALID_ID64;
+        retry_gbp_tail = OG_FALSE;
+        *batch_out = NULL;
 
-    for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
-        if (g_dtc_rcy_fetch_diag_active != NULL) {
-            g_dtc_rcy_fetch_diag_active->node_scan_iters++;
-        }
-        node_scan_begin = cm_now();
-        dtc_standby_reset_recovery_stat(session);
-        rcy_node = &dtc_rcy->rcy_nodes[i];
-        rcy_log_point = &dtc_rcy->rcy_log_points[i];
-        if (rcy_node->recover_done) {
-            OG_LOG_DEBUG_INF("[DTC RCY] dtc fetch log recover done node_id = %u", rcy_node->node_id);
-            if (!dtc_rcy->full_recovery && dtc_rcy->phase == PHASE_RECOVERY &&
-                dtc_rcy_verify_analysis_and_recovery_log_point(rcy_node->analysis_read_end_point,
-                                                               rcy_node->recovery_read_end_point) != OG_SUCCESS) {
-                knl_panic_log(
-                    0,
-                    "[DTC RCY] analysis read end point[asn(%u)-block_id(%u)-rst_id(%llu)-lfn(%llu)-lsn(%llu)] is not "
-                    "equal recovery read end point[asn(%u)-block_id(%u)-rst_id(%llu)-lfn(%llu)-lsn(%llu)]",
-                    rcy_node->analysis_read_end_point.asn, rcy_node->analysis_read_end_point.block_id,
-                    (uint64)rcy_node->analysis_read_end_point.rst_id, (uint64)rcy_node->analysis_read_end_point.lfn,
-                    rcy_node->analysis_read_end_point.lsn, rcy_node->recovery_read_end_point.asn,
-                    rcy_node->recovery_read_end_point.block_id, (uint64)rcy_node->recovery_read_end_point.rst_id,
-                    (uint64)rcy_node->recovery_read_end_point.lfn, rcy_node->recovery_read_end_point.lsn);
-            }
-            DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-            continue;
-        }
+        gbp_jump_begin = cm_now();
+        OG_RETURN_IFERR(dtc_rcy_try_delayed_gbp_jump(session));
+        DTC_RCY_FETCH_DIAG_ACCUM(gbp_jump_us, gbp_jump_begin);
 
-        // get batch from log buffer
-        OG_RETURN_IFERR(dtc_update_batch(session, i));
-        if (rcy_node->recover_done == OG_TRUE) {
-            OG_LOG_DEBUG_INF("[DTC RCY] read node log proc node is done node_id = %u", i);
-            DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-            continue;
-        }
-        if (rcy_node->read_buf_ready[rcy_node->read_buf_read_index] == OG_FALSE) {
-            OG_LOG_DEBUG_INF("[DTC RCY] read node log proc node buf not ready node_id = %u", i);
-            DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-            continue;
-        }
-
-        batch = dtc_rcy_get_curr_batch(dtc_rcy, i, rcy_node->read_buf_read_index);
-        OG_LOG_DEBUG_INF(
-            "[DTC RCY] fetch batch from instance %u point [%u-%u/%u/%llu],"
-            " head lfn:%llu, batch writepos:%u, readpos:%u, space_size:%u, current lsn:%llu, start lsn:%llu",
-            rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
-            rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn, (uint64)batch->head.point.lfn,
-            rcy_node->write_pos[rcy_node->read_buf_read_index], rcy_node->read_pos[rcy_node->read_buf_read_index],
-            batch->space_size, rcy_log_point->rcy_point.lsn, rcy_log_point->rcy_point_saved.lsn);
-        uint32 left_size = rcy_node->write_pos[rcy_node->read_buf_read_index] -
-                           rcy_node->read_pos[rcy_node->read_buf_read_index];
-        /*
-         * Partial GBP prepare advances rcy_log_points[].rcy_point to gbp_rcy_point without advancing this node's ring
-         * read_pos. The next buffered batch may still start in the skipped LFN range, so
-         * LFN_IS_CONTINUOUS would fail and recover_done would drop the tail redo. Skip valid batches until
-         * head.lfn reaches rcy_point.lfn + 1 (same invariant as single-node log_reset_point + rcy_load).
-         */
-        for (;;) {
-            if (left_size < sizeof(log_batch_t) || batch == NULL || left_size < batch->space_size) {
-                break;
-            }
-            if (dtc_rcy->phase == PHASE_RECOVERY && !dtc_rcy->full_recovery &&
-                KNL_RECOVERY_WITH_GBP(session->kernel) &&
-                rcy_log_point->node_id < OG_MAX_INSTANCES && dtc_rcy->gbp_jump_taken[rcy_log_point->node_id] &&
-                dtc_rcy_validate_batch(batch) && batch->head.point.lfn < rcy_log_point->rcy_point.lfn + 1) {
-                OG_LOG_RUN_INF(
-                    "[DTC RCY][GBP][partial] skip buffered batch node=%u head_lfn=%llu expect_next_lfn=%llu (ring align after "
-                    "GBP JUMP)",
-                    rcy_log_point->node_id, (uint64)batch->head.point.lfn,
-                    (uint64)(rcy_log_point->rcy_point.lfn + 1));
-                rcy_node->read_pos[rcy_node->read_buf_read_index] += batch->space_size;
-                rcy_node->curr_file_length += batch->space_size;
-                /* Match dtc_skip_batch: keep rcy_point file/lsn cursor with bytes skipped (DBStor reads by lsn). */
-                rcy_log_point->rcy_point.block_id += batch->space_size / rcy_node->blk_size;
-                if (cm_dbs_is_enable_dbs() == OG_TRUE) {
-                    rcy_log_point->rcy_point.lsn = batch->lsn;
-                }
-                left_size = rcy_node->write_pos[rcy_node->read_buf_read_index] -
-                            rcy_node->read_pos[rcy_node->read_buf_read_index];
-                if (left_size < sizeof(log_batch_t)) {
-                    break;
-                }
-                batch = dtc_rcy_get_curr_batch(dtc_rcy, i, rcy_node->read_buf_read_index);
-                if (left_size < batch->space_size) {
-                    break;
-                }
-                continue;
-            }
-            break;
-        }
-        if (left_size < sizeof(log_batch_t) || batch == NULL || left_size < batch->space_size) {
-            OG_LOG_DEBUG_INF("[DTC RCY] recover fetch batch, find max lsn and move point left_size "
-                             "< sizeof(log_batch_t) || left_size < tmp_batch->space_size");
-            dtc_rcy_release_read_buf_if_exhausted(i, "gbp skip drained read buffer");
-            DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-            continue;
-        }
-        validate_begin = cm_now();
-        if (!dtc_rcy_validate_batch(batch)) {
-            DTC_RCY_FETCH_DIAG_ACCUM(validate_us, validate_begin);
+        for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
             if (g_dtc_rcy_fetch_diag_active != NULL) {
-                g_dtc_rcy_fetch_diag_active->validate_calls++;
+                g_dtc_rcy_fetch_diag_active->node_scan_iters++;
             }
-            if (!(DB_IS_MAXFIX(session) && cm_dbs_is_enable_dbs())) {
-                dtc_rcy_gbp_log_root_cause(session, rcy_log_point->node_id, "fetch", "INVALID_BATCH_AT_CURSOR",
-                    &rcy_log_point->rcy_point, batch, NULL, 0, rcy_log_point->rcy_point.block_id);
-                // Batch is invalid
-                if (dtc_rcy->phase == PHASE_RECOVERY && !dtc_rcy->full_recovery &&
-                    rcy_log_point->node_id < OG_MAX_INSTANCES &&
-                    dtc_rcy->gbp_jump_taken[rcy_log_point->node_id]) {
-                    dtc_rcy->gbp_tail_invalid_cursor_count++;
+            node_scan_begin = cm_now();
+            dtc_standby_reset_recovery_stat(session);
+            rcy_node = &dtc_rcy->rcy_nodes[i];
+            rcy_log_point = &dtc_rcy->rcy_log_points[i];
+            if (rcy_node->recover_done) {
+                OG_LOG_DEBUG_INF("[DTC RCY] dtc fetch log recover done node_id = %u", rcy_node->node_id);
+                if (!dtc_rcy->full_recovery && dtc_rcy->phase == PHASE_RECOVERY &&
+                    dtc_rcy_verify_analysis_and_recovery_log_point(rcy_node->analysis_read_end_point,
+                                                                   rcy_node->recovery_read_end_point) != OG_SUCCESS) {
+                    uint32 node_id = (uint32)rcy_log_point->node_id;
+                    if (dtc_rcy_gbp_tail_replay_active(session, dtc_rcy) && node_id < OG_MAX_INSTANCES &&
+                        dtc_rcy->gbp_jump_taken[node_id]) {
+                        DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                        continue;
+                    }
+                    knl_panic_log(
+                        0,
+                        "[DTC RCY] analysis read end point[asn(%u)-block_id(%u)-rst_id(%llu)-"
+                        "lfn(%llu)-lsn(%llu)] is not "
+                        "equal recovery read end point[asn(%u)-block_id(%u)-rst_id(%llu)-lfn(%llu)-lsn(%llu)]",
+                        rcy_node->analysis_read_end_point.asn, rcy_node->analysis_read_end_point.block_id,
+                        (uint64)rcy_node->analysis_read_end_point.rst_id,
+                        (uint64)rcy_node->analysis_read_end_point.lfn,
+                        rcy_node->analysis_read_end_point.lsn, rcy_node->recovery_read_end_point.asn,
+                        rcy_node->recovery_read_end_point.block_id, (uint64)rcy_node->recovery_read_end_point.rst_id,
+                        (uint64)rcy_node->recovery_read_end_point.lfn, rcy_node->recovery_read_end_point.lsn);
                 }
-                rcy_node->recover_done = OG_TRUE;
-                OG_LOG_RUN_INF(
-                    "[DTC RCY] Invalid batch from instance %u, recovery done with point [%u-%u/%u/%llu],"
-                    " head lfn:%llu, batch writepos:%u, readpos:%u, space_size:%u, current lsn:%llu, start lsn:%llu",
-                    rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
-                    rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
-                    (uint64)batch->head.point.lfn, rcy_node->write_pos[rcy_node->read_buf_read_index],
-                    rcy_node->read_pos[rcy_node->read_buf_read_index], batch->space_size, rcy_log_point->rcy_point.lsn,
-                    rcy_log_point->rcy_point_saved.lsn);
-                dtc_rcy_release_read_buf(i, "invalid batch recovery done");
                 DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
                 continue;
             }
-        } else {
-            DTC_RCY_FETCH_DIAG_ACCUM(validate_us, validate_begin);
-            if (g_dtc_rcy_fetch_diag_active != NULL) {
-                g_dtc_rcy_fetch_diag_active->validate_calls++;
-            }
-        }
 
-        if (!LFN_IS_CONTINUOUS(batch->head.point.lfn, rcy_log_point->rcy_point.lfn)) {
-            // batch is not continuous
-            if (DB_IS_MAXFIX(session)) {
-                OG_LOG_RUN_WAR("[DTC RCY] damage log batch skipped,not continuous batch from instance %u, "
-                               "recovery with point [%u-%u/%u/%llu/%llu],current point [%u-%u/%u/%llu/%llu]",
-                               rcy_log_point->node_id, batch->head.point.rst_id, batch->head.point.asn,
-                               batch->head.point.block_id, (uint64)batch->head.point.lfn, batch->head.point.lsn,
-                               rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
-                               rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
-                               rcy_log_point->rcy_point.lsn);
-            } else {
-                OG_LOG_RUN_INF("[DTC RCY] not continuous batch from instance %u, "
-                               "recovery done with point [%u-%u/%u/%llu/%llu],current point [%u-%u/%u/%llu/%llu]",
-                               rcy_log_point->node_id, batch->head.point.rst_id, batch->head.point.asn,
-                               batch->head.point.block_id, (uint64)batch->head.point.lfn, batch->head.point.lsn,
-                               rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
-                               rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
-                               rcy_log_point->rcy_point.lsn);
-                CM_ABORT_REASONABLE(!cm_dbs_is_enable_dbs() || session->kernel->db.recover_for_restore,
-                                    "[DTC RCY] ABORT INFO: dbstor batch not continuous");
-                rcy_node->recover_done = OG_TRUE;
-                dtc_rcy_release_read_buf(i, "not continuous recovery done");
+            // get batch from log buffer
+            OG_RETURN_IFERR(dtc_update_batch(session, i));
+            if (rcy_node->recover_done == OG_TRUE) {
+                OG_LOG_DEBUG_INF("[DTC RCY] read node log proc node is done node_id = %u", i);
                 DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
                 continue;
             }
-        }
-
-        checksum_begin = cm_now();
-        if (rcy_verify_checksum(session, batch) != OG_SUCCESS) {
-            DTC_RCY_FETCH_DIAG_ACCUM(checksum_us, checksum_begin);
-            if (g_dtc_rcy_fetch_diag_active != NULL) {
-                g_dtc_rcy_fetch_diag_active->checksum_calls++;
-            }
-            OG_LOG_RUN_ERR("[DTC RCY] failed to verify log batch checksum of instance %u with rcy point"
-                           " [%u-%u/%u%llu], betch_lsn=%llu",
-                           rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
-                           rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn, batch->lsn);
-            if (DB_IS_MAXFIX(session)) {
-                OG_RETURN_IFERR(dtc_skip_damage_batch(session, &batch, i));
-                if (rcy_node->recover_done == OG_TRUE) {
-                    DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-                    continue;
-                }
-            } else {
+            if (rcy_node->read_buf_ready[rcy_node->read_buf_read_index] == OG_FALSE) {
+                OG_LOG_DEBUG_INF("[DTC RCY] read node log proc node buf not ready node_id = %u", i);
                 DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-                return OG_ERROR;
+                continue;
             }
-        } else {
-            DTC_RCY_FETCH_DIAG_ACCUM(checksum_us, checksum_begin);
-            if (g_dtc_rcy_fetch_diag_active != NULL) {
-                g_dtc_rcy_fetch_diag_active->checksum_calls++;
-            }
-        }
-        if (dtc_log_need_reload(session, i, batch_loaded)) {
-            DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
-            break;
-        }
 
-        if (batch->lsn < curr_batch_lsn) {
-            *curr_node_idx = (uint8)i;
-            curr_node = rcy_node->node_id;
-            curr_batch_lsn = batch->lsn;
-            batch_loaded = OG_TRUE;
+            batch = dtc_rcy_get_curr_batch(dtc_rcy, i, rcy_node->read_buf_read_index);
             OG_LOG_DEBUG_INF(
-                "[DTC RCY] finish fetch batch from instance %u, recovery point [%u-%u/%u/%llu],"
+                "[DTC RCY] fetch batch from instance %u point [%u-%u/%u/%llu],"
                 " head lfn:%llu, batch writepos:%u, readpos:%u, space_size:%u, current lsn:%llu, start lsn:%llu",
                 rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
                 rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn, (uint64)batch->head.point.lfn,
                 rcy_node->write_pos[rcy_node->read_buf_read_index], rcy_node->read_pos[rcy_node->read_buf_read_index],
                 batch->space_size, rcy_log_point->rcy_point.lsn, rcy_log_point->rcy_point_saved.lsn);
+            uint32 left_size = rcy_node->write_pos[rcy_node->read_buf_read_index] -
+                               rcy_node->read_pos[rcy_node->read_buf_read_index];
+            /*
+             * Partial GBP prepare advances rcy_log_points[].rcy_point to gbp_rcy_point without advancing this node's
+             * ring read_pos. The next buffered batch may still start in the skipped LFN range, so LFN_IS_CONTINUOUS
+             * would fail and recover_done would drop the tail redo. Skip valid batches until head.lfn reaches
+             * rcy_point.lfn + 1 (same invariant as single-node log_reset_point + rcy_load).
+             */
+            for (;;) {
+                if (left_size < sizeof(log_batch_t) || batch == NULL || left_size < batch->space_size) {
+                    break;
+                }
+                if (dtc_rcy->phase == PHASE_RECOVERY && !dtc_rcy->full_recovery &&
+                    KNL_RECOVERY_WITH_GBP(session->kernel) &&
+                    rcy_log_point->node_id < OG_MAX_INSTANCES && dtc_rcy->gbp_jump_taken[rcy_log_point->node_id] &&
+                    dtc_rcy_validate_batch(batch) && batch->head.point.lfn < rcy_log_point->rcy_point.lfn + 1) {
+                    OG_LOG_RUN_INF(
+                        "[DTC RCY][GBP][partial] skip buffered batch node=%u head_lfn=%llu "
+                        "expect_next_lfn=%llu (ring align after "
+                        "GBP JUMP)",
+                        rcy_log_point->node_id, (uint64)batch->head.point.lfn,
+                        (uint64)(rcy_log_point->rcy_point.lfn + 1));
+                    rcy_node->read_pos[rcy_node->read_buf_read_index] += batch->space_size;
+                    rcy_node->curr_file_length += batch->space_size;
+                    /* Match dtc_skip_batch: keep rcy_point file/lsn cursor with bytes skipped (DBStor reads by lsn). */
+                    rcy_log_point->rcy_point.block_id += batch->space_size / rcy_node->blk_size;
+                    if (cm_dbs_is_enable_dbs() == OG_TRUE) {
+                        rcy_log_point->rcy_point.lsn = batch->lsn;
+                    }
+                    left_size = rcy_node->write_pos[rcy_node->read_buf_read_index] -
+                                rcy_node->read_pos[rcy_node->read_buf_read_index];
+                    if (left_size < sizeof(log_batch_t)) {
+                        break;
+                    }
+                    batch = dtc_rcy_get_curr_batch(dtc_rcy, i, rcy_node->read_buf_read_index);
+                    if (left_size < batch->space_size) {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+            if (left_size < sizeof(log_batch_t) || batch == NULL || left_size < batch->space_size) {
+                retry_gbp_tail = (bool32)(retry_gbp_tail || (dtc_rcy_gbp_tail_replay_active(session, dtc_rcy) &&
+                    rcy_log_point->node_id < OG_MAX_INSTANCES && dtc_rcy->gbp_jump_taken[rcy_log_point->node_id] &&
+                    !rcy_node->recover_done &&
+                    LOG_LFN_LT(rcy_node->recovery_read_end_point, rcy_node->analysis_read_end_point)));
+                OG_LOG_DEBUG_INF("[DTC RCY] recover fetch batch, find max lsn and move point left_size "
+                                 "< sizeof(log_batch_t) || left_size < tmp_batch->space_size");
+                dtc_rcy_release_read_buf_if_exhausted(i, "gbp skip drained read buffer");
+                DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                continue;
+            }
+            validate_begin = cm_now();
+            if (!dtc_rcy_validate_batch(batch)) {
+                DTC_RCY_FETCH_DIAG_ACCUM(validate_us, validate_begin);
+                if (g_dtc_rcy_fetch_diag_active != NULL) {
+                    g_dtc_rcy_fetch_diag_active->validate_calls++;
+                }
+                if (!(DB_IS_MAXFIX(session) && cm_dbs_is_enable_dbs())) {
+                    dtc_rcy_gbp_log_root_cause(session, rcy_log_point->node_id, "fetch", "INVALID_BATCH_AT_CURSOR",
+                        &rcy_log_point->rcy_point, batch, NULL, 0, rcy_log_point->rcy_point.block_id);
+                    // Batch is invalid
+                    if (dtc_rcy->phase == PHASE_RECOVERY && !dtc_rcy->full_recovery &&
+                        rcy_log_point->node_id < OG_MAX_INSTANCES &&
+                        dtc_rcy->gbp_jump_taken[rcy_log_point->node_id]) {
+                        dtc_rcy->gbp_tail_invalid_cursor_count++;
+                    }
+                    rcy_node->recover_done = OG_TRUE;
+                    OG_LOG_RUN_INF(
+                        "[DTC RCY] Invalid batch from instance %u, recovery done with point [%u-%u/%u/%llu],"
+                        " head lfn:%llu, batch writepos:%u, readpos:%u, space_size:%u, current lsn:%llu, "
+                        "start lsn:%llu",
+                        rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
+                        rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
+                        (uint64)batch->head.point.lfn, rcy_node->write_pos[rcy_node->read_buf_read_index],
+                        rcy_node->read_pos[rcy_node->read_buf_read_index], batch->space_size,
+                        rcy_log_point->rcy_point.lsn,
+                        rcy_log_point->rcy_point_saved.lsn);
+                    dtc_rcy_release_read_buf(i, "invalid batch recovery done");
+                    DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                    continue;
+                }
+            } else {
+                DTC_RCY_FETCH_DIAG_ACCUM(validate_us, validate_begin);
+                if (g_dtc_rcy_fetch_diag_active != NULL) {
+                    g_dtc_rcy_fetch_diag_active->validate_calls++;
+                }
+            }
+
+            if (!LFN_IS_CONTINUOUS(batch->head.point.lfn, rcy_log_point->rcy_point.lfn)) {
+                // batch is not continuous
+                if (DB_IS_MAXFIX(session)) {
+                    OG_LOG_RUN_WAR("[DTC RCY] damage log batch skipped,not continuous batch from instance %u, "
+                                   "recovery with point [%u-%u/%u/%llu/%llu],current point [%u-%u/%u/%llu/%llu]",
+                                   rcy_log_point->node_id, batch->head.point.rst_id, batch->head.point.asn,
+                                   batch->head.point.block_id, (uint64)batch->head.point.lfn, batch->head.point.lsn,
+                                   rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
+                                   rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
+                                   rcy_log_point->rcy_point.lsn);
+                } else {
+                    OG_LOG_RUN_INF("[DTC RCY] not continuous batch from instance %u, "
+                                   "recovery done with point [%u-%u/%u/%llu/%llu],current point [%u-%u/%u/%llu/%llu]",
+                                   rcy_log_point->node_id, batch->head.point.rst_id, batch->head.point.asn,
+                                   batch->head.point.block_id, (uint64)batch->head.point.lfn, batch->head.point.lsn,
+                                   rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
+                                   rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
+                                   rcy_log_point->rcy_point.lsn);
+                    CM_ABORT_REASONABLE(!cm_dbs_is_enable_dbs() || session->kernel->db.recover_for_restore,
+                                        "[DTC RCY] ABORT INFO: dbstor batch not continuous");
+                    rcy_node->recover_done = OG_TRUE;
+                    dtc_rcy_release_read_buf(i, "not continuous recovery done");
+                    DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                    continue;
+                }
+            }
+
+            checksum_begin = cm_now();
+            if (rcy_verify_checksum(session, batch) != OG_SUCCESS) {
+                DTC_RCY_FETCH_DIAG_ACCUM(checksum_us, checksum_begin);
+                if (g_dtc_rcy_fetch_diag_active != NULL) {
+                    g_dtc_rcy_fetch_diag_active->checksum_calls++;
+                }
+                OG_LOG_RUN_ERR("[DTC RCY] failed to verify log batch checksum of instance %u with rcy point"
+                               " [%u-%u/%u%llu], betch_lsn=%llu",
+                               rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
+                               rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn, batch->lsn);
+                if (DB_IS_MAXFIX(session)) {
+                    OG_RETURN_IFERR(dtc_skip_damage_batch(session, &batch, i));
+                    if (rcy_node->recover_done == OG_TRUE) {
+                        DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                        continue;
+                    }
+                } else {
+                    DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                    return OG_ERROR;
+                }
+            } else {
+                DTC_RCY_FETCH_DIAG_ACCUM(checksum_us, checksum_begin);
+                if (g_dtc_rcy_fetch_diag_active != NULL) {
+                    g_dtc_rcy_fetch_diag_active->checksum_calls++;
+                }
+            }
+            if (dtc_log_need_reload(session, i, batch_loaded)) {
+                DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                break;
+            }
+
+            if (batch->lsn < curr_batch_lsn) {
+                *curr_node_idx = (uint8)i;
+                curr_node = rcy_node->node_id;
+                curr_batch_lsn = batch->lsn;
+                batch_loaded = OG_TRUE;
+                OG_LOG_DEBUG_INF(
+                    "[DTC RCY] finish fetch batch from instance %u, recovery point [%u-%u/%u/%llu],"
+                    " head lfn:%llu, batch writepos:%u, readpos:%u, space_size:%u, current lsn:%llu, start lsn:%llu",
+                    rcy_log_point->node_id, rcy_log_point->rcy_point.rst_id, rcy_log_point->rcy_point.asn,
+                    rcy_log_point->rcy_point.block_id, (uint64)rcy_log_point->rcy_point.lfn,
+                    (uint64)batch->head.point.lfn,
+                    rcy_node->write_pos[rcy_node->read_buf_read_index],
+                    rcy_node->read_pos[rcy_node->read_buf_read_index],
+                    batch->space_size, rcy_log_point->rcy_point.lsn, rcy_log_point->rcy_point_saved.lsn);
+            }
+            DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
         }
-        DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+
+        if (!batch_loaded && retry_gbp_tail) {
+            retry_fetch = OG_TRUE;
+        }
     }
 
     if (batch_loaded) {
@@ -5712,6 +5745,51 @@ static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **ba
         }
     }
 
+    return OG_SUCCESS;
+}
+
+static bool32 dtc_rcy_gbp_tail_replay_active(knl_session_t *session, dtc_rcy_context_t *dtc_rcy)
+{
+    return (bool32)(dtc_rcy != NULL && !dtc_rcy->full_recovery && dtc_rcy->phase == PHASE_RECOVERY &&
+                    KNL_RECOVERY_WITH_GBP(session->kernel) && KNL_GBP_ENABLE(session->kernel) &&
+                    KNL_GBP_FOR_RECOVERY(session->kernel) && !session->kernel->db.recover_for_restore);
+}
+
+static status_t dtc_rcy_gbp_check_tail_replay_complete(knl_session_t *session, const char *stage)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+
+    if (!dtc_rcy_gbp_tail_replay_active(session, dtc_rcy)) {
+        return OG_SUCCESS;
+    }
+
+    for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
+        uint32 node_id = (uint32)dtc_rcy->rcy_log_points[i].node_id;
+        dtc_rcy_node_t *node = &dtc_rcy->rcy_nodes[i];
+
+        if (node_id >= OG_MAX_INSTANCES || !dtc_rcy->gbp_jump_taken[node_id]) {
+            continue;
+        }
+        if (dtc_rcy_verify_analysis_and_recovery_log_point(node->analysis_read_end_point,
+                                                           node->recovery_read_end_point) == OG_SUCCESS) {
+            continue;
+        }
+
+        OG_LOG_RUN_ERR("[DTC RCY][GBP][partial] tail replay incomplete before %s: node=%u "
+                       "analysis=[%u-%u/%u/%llu/%llu] recovery=[%u-%u/%u/%llu/%llu] "
+                       "skip_lfn=%llu gbp_rcy_lfn=%llu recover_done=%u",
+                       (stage == NULL) ? "finish" : stage, node_id,
+                       node->analysis_read_end_point.rst_id, node->analysis_read_end_point.asn,
+                       node->analysis_read_end_point.block_id, (uint64)node->analysis_read_end_point.lfn,
+                       node->analysis_read_end_point.lsn, node->recovery_read_end_point.rst_id,
+                       node->recovery_read_end_point.asn, node->recovery_read_end_point.block_id,
+                       (uint64)node->recovery_read_end_point.lfn, node->recovery_read_end_point.lsn,
+                       (uint64)dtc_rcy->gbp_skip_points[node_id].lfn,
+                       (uint64)dtc_rcy->gbp_rcy_points[node_id].lfn, (uint32)node->recover_done);
+        gbp_knl_mark_dtc_fallback(session, node_id, GBP_READ_RESULT_ERROR,
+                                  GBP_DTC_FALLBACK_TAIL_INCOMPLETE);
+        return OG_ERROR;
+    }
     return OG_SUCCESS;
 }
 
@@ -5811,7 +5889,9 @@ status_t dtc_rcy_process_batch(knl_session_t *session, log_batch_t *batch)
                 break;
             }
             session->ddl_lsn_pitr = dtc_rcy_get_ddl_lsn_pitr();
-            rcy_replay_group(session, ogx, group);
+            if (rcy_replay_group(session, ogx, group) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
             OG_LOG_DEBUG_INF("[DTC RCY] before redo replay log group, lsn=%llu, rmid=%u, session->kernel->lsn=%llu",
                              group->lsn, group->rmid, session->kernel->lsn);
             // set kernel lsn after replaying one log group
@@ -5996,11 +6076,13 @@ static void dtc_rcy_set_num_stat(void)
     }
 }
 
-static void dtc_rcy_wait_paral_replay_end(knl_session_t *session)
+static void dtc_rcy_wait_paral_replay_end(knl_session_t *session, bool32 close_workers)
 {
     rcy_context_t *rcy = &session->kernel->rcy_ctx;
     rcy_wait_replay_complete(session);
-    rcy->rcy_end = OG_TRUE;
+    if (close_workers) {
+        rcy->rcy_end = OG_TRUE;
+    }
 }
 
 static bool32 dtc_rcy_pitr_replay_end(rcy_context_t *rcy, log_batch_t *batch)
@@ -6659,7 +6741,7 @@ void dtc_rcy_atomic_dec_group_num(knl_session_t *session, uint32 idx, int32 val)
     }
 }
 
-static void dtc_rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cursor, uint32 idx,
+static status_t dtc_rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cursor, uint32 idx,
     dtc_rcy_replay_batch_diag_t *diag)
 {
     knl_instance_t *kernel = session->kernel;
@@ -6689,6 +6771,7 @@ static void dtc_rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cur
     uint64 batch_logic_groups = 0;
     uint64 batch_us;
     uint32 node_idx = g_replay_paral_mgr.node_id[idx];
+    status_t status = OG_SUCCESS;
     redo_ssesion->dtc_session_type = session->dtc_session_type;
 
     if (diag != NULL) {
@@ -6699,6 +6782,10 @@ static void dtc_rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cur
     g_replay_paral_mgr.batch_scn[idx] = 0;
     g_replay_paral_mgr.batch_rpl_start_time[idx] = cm_now();
     for (;;) {
+        if (KNL_RECOVERY_WITH_GBP(session->kernel) && gbp_knl_dtc_fallback_required(session)) {
+            status = OG_ERROR;
+            break;
+        }
         step_begin = DTC_RCY_REPLAY_DIAG_NOW();
         group = log_fetch_group(ogx, cursor);
         step_us = (uint64)(DTC_RCY_REPLAY_DIAG_NOW() - step_begin);
@@ -6765,11 +6852,16 @@ static void dtc_rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cur
             rcy->wait_stats_view[LOGIC_GROUP_COUNT]++;
             rcy->curr_group->ddl_lsn_pitr = dtc_rcy_get_ddl_lsn_pitr();
             step_begin = DTC_RCY_REPLAY_DIAG_NOW();
-            rcy_replay_logic_group(session, rcy->curr_group);
+            if (rcy_replay_logic_group(session, rcy->curr_group) != OG_SUCCESS) {
+                status = OG_ERROR;
+            }
             step_us = (uint64)(DTC_RCY_REPLAY_DIAG_NOW() - step_begin);
             batch_logic_group_us += step_us;
             if (diag != NULL) {
                 diag->logic_group_us += step_us;
+            }
+            if (status != OG_SUCCESS) {
+                break;
             }
         } else {
             step_begin = DTC_RCY_REPLAY_DIAG_NOW();
@@ -6858,7 +6950,7 @@ static void dtc_rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cur
 #endif
     }
     OG_LOG_DEBUG_INF("[DTC RCY] finish paral redo replay of log batch=%u", idx);
-    return;
+    return status;
 }
 
 static void dtc_close_analyze_proc()
@@ -7602,6 +7694,11 @@ static status_t dtc_rcy_replay_batches_paral(knl_session_t *session)
             break;
         }
 
+        if (KNL_RECOVERY_WITH_GBP(session->kernel) && gbp_knl_dtc_fallback_required(session)) {
+            status = OG_ERROR;
+            break;
+        }
+
         // check whether need to cancel this task
         if (DB_IS_PRIMARY(&session->kernel->db) && dtc_rcy->canceled) {
             OG_LOG_RUN_ERR("[DTC RCY] required to cancel this dtc recovery task");
@@ -7671,13 +7768,18 @@ static status_t dtc_rcy_replay_batches_paral(knl_session_t *session)
         rcy_init_log_cursor(&cursor, (log_batch_t *)g_replay_paral_mgr.buf_list[idx].aligned_buf);
 #endif
         ELAPSED_BEGIN(elapsed_begin);
-        dtc_rcy_paral_replay_batch(session, &cursor, idx, replay_diag_ptr);
+        if (dtc_rcy_paral_replay_batch(session, &cursor, idx, replay_diag_ptr) != OG_SUCCESS) {
+            status = OG_ERROR;
+        }
         OG_LOG_DEBUG_INF("[DTC RCY] paral replay redo log batch lfn=%llu, lsn=%llu, point [%u-%u/%u] has been"
                          " processed for instance=%u, session lsn=%llu",
                          (uint64)batch->head.point.lfn, batch->lsn, batch->head.point.rst_id, batch->head.point.asn,
                          batch->head.point.block_id, dtc_rcy->curr_node, session->kernel->lsn);
         ELAPSED_END(elapsed_begin, used_time);
         replay_batch_time += used_time;
+        if (status != OG_SUCCESS) {
+            break;
+        }
         // fetch next batch
         ELAPSED_BEGIN(elapsed_begin);
 
@@ -7709,7 +7811,10 @@ static status_t dtc_rcy_replay_batches_paral(knl_session_t *session)
     }
     close_read_log_us = (uint64)(cm_now() - stage_begin);
     stage_begin = cm_now();
-    dtc_rcy_wait_paral_replay_end(session);
+    bool32 keep_workers_for_gbp_fallback = (bool32)(!dtc_rcy->full_recovery &&
+        KNL_RECOVERY_WITH_GBP(session->kernel) && !dtc_rcy->gbp_redo_fallback_used &&
+        (status == OG_SUCCESS || gbp_knl_dtc_fallback_required(session)));
+    dtc_rcy_wait_paral_replay_end(session, (bool32)!keep_workers_for_gbp_fallback);
     wait_replay_end_us = (uint64)(cm_now() - stage_begin);
     if (gbp_tail_replay_diag) {
         dtc_rcy_log_gbp_tail_replay_summary(session, submitted_batches, submitted_bytes, first_submit_lfn,
@@ -8403,6 +8508,16 @@ static uint32 dtc_rcy_gbp_planned_count(dtc_rcy_context_t *dtc_rcy)
     return count;
 }
 
+static void dtc_rcy_gbp_disable_planned_nodes(dtc_rcy_context_t *dtc_rcy)
+{
+    for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
+        uint32 node_id = (uint32)dtc_rcy->rcy_log_points[i].node_id;
+        if (node_id < OG_MAX_INSTANCES) {
+            dtc_rcy->gbp_read_planned[node_id] = OG_FALSE;
+        }
+    }
+}
+
 static status_t dtc_rcy_gbp_query_and_cache_node_window(knl_session_t *session, uint32 node_id,
     gbp_read_ckpt_resp_t *resp, const char *stage)
 {
@@ -8509,9 +8624,9 @@ static void dtc_rcy_gbp_stage_jump_node(knl_session_t *session, uint32 node_idx,
     dtc_rcy->gbp_skip_points[node_id] = skip_point;
     dtc_rcy->gbp_jump_taken[node_id] = OG_TRUE;
     dtc_rcy_gbp_save_verify_node(session, node_id);
-    node->rcy_point_saved = dtc_rcy->gbp_rcy_points[node_id];
     node->rcy_point = dtc_rcy->gbp_rcy_points[node_id];
     node->rcy_write_point = dtc_rcy->gbp_rcy_points[node_id];
+    dtc_rcy->rcy_nodes[node_idx].recovery_read_end_point = dtc_rcy->gbp_rcy_points[node_id];
     dtc_rcy_gbp_update_global_lrp(session, node_id);
     session->kernel->rcy_ctx.max_lrp_lsn = MAX(session->kernel->rcy_ctx.max_lrp_lsn,
                                                dtc_rcy->gbp_global_lrp_lsn);
@@ -8533,6 +8648,13 @@ static status_t dtc_rcy_try_delayed_gbp_jump(knl_session_t *session)
         session->kernel->db.recover_for_restore || !KNL_GBP_SAFE(session->kernel)) {
         return OG_SUCCESS;
     }
+    if (gbp_knl_dtc_read_failed(session)) {
+        OG_LOG_RUN_WAR("[DTC RCY][GBP][partial] skip delayed jump because GBP read failed, "
+                       "abort read phase and keep redo recovery");
+        gbp_knl_abort_dtc_read(session);
+        dtc_rcy_gbp_disable_planned_nodes(dtc_rcy);
+        return OG_SUCCESS;
+    }
 
     for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
         uint32 node_id = (uint32)dtc_rcy->rcy_log_points[i].node_id;
@@ -8552,6 +8674,13 @@ static status_t dtc_rcy_try_delayed_gbp_jump(knl_session_t *session)
                            "before jump",
                            node_id, (uint64)point->lfn, (uint64)dtc_rcy->gbp_rcy_points[node_id].lfn);
             return OG_ERROR;
+        }
+        if (gbp_knl_dtc_read_failed(session)) {
+            OG_LOG_RUN_WAR("[DTC RCY][GBP][partial] skip delayed jump node %u because GBP read failed, "
+                           "abort read phase and keep redo recovery", node_id);
+            gbp_knl_abort_dtc_read(session);
+            dtc_rcy_gbp_disable_planned_nodes(dtc_rcy);
+            return OG_SUCCESS;
         }
 
         dtc_rcy_gbp_stage_jump_node(session, i, "staged");
@@ -8730,13 +8859,22 @@ static status_t dtc_rcy_gbp_partial_append_required(gbp_partial_context_t *ctx, 
         return OG_ERROR;
     }
 
-    new_items = (gbp_partial_item_t **)realloc(ctx->required_items,
-                                              (size_t)new_capacity * sizeof(gbp_partial_item_t *));
+    size_t new_size = (size_t)new_capacity * sizeof(gbp_partial_item_t *);
+    new_items = (gbp_partial_item_t **)malloc(new_size);
     if (new_items == NULL) {
         OG_LOG_RUN_ERR("[DTC RCY][GBP][partial] failed to grow required cache: old=%u new=%u",
                        ctx->required_capacity, new_capacity);
         return OG_ERROR;
     }
+    if (ctx->required_items != NULL && ctx->required_count > 0) {
+        size_t old_size = (size_t)ctx->required_count * sizeof(gbp_partial_item_t *);
+        errno_t err = memcpy_sp(new_items, new_size, ctx->required_items, old_size);
+        if (err != EOK) {
+            free(new_items);
+            return OG_ERROR;
+        }
+    }
+    CM_FREE_PTR(ctx->required_items);
     ctx->required_items = new_items;
     ctx->required_capacity = new_capacity;
     ctx->required_items[ctx->required_count++] = item;
@@ -9012,6 +9150,19 @@ static status_t dtc_rcy_gbp_prepare_partial(knl_session_t *session)
 
     OG_LOG_RUN_WAR("[DTC RCY][GBP][partial] prepare planned: planned_nodes=%u candidate_nodes=%u jump_allowed=%u",
                    dtc_rcy_gbp_planned_count(dtc_rcy), candidate_count, jump_allowed_count);
+    if (gbp_knl_dtc_read_failed(session)) {
+        OG_LOG_RUN_WAR("[DTC RCY][GBP][partial] GBP read failed before jump, abort read phase and keep redo recovery");
+        gbp_knl_abort_dtc_read(session);
+        dtc_rcy_gbp_set_candidate_planned(dtc_rcy, candidate_nodes, OG_FALSE);
+        dtc_rcy_pcn_diag_finish_gbp_prepare(session, DTC_PCND_GBP_PREP_PARTIAL_CHECKED);
+        return OG_SUCCESS;
+    }
+    if (dtc_rcy_try_delayed_gbp_jump(session) != OG_SUCCESS) {
+        dtc_rcy_pcn_diag_finish_gbp_prepare(session, DTC_PCND_GBP_PREP_PARTIAL_CHECKED);
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_WAR("[DTC RCY][GBP][partial] prepare immediate jump check done: jumped=%u planned=%u",
+                   dtc_rcy_gbp_jump_count(dtc_rcy), dtc_rcy_gbp_planned_count(dtc_rcy));
     dtc_rcy_pcn_diag_finish_gbp_prepare(session, DTC_PCND_GBP_PREP_PARTIAL_CHECKED);
     return OG_SUCCESS;
 }
@@ -9031,6 +9182,11 @@ static status_t dtc_rcy_gbp_prepare(knl_session_t *session)
         return OG_SUCCESS;
     }
 
+    if (!dtc_rcy->gbp_saved_max_lrp_valid) {
+        dtc_rcy->gbp_saved_max_lrp_lsn = session->kernel->rcy_ctx.max_lrp_lsn;
+        dtc_rcy->gbp_saved_max_lrp_valid = OG_TRUE;
+    }
+    gbp_knl_clear_dtc_fallback(session);
     dtc_rcy_gbp_reset_state(dtc_rcy);
     global_local_lrp_lsn = dtc_rcy_get_global_local_lrp_lsn(session);
     if (session->kernel->rcy_ctx.max_lrp_lsn == OG_INVALID_ID64 ||
@@ -9144,6 +9300,51 @@ static status_t dtc_rcy_full_recovery(knl_session_t *session)
     return dtc_rcy_update_ckpt_log_point(session);
 }
 
+static status_t dtc_rcy_partial_replay_once(knl_session_t *session)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+
+    dtc_rcy->recovery_status = RECOVERY_REPLAY;
+    if (dtc_rcy->paral_rcy) {
+        if (dtc_rcy_replay_batches_paral(session) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to do redo log batch replay in parallel");
+            return OG_ERROR;
+        }
+    } else {
+        if (dtc_rcy_process_batches(session) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to do redo log batch replay");
+            return OG_ERROR;
+        }
+    }
+
+    return dtc_rcy_gbp_check_tail_replay_complete(session, "GBP finish");
+}
+
+static void dtc_rcy_gbp_prepare_redo_fallback(knl_session_t *session, const char *reason)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    log_context_t *redo = &session->kernel->redo_ctx;
+
+    OG_LOG_RUN_WAR("[DTC RCY][GBP][partial] fallback to ordinary redo: reason=%s used=%u saved_max_lrp_valid=%u "
+                   "saved_max_lrp_lsn=%llu current_max_lrp_lsn=%llu",
+                   (reason == NULL) ? "unknown" : reason, (uint32)dtc_rcy->gbp_redo_fallback_used,
+                   (uint32)dtc_rcy->gbp_saved_max_lrp_valid, (uint64)dtc_rcy->gbp_saved_max_lrp_lsn,
+                   (uint64)session->kernel->rcy_ctx.max_lrp_lsn);
+    dtc_rcy->gbp_redo_fallback_used = OG_TRUE;
+
+    gbp_knl_abort_dtc_read(session);
+    redo->rcy_with_gbp = OG_FALSE;
+    redo->last_rcy_with_gbp = OG_FALSE;
+    if (dtc_rcy->gbp_saved_max_lrp_valid) {
+        session->kernel->rcy_ctx.max_lrp_lsn = dtc_rcy->gbp_saved_max_lrp_lsn;
+    }
+    dtc_rcy_gbp_reset_state(dtc_rcy);
+    dtc_rcy_gbp_partial_reset_required_cache(&dtc_rcy->gbp_partial_ctx);
+    dtc_rcy_next_phase(session);
+    gbp_knl_clear_dtc_fallback(session);
+    cm_reset_error();
+}
+
 static status_t dtc_rcy_partial_recovery(knl_session_t *session)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
@@ -9151,6 +9352,7 @@ static status_t dtc_rcy_partial_recovery(knl_session_t *session)
     reform_detail_t *rf_detail = &g_dtc->rf_ctx.reform_detail;
     stat->last_rcy_is_full_recovery = OG_FALSE;
     knl_session_t *se = session->kernel->sessions[SESSION_ID_KERNEL];
+    status_t replay_status;
 
     dtc_rcy->recovery_status = RECOVERY_ANALYSIS;
     RC_STEP_BEGIN(rf_detail->recovery_set_create_elapsed);
@@ -9241,28 +9443,46 @@ static status_t dtc_rcy_partial_recovery(knl_session_t *session)
 
     // start real recovery task using recovery set
     RC_STEP_BEGIN(rf_detail->recovery_replay_elapsed);
-    if (dtc_rcy->paral_rcy) {
-        if (dtc_rcy_replay_batches_paral(session) != OG_SUCCESS) {
-            OG_LOG_RUN_ERR("[DTC RCY] failed to do redo log batch replay in parallel");
-            RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FAILED);
-            gbp_knl_abort_dtc_read(session);
-            return OG_ERROR;
+    for (;;) {
+        replay_status = dtc_rcy_partial_replay_once(session);
+
+        if (replay_status == OG_SUCCESS && KNL_RECOVERY_WITH_GBP(session->kernel)) {
+            gbp_knl_finish_dtc_read(session);
+            if (gbp_knl_dtc_fallback_required(session)) {
+                replay_status = OG_ERROR;
+            }
         }
-    } else {
-        if (dtc_rcy_process_batches(session) != OG_SUCCESS) {
-            OG_LOG_RUN_ERR("[DTC RCY] failed to do redo log batch replay");
-            RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FAILED);
-            gbp_knl_abort_dtc_read(session);
-            return OG_ERROR;
+
+        if (replay_status == OG_SUCCESS) {
+            if (dtc_recover_check(session) == OG_SUCCESS) {
+                break;
+            }
+            OG_LOG_RUN_ERR("[DTC RCY][partial recovery] failed to check dtc recovery rcy point");
+            if (session->kernel->redo_ctx.last_rcy_with_gbp && !dtc_rcy->gbp_redo_fallback_used) {
+                gbp_knl_mark_dtc_fallback(session, OG_INVALID_ID32, GBP_READ_RESULT_ERROR,
+                                          GBP_DTC_FALLBACK_RECOVER_CHECK);
+                replay_status = OG_ERROR;
+            } else {
+                RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FAILED);
+                return OG_ERROR;
+            }
         }
+
+        if (replay_status != OG_SUCCESS && gbp_knl_dtc_fallback_required(session) &&
+            !dtc_rcy->gbp_redo_fallback_used) {
+            dtc_rcy_gbp_prepare_redo_fallback(session, "GBP application failed");
+            continue;
+        }
+
+        if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
+            gbp_knl_abort_dtc_read(session);
+        }
+        RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FAILED);
+        return OG_ERROR;
     }
     RC_STEP_END(rf_detail->recovery_replay_elapsed, RC_STEP_FINISH);
-
-    gbp_knl_finish_dtc_read(session);
-
-    if (dtc_recover_check(session) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC RCY][partial recovery] failed to check dtc recovery rcy point");
-        return OG_ERROR;
+    if (dtc_rcy->paral_rcy) {
+        session->kernel->rcy_ctx.rcy_end = OG_TRUE;
     }
 
     OG_LOG_RUN_INF("[DTC RCY] finish redo replay, session lsn=%llu", ((knl_session_t *)g_rc_ctx->session)->kernel->lsn);
@@ -9378,8 +9598,13 @@ static status_t dtc_rcy_init_context(knl_session_t *session, dtc_rcy_context_t *
     dtc_rcy->pcn_diag_redo_end_lfn_snapshot = 0;
     dtc_rcy->pcn_diag_gbp_rcy_lfn_snapshot = 0;
     dtc_rcy->pcn_diag_rcy_with_gbp_after_prepare = 0;
+    dtc_rcy->gbp_redo_fallback_used = OG_FALSE;
+    dtc_rcy->gbp_saved_max_lrp_valid = OG_FALSE;
+    dtc_rcy->gbp_fallback_reserved = 0;
+    dtc_rcy->gbp_saved_max_lrp_lsn = 0;
     session->kernel->redo_ctx.rcy_with_gbp = OG_FALSE;
     session->kernel->redo_ctx.last_rcy_with_gbp = OG_FALSE;
+    gbp_knl_clear_dtc_fallback(session);
     ret = memset_sp(&dtc_rcy->gbp_partial_ctx, sizeof(dtc_rcy->gbp_partial_ctx), 0,
                     sizeof(dtc_rcy->gbp_partial_ctx));
     knl_securec_check(ret);

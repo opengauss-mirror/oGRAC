@@ -40,6 +40,9 @@
 extern bool32 g_enable_fdsa;
 extern bool32 g_crc_verify;
 
+#define SRV_GBP_ASSEMBLE_MAX_SCAN_MIN 100
+#define SRV_GBP_ASSEMBLE_MAX_SCAN_MAX 1000000
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -887,12 +890,12 @@ status_t srv_load_gbp_params(void)
 
     OG_RETURN_IFERR(srv_get_param_uint16("GBP_PORT", &gbp->lsnr_port));
     OG_RETURN_IFERR(srv_get_param_uint32("GBP_ASSEMBLE_MAX_SCAN", &gbp->assemble_max_scan));
-    if (gbp->assemble_max_scan < 100) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "GBP_ASSEMBLE_MAX_SCAN", (int64)100);
+    if (gbp->assemble_max_scan < SRV_GBP_ASSEMBLE_MAX_SCAN_MIN) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "GBP_ASSEMBLE_MAX_SCAN", (int64)SRV_GBP_ASSEMBLE_MAX_SCAN_MIN);
         return OG_ERROR;
     }
-    if (gbp->assemble_max_scan > 1000000) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "GBP_ASSEMBLE_MAX_SCAN", (int64)1000000);
+    if (gbp->assemble_max_scan > SRV_GBP_ASSEMBLE_MAX_SCAN_MAX) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "GBP_ASSEMBLE_MAX_SCAN", (int64)SRV_GBP_ASSEMBLE_MAX_SCAN_MAX);
         return OG_ERROR;
     }
 

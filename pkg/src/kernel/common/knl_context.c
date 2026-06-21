@@ -36,6 +36,11 @@ extern "C" {
 
 extern bool8 g_local_set_disaster_cluster_role;
 
+#define KNL_DEFAULT_GBP_RT_PARSE_WORKERS 2
+#define KNL_DEFAULT_GBP_RT_OWNER_WORKERS 4
+#define KNL_DEFAULT_GBP_PORT 2611
+#define KNL_DEFAULT_GBP_ASSEMBLE_MAX_SCAN 300
+
 void knl_init_attr(knl_handle_t kernel)
 {
     knl_instance_t *inst = (knl_instance_t *)kernel;
@@ -62,10 +67,10 @@ void knl_init_attr(knl_handle_t kernel)
     inst->gbp_attr.use_gbp = OG_FALSE;
     inst->gbp_attr.gbp_for_recovery = OG_TRUE;
     inst->gbp_attr.gbp_rt_analysis = OG_FALSE;
-    inst->gbp_attr.gbp_rt_parse_workers = 2;
-    inst->gbp_attr.gbp_rt_page_owner_workers = 4;
+    inst->gbp_attr.gbp_rt_parse_workers = KNL_DEFAULT_GBP_RT_PARSE_WORKERS;
+    inst->gbp_attr.gbp_rt_page_owner_workers = KNL_DEFAULT_GBP_RT_OWNER_WORKERS;
     inst->gbp_attr.gbp_off_triggered = OG_FALSE;
-    inst->gbp_attr.lsnr_port = 2611;
+    inst->gbp_attr.lsnr_port = KNL_DEFAULT_GBP_PORT;
     inst->gbp_attr.server_count = 1;
     err = strncpy_s(inst->gbp_attr.server_addr[0], CM_MAX_IP_LEN, "127.0.0.1", CM_MAX_IP_LEN - 1);
     knl_securec_check(err);
@@ -73,7 +78,7 @@ void knl_init_attr(knl_handle_t kernel)
     knl_securec_check(err);
     err = strncpy_s(inst->gbp_attr.trans_type, OG_MAX_NAME_LEN, "tcp", OG_MAX_NAME_LEN - 1);
     knl_securec_check(err);
-    inst->gbp_attr.assemble_max_scan = 300;
+    inst->gbp_attr.assemble_max_scan = KNL_DEFAULT_GBP_ASSEMBLE_MAX_SCAN;
     param = cm_get_config_value(inst->attr.config, "COMMIT_WAIT");
     if (param != NULL) {
         inst->attr.commit_nowait = cm_str_equal(param, "NOWAIT");

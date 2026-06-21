@@ -1,3 +1,28 @@
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_protocol.cpp
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_protocol.cpp
+ *
+ * -------------------------------------------------------------------------
+ */
+
 #include "gbp_protocol.h"
 
 #include <algorithm>
@@ -11,17 +36,34 @@ namespace gbp {
 
 namespace {
 
-gbp_batch_read_resp_t& tls_batch_read_resp() {
+constexpr size_t GBP_CS_READY_ACK_SIZE = sizeof(uint32_t);
+constexpr size_t GBP_CS_READY_FLAG_OFFSET = sizeof(uint16_t);
+constexpr size_t GBP_CKPT_CHECK_END_OFFSET = 0;
+constexpr size_t GBP_CKPT_ALY_END_OFFSET = sizeof(uint64_t);
+constexpr size_t GBP_META_EPOCH_OFFSET = 0;
+constexpr size_t GBP_META_CURSOR_OFFSET = sizeof(uint64_t);
+constexpr size_t GBP_META_MAX_COUNT_OFFSET = sizeof(uint64_t) * 2;
+constexpr size_t GBP_META_REQUEST_SIZE = GBP_META_MAX_COUNT_OFFSET + sizeof(uint32_t);
+constexpr size_t GBP_SELECTED_COUNT_OFFSET = 0;
+constexpr size_t GBP_SELECTED_ENTRIES_OFFSET = sizeof(uint64_t);
+constexpr size_t GBP_SELECTED_ENTRY_SIZE = sizeof(page_id_t) + sizeof(uint64_t);
+
+gbp_batch_read_resp_t& tls_batch_read_resp()
+{
     thread_local gbp_batch_read_resp_t resp;
     return resp;
 }
 
-void fill_demo_msg(char* msg, const char* text) {
+void fill_demo_msg(char* msg, const char* text)
+{
     std::memset(msg, 0, GBP_MSG_LEN);
-    if (text && text[0]) std::memcpy(msg, text, std::strlen(text) + 1);
+    if (text && text[0]) {
+        std::memcpy(msg, text, std::strlen(text) + 1);
+    }
 }
 
-void pad_batch_resp_pages(gbp_batch_read_resp_t& resp, uint32_t count) {
+void pad_batch_resp_pages(gbp_batch_read_resp_t& resp, uint32_t count)
+{
     thread_local uint32_t prev_filled = 0;
     if (count < prev_filled) {
         std::memset(resp.pages + count, 0,
@@ -30,7 +72,8 @@ void pad_batch_resp_pages(gbp_batch_read_resp_t& resp, uint32_t count) {
     prev_filled = count;
 }
 
-std::shared_ptr<PagePayload> payload_from_block(const uint8_t* block_ptr) {
+std::shared_ptr<PagePayload> payload_from_block(const uint8_t* block_ptr)
+{
     auto payload = std::make_shared<PagePayload>();
     std::memcpy(payload->block, block_ptr, GBP_PAGE_SIZE);
     return payload;
@@ -69,7 +112,8 @@ struct PageWritePlan {
     std::shared_ptr<PagePayload> payload;
 };
 
-const char* page_write_op_name(PageWriteOp op) {
+const char* page_write_op_name(PageWriteOp op)
+{
     switch (op) {
         case PageWriteOp::Reject:
             return "reject";
@@ -84,7 +128,8 @@ const char* page_write_op_name(PageWriteOp op) {
 
 bool commit_page_install(PageWritePlan& plan, GbpServerState& state, GbpShard& shard, PageRecord rec,
                          const PageMeta& meta, bool legacy_pending, int& rejected, int& accepted,
-                         int& capacity_rejected) {
+                         int& capacity_rejected)
+{
     if (!install_page(state, shard, plan.pid_key, std::move(rec), meta, legacy_pending)) {
         ++rejected;
         ++capacity_rejected;
@@ -97,7 +142,8 @@ bool commit_page_install(PageWritePlan& plan, GbpServerState& state, GbpShard& s
     return true;
 }
 
-void fill_prev_page_diag(PageWritePlan& plan, const PageRecord& prev) {
+void fill_prev_page_diag(PageWritePlan& plan, const PageRecord& prev)
+{
     uint16_t cks = 0;
 
     plan.had_prev = true;
@@ -106,7 +152,8 @@ void fill_prev_page_diag(PageWritePlan& plan, const PageRecord& prev) {
     page_diag_from_block(page_block_cstr(prev), plan.prev_page_lsn, plan.prev_page_pcn, cks);
 }
 
-std::string format_hex_u16(uint16_t value) {
+std::string format_hex_u16(uint16_t value)
+{
     std::ostringstream os;
     os << std::hex << value;
     return os.str();
@@ -116,7 +163,8 @@ void log_verbose_page_write_result(const std::string& peer, uint32_t qid, uint32
                                    const PageWritePlan& plan, bool applied, int accepted_delta,
                                    int rejected_delta, const log_point_t& batch_begin,
                                    const log_point_t& batch_trunc, const log_point_t& batch_lrp,
-                                   const GbpShard& shard) {
+                                   const GbpShard& shard)
+{
     page_id_t pid{};
     uint64_t incoming_lsn = 0;
     uint32_t incoming_pcn = 0;
@@ -172,11 +220,13 @@ void log_verbose_page_write_result(const std::string& peer, uint32_t qid, uint32
                 " batch_lrp[" + format_log_point_short(batch_lrp) + "]");
 }
 
-bool page_write_passes_reset(const GbpShard& shard, const log_point_t& lrp, bool lsn_only) {
+bool page_write_passes_reset(const GbpShard& shard, const log_point_t& lrp, bool lsn_only)
+{
     return log_point_is_zero(shard.reset_point) || log_point_cmp(lrp, shard.reset_point, lsn_only) > 0;
 }
 
-PageWritePlan plan_page_write(const PreparedPageWrite& pw, GbpShard& shard, bool strict, bool lsn_only, int& rejected) {
+PageWritePlan plan_page_write(const PreparedPageWrite& pw, GbpShard& shard, bool strict, bool lsn_only, int& rejected)
+{
     PageWritePlan plan{};
     plan.pid_key = pw.pid_key;
     plan.block_ptr = pw.block_ptr;
@@ -241,8 +291,11 @@ PageWritePlan plan_page_write(const PreparedPageWrite& pw, GbpShard& shard, bool
 }
 
 bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard& shard, bool strict, bool lsn_only,
-                           bool legacy_pending, int& rejected, int& accepted, int& capacity_rejected) {
-    if (plan.op == PageWriteOp::Reject) return false;
+                           bool legacy_pending, int& rejected, int& accepted, int& capacity_rejected)
+{
+    if (plan.op == PageWriteOp::Reject) {
+        return false;
+    }
 
     if (!page_write_passes_reset(shard, plan.lrp, lsn_only)) {
         ++rejected;
@@ -336,18 +389,20 @@ bool apply_page_write_plan(PageWritePlan& plan, GbpServerState& state, GbpShard&
 
 }  // namespace
 
-void send_cs_ready_ack(socket_t fd) {
+void send_cs_ready_ack(socket_t fd)
+{
     const uint16_t one = 1;
     const uint8_t local_endian = (*reinterpret_cast<const uint8_t*>(&one) == 0) ? 1 : 0;
-    uint8_t ack[4];
+    uint8_t ack[GBP_CS_READY_ACK_SIZE];
     ack[0] = local_endian;
     ack[1] = static_cast<uint8_t>(CS_HANDSHAKE_VERSION);
     uint16_t flag = CS_FLAG_DN_CONN;
-    std::memcpy(ack + 2, &flag, 2);
+    std::memcpy(ack + GBP_CS_READY_FLAG_OFFSET, &flag, sizeof(flag));
     send_full_or_disconnect(fd, ack, sizeof(ack), "CS_READY_ACK");
 }
 
-void send_ack(socket_t fd, const gbp_msg_hdr_t& req, uint32_t ack_type, uint32_t ack_data) {
+void send_ack(socket_t fd, const gbp_msg_hdr_t& req, uint32_t ack_type, uint32_t ack_data)
+{
     gbp_msg_ack_t ack{};
     ack.header.msg_type = req.msg_type;
     ack.header.msg_length = static_cast<uint32_t>(sizeof(gbp_msg_ack_t));
@@ -358,7 +413,8 @@ void send_ack(socket_t fd, const gbp_msg_hdr_t& req, uint32_t ack_type, uint32_t
     send_full_or_disconnect(fd, &ack, sizeof(ack), "ACK");
 }
 
-void send_shake_resp(socket_t fd, const gbp_msg_hdr_t& req, uint32_t queue_id, uint32_t is_temp) {
+void send_shake_resp(socket_t fd, const gbp_msg_hdr_t& req, uint32_t queue_id, uint32_t is_temp)
+{
     struct {
         gbp_msg_hdr_t header;
         uint32_t queue_id;
@@ -374,17 +430,18 @@ void send_shake_resp(socket_t fd, const gbp_msg_hdr_t& req, uint32_t queue_id, u
 }
 
 void send_read_ckpt_resp(socket_t fd, const gbp_msg_hdr_t& req, const uint8_t* body, size_t body_len,
-                         GbpServerState& state, bool verbose, const std::string& peer) {
+                         GbpServerState& state, bool verbose, const std::string& peer)
+{
     (void)verbose;
     const bool lsn_only = state.config().log_cmp_lsn_only;
     const CkptResult ckpt = state.ckpt_snapshot(lsn_only);
     uint32_t check_end = 0;
     log_point_t aly_end = zero_log_point();
-    if (body_len >= 4) {
-        std::memcpy(&check_end, body, 4);
+    if (body_len >= GBP_CKPT_CHECK_END_OFFSET + sizeof(check_end)) {
+        std::memcpy(&check_end, body + GBP_CKPT_CHECK_END_OFFSET, sizeof(check_end));
     }
-    if (body_len >= 8 + LOG_POINT_SIZE) {
-        std::memcpy(&aly_end, body + 8, LOG_POINT_SIZE);
+    if (body_len >= GBP_CKPT_ALY_END_OFFSET + LOG_POINT_SIZE) {
+        std::memcpy(&aly_end, body + GBP_CKPT_ALY_END_OFFSET, LOG_POINT_SIZE);
     }
     gbp_read_ckpt_resp_t resp{};
     resp.header.msg_type = req.msg_type;
@@ -416,7 +473,8 @@ void send_read_ckpt_resp(socket_t fd, const gbp_msg_hdr_t& req, const uint8_t* b
 }
 
 void send_page_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const page_id_t& page_id, bool hit,
-                         const log_point_t& trunc, const char* block) {
+                         const log_point_t& trunc, const char* block)
+{
     gbp_read_resp_t resp{};
     resp.header = req;
     resp.header.msg_length = static_cast<uint32_t>(GBP_READ_RESP_SIZE);
@@ -424,12 +482,15 @@ void send_page_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const page_id_t&
     resp.unused = 0;
     resp.pageid = page_id;
     resp.gbp_trunc_point = hit ? trunc : zero_log_point();
-    if (hit && block) std::memcpy(resp.block, block, GBP_PAGE_SIZE);
+    if (hit && block) {
+        std::memcpy(resp.block, block, GBP_PAGE_SIZE);
+    }
     send_full_or_disconnect(fd, &resp, sizeof(resp), "PAGE_READ");
 }
 
 void send_batch_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const log_point_t& skip_point, uint32_t conn_qid,
-                          GbpServerState& state, bool verbose, const std::string& peer, bool read_phase_active) {
+                          GbpServerState& state, bool verbose, const std::string& peer, bool read_phase_active)
+{
     const bool timing_diag = state.config().timing_diag;
     const bool lsn_only = state.config().log_cmp_lsn_only;
     const uint32_t qid = conn_qid % OG_GBP_SESSION_COUNT;
@@ -444,12 +505,14 @@ void send_batch_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const log_point
     if (timing_diag) {
         batch_begin = std::chrono::steady_clock::now();
     }
-    const auto lock_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto lock_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
     std::unique_lock<std::mutex> lock(shard.mtx);
     if (timing_diag) {
         lock_wait_us = us_since(lock_begin);
     }
-    const auto scan_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto scan_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
     auto pick = shard.batch_pending.take_batch(shard.page_cache, skip_point, static_cast<int>(GBP_BATCH_PAGE_NUM),
                                                lsn_only);
     if (timing_diag) {
@@ -462,7 +525,9 @@ void send_batch_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const log_point
         (void)gen;
         (void)install_gen;
         auto it = shard.page_cache.find(pid_key);
-        if (it == shard.page_cache.end()) continue;
+        if (it == shard.page_cache.end()) {
+            continue;
+        }
         const PageRecord& rec = it->second;
         handles.push_back({pid_key, rec.coverage_begin, rec.coverage_lrp, rec.writer_inst, rec.writer_seq,
                            rec.payload});
@@ -474,7 +539,8 @@ void send_batch_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const log_point
     int64_t send_us = 0;
     int64_t pending_lock_us = 0;
     int64_t pending_remove_us = 0;
-    const auto pack_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto pack_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
 
     gbp_batch_read_resp_t& resp = tls_batch_read_resp();
     resp.header = req;
@@ -489,21 +555,22 @@ void send_batch_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const log_point
     if (timing_diag) {
         pack_us = us_since(pack_begin);
     }
-    const auto send_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto send_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
     send_full_or_disconnect(fd, &resp, sizeof(resp), "BATCH_PAGE_READ");
     if (timing_diag) {
         send_us = us_since(send_begin);
     }
 
     if (batch_result == GBP_READ_RESULT_OK && !handles.empty()) {
-        const auto pending_lock_begin =
-            timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const auto pending_lock_begin = timing_diag ? std::chrono::steady_clock::now() :
+            std::chrono::steady_clock::time_point{};
         lock.lock();
         if (timing_diag) {
             pending_lock_us = us_since(pending_lock_begin);
         }
-        const auto pending_remove_begin =
-            timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const auto pending_remove_begin = timing_diag ? std::chrono::steady_clock::now() :
+            std::chrono::steady_clock::time_point{};
         const int removed = shard.batch_pending.mark_sent_and_count(pick, shard.page_cache);
         if (timing_diag) {
             pending_remove_us = us_since(pending_remove_begin);
@@ -534,18 +601,27 @@ void send_batch_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const log_point
 }
 
 PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, GbpServerState& state,
-                                       uint32_t conn_qid, bool verbose, const std::string& peer) {
+                                       uint32_t conn_qid, bool verbose, const std::string& peer)
+{
     PageWriteResult out;
-    if (body_len < 4) return out;
+    if (body_len < GBP_UINT32_WIRE_SIZE) {
+        return out;
+    }
     uint32_t page_num = 0;
-    std::memcpy(&page_num, body, 4);
-    if (page_num > GBP_BATCH_PAGE_NUM) page_num = GBP_BATCH_PAGE_NUM;
+    std::memcpy(&page_num, body, GBP_UINT32_WIRE_SIZE);
+    if (page_num > GBP_BATCH_PAGE_NUM) {
+        page_num = GBP_BATCH_PAGE_NUM;
+    }
     const uint32_t qid = conn_qid % OG_GBP_SESSION_COUNT;
     GbpShard& shard = state.shard(qid);
     out.pages_off = resolve_write_pages_offset(body, body_len, page_num);
-    if (out.pages_off < 0) return out;
+    if (out.pages_off < 0) {
+        return out;
+    }
 
-    log_point_t batch_begin{}, batch_trunc{}, batch_lrp{};
+    log_point_t batch_begin{};
+    log_point_t batch_trunc{};
+    log_point_t batch_lrp{};
     parse_write_batch_points(body, body_len, out.pages_off, batch_begin, batch_trunc, batch_lrp);
     const bool lsn_only = state.config().log_cmp_lsn_only;
     const bool strict = state.config().smb_version;
@@ -553,7 +629,9 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Gbp
 
     if (page_num == 0) {
         log_point_t reset_point = select_reset_point(batch_begin, batch_lrp, lsn_only);
-        if (log_point_is_zero(reset_point)) return out;
+        if (log_point_is_zero(reset_point)) {
+            return out;
+        }
         const auto lock_begin = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> g(shard.mtx);
         out.lock_wait_us = us_since(lock_begin);
@@ -565,7 +643,9 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Gbp
     }
 
     const size_t need = static_cast<size_t>(out.pages_off) + page_num * GBP_PAGE_ITEM_SIZE;
-    if (body_len < need) return out;
+    if (body_len < need) {
+        return out;
+    }
 
     std::vector<PreparedPageWrite> prepared;
     prepared.reserve(page_num);
@@ -650,18 +730,27 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Gbp
         out.apply_hold_us = us_since(hold_begin);
         out.lock_hold_us += out.apply_hold_us;
     }
-    if (state.config().capacity_evict_on_write) state.maybe_start_capacity_evict();
+    if (state.config().capacity_evict_on_write) {
+        state.maybe_start_capacity_evict();
+    }
     return out;
 }
 
 void send_meta_chunk_resp(socket_t fd, const gbp_msg_hdr_t& req, const uint8_t* body, size_t body_len,
-                          GbpServerState& state, ConnMeta& conn_meta, bool verbose, const std::string& peer) {
+                          GbpServerState& state, ConnMeta& conn_meta, bool verbose, const std::string& peer)
+{
     uint64_t epoch = 0;
     uint64_t cursor = 0;
     uint32_t max_count = GBP_META_CHUNK_NUM;
-    if (body_len >= 8) std::memcpy(&epoch, body, 8);
-    if (body_len >= 16) std::memcpy(&cursor, body + 8, 8);
-    if (body_len >= 20) std::memcpy(&max_count, body + 16, 4);
+    if (body_len >= GBP_META_EPOCH_OFFSET + sizeof(epoch)) {
+        std::memcpy(&epoch, body + GBP_META_EPOCH_OFFSET, sizeof(epoch));
+    }
+    if (body_len >= GBP_META_CURSOR_OFFSET + sizeof(cursor)) {
+        std::memcpy(&cursor, body + GBP_META_CURSOR_OFFSET, sizeof(cursor));
+    }
+    if (body_len >= GBP_META_REQUEST_SIZE) {
+        std::memcpy(&max_count, body + GBP_META_MAX_COUNT_OFFSET, sizeof(max_count));
+    }
     max_count = std::max(1u, std::min(max_count, GBP_META_CHUNK_NUM));
 
     if (cursor == 0 || !conn_meta.snapshot_built) {
@@ -713,14 +802,17 @@ void send_meta_chunk_resp(socket_t fd, const gbp_msg_hdr_t& req, const uint8_t* 
 
 void send_batch_selected_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const uint8_t* body, size_t body_len,
                                    GbpServerState& state, bool verbose, const std::string& peer,
-                                   uint32_t conn_qid) {
+                                   uint32_t conn_qid)
+{
     const bool timing_diag = state.config().timing_diag;
     std::chrono::steady_clock::time_point batch_begin{};
     if (timing_diag) {
         batch_begin = std::chrono::steady_clock::now();
     }
     uint32_t req_count = 0;
-    if (body_len >= 4) std::memcpy(&req_count, body, 4);
+    if (body_len >= GBP_SELECTED_COUNT_OFFSET + sizeof(req_count)) {
+        std::memcpy(&req_count, body + GBP_SELECTED_COUNT_OFFSET, sizeof(req_count));
+    }
     req_count = std::min(req_count, GBP_BATCH_PAGE_NUM);
     struct SelectedPick {
         BatchPageHandle handle{};
@@ -741,22 +833,23 @@ void send_batch_selected_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const 
     int64_t lock_wait_us = 0;
     int selected_mismatch_count = 0;
     int meta_mismatch_count = 0;
-    size_t off = 8;
-    const auto lookup_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    for (uint32_t i = 0; i < req_count && off + 16 <= body_len; ++i) {
+    size_t off = GBP_SELECTED_ENTRIES_OFFSET;
+    const auto lookup_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
+    for (uint32_t i = 0; i < req_count && off + GBP_SELECTED_ENTRY_SIZE <= body_len; ++i) {
         page_id_t pid{};
         uint64_t selected_lsn = 0;
-        std::memcpy(&pid, body + off, 8);
-        std::memcpy(&selected_lsn, body + off + 8, 8);
-        off += 16;
+        std::memcpy(&pid, body + off, sizeof(pid));
+        std::memcpy(&selected_lsn, body + off + sizeof(pid), sizeof(selected_lsn));
+        off += GBP_SELECTED_ENTRY_SIZE;
         const uint64_t pid_key = page_id_key_from_raw(pid);
         GbpShard& shard = state.shard(page_queue_id(pid.page));
         BatchPageHandle handle{};
         bool found = false;
         int64_t meta_lsn = -1;
         {
-            const auto lock_begin =
-                timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            const auto lock_begin = timing_diag ? std::chrono::steady_clock::now() :
+                std::chrono::steady_clock::time_point{};
             std::lock_guard<std::mutex> g(shard.mtx);
             if (timing_diag) {
                 lock_wait_us += us_since(lock_begin);
@@ -770,9 +863,13 @@ void send_batch_selected_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const 
             handle = {pid_key, rec.coverage_begin, rec.coverage_lrp, rec.writer_inst, rec.writer_seq, rec.payload};
             found = true;
             auto mit = shard.page_meta.find(pid_key);
-            if (mit != shard.page_meta.end()) meta_lsn = static_cast<int64_t>(mit->second.page_lsn);
+            if (mit != shard.page_meta.end()) {
+                meta_lsn = static_cast<int64_t>(mit->second.page_lsn);
+            }
         }
-        if (!found) continue;
+        if (!found) {
+            continue;
+        }
         int64_t block_lsn_value = meta_lsn;
         uint64_t block_lsn = 0;
         uint32_t pcn = 0;
@@ -802,7 +899,8 @@ void send_batch_selected_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const 
     }
     const int64_t lookup_us = timing_diag ? us_since(lookup_begin) : 0;
     const int count = static_cast<int>(picked.size());
-    const auto pack_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto pack_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
     gbp_batch_read_resp_t& resp = tls_batch_read_resp();
     resp.header = req;
     resp.header.msg_length = static_cast<uint32_t>(BATCH_READ_RESP_SIZE);
@@ -843,14 +941,17 @@ void send_batch_selected_read_resp(socket_t fd, const gbp_msg_hdr_t& req, const 
         for (size_t i = 0; i < std::min(misses.size(), size_t{3}); ++i) {
             page_id_t pid{};
             std::memcpy(&pid, &misses[i], sizeof(pid));
-            if (i > 0) sample << ",";
+            if (i > 0) {
+                sample << ",";
+            }
             sample << format_page_id(pid.file, pid.page);
         }
         gbp_run_log("BATCH_PAGE_READ_SELECTED peer=" + peer + " queue=" + std::to_string(req.queue_id) +
                     " requested=" + std::to_string(req_count) + " sent=" + std::to_string(count) +
                     " missing=" + std::to_string(misses.size()) + " sample=[" + sample.str() + "]");
     }
-    const auto send_begin = timing_diag ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto send_begin = timing_diag ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
     send_full_or_disconnect(fd, &resp, sizeof(resp), "BATCH_PAGE_READ_SELECTED");
     const int64_t send_us = timing_diag ? us_since(send_begin) : 0;
     if (timing_diag) {

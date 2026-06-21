@@ -33,6 +33,7 @@ extern "C" {
 
 #define RM_SESSION_RATIO 1.2
 #define SGA_PAD(buf_size, page_size) ((buf_size) + CM_ALIGN8(((buf_size) / (page_size)) * sizeof(uint32)))
+#define QUICK_CKPT_GROUP_COUNT 2
 
 static status_t srv_get_page_size_param(knl_attr_t *attr)
 {
@@ -1474,7 +1475,7 @@ status_t srv_load_kernel_params(void)
     OG_RETURN_IFERR(srv_get_ckpt_param(attr));
 
     if (attr->enable_quick_ckpt) {
-        attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size * 2;
+        attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size * QUICK_CKPT_GROUP_COUNT;
     } else {
         attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size;
     }

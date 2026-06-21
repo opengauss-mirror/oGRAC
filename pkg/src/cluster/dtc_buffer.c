@@ -31,6 +31,7 @@
 #include "dtc_trace.h"
 #include "knl_datafile.h"
 #include "knl_buflatch.h"
+#include "knl_gbp.h"
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
@@ -170,7 +171,10 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         }
         if (KNL_RECOVERY_WITH_GBP(session->kernel) &&
             !SESSION_IS_LOG_ANALYZE(session) && !SESSION_IS_GBP_BG(session)) {
-            buf_check_page_version(session, ctrl);
+            if (buf_check_page_version(session, ctrl) != OG_SUCCESS) {
+                buf_unlatch(session, ctrl, OG_TRUE);
+                return OG_ERROR;
+            }
         }
     }
 

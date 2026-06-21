@@ -1,4 +1,30 @@
-#pragma once
+/* -------------------------------------------------------------------------
+ *  This file is part of the oGRAC project.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
+ *
+ * oGRAC is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ * -------------------------------------------------------------------------
+ *
+ * gbp_config.h
+ *
+ *
+ * IDENTIFICATION
+ * src/gbp/gbp_config.h
+ *
+ * -------------------------------------------------------------------------
+ */
+
+#ifndef GBP_CONFIG_H
+#define GBP_CONFIG_H
 
 #include <algorithm>
 #include <cctype>
@@ -30,12 +56,11 @@ struct Config {
     int page_write_slow_us = 0;
     int page_write_timing_us = 500000;
     int selected_lsn_mismatch_log = 20;
-    double read_phase_timeout = 300.0;
+    double read_phase_timeout = 3.0;
     double cache_high_water = 0.95;
     double cache_evict_ratio = 0.10;
     ReadEndMode read_end_mode = ReadEndMode::Async;
     bool timing_diag = false;
-
 };
 
 struct ServerOptions {
@@ -80,29 +105,43 @@ struct CliOverrides {
 std::string default_config_path();
 bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::string& err);
 
-inline bool str_ieq(const char* a, const char* b) {
-    if (!a || !b) return false;
+inline bool str_ieq(const char* a, const char* b)
+{
+    if (!a || !b) {
+        return false;
+    }
     while (*a && *b) {
-        if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b))) return false;
+        if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b))) {
+            return false;
+        }
         ++a;
         ++b;
     }
     return *a == *b;
 }
 
-inline bool env_truthy(const char* v) {
-    if (!v || !*v) return false;
+inline bool env_truthy(const char* v)
+{
+    if (!v || !*v) {
+        return false;
+    }
     return std::strcmp(v, "1") == 0 || str_ieq(v, "true") || str_ieq(v, "yes") || str_ieq(v, "on");
 }
 
-inline bool env_falsy(const char* v) {
-    if (!v || !*v) return false;
+inline bool env_falsy(const char* v)
+{
+    if (!v || !*v) {
+        return false;
+    }
     return std::strcmp(v, "0") == 0 || str_ieq(v, "false") || str_ieq(v, "no") || str_ieq(v, "off");
 }
 
-inline int env_int(const char* name, int def) {
+inline int env_int(const char* name, int def)
+{
     const char* v = std::getenv(name);
-    if (!v || !*v) return def;
+    if (!v || !*v) {
+        return def;
+    }
     try {
         return std::max(0, std::stoi(v));
     } catch (...) {
@@ -110,9 +149,12 @@ inline int env_int(const char* name, int def) {
     }
 }
 
-inline double env_double(const char* name, double def) {
+inline double env_double(const char* name, double def)
+{
     const char* v = std::getenv(name);
-    if (!v || !*v) return def;
+    if (!v || !*v) {
+        return def;
+    }
     try {
         return std::stod(v);
     } catch (...) {
@@ -121,3 +163,5 @@ inline double env_double(const char* name, double def) {
 }
 
 }  // namespace gbp
+
+#endif  // GBP_CONFIG_H
