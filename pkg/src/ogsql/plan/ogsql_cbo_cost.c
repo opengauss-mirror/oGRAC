@@ -2946,6 +2946,15 @@ static int64 sql_cal_table_card(plan_assist_t *pa, dc_entity_t *entity, sql_tabl
     return result <= 0 ? 1 : result;
 }
 
+static inline uint32 sql_cbo_stats_index_part_no(index_t *index, uint32 table_part_no)
+{
+    return IS_PART_INDEX(index) ? table_part_no : CBO_GLOBAL_PART_NO;
+}
+
+static inline uint32 sql_cbo_stats_index_subpart_no(index_t *index, uint32 table_subpart_no)
+{
+    return IS_PART_INDEX(index) ? table_subpart_no : CBO_GLOBAL_SUBPART_NO;
+}
 
 double sql_estimate_subpartition_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose_assist_t *ca, dc_entity_t *entity,
     index_t *index, galist_t **idx_cond_array, int64 *card, sql_table_t *table)
@@ -2965,8 +2974,8 @@ double sql_estimate_subpartition_index_scan_cost(sql_stmt_t *stmt, cbo_index_cho
             return sql_estimate_partition_index_scan_cost(stmt, ca, entity, index, idx_cond_array, card, table);
         }
         uint32 table_subpartition_no = COMPART_TABLE_SCAN_SUBPART_NO(table, i);
-        uint32 index_partition_no = IS_PART_INDEX(index) ? CBO_GLOBAL_PART_NO : table_partition_no;
-        uint32 index_subpartition_no = IS_PART_INDEX(index) ? CBO_GLOBAL_SUBPART_NO : table_subpartition_no;
+        uint32 index_partition_no = sql_cbo_stats_index_part_no(index, table_partition_no);
+        uint32 index_subpartition_no = sql_cbo_stats_index_subpart_no(index, table_subpartition_no);
         cbo_stats_info_t stats_info;
         OG_RETURN_MAX_COST_IFERR(init_stats_info(&stats_info, scan_type, table_partition_no, table_subpartition_no,
             index_id, index_partition_no, index_subpartition_no));
@@ -2996,7 +3005,7 @@ double sql_estimate_partition_index_scan_cost(sql_stmt_t *stmt, cbo_index_choose
     for (uint64 i = 0; i < cal_part_cnt; i++) {
         cbo_stats_info_t stats_info;
         uint32 table_partition_no = PART_TABLE_SCAN_PART_NO(table, i);
-        uint32 index_partition_no = IS_PART_INDEX(index) ? CBO_GLOBAL_PART_NO : table_partition_no;
+        uint32 index_partition_no = sql_cbo_stats_index_part_no(index, table_partition_no);
         OG_RETURN_MAX_COST_IFERR(init_stats_info(&stats_info, scan_type, table_partition_no, CBO_GLOBAL_SUBPART_NO,
             index_id, index_partition_no, CBO_GLOBAL_SUBPART_NO));
         OG_RETURN_MAX_COST_IFERR(sql_cal_table_or_partition_stats(entity, table, &stats_info, KNL_SESSION(stmt)));
