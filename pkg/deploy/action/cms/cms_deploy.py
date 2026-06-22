@@ -153,6 +153,9 @@ class CmsDeploy:
                 f"cp -arf {pkg}/add-ons {pkg}/admin {pkg}/bin "
                 f"{pkg}/cfg {pkg}/lib {pkg}/package.xml {target}"
             )
+            # Remove RUN-only binaries from CMS bin directory
+            for unwanted in ("ogsql", "ogracd", "ogencrypt", "ogbackup", "ogbox", "ogrst"):
+                run_cmd(f"rm -f {target}/bin/{unwanted}")
 
         if self.deploy_mode in ("file", "dss"):
             return

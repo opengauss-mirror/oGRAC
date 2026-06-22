@@ -7,7 +7,7 @@ source "${CURRENT_PATH}"/common.sh
 
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="openGauss_oGRAC"
+BUILD_PACK_NAME="oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
@@ -62,14 +62,23 @@ function newPackageTarget() {
   echo "Start newPackageTarget..."
   local current_time=$(date "+%Y%m%d%H%M%S")
   local pkg_dir_name="${BUILD_TARGET_NAME}"
-  local build_type_upper=$(echo "${BUILD_TYPE}" | tr [:lower:] [:upper:])
-  if [[ ${COMPILE_TYPE} == "ASAN" ]]; then
-    build_type_upper="${COMPILE_TYPE}"
+  local ograc_version=$(grep 'Version:' "${CURRENT_PATH}"/versions.yml | awk '{print $2}')
+  local build_type_suffix=""
+  if [[ ${BUILD_TYPE} == "debug" ]]; then
+    build_type_suffix="-debug"
   fi
-  local pkg_name="${BUILD_PACK_NAME}_${ENV_TYPE}_${build_type_upper}.tgz"
+  local os_distro_part="${OS_DISTRO_NAME}"
+  if [[ -z "${os_distro_part}" ]]; then
+    os_distro_part=$(echo "${OS_SUFFIX}" | tr '[:upper:]' '[:lower:]')
+  fi
+  local pkg_name="${BUILD_PACK_NAME}-${ograc_version}"
+  if [[ -n "${os_distro_part}" ]]; then
+    pkg_name="${pkg_name}-${os_distro_part}"
+  fi
   if [[ ${BUILD_MODE} == "single" ]]; then
-    pkg_name="${BUILD_PACK_NAME}_${BUILD_MODE}_${ENV_TYPE}_${build_type_upper}.tgz"
+    pkg_name="${pkg_name}-${BUILD_MODE}"
   fi
+  pkg_name="${pkg_name}${build_type_suffix}-${ENV_TYPE}.tgz"
   local pkg_real_path=${TMP_PKG_PATH}/${pkg_dir_name}
   echo "当前目录: $(pwd)"
   echo "目录内容:"

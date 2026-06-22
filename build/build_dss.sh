@@ -276,6 +276,32 @@ function build_package() {
     cp -arf ${OGDB_CODE_PATH}/DSS/output/bin/* "${OGDB_CODE_PATH}"/dss/bin/
     cp -arf ${OGDB_CODE_PATH}/DSS/output/lib/* "${OGDB_CODE_PATH}"/dss/lib/
     echo "end to copy bin/lib source."
+
+    echo "Start to separate debug symbols."
+    rm -rf "${OGDB_CODE_PATH}/dss_symbols"
+    mkdir -p "${OGDB_CODE_PATH}"/dss_symbols/{bin,lib}
+    for dir in bin lib; do
+        for f in "${OGDB_CODE_PATH}"/dss/${dir}/*; do
+            [ -e "$f" ] || continue
+            [ -f "$f" ] || continue
+            [ -L "$f" ] && continue
+            if ! file "$f" | grep -q "ELF"; then
+                continue
+            fi
+            base_name=$(basename "$f")
+            sym_file="${OGDB_CODE_PATH}/dss_symbols/${dir}/${base_name}.symbol"
+            if [[ "$base_name" == *.so* ]]; then
+                objcopy --only-keep-debug "$f" "$sym_file"
+                objcopy --strip-unneeded "$f"
+                objcopy --add-gnu-debuglink="$sym_file" "$f"
+            else
+                objcopy --only-keep-debug "$f" "$sym_file"
+                objcopy --strip-all "$f"
+                objcopy --add-gnu-debuglink="$sym_file" "$f"
+            fi
+        done
+    done
+    echo "End to separate debug symbols."
 }
 echo "build dss start."
 cd ${OGDB_CODE_PATH}

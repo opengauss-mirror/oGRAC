@@ -177,13 +177,18 @@ func_release_symbol()
 {
     if [ "${ENABLE_LLT_ASAN}" == "NO" ]; then
         echo "release symbol"
+        rm -rf ${OGRACDB_SYMBOL}
         mkdir -p ${OGRACDB_SYMBOL}
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogclient.so
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogcommon.so
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogprotocol.so
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libograc.so
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libdsslock.so
         mv -f ${OGRACDB_LIB}/libogclient.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogclient.${SO}.${SYMBOLFIX}
         mv -f ${OGRACDB_LIB}/libogcommon.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogcommon.${SO}.${SYMBOLFIX}
         mv -f ${OGRACDB_LIB}/libogprotocol.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogprotocol.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libograc.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libograc.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libdsslock.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libdsslock.${SO}.${SYMBOLFIX}
 
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/${OGRACD_BIN}
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/cms
@@ -192,6 +197,7 @@ func_release_symbol()
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogbox
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogbackup
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/dbstor
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogrst
         mv -f ${OGRACDB_BIN}/${OGRACD_BIN}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/${OGRACD_BIN}.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/cms.${SYMBOLFIX} ${OGRACDB_SYMBOL}/cms.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/ogencrypt.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogencrypt.${SYMBOLFIX}
@@ -199,14 +205,24 @@ func_release_symbol()
         mv -f ${OGRACDB_BIN}/ogbox.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogbox.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/ogbackup.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogbackup.${SYMBOLFIX}
         mv -f ${OGRACDB_BIN}/dbstor.${SYMBOLFIX} ${OGRACDB_SYMBOL}/dbstor.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/ogrst.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogrst.${SYMBOLFIX}
 
         ##opensource library
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${Z_LIB_PATH}/libz.so.1.2.13
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${PCRE_LIB_PATH}/libpcre2-8.so.0.11.0
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${ZSTD_LIB_PATH}/libzstd.so.1.5.2
-        mv -f ${Z_LIB_PATH}/libz.so.1.2.13.${SYMBOLFIX}       ${OGRACDB_SYMBOL}/libz.so.1.2.13.${SYMBOLFIX}
-        mv -f ${PCRE_LIB_PATH}/libpcre2-8.so.0.11.0.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libpcre2-8.so.0.11.0.${SYMBOLFIX}
-        mv -f ${ZSTD_LIB_PATH}/libzstd.so.1.5.2.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libzstd.so.1.5.2.${SYMBOLFIX}
+        for lib_file in ${Z_LIB_PATH}/libz.so.*.*; do
+            [ -f "$lib_file" ] && [ ! -L "$lib_file" ] || continue
+            sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} "$lib_file"
+            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/
+        done
+        for lib_file in ${PCRE_LIB_PATH}/libpcre2-8.so.*.*; do
+            [ -f "$lib_file" ] && [ ! -L "$lib_file" ] || continue
+            sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} "$lib_file"
+            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/
+        done
+        for lib_file in ${ZSTD_LIB_PATH}/libzstd.so.*.*; do
+            [ -f "$lib_file" ] && [ ! -L "$lib_file" ] || continue
+            sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} "$lib_file"
+            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/
+        done
 
         sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${ZSTD_LIB_PATH}/../bin/zstd
         mv -f ${ZSTD_LIB_PATH}/../bin/zstd.${SYMBOLFIX} ${OGRACDB_SYMBOL}/zstd.${SYMBOLFIX}
@@ -249,7 +265,8 @@ func_pkg_run_basic()
     func_version_run_pkg
 
     cd ${OGRACDB_BIN}
-    cp ogsql ogracd ogencrypt cms ogbackup ogbox ogrst dbstor ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
+
+    cp ogsql ogracd ogencrypt ogbackup ogbox ogrst dbstor cms ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cp -d ${ZSTD_LIB_PATH}/../bin/zstd ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
     cd ${OGRACDB_HOME}
     cp ${OGRACDB_INSTALL}/installdb.sh  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/
@@ -270,6 +287,7 @@ func_pkg_run_basic()
 
     cp -R ${OGRACDB_HOME}/admin  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/
     cp -R ${OGRACDB_HOME}/cfg  ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/
+
     if [ "${ENABLE_LLT_ASAN}" == "YES" ]; then
         if [[ ${OS_ARCH} =~ "x86_64" ]]; then
             cp -d /usr/lib64/libasan.so* ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/add-ons/
@@ -295,6 +313,7 @@ func_pkg_run()
     find ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/admin/scripts/ -type f -print0 | xargs -0 chmod 400
     find ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/admin/scripts/ -type d -print0 | xargs -0 chmod 700
     cd ${OGRACDB_BIN} && tar --owner=root --group=root -zcf ${RUN_PACK_DIR_NAME}.tar.gz ${RUN_PACK_DIR_NAME}
+
     rm -rf ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/script
 }
 

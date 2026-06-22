@@ -110,7 +110,8 @@ class PathConfig:
         self.cms_scripts = os.path.join(self.action_dir, "cms")
 
         self.image_dir = os.path.join(ograc_home, "image")
-        self.cms_pkg_dir = os.path.join(self.image_dir, "oGRAC-RUN-LINUX-64bit")
+        self.run_pkg_dir = os.path.join(self.image_dir, "oGRAC-RUN-LINUX-64bit")
+        self.cms_pkg_dir = self.run_pkg_dir
         self.rpm_flag = os.path.join(ograc_home, "installed_by_rpm")
 
         self.backup_dir = os.path.join(data_root, "backup")

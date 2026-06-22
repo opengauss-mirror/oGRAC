@@ -445,9 +445,15 @@ function update_cms_service() {
     rm -rf ${ograc_home}/server/*
     cp -arf ${cms_pkg_file}/add-ons ${cms_pkg_file}/admin ${cms_pkg_file}/bin \
        ${cms_pkg_file}/cfg ${cms_pkg_file}/lib ${cms_pkg_file}/package.xml ${cms_home}/service
+    for unwanted in ogsql ogracd ogencrypt ogbackup ogbox ogrst; do
+        rm -f ${cms_home}/service/bin/${unwanted}
+    done
 
     cp -arf ${cms_pkg_file}/add-ons ${cms_pkg_file}/admin ${cms_pkg_file}/bin \
        ${cms_pkg_file}/cfg ${cms_pkg_file}/lib ${cms_pkg_file}/package.xml ${ograc_home}/server
+    for unwanted in ogsql ogracd ogencrypt ogbackup ogbox ogrst; do
+        rm -f ${ograc_home}/server/bin/${unwanted}
+    done
 
     deploy_mode=$(python3 ${CURRENT_PATH}/get_config_info.py "deploy_mode")
     if [[ x"${deploy_mode}" == x"file" ]] ||  [[ ${deploy_mode} == "dss" ]]; then
