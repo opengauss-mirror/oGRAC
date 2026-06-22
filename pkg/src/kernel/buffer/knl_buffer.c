@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -24,6 +24,7 @@
  */
 #include "knl_buffer_module.h"
 #include "knl_buffer.h"
+#include "knl_buffer_access.h"
 #include "knl_buflatch.h"
 #include "pcr_heap.h"
 #include "dtc_buffer.h"
@@ -32,11 +33,32 @@
 #include "dtc_context.h"
 #include "dtc_recovery.h"
 #include "dtc_database.h"
+#include "knl_gbp.h"
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
+#define BUF_PAGE_COST_WITH_GBP (BUF_PAGE_COST + sizeof(buf_gbp_ctrl_t))
 
 static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 uint32 g_cks_level;
+
+static bool32 buf_gbp_post_recovery_check_enabled(knl_session_t *session)
+{
+    if (!gbp_db_enforce_primary_style_invariants(session) || !DB_IS_OPEN(session)) {
+        return OG_FALSE;
+    }
+
+    if (DB_IS_CLUSTER(session) && g_dtc != NULL) {
+        dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+        gbp_context_t *gbp_context = &session->kernel->gbp_context;
+
+        if (OGRAC_SESSION_IN_RECOVERY(session) || dtc_rcy->in_progress || dtc_rcy->phase == PHASE_RECOVERY ||
+            gbp_context->dtc_read_active || gbp_context->dtc_read_node_count > 0) {
+            return OG_FALSE;
+        }
+    }
+
+    return OG_TRUE;
+}
 
 static void buf_init_list(buf_set_t *set)
 {
@@ -62,12 +84,18 @@ status_t buf_init(knl_session_t *session)
         set->addr = kernel->attr.data_buf + i * kernel->attr.data_buf_part_align_size;
         cm_init_cond(&set->set_cond);
         /* set->size <= 32T, BUF_PAGE_COST >= 8360, set->capacity cannot overflow */
-        set->capacity = (uint32)(set->size / BUF_PAGE_COST);
+        set->capacity = (uint32)(set->size / (KNL_GBP_ENABLE(kernel) ? BUF_PAGE_COST_WITH_GBP : BUF_PAGE_COST));
         set->hwm = 0;
         set->page_buf = set->addr;
         offset = (uint64)DEFAULT_PAGE_SIZE(session) * set->capacity;
         set->ctrls = (buf_ctrl_t *)(set->addr + offset);
         offset += (uint64)set->capacity * sizeof(buf_ctrl_t);
+        if (KNL_GBP_ENABLE(kernel)) {
+            set->gbp_ctrls = (buf_gbp_ctrl_t *)(set->addr + offset);
+            offset += set->capacity * sizeof(buf_gbp_ctrl_t);
+        } else {
+            set->gbp_ctrls = NULL;
+        }
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
 
@@ -361,12 +389,56 @@ static inline void buf_lru_shift_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
     buf_lru_add_ctrl(list, ctrl, BUF_ADD_HOT);
 }
 
+/*
+ * page flushed to disk, but it has not flushed to gbp.
+ * it can be reclaimed after it has been flushed to disk.
+ * in such case, becuause ctrl is reused and a new page enters,
+ * the page will not be flushed to gbp,
+ * so, we must notice gbp, it maybe has gap.
+ */
+static void buf_check_gbp_queue_gap(knl_session_t *session, buf_ctrl_t *item)
+{
+    if (item->gbp_ctrl->is_gbpdirty) {
+        if (item->bucket_id != OG_INVALID_ID32) {
+            buf_latch_x(session, item, OG_TRUE);
+            /*
+             * Prefer snapshot detach before this ctrl is reused.  If memory is
+             * unavailable, the detach helper drops the queue item and forces a
+             * GBP gap, preserving recovery correctness without blocking recycle.
+             */
+            if (!gbp_try_detach_pending_page(session, item)) {
+                item->load_status = BUF_NEED_LOAD;
+            }
+            buf_unlatch(session, item, OG_FALSE);
+        } else {
+            gbp_queue_set_gap(session, item);
+        }
+    }
+}
+
 static void buf_init_ctrl(knl_session_t *session, buf_set_t *set, buf_ctrl_t *item, bool32 from_hwm, uint32 options)
 {
     page_head_t *page = item->page;
 
-    *item = g_init_buf_ctrl;
-    item->page = page;
+    if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
+        buf_ctrl_t init_ctrl_with_gbp = g_init_buf_ctrl;
+
+        init_ctrl_with_gbp.gbp_ctrl = item->gbp_ctrl;
+        if (!from_hwm) {
+            buf_check_gbp_queue_gap(session, item);
+        }
+        cm_spin_lock(&item->gbp_ctrl->init_lock, NULL);
+        *item = init_ctrl_with_gbp;
+        item->page = page;
+        /* do not memset pending GBP queue state while the writer may still own an item */
+        item->gbp_ctrl->is_from_gbp = OG_FALSE;
+        item->gbp_ctrl->gbp_read_version = 0;
+        item->gbp_ctrl->page_status = GBP_PAGE_NONE;
+        cm_spin_unlock(&item->gbp_ctrl->init_lock);
+    } else {
+        *item = g_init_buf_ctrl;
+        item->page = page;
+    }
 
     /*
      * strategy to add page to different list with different options:
@@ -830,6 +902,11 @@ static buf_ctrl_t *buf_alloc_hwm(knl_session_t *session, buf_set_t *set)
     cm_spin_unlock(&set->lock);
 
     *ctrl = g_init_buf_ctrl;
+    if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
+        ctrl->gbp_ctrl = &set->gbp_ctrls[id];
+    } else {
+        ctrl->gbp_ctrl = NULL;
+    }
 
     ctrl->page = (page_head_t *)(set->page_buf + (uint64)DEFAULT_PAGE_SIZE(session) * id);
     return ctrl;
@@ -1501,8 +1578,213 @@ void buf_balance_set_list(buf_set_t *set)
     cm_spin_unlock(&list->lock);
 }
 
+/*
+ * Only running when recover or failover with GBP
+ * check current page lsn, if curr_lsn is not expect lsn, try pull this page from GBP, and replace as gbp page
+ * then update this ctrl's gbp_read_version, make sure same page pull from GBP at most once.
+ */
+static void buf_try_load_zero_page_from_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id)
+{
+    if (ctrl->page->lsn != OG_INVALID_LSN) {
+        return;
+    }
+
+    ctrl->gbp_ctrl->is_from_gbp = OG_FALSE;
+    if (buf_load_page_from_disk(session, ctrl, page_id) != OG_SUCCESS) {
+        CM_ABORT(0, "[GBP] ABORT INFO: failed to load %u-%u from disk after GBP pull left zero page",
+                 page_id.file, page_id.page);
+    }
+    OG_LOG_RUN_INF("[GBP] load page from disk %u-%u when GBP pull leaves zero page", page_id.file, page_id.page);
+}
+
+status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    knl_instance_t *kernel = session->kernel;
+    log_context_t *redo = &kernel->redo_ctx;
+    page_id_t page_id = ctrl->page_id;
+    gbp_analyse_item_t *item = NULL;
+    bool32 update_gbp_read_version = OG_TRUE;
+    bool32 need_disk_reload = OG_FALSE;
+    status_t status = OG_SUCCESS;
+
+    /* read latest page versioin */
+    if (KNL_RECOVERY_WITH_GBP(kernel) && ctrl->gbp_ctrl->gbp_read_version != KNL_GBP_READ_VER(kernel)) {
+        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_check_page_version enter page %u-%u ctrl_gbp_ver=%u knl_gbp_ver=%u "
+                         "page_lsn=%llu page_pcn=%u load_status=%u sid=%u",
+                         page_id.file, page_id.page, (uint32)ctrl->gbp_ctrl->gbp_read_version,
+                         (uint32)KNL_GBP_READ_VER(kernel), (uint64)ctrl->page->lsn, ctrl->page->pcn,
+                         (uint32)ctrl->load_status, session->id);
+        uint32 lock_id = page_id.page % OG_GBP_RD_LOCK_COUNT;
+
+        cm_spin_lock(&kernel->gbp_context.buf_read_lock[lock_id], NULL);
+        if (!KNL_RECOVERY_WITH_GBP(kernel)) {
+            item = NULL; /* check rcy_with_gbp again, if not recover with gbp, do not read gbp */
+            GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_check_page_version recheck rcy_with_gbp=OFF page %u-%u, skip GBP",
+                             page_id.file, page_id.page);
+        } else {
+            item = gbp_aly_get_page_item(session, page_id);
+        }
+
+        if (dtc_rcy_gbp_partial_enabled(session)) {
+            gbp_partial_item_t *partial_item = dtc_rcy_gbp_partial_get_item(page_id);
+            uint64 expect_lsn = dtc_rcy_gbp_partial_get_expect_lsn(partial_item);
+            bool32 partial_need_replay = (bool32)(partial_item != NULL && partial_item->rcy_item != NULL &&
+                partial_item->rcy_item->need_replay && expect_lsn != 0);
+            uint32 verify_node_id = 0;
+            bool32 partial_need_gbp = (bool32)(partial_need_replay && partial_item->required &&
+                dtc_rcy_gbp_partial_item_in_jumped_window(session, partial_item, &verify_node_id));
+            if (partial_need_replay && partial_item->required && !partial_need_gbp && ctrl->page->lsn < expect_lsn) {
+                update_gbp_read_version = OG_FALSE;
+            }
+
+            if (partial_need_gbp && partial_item->selected_pulled && ctrl->page->lsn < expect_lsn) {
+                ctrl->gbp_ctrl->gbp_read_version = KNL_GBP_READ_VER(session->kernel);
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial skip_on_demand_pull selected_pulled page %u-%u "
+                                 "page_lsn=%llu expect_lsn=%llu expect_lfn=%llu page_pcn=%u required=%u "
+                                 "verify_node=%u verified=%u",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)expect_lsn,
+                                 (uint64)partial_item->expect_lfn, (uint32)ctrl->page->pcn,
+                                 (uint32)partial_item->required, verify_node_id, (uint32)partial_item->verified);
+            } else if (partial_need_gbp && ctrl->page->lsn < expect_lsn) {
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial on_demand_pull BEGIN page %u-%u page_lsn=%llu "
+                                 "expect_lsn=%llu expect_lfn=%llu enter_upper_lsn=%llu page_pcn=%u required=%u "
+                                 "verify_node=%u",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)expect_lsn,
+                                 (uint64)partial_item->expect_lfn,
+                                 (uint64)partial_item->rcy_item->last_dirty_lsn,
+                                 (uint32)ctrl->page->pcn, (uint32)partial_item->required, verify_node_id);
+                knl_begin_session_wait(session, DB_FILE_GBP_READ, OG_TRUE);
+                ctrl->gbp_ctrl->page_status = knl_read_page_from_gbp(session, ctrl);
+                knl_end_session_wait(session, DB_FILE_GBP_READ);
+                if (ctrl->gbp_ctrl->page_status == GBP_PAGE_ERROR) {
+                    update_gbp_read_version = OG_FALSE;
+                    if (gbp_knl_dtc_fallback_required(session)) {
+                        status = OG_ERROR;
+                    } else if (ctrl->page->lsn == OG_INVALID_LSN) {
+                        need_disk_reload = OG_TRUE;
+                    }
+                } else if (ctrl->page->lsn == OG_INVALID_LSN) {
+                    need_disk_reload = OG_TRUE;
+                }
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial on_demand_pull END page %u-%u page_status=%u "
+                                 "page_lsn=%llu page_pcn=%u is_from_gbp=%u",
+                                 page_id.file, page_id.page, (uint32)ctrl->gbp_ctrl->page_status,
+                                 (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn,
+                                 (uint32)ctrl->gbp_ctrl->is_from_gbp);
+            } else if (partial_need_gbp) {
+                dtc_rcy_gbp_partial_mark_item_verified(partial_item);
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial skip_pull page_lsn>=expect page %u-%u page_lsn=%llu "
+                                 "expect_lsn=%llu expect_lfn=%llu enter_upper_lsn=%llu page_pcn=%u required=%u "
+                                 "verify_node=%u",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)expect_lsn,
+                                 (uint64)partial_item->expect_lfn,
+                                 (uint64)partial_item->rcy_item->last_dirty_lsn,
+                                 (uint32)ctrl->page->pcn, (uint32)partial_item->required, verify_node_id);
+            } else if (partial_need_replay) {
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial skip_gbp_pull page %u-%u page_lsn=%llu expect_lsn=%llu "
+                                 "expect_lfn=%llu enter_upper_lsn=%llu page_pcn=%u required=%u in_jumped_window=0 "
+                                 "defer_read_version=%u",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)expect_lsn,
+                                 (uint64)partial_item->expect_lfn,
+                                 (uint64)partial_item->rcy_item->last_dirty_lsn,
+                                 (uint32)ctrl->page->pcn, (uint32)partial_item->required,
+                                 (uint32)!update_gbp_read_version);
+            } else {
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] partial no_replay_item page %u-%u page_lsn=%llu page_pcn=%u "
+                                 "has_item=%u required=%u has_rcy_item=%u need_replay=%u expect_lsn=%llu",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn,
+                                 (uint32)(partial_item != NULL), (uint32)(partial_item != NULL &&
+                                 partial_item->required), (uint32)(partial_item != NULL &&
+                                 partial_item->rcy_item != NULL), (uint32)(partial_item != NULL &&
+                                 partial_item->rcy_item != NULL && partial_item->rcy_item->need_replay),
+                                 (uint64)expect_lsn);
+            }
+        } else if (item != NULL) {
+            if (ctrl->page->lsn < item->lsn) {
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] on_demand_pull BEGIN page %u-%u page_lsn=%llu expect_item_lsn=%llu "
+                                 "page_pcn=%u",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)item->lsn,
+                                 (uint32)ctrl->page->pcn);
+                knl_begin_session_wait(session, DB_FILE_GBP_READ, OG_TRUE);
+                ctrl->gbp_ctrl->page_status = knl_read_page_from_gbp(session, ctrl);
+                knl_end_session_wait(session, DB_FILE_GBP_READ);
+                if (ctrl->gbp_ctrl->page_status == GBP_PAGE_ERROR) {
+                    update_gbp_read_version = OG_FALSE;
+                    if (gbp_knl_dtc_fallback_required(session)) {
+                        status = OG_ERROR;
+                    } else if (ctrl->page->lsn == OG_INVALID_LSN) {
+                        need_disk_reload = OG_TRUE;
+                    }
+                } else if (ctrl->page->lsn == OG_INVALID_LSN) {
+                    need_disk_reload = OG_TRUE;
+                }
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] on_demand_pull END page %u-%u page_status=%u page_lsn=%llu "
+                                 "page_pcn=%u is_from_gbp=%u",
+                                 page_id.file, page_id.page, (uint32)ctrl->gbp_ctrl->page_status,
+                                 (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn,
+                                 (uint32)ctrl->gbp_ctrl->is_from_gbp);
+            } else {
+                /*
+                 * page lsn >= expect lsn (item->lsn), we must set item->is_verified here, otherwise
+                 * 1. this page is modified by this session and page lsn update to new lsn
+                 * 2. this page is flushed to disk and recycled, not in buffer, this page's disk lsn > expect lsn
+                 * 3. in gbp_process_batch_read_resp, find this page is not loaded to disk, so curr_page_lsn == 0
+                 * 4. in gbp_page_verify, item->is_verified == 0 && gbp_page_lsn == expect_lsn, this page is HIT page
+                 * 5. in gbp_process_batch_read_resp, gbp_page_lsn > curr_page_lsn(0) && is HIT page, will be replace
+                 * 6. but this page's disk lsn > expect lsn == gbp_page_lsn
+                 */
+                item->is_verified = 1;
+                /* v6: local page itself becomes the winning candidate, so record it beside verified state. */
+                item->best_lsn = ctrl->page->lsn;
+                GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] skip_pull page_lsn>=item_lsn page %u-%u page_lsn=%llu item_lsn=%llu "
+                                 "page_pcn=%u (mark item verified)",
+                                 page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)item->lsn,
+                                 (uint32)ctrl->page->pcn);
+            }
+        } else {
+            GBP_BUF_TRACE_LOG(
+                "[GBP_BUF_TRACE] no_analysis_item page %u-%u page_lsn=%llu page_pcn=%u (gbp_aly_get_page_item NULL)",
+                page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn);
+        }
+        if (update_gbp_read_version) {
+            ctrl->gbp_ctrl->gbp_read_version = KNL_GBP_READ_VER(kernel);
+        }
+        cm_spin_unlock(&kernel->gbp_context.buf_read_lock[lock_id]);
+
+        if (status != OG_SUCCESS) {
+            return status;
+        }
+        if (need_disk_reload) {
+            buf_try_load_zero_page_from_disk(session, ctrl, page_id);
+        }
+    }
+
+    /* page should have the latest version */
+    if (redo->last_rcy_with_gbp && buf_gbp_post_recovery_check_enabled(session) && ctrl->page->lsn > 0) {
+        uint64 expect_lsn = gbp_aly_get_page_lsn(session, page_id);
+        knl_panic_log(ctrl->page->lsn >= expect_lsn, "ctrl page lsn is smaller than expect, panic info: page %u-%u "
+                      "type %u ctrl lsn %llu expect_lsn %llu",
+                      page_id.file, page_id.page, ctrl->page->type, ctrl->page->lsn, expect_lsn);
+    }
+
+    /* after recovery, usable page should be replayed */
+    if (redo->last_rcy_with_gbp && ctrl->gbp_ctrl->page_status == GBP_PAGE_USABLE &&
+        buf_gbp_post_recovery_check_enabled(session)) {
+        knl_panic_log(0, "[GBP] usable page %u-%u is not replayed after recover", page_id.file, page_id.page);
+    }
+    return OG_SUCCESS;
+}
+
+/*
+ * After failover with GBP, some local buffer page is old, when use page through buf_enter_page, we can auto update it
+ * as new page from GBP. But resident pages is used as memery when read it, not through buf_enter_page.So we should let
+ * resident page use buf_check_page_version at least once, to ensure this page can be updated by GBP.
+ */
 bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id)
 {
+    /*
+     * Cluster: DCS fast path + optional GBP pull (when KNL_GBP_ENABLE), aligned with non-cluster resident refresh.
+     */
     if (DB_IS_CLUSTER(session)) {
         buf_bucket_t *bucket = buf_find_bucket(session, page_id);
 
@@ -1524,13 +1806,56 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
             depth--;
         }
 
+        if (KNL_GBP_ENABLE(session->kernel) && !SESSION_IS_LOG_ANALYZE(session) && !SESSION_IS_GBP_BG(session)) {
+            buf_bucket_t *gbp_bucket = buf_find_bucket(session, page_id);
+            status_t gbp_status = OG_SUCCESS;
+
+            cm_spin_lock(&gbp_bucket->lock, &session->stat->spin_stat.stat_bucket);
+            buf_ctrl_t *gbp_ctrl = buf_find_from_bucket(gbp_bucket, page_id);
+            if (gbp_ctrl != NULL) {
+                gbp_status = buf_check_page_version(session, gbp_ctrl);
+            }
+            cm_spin_unlock(&gbp_bucket->lock);
+            if (gbp_status != OG_SUCCESS) {
+                return OG_FALSE;
+            }
+        }
+
         buf_enter_page(session, page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL);
         buf_leave_page(session, OG_FALSE);
         return OG_TRUE;
     }
 
-    // 非集群模式直接返回
-    return OG_FALSE;
+    if (SECUREC_LIKELY(!KNL_RECOVERY_WITH_GBP(session->kernel))) {
+        return OG_FALSE;
+    }
+
+    if (SESSION_IS_LOG_ANALYZE(session) || SESSION_IS_GBP_BG(session)) {
+        return OG_TRUE;
+    }
+
+    uint32 depth = session->page_stack.depth;
+    while (depth > 0) {
+        if (IS_SAME_PAGID(session->page_stack.pages[depth - 1]->page_id, page_id)) {
+            return OG_TRUE;  // resident page has been enter by self
+        }
+        depth--;
+    }
+
+    buf_bucket_t *bucket = buf_find_bucket(session, page_id);
+    status_t gbp_status = OG_SUCCESS;
+
+    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
+    if (ctrl != NULL) {
+        gbp_status = buf_check_page_version(session, ctrl);
+    }
+    cm_spin_unlock(&bucket->lock);
+    if (gbp_status != OG_SUCCESS) {
+        return OG_FALSE;
+    }
+
+    return OG_TRUE;
 }
 
 bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *buf_ctrl, page_id_t page_id)

@@ -104,6 +104,24 @@ function wait_for_node1_in_cluster() {
   wait_for_success 60 is_node1_joined_cluster
 }
 
+function cms_resource_exists() {
+  local res_name=$1
+  cms res -list 2>/dev/null | awk '{print $1}' | grep -qi "^${res_name}$"
+}
+
+function add_gbps_cms_resource() {
+  local gbps_script="${OGDB_HOME}/bin/gbps_contrl.sh"
+  if [ ! -x "${gbps_script}" ]; then
+    log "skip gbps cms resource, script not found: ${gbps_script}"
+    return 0
+  fi
+  if cms_resource_exists gbps; then
+    log "gbps cms resource already exists"
+    return 0
+  fi
+  cms res -add gbps -type gbps -attr "script=${gbps_script}"
+}
+
 function start_cms() {
   log "=========== start cms ${NODE_ID} ================"
   if [ ${NODE_ID} == 0 ]; then
@@ -116,6 +134,7 @@ function start_cms() {
     fi
 
     cms res -add db -type db -attr "script=${OGDB_HOME}/bin/cluster.sh"
+    add_gbps_cms_resource
   elif [ ${NODE_ID} == 1 ]; then
     wait_for_node1_in_cluster
   fi

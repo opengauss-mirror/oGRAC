@@ -34,6 +34,7 @@
 #include "mes_config.h"
 #include "dtc_dmon.h"
 #include "dtc_recovery.h"
+#include "dtc_gbp_rt_aly.h"
 #include "dtc_reform.h"
 #include "dtc_session.h"
 #include "cm_types.h"
@@ -71,6 +72,7 @@ typedef struct st_dtc_instance {
     reform_ctx_t rf_ctx;
     dmon_context_t dmon_ctx;
     dtc_rcy_context_t dtc_rcy_ctx;
+    dtc_gbp_rt_aly_ctx_t gbp_rt_aly_ctx;
     dtc_session_pool_t session_pool;
 } dtc_instance_t;
 

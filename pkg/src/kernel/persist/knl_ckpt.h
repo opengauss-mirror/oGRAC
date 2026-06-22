@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024. All rights reserved.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -28,6 +28,7 @@
 #include "cm_defs.h"
 #include "cm_thread.h"
 #include "cm_spinlock.h"
+#include "cm_types.h"
 #include "cm_utils.h"
 #include "knl_log.h"
 #include "knl_buffer_access.h"
@@ -120,7 +121,22 @@ typedef struct st_rcy_sort_item {
     uint32 buf_id;
 } rcy_sort_item_t;
 
+typedef enum e_ckpt_status {
+    CKPT_STATUS_IDLE = 0,
+    CKPT_STATUS_PENDING = 1,
+} ckpt_status_e;
+
 typedef struct st_ckpt_group {
+    ckpt_status_e status;
+    bool8 has_compressed;
+    bool8 is_page_clean;
+    volatile bool8 trunc_point_valid;
+    uint8 unused;
+    uint64 consistent_lfn;
+    log_point_t trunc_point_snapshot;
+    log_point_t trunc_point;
+    volatile ckpt_mode_t trigger_task;
+    volatile ckpt_mode_t timed_task;
     uint32 count;
     char *buf;
     char *iocbs_buf;
@@ -205,9 +221,11 @@ typedef struct st_ckpt_clean_ctx {
 
 typedef struct st_ckpt_ctx {
     thread_t thread;
+    thread_t ckpt_prepare_thread;
     dbwr_context_t dbwr[OG_MAX_DBWR_PROCESS];
     spinlock_t lock;
 
+    cm_sem_t flush_sem;
     volatile bool32 ckpt_enabled;
     volatile uint64 trigger_finish_num; // total number of all finished trigger task
     atomic_t full_trigger_active_num; // number of full trigger task in waiting and running
@@ -231,7 +249,7 @@ typedef struct st_ckpt_ctx {
     atomic_t prev_io_read;
 
     ckpt_queue_t queue;
-    ckpt_group_t group;
+    ckpt_group_t group[2];
     ckpt_part_group_t ckpt_part_group[OG_MAX_DBWR_PROCESS];
     rcy_sort_item_t rcy_items[OG_MAX_CKPT_GROUP_SIZE];
     ckpt_stat_t stat;
@@ -249,6 +267,8 @@ typedef struct st_ckpt_ctx {
     spinlock_t disable_lock;
     volatile bool32 ckpt_enable_update_point;
     volatile uint32 disable_update_point_cnt;
+    volatile uint16 wid;
+    volatile uint16 fid;
 } ckpt_context_t;
 
 void ckpt_update_log_point_slave_role(knl_session_t *session);
@@ -277,9 +297,11 @@ void ckpt_enable(knl_session_t *session);
 void ckpt_remove_df_page(knl_session_t *session, datafile_t *df, bool32 need_disable);
 bool32 ckpt_try_latch_ctrl(knl_session_t *session, buf_ctrl_t *ctrl);
 void ckpt_pop_page(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl);
-status_t ckpt_checksum(knl_session_t *session, ckpt_context_t *ogx);
-status_t ckpt_encrypt(knl_session_t *session, ckpt_context_t *ogx);
+status_t ckpt_checksum(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group);
+status_t ckpt_encrypt(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group);
 status_t ckpt_recover_partial_write_node(knl_session_t *session, uint32 node_id);
+void ckpt_wait_group_fid_idle(knl_session_t *session, ckpt_context_t *ogx);
+void ckpt_prepare_proc(thread_t *thread);
 
 void ckpt_put_to_part_group(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *to_flush_ctrl);
 status_t ckpt_prepare_compress(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *curr_ctrl,

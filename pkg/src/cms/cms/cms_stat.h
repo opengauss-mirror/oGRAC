@@ -67,7 +67,8 @@ typedef struct st_cms_hb_aync_start_t {
 
 #define CMS_RES_LOCK_OFFSET         (CMS_RES_DATA_OFFSET + sizeof(cms_cluster_res_data_t) + CMS_RESERVED_BLOCKS_SIZE)
 #define CMS_MES_CHANNEL_OFFSET      (CMS_RES_LOCK_OFFSET + sizeof(cms_cluster_res_lock_t))
-#define CMS_RES_LOCK_DISK_SIZE      (6553600)
+#define CMS_RES_LOCK_DISK_SIZE \
+    (CMS_MAX_NODE_COUNT * CMS_RES_STAT_MAX_RESOURCE_COUNT * CMS_DISK_LOCK_BLOCKS_SIZE)
 
 #define CMS_STAT_HEAD_MAGIC         (*((uint64*)"STATHEAD"))
 #define CMS_RES_DATA_MAGIC          (*((uint64*)"RES_DATA"))
@@ -331,6 +332,7 @@ status_t cms_init_file_dbs(object_id_t *handle, const char *filename);
 status_t cms_vote_file_init(void);
 status_t cms_res_lock_init(void);
 status_t cms_get_start_lock(cms_disk_lock_t *lock, bool32 *cms_get_lock);
+cms_disk_lock_t *cms_get_res_stat_lock(uint32 node_id, uint32 res_id);
 void cms_record_io_aync_hb_gap_end(biqueue_node_t *node_hb_aync, status_t stat);
 status_t cms_get_res_start_lock(uint32 res_id);
 void cms_release_res_start_lock(uint32 res_id);
@@ -341,8 +343,14 @@ status_t cms_server_stat(uint32 node_id, bool32* cms_online);
 status_t cms_get_node_view(uint64* cms_online_bitmap);
 status_t cms_check_res_running(uint32 res_id);
 bool32 cms_check_node_dead(uint32 node_id);
+bool32 cms_res_is_script_detect_res(const cms_res_t *res);
+bool32 cms_res_is_no_fence_res(const cms_res_t *res);
+bool32 cms_res_is_gbps_res(const cms_res_t *res);
+bool32 cms_res_name_type_is_gbps(const char *name, const char *type);
+bool32 cms_gbps_is_enabled(void);
+bool32 cms_gbps_res_is_disabled(const char *name, const char *type);
 
-status_t cms_check_dss_stat(cms_res_t res);
+status_t cms_check_script_res_stat(cms_res_t res);
 status_t cms_init_mes_channel_version(void);
 status_t cms_get_mes_channel_version(uint64* version);
 status_t cms_get_cluster_res_list_4tool(uint32 res_id, cms_tool_res_stat_list_t *res_list);

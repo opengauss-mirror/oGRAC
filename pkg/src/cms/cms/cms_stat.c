@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -23,6 +23,10 @@
  * -------------------------------------------------------------------------
  */
 
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include "cms_log_module.h"
 #include "cm_disk.h"
@@ -49,6 +53,10 @@
 #include "cbb_disklock.h"
 
 #define CMS_DSS_MASTER_LOCK_POS (1073741824)
+
+#if !defined(_WIN32)
+extern char **environ;
+#endif
 
 void cms_date2str(date_t date, char* str, uint32 max_size);
 
@@ -89,6 +97,7 @@ cms_io_record_wait_t g_cms_io_record_event_wait[CMS_IO_COUNT];
 #define CMS_RES_STAT(node_id, res_id) (&g_stat->node_inf[(node_id)].res_stat[(res_id)])
 #define CMS_RES_OFFLINE_RESET_TIMEOUT (15000 * MICROSECS_PER_MILLISEC)
 #define CMS_STAT_IS_REGISTER(stat) ((stat).session_id != 0 && (stat).session_id != OG_INVALID_ID64)
+#define CMS_GBP_CONF_QUOTE_PAIR_LEN 2
 #define CMS_NODE_STAT_POS(node_id) (CMS_CLUSTER_STAT_OFFSET + \
     ((size_t) &(((cms_cluster_stat_t*)NULL)->node_inf[node_id].node_stat[node_id])))
 #define CMS_CUR_NODE_STAT (&g_stat->node_inf[g_cms_param->node_id].node_stat[g_cms_param->node_id])
@@ -97,6 +106,15 @@ cms_io_record_wait_t g_cms_io_record_event_wait[CMS_IO_COUNT];
     ((size_t)&(((cms_cluster_res_lock_t*)NULL)->res_stat_lock[node_id][res_id])))
 #define CMS_MES_CHANNEL_POS (CMS_MES_CHANNEL_OFFSET + \
     ((size_t)&(((cms_mes_channel_t*)NULL)->channel_info[g_cms_param->node_id])))
+
+cms_disk_lock_t *cms_get_res_stat_lock(uint32 node_id, uint32 res_id)
+{
+    if (res_id < CMS_RES_STAT_MAX_RESOURCE_COUNT) {
+        return &g_cms_inst->res_stat_lock[node_id][res_id];
+    }
+    /* Optional resources share stat_lock so the existing on-disk lock layout stays compatible. */
+    return &g_cms_inst->stat_lock;
+}
 
 static inline status_t stat_read(uint64 offset, char* data, uint32 size)
 {
@@ -191,8 +209,8 @@ bool32 cms_check_node_dead(uint32 node_id)
 
 static status_t cms_sync_cur_res_stat(uint32 res_id, cms_res_stat_t* res_stat)
 {
-    if (cms_disk_lock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WAIT_TIMEOUT,
-        DISK_LOCK_WRITE) != OG_SUCCESS) {
+    cms_disk_lock_t *res_stat_lock = cms_get_res_stat_lock(g_cms_param->node_id, res_id);
+    if (cms_disk_lock(res_stat_lock, DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_WRITE) != OG_SUCCESS) {
         CMS_LOG_ERR("cms_disk_lock timeout, node_id = %u, res_id = %u.", g_cms_param->node_id, res_id);
         return OG_ERROR;
     }
@@ -209,11 +227,11 @@ static status_t cms_sync_cur_res_stat(uint32 res_id, cms_res_stat_t* res_stat)
     if (stat_write(CMS_RES_STAT_POS(g_cms_param->node_id, (res_id)), (char*)(res_stat),
         sizeof(cms_res_stat_t)) != OG_SUCCESS) {
         CMS_LOG_ERR("sync cur res stat failed. node_id = %u, res_id = %u.", g_cms_param->node_id, res_id);
-        cms_disk_unlock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WRITE);
+        cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
         return OG_ERROR;
     }
 
-    cms_disk_unlock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WRITE);
+    cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
     return OG_SUCCESS;
 }
 
@@ -982,6 +1000,163 @@ static bool32 cms_is_dss_mode_db_res(const cms_res_t* res)
         cm_strcmpi(res->name, CMS_RES_TYPE_DB) == 0);
 }
 
+bool32 cms_res_name_type_is_gbps(const char *name, const char *type)
+{
+    return ((name != NULL && cm_strcmpi(name, CMS_RES_TYPE_GBPS) == 0) ||
+        (type != NULL && cm_strcmpi(type, CMS_RES_TYPE_GBPS) == 0));
+}
+
+bool32 cms_res_is_script_detect_res(const cms_res_t *res)
+{
+    return (cm_strcmpi(res->name, CMS_RES_TYPE_DSS) == 0 || cm_strcmpi(res->type, CMS_RES_TYPE_DSS) == 0 ||
+        cms_res_name_type_is_gbps(res->name, res->type));
+}
+
+bool32 cms_res_is_no_fence_res(const cms_res_t *res)
+{
+    return (cm_strcmpi(res->type, CMS_RES_TYPE_DSS) == 0 || cm_strcmpi(res->name, CMS_RES_TYPE_DSS) == 0 ||
+        cms_res_name_type_is_gbps(res->name, res->type));
+}
+
+bool32 cms_res_is_gbps_res(const cms_res_t *res)
+{
+    return cms_res_name_type_is_gbps(res->name, res->type);
+}
+
+static char *cms_trim_gbp_conf_token(char *str)
+{
+    char *begin = str;
+    while (*begin != '\0' && isspace((unsigned char)*begin)) {
+        begin++;
+    }
+
+    char *end = begin + strlen(begin);
+    while (end > begin && isspace((unsigned char)*(end - 1))) {
+        end--;
+        *end = '\0';
+    }
+    return begin;
+}
+
+static char *cms_strip_gbp_conf_quotes(char *str)
+{
+    uint32 len = (uint32)strlen(str);
+    if (len >= CMS_GBP_CONF_QUOTE_PAIR_LEN &&
+        ((*str == '"' && str[len - 1] == '"') || (*str == '\'' && str[len - 1] == '\''))) {
+        str[len - 1] = '\0';
+        return str + 1;
+    }
+    return str;
+}
+
+static bool32 cms_read_use_gbp_from_conf_file(const char *file_name, bool32 *enabled)
+{
+    FILE *fp = fopen(file_name, "r");
+    if (fp == NULL) {
+        return OG_FALSE;
+    }
+
+    bool32 found = OG_FALSE;
+    char line[1024];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char *content = cms_trim_gbp_conf_token(line);
+        if (*content == '\0' || *content == '#') {
+            continue;
+        }
+
+        char *separator = strchr(content, '=');
+        if (separator == NULL) {
+            continue;
+        }
+        *separator = '\0';
+        char *key = cms_trim_gbp_conf_token(content);
+        char *value = cms_trim_gbp_conf_token(separator + 1);
+        char *comment = strchr(value, '#');
+        if (comment != NULL) {
+            *comment = '\0';
+            value = cms_trim_gbp_conf_token(value);
+        }
+        value = cms_strip_gbp_conf_quotes(value);
+
+        if (cm_strcmpi(key, "USE_GBP") == 0) {
+            *enabled = (cm_strcmpi(value, "TRUE") == 0) ? OG_TRUE : OG_FALSE;
+            found = OG_TRUE;
+            break;
+        }
+    }
+
+    (void)fclose(fp);
+    return found;
+}
+
+static bool32 cms_read_use_gbp_from_home(const char *home, bool32 *enabled)
+{
+    if (home == NULL || home[0] == '\0') {
+        return OG_FALSE;
+    }
+
+    char file_name[CMS_FILE_NAME_BUFFER_SIZE] = {0};
+    int32 ret = snprintf_s(file_name, CMS_FILE_NAME_BUFFER_SIZE, CMS_MAX_FILE_NAME_LEN, "%s/cfg/ogracd.ini", home);
+    if (ret == -1) {
+        return OG_FALSE;
+    }
+    return cms_read_use_gbp_from_conf_file(file_name, enabled);
+}
+
+static bool32 cms_copy_env_value(const char *name, char *value, uint32 value_size)
+{
+    if (name == NULL || value == NULL || value_size == 0) {
+        return OG_FALSE;
+    }
+
+#if defined(_WIN32)
+    size_t required_size = 0;
+    if (getenv_s(&required_size, value, value_size, name) != 0 || required_size == 0 ||
+        required_size > value_size) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+#else
+    size_t name_len = strlen(name);
+    for (char **envp = environ; envp != NULL && *envp != NULL; envp++) {
+        if (strncmp(*envp, name, name_len) != 0 || (*envp)[name_len] != '=') {
+            continue;
+        }
+        const char *env_value = *envp + name_len + 1;
+        size_t env_len = strlen(env_value);
+        if (env_len >= value_size) {
+            return OG_FALSE;
+        }
+        errno_t err = strncpy_s(value, value_size, env_value, env_len);
+        return (err == EOK) ? OG_TRUE : OG_FALSE;
+    }
+    return OG_FALSE;
+#endif
+}
+
+bool32 cms_gbps_is_enabled(void)
+{
+    bool32 enabled = OG_FALSE;
+    char home[CMS_FILE_NAME_BUFFER_SIZE] = {0};
+    if (cms_copy_env_value("OGDB_DATA", home, CMS_FILE_NAME_BUFFER_SIZE) &&
+        cms_read_use_gbp_from_home(home, &enabled)) {
+        return enabled;
+    }
+    if (cms_copy_env_value("OGDB_HOME", home, CMS_FILE_NAME_BUFFER_SIZE) &&
+        cms_read_use_gbp_from_home(home, &enabled)) {
+        return enabled;
+    }
+    if (cms_read_use_gbp_from_home(g_cms_param->cms_home, &enabled)) {
+        return enabled;
+    }
+    return OG_FALSE;
+}
+
+bool32 cms_gbps_res_is_disabled(const char *name, const char *type)
+{
+    return (cms_res_name_type_is_gbps(name, type) && !cms_gbps_is_enabled());
+}
+
 static bool32 cms_db_wait_dss_timeout(uint32 res_id)
 {
     int64 now_time = cm_now();
@@ -1060,36 +1235,38 @@ status_t cms_check_res_running(uint32 res_id)
     return OG_SUCCESS;
 }
 
-status_t cms_check_dss_stat(cms_res_t res)
+status_t cms_check_script_res_stat(cms_res_t res)
 {
-    status_t dss_status = OG_SUCCESS;
+    status_t res_status = OG_SUCCESS;
     status_t ret;
 
-    ret = cms_res_check(res.res_id, &dss_status);
+    ret = cms_res_check(res.res_id, &res_status);
     if (ret != OG_SUCCESS) {
         CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                          "check dss failed, res_id=%u, script=%s, ret=%d, dss_status=%d",
-                          res.res_id, res.script, ret, dss_status);
+                          "check resource failed, res_id=%u, res_name=%s, script=%s, ret=%d, res_status=%d",
+                          res.res_id, res.name, res.script, ret, res_status);
         return OG_ERROR;
     }
 
-    if (dss_status == OG_ERROR) {
+    if (res_status == OG_ERROR) {
         CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                          "dss process not exit, res_id=%u, script=%s, ret=%d, dss_status=%d",
-                          res.res_id, res.script, ret, dss_status);
+                          "resource process is not running, res_id=%u, res_name=%s, script=%s, ret=%d, res_status=%d",
+                          res.res_id, res.name, res.script, ret, res_status);
         cms_res_detect_offline(res.res_id, NULL);
         return OG_ERROR;
     }
 
-    if (dss_status == OG_TIMEDOUT) {
+    if (res_status == OG_TIMEDOUT) {
         CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                          "check dss stat timeout, res_id=%u, script=%s", res.res_id, res.script);
+                          "check resource stat timeout, res_id=%u, res_name=%s, script=%s",
+                          res.res_id, res.name, res.script);
         return OG_ERROR;
     }
 
-    if (dss_status == OG_EAGAIN) {
+    if (res_status == OG_EAGAIN) {
         CMS_LOG_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                          "dss work stat is abnormal, res_id=%u, script=%s", res.res_id, res.script);
+                          "resource work stat is abnormal, res_id=%u, res_name=%s, script=%s",
+                          res.res_id, res.name, res.script);
         return OG_ERROR;
     }
     cms_res_hb(res.res_id);
@@ -1164,6 +1341,10 @@ status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
     OG_RETURN_IFERR(cms_get_res_by_id(res_id, &res));
 
     CMS_LOG_INF("begin start res, res_id=%u", res_id);
+    if (cms_gbps_res_is_disabled(res.name, res.type)) {
+        CMS_LOG_WAR("gbps resource is disabled by USE_GBP=FALSE, start skipped.");
+        return OG_ERROR;
+    }
     get_cur_res_stat(res_id, &res_stat);
     if (res_stat.cur_stat == CMS_RES_ONLINE) {
         CMS_LOG_ERR("resource is ONLINE, no need to start, res_name=%s, res_id=%u", res.name, res_id);
@@ -1205,15 +1386,15 @@ status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
         return ret;
     }
 
-    if (cm_strcmpi(res.name, CMS_RES_TYPE_DSS) == 0) {
-        CMS_LOG_INF("CMS does not need to wait for reform when starting DSS");
+    if (cms_res_is_script_detect_res(&res)) {
+        CMS_LOG_INF("CMS does not need to wait for reform when starting %s", res.name);
     } else if (wait_for_cluster_reform_done(res_id) != OG_SUCCESS) {
         CMS_LOG_ERR("cms wait cluster reform done failed");
         cms_release_res_start_lock(res_id);
         return OG_ERROR;
     }
     CMS_LOG_INF("cms cluster reform done");
-    if (cms_check_res_running(res_id) != OG_SUCCESS) {
+    if (!cms_res_is_gbps_res(&res) && cms_check_res_running(res_id) != OG_SUCCESS) {
         cms_release_res_start_lock(res_id);
         return OG_ERROR;
     }
@@ -1426,10 +1607,11 @@ status_t cms_res_detect_online(uint32 res_id, cms_res_stat_t *old_stat)
     res_stat->session_id = res_id;
     res_stat->target_stat = CMS_RES_ONLINE;
     res_stat->inst_id = g_cms_param->node_id;
-    if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) == 0) {
-        int result = snprintf_s(res_stat->res_type, CMS_MAX_RES_TYPE_LEN, CMS_MAX_RES_TYPE_LEN - 1, CMS_RES_TYPE_DSS);
+    if (cms_res_is_script_detect_res(&res)) {
+        int result = snprintf_s(res_stat->res_type, CMS_MAX_RES_TYPE_LEN, CMS_MAX_RES_TYPE_LEN - 1, "%s", res.type);
         if (result == OG_ERROR) {
             CMS_LOG_ERR("Use snprintf_s on res_type failed.");
+            cm_thread_unlock(&g_res_session[res_id].lock);
             return OG_ERROR;
         }
     }
@@ -1522,7 +1704,7 @@ status_t cms_res_detect_offline(uint32 res_id, cms_res_stat_t *old_stat)
         return OG_SUCCESS;
     }
 
-    if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) != 0) {
+    if (!cms_res_is_no_fence_res(&res)) {
         try_cms_kick_node(g_cms_param->node_id, res_id, IOFENCE_BY_DETECT_OFFLINE);
     }
     cms_stat_set(res_stat, CMS_RES_OFFLINE, &is_changed);
@@ -1660,8 +1842,8 @@ status_t get_res_stat(uint32 node_id, uint32 res_id, cms_res_stat_t* res_stat)
         return OG_ERROR;
     }
 
-    if (cms_disk_lock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_READ) !=
-        OG_SUCCESS) {
+    cms_disk_lock_t *res_stat_lock = cms_get_res_stat_lock(node_id, res_id);
+    if (cms_disk_lock(res_stat_lock, DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_READ) != OG_SUCCESS) {
         CM_FREE_PTR(res_cur_stat);
         CMS_LOG_ERR("cms_disk_lock timeout.");
         cm_thread_unlock(&g_node_lock[node_id]);
@@ -1673,7 +1855,7 @@ retry:
     if (errcode != EOK) {
         CM_FREE_PTR(res_cur_stat);
         CMS_LOG_ERR("stat read memset_s failed");
-        cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_READ);
+        cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
         cm_thread_unlock(&g_node_lock[node_id]);
         return OG_ERROR;
     }
@@ -1682,7 +1864,7 @@ retry:
     if (ret != OG_SUCCESS) {
         CM_FREE_PTR(res_cur_stat);
         CMS_LOG_ERR("stat read failed");
-        cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_READ);
+        cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
         cm_thread_unlock(&g_node_lock[node_id]);
         return OG_ERROR;
     }
@@ -1717,14 +1899,14 @@ retry:
             errno_t err = memcpy_s(res_stat, sizeof(cms_res_stat_t), res_cur_stat, sizeof(cms_res_stat_t));
             CM_FREE_PTR(res_cur_stat);
             MEMS_RETURN_IFERR(err);
-            cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_READ);
+            cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
             cm_thread_unlock(&g_node_lock[node_id]);
             return OG_EAGAIN;
         } else {
             goto retry;
         }
     }
-    cms_disk_unlock(&g_cms_inst->res_stat_lock[node_id][res_id], DISK_LOCK_READ);
+    cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
 
     errno_t err = memcpy_s(res_stat, sizeof(cms_res_stat_t), res_cur_stat, sizeof(cms_res_stat_t));
     CM_FREE_PTR(res_cur_stat);
@@ -2511,7 +2693,7 @@ status_t cms_try_be_master(void)
             continue;
         }
 
-        if (cm_strcmpi(res.type, CMS_RES_TYPE_DSS) == 0) {
+        if (cms_res_is_no_fence_res(&res)) {
             continue;
         }
 
@@ -2587,6 +2769,12 @@ status_t cms_get_master_node(uint16* node_id)
 
 status_t cms_get_res_master(uint32 res_id, uint8* node_id)
 {
+    cms_res_t res;
+    if (cms_get_res_by_id(res_id, &res) == OG_SUCCESS && cms_res_is_gbps_res(&res)) {
+        *node_id = OG_INVALID_ID8;
+        return OG_SUCCESS;
+    }
+
     cms_res_reformer_t reformers;
     OG_RETURN_IFERR(cms_disk_lock_get_data(&g_cms_inst->master_lock, (char *)&reformers, sizeof(cms_res_reformer_t)));
     if (reformers.magic == CMS_REFORMER_MAGIC) {
@@ -2595,7 +2783,6 @@ status_t cms_get_res_master(uint32 res_id, uint8* node_id)
     if (g_cms_param->gcc_type != CMS_DEV_TYPE_LUN && g_cms_param->gcc_type != CMS_DEV_TYPE_SD) {
         return OG_SUCCESS;
     }
-    cms_res_t res;
     if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
         CMS_LOG_ERR("get reformer res failed, res_id=%u", res_id);
         return OG_ERROR;
@@ -2648,15 +2835,15 @@ status_t cms_aync_update_res_hb(cms_res_stat_t *res_stat_disk, uint32 res_id)
     biqueue_node_t *node_hb_aync = cms_deque(&g_hb_aync_gap_que);
     cm_thread_lock(&g_res_session[res_id].lock);
 
-    if (cms_disk_lock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WAIT_TIMEOUT,
-        DISK_LOCK_WRITE) != OG_SUCCESS) {
+    cms_disk_lock_t *res_stat_lock = cms_get_res_stat_lock(g_cms_param->node_id, res_id);
+    if (cms_disk_lock(res_stat_lock, DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_WRITE) != OG_SUCCESS) {
         CMS_LOG_ERR("cms_disk_lock timeout, node_id = %u, res_id = %u.", g_cms_param->node_id, res_id);
         cm_thread_unlock(&g_res_session[res_id].lock);
         return OG_ERROR;
     }
     if (stat_read(CMS_CUR_RES_STAT_POS(res_id), (char *)res_stat_disk, sizeof(cms_res_stat_t)) != OG_SUCCESS) {
         CMS_LOG_ERR("read state fail, node_id=%u, res_id=%u", g_cms_param->node_id, res_id);
-        cms_disk_unlock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WRITE);
+        cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
         cm_thread_unlock(&g_res_session[res_id].lock);
         cms_record_io_aync_hb_gap_end(node_hb_aync, OG_ERROR);
         return OG_ERROR;
@@ -2675,12 +2862,12 @@ status_t cms_aync_update_res_hb(cms_res_stat_t *res_stat_disk, uint32 res_id)
                         res_stat_disk->restart_count, res_stat_disk->restart_time, res_stat_disk->checking);
     if (stat_write(CMS_CUR_RES_STAT_POS(res_id), (char *)res_stat_disk, sizeof(cms_res_stat_t)) != OG_SUCCESS) {
         CMS_LOG_ERR("aync_write res failed, res_id=%u", res_id);
-        cms_disk_unlock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WRITE);
+        cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
         cm_thread_unlock(&g_res_session[res_id].lock);
         cms_record_io_aync_hb_gap_end(node_hb_aync, OG_ERROR);
         return OG_ERROR;
     }
-    cms_disk_unlock(&g_cms_inst->res_stat_lock[g_cms_param->node_id][res_id], DISK_LOCK_WRITE);
+    cms_disk_unlock(res_stat_lock, DISK_LOCK_WRITE);
     
     cm_thread_unlock(&g_res_session[res_id].lock);
     cms_record_io_aync_hb_gap_end(node_hb_aync, OG_SUCCESS);
@@ -2885,6 +3072,9 @@ static status_t cms_res_list_info_copy(const cms_gcc_t* gcc, cms_tool_msg_res_ge
     for (uint32 res_id = 0; res_id < CMS_MAX_RESOURCE_COUNT; res_id++) {
         const cms_res_t* gcc_res = &gcc->res[res_id];
         if (gcc_res->magic != CMS_GCC_RES_MAGIC) {
+            continue;
+        }
+        if (cms_gbps_res_is_disabled(gcc_res->name, gcc_res->type)) {
             continue;
         }
         gcc_info->res_list[res_cnt].magic = gcc_res->magic;

@@ -33,6 +33,7 @@ extern "C" {
 
 #define RM_SESSION_RATIO 1.2
 #define SGA_PAD(buf_size, page_size) ((buf_size) + CM_ALIGN8(((buf_size) / (page_size)) * sizeof(uint32)))
+#define QUICK_CKPT_GROUP_COUNT 2
 
 static status_t srv_get_page_size_param(knl_attr_t *attr)
 {
@@ -293,6 +294,7 @@ static status_t srv_get_log_buffer_param(knl_attr_t *attr)
 
 static status_t srv_get_ckpt_param(knl_attr_t *attr)
 {
+    OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_QUICK_CKPT", &attr->enable_quick_ckpt));
     OG_RETURN_IFERR(srv_get_param_bool32("_CHECKPOINT_MERGE_IO", &attr->ckpt_flush_neighbors));
 
     OG_RETURN_IFERR(srv_get_param_uint32("CHECKPOINT_PAGES", &attr->ckpt_interval));
@@ -1338,7 +1340,7 @@ status_t srv_load_kernel_params(void)
     }
 
     // db writer buffer
-    attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size;
+    // attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size;
 
     // transaction buffer
     attr->tran_buf_size = knl_txn_buffer_size(attr->page_size, attr->undo_segments);
@@ -1471,6 +1473,12 @@ status_t srv_load_kernel_params(void)
     }
 
     OG_RETURN_IFERR(srv_get_ckpt_param(attr));
+
+    if (attr->enable_quick_ckpt) {
+        attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size * QUICK_CKPT_GROUP_COUNT;
+    } else {
+        attr->dbwr_buf_size = (uint64)OG_MAX_CKPT_GROUP_SIZE * attr->page_size;
+    }
 
     value = srv_get_param("COMMIT_MODE");
     attr->commit_batch = cm_str_equal_ins(value, "BATCH");

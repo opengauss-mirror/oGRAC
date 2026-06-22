@@ -981,6 +981,10 @@ int32 cms_res_list(int32 argc, char* argv[])
             continue;
         }
 
+        if (cms_gbps_res_is_disabled(res->name, res->type)) {
+            continue;
+        }
+
         if (argc == 4 && (strcmp(gcc->resgrp[res->grp_id].name, argv[3]) != 0)) {
             continue;
         }
@@ -1061,13 +1065,13 @@ static status_t cms_stat_from_server()
            "NODE_ID", "NAME", "STAT", "PRE_STAT", "TARGET_STAT", "WORK_STAT", "SESSION_ID", "INSTANCE_ID",
            "ROLE", "LAST_CHECK", "HB_TIME", "STAT_CHANGE");
     uint8 master_node_id = -1;
-    for (uint32 res_id = 0; res_id < res_gcc.res_count; res_id++) {
-        const cms_msg_res_t* res = &res_gcc.res_list[res_id];
+    for (uint32 i = 0; i < res_gcc.res_count; i++) {
+        const cms_msg_res_t* res = &res_gcc.res_list[i];
         if (res->magic != CMS_GCC_RES_MAGIC) {
             continue;
         }
         cms_tool_res_stat_list_t res_list;
-        OG_RETURN_IFERR(cms_tool_get_res_stat_list(res_id, &res_list));
+        OG_RETURN_IFERR(cms_tool_get_res_stat_list(res->res_id, &res_list));
         master_node_id = res_list.master_inst_id;
 
         for (uint32 node_id = 0; node_id < res_list.inst_count; node_id++) {
@@ -1116,6 +1120,9 @@ int32 cms_stat_cluster(int32 argc, char* argv[])
     for (uint32 res_id = 0; res_id < CMS_MAX_RESOURCE_COUNT; res_id++) {
         const cms_res_t* res = &gcc->res[res_id];
         if (res->magic != CMS_GCC_RES_MAGIC) {
+            continue;
+        }
+        if (cms_gbps_res_is_disabled(res->name, res->type)) {
             continue;
         }
 
@@ -1188,13 +1195,13 @@ static status_t cms_stat_res_from_server(char* name)
            "NODE_ID", "RESOURCE_NAME", "STAT", "PRE_STAT", "TARGET_STAT", "WORK_STAT", "LAST_CHECK", "STAT_CHANGE");
 
     for (uint32 id = 0; id < res_gcc.res_count; id++) {
-        if (res_gcc.res_list[id].magic != CMS_GCC_RES_MAGIC ||
-            (res_id != CMS_MAX_RESOURCE_COUNT && res_id != id)) {
+        const cms_msg_res_t* res = &res_gcc.res_list[id];
+        if (res->magic != CMS_GCC_RES_MAGIC ||
+            (res_id != CMS_MAX_RESOURCE_COUNT && res_id != res->res_id)) {
             continue;
         }
-        const cms_msg_res_t* res = &res_gcc.res_list[id];
         cms_tool_res_stat_list_t res_list;
-        OG_RETURN_IFERR(cms_tool_get_res_stat_list(id, &res_list));
+        OG_RETURN_IFERR(cms_tool_get_res_stat_list(res->res_id, &res_list));
 
         for (uint32 node_id = 0; node_id < res_gcc.node_count; node_id++) {
             const cms_msg_node_def_t *node_def = &res_gcc.node_def_list[node_id];
@@ -1222,6 +1229,10 @@ static status_t cms_get_res_id_with_name(const cms_gcc_t* gcc, char* name, uint3
 {
     if (name == NULL) {
         return OG_SUCCESS;
+    }
+    if (cms_gbps_res_is_disabled(name, NULL)) {
+        CMS_LOG_ERR("resource [%s] is disabled by USE_GBP=FALSE.\n", name);
+        return OG_ERROR;
     }
     const cms_res_t* res = cms_find_res(gcc, name);
     if (res == NULL) {
@@ -1259,6 +1270,9 @@ int32 cms_stat_res(int32 argc, char* argv[])
 
     for (uint32 id = 0; id < CMS_MAX_RESOURCE_COUNT; id++) {
         if (gcc->res[id].magic != CMS_GCC_RES_MAGIC || (res_id != CMS_MAX_RESOURCE_COUNT && res_id != id)) {
+            continue;
+        }
+        if (cms_gbps_res_is_disabled(gcc->res[id].name, gcc->res[id].type)) {
             continue;
         }
 
@@ -1673,6 +1687,10 @@ int32 cms_res_start_with_node(int32 argc, char* argv[])
 
         if (cms_get_res_by_name(name, &res) != OG_SUCCESS) {
             printf("resource does not exist.\n");
+            return OG_ERROR;
+        }
+        if (cms_gbps_res_is_disabled(res.name, res.type)) {
+            printf("gbps disabled by USE_GBP=FALSE, start resource failed.\n");
             return OG_ERROR;
         }
         

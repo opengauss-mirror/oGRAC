@@ -235,6 +235,8 @@ typedef enum en_cs_distribute_type {
 #define OG_BACKUP_FILE_NAME_LEN (uint32)88
 #define OG_MAX_BACKUP_PATH_LEN (OG_MAX_FILE_NAME_LEN - OG_BACKUP_FILE_NAME_LEN)
 #define OG_MAX_SSL_CIPHER_LEN (uint32)1024
+#define OG_GBP_SESSION_COUNT (uint32)8
+#define OG_GBP_RD_LOCK_COUNT OG_GBP_SESSION_COUNT
 
 #define OG_DFLT_VALUE_BUFFER_SIZE (uint32)4096
 #define OG_UDFLT_VALUE_BUFFER_SIZE (uint32)8192
@@ -403,7 +405,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MALICIOUS_LOGIN_COUNT (uint32)9
 #define OG_MALICIOUS_LOGIN_ALARM (uint32)15
 #define OG_MAX_MALICIOUS_IP_COUNT (uint32)64000
-#define OG_SYS_SESSIONS (uint32)32
+#define OG_SYS_SESSIONS (uint32)33
 #define OG_MAX_AUTON_SESSIONS (uint32)256
 #define OG_MAX_UNDO_SEGMENTS (uint32)1024
 #define OG_MAX_SESSIONS (uint32)19380

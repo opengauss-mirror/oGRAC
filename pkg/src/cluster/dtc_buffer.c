@@ -31,6 +31,7 @@
 #include "dtc_trace.h"
 #include "knl_datafile.h"
 #include "knl_buflatch.h"
+#include "knl_gbp.h"
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
@@ -142,6 +143,9 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         }
         if (ra->options & ENTER_PAGE_NO_READ) {
             ctrl->load_status = (uint8)BUF_IS_LOADED;
+            if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
+                ctrl->gbp_ctrl->page_status = GBP_PAGE_NOREAD;
+            }
         }
     } else {
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
@@ -154,6 +158,25 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
     knl_panic_log(IS_SAME_PAGID(ra->page_id, ctrl->page_id),
                   "page_id and ctrl's page_id are not same, panic info: page %u-%u ctrl page %u-%u type %u",
                   ra->page_id.file, ra->page_id.page, ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
+
+    /*
+     * Cluster recovery with GBP: local page may be stale.
+     * Mirror the non-cluster buf_read_page tail (buf_try_read_gbp_page) so that
+     * on-demand GBP pull is also triggered through the DCS path.
+     */
+    if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
+        if (ctrl->gbp_ctrl->page_status == GBP_PAGE_NOREAD) {
+            ctrl->page->lsn = OG_INVALID_LSN;
+            ctrl->gbp_ctrl->page_status = GBP_PAGE_NONE;
+        }
+        if (KNL_RECOVERY_WITH_GBP(session->kernel) &&
+            !SESSION_IS_LOG_ANALYZE(session) && !SESSION_IS_GBP_BG(session)) {
+            if (buf_check_page_version(session, ctrl) != OG_SUCCESS) {
+                buf_unlatch(session, ctrl, OG_TRUE);
+                return OG_ERROR;
+            }
+        }
+    }
 
     session->curr_page = (char *)ctrl->page;
     session->curr_page_ctrl = ctrl;
@@ -318,7 +341,6 @@ bool32 dtc_dcs_readable(knl_session_t *session, page_id_t page_id)
     if (IS_INVALID_PAGID(page_id)) {
         return OG_FALSE;
     }
-
     bool32 page_need_recover = dtc_page_in_rcyset(session, page_id);
     return !page_need_recover;
 }

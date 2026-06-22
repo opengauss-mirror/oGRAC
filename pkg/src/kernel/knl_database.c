@@ -33,6 +33,7 @@
 #include "dtc_database.h"
 #include "dtc_dls.h"
 #include "dtc_drc.h"
+#include "dtc_gbp_rt_aly.h"
 #include "cm_dbs_intf.h"
 #include "cm_file_iofence.h"
 #include "cm_dss_iofence.h"
@@ -429,11 +430,13 @@ void db_close(knl_session_t *session, bool32 need_ckpt)
     log_point_t *lrp_point = &dtc_my_ctrl(session)->lrp_point;
 
     if (!DB_IS_PRIMARY(&session->kernel->db)) {
+        gbp_aly_close(session);
         lrpl_close(session);
         lftc_clt_close(session);
     }
 
     rcy_close(session);
+    gbp_agent_close(session);
     bak_close(session);
     undo_close(session);
     arch_close(session);
@@ -734,6 +737,11 @@ status_t db_mount(knl_session_t *session)
         return OG_ERROR;
     }
 
+    if (KNL_GBP_ENABLE(session->kernel) && (gbp_agent_start(session) != OG_SUCCESS)) {
+        cm_spin_unlock(&kernel->lock);
+        return OG_ERROR;
+    }
+
     if (rcy_init(session) != OG_SUCCESS) {
         cm_spin_unlock(&kernel->lock);
         return OG_ERROR;
@@ -765,6 +773,14 @@ static status_t db_start_writer(knl_instance_t *kernel, ckpt_context_t *ckpt)
     // start db writer threads
     for (uint32 i = 0; i < ckpt->dbwr_count; i++) {
         if (cm_create_thread(dbwr_proc, 0, &ckpt->dbwr[i], &ckpt->dbwr[i].thread) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    // start ckpt perform th
+    if (kernel->attr.enable_quick_ckpt) {
+        if (cm_create_thread(ckpt_prepare_proc, 0, kernel->sessions[SESSION_ID_CKPT_PREPARE],
+                            &kernel->ckpt_ctx.ckpt_prepare_thread) != OG_SUCCESS) {
             return OG_ERROR;
         }
     }
@@ -857,6 +873,11 @@ static status_t db_switchover_proc_init(knl_session_t *session)
                 return OG_ERROR;
             }
             return OG_SUCCESS;
+        }
+        if (KNL_GBP_ENABLE(kernel)) {
+            if (gbp_aly_init(session) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
         }
 
         rcy_init_proc(session);
@@ -1214,6 +1235,10 @@ static status_t db_initphase2_to_open(knl_session_t *session)
 
     if (db_switchover_proc_init(session) != OG_SUCCESS) {
         return OG_ERROR;
+    }
+
+    if (DB_IS_CLUSTER(session) && dtc_gbp_rt_aly_start(session) != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("[DTC GBP RT] failed to start runtime analyzer, partial recovery will fallback");
     }
 
     if (raft_db_start_follower(session, old_role) != OG_SUCCESS) {

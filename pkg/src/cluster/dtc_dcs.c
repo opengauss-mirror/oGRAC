@@ -43,6 +43,9 @@
 #include "dtc_ckpt.h"
 #include "rc_reform.h"
 #include "dtc_context.h"
+#include "knl_buflatch.h"
+#include "knl_buffer_access.h"
+#include "knl_gbp.h"
 
 bool32 dcs_page_latch_usable[][DRC_LOCK_MODE_MAX] = {
     // DRC_LOCK_NULL,  DRC_LOCK_SHARE, DRC_LOCK_EXCLUSIVE, DRC_LOCK_MODE_MAX
@@ -226,6 +229,28 @@ static void dcs_handle_page_from_owner(knl_session_t *session, buf_ctrl_t *ctrl,
     if (size > DEFAULT_PAGE_SIZE(session)) {
         knl_panic(!(flags & MES_FLAG_NEED_LOAD) && !(flags & MES_FLAG_READONLY2X));
         uint64 new_lsn = ((page_head_t *)(msg->buffer + sizeof(msg_ask_page_ack_t)))->lsn;
+        if (gbp_need_wait_before_remote_overwrite(session, ctrl)) {
+            page_id_t old_page_id = ctrl->page_id;
+            uint64 old_lsn = dtc_get_ctrl_lsn(ctrl);
+            /*
+             * Keep the DCS hot path non-blocking: snapshot the pending GBP image
+             * while the old page is still latched, then overwrite the live ctrl.
+             * If snapshot memory is unavailable, GBP falls back through gap/reset.
+             */
+            if (!gbp_try_detach_pending_page(session, ctrl)) {
+                OG_LOG_RUN_WAR("[DCS][GBP] pending EDP snapshot detach failed before remote overwrite: "
+                               "page=%u-%u old_lsn=%llu new_lsn=%llu, continue with GBP gap",
+                               old_page_id.file, old_page_id.page, old_lsn, new_lsn);
+            } else {
+                OG_LOG_DEBUG_INF("[DCS][GBP] detached pending EDP before remote overwrite: "
+                                 "page=%u-%u old_lsn=%llu new_lsn=%llu",
+                                 old_page_id.file, old_page_id.page, old_lsn, new_lsn);
+            }
+            knl_panic_log(IS_SAME_PAGID(old_page_id, ctrl->page_id),
+                          "[DCS][GBP] ctrl changed before remote page overwrite, old page %u-%u current page %u-%u",
+                          old_page_id.file, old_page_id.page, ctrl->page_id.file, ctrl->page_id.page);
+            knl_panic(DCS_BUF_CTRL_NOT_OWNER(session, ctrl));
+        }
         knl_panic(new_lsn >= dtc_get_ctrl_lsn(ctrl));
         errno_t err = memcpy_sp(ctrl->page, DEFAULT_PAGE_SIZE(session), msg->buffer + sizeof(msg_ask_page_ack_t),
                                 DEFAULT_PAGE_SIZE(session));
@@ -681,7 +706,11 @@ void dcs_clean_local_ctrl(knl_session_t *session, buf_ctrl_t *ctrl, drc_res_acti
         tmp_ctrl->is_dirty = 0;
         tmp_ctrl->page = (page_head_t *)cm_aligned_buf((char *)tmp_ctrl + (uint64)sizeof(buf_ctrl_t));
         tmp_ctrl->page->lsn = 0;
-        if (buf_load_page(session, tmp_ctrl, tmp_ctrl->page_id) != OG_SUCCESS) {
+        /*
+         * tmp_ctrl is stack-local and only used to compare the disk image with the local EDP image.
+         * Do not use buf_load_page() here: recovery with GBP may replace tmp_ctrl from GBP and enqueue it to CKPT.
+         */
+        if (buf_load_page_from_disk(session, tmp_ctrl, tmp_ctrl->page_id) != OG_SUCCESS) {
             tmp_ctrl->load_status = (uint8)BUF_LOAD_FAILED;
             knl_panic_log(0, "[DCS]edp page[%u-%u] (lsn:%lld) load from disk failed", ctrl->page_id.file,
                           ctrl->page_id.page, ctrl->page->lsn);

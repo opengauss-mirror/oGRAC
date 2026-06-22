@@ -255,6 +255,7 @@ typedef bool32 (*rc_cb_reform_canceled)(void);
 typedef status_t (*rc_cb_promote_role)(knl_session_t *session);
 typedef status_t (*rc_cb_start_lrpl_proc)(knl_session_t *session);
 typedef status_t (*rc_cb_notify_reform_stat)(knl_session_t *session, reform_info_t *rc_info, uint32 status);
+typedef void (*rc_cb_after_reform_done)(knl_session_t *session);
 
 extern const uint8_t g_bitcnt[256];
 
@@ -269,6 +270,7 @@ typedef struct st_reform_callback {
     rc_cb_reform_canceled rc_reform_cancled;
     rc_cb_start_lrpl_proc rc_start_lrpl_proc;
     rc_cb_notify_reform_stat rc_notify_reform_status;
+    rc_cb_after_reform_done rc_after_reform_done;
 } reform_callback_t;
 
 typedef struct st_reform_init {

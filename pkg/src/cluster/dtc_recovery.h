@@ -31,6 +31,7 @@
 #include "knl_archive.h"
 #include "knl_log.h"
 #include "knl_session.h"
+#include "knl_page.h"
 #include "mes_func.h"
 #include "dtc_reform.h"
 #include "knl_recovery.h"
@@ -55,6 +56,20 @@ extern "C" {
 #define DTC_RCY_WAIT_REF_NUM_CLEAN_SLEEP_TIME 10
 #define DTC_RCY_STANDBY_WAIT_SLEEP_TIME 1000
 #define DTC_RCY_SET_SEND_MSG_MAX_PAGE_NUM ((MES_MESSAGE_BUFFER_SIZE - sizeof(dtc_rcy_set_msg_t)) / sizeof(page_id_t))
+#define GBP_PARTIAL_TOUCH_SLOT_COUNT 16
+#define GBP_PARTIAL_BUCKET_NUM       262147
+#define GBP_PARTIAL_ITEM_POOL_SIZE   4096
+#define GBP_PARTIAL_CANDIDATE_CACHE_MIN 4096
+#define GBP_PARTIAL_CANDIDATE_CACHE_FACTOR 4
+#define GBP_PARTIAL_CANDIDATE_CACHE_CAP 32768
+#define DTC_RCY_LOCAL_SET_BUCKET_NUM     262147
+#define DTC_RCY_LOCAL_SET_POOL_CAPACITY  4096
+#define DTC_RCY_ANALYZE_MERGE_SHARD_NUM  8
+#define DTC_RCY_MERGE_SHARD_POOL_CAPACITY 65536
+#ifndef DTC_RCY_USE_LEGACY_FINALIZE
+#define DTC_RCY_USE_LEGACY_FINALIZE 0
+#endif
+#define DTC_RCY_ANALYZE_FINALIZE_SLOW_US 3000000ULL
 
 typedef struct st_dtc_rcy_atomic_list_node {
     uint32 *array;
@@ -64,15 +79,129 @@ typedef struct st_dtc_rcy_atomic_list_node {
     spinlock_t lock;
 } dtc_rcy_atomic_list;
 
+typedef struct st_gbp_partial_touch {
+    uint8 node_id;
+    uint8 used;
+    uint8 reserved[6];
+    uint64 touch_min_lfn;
+    uint64 touch_max_lfn;
+} gbp_partial_touch_t;
+
+typedef struct st_rcy_set_analyze_gbp {
+    uint64 expect_lsn;
+    uint64 expect_lfn;
+    gbp_partial_touch_t touches[GBP_PARTIAL_TOUCH_SLOT_COUNT];
+    uint64 overflow_disable_bitmap;
+    bool8 touch_overflow;
+    bool8 touched;
+    uint8 reserved[6];
+} rcy_set_analyze_gbp_t;
+
+typedef struct st_rcy_set_item {
+    page_id_t page_id;
+    uint64 first_dirty_lsn;
+    uint64 last_dirty_lsn;
+    uint64 dirty_min_lfn;
+    uint64 dirty_max_lfn;
+    uint32 pcn;
+    uint8 master_id;
+    volatile bool8 need_replay;
+    bool8 gbp_required;
+    bool8 gbp_verified;
+    bool8 need_check_leave_changed;
+    rcy_set_analyze_gbp_t analyze_gbp;
+    struct st_rcy_set_item *next_item;
+    struct st_rcy_set_item *merge_next;
+    struct st_rcy_set_item *active_next;
+    uint64 active_epoch;
+} rcy_set_item_t;
+
+typedef struct st_rcy_local_bucket {
+    uint32 count;
+    rcy_set_item_t *first;
+} rcy_local_bucket_t;
+
+typedef struct st_rcy_set_item_pool rcy_set_item_pool_t;
+
+struct st_rcy_set_item_pool {
+    int64  hwm;
+    int64  capacity;
+    rcy_set_item_t *items;
+    struct st_rcy_set_item_pool *next;
+};
+
+typedef struct st_dtc_rcy_local_set {
+    uint32 bucket_num;
+    rcy_local_bucket_t *buckets;
+    rcy_set_item_pool_t *item_pools;
+    rcy_set_item_pool_t *curr_item_pools;
+    rcy_set_item_t *merge_shard_heads[DTC_RCY_ANALYZE_MERGE_SHARD_NUM];
+    rcy_set_item_t *merge_shard_tails[DTC_RCY_ANALYZE_MERGE_SHARD_NUM];
+    rcy_set_item_t *active_shard_heads[DTC_RCY_ANALYZE_MERGE_SHARD_NUM];
+    rcy_set_item_t *active_shard_tails[DTC_RCY_ANALYZE_MERGE_SHARD_NUM];
+    rcy_set_item_pool_t *active_rebuild_pool;
+    uint64 active_epoch;
+    uint64 active_prune_lfn;
+    uint64 active_item_count;
+    int64 pool_capacity;
+    uint32 space_id_set[OG_MAX_SPACES];
+    uint32 space_set_size;
+    bool8 inited;
+    bool8 active_tracking;
+    bool8 active_rebuild_done;
+    uint8 reserved[1];
+    int64 active_rebuild_idx;
+} dtc_rcy_local_set_t;
+
+typedef bool32 (*dtc_rcy_local_item_filter_t)(const rcy_set_item_t *item, void *arg);
+
 typedef struct st_dtc_rcy_analyze_paral_node {
     aligned_buf_t *buf_list;
+    uint32 *node_ids;
+    log_point_t *batch_points;
     thread_t thread[PARAL_ANALYZE_THREAD_NUM];
     dtc_rcy_atomic_list free_list;
     dtc_rcy_atomic_list used_list;
     atomic32_t running_thread_num;
     bool8 read_log_end_flag;
     bool8 killed_flag;
+    dtc_rcy_local_set_t local_rcy[PARAL_ANALYZE_THREAD_NUM];
+    bool8 local_rcy_inited;
 } dtc_rcy_analyze_paral_node_t;
+
+typedef struct st_dtc_rcy_analysis_group_diag {
+    uint64 entries;
+    uint64 enter_entries;
+    uint64 leave_entries;
+    uint64 changed_leave_entries;
+    uint64 record_calls;
+    uint64 record_new;
+    uint64 record_hit;
+    uint64 partial_calls;
+    uint64 record_us;
+    uint64 partial_us;
+    uint64 partial_created;
+    uint64 partial_hit;
+    uint64 partial_init_us;
+    uint64 rcy_lookup_us;
+    uint64 rcy_bucket_lock_us;
+    uint64 partial_bucket_lock_us;
+    uint64 partial_global_lock_us;
+    uint64 alloc_itempool_us;
+    uint64 partial_alloc_pool_us;
+    uint64 drc_master_us;
+} dtc_rcy_analysis_group_diag_t;
+
+typedef struct st_dtc_rcy_analysis_group_count {
+    uint64 entries;
+    uint64 enter_entries;
+    uint64 leave_entries;
+    uint64 changed_leave_entries;
+    uint64 record_calls;
+    uint64 record_new;
+    uint64 record_hit;
+    uint64 partial_calls;
+} dtc_rcy_analysis_group_count_t;
 
 typedef struct st_dtc_rcy_replay_paral_node {
     aligned_buf_t *buf_list;
@@ -93,28 +222,11 @@ typedef struct st_dtc_rcy_set_req {
     uint64 reform_trigger_version;
 } dtc_rcy_set_msg_t;
 
-typedef struct st_rcy_set_item {
-    page_id_t page_id;
-    uint64 first_dirty_lsn;
-    uint64 last_dirty_lsn;
-    uint32 pcn;
-    uint8 master_id;
-    volatile bool8 need_replay;
-    bool8 need_check_leave_changed;
-    struct st_rcy_set_item *next_item;
-} rcy_set_item_t;
-
 typedef struct st_rcy_set_bucket {
     spinlock_t lock;
     uint32 count;
     rcy_set_item_t *first;
 } rcy_set_bucket_t;
-
-typedef struct st_rcy_set_item_pool {
-    int64  hwm;
-    rcy_set_item_t *items;
-    struct st_rcy_set_item_pool *next;
-} rcy_set_item_pool_t;
 
 typedef struct st_rcy_set {
     spinlock_t lock;
@@ -129,6 +241,82 @@ typedef struct st_rcy_set {
     uint32 space_id_set[OG_MAX_SPACES];
     uint32 space_set_size;
 } rcy_set_t;
+
+typedef struct st_gbp_partial_item gbp_partial_item_t;
+
+typedef struct st_gbp_partial_candidate {
+    gbp_partial_item_t *item;
+    page_id_t page_id;
+    uint64 page_lsn;
+    uint32 source_node;
+    bool8 used;
+    uint8 reserved[3];
+    char *page;
+} gbp_partial_candidate_t;
+
+struct st_gbp_partial_item {
+    page_id_t page_id;
+    rcy_set_item_t *rcy_item;
+    gbp_partial_touch_t touches[GBP_PARTIAL_TOUCH_SLOT_COUNT];
+    gbp_partial_candidate_t *candidate;
+    uint64 expect_lsn;
+    uint64 expect_lfn;
+    uint64 best_lsn;
+    uint64 selected_lsn;
+    uint32 best_source_node;
+    uint32 selected_node;
+    uint64 seen_node_bitmap;
+    bool8 required;
+    bool8 verified;
+    bool8 selected_valid;
+    bool8 selected_pulled;
+    bool8 touch_overflow;
+    uint8 reserved[3];
+    struct st_gbp_partial_item *next;
+};
+
+typedef struct st_gbp_partial_bucket {
+    spinlock_t lock;
+    uint32 count;
+    gbp_partial_item_t *first;
+} gbp_partial_bucket_t;
+
+typedef struct st_gbp_partial_item_pool {
+    int64 hwm;
+    gbp_partial_item_t *items;
+    struct st_gbp_partial_item_pool *next;
+} gbp_partial_item_pool_t;
+
+typedef struct st_gbp_partial_context {
+    spinlock_t lock;
+    bool8 enabled;
+    bool8 required_built;
+    uint16 reserved;
+    uint32 bucket_num;
+    uint32 required_count;
+    uint32 required_capacity;
+    uint32 direct_selected_node;
+    uint32 direct_selected_count;
+    uint64 item_count;
+    uint64 overflow_items;
+    uint64 miss_count;
+    uint32 candidate_capacity;
+    uint32 candidate_count;
+    uint32 candidate_clock;
+    uint32 candidate_page_size;
+    uint64 candidate_store_count;
+    uint64 candidate_hit_count;
+    uint64 candidate_miss_count;
+    uint64 candidate_evict_count;
+    bool8 direct_selected_ready;
+    uint8 reserved2[7];
+    gbp_partial_bucket_t *buckets;
+    gbp_partial_item_pool_t *item_pools;
+    gbp_partial_item_pool_t *curr_item_pool;
+    gbp_partial_item_t **required_items;
+    gbp_partial_candidate_t *candidate_items;
+    char *candidate_pages;
+} gbp_partial_context_t;
 
 typedef enum en_dtc_rcy_phase {
     PHASE_ANALYSIS = 0,
@@ -207,6 +395,17 @@ typedef enum st_dtc_recovery_status {
     RECOVERY_FINISH,
 } dtc_recovery_status_e;
 
+typedef struct st_dtc_gbp_lfn_point_entry {
+    uint64 lfn;
+    log_point_t point;
+} dtc_gbp_lfn_point_entry_t;
+
+typedef struct st_dtc_gbp_lfn_point_map {
+    dtc_gbp_lfn_point_entry_t *entries;
+    uint32 count;
+    uint32 capacity;
+} dtc_gbp_lfn_point_map_t;
+
 typedef struct st_dtc_rcy_context {
     rcy_bucket_t bucket[OG_MAX_PARAL_RCY];
     spinlock_t lock;
@@ -242,7 +441,93 @@ typedef struct st_dtc_rcy_context {
     uint32 pcn_is_equal_num;
     int32 need_analysis_leave_page_cnt;
     bool8 rcy_create_users[OG_MAX_USERS];
+    /* PCN 诊断：见 DTC_PCND_ANALYZE_* / DTC_PCND_GBP_PREP_* 与 dtc_rcy_log_pcn_mismatch_diag */
+    uint32 pcn_diag_analyze_path;
+    uint32 pcn_diag_gbp_prepare;
+    uint64 pcn_diag_redo_end_lfn_snapshot;
+    uint64 pcn_diag_gbp_rcy_lfn_snapshot;
+    uint8 pcn_diag_rcy_with_gbp_after_prepare;
+    /*
+     * v6 multi-node GBP state:
+     * - each recovery node keeps its own GBP window snapshot;
+     * - READ_BEGIN success marks a planned node; replay jumps when that node enters its window;
+     * - global_gbp_lrp_lsn is the merged tail that replay must still reach after page backfill.
+     */
+    bool8 gbp_window_valid[OG_MAX_INSTANCES];
+    bool8 gbp_read_planned[OG_MAX_INSTANCES];
+    bool8 gbp_jump_taken[OG_MAX_INSTANCES];
+    log_point_t gbp_begin_points[OG_MAX_INSTANCES];
+    log_point_t gbp_rcy_points[OG_MAX_INSTANCES];
+    log_point_t gbp_lrp_points[OG_MAX_INSTANCES];
+    log_point_t gbp_skip_points[OG_MAX_INSTANCES];
+    uint64 gbp_max_lsns[OG_MAX_INSTANCES];
+    uint64 gbp_global_lrp_lsn;
+    bool8 gbp_redo_fallback_used;
+    bool8 gbp_saved_max_lrp_valid;
+    uint16 gbp_fallback_reserved;
+    uint64 gbp_saved_max_lrp_lsn;
+    dtc_gbp_lfn_point_map_t gbp_lfn_point_maps[OG_MAX_INSTANCES];
+    gbp_partial_context_t gbp_partial_ctx;
+    bool8 gbp_partial_jump_disabled[OG_MAX_INSTANCES];
+    uint32 gbp_partial_disabled_count;
+    uint64 gbp_tail_find_max_invalid_count;
+    uint64 gbp_tail_find_max_invalid_bytes;
+    uint64 gbp_tail_find_max_invalid_first_lfn;
+    uint64 gbp_tail_find_max_invalid_last_lfn;
+    uint64 gbp_tail_invalid_cursor_count;
 } dtc_rcy_context_t;
+
+void dtc_rcy_log_pcn_mismatch_diag(knl_session_t *session, const char *stage, uint32 log_pcn, uint32 page_pcn,
+    log_type_t log_type);
+bool32 dtc_rcy_is_partial_replay(void);
+bool32 dtc_rcy_gbp_partial_item_need_verify(knl_session_t *session, page_id_t page_id, uint32 node_id, uint64 lfn,
+    uint64 expect_lsn);
+uint64 dtc_rcy_gbp_partial_expect_lsn(knl_session_t *session, page_id_t page_id, uint64 item_lsn);
+void dtc_rcy_gbp_partial_mark_verified(knl_session_t *session, page_id_t page_id, uint32 node_id, uint64 lsn);
+bool32 dtc_rcy_gbp_partial_enabled(knl_session_t *session);
+gbp_partial_item_t *dtc_rcy_gbp_partial_get_item(page_id_t page_id);
+uint64 dtc_rcy_gbp_partial_get_expect_lsn(gbp_partial_item_t *item);
+status_t dtc_rcy_gbp_partial_build_required(knl_session_t *session);
+uint32 dtc_rcy_gbp_partial_required_count(void);
+gbp_partial_item_t *dtc_rcy_gbp_partial_required_item(uint32 index);
+bool32 dtc_rcy_gbp_partial_item_in_jumped_window(knl_session_t *session, gbp_partial_item_t *item,
+    uint32 *verify_node_id);
+void dtc_rcy_gbp_partial_update_candidate(gbp_partial_item_t *item, uint32 source_node, uint64 lsn);
+void dtc_rcy_gbp_partial_update_selected(gbp_partial_item_t *item, uint32 source_node, uint64 lsn);
+bool32 dtc_rcy_gbp_partial_direct_selected_ready(uint32 node_id, uint32 *selected_count);
+void dtc_rcy_gbp_partial_mark_selected_pulled(gbp_partial_item_t *item, uint64 lsn);
+bool32 dtc_rcy_gbp_partial_copy_candidate(knl_session_t *session, gbp_partial_item_t *item, char *page_buf,
+    uint32 buf_size, uint64 *page_lsn, uint32 *source_node);
+void dtc_rcy_gbp_partial_mark_item_verified(gbp_partial_item_t *item);
+bool32 dtc_rcy_gbp_partial_node_jump_disabled(uint32 node_id);
+void dtc_rcy_gbp_partial_clear(dtc_rcy_context_t *dtc_rcy);
+void dtc_rcy_gbp_analyze_touch_apply_range(rcy_set_analyze_gbp_t *meta, uint32 node_id, uint64 min_lfn,
+    uint64 max_lfn);
+status_t dtc_rcy_gbp_partial_materialize_global(knl_session_t *session);
+status_t dtc_rcy_local_set_init(dtc_rcy_local_set_t *local);
+void dtc_rcy_local_set_clear(dtc_rcy_local_set_t *local);
+void dtc_rcy_local_set_enable_active_tracking(dtc_rcy_local_set_t *local);
+void dtc_rcy_local_set_begin_active_rebuild(dtc_rcy_local_set_t *local, uint64 prune_lfn);
+void dtc_rcy_local_set_rebuild_active_budget(dtc_rcy_local_set_t *local, uint32 budget);
+bool32 dtc_rcy_local_set_active_ready(const dtc_rcy_local_set_t *local);
+status_t dtc_rcy_record_page_into_local(knl_session_t *session, dtc_rcy_local_set_t *local, page_id_t page_id,
+    uint64 lsn, uint64 batch_lfn, uint32 pcn, dtc_rcy_analysis_group_diag_t *diag,
+    dtc_rcy_analysis_group_count_t *counts);
+void dtc_rcy_record_space_id_into_local(dtc_rcy_local_set_t *local, uint32 space_id);
+void dtc_rcy_gbp_analyze_leave_into_local(dtc_rcy_local_set_t *local, page_id_t page_id, uint32 node_id,
+    uint64 batch_lfn, uint64 changed_lsn, dtc_rcy_analysis_group_diag_t *diag,
+    dtc_rcy_analysis_group_count_t *counts);
+status_t dtc_rcy_merge_local_sets_to_recovery(knl_session_t *session, dtc_rcy_local_set_t *locals,
+    uint32 local_count, dtc_rcy_local_item_filter_t filter, void *filter_arg, bool32 clear_after,
+    const char *tag);
+status_t dtc_rcy_merge_active_local_sets_to_recovery(knl_session_t *session, dtc_rcy_local_set_t *locals,
+    uint32 local_count, dtc_rcy_local_item_filter_t filter, void *filter_arg, bool32 clear_after,
+    const char *tag);
+status_t dtc_rcy_merge_compact_local_sets_to_recovery(knl_session_t *session, dtc_rcy_local_set_t *locals,
+    uint32 local_count, dtc_rcy_local_item_filter_t filter, void *filter_arg, bool32 clear_after,
+    const char *tag);
+status_t dtc_rcy_analyze_group_into_local(knl_session_t *session, log_group_t *group, uint32 node_id,
+    uint64 batch_lfn, dtc_rcy_local_set_t *local, uint64 *enter_count);
 
 status_t dtc_recover(knl_session_t *session);
 status_t dtc_recover_crashed_nodes(knl_session_t *session, instance_list_t *recover_list, bool32 full_recovery);
@@ -278,6 +563,8 @@ bool8 dtc_get_page_id_by_redo(log_entry_t *log, page_id_t *page_id_value);
 bool8 dtc_rcy_check_recovery_is_done(knl_session_t *session, uint32 idx);
 status_t dtc_rcy_set_batch_invalidate(knl_session_t *session, log_batch_t *batch);
 status_t dtc_rcy_analyze_group(knl_session_t *session, log_group_t *group);
+status_t dtc_rcy_analyze_group_ex(knl_session_t *session, log_group_t *group, uint32 node_id, uint64 batch_lfn);
+rcy_set_item_t *dtc_rcy_get_item(rcy_set_bucket_t *bucket, page_id_t page_id);
 status_t dtc_rcy_process_batch(knl_session_t *session, log_batch_t *batch);
 bool32 dtc_rcy_validate_batch(log_batch_t *batch);
 status_t dtc_add_dirtypage_for_recovery(knl_session_t *session, page_id_t page_id);
@@ -315,6 +602,15 @@ log_batch_t* dtc_rcy_get_curr_batch(dtc_rcy_context_t *dtc_rcy, uint32 idx, uint
 
 extern dtc_rcy_replay_paral_node_t g_replay_paral_mgr;
 #define DTC_RCY_CONTEXT                         (&g_dtc->dtc_rcy_ctx)
+
+#define DTC_PCND_ANALYZE_NONE            0U
+#define DTC_PCND_ANALYZE_SERIAL_BATCHES  1U
+#define DTC_PCND_ANALYZE_PARAL           2U
+
+#define DTC_PCND_GBP_PREP_NONE                    0U
+#define DTC_PCND_GBP_PREP_SKIP_NO_GBP            1U
+#define DTC_PCND_GBP_PREP_PARTIAL_UNAVAILABLE    2U
+#define DTC_PCND_GBP_PREP_PARTIAL_CHECKED        3U
 
 #define OGRAC_FULL_RECOVERY(session)             ((DTC_RCY_CONTEXT)->in_progress && (DTC_RCY_CONTEXT->full_recovery))
 #define OGRAC_PART_RECOVERY(session)             ((DTC_RCY_CONTEXT)->in_progress && !(DTC_RCY_CONTEXT->full_recovery))

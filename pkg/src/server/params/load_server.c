@@ -34,10 +34,14 @@
 #include "cm_kmc.h"
 #include "cm_log.h"
 #include "cm_file_iofence.h"
+#include "cm_ip.h"
 #include "srv_device_adpt.h"
 
 extern bool32 g_enable_fdsa;
 extern bool32 g_crc_verify;
+
+#define SRV_GBP_ASSEMBLE_MAX_SCAN_MIN 100
+#define SRV_GBP_ASSEMBLE_MAX_SCAN_MAX 1000000
 
 #ifdef __cplusplus
 extern "C" {
@@ -836,6 +840,68 @@ static status_t srv_get_interconnect_type_param(cs_pipe_type_t *type)
     } else {
         OG_THROW_ERROR(ERR_INVALID_PARAMETER, "INTERCONNECT_TYPE");
         return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+/* Apply GBP_* from cfg/$cnf after knl_init_attr() defaults. */
+status_t srv_load_gbp_params(void)
+{
+    knl_instance_t *kernel = &g_instance->kernel;
+    gbp_attr_t *gbp = &kernel->gbp_attr;
+    const char *value = NULL;
+    uint32 addr_cnt = 0;
+    bool32 use_gbp = OG_FALSE;
+
+    OG_RETURN_IFERR(srv_get_param_bool32("USE_GBP", &use_gbp));
+    gbp->use_gbp = use_gbp;
+    OG_RETURN_IFERR(srv_get_param_bool32("GBP_FOR_RECOVERY", &gbp->gbp_for_recovery));
+    OG_RETURN_IFERR(srv_get_param_bool32("GBP_RT_ANALYSIS", &gbp->gbp_rt_analysis));
+    OG_RETURN_IFERR(srv_get_param_uint32("GBP_RT_PARSE_WORKERS", &gbp->gbp_rt_parse_workers));
+    if (gbp->gbp_rt_parse_workers < 1) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "GBP_RT_PARSE_WORKERS", (int64)1);
+        return OG_ERROR;
+    }
+    if (gbp->gbp_rt_parse_workers > DTC_GBP_RT_MAX_PARSE_WORKERS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "GBP_RT_PARSE_WORKERS", (int64)DTC_GBP_RT_MAX_PARSE_WORKERS);
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(srv_get_param_uint32("GBP_RT_PAGE_OWNER_WORKERS", &gbp->gbp_rt_page_owner_workers));
+    if (gbp->gbp_rt_page_owner_workers < 1) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "GBP_RT_PAGE_OWNER_WORKERS", (int64)1);
+        return OG_ERROR;
+    }
+    if (gbp->gbp_rt_page_owner_workers > DTC_GBP_RT_MAX_OWNER_WORKERS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "GBP_RT_PAGE_OWNER_WORKERS", (int64)DTC_GBP_RT_MAX_OWNER_WORKERS);
+        return OG_ERROR;
+    }
+    value = srv_get_param("GBP_IP");
+    if (value != NULL && strlen(value) > 0) {
+        MEMS_RETURN_IFERR(memset_s(gbp->server_addr, sizeof(gbp->server_addr), 0, sizeof(gbp->server_addr)));
+        OG_RETURN_IFERR(cm_split_host_ip(gbp->server_addr, value));
+        for (addr_cnt = 0; addr_cnt < OG_MAX_LSNR_HOST_COUNT; addr_cnt++) {
+            if (gbp->server_addr[addr_cnt][0] == '\0') {
+                break;
+            }
+        }
+        gbp->server_count = (addr_cnt == 0) ? 1 : addr_cnt;
+    }
+
+    OG_RETURN_IFERR(srv_get_param_uint16("GBP_PORT", &gbp->lsnr_port));
+    OG_RETURN_IFERR(srv_get_param_uint32("GBP_ASSEMBLE_MAX_SCAN", &gbp->assemble_max_scan));
+    if (gbp->assemble_max_scan < SRV_GBP_ASSEMBLE_MAX_SCAN_MIN) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "GBP_ASSEMBLE_MAX_SCAN", (int64)SRV_GBP_ASSEMBLE_MAX_SCAN_MIN);
+        return OG_ERROR;
+    }
+    if (gbp->assemble_max_scan > SRV_GBP_ASSEMBLE_MAX_SCAN_MAX) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "GBP_ASSEMBLE_MAX_SCAN", (int64)SRV_GBP_ASSEMBLE_MAX_SCAN_MAX);
+        return OG_ERROR;
+    }
+
+    value = srv_get_param("LOCAL_GBP_HOST");
+    if (value != NULL && strlen(value) > 0) {
+        MEMS_RETURN_IFERR(strncpy_s(gbp->local_gbp_host, CM_MAX_IP_LEN, value, strlen(value)));
     }
 
     return OG_SUCCESS;
