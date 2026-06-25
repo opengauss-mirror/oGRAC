@@ -14,17 +14,17 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_config.h
+ * rbp_config.h
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_config.h
+ * src/rbp/rbp_config.h
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef GBP_CONFIG_H
-#define GBP_CONFIG_H
+#ifndef RBP_CONFIG_H
+#define RBP_CONFIG_H
 
 #include <algorithm>
 #include <cctype>
@@ -32,7 +32,7 @@
 #include <cstring>
 #include <string>
 
-namespace gbp {
+namespace rbp {
 
 enum class ReadEndMode { Async, Sync };
 
@@ -162,6 +162,6 @@ inline double env_double(const char* name, double def)
     }
 }
 
-}  // namespace gbp
+}  // namespace rbp
 
-#endif  // GBP_CONFIG_H
+#endif  // RBP_CONFIG_H

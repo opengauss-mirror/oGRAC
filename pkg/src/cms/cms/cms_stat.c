@@ -97,7 +97,7 @@ cms_io_record_wait_t g_cms_io_record_event_wait[CMS_IO_COUNT];
 #define CMS_RES_STAT(node_id, res_id) (&g_stat->node_inf[(node_id)].res_stat[(res_id)])
 #define CMS_RES_OFFLINE_RESET_TIMEOUT (15000 * MICROSECS_PER_MILLISEC)
 #define CMS_STAT_IS_REGISTER(stat) ((stat).session_id != 0 && (stat).session_id != OG_INVALID_ID64)
-#define CMS_GBP_CONF_QUOTE_PAIR_LEN 2
+#define CMS_RBP_CONF_QUOTE_PAIR_LEN 2
 #define CMS_NODE_STAT_POS(node_id) (CMS_CLUSTER_STAT_OFFSET + \
     ((size_t) &(((cms_cluster_stat_t*)NULL)->node_inf[node_id].node_stat[node_id])))
 #define CMS_CUR_NODE_STAT (&g_stat->node_inf[g_cms_param->node_id].node_stat[g_cms_param->node_id])
@@ -1000,30 +1000,30 @@ static bool32 cms_is_dss_mode_db_res(const cms_res_t* res)
         cm_strcmpi(res->name, CMS_RES_TYPE_DB) == 0);
 }
 
-bool32 cms_res_name_type_is_gbps(const char *name, const char *type)
+bool32 cms_res_name_type_is_rbps(const char *name, const char *type)
 {
-    return ((name != NULL && cm_strcmpi(name, CMS_RES_TYPE_GBPS) == 0) ||
-        (type != NULL && cm_strcmpi(type, CMS_RES_TYPE_GBPS) == 0));
+    return ((name != NULL && cm_strcmpi(name, CMS_RES_TYPE_RBPS) == 0) ||
+        (type != NULL && cm_strcmpi(type, CMS_RES_TYPE_RBPS) == 0));
 }
 
 bool32 cms_res_is_script_detect_res(const cms_res_t *res)
 {
     return (cm_strcmpi(res->name, CMS_RES_TYPE_DSS) == 0 || cm_strcmpi(res->type, CMS_RES_TYPE_DSS) == 0 ||
-        cms_res_name_type_is_gbps(res->name, res->type));
+        cms_res_name_type_is_rbps(res->name, res->type));
 }
 
 bool32 cms_res_is_no_fence_res(const cms_res_t *res)
 {
     return (cm_strcmpi(res->type, CMS_RES_TYPE_DSS) == 0 || cm_strcmpi(res->name, CMS_RES_TYPE_DSS) == 0 ||
-        cms_res_name_type_is_gbps(res->name, res->type));
+        cms_res_name_type_is_rbps(res->name, res->type));
 }
 
-bool32 cms_res_is_gbps_res(const cms_res_t *res)
+bool32 cms_res_is_rbps_res(const cms_res_t *res)
 {
-    return cms_res_name_type_is_gbps(res->name, res->type);
+    return cms_res_name_type_is_rbps(res->name, res->type);
 }
 
-static char *cms_trim_gbp_conf_token(char *str)
+static char *cms_trim_rbp_conf_token(char *str)
 {
     char *begin = str;
     while (*begin != '\0' && isspace((unsigned char)*begin)) {
@@ -1038,10 +1038,10 @@ static char *cms_trim_gbp_conf_token(char *str)
     return begin;
 }
 
-static char *cms_strip_gbp_conf_quotes(char *str)
+static char *cms_strip_rbp_conf_quotes(char *str)
 {
     uint32 len = (uint32)strlen(str);
-    if (len >= CMS_GBP_CONF_QUOTE_PAIR_LEN &&
+    if (len >= CMS_RBP_CONF_QUOTE_PAIR_LEN &&
         ((*str == '"' && str[len - 1] == '"') || (*str == '\'' && str[len - 1] == '\''))) {
         str[len - 1] = '\0';
         return str + 1;
@@ -1049,7 +1049,7 @@ static char *cms_strip_gbp_conf_quotes(char *str)
     return str;
 }
 
-static bool32 cms_read_use_gbp_from_conf_file(const char *file_name, bool32 *enabled)
+static bool32 cms_read_use_rbp_from_conf_file(const char *file_name, bool32 *enabled)
 {
     FILE *fp = fopen(file_name, "r");
     if (fp == NULL) {
@@ -1059,7 +1059,7 @@ static bool32 cms_read_use_gbp_from_conf_file(const char *file_name, bool32 *ena
     bool32 found = OG_FALSE;
     char line[1024];
     while (fgets(line, sizeof(line), fp) != NULL) {
-        char *content = cms_trim_gbp_conf_token(line);
+        char *content = cms_trim_rbp_conf_token(line);
         if (*content == '\0' || *content == '#') {
             continue;
         }
@@ -1069,16 +1069,16 @@ static bool32 cms_read_use_gbp_from_conf_file(const char *file_name, bool32 *ena
             continue;
         }
         *separator = '\0';
-        char *key = cms_trim_gbp_conf_token(content);
-        char *value = cms_trim_gbp_conf_token(separator + 1);
+        char *key = cms_trim_rbp_conf_token(content);
+        char *value = cms_trim_rbp_conf_token(separator + 1);
         char *comment = strchr(value, '#');
         if (comment != NULL) {
             *comment = '\0';
-            value = cms_trim_gbp_conf_token(value);
+            value = cms_trim_rbp_conf_token(value);
         }
-        value = cms_strip_gbp_conf_quotes(value);
+        value = cms_strip_rbp_conf_quotes(value);
 
-        if (cm_strcmpi(key, "USE_GBP") == 0) {
+        if (cm_strcmpi(key, "USE_RBP") == 0) {
             *enabled = (cm_strcmpi(value, "TRUE") == 0) ? OG_TRUE : OG_FALSE;
             found = OG_TRUE;
             break;
@@ -1089,7 +1089,7 @@ static bool32 cms_read_use_gbp_from_conf_file(const char *file_name, bool32 *ena
     return found;
 }
 
-static bool32 cms_read_use_gbp_from_home(const char *home, bool32 *enabled)
+static bool32 cms_read_use_rbp_from_home(const char *home, bool32 *enabled)
 {
     if (home == NULL || home[0] == '\0') {
         return OG_FALSE;
@@ -1100,7 +1100,7 @@ static bool32 cms_read_use_gbp_from_home(const char *home, bool32 *enabled)
     if (ret == -1) {
         return OG_FALSE;
     }
-    return cms_read_use_gbp_from_conf_file(file_name, enabled);
+    return cms_read_use_rbp_from_conf_file(file_name, enabled);
 }
 
 static bool32 cms_copy_env_value(const char *name, char *value, uint32 value_size)
@@ -1134,27 +1134,27 @@ static bool32 cms_copy_env_value(const char *name, char *value, uint32 value_siz
 #endif
 }
 
-bool32 cms_gbps_is_enabled(void)
+bool32 cms_rbps_is_enabled(void)
 {
     bool32 enabled = OG_FALSE;
     char home[CMS_FILE_NAME_BUFFER_SIZE] = {0};
     if (cms_copy_env_value("OGDB_DATA", home, CMS_FILE_NAME_BUFFER_SIZE) &&
-        cms_read_use_gbp_from_home(home, &enabled)) {
+        cms_read_use_rbp_from_home(home, &enabled)) {
         return enabled;
     }
     if (cms_copy_env_value("OGDB_HOME", home, CMS_FILE_NAME_BUFFER_SIZE) &&
-        cms_read_use_gbp_from_home(home, &enabled)) {
+        cms_read_use_rbp_from_home(home, &enabled)) {
         return enabled;
     }
-    if (cms_read_use_gbp_from_home(g_cms_param->cms_home, &enabled)) {
+    if (cms_read_use_rbp_from_home(g_cms_param->cms_home, &enabled)) {
         return enabled;
     }
     return OG_FALSE;
 }
 
-bool32 cms_gbps_res_is_disabled(const char *name, const char *type)
+bool32 cms_rbps_res_is_disabled(const char *name, const char *type)
 {
-    return (cms_res_name_type_is_gbps(name, type) && !cms_gbps_is_enabled());
+    return (cms_res_name_type_is_rbps(name, type) && !cms_rbps_is_enabled());
 }
 
 static bool32 cms_db_wait_dss_timeout(uint32 res_id)
@@ -1341,8 +1341,8 @@ status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
     OG_RETURN_IFERR(cms_get_res_by_id(res_id, &res));
 
     CMS_LOG_INF("begin start res, res_id=%u", res_id);
-    if (cms_gbps_res_is_disabled(res.name, res.type)) {
-        CMS_LOG_WAR("gbps resource is disabled by USE_GBP=FALSE, start skipped.");
+    if (cms_rbps_res_is_disabled(res.name, res.type)) {
+        CMS_LOG_WAR("rbps resource is disabled by USE_RBP=FALSE, start skipped.");
         return OG_ERROR;
     }
     get_cur_res_stat(res_id, &res_stat);
@@ -1394,7 +1394,7 @@ status_t cms_res_start(uint32 res_id, uint32 timeout_ms)
         return OG_ERROR;
     }
     CMS_LOG_INF("cms cluster reform done");
-    if (!cms_res_is_gbps_res(&res) && cms_check_res_running(res_id) != OG_SUCCESS) {
+    if (!cms_res_is_rbps_res(&res) && cms_check_res_running(res_id) != OG_SUCCESS) {
         cms_release_res_start_lock(res_id);
         return OG_ERROR;
     }
@@ -2770,7 +2770,7 @@ status_t cms_get_master_node(uint16* node_id)
 status_t cms_get_res_master(uint32 res_id, uint8* node_id)
 {
     cms_res_t res;
-    if (cms_get_res_by_id(res_id, &res) == OG_SUCCESS && cms_res_is_gbps_res(&res)) {
+    if (cms_get_res_by_id(res_id, &res) == OG_SUCCESS && cms_res_is_rbps_res(&res)) {
         *node_id = OG_INVALID_ID8;
         return OG_SUCCESS;
     }
@@ -3074,7 +3074,7 @@ static status_t cms_res_list_info_copy(const cms_gcc_t* gcc, cms_tool_msg_res_ge
         if (gcc_res->magic != CMS_GCC_RES_MAGIC) {
             continue;
         }
-        if (cms_gbps_res_is_disabled(gcc_res->name, gcc_res->type)) {
+        if (cms_rbps_res_is_disabled(gcc_res->name, gcc_res->type)) {
             continue;
         }
         gcc_info->res_list[res_cnt].magic = gcc_res->magic;

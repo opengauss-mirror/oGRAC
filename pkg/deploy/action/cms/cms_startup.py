@@ -160,15 +160,15 @@ class CmsStartup:
                 return True
         return False
 
-    def _add_gbps_res(self):
-        gbps_script = os.path.join(self.cms_install_path, "bin", "gbps_contrl.sh")
-        if not os.path.isfile(gbps_script):
-            LOGGER.warning("skip gbps cms resource, script not found: %s", gbps_script)
+    def _add_rbps_res(self):
+        rbps_script = os.path.join(self.cms_install_path, "bin", "rbps_contrl.sh")
+        if not os.path.isfile(rbps_script):
+            LOGGER.warning("skip rbps cms resource, script not found: %s", rbps_script)
             return
-        if self._cms_res_exists("gbps"):
-            LOGGER.info("gbps cms resource already exists")
+        if self._cms_res_exists("rbps"):
+            LOGGER.info("rbps cms resource already exists")
             return
-        self._cms_cmd(f'res -add gbps -type gbps -attr "script={gbps_script}"')
+        self._cms_cmd(f'res -add rbps -type rbps -attr "script={rbps_script}"')
 
     def _wait_for_success(self, attempts, check_fn, label=""):
         """Wait for check_fn to return True, up to `attempts` seconds."""
@@ -262,7 +262,7 @@ class CmsStartup:
             self._cms_cmd(
                 f'res -add db -type db -attr "script={self.cms_install_path}/bin/cluster.sh"'
             )
-            self._add_gbps_res()
+            self._add_rbps_res()
 
         elif self.node_id == 1:
             self._wait_for_node1()

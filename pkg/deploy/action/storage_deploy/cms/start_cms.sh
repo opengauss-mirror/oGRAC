@@ -159,9 +159,9 @@ function set_cms() {
     fi
 
     ${CMS_INSTALL_PATH}/bin/cms res -add db -type db -attr "script=${CMS_INSTALL_PATH}/bin/cluster.sh"
-    gbps_script="${CMS_INSTALL_PATH}/bin/gbps_contrl.sh"
-    if [ -x "${gbps_script}" ] && ! ${CMS_INSTALL_PATH}/bin/cms res -list 2>/dev/null | awk '{print $1}' | grep -qi "^gbps$"; then
-      ${CMS_INSTALL_PATH}/bin/cms res -add gbps -type gbps -attr "script=${gbps_script}"
+    rbps_script="${CMS_INSTALL_PATH}/bin/rbps_contrl.sh"
+    if [ -x "${rbps_script}" ] && ! ${CMS_INSTALL_PATH}/bin/cms res -list 2>/dev/null | awk '{print $1}' | grep -qi "^rbps$"; then
+      ${CMS_INSTALL_PATH}/bin/cms res -add rbps -type rbps -attr "script=${rbps_script}"
     fi
     if [[ ${DEPLOY_MODE} == "dbstor" || ${DEPLOY_MODE} == "combined" ]] && [[ ! -f /opt/ograc/youmai_demo ]]; then
       ${CMS_INSTALL_PATH}/bin/cms gccmark -create

@@ -86,7 +86,7 @@ include_directories(
         "${PROJECT_SOURCE_DIR}/pkg/src/utils/ogbackup"
         "${PROJECT_SOURCE_DIR}/pkg/src/ogbox"
         "${PROJECT_SOURCE_DIR}/pkg/src/ogrst"
-        "${PROJECT_SOURCE_DIR}/pkg/src/gbp"
+        "${PROJECT_SOURCE_DIR}/pkg/src/rbp"
         "${PROJECT_SOURCE_DIR}/pkg/src/extproc"
         "${PROJECT_SOURCE_DIR}/pkg/src/ogsql/pl/include"
         "${PROJECT_SOURCE_DIR}/pkg/src/mec"

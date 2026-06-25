@@ -514,9 +514,9 @@ static void srv_process_demote_request_core(knl_session_t *session, knl_instance
         CM_ABORT(0, "[INST] [SWITCHOVER] ABORT INFO: failed to save ctrlfile, demote failed");
     }
 
-    if (KNL_GBP_ENABLE(kernel)) {
-        if (gbp_aly_init(session) != OG_SUCCESS) {
-            CM_ABORT(0, "[INST] ABORT INFO: failed to create gbp analyze thread");
+    if (KNL_RBP_ENABLE(kernel)) {
+        if (rbp_aly_init(session) != OG_SUCCESS) {
+            CM_ABORT(0, "[INST] ABORT INFO: failed to create rbp analyze thread");
         }
     }
 
@@ -547,7 +547,7 @@ static void srv_process_demote_request(void)
         return;
     }
 
-    OG_RETVOID_IFTRUE(KNL_GBP_ENABLE(kernel) && KNL_RECOVERY_WITH_GBP(kernel));
+    OG_RETVOID_IFTRUE(KNL_RBP_ENABLE(kernel) && KNL_RECOVERY_WITH_RBP(kernel));
     if (!srv_killed_session_flush_end(OG_TRUE)) {
         cm_spin_unlock(&db->lock);
         return;
@@ -859,10 +859,10 @@ static void srv_process_promote_request(void)
     lsnd_close_all_thread(session);
     lrcv_close(session);
     lrpl_close(session);
-    gbp_aly_close(session);
+    rbp_aly_close(session);
     lftc_clt_close(session);
     rcy_close_proc(session);
-    OG_LOG_RUN_INF("[INST] [SWITCHOVER] close lsnd & lrcv & lrpl & gbp_aly & lftc & rcy");
+    OG_LOG_RUN_INF("[INST] [SWITCHOVER] close lsnd & lrcv & lrpl & rbp_aly & lftc & rcy");
 
     // from now on, we are running as primary
     knl_inc_dc_ver(kernel);
@@ -999,7 +999,7 @@ static void srv_process_force_promote_request(void)
         reactor_resume_pool();
         srv_resume_lsnr(LSNR_TYPE_SERVICE);
 
-        ctrl->state = KNL_GBP_ENABLE(kernel) ? SWITCH_WAIT_LOG_ANALYSIS : SWITCH_WAIT_RECOVERY;
+        ctrl->state = KNL_RBP_ENABLE(kernel) ? SWITCH_WAIT_LOG_ANALYSIS : SWITCH_WAIT_RECOVERY;
         log->promote_temp_time = KNL_NOW(session);
         OG_LOG_RUN_INF("[INST] [%sFAILOVER] log replay from [%llu-%u-%u/%llu]", force ? "FORCE " : "",
             (uint64)lrpl->curr_point.rst_id, lrpl->curr_point.asn, lrpl->curr_point.block_id,
@@ -1007,11 +1007,11 @@ static void srv_process_force_promote_request(void)
     }
 
     if (ctrl->state == SWITCH_WAIT_LOG_ANALYSIS) {
-        if (!kernel->gbp_aly_ctx.thread.closed) {
+        if (!kernel->rbp_aly_ctx.thread.closed) {
             cm_spin_unlock(&db->lock);
             return;
         }
-        gbp_record_promote_time(session, "Log analyze", "FAILOVER");
+        rbp_record_promote_time(session, "Log analyze", "FAILOVER");
         ctrl->state = SWITCH_WAIT_RECOVERY;
     }
 
@@ -1022,12 +1022,12 @@ static void srv_process_force_promote_request(void)
         }
 
         rcy_wait_replay_complete(session); // need wait parallel replay thread finished
-        if (KNL_GBP_SAFE(kernel)) {
-            CM_ASSERT(kernel->lrpl_ctx.curr_point.lfn == kernel->gbp_aly_ctx.curr_point.lfn);
+        if (KNL_RBP_SAFE(kernel)) {
+            CM_ASSERT(kernel->lrpl_ctx.curr_point.lfn == kernel->rbp_aly_ctx.curr_point.lfn);
         }
 
         OG_LOG_RUN_INF("[INST] [%sFAILOVER] LRPL has finished replay work", force ? "FORCE " : "");
-        gbp_record_promote_time(session, "LRPL replay", "FAILOVER");
+        rbp_record_promote_time(session, "LRPL replay", "FAILOVER");
         rcy_close_proc(session);
         /*
          * do not trigger full checkpoint when db->ctrl.core.rcy_point.rst_id == log_ctx->curr_point.rst_id
@@ -1273,17 +1273,17 @@ static void srv_process_force_raft_promote_request(void)
         reactor_resume_pool();
         srv_resume_lsnr(LSNR_TYPE_SERVICE);
 
-        ctrl->state = KNL_GBP_ENABLE(kernel) ? SWITCH_WAIT_LOG_ANALYSIS : SWITCH_WAIT_RECOVERY;
+        ctrl->state = KNL_RBP_ENABLE(kernel) ? SWITCH_WAIT_LOG_ANALYSIS : SWITCH_WAIT_RECOVERY;
         log_ctx->promote_temp_time = KNL_NOW(session);
         OG_LOG_RUN_INF("[INST] failover log repaly from [%llu-%u-%u/%llu]", (uint64)lrpl->curr_point.rst_id,
             lrpl->curr_point.asn, lrpl->curr_point.block_id, (uint64)lrpl->curr_point.lfn);
     }
 
     if (ctrl->state == SWITCH_WAIT_LOG_ANALYSIS) {
-        if (!kernel->gbp_aly_ctx.thread.closed) {
+        if (!kernel->rbp_aly_ctx.thread.closed) {
             return;
         }
-        gbp_record_promote_time(session, "Log analyze", "FAILOVER");
+        rbp_record_promote_time(session, "Log analyze", "FAILOVER");
         ctrl->state = SWITCH_WAIT_RECOVERY;
     }
 
@@ -1293,12 +1293,12 @@ static void srv_process_force_raft_promote_request(void)
         }
 
         rcy_wait_replay_complete(session); // need wait parallel replay thread finished
-        if (KNL_GBP_SAFE(kernel)) {
-            CM_ASSERT(kernel->lrpl_ctx.curr_point.lfn == kernel->gbp_aly_ctx.curr_point.lfn);
+        if (KNL_RBP_SAFE(kernel)) {
+            CM_ASSERT(kernel->lrpl_ctx.curr_point.lfn == kernel->rbp_aly_ctx.curr_point.lfn);
         }
 
         OG_LOG_RUN_INF("[INST] [FAILOVER] LRPL has finished replay work");
-        gbp_record_promote_time(session, "LRPL replay", "FAILOVER");
+        rbp_record_promote_time(session, "LRPL replay", "FAILOVER");
         rcy_close_proc(session);
         /*
          * do not trigger full checkpoint when db->ctrl.core.rcy_point.rst_id == log_ctx->curr_point.rst_id
@@ -1471,7 +1471,7 @@ static status_t srv_kernel_startup(bool32 is_coordinator)
 
     OG_LOG_RUN_INF("begin start kernel.");
     knl_init_attr(kernel);
-    OG_RETURN_IFERR(srv_load_gbp_params());
+    OG_RETURN_IFERR(srv_load_rbp_params());
     kernel->home = g_instance->home;
     kernel->id = kernel->dtc_attr.inst_id;
     g_local_inst_id = kernel->id;

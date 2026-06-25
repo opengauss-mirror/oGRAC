@@ -38,7 +38,7 @@
 #include "rc_reform.h"
 #include "dtc_backup.h"
 #include "repl_log_replay.h"
-#include "dtc_gbp_rt_aly.h"
+#include "dtc_rbp_rt_aly.h"
 status_t init_dtc_rc(void)
 {
     knl_session_t *session;
@@ -1256,8 +1256,8 @@ void rc_after_reform_done(knl_session_t *session)
         return;
     }
 
-    if (dtc_gbp_rt_aly_start(session) != OG_SUCCESS) {
-        OG_LOG_RUN_WAR("[DTC GBP RT] failed to restart runtime analyzer after reform, partial recovery will fallback");
+    if (dtc_rbp_rt_aly_start(session) != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("[DTC RBP RT] failed to restart runtime analyzer after reform, partial recovery will fallback");
     }
 }
 

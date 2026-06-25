@@ -79,7 +79,7 @@ GLOBAL_COPTS = [
     # "-Ipkg/src/utils/ogbackup",    # maybe redundant include path
     # "-Ipkg/src/ogbox",    # maybe redundant include path
     # "-Ipkg/src/ztrst",    # maybe redundant include path
-    # "-Ipkg/src/gbp",    # maybe redundant include path
+    # "-Ipkg/src/rbp",    # maybe redundant include path
     # "-Ipkg/src/mec",    # maybe redundant include path
     # "-Ilibrary/xnet/include",    # maybe redundant include path
     # "-Ilibrary/dbstor/include/dbstor",    # maybe redundant include path

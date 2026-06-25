@@ -1249,14 +1249,14 @@ static inline status_t cms_find_unused_res_id(const cms_gcc_t *gcc, uint32 *res_
     return OG_ERROR;
 }
 
-static inline status_t cms_find_unused_gbps_res_id(const cms_gcc_t *gcc, uint32 *res_id)
+static inline status_t cms_find_unused_rbps_res_id(const cms_gcc_t *gcc, uint32 *res_id)
 {
     if (cms_find_unused_res_id_in_range(gcc, CMS_CORE_RES_STAT_LOCK_COUNT,
         CMS_MANAGED_RESOURCE_COUNT, res_id) == OG_SUCCESS) {
         return OG_SUCCESS;
     }
 
-    OG_THROW_ERROR(ERR_CMS_NUM_EXCEED, "gbps resource",
+    OG_THROW_ERROR(ERR_CMS_NUM_EXCEED, "rbps resource",
         (uint32)(CMS_MANAGED_RESOURCE_COUNT - CMS_CORE_RES_STAT_LOCK_COUNT));
     return OG_ERROR;
 }
@@ -1302,13 +1302,13 @@ static inline status_t cms_check_res_and_resgrp(cms_gcc_t *gcc, const char* grp,
     return OG_SUCCESS;
 }
 
-static bool32 cms_gcc_is_gbps_res(const char *name, const char *type)
+static bool32 cms_gcc_is_rbps_res(const char *name, const char *type)
 {
-    return ((name != NULL && cm_strcmpi(name, CMS_RES_TYPE_GBPS) == 0) ||
-        (type != NULL && cm_strcmpi(type, CMS_RES_TYPE_GBPS) == 0));
+    return ((name != NULL && cm_strcmpi(name, CMS_RES_TYPE_RBPS) == 0) ||
+        (type != NULL && cm_strcmpi(type, CMS_RES_TYPE_RBPS) == 0));
 }
 
-static status_t cms_move_gbps_res_to_optional_slot(cms_gcc_t *gcc, uint32 *res_id, bool32 *changed)
+static status_t cms_move_rbps_res_to_optional_slot(cms_gcc_t *gcc, uint32 *res_id, bool32 *changed)
 {
     errno_t ret;
     uint32 new_res_id;
@@ -1317,7 +1317,7 @@ static status_t cms_move_gbps_res_to_optional_slot(cms_gcc_t *gcc, uint32 *res_i
         return OG_SUCCESS;
     }
 
-    if (cms_find_unused_gbps_res_id(gcc, &new_res_id) != OG_SUCCESS) {
+    if (cms_find_unused_rbps_res_id(gcc, &new_res_id) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
@@ -1326,7 +1326,7 @@ static status_t cms_move_gbps_res_to_optional_slot(cms_gcc_t *gcc, uint32 *res_i
     ret = memset_sp(&gcc->res[*res_id], sizeof(cms_res_t), 0, sizeof(cms_res_t));
     MEMS_RETURN_IFERR(ret);
 
-    CMS_LOG_INF("move gbps resource id from %u to %u.", *res_id, new_res_id);
+    CMS_LOG_INF("move rbps resource id from %u to %u.", *res_id, new_res_id);
     *res_id = new_res_id;
     *changed = OG_TRUE;
     return OG_SUCCESS;
@@ -1358,10 +1358,10 @@ status_t cms_add_res(const char* name, const char* res_type, const char* grp, co
     }
 
     old_res = cms_find_res(new_gcc, name);
-    if (old_res != NULL && cms_gcc_is_gbps_res(name, res_type) &&
-        cms_gcc_is_gbps_res(old_res->name, old_res->type)) {
+    if (old_res != NULL && cms_gcc_is_rbps_res(name, res_type) &&
+        cms_gcc_is_rbps_res(old_res->name, old_res->type)) {
         res_id = old_res->res_id;
-        if (cms_move_gbps_res_to_optional_slot(new_gcc, &res_id, &gcc_changed) != OG_SUCCESS) {
+        if (cms_move_rbps_res_to_optional_slot(new_gcc, &res_id, &gcc_changed) != OG_SUCCESS) {
             CM_FREE_PTR(new_gcc);
             return OG_ERROR;
         }
@@ -1381,7 +1381,7 @@ status_t cms_add_res(const char* name, const char* res_type, const char* grp, co
                 return OG_ERROR;
             }
         }
-        CMS_LOG_INF("gbps resource already exists, refresh attrs and skip add.");
+        CMS_LOG_INF("rbps resource already exists, refresh attrs and skip add.");
         CM_FREE_PTR(new_gcc);
         return OG_SUCCESS;
     }
@@ -1392,8 +1392,8 @@ status_t cms_add_res(const char* name, const char* res_type, const char* grp, co
         return OG_ERROR;
     }
 
-    if (cms_gcc_is_gbps_res(name, res_type)) {
-        ret = cms_find_unused_gbps_res_id(new_gcc, &res_id);
+    if (cms_gcc_is_rbps_res(name, res_type)) {
+        ret = cms_find_unused_rbps_res_id(new_gcc, &res_id);
     } else {
         ret = cms_find_unused_res_id(new_gcc, &res_id);
     }

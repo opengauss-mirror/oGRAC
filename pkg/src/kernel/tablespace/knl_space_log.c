@@ -926,7 +926,7 @@ static void rd_spc_extend_datafile_internal(knl_session_t *session, rd_extend_da
     }
     datafile_t *df = DATAFILE_GET(session, redo->id);
     int32 *handle = DATAFILE_FD(session, redo->id);
-    bool32 need_lock = KNL_GBP_ENABLE(session->kernel);
+    bool32 need_lock = KNL_RBP_ENABLE(session->kernel);
 
     if (!df->ctrl->used || !DATAFILE_IS_ONLINE(df)) {
         return;
@@ -943,8 +943,8 @@ static void rd_spc_extend_datafile_internal(knl_session_t *session, rd_extend_da
         return;
     }
 
-    if (need_lock) { // concurrency with gbp_aly_spc_extend_datafile in gbp_aly_proc
-        cm_spin_lock(&session->kernel->gbp_aly_ctx.extend_lock, NULL);
+    if (need_lock) { // concurrency with rbp_aly_spc_extend_datafile in rbp_aly_proc
+        cm_spin_lock(&session->kernel->rbp_aly_ctx.extend_lock, NULL);
     }
 
     if (OGRAC_REPLAY_NODE(session)) {
@@ -984,7 +984,7 @@ static void rd_spc_extend_datafile_internal(knl_session_t *session, rd_extend_da
     }
 
     if (need_lock) {
-        cm_spin_unlock(&session->kernel->gbp_aly_ctx.extend_lock);
+        cm_spin_unlock(&session->kernel->rbp_aly_ctx.extend_lock);
     }
 }
 
@@ -994,12 +994,12 @@ void rd_spc_extend_datafile(knl_session_t *session, log_entry_t *log)
     rd_spc_extend_datafile_internal(session, redo);
 }
 
-void gbp_aly_spc_extend_datafile(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_spc_extend_datafile(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
-    if (KNL_GBP_SAFE(session->kernel)) {
+    if (KNL_RBP_SAFE(session->kernel)) {
         rd_spc_extend_datafile(session, log);
     } else {
-        gbp_aly_unsafe_entry(session, log, lsn);
+        rbp_aly_unsafe_entry(session, log, lsn);
     }
 }
 

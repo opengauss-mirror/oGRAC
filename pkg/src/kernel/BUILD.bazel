@@ -85,7 +85,7 @@ cc_library (
         "persist/knl_log.c",
         "persist/knl_log_file.c",
         "persist/knl_recovery.c",
-        "replication/knl_gbp.c",
+        "replication/knl_rbp.c",
         "replication/repl_arch_fetch.c",
         "replication/repl_log_recv.c",
         "replication/repl_log_replay.c",

@@ -37,8 +37,8 @@ void rd_leave_page(knl_session_t *session, log_entry_t *log);
 void print_enter_page(log_entry_t *log);
 void print_leave_page(log_entry_t *log);
 
-void gbp_aly_enter_page(knl_session_t *session, log_entry_t *log, uint64 lsn);
-void gbp_aly_leave_page(knl_session_t *session, log_entry_t *log, uint64 lsn);
+void rbp_aly_enter_page(knl_session_t *session, log_entry_t *log, uint64 lsn);
+void rbp_aly_leave_page(knl_session_t *session, log_entry_t *log, uint64 lsn);
 
 #ifdef __cplusplus
 }

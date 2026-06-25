@@ -280,58 +280,58 @@ typedef struct st_replay_stat {
 } replay_stat_t;
 
 /*
- * Keep a compact per-page touch summary for GBP verify.
+ * Keep a compact per-page touch summary for RBP verify.
  * Each slot packs node_id in the high 8 bits and lfn in the low 48 bits. A page is rarely written by many nodes
- * inside one recovery window; if these slots overflow, GBP analysis marks unsafe and recovery falls back to redo.
+ * inside one recovery window; if these slots overflow, RBP analysis marks unsafe and recovery falls back to redo.
  */
-#define GBP_ALY_TOUCH_SLOT_COUNT 2
-#define GBP_ALY_TOUCH_NODE_SHIFT 56
-#define GBP_ALY_TOUCH_LFN_MASK   0x0000FFFFFFFFFFFFULL
-#define GBP_ALY_PACK_TOUCH(node_id, lfn) ((((uint64)(node_id)) << GBP_ALY_TOUCH_NODE_SHIFT) | \
-    ((uint64)(lfn) & GBP_ALY_TOUCH_LFN_MASK))
-#define GBP_ALY_TOUCH_NODE(touch) ((uint32)((uint64)(touch) >> GBP_ALY_TOUCH_NODE_SHIFT))
-#define GBP_ALY_TOUCH_LFN(touch)  ((uint64)(touch) & GBP_ALY_TOUCH_LFN_MASK)
+#define RBP_ALY_TOUCH_SLOT_COUNT 2
+#define RBP_ALY_TOUCH_NODE_SHIFT 56
+#define RBP_ALY_TOUCH_LFN_MASK   0x0000FFFFFFFFFFFFULL
+#define RBP_ALY_PACK_TOUCH(node_id, lfn) ((((uint64)(node_id)) << RBP_ALY_TOUCH_NODE_SHIFT) | \
+    ((uint64)(lfn) & RBP_ALY_TOUCH_LFN_MASK))
+#define RBP_ALY_TOUCH_NODE(touch) ((uint32)((uint64)(touch) >> RBP_ALY_TOUCH_NODE_SHIFT))
+#define RBP_ALY_TOUCH_LFN(touch)  ((uint64)(touch) & RBP_ALY_TOUCH_LFN_MASK)
 
 /* log analyze item(page/lsn/lfn) */
-typedef struct st_gbp_analyse_item {
+typedef struct st_rbp_analyse_item {
     page_id_t page_id;
     volatile uint64 lsn;             // expect lsn after failover done
     volatile uint64 unused : 8;      // reseved
-    volatile uint64 is_verified : 8; // whether gbp page is verifyed
+    volatile uint64 is_verified : 8; // whether rbp page is verifyed
     volatile uint64 lfn : 48;        // the lfn of batch contain this page
     /*
-     * lsn/lfn/node_id are overwritten by the latest touch of a page. Partial GBP also needs the first touch so
+     * lsn/lfn/node_id are overwritten by the latest touch of a page. Partial RBP also needs the first touch so
      * verification still covers pages that were modified in the skipped prefix and then modified again by tail redo.
      */
     volatile uint64 first_node_id : 8;
     volatile uint64 first_lfn : 48;
     volatile uint64 first_reserved : 8;
-    volatile uint64 touch_min[GBP_ALY_TOUCH_SLOT_COUNT];
-    volatile uint64 touch_max[GBP_ALY_TOUCH_SLOT_COUNT];
+    volatile uint64 touch_min[RBP_ALY_TOUCH_SLOT_COUNT];
+    volatile uint64 touch_max[RBP_ALY_TOUCH_SLOT_COUNT];
     /*
-     * v6 multi-node GBP keeps recovery-side candidate state here:
+     * v6 multi-node RBP keeps recovery-side candidate state here:
      * - best_lsn / best_source_node record the best page that does not exceed expect_lsn;
-     * - seen_node_bitmap records which per-node GBP servers have responded for this page;
+     * - seen_node_bitmap records which per-node RBP servers have responded for this page;
      * - node_id records which redo stream produced the expect_lsn so verify can map the page back
      *   to that node's skipped prefix.
      */
-    volatile uint64 best_lsn;        // best GBP candidate lsn which is <= expect lsn
+    volatile uint64 best_lsn;        // best RBP candidate lsn which is <= expect lsn
     volatile uint64 seen_node_bitmap;
     volatile uint32 best_source_node;
     volatile uint32 node_id;
-    struct st_gbp_analyse_item *next;
-} gbp_analyse_item_t;
+    struct st_rbp_analyse_item *next;
+} rbp_analyse_item_t;
 
-typedef struct st_gbp_analyse_bucket {
+typedef struct st_rbp_analyse_bucket {
     uint32 count;
-    gbp_analyse_item_t *first;
-} gbp_analyse_bucket_t;
+    rbp_analyse_item_t *first;
+} rbp_analyse_bucket_t;
 
-typedef struct st_gbp_analyse_result {
-    volatile bool32 gbp_unsafe;
+typedef struct st_rbp_analyse_result {
+    volatile bool32 rbp_unsafe;
     log_type_t unsafe_type;
     uint64 unsafe_max_lsn;
-} gbp_analyse_result_t;
+} rbp_analyse_result_t;
 
 typedef struct st_log_context {
     spinlock_t commit_lock;       // lock for commit
@@ -389,19 +389,19 @@ typedef struct st_log_context {
     log_verify_nolog_insert_proc verify_nolog_insert_proc[RD_TYPE_END];
     log_stop_backup_proc stop_backup_proc[RD_TYPE_END];
     log_point_t redo_end_point;
-    aligned_buf_t gbp_aly_mem;
-    gbp_analyse_item_t *gbp_aly_items;
-    gbp_analyse_bucket_t *gbp_aly_buckets;
-    gbp_analyse_bucket_t gbp_aly_free_list;
-    gbp_analyse_result_t gbp_aly_result;
-    volatile uint64 gbp_aly_lsn;
-    volatile bool32 rcy_with_gbp;
-    bool32 last_rcy_with_gbp;
-    log_point_t gbp_skip_point;
-    log_point_t gbp_begin_point;
-    log_point_t gbp_rcy_point;
-    log_point_t gbp_lrp_point;
-    uint64 gbp_rcy_lfn;
+    aligned_buf_t rbp_aly_mem;
+    rbp_analyse_item_t *rbp_aly_items;
+    rbp_analyse_bucket_t *rbp_aly_buckets;
+    rbp_analyse_bucket_t rbp_aly_free_list;
+    rbp_analyse_result_t rbp_aly_result;
+    volatile uint64 rbp_aly_lsn;
+    volatile bool32 rcy_with_rbp;
+    bool32 last_rcy_with_rbp;
+    log_point_t rbp_skip_point;
+    log_point_t rbp_begin_point;
+    log_point_t rbp_rcy_point;
+    log_point_t rbp_lrp_point;
+    uint64 rbp_rcy_lfn;
 
     date_t promote_begin_time;
     date_t promote_temp_time;

@@ -34,7 +34,7 @@
 #include "knl_xa_persist.h"
 #include "dtc_dc.h"
 #include "dtc_buffer.h"
-#include "knl_gbp.h"
+#include "knl_rbp.h"
 
 void log_get_manager(log_manager_t **lmgr, uint32 *count)
 {
@@ -118,7 +118,7 @@ static bool32 rcy_is_skip(knl_session_t *session, log_type_t type)
 
     if (!DB_IS_CLUSTER(session) && DB_IS_OPEN(session) && (type == RD_TX_END || type == RD_XA_PHASE1)) {
         /*
-         * gbp log analyze proc will replay txn redo, and maintain txn area, but it can not forward scn
+         * rbp log analyze proc will replay txn redo, and maintain txn area, but it can not forward scn
          * only lrpl proc can forward scn, so we do not skip RD_TX_END and RD_XA_PHASE1 in rcy_is_skip
          * is_skip will been judged in rd_tx_end and rd_xa_phase1
          */
@@ -161,25 +161,25 @@ void rcy_page_set_damage(knl_session_t *session, pcn_verify_t *log_pcns, log_typ
     return;
 }
 
-static void rcy_log_gbp_expect_page(knl_session_t *session, uint32 log_pcn)
+static void rcy_log_rbp_expect_page(knl_session_t *session, uint32 log_pcn)
 {
     buf_ctrl_t *cp = session->curr_page_ctrl;
     dtc_rcy_context_t *dtc_rcy = DB_IS_CLUSTER(session) ? DTC_RCY_CONTEXT : NULL;
     uint32 curr_node = (dtc_rcy == NULL) ? OG_INVALID_ID32 : dtc_rcy->curr_node;
-    uint64 gbp_skip_lfn = (curr_node < OG_MAX_INSTANCES) ? dtc_rcy->gbp_skip_points[curr_node].lfn : 0;
-    uint64 gbp_rcy_lfn = (curr_node < OG_MAX_INSTANCES) ? dtc_rcy->gbp_rcy_points[curr_node].lfn : 0;
+    uint64 rbp_skip_lfn = (curr_node < OG_MAX_INSTANCES) ? dtc_rcy->rbp_skip_points[curr_node].lfn : 0;
+    uint64 rbp_rcy_lfn = (curr_node < OG_MAX_INSTANCES) ? dtc_rcy->rbp_rcy_points[curr_node].lfn : 0;
 
-    if (cp == NULL || cp->page == NULL || cp->gbp_ctrl == NULL) {
+    if (cp == NULL || cp->page == NULL || cp->rbp_ctrl == NULL) {
         return;
     }
 
-    OG_LOG_RUN_WAR("[GBP_RCY_TRACE] EXPECT_PAGE page=%u-%u replay_lsn=%llu log_pcn=%u page_pcn=%u "
-                   "page_lsn=%llu is_from_gbp=%u page_status=%u gbp_read_version=%u curr_node=%u "
-                   "gbp_skip_lfn=%llu gbp_rcy_lfn=%llu",
+    OG_LOG_RUN_WAR("[RBP_RCY_TRACE] EXPECT_PAGE page=%u-%u replay_lsn=%llu log_pcn=%u page_pcn=%u "
+                   "page_lsn=%llu is_from_rbp=%u page_status=%u rbp_read_version=%u curr_node=%u "
+                   "rbp_skip_lfn=%llu rbp_rcy_lfn=%llu",
                    cp->page_id.file, cp->page_id.page, (uint64)session->curr_lsn, log_pcn,
-                   (uint32)cp->page->pcn, (uint64)cp->page->lsn, (uint32)cp->gbp_ctrl->is_from_gbp,
-                   (uint32)cp->gbp_ctrl->page_status, (uint32)cp->gbp_ctrl->gbp_read_version, curr_node,
-                   (uint64)gbp_skip_lfn, (uint64)gbp_rcy_lfn);
+                   (uint32)cp->page->pcn, (uint64)cp->page->lsn, (uint32)cp->rbp_ctrl->is_from_rbp,
+                   (uint32)cp->rbp_ctrl->page_status, (uint32)cp->rbp_ctrl->rbp_read_version, curr_node,
+                   (uint64)rbp_skip_lfn, (uint64)rbp_rcy_lfn);
 }
 
 void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_t *log_pcns, uint32 log_pcns_size)
@@ -213,7 +213,7 @@ void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_
 
         changed = *(bool32 *)log->data;
         if (changed && (!DB_IS_MAXFIX(session))) {
-            rcy_log_gbp_expect_page(session, log_pcns[session->page_stack.depth - 1].pcn);
+            rcy_log_rbp_expect_page(session, log_pcns[session->page_stack.depth - 1].pcn);
             dtc_rcy_log_pcn_mismatch_diag(session, "pcn_leave_page_panic", log_pcns[session->page_stack.depth - 1].pcn,
                 session->curr_page_ctrl->page->pcn, log->type);
             knl_panic_log(OG_FALSE, "log entry pcn %u not equal page pcn %u.page_id: %u-%u, lsn: %llu, curr_file: %s",
@@ -237,15 +237,15 @@ void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_
 
         if (log_pcns[session->page_stack.depth - 1].pcn != session->curr_page_ctrl->page->pcn) {
             buf_ctrl_t *cp = session->curr_page_ctrl;
-            rcy_log_gbp_expect_page(session, log_pcns[session->page_stack.depth - 1].pcn);
+            rcy_log_rbp_expect_page(session, log_pcns[session->page_stack.depth - 1].pcn);
             OG_LOG_RUN_WAR(
-                "[GBP_BUF_TRACE] PCN_MISMATCH before_damage log_type=%u log_pcn=%u page_pcn=%u page %u-%u "
-                "page_lsn=%llu rcy_with_gbp=%u knl_gbp_read_ver=%u ctrl_gbp_read_ver=%u is_from_gbp=%u page_status=%u "
+                "[RBP_BUF_TRACE] PCN_MISMATCH before_damage log_type=%u log_pcn=%u page_pcn=%u page %u-%u "
+                "page_lsn=%llu rcy_with_rbp=%u knl_rbp_read_ver=%u ctrl_rbp_read_ver=%u is_from_rbp=%u page_status=%u "
                 "load_status=%u replay_lsn=%llu sid=%u",
                 (uint32)log->type, log_pcns[session->page_stack.depth - 1].pcn, cp->page->pcn, cp->page_id.file,
-                cp->page_id.page, (uint64)cp->page->lsn, (uint32)KNL_RECOVERY_WITH_GBP(session->kernel),
-                (uint32)KNL_GBP_READ_VER(session->kernel), (uint32)cp->gbp_ctrl->gbp_read_version,
-                (uint32)cp->gbp_ctrl->is_from_gbp, (uint32)cp->gbp_ctrl->page_status, (uint32)cp->load_status,
+                cp->page_id.page, (uint64)cp->page->lsn, (uint32)KNL_RECOVERY_WITH_RBP(session->kernel),
+                (uint32)KNL_RBP_READ_VER(session->kernel), (uint32)cp->rbp_ctrl->rbp_read_version,
+                (uint32)cp->rbp_ctrl->is_from_rbp, (uint32)cp->rbp_ctrl->page_status, (uint32)cp->load_status,
                 (uint64)session->curr_lsn, session->id);
             log_pcns[session->page_stack.depth - 1].failed = OG_TRUE;
             rcy_page_set_damage(session, log_pcns, log->type);
@@ -364,9 +364,9 @@ static void rcy_analysis_entry(knl_session_t *session, log_entry_t *log)
     log_context_t *ogx = &session->kernel->redo_ctx;
 
     knl_panic_log(ogx->analysis_procs[log->type] != NULL, "current analysis_procs is NULL.");
-    /* always analysis it if this log is gbp_unsafe or gbp_safe */
-    if (ogx->analysis_procs[log->type] == gbp_aly_unsafe_entry ||
-        ogx->analysis_procs[log->type] == gbp_aly_safe_entry) {
+    /* always analysis it if this log is rbp_unsafe or rbp_safe */
+    if (ogx->analysis_procs[log->type] == rbp_aly_unsafe_entry ||
+        ogx->analysis_procs[log->type] == rbp_aly_safe_entry) {
         ogx->analysis_procs[log->type](session, log, session->curr_lsn);
     } else {
         /* because we may replay log during log analysis, so we must follow `skip' logical */
@@ -418,8 +418,8 @@ void rcy_wait_replay_complete(knl_session_t *session)
         rcy->preload_info[i].group_id = 0;
         rcy->preload_info[i].curr = i;
     }
-    if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
-        gbp_unsafe_redo_check(session);
+    if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
+        rbp_unsafe_redo_check(session);
     }
 }
 
@@ -535,8 +535,8 @@ static void rcy_replay_group_end(knl_session_t *session)
         ckpt_enque_page(session);
     }
 
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel) && session->gbp_dirty_count > 0)) {
-        gbp_enque_pages(session);
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel) && session->rbp_dirty_count > 0)) {
+        rbp_enque_pages(session);
     }
 
     if (session->changed_count > 0) {
@@ -559,10 +559,10 @@ static void rcy_unwind_page_stack(knl_session_t *session, uint32 depth)
     }
 }
 
-static inline bool32 rcy_gbp_fallback_required(knl_session_t *session)
+static inline bool32 rcy_rbp_fallback_required(knl_session_t *session)
 {
-    return (bool32)(SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) &&
-                    gbp_knl_dtc_fallback_required(session));
+    return (bool32)(SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) &&
+                    rbp_knl_dtc_fallback_required(session));
 }
 
 static status_t rcy_paral_replay_group(knl_session_t *session, rcy_bucket_t *bucket, log_context_t *ogx,
@@ -582,21 +582,21 @@ static status_t rcy_paral_replay_group(knl_session_t *session, rcy_bucket_t *buc
     session->ddl_lsn_pitr = paral_group->ddl_lsn_pitr;
     offset = sizeof(log_group_t);
     session->rm->nolog_type = group->nologging_insert ? TABLE_LEVEL : LOGGING_LEVEL;
-    if (rcy_gbp_fallback_required(session)) {
+    if (rcy_rbp_fallback_required(session)) {
         session->rm->nolog_type = LOGGING_LEVEL;
         return OG_ERROR;
     }
     while (offset < LOG_GROUP_ACTUAL_SIZE(group)) {
         log = (log_entry_t *)((char *)group + offset);
         if (rcy_paral_replay_entry(session, bucket, log, paral_group, pcn_list) != OG_SUCCESS) {
-            if (rcy_gbp_fallback_required(session)) {
+            if (rcy_rbp_fallback_required(session)) {
                 rcy_unwind_page_stack(session, stack_depth);
                 rcy_replay_group_end(session);
             }
             session->rm->nolog_type = LOGGING_LEVEL;
             return OG_ERROR;
         }
-        if (rcy_gbp_fallback_required(session)) {
+        if (rcy_rbp_fallback_required(session)) {
             rcy_unwind_page_stack(session, stack_depth);
             rcy_replay_group_end(session);
             session->rm->nolog_type = LOGGING_LEVEL;
@@ -628,14 +628,14 @@ status_t rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_
     se->curr_lsn = group->lsn;
     offset = sizeof(log_group_t);
     se->rm->nolog_type = group->nologging_insert ? TABLE_LEVEL : LOGGING_LEVEL;
-    if (rcy_gbp_fallback_required(se)) {
+    if (rcy_rbp_fallback_required(se)) {
         se->rm->nolog_type = LOGGING_LEVEL;
         return OG_ERROR;
     }
     while (offset < LOG_GROUP_ACTUAL_SIZE(group)) {
         log = (log_entry_t *)((char *)group + offset);
         rcy_replay_entry(se, log, log_pcns, KNL_MAX_PAGE_STACK_DEPTH);
-        if (rcy_gbp_fallback_required(se)) {
+        if (rcy_rbp_fallback_required(se)) {
             rcy_unwind_page_stack(se, stack_depth);
             rcy_replay_group_end(se);
             se->rm->nolog_type = LOGGING_LEVEL;
@@ -648,7 +648,7 @@ status_t rcy_replay_group(knl_session_t *session, log_context_t *ogx, log_group_
     return OG_SUCCESS;
 }
 
-/* when GBP enabled, analyze standby redo log group, set page latest lsn to gbp aly item */
+/* when RBP enabled, analyze standby redo log group, set page latest lsn to rbp aly item */
 void rcy_analysis_group(knl_session_t *session, log_context_t *ogx, log_group_t *group)
 {
     uint32 offset;
@@ -659,7 +659,7 @@ void rcy_analysis_group(knl_session_t *session, log_context_t *ogx, log_group_t 
         se = session;  // use aly session for log analysis
     }
 
-    ogx->gbp_aly_lsn = group->lsn;
+    ogx->rbp_aly_lsn = group->lsn;
     se->curr_lsn = group->lsn;
     offset = sizeof(log_group_t);
 
@@ -900,7 +900,7 @@ status_t rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral
     ELAPSED_BEGIN(begin_time);
     for (uint32 j = 0; j < rcy->capacity; j++) {
         while (rcy->bucket[j].head != rcy->bucket[j].tail) {
-            if (rcy_gbp_fallback_required(session)) {
+            if (rcy_rbp_fallback_required(session)) {
                 ELAPSED_END(begin_time, used_time);
                 stat->latc_rcy_logic_log_wait_time += used_time;
                 rcy_release_lock_pages(session, paral_group);
@@ -914,7 +914,7 @@ status_t rcy_replay_logic_group(knl_session_t *session, rcy_paral_group_t *paral
 
     ELAPSED_BEGIN(begin_time);
     status = rcy_paral_replay_group(session, NULL, ogx, paral_group);
-    if (status == OG_SUCCESS || rcy_gbp_fallback_required(session)) {
+    if (status == OG_SUCCESS || rcy_rbp_fallback_required(session)) {
         rcy_release_lock_pages(session, paral_group);
     }
     ELAPSED_END(begin_time, used_time);
@@ -940,8 +940,8 @@ static void rcy_paral_replay_batch(knl_session_t *session, log_cursor_t *cursor,
         if (SECUREC_UNLIKELY(group == NULL)) {
             break;
         }
-        // record curr replay lsn in redo_session when paral recovery, it will be used in gbp_page_verify
-        // because redo_curr_lsn must >= page lsn during lrpl, if gbp_page_lsn > redo_curr_lsn, means gbp page can used
+        // record curr replay lsn in redo_session when paral recovery, it will be used in rbp_page_verify
+        // because redo_curr_lsn must >= page lsn during lrpl, if rbp_page_lsn > redo_curr_lsn, means rbp page can used
         redo_session->curr_lsn = group->lsn;
         rcy_add_pages(rcy->curr_group, group, group_slot, rcy, &logic, &next_paral_group);
         group_slot++;
@@ -996,18 +996,18 @@ void rcy_replay_batch(knl_session_t *session, log_batch_t *batch)
             group = log_fetch_group(ogx, &cursor);
         }
         DB_SET_LFN(&ogx->lfn, batch->head.point.lfn);
-        if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
-            gbp_unsafe_redo_check(session);
+        if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
+            rbp_unsafe_redo_check(session);
         }
     }
 }
 
-/* when GBP enabled, analyze standby redo log batch */
+/* when RBP enabled, analyze standby redo log batch */
 void rcy_analysis_batch(knl_session_t *session, log_batch_t *batch)
 {
     knl_instance_t *kernel = session->kernel;
     log_context_t *ogx = &kernel->redo_ctx;
-    gbp_aly_ctx_t *aly = &kernel->gbp_aly_ctx;
+    rbp_aly_ctx_t *aly = &kernel->rbp_aly_ctx;
     log_cursor_t cursor;
 
     rcy_init_log_cursor(&cursor, batch);
@@ -1066,7 +1066,7 @@ static inline void rcy_next_file(knl_session_t *session, log_point_t *point, boo
         *need_more_log = OG_TRUE;
     } else if (!SESSION_IS_LOG_ANALYZE(session) && session->kernel->rcy_ctx.loading_curr_file) {
         *need_more_log = OG_TRUE;
-    } else if (SESSION_IS_LOG_ANALYZE(session) && session->kernel->gbp_aly_ctx.loading_curr_file) {
+    } else if (SESSION_IS_LOG_ANALYZE(session) && session->kernel->rbp_aly_ctx.loading_curr_file) {
         *need_more_log = OG_TRUE;
     } else {
         point->asn++;
@@ -1749,7 +1749,7 @@ static void rcy_perform(knl_session_t *session, rcy_bucket_t *bucket, uint64 *rc
     cm_spin_unlock(&bucket->lock);
 
     bucket->last_replay_time = g_timer()->now;
-    if (rcy_gbp_fallback_required(session)) {
+    if (rcy_rbp_fallback_required(session)) {
         timeval_t calc_work_time;
         ELAPSED_BEGIN(calc_work_time);
         rcy_release_lock_pages(session, ctrl);
@@ -1772,7 +1772,7 @@ static void rcy_perform(knl_session_t *session, rcy_bucket_t *bucket, uint64 *rc
     ELAPSED_BEGIN(calc_work_time);
 
     if (rcy_paral_replay_group(session, bucket, ogx, ctrl) != OG_SUCCESS) {
-        if (rcy_gbp_fallback_required(session)) {
+        if (rcy_rbp_fallback_required(session)) {
             rcy_release_lock_pages(session, ctrl);
             if (session->kernel->attr.clustered) {
                 dtc_rcy_atomic_dec_group_num(session, ctrl->group_list_idx, 1);
@@ -2065,7 +2065,7 @@ void rcy_close_file(knl_session_t *session)
     uint32 i;
 
     if (SESSION_IS_LOG_ANALYZE(session)) {
-        return;  // gbp aly session's log file handle is closed in gbp_aly_proc
+        return;  // rbp aly session's log file handle is closed in rbp_aly_proc
     }
     cm_close_device(cm_device_type(rcy_ctx->arch_file.name), &rcy_ctx->arch_file.handle);
     rcy_ctx->arch_file.handle = OG_INVALID_HANDLE;
@@ -2167,7 +2167,7 @@ status_t rcy_recover(knl_session_t *session)
         return dtc_recover(session);
     }
 
-    /* redo log analysis, if GBP is usable, move curr_point forward to gbp_rcy_point, skip some redo log */
+    /* redo log analysis, if RBP is usable, move curr_point forward to rbp_rcy_point, skip some redo log */
     if (rcy_redo_analysis(session, &curr_point) != OG_SUCCESS) {
         rcy_close_file(session);
         OG_LOG_RUN_ERR("[RCY] database redo analysis failed");
@@ -2313,8 +2313,8 @@ static void rcy_preload_proc(thread_t *thread)
         page_id.file = page->file;
         page_id.page = page->page;
 
-        /* RTO = 0, disable prefetch when db is recovery from GBP */
-        if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel) || IS_INVALID_PAGID(page_id))) {
+        /* RTO = 0, disable prefetch when db is recovery from RBP */
+        if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel) || IS_INVALID_PAGID(page_id))) {
             ctrl = NULL;
             rcy_update_preload_info(info, rcy, PRELOAD_BUFFER_PAGES);
             continue;
@@ -2599,7 +2599,7 @@ void print_replay_logic(log_entry_t *log)
     }
 }
 
-void gbp_aly_gbp_logic(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_rbp_logic(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     logic_op_t *op_type = (logic_op_t *)log->data;
 
@@ -2615,7 +2615,7 @@ void gbp_aly_gbp_logic(knl_session_t *session, log_entry_t *log, uint64 lsn)
             rd_alter_drop_logfile(session, log);
             break;
         default:
-            gbp_aly_unsafe_entry(session, log, lsn);
+            rbp_aly_unsafe_entry(session, log, lsn);
             break;
     }
 }

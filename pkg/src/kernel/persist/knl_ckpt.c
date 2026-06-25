@@ -45,7 +45,7 @@
 #include "dtc_dls.h"
 #include "dtc_dcs.h"
 #include "dtc_ckpt.h"
-#include "knl_gbp.h"
+#include "knl_rbp.h"
 #include "knl_ckpt.h"
 
 #define NEED_SYNC_LOG_INFO(ogx) ((ogx)->timed_task != CKPT_MODE_IDLE || (ogx)->trigger_task == CKPT_TRIGGER_FULL)
@@ -86,9 +86,9 @@ static void ckpt_validate_enque_ctrl(knl_session_t *session, const buf_ctrl_t *c
 {
     if (!ckpt_ctrl_in_buffer_pool(session, ctrl)) {
         knl_panic_log(0, "[CKPT] invalid ctrl before enqueue, source=%s index=%u ctrl=%p sid=%u dtc_type=%u "
-                      "dirty_count=%u changed_count=%u gbp_dirty_count=%u",
+                      "dirty_count=%u changed_count=%u rbp_dirty_count=%u",
                       source, index, ctrl, session->id, (uint32)session->dtc_session_type, session->dirty_count,
-                      session->changed_count, session->gbp_dirty_count);
+                      session->changed_count, session->rbp_dirty_count);
         return;
     }
 
@@ -563,7 +563,7 @@ static void ckpt_full_checkpoint(knl_session_t *session, ckpt_stat_items_t *stat
             }
 
             log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);
-            gbp_queue_notify_ckpt_point(session, &dtc_my_ctrl(session)->rcy_point);
+            rbp_queue_notify_ckpt_point(session, &dtc_my_ctrl(session)->rcy_point);
             OG_LOG_DEBUG_INF("[CKPT] Set rcy point to [%u-%u/%u/%llu] in ctrl for instance %u",
                             dtc_my_ctrl(session)->rcy_point.rst_id, dtc_my_ctrl(session)->rcy_point.asn,
                             dtc_my_ctrl(session)->rcy_point.block_id, (uint64)dtc_my_ctrl(session)->rcy_point.lfn,
@@ -649,7 +649,7 @@ static void ckpt_inc_checkpoint(knl_session_t *session, ckpt_stat_items_t *stat)
     uint64 task_save_ctrl_1 = KNL_NOW(session);
     stat->save_contrl_us += ckpt_stat_time_diff(task_wait, task_save_ctrl_1);
     log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);
-    gbp_queue_notify_ckpt_point(session, &dtc_my_ctrl(session)->rcy_point);
+    rbp_queue_notify_ckpt_point(session, &dtc_my_ctrl(session)->rcy_point);
     OG_LOG_DEBUG_INF("[CKPT] Set rcy point to [%u-%u/%u/%llu] in ctrl for instance %u",
                      dtc_my_ctrl(session)->rcy_point.rst_id, dtc_my_ctrl(session)->rcy_point.asn,
                      dtc_my_ctrl(session)->rcy_point.block_id, (uint64)dtc_my_ctrl(session)->rcy_point.lfn,
@@ -1194,16 +1194,16 @@ bool32 ckpt_try_latch_group(knl_session_t *session, buf_ctrl_t *ctrl)
 
 static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t *to_flush_ctrl)
 {
-    gbp_context_t *gbp_ctx = &session->kernel->gbp_context;
+    rbp_context_t *rbp_ctx = &session->kernel->rbp_context;
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
     ckpt_group_t *group = &ogx->group[ogx->wid];
-    uint32 gbp_lock_id = OG_INVALID_ID32;
+    uint32 rbp_lock_id = OG_INVALID_ID32;
     errno_t ret;
 
-    /* concurrent with knl_read_page_from_gbp when buf_enter_page with LATCH_S lock */
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel))) {
-        gbp_lock_id = ctrl->page_id.page % OG_GBP_RD_LOCK_COUNT;
-        cm_spin_lock(&gbp_ctx->buf_read_lock[gbp_lock_id], NULL);
+    /* concurrent with knl_read_page_from_rbp when buf_enter_page with LATCH_S lock */
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel))) {
+        rbp_lock_id = ctrl->page_id.page % OG_RBP_RD_LOCK_COUNT;
+        cm_spin_lock(&rbp_ctx->buf_read_lock[rbp_lock_id], NULL);
     }
 
     knl_panic_log(IS_SAME_PAGID(to_flush_ctrl->page_id, AS_PAGID(to_flush_ctrl->page->id)),
@@ -1228,9 +1228,9 @@ static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t 
         to_flush_ctrl->page, DEFAULT_PAGE_SIZE(session));
     knl_securec_check(ret);
 
-    if (SECUREC_UNLIKELY(gbp_lock_id != OG_INVALID_ID32)) {
-        cm_spin_unlock(&gbp_ctx->buf_read_lock[gbp_lock_id]);
-        gbp_lock_id = OG_INVALID_ID32;
+    if (SECUREC_UNLIKELY(rbp_lock_id != OG_INVALID_ID32)) {
+        cm_spin_unlock(&rbp_ctx->buf_read_lock[rbp_lock_id]);
+        rbp_lock_id = OG_INVALID_ID32;
     }
 
     if (to_flush_ctrl == ogx->batch_end) {
@@ -2426,9 +2426,9 @@ void ckpt_enque_page(knl_session_t *session)
 
     knl_panic_log(session->dirty_count > 0 && session->dirty_count <= KNL_MAX_ATOMIC_PAGES,
                   "[CKPT] dirty_count is abnormal before enqueue, sid=%u dtc_type=%u dirty_count=%u "
-                  "changed_count=%u gbp_dirty_count=%u",
+                  "changed_count=%u rbp_dirty_count=%u",
                   session->id, (uint32)session->dtc_session_type, session->dirty_count, session->changed_count,
-                  session->gbp_dirty_count);
+                  session->rbp_dirty_count);
     for (i = 0; i < session->dirty_count; i++) {
         ckpt_validate_enque_ctrl(session, session->dirty_pages[i], "dirty_pages", i);
     }
@@ -2520,8 +2520,8 @@ void ckpt_set_trunc_point(knl_session_t *session, log_point_t *point)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
 
-    /* do not move forward trunc point if GBP_RECOVERY is not completed */
-    if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
+    /* do not move forward trunc point if RBP_RECOVERY is not completed */
+    if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         return;
     }
     cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
@@ -2537,8 +2537,8 @@ void ckpt_set_trunc_point_slave_role(knl_session_t *session, log_point_t *point,
         return;
 }
 
-    /* do not move forward trunc point if GBP_RECOVERY is not completed */
-    if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
+    /* do not move forward trunc point if RBP_RECOVERY is not completed */
+    if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         return;
     }
     cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
@@ -3868,7 +3868,7 @@ static status_t ckpt_perform_flush_group(knl_session_t *session)
     }
 
     log_recycle_file(session, &dtc_my_ctrl(session)->rcy_point);
-    gbp_queue_notify_ckpt_point(session, &dtc_my_ctrl(session)->rcy_point);
+    rbp_queue_notify_ckpt_point(session, &dtc_my_ctrl(session)->rcy_point);
     OG_LOG_DEBUG_INF("[CKPT] Set rcy point to [%u-%u/%u/%llu] in ctrl for instance %u",
                     dtc_my_ctrl(session)->rcy_point.rst_id, dtc_my_ctrl(session)->rcy_point.asn,
                     dtc_my_ctrl(session)->rcy_point.block_id, (uint64)dtc_my_ctrl(session)->rcy_point.lfn,

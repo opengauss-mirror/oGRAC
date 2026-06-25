@@ -332,7 +332,7 @@ cc_library (
         "-Ipkg/src/utils/ogbackup",
         "-Ipkg/src/gstbox",
         "-Ipkg/src/ztrst",
-        "-Ipkg/src/gbp",
+        "-Ipkg/src/rbp",
         "-Ipkg/src/mec",
     ] + COMMON_COPTS,
     linkopts = COMMON_LINKOPTS,

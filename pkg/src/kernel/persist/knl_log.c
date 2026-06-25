@@ -844,7 +844,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     }
     ogx->curr_replay_point = ogx->curr_point;
     ckpt_set_trunc_point(session, &ogx->curr_point);
-    gbp_queue_set_trunc_point(session, &ogx->curr_point);
+    rbp_queue_set_trunc_point(session, &ogx->curr_point);
     if (point != NULL && log_cmp_point(point, &ogx->curr_point) < 0) {
         *point = ogx->curr_point;
     }
@@ -967,15 +967,15 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
         }
         log_reset_readonly(ctrl);
 
-        if (dtc_rcy_gbp_partial_enabled(session)) {
-            gbp_partial_item_t *partial_item = dtc_rcy_gbp_partial_get_item(ctrl->page_id);
+        if (dtc_rcy_rbp_partial_enabled(session)) {
+            rbp_partial_item_t *partial_item = dtc_rcy_rbp_partial_get_item(ctrl->page_id);
             uint64 expect_lsn;
 
             if (partial_item != NULL && partial_item->required && partial_item->rcy_item != NULL &&
                 partial_item->rcy_item->need_replay && partial_item->selected_pulled && !partial_item->verified) {
-                expect_lsn = dtc_rcy_gbp_partial_get_expect_lsn(partial_item);
+                expect_lsn = dtc_rcy_rbp_partial_get_expect_lsn(partial_item);
                 if (expect_lsn > 0 && lsn >= expect_lsn) {
-                    dtc_rcy_gbp_partial_mark_item_verified(partial_item);
+                    dtc_rcy_rbp_partial_mark_item_verified(partial_item);
                 }
             }
         }
@@ -1743,8 +1743,8 @@ void log_atomic_op_end(knl_session_t *session)
         ckpt_enque_page(session);
     }
 
-    if (SECUREC_UNLIKELY(session->gbp_dirty_count > 0)) {
-        gbp_enque_pages(session);
+    if (SECUREC_UNLIKELY(session->rbp_dirty_count > 0)) {
+        rbp_enque_pages(session);
     }
 
     log_write(session);

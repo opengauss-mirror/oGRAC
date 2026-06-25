@@ -345,10 +345,10 @@ status_t cms_check_res_running(uint32 res_id);
 bool32 cms_check_node_dead(uint32 node_id);
 bool32 cms_res_is_script_detect_res(const cms_res_t *res);
 bool32 cms_res_is_no_fence_res(const cms_res_t *res);
-bool32 cms_res_is_gbps_res(const cms_res_t *res);
-bool32 cms_res_name_type_is_gbps(const char *name, const char *type);
-bool32 cms_gbps_is_enabled(void);
-bool32 cms_gbps_res_is_disabled(const char *name, const char *type);
+bool32 cms_res_is_rbps_res(const cms_res_t *res);
+bool32 cms_res_name_type_is_rbps(const char *name, const char *type);
+bool32 cms_rbps_is_enabled(void);
+bool32 cms_rbps_res_is_disabled(const char *name, const char *type);
 
 status_t cms_check_script_res_stat(cms_res_t res);
 status_t cms_init_mes_channel_version(void);

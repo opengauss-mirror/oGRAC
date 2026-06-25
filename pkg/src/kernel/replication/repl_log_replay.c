@@ -87,7 +87,7 @@ static bool32 lrpl_check_gap_exist(knl_session_t *session, log_point_t *point)
 status_t lrpl_prepare_archfile(knl_session_t *session, log_point_t *point, bool32 *reset)
 {
     lrpl_context_t *lrpl_ctx = &session->kernel->lrpl_ctx;
-    gbp_aly_ctx_t *aly_ctx = &session->kernel->gbp_aly_ctx;
+    rbp_aly_ctx_t *aly_ctx = &session->kernel->rbp_aly_ctx;
     thread_t *thread = SESSION_IS_LOG_ANALYZE(session) ? &aly_ctx->thread : &lrpl_ctx->thread;
     char arch_name[OG_FILE_NAME_BUFFER_SIZE] = {0};
     lftc_task_handle_t task_handle;
@@ -108,7 +108,7 @@ status_t lrpl_prepare_archfile(knl_session_t *session, log_point_t *point, bool3
         return OG_SUCCESS;
     }
     OG_LOG_RUN_INF("[%s] Archive log %s not found, start to fetch it from primary.",
-        LRPL_OR_GBPALY(session), arch_name);
+        LRPL_OR_RBPALY(session), arch_name);
 
     if (lftc_clt_create_task(session, (uint32)point->rst_id, point->asn, arch_name, &task_handle) != OG_SUCCESS) {
         return OG_ERROR;
@@ -143,7 +143,7 @@ status_t lrpl_prepare_archfile(knl_session_t *session, log_point_t *point, bool3
             point->asn > session->kernel->db.ctrl.core.resetlogs.last_asn) {
             OG_LOG_RUN_INF("[%s] point rstid/asn [%u/%u], resetlogs rstid/last_asn [%u/%u], "
                 "curr_file rstid/asn [%u/%u], current point [%u-%u/%u/%llu]",
-                LRPL_OR_GBPALY(session),
+                LRPL_OR_RBPALY(session),
                 point->rst_id, point->asn, session->kernel->db.ctrl.core.resetlogs.rst_id,
                 session->kernel->db.ctrl.core.resetlogs.last_asn,
                 session->kernel->redo_ctx.files[session->kernel->redo_ctx.curr_file].head.rst_id,
