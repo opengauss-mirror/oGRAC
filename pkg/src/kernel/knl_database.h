@@ -303,10 +303,10 @@ knl_scn_t db_time_scn(knl_session_t *session, uint32 second, uint32 msecond);
                                              (session)->id < SESSION_ID_ROLLBACK + OG_MAX_ROLLBACK_PROC)
 */
 #define DB_IS_BG_ROLLBACK_SE(session) ((session)->bg_rollback)
-#define SESSION_IS_LOG_ANALYZE(session)     ((session)->id > 0 && (session)->id == (session)->kernel->gbp_aly_ctx.sid)
+#define SESSION_IS_LOG_ANALYZE(session)     ((session)->id > 0 && (session)->id == (session)->kernel->rbp_aly_ctx.sid)
 #define SESSION_IS_KERNEL(session)          ((session)->id == SESSION_ID_KERNEL)
-#define SESSION_IS_GBP_BG(session)          ((session)->gbp_queue_index > 0)
-#define LRPL_OR_GBPALY(session)             (SESSION_IS_LOG_ANALYZE(session) ? "GBP" : "LRPL")
+#define SESSION_IS_RBP_BG(session)          ((session)->rbp_queue_index > 0)
+#define LRPL_OR_RBPALY(session)             (SESSION_IS_LOG_ANALYZE(session) ? "RBP" : "LRPL")
 
 #define MODE_MAX_PERFORMANCE(db) ((db)->ctrl.core.protect_mode == MAXIMUM_PERFORMANCE)
 #define MODE_MAX_AVAILABILITY(db) ((db)->ctrl.core.protect_mode == MAXIMUM_AVAILABILITY)

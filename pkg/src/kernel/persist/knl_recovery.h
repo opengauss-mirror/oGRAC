@@ -246,13 +246,13 @@ void rcy_replay_batch(knl_session_t *session, log_batch_t *batch);
  * log receiver and LFTC can running same time, but log receiver may send log from batch 120,
  * LFTC send log from batch 100.
  * If standby failover when LFTC just send log end with batch 110, the log in [110, 120] is not exsit.
- * In this case, LRPL end point is 110, and log receiver flush point may be 130 and GBP lrp_point may be 129, GBP
- * status is unsafe, will not use gbp. So we do not need to update log receiver flush point here when LFTC running.
+ * In this case, LRPL end point is 110, and log receiver flush point may be 130 and RBP lrp_point may be 129, RBP
+ * status is unsafe, will not use rbp. So we do not need to update log receiver flush point here when LFTC running.
  */
 void rcy_analysis_batch(knl_session_t *session, log_batch_t *batch);
 void rcy_analysis_group(knl_session_t *session, log_context_t *ogx, log_group_t *group);
 void rcy_replay_logic(knl_session_t *session, log_entry_t *log);
-void gbp_aly_gbp_logic(knl_session_t *session, log_entry_t *log, uint64 lsn);
+void rbp_aly_rbp_logic(knl_session_t *session, log_entry_t *log, uint64 lsn);
 void print_replay_logic(log_entry_t *log);
 void backup_logic_entry(knl_session_t *session, log_entry_t *log, bool32 *need_unblock_backup);
 const char* rcy_redo_name(log_entry_t *log);

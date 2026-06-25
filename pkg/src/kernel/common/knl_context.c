@@ -36,10 +36,10 @@ extern "C" {
 
 extern bool8 g_local_set_disaster_cluster_role;
 
-#define KNL_DEFAULT_GBP_RT_PARSE_WORKERS 2
-#define KNL_DEFAULT_GBP_RT_OWNER_WORKERS 4
-#define KNL_DEFAULT_GBP_PORT 2611
-#define KNL_DEFAULT_GBP_ASSEMBLE_MAX_SCAN 300
+#define KNL_DEFAULT_RBP_RT_PARSE_WORKERS 2
+#define KNL_DEFAULT_RBP_RT_OWNER_WORKERS 4
+#define KNL_DEFAULT_RBP_PORT 2611
+#define KNL_DEFAULT_RBP_ASSEMBLE_MAX_SCAN 300
 
 void knl_init_attr(knl_handle_t kernel)
 {
@@ -63,22 +63,22 @@ void knl_init_attr(knl_handle_t kernel)
     /* the min value of inst->attr.max_map_nodes is 8192 */
     inst->attr.max_map_nodes = (page_size - sizeof(map_page_t) - sizeof(page_tail_t)) / sizeof(map_node_t);
     inst->attr.sample_by_map = OG_TRUE;
-    /* Defaults; cfg USE_GBP / GBP_FOR_RECOVERY / GBP_* override in srv_load_gbp_params() after this */
-    inst->gbp_attr.use_gbp = OG_FALSE;
-    inst->gbp_attr.gbp_for_recovery = OG_TRUE;
-    inst->gbp_attr.gbp_rt_analysis = OG_FALSE;
-    inst->gbp_attr.gbp_rt_parse_workers = KNL_DEFAULT_GBP_RT_PARSE_WORKERS;
-    inst->gbp_attr.gbp_rt_page_owner_workers = KNL_DEFAULT_GBP_RT_OWNER_WORKERS;
-    inst->gbp_attr.gbp_off_triggered = OG_FALSE;
-    inst->gbp_attr.lsnr_port = KNL_DEFAULT_GBP_PORT;
-    inst->gbp_attr.server_count = 1;
-    err = strncpy_s(inst->gbp_attr.server_addr[0], CM_MAX_IP_LEN, "127.0.0.1", CM_MAX_IP_LEN - 1);
+    /* Defaults; cfg USE_RBP / RBP_FOR_RECOVERY / RBP_* override in srv_load_rbp_params() after this */
+    inst->rbp_attr.use_rbp = OG_FALSE;
+    inst->rbp_attr.rbp_for_recovery = OG_TRUE;
+    inst->rbp_attr.rbp_rt_analysis = OG_FALSE;
+    inst->rbp_attr.rbp_rt_parse_workers = KNL_DEFAULT_RBP_RT_PARSE_WORKERS;
+    inst->rbp_attr.rbp_rt_page_owner_workers = KNL_DEFAULT_RBP_RT_OWNER_WORKERS;
+    inst->rbp_attr.rbp_off_triggered = OG_FALSE;
+    inst->rbp_attr.lsnr_port = KNL_DEFAULT_RBP_PORT;
+    inst->rbp_attr.server_count = 1;
+    err = strncpy_s(inst->rbp_attr.server_addr[0], CM_MAX_IP_LEN, "127.0.0.1", CM_MAX_IP_LEN - 1);
     knl_securec_check(err);
-    err = strncpy_s(inst->gbp_attr.local_gbp_host, CM_MAX_IP_LEN, "127.0.0.1", CM_MAX_IP_LEN - 1);
+    err = strncpy_s(inst->rbp_attr.local_rbp_host, CM_MAX_IP_LEN, "127.0.0.1", CM_MAX_IP_LEN - 1);
     knl_securec_check(err);
-    err = strncpy_s(inst->gbp_attr.trans_type, OG_MAX_NAME_LEN, "tcp", OG_MAX_NAME_LEN - 1);
+    err = strncpy_s(inst->rbp_attr.trans_type, OG_MAX_NAME_LEN, "tcp", OG_MAX_NAME_LEN - 1);
     knl_securec_check(err);
-    inst->gbp_attr.assemble_max_scan = KNL_DEFAULT_GBP_ASSEMBLE_MAX_SCAN;
+    inst->rbp_attr.assemble_max_scan = KNL_DEFAULT_RBP_ASSEMBLE_MAX_SCAN;
     param = cm_get_config_value(inst->attr.config, "COMMIT_WAIT");
     if (param != NULL) {
         inst->attr.commit_nowait = cm_str_equal(param, "NOWAIT");
@@ -237,8 +237,8 @@ status_t db_load_lib(knl_session_t *session)
         return OG_ERROR;
     }
 
-    session->kernel->gbp_aly_ctx.sid = OG_INVALID_ID32;
-    if (KNL_GBP_ENABLE(session->kernel) && cm_str_equal_ins(session->kernel->gbp_attr.trans_type, "rdma")) {
+    session->kernel->rbp_aly_ctx.sid = OG_INVALID_ID32;
+    if (KNL_RBP_ENABLE(session->kernel) && cm_str_equal_ins(session->kernel->rbp_attr.trans_type, "rdma")) {
         if (rdma_init_lib() != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DB] failed to init rdma library");
             return OG_ERROR;

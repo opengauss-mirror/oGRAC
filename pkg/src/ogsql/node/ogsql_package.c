@@ -33,7 +33,7 @@
 #include "func_parser.h"
 #include "ogsql_privilege.h"
 #include "knl_interface.h"
-#include "knl_gbp.h"
+#include "knl_rbp.h"
 #include "knl_table.h"
 #include "ddl_parser.h"
 #include "func_others.h"
@@ -5839,13 +5839,13 @@ static sql_func_t g_dbe_redact_funcs[] = {
     { { (char *)"drop_policy", 11 }, sql_drop_ddm_policy, sql_verify_drop_ddm_policy, AGGR_TYPE_NONE, FO_PROC, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },
 };
 
-static status_t sql_func_pull_gbp_page_demo(sql_stmt_t *stmt, expr_node_t *func, variant_t *result)
+static status_t sql_func_pull_rbp_page_demo(sql_stmt_t *stmt, expr_node_t *func, variant_t *result)
 {
     variant_t vfile;
     variant_t vpage;
     expr_tree_t *arg1 = NULL;
     expr_tree_t *arg2 = NULL;
-    uint32 gbp_res = 0;
+    uint32 rbp_res = 0;
     status_t st;
 
     CM_POINTER3(stmt, func, result);
@@ -5876,21 +5876,21 @@ static status_t sql_func_pull_gbp_page_demo(sql_stmt_t *stmt, expr_node_t *func,
         return OG_ERROR;
     }
 
-    st = knl_gbp_sql_demo_read_page(&stmt->session->knl_session, (uint16)vfile.v_int, (uint32)vpage.v_int, &gbp_res);
+    st = knl_rbp_sql_demo_read_page(&stmt->session->knl_session, (uint16)vfile.v_int, (uint32)vpage.v_int, &rbp_res);
     result->is_null = OG_FALSE;
     result->type = OG_TYPE_INTEGER;
-    result->v_int = (st != OG_SUCCESS) ? -1 : (int32)gbp_res;
+    result->v_int = (st != OG_SUCCESS) ? -1 : (int32)rbp_res;
     OGSQL_RESTORE_STACK(stmt);
     return OG_SUCCESS;
 }
 
-#define SQL_PULL_GBP_PAGE_DEMO_ARG_COUNT 2
+#define SQL_PULL_RBP_PAGE_DEMO_ARG_COUNT 2
 
-static status_t sql_verify_pull_gbp_page_demo(sql_verifier_t *verf, expr_node_t *func)
+static status_t sql_verify_pull_rbp_page_demo(sql_verifier_t *verf, expr_node_t *func)
 {
     CM_POINTER2(verf, func);
-    if (sql_verify_func_node(verf, func, SQL_PULL_GBP_PAGE_DEMO_ARG_COUNT,
-        SQL_PULL_GBP_PAGE_DEMO_ARG_COUNT, OG_INVALID_ID32) != OG_SUCCESS) {
+    if (sql_verify_func_node(verf, func, SQL_PULL_RBP_PAGE_DEMO_ARG_COUNT,
+        SQL_PULL_RBP_PAGE_DEMO_ARG_COUNT, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
     }
     func->datatype = OG_TYPE_INTEGER;
@@ -5909,7 +5909,7 @@ static sql_func_t g_dbe_debug_funcs[] = {
     { { (char *)"get_version", 11 }, sql_debug_get_version, sql_verify_debug_get_version, AGGR_TYPE_NONE, FO_NORMAL, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },
     { { (char *)"init", 4 }, sql_debug_init, sql_verify_debug_init, AGGR_TYPE_NONE, FO_NORMAL, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },
     { { (char *)"pause", 5 }, sql_debug_pause, sql_verify_no_argument, AGGR_TYPE_NONE, FO_PROC, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },
-    { { (char *)"pull_gbp_page_demo", 18 }, sql_func_pull_gbp_page_demo, sql_verify_pull_gbp_page_demo, AGGR_TYPE_NONE,
+    { { (char *)"pull_rbp_page_demo", 18 }, sql_func_pull_rbp_page_demo, sql_verify_pull_rbp_page_demo, AGGR_TYPE_NONE,
       FO_NORMAL, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },
     { { (char *)"resume", 6 }, sql_debug_resume, sql_verify_debug_resume, AGGR_TYPE_NONE, FO_PROC, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },
     { { (char *)"set_break", 9 }, sql_debug_set_break, sql_verify_debug_set_break, AGGR_TYPE_NONE, FO_PROC, OG_INVALID_ID32, OG_INVALID_VALUE_CNT, OG_FALSE },

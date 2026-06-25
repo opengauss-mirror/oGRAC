@@ -14,16 +14,16 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_state.cpp
+ * rbp_state.cpp
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_state.cpp
+ * src/rbp/rbp_state.cpp
  *
  * -------------------------------------------------------------------------
  */
 
-#include "gbp_state.h"
+#include "rbp_state.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,7 +33,7 @@
 #include <thread>
 #include <tuple>
 
-namespace gbp {
+namespace rbp {
 
 namespace {
 std::atomic<uint64_t> g_next_install_gen{1};
@@ -72,10 +72,10 @@ void BatchReadDiag::reset()
 void BatchReadDiag::record_counts(uint32_t qid, uint32_t result, int pages)
 {
     std::lock_guard<std::mutex> g(mtx_);
-    BatchReadDiagSlot& slot = slots_[qid % OG_GBP_SESSION_COUNT];
-    if (result == GBP_READ_RESULT_OK) {
+    BatchReadDiagSlot& slot = slots_[qid % OG_RBP_SESSION_COUNT];
+    if (result == RBP_READ_RESULT_OK) {
         slot.ok++;
-    } else if (result == GBP_READ_RESULT_NOPAGE) {
+    } else if (result == RBP_READ_RESULT_NOPAGE) {
         slot.nopage++;
     } else {
         slot.error++;
@@ -89,10 +89,10 @@ void BatchReadDiag::record(uint32_t qid, uint32_t result, int pages, int64_t tot
                            int64_t skip_missing, int64_t skip_lrp)
 {
     std::lock_guard<std::mutex> g(mtx_);
-    BatchReadDiagSlot& slot = slots_[qid % OG_GBP_SESSION_COUNT];
-    if (result == GBP_READ_RESULT_OK) {
+    BatchReadDiagSlot& slot = slots_[qid % OG_RBP_SESSION_COUNT];
+    if (result == RBP_READ_RESULT_OK) {
         slot.ok++;
-    } else if (result == GBP_READ_RESULT_NOPAGE) {
+    } else if (result == RBP_READ_RESULT_NOPAGE) {
         slot.nopage++;
     } else {
         slot.error++;
@@ -113,7 +113,7 @@ void BatchReadDiag::record(uint32_t qid, uint32_t result, int pages, int64_t tot
 
 void BatchReadDiag::log_summary(const std::string& peer, const std::string& reason, bool timing_diag) const
 {
-    std::array<BatchReadDiagSlot, OG_GBP_SESSION_COUNT> slots;
+    std::array<BatchReadDiagSlot, OG_RBP_SESSION_COUNT> slots;
     {
         std::lock_guard<std::mutex> g(mtx_);
         slots = slots_;
@@ -149,14 +149,14 @@ void BatchReadDiag::log_summary(const std::string& peer, const std::string& reas
     }
 
     if (!timing_diag) {
-        gbp_run_log("server batch read total reason=" + reason + " peer=" + peer +
+        rbp_run_log("server batch read total reason=" + reason + " peer=" + peer +
                     " workers=" + std::to_string(active) +
                     " ok=" + std::to_string(total.ok) + " nopage=" + std::to_string(total.nopage) +
                     " err=" + std::to_string(total.error) + " pages=" + std::to_string(total.pages));
         return;
     }
 
-    gbp_run_log("server batch read total reason=" + reason + " peer=" + peer + " workers=" + std::to_string(active) +
+    rbp_run_log("server batch read total reason=" + reason + " peer=" + peer + " workers=" + std::to_string(active) +
                 " ok=" + std::to_string(total.ok) + " nopage=" + std::to_string(total.nopage) +
                 " err=" + std::to_string(total.error) + " pages=" + std::to_string(total.pages) +
                 " total_us=" + std::to_string(total.total_us) +
@@ -179,7 +179,7 @@ void BatchReadDiag::log_summary(const std::string& peer, const std::string& reas
         if (worker_batches == 0 && slot.pages == 0) {
             continue;
         }
-        gbp_run_log("server batch read worker q=" + std::to_string(qid) + " ok=" + std::to_string(slot.ok) +
+        rbp_run_log("server batch read worker q=" + std::to_string(qid) + " ok=" + std::to_string(slot.ok) +
                     " nopage=" + std::to_string(slot.nopage) + " err=" + std::to_string(slot.error) +
                     " pages=" + std::to_string(slot.pages) +
                     " avg_batch_us=" + std::to_string(worker_batches == 0 ? 0 : slot.total_us / worker_batches) +
@@ -205,10 +205,10 @@ void SelectedReadDiag::record_counts(uint32_t qid, uint32_t result, int requeste
                                      int mismatch, int meta_mismatch)
 {
     std::lock_guard<std::mutex> g(mtx_);
-    SelectedReadDiagSlot& slot = slots_[qid % OG_GBP_SESSION_COUNT];
-    if (result == GBP_READ_RESULT_OK) {
+    SelectedReadDiagSlot& slot = slots_[qid % OG_RBP_SESSION_COUNT];
+    if (result == RBP_READ_RESULT_OK) {
         slot.ok++;
-    } else if (result == GBP_READ_RESULT_NOPAGE) {
+    } else if (result == RBP_READ_RESULT_NOPAGE) {
         slot.nopage++;
     } else {
         slot.error++;
@@ -225,10 +225,10 @@ void SelectedReadDiag::record(uint32_t qid, uint32_t result, int requested, int 
                               int64_t pack_us, int64_t send_us)
 {
     std::lock_guard<std::mutex> g(mtx_);
-    SelectedReadDiagSlot& slot = slots_[qid % OG_GBP_SESSION_COUNT];
-    if (result == GBP_READ_RESULT_OK) {
+    SelectedReadDiagSlot& slot = slots_[qid % OG_RBP_SESSION_COUNT];
+    if (result == RBP_READ_RESULT_OK) {
         slot.ok++;
-    } else if (result == GBP_READ_RESULT_NOPAGE) {
+    } else if (result == RBP_READ_RESULT_NOPAGE) {
         slot.nopage++;
     } else {
         slot.error++;
@@ -247,7 +247,7 @@ void SelectedReadDiag::record(uint32_t qid, uint32_t result, int requested, int 
 
 void SelectedReadDiag::log_summary(const std::string& peer, const std::string& reason, bool timing_diag) const
 {
-    std::array<SelectedReadDiagSlot, OG_GBP_SESSION_COUNT> slots;
+    std::array<SelectedReadDiagSlot, OG_RBP_SESSION_COUNT> slots;
     {
         std::lock_guard<std::mutex> g(mtx_);
         slots = slots_;
@@ -286,7 +286,7 @@ void SelectedReadDiag::log_summary(const std::string& peer, const std::string& r
     }
 
     if (timing_diag) {
-        gbp_run_log("server selected read total reason=" + reason + " peer=" + peer +
+        rbp_run_log("server selected read total reason=" + reason + " peer=" + peer +
                     " workers=" + std::to_string(active) + " ok=" + std::to_string(total.ok) +
                     " nopage=" + std::to_string(total.nopage) + " err=" + std::to_string(total.error) +
                     " requested=" + std::to_string(total.requested) +
@@ -302,7 +302,7 @@ void SelectedReadDiag::log_summary(const std::string& peer, const std::string& r
                     " avg_pack_us=" + std::to_string(total.pack_us / batches) +
                     " avg_send_us=" + std::to_string(total.send_us / batches));
     } else {
-        gbp_run_log("server selected read anomaly reason=" + reason + " peer=" + peer +
+        rbp_run_log("server selected read anomaly reason=" + reason + " peer=" + peer +
                     " workers=" + std::to_string(active) + " ok=" + std::to_string(total.ok) +
                     " err=" + std::to_string(total.error) + " requested=" + std::to_string(total.requested) +
                     " returned=" + std::to_string(total.returned) + " missing=" + std::to_string(total.missing) +
@@ -320,7 +320,7 @@ void SelectedReadDiag::log_summary(const std::string& peer, const std::string& r
         if (worker_batches == 0 && slot.requested == 0) {
             continue;
         }
-        gbp_run_log("server selected read worker q=" + std::to_string(qid) + " ok=" + std::to_string(slot.ok) +
+        rbp_run_log("server selected read worker q=" + std::to_string(qid) + " ok=" + std::to_string(slot.ok) +
                     " nopage=" + std::to_string(slot.nopage) + " err=" + std::to_string(slot.error) +
                     " requested=" + std::to_string(slot.requested) +
                     " returned=" + std::to_string(slot.returned) +
@@ -336,10 +336,10 @@ void SelectedReadDiag::log_summary(const std::string& peer, const std::string& r
 }
 
 std::optional<std::pair<uint32_t, log_point_t>> max_queue_reset_with_qid(
-    const log_point_t resets[OG_GBP_SESSION_COUNT], bool lsn_only)
+    const log_point_t resets[OG_RBP_SESSION_COUNT], bool lsn_only)
 {
     std::optional<std::pair<uint32_t, log_point_t>> best;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         if (log_point_is_zero(resets[qid])) {
             continue;
         }
@@ -350,16 +350,16 @@ std::optional<std::pair<uint32_t, log_point_t>> max_queue_reset_with_qid(
     return best;
 }
 
-static log_point_t max_queue_reset(const log_point_t resets[OG_GBP_SESSION_COUNT], bool lsn_only)
+static log_point_t max_queue_reset(const log_point_t resets[OG_RBP_SESSION_COUNT], bool lsn_only)
 {
     auto best = max_queue_reset_with_qid(resets, lsn_only);
     return best ? best->second : zero_log_point();
 }
 
-std::string queue_resets_diag(const log_point_t resets[OG_GBP_SESSION_COUNT], bool lsn_only)
+std::string queue_resets_diag(const log_point_t resets[OG_RBP_SESSION_COUNT], bool lsn_only)
 {
     int count = 0;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         if (!log_point_is_zero(resets[qid])) {
             count++;
         }
@@ -373,7 +373,7 @@ std::string queue_resets_diag(const log_point_t resets[OG_GBP_SESSION_COUNT], bo
     }
     std::ostringstream lfns;
     bool first = true;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         if (log_point_is_zero(resets[qid])) {
             continue;
         }
@@ -387,10 +387,10 @@ std::string queue_resets_diag(const log_point_t resets[OG_GBP_SESSION_COUNT], bo
            "[" + format_log_point_short(best->second) + "] reset_lfns=" + lfns.str();
 }
 
-std::string queue_frontiers_diag(const log_point_t frontiers[OG_GBP_SESSION_COUNT], bool lsn_only)
+std::string queue_frontiers_diag(const log_point_t frontiers[OG_RBP_SESSION_COUNT], bool lsn_only)
 {
     int count = 0;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         if (!log_point_is_zero(frontiers[qid])) {
             count++;
         }
@@ -402,7 +402,7 @@ std::string queue_frontiers_diag(const log_point_t frontiers[OG_GBP_SESSION_COUN
     auto min_frontier = min_queue_frontier(frontiers, lsn_only, missing);
     std::ostringstream lfns;
     bool first = true;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         if (log_point_is_zero(frontiers[qid])) {
             continue;
         }
@@ -438,29 +438,29 @@ std::string queue_frontiers_diag(const log_point_t frontiers[OG_GBP_SESSION_COUN
            "] frontier_lfns=" + lfns.str() + miss;
 }
 
-void collect_queue_points(GbpServerState& state, log_point_t resets[OG_GBP_SESSION_COUNT],
-                          log_point_t frontiers[OG_GBP_SESSION_COUNT])
+void collect_queue_points(RbpServerState& state, log_point_t resets[OG_RBP_SESSION_COUNT],
+                          log_point_t frontiers[OG_RBP_SESSION_COUNT])
 {
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        const GbpShard& shard = state.shard(qid);
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        const RbpShard& shard = state.shard(qid);
         std::lock_guard<std::mutex> g(shard.mtx);
         resets[qid] = shard.reset_point;
         frontiers[qid] = shard.frontier_point;
     }
 }
 
-GbpServerState::GbpServerState(const Config& cfg) : cfg_(cfg)
+RbpServerState::RbpServerState(const Config& cfg) : cfg_(cfg)
 {
     for (auto& p : shards_) {
-        p = std::make_unique<GbpShard>(cfg_);
+        p = std::make_unique<RbpShard>(cfg_);
     }
 }
 
-PageRecord page_record_from_item(const gbp_page_item_t& item)
+PageRecord page_record_from_item(const rbp_page_item_t& item)
 {
     PageRecord rec{};
     auto payload = std::make_shared<PagePayload>();
-    std::memcpy(payload->block, item.block, GBP_PAGE_SIZE);
+    std::memcpy(payload->block, item.block, RBP_PAGE_SIZE);
     rec.payload = payload;
     rec.writer_inst = item.writer_inst_id;
     rec.writer_seq = item.writer_global_seq;
@@ -490,37 +490,37 @@ MetaSnapshotRow meta_row_from_page_meta(uint64_t pid_key, uint32_t qid, const Pa
     return row;
 }
 
-void shard_meta_index_upsert(GbpShard& shard, uint32_t qid, uint64_t pid_key, const PageMeta& meta)
+void shard_meta_index_upsert(RbpShard& shard, uint32_t qid, uint64_t pid_key, const PageMeta& meta)
 {
     shard.meta_index_[meta_index_key_from_pid_key(pid_key)] = meta_row_from_page_meta(pid_key, qid, meta);
 }
 
-void shard_meta_index_remove(GbpShard& shard, uint64_t pid_key)
+void shard_meta_index_remove(RbpShard& shard, uint64_t pid_key)
 {
     shard.meta_index_.erase(meta_index_key_from_pid_key(pid_key));
 }
 
 }  // namespace
 
-void wire_item_fill(gbp_page_item_t& item, const BatchPageHandle& handle)
+void wire_item_fill(rbp_page_item_t& item, const BatchPageHandle& handle)
 {
     page_id_t pid{};
     std::memcpy(&pid, &handle.pid_key, sizeof(pid));
     pid.aligned = 0;
     item.page_id = pid;
-    item.gbp_trunc_point = handle.coverage_begin;
-    item.gbp_lrp_point = handle.coverage_lrp;
+    item.rbp_trunc_point = handle.coverage_begin;
+    item.rbp_lrp_point = handle.coverage_lrp;
     item.session_id = 0;
     item.writer_inst_id = handle.writer_inst;
     item.writer_global_seq = handle.writer_seq;
     if (handle.payload) {
-        std::memcpy(item.block, handle.payload->block, GBP_PAGE_SIZE);
+        std::memcpy(item.block, handle.payload->block, RBP_PAGE_SIZE);
     } else {
-        std::memset(item.block, 0, GBP_PAGE_SIZE);
+        std::memset(item.block, 0, RBP_PAGE_SIZE);
     }
 }
 
-void wire_item_fill(gbp_page_item_t& item, const PageRecord& rec, uint64_t pid_key)
+void wire_item_fill(rbp_page_item_t& item, const PageRecord& rec, uint64_t pid_key)
 {
     BatchPageHandle handle{};
     handle.pid_key = pid_key;
@@ -532,43 +532,43 @@ void wire_item_fill(gbp_page_item_t& item, const PageRecord& rec, uint64_t pid_k
     wire_item_fill(item, handle);
 }
 
-gbp_page_item_t wire_item_for_response(const PageRecord& rec, uint64_t pid_key)
+rbp_page_item_t wire_item_for_response(const PageRecord& rec, uint64_t pid_key)
 {
-    gbp_page_item_t item{};
+    rbp_page_item_t item{};
     wire_item_fill(item, rec, pid_key);
     return item;
 }
 
-void GbpServerState::lock_all()
+void RbpServerState::lock_all()
 {
     for (auto& p : shards_) {
         p->mtx.lock();
     }
 }
 
-void GbpServerState::unlock_all()
+void RbpServerState::unlock_all()
 {
     for (auto it = shards_.rbegin(); it != shards_.rend(); ++it) {
         (*it)->mtx.unlock();
     }
 }
 
-void GbpServerState::reset_batch_pending_epoch()
+void RbpServerState::reset_batch_pending_epoch()
 {
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        GbpShard& shard = *shards_[qid];
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        RbpShard& shard = *shards_[qid];
         std::lock_guard<std::mutex> g(shard.mtx);
         shard.pending_seeded = false;
     }
 }
 
-std::optional<int> GbpServerState::ensure_batch_pending_seeded(bool read_phase_active, uint32_t conn_qid)
+std::optional<int> RbpServerState::ensure_batch_pending_seeded(bool read_phase_active, uint32_t conn_qid)
 {
     if (!read_phase_active) {
         return std::nullopt;
     }
-    const uint32_t qid = conn_qid % OG_GBP_SESSION_COUNT;
-    GbpShard& shard = *shards_[qid];
+    const uint32_t qid = conn_qid % OG_RBP_SESSION_COUNT;
+    RbpShard& shard = *shards_[qid];
     std::lock_guard<std::mutex> g(shard.mtx);
     if (shard.pending_seeded) {
         return std::nullopt;
@@ -585,7 +585,7 @@ std::optional<int> GbpServerState::ensure_batch_pending_seeded(bool read_phase_a
     return static_cast<int>(shard.batch_pending.size());
 }
 
-void refresh_shard_snap(GbpShard& shard)
+void refresh_shard_snap(RbpShard& shard)
 {
     auto& snap = shard.snap;
     snap.page_count = static_cast<int>(shard.page_cache.size());
@@ -646,7 +646,7 @@ void refresh_shard_snap(GbpShard& shard)
     snap.dirty = false;
 }
 
-static void snap_on_install(GbpShard& shard, const PageMeta& meta, bool replaced)
+static void snap_on_install(RbpShard& shard, const PageMeta& meta, bool replaced)
 {
     auto& snap = shard.snap;
     if (!replaced) {
@@ -665,7 +665,7 @@ static void snap_on_install(GbpShard& shard, const PageMeta& meta, bool replaced
     }
 }
 
-static void snap_on_remove(GbpShard& shard, const PageMeta& meta)
+static void snap_on_remove(RbpShard& shard, const PageMeta& meta)
 {
     auto& snap = shard.snap;
     snap.page_count = std::max(0, snap.page_count - 1);
@@ -703,7 +703,7 @@ PageMeta build_page_meta(uint64_t pid_key, const PageRecord& rec)
     return m;
 }
 
-bool install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
+bool install_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
                   bool legacy_pending)
 {
     rec.install_gen = g_next_install_gen.fetch_add(1, std::memory_order_relaxed);
@@ -743,7 +743,7 @@ bool install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, Page
     return true;
 }
 
-void GbpServerState::remember_evicted_hole(const log_point_t& lrp, bool log_hole)
+void RbpServerState::remember_evicted_hole(const log_point_t& lrp, bool log_hole)
 {
     const uint64_t lfn = log_point_lfn(lrp);
     if (lfn == 0) {
@@ -757,12 +757,12 @@ void GbpServerState::remember_evicted_hole(const log_point_t& lrp, bool log_hole
     auto it = std::lower_bound(evicted_hole_lfns_.begin(), evicted_hole_lfns_.end(), lfn);
     evicted_hole_lfns_.insert(it, lfn);
     if (log_hole) {
-        gbp_run_log("[window-hole] remember hole[" + format_log_point_short(lrp) +
+        rbp_run_log("[window-hole] remember hole[" + format_log_point_short(lrp) +
                     "] total_holes=" + std::to_string(evicted_holes_.size()));
     }
 }
 
-log_point_t GbpServerState::apply_evicted_holes_to_begin(const log_point_t& begin, const log_point_t& rcy) const
+log_point_t RbpServerState::apply_evicted_holes_to_begin(const log_point_t& begin, const log_point_t& rcy) const
 {
     const uint64_t rcy_lfn = log_point_lfn(rcy);
     if (rcy_lfn == 0) {
@@ -788,14 +788,14 @@ log_point_t GbpServerState::apply_evicted_holes_to_begin(const log_point_t& begi
     return begin;
 }
 
-void GbpServerState::clear_evicted_holes()
+void RbpServerState::clear_evicted_holes()
 {
     std::lock_guard<std::mutex> g(holes_mtx_);
     evicted_holes_.clear();
     evicted_hole_lfns_.clear();
 }
 
-void remove_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, bool record_hole,
+void remove_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, bool record_hole,
                  const char* reason, bool log_hole)
 {
     auto cit = shard.page_cache.find(pid_key);
@@ -823,7 +823,7 @@ void remove_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, bool 
     }
 }
 
-int purge_shard_through_lfn(GbpServerState& state, GbpShard& shard, uint64_t through_lfn, int budget,
+int purge_shard_through_lfn(RbpServerState& state, RbpShard& shard, uint64_t through_lfn, int budget,
                             bool record_hole, const char* reason)
 {
     const auto pids = shard.lrp_index_.collect_purge_pids(through_lfn, budget);
@@ -863,7 +863,7 @@ log_point_t select_reset_point(const log_point_t& batch_begin, const log_point_t
     return best;
 }
 
-void apply_queue_reset(GbpServerState& state, GbpShard& shard, uint32_t qid, const log_point_t& reset_point,
+void apply_queue_reset(RbpServerState& state, RbpShard& shard, uint32_t qid, const log_point_t& reset_point,
                        const log_point_t& frontier_point, bool lsn_only, bool verbose, const std::string& peer)
 {
     log_point_t reset = reset_point;
@@ -881,7 +881,7 @@ void apply_queue_reset(GbpServerState& state, GbpShard& shard, uint32_t qid, con
         }
     }
     if (verbose) {
-        gbp_run_log("PAGE_WRITE reset barrier peer=" + peer + " qid=" + std::to_string(qid) +
+        rbp_run_log("PAGE_WRITE reset barrier peer=" + peer + " qid=" + std::to_string(qid) +
                     " reset[" + format_log_point_short(reset) + "] frontier[" +
                     format_log_point_short(frontier) + "] purged_cache_pages=" + std::to_string(removed_pages) +
                     " cache_total=" + std::to_string(shard.page_cache.size()) +
@@ -889,7 +889,7 @@ void apply_queue_reset(GbpServerState& state, GbpShard& shard, uint32_t qid, con
     }
 }
 
-log_point_t apply_queue_resets_to_begin(const log_point_t& begin, const log_point_t resets[OG_GBP_SESSION_COUNT],
+log_point_t apply_queue_resets_to_begin(const log_point_t& begin, const log_point_t resets[OG_RBP_SESSION_COUNT],
                                         bool lsn_only)
 {
     log_point_t reset = max_queue_reset(resets, lsn_only);
@@ -903,11 +903,11 @@ log_point_t apply_queue_resets_to_begin(const log_point_t& begin, const log_poin
 }
 
 std::optional<std::pair<uint32_t, log_point_t>> min_queue_frontier(
-    const log_point_t frontiers[OG_GBP_SESSION_COUNT], bool lsn_only, std::vector<int>& missing)
+    const log_point_t frontiers[OG_RBP_SESSION_COUNT], bool lsn_only, std::vector<int>& missing)
 {
     missing.clear();
     std::optional<std::pair<uint32_t, log_point_t>> best;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         if (log_point_is_zero(frontiers[qid])) {
             missing.push_back(static_cast<int>(qid));
             continue;
@@ -922,19 +922,19 @@ std::optional<std::pair<uint32_t, log_point_t>> min_queue_frontier(
     return best;
 }
 
-CkptResult merge_ckpt_from_shards(GbpServerState& state, bool lsn_only)
+CkptResult merge_ckpt_from_shards(RbpServerState& state, bool lsn_only)
 {
     CkptResult out;
-    log_point_t resets[OG_GBP_SESSION_COUNT]{};
-    log_point_t frontiers[OG_GBP_SESSION_COUNT]{};
+    log_point_t resets[OG_RBP_SESSION_COUNT]{};
+    log_point_t frontiers[OG_RBP_SESSION_COUNT]{};
     log_point_t min_trunc_point{};
     uint64_t min_trunc_lfn = INF_LFN;
     log_point_t max_lrp_point{};
     uint64_t max_lrp_lfn = 0;
     uint64_t max_writer_seq = 0;
 
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        GbpShard& shard = state.shard(qid);
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        RbpShard& shard = state.shard(qid);
         if (shard.snap.dirty) {
             refresh_shard_snap(shard);
         }
@@ -963,7 +963,7 @@ CkptResult merge_ckpt_from_shards(GbpServerState& state, bool lsn_only)
 
     out.queue_resets = {};
     out.queue_frontiers = {};
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
         out.queue_resets[qid] = resets[qid];
         out.queue_frontiers[qid] = frontiers[qid];
     }
@@ -1000,7 +1000,7 @@ CkptResult merge_ckpt_from_shards(GbpServerState& state, bool lsn_only)
     return out;
 }
 
-CkptResult GbpServerState::ckpt_snapshot(bool lsn_only)
+CkptResult RbpServerState::ckpt_snapshot(bool lsn_only)
 {
     CkptResult out;
     {
@@ -1033,20 +1033,20 @@ CkptResult GbpServerState::ckpt_snapshot(bool lsn_only)
     return out;
 }
 
-RetiredReadPhaseState GbpServerState::detach_read_phase_generation()
+RetiredReadPhaseState RbpServerState::detach_read_phase_generation()
 {
     read_end_detaching_.store(true, std::memory_order_release);
     {
         std::unique_lock<std::mutex> lock(evict_state.mtx);
         while (evict_state.job_running && !evict_state.stop) {
-            cond_wait_for_compatible(evict_state.cv, lock, std::chrono::milliseconds(GBP_EVICT_WAIT_SLICE_MS));
+            cond_wait_for_compatible(evict_state.cv, lock, std::chrono::milliseconds(RBP_EVICT_WAIT_SLICE_MS));
         }
     }
 
     RetiredReadPhaseState retired;
     lock_all();
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        GbpShard& shard = *shards_[qid];
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        RbpShard& shard = *shards_[qid];
         RetiredShardData& out = retired.shards[qid];
         retired.detached_pages += static_cast<int>(shard.page_cache.size());
         out.page_cache.swap(shard.page_cache);
@@ -1076,7 +1076,7 @@ RetiredReadPhaseState GbpServerState::detach_read_phase_generation()
     return retired;
 }
 
-void GbpServerState::schedule_retired_destruction(RetiredReadPhaseState&& retired)
+void RbpServerState::schedule_retired_destruction(RetiredReadPhaseState&& retired)
 {
     std::lock_guard<std::mutex> evict_lock(evict_state.mtx);
     {
@@ -1086,7 +1086,7 @@ void GbpServerState::schedule_retired_destruction(RetiredReadPhaseState&& retire
     evict_state.cv.notify_all();
 }
 
-void GbpServerState::clear_all(int& cache_pages, int& pending_pages, int& reset_count, int& frontier_count)
+void RbpServerState::clear_all(int& cache_pages, int& pending_pages, int& reset_count, int& frontier_count)
 {
     cache_pages = 0;
     pending_pages = 0;
@@ -1128,7 +1128,7 @@ void GbpServerState::clear_all(int& cache_pages, int& pending_pages, int& reset_
     }
 }
 
-bool GbpServerState::try_note_page_installed(bool replaced)
+bool RbpServerState::try_note_page_installed(bool replaced)
 {
     if (replaced) {
         return true;
@@ -1149,12 +1149,12 @@ bool GbpServerState::try_note_page_installed(bool replaced)
     }
 }
 
-void GbpServerState::note_page_removed()
+void RbpServerState::note_page_removed()
 {
     total_pages_.fetch_sub(1, std::memory_order_relaxed);
 }
 
-void GbpServerState::note_pending_delta(int delta)
+void RbpServerState::note_pending_delta(int delta)
 {
     if (delta == 0) {
         return;
@@ -1162,12 +1162,12 @@ void GbpServerState::note_pending_delta(int delta)
     pending_total_.fetch_add(delta, std::memory_order_relaxed);
 }
 
-void GbpServerState::build_read_meta_snapshot(std::vector<MetaSnapshotRow>& out) const
+void RbpServerState::build_read_meta_snapshot(std::vector<MetaSnapshotRow>& out) const
 {
     out.clear();
     out.reserve(static_cast<size_t>(total_page_count()));
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        const GbpShard& shard = *shards_[qid];
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        const RbpShard& shard = *shards_[qid];
         std::lock_guard<std::mutex> g(shard.mtx);
         for (const auto& kv : shard.meta_index_) {
             out.push_back(kv.second);
@@ -1175,7 +1175,7 @@ void GbpServerState::build_read_meta_snapshot(std::vector<MetaSnapshotRow>& out)
     }
 }
 
-uint64_t compute_global_begin_lfn(GbpServerState& state, bool lsn_only)
+uint64_t compute_global_begin_lfn(RbpServerState& state, bool lsn_only)
 {
     state.lock_all();
     CkptResult ckpt = merge_ckpt_from_shards(state, lsn_only);
@@ -1183,18 +1183,18 @@ uint64_t compute_global_begin_lfn(GbpServerState& state, bool lsn_only)
     return log_point_lfn(ckpt.begin);
 }
 
-bool run_fixed_point_purge(GbpServerState& state, bool lsn_only, int budget)
+bool run_fixed_point_purge(RbpServerState& state, bool lsn_only, int budget)
 {
     int remaining = budget;
     bool stable = false;
     while (remaining > 0) {
         const uint64_t begin_lfn = compute_global_begin_lfn(state, lsn_only);
         int deleted = 0;
-        for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
+        for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
             if (remaining <= 0) {
                 break;
             }
-            GbpShard& shard = state.shard(qid);
+            RbpShard& shard = state.shard(qid);
             std::lock_guard<std::mutex> g(shard.mtx);
             const int n = purge_shard_through_lfn(state, shard, begin_lfn, remaining, false, "begin-purge");
             deleted += n;
@@ -1208,11 +1208,11 @@ bool run_fixed_point_purge(GbpServerState& state, bool lsn_only, int budget)
     return stable;
 }
 
-std::optional<std::pair<uint32_t, uint64_t>> find_global_min_lrp_page(GbpServerState& state)
+std::optional<std::pair<uint32_t, uint64_t>> find_global_min_lrp_page(RbpServerState& state)
 {
     std::optional<std::tuple<uint64_t, uint32_t, uint64_t>> best;
-    for (uint32_t sid = 0; sid < OG_GBP_SESSION_COUNT; ++sid) {
-        GbpShard& shard = state.shard(sid);
+    for (uint32_t sid = 0; sid < OG_RBP_SESSION_COUNT; ++sid) {
+        RbpShard& shard = state.shard(sid);
         std::lock_guard<std::mutex> g(shard.mtx);
         auto found = shard.lrp_index_.find_min_pid();
         if (!found) {
@@ -1225,13 +1225,13 @@ std::optional<std::pair<uint32_t, uint64_t>> find_global_min_lrp_page(GbpServerS
     if (!best) {
         return std::nullopt;
     }
-    return std::make_pair(std::get<GBP_GLOBAL_MIN_LRP_TUPLE_QID_INDEX>(*best),
-                          std::get<GBP_GLOBAL_MIN_LRP_TUPLE_PID_INDEX>(*best));
+    return std::make_pair(std::get<RBP_GLOBAL_MIN_LRP_TUPLE_QID_INDEX>(*best),
+                          std::get<RBP_GLOBAL_MIN_LRP_TUPLE_PID_INDEX>(*best));
 }
 
 namespace {
 
-void run_capacity_evict_job(GbpServerState* state, bool lsn_only)
+void run_capacity_evict_job(RbpServerState* state, bool lsn_only)
 {
     int job_target = 0;
     {
@@ -1254,7 +1254,7 @@ void run_capacity_evict_job(GbpServerState* state, bool lsn_only)
         if (!picked) {
             break;
         }
-        GbpShard& shard = state->shard(picked->first);
+        RbpShard& shard = state->shard(picked->first);
         std::lock_guard<std::mutex> g(shard.mtx);
         if (shard.page_cache.find(picked->second) == shard.page_cache.end()) {
             continue;
@@ -1279,7 +1279,7 @@ void run_capacity_evict_job(GbpServerState* state, bool lsn_only)
         state->evict_state.cv.notify_all();
     }
     if (deleted > 0) {
-        gbp_run_log("[capacity-evict] job done deleted=" + std::to_string(deleted) +
+        rbp_run_log("[capacity-evict] job done deleted=" + std::to_string(deleted) +
                     " target=" + std::to_string(job_target) + " purge_stable=" + std::to_string(purge_ok) +
                     " total_pages=" + std::to_string(state->total_page_count()));
     }
@@ -1287,7 +1287,7 @@ void run_capacity_evict_job(GbpServerState* state, bool lsn_only)
 
 }  // namespace
 
-void evict_worker_loop(GbpServerState* state)
+void evict_worker_loop(RbpServerState* state)
 {
     const bool lsn_only = state->config().log_cmp_lsn_only;
     while (true) {
@@ -1313,7 +1313,7 @@ void evict_worker_loop(GbpServerState* state)
                     break;
                 }
                 cond_wait_for_compatible(state->evict_state.cv, lock,
-                                         std::chrono::milliseconds(GBP_EVICT_IDLE_WAIT_MS));
+                                         std::chrono::milliseconds(RBP_EVICT_IDLE_WAIT_MS));
             }
         }
 
@@ -1345,12 +1345,12 @@ void evict_worker_loop(GbpServerState* state)
             std::lock_guard<std::mutex> g(state->retired_state.mtx);
             state->retired_state.running = false;
         }
-        gbp_run_log("READ_END background retired destruct done pages=" + std::to_string(pages) +
+        rbp_run_log("READ_END background retired destruct done pages=" + std::to_string(pages) +
                     " elapsed_ms=" + std::to_string(elapsed_ms));
     }
 }
 
-void GbpServerState::maybe_start_capacity_evict()
+void RbpServerState::maybe_start_capacity_evict()
 {
     if (!cfg_.capacity_evict_on_write) {
         return;
@@ -1381,17 +1381,17 @@ void GbpServerState::maybe_start_capacity_evict()
     evict_state.job_running = true;
     evict_state.purge_stable = false;
     evict_state.cv.notify_all();
-    gbp_run_log("[capacity-evict] start target=" + std::to_string(target) + " total_pages=" +
+    rbp_run_log("[capacity-evict] start target=" + std::to_string(target) + " total_pages=" +
                 std::to_string(total) + " max_pages=" + std::to_string(cfg_.max_cache_pages) +
                 " high_water=" + std::to_string(high_water));
 }
 
-void GbpServerState::start_evict_worker()
+void RbpServerState::start_evict_worker()
 {
     evict_thread_ = std::thread(evict_worker_loop, this);
 }
 
-void GbpServerState::stop_evict_worker()
+void RbpServerState::stop_evict_worker()
 {
     {
         std::lock_guard<std::mutex> g(evict_state.mtx);
@@ -1403,4 +1403,4 @@ void GbpServerState::stop_evict_worker()
     }
 }
 
-}  // namespace gbp
+}  // namespace rbp

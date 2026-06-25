@@ -14,28 +14,28 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_config.cpp
+ * rbp_config.cpp
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_config.cpp
+ * src/rbp/rbp_config.cpp
  *
  * -------------------------------------------------------------------------
  */
 
-#include "gbp_config.h"
+#include "rbp_config.h"
 
 #include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <map>
 
-namespace gbp {
+namespace rbp {
 
 namespace {
 
-constexpr int GBP_MIN_BUCKET_COUNT = 16;
-constexpr int GBP_MAX_TCP_PORT = 65535;
+constexpr int RBP_MIN_BUCKET_COUNT = 16;
+constexpr int RBP_MAX_TCP_PORT = 65535;
 
 std::string trim(const std::string& s)
 {
@@ -263,44 +263,44 @@ void apply_env(ServerOptions& opt)
 {
     Config& c = opt.config;
     const char* v = nullptr;
-    if ((v = std::getenv("GBPS_HOST")) != nullptr && *v) {
+    if ((v = std::getenv("RBPS_HOST")) != nullptr && *v) {
         opt.host = v;
     }
-    if ((v = std::getenv("GBPS_PORT")) != nullptr && *v) {
-        opt.port = env_int("GBPS_PORT", opt.port);
+    if ((v = std::getenv("RBPS_PORT")) != nullptr && *v) {
+        opt.port = env_int("RBPS_PORT", opt.port);
     }
-    if ((v = std::getenv("GBPS_ADMIN_HOST")) != nullptr && *v) {
+    if ((v = std::getenv("RBPS_ADMIN_HOST")) != nullptr && *v) {
         opt.admin_host = v;
     }
-    if ((v = std::getenv("GBPS_ADMIN_PORT")) != nullptr && *v) {
-        opt.admin_port = env_int("GBPS_ADMIN_PORT", opt.admin_port);
+    if ((v = std::getenv("RBPS_ADMIN_PORT")) != nullptr && *v) {
+        opt.admin_port = env_int("RBPS_ADMIN_PORT", opt.admin_port);
     }
-    if ((v = std::getenv("GBPS_LOG_FILE")) != nullptr) {
+    if ((v = std::getenv("RBPS_LOG_FILE")) != nullptr) {
         opt.log_file = expand_env_vars(v);
     }
-    if ((v = std::getenv("GBPS_PID_FILE")) != nullptr) {
+    if ((v = std::getenv("RBPS_PID_FILE")) != nullptr) {
         opt.pid_file = expand_env_vars(v);
     }
 
-    if ((v = std::getenv("GBPS_VERBOSE")) != nullptr) {
+    if ((v = std::getenv("RBPS_VERBOSE")) != nullptr) {
         c.verbose = env_truthy(v);
     }
-    if ((v = std::getenv("GBPS_TIMING_DIAG")) != nullptr) {
+    if ((v = std::getenv("RBPS_TIMING_DIAG")) != nullptr) {
         c.timing_diag = env_truthy(v);
     }
-    if ((v = std::getenv("GBPS_LOG_CMP_LSN_ONLY")) != nullptr) {
+    if ((v = std::getenv("RBPS_LOG_CMP_LSN_ONLY")) != nullptr) {
         c.log_cmp_lsn_only = env_truthy(v);
     }
-    if ((v = std::getenv("GBPS_SMB_VERSION")) != nullptr) {
+    if ((v = std::getenv("RBPS_SMB_VERSION")) != nullptr) {
         c.smb_version = !env_falsy(v);
     }
-    if ((v = std::getenv("GBPS_MAX_CACHE_PAGES")) != nullptr && *v) {
-        c.max_cache_pages = env_int("GBPS_MAX_CACHE_PAGES", c.max_cache_pages);
+    if ((v = std::getenv("RBPS_MAX_CACHE_PAGES")) != nullptr && *v) {
+        c.max_cache_pages = env_int("RBPS_MAX_CACHE_PAGES", c.max_cache_pages);
     }
-    if ((v = std::getenv("GBPS_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
+    if ((v = std::getenv("RBPS_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
         c.capacity_evict_on_write = env_truthy(v);
     }
-    if ((v = std::getenv("GBPS_READ_END_MODE")) != nullptr) {
+    if ((v = std::getenv("RBPS_READ_END_MODE")) != nullptr) {
         if (str_ieq(v, "sync")) {
             c.read_end_mode = ReadEndMode::Sync;
         }
@@ -308,45 +308,45 @@ void apply_env(ServerOptions& opt)
             c.read_end_mode = ReadEndMode::Async;
         }
     }
-    if ((v = std::getenv("GBPS_READ_PHASE_TIMEOUT")) != nullptr && *v) {
-        c.read_phase_timeout = env_double("GBPS_READ_PHASE_TIMEOUT", c.read_phase_timeout);
+    if ((v = std::getenv("RBPS_READ_PHASE_TIMEOUT")) != nullptr && *v) {
+        c.read_phase_timeout = env_double("RBPS_READ_PHASE_TIMEOUT", c.read_phase_timeout);
     }
 
-    if ((v = std::getenv("GBP_DEMO_LOG_CMP_LSN_ONLY")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_LOG_CMP_LSN_ONLY")) != nullptr) {
         c.log_cmp_lsn_only = env_truthy(v);
     }
-    if ((v = std::getenv("GBP_DEMO_SMB_VERSION")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_SMB_VERSION")) != nullptr) {
         c.smb_version = !env_falsy(v);
     }
-    if ((v = std::getenv("GBP_DEMO_MAX_CACHE_PAGES")) != nullptr && *v) {
-        c.max_cache_pages = env_int("GBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages);
+    if ((v = std::getenv("RBP_DEMO_MAX_CACHE_PAGES")) != nullptr && *v) {
+        c.max_cache_pages = env_int("RBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages);
     }
-    if ((v = std::getenv("GBP_DEMO_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
         c.capacity_evict_on_write = env_truthy(v);
     }
-    if ((v = std::getenv("GBP_DEMO_LEGACY_BATCH_PENDING")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_LEGACY_BATCH_PENDING")) != nullptr) {
         c.legacy_batch_pending = !env_falsy(v);
     }
-    if ((v = std::getenv("GBP_DEMO_CKPT_WAIT_EVICT")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_CKPT_WAIT_EVICT")) != nullptr) {
         c.ckpt_wait_evict = env_truthy(v);
     }
-    if ((v = std::getenv("GBP_DEMO_CKPT_PARITY_CHECK")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_CKPT_PARITY_CHECK")) != nullptr) {
         c.ckpt_parity_check = env_truthy(v);
     }
-    c.ckpt_wait_ms = env_int("GBP_DEMO_CKPT_WAIT_MS", c.ckpt_wait_ms);
-    c.rcy_diag_lag = env_int("GBP_DEMO_RCY_DIAG_LAG", c.rcy_diag_lag);
-    c.evict_sample_log = env_int("GBP_DEMO_EVICT_SAMPLE_LOG", c.evict_sample_log);
-    c.evict_budget = std::max(1, env_int("GBP_DEMO_EVICT_BUDGET", c.evict_budget));
-    c.purge_budget = std::max(1, env_int("GBP_DEMO_PURGE_BUDGET", c.purge_budget));
-    c.bucket_count = std::max(GBP_MIN_BUCKET_COUNT, env_int("GBP_DEMO_BUCKET_COUNT", c.bucket_count));
-    c.bucket_span = std::max(1, env_int("GBP_DEMO_BUCKET_SPAN", c.bucket_span));
-    c.page_write_slow_us = env_int("GBP_DEMO_PAGE_WRITE_SLOW_US", c.page_write_slow_us);
-    c.page_write_timing_us = env_int("GBP_DEMO_PAGE_WRITE_TIMING_US", c.page_write_timing_us);
-    c.selected_lsn_mismatch_log = env_int("GBP_DEMO_SELECTED_LSN_MISMATCH_LOG", c.selected_lsn_mismatch_log);
-    c.read_phase_timeout = env_double("GBP_DEMO_READ_PHASE_TIMEOUT", c.read_phase_timeout);
-    c.cache_high_water = std::min(1.0, std::max(0.0, env_double("GBP_DEMO_CACHE_HIGH_WATER", c.cache_high_water)));
-    c.cache_evict_ratio = std::min(1.0, std::max(0.0, env_double("GBP_DEMO_CACHE_EVICT_RATIO", c.cache_evict_ratio)));
-    if ((v = std::getenv("GBP_DEMO_READ_END_MODE")) != nullptr) {
+    c.ckpt_wait_ms = env_int("RBP_DEMO_CKPT_WAIT_MS", c.ckpt_wait_ms);
+    c.rcy_diag_lag = env_int("RBP_DEMO_RCY_DIAG_LAG", c.rcy_diag_lag);
+    c.evict_sample_log = env_int("RBP_DEMO_EVICT_SAMPLE_LOG", c.evict_sample_log);
+    c.evict_budget = std::max(1, env_int("RBP_DEMO_EVICT_BUDGET", c.evict_budget));
+    c.purge_budget = std::max(1, env_int("RBP_DEMO_PURGE_BUDGET", c.purge_budget));
+    c.bucket_count = std::max(RBP_MIN_BUCKET_COUNT, env_int("RBP_DEMO_BUCKET_COUNT", c.bucket_count));
+    c.bucket_span = std::max(1, env_int("RBP_DEMO_BUCKET_SPAN", c.bucket_span));
+    c.page_write_slow_us = env_int("RBP_DEMO_PAGE_WRITE_SLOW_US", c.page_write_slow_us);
+    c.page_write_timing_us = env_int("RBP_DEMO_PAGE_WRITE_TIMING_US", c.page_write_timing_us);
+    c.selected_lsn_mismatch_log = env_int("RBP_DEMO_SELECTED_LSN_MISMATCH_LOG", c.selected_lsn_mismatch_log);
+    c.read_phase_timeout = env_double("RBP_DEMO_READ_PHASE_TIMEOUT", c.read_phase_timeout);
+    c.cache_high_water = std::min(1.0, std::max(0.0, env_double("RBP_DEMO_CACHE_HIGH_WATER", c.cache_high_water)));
+    c.cache_evict_ratio = std::min(1.0, std::max(0.0, env_double("RBP_DEMO_CACHE_EVICT_RATIO", c.cache_evict_ratio)));
+    if ((v = std::getenv("RBP_DEMO_READ_END_MODE")) != nullptr) {
         if (str_ieq(v, "sync")) {
             c.read_end_mode = ReadEndMode::Sync;
         }
@@ -354,7 +354,7 @@ void apply_env(ServerOptions& opt)
             c.read_end_mode = ReadEndMode::Async;
         }
     }
-    if ((v = std::getenv("GBP_DEMO_TIMING_DIAG")) != nullptr) {
+    if ((v = std::getenv("RBP_DEMO_TIMING_DIAG")) != nullptr) {
         c.timing_diag = env_truthy(v);
     }
 }
@@ -402,17 +402,17 @@ std::string default_config_path()
 {
     const char* data = std::getenv("OGDB_DATA");
     if (data != nullptr && *data != '\0') {
-        std::string data_config = std::string(data) + "/cfg/gbps.conf";
+        std::string data_config = std::string(data) + "/cfg/rbps.conf";
         if (file_exists(data_config)) {
             return data_config;
         }
     }
     const char* home = std::getenv("OGDB_HOME");
     if (home != nullptr && *home != '\0') {
-        return std::string(home) + "/cfg/gbps.conf";
+        return std::string(home) + "/cfg/rbps.conf";
     }
     if (data != nullptr && *data != '\0') {
-        return std::string(data) + "/cfg/gbps.conf";
+        return std::string(data) + "/cfg/rbps.conf";
     }
     return "";
 }
@@ -445,15 +445,15 @@ bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::stri
     out.config.cache_evict_ratio = std::min(1.0, std::max(0.0, out.config.cache_evict_ratio));
     out.config.evict_budget = std::max(1, out.config.evict_budget);
     out.config.purge_budget = std::max(1, out.config.purge_budget);
-    if (out.port <= 0 || out.port > GBP_MAX_TCP_PORT) {
+    if (out.port <= 0 || out.port > RBP_MAX_TCP_PORT) {
         err = "PORT must be in range 1..65535";
         return false;
     }
-    if (out.admin_port < 0 || out.admin_port > GBP_MAX_TCP_PORT) {
+    if (out.admin_port < 0 || out.admin_port > RBP_MAX_TCP_PORT) {
         err = "ADMIN_PORT must be in range 0..65535";
         return false;
     }
     return true;
 }
 
-}  // namespace gbp
+}  // namespace rbp

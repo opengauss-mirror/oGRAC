@@ -14,19 +14,19 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_log.h
+ * rbp_log.h
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_log.h
+ * src/rbp/rbp_log.h
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef GBP_LOG_H
-#define GBP_LOG_H
+#ifndef RBP_LOG_H
+#define RBP_LOG_H
 
-#include "gbp_wire.h"
+#include "rbp_wire.h"
 
 #include <cerrno>
 #include <chrono>
@@ -45,22 +45,22 @@
 #include <sys/types.h>
 #endif
 
-namespace gbp {
+namespace rbp {
 
-inline constexpr int GBP_LOG_DIR_MODE = 0755;
-inline constexpr size_t GBP_WINDOWS_DRIVE_PREFIX_LEN = 2;
-inline constexpr size_t GBP_WINDOWS_DRIVE_COLON_INDEX = 1;
-inline constexpr size_t GBP_PAGE_LSN_OFFSET = 16;
-inline constexpr size_t GBP_PAGE_LSN_SIZE = sizeof(uint64_t);
-inline constexpr size_t GBP_PAGE_PCN_OFFSET = 24;
-inline constexpr size_t GBP_PAGE_PCN_SIZE = sizeof(uint32_t);
-inline constexpr size_t GBP_PAGE_CHECKSUM_TAIL_OFFSET = sizeof(uint64_t);
-inline constexpr size_t GBP_PAGE_CHECKSUM_SIZE = sizeof(uint16_t);
+inline constexpr int RBP_LOG_DIR_MODE = 0755;
+inline constexpr size_t RBP_WINDOWS_DRIVE_PREFIX_LEN = 2;
+inline constexpr size_t RBP_WINDOWS_DRIVE_COLON_INDEX = 1;
+inline constexpr size_t RBP_PAGE_LSN_OFFSET = 16;
+inline constexpr size_t RBP_PAGE_LSN_SIZE = sizeof(uint64_t);
+inline constexpr size_t RBP_PAGE_PCN_OFFSET = 24;
+inline constexpr size_t RBP_PAGE_PCN_SIZE = sizeof(uint32_t);
+inline constexpr size_t RBP_PAGE_CHECKSUM_TAIL_OFFSET = sizeof(uint64_t);
+inline constexpr size_t RBP_PAGE_CHECKSUM_SIZE = sizeof(uint16_t);
 
-inline std::FILE* g_gbp_log_file = stderr;
-inline std::mutex g_gbp_log_lock;
+inline std::FILE* g_rbp_log_file = stderr;
+inline std::mutex g_rbp_log_lock;
 
-inline bool gbp_mkdir_one(const std::string& path)
+inline bool rbp_mkdir_one(const std::string& path)
 {
     if (path.empty()) {
         return true;
@@ -70,14 +70,14 @@ inline bool gbp_mkdir_one(const std::string& path)
         return true;
     }
 #else
-    if (mkdir(path.c_str(), GBP_LOG_DIR_MODE) == 0 || errno == EEXIST) {
+    if (mkdir(path.c_str(), RBP_LOG_DIR_MODE) == 0 || errno == EEXIST) {
         return true;
     }
 #endif
     return false;
 }
 
-inline bool gbp_mkdirs_for_file(const std::string& file, std::string& err)
+inline bool rbp_mkdirs_for_file(const std::string& file, std::string& err)
 {
     size_t pos = file.find_last_of("/\\");
     if (pos == std::string::npos) {
@@ -88,8 +88,8 @@ inline bool gbp_mkdirs_for_file(const std::string& file, std::string& err)
         return true;
     }
     size_t start = 0;
-    if (dir.size() >= GBP_WINDOWS_DRIVE_PREFIX_LEN && dir[GBP_WINDOWS_DRIVE_COLON_INDEX] == ':') {
-        start = GBP_WINDOWS_DRIVE_PREFIX_LEN;
+    if (dir.size() >= RBP_WINDOWS_DRIVE_PREFIX_LEN && dir[RBP_WINDOWS_DRIVE_COLON_INDEX] == ':') {
+        start = RBP_WINDOWS_DRIVE_PREFIX_LEN;
     }
     while (start < dir.size() && (dir[start] == '/' || dir[start] == '\\')) {
         start++;
@@ -102,7 +102,7 @@ inline bool gbp_mkdirs_for_file(const std::string& file, std::string& err)
         if (part.empty()) {
             continue;
         }
-        if (!gbp_mkdir_one(part)) {
+        if (!rbp_mkdir_one(part)) {
             err = "failed to create log directory: " + part;
             return false;
         }
@@ -110,12 +110,12 @@ inline bool gbp_mkdirs_for_file(const std::string& file, std::string& err)
     return true;
 }
 
-inline bool gbp_init_log_file(const std::string& file, std::string& err)
+inline bool rbp_init_log_file(const std::string& file, std::string& err)
 {
     if (file.empty()) {
         return true;
     }
-    if (!gbp_mkdirs_for_file(file, err)) {
+    if (!rbp_mkdirs_for_file(file, err)) {
         return false;
     }
     std::FILE* fp = std::fopen(file.c_str(), "a");
@@ -123,12 +123,12 @@ inline bool gbp_init_log_file(const std::string& file, std::string& err)
         err = "failed to open log file: " + file;
         return false;
     }
-    std::lock_guard<std::mutex> guard(g_gbp_log_lock);
-    g_gbp_log_file = fp;
+    std::lock_guard<std::mutex> guard(g_rbp_log_lock);
+    g_rbp_log_file = fp;
     return true;
 }
 
-inline void gbp_run_log(const std::string& msg)
+inline void rbp_run_log(const std::string& msg)
 {
     using clock = std::chrono::system_clock;
     const auto now = clock::now();
@@ -146,9 +146,9 @@ inline void gbp_run_log(const std::string& msg)
 #endif
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
-    std::lock_guard<std::mutex> guard(g_gbp_log_lock);
-    std::fprintf(g_gbp_log_file, "%s.%03d [GBP] %s\n", buf, static_cast<int>(ms.count()), msg.c_str());
-    std::fflush(g_gbp_log_file);
+    std::lock_guard<std::mutex> guard(g_rbp_log_lock);
+    std::fprintf(g_rbp_log_file, "%s.%03d [RBP] %s\n", buf, static_cast<int>(ms.count()), msg.c_str());
+    std::fflush(g_rbp_log_file);
 }
 
 inline bool log_point_is_zero(const log_point_t& lp)
@@ -250,7 +250,7 @@ inline std::string format_page_id(uint16_t file, uint32_t page, uint16_t aligned
 
 inline uint32_t page_queue_id(uint32_t page_no)
 {
-    return page_no % OG_GBP_SESSION_COUNT;
+    return page_no % OG_RBP_SESSION_COUNT;
 }
 
 inline void page_diag_from_block(const char* blk, uint64_t& lsn, uint32_t& pcn, uint16_t& cks)
@@ -261,9 +261,9 @@ inline void page_diag_from_block(const char* blk, uint64_t& lsn, uint32_t& pcn, 
     if (!blk) {
         return;
     }
-    std::memcpy(&lsn, blk + GBP_PAGE_LSN_OFFSET, GBP_PAGE_LSN_SIZE);
-    std::memcpy(&pcn, blk + GBP_PAGE_PCN_OFFSET, GBP_PAGE_PCN_SIZE);
-    std::memcpy(&cks, blk + GBP_PAGE_SIZE - GBP_PAGE_CHECKSUM_TAIL_OFFSET, GBP_PAGE_CHECKSUM_SIZE);
+    std::memcpy(&lsn, blk + RBP_PAGE_LSN_OFFSET, RBP_PAGE_LSN_SIZE);
+    std::memcpy(&pcn, blk + RBP_PAGE_PCN_OFFSET, RBP_PAGE_PCN_SIZE);
+    std::memcpy(&cks, blk + RBP_PAGE_SIZE - RBP_PAGE_CHECKSUM_TAIL_OFFSET, RBP_PAGE_CHECKSUM_SIZE);
 }
 
 struct SmbDecision {
@@ -290,7 +290,7 @@ inline void check_little_endian()
 {
     const uint16_t one = 1;
     if (*reinterpret_cast<const uint8_t*>(&one) != 1) {
-        gbp_run_log("FATAL: little-endian required");
+        rbp_run_log("FATAL: little-endian required");
         std::exit(1);
     }
 }
@@ -302,6 +302,6 @@ inline int64_t us_since(const std::chrono::steady_clock::time_point& start)
         .count();
 }
 
-}  // namespace gbp
+}  // namespace rbp
 
-#endif  // GBP_LOG_H
+#endif  // RBP_LOG_H

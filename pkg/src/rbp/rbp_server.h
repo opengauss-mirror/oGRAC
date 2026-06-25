@@ -14,21 +14,21 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_server.h
+ * rbp_server.h
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_server.h
+ * src/rbp/rbp_server.h
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef GBP_SERVER_H
-#define GBP_SERVER_H
+#ifndef RBP_SERVER_H
+#define RBP_SERVER_H
 
-#include "gbp_std_compat.h"
-#include "gbp_protocol.h"
-#include "gbp_state.h"
+#include "rbp_std_compat.h"
+#include "rbp_protocol.h"
+#include "rbp_state.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -36,7 +36,7 @@
 #include <mutex>
 #include <string>
 
-namespace gbp {
+namespace rbp {
 
 struct ReadPhase {
     std::mutex mtx;
@@ -70,15 +70,15 @@ struct ReadPhaseEndResult {
 };
 
 void run_server(const std::string& host, int port, const Config& cfg, int admin_port, const std::string& admin_host);
-void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, ReadPhase& read_phase, const Config& cfg);
+void handle_conn(socket_t fd, const std::string& peer, RbpServerState& state, ReadPhase& read_phase, const Config& cfg);
 ReadPhaseSnapshot get_read_phase_snapshot(ReadPhase& read_phase);
-ReadPhaseEndResult force_read_phase_end(GbpServerState& state, ReadPhase& read_phase, const Config& cfg,
+ReadPhaseEndResult force_read_phase_end(RbpServerState& state, ReadPhase& read_phase, const Config& cfg,
                                         const std::string& peer, const char* reason);
-void admin_server_loop(const std::string& host, int port, GbpServerState& state, ReadPhase& read_phase,
+void admin_server_loop(const std::string& host, int port, RbpServerState& state, ReadPhase& read_phase,
                        const Config& cfg);
 bool admin_query_once(const std::string& host, int port, const std::string& command,
                       std::string& response, std::string& err);
 
-}  // namespace gbp
+}  // namespace rbp
 
-#endif  // GBP_SERVER_H
+#endif  // RBP_SERVER_H

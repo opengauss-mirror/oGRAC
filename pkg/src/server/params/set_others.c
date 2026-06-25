@@ -33,8 +33,8 @@
 extern "C" {
 #endif
 
-#define GBP_ASSEMBLE_MAX_SCAN_MIN 100
-#define GBP_ASSEMBLE_MAX_SCAN_MAX 1000000
+#define RBP_ASSEMBLE_MAX_SCAN_MIN 100
+#define RBP_ASSEMBLE_MAX_SCAN_MAX 1000000
 
 static inline bool32 sql_get_notify_bool_value(const char *value)
 {
@@ -576,7 +576,7 @@ status_t sql_verify_als_repl_port(void *se, void *lex, void *def)
     return OG_SUCCESS;
 }
 
-status_t sql_verify_als_gbp_ip(void *se, void *lex, void *def)
+status_t sql_verify_als_rbp_ip(void *se, void *lex, void *def)
 {
     word_t word;
     knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
@@ -600,13 +600,13 @@ status_t sql_verify_als_gbp_ip(void *se, void *lex, void *def)
     return cm_verify_lsnr_addr(sys_def->value, (uint32)strlen(sys_def->value), NULL);
 }
 
-status_t sql_verify_als_gbp_port(void *se, void *lex, void *def)
+status_t sql_verify_als_rbp_port(void *se, void *lex, void *def)
 {
     (void)se;
-    return sql_verify_param_port(lex, def, "GBP_PORT");
+    return sql_verify_param_port(lex, def, "RBP_PORT");
 }
 
-status_t sql_verify_als_local_gbp_host(void *se, void *lex, void *def)
+status_t sql_verify_als_local_rbp_host(void *se, void *lex, void *def)
 {
     word_t word;
     knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
@@ -1826,7 +1826,7 @@ status_t sql_notify_als_lrpl_res_logsize(void *se, void *item, char *value)
         return OG_ERROR;
     }
 
-    g_instance->kernel.gbp_attr.lrpl_res_logsize = (uint64)val_int64;
+    g_instance->kernel.rbp_attr.lrpl_res_logsize = (uint64)val_int64;
     return OG_SUCCESS;
 }
 
@@ -1962,7 +1962,7 @@ status_t sql_notify_als_strict_case_datatype(void *se, void *item, char *value)
     return sql_notify_als_bool(se, item, value);
 }
 
-status_t sql_notify_als_use_gbp(void *se, void *item, char *value)
+status_t sql_notify_als_use_rbp(void *se, void *item, char *value)
 {
     if (value[1] == '\0' && ((bool32)value[0] == OG_TRUE || (bool32)value[0] == OG_FALSE)) {
         return sql_notify_als_bool(se, item, value);
@@ -1972,11 +1972,11 @@ status_t sql_notify_als_use_gbp(void *se, void *item, char *value)
         return sql_notify_als_bool(se, item, value);
     }
 
-    OG_THROW_ERROR(ERR_INVALID_PARAMETER, "USE_GBP");
+    OG_THROW_ERROR(ERR_INVALID_PARAMETER, "USE_RBP");
     return OG_ERROR;
 }
 
-status_t sql_verify_als_gbp_assemble_max_scan(void *se, void *lex, void *def)
+status_t sql_verify_als_rbp_assemble_max_scan(void *se, void *lex, void *def)
 {
     uint32 num;
 
@@ -1984,18 +1984,18 @@ status_t sql_verify_als_gbp_assemble_max_scan(void *se, void *lex, void *def)
     if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if (num < GBP_ASSEMBLE_MAX_SCAN_MIN) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "GBP_ASSEMBLE_MAX_SCAN", (int64)GBP_ASSEMBLE_MAX_SCAN_MIN);
+    if (num < RBP_ASSEMBLE_MAX_SCAN_MIN) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "RBP_ASSEMBLE_MAX_SCAN", (int64)RBP_ASSEMBLE_MAX_SCAN_MIN);
         return OG_ERROR;
     }
-    if (num > GBP_ASSEMBLE_MAX_SCAN_MAX) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "GBP_ASSEMBLE_MAX_SCAN", (int64)GBP_ASSEMBLE_MAX_SCAN_MAX);
+    if (num > RBP_ASSEMBLE_MAX_SCAN_MAX) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "RBP_ASSEMBLE_MAX_SCAN", (int64)RBP_ASSEMBLE_MAX_SCAN_MAX);
         return OG_ERROR;
     }
     return OG_SUCCESS;
 }
 
-status_t sql_notify_als_gbp_assemble_max_scan(void *se, void *item, char *value)
+status_t sql_notify_als_rbp_assemble_max_scan(void *se, void *item, char *value)
 {
     uint32 num;
 
@@ -2004,10 +2004,10 @@ status_t sql_notify_als_gbp_assemble_max_scan(void *se, void *item, char *value)
     if (cm_str2uint32(value, &num) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    if (num < GBP_ASSEMBLE_MAX_SCAN_MIN || num > GBP_ASSEMBLE_MAX_SCAN_MAX) {
+    if (num < RBP_ASSEMBLE_MAX_SCAN_MIN || num > RBP_ASSEMBLE_MAX_SCAN_MAX) {
         return OG_ERROR;
     }
-    g_instance->kernel.gbp_attr.assemble_max_scan = num;
+    g_instance->kernel.rbp_attr.assemble_max_scan = num;
     return OG_SUCCESS;
 }
 

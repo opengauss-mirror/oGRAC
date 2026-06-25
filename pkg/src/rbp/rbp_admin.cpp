@@ -14,18 +14,18 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_admin.cpp
+ * rbp_admin.cpp
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_admin.cpp
+ * src/rbp/rbp_admin.cpp
  *
  * -------------------------------------------------------------------------
  */
 
-#include "gbp_server.h"
+#include "rbp_server.h"
 
-#include "gbp_log.h"
+#include "rbp_log.h"
 
 #include <algorithm>
 #include <cctype>
@@ -48,20 +48,20 @@
 #include <unistd.h>
 #endif
 
-namespace gbp {
+namespace rbp {
 
 namespace {
 
-constexpr int GBP_ADMIN_MAX_FILE_NO = 65535;
-constexpr int GBP_ADMIN_HEX_BYTE_WIDTH = 2;
-constexpr int GBP_ADMIN_CHECKSUM_HEX_WIDTH = 4;
-constexpr size_t GBP_ADMIN_PAGE_HEADER_PREVIEW = 96;
-constexpr size_t GBP_ADMIN_PAGE_TAIL_PREVIEW = 64;
-constexpr size_t GBP_ADMIN_QUEUE_PREFIX_LEN = 3;
-constexpr int GBP_ADMIN_MILLISECONDS_PER_SECOND = 1000;
-constexpr int GBP_ADMIN_LISTEN_BACKLOG = 16;
-constexpr int GBP_ADMIN_WINSOCK_VERSION_MAJOR = 2;
-constexpr int GBP_ADMIN_WINSOCK_VERSION_MINOR = 2;
+constexpr int RBP_ADMIN_MAX_FILE_NO = 65535;
+constexpr int RBP_ADMIN_HEX_BYTE_WIDTH = 2;
+constexpr int RBP_ADMIN_CHECKSUM_HEX_WIDTH = 4;
+constexpr size_t RBP_ADMIN_PAGE_HEADER_PREVIEW = 96;
+constexpr size_t RBP_ADMIN_PAGE_TAIL_PREVIEW = 64;
+constexpr size_t RBP_ADMIN_QUEUE_PREFIX_LEN = 3;
+constexpr int RBP_ADMIN_MILLISECONDS_PER_SECOND = 1000;
+constexpr int RBP_ADMIN_LISTEN_BACKLOG = 16;
+constexpr int RBP_ADMIN_WINSOCK_VERSION_MAJOR = 2;
+constexpr int RBP_ADMIN_WINSOCK_VERSION_MINOR = 2;
 
 }  // namespace
 
@@ -101,7 +101,7 @@ static bool parse_file_page(const std::string& text, int& file_no, int& page_no)
     if (!parse_nonnegative_int_exact(s.substr(pos + 1), page_no)) {
         return false;
     }
-    if (file_no > GBP_ADMIN_MAX_FILE_NO) {
+    if (file_no > RBP_ADMIN_MAX_FILE_NO) {
         return false;
     }
     return true;
@@ -113,16 +113,16 @@ static std::string hex_preview(const char* data, size_t len, size_t limit)
     const size_t n = std::min(len, limit);
     os << std::hex << std::setfill('0');
     for (size_t i = 0; i < n; ++i) {
-        os << std::setw(GBP_ADMIN_HEX_BYTE_WIDTH) << static_cast<unsigned>(static_cast<unsigned char>(data[i]));
+        os << std::setw(RBP_ADMIN_HEX_BYTE_WIDTH) << static_cast<unsigned>(static_cast<unsigned char>(data[i]));
     }
     return os.str();
 }
 
-static std::string admin_query_page(GbpServerState& state, int file_no, int page_no)
+static std::string admin_query_page(RbpServerState& state, int file_no, int page_no)
 {
     const uint64_t key = page_id_key(static_cast<uint32_t>(page_no), static_cast<uint16_t>(file_no));
     const uint32_t qid = page_queue_id(static_cast<uint32_t>(page_no));
-    GbpShard& shard = state.shard(qid);
+    RbpShard& shard = state.shard(qid);
     bool pending = false;
     log_point_t reset{};
     log_point_t frontier{};
@@ -151,7 +151,7 @@ static std::string admin_query_page(GbpServerState& state, int file_no, int page
     uint16_t cks = 0;
     page_diag_from_block(page_block_cstr(hit), lsn, pcn, cks);
     std::ostringstream cks_os;
-    cks_os << std::hex << std::setw(GBP_ADMIN_CHECKSUM_HEX_WIDTH) << std::setfill('0') << cks;
+    cks_os << std::hex << std::setw(RBP_ADMIN_CHECKSUM_HEX_WIDTH) << std::setfill('0') << cks;
     return "FOUND file=" + std::to_string(file_no) + " page=" + std::to_string(page_no) + " qid=" +
            std::to_string(qid) + " pending=" + std::to_string(static_cast<int>(pending)) + " lsn=" +
            std::to_string(lsn) + " pcn=" + std::to_string(pcn) + " checksum=0x" + cks_os.str() +
@@ -161,11 +161,11 @@ static std::string admin_query_page(GbpServerState& state, int file_no, int page
            "] frontier[" + format_log_point_short(frontier) + "] cache_total=" + std::to_string(cache_size) + "\n";
 }
 
-static std::string admin_dump_page(GbpServerState& state, int file_no, int page_no)
+static std::string admin_dump_page(RbpServerState& state, int file_no, int page_no)
 {
     const uint64_t key = page_id_key(static_cast<uint32_t>(page_no), static_cast<uint16_t>(file_no));
     const uint32_t qid = page_queue_id(static_cast<uint32_t>(page_no));
-    GbpShard& shard = state.shard(qid);
+    RbpShard& shard = state.shard(qid);
     bool pending = false;
     log_point_t reset{};
     log_point_t frontier{};
@@ -216,7 +216,7 @@ static std::string admin_dump_page(GbpServerState& state, int file_no, int page_
        << "writer_seq=" << hit.writer_seq << "\n"
        << "page_lsn=" << lsn << "\n"
        << "page_pcn=" << pcn << "\n"
-       << "page_checksum=0x" << std::hex << std::setw(GBP_ADMIN_CHECKSUM_HEX_WIDTH) << std::setfill('0') << cks
+       << "page_checksum=0x" << std::hex << std::setw(RBP_ADMIN_CHECKSUM_HEX_WIDTH) << std::setfill('0') << cks
        << std::dec << "\n"
        << "trunc_rst=" << tr_rst << "\n"
        << "trunc_asn=" << tr_asn << "\n"
@@ -234,11 +234,11 @@ static std::string admin_dump_page(GbpServerState& state, int file_no, int page_
     const char* lrp_bytes = reinterpret_cast<const char*>(&hit.coverage_lrp);
     os << "trunc_hex=" << hex_preview(trunc_bytes, LOG_POINT_SIZE, LOG_POINT_SIZE) << "\n"
        << "lrp_hex=" << hex_preview(lrp_bytes, LOG_POINT_SIZE, LOG_POINT_SIZE) << "\n"
-       << "page_header_hex=" << hex_preview(page_block_cstr(hit), GBP_PAGE_SIZE, GBP_ADMIN_PAGE_HEADER_PREVIEW) << "\n";
+       << "page_header_hex=" << hex_preview(page_block_cstr(hit), RBP_PAGE_SIZE, RBP_ADMIN_PAGE_HEADER_PREVIEW) << "\n";
     const char* block = page_block_cstr(hit);
     if (block) {
-        os << "page_tail_hex=" << hex_preview(block + GBP_PAGE_SIZE - GBP_ADMIN_PAGE_TAIL_PREVIEW,
-                                              GBP_ADMIN_PAGE_TAIL_PREVIEW, GBP_ADMIN_PAGE_TAIL_PREVIEW) << "\n";
+        os << "page_tail_hex=" << hex_preview(block + RBP_PAGE_SIZE - RBP_ADMIN_PAGE_TAIL_PREVIEW,
+                                              RBP_ADMIN_PAGE_TAIL_PREVIEW, RBP_ADMIN_PAGE_TAIL_PREVIEW) << "\n";
     } else {
         os << "page_tail_hex=\n";
     }
@@ -246,18 +246,18 @@ static std::string admin_dump_page(GbpServerState& state, int file_no, int page_
     return os.str();
 }
 
-static std::string admin_window(GbpServerState& state)
+static std::string admin_window(RbpServerState& state)
 {
     const bool lsn_only = state.config().log_cmp_lsn_only;
     const CkptResult ckpt = state.ckpt_snapshot(lsn_only);
-    log_point_t resets[OG_GBP_SESSION_COUNT]{};
-    log_point_t frontiers[OG_GBP_SESSION_COUNT]{};
+    log_point_t resets[OG_RBP_SESSION_COUNT]{};
+    log_point_t frontiers[OG_RBP_SESSION_COUNT]{};
     collect_queue_points(state, resets, frontiers);
     const std::string reset_diag = queue_resets_diag(resets, lsn_only);
     const std::string frontier_diag = queue_frontiers_diag(frontiers, lsn_only);
     int pending_pages = 0;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        const GbpShard& shard = state.shard(qid);
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        const RbpShard& shard = state.shard(qid);
         std::lock_guard<std::mutex> g(shard.mtx);
         pending_pages += static_cast<int>(shard.batch_pending.size());
     }
@@ -275,21 +275,21 @@ static std::string admin_window(GbpServerState& state)
        << "purge_stable=" << ckpt.diag.purge_stable << "\n"
        << "empty_reason=" << ckpt.diag.empty_reason << "\n";
     if (!reset_diag.empty()) {
-        os << reset_diag.substr(GBP_ADMIN_QUEUE_PREFIX_LEN) << "\n";
+        os << reset_diag.substr(RBP_ADMIN_QUEUE_PREFIX_LEN) << "\n";
     }
     if (!frontier_diag.empty()) {
-        os << frontier_diag.substr(GBP_ADMIN_QUEUE_PREFIX_LEN) << "\n";
+        os << frontier_diag.substr(RBP_ADMIN_QUEUE_PREFIX_LEN) << "\n";
     }
     os << "WINDOW_END\n";
     return os.str();
 }
 
-static std::string admin_stats(GbpServerState& state)
+static std::string admin_stats(RbpServerState& state)
 {
     int cache_total = 0;
     int pending_total = 0;
-    for (uint32_t qid = 0; qid < OG_GBP_SESSION_COUNT; ++qid) {
-        const GbpShard& shard = state.shard(qid);
+    for (uint32_t qid = 0; qid < OG_RBP_SESSION_COUNT; ++qid) {
+        const RbpShard& shard = state.shard(qid);
         std::lock_guard<std::mutex> g(shard.mtx);
         cache_total += static_cast<int>(shard.page_cache.size());
         pending_total += static_cast<int>(shard.batch_pending.size());
@@ -307,8 +307,8 @@ static std::string admin_read_phase(ReadPhase& read_phase, const Config& cfg)
     os << "READ_PHASE_BEGIN\n"
        << "active=" << static_cast<int>(snap.active) << "\n"
        << "ending=" << static_cast<int>(snap.ending) << "\n"
-       << "elapsed_ms=" << static_cast<int>(snap.elapsed_s * GBP_ADMIN_MILLISECONDS_PER_SECOND) << "\n"
-       << "idle_ms=" << static_cast<int>(snap.idle_s * GBP_ADMIN_MILLISECONDS_PER_SECOND) << "\n"
+       << "elapsed_ms=" << static_cast<int>(snap.elapsed_s * RBP_ADMIN_MILLISECONDS_PER_SECOND) << "\n"
+       << "idle_ms=" << static_cast<int>(snap.idle_s * RBP_ADMIN_MILLISECONDS_PER_SECOND) << "\n"
        << "inflight_reads=" << snap.inflight_reads << "\n"
        << "timeout_s=" << cfg.read_phase_timeout << "\n"
        << "dropped_page_writes=" << snap.dropped_page_writes << "\n"
@@ -317,25 +317,25 @@ static std::string admin_read_phase(ReadPhase& read_phase, const Config& cfg)
     return os.str();
 }
 
-static std::string admin_force_read_end(GbpServerState& state, ReadPhase& read_phase, const Config& cfg)
+static std::string admin_force_read_end(RbpServerState& state, ReadPhase& read_phase, const Config& cfg)
 {
     const ReadPhaseEndResult ended = force_read_phase_end(state, read_phase, cfg, "admin", "FORCE_READ_END");
     std::ostringstream os;
     os << "OK active_before=" << static_cast<int>(ended.active_before)
        << " ending_before=" << static_cast<int>(ended.ending_before)
        << " cleared=" << static_cast<int>(ended.cleared)
-       << " elapsed_ms=" << static_cast<int>(ended.elapsed_s * GBP_ADMIN_MILLISECONDS_PER_SECOND)
+       << " elapsed_ms=" << static_cast<int>(ended.elapsed_s * RBP_ADMIN_MILLISECONDS_PER_SECOND)
        << " dropped_page_writes=" << ended.dropped_page_writes
        << " detached_pages=" << ended.detached_pages << "\n";
     return os.str();
 }
 
-void admin_server_loop(const std::string& host, int port, GbpServerState& state, ReadPhase& read_phase,
+void admin_server_loop(const std::string& host, int port, RbpServerState& state, ReadPhase& read_phase,
                        const Config& cfg)
 {
     socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(srv)) {
-        gbp_run_log("admin socket create failed");
+        rbp_run_log("admin socket create failed");
         return;
     }
     int yes = 1;
@@ -344,7 +344,7 @@ void admin_server_loop(const std::string& host, int port, GbpServerState& state,
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        gbp_run_log("admin bind failed: invalid host " + host);
+        rbp_run_log("admin bind failed: invalid host " + host);
 #if defined(_WIN32)
         closesocket(srv);
 #else
@@ -353,7 +353,7 @@ void admin_server_loop(const std::string& host, int port, GbpServerState& state,
         return;
     }
     if (bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        gbp_run_log("admin bind failed on " + host + ":" + std::to_string(port));
+        rbp_run_log("admin bind failed on " + host + ":" + std::to_string(port));
 #if defined(_WIN32)
         closesocket(srv);
 #else
@@ -361,8 +361,8 @@ void admin_server_loop(const std::string& host, int port, GbpServerState& state,
 #endif
         return;
     }
-    if (listen(srv, GBP_ADMIN_LISTEN_BACKLOG) != 0) {
-        gbp_run_log("admin listen failed on " + host + ":" + std::to_string(port));
+    if (listen(srv, RBP_ADMIN_LISTEN_BACKLOG) != 0) {
+        rbp_run_log("admin listen failed on " + host + ":" + std::to_string(port));
 #if defined(_WIN32)
         closesocket(srv);
 #else
@@ -370,12 +370,12 @@ void admin_server_loop(const std::string& host, int port, GbpServerState& state,
 #endif
         return;
     }
-    gbp_run_log("GBPS admin listening on " + host + ":" + std::to_string(port) +
+    rbp_run_log("RBPS admin listening on " + host + ":" + std::to_string(port) +
                 " (command: EXISTS|DUMP <file>-<page>, WINDOW, STATS, READ_PHASE, FORCE_READ_END)");
 
     while (true) {
         sockaddr_in client{};
-        gbp_socklen_t clen = sizeof(client);
+        rbp_socklen_t clen = sizeof(client);
         socket_t fd = accept(srv, reinterpret_cast<sockaddr*>(&client), &clen);
         if (is_invalid_socket(fd)) {
             continue;
@@ -437,12 +437,12 @@ bool admin_query_once(const std::string& host, int port, const std::string& comm
                       std::string& response, std::string& err)
 {
     if (port <= 0) {
-        err = "gbps admin port is disabled";
+        err = "rbps admin port is disabled";
         return false;
     }
 #if defined(_WIN32)
     WSADATA wsa{};
-    WSAStartup(MAKEWORD(GBP_ADMIN_WINSOCK_VERSION_MAJOR, GBP_ADMIN_WINSOCK_VERSION_MINOR), &wsa);
+    WSAStartup(MAKEWORD(RBP_ADMIN_WINSOCK_VERSION_MAJOR, RBP_ADMIN_WINSOCK_VERSION_MINOR), &wsa);
 #endif
     socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(fd)) {
@@ -462,7 +462,7 @@ bool admin_query_once(const std::string& host, int port, const std::string& comm
         return false;
     }
     if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        err = "failed to connect gbps admin " + host + ":" + std::to_string(port);
+        err = "failed to connect rbps admin " + host + ":" + std::to_string(port);
 #if defined(_WIN32)
         closesocket(fd);
 #else
@@ -505,4 +505,4 @@ bool admin_query_once(const std::string& host, int port, const std::string& comm
     return true;
 }
 
-}  // namespace gbp
+}  // namespace rbp

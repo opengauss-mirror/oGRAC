@@ -109,17 +109,17 @@ function cms_resource_exists() {
   cms res -list 2>/dev/null | awk '{print $1}' | grep -qi "^${res_name}$"
 }
 
-function add_gbps_cms_resource() {
-  local gbps_script="${OGDB_HOME}/bin/gbps_contrl.sh"
-  if [ ! -x "${gbps_script}" ]; then
-    log "skip gbps cms resource, script not found: ${gbps_script}"
+function add_rbps_cms_resource() {
+  local rbps_script="${OGDB_HOME}/bin/rbps_contrl.sh"
+  if [ ! -x "${rbps_script}" ]; then
+    log "skip rbps cms resource, script not found: ${rbps_script}"
     return 0
   fi
-  if cms_resource_exists gbps; then
-    log "gbps cms resource already exists"
+  if cms_resource_exists rbps; then
+    log "rbps cms resource already exists"
     return 0
   fi
-  cms res -add gbps -type gbps -attr "script=${gbps_script}"
+  cms res -add rbps -type rbps -attr "script=${rbps_script}"
 }
 
 function start_cms() {
@@ -134,7 +134,7 @@ function start_cms() {
     fi
 
     cms res -add db -type db -attr "script=${OGDB_HOME}/bin/cluster.sh"
-    add_gbps_cms_resource
+    add_rbps_cms_resource
   elif [ ${NODE_ID} == 1 ]; then
     wait_for_node1_in_cluster
   fi

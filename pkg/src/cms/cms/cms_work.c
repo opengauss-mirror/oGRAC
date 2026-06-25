@@ -399,8 +399,8 @@ status_t cms_start_res_node(cms_packet_head_t* msg, char* err_info, uint32 err_i
         cms_securec_check(err);
         return OG_ERROR;
     }
-    if (cms_gbps_res_is_disabled(res.name, res.type)) {
-        err = strcpy_s(err_info, err_info_len, "gbps disabled by USE_GBP=FALSE");
+    if (cms_rbps_res_is_disabled(res.name, res.type)) {
+        err = strcpy_s(err_info, err_info_len, "rbps disabled by USE_RBP=FALSE");
         if (SECUREC_UNLIKELY(err != EOK)) {
             OG_THROW_ERROR(ERR_SYSTEM_CALL, err);
             return OG_ERROR;
@@ -3986,7 +3986,7 @@ static void cms_proc_msg_req_res_list(cms_packet_head_t *msg)
         if (res_db->magic != CMS_GCC_RES_MAGIC) {
             continue;
         }
-        if (cms_gbps_res_is_disabled(res_db->name, res_db->type)) {
+        if (cms_rbps_res_is_disabled(res_db->name, res_db->type)) {
             continue;
         }
         if (cms_proc_msg_res_list_res_copy(gcc, res_db, &res->res_info[res_count], res->info) != OG_SUCCESS) {
@@ -4150,7 +4150,7 @@ void cms_hb_timer_entry(thread_t* thread)
 
 static void cms_stat_chg_restart_res(cms_res_t res, cms_res_stat_t stat, date_t now_time)
 {
-    if (cms_gbps_res_is_disabled(res.name, res.type)) {
+    if (cms_rbps_res_is_disabled(res.name, res.type)) {
         return;
     }
 
@@ -4210,11 +4210,11 @@ void cms_detect_osclock_abnormal(date_t now_time, date_t last_refresh_time)
     }
 }
 
-static void cms_handle_disabled_gbps_res(uint32 res_id, cms_res_stat_t *stat)
+static void cms_handle_disabled_rbps_res(uint32 res_id, cms_res_stat_t *stat)
 {
     if (stat->cur_stat == CMS_RES_ONLINE) {
         CMS_LOG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-            "gbps resource is disabled by USE_GBP=FALSE, stop and keep it offline.");
+            "rbps resource is disabled by USE_RBP=FALSE, stop and keep it offline.");
         if (cms_res_stop(res_id, OG_TRUE) == OG_SUCCESS) {
             (void)cms_res_detect_offline(res_id, stat);
         }
@@ -4223,7 +4223,7 @@ static void cms_handle_disabled_gbps_res(uint32 res_id, cms_res_stat_t *stat)
 
     if (stat->target_stat == CMS_RES_ONLINE) {
         CMS_LOG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-            "gbps resource is disabled by USE_GBP=FALSE, mark target offline.");
+            "rbps resource is disabled by USE_RBP=FALSE, mark target offline.");
         (void)cms_res_stopped(res_id);
         return;
     }
@@ -4249,8 +4249,8 @@ void cms_res_check_timer_entry(thread_t* thread)
             }
 
             get_cur_res_stat(i, &stat);
-            if (cms_gbps_res_is_disabled(res.name, res.type)) {
-                cms_handle_disabled_gbps_res(i, &stat);
+            if (cms_rbps_res_is_disabled(res.name, res.type)) {
+                cms_handle_disabled_rbps_res(i, &stat);
                 continue;
             }
             min_interval = MIN(res.check_interval, min_interval);

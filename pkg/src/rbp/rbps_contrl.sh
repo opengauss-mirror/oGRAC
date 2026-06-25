@@ -19,21 +19,21 @@ cms_failed()
     exit 1
 }
 
-find_gbps_ctl()
+find_rbps_ctl()
 {
     script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
-    if [ -x "${script_dir}/gbps_ctl" ]; then
-        printf '%s' "${script_dir}/gbps_ctl"
+    if [ -x "${script_dir}/rbps_ctl" ]; then
+        printf '%s' "${script_dir}/rbps_ctl"
         return 0
     fi
-    command -v gbps_ctl 2>/dev/null || true
+    command -v rbps_ctl 2>/dev/null || true
 }
 
 ACTION="${1:-}"
 NODE_ID="${2:-}"
 [ -n "$ACTION" ] && [ -n "$NODE_ID" ] || { usage; cms_failed; }
 
-CTL=$(find_gbps_ctl)
+CTL=$(find_rbps_ctl)
 [ -n "$CTL" ] || cms_failed
 
 case "$ACTION" in
@@ -51,7 +51,7 @@ case "$ACTION" in
         ;;
     -check)
         status_out=$("$CTL" status 2>/dev/null || true)
-        printf '%s\n' "$status_out" | grep -q '^gbps is running:' && cms_success
+        printf '%s\n' "$status_out" | grep -q '^rbps is running:' && cms_success
         cms_failed
         ;;
     *)

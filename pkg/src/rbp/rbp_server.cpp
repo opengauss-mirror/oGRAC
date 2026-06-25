@@ -14,17 +14,17 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_server.cpp
+ * rbp_server.cpp
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_server.cpp
+ * src/rbp/rbp_server.cpp
  *
  * -------------------------------------------------------------------------
  */
 
-#include "gbp_log.h"
-#include "gbp_server.h"
+#include "rbp_log.h"
+#include "rbp_server.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -45,17 +45,17 @@
 #include <unistd.h>
 #endif
 
-namespace gbp {
+namespace rbp {
 
 namespace {
 
-constexpr int GBP_READ_PHASE_INITIAL_DROP_LOG_LIMIT = 8;
-constexpr int GBP_READ_PHASE_DROP_LOG_INTERVAL = 1024;
-constexpr int GBP_SERVER_MILLISECONDS_PER_SECOND = 1000;
-constexpr int GBP_READ_PHASE_WATCHDOG_MS = 100;
-constexpr int GBP_SERVER_LISTEN_BACKLOG = 64;
-constexpr int GBP_WINSOCK_VERSION_MAJOR = 2;
-constexpr int GBP_WINSOCK_VERSION_MINOR = 2;
+constexpr int RBP_READ_PHASE_INITIAL_DROP_LOG_LIMIT = 8;
+constexpr int RBP_READ_PHASE_DROP_LOG_INTERVAL = 1024;
+constexpr int RBP_SERVER_MILLISECONDS_PER_SECOND = 1000;
+constexpr int RBP_READ_PHASE_WATCHDOG_MS = 100;
+constexpr int RBP_SERVER_LISTEN_BACKLOG = 64;
+constexpr int RBP_WINSOCK_VERSION_MAJOR = 2;
+constexpr int RBP_WINSOCK_VERSION_MINOR = 2;
 
 }  // namespace
 
@@ -82,8 +82,8 @@ ReadPhaseSnapshot get_read_phase_snapshot(ReadPhase& rp)
 
 static bool read_phase_tracks_request(uint32_t msg_type)
 {
-    return msg_type == GBP_REQ_PAGE_READ || msg_type == GBP_REQ_BATCH_PAGE_READ ||
-           msg_type == GBP_REQ_READ_META_CHUNK || msg_type == GBP_REQ_BATCH_PAGE_READ_SELECTED;
+    return msg_type == RBP_REQ_PAGE_READ || msg_type == RBP_REQ_BATCH_PAGE_READ ||
+           msg_type == RBP_REQ_READ_META_CHUNK || msg_type == RBP_REQ_BATCH_PAGE_READ_SELECTED;
 }
 
 class ReadPhaseActivityGuard {
@@ -164,16 +164,16 @@ static bool read_phase_drop_page_write(ReadPhase& rp, const std::string& peer, u
         dropped = ++rp.dropped_page_writes;
         started_at = rp.started_at;
     }
-    if (dropped <= GBP_READ_PHASE_INITIAL_DROP_LOG_LIMIT || dropped % GBP_READ_PHASE_DROP_LOG_INTERVAL == 0) {
-        gbp_run_log("PAGE_WRITE ignored during READ_PHASE peer=" + peer + " qid=" + std::to_string(qid) +
+    if (dropped <= RBP_READ_PHASE_INITIAL_DROP_LOG_LIMIT || dropped % RBP_READ_PHASE_DROP_LOG_INTERVAL == 0) {
+        rbp_run_log("PAGE_WRITE ignored during READ_PHASE peer=" + peer + " qid=" + std::to_string(qid) +
                     " page_num=" + std::to_string(page_num) + " dropped=" + std::to_string(dropped) +
                     " elapsed_ms=" + std::to_string(static_cast<int>((now_seconds() - started_at) *
-                                                                      GBP_SERVER_MILLISECONDS_PER_SECOND)));
+                                                                      RBP_SERVER_MILLISECONDS_PER_SECOND)));
     }
     return true;
 }
 
-static void clear_read_phase_state_sync(GbpServerState& state, const std::string& peer, const char* reason,
+static void clear_read_phase_state_sync(RbpServerState& state, const std::string& peer, const char* reason,
                                         bool timing_diag)
 {
     state.read_diag().log_summary(peer, reason, timing_diag);
@@ -187,13 +187,13 @@ static void clear_read_phase_state_sync(GbpServerState& state, const std::string
     state.clear_all(cache_pages, pending_pages, reset_count, frontier_count);
     state.reset_batch_pending_epoch();
     state.clear_evicted_holes();
-    gbp_run_log(std::string("GBP state cleared reason=") + reason + " peer=" + peer + " cache_pages=" +
+    rbp_run_log(std::string("RBP state cleared reason=") + reason + " peer=" + peer + " cache_pages=" +
                 std::to_string(cache_pages) + " pending=" + std::to_string(pending_pages) +
                 " resets=" + std::to_string(reset_count) + " frontiers=" + std::to_string(frontier_count) +
                 " mode=sync");
 }
 
-static int clear_read_phase_state_async(GbpServerState& state, const std::string& peer, const char* reason,
+static int clear_read_phase_state_async(RbpServerState& state, const std::string& peer, const char* reason,
                                         bool timing_diag)
 {
     state.read_diag().log_summary(peer, reason, timing_diag);
@@ -206,7 +206,7 @@ static int clear_read_phase_state_async(GbpServerState& state, const std::string
     return detached_pages;
 }
 
-ReadPhaseEndResult force_read_phase_end(GbpServerState& state, ReadPhase& rp, const Config& cfg,
+ReadPhaseEndResult force_read_phase_end(RbpServerState& state, ReadPhase& rp, const Config& cfg,
                                         const std::string& peer, const char* reason)
 {
     ReadPhaseEndResult result;
@@ -253,18 +253,18 @@ static bool read_phase_expired(ReadPhase& rp, const Config& cfg, ReadPhaseSnapsh
     return snap.active && !snap.ending && snap.idle_s >= cfg.read_phase_timeout;
 }
 
-static bool release_read_phase_if_timeout(GbpServerState& state, ReadPhase& rp, const Config& cfg,
+static bool release_read_phase_if_timeout(RbpServerState& state, ReadPhase& rp, const Config& cfg,
                                           const std::string& peer)
 {
     ReadPhaseSnapshot snap;
     if (!read_phase_expired(rp, cfg, snap)) {
         return false;
     }
-    gbp_run_log("READ_PHASE_TIMEOUT force_release peer=" + peer +
+    rbp_run_log("READ_PHASE_TIMEOUT force_release peer=" + peer +
                 " timeout_s=" + std::to_string(cfg.read_phase_timeout) +
                 " elapsed_ms=" + std::to_string(static_cast<int>(snap.elapsed_s *
-                                                                  GBP_SERVER_MILLISECONDS_PER_SECOND)) +
-                " idle_ms=" + std::to_string(static_cast<int>(snap.idle_s * GBP_SERVER_MILLISECONDS_PER_SECOND)) +
+                                                                  RBP_SERVER_MILLISECONDS_PER_SECOND)) +
+                " idle_ms=" + std::to_string(static_cast<int>(snap.idle_s * RBP_SERVER_MILLISECONDS_PER_SECOND)) +
                 " inflight_reads=" + std::to_string(snap.inflight_reads) +
                 " dropped=" + std::to_string(snap.dropped_page_writes) +
                 " cache_pages=" + std::to_string(state.total_page_count()) +
@@ -273,26 +273,26 @@ static bool release_read_phase_if_timeout(GbpServerState& state, ReadPhase& rp, 
     return ended.cleared;
 }
 
-static void read_phase_timeout_watchdog(GbpServerState& state, ReadPhase& rp, Config cfg)
+static void read_phase_timeout_watchdog(RbpServerState& state, ReadPhase& rp, Config cfg)
 {
     while (true) {
         if (cfg.read_phase_timeout > 0) {
             release_read_phase_if_timeout(state, rp, cfg, "watchdog");
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(GBP_READ_PHASE_WATCHDOG_MS));
+        std::this_thread::sleep_for(std::chrono::milliseconds(RBP_READ_PHASE_WATCHDOG_MS));
     }
 }
 
-static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr_t& hdr, const uint8_t* body,
-                         size_t body_len, uint32_t conn_qid, GbpServerState& state, ReadPhase& read_phase,
+static void dispatch_msg(socket_t fd, const std::string& peer, const rbp_msg_hdr_t& hdr, const uint8_t* body,
+                         size_t body_len, uint32_t conn_qid, RbpServerState& state, ReadPhase& read_phase,
                          ConnMeta& conn_meta, const Config& cfg, int64_t recv_hdr_us, int64_t recv_body_us)
 {
-    if (hdr.msg_type == GBP_REQ_NOTIFY_MSG) {
-        uint32_t notify = MSG_GBP_INVALID;
-        if (body_len >= GBP_UINT32_WIRE_SIZE) {
-            std::memcpy(&notify, body, GBP_UINT32_WIRE_SIZE);
+    if (hdr.msg_type == RBP_REQ_NOTIFY_MSG) {
+        uint32_t notify = MSG_RBP_INVALID;
+        if (body_len >= RBP_UINT32_WIRE_SIZE) {
+            std::memcpy(&notify, body, RBP_UINT32_WIRE_SIZE);
         }
-        if (notify == MSG_GBP_READ_BEGIN) {
+        if (notify == MSG_RBP_READ_BEGIN) {
             ReadPhaseSnapshot snap;
             const bool entered = read_phase_enter(read_phase, snap);
             if (entered) {
@@ -300,39 +300,39 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
                 state.selected_read_diag().reset();
                 state.reset_batch_pending_epoch();
             }
-            send_ack(fd, hdr, ACK_GBP_READ_BEGIN);
+            send_ack(fd, hdr, ACK_RBP_READ_BEGIN);
             if (entered) {
-                gbp_run_log("READ_PHASE enter peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                rbp_run_log("READ_PHASE enter peer=" + peer + " qid=" + std::to_string(conn_qid) +
                             " reason=READ_BEGIN (lazy_batch_pending, direct_selected_reads_page_cache)");
             } else {
-                gbp_run_log("READ_BEGIN idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                rbp_run_log("READ_BEGIN idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
                             " elapsed_ms=" + std::to_string(static_cast<int>(
-                                snap.elapsed_s * GBP_SERVER_MILLISECONDS_PER_SECOND)) +
+                                snap.elapsed_s * RBP_SERVER_MILLISECONDS_PER_SECOND)) +
                             " dropped=" + std::to_string(snap.dropped_page_writes));
             }
-        } else if (notify == MSG_GBP_READ_END) {
+        } else if (notify == MSG_RBP_READ_END) {
             const ReadPhaseEndResult ended = force_read_phase_end(state, read_phase, cfg, peer, "READ_END");
-            send_ack(fd, hdr, ACK_GBP_INVALID);
+            send_ack(fd, hdr, ACK_RBP_INVALID);
             if (!ended.cleared) {
-                gbp_run_log("READ_END idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                rbp_run_log("READ_END idempotent ack peer=" + peer + " qid=" + std::to_string(conn_qid) +
                             (ended.ending_before ? " already_ending=1" : " inactive=1"));
             } else if (cfg.read_end_mode == ReadEndMode::Async) {
-                gbp_run_log("READ_END ack_immediate peer=" + peer + " detached_pages=" +
+                rbp_run_log("READ_END ack_immediate peer=" + peer + " detached_pages=" +
                             std::to_string(ended.detached_pages) + " mode=async scheduled_background=1");
             }
             if (ended.cleared) {
-                gbp_run_log("READ_PHASE leave peer=" + peer + " qid=" + std::to_string(conn_qid) +
+                rbp_run_log("READ_PHASE leave peer=" + peer + " qid=" + std::to_string(conn_qid) +
                             (cfg.read_end_mode == ReadEndMode::Sync ? " (state cleared)" : " (ack_sent)"));
             }
         } else {
-            send_ack(fd, hdr, ACK_GBP_INVALID);
+            send_ack(fd, hdr, ACK_RBP_INVALID);
         }
         return;
     }
-    if (hdr.msg_type == GBP_REQ_PAGE_WRITE) {
+    if (hdr.msg_type == RBP_REQ_PAGE_WRITE) {
         uint32_t page_num = 0;
-        if (body_len >= GBP_UINT32_WIRE_SIZE) {
-            std::memcpy(&page_num, body, GBP_UINT32_WIRE_SIZE);
+        if (body_len >= RBP_UINT32_WIRE_SIZE) {
+            std::memcpy(&page_num, body, RBP_UINT32_WIRE_SIZE);
         }
         release_read_phase_if_timeout(state, read_phase, cfg, peer);
         if (read_phase_drop_page_write(read_phase, peer, conn_qid, page_num)) {
@@ -351,7 +351,7 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
             cfg.page_write_timing_us > 0 &&
             (recv_body_us >= cfg.page_write_timing_us || apply_us >= cfg.page_write_timing_us);
         if (cfg.verbose || reset_write || wr.pages_off < 0 || wr.capacity_rejected > 0 || slow_apply || slow_recv) {
-            gbp_run_log("PAGE_WRITE summary peer=" + peer + " queue=" + std::to_string(hdr.queue_id) +
+            rbp_run_log("PAGE_WRITE summary peer=" + peer + " queue=" + std::to_string(hdr.queue_id) +
                         " bytes=" + std::to_string(hdr.msg_length) + " page_num=" + std::to_string(page_num) +
                         " reset=" + std::to_string(static_cast<int>(reset_write)) +
                         " accepted=" + std::to_string(wr.accepted) +
@@ -359,7 +359,7 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
                         " rejected_stale=" + std::to_string(wr.rejected - wr.capacity_rejected) +
                         " rejected_capacity=" + std::to_string(wr.capacity_rejected) +
                         " pages_off=" + std::to_string(wr.pages_off) +
-                        " item_size=" + std::to_string(GBP_PAGE_ITEM_SIZE) +
+                        " item_size=" + std::to_string(RBP_PAGE_ITEM_SIZE) +
                         " body_len=" + std::to_string(body_len) +
                         " layout=" + std::string(wr.pages_off >= 0 ? "v2_ok" : "v2_unresolved") +
                         " recv_hdr_us=" + std::to_string(recv_hdr_us) +
@@ -375,17 +375,17 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
         return;
     }
     ReadPhaseActivityGuard read_guard(read_phase, hdr.msg_type);
-    if (hdr.msg_type == GBP_REQ_READ_CKPT) {
+    if (hdr.msg_type == RBP_REQ_READ_CKPT) {
         send_read_ckpt_resp(fd, hdr, body, body_len, state, cfg.verbose, peer);
         return;
     }
-    if (hdr.msg_type == GBP_REQ_PAGE_READ) {
+    if (hdr.msg_type == RBP_REQ_PAGE_READ) {
         page_id_t req_page_id{};
         if (body_len >= sizeof(req_page_id)) {
             std::memcpy(&req_page_id, body, sizeof(req_page_id));
         }
         const uint64_t pid_key = page_id_key_from_raw(req_page_id);
-        GbpShard& shard = state.shard(page_queue_id(req_page_id.page));
+        RbpShard& shard = state.shard(page_queue_id(req_page_id.page));
         log_point_t trunc{};
         std::shared_ptr<const PagePayload> payload;
         bool hit = false;
@@ -399,14 +399,14 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
             }
         }
         if (cfg.verbose) {
-            gbp_run_log("PAGE_READ peer=" + peer + " " +
+            rbp_run_log("PAGE_READ peer=" + peer + " " +
                         format_page_id(req_page_id.file, req_page_id.page, req_page_id.aligned) +
                         " -> " + (hit ? "HIT" : "MISS"));
         }
         send_page_read_resp(fd, hdr, req_page_id, hit, trunc, hit && payload ? payload->block : nullptr);
         return;
     }
-    if (hdr.msg_type == GBP_REQ_BATCH_PAGE_READ) {
+    if (hdr.msg_type == RBP_REQ_BATCH_PAGE_READ) {
         log_point_t skip{};
         if (body_len >= sizeof(log_point_t)) {
             std::memcpy(&skip, body, sizeof(log_point_t));
@@ -419,33 +419,33 @@ static void dispatch_msg(socket_t fd, const std::string& peer, const gbp_msg_hdr
         send_batch_read_resp(fd, hdr, skip, conn_qid, state, cfg.verbose, peer, read_active);
         return;
     }
-    if (hdr.msg_type == GBP_REQ_READ_META_CHUNK) {
+    if (hdr.msg_type == RBP_REQ_READ_META_CHUNK) {
         send_meta_chunk_resp(fd, hdr, body, body_len, state, conn_meta, cfg.verbose, peer);
         return;
     }
-    if (hdr.msg_type == GBP_REQ_BATCH_PAGE_READ_SELECTED) {
+    if (hdr.msg_type == RBP_REQ_BATCH_PAGE_READ_SELECTED) {
         send_batch_selected_read_resp(fd, hdr, body, body_len, state, cfg.verbose, peer, conn_qid);
         return;
     }
-    if (hdr.msg_type == GBP_REQ_CLOSE_CONN) {
+    if (hdr.msg_type == RBP_REQ_CLOSE_CONN) {
         throw std::runtime_error("close requested");
     }
-    gbp_run_log("unknown msg_type=" + std::to_string(hdr.msg_type) + " len=" + std::to_string(hdr.msg_length));
+    rbp_run_log("unknown msg_type=" + std::to_string(hdr.msg_type) + " len=" + std::to_string(hdr.msg_length));
 }
 
-void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, ReadPhase& read_phase,
+void handle_conn(socket_t fd, const std::string& peer, RbpServerState& state, ReadPhase& read_phase,
                  const Config& cfg)
 {
     ConnMeta conn_meta;
     uint32_t req_qid = 0;
     try {
         uint32_t proto_code = 0;
-        if (!recv_full(fd, &proto_code, GBP_UINT32_WIRE_SIZE) || proto_code != OG_PROTO_CODE) {
+        if (!recv_full(fd, &proto_code, RBP_UINT32_WIRE_SIZE) || proto_code != OG_PROTO_CODE) {
             throw std::runtime_error("invalid proto_code");
         }
         send_cs_ready_ack(fd);
-        gbp_msg_hdr_t hdr{};
-        if (!recv_full(fd, &hdr, sizeof(hdr)) || hdr.msg_type != GBP_REQ_SHAKE_HAND) {
+        rbp_msg_hdr_t hdr{};
+        if (!recv_full(fd, &hdr, sizeof(hdr)) || hdr.msg_type != RBP_REQ_SHAKE_HAND) {
             throw std::runtime_error("expect shake hand");
         }
         uint32_t shake_body[4]{};
@@ -455,7 +455,7 @@ void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, Re
         req_qid = shake_body[0];
         send_shake_resp(fd, hdr, req_qid, shake_body[1]);
         if (cfg.verbose) {
-            gbp_run_log("gbp handshake peer=" + peer + " qid=" + std::to_string(req_qid));
+            rbp_run_log("rbp handshake peer=" + peer + " qid=" + std::to_string(req_qid));
         }
 
         std::vector<uint8_t> body;
@@ -483,10 +483,10 @@ void handle_conn(socket_t fd, const std::string& peer, GbpServerState& state, Re
         }
     } catch (const QuietDisconnect& exc) {
         if (cfg.verbose) {
-            gbp_run_log("client intentionally closed peer=" + peer + " reason=" + exc.what());
+            rbp_run_log("client intentionally closed peer=" + peer + " reason=" + exc.what());
         }
     } catch (const std::exception& exc) {
-        gbp_run_log("client error peer=" + peer + " err=" + exc.what());
+        rbp_run_log("client error peer=" + peer + " err=" + exc.what());
     }
 #if defined(_WIN32)
     closesocket(fd);
@@ -499,13 +499,13 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 {
 #if defined(_WIN32)
     WSADATA wsa{};
-    WSAStartup(MAKEWORD(GBP_WINSOCK_VERSION_MAJOR, GBP_WINSOCK_VERSION_MINOR), &wsa);
+    WSAStartup(MAKEWORD(RBP_WINSOCK_VERSION_MAJOR, RBP_WINSOCK_VERSION_MINOR), &wsa);
 #else
     if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
-        gbp_run_log("signal(SIGPIPE) failed");
+        rbp_run_log("signal(SIGPIPE) failed");
     }
 #endif
-    GbpServerState state(cfg);
+    RbpServerState state(cfg);
     ReadPhase read_phase;
     state.start_evict_worker();
     if (cfg.read_phase_timeout > 0) {
@@ -517,7 +517,7 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 
     socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(srv)) {
-        gbp_run_log("socket create failed");
+        rbp_run_log("socket create failed");
         std::exit(1);
     }
     int yes = 1;
@@ -526,7 +526,7 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        gbp_run_log("bind failed: invalid host " + host);
+        rbp_run_log("bind failed: invalid host " + host);
 #if defined(_WIN32)
         closesocket(srv);
 #else
@@ -535,7 +535,7 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
         std::exit(1);
     }
     if (bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        gbp_run_log("bind failed on " + host + ":" + std::to_string(port));
+        rbp_run_log("bind failed on " + host + ":" + std::to_string(port));
 #if defined(_WIN32)
         closesocket(srv);
 #else
@@ -543,8 +543,8 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 #endif
         std::exit(1);
     }
-    if (listen(srv, GBP_SERVER_LISTEN_BACKLOG) != 0) {
-        gbp_run_log("listen failed on " + host + ":" + std::to_string(port));
+    if (listen(srv, RBP_SERVER_LISTEN_BACKLOG) != 0) {
+        rbp_run_log("listen failed on " + host + ":" + std::to_string(port));
 #if defined(_WIN32)
         closesocket(srv);
 #else
@@ -552,12 +552,12 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 #endif
         std::exit(1);
     }
-    gbp_run_log("GBPS listening on " + host + ":" + std::to_string(port) +
+    rbp_run_log("RBPS listening on " + host + ":" + std::to_string(port) +
                 " SMB_page_version=" + std::to_string(cfg.smb_version));
 
     while (true) {
         sockaddr_in client{};
-        gbp_socklen_t clen = sizeof(client);
+        rbp_socklen_t clen = sizeof(client);
         socket_t fd = accept(srv, reinterpret_cast<sockaddr*>(&client), &clen);
         if (is_invalid_socket(fd)) {
             continue;
@@ -569,4 +569,4 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
     }
 }
 
-}  // namespace gbp
+}  // namespace rbp

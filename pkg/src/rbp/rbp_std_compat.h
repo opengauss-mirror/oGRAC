@@ -14,16 +14,16 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_std_compat.h
+ * rbp_std_compat.h
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_std_compat.h
+ * src/rbp/rbp_std_compat.h
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef GBP_STD_COMPAT_H
-#define GBP_STD_COMPAT_H
+#ifndef RBP_STD_COMPAT_H
+#define RBP_STD_COMPAT_H
 
-#endif  // GBP_STD_COMPAT_H
+#endif  // RBP_STD_COMPAT_H

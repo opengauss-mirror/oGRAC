@@ -42,7 +42,7 @@
 #include "dtc_dc.h"
 #include "dtc_reform.h"
 #include "dtc_smon.h"
-#include "dtc_gbp_rt_aly.h"
+#include "dtc_rbp_rt_aly.h"
 #include "cm_io_record.h"
 #include "tms_monitor.h"
 #define DTC_BUFFER_POOL_NUM      (4)
@@ -599,7 +599,7 @@ status_t dtc_startup(void)
 
 void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
 {
-    dtc_gbp_rt_aly_close(session);
+    dtc_rbp_rt_aly_close(session);
     free_dtc_rc();
     dmon_close();
     mes_clean();

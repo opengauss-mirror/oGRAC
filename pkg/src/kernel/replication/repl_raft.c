@@ -450,12 +450,12 @@ static void raft_sendlog_cb(char *buf, int buf_len, unsigned long long lsn, unsi
     (void)cm_release_cond(&raft_ctx->cond);
 }
 
-static void raft_set_gbp_trunc_point(raft_context_t *raft_ctx)
+static void raft_set_rbp_trunc_point(raft_context_t *raft_ctx)
 {
     knl_session_t *session = g_raft_session->kernel->sessions[SESSION_ID_KERNEL];
     log_point_t raft_flush_point;
 
-    if (SECUREC_LIKELY(!KNL_GBP_ENABLE(g_raft_session->kernel))) {
+    if (SECUREC_LIKELY(!KNL_RBP_ENABLE(g_raft_session->kernel))) {
         return;
     }
 
@@ -463,7 +463,7 @@ static void raft_set_gbp_trunc_point(raft_context_t *raft_ctx)
     raft_flush_point = raft_ctx->flush_point;
     cm_spin_unlock(&raft_ctx->raft_write_disk_lock);
 
-    gbp_queue_set_trunc_point(session, &raft_flush_point);
+    rbp_queue_set_trunc_point(session, &raft_flush_point);
 }
 
 void raft_writelog_cb(unsigned long long lsn, unsigned long long raft_index, long long errorCode)
@@ -525,7 +525,7 @@ void raft_writelog_cb(unsigned long long lsn, unsigned long long raft_index, lon
 
     (void)cm_release_cond(&raft_ctx->cond);
 
-    raft_set_gbp_trunc_point(raft_ctx);
+    raft_set_rbp_trunc_point(raft_ctx);
 }
 
 static void raft_db_register_callback(knl_session_t *session)

@@ -18,14 +18,14 @@
  *
  *
  * IDENTIFICATION
- * src/gbp/main.cpp
+ * src/rbp/main.cpp
  *
  * -------------------------------------------------------------------------
  */
 
-#include "gbp_config.h"
-#include "gbp_log.h"
-#include "gbp_server.h"
+#include "rbp_config.h"
+#include "rbp_log.h"
+#include "rbp_server.h"
 
 #include <cstdlib>
 #include <exception>
@@ -46,9 +46,9 @@ static void usage(const char* prog)
 
 int main(int argc, char** argv)
 {
-    gbp::check_little_endian();
+    rbp::check_little_endian();
 
-    gbp::CliOverrides cli;
+    rbp::CliOverrides cli;
 
     try {
         int i = 1;
@@ -103,31 +103,31 @@ int main(int argc, char** argv)
             }
         }
     } catch (const std::exception& exc) {
-        std::cerr << "gbps: invalid command line: " << exc.what() << "\n";
+        std::cerr << "rbps: invalid command line: " << exc.what() << "\n";
         usage(argv[0]);
         return 1;
     }
 
-    gbp::ServerOptions options;
+    rbp::ServerOptions options;
     std::string err;
-    if (!gbp::build_server_options(cli, options, err)) {
-        std::cerr << "gbps: " << err << "\n";
+    if (!rbp::build_server_options(cli, options, err)) {
+        std::cerr << "rbps: " << err << "\n";
         return 1;
     }
     if (cli.admin_query_set) {
         std::string response;
-        if (!gbp::admin_query_once(options.admin_host, options.admin_port, cli.admin_query, response, err)) {
-            std::cerr << "gbps: " << err << "\n";
+        if (!rbp::admin_query_once(options.admin_host, options.admin_port, cli.admin_query, response, err)) {
+            std::cerr << "rbps: " << err << "\n";
             return 1;
         }
         std::cout << response;
         return 0;
     }
-    if (!gbp::gbp_init_log_file(options.log_file, err)) {
-        std::cerr << "gbps: " << err << "\n";
+    if (!rbp::rbp_init_log_file(options.log_file, err)) {
+        std::cerr << "rbps: " << err << "\n";
         return 1;
     }
 
-    gbp::run_server(options.host, options.port, options.config, options.admin_port, options.admin_host);
+    rbp::run_server(options.host, options.port, options.config, options.admin_port, options.admin_host);
     return 0;
 }

@@ -4,12 +4,12 @@ set -u
 
 usage()
 {
-    echo "Usage: $0 {start|stop|stop_force|status|restart|stats|window|read_phase|force_read_end|exists|dump|query} [-c gbps.conf] [arg]"
+    echo "Usage: $0 {start|stop|stop_force|status|restart|stats|window|read_phase|force_read_end|exists|dump|query} [-c rbps.conf] [arg]"
 }
 
 die()
 {
-    echo "gbps_ctl: $*" >&2
+    echo "rbps_ctl: $*" >&2
     exit 1
 }
 
@@ -52,16 +52,16 @@ default_log_file()
 {
     server_home=$1
     ograc_root=$(derive_ograc_root "$server_home")
-    printf '%s/log/gbps/gbps.log' "$ograc_root"
+    printf '%s/log/rbps/rbps.log' "$ograc_root"
 }
 
 is_old_default_log_file()
 {
     value=$1
     server_home=$2
-    [ "$value" = "${server_home}/log/gbps/gbps.rlog" ] && return 0
+    [ "$value" = "${server_home}/log/rbps/rbps.rlog" ] && return 0
     case "$value" in
-        '$OGDB_HOME/log/gbps/gbps.rlog'|'${OGDB_HOME}/log/gbps/gbps.rlog'|*/log/gbps/gbps.rlog)
+        '$OGDB_HOME/log/rbps/rbps.rlog'|'${OGDB_HOME}/log/rbps/rbps.rlog'|*/log/rbps/rbps.rlog)
             return 0
             ;;
     esac
@@ -89,20 +89,20 @@ expand_value()
 default_conf_path()
 {
     home=${OGDB_HOME:-$(derive_ogdb_home)}
-    if [ -n "${OGDB_DATA:-}" ] && [ -f "${OGDB_DATA}/cfg/gbps.conf" ]; then
-        printf '%s' "${OGDB_DATA}/cfg/gbps.conf"
+    if [ -n "${OGDB_DATA:-}" ] && [ -f "${OGDB_DATA}/cfg/rbps.conf" ]; then
+        printf '%s' "${OGDB_DATA}/cfg/rbps.conf"
         return 0
     fi
-    if [ -n "$home" ] && [ -f "${home}/cfg/gbps.conf" ]; then
-        printf '%s' "${home}/cfg/gbps.conf"
+    if [ -n "$home" ] && [ -f "${home}/cfg/rbps.conf" ]; then
+        printf '%s' "${home}/cfg/rbps.conf"
         return 0
     fi
     if [ -n "${OGDB_DATA:-}" ]; then
-        printf '%s' "${OGDB_DATA}/cfg/gbps.conf"
+        printf '%s' "${OGDB_DATA}/cfg/rbps.conf"
         return 0
     fi
     if [ -n "$home" ]; then
-        printf '%s' "${home}/cfg/gbps.conf"
+        printf '%s' "${home}/cfg/rbps.conf"
         return 0
     fi
     return 1
@@ -122,7 +122,7 @@ load_conf()
     runtime_home=${OGDB_HOME:-$(derive_ogdb_home)}
     default_log=$(default_log_file "$runtime_home")
     LOG_FILE="$default_log"
-    PID_FILE="${runtime_home}/run/gbps.pid"
+    PID_FILE="${runtime_home}/run/rbps.pid"
 
     while IFS= read -r line || [ -n "$line" ]; do
         line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -160,48 +160,48 @@ is_running()
     kill -0 "$pid" 2>/dev/null
 }
 
-gbps_bin()
+rbps_bin()
 {
     dir=$(script_dir)
-    if [ -x "$dir/gbps" ]; then
-        printf '%s' "$dir/gbps"
+    if [ -x "$dir/rbps" ]; then
+        printf '%s' "$dir/rbps"
     else
-        command -v gbps 2>/dev/null || true
+        command -v rbps 2>/dev/null || true
     fi
 }
 
-start_gbps()
+start_rbps()
 {
     load_conf
     if is_running; then
-        echo "gbps is already running: pid=$(cat "$PID_FILE") conf=$CONF"
+        echo "rbps is already running: pid=$(cat "$PID_FILE") conf=$CONF"
         return 0
     fi
     if [ -f "$PID_FILE" ]; then
-        echo "gbps_ctl: removing stale pid file $PID_FILE"
+        echo "rbps_ctl: removing stale pid file $PID_FILE"
         rm -f "$PID_FILE"
     fi
 
-    bin=$(gbps_bin)
-    [ -n "$bin" ] || die "gbps binary not found"
+    bin=$(rbps_bin)
+    [ -n "$bin" ] || die "rbps binary not found"
     mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
-    GBPS_LOG_FILE="$LOG_FILE" nohup "$bin" --config "$CONF" >> "$LOG_FILE" 2>&1 &
+    RBPS_LOG_FILE="$LOG_FILE" nohup "$bin" --config "$CONF" >> "$LOG_FILE" 2>&1 &
     pid=$!
     echo "$pid" > "$PID_FILE"
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$PID_FILE"
-        die "gbps failed to start; check $LOG_FILE"
+        die "rbps failed to start; check $LOG_FILE"
     fi
-    echo "gbps started: pid=$pid listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
+    echo "rbps started: pid=$pid listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
 }
 
-stop_gbps()
+stop_rbps()
 {
     load_conf
     if ! is_running; then
         [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
-        echo "gbps is not running"
+        echo "rbps is not running"
         return 0
     fi
     pid=$(cat "$PID_FILE")
@@ -209,19 +209,19 @@ stop_gbps()
     i=0
     while kill -0 "$pid" 2>/dev/null; do
         i=$((i + 1))
-        [ "$i" -ge 30 ] && die "gbps did not stop within 30s: pid=$pid"
+        [ "$i" -ge 30 ] && die "rbps did not stop within 30s: pid=$pid"
         sleep 1
     done
     rm -f "$PID_FILE"
-    echo "gbps stopped: pid=$pid"
+    echo "rbps stopped: pid=$pid"
 }
 
-stop_gbps_force()
+stop_rbps_force()
 {
     load_conf
     if ! is_running; then
         [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
-        echo "gbps is not running"
+        echo "rbps is not running"
         return 0
     fi
     pid=$(cat "$PID_FILE")
@@ -238,29 +238,29 @@ stop_gbps_force()
     i=0
     while kill -0 "$pid" 2>/dev/null; do
         i=$((i + 1))
-        [ "$i" -ge 5 ] && die "gbps did not stop after force kill: pid=$pid"
+        [ "$i" -ge 5 ] && die "rbps did not stop after force kill: pid=$pid"
         sleep 1
     done
     rm -f "$PID_FILE"
-    echo "gbps force stopped: pid=$pid"
+    echo "rbps force stopped: pid=$pid"
 }
 
-status_gbps()
+status_rbps()
 {
     load_conf
     if is_running; then
-        echo "gbps is running: pid=$(cat "$PID_FILE") listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
+        echo "rbps is running: pid=$(cat "$PID_FILE") listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
     else
-        [ -f "$PID_FILE" ] && echo "gbps is not running; stale pid file=$PID_FILE"
-        [ -f "$PID_FILE" ] || echo "gbps is not running"
+        [ -f "$PID_FILE" ] && echo "rbps is not running; stale pid file=$PID_FILE"
+        [ -f "$PID_FILE" ] || echo "rbps is not running"
     fi
 }
 
 admin_query()
 {
     load_conf
-    bin=$(gbps_bin)
-    [ -n "$bin" ] || die "gbps binary not found"
+    bin=$(rbps_bin)
+    [ -n "$bin" ] || die "rbps binary not found"
     "$bin" --config "$CONF" --admin-host "$ADMIN_HOST" --admin-port "$ADMIN_PORT" --admin-query "$1"
 }
 
@@ -300,24 +300,24 @@ done
 case "$ACTION" in
     start)
         [ -z "$QUERY_ARG" ] || die "start does not take an argument"
-        start_gbps
+        start_rbps
         ;;
     stop)
         [ -z "$QUERY_ARG" ] || die "stop does not take an argument"
-        stop_gbps
+        stop_rbps
         ;;
     stop_force)
         [ -z "$QUERY_ARG" ] || die "stop_force does not take an argument"
-        stop_gbps_force
+        stop_rbps_force
         ;;
     status)
         [ -z "$QUERY_ARG" ] || die "status does not take an argument"
-        status_gbps
+        status_rbps
         ;;
     restart)
         [ -z "$QUERY_ARG" ] || die "restart does not take an argument"
-        stop_gbps
-        start_gbps
+        stop_rbps
+        start_rbps
         ;;
     stats)
         [ -z "$QUERY_ARG" ] || die "stats does not take an argument"

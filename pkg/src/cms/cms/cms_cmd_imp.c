@@ -981,7 +981,7 @@ int32 cms_res_list(int32 argc, char* argv[])
             continue;
         }
 
-        if (cms_gbps_res_is_disabled(res->name, res->type)) {
+        if (cms_rbps_res_is_disabled(res->name, res->type)) {
             continue;
         }
 
@@ -1122,7 +1122,7 @@ int32 cms_stat_cluster(int32 argc, char* argv[])
         if (res->magic != CMS_GCC_RES_MAGIC) {
             continue;
         }
-        if (cms_gbps_res_is_disabled(res->name, res->type)) {
+        if (cms_rbps_res_is_disabled(res->name, res->type)) {
             continue;
         }
 
@@ -1230,8 +1230,8 @@ static status_t cms_get_res_id_with_name(const cms_gcc_t* gcc, char* name, uint3
     if (name == NULL) {
         return OG_SUCCESS;
     }
-    if (cms_gbps_res_is_disabled(name, NULL)) {
-        CMS_LOG_ERR("resource [%s] is disabled by USE_GBP=FALSE.\n", name);
+    if (cms_rbps_res_is_disabled(name, NULL)) {
+        CMS_LOG_ERR("resource [%s] is disabled by USE_RBP=FALSE.\n", name);
         return OG_ERROR;
     }
     const cms_res_t* res = cms_find_res(gcc, name);
@@ -1272,7 +1272,7 @@ int32 cms_stat_res(int32 argc, char* argv[])
         if (gcc->res[id].magic != CMS_GCC_RES_MAGIC || (res_id != CMS_MAX_RESOURCE_COUNT && res_id != id)) {
             continue;
         }
-        if (cms_gbps_res_is_disabled(gcc->res[id].name, gcc->res[id].type)) {
+        if (cms_rbps_res_is_disabled(gcc->res[id].name, gcc->res[id].type)) {
             continue;
         }
 
@@ -1689,8 +1689,8 @@ int32 cms_res_start_with_node(int32 argc, char* argv[])
             printf("resource does not exist.\n");
             return OG_ERROR;
         }
-        if (cms_gbps_res_is_disabled(res.name, res.type)) {
-            printf("gbps disabled by USE_GBP=FALSE, start resource failed.\n");
+        if (cms_rbps_res_is_disabled(res.name, res.type)) {
+            printf("rbps disabled by USE_RBP=FALSE, start resource failed.\n");
             return OG_ERROR;
         }
         

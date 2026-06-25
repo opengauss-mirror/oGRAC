@@ -14,22 +14,22 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_state.h
+ * rbp_state.h
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_state.h
+ * src/rbp/rbp_state.h
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef GBP_STATE_H
-#define GBP_STATE_H
+#ifndef RBP_STATE_H
+#define RBP_STATE_H
 
-#include "gbp_config.h"
-#include "gbp_log.h"
-#include "gbp_std_compat.h"
-#include "gbp_wire.h"
+#include "rbp_config.h"
+#include "rbp_log.h"
+#include "rbp_std_compat.h"
+#include "rbp_wire.h"
 
 #include <array>
 #include <atomic>
@@ -49,15 +49,15 @@
 #include <utility>
 #include <vector>
 
-namespace gbp {
+namespace rbp {
 
-inline constexpr size_t GBP_PID_KEY_BYTES = sizeof(uint64_t);
-inline constexpr size_t GBP_PENDING_COMPACT_SKIP_THRESHOLD = 4096;
-inline constexpr size_t GBP_PENDING_COMPACT_LIVE_RATIO = 2;
-inline constexpr int GBP_EVICT_WAIT_SLICE_MS = 50;
-inline constexpr int GBP_EVICT_IDLE_WAIT_MS = 500;
-inline constexpr size_t GBP_GLOBAL_MIN_LRP_TUPLE_QID_INDEX = 1;
-inline constexpr size_t GBP_GLOBAL_MIN_LRP_TUPLE_PID_INDEX = 2;
+inline constexpr size_t RBP_PID_KEY_BYTES = sizeof(uint64_t);
+inline constexpr size_t RBP_PENDING_COMPACT_SKIP_THRESHOLD = 4096;
+inline constexpr size_t RBP_PENDING_COMPACT_LIVE_RATIO = 2;
+inline constexpr int RBP_EVICT_WAIT_SLICE_MS = 50;
+inline constexpr int RBP_EVICT_IDLE_WAIT_MS = 500;
+inline constexpr size_t RBP_GLOBAL_MIN_LRP_TUPLE_QID_INDEX = 1;
+inline constexpr size_t RBP_GLOBAL_MIN_LRP_TUPLE_PID_INDEX = 2;
 
 // Use system_clock timed waits so builds do not depend on pthread_cond_clockwait availability.
 inline void cond_wait_for_compatible(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
@@ -80,7 +80,7 @@ struct PageMeta {
 };
 
 struct PagePayload {
-    char block[GBP_PAGE_SIZE]{};
+    char block[RBP_PAGE_SIZE]{};
 };
 
 struct PageRecord {
@@ -107,7 +107,7 @@ struct BatchPageHandle {
 };
 
 struct MetaSnapshotRow {
-    std::array<uint8_t, GBP_PID_KEY_BYTES> pid_bytes{};
+    std::array<uint8_t, RBP_PID_KEY_BYTES> pid_bytes{};
     uint64_t page_lsn = 0;
     uint32_t page_pcn = 0;
     uint32_t writer_inst = 0;
@@ -115,18 +115,18 @@ struct MetaSnapshotRow {
 };
 
 struct PidBytesLess {
-    bool operator()(const std::array<uint8_t, GBP_PID_KEY_BYTES>& a,
-                    const std::array<uint8_t, GBP_PID_KEY_BYTES>& b) const
+    bool operator()(const std::array<uint8_t, RBP_PID_KEY_BYTES>& a,
+                    const std::array<uint8_t, RBP_PID_KEY_BYTES>& b) const
     {
-        return std::memcmp(a.data(), b.data(), GBP_PID_KEY_BYTES) < 0;
+        return std::memcmp(a.data(), b.data(), RBP_PID_KEY_BYTES) < 0;
     }
 };
 
-using MetaIndexMap = std::map<std::array<uint8_t, GBP_PID_KEY_BYTES>, MetaSnapshotRow, PidBytesLess>;
+using MetaIndexMap = std::map<std::array<uint8_t, RBP_PID_KEY_BYTES>, MetaSnapshotRow, PidBytesLess>;
 
-inline std::array<uint8_t, GBP_PID_KEY_BYTES> meta_index_key_from_pid_key(uint64_t pid_key)
+inline std::array<uint8_t, RBP_PID_KEY_BYTES> meta_index_key_from_pid_key(uint64_t pid_key)
 {
-    std::array<uint8_t, GBP_PID_KEY_BYTES> key{};
+    std::array<uint8_t, RBP_PID_KEY_BYTES> key{};
     std::memcpy(key.data(), &pid_key, sizeof(pid_key));
     return key;
 }
@@ -345,7 +345,7 @@ public:
 private:
     void compact_if_needed()
     {
-        if (pos_ < GBP_PENDING_COMPACT_SKIP_THRESHOLD || pos_ * GBP_PENDING_COMPACT_LIVE_RATIO < order_.size()) {
+        if (pos_ < RBP_PENDING_COMPACT_SKIP_THRESHOLD || pos_ * RBP_PENDING_COMPACT_LIVE_RATIO < order_.size()) {
             return;
         }
         std::vector<std::pair<uint64_t, int>> kept;
@@ -396,7 +396,7 @@ public:
 
 private:
     mutable std::mutex mtx_;
-    std::array<BatchReadDiagSlot, OG_GBP_SESSION_COUNT> slots_{};
+    std::array<BatchReadDiagSlot, OG_RBP_SESSION_COUNT> slots_{};
 };
 
 struct SelectedReadDiagSlot {
@@ -427,7 +427,7 @@ public:
 
 private:
     mutable std::mutex mtx_;
-    std::array<SelectedReadDiagSlot, OG_GBP_SESSION_COUNT> slots_{};
+    std::array<SelectedReadDiagSlot, OG_RBP_SESSION_COUNT> slots_{};
 };
 
 struct RetiredShardData {
@@ -444,7 +444,7 @@ struct RetiredShardData {
 };
 
 struct RetiredReadPhaseState {
-    std::array<RetiredShardData, OG_GBP_SESSION_COUNT> shards{};
+    std::array<RetiredShardData, OG_RBP_SESSION_COUNT> shards{};
     int detached_pages = 0;
 };
 
@@ -476,17 +476,17 @@ struct EvictState {
             if (remaining.count() <= 0) {
                 return false;
             }
-            const auto chunk = remaining > std::chrono::milliseconds(GBP_EVICT_WAIT_SLICE_MS) ?
-                std::chrono::milliseconds(GBP_EVICT_WAIT_SLICE_MS) : remaining;
+            const auto chunk = remaining > std::chrono::milliseconds(RBP_EVICT_WAIT_SLICE_MS) ?
+                std::chrono::milliseconds(RBP_EVICT_WAIT_SLICE_MS) : remaining;
             cond_wait_for_compatible(cv, lock, chunk);
         }
         return true;
     }
 };
 
-class GbpShard {
+class RbpShard {
 public:
-    explicit GbpShard(const Config& cfg) : lrp_index_(cfg), trunc_index_(cfg), writer_index_(cfg)
+    explicit RbpShard(const Config& cfg) : lrp_index_(cfg), trunc_index_(cfg), writer_index_(cfg)
     {
     }
 
@@ -500,7 +500,7 @@ public:
     LfnBucketIndex trunc_index_;
     LfnBucketIndex writer_index_;
     WindowSnap snap{};
-    std::map<std::array<uint8_t, GBP_PID_KEY_BYTES>, MetaSnapshotRow, PidBytesLess> meta_index_;
+    std::map<std::array<uint8_t, RBP_PID_KEY_BYTES>, MetaSnapshotRow, PidBytesLess> meta_index_;
     bool pending_seeded = false;
 };
 
@@ -517,20 +517,20 @@ struct CkptResult {
     log_point_t lrp{};
     uint64_t max_lsn = 0;
     int cache_pages = 0;
-    std::array<log_point_t, OG_GBP_SESSION_COUNT> queue_resets{};
-    std::array<log_point_t, OG_GBP_SESSION_COUNT> queue_frontiers{};
+    std::array<log_point_t, OG_RBP_SESSION_COUNT> queue_resets{};
+    std::array<log_point_t, OG_RBP_SESSION_COUNT> queue_frontiers{};
     CkptDiag diag;
 };
 
-class GbpServerState {
+class RbpServerState {
 public:
-    explicit GbpServerState(const Config& cfg);
+    explicit RbpServerState(const Config& cfg);
 
-    GbpShard& shard(uint32_t qid)
+    RbpShard& shard(uint32_t qid)
     {
-        return *shards_[qid % OG_GBP_SESSION_COUNT];
+        return *shards_[qid % OG_RBP_SESSION_COUNT];
     }
-    const GbpShard& shard(uint32_t qid) const { return *shards_[qid % OG_GBP_SESSION_COUNT]; }
+    const RbpShard& shard(uint32_t qid) const { return *shards_[qid % OG_RBP_SESSION_COUNT]; }
 
     void lock_all();
     void unlock_all();
@@ -572,11 +572,11 @@ public:
     RetiredDestructState retired_state;
 
 private:
-    friend void evict_worker_loop(GbpServerState* state);
+    friend void evict_worker_loop(RbpServerState* state);
 
     Config cfg_;
     std::atomic<bool> read_end_detaching_{false};
-    std::array<std::unique_ptr<GbpShard>, OG_GBP_SESSION_COUNT> shards_{};
+    std::array<std::unique_ptr<RbpShard>, OG_RBP_SESSION_COUNT> shards_{};
     std::thread evict_thread_;
     mutable std::mutex holes_mtx_;
     std::unordered_map<uint64_t, log_point_t> evicted_holes_;
@@ -587,39 +587,39 @@ private:
     SelectedReadDiag selected_read_diag_;
 };
 
-PageRecord page_record_from_item(const gbp_page_item_t& item);
+PageRecord page_record_from_item(const rbp_page_item_t& item);
 PageRecord page_record_from_payload(std::shared_ptr<PagePayload> payload, uint32_t writer_inst, uint64_t writer_seq);
-void wire_item_fill(gbp_page_item_t& item, const BatchPageHandle& handle);
-void wire_item_fill(gbp_page_item_t& item, const PageRecord& rec, uint64_t pid_key);
-gbp_page_item_t wire_item_for_response(const PageRecord& rec, uint64_t pid_key);
+void wire_item_fill(rbp_page_item_t& item, const BatchPageHandle& handle);
+void wire_item_fill(rbp_page_item_t& item, const PageRecord& rec, uint64_t pid_key);
+rbp_page_item_t wire_item_for_response(const PageRecord& rec, uint64_t pid_key);
 
-void refresh_shard_snap(GbpShard& shard);
+void refresh_shard_snap(RbpShard& shard);
 PageMeta build_page_meta(uint64_t pid_key, const PageRecord& rec);
-bool install_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
+bool install_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
                   bool legacy_pending);
-void remove_page(GbpServerState& state, GbpShard& shard, uint64_t pid_key, bool record_hole,
+void remove_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, bool record_hole,
                  const char* reason, bool log_hole);
-int purge_shard_through_lfn(GbpServerState& state, GbpShard& shard, uint64_t through_lfn, int budget,
+int purge_shard_through_lfn(RbpServerState& state, RbpShard& shard, uint64_t through_lfn, int budget,
                             bool record_hole, const char* reason);
-void apply_queue_reset(GbpServerState& state, GbpShard& shard, uint32_t qid, const log_point_t& reset_point,
+void apply_queue_reset(RbpServerState& state, RbpShard& shard, uint32_t qid, const log_point_t& reset_point,
                        const log_point_t& frontier_point, bool lsn_only, bool verbose, const std::string& peer);
 log_point_t select_reset_point(const log_point_t& batch_begin, const log_point_t& batch_lrp, bool lsn_only);
 log_point_t update_point_monotonic(const log_point_t& old_pt, const log_point_t& pt, bool lsn_only);
 std::optional<std::pair<uint32_t, log_point_t>> min_queue_frontier(
-    const log_point_t frontiers[OG_GBP_SESSION_COUNT], bool lsn_only, std::vector<int>& missing);
+    const log_point_t frontiers[OG_RBP_SESSION_COUNT], bool lsn_only, std::vector<int>& missing);
 log_point_t apply_queue_resets_to_begin(const log_point_t& begin,
-                                        const log_point_t resets[OG_GBP_SESSION_COUNT], bool lsn_only);
+                                        const log_point_t resets[OG_RBP_SESSION_COUNT], bool lsn_only);
 std::optional<std::pair<uint32_t, log_point_t>> max_queue_reset_with_qid(
-    const log_point_t resets[OG_GBP_SESSION_COUNT], bool lsn_only);
-std::string queue_resets_diag(const log_point_t resets[OG_GBP_SESSION_COUNT], bool lsn_only);
-std::string queue_frontiers_diag(const log_point_t frontiers[OG_GBP_SESSION_COUNT], bool lsn_only);
-void collect_queue_points(GbpServerState& state, log_point_t resets[OG_GBP_SESSION_COUNT],
-                          log_point_t frontiers[OG_GBP_SESSION_COUNT]);
-CkptResult merge_ckpt_from_shards(GbpServerState& state, bool lsn_only);
-uint64_t compute_global_begin_lfn(GbpServerState& state, bool lsn_only);
-bool run_fixed_point_purge(GbpServerState& state, bool lsn_only, int budget);
-std::optional<std::pair<uint32_t, uint64_t>> find_global_min_lrp_page(GbpServerState& state);
+    const log_point_t resets[OG_RBP_SESSION_COUNT], bool lsn_only);
+std::string queue_resets_diag(const log_point_t resets[OG_RBP_SESSION_COUNT], bool lsn_only);
+std::string queue_frontiers_diag(const log_point_t frontiers[OG_RBP_SESSION_COUNT], bool lsn_only);
+void collect_queue_points(RbpServerState& state, log_point_t resets[OG_RBP_SESSION_COUNT],
+                          log_point_t frontiers[OG_RBP_SESSION_COUNT]);
+CkptResult merge_ckpt_from_shards(RbpServerState& state, bool lsn_only);
+uint64_t compute_global_begin_lfn(RbpServerState& state, bool lsn_only);
+bool run_fixed_point_purge(RbpServerState& state, bool lsn_only, int budget);
+std::optional<std::pair<uint32_t, uint64_t>> find_global_min_lrp_page(RbpServerState& state);
 
-}  // namespace gbp
+}  // namespace rbp
 
-#endif  // GBP_STATE_H
+#endif  // RBP_STATE_H

@@ -14,17 +14,17 @@
  * See the Mulan PSL v2 for more details.
  * -------------------------------------------------------------------------
  *
- * gbp_wire.h
+ * rbp_wire.h
  *
  *
  * IDENTIFICATION
- * src/gbp/gbp_wire.h
+ * src/rbp/rbp_wire.h
  *
  * -------------------------------------------------------------------------
  */
 
-#ifndef GBP_WIRE_H
-#define GBP_WIRE_H
+#ifndef RBP_WIRE_H
+#define RBP_WIRE_H
 
 #include <algorithm>
 #include <cstddef>
@@ -38,7 +38,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 using socket_t = SOCKET;
-using gbp_socklen_t = int;
+using rbp_socklen_t = int;
 static inline socket_t invalid_socket()
 {
     return INVALID_SOCKET;
@@ -56,7 +56,7 @@ static inline bool is_invalid_socket(socket_t fd)
 #define MSG_NOSIGNAL 0
 #endif
 using socket_t = int;
-using gbp_socklen_t = socklen_t;
+using rbp_socklen_t = socklen_t;
 static inline socket_t invalid_socket()
 {
     return -1;
@@ -67,35 +67,35 @@ static inline bool is_invalid_socket(socket_t fd)
 }
 #endif
 
-namespace gbp {
+namespace rbp {
 
-constexpr uint32_t GBP_BATCH_PAGE_NUM = 100;
-constexpr uint32_t GBP_PAGE_SIZE = 8192;
-constexpr uint32_t GBP_MSG_LEN = 64;
-constexpr uint32_t GBP_META_CHUNK_NUM = 1024;
-constexpr uint32_t OG_GBP_SESSION_COUNT = 8;
+constexpr uint32_t RBP_BATCH_PAGE_NUM = 100;
+constexpr uint32_t RBP_PAGE_SIZE = 8192;
+constexpr uint32_t RBP_MSG_LEN = 64;
+constexpr uint32_t RBP_META_CHUNK_NUM = 1024;
+constexpr uint32_t OG_RBP_SESSION_COUNT = 8;
 constexpr uint32_t LOG_POINT_SIZE = 24;
 constexpr uint32_t LOG_POINT_ALIGN = 8;
 
-constexpr uint32_t GBP_REQ_PAGE_READ = 20000;
-constexpr uint32_t GBP_REQ_PAGE_WRITE = 20100;
-constexpr uint32_t GBP_REQ_BATCH_PAGE_READ = 21000;
-constexpr uint32_t GBP_REQ_READ_META_CHUNK = 22000;
-constexpr uint32_t GBP_REQ_BATCH_PAGE_READ_SELECTED = 23000;
-constexpr uint32_t GBP_REQ_READ_CKPT = 31000;
-constexpr uint32_t GBP_REQ_NOTIFY_MSG = 41000;
-constexpr uint32_t GBP_REQ_SHAKE_HAND = 51000;
-constexpr uint32_t GBP_REQ_CLOSE_CONN = 61000;
+constexpr uint32_t RBP_REQ_PAGE_READ = 20000;
+constexpr uint32_t RBP_REQ_PAGE_WRITE = 20100;
+constexpr uint32_t RBP_REQ_BATCH_PAGE_READ = 21000;
+constexpr uint32_t RBP_REQ_READ_META_CHUNK = 22000;
+constexpr uint32_t RBP_REQ_BATCH_PAGE_READ_SELECTED = 23000;
+constexpr uint32_t RBP_REQ_READ_CKPT = 31000;
+constexpr uint32_t RBP_REQ_NOTIFY_MSG = 41000;
+constexpr uint32_t RBP_REQ_SHAKE_HAND = 51000;
+constexpr uint32_t RBP_REQ_CLOSE_CONN = 61000;
 
-constexpr uint32_t MSG_GBP_INVALID = 0;
-constexpr uint32_t MSG_GBP_READ_BEGIN = 1;
-constexpr uint32_t MSG_GBP_READ_END = 2;
-constexpr uint32_t ACK_GBP_INVALID = 0;
-constexpr uint32_t ACK_GBP_READ_BEGIN = 1;
+constexpr uint32_t MSG_RBP_INVALID = 0;
+constexpr uint32_t MSG_RBP_READ_BEGIN = 1;
+constexpr uint32_t MSG_RBP_READ_END = 2;
+constexpr uint32_t ACK_RBP_INVALID = 0;
+constexpr uint32_t ACK_RBP_READ_BEGIN = 1;
 
-constexpr uint32_t GBP_READ_RESULT_OK = 0;
-constexpr uint32_t GBP_READ_RESULT_NOPAGE = 1;
-constexpr uint32_t GBP_READ_RESULT_ERROR = 2;
+constexpr uint32_t RBP_READ_RESULT_OK = 0;
+constexpr uint32_t RBP_READ_RESULT_NOPAGE = 1;
+constexpr uint32_t RBP_READ_RESULT_ERROR = 2;
 
 constexpr uint32_t OG_PROTO_CODE = 0x98BADCFE;
 constexpr uint32_t CS_HANDSHAKE_VERSION = 23;
@@ -117,42 +117,42 @@ struct log_point_t {
     uint64_t lsn;
 };
 
-struct gbp_msg_hdr_t {
+struct rbp_msg_hdr_t {
     uint32_t msg_type;
     uint32_t msg_length;
     uint32_t queue_id;
     int32_t msg_fd;
 };
 
-struct gbp_msg_ack_t {
-    gbp_msg_hdr_t header;
+struct rbp_msg_ack_t {
+    rbp_msg_hdr_t header;
     uint32_t ack_type;
     uint32_t ack_data;
 };
 
-struct gbp_page_item_t {
+struct rbp_page_item_t {
     page_id_t page_id;
     uint32_t session_id;
     uint32_t writer_inst_id;
     uint64_t writer_global_seq;
-    log_point_t gbp_trunc_point;
-    log_point_t gbp_lrp_point;
-    char block[GBP_PAGE_SIZE];
+    log_point_t rbp_trunc_point;
+    log_point_t rbp_lrp_point;
+    char block[RBP_PAGE_SIZE];
 };
 
-struct gbp_read_req_t {
-    gbp_msg_hdr_t header;
+struct rbp_read_req_t {
+    rbp_msg_hdr_t header;
     page_id_t page_id;
     uint16_t buf_pool_id;
     uint16_t reserved[3];
 };
 
-struct gbp_batch_read_req_t {
-    gbp_msg_hdr_t header;
-    log_point_t gbp_skip_point;
+struct rbp_batch_read_req_t {
+    rbp_msg_hdr_t header;
+    log_point_t rbp_skip_point;
 };
 
-struct gbp_meta_item_t {
+struct rbp_meta_item_t {
     page_id_t page_id;
     uint64_t page_lsn;
     uint32_t page_pcn;
@@ -161,16 +161,16 @@ struct gbp_meta_item_t {
     uint32_t reserved;
 };
 
-struct gbp_read_meta_req_t {
-    gbp_msg_hdr_t header;
+struct rbp_read_meta_req_t {
+    rbp_msg_hdr_t header;
     uint64_t epoch;
     uint64_t cursor;
     uint32_t max_count;
     uint32_t reserved;
 };
 
-struct gbp_read_meta_resp_t {
-    gbp_msg_hdr_t header;
+struct rbp_read_meta_resp_t {
+    rbp_msg_hdr_t header;
     uint32_t result;
     uint32_t count;
     uint64_t epoch;
@@ -179,86 +179,86 @@ struct gbp_read_meta_resp_t {
     uint64_t total_count;
     uint32_t done;
     uint32_t reserved;
-    gbp_meta_item_t items[GBP_META_CHUNK_NUM];
+    rbp_meta_item_t items[RBP_META_CHUNK_NUM];
 };
 
-struct gbp_selected_page_req_t {
+struct rbp_selected_page_req_t {
     page_id_t page_id;
     uint64_t selected_lsn;
 };
 
-struct gbp_batch_selected_read_req_t {
-    gbp_msg_hdr_t header;
+struct rbp_batch_selected_read_req_t {
+    rbp_msg_hdr_t header;
     uint32_t count;
     uint32_t reserved;
-    gbp_selected_page_req_t pages[GBP_BATCH_PAGE_NUM];
+    rbp_selected_page_req_t pages[RBP_BATCH_PAGE_NUM];
 };
 
-struct gbp_write_req_t {
-    gbp_msg_hdr_t header;
+struct rbp_write_req_t {
+    rbp_msg_hdr_t header;
     uint32_t page_num;
     log_point_t batch_begin_point;
     log_point_t batch_trunc_point;
     log_point_t batch_lrp_point;
-    gbp_page_item_t pages[GBP_BATCH_PAGE_NUM];
+    rbp_page_item_t pages[RBP_BATCH_PAGE_NUM];
     uint32_t page_num_tail;
 };
 
-struct gbp_read_ckpt_req_t {
-    gbp_msg_hdr_t header;
+struct rbp_read_ckpt_req_t {
+    rbp_msg_hdr_t header;
     uint32_t check_end_point;
     uint32_t _pad;
     log_point_t aly_end_point;
 };
 
-struct gbp_read_resp_t {
-    gbp_msg_hdr_t header;
+struct rbp_read_resp_t {
+    rbp_msg_hdr_t header;
     uint32_t result;
     uint32_t unused;
     page_id_t pageid;
-    log_point_t gbp_trunc_point;
-    char block[GBP_PAGE_SIZE];
+    log_point_t rbp_trunc_point;
+    char block[RBP_PAGE_SIZE];
 };
 
-struct gbp_batch_read_resp_t {
-    gbp_msg_hdr_t header;
+struct rbp_batch_read_resp_t {
+    rbp_msg_hdr_t header;
     uint32_t result;
     uint32_t count;
-    char msg[GBP_MSG_LEN];
-    gbp_page_item_t pages[GBP_BATCH_PAGE_NUM];
+    char msg[RBP_MSG_LEN];
+    rbp_page_item_t pages[RBP_BATCH_PAGE_NUM];
 };
 
-struct gbp_read_ckpt_resp_t {
-    gbp_msg_hdr_t header;
-    uint32_t gbp_unsafe;
+struct rbp_read_ckpt_resp_t {
+    rbp_msg_hdr_t header;
+    uint32_t rbp_unsafe;
     uint32_t _pad;
     log_point_t begin_point;
     log_point_t rcy_point;
     log_point_t lrp_point;
     uint64_t max_lsn;
-    char unsafe_reason[GBP_MSG_LEN];
+    char unsafe_reason[RBP_MSG_LEN];
 };
 
-constexpr size_t HDR_SIZE = sizeof(gbp_msg_hdr_t);
-constexpr size_t GBP_PAGE_ITEM_SIZE = sizeof(gbp_page_item_t);
-constexpr size_t GBP_READ_RESP_SIZE = sizeof(gbp_read_resp_t);
-constexpr size_t BATCH_READ_RESP_SIZE = sizeof(gbp_batch_read_resp_t);
-constexpr size_t READ_META_RESP_SIZE = sizeof(gbp_read_meta_resp_t);
-constexpr size_t CKPT_READ_RESP_SIZE = sizeof(gbp_read_ckpt_resp_t);
-constexpr size_t GBP_META_ITEM_SIZE = sizeof(gbp_meta_item_t);
+constexpr size_t HDR_SIZE = sizeof(rbp_msg_hdr_t);
+constexpr size_t RBP_PAGE_ITEM_SIZE = sizeof(rbp_page_item_t);
+constexpr size_t RBP_READ_RESP_SIZE = sizeof(rbp_read_resp_t);
+constexpr size_t BATCH_READ_RESP_SIZE = sizeof(rbp_batch_read_resp_t);
+constexpr size_t READ_META_RESP_SIZE = sizeof(rbp_read_meta_resp_t);
+constexpr size_t CKPT_READ_RESP_SIZE = sizeof(rbp_read_ckpt_resp_t);
+constexpr size_t RBP_META_ITEM_SIZE = sizeof(rbp_meta_item_t);
 constexpr size_t SHAKE_BODY_SIZE = 16;
-constexpr size_t GBP_UINT32_WIRE_SIZE = sizeof(uint32_t);
-constexpr size_t GBP_BATCH_READ_RESP_COUNT_FIELDS = 2;
+constexpr size_t RBP_UINT32_WIRE_SIZE = sizeof(uint32_t);
+constexpr size_t RBP_BATCH_READ_RESP_COUNT_FIELDS = 2;
 constexpr size_t WRITE_BATCH_LOG_POINT_COUNT = 3;
 constexpr size_t WRITE_BATCH_LRP_INDEX = 2;
 constexpr size_t WRITE_PAGES_OFFSET_CANDIDATE_COUNT = 2;
 
 constexpr size_t WRITE_BODY_SIZE_ALIGNED =
-    ((GBP_UINT32_WIRE_SIZE + LOG_POINT_ALIGN - 1) / LOG_POINT_ALIGN) * LOG_POINT_ALIGN +
-    WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE + GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE + GBP_UINT32_WIRE_SIZE;
+    ((RBP_UINT32_WIRE_SIZE + LOG_POINT_ALIGN - 1) / LOG_POINT_ALIGN) * LOG_POINT_ALIGN +
+    WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE + RBP_BATCH_PAGE_NUM * RBP_PAGE_ITEM_SIZE + RBP_UINT32_WIRE_SIZE;
 constexpr size_t WRITE_BODY_SIZE_TIGHT =
-    GBP_UINT32_WIRE_SIZE + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE +
-    GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE + GBP_UINT32_WIRE_SIZE;
+    RBP_UINT32_WIRE_SIZE + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE +
+    RBP_BATCH_PAGE_NUM * RBP_PAGE_ITEM_SIZE + RBP_UINT32_WIRE_SIZE;
 
 inline constexpr size_t align_up(size_t v, size_t a)
 {
@@ -325,15 +325,15 @@ inline void send_full_or_disconnect(socket_t fd, const void* buf, size_t size, c
 
 inline std::pair<int, int> write_pages_offset_candidates()
 {
-    const int tight = static_cast<int>(GBP_UINT32_WIRE_SIZE + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE);
-    const size_t aligned_off = align_up(GBP_UINT32_WIRE_SIZE, LOG_POINT_ALIGN);
+    const int tight = static_cast<int>(RBP_UINT32_WIRE_SIZE + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE);
+    const size_t aligned_off = align_up(RBP_UINT32_WIRE_SIZE, LOG_POINT_ALIGN);
     const int aligned = static_cast<int>(aligned_off + WRITE_BATCH_LOG_POINT_COUNT * LOG_POINT_SIZE);
     return {aligned, tight};
 }
 
 inline int resolve_write_pages_offset(const uint8_t* body, size_t body_len, uint32_t page_num)
 {
-    const uint32_t pn = std::min(page_num, GBP_BATCH_PAGE_NUM);
+    const uint32_t pn = std::min(page_num, RBP_BATCH_PAGE_NUM);
     const auto candidates = write_pages_offset_candidates();
     if (pn == 0) {
         return candidates.first;
@@ -345,18 +345,18 @@ inline int resolve_write_pages_offset(const uint8_t* body, size_t body_len, uint
     }
     const int offsets[WRITE_PAGES_OFFSET_CANDIDATE_COUNT] = {candidates.first, candidates.second};
     for (int off : offsets) {
-        const size_t need_fixed = static_cast<size_t>(off) + GBP_BATCH_PAGE_NUM * GBP_PAGE_ITEM_SIZE;
-        if (need_fixed + GBP_UINT32_WIRE_SIZE <= body_len) {
+        const size_t need_fixed = static_cast<size_t>(off) + RBP_BATCH_PAGE_NUM * RBP_PAGE_ITEM_SIZE;
+        if (need_fixed + RBP_UINT32_WIRE_SIZE <= body_len) {
             uint32_t tail_fixed = 0;
-            std::memcpy(&tail_fixed, body + need_fixed, GBP_UINT32_WIRE_SIZE);
+            std::memcpy(&tail_fixed, body + need_fixed, RBP_UINT32_WIRE_SIZE);
             if (tail_fixed == page_num) {
                 return off;
             }
         }
-        const size_t need_var = static_cast<size_t>(off) + pn * GBP_PAGE_ITEM_SIZE;
-        if (need_var + GBP_UINT32_WIRE_SIZE <= body_len) {
+        const size_t need_var = static_cast<size_t>(off) + pn * RBP_PAGE_ITEM_SIZE;
+        if (need_var + RBP_UINT32_WIRE_SIZE <= body_len) {
             uint32_t tail_var = 0;
-            std::memcpy(&tail_var, body + need_var, GBP_UINT32_WIRE_SIZE);
+            std::memcpy(&tail_var, body + need_var, RBP_UINT32_WIRE_SIZE);
             if (tail_var == page_num) {
                 return off;
             }
@@ -372,9 +372,9 @@ inline void parse_write_batch_points(const uint8_t* body, size_t body_len, int p
     const auto candidates = write_pages_offset_candidates();
     size_t base = 0;
     if (pages_off == candidates.second) {
-        base = GBP_UINT32_WIRE_SIZE;
+        base = RBP_UINT32_WIRE_SIZE;
     } else if (pages_off == candidates.first) {
-        base = align_up(GBP_UINT32_WIRE_SIZE, LOG_POINT_ALIGN);
+        base = align_up(RBP_UINT32_WIRE_SIZE, LOG_POINT_ALIGN);
     } else {
         return;
     }
@@ -388,16 +388,16 @@ inline void parse_write_batch_points(const uint8_t* body, size_t body_len, int p
 
 static_assert(sizeof(page_id_t) == 8, "page_id_t size");
 static_assert(sizeof(log_point_t) == 24, "log_point_t size");
-static_assert(sizeof(gbp_page_item_t) == 8264, "gbp_page_item_t size");
-static_assert(sizeof(gbp_read_resp_t) == 8248, "gbp_read_resp_t size");
-static_assert(sizeof(gbp_batch_read_resp_t) ==
-                  sizeof(gbp_msg_hdr_t) + sizeof(uint32_t) * GBP_BATCH_READ_RESP_COUNT_FIELDS + GBP_MSG_LEN +
-                      GBP_BATCH_PAGE_NUM * sizeof(gbp_page_item_t),
-              "gbp_batch_read_resp_t size");
-static_assert(sizeof(gbp_read_meta_resp_t) == 32832, "gbp_read_meta_resp_t size");
-static_assert(sizeof(gbp_read_ckpt_resp_t) == 168, "gbp_read_ckpt_resp_t size");
-static_assert(offsetof(gbp_read_ckpt_resp_t, begin_point) == 24, "ckpt begin offset");
-static_assert(offsetof(gbp_page_item_t, block) == 72, "page_item block offset");
+static_assert(sizeof(rbp_page_item_t) == 8264, "rbp_page_item_t size");
+static_assert(sizeof(rbp_read_resp_t) == 8248, "rbp_read_resp_t size");
+static_assert(sizeof(rbp_batch_read_resp_t) ==
+                  sizeof(rbp_msg_hdr_t) + sizeof(uint32_t) * RBP_BATCH_READ_RESP_COUNT_FIELDS + RBP_MSG_LEN +
+                      RBP_BATCH_PAGE_NUM * sizeof(rbp_page_item_t),
+              "rbp_batch_read_resp_t size");
+static_assert(sizeof(rbp_read_meta_resp_t) == 32832, "rbp_read_meta_resp_t size");
+static_assert(sizeof(rbp_read_ckpt_resp_t) == 168, "rbp_read_ckpt_resp_t size");
+static_assert(offsetof(rbp_read_ckpt_resp_t, begin_point) == 24, "ckpt begin offset");
+static_assert(offsetof(rbp_page_item_t, block) == 72, "page_item block offset");
 
 inline uint64_t page_id_key(uint32_t page, uint16_t file)
 {
@@ -416,6 +416,6 @@ inline uint64_t page_id_key_from_raw(const page_id_t& raw)
     return page_id_key(raw.page, raw.file);
 }
 
-}  // namespace gbp
+}  // namespace rbp
 
-#endif  // GBP_WIRE_H
+#endif  // RBP_WIRE_H

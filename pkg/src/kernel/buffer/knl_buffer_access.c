@@ -33,13 +33,13 @@
 #include "dtc_context.h"
 #include "dtc_recovery.h"
 #include "dtc_database.h"
-#include "knl_gbp.h"
+#include "knl_rbp.h"
 
 static inline void buf_free_iocb(knl_aio_iocbs_t *buf_iocbs, buf_iocb_t *buf_iocb);
 
-static inline bool32 buf_gbp_should_mark_dirty(knl_session_t *session)
+static inline bool32 buf_rbp_should_mark_dirty(knl_session_t *session)
 {
-    if (!KNL_GBP_ENABLE(session->kernel)) {
+    if (!KNL_RBP_ENABLE(session->kernel)) {
         return OG_FALSE;
     }
 
@@ -1014,91 +1014,91 @@ status_t buf_try_prefetch_next_ext(knl_session_t *session, buf_ctrl_t *ctrl)
 }
 
 /*
- * When DB recover with gbp, buf_load_page will try load page from GBP at first.
- * If page cannot be loaded from GBP, it will be loaded from disk
+ * When DB recover with rbp, buf_load_page will try load page from RBP at first.
+ * If page cannot be loaded from RBP, it will be loaded from disk
  */
-static status_t buf_load_page_from_GBP(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id,
-                                       bool32 *gbp_read_failed)
+static status_t buf_load_page_from_RBP(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id,
+                                       bool32 *rbp_read_failed)
 {
-    gbp_context_t *gbp_ctx = &session->kernel->gbp_context;
-    gbp_page_status_e status;
-    uint32 lock_id = page_id.page % OG_GBP_RD_LOCK_COUNT;
+    rbp_context_t *rbp_ctx = &session->kernel->rbp_context;
+    rbp_page_status_e status;
+    uint32 lock_id = page_id.page % OG_RBP_RD_LOCK_COUNT;
 
-    if (gbp_read_failed != NULL) {
-        *gbp_read_failed = OG_FALSE;
+    if (rbp_read_failed != NULL) {
+        *rbp_read_failed = OG_FALSE;
     }
-    GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP try page %u-%u sid=%u", page_id.file, page_id.page,
+    RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP try page %u-%u sid=%u", page_id.file, page_id.page,
                       session->id);
-    cm_spin_lock(&gbp_ctx->buf_read_lock[lock_id], NULL);
-    if (!KNL_RECOVERY_WITH_GBP(session->kernel)) {
-        cm_spin_unlock(&gbp_ctx->buf_read_lock[lock_id]);
-        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP abort rcy_with_gbp=OFF page %u-%u", page_id.file,
+    cm_spin_lock(&rbp_ctx->buf_read_lock[lock_id], NULL);
+    if (!KNL_RECOVERY_WITH_RBP(session->kernel)) {
+        cm_spin_unlock(&rbp_ctx->buf_read_lock[lock_id]);
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP abort rcy_with_rbp=OFF page %u-%u", page_id.file,
                           page_id.page);
-        return OG_ERROR; /* recheck rcy_with_gbp flag, if OG_FALSE, all GBP pages are pulled to local buffer */
+        return OG_ERROR; /* recheck rcy_with_rbp flag, if OG_FALSE, all RBP pages are pulled to local buffer */
     }
 
-    knl_begin_session_wait(session, DB_FILE_GBP_READ, OG_TRUE);
-    status = knl_read_page_from_gbp(session, ctrl);
-    ctrl->gbp_ctrl->page_status = status;
-    knl_end_session_wait(session, DB_FILE_GBP_READ);
-    cm_spin_unlock(&gbp_ctx->buf_read_lock[lock_id]);
+    knl_begin_session_wait(session, DB_FILE_RBP_READ, OG_TRUE);
+    status = knl_read_page_from_rbp(session, ctrl);
+    ctrl->rbp_ctrl->page_status = status;
+    knl_end_session_wait(session, DB_FILE_RBP_READ);
+    cm_spin_unlock(&rbp_ctx->buf_read_lock[lock_id]);
 
-    if (status == GBP_PAGE_ERROR) {
-        if (gbp_read_failed != NULL && gbp_knl_dtc_fallback_required(session)) {
-            *gbp_read_failed = OG_TRUE;
+    if (status == RBP_PAGE_ERROR) {
+        if (rbp_read_failed != NULL && rbp_knl_dtc_fallback_required(session)) {
+            *rbp_read_failed = OG_TRUE;
         }
-        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP error page %u-%u status=%u",
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP error page %u-%u status=%u",
                           page_id.file, page_id.page, (uint32)status);
         return OG_ERROR;
-    } else if (status == GBP_PAGE_MISS || status == GBP_PAGE_OLD || status == GBP_PAGE_AHEAD) {
-        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP fail page %u-%u status=%u -> load_disk", page_id.file,
+    } else if (status == RBP_PAGE_MISS || status == RBP_PAGE_OLD || status == RBP_PAGE_AHEAD) {
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP fail page %u-%u status=%u -> load_disk", page_id.file,
                           page_id.page, (uint32)status);
-        /* page not exists on gbp */
+        /* page not exists on rbp */
         return OG_ERROR;
     } else {
         knl_panic_log(CHECK_PAGE_PCN(ctrl->page), "page pcn is abnormal, panic info: ctrl_page %u-%u type %u",
                       ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
-        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page_from_GBP ok page %u-%u status=%u page_lsn=%llu page_pcn=%u "
-                          "is_from_gbp=%u",
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP ok page %u-%u status=%u page_lsn=%llu page_pcn=%u "
+                          "is_from_rbp=%u",
                           page_id.file, page_id.page, (uint32)status, (uint64)ctrl->page->lsn,
-                          (uint32)ctrl->page->pcn, (uint32)ctrl->gbp_ctrl->is_from_gbp);
+                          (uint32)ctrl->page->pcn, (uint32)ctrl->rbp_ctrl->is_from_rbp);
         return OG_SUCCESS;
     }
 }
 
 /*
- * When DB recover with gbp, current session whether need read page from GBP
+ * When DB recover with rbp, current session whether need read page from RBP
  * log analysis session always read page from local disk
- * gbp backround always read page from disk because of it has already pulled page from gbp
+ * rbp backround always read page from disk because of it has already pulled page from rbp
  */
-static inline bool32 session_need_read_gbp(knl_session_t *session)
+static inline bool32 session_need_read_rbp(knl_session_t *session)
 {
-    if (SESSION_IS_LOG_ANALYZE(session) || SESSION_IS_GBP_BG(session)) {
+    if (SESSION_IS_LOG_ANALYZE(session) || SESSION_IS_RBP_BG(session)) {
         return OG_FALSE;
     } else {
         return OG_TRUE;
     }
 }
 
-/* If failover with GBP, try load page from GBP. If page is not exists on GBP, load page from disk */
+/* If failover with RBP, try load page from RBP. If page is not exists on RBP, load page from disk */
 status_t buf_load_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id)
 {
     status_t status = OG_ERROR;
-    bool32 gbp_read_failed = OG_FALSE;
+    bool32 rbp_read_failed = OG_FALSE;
 
     knl_panic(!(ctrl->is_edp || ctrl->is_dirty) && (!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl)));
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) && session_need_read_gbp(session)) {
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) && session_need_read_rbp(session)) {
         ctrl->page->lsn = OG_INVALID_LSN; // reset page lsn to 0 here, because it is not loaded from disk
-        status = buf_load_page_from_GBP(session, ctrl, page_id, &gbp_read_failed);
-    } else if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel))) {
-        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page skip_GBP_first path page %u-%u sid=%u log_aly=%u gbp_bg=%u",
+        status = buf_load_page_from_RBP(session, ctrl, page_id, &rbp_read_failed);
+    } else if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel))) {
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page skip_RBP_first path page %u-%u sid=%u log_aly=%u rbp_bg=%u",
                           page_id.file, page_id.page, session->id, (uint32)SESSION_IS_LOG_ANALYZE(session),
-                          (uint32)SESSION_IS_GBP_BG(session));
+                          (uint32)SESSION_IS_RBP_BG(session));
     }
 
-    if (status != OG_SUCCESS && !gbp_read_failed) {
-        if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) && session_need_read_gbp(session)) {
-            GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_load_page fallback_disk page %u-%u after GBP path failed",
+    if (status != OG_SUCCESS && !rbp_read_failed) {
+        if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) && session_need_read_rbp(session)) {
+            RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page fallback_disk page %u-%u after RBP path failed",
                               page_id.file, page_id.page);
         }
         status = buf_load_page_from_disk(session, ctrl, page_id);
@@ -1362,13 +1362,13 @@ static void buf_validate_page(knl_session_t *session, buf_ctrl_t *ctrl, bool32 c
         return;
     }
 
-    if (KNL_RECOVERY_WITH_GBP(session->kernel) && SESSION_IS_GBP_BG(session)) {
+    if (KNL_RECOVERY_WITH_RBP(session->kernel) && SESSION_IS_RBP_BG(session)) {
         return;
     }
 
-    /* page first load from gbp */
-    if (KNL_RECOVERY_WITH_GBP(session->kernel) && ctrl->gbp_ctrl->is_from_gbp && ctrl->is_dirty &&
-        ctrl->gbp_ctrl->gbp_read_version == KNL_GBP_READ_VER(session->kernel) && !changed) {
+    /* page first load from rbp */
+    if (KNL_RECOVERY_WITH_RBP(session->kernel) && ctrl->rbp_ctrl->is_from_rbp && ctrl->is_dirty &&
+        ctrl->rbp_ctrl->rbp_read_version == KNL_RBP_READ_VER(session->kernel) && !changed) {
         return;
     }
 
@@ -1428,7 +1428,7 @@ void buf_log_enter_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t m
         return;
     }
 
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) && SESSION_IS_GBP_BG(session)) {
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) && SESSION_IS_RBP_BG(session)) {
         return;
     }
 
@@ -1452,7 +1452,7 @@ void buf_log_enter_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t m
         redo.pcn = ctrl->page->pcn;
         redo.options = options;
 
-        /* because we replay txn page when do log analysis on standby(gbp enabled), we should identify it */
+        /* because we replay txn page when do log analysis on standby(rbp enabled), we should identify it */
         if (ctrl->is_resident && ctrl->page->type == PAGE_TYPE_TXN) {
             log_put(session, RD_ENTER_TXN_PAGE, &redo, sizeof(rd_enter_page_t), LOG_ENTRY_FLAG_NONE);
         } else {
@@ -1471,7 +1471,7 @@ static void buf_log_leave_page(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
         return;
     }
 
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel)) && SESSION_IS_GBP_BG(session)) {
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) && SESSION_IS_RBP_BG(session)) {
         return;
     }
 
@@ -1489,7 +1489,7 @@ static void buf_log_leave_page(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
 #endif
             /* there is some other log entry behind RD_ENTER_PAGE, it means the page changed */
             if (ctrl->is_resident && ctrl->page->type == PAGE_TYPE_TXN) {
-                /* because we replay txn page when do log analysis on standby(gbp enabled), we should identify it */
+                /* because we replay txn page when do log analysis on standby(rbp enabled), we should identify it */
                 log_put(session, RD_LEAVE_TXN_PAGE, &changed, sizeof(bool32), LOG_ENTRY_FLAG_NONE);
             } else {
                 log_put(session, RD_LEAVE_PAGE, &changed, sizeof(bool32), LOG_ENTRY_FLAG_NONE);
@@ -1554,20 +1554,20 @@ bool32 buf_check_loaded_page_checksum(knl_session_t *session, buf_ctrl_t *ctrl, 
     return buf_verify_checksum(session, ctrl->page, ctrl->page_id);
 }
 
-static inline status_t buf_try_read_gbp_page(knl_session_t *session, buf_ctrl_t *ctrl)
+static inline status_t buf_try_read_rbp_page(knl_session_t *session, buf_ctrl_t *ctrl)
 {
-    if (ctrl->gbp_ctrl->page_status == GBP_PAGE_NOREAD) {
+    if (ctrl->rbp_ctrl->page_status == RBP_PAGE_NOREAD) {
         ctrl->page->lsn = OG_INVALID_LSN; // page is not loaded, set lsn to 0
-        ctrl->gbp_ctrl->page_status = GBP_PAGE_NONE;
+        ctrl->rbp_ctrl->page_status = RBP_PAGE_NONE;
     }
 
-    if (session_need_read_gbp(session)) {
-        return buf_check_page_version(session, ctrl); // if local page is old, read page from gbp
+    if (session_need_read_rbp(session)) {
+        return buf_check_page_version(session, ctrl); // if local page is old, read page from rbp
     } else {
-        GBP_BUF_TRACE_LOG("[GBP_BUF_TRACE] buf_try_read_gbp_page skip_check page %u-%u sid=%u log_aly=%u gbp_bg=%u "
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_try_read_rbp_page skip_check page %u-%u sid=%u log_aly=%u rbp_bg=%u "
                           "page_status=%u page_lsn=%llu",
                           ctrl->page_id.file, ctrl->page_id.page, session->id, (uint32)SESSION_IS_LOG_ANALYZE(session),
-                          (uint32)SESSION_IS_GBP_BG(session), (uint32)ctrl->gbp_ctrl->page_status,
+                          (uint32)SESSION_IS_RBP_BG(session), (uint32)ctrl->rbp_ctrl->page_status,
                           (uint64)ctrl->page->lsn);
     }
     return OG_SUCCESS;
@@ -1581,8 +1581,8 @@ static inline void buf_read_compress_update_no_read(knl_session_t *session, buf_
                                                                          // loaded and not formated.
         CM_MFENCE;
         head_ctrl->compress_group[i]->load_status = BUF_IS_LOADED;
-        if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
-            head_ctrl->compress_group[i]->gbp_ctrl->page_status = GBP_PAGE_NOREAD;
+        if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel))) {
+            head_ctrl->compress_group[i]->rbp_ctrl->page_status = RBP_PAGE_NOREAD;
         }
     }
 }
@@ -1616,8 +1616,8 @@ static status_t buf_read_normal(knl_session_t *session, buf_ctrl_t *ctrl, page_i
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
         if (options & ENTER_PAGE_NO_READ) {
             ctrl->load_status = (uint8)BUF_IS_LOADED;
-            if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel))) {
-                ctrl->gbp_ctrl->page_status = GBP_PAGE_NOREAD;
+            if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel))) {
+                ctrl->rbp_ctrl->page_status = RBP_PAGE_NOREAD;
             }
             return OG_SUCCESS;
         }
@@ -1678,8 +1678,8 @@ status_t buf_read_page(knl_session_t *session, page_id_t page_id, latch_mode_t m
                   "page_id and ctrl's page_id are not same, panic info: page %u-%u ctrl page %u-%u type %u",
                   page_id.file, page_id.page, ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
 
-    if (SECUREC_UNLIKELY(KNL_GBP_ENABLE(session->kernel)) &&
-        buf_try_read_gbp_page(session, ctrl) != OG_SUCCESS) {
+    if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel)) &&
+        buf_try_read_rbp_page(session, ctrl) != OG_SUCCESS) {
         buf_unlatch(session, ctrl, OG_TRUE);
         return OG_ERROR;
     }
@@ -1755,8 +1755,8 @@ status_t buf_read_prefetch_page(knl_session_t *session, page_id_t page_id, latch
         return OG_ERROR;
     }
 
-    /* RTO = 0, disable prefetch when db is recovery from GBP */
-    if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
+    /* RTO = 0, disable prefetch when db is recovery from RBP */
+    if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         return buf_read_page(session, page_id, mode, options);
     }
 
@@ -1853,8 +1853,8 @@ status_t buf_read_prefetch_page_num(knl_session_t *session, page_id_t page_id, u
         return OG_ERROR;
     }
 
-    /* RTO = 0, disable prefetch when db is recovery from GBP */
-    if (KNL_RECOVERY_WITH_GBP(session->kernel)) {
+    /* RTO = 0, disable prefetch when db is recovery from RBP */
+    if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         return buf_read_page(session, page_id, mode, options);
     }
 
@@ -1940,7 +1940,7 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
 #endif
 
     if (changed && !PAGE_IS_HARD_DAMAGE_ZERO(ctrl->page)) {
-#ifdef GBP_VERBOSE_TRACE
+#ifdef RBP_VERBOSE_TRACE
         uint32 old_pcn = ctrl->page->pcn;
 #endif
         knl_panic_log(PAGE_SIZE(*ctrl->page) != 0, "the page size is abnormal, panic info: page %u-%u type %u size %u",
@@ -1953,9 +1953,9 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
             ctrl->is_dirty = 1;
             knl_panic_log(session->dirty_count < KNL_MAX_ATOMIC_PAGES,
                           "the dirty page count of current session is abnormal, panic info: page %u-%u type %u "
-                          "dirty_count %u changed_count %u gbp_dirty_count %u sid %u dtc_type %u",
+                          "dirty_count %u changed_count %u rbp_dirty_count %u sid %u dtc_type %u",
                           ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->dirty_count,
-                          session->changed_count, session->gbp_dirty_count, session->id,
+                          session->changed_count, session->rbp_dirty_count, session->id,
                           (uint32)session->dtc_session_type);
             if (session->dirty_count > 0) {
                 session->dirty_pages[session->dirty_count - 1]->ckpt_next = ctrl;
@@ -1973,61 +1973,61 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
                           ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->changed_count);
         }
 
-        if (SECUREC_UNLIKELY(buf_gbp_should_mark_dirty(session))) {
-            bool32 was_gbpdirty = ctrl->gbp_ctrl->is_gbpdirty;
-            bool32 enqueue_allowed = was_gbpdirty ? OG_FALSE : gbp_ctrl_may_enqueue(session, ctrl);
-            bool32 will_enqueue = (bool32)(!was_gbpdirty && enqueue_allowed);
+        if (SECUREC_UNLIKELY(buf_rbp_should_mark_dirty(session))) {
+            bool32 was_rbpdirty = ctrl->rbp_ctrl->is_rbpdirty;
+            bool32 enqueue_allowed = was_rbpdirty ? OG_FALSE : rbp_ctrl_may_enqueue(session, ctrl);
+            bool32 will_enqueue = (bool32)(!was_rbpdirty && enqueue_allowed);
 
-#ifdef GBP_VERBOSE_TRACE
-            OG_LOG_RUN_INF("[GBP_CTRL_TRACE] DIRTY_CHANGE page=%u-%u sid=%u dtc_type=%u old_pcn=%u new_pcn=%u "
-                           "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu is_dirty=%u is_edp=%u is_gbpdirty=%u "
-                           "pending_item=%p page_status=%u gbp_trunc_lfn=%llu will_enqueue=%u enqueue_allowed=%u",
+#ifdef RBP_VERBOSE_TRACE
+            OG_LOG_RUN_INF("[RBP_CTRL_TRACE] DIRTY_CHANGE page=%u-%u sid=%u dtc_type=%u old_pcn=%u new_pcn=%u "
+                           "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu is_dirty=%u is_edp=%u is_rbpdirty=%u "
+                           "pending_item=%p page_status=%u rbp_trunc_lfn=%llu will_enqueue=%u enqueue_allowed=%u",
                            ctrl->page_id.file, ctrl->page_id.page, session->id, (uint32)session->dtc_session_type,
                            old_pcn, (uint32)ctrl->page->pcn, (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
                            (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint32)ctrl->is_dirty,
-                           (uint32)ctrl->is_edp, (uint32)was_gbpdirty, (void *)ctrl->gbp_ctrl->pending_item,
-                           (uint32)ctrl->gbp_ctrl->page_status, (uint64)ctrl->gbp_ctrl->gbp_trunc_point.lfn,
+                           (uint32)ctrl->is_edp, (uint32)was_rbpdirty, (void *)ctrl->rbp_ctrl->pending_item,
+                           (uint32)ctrl->rbp_ctrl->page_status, (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
                            (uint32)will_enqueue, (uint32)enqueue_allowed);
 #endif
-            ctrl->gbp_ctrl->page_status = GBP_PAGE_NONE;
+            ctrl->rbp_ctrl->page_status = RBP_PAGE_NONE;
             if (will_enqueue) {
-                ctrl->gbp_ctrl->is_gbpdirty = OG_TRUE;
-                session->gbp_dirty_pages[session->gbp_dirty_count++] = ctrl;
-                knl_panic_log(session->gbp_dirty_count <= KNL_MAX_ATOMIC_PAGES,
-                              "gbp_dirty_count is abnormal, panic info: page %u-%u type %u gbp_dirty_count %u",
-                              ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->gbp_dirty_count);
-#ifdef GBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[GBP_CTRL_TRACE] GBP_DIRTY_MARK page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
-                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu gbp_dirty_count=%u pending_item=%p",
+                ctrl->rbp_ctrl->is_rbpdirty = OG_TRUE;
+                session->rbp_dirty_pages[session->rbp_dirty_count++] = ctrl;
+                knl_panic_log(session->rbp_dirty_count <= KNL_MAX_ATOMIC_PAGES,
+                              "rbp_dirty_count is abnormal, panic info: page %u-%u type %u rbp_dirty_count %u",
+                              ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->rbp_dirty_count);
+#ifdef RBP_VERBOSE_TRACE
+                OG_LOG_RUN_INF("[RBP_CTRL_TRACE] RBP_DIRTY_MARK page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
+                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu rbp_dirty_count=%u pending_item=%p",
                                ctrl->page_id.file, ctrl->page_id.page, session->id,
                                (uint32)session->dtc_session_type, (uint32)ctrl->page->pcn,
                                (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
-                               (uint64)session->kernel->redo_ctx.curr_point.lfn, session->gbp_dirty_count,
-                               (void *)ctrl->gbp_ctrl->pending_item);
+                               (uint64)session->kernel->redo_ctx.curr_point.lfn, session->rbp_dirty_count,
+                               (void *)ctrl->rbp_ctrl->pending_item);
 #endif
-            } else if (was_gbpdirty) {
-#ifdef GBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[GBP_CTRL_TRACE] GBP_PENDING_UPDATE page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
-                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu pending_item=%p gbp_trunc_lfn=%llu "
+            } else if (was_rbpdirty) {
+#ifdef RBP_VERBOSE_TRACE
+                OG_LOG_RUN_INF("[RBP_CTRL_TRACE] RBP_PENDING_UPDATE page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
+                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu pending_item=%p rbp_trunc_lfn=%llu "
                                "page_status=%u",
                                ctrl->page_id.file, ctrl->page_id.page, session->id,
                                (uint32)session->dtc_session_type, (uint32)ctrl->page->pcn,
                                (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
                                (uint64)session->kernel->redo_ctx.curr_point.lfn,
-                               (void *)ctrl->gbp_ctrl->pending_item,
-                               (uint64)ctrl->gbp_ctrl->gbp_trunc_point.lfn,
-                               (uint32)ctrl->gbp_ctrl->page_status);
+                               (void *)ctrl->rbp_ctrl->pending_item,
+                               (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
+                               (uint32)ctrl->rbp_ctrl->page_status);
 #endif
             } else {
-#ifdef GBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[GBP_CTRL_TRACE] GBP_ENQUEUE_SKIP page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
+#ifdef RBP_VERBOSE_TRACE
+                OG_LOG_RUN_INF("[RBP_CTRL_TRACE] RBP_ENQUEUE_SKIP page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
                                "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu enqueue_allowed=%u pending_item=%p "
                                "page_status=%u lock_mode=%u clustered=%u",
                                ctrl->page_id.file, ctrl->page_id.page, session->id,
                                (uint32)session->dtc_session_type, (uint32)ctrl->page->pcn,
                                (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
                                (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint32)enqueue_allowed,
-                               (void *)ctrl->gbp_ctrl->pending_item, (uint32)ctrl->gbp_ctrl->page_status,
+                               (void *)ctrl->rbp_ctrl->pending_item, (uint32)ctrl->rbp_ctrl->page_status,
                                (uint32)ctrl->lock_mode, (uint32)DB_IS_CLUSTER(session));
 #endif
             }
@@ -2159,7 +2159,7 @@ status_t buf_invalidate_page_with_version(knl_session_t *session, page_id_t page
         return OG_ERROR;
     }
 
-    gbp_on_page_owner_migrate_or_invalidate(session, ctrl);
+    rbp_on_page_owner_migrate_or_invalidate(session, ctrl);
 
     // If multiple S-readings come later, BUF_LOAD_FAILED can ensure only one invokes DCS page request.
     ctrl->load_status = BUF_LOAD_FAILED;
@@ -2184,7 +2184,7 @@ status_t buf_invalidate_page(knl_session_t *session, page_id_t page_id)
 
     knl_panic(DCS_BUF_CTRL_NOT_OWNER(session, ctrl));
 
-    gbp_on_page_owner_migrate_or_invalidate(session, ctrl);
+    rbp_on_page_owner_migrate_or_invalidate(session, ctrl);
 
     // If multiple S-readings come later, BUF_LOAD_FAILED can ensure only one invokes DCS page request.
     ctrl->load_status = BUF_LOAD_FAILED;
@@ -2261,7 +2261,7 @@ status_t buf_invalidate_page_owner(knl_session_t *session, page_id_t page_id, ui
         return OG_ERROR;
     }
 
-    gbp_on_page_owner_migrate_or_invalidate(session, ctrl);
+    rbp_on_page_owner_migrate_or_invalidate(session, ctrl);
 
     ctrl->load_status = BUF_LOAD_FAILED;
     ctrl->lock_mode = DRC_LOCK_NULL;
@@ -2319,7 +2319,7 @@ bool32 buf_clean_edp(knl_session_t *session, edp_page_info_t page)
         tmp_ctrl->page->lsn = 0;
         /*
          * tmp_ctrl is stack-local and only used to compare the disk image with the local EDP image.
-         * Do not use buf_load_page() here: recovery with GBP may replace tmp_ctrl from GBP and enqueue it to CKPT.
+         * Do not use buf_load_page() here: recovery with RBP may replace tmp_ctrl from RBP and enqueue it to CKPT.
          */
         if (buf_load_page_from_disk(session, tmp_ctrl, tmp_ctrl->page_id) != OG_SUCCESS) {
             tmp_ctrl->load_status = (uint8)BUF_LOAD_FAILED;

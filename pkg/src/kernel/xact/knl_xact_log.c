@@ -62,13 +62,13 @@ void rd_undo_change_txn(knl_session_t *session, log_entry_t *log)
 /*
  * log analysis function for change txn
  */
-void gbp_aly_undo_change_txn(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_undo_change_txn(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     knl_panic(BUF_IS_RESIDENT(session->curr_page_ctrl));
     rd_undo_change_txn(session, log);
 }
 
-void gbp_undo_format_txn(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_undo_format_txn(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     knl_panic(BUF_IS_RESIDENT(session->curr_page_ctrl));
 }
@@ -296,7 +296,7 @@ void rd_tx_begin(knl_session_t *session, log_entry_t *log)
     }
 }
 
-void gbp_aly_tx_begin(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_tx_begin(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     /* redo tx page when do log analysis */
     knl_panic(BUF_IS_RESIDENT(session->curr_page_ctrl));
@@ -310,7 +310,7 @@ void print_tx_begin(log_entry_t *log)
 }
 
 /*
- * rd_tx_end will not skip when GBP enable, because log analyze proc will repaly rd_tx_end
+ * rd_tx_end will not skip when RBP enable, because log analyze proc will repaly rd_tx_end
  * log analyze proc maintain txn area but do not change scn, scn will changed by lrpl proc
  * Notice:
  *     must judge is_skip when modify txn area and page, and judge SESSION_IS_LOG_ANALYZE when modify scn
@@ -373,7 +373,7 @@ void rd_tx_end(knl_session_t *session, log_entry_t *log)
     }
 }
 
-void gbp_aly_tx_end(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_tx_end(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     knl_panic(BUF_IS_RESIDENT(session->curr_page_ctrl));
     /* redo tx page when do log analysis */
@@ -389,7 +389,7 @@ void print_tx_end(log_entry_t *log)
 }
 
 /*
- * rd_xa_phase1 will not skip when GBP enable, because log analyze proc will repaly rd_xa_phase1
+ * rd_xa_phase1 will not skip when RBP enable, because log analyze proc will repaly rd_xa_phase1
  * log analyze proc maintain txn area but do not change scn, scn will changed by lrpl proc
  * Notice:
  *     must judge is_skip when modify txn area and page, and judge SESSION_IS_LOG_ANALYZE when modify scn
@@ -430,7 +430,7 @@ void print_xa_phase1(log_entry_t *log)
     printf("xmap %u-%u, scn %llu\n", (uint32)redo->xmap.seg_id, (uint32)redo->xmap.slot, redo->scn);
 }
 
-void gbp_aly_xa_phase1(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_xa_phase1(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     knl_panic(BUF_IS_RESIDENT(session->curr_page_ctrl));
     /* redo tx page when do log analysis */
@@ -456,7 +456,7 @@ void print_xa_rollback_phase2(log_entry_t *log)
     printf("xmap %u-%u\n", (uint32)xmap->seg_id, (uint32)xmap->slot);
 }
 
-void gbp_aly_xa_rollback_phase2(knl_session_t *session, log_entry_t *log, uint64 lsn)
+void rbp_aly_xa_rollback_phase2(knl_session_t *session, log_entry_t *log, uint64 lsn)
 {
     knl_panic(BUF_IS_RESIDENT(session->curr_page_ctrl));
     /* redo tx page when do log analysis */

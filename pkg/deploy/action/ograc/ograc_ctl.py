@@ -140,15 +140,15 @@ INSTALL_CONFIG_FILE = os.path.join(PKG_DIR, "action", "ograc", "install_config.j
 USE_LUN = ("dss",)
 
 
-def _gbps_log_file():
+def _rbps_log_file():
     install_home = paths.r_install_path.rstrip("/\\")
     ograc_home_from_install = os.path.dirname(os.path.dirname(install_home))
-    return os.path.join(ograc_home_from_install, "log", "gbps", "gbps.log")
+    return os.path.join(ograc_home_from_install, "log", "rbps", "rbps.log")
 
 
-def _default_gbps_conf():
-    return f"""# gbps.conf
-# Lightweight GBP server configuration. ogracd client settings stay in ogracd.ini.
+def _default_rbps_conf():
+    return f"""# rbps.conf
+# Lightweight RBP server configuration. ogracd client settings stay in ogracd.ini.
 
 HOST=0.0.0.0
 PORT=2611
@@ -156,8 +156,8 @@ PORT=2611
 ADMIN_HOST=127.0.0.1
 ADMIN_PORT=2711
 
-LOG_FILE={_gbps_log_file()}
-PID_FILE=$OGDB_HOME/run/gbps.pid
+LOG_FILE={_rbps_log_file()}
+PID_FILE=$OGDB_HOME/run/rbps.pid
 
 MAX_CACHE_PAGES=0
 READ_END_MODE=async
@@ -168,22 +168,22 @@ TIMING_DIAG=false
 """
 
 
-def _is_old_gbps_log_value(value):
+def _is_old_rbps_log_value(value):
     value = value.strip().strip('"').strip("'")
     old_values = (
-        "$OGDB_HOME/log/gbps/gbps.rlog",
-        "${OGDB_HOME}/log/gbps/gbps.rlog",
-        "$OGDB_HOME/../../log/gbps/gbps.log",
-        "${OGDB_HOME}/../../log/gbps/gbps.log",
+        "$OGDB_HOME/log/rbps/rbps.rlog",
+        "${OGDB_HOME}/log/rbps/rbps.rlog",
+        "$OGDB_HOME/../../log/rbps/rbps.log",
+        "${OGDB_HOME}/../../log/rbps/rbps.log",
     )
-    return value in old_values or value.endswith("/log/gbps/gbps.rlog")
+    return value in old_values or value.endswith("/log/rbps/rbps.rlog")
 
 
-def _migrate_gbps_conf_file(gbps_conf):
-    if not os.path.isfile(gbps_conf):
+def _migrate_rbps_conf_file(rbps_conf):
+    if not os.path.isfile(rbps_conf):
         return
 
-    with open(gbps_conf, "r", encoding="utf-8") as fp:
+    with open(rbps_conf, "r", encoding="utf-8") as fp:
         lines = fp.readlines()
 
     changed = False
@@ -195,37 +195,37 @@ def _migrate_gbps_conf_file(gbps_conf):
             key, _, value = stripped.partition("=")
             if key.strip().upper() == "LOG_FILE":
                 found_log_file = True
-                if _is_old_gbps_log_value(value):
-                    new_lines.append(f"LOG_FILE={_gbps_log_file()}\n")
+                if _is_old_rbps_log_value(value):
+                    new_lines.append(f"LOG_FILE={_rbps_log_file()}\n")
                     changed = True
                     continue
         new_lines.append(line)
 
     if not found_log_file:
-        new_lines.append(f"LOG_FILE={_gbps_log_file()}\n")
+        new_lines.append(f"LOG_FILE={_rbps_log_file()}\n")
         changed = True
 
     if changed:
         flags = os.O_WRONLY | os.O_TRUNC
-        with os.fdopen(os.open(gbps_conf, flags), "w", encoding="utf-8") as fp:
+        with os.fdopen(os.open(rbps_conf, flags), "w", encoding="utf-8") as fp:
             fp.writelines(new_lines)
-        LOG.info("Updated gbps log path in config: %s", gbps_conf)
+        LOG.info("Updated rbps log path in config: %s", rbps_conf)
 
 
-def _ensure_gbps_conf_file(gbps_conf):
-    if os.path.isfile(gbps_conf):
-        _migrate_gbps_conf_file(gbps_conf)
+def _ensure_rbps_conf_file(rbps_conf):
+    if os.path.isfile(rbps_conf):
+        _migrate_rbps_conf_file(rbps_conf)
         return
-    _ensure_dir(os.path.dirname(gbps_conf), 0o750)
+    _ensure_dir(os.path.dirname(rbps_conf), 0o750)
     flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
     modes = stat.S_IRUSR | stat.S_IWUSR
-    with os.fdopen(os.open(gbps_conf, flags, modes), "w", encoding="utf-8") as fp:
-        fp.write(_default_gbps_conf())
-    LOG.info("Created default gbps config: %s", gbps_conf)
+    with os.fdopen(os.open(rbps_conf, flags, modes), "w", encoding="utf-8") as fp:
+        fp.write(_default_rbps_conf())
+    LOG.info("Created default rbps config: %s", rbps_conf)
 
 
-def _ensure_gbps_conf():
-    _ensure_gbps_conf_file(os.path.join(install_path, "cfg", "gbps.conf"))
+def _ensure_rbps_conf():
+    _ensure_rbps_conf_file(os.path.join(install_path, "cfg", "rbps.conf"))
 
 
 class DeployParams:
@@ -1092,7 +1092,7 @@ def action_install():
             else:
                 os.remove(cms_bin)
         LOG.info("RPM files copied")
-    _ensure_gbps_conf()
+    _ensure_rbps_conf()
     _exec(f"chmod 700 -R {install_path}")
 
     _ensure_dir(cfg_dir, 0o750)
@@ -1122,14 +1122,14 @@ def action_install():
         sys_password = _prompt_sys_password()
 
     if install_type != "override":
-        for fname in ("ogracd.ini", "ogsql.ini", "gbps.conf"):
+        for fname in ("ogracd.ini", "ogsql.ini", "rbps.conf"):
             src = os.path.join(backup_dir, fname)
             dst = os.path.join(data_path, "cfg", fname)
             _ensure_dir(os.path.dirname(dst), 0o750)
             if os.path.isfile(src):
                 shutil.copy2(src, dst)
-            if fname == "gbps.conf":
-                _migrate_gbps_conf_file(dst)
+            if fname == "rbps.conf":
+                _migrate_rbps_conf_file(dst)
 
         backup_cfg_json = os.path.join(backup_dir, "ograc_config.json")
         if os.path.isfile(backup_cfg_json):
@@ -1161,7 +1161,7 @@ def action_install():
             if os.path.isdir(data_cfg_path):
                 shutil.rmtree(data_cfg_path)
             shutil.copytree(backup_cfg_dir_path, data_cfg_path)
-            _migrate_gbps_conf_file(os.path.join(data_cfg_path, "gbps.conf"))
+            _migrate_rbps_conf_file(os.path.join(data_cfg_path, "rbps.conf"))
         backup_cfg_json = os.path.join(backup_dir, "ograc_config.json")
         if os.path.isfile(backup_cfg_json):
             shutil.copy2(backup_cfg_json, os.path.join(CUR_DIR, "ograc_config.json"))
@@ -1375,7 +1375,7 @@ def action_backup():
 
     _ensure_dir(backup_dir, 0o700)
 
-    for fname in ("ogracd.ini", "ogsql.ini", "gbps.conf"):
+    for fname in ("ogracd.ini", "ogsql.ini", "rbps.conf"):
         src = os.path.join(data_path, "cfg", fname)
         if os.path.isfile(src):
             shutil.copy2(src, backup_dir)
@@ -1401,14 +1401,14 @@ def action_restore():
     if not os.path.isdir(backup_dir):
         raise RuntimeError(f"Backup directory not found: {backup_dir}")
 
-    for fname in ("ogracd.ini", "ogsql.ini", "gbps.conf"):
+    for fname in ("ogracd.ini", "ogsql.ini", "rbps.conf"):
         src = os.path.join(backup_dir, fname)
         dst = os.path.join(data_path, "cfg", fname)
         _ensure_dir(os.path.dirname(dst), 0o750)
         if os.path.isfile(src):
             shutil.copy2(src, dst)
-            if fname == "gbps.conf":
-                _migrate_gbps_conf_file(dst)
+            if fname == "rbps.conf":
+                _migrate_rbps_conf_file(dst)
             LOG.info("Restored %s", fname)
 
     backup_cfg_dir = os.path.join(backup_dir, "cfg")
@@ -1417,7 +1417,7 @@ def action_restore():
         if os.path.isdir(data_cfg_path):
             shutil.rmtree(data_cfg_path)
         shutil.copytree(backup_cfg_dir, data_cfg_path)
-        _migrate_gbps_conf_file(os.path.join(data_cfg_path, "gbps.conf"))
+        _migrate_rbps_conf_file(os.path.join(data_cfg_path, "rbps.conf"))
         LOG.info("Restored cfg directory")
 
     backup_cfg_json = os.path.join(backup_dir, "ograc_config.json")
