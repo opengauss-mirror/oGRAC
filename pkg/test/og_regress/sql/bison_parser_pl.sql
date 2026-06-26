@@ -516,6 +516,98 @@ drop procedure bison_pl_sql_isopen_proc;
 drop table if exists bison_pl_sql_found_log;
 drop table if exists bison_pl_sql_found_t;
 
+drop table if exists bison_pl_cursor_attr_t;
+drop table if exists bison_pl_cursor_attr_log;
+create table bison_pl_cursor_attr_t(id int, note varchar(20));
+create table bison_pl_cursor_attr_log(stage varchar(30), val int);
+insert into bison_pl_cursor_attr_t values(1, 'one');
+insert into bison_pl_cursor_attr_t values(2, 'two');
+
+create or replace procedure bison_pl_sql_notfound_proc(p_id int) is
+begin
+    update bison_pl_cursor_attr_t set note = note where id = p_id;
+    if SQL%NOTFOUND then
+        insert into bison_pl_cursor_attr_log values('sql_notfound', 1);
+    else
+        insert into bison_pl_cursor_attr_log values('sql_notfound', 0);
+    end if;
+end;
+/
+
+declare
+begin
+    bison_pl_sql_notfound_proc(9);
+end;
+/
+
+declare
+    v_count int;
+begin
+    update bison_pl_cursor_attr_t set note = note where id = 1;
+    v_count := SQL%ROWCOUNT;
+    insert into bison_pl_cursor_attr_log values('sql_rowcount', v_count);
+end;
+/
+
+declare
+    cursor c1 is select id from bison_pl_cursor_attr_t order by id;
+    v_id int;
+    v_count int;
+begin
+    open c1;
+    if c1%ISOPEN then
+        insert into bison_pl_cursor_attr_log values('cursor_isopen', 1);
+    end if;
+    fetch c1 into v_id;
+    if c1%FOUND then
+        insert into bison_pl_cursor_attr_log values('cursor_found', v_id);
+    end if;
+    v_count := c1%ROWCOUNT;
+    insert into bison_pl_cursor_attr_log values('cursor_rowcount', v_count);
+    loop
+        fetch c1 into v_id;
+        exit when c1%NOTFOUND;
+    end loop;
+    insert into bison_pl_cursor_attr_log values('cursor_notfound', 1);
+    close c1;
+end;
+/
+
+declare
+    rc sys_refcursor;
+    v_id int;
+begin
+    open rc for select id from bison_pl_cursor_attr_t order by id;
+    loop
+        fetch rc into v_id;
+        exit when rc%NOTFOUND;
+    end loop;
+    insert into bison_pl_cursor_attr_log values('refcursor_notfound', 1);
+    close rc;
+end;
+/
+
+create or replace procedure bison_pl_auto_proc is
+    pragma autonomous_transaction;
+begin
+    insert into bison_pl_cursor_attr_log values('pragma_auto', 1);
+    commit;
+end;
+/
+
+declare
+begin
+    bison_pl_auto_proc;
+end;
+/
+
+select stage, val from bison_pl_cursor_attr_log order by stage;
+
+drop procedure bison_pl_auto_proc;
+drop procedure bison_pl_sql_notfound_proc;
+drop table if exists bison_pl_cursor_attr_log;
+drop table if exists bison_pl_cursor_attr_t;
+
 drop table if exists bison_pl_trig_event_log;
 drop table if exists bison_pl_trig_event_t;
 create table bison_pl_trig_event_t(id int, status varchar(10));

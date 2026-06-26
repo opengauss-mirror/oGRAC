@@ -113,6 +113,7 @@ static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char 
 static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_raise_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
+static status_t compile_pragma_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_exit_or_continue_stmt(sql_stmt_t *stmt, bool32 is_continue, const char *label_name,
     text_t *cond_src, source_location_t loc);
 static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, pl_line_case_t **case_line);
@@ -1642,6 +1643,13 @@ decl_stmt:
                     decl->excpt.is_userdef = OG_TRUE;
                     decl->excpt.err_code = OG_INVALID_INT32;
                 }
+            | K_PRAGMA T_WORD ';'
+                {
+                    pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    if (compile_pragma_stmt(compiler, $2.ident, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("compile pragma failed");
+                    }
+                }
             | decl_varname K_SYS_REFCURSOR ';'
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
@@ -2105,6 +2113,32 @@ unreserved_keyword:
         ;
 
 %%
+
+static status_t compile_pragma_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc)
+{
+    pl_entity_t *entity = (pl_entity_t *)compiler->entity;
+    uint32 max_stack_depth = (compiler->type == PL_TRIGGER) ? 1 : 0;
+
+    if (!cm_str_equal_ins(name, "autonomous_transaction")) {
+        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "pragma syntax word", name);
+        return OG_ERROR;
+    }
+
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR && IS_APP_CONN(compiler->stmt->session)) {
+        OG_SRC_THROW_ERROR(loc, ERR_CAPABILITY_NOT_SUPPORT, "AUTONOMOUS_TRANSACTION on coordinator is");
+        return OG_ERROR;
+    }
+#endif
+
+    if (compiler->stack.depth > max_stack_depth) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "autonomous transaction must be in top stack");
+        return OG_ERROR;
+    }
+
+    entity->is_auton_trans = OG_TRUE;
+    return OG_SUCCESS;
+}
 
 static void plsql_yyerror(core_yyscan_t yyscanner, const char* message)
 {

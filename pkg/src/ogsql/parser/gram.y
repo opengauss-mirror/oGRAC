@@ -26,6 +26,7 @@
 #include "ogsql_privilege.h"
 #include "pl_ddl_parser.h"
 #include "cm_error.h"
+#include "decl.h"
 
 /* Location tracking support --- simpler than bison's default */
 
@@ -118,7 +119,7 @@ static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr,
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
 static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node);
-static expr_tree_t *bison_make_implicit_sql_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
+static expr_tree_t *bison_make_pl_cursor_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
     expr_tree_t *right, source_location_t loc);
 static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
     expr_node_type_t node_type, source_location_t loc);
@@ -5185,9 +5186,9 @@ a_expr:     c_expr    { $$ = $1; }
             }
             | a_expr '%' a_expr
             {
-                $$ = bison_make_implicit_sql_attr_or_mod_expr(yyscanner, $1, $3, @1.loc);
+                $$ = bison_make_pl_cursor_attr_or_mod_expr(yyscanner, $1, $3, @1.loc);
                 if ($$ == NULL) {
-                    parser_abort_or_yyerror("create implicit SQL attr or mod expr failed");
+                    parser_abort_or_yyerror("create pl attr or mod expr failed");
                 }
             }
             | a_expr '|' a_expr
@@ -17742,29 +17743,46 @@ static bool32 bison_get_simple_column_name(expr_tree_t *expr, text_t **name)
     return OG_TRUE;
 }
 
-static expr_tree_t *bison_make_implicit_sql_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
+static bool32 bison_get_pl_attr_left_name(expr_tree_t *expr, text_t **name)
+{
+    expr_node_t *node = (expr == NULL) ? NULL : expr->root;
+    var_address_pair_t *pair = NULL;
+
+    if (bison_get_simple_column_name(expr, name)) {
+        return cm_text_str_equal_ins(*name, "SQL");
+    }
+
+    if (node == NULL || expr->chain.count != 1 || node->type != EXPR_NODE_V_ADDR) {
+        return OG_FALSE;
+    }
+
+    pair = sql_get_last_addr_pair(node);
+    if (pair == NULL || pair->type != UDT_STACK_ADDR || pair->stack == NULL ||
+        pair->stack->decl == NULL || pair->stack->decl->type != PLV_CUR) {
+        return OG_FALSE;
+    }
+
+    *name = &pair->stack->decl->name;
+    return OG_TRUE;
+}
+
+static expr_tree_t *bison_make_pl_cursor_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
     expr_tree_t *right, source_location_t loc)
 {
     bool32 matched = OG_FALSE;
     expr_tree_t *expr = NULL;
     text_t *left_name = NULL;
     text_t *attr_name = NULL;
-    char left_buf[OG_NAME_BUFFER_SIZE];
-    char attr_buf[OG_NAME_BUFFER_SIZE];
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
-    if (bison_get_simple_column_name(left, &left_name) && cm_text_str_equal_ins(left_name, "SQL") &&
-        bison_get_simple_column_name(right, &attr_name)) {
-        if (cm_text2str(left_name, left_buf, sizeof(left_buf)) != OG_SUCCESS ||
-            cm_text2str(attr_name, attr_buf, sizeof(attr_buf)) != OG_SUCCESS) {
-            return NULL;
-        }
-        if (sql_create_pl_attr_expr(stmt, &expr, left_buf, attr_buf, loc, &matched) != OG_SUCCESS) {
-            return NULL;
-        }
-        if (matched) {
-            return expr;
-        }
+    if (!bison_get_pl_attr_left_name(left, &left_name) || !bison_get_simple_column_name(right, &attr_name)) {
+        return bison_make_oper_expr(yyscanner, left, right, EXPR_NODE_MOD, loc);
+    }
+    if (sql_create_pl_attr_expr(stmt, &expr, left_name, attr_name, loc, &matched) != OG_SUCCESS) {
+        return NULL;
+    }
+    if (matched) {
+        return expr;
     }
 
     return bison_make_oper_expr(yyscanner, left, right, EXPR_NODE_MOD, loc);
