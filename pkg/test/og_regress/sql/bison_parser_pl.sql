@@ -474,6 +474,39 @@ select * from bison_pl_char_concat order by stage;
 
 drop table if exists bison_pl_char_concat;
 
+drop table if exists bison_pl_trig_event_log;
+drop table if exists bison_pl_trig_event_t;
+create table bison_pl_trig_event_t(id int, status varchar(10));
+create table bison_pl_trig_event_log(event_name varchar(10));
+insert into bison_pl_trig_event_t values(1, 'old');
+
+create or replace trigger bison_pl_trig_event_trg
+after insert or update or delete on bison_pl_trig_event_t
+for each row
+begin
+    case
+        when inserting then
+            insert into bison_pl_trig_event_log values('insert');
+        when updating then
+            insert into bison_pl_trig_event_log values('update');
+        when deleting then
+            insert into bison_pl_trig_event_log values('delete');
+        else
+            insert into bison_pl_trig_event_log values('other');
+    end case;
+end;
+/
+
+insert into bison_pl_trig_event_t values(2, 'new');
+update bison_pl_trig_event_t set status = 'new' where id = 1;
+delete from bison_pl_trig_event_t where id = 2;
+select event_name, count(*) as cnt from bison_pl_trig_event_log group by event_name order by event_name;
+select count(*) as updated_rows from bison_pl_trig_event_t where status = 'new';
+
+drop trigger bison_pl_trig_event_trg;
+drop table if exists bison_pl_trig_event_log;
+drop table if exists bison_pl_trig_event_t;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;

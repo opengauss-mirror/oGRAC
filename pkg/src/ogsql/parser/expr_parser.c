@@ -3571,6 +3571,20 @@ static status_t sql_try_convert_static_pl_var_to_param(sql_stmt_t *stmt, expr_no
     return OG_SUCCESS;
 }
 
+static bool32 sql_is_nameable_reserved_columnref(pl_columnref_expr_arg_t *arg)
+{
+    word_t word = { 0 };
+
+    if (arg->list != NULL) {
+        return OG_FALSE;
+    }
+
+    word.namable = OG_FALSE;
+    word.text.str = (char *)arg->val;
+    word.text.len = (uint32)strlen(arg->val);
+    return lex_match_reserved_keyword_bison(&word) && word.namable;
+}
+
 static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr,
     pl_columnref_expr_arg_t *arg, bool32 *converted)
 {
@@ -3579,6 +3593,9 @@ static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t *
 
     *converted = OG_FALSE;
     if (arg->type != EXPR_NODE_COLUMN || !sql_is_pl_compile_context(stmt)) {
+        return OG_SUCCESS;
+    }
+    if (sql_is_nameable_reserved_columnref(arg)) {
         return OG_SUCCESS;
     }
 
