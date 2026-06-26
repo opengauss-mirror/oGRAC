@@ -10248,8 +10248,28 @@ AlterTenantStmt:
                 }
         ;
 
+/*
+ * The native ALTER INDEX parser does not require end-of-text after UNUSABLE,
+ * so these compatibility tails are accepted and ignored there.
+ */
+alter_index_ignored_unusable_option:
+            /*EMPTY*/
+            | ONLINE
+            | DEFERRED alter_index_ignored_invalidation
+            | IMMEDIATE alter_index_ignored_invalidation
+        ;
+
+alter_index_ignored_invalidation:
+            IDENT
+                {
+                    if (!cm_str_equal_ins($1, "INVALIDATION")) {
+                        parser_yyerror("invalid alter index unusable option");
+                    }
+                }
+        ;
+
 alter_index_action:
- 	        UNUSABLE
+            UNUSABLE alter_index_ignored_unusable_option
  	            {
  	                alter_index_action_t *alter_idx_act = NULL;
  	                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
