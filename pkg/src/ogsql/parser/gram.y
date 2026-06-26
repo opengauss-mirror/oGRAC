@@ -14811,7 +14811,7 @@ pl_trigger_block:
         ;
 
 compileFunctionSource:
-            proc_args RETURN Typename as_is subprogram_body
+            proc_args RETURN func_type as_is subprogram_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
@@ -14912,7 +14912,7 @@ CreateFunctionStmt:
                 if (pl_init_compiler(og_yyget_extra(yyscanner)->core_yy_extra.stmt) != OG_SUCCESS) {
                     parser_yyerror("init pl compiler failed");
                 }
-            } opt_if_not_exists any_name proc_args RETURN Typename
+            } opt_if_not_exists any_name proc_args RETURN func_type
             as_is subprogram_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;

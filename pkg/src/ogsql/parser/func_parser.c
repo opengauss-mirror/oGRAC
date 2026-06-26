@@ -1482,7 +1482,7 @@ static status_t sql_try_create_pl_construct_expr(sql_stmt_t *stmt, pl_collection
     udt_constructor_t *v_construct = NULL;
 
     *converted = OG_FALSE;
-    if (arg->func_name->count != 1 || arg->arg_list == NULL) {
+    if (arg->func_name->count != 1) {
         return OG_SUCCESS;
     }
 

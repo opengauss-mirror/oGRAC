@@ -1037,6 +1037,186 @@ SQL> drop table if exists bison_pl_trig_event_t;
 
 Succeed.
 
+SQL> drop table if exists bison_pl_issue245_log;
+
+Succeed.
+
+SQL> create table bison_pl_issue245_log(name varchar(40), val int);
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     n PLS_INTEGER := 1;
+  3 begin
+  4     insert into bison_pl_issue245_log values('pls_integer', n);
+  5 end;
+  6 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> drop table if exists bison_pls_integer_name_t;
+
+Succeed.
+
+SQL> create table bison_pls_integer_name_t(pls_integer int);
+
+Succeed.
+
+SQL> insert into bison_pls_integer_name_t values(7);
+
+1 rows affected.
+
+SQL> update bison_pls_integer_name_t set pls_integer = pls_integer where pls_integer = 7;
+
+1 rows affected.
+
+SQL> drop table bison_pls_integer_name_t;
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     first integer := 1;
+  3     last integer := 3;
+  4     high integer := 10;
+  5     low integer := 5;
+  6 begin
+  7     for k in reverse first..last loop
+  8         null;
+  9     end loop;
+ 10     for step in 0..(trunc(high / low) * 2) loop
+ 11         null;
+ 12     end loop;
+ 13     first := last;
+ 14     insert into bison_pl_issue245_log values('keyword_bounds', first);
+ 15 end;
+ 16 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> declare
+  2     type bison_arr is varray(4) of varchar2(10);
+  3     team bison_arr := bison_arr();
+  4 begin
+  5     if team.count = 0 then
+  6         insert into bison_pl_issue245_log values('empty_constructor', 0);
+  7     end if;
+  8 end;
+  9 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> declare
+  2     type roster is table of varchar2(15);
+  3     names roster := roster('A', 'B');
+  4     v varchar2(15);
+  5 begin
+  6     for i in names.first .. names.last loop
+  7         v := names(i);
+  8     end loop;
+  9     insert into bison_pl_issue245_log values('collection_bounds', names.count);
+ 10 end;
+ 11 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> drop function if exists bison_pl_issue245_return_type;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_issue245_body_type;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_issue245_type_t;
+
+Succeed.
+
+SQL> create table bison_pl_issue245_type_t(id int, note varchar2(20));
+
+Succeed.
+
+SQL> insert into bison_pl_issue245_type_t values(1, 'one');
+
+1 rows affected.
+
+SQL>
+SQL> create or replace function bison_pl_issue245_return_type(p_id int)
+  2 return bison_pl_issue245_type_t.id%TYPE
+  3 is
+  4 begin
+  5     return p_id;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> select bison_pl_issue245_return_type(1) as return_type_result from sys_dummy;
+
+RETURN_TYPE_RESULT
+------------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> create or replace function bison_pl_issue245_body_type(p_id int)
+  2 return int
+  3 is
+  4     v_id bison_pl_issue245_type_t.id%TYPE;
+  5     r bison_pl_issue245_type_t%ROWTYPE;
+  6 begin
+  7     select * into r from bison_pl_issue245_type_t where id = p_id;
+  8     v_id := r.id;
+  9     return v_id;
+ 10 end;
+ 11 /
+
+Succeed.
+
+SQL> select bison_pl_issue245_body_type(1) as body_type_result from sys_dummy;
+
+BODY_TYPE_RESULT
+----------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> drop function bison_pl_issue245_return_type;
+
+Succeed.
+
+SQL> drop function bison_pl_issue245_body_type;
+
+Succeed.
+
+SQL> drop table bison_pl_issue245_type_t;
+
+Succeed.
+
+SQL>
+SQL> select name, val from bison_pl_issue245_log order by name;
+
+NAME                                     VAL
+---------------------------------------- ------------
+collection_bounds                        2
+empty_constructor                        0
+keyword_bounds                           3
+pls_integer                              1
+
+4 rows fetched.
+
+SQL>
+SQL> drop table if exists bison_pl_issue245_log;
+
+Succeed.
+
 SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 

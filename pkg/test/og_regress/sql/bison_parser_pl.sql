@@ -640,6 +640,96 @@ select count(*) as updated_rows from bison_pl_trig_event_t where status = 'new';
 drop trigger bison_pl_trig_event_trg;
 drop table if exists bison_pl_trig_event_log;
 drop table if exists bison_pl_trig_event_t;
+drop table if exists bison_pl_issue245_log;
+create table bison_pl_issue245_log(name varchar(40), val int);
+
+declare
+    n PLS_INTEGER := 1;
+begin
+    insert into bison_pl_issue245_log values('pls_integer', n);
+end;
+/
+
+drop table if exists bison_pls_integer_name_t;
+create table bison_pls_integer_name_t(pls_integer int);
+insert into bison_pls_integer_name_t values(7);
+update bison_pls_integer_name_t set pls_integer = pls_integer where pls_integer = 7;
+drop table bison_pls_integer_name_t;
+
+declare
+    first integer := 1;
+    last integer := 3;
+    high integer := 10;
+    low integer := 5;
+begin
+    for k in reverse first..last loop
+        null;
+    end loop;
+    for step in 0..(trunc(high / low) * 2) loop
+        null;
+    end loop;
+    first := last;
+    insert into bison_pl_issue245_log values('keyword_bounds', first);
+end;
+/
+
+declare
+    type bison_arr is varray(4) of varchar2(10);
+    team bison_arr := bison_arr();
+begin
+    if team.count = 0 then
+        insert into bison_pl_issue245_log values('empty_constructor', 0);
+    end if;
+end;
+/
+
+declare
+    type roster is table of varchar2(15);
+    names roster := roster('A', 'B');
+    v varchar2(15);
+begin
+    for i in names.first .. names.last loop
+        v := names(i);
+    end loop;
+    insert into bison_pl_issue245_log values('collection_bounds', names.count);
+end;
+/
+
+drop function if exists bison_pl_issue245_return_type;
+drop function if exists bison_pl_issue245_body_type;
+drop table if exists bison_pl_issue245_type_t;
+create table bison_pl_issue245_type_t(id int, note varchar2(20));
+insert into bison_pl_issue245_type_t values(1, 'one');
+
+create or replace function bison_pl_issue245_return_type(p_id int)
+return bison_pl_issue245_type_t.id%TYPE
+is
+begin
+    return p_id;
+end;
+/
+select bison_pl_issue245_return_type(1) as return_type_result from sys_dummy;
+
+create or replace function bison_pl_issue245_body_type(p_id int)
+return int
+is
+    v_id bison_pl_issue245_type_t.id%TYPE;
+    r bison_pl_issue245_type_t%ROWTYPE;
+begin
+    select * into r from bison_pl_issue245_type_t where id = p_id;
+    v_id := r.id;
+    return v_id;
+end;
+/
+select bison_pl_issue245_body_type(1) as body_type_result from sys_dummy;
+
+drop function bison_pl_issue245_return_type;
+drop function bison_pl_issue245_body_type;
+drop table bison_pl_issue245_type_t;
+
+select name, val from bison_pl_issue245_log order by name;
+
+drop table if exists bison_pl_issue245_log;
 
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
