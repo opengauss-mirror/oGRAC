@@ -31,7 +31,8 @@
 #include "dtc_remote_lock.h"
 
 void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *atomic_state, int32 *x_owner_node,
-    int32 *write_waiters, int32 *owner_tid, int32 *readonly);
+    int32 *write_waiters, int32 *owner_tid, int32 *readonly, int32 *readonly_owner_node,
+    int32 *readonly_owner_tid);
 
 // The distributed lock is the in-tree atomic implementation (ub_atomic_dist_lock.c),
 // so there is no SDK lock queue to initialise.
@@ -207,7 +208,8 @@ status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page
 }
 
 void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
-    int32 *write_waiters, int32 *owner_tid, int32 *readonly)
+    int32 *write_waiters, int32 *owner_tid, int32 *readonly, int32 *readonly_owner_node,
+    int32 *readonly_owner_tid)
 {
     if (lock_ptr == 0) {
         *atomic_state = 0;
@@ -215,9 +217,11 @@ void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int3
         *write_waiters = 0;
         *owner_tid = -1;
         *readonly = 0;
+        *readonly_owner_node = -1;
+        *readonly_owner_tid = -1;
         return;
     }
     ub_rw_lock_debug_read((const ub_rw_lock_t *)(uintptr_t)lock_ptr, atomic_state, x_owner_node, write_waiters,
-        owner_tid, readonly);
+        owner_tid, readonly, readonly_owner_node, readonly_owner_tid);
 }
 

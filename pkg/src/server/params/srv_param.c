@@ -202,7 +202,7 @@ config_item_t g_parameters[] = {
       sql_notify_als_bool, NULL },
     { "_UB_PAGE_HOT_THRESHOLD", OG_TRUE, ATTR_NONE, "100", NULL, NULL, "-", "[1,10000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_THRESHOLD, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_threshold,
-      NULL, NULL, NULL },
+      sql_notify_als_ub_page_hot_threshold, NULL, NULL },
     { "_UB_PAGE_HOT_TIMEOUT", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", "[1,1000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_TIMEOUT, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_timeout,
       sql_notify_als_ub_page_hot_timeout, NULL, NULL },

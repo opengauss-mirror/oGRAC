@@ -192,10 +192,61 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             //                "is_load_from_gbp: %d, mode: %u", ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
             //                (unsigned int)ra->options, is_load_from_gbp, ctrl->gbp_lock_mode);
 
+            if (!is_load_from_gbp && ctrl->gbp_reload_in_progress &&
+                !dtc_buf_gbp_reload_owned_by_session(session, ctrl)) {
+                ret = dtc_buf_gbp_wait_reload_done(session, ctrl);
+                if (ret != OG_SUCCESS) {
+                    (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
+                    return ret;
+                }
+            }
+
             if (!is_load_from_gbp && !CHECK_PAGE_PCN(ctrl->page)) {
+                remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+                uint64 lock_ptr = (shmem_page_meta != NULL) ? shmem_page_meta->lock_ptr : 0;
+                int32 atomic_state = 0;
+                int32 x_owner_node = -1;
+                int32 write_waiters = 0;
+                int32 owner_tid = -1;
+                int32 readonly = 0;
+                int32 readonly_owner_node = -1;
+                int32 readonly_owner_tid = -1;
+                uint64 remote_head_lsn = 0;
+                uint64 remote_tail_lsn = 0;
+                uint64 ckpt_state = 0;
+
+                if (shmem_page_meta != NULL) {
+                    remote_head_lsn = shmem_page_meta->head_lsn;
+                    remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+                    ckpt_state = gbp_ckpt_get_state(shmem_page_meta);
+                }
+                drc_gbp_lock_info_debug_snapshot(lock_ptr, &atomic_state, &x_owner_node, &write_waiters, &owner_tid,
+                    &readonly, &readonly_owner_node, &readonly_owner_tid);
+
                 OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] page pcn still mismatch after check page, head pcn:%u, tail pcn:%u",
                     ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->page->pcn,
                     (uint32)PAGE_TAIL(ctrl->page)->pcn);
+                OG_LOG_RUN_ERR("[DTC-GBP-COPY-DIAG][%u-%u] mode:%u, options:%u, load_status:%u, dirty:%u, "
+                    "remote_dirty:%u, edp:%u, in_ckpt:%u, marked:%u, ctrl_readonly:%u, ctrl_lock_mode:%u, "
+                    "gbp_lock_mode:%u, gbp_lock_count:%u, gbp_store_pending:%u, reload:%u, reload_sid:%u, "
+                    "reload_gen:%u, local_lsn:%llu, remote[%u-%u], remote_head_lsn:%llu, remote_tail_lsn:%llu, "
+                    "ckpt_marked:%u, ckpt_state_lsn:%llu, ckpt_state:%llu, lock_ptr:%llu, lock_state:%d, "
+                    "x_owner_node:%d, write_waiters:%d, owner_tid:%d, readonly:%d, readonly_owner_node:%d, "
+                    "readonly_owner_tid:%d, sid:%u, tid:%d",
+                    ctrl->page_id.file, ctrl->page_id.page, (uint32)ra->mode, (uint32)ra->options,
+                    (uint32)ctrl->load_status, (uint32)ctrl->is_dirty, (uint32)ctrl->is_remote_dirty,
+                    (uint32)ctrl->is_edp, (uint32)ctrl->in_ckpt, (uint32)ctrl->is_marked,
+                    (uint32)ctrl->is_readonly, (uint32)ctrl->lock_mode, (uint32)ctrl->gbp_lock_mode,
+                    (uint32)ctrl->gbp_lock_count, (uint32)ctrl->gbp_store_pending,
+                    (uint32)ctrl->gbp_reload_in_progress, (uint32)ctrl->gbp_reload_sid,
+                    ctrl->gbp_reload_generation, (uint64)ctrl->page->lsn,
+                    (shmem_page_meta != NULL) ? (uint32)shmem_page_meta->file_id : 0U,
+                    (shmem_page_meta != NULL) ? shmem_page_meta->page_id : 0U,
+                    remote_head_lsn, remote_tail_lsn,
+                    (uint32)gbp_ckpt_state_is_marked(ckpt_state), (uint64)gbp_ckpt_state_lsn(ckpt_state),
+                    ckpt_state, lock_ptr, atomic_state, x_owner_node, write_waiters, owner_tid,
+                    readonly, readonly_owner_node, readonly_owner_tid, session->id,
+                    (int32)cm_get_current_thread_id());
                 if (gbp_held) {
                     (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
                 }

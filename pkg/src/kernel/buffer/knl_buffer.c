@@ -34,6 +34,8 @@
 #include "dtc_recovery.h"
 #include "dtc_database.h"
 #include "knl_rbp.h"
+#include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define BUF_PAGE_COST_WITH_RBP (BUF_PAGE_COST + sizeof(buf_rbp_ctrl_t))
@@ -59,10 +61,7 @@ static bool32 buf_rbp_post_recovery_check_enabled(knl_session_t *session)
 
     return OG_TRUE;
 }
-#include "dtc_remote_lock.h"
-#include "dtc_remote_buffer.h"
 
-#define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define GBP_COMPOUND_SLOT_SIZE (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64))
 #define MAX_TOUCH_NUM 3
 
