@@ -1,4 +1,10 @@
 alter system set use_bison_parser = true;
+drop table if exists bison_comment_escape_t;
+create table bison_comment_escape_t(id int);
+insert into bison_comment_escape_t select /* This is \/* a nested \*\/ comment */ 1;
+insert into bison_comment_escape_t select /* This is \*/ a nested \*\/ comment */ 2;
+insert into bison_comment_escape_t select /* outer \\/* nested */ still outer */ 3;
+drop table bison_comment_escape_t;
 
 drop table if exists bison_t1;
 create table bison_t1 (a int, b char(10));

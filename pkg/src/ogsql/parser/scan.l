@@ -87,6 +87,7 @@ do {                        \
 #define SET_YYLLOC()  update_current_location(yytext, yyextra->scanbuf, yylloc, yyextra->multi_line_sql)
 
 #define COMMENT_NOT_IGNORED()  (yyextra->is_hint_str || yyextra->include_ora_comment)
+#define COMMENT_DELIMITER_ESCAPED() comment_delimiter_escaped(yytext, yyextra->scanbuf)
 /*
  * Advance yylloc by the given number of bytes.
  */
@@ -143,6 +144,21 @@ status_t handle_float_overflow(char *token, core_yyscan_t yyscanner, char **resu
 static void update_current_location(char *cur_pos, char *origin_str, lex_location_t *loc, bool8 multi_line_sql);
 static void flex_alloc_mem(void *context, yy_size_t size, void **buf);
 static bool32 need_ignore_for_func(sql_stmt_t *stmt, char* ident, int len);
+static inline bool32 comment_delimiter_escaped(const char *delimiter, const char *scanbuf)
+{
+    uint32 slash_count = 0;
+    const char *pos = delimiter;
+
+    if (delimiter == NULL || scanbuf == NULL || delimiter <= scanbuf) {
+        return OG_FALSE;
+    }
+
+    for (; pos > scanbuf && pos[-1] == '\\'; pos--) {
+        slash_count++;
+    }
+
+    return (slash_count % 2) == 1 ? OG_TRUE : OG_FALSE;
+}
 
 #define yyerror(msg)                    \
 do {                                    \
@@ -496,9 +512,12 @@ other            .
         }
 
 <xc>{xcstart}    {
-                    (yyextra->xcdepth)++;
-                    /* Put back any characters past slash-star; see above */
-                    yyless(2);
+                    if (!COMMENT_DELIMITER_ESCAPED())
+                    {
+                        (yyextra->xcdepth)++;
+                        /* Put back any characters past slash-star; see above */
+                        yyless(2);
+                    }
                     if (COMMENT_NOT_IGNORED())
                     {
                         addlit(yytext, yyleng, yyscanner);
@@ -506,18 +525,24 @@ other            .
         }
 
 <xc>{xcstop}    {
-                    if (yyextra->xcdepth <= 0)
-                        BEGIN(INITIAL);
-                    else
-                        (yyextra->xcdepth)--;
-
+                    bool32 delimiter_escaped = COMMENT_DELIMITER_ESCAPED();
+                    if (!delimiter_escaped)
+                    {
+                        if (yyextra->xcdepth <= 0)
+                            BEGIN(INITIAL);
+                        else
+                            (yyextra->xcdepth)--;
+                    }
                     if (COMMENT_NOT_IGNORED())
-                    {    
+                    {
                         addlit(yytext, yyleng, yyscanner);
-                        yylval->str = litbufdup(yyscanner);
-                        yyleng = yyextra->literallen;
-                        yyextra->is_hint_str = false;
-                        return COMMENTSTRING;
+                        if (!delimiter_escaped)
+                        {
+                            yylval->str = litbufdup(yyscanner);
+                            yyleng = yyextra->literallen;
+                            yyextra->is_hint_str = false;
+                            return COMMENTSTRING;
+                        }
                     }
         }
 
