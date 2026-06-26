@@ -292,7 +292,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <parse_col> columnDef
 %type <parse_cons> TableConstraint ConstraintElem
 %type <table_element> TableElement
-%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_authid
+%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_authid opt_delete_only
                 opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior
                 opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition
                 opt_reuse opt_all_in_memory opt_encrypted ignore_nulls opt_orajoin on_or_off opt_undo opt_or_replace opt_signed
@@ -3715,20 +3715,38 @@ delete_target_list:
     ;
 
 delete_target:
-        insert_target
+        insert_target opt_delete_only
         {
             sql_table_t *table = $1;
             del_object_t *delete_obj = NULL;
-            if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(del_object_t), (void **)&delete_obj) != OG_SUCCESS) {
+            sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+            if (sql_alloc_mem(stmt->context, sizeof(del_object_t), (void **)&delete_obj) != OG_SUCCESS) {
                 parser_yyerror("alloc delete obj failed");
             }
 
+            if ($2) {
+                if (table->alias.len > 0) {
+                    parser_yyerror("invalid delete target");
+                }
+                sql_text_t only_alias = { 0 };
+                only_alias.value.str = (char *)"ONLY";
+                only_alias.value.len = 4;
+                only_alias.loc = @2.loc;
+                if (sql_copy_name_loc(stmt->context, &only_alias, &table->alias) != OG_SUCCESS) {
+                    parser_yyerror("copy delete alias failed");
+                }
+            }
             delete_obj->user = table->user;
-            delete_obj->name = table->name;
+            delete_obj->name = (table->alias.len > 0) ? table->alias : table->name;
             delete_obj->alias = table->alias;
             delete_obj->table = table;
             $$ = delete_obj;
         }
+    ;
+
+opt_delete_only:
+        ONLY                                            { $$ = true; }
+        | /* EMPTY */                                   { $$ = false; }
     ;
 
 /*****************************************************************************
@@ -7283,6 +7301,7 @@ merge_insert:
                     if (sql_init_insert(stmt, insert_ctx) != OG_SUCCESS) {
                         parser_yyerror("init insert context failed ");
                     }
+                    insert_ctx->flags |= INSERT_COLS_SPECIFIED;
                     insert_ctx->pairs = $5;
                     column_value_pair_t *pair = NULL;
                     galist_t *columns = $3;
