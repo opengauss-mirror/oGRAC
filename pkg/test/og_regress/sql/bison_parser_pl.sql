@@ -640,6 +640,26 @@ select count(*) as updated_rows from bison_pl_trig_event_t where status = 'new';
 drop trigger bison_pl_trig_event_trg;
 drop table if exists bison_pl_trig_event_log;
 drop table if exists bison_pl_trig_event_t;
+declare
+    res varchar2(100);
+begin
+--  res := dbms_debug.initialize();
+exception
+    when others then
+        null;
+end;
+/
+
+declare
+    res varchar2(100);
+begin
+    null;
+exception
+    when others then
+        res := 'handled';
+end;
+/
+
 drop table if exists bison_pl_issue245_log;
 create table bison_pl_issue245_log(name varchar(40), val int);
 

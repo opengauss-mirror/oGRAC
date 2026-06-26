@@ -431,7 +431,7 @@ block_body_core:
                         compiler->body = line;
                     }
                 }
-            proc_sect opt_exception_sect K_END opt_block_end_name
+            block_body_stmts K_END opt_block_end_name
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     pl_line_ctrl_t *line = NULL;
@@ -445,11 +445,11 @@ block_body_core:
                         if (expected_name == NULL && compiler->stack.depth == 1 && compiler->obj != NULL) {
                             expected_name = &compiler->obj->name;
                         }
-                        if (check_end_name(expected_name, $6, @6.loc) != OG_SUCCESS) {
+                        if (check_end_name(expected_name, $5, @5.loc) != OG_SUCCESS) {
                             parser_yyerror("Undefined symbol");
                         }
                     }
-                    compiler->line_loc = @5.loc;
+                    compiler->line_loc = @4.loc;
                     plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END, (pl_line_ctrl_t **)&line);
                     if (begin_line != NULL) {
                         begin_line->end = line;
@@ -458,6 +458,11 @@ block_body_core:
                         parser_yyerror("pop block failed");
                     }
                 }
+        ;
+
+block_body_stmts:
+            proc_sect opt_exception_sect
+            | exception_sect
         ;
 
 /*
@@ -487,7 +492,11 @@ opt_loop_end_name:
 
 opt_exception_sect:
             /* EMPTY */
-            | K_EXCEPTION
+            | exception_sect
+        ;
+
+exception_sect:
+            K_EXCEPTION
                 {
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
