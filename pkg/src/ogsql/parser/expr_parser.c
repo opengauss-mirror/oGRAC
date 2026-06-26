@@ -2278,6 +2278,52 @@ static status_t sql_word2plattr(sql_stmt_t *stmt, expr_tree_t *expr, word_t *wor
     return sql_word2plattr_type(word, &node->value.v_plattr.type);
 }
 
+static bool32 sql_match_implicit_sql_attr(const char *attr_name, uint32 *attr_id)
+{
+    typedef struct st_pl_cursor_attr_map {
+        const char *name;
+        uint32 attr_id;
+    } pl_cursor_attr_map_t;
+
+    static const pl_cursor_attr_map_t g_attrs[] = {
+        { "isopen", PL_ATTR_WORD_ISOPEN },
+        { "found", PL_ATTR_WORD_FOUND },
+    };
+
+    for (uint32 i = 0; i < ELEMENT_COUNT(g_attrs); i++) {
+        if (cm_str_equal_ins(attr_name, g_attrs[i].name)) {
+            *attr_id = g_attrs[i].attr_id;
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+status_t sql_create_pl_attr_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char *name, const char *attr_name,
+    source_location_t loc, bool32 *matched)
+{
+    expr_node_t *node = NULL;
+    word_t word = { 0 };
+
+    *matched = sql_match_implicit_sql_attr(attr_name, &word.id);
+    if (!*matched) {
+        return OG_SUCCESS;
+    }
+
+    word.type = WORD_TYPE_PL_ATTR;
+    word.ori_type = WORD_TYPE_PL_ATTR;
+    word.loc = loc;
+    word.text.value.str = (char *)name;
+    word.text.value.len = (uint32)strlen(name);
+    word.text.loc = loc;
+
+    OG_RETURN_IFERR(sql_init_expr_node(stmt, expr, &node, OG_TYPE_COLUMN, EXPR_NODE_PL_ATTR, loc));
+    OG_RETURN_IFERR(sql_word2plattr(stmt, *expr, &word, node));
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
 static status_t sql_word2column(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word, expr_node_t *node)
 {
     node->value.type = OG_TYPE_COLUMN;

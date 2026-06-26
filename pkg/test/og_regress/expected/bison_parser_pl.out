@@ -710,6 +710,92 @@ SQL> drop table if exists bison_pl_char_concat;
 Succeed.
 
 SQL>
+SQL> drop table if exists bison_pl_sql_found_t;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_sql_found_log;
+
+Succeed.
+
+SQL> create table bison_pl_sql_found_t(id int);
+
+Succeed.
+
+SQL> create table bison_pl_sql_found_log(stage varchar(30), val int);
+
+Succeed.
+
+SQL> insert into bison_pl_sql_found_t values(1);
+
+1 rows affected.
+
+SQL>
+SQL> create or replace procedure bison_pl_sql_isopen_proc(p_id int) is
+  2 begin
+  3     delete from bison_pl_sql_found_t where id = p_id;
+  4     if SQL%ISOPEN then
+  5         insert into bison_pl_sql_found_log values('sql_isopen', 1);
+  6     else
+  7         insert into bison_pl_sql_found_log values('sql_isopen', 0);
+  8     end if;
+  9 end;
+ 10 /
+
+Succeed.
+
+SQL>
+SQL> create or replace procedure bison_pl_sql_found_proc(p_id int) is
+  2 begin
+  3     delete from bison_pl_sql_found_t where id = p_id;
+  4     if SQL%FOUND then
+  5         insert into bison_pl_sql_found_log values('sql_found', 1);
+  6     else
+  7         insert into bison_pl_sql_found_log values('sql_found', 0);
+  8     end if;
+  9 end;
+ 10 /
+
+Succeed.
+
+SQL>
+SQL> declare
+  2 begin
+  3     bison_pl_sql_isopen_proc(99);
+  4     bison_pl_sql_found_proc(1);
+  5 end;
+  6 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> select stage, val from bison_pl_sql_found_log order by stage;
+
+STAGE                          VAL
+------------------------------ ------------
+sql_found                      1
+sql_isopen                     0
+
+2 rows fetched.
+
+SQL>
+SQL> drop procedure bison_pl_sql_found_proc;
+
+Succeed.
+
+SQL> drop procedure bison_pl_sql_isopen_proc;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_sql_found_log;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_sql_found_t;
+
+Succeed.
+
+SQL>
 SQL> drop table if exists bison_pl_trig_event_log;
 
 Succeed.

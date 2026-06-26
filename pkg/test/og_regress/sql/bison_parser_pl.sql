@@ -474,6 +474,48 @@ select * from bison_pl_char_concat order by stage;
 
 drop table if exists bison_pl_char_concat;
 
+drop table if exists bison_pl_sql_found_t;
+drop table if exists bison_pl_sql_found_log;
+create table bison_pl_sql_found_t(id int);
+create table bison_pl_sql_found_log(stage varchar(30), val int);
+insert into bison_pl_sql_found_t values(1);
+
+create or replace procedure bison_pl_sql_isopen_proc(p_id int) is
+begin
+    delete from bison_pl_sql_found_t where id = p_id;
+    if SQL%ISOPEN then
+        insert into bison_pl_sql_found_log values('sql_isopen', 1);
+    else
+        insert into bison_pl_sql_found_log values('sql_isopen', 0);
+    end if;
+end;
+/
+
+create or replace procedure bison_pl_sql_found_proc(p_id int) is
+begin
+    delete from bison_pl_sql_found_t where id = p_id;
+    if SQL%FOUND then
+        insert into bison_pl_sql_found_log values('sql_found', 1);
+    else
+        insert into bison_pl_sql_found_log values('sql_found', 0);
+    end if;
+end;
+/
+
+declare
+begin
+    bison_pl_sql_isopen_proc(99);
+    bison_pl_sql_found_proc(1);
+end;
+/
+
+select stage, val from bison_pl_sql_found_log order by stage;
+
+drop procedure bison_pl_sql_found_proc;
+drop procedure bison_pl_sql_isopen_proc;
+drop table if exists bison_pl_sql_found_log;
+drop table if exists bison_pl_sql_found_t;
+
 drop table if exists bison_pl_trig_event_log;
 drop table if exists bison_pl_trig_event_t;
 create table bison_pl_trig_event_t(id int, status varchar(10));

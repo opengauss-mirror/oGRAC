@@ -118,6 +118,8 @@ static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr,
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
 static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node);
+static expr_tree_t *bison_make_implicit_sql_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
+    expr_tree_t *right, source_location_t loc);
 static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
     expr_node_type_t node_type, source_location_t loc);
 static cmp_type_t bison_cmpop_to_cmp_type(const char *op);
@@ -5183,11 +5185,10 @@ a_expr:     c_expr    { $$ = $1; }
             }
             | a_expr '%' a_expr
             {
-                expr_tree_t *expr = NULL;
-                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_MOD, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                $$ = bison_make_implicit_sql_attr_or_mod_expr(yyscanner, $1, $3, @1.loc);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("create implicit SQL attr or mod expr failed");
                 }
-                $$ = expr;
             }
             | a_expr '|' a_expr
             {
@@ -17724,6 +17725,49 @@ static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node)
         return NULL;
     }
     return node->cmp->right;
+}
+
+static bool32 bison_get_simple_column_name(expr_tree_t *expr, text_t **name)
+{
+    expr_node_t *node = (expr == NULL) ? NULL : expr->root;
+
+    if (node == NULL || expr->chain.count != 1 || node->type != EXPR_NODE_COLUMN) {
+        return OG_FALSE;
+    }
+    if (node->word.column.table.value.len != 0 || node->word.column.user.value.len != 0) {
+        return OG_FALSE;
+    }
+
+    *name = &node->word.column.name.value;
+    return OG_TRUE;
+}
+
+static expr_tree_t *bison_make_implicit_sql_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
+    expr_tree_t *right, source_location_t loc)
+{
+    bool32 matched = OG_FALSE;
+    expr_tree_t *expr = NULL;
+    text_t *left_name = NULL;
+    text_t *attr_name = NULL;
+    char left_buf[OG_NAME_BUFFER_SIZE];
+    char attr_buf[OG_NAME_BUFFER_SIZE];
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (bison_get_simple_column_name(left, &left_name) && cm_text_str_equal_ins(left_name, "SQL") &&
+        bison_get_simple_column_name(right, &attr_name)) {
+        if (cm_text2str(left_name, left_buf, sizeof(left_buf)) != OG_SUCCESS ||
+            cm_text2str(attr_name, attr_buf, sizeof(attr_buf)) != OG_SUCCESS) {
+            return NULL;
+        }
+        if (sql_create_pl_attr_expr(stmt, &expr, left_buf, attr_buf, loc, &matched) != OG_SUCCESS) {
+            return NULL;
+        }
+        if (matched) {
+            return expr;
+        }
+    }
+
+    return bison_make_oper_expr(yyscanner, left, right, EXPR_NODE_MOD, loc);
 }
 
 static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
