@@ -227,6 +227,7 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         for (uint32 j = 0; j < set->capacity; j++) {
             char *page_addr = set->page_buf + j * page_size;
             remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
+            gbp_ckpt_set_state(page_info, 0);
             if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
                 // each page corresponds to a lock in the lock buffer.
                 uint64 lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
@@ -921,13 +922,13 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     // to do: check local ctrl page lsn and remote page lsn
     uint64 remote_page_lsn = curr_lsn;
 
-    // Has acquired global lock  when copy from gbp ->local
-    remote_page_info_t new_shmem_page_meta;
-    new_shmem_page_meta.lock_ptr = ctrl->shmem_page_meta->lock_ptr;
+    // Has acquired global lock when copy from gbp -> local
+    remote_page_info_t new_shmem_page_meta = {0};
+    new_shmem_page_meta.lock_ptr = shmem_page_meta->lock_ptr;
     new_shmem_page_meta.head_lsn = remote_page_lsn;
     new_shmem_page_meta.file_id = ctrl->page_id.file;
     new_shmem_page_meta.page_id = ctrl->page_id.page;
-    new_shmem_page_meta.claimed_owner = ctrl->shmem_page_meta->claimed_owner;
+    new_shmem_page_meta.claimed_owner = shmem_page_meta->claimed_owner;
     new_shmem_page_meta.touch_number = shmem_page_meta->touch_number + 1;
     new_shmem_page_meta.ref_num = 0;
     new_shmem_page_meta.xlog_owner_node = curr_node_id;
@@ -936,8 +937,8 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
     uint64 page_tail_lsn = remote_page_lsn;
 
-    errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &new_shmem_page_meta,
-                           sizeof(remote_page_info_t));
+    errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &new_shmem_page_meta,
+                           offsetof(remote_page_info_t, ckpt_flush_state));
     knl_securec_check(err);
 
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));

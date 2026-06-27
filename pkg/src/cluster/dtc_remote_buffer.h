@@ -27,6 +27,7 @@
 #define DTC_REMOTE_BUFFER_H
 
 #include "cm_defs.h"
+#include "cm_atomic.h"
 #include "dtc_drc_util.h"
 #include "knl_session.h"
 #include "knl_context.h"
@@ -85,9 +86,44 @@ typedef struct st_remote_page_info {
     uint16 ref_num;
     uint16 xlog_owner_node;  // last repair node
     uint8 xlog_owner_node_timeline_id[6];
+    uint8 reserved[5];
+    uint64 ckpt_flush_state;
 } remote_page_info_t;
 
 #pragma pack(pop)
+
+#define GBP_CKPT_MARK_MASK (1ULL << 63)
+#define GBP_CKPT_LSN_MASK  (~GBP_CKPT_MARK_MASK)
+
+static inline uint64 gbp_ckpt_pack_state(bool32 is_marked, uint64 lsn)
+{
+    return (lsn & GBP_CKPT_LSN_MASK) | (is_marked ? GBP_CKPT_MARK_MASK : 0);
+}
+
+static inline bool32 gbp_ckpt_state_is_marked(uint64 state)
+{
+    return (bool32)((state & GBP_CKPT_MARK_MASK) != 0);
+}
+
+static inline uint64 gbp_ckpt_state_lsn(uint64 state)
+{
+    return (state & GBP_CKPT_LSN_MASK);
+}
+
+static inline uint64 gbp_ckpt_get_state(remote_page_info_t *page_info)
+{
+    return (uint64)cm_atomic_get((atomic_t *)&page_info->ckpt_flush_state);
+}
+
+static inline bool32 gbp_ckpt_cas_state(remote_page_info_t *page_info, uint64 old_state, uint64 new_state)
+{
+    return cm_atomic_cas((atomic_t *)&page_info->ckpt_flush_state, (int64)old_state, (int64)new_state);
+}
+
+static inline void gbp_ckpt_set_state(remote_page_info_t *page_info, uint64 state)
+{
+    (void)cm_atomic_set((atomic_t *)&page_info->ckpt_flush_state, (int64)state);
+}
 
 typedef enum buffer_type {
     DATA_TYPE,

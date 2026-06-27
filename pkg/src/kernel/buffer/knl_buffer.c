@@ -70,6 +70,7 @@ uint32 g_cks_level;
 static const remote_page_info_t g_invalid_shmem_page_metadata = {
     .lock_ptr = OG_INVALID_ID64,
     .head_lsn = 0,
+    .ckpt_flush_state = 0,
     .page_id = OG_INVALID_ID32,
     .file_id = OG_INVALID_ID16,
     .claimed_owner = OG_INVALID_ID8,

@@ -114,7 +114,20 @@ typedef struct st_ckpt_sort_item {
     buf_ctrl_t *ctrl;
     uint32 buf_id;
     bool8 need_punch;
+    bool8 gbp_ckpt_mark;
+    uint8 reserved[2];
+    uint64 gbp_ckpt_lsn;
+    uint64 gbp_claimed_state;
+    uint64 gbp_old_state;
 } ckpt_sort_item;
+
+typedef enum en_ckpt_gbp_prepare_result {
+    CKPT_GBP_PREPARE_FLUSHABLE = 0,
+    CKPT_GBP_PREPARE_CLAIMED,
+    CKPT_GBP_PREPARE_SKIP,
+    CKPT_GBP_PREPARE_RETRY,
+    CKPT_GBP_PREPARE_ERROR,
+} ckpt_gbp_prepare_result_t;
 
 typedef struct st_rcy_sort_item {
     page_head_t *page;
@@ -304,6 +317,8 @@ void ckpt_enable(knl_session_t *session);
 void ckpt_remove_df_page(knl_session_t *session, datafile_t *df, bool32 need_disable);
 bool32 ckpt_try_latch_ctrl(knl_session_t *session, buf_ctrl_t *ctrl);
 void ckpt_pop_page(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl);
+ckpt_gbp_prepare_result_t ckpt_gbp_prepare_flush(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl,
+    uint64 *gbp_ckpt_lsn, uint64 *gbp_claimed_state, uint64 *gbp_old_state);
 status_t ckpt_checksum(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group);
 status_t ckpt_encrypt(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group);
 status_t ckpt_recover_partial_write_node(knl_session_t *session, uint32 node_id);

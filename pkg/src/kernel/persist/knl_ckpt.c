@@ -73,12 +73,11 @@ void ckpt_proc(thread_t *thread);
 void dbwr_proc(thread_t *thread);
 static status_t ckpt_perform(knl_session_t *session, ckpt_stat_items_t *stat);
 static void ckpt_page_clean(knl_session_t *session, ckpt_stat_items_t *stat);
-static void ckpt_clean_gbp_stale(knl_session_t *session, ckpt_context_t *ogx);
 
 /* GBP-backed ctrl may have DRC lock_mode NULL after load-from-gbp; still flush local copy. */
 static inline bool32 ckpt_need_check_owner(knl_session_t *session, buf_ctrl_t *ctrl)
 {
-    return (bool32)(!session->kernel->attr.enable_ubsmem || ctrl->shmem_page_meta == NULL);
+    return (bool32)(!session->kernel->attr.enable_ubsmem || (!ctrl->is_in_gbp && ctrl->shmem_page_meta == NULL));
 }
 
 static bool32 ckpt_ctrl_in_buffer_pool(knl_session_t *session, const buf_ctrl_t *ctrl)
@@ -117,6 +116,198 @@ static void ckpt_validate_enque_ctrl(knl_session_t *session, const buf_ctrl_t *c
                       (uint32)session->dtc_session_type, (uint32)ctrl->is_dirty, (uint32)ctrl->is_remote_dirty,
                       (uint32)ctrl->in_ckpt, (uint32)ctrl->lock_mode);
         return;
+    }
+}
+
+static inline void ckpt_init_sort_item(ckpt_sort_item *item, buf_ctrl_t *ctrl, uint32 buf_id, bool8 need_punch,
+    bool8 gbp_ckpt_mark, uint64 gbp_ckpt_lsn, uint64 gbp_claimed_state, uint64 gbp_old_state)
+{
+    item->ctrl = ctrl;
+    item->buf_id = buf_id;
+    item->need_punch = need_punch;
+    item->gbp_ckpt_mark = gbp_ckpt_mark;
+    item->gbp_ckpt_lsn = gbp_ckpt_lsn;
+    item->gbp_claimed_state = gbp_claimed_state;
+    item->gbp_old_state = gbp_old_state;
+    item->reserved[0] = 0;
+    item->reserved[1] = 0;
+}
+
+static bool32 ckpt_gbp_read_stable_lsn(buf_ctrl_t *ctrl, uint64 *remote_lsn)
+{
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    uint64 remote_head_lsn;
+    uint64 remote_tail_lsn;
+
+    if (shmem_page_meta == NULL) {
+        return OG_FALSE;
+    }
+
+    if (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
+        OG_LOG_RUN_WAR("[DTC-GBP-CKPT][%u-%u]: meta page mismatch, remote page %u-%u",
+            ctrl->page_id.file, ctrl->page_id.page, shmem_page_meta->file_id, shmem_page_meta->page_id);
+        return OG_FALSE;
+    }
+
+    remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
+    remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+    if (remote_head_lsn != remote_tail_lsn) {
+        OG_LOG_DEBUG_WAR("[DTC-GBP-CKPT][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn);
+        return OG_FALSE;
+    }
+
+    *remote_lsn = remote_head_lsn;
+    return OG_TRUE;
+}
+
+static void ckpt_gbp_rollback_claim(remote_page_info_t *shmem_page_meta, uint64 claimed_state, uint64 old_state)
+{
+    (void)gbp_ckpt_cas_state(shmem_page_meta, claimed_state, old_state);
+}
+
+ckpt_gbp_prepare_result_t ckpt_gbp_prepare_flush(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl,
+    uint64 *gbp_ckpt_lsn, uint64 *gbp_claimed_state, uint64 *gbp_old_state)
+{
+    remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
+    uint64 remote_lsn;
+    uint64 local_lsn;
+    uint64 target_lsn;
+    uint64 state;
+    uint64 flushed_lsn;
+    uint64 claimed_state;
+    bool32 is_load = OG_FALSE;
+    status_t ret;
+
+    *gbp_ckpt_lsn = 0;
+    *gbp_claimed_state = 0;
+    *gbp_old_state = 0;
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem || shmem_page_meta == NULL) {
+        return CKPT_GBP_PREPARE_FLUSHABLE;
+    }
+
+    if (!ckpt_gbp_read_stable_lsn(ctrl, &remote_lsn)) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because gbp lsn is unstable, local_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+
+    for (;;) {
+        local_lsn = ctrl->page->lsn;
+        target_lsn = MAX(remote_lsn, local_lsn);
+        state = gbp_ckpt_get_state(shmem_page_meta);
+        if (gbp_ckpt_state_is_marked(state)) {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                "[DTC-GBP-CKPT][%u-%u]: retry because remote ckpt mark is set, local_lsn(%llu), "
+                "remote_lsn(%llu), mark_lsn(%llu), state(%llu)",
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)local_lsn, (uint64)remote_lsn,
+                (uint64)gbp_ckpt_state_lsn(state), (uint64)state);
+            return CKPT_GBP_PREPARE_RETRY;
+        }
+
+        flushed_lsn = gbp_ckpt_state_lsn(state);
+        target_lsn = MAX(target_lsn, flushed_lsn);
+
+        claimed_state = gbp_ckpt_pack_state(OG_TRUE, target_lsn);
+        if (gbp_ckpt_cas_state(shmem_page_meta, state, claimed_state)) {
+            break;
+        }
+    }
+
+    if (ctrl->page->lsn < remote_lsn) {
+        ret = dtc_buf_check_local_page(session, ctrl, LATCH_MODE_S, &is_load);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                "[DTC-GBP-CKPT][%u-%u]: check local page failed before load from gbp, local_lsn(%llu), "
+                "remote_lsn(%llu), ret(%d)",
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn, ret);
+            ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
+            return CKPT_GBP_PREPARE_ERROR;
+        }
+
+        if (is_load || ctrl->page->lsn < remote_lsn) {
+            ret = dtc_buf_try_load_from_gbp(session, ctrl, LATCH_MODE_S);
+        }
+        if (ctrl->gbp_lock_count > 0) {
+            (void)dtc_buf_gbp_unhold(session, ctrl, LATCH_MODE_S);
+        }
+        if (ret != OG_SUCCESS) {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                "[DTC-GBP-CKPT][%u-%u]: load from gbp failed before checkpoint flush, local_lsn(%llu), "
+                "remote_lsn(%llu), ret(%d)",
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn, ret);
+            ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
+            return CKPT_GBP_PREPARE_ERROR;
+        }
+        if (ctrl->page->lsn < remote_lsn) {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                "[DTC-GBP-CKPT][%u-%u]: retry because local page is still stale after load from gbp, "
+                "local_lsn(%llu), remote_lsn(%llu)",
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn);
+            ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
+            return CKPT_GBP_PREPARE_RETRY;
+        }
+    }
+
+    *gbp_ckpt_lsn = target_lsn;
+    *gbp_claimed_state = claimed_state;
+    *gbp_old_state = state;
+    OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: gbp page need flush, flush_lsn(%llu), state(%llu)",
+        ctrl->page_id.file, ctrl->page_id.page, (uint64)*gbp_ckpt_lsn,
+        (uint64)*gbp_claimed_state);
+    return CKPT_GBP_PREPARE_CLAIMED;
+}
+
+static void ckpt_gbp_finish_remote_flush(ckpt_sort_item *item)
+{
+    remote_page_info_t *shmem_page_meta = NULL;
+    uint64 state;
+    uint64 new_state;
+
+    if (!item->gbp_ckpt_mark || item->ctrl == NULL || item->ctrl->shmem_page_meta == NULL) {
+        return;
+    }
+
+    shmem_page_meta = item->ctrl->shmem_page_meta;
+    for (;;) {
+        state = gbp_ckpt_get_state(shmem_page_meta);
+        if (!gbp_ckpt_state_is_marked(state)) {
+            break;
+        }
+
+        if (state != item->gbp_claimed_state) {
+            OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: skip clearing unexpected ckpt state, current(%llu), "
+                "claimed(%llu), flush_lsn(%llu)", item->ctrl->page_id.file, item->ctrl->page_id.page,
+                state, item->gbp_claimed_state, item->gbp_ckpt_lsn);
+            break;
+        }
+
+        new_state = gbp_ckpt_pack_state(OG_FALSE, item->gbp_ckpt_lsn);
+        if (gbp_ckpt_cas_state(shmem_page_meta, item->gbp_claimed_state, new_state)) {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                "[DTC-GBP-CKPT][%u-%u]: flushed gbp page, flush_lsn(%llu), old_state(%llu), new_state(%llu)",
+                item->ctrl->page_id.file, item->ctrl->page_id.page, (uint64)item->gbp_ckpt_lsn,
+                (uint64)item->gbp_claimed_state, (uint64)new_state);
+            break;
+        }
+    }
+
+    item->gbp_ckpt_mark = OG_FALSE;
+}
+
+static inline void ckpt_finish_flushed_item(ckpt_sort_item *item)
+{
+    ckpt_gbp_finish_remote_flush(item);
+    item->ctrl->is_marked = 0;
+}
+
+static void ckpt_finish_flushed_range(ckpt_context_t *ogx, uint32 begin, uint32 end)
+{
+    ckpt_group_t *group = &ogx->group[ogx->fid];
+
+    for (uint32 i = begin; i <= end; i++) {
+        ckpt_finish_flushed_item(&group->items[i]);
     }
 }
 
@@ -1405,19 +1596,30 @@ bool32 ckpt_try_latch_group(knl_session_t *session, buf_ctrl_t *ctrl)
     return OG_TRUE;
 }
 
-static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t *to_flush_ctrl)
+static bool32 ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t *to_flush_ctrl)
 {
     rbp_context_t *rbp_ctx = &session->kernel->rbp_context;
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
     ckpt_group_t *group = &ogx->group[ogx->wid];
     uint32 rbp_lock_id = OG_INVALID_ID32;
     bool32 local_guard_active = rbp_knl_recovery_local_guard_active(session);
+
+    ckpt_gbp_prepare_result_t gbp_result;
+    uint64 gbp_ckpt_lsn = 0;
+    uint64 gbp_claimed_state = 0;
+    uint64 gbp_old_state = 0;
     errno_t ret;
 
     /* concurrent with knl_read_page_from_rbp when buf_enter_page with LATCH_S lock */
     if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel) || local_guard_active)) {
         rbp_lock_id = ctrl->page_id.page % OG_RBP_RD_LOCK_COUNT;
         cm_spin_lock(&rbp_ctx->buf_read_lock[rbp_lock_id], NULL);
+    }
+
+    /* concurrent with knl_read_page_from_gbp when buf_enter_page with LATCH_S lock */
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_GBP(session->kernel))) {
+        gbp_lock_id = ctrl->page_id.page % OG_GBP_RD_LOCK_COUNT;
+        cm_spin_lock(&gbp_ctx->buf_read_lock[gbp_lock_id], NULL);
     }
 
     knl_panic_log(IS_SAME_PAGID(to_flush_ctrl->page_id, AS_PAGID(to_flush_ctrl->page->id)),
@@ -1427,6 +1629,15 @@ static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t 
         AS_PAGID(to_flush_ctrl->page->id).page, to_flush_ctrl->page->type);
     knl_panic_log(CHECK_PAGE_PCN(to_flush_ctrl->page), "page pcn is abnormal, panic info: page %u-%u type %u",
         to_flush_ctrl->page_id.file, to_flush_ctrl->page_id.page, to_flush_ctrl->page->type);
+
+    gbp_result = ckpt_gbp_prepare_flush(session, ogx, to_flush_ctrl, &gbp_ckpt_lsn, &gbp_claimed_state,
+        &gbp_old_state);
+    if (gbp_result == CKPT_GBP_PREPARE_RETRY || gbp_result == CKPT_GBP_PREPARE_SKIP) {
+        return OG_FALSE;
+    }
+    if (gbp_result == CKPT_GBP_PREPARE_ERROR) {
+        return OG_FALSE;
+    }
 
     /* this is not accurate, does not matter */
     if (ogx->trunc_lsn < to_flush_ctrl->page->lsn) {
@@ -1470,7 +1681,10 @@ static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t 
     group->items[group->count].buf_id = group->count;
     group->items[group->count].need_punch = OG_FALSE;
 
+    ckpt_init_sort_item(&group->items[group->count], to_flush_ctrl, group->count, OG_FALSE,
+        (bool8)(gbp_result == CKPT_GBP_PREPARE_CLAIMED), gbp_ckpt_lsn, gbp_claimed_state, gbp_old_state);
     ckpt_put_to_part_group(session, ogx, to_flush_ctrl);
+    return OG_TRUE;
 }
 
 static status_t ckpt_ending_prepare(knl_session_t *session, ckpt_context_t *ogx)
@@ -1513,6 +1727,19 @@ status_t ckpt_prepare_compress(knl_session_t *session, ckpt_context_t *ogx, buf_
     }
 
     first_page_id = page_first_group_id(session, curr_ctrl->page_id);
+    if (session->kernel->attr.enable_ubsmem) {
+        to_flush_pageid = first_page_id;
+        for (uint16 i = 0; i < PAGE_GROUP_COUNT; i++) {
+            to_flush_pageid.page = first_page_id.page + i;
+            to_flush_ctrl = IS_SAME_PAGID(to_flush_pageid, curr_ctrl->page_id) ?
+                curr_ctrl : buf_find_by_pageid(session, to_flush_pageid);
+            if (to_flush_ctrl != NULL && to_flush_ctrl->shmem_page_meta != NULL) {
+                ckpt_unlatch_group(session, first_page_id, 0, PAGE_GROUP_COUNT);
+                return OG_SUCCESS;
+            }
+        }
+    }
+
     to_flush_pageid = first_page_id;
     for (uint16 i = 0; i < PAGE_GROUP_COUNT; i++) {
         to_flush_pageid.page = first_page_id.page + i;
@@ -1541,7 +1768,10 @@ status_t ckpt_prepare_compress(knl_session_t *session, ckpt_context_t *ogx, buf_
             return OG_SUCCESS;
         }
 
-        ckpt_copy_item(session, curr_ctrl, to_flush_ctrl);
+        if (!ckpt_copy_item(session, curr_ctrl, to_flush_ctrl)) {
+            buf_unlatch(session, to_flush_ctrl, OG_FALSE);
+            continue;
+        }
 
         if (to_flush_ctrl == ctrl_next) {
             *ctrl_next_is_flushed = OG_TRUE;
@@ -1573,6 +1803,7 @@ static status_t ckpt_prepare_normal(knl_session_t *session, ckpt_context_t *ogx,
     buf_ctrl_t *to_flush_ctrl = NULL;
     uint32 count;
     ckpt_group_t *group = &ogx->group[ogx->wid];
+    bool32 need_remote_clean;
 
     ogx->stat.ckpt_total_neighbors_times++;
     ogx->stat.ckpt_curr_neighbors_times++;
@@ -1631,14 +1862,14 @@ static status_t ckpt_prepare_normal(knl_session_t *session, ckpt_context_t *ogx,
                     (uint32)to_flush_ctrl->lock_mode, (uint64)to_flush_ctrl->page->lsn);
             }
 
-            if (to_flush_ctrl->is_remote_dirty &&
-                !dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session),
-                    to_flush_ctrl->page_id,
-                                      to_flush_ctrl->page->lsn)) {
+            need_remote_clean = to_flush_ctrl->is_remote_dirty;
+            if (need_remote_clean && ogx->remote_edp_clean_group.count >= OG_CKPT_GROUP_SIZE(session)) {
                 buf_unlatch(session, to_flush_ctrl, OG_FALSE);
                 *need_exit = OG_TRUE;
                 break;
             }
+        } else {
+            need_remote_clean = OG_FALSE;
         }
 
         /*
@@ -1651,7 +1882,15 @@ static status_t ckpt_prepare_normal(knl_session_t *session, ckpt_context_t *ogx,
             return OG_SUCCESS;
         }
 
-        ckpt_copy_item(session, curr_ctrl, to_flush_ctrl);
+        if (!ckpt_copy_item(session, curr_ctrl, to_flush_ctrl)) {
+            buf_unlatch(session, to_flush_ctrl, OG_FALSE);
+            continue;
+        }
+
+        if (need_remote_clean) {
+            (void)dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session),
+                to_flush_ctrl->page_id, to_flush_ctrl->page->lsn);
+        }
 
         if (to_flush_ctrl == ctrl_next) {
             *ctrl_next_is_flushed = OG_TRUE;
@@ -1711,9 +1950,6 @@ static status_t ckpt_prepare_pages(knl_session_t *session, ckpt_context_t *ogx, 
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
         dcs_ckpt_clean_local_edp(session, ogx, stat);
-        if (session->kernel->attr.enable_ubsmem) {
-            ckpt_clean_gbp_stale(session, ogx);
-        }
         dtc_calculate_rcy_redo_size(session, ctrl);
     }
 
@@ -2133,6 +2369,8 @@ static status_t dbwr_flush_async_io(knl_session_t *session, dbwr_context_t *dbwr
     for (uint16 i = dbwr->begin; i <= dbwr->end; i++) {
         group->items[i].ctrl->is_marked = 0;
     }
+    
+    ckpt_finish_flushed_range(ogx, dbwr->begin, dbwr->end);
 
     return OG_SUCCESS;
 }
@@ -2188,6 +2426,7 @@ static status_t dbwr_async_io_write_dbs(knl_session_t *session, ckpt_context_t *
             page = (page_head_t *)(group->buf + ((uint64)buf_id) * size);
             ckpt_verify_written_page(session, group->items[group_index].ctrl, page, "ckpt_dbs_write");
             group->items[group_index].ctrl->is_marked = 0;
+            ckpt_finish_flushed_item(&group->items[group_index]);
         }
         begin = end;
     }
@@ -3100,8 +3339,12 @@ static status_t dbwr_flush_sync_io(knl_session_t *session, dbwr_context_t *dbwr)
     }
 
     if (session->kernel->attr.enable_fdatasync) {
-        return dbwr_fdatasync(session, dbwr);
+        if (dbwr_fdatasync(session, dbwr) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
     }
+
+    ckpt_finish_flushed_range(ogx, dbwr->begin, dbwr->end);
     return OG_SUCCESS;
 }
 
@@ -3715,6 +3958,17 @@ static status_t ckpt_clean_prepare_compress(knl_session_t *session, ckpt_context
         return OG_SUCCESS; // continue the next
     }
 
+    if (session->kernel->attr.enable_ubsmem) {
+        for (i = 0; i < PAGE_GROUP_COUNT; i++) {
+            if (ctrl_group[i]->shmem_page_meta != NULL) {
+                for (j = 0; j < PAGE_GROUP_COUNT; j++) {
+                    buf_unlatch(session, ctrl_group[j], OG_FALSE);
+                }
+                return OG_SUCCESS;
+            }
+        }
+    }
+
     knl_panic(!head->is_marked);
     knl_panic(head->in_ckpt);
 
@@ -3748,6 +4002,9 @@ static status_t ckpt_clean_prepare_compress(knl_session_t *session, ckpt_context
         group->items[group->count].buf_id = group->count;
         group->items[group->count].need_punch = OG_FALSE;
 
+        ckpt_init_sort_item(&group->items[group->count], ctrl_group[i], group->count, OG_FALSE,
+            OG_FALSE, 0, 0, 0);
+
         if (ckpt_encrypt(session, ogx, group) != OG_SUCCESS) {
             for (j = i + 1; j < PAGE_GROUP_COUNT; j++) {
                 buf_unlatch(session, ctrl_group[j], OG_FALSE);
@@ -3769,6 +4026,12 @@ static status_t ckpt_clean_prepare_compress(knl_session_t *session, ckpt_context
 
 static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *shift)
 {
+    ckpt_gbp_prepare_result_t gbp_result;
+    uint64 gbp_ckpt_lsn = 0;
+    uint64 gbp_claimed_state = 0;
+    uint64 gbp_old_state = 0;
+    bool32 need_remote_clean = OG_FALSE;
+
     if (!ckpt_try_latch_ctrl(session, shift)) {
         return OG_SUCCESS; // continue the next
     }
@@ -3799,9 +4062,8 @@ static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t
                 "page_lsn(%llu)", shift->page_id.file, shift->page_id.page, (uint32)shift->lock_mode,
                 (uint64)shift->page->lsn);
         }
-        if (shift->is_remote_dirty && !dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group,
-            OG_CKPT_GROUP_SIZE(session),
-                                                            shift->page_id, shift->page->lsn)) {
+        need_remote_clean = shift->is_remote_dirty;
+        if (need_remote_clean && ogx->remote_edp_clean_group.count >= OG_CKPT_GROUP_SIZE(session)) {
             buf_unlatch(session, shift, OG_FALSE);
             return OG_SUCCESS;
         }
@@ -3815,6 +4077,16 @@ static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t
         "page id %u-%u type %u", shift->page_id.file, shift->page_id.page,
         shift->page->type, AS_PAGID(shift->page->id).file,
         AS_PAGID(shift->page->id).page, shift->page->type);
+
+    gbp_result = ckpt_gbp_prepare_flush(session, ogx, shift, &gbp_ckpt_lsn, &gbp_claimed_state, &gbp_old_state);
+    if (gbp_result == CKPT_GBP_PREPARE_RETRY || gbp_result == CKPT_GBP_PREPARE_SKIP) {
+        buf_unlatch(session, shift, OG_FALSE);
+        return OG_SUCCESS;
+    }
+    if (gbp_result == CKPT_GBP_PREPARE_ERROR) {
+        buf_unlatch(session, shift, OG_FALSE);
+        return OG_ERROR;
+    }
 
     /* copy page from buffer to ckpt group */
     errno_t ret = memcpy_sp(group->buf + DEFAULT_PAGE_SIZE(session) * group->count,
@@ -3836,6 +4108,15 @@ static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t
     group->items[group->count].ctrl = shift;
     group->items[group->count].buf_id = group->count;
     group->items[group->count].need_punch = OG_FALSE;
+
+    ckpt_init_sort_item(&group->items[group->count], shift, group->count, OG_FALSE,
+        (bool8)(gbp_result == CKPT_GBP_PREPARE_CLAIMED), gbp_ckpt_lsn, gbp_claimed_state, gbp_old_state);
+
+    if (need_remote_clean) {
+        (void)dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session),
+            shift->page_id, shift->page->lsn);
+    }
+
     if (ckpt_encrypt(session, ogx, group) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -3873,9 +4154,6 @@ static status_t ckpt_clean_prepare_pages(knl_session_t *session, ckpt_context_t 
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
         dcs_ckpt_clean_local_edp(session, ogx, stat);
-        if (session->kernel->attr.enable_ubsmem) {
-            ckpt_clean_gbp_stale(session, ogx);
-        }
     }
 
     if (group->count >= OG_CKPT_GROUP_SIZE(session)) {
@@ -4041,9 +4319,6 @@ static status_t ckpt_clean_prepare_pages_all_set(knl_session_t *session, ckpt_co
     if (DB_IS_CLUSTER(session)) {
         dcs_ckpt_remote_edp_prepare(session, ogx);
         dcs_ckpt_clean_local_edp(session, ogx, stat);
-        if (session->kernel->attr.enable_ubsmem) {
-            ckpt_clean_gbp_stale(session, ogx);
-        }
     }
 
     if (group->count >= OG_CKPT_GROUP_SIZE(session)) {

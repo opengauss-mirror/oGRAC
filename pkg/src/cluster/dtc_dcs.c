@@ -1345,7 +1345,10 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
         return ret;
     }
 
-    remote_page_info_t master_shmem_page_meta;
+    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
+    uint64 page_tail_lsn = ctrl->page->lsn;
+
+    remote_page_info_t master_shmem_page_meta = {0};
     master_shmem_page_meta.lock_ptr = lock_ptr;
     master_shmem_page_meta.file_id = page_req->page_id.file;
     master_shmem_page_meta.page_id = page_req->page_id.page;
@@ -1354,11 +1357,8 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     master_shmem_page_meta.xlog_owner_node_timeline_id[0] = page_req->head.src_inst;
     master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
-    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
-    uint64 page_tail_lsn = ctrl->page->lsn;
-
-    errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &master_shmem_page_meta,
-                           sizeof(remote_page_info_t));
+    errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &master_shmem_page_meta,
+                           offsetof(remote_page_info_t, ckpt_flush_state));
     knl_securec_check(err);
 
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
@@ -1388,10 +1388,6 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
         // TOODO: problem here: What if this page is dirty? Do we manually trigger a flush for it?
         ctrl->lock_mode = DRC_LOCK_NULL;
         ctrl->load_status = BUF_LOAD_FAILED;
-        if (ctrl->is_dirty) {
-            ctrl->is_edp = OG_TRUE;
-            ctrl->edp_scn = DB_CURR_SCN(session);
-        }
         ctrl->is_remote_dirty = 0;
     }
 
