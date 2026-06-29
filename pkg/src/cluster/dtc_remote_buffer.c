@@ -423,7 +423,7 @@ static status_t dtc_buf_commit_temp_page(knl_session_t *session, buf_ctrl_t *ctr
  * Copy page from GBP shmem into a temp buffer first; validate PCN on temp page,
  * then commit to ctrl->page atomically under bucket lock.
  */
-static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
+static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
 {
     ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_offset;
     status_t ret;
@@ -469,6 +469,17 @@ static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *
     }
 
     return dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
+}
+
+static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
+{
+    status_t ret;
+
+    CM_SAVE_STACK(session->stack);
+    ret = dtc_buf_copy_from_gbp_shmem_inner(session, ctrl, lock_offset);
+    CM_RESTORE_STACK(session->stack);
+
+    return ret;
 }
 
 void dtc_buf_gbp_hold(buf_ctrl_t *ctrl, latch_mode_t mode)
