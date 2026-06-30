@@ -847,6 +847,7 @@ void knl_init_session(knl_handle_t kernel, knl_handle_t knl_session, uint32 uid,
     cm_init_cond(&session->commit_cond);
     session->dist_ddl_id = NULL;
     session->is_loading = OG_FALSE;
+    session->is_btree_splitting = OG_FALSE;
     session->has_migr = OG_FALSE;
     lock_init_group(&session->alck_lock_group);
 

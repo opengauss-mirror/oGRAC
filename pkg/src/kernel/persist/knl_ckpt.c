@@ -1458,9 +1458,6 @@ static inline void ckpt_reset_group(knl_session_t *session, ckpt_group_t *group)
     group->trunc_point_valid = OG_FALSE;
     group->trigger_task = ogx->trigger_task;
     group->timed_task = ogx->timed_task;
-    if (!session->kernel->attr.enable_quick_ckpt) {
-        group->consistent_lfn = 0;
-    }
 }
 
 static inline void ckpt_set_group_trunc_point(knl_session_t *session)
@@ -1497,6 +1494,9 @@ static status_t ckpt_prepare_pages(knl_session_t *session, ckpt_context_t *ogx, 
     }
 
     ckpt_reset_group(session, group);
+    if (!session->kernel->attr.enable_quick_ckpt) {
+        group->consistent_lfn = 0;
+    }
     ckpt_set_group_trunc_point(session);
     ogx->stat.ckpt_curr_neighbors_times = 0;
     ogx->stat.ckpt_curr_neighbors_len = 0;
@@ -3639,6 +3639,8 @@ static status_t ckpt_clean_prepare_pages_all_set(knl_session_t *session, ckpt_co
     buf_context_t *buf_ctx = &session->kernel->buf_ctx;
     buf_ctrl_t *shift = NULL;
     ckpt_group_t *group = &ogx->group[ogx->wid];
+    ckpt_reset_group(session, group);
+    ckpt_set_group_trunc_point(session);
     group->count = 0;
     ogx->edp_group.count = 0;
     init_ckpt_part_group(session);

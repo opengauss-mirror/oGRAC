@@ -1427,7 +1427,16 @@ status_t knl_try_open_dc_by_id(knl_handle_t handle, uint32 uid, uint32 oid, knl_
     }
 
     dc_entry_t *entry = DC_GET_ENTRY(user, oid);
-    cm_spin_lock(&entry->lock, &session->stat->spin_stat.stat_dc_entry);
+
+    if (session->dtc_session_type != DTC_WORKER) {
+        cm_spin_lock(&entry->lock, &session->stat->spin_stat.stat_dc_entry);
+    } else {
+        uint32 timeout_ticks = 5;
+        if (!cm_spin_timed_lock(&entry->lock, timeout_ticks)) {
+            return OG_ERROR;
+        }
+    }
+
     dc_wait_till_load_finish(session, entry);
     dc_init_knl_dictionary(dc, entry);
 

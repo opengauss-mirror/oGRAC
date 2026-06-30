@@ -403,8 +403,9 @@ status_t dtc_get_btree_split_status(knl_session_t *session, btree_t *btree, knl_
     btree_data.split_status = btree->is_splitting;
 
     uint16 msg_size = sizeof(msg_broadcast_data_t) + sizeof(msg_broadcast_btree_data_t);
+    uint8 dst_id = (session->kernel->id == 0) ? 1 : 0;
     mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_DATA, msg_size, OG_INVALID_ID32, session->kernel->id,
-                       btree->split_owner, session->id, OG_INVALID_ID16);
+                       dst_id, session->id, OG_INVALID_ID16);
     bcast.type = BTREE_SPLIT_STATUS;
 
     mes_message_t msg;
@@ -599,8 +600,9 @@ status_t dtc_get_heap_extend_status(knl_session_t *session, heap_t *heap, knl_pa
     heap_data.compacting = heap->compacting;
 
     uint16 msg_size = sizeof(msg_broadcast_data_t) + sizeof(msg_broadcast_heap_data_t);
+    uint8 dst_id = (session->kernel->id == 0) ? 1 : 0;
     mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_DATA, msg_size, OG_INVALID_ID32, session->kernel->id,
-                       heap->extend_owner, session->id, OG_INVALID_ID16);
+                       dst_id, session->id, OG_INVALID_ID16);
     bcast.type = HEAP_EXTEND_STATUS;
 
     mes_message_t  msg;
@@ -622,6 +624,9 @@ status_t dtc_get_heap_extend_status(knl_session_t *session, heap_t *heap, knl_pa
 
     msg_heap_extend_status_t *extend_ack = (msg_heap_extend_status_t *)(msg.buffer);
     *extending = extend_ack->is_extending;
+    if (extend_ack->is_extending) {
+        heap->extend_owner = extend_ack->extend_owner;
+    }
     mes_release_message_buf(msg.buffer);
 
     OG_LOG_DEBUG_INF("[DTC][get heap extend status]: uid/table_id/part/subpart:[%d-%d-%u-%u], "

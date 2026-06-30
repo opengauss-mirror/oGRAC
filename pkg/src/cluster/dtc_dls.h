@@ -55,6 +55,7 @@ typedef struct st_msg_lock_ack {
     mes_message_head_t head;
     status_t lock_status;
     uint64 req_version;
+    bool8 is_btree_splitting;
 } msg_lock_ack_t;
 
 EXTER_ATTACK status_t dls_process_ask_master_for_lock(knl_session_t *session, mes_message_t *receive_msg);

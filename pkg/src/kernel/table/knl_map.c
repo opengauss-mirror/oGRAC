@@ -1071,31 +1071,6 @@ void heap_drop_part_garbage_segment(knl_session_t *session, knl_seg_desc_t *seg)
     heap_drop_part_segment(session, &table_part);
 }
 
-static void heap_try_clean_extend_status(knl_session_t *session, heap_t *heap, knl_part_locate_t part_loc)
-{
-    heap->wait_ticks++;
-    cm_spin_sleep();
-    if (heap->wait_ticks > MAX_WAIT_TICKS && heap->extend_owner != session->kernel->id) {
-        cluster_view_t view;
-        rc_get_cluster_view(&view, OG_FALSE);
-        uint64 alive_inst = view.bitmap;
-        bool8 need_clean = OG_FALSE;
-        if (!rc_bitmap64_exist(&alive_inst, heap->extend_owner)) {
-            need_clean = heap->extending;
-        } else {
-            bool8 is_extending = OG_FALSE;
-            status_t status = dtc_get_heap_extend_status(session, heap, part_loc, &is_extending);
-            need_clean = (status == OG_SUCCESS) && (is_extending == 0);
-        }
-        if (need_clean) {
-            heap->extending = OG_FALSE;
-            heap->wait_ticks = 0;
-            (void)dtc_broadcast_heap_extend(session, heap, part_loc);
-            heap->extend_owner = OG_INVALID_ID8;
-        }
-    }
-}
-
 /*
  * Check if segment has been extended by other session or not, check from the max
  * lid 'cause if someone has just added pages to map tree, we can find it immediately.
@@ -1111,26 +1086,18 @@ static bool32 heap_prepare_extend(knl_session_t *session, heap_t *heap, uint32 m
     for (;;) {
         dls_spin_lock(session, &heap->lock, NULL);
         if (!heap->extending) {
-            heap->extending = OG_TRUE;
             if (DB_IS_CLUSTER(session)) {
-                status_t ret = dtc_broadcast_heap_extend(session, heap, part_loc);
-                if (ret != OG_SUCCESS) {
-                    heap->extending = OG_FALSE;
+                bool8 is_extending = OG_FALSE;
+                (void)dtc_get_heap_extend_status(session, heap, part_loc, &is_extending);
+                if (is_extending == OG_FALSE) {
+                    heap->extending = OG_TRUE;
+                    heap->extend_owner = session->kernel->id;
                     dls_spin_unlock(session, &heap->lock);
-                    cm_spin_sleep_and_stat2(1);
-                    OG_LOG_DEBUG_ERR(
-                        "prepare extend, heap failed to broadcast heap extending info, "
-                        "uid/table_id/part/subpart:[%u-%u-%u-%u], extending:%d, compacting:%d",
-                        heap->table->desc.uid, heap->table->desc.id, part_loc.part_no, part_loc.subpart_no,
-                        heap->extending, heap->compacting);
-                    continue;
+                    return OG_TRUE;
                 }
             }
-            dls_spin_unlock(session, &heap->lock);
-            return OG_TRUE;
         }
 
-        heap_try_clean_extend_status(session, heap, part_loc);
         dls_spin_unlock(session, &heap->lock);
 
         // wait other session to finish extending map
@@ -1169,13 +1136,6 @@ static void heap_unset_extend_flag(knl_session_t *session, heap_t *heap, knl_par
 
     dls_spin_lock(session, &heap->lock, NULL);
     heap->extending = OG_FALSE;
-    status_t ret = dtc_broadcast_heap_extend(session, heap, part_loc);
-    if (ret != OG_SUCCESS) {
-        OG_LOG_RUN_ERR(
-            "heap failed to broadcast heap extending info, abort, uid/table_id/part/subpart:[%u-%u-%u-%u], extending:%d, compacting:%d",
-            heap->table->desc.uid, heap->table->desc.id, part_loc.part_no, part_loc.subpart_no, heap->extending,
-            heap->compacting);
-    }
     dls_spin_unlock(session, &heap->lock);
 }
 
