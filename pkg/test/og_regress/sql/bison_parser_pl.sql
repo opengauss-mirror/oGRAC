@@ -474,6 +474,283 @@ select * from bison_pl_char_concat order by stage;
 
 drop table if exists bison_pl_char_concat;
 
+drop table if exists bison_pl_sql_found_t;
+drop table if exists bison_pl_sql_found_log;
+create table bison_pl_sql_found_t(id int);
+create table bison_pl_sql_found_log(stage varchar(30), val int);
+insert into bison_pl_sql_found_t values(1);
+
+create or replace procedure bison_pl_sql_isopen_proc(p_id int) is
+begin
+    delete from bison_pl_sql_found_t where id = p_id;
+    if SQL%ISOPEN then
+        insert into bison_pl_sql_found_log values('sql_isopen', 1);
+    else
+        insert into bison_pl_sql_found_log values('sql_isopen', 0);
+    end if;
+end;
+/
+
+create or replace procedure bison_pl_sql_found_proc(p_id int) is
+begin
+    delete from bison_pl_sql_found_t where id = p_id;
+    if SQL%FOUND then
+        insert into bison_pl_sql_found_log values('sql_found', 1);
+    else
+        insert into bison_pl_sql_found_log values('sql_found', 0);
+    end if;
+end;
+/
+
+declare
+begin
+    bison_pl_sql_isopen_proc(99);
+    bison_pl_sql_found_proc(1);
+end;
+/
+
+select stage, val from bison_pl_sql_found_log order by stage;
+
+drop procedure bison_pl_sql_found_proc;
+drop procedure bison_pl_sql_isopen_proc;
+drop table if exists bison_pl_sql_found_log;
+drop table if exists bison_pl_sql_found_t;
+
+drop table if exists bison_pl_cursor_attr_t;
+drop table if exists bison_pl_cursor_attr_log;
+create table bison_pl_cursor_attr_t(id int, note varchar(20));
+create table bison_pl_cursor_attr_log(stage varchar(30), val int);
+insert into bison_pl_cursor_attr_t values(1, 'one');
+insert into bison_pl_cursor_attr_t values(2, 'two');
+
+create or replace procedure bison_pl_sql_notfound_proc(p_id int) is
+begin
+    update bison_pl_cursor_attr_t set note = note where id = p_id;
+    if SQL%NOTFOUND then
+        insert into bison_pl_cursor_attr_log values('sql_notfound', 1);
+    else
+        insert into bison_pl_cursor_attr_log values('sql_notfound', 0);
+    end if;
+end;
+/
+
+declare
+begin
+    bison_pl_sql_notfound_proc(9);
+end;
+/
+
+declare
+    v_count int;
+begin
+    update bison_pl_cursor_attr_t set note = note where id = 1;
+    v_count := SQL%ROWCOUNT;
+    insert into bison_pl_cursor_attr_log values('sql_rowcount', v_count);
+end;
+/
+
+declare
+    cursor c1 is select id from bison_pl_cursor_attr_t order by id;
+    v_id int;
+    v_count int;
+begin
+    open c1;
+    if c1%ISOPEN then
+        insert into bison_pl_cursor_attr_log values('cursor_isopen', 1);
+    end if;
+    fetch c1 into v_id;
+    if c1%FOUND then
+        insert into bison_pl_cursor_attr_log values('cursor_found', v_id);
+    end if;
+    v_count := c1%ROWCOUNT;
+    insert into bison_pl_cursor_attr_log values('cursor_rowcount', v_count);
+    loop
+        fetch c1 into v_id;
+        exit when c1%NOTFOUND;
+    end loop;
+    insert into bison_pl_cursor_attr_log values('cursor_notfound', 1);
+    close c1;
+end;
+/
+
+declare
+    rc sys_refcursor;
+    v_id int;
+begin
+    open rc for select id from bison_pl_cursor_attr_t order by id;
+    loop
+        fetch rc into v_id;
+        exit when rc%NOTFOUND;
+    end loop;
+    insert into bison_pl_cursor_attr_log values('refcursor_notfound', 1);
+    close rc;
+end;
+/
+
+create or replace procedure bison_pl_auto_proc is
+    pragma autonomous_transaction;
+begin
+    insert into bison_pl_cursor_attr_log values('pragma_auto', 1);
+    commit;
+end;
+/
+
+declare
+begin
+    bison_pl_auto_proc;
+end;
+/
+
+select stage, val from bison_pl_cursor_attr_log order by stage;
+
+drop procedure bison_pl_auto_proc;
+drop procedure bison_pl_sql_notfound_proc;
+drop table if exists bison_pl_cursor_attr_log;
+drop table if exists bison_pl_cursor_attr_t;
+
+drop table if exists bison_pl_trig_event_log;
+drop table if exists bison_pl_trig_event_t;
+create table bison_pl_trig_event_t(id int, status varchar(10));
+create table bison_pl_trig_event_log(event_name varchar(10));
+insert into bison_pl_trig_event_t values(1, 'old');
+
+create or replace trigger bison_pl_trig_event_trg
+after insert or update or delete on bison_pl_trig_event_t
+for each row
+begin
+    case
+        when inserting then
+            insert into bison_pl_trig_event_log values('insert');
+        when updating then
+            insert into bison_pl_trig_event_log values('update');
+        when deleting then
+            insert into bison_pl_trig_event_log values('delete');
+        else
+            insert into bison_pl_trig_event_log values('other');
+    end case;
+end;
+/
+
+insert into bison_pl_trig_event_t values(2, 'new');
+update bison_pl_trig_event_t set status = 'new' where id = 1;
+delete from bison_pl_trig_event_t where id = 2;
+select event_name, count(*) as cnt from bison_pl_trig_event_log group by event_name order by event_name;
+select count(*) as updated_rows from bison_pl_trig_event_t where status = 'new';
+
+drop trigger bison_pl_trig_event_trg;
+drop table if exists bison_pl_trig_event_log;
+drop table if exists bison_pl_trig_event_t;
+declare
+    res varchar2(100);
+begin
+--  res := dbms_debug.initialize();
+exception
+    when others then
+        null;
+end;
+/
+
+declare
+    res varchar2(100);
+begin
+    null;
+exception
+    when others then
+        res := 'handled';
+end;
+/
+
+drop table if exists bison_pl_issue245_log;
+create table bison_pl_issue245_log(name varchar(40), val int);
+
+declare
+    n PLS_INTEGER := 1;
+begin
+    insert into bison_pl_issue245_log values('pls_integer', n);
+end;
+/
+
+drop table if exists bison_pls_integer_name_t;
+create table bison_pls_integer_name_t(pls_integer int);
+insert into bison_pls_integer_name_t values(7);
+update bison_pls_integer_name_t set pls_integer = pls_integer where pls_integer = 7;
+drop table bison_pls_integer_name_t;
+
+declare
+    first integer := 1;
+    last integer := 3;
+    high integer := 10;
+    low integer := 5;
+begin
+    for k in reverse first..last loop
+        null;
+    end loop;
+    for step in 0..(trunc(high / low) * 2) loop
+        null;
+    end loop;
+    first := last;
+    insert into bison_pl_issue245_log values('keyword_bounds', first);
+end;
+/
+
+declare
+    type bison_arr is varray(4) of varchar2(10);
+    team bison_arr := bison_arr();
+begin
+    if team.count = 0 then
+        insert into bison_pl_issue245_log values('empty_constructor', 0);
+    end if;
+end;
+/
+
+declare
+    type roster is table of varchar2(15);
+    names roster := roster('A', 'B');
+    v varchar2(15);
+begin
+    for i in names.first .. names.last loop
+        v := names(i);
+    end loop;
+    insert into bison_pl_issue245_log values('collection_bounds', names.count);
+end;
+/
+
+drop function if exists bison_pl_issue245_return_type;
+drop function if exists bison_pl_issue245_body_type;
+drop table if exists bison_pl_issue245_type_t;
+create table bison_pl_issue245_type_t(id int, note varchar2(20));
+insert into bison_pl_issue245_type_t values(1, 'one');
+
+create or replace function bison_pl_issue245_return_type(p_id int)
+return bison_pl_issue245_type_t.id%TYPE
+is
+begin
+    return p_id;
+end;
+/
+select bison_pl_issue245_return_type(1) as return_type_result from sys_dummy;
+
+create or replace function bison_pl_issue245_body_type(p_id int)
+return int
+is
+    v_id bison_pl_issue245_type_t.id%TYPE;
+    r bison_pl_issue245_type_t%ROWTYPE;
+begin
+    select * into r from bison_pl_issue245_type_t where id = p_id;
+    v_id := r.id;
+    return v_id;
+end;
+/
+select bison_pl_issue245_body_type(1) as body_type_result from sys_dummy;
+
+drop function bison_pl_issue245_return_type;
+drop function bison_pl_issue245_body_type;
+drop table bison_pl_issue245_type_t;
+
+select name, val from bison_pl_issue245_log order by name;
+
+drop table if exists bison_pl_issue245_log;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;

@@ -2278,6 +2278,53 @@ static status_t sql_word2plattr(sql_stmt_t *stmt, expr_tree_t *expr, word_t *wor
     return sql_word2plattr_type(word, &node->value.v_plattr.type);
 }
 
+static bool32 sql_match_pl_cursor_attr_text_id(const text_t *attr_name, uint32 *attr_id)
+{
+    typedef struct st_pl_cursor_attr_map {
+        const char *name;
+        uint32 attr_id;
+    } pl_cursor_attr_map_t;
+
+    static const pl_cursor_attr_map_t g_attrs[] = {
+        { "isopen", PL_ATTR_WORD_ISOPEN },
+        { "found", PL_ATTR_WORD_FOUND },
+        { "notfound", PL_ATTR_WORD_NOTFOUND },
+        { "rowcount", PL_ATTR_WORD_ROWCOUNT },
+    };
+
+    for (uint32 i = 0; i < ELEMENT_COUNT(g_attrs); i++) {
+        if (cm_text_str_equal_ins(attr_name, g_attrs[i].name)) {
+            *attr_id = g_attrs[i].attr_id;
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+status_t sql_create_pl_attr_expr(sql_stmt_t *stmt, expr_tree_t **expr, const text_t *name, const text_t *attr_name,
+    source_location_t loc, bool32 *matched)
+{
+    expr_node_t *node = NULL;
+    word_t word = { 0 };
+
+    *matched = sql_match_pl_cursor_attr_text_id(attr_name, &word.id);
+    if (!*matched) {
+        return OG_SUCCESS;
+    }
+
+    word.type = WORD_TYPE_PL_ATTR;
+    word.ori_type = WORD_TYPE_PL_ATTR;
+    word.loc = loc;
+    word.text.value = *name;
+    word.text.loc = loc;
+
+    OG_RETURN_IFERR(sql_init_expr_node(stmt, expr, &node, OG_TYPE_COLUMN, EXPR_NODE_PL_ATTR, loc));
+    OG_RETURN_IFERR(sql_word2plattr(stmt, *expr, &word, node));
+    APPEND_CHAIN(&((*expr)->chain), node);
+    sql_generate_expr(*expr);
+    return OG_SUCCESS;
+}
+
 static status_t sql_word2column(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word, expr_node_t *node)
 {
     node->value.type = OG_TYPE_COLUMN;
@@ -3571,6 +3618,20 @@ static status_t sql_try_convert_static_pl_var_to_param(sql_stmt_t *stmt, expr_no
     return OG_SUCCESS;
 }
 
+static bool32 sql_is_nameable_reserved_columnref(pl_columnref_expr_arg_t *arg)
+{
+    word_t word = { 0 };
+
+    if (arg->list != NULL) {
+        return OG_FALSE;
+    }
+
+    word.namable = OG_FALSE;
+    word.text.str = (char *)arg->val;
+    word.text.len = (uint32)strlen(arg->val);
+    return lex_match_reserved_keyword_bison(&word) && word.namable;
+}
+
 static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr,
     pl_columnref_expr_arg_t *arg, bool32 *converted)
 {
@@ -3579,6 +3640,9 @@ static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t *
 
     *converted = OG_FALSE;
     if (arg->type != EXPR_NODE_COLUMN || !sql_is_pl_compile_context(stmt)) {
+        return OG_SUCCESS;
+    }
+    if (sql_is_nameable_reserved_columnref(arg)) {
         return OG_SUCCESS;
     }
 

@@ -255,7 +255,11 @@ status_t og_find_then_parse_dml(sql_stmt_t *statement, key_wid_t key_wid, sql_te
         return OG_ERROR;
     }
     OG_LOG_DEBUG_INF("DML hard parsing completed successfully, stmtid=%u", statement->id);
-    CM_ASSERT(ogx->cacheable);
+    if (!ogx->cacheable) {
+        og_update_context_stat_uncached(statement, &begin_time);
+        return OG_SUCCESS;
+    }
+
     og_update_context_stat_cached(statement, &begin_time, &stat);
     ret = og_cache_sql_context(statement, ctx_bucket, sql_text, hash);
     if (ret != OG_SUCCESS) {

@@ -617,12 +617,20 @@ void plc_bison_find_decl_ex(pl_compiler_t *compiler, uint32 types, plc_var_type_
     char *first_name, galist_t *sub_names)
 {
     text_t name;
-    cm_str2text(first_name, &name);
     plc_var_type_t type;
     char block_name_buf[OG_NAME_BUFFER_SIZE];
     char name_buf[OG_NAME_BUFFER_SIZE];
     plc_variant_name_t variant_name;
+
     *decl = NULL;
+    if (var_type != NULL) {
+        *var_type = PLC_NORMAL_VAR;
+    }
+    if (compiler == NULL || first_name == NULL) {
+        return;
+    }
+
+    cm_str2text(first_name, &name);
     PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types);
     plc_bison_translate_variant(compiler, &variant_name, &type, &name, sub_names);
 

@@ -1,4 +1,10 @@
 alter system set use_bison_parser = true;
+drop table if exists bison_comment_escape_t;
+create table bison_comment_escape_t(id int);
+insert into bison_comment_escape_t select /* This is \/* a nested \*\/ comment */ 1;
+insert into bison_comment_escape_t select /* This is \*/ a nested \*\/ comment */ 2;
+insert into bison_comment_escape_t select /* outer \\/* nested */ still outer */ 3;
+drop table bison_comment_escape_t;
 
 drop table if exists bison_t1;
 create table bison_t1 (a int, b char(10));
@@ -170,6 +176,15 @@ insert into bison_t2 values (2, 2);
 delete from bison_t1 where a = 1;
 delete from bison_t1 using bison_t1, bison_t2 where a = 1;	
 delete from bison_t1, bison_t2 using bison_t1, bison_t2 where a = 2;
+
+drop table if exists bison_delete_alias_t;
+create table bison_delete_alias_t(id int, name varchar(20));
+insert into bison_delete_alias_t values(1, 'a');
+insert into bison_delete_alias_t values(2, 'b');
+delete from bison_delete_alias_t only where id = 2;
+delete from bison_delete_alias_t t where t.name = 'a';
+select count(*) as alias_delete_count from bison_delete_alias_t;
+drop table bison_delete_alias_t;
 
 delete from bison_t1 using bison_t1, bison_t2;
 
@@ -742,6 +757,22 @@ WHEN MATCHED THEN
         e.last_update = s.update_date
     WHERE s.new_salary > e.salary;
 
+drop table if exists bison_merge_issue243_t1;
+drop table if exists bison_merge_issue243_t2;
+create table bison_merge_issue243_t1(product_id int, product_name varchar2(60), category_id varchar2(60));
+create table bison_merge_issue243_t2(product_id int, product_name varchar2(60), category_id varchar2(60));
+insert into bison_merge_issue243_t1 values(1, 'old', 'oldcat');
+insert into bison_merge_issue243_t2 values(2, 'new', 'newcat');
+merge into bison_merge_issue243_t1 t1 using bison_merge_issue243_t2 t2
+on (t1.product_name = t2.product_name)
+when not matched then
+    insert (product_name, category_id) values (t2.product_name, t2.category_id)
+when matched then
+    update set t1.product_id = t2.product_id;
+select product_name, category_id from bison_merge_issue243_t1 order by product_name;
+drop table bison_merge_issue243_t2;
+drop table bison_merge_issue243_t1;
+
 drop table bison_t1;
 create table bison_t1 (a int, b int);
 replace into bison_t1 (a, b) values (1,1), (2,2);
@@ -1305,6 +1336,12 @@ CREATE INDEX idx ON bison_test(id);
 SELECT INDEX_NAME, PARTITIONED, STATUS, INI_TRANS FROM MY_INDEXES WHERE TABLE_NAME = 'BISON_TEST';
 ALTER INDEX idx REBUILD;
 ALTER INDEX idx UNUSABLE;
+ALTER INDEX idx REBUILD;
+ALTER INDEX idx UNUSABLE ONLINE;
+ALTER INDEX idx REBUILD;
+ALTER INDEX idx UNUSABLE DEFERRED INVALIDATION;
+ALTER INDEX idx REBUILD;
+ALTER INDEX idx UNUSABLE IMMEDIATE INVALIDATION;
 ALTER INDEX idx RENAME TO idx_id;
 ALTER INDEX idx_id RENAME TO idx;
 ALTER INDEX idx INITRANS 5;

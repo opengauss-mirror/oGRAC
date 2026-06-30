@@ -26,6 +26,7 @@
 #include "ogsql_privilege.h"
 #include "pl_ddl_parser.h"
 #include "cm_error.h"
+#include "decl.h"
 
 /* Location tracking support --- simpler than bison's default */
 
@@ -118,6 +119,8 @@ static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr,
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
 static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node);
+static expr_tree_t *bison_make_pl_cursor_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
+    expr_tree_t *right, source_location_t loc);
 static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
     expr_node_type_t node_type, source_location_t loc);
 static cmp_type_t bison_cmpop_to_cmp_type(const char *op);
@@ -289,7 +292,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <parse_col> columnDef
 %type <parse_cons> TableConstraint ConstraintElem
 %type <table_element> TableElement
-%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_authid
+%type <boolean> opt_ignore opt_varying opt_charbyte sub_type format_json json_on_error_or_null jsonb_table opt_found_rows opt_authid opt_delete_only
                 opt_distinct unpivot_include_or_exclude_nulls opt_nocycle opt_all opt_all_distinct opt_if_exists opt_drop_behavior
                 opt_cascade opt_purge opt_temporary opt_public opt_force partition_or_subpartition
                 opt_reuse opt_all_in_memory opt_encrypted ignore_nulls opt_orajoin on_or_off opt_undo opt_or_replace opt_signed
@@ -3712,20 +3715,38 @@ delete_target_list:
     ;
 
 delete_target:
-        insert_target
+        insert_target opt_delete_only
         {
             sql_table_t *table = $1;
             del_object_t *delete_obj = NULL;
-            if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(del_object_t), (void **)&delete_obj) != OG_SUCCESS) {
+            sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+            if (sql_alloc_mem(stmt->context, sizeof(del_object_t), (void **)&delete_obj) != OG_SUCCESS) {
                 parser_yyerror("alloc delete obj failed");
             }
 
+            if ($2) {
+                if (table->alias.len > 0) {
+                    parser_yyerror("invalid delete target");
+                }
+                sql_text_t only_alias = { 0 };
+                only_alias.value.str = (char *)"ONLY";
+                only_alias.value.len = 4;
+                only_alias.loc = @2.loc;
+                if (sql_copy_name_loc(stmt->context, &only_alias, &table->alias) != OG_SUCCESS) {
+                    parser_yyerror("copy delete alias failed");
+                }
+            }
             delete_obj->user = table->user;
-            delete_obj->name = table->name;
+            delete_obj->name = (table->alias.len > 0) ? table->alias : table->name;
             delete_obj->alias = table->alias;
             delete_obj->table = table;
             $$ = delete_obj;
         }
+    ;
+
+opt_delete_only:
+        ONLY                                            { $$ = true; }
+        | /* EMPTY */                                   { $$ = false; }
     ;
 
 /*****************************************************************************
@@ -5183,11 +5204,10 @@ a_expr:     c_expr    { $$ = $1; }
             }
             | a_expr '%' a_expr
             {
-                expr_tree_t *expr = NULL;
-                if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_MOD, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                $$ = bison_make_pl_cursor_attr_or_mod_expr(yyscanner, $1, $3, @1.loc);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("create pl attr or mod expr failed");
                 }
-                $$ = expr;
             }
             | a_expr '|' a_expr
             {
@@ -7281,6 +7301,7 @@ merge_insert:
                     if (sql_init_insert(stmt, insert_ctx) != OG_SUCCESS) {
                         parser_yyerror("init insert context failed ");
                     }
+                    insert_ctx->flags |= INSERT_COLS_SPECIFIED;
                     insert_ctx->pairs = $5;
                     column_value_pair_t *pair = NULL;
                     galist_t *columns = $3;
@@ -10227,8 +10248,28 @@ AlterTenantStmt:
                 }
         ;
 
+/*
+ * The native ALTER INDEX parser does not require end-of-text after UNUSABLE,
+ * so these compatibility tails are accepted and ignored there.
+ */
+alter_index_ignored_unusable_option:
+            /*EMPTY*/
+            | ONLINE
+            | DEFERRED alter_index_ignored_invalidation
+            | IMMEDIATE alter_index_ignored_invalidation
+        ;
+
+alter_index_ignored_invalidation:
+            IDENT
+                {
+                    if (!cm_str_equal_ins($1, "INVALIDATION")) {
+                        parser_yyerror("invalid alter index unusable option");
+                    }
+                }
+        ;
+
 alter_index_action:
- 	        UNUSABLE
+            UNUSABLE alter_index_ignored_unusable_option
  	            {
  	                alter_index_action_t *alter_idx_act = NULL;
  	                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -14809,7 +14850,7 @@ pl_trigger_block:
         ;
 
 compileFunctionSource:
-            proc_args RETURN Typename as_is subprogram_body
+            proc_args RETURN func_type as_is subprogram_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
@@ -14910,7 +14951,7 @@ CreateFunctionStmt:
                 if (pl_init_compiler(og_yyget_extra(yyscanner)->core_yy_extra.stmt) != OG_SUCCESS) {
                     parser_yyerror("init pl compiler failed");
                 }
-            } opt_if_not_exists any_name proc_args RETURN Typename
+            } opt_if_not_exists any_name proc_args RETURN func_type
             as_is subprogram_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -17724,6 +17765,66 @@ static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node)
         return NULL;
     }
     return node->cmp->right;
+}
+
+static bool32 bison_get_simple_column_name(expr_tree_t *expr, text_t **name)
+{
+    expr_node_t *node = (expr == NULL) ? NULL : expr->root;
+
+    if (node == NULL || expr->chain.count != 1 || node->type != EXPR_NODE_COLUMN) {
+        return OG_FALSE;
+    }
+    if (node->word.column.table.value.len != 0 || node->word.column.user.value.len != 0) {
+        return OG_FALSE;
+    }
+
+    *name = &node->word.column.name.value;
+    return OG_TRUE;
+}
+
+static bool32 bison_get_pl_attr_left_name(expr_tree_t *expr, text_t **name)
+{
+    expr_node_t *node = (expr == NULL) ? NULL : expr->root;
+    var_address_pair_t *pair = NULL;
+
+    if (bison_get_simple_column_name(expr, name)) {
+        return cm_text_str_equal_ins(*name, "SQL");
+    }
+
+    if (node == NULL || expr->chain.count != 1 || node->type != EXPR_NODE_V_ADDR) {
+        return OG_FALSE;
+    }
+
+    pair = sql_get_last_addr_pair(node);
+    if (pair == NULL || pair->type != UDT_STACK_ADDR || pair->stack == NULL ||
+        pair->stack->decl == NULL || pair->stack->decl->type != PLV_CUR) {
+        return OG_FALSE;
+    }
+
+    *name = &pair->stack->decl->name;
+    return OG_TRUE;
+}
+
+static expr_tree_t *bison_make_pl_cursor_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
+    expr_tree_t *right, source_location_t loc)
+{
+    bool32 matched = OG_FALSE;
+    expr_tree_t *expr = NULL;
+    text_t *left_name = NULL;
+    text_t *attr_name = NULL;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (!bison_get_pl_attr_left_name(left, &left_name) || !bison_get_simple_column_name(right, &attr_name)) {
+        return bison_make_oper_expr(yyscanner, left, right, EXPR_NODE_MOD, loc);
+    }
+    if (sql_create_pl_attr_expr(stmt, &expr, left_name, attr_name, loc, &matched) != OG_SUCCESS) {
+        return NULL;
+    }
+    if (matched) {
+        return expr;
+    }
+
+    return bison_make_oper_expr(yyscanner, left, right, EXPR_NODE_MOD, loc);
 }
 
 static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,

@@ -4,6 +4,30 @@ SQL> alter system set use_bison_parser = true;
 
 Succeed.
 
+SQL> drop table if exists bison_comment_escape_t;
+
+Succeed.
+
+SQL> create table bison_comment_escape_t(id int);
+
+Succeed.
+
+SQL> insert into bison_comment_escape_t select /* This is \/* a nested \*\/ comment */ 1;
+
+1 rows affected.
+
+SQL> insert into bison_comment_escape_t select /* This is \*/ a nested \*\/ comment */ 2;
+
+1 rows affected.
+
+SQL> insert into bison_comment_escape_t select /* outer \\/* nested */ still outer */ 3;
+
+1 rows affected.
+
+SQL> drop table bison_comment_escape_t;
+
+Succeed.
+
 SQL> 
 SQL> drop table if exists bison_t1;
 
@@ -544,6 +568,43 @@ SQL> delete from bison_t1 using bison_t1, bison_t2 where a = 1;
 SQL> delete from bison_t1, bison_t2 using bison_t1, bison_t2 where a = 2;
 
 3 rows affected.
+
+SQL>
+SQL> drop table if exists bison_delete_alias_t;
+
+Succeed.
+
+SQL> create table bison_delete_alias_t(id int, name varchar(20));
+
+Succeed.
+
+SQL> insert into bison_delete_alias_t values(1, 'a');
+
+1 rows affected.
+
+SQL> insert into bison_delete_alias_t values(2, 'b');
+
+1 rows affected.
+
+SQL> delete from bison_delete_alias_t only where id = 2;
+
+1 rows affected.
+
+SQL> delete from bison_delete_alias_t t where t.name = 'a';
+
+1 rows affected.
+
+SQL> select count(*) as alias_delete_count from bison_delete_alias_t;
+
+ALIAS_DELETE_COUNT
+--------------------
+0
+
+1 rows fetched.
+
+SQL> drop table bison_delete_alias_t;
+
+Succeed.
 
 SQL> 
 SQL> delete from bison_t1 using bison_t1, bison_t2;
@@ -2326,6 +2387,57 @@ SQL> MERGE INTO employees e
  10     WHERE s.new_salary > e.salary;
 
 0 rows affected.
+
+SQL>
+SQL> drop table if exists bison_merge_issue243_t1;
+
+Succeed.
+
+SQL> drop table if exists bison_merge_issue243_t2;
+
+Succeed.
+
+SQL> create table bison_merge_issue243_t1(product_id int, product_name varchar2(60), category_id varchar2(60));
+
+Succeed.
+
+SQL> create table bison_merge_issue243_t2(product_id int, product_name varchar2(60), category_id varchar2(60));
+
+Succeed.
+
+SQL> insert into bison_merge_issue243_t1 values(1, 'old', 'oldcat');
+
+1 rows affected.
+
+SQL> insert into bison_merge_issue243_t2 values(2, 'new', 'newcat');
+
+1 rows affected.
+
+SQL> merge into bison_merge_issue243_t1 t1 using bison_merge_issue243_t2 t2
+  2 on (t1.product_name = t2.product_name)
+  3 when not matched then
+  4     insert (product_name, category_id) values (t2.product_name, t2.category_id)
+  5 when matched then
+  6     update set t1.product_id = t2.product_id;
+
+1 rows affected.
+
+SQL> select product_name, category_id from bison_merge_issue243_t1 order by product_name;
+
+PRODUCT_NAME                                                 CATEGORY_ID
+------------------------------------------------------------ ------------------------------------------------------------
+new                                                          newcat
+old                                                          oldcat
+
+2 rows fetched.
+
+SQL> drop table bison_merge_issue243_t2;
+
+Succeed.
+
+SQL> drop table bison_merge_issue243_t1;
+
+Succeed.
 
 SQL> 
 SQL> drop table bison_t1;
@@ -4407,6 +4519,30 @@ SQL> ALTER INDEX idx REBUILD;
 Succeed.
 
 SQL> ALTER INDEX idx UNUSABLE;
+
+Succeed.
+
+SQL> ALTER INDEX idx REBUILD;
+
+Succeed.
+
+SQL> ALTER INDEX idx UNUSABLE ONLINE;
+
+Succeed.
+
+SQL> ALTER INDEX idx REBUILD;
+
+Succeed.
+
+SQL> ALTER INDEX idx UNUSABLE DEFERRED INVALIDATION;
+
+Succeed.
+
+SQL> ALTER INDEX idx REBUILD;
+
+Succeed.
+
+SQL> ALTER INDEX idx UNUSABLE IMMEDIATE INVALIDATION;
 
 Succeed.
 

@@ -107,12 +107,15 @@ static char *pl_type_token_text(core_yyscan_t yyscanner, int token, union YYSTYP
 static bool32 pl_token_text_equal(core_yyscan_t yyscanner, int token, union YYSTYPE *lval, const char *expected);
 static status_t pl_read_interval_datatype(core_yyscan_t yyscanner, sql_stmt_t *stmt, char **typename,
     galist_t **typemode, galist_t **second_typemode, int *tok);
+static bool32 pl_bison_is_ident_char(char c);
+static bool32 pl_bison_is_ident_text(const char *str, uint32 len);
 static text_t *current_label_name(pl_compiler_t *compiler);
 static status_t check_end_name(const text_t *expected, const char *actual, source_location_t loc);
 static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char *actual, source_location_t loc);
 static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_raise_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
+static status_t compile_pragma_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_exit_or_continue_stmt(sql_stmt_t *stmt, bool32 is_continue, const char *label_name,
     text_t *cond_src, source_location_t loc);
 static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, pl_line_case_t **case_line);
@@ -136,8 +139,23 @@ static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *inde
     pl_line_for_t **for_line);
 static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_name, text_t *lower_src,
     source_location_t loc);
+static status_t create_expr_from_pl_node(sql_stmt_t *stmt, expr_node_t *node, source_location_t loc,
+    expr_tree_t **expr);
+static status_t try_create_pl_var_node_from_name(sql_stmt_t *stmt, const char *name, source_location_t loc,
+    expr_node_t **node);
+static status_t try_create_pl_var_expr_from_text(sql_stmt_t *stmt, text_t *src, source_location_t loc,
+    expr_tree_t **expr);
+static status_t pl_copy_cstr_name(core_yyscan_t yyscanner, const char *src, bool32 upper, char **dst);
+static status_t pl_copy_ident_token_text(core_yyscan_t yyscanner, char **name);
+static status_t read_sql_expression_from_token(int token, int until, core_yyscan_t yyscanner, text_t **expr_src,
+    expr_node_t **datum_node, source_location_t *datum_loc);
 static text_t *read_sql_expression(int until, core_yyscan_t yyscanner);
 static text_t *read_sql_expression2(int until, int until2, core_yyscan_t yyscanner, int *endtoken);
+static bool32 is_sql_construct_terminator(int token, int paren_depth, int until, int until2, int until3,
+    int until4, int until5, int until6);
+static void update_sql_construct_depth(int token, int *paren_depth);
+static status_t read_sql_construct_core(int start_offset, int token, int until, int until2, int until3, int until4,
+    int until5, int until6, core_yyscan_t yyscanner, text_t **expr_src, int *endtoken, uint32 *token_count);
 static text_t *read_sql_construct_from(int start_offset,
                                    int until,
                                    int until2,
@@ -413,7 +431,7 @@ block_body_core:
                         compiler->body = line;
                     }
                 }
-            proc_sect opt_exception_sect K_END opt_block_end_name
+            block_body_stmts K_END opt_block_end_name
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     pl_line_ctrl_t *line = NULL;
@@ -427,11 +445,11 @@ block_body_core:
                         if (expected_name == NULL && compiler->stack.depth == 1 && compiler->obj != NULL) {
                             expected_name = &compiler->obj->name;
                         }
-                        if (check_end_name(expected_name, $6, @6.loc) != OG_SUCCESS) {
+                        if (check_end_name(expected_name, $5, @5.loc) != OG_SUCCESS) {
                             parser_yyerror("Undefined symbol");
                         }
                     }
-                    compiler->line_loc = @5.loc;
+                    compiler->line_loc = @4.loc;
                     plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END, (pl_line_ctrl_t **)&line);
                     if (begin_line != NULL) {
                         begin_line->end = line;
@@ -440,6 +458,11 @@ block_body_core:
                         parser_yyerror("pop block failed");
                     }
                 }
+        ;
+
+block_body_stmts:
+            proc_sect opt_exception_sect
+            | exception_sect
         ;
 
 /*
@@ -469,7 +492,11 @@ opt_loop_end_name:
 
 opt_exception_sect:
             /* EMPTY */
-            | K_EXCEPTION
+            | exception_sect
+        ;
+
+exception_sect:
+            K_EXCEPTION
                 {
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
@@ -1642,6 +1669,13 @@ decl_stmt:
                     decl->excpt.is_userdef = OG_TRUE;
                     decl->excpt.err_code = OG_INVALID_INT32;
                 }
+            | K_PRAGMA T_WORD ';'
+                {
+                    pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    if (compile_pragma_stmt(compiler, $2.ident, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("compile pragma failed");
+                    }
+                }
             | decl_varname K_SYS_REFCURSOR ';'
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
@@ -1965,8 +1999,8 @@ simple_name:
             T_WORD                                      { $$ = $1.ident; }
             | unreserved_keyword
                 {
-                    char *tmp = strdup($1);
-                    if (tmp == NULL) {
+                    char *tmp = NULL;
+                    if (pl_copy_cstr_name(yyscanner, $1, OG_FALSE, &tmp) != OG_SUCCESS) {
                         parser_yyerror("alloc name failed");
                     }
                     $$ = tmp;
@@ -1990,10 +2024,15 @@ decl_varname:
             | unreserved_keyword
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    char *tmp = strdup($1);
+                    char *tmp = NULL;
                     text_t name;
+
+                    if (pl_copy_cstr_name(yyscanner, $1, OG_TRUE, &tmp) != OG_SUCCESS) {
+                        parser_yyerror("alloc name failed");
+                    }
                     cm_str2text(tmp, &name);
                     bool32 result = OG_FALSE;
+
                     plc_check_duplicate(compiler->decls, (text_t *)&name, OG_FALSE, &result);
 
                     if (result) {
@@ -2105,6 +2144,32 @@ unreserved_keyword:
         ;
 
 %%
+
+static status_t compile_pragma_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc)
+{
+    pl_entity_t *entity = (pl_entity_t *)compiler->entity;
+    uint32 max_stack_depth = (compiler->type == PL_TRIGGER) ? 1 : 0;
+
+    if (!cm_str_equal_ins(name, "autonomous_transaction")) {
+        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "pragma syntax word", name);
+        return OG_ERROR;
+    }
+
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR && IS_APP_CONN(compiler->stmt->session)) {
+        OG_SRC_THROW_ERROR(loc, ERR_CAPABILITY_NOT_SUPPORT, "AUTONOMOUS_TRANSACTION on coordinator is");
+        return OG_ERROR;
+    }
+#endif
+
+    if (compiler->stack.depth > max_stack_depth) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "autonomous transaction must be in top stack");
+        return OG_ERROR;
+    }
+
+    entity->is_auton_trans = OG_TRUE;
+    return OG_SUCCESS;
+}
 
 static void plsql_yyerror(core_yyscan_t yyscanner, const char* message)
 {
@@ -2613,7 +2678,18 @@ static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefi
 
 static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
 {
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    source_location_t loc = { 0 };
+
     *expr = NULL;
+    if (compiler != NULL) {
+        loc = compiler->line_loc;
+        OG_RETURN_IFERR(try_create_pl_var_expr_from_text(stmt, src, loc, expr));
+        if (*expr != NULL) {
+            return OG_SUCCESS;
+        }
+    }
+
     /*
      * DEFAULT is an internal raw-parser entry selector. It lets PL fragments
      * reuse the bison SQL expression grammar without depending on session-owned
@@ -2980,6 +3056,19 @@ static status_t compile_dynamic_sql_expr(sql_stmt_t *stmt, text_t *src, expr_tre
 static bool32 pl_bison_is_ident_char(char c)
 {
     return (bool32)(CM_IS_LETER(c) || CM_IS_DIGIT(c) || c == '_' || c == '$' || c == '#');
+}
+
+static bool32 pl_bison_is_ident_text(const char *str, uint32 len)
+{
+    if (str == NULL || len == 0 || (!CM_IS_LETER(str[0]) && str[0] != '_')) {
+        return OG_FALSE;
+    }
+    for (uint32 i = 0; i < len; i++) {
+        if (!pl_bison_is_ident_char(str[i])) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
 }
 
 static bool32 pl_bison_match_word_at(text_t *src, uint32 pos, const char *word)
@@ -4161,22 +4250,149 @@ static status_t init_for_cursor_record(pl_compiler_t *compiler, pl_line_for_t *l
     return OG_SUCCESS;
 }
 
-static status_t finish_numeric_for_start(core_yyscan_t yyscanner, const char *index_name, bool32 reverse,
-    text_t *lower_src, source_location_t loc, pl_line_for_t **for_line)
+static status_t create_expr_from_pl_node(sql_stmt_t *stmt, expr_node_t *node, source_location_t loc, expr_tree_t **expr)
 {
-    text_t *upper_src = read_sql_expression(K_LOOP, yyscanner);
+    OG_RETURN_IFERR(sql_create_expr(stmt, expr));
+    (*expr)->loc = loc;
+    node->owner = *expr;
+    node->loc = loc;
+    node->left = NULL;
+    node->right = NULL;
+    APPEND_CHAIN(&((*expr)->chain), node);
+    return sql_generate_expr(*expr);
+}
+
+static status_t try_create_pl_var_node_from_name(sql_stmt_t *stmt, const char *name, source_location_t loc,
+    expr_node_t **node)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    text_t name_text;
+    plv_decl_t *decl = NULL;
+    plc_variant_name_t variant_name;
+    char block_name_buf[OG_NAME_BUFFER_SIZE];
+    char name_buf[OG_NAME_BUFFER_SIZE];
+    uint32 types = PLV_VARIANT_AND_CUR;
+
+    *node = NULL;
+    if (name == NULL || compiler == NULL) {
+        return OG_SUCCESS;
+    }
+
+    cm_str2text((char *)name, &name_text);
+    PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types);
+    variant_name.block_name.len = 0;
+    plc_concat_text_upper_by_type(&variant_name.name, OG_MAX_NAME_LEN, &name_text, WORD_TYPE_VARIANT);
+    plc_find_block_decl(compiler, &variant_name, &decl);
+    if (decl == NULL) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)node));
+    MEMS_RETURN_IFERR(memset_s(*node, sizeof(expr_node_t), 0, sizeof(expr_node_t)));
+    (*node)->loc = loc;
+    (*node)->value.type = OG_TYPE_COLUMN;
+    (*node)->value.v_col.ss_start = OG_INVALID_ID32;
+    (*node)->value.v_col.ss_end = OG_INVALID_ID32;
+    return plc_build_var_address(stmt, decl, *node, UDT_STACK_ADDR);
+}
+
+static status_t try_create_pl_var_expr_from_text(sql_stmt_t *stmt, text_t *src, source_location_t loc,
+    expr_tree_t **expr)
+{
+    text_t ident = *src;
+    char *name = NULL;
+    expr_node_t *node = NULL;
+
+    *expr = NULL;
+    cm_trim_text(&ident);
+    if (!pl_bison_is_ident_text(ident.str, ident.len)) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_stack_alloc(stmt, ident.len + 1, (void **)&name));
+    MEMS_RETURN_IFERR(memcpy_s(name, ident.len + 1, ident.str, ident.len));
+    name[ident.len] = '\0';
+
+    OG_RETURN_IFERR(try_create_pl_var_node_from_name(stmt, name, loc, &node));
+    if (node == NULL) {
+        return OG_SUCCESS;
+    }
+    return create_expr_from_pl_node(stmt, node, loc, expr);
+}
+
+static status_t pl_copy_cstr_name(core_yyscan_t yyscanner, const char *src, bool32 upper, char **dst)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    uint32 len = (uint32)strlen(src);
+
+    *dst = NULL;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, len + 1, (void **)dst));
+    if (len != 0) {
+        MEMS_RETURN_IFERR(memcpy_s(*dst, len + 1, src, len));
+    }
+    (*dst)[len] = '\0';
+    if (upper) {
+        for (uint32 i = 0; i < len; i++) {
+            (*dst)[i] = UPPER((*dst)[i]);
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t pl_copy_ident_token_text(core_yyscan_t yyscanner, char **name)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    uint32 token_len;
+    char *src = NULL;
+
+    *name = NULL;
+    if (compiler == NULL || compiler->plsql_yyleng <= 0) {
+        return OG_SUCCESS;
+    }
+    token_len = (uint32)compiler->plsql_yyleng;
+
+    src = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + yylloc.offset;
+    if (!pl_bison_is_ident_text(src, token_len)) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_stack_alloc(stmt, token_len + 1, (void **)name));
+    MEMS_RETURN_IFERR(memcpy_s(*name, token_len + 1, src, token_len));
+    (*name)[token_len] = '\0';
+    return OG_SUCCESS;
+}
+
+static status_t compile_for_bound_expr(sql_stmt_t *stmt, pl_compiler_t *compiler, text_t *src,
+    expr_node_t *datum_node, source_location_t datum_loc, expr_tree_t **expr)
+{
+    if (datum_node != NULL) {
+        OG_RETURN_IFERR(create_expr_from_pl_node(stmt, datum_node, datum_loc, expr));
+    } else {
+        OG_RETURN_IFERR(get_valid_expr_tree(stmt, src, expr));
+    }
+    OG_RETURN_IFERR(plc_verify_expr(compiler, *expr));
+    return plc_clone_expr_tree(compiler, expr);
+}
+
+static status_t finish_numeric_for_start(core_yyscan_t yyscanner, const char *index_name, bool32 reverse,
+    text_t *lower_src, expr_node_t *lower_node, source_location_t lower_loc, source_location_t loc,
+    pl_line_for_t **for_line)
+{
+    expr_node_t *upper_node = NULL;
+    source_location_t upper_loc = loc;
+    text_t *upper_src = NULL;
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
 
+    OG_RETURN_IFERR(read_sql_expression_from_token(YYLEX, K_LOOP, yyscanner, &upper_src, &upper_node, &upper_loc));
     OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_FALSE));
     (*for_line)->id->type = PLV_VAR;
     (*for_line)->id->variant.type.datatype = OG_TYPE_INTEGER;
-    OG_RETURN_IFERR(get_valid_expr_tree(stmt, lower_src, &(*for_line)->lower_expr));
-    OG_RETURN_IFERR(plc_verify_expr(compiler, (*for_line)->lower_expr));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &(*for_line)->lower_expr));
-    OG_RETURN_IFERR(get_valid_expr_tree(stmt, upper_src, &(*for_line)->upper_expr));
-    OG_RETURN_IFERR(plc_verify_expr(compiler, (*for_line)->upper_expr));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &(*for_line)->upper_expr));
+    OG_RETURN_IFERR(compile_for_bound_expr(stmt, compiler, lower_src, lower_node, lower_loc,
+        &(*for_line)->lower_expr));
+    OG_RETURN_IFERR(compile_for_bound_expr(stmt, compiler, upper_src, upper_node, upper_loc,
+        &(*for_line)->upper_expr));
     (*for_line)->reverse = reverse;
     return OG_SUCCESS;
 }
@@ -4278,8 +4494,9 @@ static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *inde
     pl_line_for_t **for_line)
 {
     int tok = YYLEX;
-    int lower_start;
     text_t *lower_src = NULL;
+    expr_node_t *lower_node = NULL;
+    source_location_t lower_loc = loc;
     bool32 reverse = OG_FALSE;
 
     if (tok == K_REVERSE) {
@@ -4289,7 +4506,6 @@ static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *inde
     if (tok == '(') {
         return finish_implicit_cursor_for_start(yyscanner, index_name, loc, for_line);
     }
-    lower_start = yylloc.offset;
     if (!reverse && tok == T_DATUM) {
         var_address_pair_t *pair = sql_get_last_addr_pair(yylval.node);
         if (pair != NULL && pair->type == UDT_STACK_ADDR && pair->stack->decl != NULL &&
@@ -4297,10 +4513,8 @@ static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *inde
             return finish_explicit_cursor_for_start(yyscanner, index_name, yylval.node, loc, for_line);
         }
     }
-    lower_src = read_sql_expression(DOT_DOT, yyscanner);
-    lower_src->str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + lower_start;
-    lower_src->len = (uint32)(yylloc.offset - lower_start);
-    return finish_numeric_for_start(yyscanner, index_name, reverse, lower_src, loc, for_line);
+    OG_RETURN_IFERR(read_sql_expression_from_token(tok, DOT_DOT, yyscanner, &lower_src, &lower_node, &lower_loc));
+    return finish_numeric_for_start(yyscanner, index_name, reverse, lower_src, lower_node, lower_loc, loc, for_line);
 }
 
 static key_wid_t dml_key_from_token(int token)
@@ -4466,6 +4680,39 @@ static text_t *read_sql_expression(int until, core_yyscan_t yyscanner)
     return read_sql_construct(until, 0, 0, 0, 0, 0, yyscanner, NULL);
 }
 
+static status_t read_sql_expression_from_token(int token, int until, core_yyscan_t yyscanner, text_t **expr_src,
+    expr_node_t **datum_node, source_location_t *datum_loc)
+{
+    int tok = token;
+    int begin = yylloc.offset;
+    uint32 token_count = 0;
+    bool32 first_token_is_datum = (tok == T_DATUM);
+    expr_node_t *first_datum = yylval.node;
+    source_location_t first_loc = yylloc.loc;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    char *first_name = NULL;
+
+    *expr_src = NULL;
+    if (tok != T_DATUM) {
+        OG_RETURN_IFERR(pl_copy_ident_token_text(yyscanner, &first_name));
+    }
+    OG_RETURN_IFERR(read_sql_construct_core(begin, tok, until, 0, 0, 0, 0, 0, yyscanner, expr_src, NULL,
+        &token_count));
+
+    if (datum_node != NULL) {
+        bool32 single_token = (token_count == 1);
+        *datum_node = (first_token_is_datum && single_token) ? first_datum : NULL;
+        if (*datum_node == NULL && single_token) {
+            OG_RETURN_IFERR(try_create_pl_var_node_from_name(stmt, first_name, first_loc, datum_node));
+        }
+    }
+    if (datum_loc != NULL && datum_node != NULL && *datum_node != NULL) {
+        *datum_loc = first_loc;
+    }
+
+    return OG_SUCCESS;
+}
+
 static text_t *read_sql_expression2(int until, int until2, core_yyscan_t yyscanner, int *endtoken)
 {
     return read_sql_construct(until, until2, 0, 0, 0, 0, yyscanner, endtoken);
@@ -4496,6 +4743,37 @@ static void update_sql_construct_depth(int token, int *paren_depth)
     }
 }
 
+static status_t read_sql_construct_core(int start_offset, int token, int until, int until2, int until3, int until4,
+    int until5, int until6, core_yyscan_t yyscanner, text_t **expr_src, int *endtoken, uint32 *token_count)
+{
+    int tok = token;
+    int paren_depth = 0;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (token_count != NULL) {
+        *token_count = 0;
+    }
+    OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(text_t), (void **)expr_src));
+    for (;;) {
+        if (is_sql_construct_terminator(tok, paren_depth, until, until2, until3, until4, until5, until6)) {
+            break;
+        }
+        if (token_count != NULL) {
+            (*token_count)++;
+        }
+        update_sql_construct_depth(tok, &paren_depth);
+        tok = YYLEX;
+    }
+
+    if (endtoken != NULL) {
+        *endtoken = tok;
+    }
+
+    (*expr_src)->str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + start_offset;
+    (*expr_src)->len = yylloc.offset - start_offset;
+    return OG_SUCCESS;
+}
+
 static text_t *read_sql_construct_from(int start_offset,
                                    int until,
                                    int until2,
@@ -4508,24 +4786,11 @@ static text_t *read_sql_construct_from(int start_offset,
 {
     text_t *expr_src = NULL;
     int tok = YYLEX;
-    int paren_depth = 0;
-    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
-    sql_stack_alloc(stmt, sizeof(text_t), (void**)&expr_src);
-    for (;;) {
-        if (is_sql_construct_terminator(tok, paren_depth, until, until2, until3, until4, until5, until6)) {
-            break;
-        }
-        update_sql_construct_depth(tok, &paren_depth);
-        tok = YYLEX;
+    if (read_sql_construct_core(start_offset, tok, until, until2, until3, until4, until5, until6, yyscanner,
+        &expr_src, endtoken, NULL) != OG_SUCCESS) {
+        return NULL;
     }
-
-    if (endtoken) {
-        *endtoken = tok;
-    }
-
-    expr_src->str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + start_offset;
-    expr_src->len = yylloc.offset - start_offset;
     return expr_src;
 }
 
@@ -4541,23 +4806,10 @@ static text_t *read_sql_construct(int until,
     text_t *expr_src = NULL;
     int	tok = YYLEX;
     int begin = yylloc.offset;
-    int paren_depth = 0;
-    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-    sql_stack_alloc(stmt, sizeof(text_t), (void**)&expr_src);
 
-    for (;;) {
-        if (is_sql_construct_terminator(tok, paren_depth, until, until2, until3, until4, until5, until6)) {
-            break;
-        }
-        update_sql_construct_depth(tok, &paren_depth);
-        tok = YYLEX;
+    if (read_sql_construct_core(begin, tok, until, until2, until3, until4, until5, until6, yyscanner,
+        &expr_src, endtoken, NULL) != OG_SUCCESS) {
+        return NULL;
     }
-
-    if (endtoken) {
-        *endtoken = tok;
-    }
-
-    expr_src->str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + begin;
-    expr_src->len = yylloc.offset - begin;
     return expr_src;
 }

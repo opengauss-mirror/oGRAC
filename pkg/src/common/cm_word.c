@@ -465,6 +465,7 @@ static datatype_word_t g_datatype_words_bison[] = {
     { { (char *)"numeric" }, DTYP_DECIMAL, OG_TRUE, OG_FALSE },
     { { (char *)"nvarchar" }, DTYP_NVARCHAR, OG_TRUE, OG_FALSE },
     { { (char *)"nvarchar2" }, DTYP_NVARCHAR, OG_TRUE, OG_FALSE },
+    { { (char *)"pls_integer" }, DTYP_PLS_INTEGER, OG_TRUE, OG_TRUE },
     { { (char *)"raw" }, DTYP_RAW, OG_FALSE, OG_FALSE },
     { { (char *)"real" }, DTYP_DOUBLE, OG_TRUE, OG_FALSE },
     { { (char *)"rowid" }, DTYP_ROWID, OG_FALSE, OG_FALSE },
