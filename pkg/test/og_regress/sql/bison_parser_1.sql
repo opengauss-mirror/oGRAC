@@ -1264,6 +1264,7 @@ insert into t_special_no_arg_func select sysdate;
 
 -- all value have year value, so it muse be start with 20XX, use left to get first two char
 select left(a, 2) from t_special_no_arg_func;
+select left ($$'''E'''e''$$,3) AS RESULT;
 delete from t_special_no_arg_func;
 insert into t_special_no_arg_func select rowid;
 -- rowid, length is 18
