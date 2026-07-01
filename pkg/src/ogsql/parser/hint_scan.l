@@ -337,7 +337,7 @@ xufailed		[uU]&
 <xdolq>{dolqdelim} {
                     if (strcmp(yytext, yyextra->dolqstart) == 0)
                     {
-                        free(yyextra->dolqstart);
+                        /* dolqstart is owned by stmt memory context. */
                         yyextra->dolqstart = NULL;
                         BEGIN(INITIAL);
                         yylval->str = litbufdup(yyscanner);

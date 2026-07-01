@@ -4209,6 +4209,14 @@ LEFT(A, 2)
 
 8 rows fetched.
 
+SQL> select left ($$'''E'''e''$$,3) AS RESULT;
+
+RESULT
+------
+''E   
+
+1 rows fetched.
+
 SQL> delete from t_special_no_arg_func;
 
 8 rows affected.

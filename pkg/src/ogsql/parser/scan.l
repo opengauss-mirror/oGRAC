@@ -758,7 +758,7 @@ other            .
 <xdolq>{dolqdelim} {
                     if (strcmp(yytext, yyextra->dolqstart) == 0)
                     {
-                        free(yyextra->dolqstart);
+                        /* dolqstart is owned by stmt/pl memory context. */
                         yyextra->dolqstart = NULL;
                         BEGIN(INITIAL);
                         yylval->str = litbufdup(yyscanner);
