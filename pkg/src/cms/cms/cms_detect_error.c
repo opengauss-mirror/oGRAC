@@ -22,16 +22,51 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <unistd.h>
+#include <sys/stat.h>
 #include "cms_log_module.h"
-#include "cms_detect_error.h"
 #include "cms_stat.h"
 #include "cms_log.h"
+#include "cms_detect_error.h"
 
 cms_disk_check_t g_check_disk = { 0 };
 
 cms_disk_check_stat_t g_local_disk_stat = { 0 };
 disk_handle_t g_detect_file_fd[CMS_MAX_DISK_DETECT_FILE];
 object_id_t g_detect_dbs_file[CMS_MAX_DISK_DETECT_FILE]; // only used in dbs type
+
+static status_t cms_check_gcc_permission(const char *path)
+{
+    if (path == NULL || path[0] == '\0') {
+        CMS_LOG_ERR("invalid disk path for permission check.");
+        g_check_disk.disk_perm_denied = OG_TRUE;
+        return OG_ERROR;
+    }
+
+    if (access(path, R_OK | W_OK) == 0) {
+        g_check_disk.disk_perm_denied = OG_FALSE;
+        return OG_SUCCESS;
+    }
+
+    CMS_LOG_WAR("disk path %s has no read/write permission, errno=%d, try chmod.",
+        path, errno);
+    if (chmod(path, (mode_t)FILE_PERM_OF_DATA) != 0) {
+        CMS_LOG_ERR("chmod disk path %s failed, errno=%d.", path, errno);
+        g_check_disk.disk_perm_denied = OG_TRUE;
+        return OG_ERROR;
+    }
+
+    if (access(path, R_OK | W_OK) != 0) {
+        CMS_LOG_ERR("disk path %s still has no read/write permission after chmod, errno=%d.",
+            path, errno);
+        g_check_disk.disk_perm_denied = OG_TRUE;
+        return OG_ERROR;
+    }
+
+    g_check_disk.disk_perm_denied = OG_FALSE;
+    CMS_LOG_INF("restored read/write permission on disk path %s.", path);
+    return OG_SUCCESS;
+}
 
 status_t cms_detect_disk(void)
 {
@@ -43,6 +78,10 @@ status_t cms_detect_disk(void)
             }
         }
     } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
+        if (cms_check_gcc_permission(g_cms_param->gcc_home) != OG_SUCCESS) {
+            CMS_LOG_ERR("cms check disk permission failed, file is %s.", g_cms_param->gcc_home);
+            return OG_ERROR;
+        }
         if (cms_detect_file_stat(g_cms_param->gcc_home, &g_detect_file_fd[0]) != OG_SUCCESS) {
             CMS_LOG_ERR("cms detect file failed, file is %s.", g_cms_param->gcc_home);
             return OG_ERROR;
@@ -223,9 +262,11 @@ status_t cms_judge_disk_error(void)
     date_t time_now = cm_now();
     if ((time_now - g_check_disk.last_check_time) >
         (int64)(g_cms_param->detect_disk_timeout * CMS_SECOND_TRANS_MICROSECOND) ||
-        g_check_disk.read_timeout == OG_TRUE) {
-        CMS_LOG_ERR("cms detect disk problem, latest check time is %lld, time now is %lld, read timeout stat is %u.",
-            g_check_disk.last_check_time, time_now, g_check_disk.read_timeout);
+        g_check_disk.read_timeout == OG_TRUE ||
+        g_check_disk.disk_perm_denied == OG_TRUE) {
+        CMS_LOG_ERR("cms detect disk problem, latest check time is %lld, time now is %lld, "
+            "read timeout stat is %u, disk perm denied is %u.",
+            g_check_disk.last_check_time, time_now, g_check_disk.read_timeout, g_check_disk.disk_perm_denied);
         if (cms_daemon_stop_pull() != OG_SUCCESS) {
             CMS_LOG_ERR("stop cms daemon process failed.");
         }
@@ -282,6 +323,7 @@ void cms_judge_disk_error_entry(thread_t *thread)
 {
     g_check_disk.last_check_time = cm_now();
     g_check_disk.read_timeout = OG_FALSE;
+    g_check_disk.disk_perm_denied = OG_FALSE;
     while (!thread->closed) {
         if (cms_judge_disk_error() != OG_SUCCESS) {
             CMS_LOG_ERR("cms detect disk failed, all res on the node are about to be offline.");
