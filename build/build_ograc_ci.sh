@@ -7,7 +7,7 @@ source "${CURRENT_PATH}"/common.sh
 
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="oGRAC"
+BUILD_PACK_NAME="openGauss-oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel

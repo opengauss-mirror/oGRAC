@@ -3,7 +3,7 @@ set -e
 CURRENT_PATH=$(dirname $(readlink -f $0))
 source "${CURRENT_PATH}"/common.sh
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
-BUILD_PACK_NAME="oGRAC"
+BUILD_PACK_NAME="openGauss-oGRAC"
 ENV_TYPE=$(uname -p)
 BUILD_TYPE="release"
 

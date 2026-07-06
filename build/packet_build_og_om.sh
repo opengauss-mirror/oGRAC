@@ -8,7 +8,12 @@ SCRIPT_TOP_DIR=$(cd ${CURRENT_PATH}; pwd)
 CI_TOP_DIR=$(cd ${SCRIPT_TOP_DIR}/..; pwd)
 
 MODULE_NAME=og_om
-MODULE_VERSION=1.0.0
+
+VERSIONS_YML="${CI_TOP_DIR}/build/versions.yml"
+if [[ -f "${VERSIONS_YML}" ]]; then
+    MODULE_VERSION=$(grep 'Version:' "${VERSIONS_YML}" | awk '{print $2}')
+fi
+MODULE_VERSION=${MODULE_VERSION:-1.0.0}
 
 # 由 build_ograc_om.sh 创建并填充的源文件目录
 og_om_component_path="${CI_TOP_DIR}/opt/og_om"

@@ -178,56 +178,69 @@ func_release_symbol()
     if [ "${ENABLE_LLT_ASAN}" == "NO" ]; then
         echo "release symbol"
         rm -rf ${OGRACDB_SYMBOL}
-        mkdir -p ${OGRACDB_SYMBOL}
+        mkdir -p ${OGRACDB_SYMBOL}/ograc/lib
+        mkdir -p ${OGRACDB_SYMBOL}/ograc/bin
+        mkdir -p ${OGRACDB_SYMBOL}/cms/lib
+        mkdir -p ${OGRACDB_SYMBOL}/cms/bin
+
+        # oGRAC libraries
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogclient.so
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogcommon.so
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libogprotocol.so
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libograc.so
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_LIB}/libdsslock.so
-        mv -f ${OGRACDB_LIB}/libogclient.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogclient.${SO}.${SYMBOLFIX}
-        mv -f ${OGRACDB_LIB}/libogcommon.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogcommon.${SO}.${SYMBOLFIX}
-        mv -f ${OGRACDB_LIB}/libogprotocol.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libogprotocol.${SO}.${SYMBOLFIX}
-        mv -f ${OGRACDB_LIB}/libograc.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libograc.${SO}.${SYMBOLFIX}
-        mv -f ${OGRACDB_LIB}/libdsslock.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/libdsslock.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libogclient.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/lib/libogclient.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libogcommon.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/lib/libogcommon.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libogprotocol.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/lib/libogprotocol.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libograc.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/lib/libograc.${SO}.${SYMBOLFIX}
+        mv -f ${OGRACDB_LIB}/libdsslock.${SO}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/lib/libdsslock.${SO}.${SYMBOLFIX}
 
+        # oGRAC binaries
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/${OGRACD_BIN}
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/cms
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogencrypt
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogsql
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogbox
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogbackup
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/dbstor
         sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/ogrst
-        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/rbps
-        mv -f ${OGRACDB_BIN}/${OGRACD_BIN}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/${OGRACD_BIN}.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/cms.${SYMBOLFIX} ${OGRACDB_SYMBOL}/cms.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/ogencrypt.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogencrypt.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/ogsql.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogsql.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/ogbox.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogbox.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/ogbackup.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogbackup.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/dbstor.${SYMBOLFIX} ${OGRACDB_SYMBOL}/dbstor.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/ogrst.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ogrst.${SYMBOLFIX}
-        mv -f ${OGRACDB_BIN}/rbps.${SYMBOLFIX} ${OGRACDB_SYMBOL}/rbps.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/${OGRACD_BIN}.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/${OGRACD_BIN}.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/ogencrypt.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/ogencrypt.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/ogsql.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/ogsql.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/ogbox.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/ogbox.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/ogbackup.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/ogbackup.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/dbstor.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/dbstor.${SYMBOLFIX}
+        mv -f ${OGRACDB_BIN}/ogrst.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/ogrst.${SYMBOLFIX}
+
+        # CMS binary
+        sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/cms
+        mv -f ${OGRACDB_BIN}/cms.${SYMBOLFIX} ${OGRACDB_SYMBOL}/cms/bin/cms.${SYMBOLFIX}
+
+        # rbps: shared by oGRAC and CMS, put symbol in both directories
+        if [ -f ${OGRACDB_BIN}/rbps ]; then
+            sh  ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${OGRACDB_BIN}/rbps
+            mv -f ${OGRACDB_BIN}/rbps.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/rbps.${SYMBOLFIX}
+            cp -f ${OGRACDB_SYMBOL}/ograc/bin/rbps.${SYMBOLFIX} ${OGRACDB_SYMBOL}/cms/bin/rbps.${SYMBOLFIX}
+        fi
 
         ##opensource library
         for lib_file in ${Z_LIB_PATH}/libz.so.*.*; do
             [ -f "$lib_file" ] && [ ! -L "$lib_file" ] || continue
             sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} "$lib_file"
-            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/
+            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/ograc/lib/
         done
         for lib_file in ${PCRE_LIB_PATH}/libpcre2-8.so.*.*; do
             [ -f "$lib_file" ] && [ ! -L "$lib_file" ] || continue
             sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} "$lib_file"
-            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/
+            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/ograc/lib/
         done
         for lib_file in ${ZSTD_LIB_PATH}/libzstd.so.*.*; do
             [ -f "$lib_file" ] && [ ! -L "$lib_file" ] || continue
             sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} "$lib_file"
-            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/
+            mv -f "${lib_file}.${SYMBOLFIX}" ${OGRACDB_SYMBOL}/ograc/lib/
         done
 
         sh ${OGRACDB_BUILD}/${DBG_SYMBOL_SCRIPT} ${ZSTD_LIB_PATH}/../bin/zstd
-        mv -f ${ZSTD_LIB_PATH}/../bin/zstd.${SYMBOLFIX} ${OGRACDB_SYMBOL}/zstd.${SYMBOLFIX}
+        mv -f ${ZSTD_LIB_PATH}/../bin/zstd.${SYMBOLFIX} ${OGRACDB_SYMBOL}/ograc/bin/zstd.${SYMBOLFIX}
 
         func_pkg_symbol
     fi
@@ -323,11 +336,15 @@ func_pkg_symbol()
     echo "pkg symbol"
 
     rm -rf ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}*
+    rm -rf ${OGRACDB_BIN}/ograc_symbols
     mkdir -p ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}
-    cp -rf ${OGRACDB_SYMBOL}/*.${SYMBOLFIX} ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}/
-    chmod 500 ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}/*
-    cd ${OGRACDB_BIN} && tar --owner=root --group=root -zcf ${SYMBOL_PACK_DIR_NAME}.tar.gz ${SYMBOL_PACK_DIR_NAME}
+    cd ${OGRACDB_SYMBOL} && find . -type f -name "*.${SYMBOLFIX}" -exec cp --parents {} ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}/ \;
+    chmod -R 500 ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}
+    mv ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME} ${OGRACDB_BIN}/ograc_symbols
+    cd ${OGRACDB_BIN} && tar --owner=root --group=root -zcf ${SYMBOL_PACK_DIR_NAME}.tar.gz ograc_symbols
     sha256sum ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${SYMBOL_PACK_DIR_NAME}.sha256
+    chmod -R 755 ${OGRACDB_BIN}/ograc_symbols
+    rm -rf ${OGRACDB_BIN}/ograc_symbols
 }
 
 func_make_debug()

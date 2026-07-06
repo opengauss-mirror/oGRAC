@@ -7,7 +7,7 @@ source "${CURRENT_PATH}"/common.sh
 
 OGDB_CODE_PATH=$(readlink -f "${CURRENT_PATH}/..")
 BUILD_TARGET_NAME="ograc_connector"
-BUILD_PACK_NAME="oGRAC"
+BUILD_PACK_NAME="openGauss-oGRAC"
 ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
@@ -114,8 +114,8 @@ function newPackageTarget() {
   rm -rf ${pkg_dir_name}
   echo "Packing ${pkg_name} success"
 
-  # Unified symbols package: includes DSS symbols + database/CM/other component symbols
-  if [[ ${DSSENABLED} == "TRUE" ]] || [ -d "${OGDB_CODE_PATH}/output/symbol" ]; then
+  # Unified symbols package: only generated for release builds
+  if [[ ${BUILD_TYPE} == "release" ]]; then
     local sym_pkg_name="${BUILD_PACK_NAME}-${ograc_version}"
     if [[ -n "${os_distro_part}" ]]; then
       sym_pkg_name="${sym_pkg_name}-${os_distro_part}"
@@ -126,19 +126,19 @@ function newPackageTarget() {
     sym_pkg_name="${sym_pkg_name}${build_type_suffix}-${ENV_TYPE}-symbols.tgz"
     echo "Start packing symbols ${sym_pkg_name}..."
 
-    mkdir -p ${TMP_PKG_PATH}/${pkg_dir_name}_symbols
+    mkdir -p ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc_symbols
     # Collect DSS symbols
     if [[ ${DSSENABLED} == "TRUE" ]] && [ -d "${OGDB_CODE_PATH}/dss_symbols" ]; then
-      cp -arf "${OGDB_CODE_PATH}"/dss_symbols/* ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/
+      mkdir -p ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc_symbols/dss
+      cp -arf "${OGDB_CODE_PATH}"/dss_symbols/* ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc_symbols/dss/
     fi
-    # Collect oGRAC database/CM/other component symbols
+    # Collect oGRAC database/CM/other component symbols (already categorized)
     if [ -d "${OGDB_CODE_PATH}/output/symbol" ]; then
-      mkdir -p ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc
-      cp -arf "${OGDB_CODE_PATH}"/output/symbol/* ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc/
+      cp -arf "${OGDB_CODE_PATH}"/output/symbol/* ${TMP_PKG_PATH}/${pkg_dir_name}_symbols/ograc_symbols/
     fi
 
     cd ${TMP_PKG_PATH}/${pkg_dir_name}_symbols
-    tar -zcf "${TMP_PKG_PATH}/${sym_pkg_name}" .
+    tar -zcf "${TMP_PKG_PATH}/${sym_pkg_name}" ograc_symbols
     cd - > /dev/null
     rm -rf ${TMP_PKG_PATH}/${pkg_dir_name}_symbols
     echo "Packing ${sym_pkg_name} success"
