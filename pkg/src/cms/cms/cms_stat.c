@@ -1834,35 +1834,26 @@ status_t get_res_stat(uint32 node_id, uint32 res_id, cms_res_stat_t* res_stat)
 
     cm_thread_lock(&g_node_lock[node_id]);
 
-    uint32 size = CM_ALIGN_512(sizeof(cms_res_stat_t));
-    cms_res_stat_t* res_cur_stat = (cms_res_stat_t*)cm_malloc_align(CMS_BLOCK_SIZE, size);
-    if (res_cur_stat == NULL) {
-        CMS_LOG_ERR("cm_malloc_align failed, alloc_size=%u", size);
-        cm_thread_unlock(&g_node_lock[node_id]);
-        return OG_ERROR;
-    }
+    cms_res_stat_t res_cur_stat __attribute__((aligned(512)));
 
     cms_disk_lock_t *res_stat_lock = cms_get_res_stat_lock(node_id, res_id);
     if (cms_disk_lock(res_stat_lock, DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_READ) != OG_SUCCESS) {
-        CM_FREE_PTR(res_cur_stat);
         CMS_LOG_ERR("cms_disk_lock timeout.");
         cm_thread_unlock(&g_node_lock[node_id]);
         return OG_ERROR;
     }
 retry:
 
-    errcode = memset_s(res_cur_stat, sizeof(cms_res_stat_t), 0, sizeof(cms_res_stat_t));
+    errcode = memset_s(&res_cur_stat, sizeof(cms_res_stat_t), 0, sizeof(cms_res_stat_t));
     if (errcode != EOK) {
-        CM_FREE_PTR(res_cur_stat);
         CMS_LOG_ERR("stat read memset_s failed");
         cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
         cm_thread_unlock(&g_node_lock[node_id]);
         return OG_ERROR;
     }
 
-    ret = stat_read(CMS_RES_STAT_POS(node_id, res_id), (char *)res_cur_stat, sizeof(cms_res_stat_t));
+    ret = stat_read(CMS_RES_STAT_POS(node_id, res_id), (char *)&res_cur_stat, sizeof(cms_res_stat_t));
     if (ret != OG_SUCCESS) {
-        CM_FREE_PTR(res_cur_stat);
         CMS_LOG_ERR("stat read failed");
         cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
         cm_thread_unlock(&g_node_lock[node_id]);
@@ -1873,31 +1864,30 @@ retry:
                         "res_id=%u, magic=%llu, session_id=%llu, inst_id=%llu, res_type=%s, cur_stat=%d, "
                         "pre_stat=%d, target_stat=%d, work_stat=%u, hb_time=%lld, last_check=%lld, "
                         "last_stat_change=%lld, restart_count=%d, restart_time=%lld, checking=%d.",
-                        g_stat->head.stat_ver, node_id, res_id, res_cur_stat->magic, res_cur_stat->session_id,
-                        res_cur_stat->inst_id, res_cur_stat->res_type, res_cur_stat->cur_stat,
-                        res_cur_stat->pre_stat, res_cur_stat->target_stat, res_cur_stat->work_stat,
-                        res_cur_stat->hb_time, res_cur_stat->last_check, res_cur_stat->last_stat_change,
-                        res_cur_stat->restart_count, res_cur_stat->restart_time, res_cur_stat->checking);
+                        g_stat->head.stat_ver, node_id, res_id, res_cur_stat.magic, res_cur_stat.session_id,
+                        res_cur_stat.inst_id, res_cur_stat.res_type, res_cur_stat.cur_stat,
+                        res_cur_stat.pre_stat, res_cur_stat.target_stat, res_cur_stat.work_stat,
+                        res_cur_stat.hb_time, res_cur_stat.last_check, res_cur_stat.last_stat_change,
+                        res_cur_stat.restart_count, res_cur_stat.restart_time, res_cur_stat.checking);
 
     // when read failed, retry 5 times.
-    if ((res_cur_stat->cur_stat == CMS_RES_OFFLINE && res_cur_stat->inst_id != OG_INVALID_ID64) ||
-        (res_cur_stat->cur_stat != CMS_RES_OFFLINE && res_cur_stat->inst_id >= OG_MAX_INSTANCES) ||
-        (res_cur_stat->cur_stat == CMS_RES_UNKNOWN && res_cur_stat->pre_stat == CMS_RES_UNKNOWN
-                        && res_cur_stat->hb_time == 0 && res_cur_stat->restart_time == 0)) {      // res_cur_stat is all zero
+    if ((res_cur_stat.cur_stat == CMS_RES_OFFLINE && res_cur_stat.inst_id != OG_INVALID_ID64) ||
+        (res_cur_stat.cur_stat != CMS_RES_OFFLINE && res_cur_stat.inst_id >= OG_MAX_INSTANCES) ||
+        (res_cur_stat.cur_stat == CMS_RES_UNKNOWN && res_cur_stat.pre_stat == CMS_RES_UNKNOWN &&
+        res_cur_stat.hb_time == 0 && res_cur_stat.restart_time == 0)) {
         CMS_LOG_ERR("[CMS] ERROR INFO: invalid inst_id after stat read, stat_ver=%llu, node_id=%u, "
                             "res_id=%u, magic=%llu, session_id=%llu, inst_id=%llu, res_type=%s, cur_stat=%d, "
                             "pre_stat=%d, target_stat=%d, work_stat=%u, hb_time=%lld, last_check=%lld, "
                             "last_stat_change=%lld, restart_count=%d, restart_time=%lld, checking=%d.",
-                            g_stat->head.stat_ver, node_id, res_id, res_cur_stat->magic, res_cur_stat->session_id,
-                            res_cur_stat->inst_id, res_cur_stat->res_type, res_cur_stat->cur_stat,
-                            res_cur_stat->pre_stat, res_cur_stat->target_stat, res_cur_stat->work_stat,
-                            res_cur_stat->hb_time, res_cur_stat->last_check, res_cur_stat->last_stat_change,
-                            res_cur_stat->restart_count, res_cur_stat->restart_time, res_cur_stat->checking);
+                            g_stat->head.stat_ver, node_id, res_id, res_cur_stat.magic, res_cur_stat.session_id,
+                            res_cur_stat.inst_id, res_cur_stat.res_type, res_cur_stat.cur_stat,
+                            res_cur_stat.pre_stat, res_cur_stat.target_stat, res_cur_stat.work_stat,
+                            res_cur_stat.hb_time, res_cur_stat.last_check, res_cur_stat.last_stat_change,
+                            res_cur_stat.restart_count, res_cur_stat.restart_time, res_cur_stat.checking);
         retry_count++;
         if (retry_count >= CMS_READ_RES_STAT_FAILED_RETRY) {
             CMS_LOG_ERR("retry %d times and failed, get invalid inst_id after stat read. return ERROR.", CMS_READ_RES_STAT_FAILED_RETRY);
-            errno_t err = memcpy_s(res_stat, sizeof(cms_res_stat_t), res_cur_stat, sizeof(cms_res_stat_t));
-            CM_FREE_PTR(res_cur_stat);
+            errno_t err = memcpy_s(res_stat, sizeof(cms_res_stat_t), &res_cur_stat, sizeof(cms_res_stat_t));
             MEMS_RETURN_IFERR(err);
             cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
             cm_thread_unlock(&g_node_lock[node_id]);
@@ -1908,8 +1898,7 @@ retry:
     }
     cms_disk_unlock(res_stat_lock, DISK_LOCK_READ);
 
-    errno_t err = memcpy_s(res_stat, sizeof(cms_res_stat_t), res_cur_stat, sizeof(cms_res_stat_t));
-    CM_FREE_PTR(res_cur_stat);
+    errno_t err = memcpy_s(res_stat, sizeof(cms_res_stat_t), &res_cur_stat, sizeof(cms_res_stat_t));
     cm_thread_unlock(&g_node_lock[node_id]);
     MEMS_RETURN_IFERR(err);
 
