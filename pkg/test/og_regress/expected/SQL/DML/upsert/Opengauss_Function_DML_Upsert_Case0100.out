@@ -1,0 +1,49 @@
+
+
+SQL> drop table if exists mykey_4a;
+
+Succeed.
+
+SQL> create table mykey_4a
+  2 (
+  3    name nvarchar2(20) unique ,
+  4    id number primary key ,
+  5    address nvarchar2(50)
+  6 ) ;
+
+Succeed.
+
+SQL> 
+SQL> insert into mykey_4a values('tiya',99,'daqing'),('tiya1',100,'beijing');
+
+2 rows affected.
+
+SQL> select * from mykey_4a;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+tiya                                                             99                                       daqing                                                          
+tiya1                                                            100                                      beijing                                                         
+
+2 rows fetched.
+
+SQL>  insert into mykey_4a values('tiya',99,'yunnan')on DUPLICATE KEY UPDATE address='yunnan';
+
+2 rows affected.
+
+SQL>  select * from mykey_4a;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+tiya                                                             99                                       yunnan                                                          
+tiya1                                                            100                                      beijing                                                         
+
+2 rows fetched.
+
+SQL>  drop table mykey_4a;
+
+Succeed.
+
+SQL> 
+
+

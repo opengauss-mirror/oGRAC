@@ -1,0 +1,47 @@
+
+
+SQL> drop table if exists explain_t012;
+
+Succeed.
+
+SQL> drop table if exists explain_t012_bak;
+
+Succeed.
+
+SQL> create table explain_t012(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t012_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> explain plan for select t.a  from explain_t012 t where t.a = (select f1 from explain_t012_bak) - 1;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
+------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                  | 0    | 0    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                  | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_T012 T   | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_T012_BAK | 0    | 0    | 0         |       |        |
+------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: T.A = (SELECT F1 FROM EXPLAIN_T012_BAK) - 1     
+
+11 rows fetched.
+
+SQL> drop table explain_t012;
+
+Succeed.
+
+SQL> drop table explain_t012_bak;
+
+Succeed.
+
+SQL> 
+
+

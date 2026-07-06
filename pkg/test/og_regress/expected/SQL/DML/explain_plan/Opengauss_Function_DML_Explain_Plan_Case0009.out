@@ -1,0 +1,43 @@
+
+
+SQL> drop table if exists explain_t009;
+
+Succeed.
+
+SQL> drop table if exists explain_t009_bak;
+
+Succeed.
+
+SQL> create table explain_t009(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t009_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> explain plan for select t.a, (select f1 from explain_t009_bak) from explain_t009 t;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                  | 0    | 0    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_T009_BAK | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL | SYS   | EXPLAIN_T009 T   | 0    | 0    | 0         |       |        |
+----------------------------------------------------------------------------------------------------
+
+7 rows fetched.
+
+SQL> drop table explain_t009;
+
+Succeed.
+
+SQL> drop table explain_t009_bak;
+
+Succeed.
+
+SQL> 
+
+

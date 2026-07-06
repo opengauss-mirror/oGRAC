@@ -1,0 +1,50 @@
+
+
+SQL> drop table if exists t_insert02;
+
+Succeed.
+
+SQL> create table t_insert02(id int primary key,name varchar(10));
+
+Succeed.
+
+SQL> insert into t_insert02 values(1,'Tom'),(2,'lisi');
+
+2 rows affected.
+
+SQL> drop table if exists t_insert02_bak;
+
+Succeed.
+
+SQL> create table t_insert02_bak(id int primary key,name varchar(10));
+
+Succeed.
+
+SQL> insert into t_insert02_bak select * from t_insert02;
+
+2 rows affected.
+
+SQL> insert into t_insert02_bak select * from t_insert02 where id >5;
+
+0 rows affected.
+
+SQL> select * from t_insert02_bak;
+
+ID           NAME      
+------------ ----------
+1            Tom       
+2            lisi      
+
+2 rows fetched.
+
+SQL> drop table if exists t_insert02;
+
+Succeed.
+
+SQL> drop table if exists t_insert02_bak;
+
+Succeed.
+
+SQL> 
+
+

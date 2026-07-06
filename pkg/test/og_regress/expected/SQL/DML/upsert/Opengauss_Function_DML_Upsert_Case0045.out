@@ -1,0 +1,68 @@
+
+
+SQL> drop table if exists upsert1;
+
+Succeed.
+
+SQL> create table upsert1(id int primary key,age int,count int);
+
+Succeed.
+
+SQL> insert into upsert1 values (1,1,1),(4,4,4);
+
+2 rows affected.
+
+SQL> select * from upsert1 order by id;
+
+ID           AGE          COUNT       
+------------ ------------ ------------
+1            1            1           
+4            4            4           
+
+2 rows fetched.
+
+SQL> 
+SQL> insert into upsert1 values(1,2,3),(2,3,4) ON DUPLICATE key update age=2,count=3;
+
+3 rows affected.
+
+SQL> select * from upsert1 order by id;
+
+ID           AGE          COUNT       
+------------ ------------ ------------
+1            2            3           
+2            3            4           
+4            4            4           
+
+3 rows fetched.
+
+SQL> delete from upsert1 ;
+
+3 rows affected.
+
+SQL> insert into upsert1 values (1,1,1),(4,4,4);
+
+2 rows affected.
+
+SQL> 
+SQL> insert into upsert1 values(1,2,3),(2,3,4) on DUPLICATE key update age=3,count=4;
+
+3 rows affected.
+
+SQL> select * from upsert1 order by id;
+
+ID           AGE          COUNT       
+------------ ------------ ------------
+1            3            4           
+2            3            4           
+4            4            4           
+
+3 rows fetched.
+
+SQL> drop table upsert1;
+
+Succeed.
+
+SQL> 
+
+

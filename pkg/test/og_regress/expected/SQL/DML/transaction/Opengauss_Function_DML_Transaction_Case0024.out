@@ -1,0 +1,43 @@
+
+
+SQL> drop table if exists t_dml_transaction_case0024;create table t_dml_transaction_case0024 (sk integer,id tinyint,name smallint,sq_ft bigint);
+
+Succeed.
+
+
+Succeed.
+
+SQL> 
+SQL> declare
+  2                           a integer;
+  3                           b TINYINT;
+  4                           c SMALLINT;
+  5                           d BIGINT;
+  6                         begin
+  7                           a := 1;
+  8                           b := 255;
+  9                           c := 3000;
+ 10                           d := 9223372036854775807;
+ 11                           insert into t_dml_transaction_case0024 values (a,b,c,d);
+ 12                         end;
+ 13 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select * from t_dml_transaction_case0024;
+
+SK           ID           NAME         SQ_FT               
+------------ ------------ ------------ --------------------
+1            255          3000         9223372036854775807 
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_dml_transaction_case0024;
+
+Succeed.
+
+SQL> 
+
+

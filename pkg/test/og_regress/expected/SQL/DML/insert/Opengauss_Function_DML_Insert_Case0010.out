@@ -1,0 +1,41 @@
+
+
+SQL> drop table if exists zsharding_tbl;
+
+Succeed.
+
+SQL> create table zsharding_tbl(
+  2 c_id int, c_int int, c_integer integer, c_bool int, c_boolean int, c_bigint integer,
+  3 c_real real, c_double real,
+  4 c_decimal decimal(38), c_number number(38), c_numeric numeric(38),
+  5 c_char char(50) default null, c_varchar varchar(20), c_varchar2 varchar2(4000),
+  6 c_date date, c_datetime date, c_timestamp timestamp
+  7 )
+  8 PARTITION BY RANGE (c_integer)
+  9 (
+ 10 partition P_20180121 values less than (0),
+ 11 partition P_20190122 values less than (50000),
+ 12 partition P_20200123 values less than (100000)
+ 13 );
+
+Succeed.
+
+SQL> insert into zsharding_tbl(c_id,c_integer) values(1,123);
+
+1 rows affected.
+
+SQL> select * from zsharding_tbl order by 1;
+
+C_ID         C_INT        C_INTEGER    C_BOOL       C_BOOLEAN    C_BIGINT     C_REAL               C_DOUBLE             C_DECIMAL                                C_NUMBER                                 C_NUMERIC                                C_CHAR                                             C_VARCHAR            C_VARCHAR2                                                       C_DATE                 C_DATETIME             C_TIMESTAMP                     
+------------ ------------ ------------ ------------ ------------ ------------ -------------------- -------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------- -------------------------------------------------- -------------------- ---------------------------------------------------------------- ---------------------- ---------------------- --------------------------------
+1                         123                                                                                                                                                                                                                                                                                                                                                                                                                                             
+
+1 rows fetched.
+
+SQL> drop table if exists zsharding_tbl;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,47 @@
+
+
+SQL> drop table if exists explain_t008;
+
+Succeed.
+
+SQL> drop table if exists explain_t008_bak;
+
+Succeed.
+
+SQL> create table explain_t008(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t008_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> explain plan for  select * from explain_t008 where A = 1 + (select f1 from explain_t008_bak);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
+------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                  | 0    | 0    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                  | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_T008     | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_T008_BAK | 0    | 0    | 0         |       |        |
+------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: A = 1 + (SELECT F1 FROM EXPLAIN_T008_BAK)       
+
+11 rows fetched.
+
+SQL> drop table explain_t008;
+
+Succeed.
+
+SQL> drop table explain_t008_bak;
+
+Succeed.
+
+SQL> 
+
+

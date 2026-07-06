@@ -1,0 +1,59 @@
+
+
+SQL> drop table if exists explain_partition_tab_list_0029;
+
+Succeed.
+
+SQL>             create table explain_partition_tab_list_0029(col1 int,col2 int)
+  2             partition by list(col1)
+  3             (
+  4                 partition p1 values (2000),
+  5                 partition p2 values (3000),
+  6                 partition p3 values (4000),
+  7                 partition p4 values (5000)
+  8             );
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_partition_tab_list_0029 values(2000, 2000);
+
+1 rows affected.
+
+SQL> 
+SQL> insert into explain_partition_tab_list_0029 values(3000, 3000);
+
+1 rows affected.
+
+SQL> 
+SQL> alter table explain_partition_tab_list_0029 add partition p5
+  2             values (6000);
+
+Succeed.
+
+SQL>             insert into  explain_partition_tab_list_0029 VALUES(6000, 6000);
+
+1 rows affected.
+
+SQL> 
+SQL> explain select * from explain_partition_tab_list_0029;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------
+| Id | Operation                          | Owner | Name                            | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                   |       |                                 | 1239 | 18   | 0         |       |        |
+| 1  |     TABLE ACCESS FULL Filter:[0,5) | SYS   | EXPLAIN_PARTITION_TAB_LIST_0029 | 1239 | 18   | 0         |       |        |
+--------------------------------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> 
+SQL> drop table explain_partition_tab_list_0029;
+
+Succeed.
+
+SQL> 
+
+

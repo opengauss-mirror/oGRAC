@@ -1,0 +1,35 @@
+
+
+SQL> drop table if exists mykey_0d;
+
+Succeed.
+
+SQL> create table mykey_0d
+  2 (
+  3    name nvarchar2(20),
+  4    id number unique ,
+  5    address nvarchar2(50)
+  6 ) ;
+
+Succeed.
+
+SQL> insert into mykey_0d values('lihua',1,'shenzhen'),('lihua1',2,'shenzhen');
+
+2 rows affected.
+
+SQL> select * from mykey_0d;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+lihua                                                            1                                        shenzhen                                                        
+lihua1                                                           2                                        shenzhen                                                        
+
+2 rows fetched.
+
+SQL> drop table mykey_0d;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,69 @@
+
+
+SQL> drop table if exists t_dml_explain_0074_1;
+
+Succeed.
+
+SQL> drop table if exists t_dml_explain_0074_2;
+
+Succeed.
+
+SQL> drop table if exists t_dml_explain_0074_3;
+
+Succeed.
+
+SQL> create table t_dml_explain_0074_1(id int,id1 int);
+
+Succeed.
+
+SQL> create table t_dml_explain_0074_2(id int,id1 int);
+
+Succeed.
+
+SQL> create table t_dml_explain_0074_3(id int,id1 int);
+
+Succeed.
+
+SQL> 
+SQL> explain select m.* from ( select tz.* from (select t_dml_explain_0074_1.id from t_dml_explain_0074_1 WHERE exists (select t_dml_explain_0074_2.id from t_dml_explain_0074_2 where t_dml_explain_0074_2.id = t_dml_explain_0074_1.id and t_dml_explain_0074_2.id1 in (1,2,3,4,5,6,7,8,9,10,11))) tz limit 10) m
+  2 left join t_dml_explain_0074_3 on m.id = t_dml_explain_0074_3.id;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------
+| Id | Operation                           | Owner | Name                 | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                    |       |                      | 1    | 0    | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER                |       |                      | 1    | 0    | 0         |       |        |
+| 2  |       SUBSELECT                     | SYS   | M                    | 0    | 0    | 0         |       |        |
+| 3  |         QUERY LIMIT                 |       |                      | 0    | 0    | 0         |       |        |
+| 4  |             SUBSELECT               | SYS   | TZ                   | 0    | 0    | 0         |       |        |
+| 5  |               KERNEL FILTER         |       |                      | 0    | 0    | 0         |       |        |
+| 6  |                 TABLE ACCESS FULL   | SYS   | T_DML_EXPLAIN_0074_1 | 0    | 0    | 0         |       |        |
+| 7  |                   TABLE ACCESS FULL | SYS   | T_DML_EXPLAIN_0074_2 | 0    | 0    | 0         |       |        |
+| 8  |       TABLE ACCESS FULL             | SYS   | T_DML_EXPLAIN_0074_3 | 0    | 0    | 0         |       |        |
+----------------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    6 - filter: EXISTS(SELECT 1 FROM T_DML_EXPLAIN_0074_2 WHERE T_DML_EXPLAIN_0074_2.ID1 IN (1, 2, 3, 4, 5, 6, 7, 8,
+                9, 10, 11) AND T_DML_EXPLAIN_0074_2.ID = T_DML_EXPLAIN_0074_1.ID)
+    7 - filter: T_DML_EXPLAIN_0074_2.ID1 IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) AND T_DML_EXPLAIN_0074_2.ID = T_DML_EXPLAIN_0074_1.ID
+    8 - filter: M.ID = T_DML_EXPLAIN_0074_3.ID                  
+
+19 rows fetched.
+
+SQL> 
+SQL> drop table t_dml_explain_0074_1;
+
+Succeed.
+
+SQL> drop table t_dml_explain_0074_2;
+
+Succeed.
+
+SQL> drop table t_dml_explain_0074_3;
+Succeed.
+
+
+
+

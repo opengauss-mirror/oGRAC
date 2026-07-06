@@ -1,0 +1,36 @@
+
+
+SQL> drop table if exists t3;
+
+Succeed.
+
+SQL> drop table if exists t2;
+
+Succeed.
+
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> create table t1(a int);
+
+Succeed.
+
+SQL> insert into t1 values(1);
+
+1 rows affected.
+
+SQL> insert into t1 values(11);
+
+1 rows affected.
+
+SQL> alter table t1  add constraint ua unique (a);
+
+Succeed.
+
+SQL> drop table if exists t1;
+
+Succeed.
+
+SQL> 
+

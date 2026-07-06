@@ -1,0 +1,44 @@
+
+
+SQL> drop table if exists explain_table_func1_0019;
+
+Succeed.
+
+SQL>             create table explain_table_func1_0019(name varchar(10),stu_id integer
+  2             not null,score int );
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_table_func1_0019 values('张三',1,50),
+  2             ('李四',2,55),('王五',3,30);
+
+3 rows affected.
+
+SQL> 
+SQL> explain select char_length
+  2             ((select name from explain_table_func1_0019 where score = 30));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name                     | Rows | Cost | StartCost | Bytes | Remark |
+------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                          | 744  | 10   | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_FUNC1_0019 | 2    | 2    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL | SYS   | SYS_DUMMY                | 744  | 10   | 0         |       |        |
+------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: SCORE = 30                                      
+
+10 rows fetched.
+
+SQL> 
+SQL> drop table explain_table_func1_0019;
+
+Succeed.
+
+SQL> 
+
+

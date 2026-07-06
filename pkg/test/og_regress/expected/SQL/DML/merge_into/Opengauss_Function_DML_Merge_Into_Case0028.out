@@ -1,0 +1,88 @@
+
+
+SQL> drop table if exists t_mergeinto_28_01;
+
+Succeed.
+
+SQL> drop table if exists t_mergeinto_28_02;
+
+Succeed.
+
+SQL> create table t_mergeinto_28_01(product_id integer,product_name varchar2(60),
+  2 category varchar2(60));
+
+Succeed.
+
+SQL> insert into t_mergeinto_28_01 values (1501, 'vivitar 35mm', 'electrncs');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_01 values (1502, 'olympus is50', 'electrncs');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_01 values (1600, 'play gym', 'toys');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_01 values (1601, 'lamaze', 'toys');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_01 values (1666, 'harry potter', 'dvd');
+
+1 rows affected.
+
+SQL> create table t_mergeinto_28_02(product_id integer,product_name varchar2(60),
+  2 category varchar2(60));
+
+Succeed.
+
+SQL> insert into t_mergeinto_28_02 values (1502, 'olympus camera', 'electrncs');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_02 values (1601, 'lamaze', 'toys');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_02 values (1666, 'harry potter', 'toys');
+
+1 rows affected.
+
+SQL> insert into t_mergeinto_28_02 values (1700, 'wait interface', 'books');
+
+1 rows affected.
+
+SQL> merge into t_mergeinto_28_01 t1  using t_mergeinto_28_02 t2
+  2 on (t1.product_name = t2.product_name)
+  3 when not matched then
+  4   insert values (t2.product_id, t2.product_name, t2.category)
+  5   where t2.category = 'books';
+
+1 rows affected.
+
+SQL> select * from t_mergeinto_28_01 order by product_id;
+
+PRODUCT_ID   PRODUCT_NAME                                                 CATEGORY                                                    
+------------ ------------------------------------------------------------ ------------------------------------------------------------
+1501         vivitar 35mm                                                 electrncs                                                   
+1502         olympus is50                                                 electrncs                                                   
+1600         play gym                                                     toys                                                        
+1601         lamaze                                                       toys                                                        
+1666         harry potter                                                 dvd                                                         
+1700         wait interface                                               books                                                       
+
+6 rows fetched.
+
+SQL> drop table t_mergeinto_28_01;
+
+Succeed.
+
+SQL> drop table t_mergeinto_28_02;
+
+Succeed.
+
+SQL> 
+
+

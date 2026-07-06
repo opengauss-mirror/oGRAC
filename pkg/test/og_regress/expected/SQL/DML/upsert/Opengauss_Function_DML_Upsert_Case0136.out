@@ -1,0 +1,70 @@
+
+
+SQL> drop table if exists t_dml_upsert_0136;
+
+Succeed.
+
+SQL> create table t_dml_upsert_0136(a int, b int) partition by range (a)(
+  2 partition p1  values less than (10),
+  3 partition p2  values less than (maxvalue)
+  4 );
+
+Succeed.
+
+SQL> 
+SQL> create unique index t_unique_key on t_dml_upsert_0136(b);
+
+Succeed.
+
+SQL> 
+SQL> insert into t_dml_upsert_0136 values(1,1),(2,2),(11,11);
+
+3 rows affected.
+
+SQL> select * from t_dml_upsert_0136 partition(p1);
+
+A            B           
+------------ ------------
+1            1           
+2            2           
+
+2 rows fetched.
+
+SQL> select * from t_dml_upsert_0136 partition(p2);
+
+A            B           
+------------ ------------
+11           11          
+
+1 rows fetched.
+
+SQL> 
+SQL> insert into t_dml_upsert_0136 values(2,2) on duplicate key update a = 15;
+
+2 rows affected.
+
+SQL> select * from t_dml_upsert_0136 partition(p1);
+
+A            B           
+------------ ------------
+1            1           
+
+1 rows fetched.
+
+SQL> select * from t_dml_upsert_0136 partition(p2);
+
+A            B           
+------------ ------------
+11           11          
+15           2           
+
+2 rows fetched.
+
+SQL> 
+SQL> drop table t_dml_upsert_0136;
+
+Succeed.
+
+SQL> 
+
+

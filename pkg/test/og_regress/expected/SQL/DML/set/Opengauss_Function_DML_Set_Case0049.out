@@ -1,0 +1,55 @@
+
+
+SQL> drop table if exists student;
+
+Succeed.
+
+SQL>                                       create table student(id int, name char(20));
+
+Succeed.
+
+SQL>                                       drop index if exists unique_id;
+
+Succeed.
+
+SQL>                                       CREATE INDEX unique_id on student(id);
+
+Succeed.
+
+SQL> 
+SQL> explain select sum(id) from student;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name    | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |         | 1    | 0    | 0         |       |        |
+| 1  |   AGGR                  |       |         | 1    | 0    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | STUDENT | 0    | 0    | 0         |       |        |
+---------------------------------------------------------------------------------------------
+
+7 rows fetched.
+
+SQL>                                       explain select count(*) from student;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name    | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |         | 1    | 0    | 0         |       |        |
+| 1  |   AGGR                  |       |         | 1    | 0    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | STUDENT | 0    | 0    | 0         |       |        |
+---------------------------------------------------------------------------------------------
+
+7 rows fetched.
+
+SQL> 
+SQL> drop table student;
+
+Succeed.
+
+SQL> 
+
+

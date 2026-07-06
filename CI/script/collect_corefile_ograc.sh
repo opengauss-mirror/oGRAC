@@ -1,9 +1,9 @@
 #!/bin/bash
 
-if [ $# -ne 5 ]
+if [ $# -lt 5 ] || [ $# -gt 6 ]
 then	
 	echo "Help:"	
-	echo "usage: collect_corefile_ograc.sh CORE_DIR BACKUP_DIR ROOT_PATH OGDB_DATA USER"
+	echo "usage: collect_corefile_ograc.sh CORE_DIR BACKUP_DIR ROOT_PATH OGDB_DATA USER [REGRESS_LOG]"
 	exit 1	
 fi
 
@@ -12,6 +12,7 @@ BACKUP_DIR=$2
 ROOT_PATH=$3
 OGDB_DATA=$4
 TEST_USER=$5
+REGRESS_LOG=$6
 
 OUTPUT_DIR=${ROOT_PATH}/output
 
@@ -53,6 +54,18 @@ collect_run_log()
 	
 	if [ -d ${OGDB_DATA}/log ]; then
 		cp -rf ${OGDB_DATA}/log/ ${BACKUP_DIR}/${collect_core}/
+	fi
+
+	if [ -n "${REGRESS_LOG}" ] && [ -f "${REGRESS_LOG}" ]; then
+		cp -f "${REGRESS_LOG}" "${BACKUP_DIR}/${collect_core}/regress_log"
+	fi
+
+	if [ -d "${BACKUP_DIR}/diff" ]; then
+		cp -rf "${BACKUP_DIR}/diff" "${BACKUP_DIR}/${collect_core}/"
+	fi
+
+	if [ -f "${BACKUP_DIR}/regress_diff_files.list" ]; then
+		cp -f "${BACKUP_DIR}/regress_diff_files.list" "${BACKUP_DIR}/${collect_core}/"
 	fi
 	
 }

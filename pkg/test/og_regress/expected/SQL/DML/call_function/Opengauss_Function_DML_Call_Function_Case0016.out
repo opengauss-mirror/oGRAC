@@ -1,0 +1,30 @@
+
+
+SQL> drop FUNCTION if EXISTS func_add_sql017;
+
+Succeed.
+
+SQL> CREATE FUNCTION func_add_sql017(num1 integer, num2 char) RETURN char
+  2 AS
+  3 BEGIN
+  4 RETURN num2;
+  5 END;
+  6 /
+
+Succeed.
+
+SQL> select func_add_sql017(999,'hello') from sys_dummy;
+
+FUNC_ADD_SQL017(999,'HELLO')                                    
+----------------------------------------------------------------
+hello                                                           
+
+1 rows fetched.
+
+SQL> drop FUNCTION func_add_sql017;
+
+Succeed.
+
+SQL> 
+
+

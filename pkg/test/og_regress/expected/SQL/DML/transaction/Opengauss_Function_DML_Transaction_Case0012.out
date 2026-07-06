@@ -1,0 +1,65 @@
+
+
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL>                 create table testzl (SK INTEGER,ID CHAR(16),
+  2                 NAME VARCHAR(20),SQ_FT INTEGER);
+
+Succeed.
+
+SQL>                 insert into testzl values (001,'sk1','tt',3332);
+
+1 rows affected.
+
+SQL> 
+SQL> declare
+  2                             t1 int;
+  3                             v_sql varchar(4000);
+  4                           begin
+  5                             v_sql := 'select count(*) from testzl';
+  6                             execute immediate v_sql into t1;
+  7                           end;
+  8 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select count(*) from testzl;
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> declare
+  2                             t2 int;
+  3                             v_sql varchar(4000);
+  4                           begin
+  5                             v_sql := 'select count(*) from testzl';
+  6                             execute immediate v_sql into t2;
+  7                           end;
+  8 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select * from testzl;
+
+SK           ID               NAME                 SQ_FT       
+------------ ---------------- -------------------- ------------
+1            sk1              tt                   3332        
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL> 
+
+

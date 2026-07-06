@@ -1,0 +1,34 @@
+
+
+SQL> drop function if exists fun_function_0022;
+
+Succeed.
+
+SQL> create or replace function fun_function_0022(c bigint:=1) return int
+  2 as
+  3    b int := c;
+  4 begin
+  5   for i in 1..c loop
+  6     b := b + 1;
+  7   end loop;
+  8   return b;
+  9 end;
+ 10 /
+
+Succeed.
+
+SQL> select fun_function_0022 from sys_dummy;
+
+FUN_FUNCTION_0022
+-----------------
+2                
+
+1 rows fetched.
+
+SQL> drop function if exists fun_function_0022;
+
+Succeed.
+
+SQL> 
+
+

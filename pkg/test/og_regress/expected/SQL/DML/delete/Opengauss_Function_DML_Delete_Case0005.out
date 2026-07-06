@@ -1,0 +1,45 @@
+
+
+SQL> drop table if exists t_delete05;
+
+Succeed.
+
+SQL> create table t_delete05(age int,salary numeric);
+
+Succeed.
+
+SQL> insert into t_delete05 values(25,8500);
+
+1 rows affected.
+
+SQL> insert into t_delete05 values(30,9500.50);
+
+1 rows affected.
+
+SQL> insert into t_delete05 values(45,6000);
+
+1 rows affected.
+
+SQL> delete FROM t_delete05 WHERE AGE >= 25 AND SALARY > 8500;
+
+1 rows affected.
+
+SQL> delete FROM t_delete05 WHERE AGE >30 or SALARY > 10000;
+
+1 rows affected.
+
+SQL> delete FROM t_delete05 WHERE age in(20,25);
+
+1 rows affected.
+
+SQL> delete FROM t_delete05 WHERE age not in(30,45);
+
+0 rows affected.
+
+SQL> drop table t_delete05;
+
+Succeed.
+
+SQL> 
+
+

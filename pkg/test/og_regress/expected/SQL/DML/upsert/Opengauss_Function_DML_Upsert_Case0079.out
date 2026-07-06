@@ -1,0 +1,58 @@
+
+
+SQL> drop table if exists test2;
+
+Succeed.
+
+SQL> create table test2 (id int ,name varchar(20) );
+
+Succeed.
+
+SQL> ALTER TABLE test2 ADD CONSTRAINT id_key primary key (id);
+
+Succeed.
+
+SQL> insert into test2 values(5,'daliu');
+
+1 rows affected.
+
+SQL> select * from test2;
+
+ID           NAME                
+------------ --------------------
+5            daliu               
+
+1 rows fetched.
+
+SQL> insert into test2 values(5,'lisa') ON DUPLICATE KEY UPDATE  name='lisa';
+
+2 rows affected.
+
+SQL> select * from test2;
+
+ID           NAME                
+------------ --------------------
+5            lisa                
+
+1 rows fetched.
+
+SQL> insert into test2 values(6,'lisa1') ON DUPLICATE KEY UPDATE name='lisa1';
+
+1 rows affected.
+
+SQL> select * from test2;
+
+ID           NAME                
+------------ --------------------
+5            lisa                
+6            lisa1               
+
+2 rows fetched.
+
+SQL> drop table test2;
+
+Succeed.
+
+SQL> 
+
+

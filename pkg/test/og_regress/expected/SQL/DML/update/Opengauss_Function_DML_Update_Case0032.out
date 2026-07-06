@@ -1,0 +1,48 @@
+
+
+SQL> drop table if exists t_update003;
+
+Succeed.
+
+SQL> create table t_update003(c_x varchar(20), c_y int );
+
+Succeed.
+
+SQL> insert into t_update003 values('a',3);
+
+1 rows affected.
+
+SQL> insert into t_update003 values('c',2);
+
+1 rows affected.
+
+SQL> insert into t_update003 values('b',5);
+
+1 rows affected.
+
+SQL> insert into t_update003 values('a',1);
+
+1 rows affected.
+
+SQL> update t_update003  set (c_x,c_y) = (SELECT c_x, sum(c_y) FROM t_update003 GROUP BY c_x HAVING sum(c_y) > 4);
+
+4 rows affected.
+
+SQL> select * from t_update003;
+
+C_X                  C_Y         
+-------------------- ------------
+b                    5           
+b                    5           
+b                    5           
+b                    5           
+
+4 rows fetched.
+
+SQL> drop table t_update003;
+
+Succeed.
+
+SQL> 
+
+

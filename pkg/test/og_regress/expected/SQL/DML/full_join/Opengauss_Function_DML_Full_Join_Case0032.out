@@ -1,0 +1,60 @@
+
+
+SQL> drop table if exists t_fulljoin_0032;
+
+Succeed.
+
+SQL> create table t_fulljoin_0032
+  2 (customer_id integer,
+  3  cust_first_name  varchar(20) not null,
+  4  cust_last_name   varchar(20) not null,
+  5  credit_limit integer
+  6 );
+
+Succeed.
+
+SQL> 
+SQL> insert into t_fulljoin_0032 values (1, 'li', 'adjani', 100);
+
+1 rows affected.
+
+SQL> insert into t_fulljoin_0032 values (2, 'li', 'alexander', 2000);
+
+1 rows affected.
+
+SQL> insert into t_fulljoin_0032 values (3, 'li', 'altman', 5000);
+
+1 rows affected.
+
+SQL> 
+SQL> select * from t_fulljoin_0032 t1 full join t_fulljoin_0032 t2 on
+  2 case t2.credit_limit
+  3 when 100 then 'low'
+  4 when 5000 then 'high'
+  5 when 2000 then 'medium'
+  6 end between 'high' and 'high'
+  7 join t_fulljoin_0032 t3 on
+  8 case t3.credit_limit
+  9 when 100 then 'low'
+ 10 when 5000 then 'high'
+ 11 when 2000 then 'medium'
+ 12 end between 'high' and 'high' order by 1, 2, 3, 4;
+
+CUSTOMER_ID  CUST_FIRST_NAME      CUST_LAST_NAME       CREDIT_LIMIT CUSTOMER_ID  CUST_FIRST_NAME      CUST_LAST_NAME       CREDIT_LIMIT CUSTOMER_ID  CUST_FIRST_NAME      CUST_LAST_NAME       CREDIT_LIMIT
+------------ -------------------- -------------------- ------------ ------------ -------------------- -------------------- ------------ ------------ -------------------- -------------------- ------------
+1            li                   adjani               100          3            li                   altman               5000         3            li                   altman               5000        
+2            li                   alexander            2000         3            li                   altman               5000         3            li                   altman               5000        
+3            li                   altman               5000         3            li                   altman               5000         3            li                   altman               5000        
+                                                                    1            li                   adjani               100          3            li                   altman               5000        
+                                                                    2            li                   alexander            2000         3            li                   altman               5000        
+
+5 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_fulljoin_0032;
+
+Succeed.
+
+SQL> 
+
+

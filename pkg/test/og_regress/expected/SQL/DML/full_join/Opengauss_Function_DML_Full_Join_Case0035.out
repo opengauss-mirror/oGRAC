@@ -1,0 +1,137 @@
+
+
+SQL> drop table if exists t_join_0035_01;
+
+Succeed.
+
+SQL> drop table if exists t_join_0035_02;
+
+Succeed.
+
+SQL> drop table if exists t_join_0035_03;
+
+Succeed.
+
+SQL> drop table if exists t_join_0035_04;
+
+Succeed.
+
+SQL> create table t_join_0035_01(w_zip text);
+
+Succeed.
+
+SQL> create table t_join_0035_02(w_name varchar(20),w_tax int,w_street_2 varchar(50));
+
+Succeed.
+
+SQL> create table t_join_0035_03(d_id int);
+
+Succeed.
+
+SQL> create table t_join_0035_04(w_id int,w_ytd numeric(6,2));
+
+Succeed.
+
+SQL> insert into t_join_0035_01 values('pandas');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_01 values('pandas1');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_01 values('pandas2');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('七仔', 1, 'pandas');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('萌兰', 2, 'pandas');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('花花', 3, 'pandas3');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('乐乐', 4, 'pandas1');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('丫丫', 5, 'pandas2');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('美香', 6, 'pandas4');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_02 values('小奇迹', 7, 'pandas5');
+
+1 rows affected.
+
+SQL> insert into t_join_0035_04 values(102,40.0);
+
+1 rows affected.
+
+SQL> insert into t_join_0035_04 values(29,3.1);
+
+1 rows affected.
+
+SQL> 
+SQL> select
+  2     *
+  3 from
+  4     (
+  5     select
+  6         alias2.w_name alias6 ,
+  7         alias2.w_tax alias7,
+  8         mod(t_join_0035_04.w_id,
+  9         t_join_0035_04.w_ytd + 10) alias8
+ 10     from
+ 11         t_join_0035_01 alias1
+ 12     full join t_join_0035_02 alias2 on
+ 13         alias1.w_zip = alias2.w_street_2,
+ 14         t_join_0035_04)alias9
+ 15 full join t_join_0035_03 on
+ 16     alias9.alias7 != t_join_0035_03.d_id
+ 17 where
+ 18     alias9.alias8 = 2
+ 19     or alias9.alias7 = 2
+ 20 order by alias7, alias8, alias6;
+
+ALIAS6               ALIAS7       ALIAS8                                   D_ID        
+-------------------- ------------ ---------------------------------------- ------------
+七仔               1            2                                                    
+萌兰               2            2                                                    
+萌兰               2            2.8                                                  
+花花               3            2                                                    
+乐乐               4            2                                                    
+丫丫               5            2                                                    
+美香               6            2                                                    
+小奇迹            7            2                                                    
+
+8 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_join_0035_01;
+
+Succeed.
+
+SQL> drop table if exists t_join_0035_02;
+
+Succeed.
+
+SQL> drop table if exists t_join_0035_03;
+
+Succeed.
+
+SQL> drop table if exists t_join_0035_04;
+
+Succeed.
+
+SQL> 
+
+

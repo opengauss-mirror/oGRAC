@@ -1,0 +1,61 @@
+
+
+SQL> drop table if exists all_datatype_table;
+
+Succeed.
+
+SQL> create table all_datatype_table(id int not null,c_intger integer,c_char char(10))
+  2 PARTITION BY RANGE (c_intger)
+  3 (
+  4 partition P_20180121 values less than (2018),
+  5 partition P_20190122 values less than (2019),
+  6 partition P_20200123 values less than (2020),
+  7 partition P_max values less than (2050)
+  8 );
+
+Succeed.
+
+SQL> insert into all_datatype_table values(1,1000,1000);
+
+1 rows affected.
+
+SQL> insert into all_datatype_table values(2,2000,1000);
+
+1 rows affected.
+
+SQL> insert into all_datatype_table values(3,2001,null);
+
+1 rows affected.
+
+SQL> insert into all_datatype_table values(4,2002,'a');
+
+1 rows affected.
+
+SQL> select count(*) from all_datatype_table t1 right join all_datatype_table t2 on t1.id=t2.id
+  2 inner join all_datatype_table t3 on t1.id=t3.id
+  3 right join all_datatype_table t4 on t1.id=t4.id
+  4 left join all_datatype_table t5 on t1.id=t5.id
+  5 inner join all_datatype_table t6 on t1.id=t6.id
+  6 left join all_datatype_table t7 on t1.id=t7.id
+  7 full outer join all_datatype_table t8 on t1.id=t8.id
+  8 full join all_datatype_table t9 on t1.id=t9.id
+  9 full outer join all_datatype_table t10 on t1.id=t10.id
+ 10 right join all_datatype_table t11 on t1.id=t11.id
+ 11 full outer join all_datatype_table t12 on t1.id=t12.id
+ 12 full outer join all_datatype_table t13 on t1.id=t13.id
+ 13 right join all_datatype_table t14 on t1.id=t14.id
+ 14 right join all_datatype_table t15 on t1.id=t15.id;
+
+COUNT(*)            
+--------------------
+4                   
+
+1 rows fetched.
+
+SQL> drop table if exists all_datatype_table;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,58 @@
+
+
+SQL> drop table if exists explain_t017;
+
+Succeed.
+
+SQL> drop table if exists explain_t017_bak;
+
+Succeed.
+
+SQL> drop table if exists explain_t017_bak1;
+
+Succeed.
+
+SQL> create table explain_t017(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t017_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> create table explain_t017_bak1(f3 int,f4 int);
+
+Succeed.
+
+SQL> explain plan for update explain_t017 set a = (select f3 from explain_t017_bak1) where b = 1;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------
+| 0  | UPDATE STATEMENT      |       |                   | 0    | 0    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_T017      | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL | SYS   | EXPLAIN_T017_BAK1 | 0    | 0    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: B = 1                                           
+
+10 rows fetched.
+
+SQL> drop table explain_t017;
+
+Succeed.
+
+SQL> drop table explain_t017_bak;
+
+Succeed.
+
+SQL> drop table explain_t017_bak1;
+
+Succeed.
+
+SQL> 
+
+

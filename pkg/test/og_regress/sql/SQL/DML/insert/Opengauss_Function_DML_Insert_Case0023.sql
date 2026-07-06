@@ -1,0 +1,10 @@
+drop table if exists t_insert02;
+create table t_insert02(id int primary key,name varchar(10));
+insert into t_insert02 values(1,'Tom'),(2,'lisi');
+drop table if exists t_insert02_bak;
+create table t_insert02_bak(id int primary key,name varchar(10));
+insert into t_insert02_bak select * from t_insert02;
+insert into t_insert02_bak select * from t_insert02 where id >5;
+select * from t_insert02_bak;
+drop table if exists t_insert02;
+drop table if exists t_insert02_bak;

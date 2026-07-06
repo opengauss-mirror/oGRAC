@@ -1,0 +1,42 @@
+
+
+SQL> drop table if exists explain_partition_tab_hash_0030;
+
+Succeed.
+
+SQL>             create table explain_partition_tab_hash_0030(col1 int,col2 int)
+  2             partition by hash(col1)
+  3             (
+  4                 partition p1,
+  5                 partition p2
+  6             );
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_partition_tab_hash_0030 values(1,1),(2,2);
+
+2 rows affected.
+
+SQL> 
+SQL> explain select * from explain_partition_tab_hash_0030;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------
+| Id | Operation                          | Owner | Name                            | Rows | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                   |       |                                 | 413  | 6    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL Filter:[0,2) | SYS   | EXPLAIN_PARTITION_TAB_HASH_0030 | 413  | 6    | 0         |       |        |
+--------------------------------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> 
+SQL> drop table explain_partition_tab_hash_0030;
+
+Succeed.
+
+SQL> 
+
+

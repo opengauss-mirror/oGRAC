@@ -1,0 +1,46 @@
+
+
+SQL> drop table if exists explain_t010;
+
+Succeed.
+
+SQL> drop table if exists explain_t010_bak;
+
+Succeed.
+
+SQL> create table explain_t010(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t010_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> explain plan for select t.a, (case when exists(select f1 from explain_t010_bak where f1 = 1) then 1 end) from explain_t010 t;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                  | 0    | 0    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_T010_BAK | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL | SYS   | EXPLAIN_T010 T   | 0    | 0    | 0         |       |        |
+----------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: F1 = 1                                          
+
+10 rows fetched.
+
+SQL> drop table explain_t010;
+
+Succeed.
+
+SQL> drop table explain_t010_bak;
+
+Succeed.
+
+SQL> 
+
+

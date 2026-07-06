@@ -1,0 +1,30 @@
+
+
+SQL> drop FUNCTION if EXISTS func_add_sql012;
+
+Succeed.
+
+SQL> CREATE FUNCTION func_add_sql012(num1 integer) RETURN integer
+  2 AS
+  3 BEGIN
+  4 RETURN num1;
+  5 END;
+  6 /
+
+Succeed.
+
+SQL> select func_add_sql012(num1=>30) from sys_dummy;
+
+FUNC_ADD_SQL012(NUM1=>30)
+-------------------------
+30                       
+
+1 rows fetched.
+
+SQL> drop FUNCTION func_add_sql012;
+
+Succeed.
+
+SQL> 
+
+

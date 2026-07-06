@@ -1,0 +1,63 @@
+
+
+SQL> drop table if exists explain_t005;
+
+Succeed.
+
+SQL> drop table if exists explain_t005_bak;
+
+Succeed.
+
+SQL> drop table if exists explain_t005_bak1;
+
+Succeed.
+
+SQL> create table explain_t005(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t005_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> create table explain_t005_bak1(f3 int,f4 int);
+
+Succeed.
+
+SQL> explain plan for select a from explain_t005 where exists(select * from explain_t005_bak) group by a having a in (select f3 from explain_t005_bak1);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |                   | 0    | 0    | 0         |       |        |
+| 1  |   HAVING                    |       |                   | 0    | 0    | 0         |       |        |
+| 2  |     HASH GROUP BY           |       |                   | 0    | 0    | 0         |       |        |
+| 3  |       KERNEL FILTER         |       |                   | 0    | 0    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL   | SYS   | EXPLAIN_T005      | 0    | 0    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EXPLAIN_T005_BAK  | 0    | 0    | 0         |       |        |
+| 6  |     TABLE ACCESS FULL       | SYS   | EXPLAIN_T005_BAK1 | 0    | 0    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - filter: A IN ((SELECT F3 FROM EXPLAIN_T005_BAK1))       
+    4 - filter: EXISTS(SELECT 1 FROM EXPLAIN_T005_BAK)          
+
+15 rows fetched.
+
+SQL> drop table explain_t005;
+
+Succeed.
+
+SQL> drop table explain_t005_bak;
+
+Succeed.
+
+SQL> drop table explain_t005_bak1;
+
+Succeed.
+
+SQL> 
+
+

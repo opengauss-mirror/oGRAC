@@ -1,0 +1,45 @@
+
+
+SQL> drop table if exists explain_temp_tab1_0031;
+
+Succeed.
+
+SQL> drop table if exists explain_temp_tab2_0031;
+
+Succeed.
+
+SQL> create table explain_temp_tab1_0031 (col1 int,col2 int);
+
+Succeed.
+
+SQL> insert into explain_temp_tab1_0031 values(1,1),(2,2);
+
+2 rows affected.
+
+SQL> create table explain_temp_tab2_0031 as select * from explain_temp_tab1_0031;
+
+Succeed.
+
+SQL> explain select * from explain_temp_tab2_0031;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name                   | Rows | Cost | StartCost | Bytes | Remark |
+----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                        | 449  | 6    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_TEMP_TAB2_0031 | 449  | 6    | 0         |       |        |
+----------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> drop table explain_temp_tab2_0031;
+
+Succeed.
+
+SQL> drop table explain_temp_tab1_0031;
+Succeed.
+
+
+
+

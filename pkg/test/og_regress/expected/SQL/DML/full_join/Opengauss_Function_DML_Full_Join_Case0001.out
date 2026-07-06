@@ -1,0 +1,51 @@
+
+
+SQL> drop table if exists all_datatype_table;
+
+Succeed.
+
+SQL> create table all_datatype_table(id int not null,c_intger integer,c_char char(10))
+  2 PARTITION BY RANGE (c_intger)
+  3 (
+  4 partition P_20180121 values less than (2018),
+  5 partition P_20190122 values less than (2019),
+  6 partition P_20200123 values less than (2020),
+  7 partition P_max values less than (2050)
+  8 );
+
+Succeed.
+
+SQL> insert into all_datatype_table values(1,1000,1000);
+
+1 rows affected.
+
+SQL> insert into all_datatype_table values(2,2000,1000);
+
+1 rows affected.
+
+SQL> insert into all_datatype_table values(3,2001,null);
+
+1 rows affected.
+
+SQL> insert into all_datatype_table values(4,2002,'a');
+
+1 rows affected.
+
+SQL> select * from all_datatype_table t1 full join all_datatype_table t2 on t1.id=t2.id where t1.id<10;
+
+ID           C_INTGER     C_CHAR     ID           C_INTGER     C_CHAR    
+------------ ------------ ---------- ------------ ------------ ----------
+1            1000         1000       1            1000         1000      
+2            2000         1000       2            2000         1000      
+3            2001                    3            2001                   
+4            2002         a          4            2002         a         
+
+4 rows fetched.
+
+SQL> drop table all_datatype_table;
+
+Succeed.
+
+SQL> 
+
+

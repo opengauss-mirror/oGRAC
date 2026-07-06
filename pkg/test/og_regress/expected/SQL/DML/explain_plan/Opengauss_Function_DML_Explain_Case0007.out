@@ -1,0 +1,63 @@
+
+
+SQL> drop table if exists explain_t007;
+
+Succeed.
+
+SQL> drop table if exists explain_t007_bak;
+
+Succeed.
+
+SQL> drop table if exists explain_t007_bak_1;
+
+Succeed.
+
+SQL> create table explain_t007(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t007_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> create table explain_t007_bak_1(f3 int,f4 int);
+
+Succeed.
+
+SQL> explain plan for select * from explain_t007 where exists(select f1 from explain_t007_bak GROUP BY f1 HAVING f1 IN (select f3 from explain_t007_bak_1));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name               | Rows | Cost | StartCost | Bytes | Remark |
+------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |                    | 0    | 0    | 0         |       |        |
+| 1  |   KERNEL FILTER             |       |                    | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL       | SYS   | EXPLAIN_T007       | 0    | 0    | 0         |       |        |
+| 3  |     HAVING                  |       |                    | 0    | 0    | 0         |       |        |
+| 4  |       HASH GROUP BY         |       |                    | 0    | 0    | 0         |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EXPLAIN_T007_BAK   | 0    | 0    | 0         |       |        |
+| 6  |       TABLE ACCESS FULL     | SYS   | EXPLAIN_T007_BAK_1 | 0    | 0    | 0         |       |        |
+------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: EXISTS(SELECT 1 FROM EXPLAIN_T007_BAK GROUP BY F1 HAVING F1 IN ((SELECT F3 FROM EXPLAIN_T007_BAK_1)))
+    3 - filter: F1 IN ((SELECT F3 FROM EXPLAIN_T007_BAK_1))     
+
+15 rows fetched.
+
+SQL> drop table explain_t007;
+
+Succeed.
+
+SQL> drop table explain_t007_bak;
+
+Succeed.
+
+SQL> drop table explain_t007_bak_1;
+
+Succeed.
+
+SQL> 
+
+

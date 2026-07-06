@@ -1,0 +1,46 @@
+
+
+SQL> drop table if exists explain_view_0032;
+
+Succeed.
+
+SQL>             create table explain_view_0032(col1 int,col2 int);
+
+Succeed.
+
+SQL> 
+SQL> insert into  explain_view_0032 values(1,1),(2,2);
+
+2 rows affected.
+
+SQL> 
+SQL> create view select_view_0032 as select * from explain_view_0032;
+
+Succeed.
+
+SQL> 
+SQL> explain select * from select_view_0032;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                   | 449  | 6    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_VIEW_0032 | 449  | 6    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> 
+SQL> drop view select_view_0032;
+
+Succeed.
+
+SQL>             drop table explain_view_0032;
+
+Succeed.
+
+SQL> 
+
+
