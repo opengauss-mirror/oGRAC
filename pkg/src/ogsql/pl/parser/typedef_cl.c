@@ -2527,6 +2527,14 @@ static status_t plc_bison_check_type_name(char *type_name, galist_t *decls)
     return OG_SUCCESS;
 }
 
+static status_t plc_bison_copy_decl_name(pl_compiler_t *compiler, char *src, text_t *dst)
+{
+    text_t name;
+
+    cm_str2text(src, &name);
+    return pl_copy_name(compiler->entity, &name, dst);
+}
+
 static status_t plc_bison_check_attr_duplicate(pl_compiler_t *compiler, plv_record_t *record, char *attr_name,
     source_location_t loc)
 {
@@ -2609,7 +2617,7 @@ static status_t plc_bison_compile_type_record_def(pl_compiler_t *compiler, plv_d
             pl_check_and_set_loc(attr_def->loc);
             return OG_ERROR;
         }
-        cm_str2text(attr_def->name, &attr->name);
+        OG_RETURN_IFERR(plc_bison_copy_decl_name(compiler, attr_def->name, &attr->name));
 
         if (attr_def->type->pl_rowtype || attr_def->type->pl_type) {
             OG_RETURN_IFERR(plc_bison_compile_inherit_record_attr(compiler, decls, attr, attr_def));
@@ -2639,7 +2647,7 @@ status_t plc_bison_compile_collection_type_def(pl_compiler_t *compiler, plc_biso
 
     OG_RETURN_IFERR(plc_bison_check_type_name(type_def->type_name, decls));
     OG_RETURN_IFERR(cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl));
-    cm_str2text(type_def->type_name, &decl->name);
+    OG_RETURN_IFERR(plc_bison_copy_decl_name(compiler, type_def->type_name, &decl->name));
     decl->vid.block = (int16)compiler->stack.depth;
     decl->vid.id = decls->count - 1;
     decl->type = PLV_TYPE;
@@ -2674,7 +2682,7 @@ status_t plc_bison_compile_type_def(pl_compiler_t *compiler, char *type_name, ga
 
     OG_RETURN_IFERR(plc_bison_check_type_name(type_name, decls));
     OG_RETURN_IFERR(cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl));
-    cm_str2text(type_name, &decl->name);
+    OG_RETURN_IFERR(plc_bison_copy_decl_name(compiler, type_name, &decl->name));
     decl->vid.block = (int16)compiler->stack.depth;
     decl->vid.id = decls->count - 1; // not overflow
     decl->type = PLV_TYPE;

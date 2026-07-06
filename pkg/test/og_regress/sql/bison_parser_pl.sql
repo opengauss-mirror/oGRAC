@@ -601,10 +601,53 @@ begin
 end;
 /
 
+create or replace procedure bison_pl_exception_init_proc is
+    snapshot_too_old exception;
+    v_part varchar(130);
+    pragma exception_init(snapshot_too_old, 715);
+begin
+    v_part := 'pragma_exception_init';
+    insert into bison_pl_cursor_attr_log values(v_part, 1);
+end;
+/
+
+begin
+    bison_pl_exception_init_proc;
+end;
+/
+
+drop table if exists bison_pl_cursor_loop_t;
+create table bison_pl_cursor_loop_t(owner varchar(20), table_name varchar(20), partition_name varchar(20));
+insert into bison_pl_cursor_loop_t values('USR', 'TAB', 'P1');
+
+create or replace procedure bison_pl_cursor_assign_proc is
+    v_table varchar(130);
+    v_part varchar(130);
+    v_owner varchar(130);
+begin
+    for item in (select owner, table_name, partition_name from bison_pl_cursor_loop_t) loop
+        v_table := '"'||ITEM.TABLE_NAME||'"';
+        v_part  := '"'||ITEM.PARTITION_NAME||'"';
+        v_owner := '"'||ITEM.OWNER||'"';
+        if v_table = '"TAB"' and v_part = '"P1"' and v_owner = '"USR"' then
+            insert into bison_pl_cursor_attr_log values('cursor_for_assign', 1);
+        end if;
+    end loop;
+end;
+/
+
+begin
+    bison_pl_cursor_assign_proc;
+end;
+/
+
 select stage, val from bison_pl_cursor_attr_log order by stage;
 
+drop procedure bison_pl_cursor_assign_proc;
+drop procedure bison_pl_exception_init_proc;
 drop procedure bison_pl_auto_proc;
 drop procedure bison_pl_sql_notfound_proc;
+drop table if exists bison_pl_cursor_loop_t;
 drop table if exists bison_pl_cursor_attr_log;
 drop table if exists bison_pl_cursor_attr_t;
 
@@ -750,6 +793,45 @@ drop table bison_pl_issue245_type_t;
 select name, val from bison_pl_issue245_log order by name;
 
 drop table if exists bison_pl_issue245_log;
+
+drop table if exists bison_pl_pushback_log;
+drop table if exists bison_pl_pushback_src;
+create table bison_pl_pushback_log(stage varchar(40), val int, info varchar(60));
+create table bison_pl_pushback_src(id int, name varchar(20));
+insert into bison_pl_pushback_src values(7, 'PB');
+
+declare
+    type pushback_rec_t is record(id int, name varchar2(20));
+    type id_tab_t is table of int index by binary_integer;
+    v_rec pushback_rec_t;
+    v_ids id_tab_t;
+    v_id int := 0;
+    v_name varchar2(20);
+    cursor c_arg(p_min int, p_name varchar2 default 'PB') is
+        select id, name from bison_pl_pushback_src where id >= p_min and name = p_name;
+begin
+    v_ids(1) := 11;
+    bison_pl_proc(v_ids(1));
+
+    open c_arg(p_min => 7, p_name => 'PB');
+    fetch c_arg into v_id, v_name;
+    close c_arg;
+    v_rec.id := v_id;
+    v_rec.name := v_name;
+
+    execute immediate 'select id, name from bison_pl_pushback_src where id = :1'
+        into v_id, v_name using in v_rec.id;
+
+    insert into bison_pl_pushback_log values('assoc_type_lookahead', v_ids(1), 'ok');
+    insert into bison_pl_pushback_log values('cursor_named_arg', v_rec.id, v_rec.name);
+    insert into bison_pl_pushback_log values('execute_using', v_id, v_name);
+end;
+/
+
+select * from bison_pl_pushback_log order by stage;
+
+drop table if exists bison_pl_pushback_log;
+drop table if exists bison_pl_pushback_src;
 
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
