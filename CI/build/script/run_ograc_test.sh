@@ -35,19 +35,35 @@ function init_container() {
   echo "init container success"
 }
 
+function discover_part_schedules() {
+  local schedule_dir="${CURRENT_CODE_PATH}/pkg/test/og_regress"
+  local schedules
+  schedules=$(find "${schedule_dir}" -maxdepth 1 -type f -name 'og_schedule_part*' -printf '%f\n' | grep -E '^og_schedule_part[0-9]+$' | sort -V | paste -sd, -)
+  if [ -z "${schedules}" ]; then
+    echo "No schedule files found under ${schedule_dir}: og_schedule_part[0-9]+" >&2
+    return 1
+  fi
+  echo "${schedules}"
+}
+
+function check_schedule_file() {
+  local schedule_name=$1
+  local schedule_file="${CURRENT_CODE_PATH}/pkg/test/og_regress/${schedule_name}"
+  if [ ! -f "${schedule_file}" ]; then
+    echo "Schedule file not found: ${schedule_file}" >&2
+    return 1
+  fi
+  echo "${schedule_name}"
+}
+
 function run_test() {
   echo "Start run_test..."
   echo "OGDB_CODE_PATH: ${OGDB_CODE_PATH}"
   pram=$1
   case $pram in
-    part1)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part1"   ;;
-    part2)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part2"   ;;
-    part3)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part3"   ;;
-    part4)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part4"   ;;
-    part5)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part5"   ;;
-    part6)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part6"   ;;
-    part7)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part7"   ;;
-    part8)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list="og_schedule_part8"   ;;
+    part_all)         script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(discover_part_schedules) || exit 1   ;;
+    part[0-9]*)       script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "og_schedule_${pram}") || exit 1   ;;
+    og_schedule*)     script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "${pram}") || exit 1   ;;
     Dev_Basic)        script_path="${CURRENT_CODE_PATH}/CI/script/Dev_Basic_test.sh"; og_schedule_list="og_schedule"   ;;
     cms)              script_path="${CURRENT_CODE_PATH}/CI/script/Dev_cms_test.sh"; og_schedule_list="og_schedule"   ;;
     cms_ut)           script_path="${CURRENT_CODE_PATH}/CI/script/Dev_cms_unit_test.sh"; og_schedule_list="og_schedule"   ;;
@@ -64,9 +80,11 @@ function run_test() {
     Dev_all_unit)     script_path="${CURRENT_CODE_PATH}/CI/script/Dev_run_all_llt.sh"; og_schedule_list="og_schedule"   ;;
      *)
        echo "invalid pram ${pram}"
+       exit 1
   esac
   echo "script_path is : ${script_path}"
-  bash ${script_path} --coverage 1 --og_schedule_list ${og_schedule_list}
+  echo "og_schedule_list is : ${og_schedule_list}"
+  bash ${script_path} --coverage 1 --og_schedule_list "${og_schedule_list}"
 }
 
 function change_shm_size() {

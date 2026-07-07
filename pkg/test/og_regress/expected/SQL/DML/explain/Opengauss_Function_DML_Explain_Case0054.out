@@ -1,0 +1,37 @@
+
+
+SQL> drop table if exists explain_param_nodes_0054;
+
+Succeed.
+
+SQL>             create table explain_param_nodes_0054(col1 int,col2 int);
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_param_nodes_0054 values(1,1),(2,2);
+
+2 rows affected.
+
+SQL> 
+SQL> explain select * from explain_param_nodes_0054;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+| Id | Operation             | Owner | Name                     | Rows | Cost | StartCost | Bytes | Remark |
+------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT      |       |                          | 449  | 6    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | EXPLAIN_PARAM_NODES_0054 | 449  | 6    | 0         |       |        |
+------------------------------------------------------------------------------------------------------------
+
+6 rows fetched.
+
+SQL> 
+SQL> drop table explain_param_nodes_0054;
+
+Succeed.
+
+SQL> 
+
+

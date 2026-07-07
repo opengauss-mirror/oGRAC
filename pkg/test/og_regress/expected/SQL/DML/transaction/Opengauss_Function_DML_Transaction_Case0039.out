@@ -1,0 +1,42 @@
+
+
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL>                         create table testzl (SK INTEGER,ID CHAR(16),NAME VARCHAR(20),SQ_FT INTEGER);
+
+Succeed.
+
+SQL> 
+SQL> set transaction isolation level read committed;
+
+
+Succeed.
+
+
+SQL>                           insert into testzl values (001,'sk1','tt',3332);
+
+1 rows affected.
+
+SQL>                           commit;
+
+Succeed.
+
+SQL> 
+SQL> select count(*) from testzl;
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL> 
+
+

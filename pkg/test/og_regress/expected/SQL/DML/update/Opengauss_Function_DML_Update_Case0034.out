@@ -1,0 +1,21 @@
+
+
+SQL> drop table if exists abort_test;
+
+Succeed.
+
+SQL>                      create table abort_test(id int,name varchar(10));
+
+Succeed.
+
+SQL>                      insert into abort_test values(1,'a');
+
+1 rows affected.
+
+SQL>                      update abort_test set abort_test.name='cici' where abort_test.id=1;
+
+1 rows affected.
+
+SQL> 
+
+

@@ -1,0 +1,10 @@
+drop table if exists explain_t017;
+drop table if exists explain_t017_bak;
+drop table if exists explain_t017_bak1;
+create table explain_t017(a int, b int);
+create table explain_t017_bak(f1 int,f2 int);
+create table explain_t017_bak1(f3 int,f4 int);
+explain plan for update explain_t017 set a = (select f3 from explain_t017_bak1) where b = 1;
+drop table explain_t017;
+drop table explain_t017_bak;
+drop table explain_t017_bak1;

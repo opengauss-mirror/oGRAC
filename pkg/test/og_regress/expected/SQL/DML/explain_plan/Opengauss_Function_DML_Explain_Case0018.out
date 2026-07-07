@@ -1,0 +1,61 @@
+
+
+SQL> drop table if exists explain_t018;
+
+Succeed.
+
+SQL> drop table if exists explain_t018_bak;
+
+Succeed.
+
+SQL> drop table if exists explain_t018_bak1;
+
+Succeed.
+
+SQL> create table explain_t018(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t018_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> create table explain_t018_bak1(f3 int,f4 int);
+
+Succeed.
+
+SQL> explain plan for update explain_t018 set a = (select f3 from explain_t018_bak1) where b = (select f1 from explain_t018_bak where f1 = 1);
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------
+| 0  | UPDATE STATEMENT        |       |                   | 0    | 0    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                   | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_T018      | 0    | 0    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_T018_BAK  | 0    | 0    | 0         |       |        |
+| 4  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_T018_BAK1 | 0    | 0    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: B = (SELECT F1 FROM EXPLAIN_T018_BAK WHERE F1 = 1)
+    3 - filter: F1 = 1                                          
+
+13 rows fetched.
+
+SQL> drop table explain_t018;
+
+Succeed.
+
+SQL> drop table explain_t018_bak;
+
+Succeed.
+
+SQL> drop table explain_t018_bak1;
+
+Succeed.
+
+SQL> 
+
+

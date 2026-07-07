@@ -1,0 +1,44 @@
+
+
+SQL> drop table if exists t_upsert_0135;
+
+Succeed.
+
+SQL> create table t_upsert_0135 (
+  2     product_no integer primary key,
+  3     name text,
+  4     price numeric
+  5 );
+
+Succeed.
+
+SQL> 
+SQL> insert into t_upsert_0135 values(110,'meat',22.5);
+
+1 rows affected.
+
+SQL> 
+SQL> insert into t_upsert_0135 values(110,'orange',7.4) on DUPLICATE key update NAME='orange';
+
+2 rows affected.
+
+SQL> select * from t_upsert_0135;
+
+PRODUCT_NO   NAME                                                             PRICE                                   
+------------ ---------------------------------------------------------------- ----------------------------------------
+110          orange                                                           22.5                                    
+
+1 rows fetched.
+
+SQL> insert into t_upsert_0135 values(889,'orange',7.4) on DUPLICATE key update name='orange';
+
+1 rows affected.
+
+SQL> 
+SQL> drop table t_upsert_0135;
+
+Succeed.
+
+SQL> 
+
+

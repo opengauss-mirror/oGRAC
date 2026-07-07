@@ -1,0 +1,10 @@
+drop table if exists test2;
+create table test2 (id int ,name varchar(20) );
+ALTER TABLE test2 ADD CONSTRAINT id_key primary key (id);
+insert into test2 values(5,'daliu');
+select * from test2;
+insert into test2 values(5,'lisa') ON DUPLICATE KEY UPDATE  name='lisa';
+select * from test2;
+insert into test2 values(6,'lisa1') ON DUPLICATE KEY UPDATE name='lisa1';
+select * from test2;
+drop table test2;

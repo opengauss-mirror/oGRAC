@@ -1,0 +1,46 @@
+
+
+SQL> drop table if exists products5;
+
+Succeed.
+
+SQL> CREATE TABLE products5 (
+  2     product_no integer PRIMARY KEY,
+  3     name text,
+  4     price numeric
+  5 );
+
+Succeed.
+
+SQL> insert into  products5 values(01,'grains',5.5);
+
+1 rows affected.
+
+SQL> select * from  products5;
+
+PRODUCT_NO   NAME                                                             PRICE                                   
+------------ ---------------------------------------------------------------- ----------------------------------------
+1            grains                                                           5.5                                     
+
+1 rows fetched.
+
+SQL> insert into  products5 values(02,'veggies',6.8) on DUPLICATE key update name='veggies';
+
+1 rows affected.
+
+SQL> select * from  products5;
+
+PRODUCT_NO   NAME                                                             PRICE                                   
+------------ ---------------------------------------------------------------- ----------------------------------------
+1            grains                                                           5.5                                     
+2            veggies                                                          6.8                                     
+
+2 rows fetched.
+
+SQL> drop table products5;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,66 @@
+
+
+SQL> drop table if exists explain_table_notin1_0015;
+
+Succeed.
+
+SQL>             create table explain_table_notin1_0015(name varchar(10),stu_id integer
+  2             not null,score int );
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists explain_table_notin2_0015;
+
+Succeed.
+
+SQL>             create table explain_table_notin2_0015 (cname varchar(10),cid varchar(5)
+  2             not null,num int,sname varchar(10));
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_table_notin1_0015 values('张三',1,50),('李四',2,55),
+  2             ('王五',3,30);
+
+3 rows affected.
+
+SQL> 
+SQL> insert into explain_table_notin2_0015 values('张三',1,50,'张三'),('李四',2,55,'李四'),('王五',3,30,'王五');
+
+3 rows affected.
+
+SQL> 
+SQL> explain select * from explain_table_notin1_0015
+  2             where name not in (select sname from explain_table_notin2_0015 where num >= 50)
+  3             ;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name                      | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                           | 332  | 6    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                           | 332  | 6    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_TABLE_NOTIN1_0015 | 332  | 6    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_NOTIN2_0015 | 104  | 3    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: NAME NOT IN ((SELECT SNAME FROM EXPLAIN_TABLE_NOTIN2_0015 WHERE NUM >= 50))
+    3 - filter: NUM >= 50                                       
+
+12 rows fetched.
+
+SQL> 
+SQL> drop table explain_table_notin1_0015;
+
+Succeed.
+
+SQL>             drop table explain_table_notin2_0015;
+
+Succeed.
+
+SQL> 
+
+

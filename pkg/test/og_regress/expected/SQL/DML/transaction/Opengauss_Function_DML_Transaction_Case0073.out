@@ -1,0 +1,38 @@
+
+
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL>                     create table testzl (SK INTEGER,ID CHAR(16),NAME VARCHAR(20),SQ_FT INTEGER);
+
+Succeed.
+
+SQL> 
+SQL> declare
+  2                         i varchar(16);
+  3                       begin
+  4                         i := to_char(current_date, 'YYYY-MM-DD');
+  5                         insert into testzl values (001,i,'tt',3332);
+  6                       end;
+  7 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select count(*) from testzl;
+
+COUNT(*)            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL> 
+
+

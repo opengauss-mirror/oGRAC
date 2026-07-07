@@ -1,0 +1,71 @@
+
+
+SQL> drop table if exists t_dml_upsert_0138;
+
+Succeed.
+
+SQL> create table t_dml_upsert_0138 (col1 int, col2 int)
+  2 partition by hash(col1)
+  3 (
+  4 partition p1,
+  5 partition p2
+  6 );
+
+Succeed.
+
+SQL> 
+SQL> 
+SQL> create unique index t_unique_key on t_dml_upsert_0138(col2);
+
+Succeed.
+
+SQL> 
+SQL> insert into t_dml_upsert_0138 values(1,1),(2,2);
+
+2 rows affected.
+
+SQL> select * from t_dml_upsert_0138 partition(p1);
+
+COL1         COL2        
+------------ ------------
+1            1           
+2            2           
+
+2 rows fetched.
+
+SQL> select * from t_dml_upsert_0138 partition(p2);
+
+COL1         COL2        
+------------ ------------
+
+0 rows fetched.
+
+SQL> 
+SQL> insert into t_dml_upsert_0138 values(2,2) on duplicate key update col1 = 3;
+
+2 rows affected.
+
+SQL> select * from t_dml_upsert_0138 partition(p1);
+
+COL1         COL2        
+------------ ------------
+1            1           
+
+1 rows fetched.
+
+SQL> select * from t_dml_upsert_0138 partition(p2);
+
+COL1         COL2        
+------------ ------------
+3            2           
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table t_dml_upsert_0138;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,10 @@
+drop table if exists explain_t015;
+drop table if exists explain_t015_bak;
+drop table if exists explain_t015_bak1;
+create table explain_t015(a int, b int);
+create table explain_t015_bak(f1 int,f2 int);
+create table explain_t015_bak1(f3 int,f4 int);
+explain plan for update explain_t015 set a = 1 where b = (select f1 from explain_t015_bak where f1 = (select f3 from explain_t015_bak1));
+drop table explain_t015;
+drop table explain_t015_bak;
+drop table explain_t015_bak1;

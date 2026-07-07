@@ -1,0 +1,10 @@
+drop table if exists explain_t013;
+drop table if exists explain_t013_bak;
+drop table if exists explain_t013_bak1;
+create table explain_t013(a int, b int);
+create table explain_t013_bak(f1 int,f2 int);
+create table explain_t013_bak1(f3 int,f4 int);
+explain plan for select t.a  from explain_t013 t where t.a = (select f1 from explain_t013_bak where f2 = (select f3 from explain_t013_bak1)) + 1;
+drop table explain_t013;
+drop table explain_t013_bak;
+drop table explain_t013_bak1;

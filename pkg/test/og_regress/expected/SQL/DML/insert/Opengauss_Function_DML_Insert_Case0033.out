@@ -1,0 +1,46 @@
+
+
+SQL> drop table if exists COMPANY;
+
+Succeed.
+
+SQL> CREATE TABLE COMPANY(
+  2    ID INT PRIMARY KEY     NOT NULL,
+  3    NAME           TEXT    NOT NULL,
+  4    AGE            INT     NOT NULL,
+  5    ADDRESS        CHAR(50),
+  6    SALARY         REAL,
+  7    JOIN_DATE      DATE
+  8 );
+
+Succeed.
+
+SQL> insert into COMPANY values(1,'tom''s',10,105,8500.9,'2020-11-17');
+
+1 rows affected.
+
+SQL> insert into COMPANY values(2,'tom''s toys',10,105,8500.9,'2020-11-17');
+
+1 rows affected.
+
+SQL> insert into COMPANY values(3,'tom''s and friend''s',10,105,8500.9,'2020-11-17');
+
+1 rows affected.
+
+SQL> select * from company;
+
+ID           NAME                                                             AGE          ADDRESS                                            SALARY               JOIN_DATE             
+------------ ---------------------------------------------------------------- ------------ -------------------------------------------------- -------------------- ----------------------
+1            tom's                                                            10           105                                                8500.9               2020-11-17 00:00:00   
+2            tom's toys                                                       10           105                                                8500.9               2020-11-17 00:00:00   
+3            tom's and friend's                                               10           105                                                8500.9               2020-11-17 00:00:00   
+
+3 rows fetched.
+
+SQL> drop table COMPANY;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,88 @@
+
+
+SQL> drop table if exists tbl_hash;
+
+Succeed.
+
+SQL> create table tbl_hash(
+  2 col_int int,
+  3 col_integer integer,
+  4 col_BINARY_INTEGER BINARY_INTEGER,
+  5 col_smallint smallint default '7',
+  6 col_bigint bigint not null default '3',
+  7 col_real real,
+  8 col_float float,
+  9 col_BINARY_DOUBLE BINARY_DOUBLE,
+ 10 col_decimal decimal,
+ 11 col_number1 number,
+ 12 col_number2 number(38),
+ 13 col_number5 number(38,7),
+ 14 col_numeric numeric,
+ 15 col_char1 char(100),
+ 16 col_char2 char(8000),
+ 17 col_nchar1 nchar(100),
+ 18 col_nchar2 nchar(8000),
+ 19 col_varchar_1 varchar(100),
+ 20 col_varchar_2 varchar(8000) default 'aaaabbbb',
+ 21 col_varchar2_1 varchar2(100) not null default 'aaaabbbb',
+ 22 col_varchar2_2 varchar2(8000),
+ 23 col_nvarchar2_1 nvarchar2(100),
+ 24 col_nvarchar2_2 nvarchar2(8000),
+ 25 col_clob clob,
+ 26 col_text text,
+ 27 col_binary1 varchar2(100),
+ 28 col_binary2 varchar2(8000),
+ 29 col_varbinary1 varchar2(100),
+ 30 col_varbinary2 varchar2(8000),
+ 31 col_raw1 raw(100),
+ 32 col_raw2 raw(8000),
+ 33 col_blob blob,
+ 34 col_date date not null default '2018-01-07 08:08:08',
+ 35 col_timestamp1 timestamp ,
+ 36 col_timestamp2 timestamp(6),
+ 37 col_bool bool,
+ 38 col_boolean boolean,
+ 39 col_interval1 INTERVAL YEAR TO MONTH,
+ 40 col_interval2 INTERVAL DAY TO SECOND
+ 41 );
+
+Succeed.
+
+SQL> drop index if exists idx_tbl_hash_4;
+
+Succeed.
+
+SQL> create unique index idx_tbl_hash_4 on tbl_hash(col_float,col_real,col_smallint);
+
+Succeed.
+
+SQL> insert into tbl_hash(col_float,col_real,col_smallint)
+  2 select 1.11111111,1.2222222,32767 from sys_dummy
+  3 union all select 1.11111112,1.2222222,32767 from sys_dummy
+  4 union all select 1.11111113,1.2222222,32767 from sys_dummy
+  5 union all select 1.11111114,1.2222222,32767 from sys_dummy
+  6 union all select null,1.2222225,32767 from sys_dummy
+  7 union all select null,1.2222226,32767 from sys_dummy order by 1,2,3 nulls first;
+
+6 rows affected.
+
+SQL> select * from tbl_hash;
+
+COL_INT      COL_INTEGER  COL_BINARY_INTEGER COL_SMALLINT COL_BIGINT           COL_REAL             COL_FLOAT            COL_BINARY_DOUBLE    COL_DECIMAL                              COL_NUMBER1                              COL_NUMBER2                              COL_NUMBER5                              COL_NUMERIC                              COL_CHAR1                                                        COL_CHAR2                                                        COL_NCHAR1                                                       COL_NCHAR2                                                       COL_VARCHAR_1                                                    COL_VARCHAR_2                                                    COL_VARCHAR2_1                                                   COL_VARCHAR2_2                                                   COL_NVARCHAR2_1                                                  COL_NVARCHAR2_2                                                  COL_CLOB                                                         COL_TEXT                                                         COL_BINARY1                                                      COL_BINARY2                                                      COL_VARBINARY1                                                   COL_VARBINARY2                                                   COL_RAW1                                                         COL_RAW2                                                         COL_BLOB                                                         COL_DATE               COL_TIMESTAMP1                   COL_TIMESTAMP2                   COL_BOOL COL_BOOLEAN COL_INTERVAL1 COL_INTERVAL2           
+------------ ------------ ------------------ ------------ -------------------- -------------------- -------------------- -------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------- -------------------------------- -------------------------------- -------- ----------- ------------- ------------------------
+                                             32767        3                    1.2222222            1.11111111                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  aaaabbbb                                                         aaaabbbb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     2018-01-07 08:08:08                                                                                                                                 
+                                             32767        3                    1.2222222            1.11111112                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  aaaabbbb                                                         aaaabbbb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     2018-01-07 08:08:08                                                                                                                                 
+                                             32767        3                    1.2222222            1.11111113                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  aaaabbbb                                                         aaaabbbb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     2018-01-07 08:08:08                                                                                                                                 
+                                             32767        3                    1.2222222            1.11111114                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  aaaabbbb                                                         aaaabbbb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     2018-01-07 08:08:08                                                                                                                                 
+                                             32767        3                    1.2222225                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        aaaabbbb                                                         aaaabbbb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     2018-01-07 08:08:08                                                                                                                                 
+                                             32767        3                    1.2222226                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        aaaabbbb                                                         aaaabbbb                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     2018-01-07 08:08:08                                                                                                                                 
+
+6 rows fetched.
+
+SQL> drop table if exists tbl_hash;
+
+Succeed.
+
+SQL> 
+
+

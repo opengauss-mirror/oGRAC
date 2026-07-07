@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS t_dml_transaction_case0031;CREATE TABLE t_dml_transaction_case0031 (SK INTEGER,ID CHAR(16),NAME VARCHAR(20),SQ_FT INTEGER);
+
+DROP TABLE IF EXISTS t_dml_transaction_case0031;

@@ -1,0 +1,134 @@
+
+
+SQL> drop table if exists products;
+
+Succeed.
+
+SQL> CREATE TABLE products
+  2 (
+  3 product_id INTEGER,
+  4 product_name VARCHAR2(60),
+  5 category VARCHAR2(60)
+  6 );
+
+Succeed.
+
+SQL> INSERT INTO products VALUES (1501, 'vivitar 35mm', 'electrncs');
+
+1 rows affected.
+
+SQL> INSERT INTO products VALUES (1502, 'olympus is50', 'electrncs');
+
+1 rows affected.
+
+SQL> INSERT INTO products VALUES (1600, 'play gym', 'toys');
+
+1 rows affected.
+
+SQL> INSERT INTO products VALUES (1601, 'lamaze', 'toys');
+
+1 rows affected.
+
+SQL> INSERT INTO products VALUES (1666, 'harry potter', 'dvd');
+
+1 rows affected.
+
+SQL> SELECT * FROM products ;
+
+PRODUCT_ID   PRODUCT_NAME                                                 CATEGORY                                                    
+------------ ------------------------------------------------------------ ------------------------------------------------------------
+1501         vivitar 35mm                                                 electrncs                                                   
+1502         olympus is50                                                 electrncs                                                   
+1600         play gym                                                     toys                                                        
+1601         lamaze                                                       toys                                                        
+1666         harry potter                                                 dvd                                                         
+
+5 rows fetched.
+
+SQL> 
+SQL> 
+SQL> drop table if exists newproducts;
+
+Succeed.
+
+SQL> CREATE TABLE newproducts
+  2 (
+  3 product_id INTEGER,
+  4 product_name VARCHAR2(60),
+  5 category VARCHAR2(60)
+  6 );
+
+Succeed.
+
+SQL> INSERT INTO newproducts VALUES (1502, 'olympus camera', 'electrncs');
+
+1 rows affected.
+
+SQL> INSERT INTO newproducts VALUES (1601, 'lamaze', 'toys');
+
+1 rows affected.
+
+SQL> INSERT INTO newproducts VALUES (1666, 'harry potter', 'toys');
+
+1 rows affected.
+
+SQL> INSERT INTO newproducts VALUES (1700, 'wait interface', 'books');
+
+1 rows affected.
+
+SQL> SELECT * FROM  newproducts;
+
+PRODUCT_ID   PRODUCT_NAME                                                 CATEGORY                                                    
+------------ ------------------------------------------------------------ ------------------------------------------------------------
+1502         olympus camera                                               electrncs                                                   
+1601         lamaze                                                       toys                                                        
+1666         harry potter                                                 toys                                                        
+1700         wait interface                                               books                                                       
+
+4 rows fetched.
+
+SQL> MERGE INTO products p
+  2 USING newproducts np
+  3 ON (p.product_id = np.product_id)
+  4 WHEN MATCHED THEN
+  5   UPDATE SET p.product_name = np.product_name, p.category = np.category WHERE p.product_name != 'play gym'
+  6 WHEN NOT MATCHED THEN
+  7   INSERT VALUES (np.product_id, np.product_name, np.category) WHERE np.category = 'books';
+
+4 rows affected.
+
+SQL>   SELECT * FROM products ;
+
+PRODUCT_ID   PRODUCT_NAME                                                 CATEGORY                                                    
+------------ ------------------------------------------------------------ ------------------------------------------------------------
+1501         vivitar 35mm                                                 electrncs                                                   
+1502         olympus camera                                               electrncs                                                   
+1600         play gym                                                     toys                                                        
+1601         lamaze                                                       toys                                                        
+1666         harry potter                                                 toys                                                        
+1700         wait interface                                               books                                                       
+
+6 rows fetched.
+
+SQL>   SELECT * FROM  newproducts;
+
+PRODUCT_ID   PRODUCT_NAME                                                 CATEGORY                                                    
+------------ ------------------------------------------------------------ ------------------------------------------------------------
+1502         olympus camera                                               electrncs                                                   
+1601         lamaze                                                       toys                                                        
+1666         harry potter                                                 toys                                                        
+1700         wait interface                                               books                                                       
+
+4 rows fetched.
+
+SQL> DROP TABLE products;
+
+Succeed.
+
+SQL> DROP TABLE newproducts;
+
+Succeed.
+
+SQL> 
+
+

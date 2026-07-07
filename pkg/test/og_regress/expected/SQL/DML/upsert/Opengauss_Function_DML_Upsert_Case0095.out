@@ -1,0 +1,64 @@
+
+
+SQL> drop table if exists mykey_2e;
+
+Succeed.
+
+SQL> create table mykey_2e
+  2 (
+  3    name nvarchar2(20) ,
+  4    id number  ,
+  5    address nvarchar2(50)
+  6 ) ;
+
+Succeed.
+
+SQL> insert into mykey_2e values('dacong',2,'guangdong') on DUPLICATE KEY UPDATE  address='guangdong';
+
+1 rows affected.
+
+SQL> select * from mykey_2e;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+dacong                                                           2                                        guangdong                                                       
+
+1 rows fetched.
+
+SQL> alter table mykey_2e add constraint unique_id unique(id);
+
+Succeed.
+
+SQL> insert into mykey_2e values('wangyun',3,'chongqing');
+
+1 rows affected.
+
+SQL> select * from mykey_2e;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+dacong                                                           2                                        guangdong                                                       
+wangyun                                                          3                                        chongqing                                                       
+
+2 rows fetched.
+
+SQL> insert into mykey_2e values('lisa1',2,'yunnan') on DUPLICATE KEY UPDATE  name='lisa1',address='yunnan';
+
+2 rows affected.
+
+SQL> select * from mykey_2e;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+lisa1                                                            2                                        yunnan                                                          
+wangyun                                                          3                                        chongqing                                                       
+
+2 rows fetched.
+
+SQL> drop table mykey_2e;
+
+Succeed.
+
+SQL> 
+
+

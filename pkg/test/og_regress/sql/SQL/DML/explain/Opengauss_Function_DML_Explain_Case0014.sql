@@ -1,0 +1,18 @@
+drop table if exists explain_table_in1_0014;
+            create table explain_table_in1_0014 (name varchar(10),stu_id integer
+            not null,score int );
+
+drop table if exists explain_table_in2_0014;
+            create table explain_table_in2_0014 (cname varchar(10),cid varchar(5)
+            not null, num int ,sname varchar(10));
+
+insert into explain_table_in1_0014 values('张三',1,50),('李四',2,55),
+            ('王五',3,30);
+
+insert into explain_table_in2_0014 values('张三',1,50,'张三'),('李四',2,55,'李四'),('王五',3,30,'王五');
+
+explain select * from explain_table_in1_0014
+            where name in (select sname from explain_table_in2_0014 where num >= 50);
+
+drop table explain_table_in1_0014;
+            drop table explain_table_in2_0014;

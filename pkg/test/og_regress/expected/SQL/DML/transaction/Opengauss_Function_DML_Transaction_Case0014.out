@@ -1,0 +1,31 @@
+
+
+SQL> declare
+  2                             v_sql varchar(4000);
+  3                           begin
+  4                             v_sql := 'drop table if exists testzl';
+  5                             execute immediate v_sql;
+  6                             v_sql := 'CREATE TABLE testzl(SK INTEGER,ID CHAR(16),NAME VARCHAR(20),SQ_FT INTEGER)';
+  7                             execute immediate v_sql ;
+  8                           end;
+  9 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select count(*) from testzl;
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL> 
+
+

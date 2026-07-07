@@ -1,0 +1,48 @@
+
+
+SQL> drop table if exists mykey_2b;
+
+Succeed.
+
+SQL> create table mykey_2b
+  2 (
+  3    name nvarchar2(20) unique,
+  4    id number unique ,
+  5    address nvarchar2(50)
+  6 ) ;
+
+Succeed.
+
+SQL> insert into mykey_2b values ('dacong',2,'shandong'),('liuhua',3,'qingdao');
+
+2 rows affected.
+
+SQL> select * from mykey_2b;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+dacong                                                           2                                        shandong                                                        
+liuhua                                                           3                                        qingdao                                                         
+
+2 rows fetched.
+
+SQL> insert into mykey_2b values('dacong',2,'guangdong'),('liuhua',3,'jilin') on DUPLICATE KEY UPDATE  address='guangdong';
+
+4 rows affected.
+
+SQL> select * from mykey_2b;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+dacong                                                           2                                        guangdong                                                       
+liuhua                                                           3                                        guangdong                                                       
+
+2 rows fetched.
+
+SQL> drop table mykey_2b;
+
+Succeed.
+
+SQL> 
+
+

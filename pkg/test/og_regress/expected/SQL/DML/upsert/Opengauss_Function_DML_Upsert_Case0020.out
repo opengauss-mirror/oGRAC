@@ -1,0 +1,59 @@
+
+
+SQL> drop table if exists products17;
+
+Succeed.
+
+SQL> CREATE TABLE products17 (
+  2     product_no integer PRIMARY KEY,
+  3     name text,
+  4     price numeric
+  5 );
+
+Succeed.
+
+SQL> insert into  products17 values(01,'grains',5.5);
+
+1 rows affected.
+
+SQL> select * from products17;
+
+PRODUCT_NO   NAME                                                             PRICE                                   
+------------ ---------------------------------------------------------------- ----------------------------------------
+1            grains                                                           5.5                                     
+
+1 rows fetched.
+
+SQL> insert into  products17 values(02,'grains',5.5) on DUPLICATE key update name='grains', price=5.5;
+
+1 rows affected.
+
+SQL> select * from products17;
+
+PRODUCT_NO   NAME                                                             PRICE                                   
+------------ ---------------------------------------------------------------- ----------------------------------------
+1            grains                                                           5.5                                     
+2            grains                                                           5.5                                     
+
+2 rows fetched.
+
+SQL> insert into  products17 values(02,'grains',5.5) on DUPLICATE key update name='grains', price=5.5;
+
+2 rows affected.
+
+SQL> select * from  products17;
+
+PRODUCT_NO   NAME                                                             PRICE                                   
+------------ ---------------------------------------------------------------- ----------------------------------------
+1            grains                                                           5.5                                     
+2            grains                                                           5.5                                     
+
+2 rows fetched.
+
+SQL> drop table products17;
+
+Succeed.
+
+SQL> 
+
+

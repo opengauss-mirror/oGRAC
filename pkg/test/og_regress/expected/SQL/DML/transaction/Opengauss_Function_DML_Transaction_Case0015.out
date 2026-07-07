@@ -1,0 +1,47 @@
+
+
+SQL> drop table if exists t_dml_transaction_case0015;create table t_dml_transaction_case0015 (sk integer,id char(16),name varchar(20),sq_ft integer);
+
+Succeed.
+
+
+Succeed.
+
+SQL> 
+SQL> declare
+  2                        i integer;
+  3                        begin
+  4                          for i in 1..10 loop
+  5                            insert into t_dml_transaction_case0015 values(i,'sk1','tt',3332);
+  6                          end loop;
+  7                        end;
+  8 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select * from t_dml_transaction_case0015;
+
+SK           ID               NAME                 SQ_FT       
+------------ ---------------- -------------------- ------------
+1            sk1              tt                   3332        
+2            sk1              tt                   3332        
+3            sk1              tt                   3332        
+4            sk1              tt                   3332        
+5            sk1              tt                   3332        
+6            sk1              tt                   3332        
+7            sk1              tt                   3332        
+8            sk1              tt                   3332        
+9            sk1              tt                   3332        
+10           sk1              tt                   3332        
+
+10 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_dml_transaction_case0015;
+
+Succeed.
+
+SQL> 
+
+

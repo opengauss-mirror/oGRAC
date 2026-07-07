@@ -1,0 +1,47 @@
+
+
+SQL> drop table if exists t_update01;
+
+Succeed.
+
+SQL> create table t_update01(id int,name varchar(10));
+
+Succeed.
+
+SQL> insert into t_update01 values(1,'hello'),(2,'world'),(3,'hello1');
+
+3 rows affected.
+
+SQL> update t_update01 t_update01$ set id = id + 1 where name = 'hello';
+
+1 rows affected.
+
+SQL> select * from t_update01;
+
+ID           NAME      
+------------ ----------
+2            hello     
+2            world     
+3            hello1    
+
+3 rows fetched.
+
+SQL> update t_update01 as _update01$ set id = 50 where name = 'hello1';
+
+1 rows affected.
+
+SQL> update t_update01 as T_update01$ set id = 5 where name = 'world';
+
+1 rows affected.
+
+SQL> update t_update01 as "T_update01$" set id = 54 where name = 'world';
+
+1 rows affected.
+
+SQL> drop table t_update01;
+
+Succeed.
+
+SQL> 
+
+

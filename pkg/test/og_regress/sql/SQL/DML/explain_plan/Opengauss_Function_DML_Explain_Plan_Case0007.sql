@@ -1,0 +1,10 @@
+drop table if exists explain_t007;
+drop table if exists explain_t007_bak;
+drop table if exists explain_t007_bak_1;
+create table explain_t007(a int, b int);
+create table explain_t007_bak(f1 int,f2 int);
+create table explain_t007_bak_1(f3 int,f4 int);
+explain plan for select * from explain_t007 where exists(select f1 from explain_t007_bak GROUP BY f1 HAVING f1 IN (select f3 from explain_t007_bak_1));
+drop table explain_t007;
+drop table explain_t007_bak;
+drop table explain_t007_bak_1;

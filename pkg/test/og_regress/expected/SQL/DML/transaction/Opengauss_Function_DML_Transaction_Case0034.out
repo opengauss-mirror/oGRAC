@@ -1,0 +1,93 @@
+
+
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL> drop table if exists testzl1;
+
+Succeed.
+
+SQL> create table testzl (sk integer);
+
+Succeed.
+
+SQL> create table testzl1 (sk integer);
+
+Succeed.
+
+SQL> 
+SQL> drop function if exists get_transaction;
+
+Succeed.
+
+SQL> create or replace function get_transaction return integer
+  2 as
+  3 begin
+  4   return 1;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> 
+SQL> begin
+  2   insert into testzl values (get_transaction());
+  3 end;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL> select * from testzl;
+
+SK          
+------------
+1           
+
+1 rows fetched.
+
+SQL> 
+SQL> drop function if exists get_transaction;
+
+Succeed.
+
+SQL> create or replace function get_transaction(i integer) return integer
+  2 as
+  3 begin
+  4   return i + 1;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> 
+SQL> begin
+  2   insert into testzl1 values (get_transaction(1));
+  3 end;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL> select * from testzl1;
+
+SK          
+------------
+2           
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists testzl;
+
+Succeed.
+
+SQL> drop table if exists testzl1;
+
+Succeed.
+
+SQL> drop function if exists get_transaction;
+Succeed.
+
+
+
+

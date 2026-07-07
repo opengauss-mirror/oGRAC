@@ -1,0 +1,66 @@
+
+
+SQL> drop table if exists explain_table_rightjoin1_0011;
+
+Succeed.
+
+SQL>             create table explain_table_rightjoin1_0011
+  2             (name varchar(10),stu_id integer not null, score int );
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists explain_table_rightjoin2_0011;
+
+Succeed.
+
+SQL>             create table explain_table_rightjoin2_0011
+  2             (cname varchar(10),cid varchar(5) not null,
+  3             num int ,sname varchar(10));
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_table_rightjoin1_0011 values('张三',1,50),
+  2             ('李四',2,55),('王五',3,30);
+
+3 rows affected.
+
+SQL> 
+SQL> insert into explain_table_rightjoin2_0011 values('数学','01',50,'张三'),
+  2             ('语文','02',55,'李四'),('英语',3,30,'王五');
+
+3 rows affected.
+
+SQL> 
+SQL> explain select * from explain_table_rightjoin1_0011 right
+  2             join explain_table_rightjoin2_0011 on name = sname;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name                          | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                               | 545  | 3318 | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER    |       |                               | 545  | 3318 | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_RIGHTJOIN2_0011 | 311  | 5    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_RIGHTJOIN1_0011 | 351  | 6    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    3 - filter: NAME = SNAME                                    
+
+11 rows fetched.
+
+SQL> 
+SQL> drop table explain_table_rightjoin1_0011;
+
+Succeed.
+
+SQL>             drop table explain_table_rightjoin2_0011;
+
+Succeed.
+
+SQL> 
+
+

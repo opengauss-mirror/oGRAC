@@ -1,0 +1,41 @@
+
+
+SQL> drop table if exists t_dml_transaction_case0026;create table t_dml_transaction_case0026 (sk boolean,sk1 boolean,sk2 boolean);
+
+Succeed.
+
+
+Succeed.
+
+SQL> 
+SQL> declare
+  2                           a boolean;
+  3                           b boolean;
+  4                           c boolean;
+  5                         begin
+  6                           a := true;
+  7                           b := false;
+  8                           c := null;
+  9                           insert into t_dml_transaction_case0026 values (a,b,c);
+ 10                         end;
+ 11 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select * from t_dml_transaction_case0026;
+
+SK     SK1    SK2   
+------ ------ ------
+TRUE   FALSE        
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists t_dml_transaction_case0026;
+
+Succeed.
+
+SQL> 
+
+

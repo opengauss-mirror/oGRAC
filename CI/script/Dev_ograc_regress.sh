@@ -20,27 +20,35 @@ function help() {
 
 function collect_core() {
 	collect_script=${ROOT_PATH}/CI/script/collect_corefile_ograc.sh
-	sh ${collect_script} ${CORE_DIR} ${TEMP_DIR} ${ROOT_PATH} ${TEST_DATA_DIR}/data  ${RUN_TEST_USER}
+	sh "${collect_script}" "${CORE_DIR}" "${TEMP_DIR}" "${ROOT_PATH}" "${TEST_DATA_DIR}/data" "${RUN_TEST_USER}" "${REGRESS_LOG}"
 }
 
-function print_regress_diffs() {
-    local diff_dir="${ROOT_PATH}/pkg/test/og_regress/results"
-    local diff_file
+function collect_regress_diff() {
+	local results_dir=${REGRESS_PATH}/results
+	local diff_dir=${TEMP_DIR}/diff
+	local diff_list=${TEMP_DIR}/regress_diff_files.list
+	mkdir -p "${diff_dir}"
+	if [ ! -d "${results_dir}" ]; then
+		echo "No regress results directory found: ${results_dir}" | tee -a "${REGRESS_LOG}"
+		return 0
+	fi
+	find "${results_dir}" -type f -name "*.diff" | sort > "${diff_list}"
+	if [ ! -s "${diff_list}" ]; then
+		echo "No regress diff files found under ${results_dir}" | tee -a "${REGRESS_LOG}"
+		return 0
+	fi
 
-    if ls "${diff_dir}"/*.diff >/dev/null 2>&1; then
-        echo "========================= Regress Diff Begin =======================" | tee -a ${REGRESS_LOG}
-        for diff_file in "${diff_dir}"/*.diff; do
-            [ -f "${diff_file}" ] || continue
-            echo "----- ${diff_file} -----" | tee -a ${REGRESS_LOG}
-            cat "${diff_file}" | tee -a ${REGRESS_LOG}
-            echo "" | tee -a ${REGRESS_LOG}
-        done
-        echo "========================== Regress Diff End ========================" | tee -a ${REGRESS_LOG}
-        mkdir -p ${TEMP_DIR}/diff
-        cp "${diff_dir}"/*.diff ${TEMP_DIR}/diff
-    else
-        echo "No regress diff files found under ${diff_dir}" | tee -a ${REGRESS_LOG}
-    fi
+	while IFS= read -r diff_file
+	do
+		rel_path=${diff_file#${results_dir}/}
+		rel_dir=$(dirname "${rel_path}")
+		echo "========================= Regress Diff: ${rel_path} =========================" | tee -a "${REGRESS_LOG}"
+		cat "${diff_file}" 2>&1 | tee -a "${REGRESS_LOG}"
+		echo "" | tee -a "${REGRESS_LOG}"
+		mkdir -p "${diff_dir}/${rel_dir}"
+		cp "${diff_file}" "${diff_dir}/${rel_path}"
+		echo "Saved regress diff to ${diff_dir}/${rel_path}" | tee -a "${REGRESS_LOG}"
+	done < "${diff_list}"
 }
 
 function run_og_regress() {
@@ -50,7 +58,7 @@ function run_og_regress() {
 	cp -f ${ROOT_PATH}/output/bin/og_regress ${REGRESS_PATH}
 	chmod u+x ${REGRESS_PATH}/og_regress
 	chown -R ${RUN_TEST_USER}:${RUN_TEST_USER} ${REGRESS_PATH}
-    su - ${RUN_TEST_USER} -c "cd ${REGRESS_PATH} && sh ogdb_regress_ograc.sh ${TEST_DATA_DIR}/install ${SYS_PASSWD} ${OG_SCHEDULE_LIST} 2>&1 "| tee ${REGRESS_LOG}
+    su - ${RUN_TEST_USER} -c "cd ${REGRESS_PATH} && bash ogdb_regress_ograc.sh '${TEST_DATA_DIR}/install' '${SYS_PASSWD}' '${OG_SCHEDULE_LIST}' 2>&1 "| tee ${REGRESS_LOG}
     set +e
     fail_count=`grep -c ":  FAILED" ${REGRESS_LOG}`
 	ok_count=`grep -c ":  OK" ${REGRESS_LOG}`
@@ -58,7 +66,7 @@ function run_og_regress() {
 	if [ $fail_count -ne 0 ] || [ $ok_count -eq 0 ]; then
 		echo "Error: Some cases failed when og_regress!!"
 		echo "Error: Some cases failed when og_regress!!" >> ${REGRESS_LOG} 2>&1
-        print_regress_diffs
+		collect_regress_diff
 		echo "Regress Failed! Regress Failed! Regress Failed! "
 		collect_core # local debug, can annotate this step
 		exit 1
@@ -194,6 +202,11 @@ function compile_code() {
 
 gen_lcov_report()
 {
+    if ! command -v lcov >/dev/null 2>&1; then
+        echo "lcov not found, skip lcov report"
+        return 0
+    fi
+
     pid=`ps aux | grep ogracd |grep -v grep |awk '{print $2}'`
     sleep 5
     kill -35 $pid

@@ -1,0 +1,66 @@
+
+
+SQL> drop table if exists explain_table_innerjoin1_0009;
+
+Succeed.
+
+SQL>             create table explain_table_innerjoin1_0009
+  2             (name varchar(10),stu_id integer not null, score int );
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists explain_table_innerjoin2_0009;
+
+Succeed.
+
+SQL>             create table explain_table_innerjoin2_0009
+  2             (cname varchar(10),cid varchar(5) not null,
+  3             num int ,sname varchar(10));
+
+Succeed.
+
+SQL> 
+SQL> insert into explain_table_innerjoin1_0009 values('张三',1,50),
+  2             ('李四',2,55),('王五',3,30);
+
+3 rows affected.
+
+SQL> 
+SQL> insert into explain_table_innerjoin2_0009 values('数学','01',50,'张三'),
+  2             ('语文','02',55,'李四'),('英语',3,30,'王五');
+
+3 rows affected.
+
+SQL> 
+SQL> explain select * from explain_table_innerjoin1_0009 inner
+  2             join explain_table_innerjoin2_0009 on name = sname;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------
+| Id | Operation               | Owner | Name                          | Rows | Cost | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                               | 545  | 661  | 181       |       |        |
+| 1  |   MERGE JOIN            |       |                               | 545  | 661  | 181       |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_INNERJOIN2_0009 | 311  | 5    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_INNERJOIN1_0009 | 351  | 6    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    1 - access: SNAME = NAME                                    
+
+11 rows fetched.
+
+SQL> 
+SQL> drop table explain_table_innerjoin1_0009;
+
+Succeed.
+
+SQL>             drop table explain_table_innerjoin2_0009;
+
+Succeed.
+
+SQL> 
+
+

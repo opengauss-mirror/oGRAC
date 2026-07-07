@@ -1,0 +1,34 @@
+
+
+SQL> drop table if exists mykey_3f;
+
+Succeed.
+
+SQL> create table mykey_3f
+  2 (
+  3    name nvarchar2(20) ,
+  4    id number primary key ,
+  5    address nvarchar2(50)
+  6 ) ;
+
+Succeed.
+
+SQL> insert into mykey_3f values('lisa10',2,'yunnan'),('tom',2,'tianjin') on DUPLICATE KEY UPDATE name='lisa1',address='yunnan';
+
+3 rows affected.
+
+SQL> select * from mykey_3f;
+
+NAME                                                             ID                                       ADDRESS                                                         
+---------------------------------------------------------------- ---------------------------------------- ----------------------------------------------------------------
+lisa1                                                            2                                        yunnan                                                          
+
+1 rows fetched.
+
+SQL> drop table  mykey_3f;
+
+Succeed.
+
+SQL> 
+
+

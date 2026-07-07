@@ -1,0 +1,62 @@
+
+
+SQL> drop table if exists explain_t015;
+
+Succeed.
+
+SQL> drop table if exists explain_t015_bak;
+
+Succeed.
+
+SQL> drop table if exists explain_t015_bak1;
+
+Succeed.
+
+SQL> create table explain_t015(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t015_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> create table explain_t015_bak1(f3 int,f4 int);
+
+Succeed.
+
+SQL> explain plan for update explain_t015 set a = 1 where b = (select f1 from explain_t015_bak where f1 = (select f3 from explain_t015_bak1));
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                 | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | UPDATE STATEMENT          |       |                   | 0    | 0    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | EXPLAIN_T015      | 0    | 0    | 0         |       |        |
+| 3  |     KERNEL FILTER         |       |                   | 0    | 0    | 0         |       |        |
+| 4  |       TABLE ACCESS FULL   | SYS   | EXPLAIN_T015_BAK  | 0    | 0    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | EXPLAIN_T015_BAK1 | 0    | 0    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: B = (SELECT F1 FROM EXPLAIN_T015_BAK WHERE F1 = (SELECT F3 FROM EXPLAIN_T015_BAK1))
+    4 - filter: F1 = (SELECT F3 FROM EXPLAIN_T015_BAK1)         
+
+14 rows fetched.
+
+SQL> drop table explain_t015;
+
+Succeed.
+
+SQL> drop table explain_t015_bak;
+
+Succeed.
+
+SQL> drop table explain_t015_bak1;
+
+Succeed.
+
+SQL> 
+
+

@@ -1,0 +1,62 @@
+
+
+SQL> drop table if exists explain_t013;
+
+Succeed.
+
+SQL> drop table if exists explain_t013_bak;
+
+Succeed.
+
+SQL> drop table if exists explain_t013_bak1;
+
+Succeed.
+
+SQL> create table explain_t013(a int, b int);
+
+Succeed.
+
+SQL> create table explain_t013_bak(f1 int,f2 int);
+
+Succeed.
+
+SQL> create table explain_t013_bak1(f3 int,f4 int);
+
+Succeed.
+
+SQL> explain plan for select t.a  from explain_t013 t where t.a = (select f1 from explain_t013_bak where f2 = (select f3 from explain_t013_bak1)) + 1;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------
+| Id | Operation                 | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT          |       |                   | 0    | 0    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 0    | 0    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | EXPLAIN_T013 T    | 0    | 0    | 0         |       |        |
+| 3  |     KERNEL FILTER         |       |                   | 0    | 0    | 0         |       |        |
+| 4  |       TABLE ACCESS FULL   | SYS   | EXPLAIN_T013_BAK  | 0    | 0    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | EXPLAIN_T013_BAK1 | 0    | 0    | 0         |       |        |
+---------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - filter: T.A = (SELECT F1 FROM EXPLAIN_T013_BAK WHERE F2 = (SELECT F3 FROM EXPLAIN_T013_BAK1)) + 1
+    4 - filter: F2 = (SELECT F3 FROM EXPLAIN_T013_BAK1)         
+
+14 rows fetched.
+
+SQL> drop table explain_t013;
+
+Succeed.
+
+SQL> drop table explain_t013_bak;
+
+Succeed.
+
+SQL> drop table explain_t013_bak1;
+
+Succeed.
+
+SQL> 
+
+
