@@ -794,6 +794,23 @@ select name, val from bison_pl_issue245_log order by name;
 
 drop table if exists bison_pl_issue245_log;
 
+drop function if exists sys.bison_pl_issue259_func_end3;
+create or replace function sys.bison_pl_issue259_func_end3 return number is
+begin
+    return 1;
+end sys.bison_pl_issue259_func_end3;
+/
+select sys.bison_pl_issue259_func_end3() as issue259_func_end from sys_dummy;
+drop function sys.bison_pl_issue259_func_end3;
+
+drop procedure if exists sys.bison_pl_issue261_proc_end3;
+create or replace procedure sys.bison_pl_issue261_proc_end3 is
+begin
+    null;
+end sys.bison_pl_issue261_proc_end3;
+/
+drop procedure sys.bison_pl_issue261_proc_end3;
+
 drop table if exists bison_pl_pushback_log;
 drop table if exists bison_pl_pushback_src;
 create table bison_pl_pushback_log(stage varchar(40), val int, info varchar(60));

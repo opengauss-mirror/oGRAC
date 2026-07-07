@@ -127,6 +127,8 @@ static bool32 pl_bison_is_ident_char(char c);
 static bool32 pl_bison_is_ident_text(const char *str, uint32 len);
 static text_t *current_label_name(pl_compiler_t *compiler);
 static status_t check_end_name(const text_t *expected, const char *actual, source_location_t loc);
+static status_t check_block_end_name(pl_compiler_t *compiler, const text_t *expected,
+    const pl_bison_end_name_t *actual, source_location_t loc);
 static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char *actual, source_location_t loc);
 static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
@@ -201,6 +203,13 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
 
 %}
 
+%code requires {
+typedef struct st_pl_bison_end_name {
+    const char *owner;
+    const char *name;
+} pl_bison_end_name_t;
+}
+
 %expect 0
 %name-prefix "plsql_yy"
 %define api.pure
@@ -224,6 +233,7 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
     bool boolean;
     galist_t *list;
     record_attr_t *record_attr;
+    pl_bison_end_name_t end_name;
 }
 
 %type <keyword>	unreserved_keyword
@@ -233,7 +243,8 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
 %type <text> decl_rec_defval_expr cursor_query cursor_arg_defval_expr
 %type <type> decl_datatype
 %type <type> opt_collection_index
-%type <str> decl_varname simple_name label_name opt_block_end_name opt_loop_end_name opt_exit_label for_index_name
+%type <str> decl_varname simple_name label_name opt_loop_end_name opt_exit_label for_index_name
+%type <end_name> opt_block_end_name
 %type <word> pragma_exception_name
 %type <ival> pragma_error_code
 %type <boolean> decl_notnull
@@ -470,7 +481,7 @@ block_body_core:
                         if (expected_name == NULL && compiler->stack.depth == 1 && compiler->obj != NULL) {
                             expected_name = &compiler->obj->name;
                         }
-                        if (check_end_name(expected_name, $5, @5.loc) != OG_SUCCESS) {
+                        if (check_block_end_name(compiler, expected_name, &$5, @5.loc) != OG_SUCCESS) {
                             parser_yyerror("Undefined symbol");
                         }
                     }
@@ -506,14 +517,21 @@ opt_declare_keyword:
         ;
 
 opt_block_end_name:
-            T_WORD
+            simple_name
                 {
-                    $$ = pl_bison_word_name(yyscanner, &$1, @1.offset);
-                    if ($$ == NULL) {
-                        parser_yyerror("invalid block end name");
-                    }
+                    $$.owner = NULL;
+                    $$.name = $1;
                 }
-            | /* EMPTY */                               { $$ = NULL; }
+            | simple_name '.' simple_name
+                {
+                    $$.owner = $1;
+                    $$.name = $3;
+                }
+            | /* EMPTY */
+                {
+                    $$.owner = NULL;
+                    $$.name = NULL;
+                }
         ;
 
 opt_loop_end_name:
@@ -2617,6 +2635,34 @@ static status_t check_end_name(const text_t *expected, const char *actual, sourc
 
     OG_SRC_THROW_ERROR(loc, ERR_UNDEFINED_SYMBOL_FMT, actual);
     return OG_ERROR;
+}
+
+static status_t check_block_end_name(pl_compiler_t *compiler, const text_t *expected,
+    const pl_bison_end_name_t *actual, source_location_t loc)
+{
+    text_t actual_owner;
+
+    if (actual == NULL || actual->name == NULL) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(check_end_name(expected, actual->name, loc));
+    if (actual->owner == NULL) {
+        return OG_SUCCESS;
+    }
+
+    if (compiler == NULL || compiler->obj == NULL || expected != &compiler->obj->name) {
+        OG_SRC_THROW_ERROR(loc, ERR_UNDEFINED_SYMBOL_FMT, actual->owner);
+        return OG_ERROR;
+    }
+
+    cm_str2text((char *)actual->owner, &actual_owner);
+    if (!cm_text_equal_ins(&compiler->obj->user, &actual_owner)) {
+        OG_SRC_THROW_ERROR(loc, ERR_UNDEFINED_SYMBOL_FMT, actual->owner);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char *actual, source_location_t loc)

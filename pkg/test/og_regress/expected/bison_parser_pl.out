@@ -1319,6 +1319,48 @@ SQL> drop table if exists bison_pl_issue245_log;
 Succeed.
 
 SQL>
+SQL> drop function if exists sys.bison_pl_issue259_func_end3;
+
+Succeed.
+
+SQL> create or replace function sys.bison_pl_issue259_func_end3 return number is
+  2 begin
+  3     return 1;
+  4 end sys.bison_pl_issue259_func_end3;
+  5 /
+
+Succeed.
+
+SQL> select sys.bison_pl_issue259_func_end3() as issue259_func_end from sys_dummy;
+
+ISSUE259_FUNC_END
+-----------------
+1
+
+1 rows fetched.
+
+SQL> drop function sys.bison_pl_issue259_func_end3;
+
+Succeed.
+
+SQL>
+SQL> drop procedure if exists sys.bison_pl_issue261_proc_end3;
+
+Succeed.
+
+SQL> create or replace procedure sys.bison_pl_issue261_proc_end3 is
+  2 begin
+  3     null;
+  4 end sys.bison_pl_issue261_proc_end3;
+  5 /
+
+Succeed.
+
+SQL> drop procedure sys.bison_pl_issue261_proc_end3;
+
+Succeed.
+
+SQL>
 SQL> drop table if exists bison_pl_pushback_log;
 
 Succeed.
