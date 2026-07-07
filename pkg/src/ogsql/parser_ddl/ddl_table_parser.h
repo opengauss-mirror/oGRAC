@@ -48,6 +48,7 @@ status_t sql_parse_truncate_table(sql_stmt_t *stmt);
 status_t sql_parse_flashback_table(sql_stmt_t *stmt);
 status_t sql_parse_purge_table(sql_stmt_t *stmt, knl_purge_def_t *def);
 status_t sql_parse_comment_table(sql_stmt_t *stmt, key_wid_t wid);
+status_t sql_verify_comment_def(sql_stmt_t *stmt, knl_comment_def_t *comment_def);
 status_t sql_create_temporary_lead(sql_stmt_t *stmt);
 status_t sql_parse_drop_temporary_lead(sql_stmt_t *stmt);
 status_t sql_create_global_lead(sql_stmt_t *stmt);

@@ -328,6 +328,13 @@ alter database set time_zone='+00:00';
 alter database enable_logic_replication on;
 alter database enable_logic_replication off;
 
+comment on table bison_ddl_issue268_missing is 'desc'; --error
+
+drop table if exists bison_ddl_issue269_basic;
+create table bison_ddl_issue269_basic(id number, name varchar2(50));
+comment on column bison_ddl_issue269_basic.nonexistent_col is 'desc'; --error
+drop table bison_ddl_issue269_basic;
+
 drop trigger if exists bison_ddl_trig_stmt;
 drop trigger if exists bison_ddl_trig;
 drop type if exists bison_ddl_type_arr force;

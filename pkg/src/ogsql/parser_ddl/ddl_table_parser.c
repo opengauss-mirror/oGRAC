@@ -1365,7 +1365,7 @@ status_t sql_parse_purge_table(sql_stmt_t *stmt, knl_purge_def_t *def)
     return lex_expected_end(lex);
 }
 
-static status_t sql_verify_comment_def(sql_stmt_t *stmt, knl_comment_def_t *comment_def)
+status_t sql_verify_comment_def(sql_stmt_t *stmt, knl_comment_def_t *comment_def)
 {
     status_t status;
     knl_dictionary_t dc;

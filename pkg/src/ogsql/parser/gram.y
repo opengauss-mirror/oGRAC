@@ -9343,6 +9343,9 @@ CommentStmt:
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
                         def->comment.len = 0;
                     }
+                    if (sql_verify_comment_def(stmt, def) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify comment failed");
+                    }
                     $$ = def;
                 }
             | COMMENT ON COLUMN insert_column_item IS SCONST
@@ -9377,6 +9380,9 @@ CommentStmt:
                     } else {
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
                         def->comment.len = 0;
+                    }
+                    if (sql_verify_comment_def(stmt, def) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify comment failed");
                     }
                     $$ = def;
                 }

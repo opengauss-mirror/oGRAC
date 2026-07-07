@@ -760,6 +760,26 @@ SQL> alter database enable_logic_replication off;
 
 Succeed.
 
+SQL>
+SQL> comment on table bison_ddl_issue268_missing is 'desc'; --error
+
+OG-00843, The table or view SYS.BISON_DDL_ISSUE268_MISSING does not exist.
+SQL>
+SQL> drop table if exists bison_ddl_issue269_basic;
+
+Succeed.
+
+SQL> create table bison_ddl_issue269_basic(id number, name varchar2(50));
+
+Succeed.
+
+SQL> comment on column bison_ddl_issue269_basic.nonexistent_col is 'desc'; --error
+
+OG-00601, Sql syntax error: NONEXISTENT_COL: invalid identifier
+SQL> drop table bison_ddl_issue269_basic;
+
+Succeed.
+
 SQL> 
 SQL> drop trigger if exists bison_ddl_trig_stmt;
 
