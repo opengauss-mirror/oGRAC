@@ -144,13 +144,6 @@ struct st_proc_complier {
     bool32 push_stack;
     uint32 step;
     void *proc;
-
-    int plsql_yyleng;
-    /* Token pushback stack */
-#define MAX_PUSHBACKS 100
-
-    int num_pushbacks;
-    int pushback_token[MAX_PUSHBACKS];
 };
 
 struct st_pl_ctl_block_id {

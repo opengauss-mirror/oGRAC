@@ -920,27 +920,102 @@ SQL> declare
 PL/SQL procedure successfully completed.
 
 SQL>
+SQL> create or replace procedure bison_pl_exception_init_proc is
+  2     snapshot_too_old exception;
+  3     v_part varchar(130);
+  4     pragma exception_init(snapshot_too_old, 715);
+  5 begin
+  6     v_part := 'pragma_exception_init';
+  7     insert into bison_pl_cursor_attr_log values(v_part, 1);
+  8 end;
+  9 /
+
+Succeed.
+
+SQL>
+SQL> begin
+  2     bison_pl_exception_init_proc;
+  3 end;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> drop table if exists bison_pl_cursor_loop_t;
+
+Succeed.
+
+SQL> create table bison_pl_cursor_loop_t(owner varchar(20), table_name varchar(20), partition_name varchar(20));
+
+Succeed.
+
+SQL> insert into bison_pl_cursor_loop_t values('USR', 'TAB', 'P1');
+
+1 rows affected.
+
+SQL>
+SQL> create or replace procedure bison_pl_cursor_assign_proc is
+  2     v_table varchar(130);
+  3     v_part varchar(130);
+  4     v_owner varchar(130);
+  5 begin
+  6     for item in (select owner, table_name, partition_name from bison_pl_cursor_loop_t) loop
+  7         v_table := '"'||ITEM.TABLE_NAME||'"';
+  8         v_part  := '"'||ITEM.PARTITION_NAME||'"';
+  9         v_owner := '"'||ITEM.OWNER||'"';
+ 10         if v_table = '"TAB"' and v_part = '"P1"' and v_owner = '"USR"' then
+ 11             insert into bison_pl_cursor_attr_log values('cursor_for_assign', 1);
+ 12         end if;
+ 13     end loop;
+ 14 end;
+ 15 /
+
+Succeed.
+
+SQL>
+SQL> begin
+  2     bison_pl_cursor_assign_proc;
+  3 end;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
 SQL> select stage, val from bison_pl_cursor_attr_log order by stage;
 
 STAGE                          VAL
 ------------------------------ ------------
+cursor_for_assign              1
 cursor_found                   1
 cursor_isopen                  1
 cursor_notfound                1
 cursor_rowcount                1
 pragma_auto                    1
+pragma_exception_init          1
 refcursor_notfound             1
 sql_notfound                   1
 sql_rowcount                   1
 
-8 rows fetched.
+10 rows fetched.
 
 SQL>
+SQL> drop procedure bison_pl_cursor_assign_proc;
+
+Succeed.
+
+SQL> drop procedure bison_pl_exception_init_proc;
+
+Succeed.
+
 SQL> drop procedure bison_pl_auto_proc;
 
 Succeed.
 
 SQL> drop procedure bison_pl_sql_notfound_proc;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_cursor_loop_t;
 
 Succeed.
 
@@ -1240,6 +1315,78 @@ pls_integer                              1
 
 SQL>
 SQL> drop table if exists bison_pl_issue245_log;
+
+Succeed.
+
+SQL>
+SQL> drop table if exists bison_pl_pushback_log;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_pushback_src;
+
+Succeed.
+
+SQL> create table bison_pl_pushback_log(stage varchar(40), val int, info varchar(60));
+
+Succeed.
+
+SQL> create table bison_pl_pushback_src(id int, name varchar(20));
+
+Succeed.
+
+SQL> insert into bison_pl_pushback_src values(7, 'PB');
+
+1 rows affected.
+
+SQL>
+SQL> declare
+  2     type pushback_rec_t is record(id int, name varchar2(20));
+  3     type id_tab_t is table of int index by binary_integer;
+  4     v_rec pushback_rec_t;
+  5     v_ids id_tab_t;
+  6     v_id int := 0;
+  7     v_name varchar2(20);
+  8     cursor c_arg(p_min int, p_name varchar2 default 'PB') is
+  9         select id, name from bison_pl_pushback_src where id >= p_min and name = p_name;
+ 10 begin
+ 11     v_ids(1) := 11;
+ 12     bison_pl_proc(v_ids(1));
+ 13
+ 14     open c_arg(p_min => 7, p_name => 'PB');
+ 15     fetch c_arg into v_id, v_name;
+ 16     close c_arg;
+ 17     v_rec.id := v_id;
+ 18     v_rec.name := v_name;
+ 19
+ 20     execute immediate 'select id, name from bison_pl_pushback_src where id = :1'
+ 21         into v_id, v_name using in v_rec.id;
+ 22
+ 23     insert into bison_pl_pushback_log values('assoc_type_lookahead', v_ids(1), 'ok');
+ 24     insert into bison_pl_pushback_log values('cursor_named_arg', v_rec.id, v_rec.name);
+ 25     insert into bison_pl_pushback_log values('execute_using', v_id, v_name);
+ 26 end;
+ 27 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> select * from bison_pl_pushback_log order by stage;
+
+STAGE                                    VAL          INFO
+---------------------------------------- ------------ ------------------------------------------------------------
+assoc_type_lookahead                     11           ok
+cursor_named_arg                         7            PB
+execute_using                            7            PB
+
+3 rows fetched.
+
+SQL>
+SQL> drop table if exists bison_pl_pushback_log;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_pushback_src;
 
 Succeed.
 
