@@ -118,6 +118,14 @@ commit;
 drop table if exists bison_lock_t1;
 drop table if exists bison_lock_t2;
 
+drop table if exists bison_dcl_issue270_basic;
+drop role bison_dcl_issue270_role;
+create role bison_dcl_issue270_role;
+create table bison_dcl_issue270_basic(id number, name varchar2(50));
+grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+drop table bison_dcl_issue270_basic;
+drop role bison_dcl_issue270_role;
+
 -- Test VALIDATE statements
 validate datafile 1 page 100;
 validate backupset 1;

@@ -132,6 +132,8 @@ static char *bison_copy_token_text(core_yyscan_t yyscanner, int offset);
 static void sql_bison_privilege_text(core_yyscan_t yyscanner, int start_offset, bool32 stop_on, text_t *priv_name);
 static bool32 sql_bison_lookup_role(sql_stmt_t *stmt, text_t *priv_name, char *role_buf, uint32 role_buf_len,
     uint32 *rid);
+static status_t sql_bison_make_all_priv_list(sql_stmt_t *stmt, const char *name, source_location_t loc,
+    galist_t **list);
 static status_t sql_bison_copy_cstr_if_present(sql_stmt_t *stmt, char *src, text_t *dst);
 static status_t sql_bison_copy_text_if_present(sql_stmt_t *stmt, text_t *src, text_t *dst);
 static status_t strGetInt64ByLen(const char *str, size_t len, int64 *value);
@@ -11285,11 +11287,55 @@ GrantStmt:
                     }
                     $$ = def;
                 }
+            | GRANT ALL ON grant_objtype any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $4, $5, $7, $8) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
+            | GRANT ALL PRIVILEGES ON grant_objtype any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $5, $6, $8, $9) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
             | GRANT obj_priv_list ON any_name TO grantee_list opt_with_grant
                 {
                     knl_grant_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
+            | GRANT ALL ON any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
+            | GRANT ALL PRIVILEGES ON any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $5, $7, $8) != OG_SUCCESS) {
                         parser_yyerror("parse grant failed");
                     }
                     $$ = def;
@@ -18023,6 +18069,24 @@ static bool32 sql_bison_lookup_role(sql_stmt_t *stmt, text_t *priv_name, char *r
 
     *priv_name = role_name;
     return OG_TRUE;
+}
+
+static status_t sql_bison_make_all_priv_list(sql_stmt_t *stmt, const char *name, source_location_t loc,
+    galist_t **list)
+{
+    text_t priv_name;
+    knl_priv_def_t *priv_def = NULL;
+
+    OG_RETURN_IFERR(sql_create_list(stmt, list));
+    OG_RETURN_IFERR(cm_galist_new(*list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def));
+
+    cm_str2text((char *)name, &priv_name);
+    OG_RETURN_IFERR(sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name));
+
+    priv_def->priv_id = (uint32)ALL_PRIVILEGES;
+    priv_def->priv_type = PRIV_TYPE_ALL_PRIV;
+    priv_def->start_loc = loc;
+    return OG_SUCCESS;
 }
 
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc)
