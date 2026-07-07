@@ -811,6 +811,83 @@ end sys.bison_pl_issue261_proc_end3;
 /
 drop procedure sys.bison_pl_issue261_proc_end3;
 
+drop trigger if exists bison_pl_issue262_trg;
+drop table if exists bison_pl_issue262_log;
+create table bison_pl_issue262_log(id number, action varchar2(50));
+create or replace trigger bison_pl_issue262_trg
+before insert on bison_pl_issue262_log
+for each row
+declare
+    v$$ number := 0;
+begin
+    /* outer
+       /* inner */
+       :new.not_exists := 1;
+    */
+    if :new.id is null then
+        :new.id := 1;
+    elsif :new.id < 0 then
+        :new.id := 0;
+    end if;
+    while :new.id < 2 loop
+        :new.id := :new.id + 1;
+    end loop;
+    case
+        when :new.id = 2 then
+            v$$ := :new.id;
+            if v$$ = :new.id then
+                :new.action := 'p\' || to_char(:new.id) || '|' || ':new.id' || '|' || $$:old.id$$ || '|' || E'e\':old.id';
+            else
+                :new.action := 'unexpected';
+            end if;
+        else
+            :new.action := 'unexpected';
+    end case;
+end;
+/
+insert into bison_pl_issue262_log values(null, 'INSERT');
+select id, action from bison_pl_issue262_log;
+drop trigger bison_pl_issue262_trg;
+drop table bison_pl_issue262_log;
+
+drop trigger if exists bison_pl_issue263_trg;
+drop table if exists bison_pl_issue263_log;
+drop table if exists bison_pl_issue263_basic;
+create table bison_pl_issue263_basic(id number, name varchar2(50));
+create table bison_pl_issue263_log(id number, action varchar2(50));
+create or replace trigger bison_pl_issue263_trg
+after update on bison_pl_issue263_basic
+for each row
+begin
+    insert into bison_pl_issue263_log values(:old.id, 'UPDATED');
+    insert into bison_pl_issue263_log values(:old.id, ':new.id');
+end;
+/
+insert into bison_pl_issue263_basic values(1, 'old');
+update bison_pl_issue263_basic set name = 'new' where id = 1;
+select id, action from bison_pl_issue263_log order by action;
+drop trigger bison_pl_issue263_trg;
+drop table bison_pl_issue263_log;
+drop table bison_pl_issue263_basic;
+
+drop trigger if exists bison_pl_issue266_trg;
+drop view if exists bison_pl_issue266_view;
+drop table if exists bison_pl_issue266_basic;
+create table bison_pl_issue266_basic(id number, name varchar2(50));
+create view bison_pl_issue266_view as select id, name from bison_pl_issue266_basic;
+create or replace trigger bison_pl_issue266_trg
+instead of insert on bison_pl_issue266_view
+for each row
+begin
+    insert into bison_pl_issue266_basic values(:new.id, :new.name);
+end;
+/
+insert into bison_pl_issue266_view values(10, 'alice');
+select id, name from bison_pl_issue266_basic;
+drop trigger bison_pl_issue266_trg;
+drop view bison_pl_issue266_view;
+drop table bison_pl_issue266_basic;
+
 drop table if exists bison_pl_pushback_log;
 drop table if exists bison_pl_pushback_src;
 create table bison_pl_pushback_log(stage varchar(40), val int, info varchar(60));

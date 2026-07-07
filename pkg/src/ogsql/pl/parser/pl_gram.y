@@ -20,6 +20,7 @@
 #include "ogsql_dependency.h"
 #include "ogsql_privilege.h"
 #include "pragma_cl.h"
+#include "trigger_decl_cl.h"
 
 /* Location tracking support --- simpler than bison's default */
 
@@ -765,7 +766,8 @@ stmt_assign:
                             parser_yyerror("compile assignment failed");
                         }
                         line->left = left;
-                        if (parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
+                        if (plc_check_var_as_left(compiler, line->left, @1.loc, NULL) != OG_SUCCESS ||
+                            parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
                             plc_clone_expr_node(compiler, &line->left) != OG_SUCCESS ||
                             plc_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
                             plc_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
@@ -2909,12 +2911,28 @@ static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefi
     return status;
 }
 
-static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+static status_t pl_bison_rewrite_trigger_fragment(sql_stmt_t *stmt, text_t *src, text_t *rewritten)
 {
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     source_location_t loc = { 0 };
 
+    if (compiler == NULL) {
+        *rewritten = *src;
+        return OG_SUCCESS;
+    }
+    loc = compiler->line_loc;
+    return plc_rewrite_trigger_variants(compiler, src, rewritten, loc, PLC_TRIGGER_REWRITE_AS_NAME);
+}
+
+static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    source_location_t loc = { 0 };
+    text_t rewritten_src;
+
     *expr = NULL;
+    OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
+    src = &rewritten_src;
     if (compiler != NULL) {
         loc = compiler->line_loc;
         OG_RETURN_IFERR(try_create_pl_var_expr_from_text(stmt, src, loc, expr));
@@ -2933,13 +2951,21 @@ static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t *
 
 static status_t get_valid_cond_tree(sql_stmt_t *stmt, text_t *src, cond_tree_t **cond)
 {
+    text_t rewritten_src;
+
     *cond = NULL;
+    OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
+    src = &rewritten_src;
     return pl_bison_parse_fragment_tree(stmt, "CHECK (", src, ")", PL_BISON_FRAGMENT_COND_TREE, (void **)cond);
 }
 
 static status_t get_valid_call_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
 {
+    text_t rewritten_src;
+
     *expr = NULL;
+    OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
+    src = &rewritten_src;
     /* PROCEDURE selects the SQL-bison entry for PL statement-level calls. */
     return pl_bison_parse_fragment_tree(stmt, "PROCEDURE ", src, "", PL_BISON_FRAGMENT_EXPR_TREE, (void **)expr);
 }
