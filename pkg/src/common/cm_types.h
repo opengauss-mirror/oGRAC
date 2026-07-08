@@ -69,6 +69,9 @@ typedef unsigned long long uint64;
 typedef int socket_t;
 #endif
 
+typedef __int128 int128;
+typedef unsigned __int128 uint128;
+
 typedef void *pointer_t;
 typedef void *handle_t;
 

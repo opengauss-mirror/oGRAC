@@ -72,6 +72,7 @@ extern "C" {
 #define MES_MAX_TASK_NUM (1000)
 #define MES_GET_BITMAP_TIME_INTERVAL  (1000)  // ms
 #define MES_BROADCAST_SEND_TIME_INTERVAL  (1000)  // ms
+#define MES_CPU_BIND_TOTAL 8
 
 #define MES_GET_INST_BITMAP(inst_count) (((0x1) << (inst_count)) - 1)
 #define MES_IS_INST_SEND(bits, id) (((bits) >> (id)) & 0x1)
@@ -497,6 +498,7 @@ static inline bool8 mes_verify_cks(uint16 old_cks, void *msg_data, uint16 msg_si
 mes_instance_t *get_g_mes(void);
 mes_stat_t *get_g_mes_stat(void);
 char *get_g_mes_cpu_info(void);
+uint32 mes_build_cpu_bind_array(uint32 *cpu_bind_array);
 status_t mes_set_profile(mes_profile_t *profile);
 status_t mes_set_uc_dpumm_config_path(const char *home_path);
 status_t mes_startup(void);

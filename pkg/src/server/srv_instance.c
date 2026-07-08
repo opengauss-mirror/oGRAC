@@ -25,10 +25,12 @@
 #include "srv_module.h"
 #include "cm_file.h"
 #include "srv_instance.h"
+#include "cm_cpu.h"
 #include "load_others.h"
 #include "load_kernel.h"
 #include "load_server.h"
 #include "srv_view.h"
+#include "knl_log.h"
 #include "cm_signal.h"
 #include "cm_license.h"
 #include "pl_ext_proc.h"
@@ -317,6 +319,8 @@ static status_t srv_init_session_pool(void)
     biqueue_init(&g_instance->session_pool.priv_idle_sessions);
     g_instance->session_pool.service_count = 0;
     g_instance->session_pool.epollfd = epoll_create1(0);
+    g_instance->session_pool.numa_node = 0;
+
     return OG_SUCCESS;
 }
 
@@ -497,7 +501,7 @@ static bool32 srv_killed_session_flush_end(bool32 demote)
 
     if (ctrl->state == SWITCH_WAIT_LOG_SYNC) {
         if (log_need_flush(&session->kernel->redo_ctx)) {
-            if (log_flush(session, NULL, NULL, NULL) != OG_SUCCESS) {
+            if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
                 CM_ABORT(0, "[INST] %s ABORT INFO: failed to flush redo log", demote ? "SWITCHOVER" : "RAEDONLY");
             }
 
@@ -1854,95 +1858,6 @@ void srv_thread_exit(thread_t *thread, session_t *session)
     srv_release_session(session);
     srv_free_agent_res(agent, OG_FALSE);
     CM_FREE_PTR(agent);
-}
-
-
-char g_cpu_info_str[CPU_INFO_STR_SIZE];
-
-int g_cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE];
-int g_cpu_group_num = 0;
-cpu_set_t g_masks[CPU_SEG_MAX_NUM];
-
-int get_cpu_group_num(void)
-{
-    return g_cpu_group_num;
-}
-
-cpu_set_t* get_cpu_masks(void)
-{
-    return g_masks;
-}
-
-char *get_g_cpu_info(void)
-{
-    return g_cpu_info_str;
-}
-
-static int init_cpu_mask(char *cpu_info_str, int *cpu_group_num, int cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE])
-{
-    errno_t errcode;
-    if (cpu_info_str[0] == '0' && strlen(cpu_info_str) == 1) {
-        return OG_SUCCESS;
-    }
-    char *p = NULL;
-    char *str = strtok_r(cpu_info_str, " ", &p);
-    char cpu_group_str[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE];
-    while (str != NULL) {
-        errcode = strcpy_s(cpu_group_str[(*cpu_group_num)++], SMALL_RECORD_SIZE, str);
-        MEMS_RETURN_IFERR(errcode);
-        str = strtok_r(NULL, " ", &p);
-    }
-    for (int i = 0; i < *cpu_group_num; i++) {
-        char *cpu_p = NULL;
-        char cpu_group_str_cp[SMALL_RECORD_SIZE];
-        errcode = strcpy_s(cpu_group_str_cp, SMALL_RECORD_SIZE, cpu_group_str[i]);
-        MEMS_RETURN_IFERR(errcode);
-        char *cpu_str = strtok_r(cpu_group_str_cp, ",", &cpu_p);
-        int count = 0;
-        while (cpu_str != NULL) {
-            int s = 0, e = 0;
-            int num = sscanf_s(cpu_str, "%d-%d", &s, &e);
-            if (num == 1) {
-                e = s;
-            } else if (num != 2) {
-                OG_LOG_RUN_ERR("cpu configuration error, num = %d, s = %d, e = %d, should be like \"0-3\" or \"0\", but \"%s\"",
-                               num, s, e, cpu_str);
-                return OG_ERROR;
-            }
-            for (int j = s; j <= e; j++) {
-                cpu_info[i][count++] = j;
-            }
-            cpu_str = strtok_r(NULL, ",", &cpu_p);
-        }
-        cpu_info[i][count] = -1;
-    }
-    return OG_SUCCESS;
-}
-
-static void set_cpu_mask(void)
-{
-    for (int i = 0; i < g_cpu_group_num; i++) {
-        cpu_set_t mask;
-        CPU_ZERO(&mask);
-        for (int j = 0; j < SMALL_RECORD_SIZE; j++) {
-            if (g_cpu_info[i][j] >= 0) {
-                CPU_SET(g_cpu_info[i][j], &mask);
-            } else {
-                break;
-            }
-        }
-        g_masks[i] = mask;
-    }
-}
-
-static int init_cpu_info(void)
-{
-    if (init_cpu_mask(g_cpu_info_str, &g_cpu_group_num, g_cpu_info) != 0 || g_cpu_group_num == 0) {
-        OG_LOG_RUN_ERR("g_cpu_group_num init error, g_cpu_group_num is %d", g_cpu_group_num);
-        return OG_ERROR;
-    }
-    set_cpu_mask();
-    return OG_SUCCESS;
 }
 
 status_t srv_instance_startup(db_startup_phase_t phase, bool32 is_coordinator, bool32 is_datanode, bool32 is_gts)

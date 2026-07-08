@@ -43,8 +43,8 @@ typedef enum en_lock_mode {
 
 typedef struct st_schema_lock {
     void *next;  // !!! must be the first member of structure
-    lock_mode_t mode;
-    uint32 shared_count;
+    atomic32_t mode;
+    atomic32_t shared_count;
 
     uint32 inst_id;  // dtc, x mode record instance id in dtc worker thread
     // uint16 sid; //dtc, x mode record session id in dtc worker thread
@@ -62,7 +62,8 @@ typedef struct st_schema_lock {
 #define SCH_LOCK_CLEAN(session, lock) ((lock)->map[(session)->rmid] = 0)
 #define SCH_LOCK_EXPLICIT(session, lock) ((lock)->map[(session)->rmid] = EXPLICT_LOCKED)
 #define SCH_LOCKED_BY_RMID(rmid, lock) ((lock)->map[rmid])
-#define SCH_LOCKED_EXCLUSIVE(dc_entity) (((dc_entity_t *)(dc_entity))->entry->sch_lock->mode == LOCK_MODE_X)
+#define SCH_LOCKED_EXCLUSIVE(dc_entity) \
+    (cm_atomic32_get(&((dc_entity_t *)(dc_entity))->entry->sch_lock->mode) == LOCK_MODE_X)
 
 #define SCH_LOCK_INST_SET(instid, lock) ((lock)->inst_id = instid)
 #define SCH_LOCK_INST_CLEAN(lock) ((lock)->inst_id = OG_INVALID_ID8)
@@ -114,7 +115,7 @@ typedef struct st_lock_item {
 
 #define LOCK_PAGE_CAPACITY (OG_SHARED_PAGE_SIZE / sizeof(lock_item_t))
 #define MAX_LOCKS (OG_MAX_LOCK_PAGES * LOCK_PAGE_CAPACITY)
-#define UNLOCK_IX(lock) ((lock)->shared_count > 0 ? LOCK_MODE_S : LOCK_MODE_IDLE)
+#define UNLOCK_IX(lock) (cm_atomic32_get(&(lock)->shared_count) > 0 ? LOCK_MODE_S : LOCK_MODE_IDLE)
 #define LOCK_NEXT(area, lock_id) (lock_addr((area), (lock_id))->next)
 
 #define IS_SESSION_OR_PL_LOCK(type) \

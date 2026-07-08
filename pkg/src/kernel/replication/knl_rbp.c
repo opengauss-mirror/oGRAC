@@ -3016,7 +3016,7 @@ static rbp_latch_result_t rbp_buf_latch_timed_s(knl_session_t *session, buf_ctrl
         cm_spin_lock(&rbp_ctrl->init_lock, NULL);
     }
 
-    if (!buf_latch_timed_s(session, ctrl, RBP_SEND_LATCH_TIMEOUT, OG_FALSE, OG_TRUE)) {
+    if (!buf_latch_timed_s(session, ctrl, RBP_SEND_LATCH_TIMEOUT, OG_FALSE)) {
         cm_spin_unlock(&rbp_ctrl->init_lock);
         return RBP_LATCH_BUSY;
     }
@@ -3874,7 +3874,7 @@ status_t rbp_wait_redo_visible(knl_session_t *session, thread_t *thread, uint64 
     /* make sure log is flushed to local disk(primary DN disk) */
     if (max_page_lfn > redo_ctx->flushed_lfn && !rbp_context->log_flushing) {
         rbp_context->log_flushing = OG_TRUE;
-        if (log_flush(session, &curr_point, NULL, NULL) != OG_SUCCESS) {
+        if (log_flush(session, &curr_point, NULL, NULL, NULL) != OG_SUCCESS) {
             return OG_ERROR;
         }
 

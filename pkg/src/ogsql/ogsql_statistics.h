@@ -131,6 +131,24 @@ typedef struct st_ctx_accum {
     atomic_t log_ckpt_time;
     atomic_t log_sync;
     atomic_t log_sync_time;
+    atomic_t log_sleep_before_commit;
+    atomic_t log_sleep_before_commit_time;
+    atomic_t log_follower_wait;
+    atomic_t log_follower_wait_time;
+    atomic_t log_leader_self_wait;
+    atomic_t log_leader_self_wait_time;
+    atomic_t log_leader_compute_max_lfn;
+    atomic_t log_leader_compute_max_lfn_time;
+    atomic_t log_leader_worker_wait;
+    atomic_t log_leader_worker_wait_time;
+    atomic_t log_leader_wakeup;
+    atomic_t log_leader_wakeup_time;
+    atomic_t log_futex_wait;
+    atomic_t log_futex_wait_time;
+    atomic_t log_reserve_space;
+    atomic_t log_reserve_space_time;
+    atomic_t log_write;
+    atomic_t log_write_time;
     atomic_t log_bytes;
 
     // stat info about transaction
@@ -247,6 +265,24 @@ typedef struct st_ctx_prev_stat {
     atomic_t log_ckpt_time;
     atomic_t log_sync;
     atomic_t log_sync_time;
+    atomic_t log_sleep_before_commit;
+    atomic_t log_sleep_before_commit_time;
+    atomic_t log_follower_wait;
+    atomic_t log_follower_wait_time;
+    atomic_t log_leader_self_wait;
+    atomic_t log_leader_self_wait_time;
+    atomic_t log_leader_compute_max_lfn;
+    atomic_t log_leader_compute_max_lfn_time;
+    atomic_t log_leader_worker_wait;
+    atomic_t log_leader_worker_wait_time;
+    atomic_t log_leader_wakeup;
+    atomic_t log_leader_wakeup_time;
+    atomic_t log_futex_wait;
+    atomic_t log_futex_wait_time;
+    atomic_t log_reserve_space;
+    atomic_t log_reserve_space_time;
+    atomic_t log_write;
+    atomic_t log_write_time;
     atomic_t log_bytes;
 
     // stat info about transaction

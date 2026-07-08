@@ -38,7 +38,7 @@
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define BUF_PAGE_COST_WITH_RBP (BUF_PAGE_COST + sizeof(buf_rbp_ctrl_t))
 
-static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
+static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32, .latch.lock = 0, .ref_num = 0 };
 uint32 g_cks_level;
 
 static bool32 buf_rbp_post_recovery_check_enabled(knl_session_t *session)
@@ -400,7 +400,7 @@ static void buf_check_rbp_queue_gap(knl_session_t *session, buf_ctrl_t *item)
 {
     if (item->rbp_ctrl->is_rbpdirty) {
         if (item->bucket_id != OG_INVALID_ID32) {
-            buf_latch_x(session, item, OG_TRUE);
+            buf_latch_x(session, item);
             /*
              * Prefer snapshot detach before this ctrl is reused.  If memory is
              * unavailable, the detach helper drops the queue item and forces a
@@ -516,7 +516,7 @@ static inline void buf_expire_compress_remove(buf_bucket_t **bucket_visited, uin
     }
 
     for (int i = 0; i < bucket_visisted_num; i++) {
-        cm_spin_unlock(&bucket_visited[i]->lock);
+        cm_spin_unlock_bucket(&bucket_visited[i]->lock);
     }
 }
 
@@ -593,13 +593,13 @@ static uint32 buf_expire_compress(knl_session_t *session, buf_set_t *set, buf_lr
                 map_ctrl_to_bucket[i] = visited_id;
                 continue;
             }
-        } else if (cm_spin_timed_lock(&cur_bucket->lock, 100)) {
+        } else if (cm_spin_timed_lock_bucket(&cur_bucket->lock, 100)) {
             if (buf_can_expire(cur_ctrl, expire_type)) {
                 map_ctrl_to_bucket[i] = bucket_visisted_num;
                 bucket_visited[bucket_visisted_num++] = cur_bucket;
                 continue;
             }
-            cm_spin_unlock(&cur_bucket->lock);
+            cm_spin_unlock_bucket(&cur_bucket->lock);
         }
 
         break; // to fail the expiration
@@ -608,7 +608,7 @@ static uint32 buf_expire_compress(knl_session_t *session, buf_set_t *set, buf_lr
     /* cancel the bucket locks if not all ctrls are reached */
     if (i < PAGE_GROUP_COUNT) {
         for (i = 0; i < bucket_visisted_num; i++) {
-            cm_spin_unlock(&bucket_visited[i]->lock);
+            cm_spin_unlock_bucket(&bucket_visited[i]->lock);
         }
         buf_compress_cold_down(session, head);
         return 0; // fail
@@ -633,13 +633,13 @@ static uint32 buf_expire_normal(knl_session_t *session, buf_set_t *set, buf_ctrl
 
     buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     if (!buf_can_expire(ctrl, expire_type)) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         return 0; // fail
     }
     buf_remove_from_bucket(bucket, ctrl);
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     ctrl->bucket_id = OG_INVALID_ID32;
     if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_PAGE)) {
@@ -709,16 +709,16 @@ void buf_expire_page(knl_session_t *session, page_id_t page_id)
     uint32 hash_id = buf_get_bucket_id_by_hash(hash_val, set->bucket_num);
     bucket = BUF_GET_BUCKET(set, hash_id);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     ctrl = buf_find_from_bucket(bucket, page_id);
     if (ctrl == NULL) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         return;
     }
 
     /* Skip non-head compressed page */
     if (BUF_IS_COMPRESS(ctrl) && !PAGE_IS_COMPRESS_HEAD(page_id)) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         return;
     }
 
@@ -728,7 +728,7 @@ void buf_expire_page(knl_session_t *session, page_id_t page_id)
      */
     list_id = ctrl->list_id; // snap the list id before unlocking bucket.
     list = &set->list[list_id];
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
     /* The ctrl may have chaned after we lock the list,
@@ -955,13 +955,12 @@ static void buf_get_ctrl(knl_session_t *session, buf_set_t *set, uint32 options,
     *ctrl = item;
 }
 
-static void buf_latch_get_latch(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, latch_mode_t mode)
+static void buf_latch_get_latch(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode)
 {
     uint32 times = 0;
-    bool32 lock_needed = OG_FALSE;
 
     if (mode != LATCH_MODE_X) {
-        buf_latch_s(session, ctrl, (mode == LATCH_MODE_FORCE_S), lock_needed);
+        buf_latch_s(session, ctrl, (mode == LATCH_MODE_FORCE_S));
         return;
     }
 
@@ -970,10 +969,6 @@ static void buf_latch_get_latch(knl_session_t *session, buf_bucket_t *bucket, bu
     for (;;) {
         while (ctrl->is_readonly && ctrl->latch.xsid != session->id) {
             knl_begin_session_wait(session, event, OG_TRUE);
-            if (!lock_needed) {
-                cm_spin_unlock(&bucket->lock);
-                lock_needed = OG_TRUE;
-            }
 
             times++;
             if (SECUREC_UNLIKELY(times > OG_SPIN_COUNT)) {
@@ -983,10 +978,9 @@ static void buf_latch_get_latch(knl_session_t *session, buf_bucket_t *bucket, bu
             }
         }
 
-        buf_latch_x(session, ctrl, lock_needed);
+        buf_latch_x(session, ctrl);
         if (ctrl->is_readonly && ctrl->latch.xsid != session->id) {
             buf_unlatch(session, ctrl, OG_FALSE);
-            lock_needed = OG_TRUE; // always need lock after latched on time since bucket is released.
             continue;
         }
 
@@ -1000,9 +994,8 @@ static void buf_latch_ctrl(knl_session_t *session, buf_bucket_t *bucket, buf_ctr
 {
     uint32 times = 0;
 
-    buf_latch_get_latch(session, bucket, ctrl, mode);
+    buf_latch_get_latch(session, ctrl, mode);
 
-    // Wait other session to finish IO read.
     while (ctrl->load_status != (uint8)BUF_IS_LOADED) {
         if (ctrl->load_status == (uint8)BUF_LOAD_FAILED) {
             if (mode == LATCH_MODE_X) {
@@ -1015,14 +1008,14 @@ static void buf_latch_ctrl(knl_session_t *session, buf_bucket_t *bucket, buf_ctr
              * For current buffer load, if someone failed to load the page,
              * the current session need to reload again.
              */
-            cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+            cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
             if (ctrl->load_status != (uint8)BUF_LOAD_FAILED) {
-                cm_spin_unlock(&bucket->lock);
+                cm_spin_unlock_bucket(&bucket->lock);
                 continue;
             }
 
             ctrl->load_status = (uint8)BUF_NEED_LOAD;
-            cm_spin_unlock(&bucket->lock);
+            cm_spin_unlock_bucket(&bucket->lock);
             ctrl->remote_access = 0;
             break;
         }
@@ -1047,16 +1040,21 @@ static inline void buf_init_ctrl_options(knl_session_t *session, buf_ctrl_t *ctr
     }
 }
 
-static void buf_set_ctrl_options(knl_session_t *session, buf_set_t *set, buf_ctrl_t *ctrl, uint32 options)
+static void buf_apply_ctrl_options(knl_session_t *session, buf_set_t *set, buf_ctrl_t *ctrl, uint32 options,
+    bool32 bucket_held)
 {
     if ((options & ENTER_PAGE_RESIDENT) && !ctrl->is_resident) {
-        buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
+        if (!bucket_held) {
+            buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
 
-        cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
-        if (!ctrl->is_resident) {
+            cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+            if (!ctrl->is_resident) {
+                ctrl->is_resident = 1;
+            }
+            cm_spin_unlock_bucket(&bucket->lock);
+        } else {
             ctrl->is_resident = 1;
         }
-        cm_spin_unlock(&bucket->lock);
         return;
     }
 
@@ -1103,20 +1101,21 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
     uint32 hash_id = buf_get_bucket_id_by_hash(hash_val, set->bucket_num);
     buf_bucket_t *bucket = BUF_GET_BUCKET(set, hash_id);
 
-    /* lock bucket to find page ctrl and release lock after latching */
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    /* lock bucket to find ctrl / bump ref (atomic), then release before buf_latch_ctrl */
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     item = buf_find_from_bucket(bucket, page_id);
     /* nothing to do when page is not in buffer with enter page try */
     if (SECUREC_UNLIKELY((options & ENTER_PAGE_TRY) &&
                          (item == NULL || (!DB_IS_CLUSTER(session) && item->load_status != BUF_IS_LOADED)))) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         return NULL;
     }
 
     if (item != NULL) {
-        item->ref_num++;
+        (void)cm_atomic32_fetch_inc(&item->ref_num);
+        buf_apply_ctrl_options(session, set, item, options, OG_TRUE);
+        cm_spin_unlock_bucket(&bucket->lock);
         buf_latch_ctrl(session, bucket, item, mode);
-        buf_set_ctrl_options(session, set, item, options);
         buf_update_ctrl_touch_nr(session, item, options);
 
         knl_panic_log(IS_SAME_PAGID(page_id, item->page_id), "the page_id and item's page_id are not same, "
@@ -1127,7 +1126,7 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
                       item->page_id.page, item->page->type, item->buf_pool_id, buf_pool_id);
         return item;
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     knl_begin_session_wait(session, BUFFER_POOL_ALLOC, OG_FALSE);
     buf_get_ctrl(session, set, options, &item);
@@ -1137,12 +1136,13 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
      * if the same page ctrl has been added to bucket concurrently,
      * add the ctrl to aux list allocated by self.
      */
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *temp = buf_find_from_bucket(bucket, page_id);
     if (SECUREC_UNLIKELY(temp != NULL)) {
-        temp->ref_num++;
+        (void)cm_atomic32_fetch_inc(&temp->ref_num);
+        buf_apply_ctrl_options(session, set, temp, options, OG_TRUE);
+        cm_spin_unlock_bucket(&bucket->lock);
         buf_latch_ctrl(session, bucket, temp, mode);
-        buf_set_ctrl_options(session, set, temp, options);
         knl_panic_log(IS_SAME_PAGID(page_id, temp->page_id), "the page_id and temp's page_id are not same, "
                       "panic info: temp page %u-%u type %u curr page %u-%u",
                       temp->page_id.file, temp->page_id.page, temp->page->type, page_id.file, page_id.page);
@@ -1156,18 +1156,19 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
         return temp;
     }
 
-    item->ref_num = 1;
+    (void)cm_atomic32_set(&item->ref_num, 1);
     item->page_id = page_id;
     item->bucket_id = hash_id;
     item->buf_pool_id = buf_pool_id;
     buf_init_ctrl_options(session, item, options);
     buf_add_to_bucket(bucket, item);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     /* latch the ctrl directly causing no concurrent operations on it */
     if (mode != LATCH_MODE_X) {
-        buf_latch_s(session, item, (mode == LATCH_MODE_FORCE_S), OG_FALSE);
+        buf_latch_s(session, item, (mode == LATCH_MODE_FORCE_S));
     } else {
-        buf_latch_x(session, item, OG_FALSE);
+        buf_latch_x(session, item);
         item->latch.xsid = session->id;
     }
 
@@ -1213,11 +1214,12 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
     uint32 hash_id = buf_get_bucket_id_by_hash(hash_val, set->bucket_num);
     buf_bucket_t *bucket = BUF_GET_BUCKET(set, hash_id);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     item = buf_find_from_bucket(bucket, page_id);
     if (item != NULL) {
         if ((item->load_status == (uint8)BUF_LOAD_FAILED) && (!DB_IS_CLUSTER(session))) {
-            item->ref_num++;
+            (void)cm_atomic32_fetch_inc(&item->ref_num);
+            cm_spin_unlock_bucket(&bucket->lock);
             buf_latch_ctrl(session, bucket, item, mode);
             /* page maybe has been loaded by others after latching */
             if (item->load_status == (uint8)BUF_NEED_LOAD) {
@@ -1239,11 +1241,11 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
             knl_panic_log(item->buf_pool_id == buf_pool_id, "item ctrl's buf_pool_id is not equal curr buf_pool_id, "
                           "panic info: page %u-%u type %u item buf_pool_id %u buf_pool_id %u", item->page_id.file,
                           item->page_id.page, item->page->type, item->buf_pool_id, buf_pool_id);
-            cm_spin_unlock(&bucket->lock);
+            cm_spin_unlock_bucket(&bucket->lock);
             return NULL;
         }
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     knl_begin_session_wait(session, BUFFER_POOL_ALLOC, OG_FALSE);
     buf_get_ctrl(session, set, options, &item);
@@ -1253,11 +1255,12 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
      * if anyone has just added the same page ctrl to bucket,
      * release the allocated ctrl to the tail of LRU queue.
      */
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *temp = buf_find_from_bucket(bucket, page_id);
     if (SECUREC_UNLIKELY(temp != NULL)) {
         if ((temp->load_status == (uint8)BUF_LOAD_FAILED) && (!DB_IS_CLUSTER(session))) {
-            temp->ref_num++;
+            (void)cm_atomic32_fetch_inc(&temp->ref_num);
+            cm_spin_unlock_bucket(&bucket->lock);
             buf_latch_ctrl(session, bucket, temp, mode);
 
             cm_spin_lock(&set->scan_list.lock, &session->stat->spin_stat.stat_buffer);
@@ -1281,7 +1284,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
             knl_panic_log(IS_SAME_PAGID(page_id, temp->page_id),
                 "curr page_id and temp's page_id are not same, panic info: temp page %u-%u type %u curr page %u-%u",
                 temp->page_id.file, temp->page_id.page, temp->page->type, page_id.file, page_id.page);
-            cm_spin_unlock(&bucket->lock);
+            cm_spin_unlock_bucket(&bucket->lock);
 
             cm_spin_lock(&set->scan_list.lock, &session->stat->spin_stat.stat_buffer);
             buf_lru_add_ctrl(&set->scan_list, item, BUF_ADD_COLD);
@@ -1290,18 +1293,19 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
         }
     }
 
-    item->ref_num = 1;
+    (void)cm_atomic32_set(&item->ref_num, 1);
     item->page_id = page_id;
     item->bucket_id = hash_id;
     item->buf_pool_id = buf_pool_id;
     buf_init_ctrl_options(session, item, options);
     buf_add_to_bucket(bucket, item);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     /* latch the ctrl directly causing no concurrent operations on it */
     if (mode != LATCH_MODE_X) {
-        buf_latch_s(session, item, (mode == LATCH_MODE_FORCE_S), OG_FALSE);
+        buf_latch_s(session, item, (mode == LATCH_MODE_FORCE_S));
     } else {
-        buf_latch_x(session, item, OG_FALSE);
+        buf_latch_x(session, item);
         item->latch.xsid = session->id;
     }
 
@@ -1481,9 +1485,9 @@ buf_ctrl_t *buf_find_by_pageid(knl_session_t *session, page_id_t page_id)
     uint32 hash_id = buf_get_bucket_id_by_hash(hash_val, set->bucket_num);
     bucket = BUF_GET_BUCKET(set, hash_id);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     ctrl = buf_find_from_bucket(bucket, page_id);
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     return ctrl;
 }
@@ -1788,15 +1792,15 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
     if (DB_IS_CLUSTER(session)) {
         buf_bucket_t *bucket = buf_find_bucket(session, page_id);
 
-        cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+        cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
         buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
         if ((ctrl != NULL) &&
             dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
             (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
-                cm_spin_unlock(&bucket->lock);
+                cm_spin_unlock_bucket(&bucket->lock);
                 return OG_TRUE;
         }
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
 
         uint32 depth = session->page_stack.depth;
         while (depth > 0) {
@@ -1887,11 +1891,11 @@ void buf_expire_datafile_pages(knl_session_t *session, uint32 file_id)
             }
 
             buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
-            cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+            cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
             ctrl->bucket_id = OG_INVALID_ID32;
             ctrl->is_resident = 0;
             buf_remove_from_bucket(bucket, ctrl);
-            cm_spin_unlock(&bucket->lock);
+            cm_spin_unlock_bucket(&bucket->lock);
         }
     }
 }

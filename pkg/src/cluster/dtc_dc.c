@@ -195,7 +195,7 @@ status_t dtc_sync_ddl(knl_handle_t knl_session)
 {
     knl_session_t *session = (knl_session_t *)knl_session;
 
-    knl_panic(session->logic_log_size > 0);
+    knl_panic(session->logic_log_size > 0 || session->rm->logic_log_size > 0);
 
     knl_rm_t *rm = session->rm;
     char *logic_log_buf = NULL;

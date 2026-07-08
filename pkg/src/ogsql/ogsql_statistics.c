@@ -133,6 +133,24 @@ static void sql_save_log_stats(sql_stmt_t *stmt)
     context_pre_stat->log_ckpt_time = knl_stat->wait_time[LOG_FILE_SWITCH_CKPT];
     context_pre_stat->log_sync = knl_stat->wait_count[LOG_FILE_SYNC];
     context_pre_stat->log_sync_time = knl_stat->wait_time[LOG_FILE_SYNC];
+    context_pre_stat->log_sleep_before_commit = knl_stat->wait_count[LOG_SLEEP_BEFORE_WAIT_COMMIT];
+    context_pre_stat->log_sleep_before_commit_time = knl_stat->wait_time[LOG_SLEEP_BEFORE_WAIT_COMMIT];
+    context_pre_stat->log_follower_wait = knl_stat->wait_count[LOG_FOLLOWER_WAIT];
+    context_pre_stat->log_follower_wait_time = knl_stat->wait_time[LOG_FOLLOWER_WAIT];
+    context_pre_stat->log_leader_self_wait = knl_stat->wait_count[LOG_LEADER_SELF_WAIT];
+    context_pre_stat->log_leader_self_wait_time = knl_stat->wait_time[LOG_LEADER_SELF_WAIT];
+    context_pre_stat->log_leader_compute_max_lfn = knl_stat->wait_count[LOG_LEADER_COMPUTE_MAX_LFN];
+    context_pre_stat->log_leader_compute_max_lfn_time = knl_stat->wait_time[LOG_LEADER_COMPUTE_MAX_LFN];
+    context_pre_stat->log_leader_worker_wait = knl_stat->wait_count[LOG_LEADER_WORKER_WAIT];
+    context_pre_stat->log_leader_worker_wait_time = knl_stat->wait_time[LOG_LEADER_WORKER_WAIT];
+    context_pre_stat->log_leader_wakeup = knl_stat->wait_count[LOG_LEADER_WAKEUP];
+    context_pre_stat->log_leader_wakeup_time = knl_stat->wait_time[LOG_LEADER_WAKEUP];
+    context_pre_stat->log_futex_wait = knl_stat->wait_count[LOG_FUTEX_WAIT];
+    context_pre_stat->log_futex_wait_time = knl_stat->wait_time[LOG_FUTEX_WAIT];
+    context_pre_stat->log_reserve_space = knl_stat->wait_count[LOG_WRITE_RESERVE_SPACE];
+    context_pre_stat->log_reserve_space_time = knl_stat->wait_time[LOG_WRITE_RESERVE_SPACE];
+    context_pre_stat->log_write = knl_stat->wait_count[LOG_WRITE];
+    context_pre_stat->log_write_time = knl_stat->wait_time[LOG_WRITE];
     context_pre_stat->log_bytes = knl_stat->redo_bytes;
 }
 
@@ -333,6 +351,43 @@ static void sql_log_statinfo_accumulate(sql_stmt_t *stmt, ogx_stat_t *context_st
     cm_atomic_add(&context_stat->log_sync, stat_temp);
     stat_temp = (int64)(knl_stat->wait_time[LOG_FILE_SYNC] - context_pre_stat->log_sync_time);
     cm_atomic_add(&context_stat->log_sync_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_SLEEP_BEFORE_WAIT_COMMIT] - context_pre_stat->log_sleep_before_commit);
+    cm_atomic_add(&context_stat->log_sleep_before_commit, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_SLEEP_BEFORE_WAIT_COMMIT] - context_pre_stat->log_sleep_before_commit_time);
+    cm_atomic_add(&context_stat->log_sleep_before_commit_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_FOLLOWER_WAIT] - context_pre_stat->log_follower_wait);
+    cm_atomic_add(&context_stat->log_follower_wait, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_FOLLOWER_WAIT] - context_pre_stat->log_follower_wait_time);
+    cm_atomic_add(&context_stat->log_follower_wait_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_LEADER_SELF_WAIT] - context_pre_stat->log_leader_self_wait);
+    cm_atomic_add(&context_stat->log_leader_self_wait, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_LEADER_SELF_WAIT] - context_pre_stat->log_leader_self_wait_time);
+    cm_atomic_add(&context_stat->log_leader_self_wait_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_LEADER_COMPUTE_MAX_LFN] - context_pre_stat->log_leader_compute_max_lfn);
+    cm_atomic_add(&context_stat->log_leader_compute_max_lfn, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_LEADER_COMPUTE_MAX_LFN] - context_pre_stat->log_leader_compute_max_lfn_time);
+    cm_atomic_add(&context_stat->log_leader_compute_max_lfn_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_LEADER_WORKER_WAIT] - context_pre_stat->log_leader_worker_wait);
+    cm_atomic_add(&context_stat->log_leader_worker_wait, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_LEADER_WORKER_WAIT] - context_pre_stat->log_leader_worker_wait_time);
+    cm_atomic_add(&context_stat->log_leader_worker_wait_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_LEADER_WAKEUP] - context_pre_stat->log_leader_wakeup);
+    cm_atomic_add(&context_stat->log_leader_wakeup, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_LEADER_WAKEUP] - context_pre_stat->log_leader_wakeup_time);
+    cm_atomic_add(&context_stat->log_leader_wakeup_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_FUTEX_WAIT] - context_pre_stat->log_futex_wait);
+    cm_atomic_add(&context_stat->log_futex_wait, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_FUTEX_WAIT] - context_pre_stat->log_futex_wait_time);
+    cm_atomic_add(&context_stat->log_futex_wait_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_WRITE_RESERVE_SPACE] - context_pre_stat->log_reserve_space);
+    cm_atomic_add(&context_stat->log_reserve_space, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_WRITE_RESERVE_SPACE] - context_pre_stat->log_reserve_space_time);
+    cm_atomic_add(&context_stat->log_reserve_space_time, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_count[LOG_WRITE] - context_pre_stat->log_write);
+    cm_atomic_add(&context_stat->log_write, stat_temp);
+    stat_temp = (int64)(knl_stat->wait_time[LOG_WRITE] - context_pre_stat->log_write_time);
+    cm_atomic_add(&context_stat->log_write_time, stat_temp);
+
     stat_temp = (int64)(knl_stat->redo_bytes - context_pre_stat->log_bytes);
     cm_atomic_add(&context_stat->log_bytes, stat_temp);
 }

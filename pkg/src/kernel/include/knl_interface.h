@@ -882,7 +882,7 @@ uint8 knl_get_initrans(void);
 uint32 knl_db_node_count(knl_handle_t session);
 
 void knl_attach_cpu_core(void);
-void knl_get_cpu_set_from_conf(cpu_set_t *cpuset);
+void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint8 target_numa);
 /* @} */
 #ifdef __cplusplus
 }

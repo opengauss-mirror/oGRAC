@@ -95,6 +95,7 @@ typedef struct st_knl_spin_stat_t {
     spin_statis_t stat_ckpt_queue;
     spin_statis_t stat_buffer;
     spin_statis_t stat_bucket;
+    spin_statis_t stat_buf_latch;
     spin_statis_t stat_space;
     spin_statis_t stat_dc_entry;
     spin_statis_t stat_log_flush;
@@ -362,6 +363,7 @@ typedef struct st_knl_session {
     uint32 inst_id;    // instance id, for cluster
     uint16 stat_id;
     uint8 reverse;
+    uint32 ass_numa;
     bool8 has_migr;
     bool8 bootstrap;  // if this session is doing database bootstrap
     bool8 autotrace;

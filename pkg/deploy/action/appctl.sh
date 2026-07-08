@@ -23,8 +23,8 @@ DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-${OGRAC_HOME}/log/deploy}"
 OM_DEPLOY_LOG_FILE="${OM_DEPLOY_LOG_FILE:-${DEPLOY_LOG_DIR}/deploy.log}"
 mkdir -p "${DEPLOY_LOG_DIR}"
 
-log_info()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO ] $*" | tee -a "${OM_DEPLOY_LOG_FILE}"; }
-log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" | tee -a "${OM_DEPLOY_LOG_FILE}" >&2; }
+log_info()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO ] $*" | tee -a "${OM_DEPLOY_LOG_FILE}" 2>/dev/null || true; }
+log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" | tee -a "${OM_DEPLOY_LOG_FILE}" >&2 2>/dev/null || true; }
 
 acquire_lock() {
      mkdir "${LOCK_DIR}" 2>/dev/null || { log_error "Another deploy is running for OGRAC_USER=${_DEPLOY_LOCK_USER}"; return 1; }
@@ -36,7 +36,11 @@ run_deploy() {
     log_info "=== ${action} begin ==="
     python3 -B "${CURRENT_PATH}/ograc_deploy.py" "${action}" "$@"
     local ret=$?
-    [ ${ret} -eq 0 ] && log_info "=== ${action} success ===" || log_error "=== ${action} failed (ret=${ret}) ==="
+    if [ ${ret} -eq 0 ]; then
+        log_info "=== ${action} success ==="
+    else
+        log_error "=== ${action} failed (ret=${ret}) ==="
+    fi
     return ${ret}
 }
 

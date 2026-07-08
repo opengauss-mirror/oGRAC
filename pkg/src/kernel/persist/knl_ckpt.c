@@ -970,7 +970,7 @@ bool32 ckpt_try_latch_ctrl(knl_session_t *session, buf_ctrl_t *ctrl)
         }
 
         // in checkpoint, we don't increase the ref_num.
-        if (!buf_latch_timed_s(session, ctrl, CKPT_LATCH_TIMEOUT, OG_FALSE, OG_TRUE)) {
+        if (!buf_latch_timed_s(session, ctrl, CKPT_LATCH_TIMEOUT, OG_FALSE)) {
             return OG_FALSE;
         }
 
@@ -2285,7 +2285,7 @@ static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
     core_ctrl_t *core = &session->kernel->db.ctrl.core;
     ckpt_group_t *group = &ogx->group[ogx->fid];
 
-    if (log_flush(session, &ogx->lrp_point, &ogx->lrp_scn, NULL) != OG_SUCCESS) {
+    if (log_flush(session, &ogx->lrp_point, &ogx->lrp_scn, NULL, NULL) != OG_SUCCESS) {
         return OG_ERROR;
     }
 

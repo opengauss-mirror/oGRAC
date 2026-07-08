@@ -41,6 +41,8 @@
 extern "C" {
 #endif
 
+#define HOT_FUNCTION __attribute__ ((hot))
+
 #define VERSION2 "OGRACD"
 #define VERSION_PKG "ZEN_PACKAGE"
 
@@ -259,7 +261,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_INDEX_REAL_PREC 16  // # of index decimal digits of precision
 #define OG_MAX_CM_DOUBLE_PREC 17
 
-#define CACHE_LINESIZE (uint32)64
+#define CACHE_LINESIZE (uint32)128
 #define OG_MAX_TIME_STRLEN (uint32)(48)
 #define OG_MAX_DATE_STRLEN (uint32)(22)
 #define OG_MAX_TIMESTAMP_STRLEN (uint32)(32)
@@ -382,6 +384,7 @@ typedef enum en_cs_distribute_type {
 #define OG_REPL_SEND_TIMEOUT (uint32)30000   /* mill-seconds */
 #define OG_BUILD_SEND_TIMEOUT (uint32)300000 /* mill-seconds */
 #define OG_HANDSHAKE_TIMEOUT (uint32)600000  /* mill-seconds */
+#define OG_BUF_LATCH_TIMEOUT (uint32)5  /* mill-seconds */
 
 /* resource manager */
 #define OG_CPU_TIME (uint32)100         // mill-seconds
@@ -407,7 +410,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_MALICIOUS_IP_COUNT (uint32)64000
 #define OG_SYS_SESSIONS (uint32)33
 #define OG_MAX_AUTON_SESSIONS (uint32)256
-#define OG_MAX_UNDO_SEGMENTS (uint32)1024
+#define OG_MAX_UNDO_SEGMENTS (uint32)4096
 #define OG_MAX_SESSIONS (uint32)19380
 #define OG_MAX_RM_LEN (uint32)8
 #define OG_MAX_RM_COUNT (uint32)(OG_SHARED_PAGE_SIZE - OFFSET_OF(schema_lock_t, map))
@@ -499,11 +502,11 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_PUTLINE_SIZE (uint32) SIZE_K(32)
 
 #define OG_MAX_JOB_THREADS (uint32)200
-#define OG_MAX_UNDO_SEGMENT (uint32)1024
+#define OG_MAX_UNDO_SEGMENT (uint32)4096
 #define OG_MIN_UNDO_SEGMENT (uint32)2
 #define OG_MIN_AUTON_TRANS_SEGMENT (uint32)1
 #define OG_MIN_UNDO_ACTIVE_SEGMENT (uint32)2
-#define OG_MAX_UNDO_ACTIVE_SEGMENT (uint32)1024
+#define OG_MAX_UNDO_ACTIVE_SEGMENT (uint32)4096
 #define OG_MIN_UNDO_PREFETCH_PAGES (uint32)1
 #define OG_MAX_UNDO_PREFETCH_PAGES (uint32)128
 #define OG_MAX_SYSTIME_INC_THRE (uint32)3600
@@ -552,7 +555,7 @@ typedef enum en_cs_distribute_type {
 
 /* sga & pga */
 #define OG_MIN_DATA_BUFFER_SIZE (int64) SIZE_M(64) /* 64M */
-#define OG_MAX_BUF_POOL_NUM (uint32)128
+#define OG_MAX_BUF_POOL_NUM (uint32)4096
 #define OG_MIN_CR_POOL_SIZE (int64) SIZE_M(16)     /* 16M */
 #define OG_MAX_CR_POOL_COUNT (uint32)256
 #define OG_MAX_TEMP_POOL_NUM (uint32)128
@@ -600,7 +603,7 @@ typedef enum en_cs_distribute_type {
 #define OG_XPURPOSE_BUFFER_SIZE SIZE_M(2)
 #define OG_MAX_VMEM_MAP_PAGES SIZE_K(32) /* 32K, MAXIMUM vmem size is 1T */
 #define OG_VMEM_PAGE_SIZE SIZE_K(128)
-#define OG_MAX_LOG_BUFFERS (uint32)16
+#define OG_MAX_LOG_BUFFERS (uint32)128
 #define OG_MIN_LOG_BUFFERS (uint32)1
 #define OG_MAX_SSL_EXPIRE_THRESHOLD (uint32)180
 #define OG_MIN_SSL_EXPIRE_THRESHOLD (uint32)7

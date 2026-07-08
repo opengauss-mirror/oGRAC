@@ -28,6 +28,7 @@
 #include "cm_thread.h"
 #include "knl_context.h"
 #include "srv_instance.h"
+#include "knl_log.h"
 #include "pcr_heap.h"
 #include "pcr_heap_undo.h"
 #include "pcr_heap_scan.h"
@@ -678,11 +679,11 @@ void dcs_clean_local_ctrl(knl_session_t *session, buf_ctrl_t *ctrl, drc_res_acti
         ctrl->page_id.file, ctrl->page_id.page, ctrl->is_edp, ctrl->is_dirty, ctrl->is_remote_dirty, action,
         ctrl->load_status, ctrl->is_fixed, clean_lsn, ctrl->page->lsn, ctrl->lock_mode);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     knl_panic(ctrl->is_edp);
 
     if (ctrl->is_fixed) { /* this ctrl has been fixed by another thread and been transfered away to other node. */
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         return;
     }
     ctrl->is_fixed = 1;
@@ -734,7 +735,7 @@ void dcs_clean_local_ctrl(knl_session_t *session, buf_ctrl_t *ctrl, drc_res_acti
         CM_ASSERT(0);
     }
     ctrl->is_fixed = 0;
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 }
 
 /*
@@ -837,7 +838,7 @@ status_t static inline dcs_owner_transfer_page(knl_session_t *session, uint8 own
     if (ctrl->is_dirty || ctrl->is_marked) {
         knl_begin_session_wait(session, DCS_TRANSFER_PAGE_FLUSHLOG, OG_TRUE);
         if (OGRAC_NEED_FLUSH_LOG(session, ctrl)) {
-            if (log_flush(session, NULL, NULL, NULL) != OG_SUCCESS) {
+            if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
                 CM_ABORT(0, "[DTC DCS][%u-%u]: ABORT INFO: flush redo log failed", page_req->page_id.file,
                          page_req->page_id.page);
             }
@@ -3339,13 +3340,13 @@ void dcs_buf_clean_ctrl_edp(knl_session_t *session, buf_ctrl_t *ctrl, bool32 nee
     buf_set_t *set = &session->kernel->buf_ctx.buf_set[ctrl->buf_pool_id];
     buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
     if (need_lock) {
-        cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+        cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     }
     if (!ctrl->is_edp) {
         DTC_DCS_DEBUG_INF("[DCS] edp page[%u-%u] (lsn:%lld) has already been cleaned.", ctrl->page_id.file,
                           ctrl->page_id.page, ctrl->page->lsn);
         if (need_lock) {
-            cm_spin_unlock(&bucket->lock);
+            cm_spin_unlock_bucket(&bucket->lock);
         }
         return;
     }
@@ -3364,7 +3365,7 @@ void dcs_buf_clean_ctrl_edp(knl_session_t *session, buf_ctrl_t *ctrl, bool32 nee
     ctrl->is_edp = 0;
     ctrl->edp_map = 0;
     if (need_lock) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
     }
 }
 

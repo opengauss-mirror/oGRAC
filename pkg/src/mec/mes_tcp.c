@@ -33,6 +33,7 @@
 #include "mes_msg_pool.h"
 #include "rc_reform.h"
 #include "mes_tcp.h"
+#include "knl_interface.h"
 
 #define MES_HOST_NAME(id) ((char *)g_mes.profile.inst_arr[id].ip)
 
@@ -701,6 +702,19 @@ static void mes_channel_entry(thread_t *thread)
     OG_LOG_RUN_INF("mes_channel_entry: channel id %u.", channel->id);
 
     cm_set_thread_name("mes_channel_entry");
+
+    uint32 cpu_bind_array[MES_CPU_BIND_TOTAL];
+    uint32 bind_count = mes_build_cpu_bind_array(cpu_bind_array);
+    if (bind_count > 0) {
+        cpu_set_t cpu_affinity_set;
+        CPU_ZERO(&cpu_affinity_set);
+        uint32 cpu_core = channel->id % bind_count;
+        CPU_SET(cpu_bind_array[cpu_core], &cpu_affinity_set);
+        int rc = sched_setaffinity(0, sizeof(cpu_set_t), &cpu_affinity_set);
+        if (rc == -1) {
+            OG_LOG_RUN_ERR("mes_channel_entry thread bind cpu failed.");
+        }
+    }
 
     while (!thread->closed) {
         if (!channel->send_pipe_active) {

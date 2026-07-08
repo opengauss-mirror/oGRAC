@@ -22,6 +22,7 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <numa.h>
 #include "srv_module.h"
 #include "cm_kmc.h"
 #include "cm_log.h"
@@ -263,7 +264,7 @@ static status_t srv_init_session_sql_curs(session_t *session)
     return OG_SUCCESS;
 }
 
-static status_t srv_alloc_session_memory(session_t **session_out)
+static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t *pool, int numa_id)
 {
     uint32 mem_size;
     uint32 buf_size;
@@ -312,7 +313,17 @@ static status_t srv_alloc_session_memory(session_t **session_out)
     }
     mem_size += len;
 
-    char *buf = (char *)malloc(mem_size);
+    if (numa_id == -1) {
+        cm_spin_lock(&pool->lock, NULL);
+        numa_id = pool->numa_node;
+        pool->numa_node = (numa_id + 1) % 4;
+        cm_spin_unlock(&pool->lock);
+        OG_LOG_RUN_INF("alloc session bind numa %u from session pool's numa", numa_id);
+    } else {
+        OG_LOG_RUN_INF("alloc session bind numa %u from TCP socket's numa", numa_id);
+    }
+    char *buf = (char *)numa_alloc_onnode(mem_size, numa_id);
+
     if (buf == NULL) {
         OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)mem_size, "creating session");
         return OG_ERROR;
@@ -368,6 +379,7 @@ static status_t srv_alloc_session_memory(session_t **session_out)
 
     session->knl_session.stat_id = stat_id;
     session->knl_session.stat = g_instance->stat_pool.stats[stat_id];
+    session->knl_session.ass_numa = numa_id;
 
     *session_out = session;
 
@@ -470,7 +482,12 @@ status_t srv_new_session(cs_pipe_t *pipe, session_t **session)
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(srv_alloc_session_memory(session));
+    int numa_id = -1;
+    if (pipe && pipe->type == CS_TYPE_TCP) {
+        numa_id = cs_get_numaid(pipe->link.tcp.sock);
+    }
+
+    OG_RETURN_IFERR(srv_alloc_session_memory(session, pool, numa_id));
 
 
     srv_init_new_session(pipe, *session);
@@ -1015,7 +1032,6 @@ EXTER_ATTACK status_t srv_process_command(session_t *session)
     clock_gettime(CLOCK_MONOTONIC, &tv_begin);
     cm_reset_error();
     OG_RETURN_IFERR(srv_process_init_session(session));
-
     OG_RETURN_IFERR(srv_read_packet(session));
 
     /* process request command */

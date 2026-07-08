@@ -27,6 +27,8 @@
 
 #include "cm_defs.h"
 #include "cm_hash.h"
+#include "cm_atomic.h"
+#include "cm_spinlock.h"
 #include "knl_common.h"
 #include "knl_interface.h"
 #include "knl_log.h"
@@ -51,7 +53,7 @@ extern "C" {
 #define RD_ENTER_PAGE_MASK        (~(ENTER_PAGE_PINNED | ENTER_PAGE_NO_READ | ENTER_PAGE_TRY | ENTER_PAGE_RESIDENT))
 
 #define BUF_IS_RESIDENT(ctrl)     ((ctrl)->is_resident)
-#define BUF_IN_USE(ctrl)          ((ctrl)->ref_num > 0)
+#define BUF_IN_USE(ctrl)          (cm_atomic32_get(&(ctrl)->ref_num) > 0)
 #define BUF_IS_HOT(ctrl)          ((ctrl)->touch_number >= BUF_TCH_AGE)
 #define BUF_IN_USE_IS_RECYCLABLE(ctrl) \
     ((ctrl)->is_pinned == 0 && (ctrl)->is_dirty == 0 && (ctrl)->is_remote_dirty == 0 && \
@@ -80,7 +82,7 @@ extern "C" {
 #define BUF_LRU_OLD_TOLERANCE 256   // adjust LRU old list pointer if the distance from OLD RATION > BUF_LRU_OLD_TOLERANCE
 #define BUF_LRU_OLD_MIN_LEN   65536 // use LRU old list if >= BUF_LRU_OLD_MIN_LEN buffer pages in memory
 #define BUF_LRU_STATS_LEN     1024  // full scan LRU list len
-#define BUF_POOL_SIZE_THRESHOLD (((uint64)SIZE_M(1024)) * 1) // if total/buf_pool_num < 1G, then use one buffer pool
+#define BUF_POOL_SIZE_THRESHOLD (((uint64)SIZE_M(256)) * 1) // if total/buf_pool_num < 256MB, then use one buffer pool
 #define BUCKET_TIMES          3     // the times of buckets against buffer ctrl
 #define BUF_IOCBS_MAX_NUM     1024
 #define BUF_CTRL_PER_IOCB     128
@@ -119,7 +121,8 @@ typedef struct st_buf_latch {
     volatile uint16 shared_count;
     volatile uint16 stat;
     volatile uint16 sid;   // the first session latched buffer, less than OG_MAX_SESSIONS(8192)
-    volatile uint16 xsid;  // the last session exclusively latched buffer, less than OG_MAX_SESSIONS(8192)
+    volatile uint16 xsid;  // last session that acquired buffer X latch (see buf_latch_get_latch in knl_buffer.c)
+    spinlock_t lock;       // protects latch state + shared_count/stat/sid/xsid
 } buf_latch_t;
 
 typedef enum en_buf_expire_type {
@@ -157,7 +160,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 in_old;
     volatile uint8 list_id;
 
-    volatile uint8 buf_pool_id;
+    volatile uint32 buf_pool_id;
     volatile uint8 in_ckpt;
     volatile uint8 lock_mode;  // used only in DTC, 0: Null, 1: Shared lock, 2: Exclusive lock
 
@@ -170,7 +173,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 remote_access;  // remote access statistics
     volatile uint8 transfer_status;   // page transfer status, used only in TDC
 
-    volatile uint16 ref_num;
+    atomic32_t ref_num;
     volatile uint16 touch_number;   // touch number for LRU
 
     page_id_t page_id;
@@ -208,8 +211,9 @@ typedef struct st_buf_rbp_ctrl {
     spinlock_t init_lock;
 } buf_rbp_ctrl_t;
 
-typedef struct st_buf_bucket {
-    spinlock_t lock;
+typedef struct __attribute__((aligned(128))) st_buf_bucket {
+    spinlock_t lock;  /* use cm_spin_lock_bucket / cm_spin_unlock_bucket only */
+    uint8 pad1[CACHE_LINESIZE - sizeof(spinlock_t)];  /* pad lock to its own cache line */
     uint32 count;
     buf_ctrl_t *first;
 } buf_bucket_t;
@@ -328,14 +332,23 @@ static inline uint32 buf_get_pool_id(page_id_t page_id, uint32 buf_pool_num)
 
 static inline buf_ctrl_t *buf_find_from_bucket(buf_bucket_t *bucket, page_id_t page_id)
 {
+    const uint64 want_pagid = PAGE_ID_VALUE(page_id);
     buf_ctrl_t *ctrl = bucket->first;
 
-    while (ctrl != NULL) {
-        if (IS_SAME_PAGID(ctrl->page_id, page_id)) {
+    if (ctrl == NULL) {
+        return NULL;
+    }
+
+    /* One 64-bit compare on file+page bits only (see PAGE_ID_VALUE). */
+    if (PAGE_ID_VALUE(ctrl->page_id) == want_pagid) {
+        return ctrl;
+    }
+
+    /* Bucket chains are typically length 1 after bucket_num tuning; peel the head above. */
+    for (ctrl = ctrl->hash_next; ctrl != NULL; ctrl = ctrl->hash_next) {
+        if (PAGE_ID_VALUE(ctrl->page_id) == want_pagid) {
             return ctrl;
         }
-
-        ctrl = ctrl->hash_next;
     }
 
     return NULL;

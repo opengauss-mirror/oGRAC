@@ -565,6 +565,10 @@ static void job_fetch_task(knl_session_t *session)
 
     knl_open_sys_cursor(session, cursor, CURSOR_ACTION_SELECT, SYS_JOB_ID, OG_INVALID_ID32);
     do {
+        if (RC_REFORM_IN_PROGRESS) {
+            continue;
+        }
+
         if (job_check_db_session_invalid(session)) {
             CM_RESTORE_STACK(session->stack);
             session->status = SESSION_INACTIVE;

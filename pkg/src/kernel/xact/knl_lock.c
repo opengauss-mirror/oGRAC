@@ -34,6 +34,46 @@
 #include "dtc_dc.h"
 #include "dtc_drc.h"
 
+/*
+ * Fast-path S acquire may inc shared_count while the last holder CASes S->IDLE.
+ * Restore S when holders remain but mode was left IDLE.
+ * Returns TRUE if mode is IX/X and caller should retry on slow path.
+ */
+static inline bool32 sch_lock_fix_idle_with_holders(schema_lock_t *lock)
+{
+    if (cm_atomic32_get(&lock->mode) != LOCK_MODE_IDLE ||
+        cm_atomic32_get(&lock->shared_count) == 0) {
+        return OG_FALSE;
+    }
+
+    if (!cm_atomic32_cas(&lock->mode, LOCK_MODE_IDLE, LOCK_MODE_S)) {
+        lock_mode_t mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        return (bool32)(mode == LOCK_MODE_IX || mode == LOCK_MODE_X);
+    }
+
+    return OG_FALSE;
+}
+
+/*
+ * Last fast-path S unlock: CAS S->IDLE, then fix up if a concurrent acquirer inc'd.
+ */
+static inline void sch_lock_finish_last_s_unlock(schema_lock_t *lock)
+{
+    if (cm_atomic32_cas(&lock->mode, LOCK_MODE_S, LOCK_MODE_IDLE)) {
+        if (cm_atomic32_get(&lock->shared_count) > 0) {
+            cm_atomic32_set(&lock->mode, LOCK_MODE_S);
+        } else if (cm_atomic32_cas(&lock->mode, LOCK_MODE_IDLE, LOCK_MODE_IDLE)) {
+            SCH_LOCK_INST_CLEAN(lock);
+        }
+    } else if (cm_atomic32_get(&lock->shared_count) > 0) {
+        lock_mode_t m = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        if (m == LOCK_MODE_IX || m == LOCK_MODE_X) {
+            return;
+        }
+        cm_atomic32_set(&lock->mode, LOCK_MODE_S);
+    }
+}
+
 status_t lock_area_init(knl_session_t *session)
 {
     memory_area_t *shared_pool = session->kernel->attr.shared_area;
@@ -216,6 +256,7 @@ status_t lock_try_lock_table_shared_local(knl_session_t *session, knl_handle_t d
     date_t begin_time;
     int64 timeout_us;
     dc_entry_t *entry;
+    lock_mode_t cur_mode;
 
     entity = (dc_entity_t *)dc_entity;
     entry = entity->entry;
@@ -241,6 +282,64 @@ status_t lock_try_lock_table_shared_local(knl_session_t *session, knl_handle_t d
             break;
         }
 
+        if (!entity->valid) {
+            OG_THROW_ERROR(ERR_DC_INVALIDATED);
+            break;
+        }
+
+        cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        if (cur_mode == LOCK_MODE_S || cur_mode == LOCK_MODE_IDLE) {
+            (void)cm_atomic32_inc(&lock->shared_count);
+
+            cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+            if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
+                cm_atomic32_dec(&lock->shared_count);
+                goto slow_path;
+            }
+
+            if (cur_mode == LOCK_MODE_IDLE) {
+                if (!cm_atomic32_cas(&lock->mode, LOCK_MODE_IDLE, LOCK_MODE_S)) {
+                    cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+                    if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
+                        cm_atomic32_dec(&lock->shared_count);
+                        goto slow_path;
+                    }
+                }
+            }
+
+            if (sch_lock_fix_idle_with_holders(lock)) {
+                cm_atomic32_dec(&lock->shared_count);
+                goto slow_path;
+            }
+
+            cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+            if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
+                cm_atomic32_dec(&lock->shared_count);
+                goto slow_path;
+            }
+
+            if (!entity->valid) {
+                cm_atomic32_dec(&lock->shared_count);
+                if (cm_atomic32_get(&lock->shared_count) == 0) {
+                    cm_atomic32_cas(&lock->mode, LOCK_MODE_S, LOCK_MODE_IDLE);
+                }
+                OG_THROW_ERROR(ERR_DC_INVALIDATED);
+                break;
+            }
+
+            SCH_LOCK_SET(session, lock);
+            SCH_LOCK_INST_SET(session->kernel->dtc_attr.inst_id, lock);
+            knl_end_session_wait(session, ENQ_TX_TABLE_S);
+            session->wtid.is_locking = OG_FALSE;
+            OG_LOG_DEBUG_INF("[DLS] add table shared lock table name %s", entry->name);
+            return OG_SUCCESS;
+        }
+
+slow_path:
+        session->wtid.oid = entity->entry->id;
+        session->wtid.uid = entity->entry->uid;
+        session->wtid.is_locking = OG_TRUE;
+
         cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
         if (!entity->valid) {
             cm_spin_unlock(&entry->sch_lock_mutex);
@@ -248,10 +347,8 @@ status_t lock_try_lock_table_shared_local(knl_session_t *session, knl_handle_t d
             break;
         }
 
-        session->wtid.oid = entity->entry->id;
-        session->wtid.uid = entity->entry->uid;
-        if (lock->mode == LOCK_MODE_IX || lock->mode == LOCK_MODE_X) {
-            session->wtid.is_locking = OG_TRUE;
+        cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
             if (timeout_us != 0) {
                 knl_begin_session_wait(session, ENQ_TX_TABLE_S, OG_FALSE);
                 if (session->lock_dead_locked) {
@@ -269,19 +366,16 @@ status_t lock_try_lock_table_shared_local(knl_session_t *session, knl_handle_t d
                 break;
             }
         }
-        /*
-         * current session has checked if entity is valid, however it may be invalidated by others
-         * between last check and lock table by current session. recheck is necessary here.
-         */
+
         if (!entity->valid) {
             cm_spin_unlock(&entry->sch_lock_mutex);
             OG_THROW_ERROR(ERR_DC_INVALIDATED);
             break;
         }
 
-        lock->mode = LOCK_MODE_S;
-        knl_panic(lock->shared_count != OG_INVALID_ID32);
-        lock->shared_count++;
+        cm_atomic32_set(&lock->mode, LOCK_MODE_S);
+        knl_panic(cm_atomic32_get(&lock->shared_count) != OG_INVALID_ID32);
+        cm_atomic32_inc(&lock->shared_count);
         SCH_LOCK_SET(session, lock);
         SCH_LOCK_INST_SET(session->kernel->dtc_attr.inst_id, lock);
         cm_spin_unlock(&entry->sch_lock_mutex);
@@ -290,6 +384,7 @@ status_t lock_try_lock_table_shared_local(knl_session_t *session, knl_handle_t d
         OG_LOG_DEBUG_INF("[DLS] add table shared lock table name %s", entry->name);
         return OG_SUCCESS;
     }
+
     item->dc_entry = NULL;
     session->lock_dead_locked = OG_FALSE;
     session->wtid.is_locking = OG_FALSE;
@@ -518,6 +613,7 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
     dc_entry_t *entry;
     int64 timeout_us;
     dc_entity_t *entity;
+    lock_mode_t cur_mode;
 
     entity = (dc_entity_t *)dc_entity;
     entry = (dc_entry_t *)dc_entry;
@@ -555,7 +651,7 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
 
         session->wtid.oid = entry->id;
         session->wtid.uid = entry->uid;
-        if (lock->mode == LOCK_MODE_X) {
+        if (cm_atomic32_get(&lock->mode) == LOCK_MODE_X) {
             knl_begin_session_wait(session, ENQ_TX_TABLE_X, OG_FALSE);
             if (session->lock_dead_locked) {
                 cm_spin_unlock(&entry->sch_lock_mutex);
@@ -580,18 +676,36 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
         }
 
         // locked by self in shared mode
-        if (dc_locked_by_self(session, entry) && lock->shared_count == 1) {
-            lock->shared_count--;
-            lock->mode = LOCK_MODE_X;
+        if (dc_locked_by_self(session, entry) && cm_atomic32_get(&lock->shared_count) == 1) {
+            cm_atomic32_set(&lock->mode, LOCK_MODE_IX);
+            if (cm_atomic32_get(&lock->shared_count) != 1) {
+                knl_begin_session_wait(session, ENQ_TX_TABLE_X, OG_FALSE);
+                if (session->lock_dead_locked) {
+                    cm_spin_unlock(&entry->sch_lock_mutex);
+                    OG_THROW_ERROR(ERR_DEAD_LOCK, "table", session->id);
+                    break;
+                }
+                if (timeout_us == 0) {
+                    cm_spin_unlock(&entry->sch_lock_mutex);
+                    OG_THROW_ERROR(ERR_RESOURCE_BUSY);
+                    break;
+                }
+                lock_ix = OG_TRUE;
+                cm_spin_unlock(&entry->sch_lock_mutex);
+                cm_spin_sleep();
+                continue;
+            }
+            cm_atomic32_dec(&lock->shared_count);
+            cm_atomic32_set(&lock->mode, LOCK_MODE_X);
             cm_spin_unlock(&entry->sch_lock_mutex);
             return OG_SUCCESS;
         }
 
         // if entry is locked by others or not
         if (dc_locked_by_self(session, entry)) {
-            is_locked = (lock->shared_count > 1);
+            is_locked = (cm_atomic32_get(&lock->shared_count) > 1);
         } else {
-            is_locked = (lock->shared_count > 0);
+            is_locked = (cm_atomic32_get(&lock->shared_count) > 0);
         }
 
         if (is_locked) {
@@ -607,8 +721,8 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
                 break;
             }
 
-            if (lock->mode == LOCK_MODE_S) {
-                lock->mode = LOCK_MODE_IX;
+            if (cm_atomic32_get(&lock->mode) == LOCK_MODE_S) {
+                cm_atomic32_set(&lock->mode, LOCK_MODE_IX);
                 lock_ix = OG_TRUE;
             }
 
@@ -617,7 +731,7 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
             continue;
         }
 
-        if (lock->mode == LOCK_MODE_IX && !lock_ix) {
+        if (cm_atomic32_get(&lock->mode) == LOCK_MODE_IX && !lock_ix) {
             knl_begin_session_wait(session, ENQ_TX_TABLE_X, OG_FALSE);
             if (session->lock_dead_locked) {
                 cm_spin_unlock(&entry->sch_lock_mutex);
@@ -629,9 +743,31 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
             continue;
         }
 
+        cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        if (cur_mode == LOCK_MODE_IDLE || cur_mode == LOCK_MODE_S) {
+            cm_atomic32_set(&lock->mode, LOCK_MODE_IX);
+            lock_ix = OG_TRUE;
+        }
+
+        if (cm_atomic32_get(&lock->shared_count) > 0) {
+            knl_begin_session_wait(session, ENQ_TX_TABLE_X, OG_FALSE);
+            if (session->lock_dead_locked) {
+                cm_spin_unlock(&entry->sch_lock_mutex);
+                OG_THROW_ERROR(ERR_DEAD_LOCK, "table", session->id);
+                break;
+            }
+            if (timeout_us == 0) {
+                cm_spin_unlock(&entry->sch_lock_mutex);
+                OG_THROW_ERROR(ERR_RESOURCE_BUSY);
+                break;
+            }
+            cm_spin_unlock(&entry->sch_lock_mutex);
+            cm_spin_sleep();
+            continue;
+        }
+
         if (SECUREC_UNLIKELY(entity != NULL && !entity->valid)) {
-            /* there is no other sessions hold lock on this table */
-            lock->mode = LOCK_MODE_IDLE;
+            cm_atomic32_set(&lock->mode, LOCK_MODE_IDLE);
             cm_spin_unlock(&entry->sch_lock_mutex);
             OG_THROW_ERROR(ERR_DC_INVALIDATED);
             break;
@@ -639,11 +775,11 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
 
         // locked by self before and X now
         if (dc_locked_by_self(session, entry)) {
-            lock->shared_count--;
-            knl_panic(lock->shared_count == 0);
+            cm_atomic32_dec(&lock->shared_count);
+            knl_panic(cm_atomic32_get(&lock->shared_count) == 0);
         }
 
-        lock->mode = LOCK_MODE_X;
+        cm_atomic32_set(&lock->mode, LOCK_MODE_X);
         SCH_LOCK_SET(session, lock);
         SCH_LOCK_INST_SET(inst_id, lock);
         cm_spin_unlock(&entry->sch_lock_mutex);
@@ -654,13 +790,8 @@ status_t lock_table_exclusive_mode(knl_session_t *session, knl_handle_t dc_entit
 
     knl_end_session_wait(session, ENQ_TX_TABLE_X);
     cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
-    /* 1 lock_upgrade_table_lock has the highest priority, as a result, if session has lock table in IX mode,
-     * session which is upgrading table lock may lock table in X mode.
-     * 2 lock is null in case table has been dropped, we should check lock_ix first, because if lock_ix is true,
-     * lock is ofcause not null.
-     */
-    if (lock_ix && lock->mode == LOCK_MODE_IX) {
-        lock->mode = (lock->shared_count > 0 ? LOCK_MODE_S : LOCK_MODE_IDLE);
+    if (lock_ix && cm_atomic32_get(&lock->mode) == LOCK_MODE_IX) {
+        cm_atomic32_set(&lock->mode, (cm_atomic32_get(&lock->shared_count) > 0 ? LOCK_MODE_S : LOCK_MODE_IDLE));
     }
     cm_spin_unlock(&entry->sch_lock_mutex);
     session->lock_dead_locked = OG_FALSE;
@@ -814,7 +945,7 @@ status_t lock_upgrade_table_lock(knl_session_t *session, knl_handle_t dc_entity,
         knl_panic_log(entity->valid, "current entity is invalid, panic info: table %s", entity->table.desc.name);
         knl_panic_log(dc_locked_by_self(session, entry), "table was not locked by self, panic info: table %s",
                       entity->table.desc.name);
-        if (lock->mode == LOCK_MODE_X) {
+        if (cm_atomic32_get(&lock->mode) == LOCK_MODE_X) {
             session->wtid.is_locking = OG_FALSE;
             session->lock_dead_locked = OG_FALSE;
             knl_end_session_wait(session, ENQ_TX_TABLE_X);
@@ -823,24 +954,19 @@ status_t lock_upgrade_table_lock(knl_session_t *session, knl_handle_t dc_entity,
             return OG_SUCCESS;
         }
 
-        if (lock->shared_count > 1) {
-            /* if locked in S mode, change to IX mode */
-            if (lock->mode == LOCK_MODE_S) {
+        if (cm_atomic32_get(&lock->shared_count) > 1) {
+            if (cm_atomic32_get(&lock->mode) == LOCK_MODE_S) {
                 lock_ix = OG_TRUE;
-                lock->mode = LOCK_MODE_IX;
+                cm_atomic32_set(&lock->mode, LOCK_MODE_IX);
             }
 
             if (wait_times == LOCK_UPGRADE_WAIT_TIMES) {
                 session->wtid.is_locking = OG_FALSE;
                 knl_end_session_wait(session, ENQ_TX_TABLE_X);
-                lock->mode = LOCK_MODE_S;
+                cm_atomic32_set(&lock->mode, LOCK_MODE_S);
                 cm_spin_unlock(&entry->sch_lock_mutex);
                 cm_spin_unlock(&ogx->upgrade_lock);
 
-                /*
-                 * unlock upgrade lock, and sleep 100ms waiting for DML commit or concurrent
-                 * upgrading lock finished.
-                 */
                 lock_ix = OG_FALSE;
                 wait_times = 0;
                 cm_sleep(100);
@@ -863,9 +989,25 @@ status_t lock_upgrade_table_lock(knl_session_t *session, knl_handle_t dc_entity,
         session->lock_dead_locked = OG_FALSE;
         session->wtid.is_locking = OG_FALSE;
         knl_end_session_wait(session, ENQ_TX_TABLE_X);
-        lock->shared_count--;
-        knl_panic(lock->shared_count == 0);
-        lock->mode = LOCK_MODE_X;
+        cm_atomic32_set(&lock->mode, LOCK_MODE_IX);
+        lock_ix = OG_TRUE;
+        if (cm_atomic32_get(&lock->shared_count) != 1) {
+            cm_spin_unlock(&entry->sch_lock_mutex);
+
+            if (session->lock_dead_locked) {
+                OG_THROW_ERROR(ERR_DEAD_LOCK, "table", session->id);
+                break;
+            }
+
+            knl_begin_session_wait(session, ENQ_TX_TABLE_X, OG_FALSE);
+            session->wtid.is_locking = OG_TRUE;
+            cm_spin_sleep();
+            wait_times++;
+            continue;
+        }
+        cm_atomic32_dec(&lock->shared_count);
+        knl_panic(cm_atomic32_get(&lock->shared_count) == 0);
+        cm_atomic32_set(&lock->mode, LOCK_MODE_X);
         cm_spin_unlock(&entry->sch_lock_mutex);
         cm_spin_unlock(&ogx->upgrade_lock);
         // must get table lock x, then can degrade and upgrade
@@ -904,8 +1046,8 @@ status_t lock_upgrade_table_lock(knl_session_t *session, knl_handle_t dc_entity,
     session->lock_dead_locked = OG_FALSE;
     knl_end_session_wait(session, ENQ_TX_TABLE_X);
     cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
-    if (lock->mode == LOCK_MODE_IX && lock_ix) {
-        lock->mode = LOCK_MODE_S;
+    if (cm_atomic32_get(&lock->mode) == LOCK_MODE_IX && lock_ix) {
+        cm_atomic32_set(&lock->mode, LOCK_MODE_S);
     }
     cm_spin_unlock(&entry->sch_lock_mutex);
     cm_spin_unlock(&ogx->upgrade_lock);
@@ -923,14 +1065,15 @@ void lock_degrade_table_lock(knl_session_t *session, knl_handle_t dc_entity)
     entry = entity->entry;
     lock = entry->sch_lock;
 
-    knl_panic_log(lock->mode == LOCK_MODE_X, "lock's mode is abnormal, panic info: table %s", entity->table.desc.name);
+    knl_panic_log(cm_atomic32_get(&lock->mode) == LOCK_MODE_X, 
+    "lock's mode is abnormal, panic info: table %s", entity->table.desc.name);
     knl_panic_log(dc_locked_by_self(session, entry), "table was not locked by self, panic info: table %s",
                   entity->table.desc.name);
 
     cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
-    lock->mode = LOCK_MODE_S;
-    knl_panic(lock->shared_count == 0);
-    lock->shared_count = 1;
+    cm_atomic32_set(&lock->mode, LOCK_MODE_S);
+    knl_panic(cm_atomic32_get(&lock->shared_count) == 0);
+    cm_atomic32_inc(&lock->shared_count);
     cm_spin_unlock(&entry->sch_lock_mutex);
 }
 
@@ -949,29 +1092,45 @@ void unlock_table_local(knl_session_t *session, knl_handle_t dc_entry, uint32 in
     knl_panic(session->kernel->db.status >= DB_STATUS_MOUNT);
     schema_lock_t *lock = entry->sch_lock;
 
-    cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
     if (lock == NULL) {
-        cm_spin_unlock(&entry->sch_lock_mutex);
         return;
     }
 
     knl_panic(lock->inst_id == OG_INVALID_ID8 || lock->inst_id == inst_id);
 
-    if (lock->mode == LOCK_MODE_S || lock->mode == LOCK_MODE_IX) {
-        knl_panic_log(lock->shared_count > 0, "lock's shared_count is abnormal, panic info: shared_count %u",
-                      lock->shared_count);
-        lock->shared_count--;
-        if (lock->shared_count == 0 && lock->mode == LOCK_MODE_S) {
-            lock->mode = LOCK_MODE_IDLE;
-            SCH_LOCK_INST_CLEAN(lock);
+    lock_mode_t cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+    if (cur_mode == LOCK_MODE_S) {
+        SCH_LOCK_CLEAN(session, lock);
+
+        int32 prev_count = cm_atomic32_dec(&lock->shared_count);
+        if (prev_count > 0) {
+            return;
         }
-    } else if (lock->mode == LOCK_MODE_X) {
-        lock->mode = LOCK_MODE_IDLE;
-        knl_panic(lock->shared_count == 0);
+
+        if (prev_count == 0) {
+            sch_lock_finish_last_s_unlock(lock);
+            return;
+        }
+
+        knl_panic(prev_count >= 0);
+        return;
+    }
+
+    cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
+
+    cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+    if (cur_mode == LOCK_MODE_S || cur_mode == LOCK_MODE_IX) {
+        knl_panic_log(cm_atomic32_get(&lock->shared_count) > 0, 
+        "lock's shared_count is abnormal, panic info: shared_count %u", cm_atomic32_get(&lock->shared_count));
+        cm_atomic32_dec(&lock->shared_count);
+        if (cm_atomic32_get(&lock->shared_count) == 0 && cur_mode == LOCK_MODE_S) {
+            sch_lock_finish_last_s_unlock(lock);
+        }
+    } else if (cur_mode == LOCK_MODE_X) {
+        cm_atomic32_set(&lock->mode, LOCK_MODE_IDLE);
+        knl_panic(cm_atomic32_get(&lock->shared_count) == 0);
         SCH_LOCK_INST_CLEAN(lock);
         SCH_LOCK_DLSTBL_CLEAN(lock);
-    } else {
-        // LOCK_MODE_IDLE, do nothing
     }
 
     SCH_LOCK_CLEAN(session, lock);
@@ -1351,7 +1510,7 @@ void lock_free(knl_session_t *session, knl_rm_t *rm)
 {
     lock_group_t *row = &rm->row_lock_group;
     lock_group_t *key = &rm->key_lock_group;
-    bool32 delay_cleanout = OG_FALSE;
+    bool32 delay_cleanout = OG_TRUE;
 
     if (row->glocks.count + key->glocks.count > LOCKS_THRESHOLD(session) && session->kernel->attr.delay_cleanout) {
         delay_cleanout = OG_TRUE;
@@ -1577,10 +1736,11 @@ char *g_lock_mode_str[] = { "IDLE", "S", "IX", "X" };
 
 // for delay cleaning page, test the table is locked or not, and try to locking
 // if table is locked by ddl/dcl(include truncate table) or dc invalidated, return FALSE immediate
-bool32 lock_table_without_xact_local(knl_session_t *session, knl_handle_t dc_entity, bool32 *inuse)  // test and lock
+bool32 lock_table_without_xact_local(knl_session_t *session, knl_handle_t dc_entity, bool32 *inuse)
 {
     schema_lock_t *lock = NULL;
     dc_entity_t *entity = NULL;
+    lock_mode_t cur_mode;
 
     if (DB_NOT_READY(session) || dc_entity == NULL) {
         OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "lock table without transaction when database is not ready");
@@ -1602,6 +1762,57 @@ bool32 lock_table_without_xact_local(knl_session_t *session, knl_handle_t dc_ent
 
     *inuse = OG_FALSE;
 
+    if (!entity->valid) {
+        OG_THROW_ERROR(ERR_DC_INVALIDATED);
+        return OG_FALSE;
+    }
+
+    cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+
+    if (cur_mode == LOCK_MODE_S || cur_mode == LOCK_MODE_IDLE) {
+        (void)cm_atomic32_inc(&lock->shared_count);
+        cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
+            cm_atomic32_dec(&lock->shared_count);
+            goto slow_path;
+        }
+
+        if (cur_mode == LOCK_MODE_IDLE) {
+            if (!cm_atomic32_cas(&lock->mode, LOCK_MODE_IDLE, LOCK_MODE_S)) {
+                cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+                if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
+                    cm_atomic32_dec(&lock->shared_count);
+                    goto slow_path;
+                }
+            }
+        }
+
+        if (sch_lock_fix_idle_with_holders(lock)) {
+            cm_atomic32_dec(&lock->shared_count);
+            goto slow_path;
+        }
+
+        cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+        if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
+            cm_atomic32_dec(&lock->shared_count);
+            goto slow_path;
+        }
+
+        if (!entity->valid) {
+            cm_atomic32_dec(&lock->shared_count);
+            if (cm_atomic32_get(&lock->shared_count) == 0) {
+                cm_atomic32_cas(&lock->mode, LOCK_MODE_S, LOCK_MODE_IDLE);
+            }
+            OG_THROW_ERROR(ERR_DC_INVALIDATED);
+            return OG_FALSE;
+        }
+
+        SCH_LOCK_SET(session, lock);
+        SCH_LOCK_INST_SET(session->kernel->dtc_attr.inst_id, lock);
+        return OG_TRUE;
+    }
+
+slow_path:
     cm_spin_lock(&entity->entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
     if (!entity->valid) {
         cm_spin_unlock(&entity->entry->sch_lock_mutex);
@@ -1609,14 +1820,15 @@ bool32 lock_table_without_xact_local(knl_session_t *session, knl_handle_t dc_ent
         return OG_FALSE;
     }
 
-    if (lock->mode == LOCK_MODE_IX || lock->mode == LOCK_MODE_X) {
+    cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+    if (cur_mode == LOCK_MODE_IX || cur_mode == LOCK_MODE_X) {
         cm_spin_unlock(&entity->entry->sch_lock_mutex);
         OG_THROW_ERROR(ERR_RESOURCE_BUSY);
         return OG_FALSE;
     }
 
-    knl_panic(lock->shared_count != OG_INVALID_ID32);
-    lock->shared_count++;
+    knl_panic(cm_atomic32_get(&lock->shared_count) != OG_INVALID_ID32);
+    cm_atomic32_inc(&lock->shared_count);
     SCH_LOCK_SET(session, lock);
     SCH_LOCK_INST_SET(session->kernel->dtc_attr.inst_id, lock);
     cm_spin_unlock(&entity->entry->sch_lock_mutex);
@@ -1634,16 +1846,29 @@ void unlock_table_without_xact(knl_session_t *session, knl_handle_t dc_entity, b
 
     entity = (dc_entity_t *)dc_entity;
     lock = entity->entry->sch_lock;
+    if (lock == NULL) {
+        return;
+    }
+
+    lock_mode_t cur_mode = (lock_mode_t)cm_atomic32_get(&lock->mode);
+    if (cur_mode == LOCK_MODE_S) {
+        SCH_LOCK_CLEAN(session, lock);
+        int32 prev_count = cm_atomic32_dec(&lock->shared_count);
+        if (prev_count == 0) {
+            sch_lock_finish_last_s_unlock(lock);
+        }
+        return;
+    }
 
     cm_spin_lock(&entity->entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
     if (lock == NULL) {
         cm_spin_unlock(&entity->entry->sch_lock_mutex);
         return;
     }
-    knl_panic(lock->shared_count > 0);
-    lock->shared_count--;
+    knl_panic(cm_atomic32_get(&lock->shared_count) > 0);
+    cm_atomic32_dec(&lock->shared_count);
     SCH_LOCK_CLEAN(session, lock);
-    if (lock->shared_count == 0) {
+    if (cm_atomic32_get(&lock->shared_count) == 0) {
         SCH_LOCK_INST_CLEAN(lock);
     }
     cm_spin_unlock(&entity->entry->sch_lock_mutex);
@@ -1789,7 +2014,7 @@ char *lock_mode_string(knl_handle_t dc_entry)
         return g_lock_mode_str[LOCK_MODE_IDLE];
     }
 
-    return g_lock_mode_str[lock->mode - LOCK_MODE_IDLE];
+    return g_lock_mode_str[cm_atomic32_get(&lock->mode) - LOCK_MODE_IDLE];
 }
 
 static inline uint32 lock_search_alck(knl_session_t *session, uint32 beg, uint32 end, uint32 alck_id)
@@ -1943,7 +2168,7 @@ bool32 lock_table_is_shared_mode(knl_session_t *session, uint64 table_id)
     cm_spin_unlock(&entry->lock);
 
     cm_spin_lock(&entry->sch_lock_mutex, &session->stat->spin_stat.stat_sch_lock);
-    if (lock->mode == LOCK_MODE_S || lock->shared_count > 0) {
+    if (cm_atomic32_get(&lock->mode) == LOCK_MODE_S || cm_atomic32_get(&lock->shared_count) > 0) {
         cm_spin_unlock(&entry->sch_lock_mutex);
         return OG_TRUE;
     }

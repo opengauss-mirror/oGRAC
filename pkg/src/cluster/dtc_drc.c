@@ -1988,7 +1988,7 @@ static void drc_revert_converting_page_abort_owner(knl_session_t *session, drc_b
 {
     buf_bucket_t *bucket = buf_find_bucket(session, buf_res->page_id);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, buf_res->page_id);
     if (ctrl != NULL) {  // local page did't held the lock
         buf_res->mode = ctrl->lock_mode;
@@ -2002,7 +2002,7 @@ static void drc_revert_converting_page_abort_owner(knl_session_t *session, drc_b
             buf_res->latest_edp_lsn = ctrl->page->lsn;
         }
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 }
 
 // clean converting page which owner is not abort
@@ -2011,7 +2011,7 @@ static void drc_revert_converting_page_non_abort_owner(knl_session_t *session, d
     buf_bucket_t *bucket = buf_find_bucket(session, buf_res->page_id);
 
     drc_lock_item_t *tmp_item = &buf_res->converting;
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, buf_res->page_id);
     if (ctrl != NULL) {
         if (ctrl->lock_mode == DRC_LOCK_NULL) {
@@ -2026,7 +2026,7 @@ static void drc_revert_converting_page_non_abort_owner(knl_session_t *session, d
             buf_res->claimed_owner = tmp_item->req_info.inst_id;
         }
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
     drc_init_page_converting(buf_res);
 }
 
@@ -6519,7 +6519,7 @@ static void drc_collect_page_info(thread_t *thread)
                 continue;
             }
             buf_bucket_t *bucket = buf_find_bucket(param->session, ctrl->page_id);
-            cm_spin_lock(&bucket->lock, &param->session->stat->spin_stat.stat_bucket);
+            cm_spin_lock_bucket(&bucket->lock, &param->session->stat->spin_stat.stat_bucket);
             volatile uint8 lock_mode = ctrl->lock_mode;
             volatile uint8 is_edp = ctrl->is_edp;
             if (ctrl->transfer_status == BUF_TRANS_TRY_REMOTE) {
@@ -6531,7 +6531,7 @@ static void drc_collect_page_info(thread_t *thread)
             }
 
             if (lock_mode == DRC_LOCK_NULL && !is_edp) {
-                cm_spin_unlock(&bucket->lock);
+                cm_spin_unlock_bucket(&bucket->lock);
                 continue;
             }
 
@@ -6541,7 +6541,7 @@ static void drc_collect_page_info(thread_t *thread)
             uint8 old_master_id;
             (void)drc_get_page_master_id(page_id, &old_master_id);
             if (old_master_id != inst_id) {
-                cm_spin_unlock(&bucket->lock);
+                cm_spin_unlock_bucket(&bucket->lock);
                 continue;
             }
 
@@ -6550,7 +6550,7 @@ static void drc_collect_page_info(thread_t *thread)
             oGRAC_record_io_stat_begin(IO_RECORD_EVENT_DRC_REMASTER_RECOVER_REBUILD, &tv_begin);
             (void)drc_cache_page_info(cache_param, new_master_id, ctrl, batch_buf);
             oGRAC_record_io_stat_end(IO_RECORD_EVENT_DRC_REMASTER_RECOVER_REBUILD, &tv_begin);
-            cm_spin_unlock(&bucket->lock);
+            cm_spin_unlock_bucket(&bucket->lock);
         }
         cm_spin_unlock(&buf_set->lock);
     }

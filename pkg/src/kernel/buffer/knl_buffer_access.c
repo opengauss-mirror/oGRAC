@@ -2050,11 +2050,11 @@ void buf_unreside(knl_session_t *session, buf_ctrl_t *ctrl)
     buf_set_t *set = &session->kernel->buf_ctx.buf_set[ctrl->buf_pool_id];
     buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     if (ctrl->is_resident) {
         ctrl->is_resident = 0;
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 }
 
 void buf_unreside_page(knl_session_t *session, page_id_t page_id)
@@ -2197,23 +2197,23 @@ status_t buf_invalidate_page(knl_session_t *session, page_id_t page_id)
 status_t buf_invalidate_page_owner(knl_session_t *session, page_id_t page_id, uint64 req_version)
 {
     buf_bucket_t *bucket = buf_find_bucket(session, page_id);
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
     if (!ctrl) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         OG_LOG_DEBUG_INF("[buffer][%u-%u][buf_invalidate_page_owner]: fast check, not found in memory", page_id.file,
                          page_id.page);
         return OG_SUCCESS;
     }
     if (!BUF_CAN_EVICT(ctrl)) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         OG_LOG_DEBUG_INF(
             "[buffer][%u-%u][buf_invalidate_page_owner]: fast check, not recyclable and return, ctrl_dirty=%u, ctrl_remote_dirty=%u, ctrl_readonly=%u, in ckpt=%u, ctrl_lock_mode=%u, edp=%d",
             ctrl->page_id.file, ctrl->page_id.page, ctrl->is_dirty, ctrl->is_remote_dirty, ctrl->is_readonly,
             ctrl->in_ckpt, ctrl->lock_mode, ctrl->is_edp);
         return OG_ERROR;
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     ctrl = buf_try_latchx_page(session, page_id, OG_TRUE);
     if (ctrl == NULL) {
@@ -2235,7 +2235,7 @@ status_t buf_invalidate_page_owner(knl_session_t *session, page_id_t page_id, ui
         return OG_SUCCESS;
     }
 
-    if (!BUF_IN_USE_IS_RECYCLABLE(ctrl) || ctrl->is_resident || (ctrl->ref_num != 1)) {
+    if (!BUF_IN_USE_IS_RECYCLABLE(ctrl) || ctrl->is_resident || (cm_atomic32_get(&ctrl->ref_num) != 1)) {
         buf_unlatch_page(session, ctrl);
         OG_LOG_RUN_ERR(
             "[buffer][%u-%u][buf_invalidate_page_owner]: not recyclable and return, ctrl_dirty=%u, ctrl_remote_dirty=%u, ctrl_readonly=%u, in ckpt=%u, ctrl_lock_mode=%u, edp=%d",
@@ -2352,20 +2352,20 @@ buf_ctrl_t *buf_try_latch_ckpt_page(knl_session_t *session, page_id_t page_id, b
     buf_bucket_t *bucket = buf_find_bucket(session, page_id);
     buf_ctrl_t *ctrl = NULL;
 
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    cm_spin_lock_bucket(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     ctrl = buf_find_from_bucket(bucket, page_id);
     if (ctrl == NULL) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         *latched = OG_FALSE;
         return NULL;
     }
-    ctrl->ref_num++;
+    (void)cm_atomic32_fetch_inc(&ctrl->ref_num);
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
-        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock_bucket(&bucket->lock);
         *latched = OG_FALSE;
         return ctrl;
     }
-    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock_bucket(&bucket->lock);
 
     if (!ckpt_try_latch_ctrl(session, ctrl)) {
         OG_LOG_DEBUG_INF("[CKPT] try latch page find gap [%u-%u]", ctrl->page_id.file, ctrl->page_id.page);
@@ -2441,14 +2441,9 @@ void buf_unlatch_page(knl_session_t *session, buf_ctrl_t *ctrl)
 
 void buf_dec_ref(knl_session_t *session, buf_ctrl_t *ctrl)
 {
-    buf_set_t *set;
-    buf_bucket_t *bucket;
-    set = &session->kernel->buf_ctx.buf_set[ctrl->buf_pool_id];
-    bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
-    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
-    knl_panic(ctrl->ref_num > 0);
-    ctrl->ref_num--;
-    cm_spin_unlock(&bucket->lock);
+    int32 prev;
+    prev = cm_atomic32_fetch_add(&ctrl->ref_num, -1);
+    knl_panic(prev > 0);
 }
 
 void buf_set_force_request(knl_session_t *session, page_id_t page_id)

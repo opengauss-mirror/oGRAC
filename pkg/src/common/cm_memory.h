@@ -61,6 +61,9 @@ extern "C" {
         __asm__ volatile("dmb ish" ::     \
                              : "memory"); \
     }
+#define CM_MEMORY_BARRIER  __asm__ volatile("dmb ish" ::: "memory"); 
+#define CM_READ_BARRIER  __asm__ volatile("dmb ishld" ::: "memory"); 
+#define CM_WRITE_BARRIER  __asm__ volatile("dmb ishst" ::: "memory"); 
 #else
 #define CM_MFENCE                         \
     {                                     \

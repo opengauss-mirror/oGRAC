@@ -3317,7 +3317,7 @@ static inline bool32 btree_coalesce_need_suspend(knl_session_t *session, dc_entr
 
     /* backstage coalesce should not block user's DDL */
     if (session->id == SESSION_ID_IDX_RECYCLE && scan_pages % BTREE_COALESCE_CHECK_INTERVAL == 0) {
-        if (lock->mode == LOCK_MODE_IX) {
+        if (cm_atomic32_get(&lock->mode) == LOCK_MODE_IX) {
             return OG_TRUE;
         }
     }
@@ -3531,7 +3531,7 @@ status_t btree_coalesce(knl_session_t *session, btree_t *btree, idx_recycle_stat
     bt_put_garbage_size(session, btree);
     (void)cm_gettimeofday(&tv_end);
 
-    OG_LOG_RUN_INF("%s index %s %s, %s,part(%d, %d),level %u, total pages %u, total leafs %u,"
+    OG_LOG_DEBUG_INF("%s index %s %s, %s,part(%d, %d),level %u, total pages %u, total leafs %u,"
         "normal leafs %u, unrecycled empty leafs %u[active tx leafs %u,unexpire leafs %u,parent first leafs %u],"
         "sparse leafs %u, recycled leafs %u[force recycled leafs %u], free pages %u, time used %llu ms, "
         "sleep %llu ms, ow_del_scn %llu",

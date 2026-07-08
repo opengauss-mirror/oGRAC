@@ -30,12 +30,13 @@
 #include "cm_memory.h"
 #include "cm_spinlock.h"
 #include "cm_list.h"
+#include "cm_atomic.h"
 
 typedef struct st_context_ctrl {
     spinlock_t lock;
     uint32 uid;
     volatile uint32 ref_count;
-    volatile int32 exec_count;
+    atomic32_t exec_count;
 
     struct st_context_pool *pool;
     memory_context_t *memory;
@@ -132,7 +133,6 @@ status_t ogx_write_text(context_ctrl_t *ctrl, text_t *text);
 status_t ogx_read_text(context_pool_t *pool, context_ctrl_t *ctrl, text_t *text, bool32 is_cut);
 void *ogx_pool_find(context_pool_t *pool, text_t *text, uint32 hash_value, uint32 uid);
 void ogx_dec_ref(context_pool_t *pool, context_ctrl_t *ctrl);
-void ogx_dec_exec(context_ctrl_t *ctrl);
 void ogx_pool_lru_move_to_head(context_pool_t *pool, context_ctrl_t *ctrl);
 static inline void ogx_inc_ref(context_ctrl_t *ctrl)
 {

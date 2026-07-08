@@ -28,6 +28,7 @@
 #include "dtc_context.h"
 #include "mes_func.h"
 #include "tms_monitor.h"
+#include "knl_interface.h"
 
 #define MES_QUEUE_LOG_LENGTH (1024)
 
@@ -259,6 +260,19 @@ void dtc_task_proc(thread_t *thread)
     if (group == NULL) {
         OG_THROW_ERROR_EX(ERR_MES_PARAMETER, "[mes]: task index %u not belong any group.", index);
         return;
+    }
+
+    uint32 cpu_bind_array[MES_CPU_BIND_TOTAL];
+    uint32 bind_count = mes_build_cpu_bind_array(cpu_bind_array);
+    if (bind_count > 0) {
+        cpu_set_t cpu_affinity_set;
+        CPU_ZERO(&cpu_affinity_set);
+        uint32 cpu_core = index % bind_count;
+        CPU_SET(cpu_bind_array[cpu_core], &cpu_affinity_set);
+        int rc = sched_setaffinity(0, sizeof(cpu_set_t), &cpu_affinity_set);
+        if (rc == -1) {
+            OG_LOG_RUN_ERR("dtc_task_proc thread bind cpu failed.");
+        }
     }
 
     tms_monitor_handle monitor_handler =
