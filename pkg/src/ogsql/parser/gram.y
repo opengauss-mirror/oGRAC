@@ -13529,10 +13529,10 @@ lob_store_params:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column name list failed.");
+                        parser_yyerror("create lob store param list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert column name failed.");
+                        parser_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13540,7 +13540,15 @@ lob_store_params:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert column name failed.");
+                        parser_yyerror("insert lob store param failed.");
+                    }
+                    $$ = list;
+                }
+            | lob_store_params lob_store_param
+                {
+                    galist_t *list = $1;
+                    if (cm_galist_insert(list, $2) != OG_SUCCESS) {
+                        parser_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13551,7 +13559,7 @@ lob_store_param:
                 {
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_TABLESPACE;
@@ -13562,7 +13570,7 @@ lob_store_param:
                 {
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_STORAGE_IN_ROW;
@@ -13573,7 +13581,7 @@ lob_store_param:
                 {
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_STORAGE_IN_ROW;
