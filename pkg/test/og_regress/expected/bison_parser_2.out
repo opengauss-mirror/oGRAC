@@ -121,6 +121,18 @@ SQL> drop table if exists bison_lob_subpart_t purge;
 
 Succeed.
 
+SQL> drop table if exists bison_idx_option_t purge;
+
+Succeed.
+
+SQL> create table bison_idx_option_t (id int, part_key int, constraint bison_idx_option_uk unique(id, part_key) using index local (partition ip1, partition ip2)) partition by range(part_key)(partition p1 values less than(10), partition p2 values less than(maxvalue));
+
+Succeed.
+
+SQL> drop table if exists bison_idx_option_t purge;
+
+Succeed.
+
 SQL> 
 SQL> drop table if exists bison_part_t1;
 

@@ -13690,7 +13690,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_TABLESPACE;
@@ -13701,7 +13701,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_TRANS) {
@@ -13715,7 +13715,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_LOCAL;
@@ -13726,7 +13726,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     if ($2 > OG_PCT_FREE_MAX) {
@@ -13740,7 +13740,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_CRMODE;
@@ -13751,7 +13751,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_ONLINE;
@@ -13761,7 +13761,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_INDEX_PARALLELISM) {
@@ -13775,7 +13775,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_REVERSE;
@@ -13785,7 +13785,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_NOLOGGING;
