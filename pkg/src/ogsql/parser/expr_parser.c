@@ -3376,7 +3376,8 @@ status_t sql_create_hex_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const c
     return OG_SUCCESS;
 }
 
-status_t sql_create_string_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, source_location_t loc)
+static status_t sql_create_string_const_expr_core(sql_stmt_t *stmt, expr_tree_t **expr, const char *val,
+    source_location_t loc, bool32 remove_quotes)
 {
     expr_node_t *node = NULL;
     if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_CHAR, EXPR_NODE_CONST, loc) != OG_SUCCESS) {
@@ -3402,12 +3403,27 @@ status_t sql_create_string_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, cons
         }
     }
 
-    text_t src = {(char*)val, len};
-    OG_RETURN_IFERR(sql_copy_text_remove_quotes(stmt->context, (text_t *)&src, &node->value.v_text));
+    text_t src = { (char *)val, len };
+    if (remove_quotes) {
+        OG_RETURN_IFERR(sql_copy_text_remove_quotes(stmt->context, &src, &node->value.v_text));
+    } else {
+        OG_RETURN_IFERR(sql_copy_text(stmt->context, &src, &node->value.v_text));
+    }
     APPEND_CHAIN(&((*expr)->chain), node);
     sql_generate_expr(*expr);
 
     return OG_SUCCESS;
+}
+
+status_t sql_create_string_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char *val, source_location_t loc)
+{
+    return sql_create_string_const_expr_core(stmt, expr, val, loc, OG_TRUE);
+}
+
+status_t sql_create_scanned_string_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char *val,
+    source_location_t loc)
+{
+    return sql_create_string_const_expr_core(stmt, expr, val, loc, OG_FALSE);
 }
 
 status_t sql_create_bool_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, bool32 val, source_location_t loc)

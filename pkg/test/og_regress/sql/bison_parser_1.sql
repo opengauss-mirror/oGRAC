@@ -1265,6 +1265,11 @@ insert into t_special_no_arg_func select sysdate;
 -- all value have year value, so it muse be start with 20XX, use left to get first two char
 select left(a, 2) from t_special_no_arg_func;
 select left ($$'''E'''e''$$,3) AS RESULT;
+drop table if exists bison_ident_quote_t;
+create table bison_ident_quote_t ("a''b" int);
+insert into bison_ident_quote_t ("a''b") values (7);
+select t."a''b" as ident_result from bison_ident_quote_t t;
+drop table if exists bison_ident_quote_t;
 delete from t_special_no_arg_func;
 insert into t_special_no_arg_func select rowid;
 -- rowid, length is 18

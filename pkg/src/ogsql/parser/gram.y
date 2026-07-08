@@ -1363,7 +1363,8 @@ indirection_el:
             '.' ColId
                 {
                     expr_tree_t *expr = NULL;
-                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, @2.loc) != OG_SUCCESS) {
+                    if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, $2, @2.loc) != OG_SUCCESS) {
                         parser_yyerror("init const expr failed");
                     }
                     $$ = expr;
@@ -3514,7 +3515,7 @@ opt_escape:
         ESCAPE SCONST
             {
                 expr_tree_t *escape_expr = NULL;
-                if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &escape_expr, $2, @2.loc) != OG_SUCCESS) {
                     parser_yyerror("init const expr failed");
                 }
@@ -6939,7 +6940,7 @@ func_name:      type_function_name
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
-                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, @1.loc) != OG_SUCCESS) {
                             parser_yyerror("init const expr failed");
                         }
@@ -6955,7 +6956,7 @@ func_name:      type_function_name
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
-                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, @1.loc) != OG_SUCCESS) {
                             parser_yyerror("init const expr failed");
                         }
@@ -7012,7 +7013,8 @@ AexprConst: ICONST
             | SCONST
             {
                 expr_tree_t *expr = NULL;
-                if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
+                if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $1, @1.loc) != OG_SUCCESS) {
                     parser_yyerror("init const expr failed");
                 }
                 $$ = expr;
@@ -7039,7 +7041,8 @@ AexprConst: ICONST
             {
                 /* National character string literal (N'...') - treat as regular string */
                 expr_tree_t *expr = NULL;
-                if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, @1.loc) != OG_SUCCESS) {
+                if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $2, @1.loc) != OG_SUCCESS) {
                     parser_yyerror("init const expr failed");
                 }
                 $$ = expr;
