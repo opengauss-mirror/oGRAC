@@ -240,6 +240,10 @@ SQL> alter system set use_bison_parser = 'true';
 
 Succeed.
 
+SQL> alter system set recyclebin = true;
+
+Succeed.
+
 SQL> -- alter system set use_bison_parser = 'true' scope = both;
 SQL> -- alter system switch logfile;
 SQL> -- alter system checkpoint;

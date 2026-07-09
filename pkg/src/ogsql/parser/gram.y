@@ -379,7 +379,8 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
 %type <str> ColId type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
-            debug_mode_value altsession_set_key altsession_set_value alter_param_value alter_session_extra_token case_invalid_word
+            debug_mode_value altsession_set_key altsession_set_value alter_system_param_name alter_param_value alter_session_extra_token
+            case_invalid_word
 
 %type <ival> opt_asc_desc opt_nulls_order opt_ckpt_type opt_charset opt_collate opt_wait opt_wait_time opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
@@ -8136,7 +8137,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P SET IDENT '=' alter_param_value opt_set_scope
+            | ALTER SYSTEM_P SET alter_system_param_name '=' alter_param_value opt_set_scope
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8534,7 +8535,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P ARCHIVE_SET IDENT '=' alter_param_value opt_set_scope opt_arch_set_type
+            | ALTER SYSTEM_P ARCHIVE_SET alter_system_param_name '=' alter_param_value opt_set_scope opt_arch_set_type
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8754,7 +8755,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P DEBUG MODE IDENT '=' debug_mode_value
+            | ALTER SYSTEM_P DEBUG MODE alter_system_param_name '=' debug_mode_value
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -9022,6 +9023,13 @@ alter_session_extra_token:
             | OPER_LSHIFT               { $$ = $1; }
             | OPER_RSHIFT               { $$ = $1; }
             | DOT_DOT                   { $$ = ".."; }
+        ;
+
+alter_system_param_name:
+            ColLabel
+                {
+                    $$ = $1;
+                }
         ;
 
 opt_drop_tbsp:

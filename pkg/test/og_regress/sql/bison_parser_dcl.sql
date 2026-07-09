@@ -132,6 +132,7 @@ validate backupset 1;
 
 -- Test ALTER SYSTEM statements
 alter system set use_bison_parser = 'true';
+alter system set recyclebin = true;
 -- alter system set use_bison_parser = 'true' scope = both;
 -- alter system switch logfile;
 -- alter system checkpoint;
