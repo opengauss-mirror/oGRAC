@@ -1334,7 +1334,7 @@ Succeed.
 SQL> select sys.bison_pl_issue259_func_end3() as issue259_func_end from sys_dummy;
 
 ISSUE259_FUNC_END
------------------
+----------------------------------------
 1
 
 1 rows fetched.

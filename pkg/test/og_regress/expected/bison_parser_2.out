@@ -1256,6 +1256,21 @@ SQL> drop function convert1;
 Succeed.
 
 SQL> 
+SQL> DECLARE
+  2 v_result NUMBER := 100;
+  3 BEGIN
+  4 IF v_result > 50 THEN
+  5 DBE_OUTPUT.PRINT_LINE('result: ' || v_result);
+  6 RETURN v_result; --error
+  7 END IF;
+  8 DBE_OUTPUT.PRINT_LINE('unreachable');
+  9 END;
+ 10 /
+
+OG-00944, [12:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[6:1] PLC-00601 Sql syntax error: ; expected
+
+SQL>
 SQL> DROP TRIGGER IF EXISTS insert_readonly_view;
 
 Succeed.

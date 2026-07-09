@@ -491,6 +491,17 @@ END convert1;
 select convert1(1,1);
 drop function convert1;
 
+DECLARE
+v_result NUMBER := 100;
+BEGIN
+IF v_result > 50 THEN
+DBE_OUTPUT.PRINT_LINE('result: ' || v_result);
+RETURN v_result; --error
+END IF;
+DBE_OUTPUT.PRINT_LINE('unreachable');
+END;
+/
+
 DROP TRIGGER IF EXISTS insert_readonly_view;
 DROP TRIGGER IF EXISTS update_readonly_view;
 DROP TRIGGER IF EXISTS delete_readonly_view;

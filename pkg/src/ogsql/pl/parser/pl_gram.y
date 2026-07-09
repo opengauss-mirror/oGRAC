@@ -789,6 +789,7 @@ stmt_return:
                         .id = 0,
                         .input_id = 0
                     };
+                    YYLTYPE return_loc = @1;
 
                     if (plc_alloc_line(compiler, sizeof(pl_line_return_t), LINE_RETURN,
                         (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
@@ -800,6 +801,10 @@ stmt_return:
                         }
                         line->expr = NULL;
                     } else {
+                        if (compiler->type != PL_FUNCTION) {
+                            plsql_yyerror(&return_loc, yyscanner, "; expected");
+                            YYABORT;
+                        }
                         if (read_return_sql_construct(stmt, $2, line) != OG_SUCCESS) {
                             parser_yyerror("compile return expr failed");
                         }
