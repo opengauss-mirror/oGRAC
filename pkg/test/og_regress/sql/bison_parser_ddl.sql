@@ -32,6 +32,12 @@ drop table if exists bison_ddl_hash_tab;
 drop table if exists bison_ddl_part_tab;
 drop table if exists bison_ddl_tab_renamed;
 drop table if exists bison_ddl_tab;
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number);
+drop table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number); --error
+create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number);
+drop table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number); --error
 
 create or replace profile bison_ddl_profile limit sessions_per_user 1;
 drop profile bison_ddl_profile;

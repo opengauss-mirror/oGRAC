@@ -142,7 +142,7 @@ char* downcase_truncate_identifier(const char* ident, int len, bool8 warn)
     }
     result[i] = '\0';
 
-    if (i >= NAMEDATALEN)
+    if (i > NAMEDATALEN)
         truncate_identifier(result, i, warn);
 
     return result;
@@ -169,14 +169,14 @@ char* upcase_truncate_identifier(const char* ident, int len, bool8 warn)
     }
     result[i] = '\0';
 
-    if (i >= NAMEDATALEN)
+    if (i > NAMEDATALEN)
         truncate_identifier(result, i, warn);
 
     return result;
 }
 
 /*
- * truncate_identifier() --- truncate an identifier to NAMEDATALEN-1 bytes.
+ * truncate_identifier() --- truncate an identifier to NAMEDATALEN bytes.
  *
  * The given string is modified in-place, if necessary.  A warning is
  * issued if requested.
@@ -186,19 +186,19 @@ char* upcase_truncate_identifier(const char* ident, int len, bool8 warn)
  */
 void truncate_identifier(char* ident, int len, bool8 warn)
 {
-    if (len >= NAMEDATALEN) {
+    if (len > NAMEDATALEN) {
         if (warn) {
             /*
              * We avoid using %.*s here because it can misbehave if the data
              * is not valid in what libc thinks is the prevailing encoding.
              */
-            char buf[NAMEDATALEN];
+            char buf[NAMEDATALEN + 1];
 
-            errno_t ret = memcpy_s(buf, NAMEDATALEN, ident, len);
+            errno_t ret = memcpy_s(buf, NAMEDATALEN + 1, ident, NAMEDATALEN);
             knl_securec_check(ret);
-            buf[len] = '\0';
+            buf[NAMEDATALEN] = '\0';
         }
-        ident[len] = '\0';
+        ident[NAMEDATALEN] = '\0';
     }
 }
 

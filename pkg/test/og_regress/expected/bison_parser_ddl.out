@@ -133,6 +133,26 @@ SQL> drop table if exists bison_ddl_tab;
 
 Succeed.
 
+SQL> create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number);
+
+Succeed.
+
+SQL> drop table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+
+Succeed.
+
+SQL> create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number); --error
+OG-00601, [1:14]Sql syntax error: identifier is too long
+SQL> create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number);
+
+Succeed.
+
+SQL> drop table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+Succeed.
+
+SQL> create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number); --error
+OG-00601, [1:14]Sql syntax error: identifier is too long
 SQL> 
 SQL> create or replace profile bison_ddl_profile limit sessions_per_user 1;
 
