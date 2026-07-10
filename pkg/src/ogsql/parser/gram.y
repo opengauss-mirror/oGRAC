@@ -7678,6 +7678,8 @@ any_name:
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(name_with_owner), (void **)&ret) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed.");
                     }
+                    ret->owner.str = NULL;
+                    ret->owner.len = 0;
                     ret->name.str = $1;
                     ret->name.len = strlen($1);
                     $$ = ret;
@@ -11804,7 +11806,7 @@ PurgeStmt:
                 {
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    purge_type_t ptype = ($3 != NULL) ? PURGE_PART : PURGE_TABLE;
+                    purge_type_t ptype = ($4 != NULL) ? PURGE_PART : PURGE_TABLE;
                     if (og_parse_purge(stmt, &def, ptype, $3, $4) != OG_SUCCESS) {
                         parser_yyerror("parse purge failed");
                     }

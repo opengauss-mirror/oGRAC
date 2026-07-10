@@ -312,7 +312,17 @@ create user bison_ddl_user identified by 'Bison_ddl_123'
 alter user bison_ddl_user identified by 'Bison_ddl_456';
 alter user bison_ddl_user identified by 'Bison_ddl_789' replace 'Bison_ddl_456' account lock;
 alter user bison_ddl_user account unlock password expire profile default;
-
+alter system set use_bison_parser = false;
+alter system set recyclebin = true;
+alter system set use_bison_parser = true;
+create table bison_ddl_user.purge_owner_tab(a int);
+drop table bison_ddl_user.purge_owner_tab;
+purge table bison_ddl_user.purge_owner_tab;
+create table bison_ddl_user.purge_local_tab(a int);
+alter session set current_schema = bison_ddl_user;
+drop table purge_local_tab;
+purge table purge_local_tab;
+alter session set current_schema = sys;
 -- ALTER TENANT requires environment-specific tablespaces, keep its bison syntax samples non-executed here.
 create tenant bison_ddl_tenant tablespaces (bison_ddl_ts1) default tablespace bison_ddl_ts1;
 alter tenant bison_ddl_tenant add tablespaces (bison_ddl_ts2);
