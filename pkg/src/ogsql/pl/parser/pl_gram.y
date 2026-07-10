@@ -1995,7 +1995,6 @@ decl_datatype:
                         yychar = YYEMPTY;
                     }
                     loc = tok_lloc.loc;
-
                     typename = pl_type_token_text(yyscanner, tok, &tok_lval, &tok_lloc, tok_len);
                     if (typename == NULL) {
                         parser_yyerror("expected datatype");
@@ -4934,6 +4933,8 @@ static status_t make_type_word(pl_compiler_t *compiler, type_word_t **type, char
     if (sql_alloc_mem(compiler->stmt->context, sizeof(type_word_t), (void **)type) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    errno_t ret = memset_s(*type, sizeof(type_word_t), 0, sizeof(type_word_t));
+    knl_securec_check(ret);
     (*type)->str = str;
     (*type)->typemode = typemode;
     (*type)->is_name_typemode = is_name_typemode;

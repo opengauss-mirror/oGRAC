@@ -1005,6 +1005,9 @@ status_t sql_parse_ddl(sql_stmt_t *stmt, word_t *leader_word)
                 status = sql_parse_create(stmt);
             } else {
                 status = raw_parser(stmt, sql_current_parse_text(stmt), &stmt->context->entry);
+                if (status != OG_SUCCESS) {
+                    status = pl_bison_finish_invalid_create(stmt);
+                }
             }
             break;
         case KEY_WORD_DROP:

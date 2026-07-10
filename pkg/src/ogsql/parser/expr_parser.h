@@ -45,6 +45,11 @@ typedef struct st_interval_info {
     uint32 fmt;
 } interval_info_t;
 
+typedef struct st_type_name_part {
+    text_t value;
+    bool32 sensitive;
+} type_name_part_t;
+
 typedef struct st_type_word {
     char *str;
     galist_t *typemode;
@@ -70,6 +75,8 @@ typedef struct st_type_word {
             bool8 is_array;
         };
     };
+    bool32 name_sensitive;
+    bool32 name_sensitive_set;
 } type_word_t;
 
 #define IS_DUAL_TABLE_NAME(tab_name) \

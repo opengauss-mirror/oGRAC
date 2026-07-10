@@ -298,7 +298,8 @@ typedef struct st_sql_stmt {
     bool32 is_var_peek : 1;
     bool32 has_pl_ref_dc : 1;
     bool32 hide_plan_extras : 1; // if hide plan extra information for printing, such as cost/rows/pridicate/outline
-    bool32 reversed : 7;
+    bool32 bison_pl_create_pending : 1;
+    bool32 reversed : 6;
 
     /* record sysdate/systimestamp/sequence of stmt */
     date_t v_sysdate;

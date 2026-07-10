@@ -26,6 +26,7 @@
 #include "ogsql_privilege.h"
 #include "pl_ddl_parser.h"
 #include "cm_error.h"
+#include "cm_utils.h"
 #include "decl.h"
 
 /* Location tracking support --- simpler than bison's default */
@@ -154,11 +155,33 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
     source_location_t loc, bool32 has_program_body);
 static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
     pl_bison_trigger_def_t *trigger_def);
+static void pl_bison_begin_object_name(core_yyscan_t yyscanner);
+static bool32 pl_bison_is_identifier_char(char ch);
+static status_t pl_bison_raw_quoted_name_end(const char *source, size_t source_len, size_t quote_offset,
+    char quote, size_t *end_offset);
+static bool32 pl_bison_is_scanner_whitespace(char ch);
+static size_t pl_bison_skip_scanner_whitespace(const char *source, size_t source_len, size_t pos);
+static void pl_bison_raw_unicode_name_end(const char *source, size_t source_len, size_t *end_offset);
+static status_t pl_bison_raw_name_end(const base_yy_extra_type *extra, int name_offset, int *end_offset);
+static status_t pl_bison_object_name_end(core_yyscan_t yyscanner, int name_offset, int *end_offset);
+static status_t pl_bison_validate_object_name(core_yyscan_t yyscanner, int name_offset, source_location_t loc);
+static bool32 pl_bison_object_name_is_quoted(const base_yy_extra_type *extra, int offset);
+static status_t pl_bison_make_object_name_part(core_yyscan_t yyscanner, char *parsed_name, int offset,
+    text_t *name, bool32 *sensitive, int *end_offset);
+static status_t pl_bison_make_object_name(core_yyscan_t yyscanner, char *owner, char *name, int owner_offset,
+    int name_offset, source_location_t loc, name_with_owner **object_name);
+static status_t pl_bison_make_raw_object_name(core_yyscan_t yyscanner, char *owner, char *name, int owner_offset,
+    int name_offset, name_with_owner **object_name);
+static status_t pl_bison_preserve_type_name(core_yyscan_t yyscanner, type_word_t *type, int name_offset);
+static status_t pl_bison_source_from_offset(core_yyscan_t yyscanner, int source_offset, text_t *source);
+static status_t pl_bison_finish_create_source(core_yyscan_t yyscanner, int source_offset, text_t *source);
+static status_t pl_bison_prepare_create_source(core_yyscan_t yyscanner, bool32 replace, bool32 if_not_exists,
+    name_with_owner *object_name, uint32 type, bool32 force, int source_offset);
 static status_t bison_parse_native_alter_table(core_yyscan_t yyscanner);
 static status_t bison_parse_native_alter_database(core_yyscan_t yyscanner);
 static status_t bison_prepare_withas_factor(core_yyscan_t yyscanner, char *name, sql_withas_factor_t **factor);
 static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,
-    source_location_t loc);
+    int name_offset, source_location_t loc);
 static pl_bison_trigger_events_t *pl_bison_make_trigger_events(core_yyscan_t yyscanner, uint16 event,
     galist_t *columns);
 static pl_bison_trigger_events_t *pl_bison_merge_trigger_events(core_yyscan_t yyscanner,
@@ -269,7 +292,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
                GrantStmt RevokeStmt PurgeStmt AlterTableStmt AlterDatabaseStmt AlterSequenceStmt AlterTablespaceStmt
                AlterProfileStmt AlterTriggerStmt AlterFunctionStmt ddl_passthrough_tail index_cluster_item TransactionStmt
                RecoverStmt OgracStmt ShutdownStmt BuildStmt RepairStmt CheckPointStmt ValidateStmt SyncPointStmt PlAnonymousStmt
-               LockTableStmt AlterSystemStmt AlterSessionStmt AlterSessionStmtValid XID LTID InternalReparseStmt pl_trigger_body
+               LockTableStmt AlterSystemStmt AlterSessionStmt AlterSessionStmtValid XID LTID InternalReparseStmt pl_trigger_body pl_trigger_header
                trigger_event trigger_event_list
 %type <list>   ctext_expr_list ctext_row indirection opt_indirection values_clause insert_column_list when_expr_clause_list
                when_cond_clause_list func_name within_group_clause sort_clause opt_sort_clause sortby_list opt_partition_clause
@@ -333,7 +356,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <for_update> for_locking_clause
 %type <rowmark_type> opt_nowait_or_skip
 %type <merge_when> merge_when_list
-%type <name_owner> any_name on_list
+%type <name_owner> any_name on_list pl_object_name pl_trigger_table_name
 %type <db_user_token> createdb_user_name
 %type <db_opt> createdb_user_opt createdb_controlfile_opt createdb_charset_opt instance_node_opt createdb_instance_opt
                createdb_nologging_opt createdb_system_opt createdb_sysaux_opt createdb_default_opt createdb_maxinstance_opt
@@ -359,7 +382,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <ts_opt> createts_opt
 %type <alts_opt> alterts_opt
 %type <boolean> opt_unique opt_if_not_exists csf_or_asf opt_with_grant opt_with_admin opt_alter_ts_db
-%type <ival> profile_parameter
+%type <ival> profile_parameter pl_extra_object_name_parts
 %type <profile_limit_item> profile_limit_item
 %type <profile_limit_value> profile_limit_value
 %type <index_col> index_column table_column
@@ -6477,6 +6500,9 @@ GenericType:
                     if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
                         parser_yyerror("make type failed");
                     }
+                    if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
+                        parser_yyerror("preserve type name failed");
+                    }
                     $$ = type;
                 }
         ;
@@ -7695,6 +7721,73 @@ any_name:
                     ret->name.str = $3;
                     ret->name.len = strlen($3);
                     $$ = ret;
+                }
+        ;
+
+pl_object_name:
+            ColId
+                {
+                    if (pl_bison_make_object_name(yyscanner, NULL, $1, -1, @1.offset, @1.loc, &$$) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare PLSQL object name failed");
+                    }
+                }
+            | ColId '.' ColId
+                {
+                    if (pl_bison_make_object_name(yyscanner, $1, $3, @1.offset, @3.offset, @1.loc,
+                        &$$) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare qualified PLSQL object name failed");
+                    }
+                }
+            | ColId '.' ColId '.' pl_extra_object_name_parts
+                {
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    int object_name_end = extra->pl_object_name_end;
+                    if (pl_bison_make_object_name(yyscanner, NULL, $1, -1, @1.offset, @1.loc,
+                        &$$) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare multi-part PLSQL object name failed");
+                    }
+                    /* Native PL keeps the first component when a name has three to six components. */
+                    extra->pl_object_name_end = object_name_end;
+                }
+        ;
+
+pl_extra_object_name_parts:
+            ColId
+                {
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    if (pl_bison_object_name_end(yyscanner, @1.offset,
+                        &extra->pl_object_name_end) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare extra PLSQL object name part failed");
+                    }
+                    $$ = 3;
+                }
+            | pl_extra_object_name_parts '.' ColId
+                {
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    if ($1 >= MAX_EXTRA_TEXTS) {
+                        OG_SRC_THROW_ERROR(@2.loc, ERR_SQL_SYNTAX_ERROR, "too many '.' found");
+                        YYABORT;
+                    }
+                    if (pl_bison_object_name_end(yyscanner, @3.offset,
+                        &extra->pl_object_name_end) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare extra PLSQL object name part failed");
+                    }
+                    $$ = $1 + 1;
+                }
+        ;
+
+pl_trigger_table_name:
+            ColId
+                {
+                    if (pl_bison_make_raw_object_name(yyscanner, NULL, $1, -1, @1.offset, &$$) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare trigger table name failed");
+                    }
+                }
+            | ColId '.' ColId
+                {
+                    if (pl_bison_make_raw_object_name(yyscanner, $1, $3, @1.offset, @3.offset, &$$) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("prepare qualified trigger table name failed");
+                    }
                 }
         ;
 
@@ -14585,34 +14678,50 @@ func_arg_with_default:
 attrs:      '.' ColId
                 {
                     galist_t *list = NULL;
-                    text_t *text = NULL;
+                    type_name_part_t *part = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
-                    if (cm_galist_new(list, sizeof(text_t), (pointer_t *)&text) != OG_SUCCESS) {
+                    if (cm_galist_new(list, sizeof(type_name_part_t), (pointer_t *)&part) != OG_SUCCESS) {
                         parser_yyerror("init element failed.");
                     }
-
-                    cm_str2text($2, text);
+                    if (pl_bison_make_object_name_part(yyscanner, $2, @2.offset, &part->value,
+                        &part->sensitive, NULL) != OG_SUCCESS) {
+                        parser_yyerror("prepare qualified type name failed.");
+                    }
                     $$ = list;
                 }
             | attrs '.' ColId
                 {
                     galist_t *list = $1;
-                    text_t *text = NULL;
-                    if (cm_galist_new(list, sizeof(text_t), (pointer_t *)&text) != OG_SUCCESS) {
+                    type_name_part_t *part = NULL;
+                    if (cm_galist_new(list, sizeof(type_name_part_t), (pointer_t *)&part) != OG_SUCCESS) {
                         parser_yyerror("init element failed.");
                     }
-
-                    cm_str2text($3, text);
+                    if (pl_bison_make_object_name_part(yyscanner, $3, @3.offset, &part->value,
+                        &part->sensitive, NULL) != OG_SUCCESS) {
+                        parser_yyerror("prepare qualified type name failed.");
+                    }
                     $$ = list;
                 }
         ;
 
 func_type:
             Typename                                { $$ = $1; }
+            | type_function_name attrs
+                {
+                    type_word_t *type = NULL;
+                    if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("make qualified type failed");
+                    }
+                    type->is_name_typemode = OG_TRUE;
+                    if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
+                        parser_yyerror("preserve qualified type name failed");
+                    }
+                    $$ = type;
+                }
             | type_function_name attrs '%' ROWTYPE_P
                 {
                     type_word_t *type = NULL;
@@ -14622,6 +14731,9 @@ func_type:
                     type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
+                    if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
+                        parser_yyerror("preserve qualified ROWTYPE name failed");
+                    }
                     $$ = type;
                 }
             | type_function_name '%' ROWTYPE_P
@@ -14633,6 +14745,9 @@ func_type:
                     type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
+                    if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
+                        parser_yyerror("preserve ROWTYPE name failed");
+                    }
                     $$ = type;
                 }
             | type_function_name attrs '%' TYPE_P
@@ -14644,6 +14759,9 @@ func_type:
                     type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_TRUE;
                     type->pl_rowtype = OG_FALSE;
+                    if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
+                        parser_yyerror("preserve qualified TYPE name failed");
+                    }
                     $$ = type;
                 }
             | type_function_name '%' TYPE_P
@@ -14655,6 +14773,9 @@ func_type:
                     type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_TRUE;
                     type->pl_rowtype = OG_FALSE;
+                    if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
+                        parser_yyerror("preserve TYPE name failed");
+                    }
                     $$ = type;
                 }
         ;
@@ -14833,14 +14954,24 @@ pl_type_body:
                 }
         ;
 
-pl_trigger_body:
-            trigger_timing trigger_event_list ON any_name opt_trigger_for_each_row pl_trigger_block
+pl_trigger_header:
+            trigger_timing trigger_event_list ON pl_trigger_table_name opt_trigger_for_each_row
                 {
                     pl_bison_trigger_def_t *trigger_def = pl_bison_make_trigger_def(yyscanner, (trigger_type_t)$1,
-                        (pl_bison_trigger_events_t *)$2, $4, $5, $6, @1.loc, @4.loc, @6.loc);
+                        (pl_bison_trigger_events_t *)$2, $4, $5, NULL, @1.loc, @4.loc, yylloc.loc);
                     if (trigger_def == NULL) {
                         parser_abort_or_yyerror("parse trigger definition failed");
                     }
+                    $$ = trigger_def;
+                }
+        ;
+
+pl_trigger_body:
+            pl_trigger_header pl_trigger_block
+                {
+                    pl_bison_trigger_def_t *trigger_def = (pl_bison_trigger_def_t *)$1;
+                    trigger_def->body = $2;
+                    trigger_def->action_loc = @2.loc;
                     $$ = trigger_def;
                 }
         ;
@@ -14897,14 +15028,14 @@ trigger_column_list:
             ColId
                 {
                     galist_t *columns = NULL;
-                    if (pl_bison_append_trigger_column(yyscanner, &columns, $1, @1.loc) != OG_SUCCESS) {
+                    if (pl_bison_append_trigger_column(yyscanner, &columns, $1, @1.offset, @1.loc) != OG_SUCCESS) {
                         parser_yyerror("parse trigger update column failed");
                     }
                     $$ = columns;
                 }
             | trigger_column_list ',' ColId
                 {
-                    if (pl_bison_append_trigger_column(yyscanner, &$1, $3, @3.loc) != OG_SUCCESS) {
+                    if (pl_bison_append_trigger_column(yyscanner, &$1, $3, @3.offset, @3.loc) != OG_SUCCESS) {
                         parser_yyerror("parse trigger update column failed");
                     }
                     $$ = $1;
@@ -14999,19 +15130,28 @@ compileStoredBodySource:
         ;
 
 CreateProcedureStmt:
-            CREATE opt_or_replace PROCEDURE {
-                if (pl_init_compiler(og_yyget_extra(yyscanner)->core_yy_extra.stmt) != OG_SUCCESS) {
-                    parser_yyerror("init pl compiler failed");
+            CREATE opt_or_replace PROCEDURE
+            {
+                pl_bison_begin_object_name(yyscanner);
+            }
+            opt_if_not_exists pl_object_name
+            {
+                if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_PROCEDURE, OG_FALSE,
+                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("prepare create procedure failed");
                 }
-            } opt_if_not_exists any_name proc_args opt_authid as_is subprogram_body
+            }
+            proc_args opt_authid as_is subprogram_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    int source_offset = ($7 != NULL) ? @7.offset : ($8 ? @8.offset : @9.offset);
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + source_offset;
-                    storage_source.len = yylloc.offset - source_offset;
+                    int source_offset = ($8 != NULL) ? @8.offset : ($9 ? @9.offset : @10.offset);
 
-                    if (pl_bison_parse_create_procedure(stmt, $2, $5, $6, $7, $10, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_finish_create_source(yyscanner, source_offset, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("record procedure source failed");
+                    }
+
+                    if (pl_bison_parse_create_procedure(stmt, $8, $11, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create procedure failed");
                     }
 
@@ -15020,20 +15160,29 @@ CreateProcedureStmt:
         ;
 
 CreateFunctionStmt:
-            CREATE opt_or_replace FUNCTION {
-                if (pl_init_compiler(og_yyget_extra(yyscanner)->core_yy_extra.stmt) != OG_SUCCESS) {
-                    parser_yyerror("init pl compiler failed");
+            CREATE opt_or_replace FUNCTION
+            {
+                pl_bison_begin_object_name(yyscanner);
+            }
+            opt_if_not_exists pl_object_name
+            {
+                if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_FUNCTION, OG_FALSE,
+                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("prepare create function failed");
                 }
-            } opt_if_not_exists any_name proc_args RETURN func_type
+            }
+            proc_args RETURN func_type
             as_is subprogram_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    int source_offset = ($7 == NULL) ? @8.offset : @7.offset;
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + source_offset;
-                    storage_source.len = yylloc.offset - source_offset;
+                    int source_offset = ($8 == NULL) ? @9.offset : @8.offset;
 
-                    if (pl_bison_parse_create_function(stmt, $2, $5, $6, $7, $9, $11, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_finish_create_source(yyscanner, source_offset, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("record function source failed");
+                    }
+
+                    if (pl_bison_parse_create_function(stmt, $8, $10, $12, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create function failed");
                     }
 
@@ -15042,14 +15191,28 @@ CreateFunctionStmt:
         ;
 
 CreatePackageStmt:
-            CREATE opt_or_replace PACKAGE opt_package_body opt_if_not_exists any_name pl_as_is_body
+            CREATE opt_or_replace PACKAGE
+            {
+                pl_bison_begin_object_name(yyscanner);
+            }
+            opt_package_body opt_if_not_exists pl_object_name
+            {
+                uint32 type = $5 ? PL_PACKAGE_BODY : PL_PACKAGE_SPEC;
+                if (pl_bison_prepare_create_source(yyscanner, $2, $6, $7, type, OG_FALSE,
+                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("prepare create package failed");
+                }
+            }
+            pl_as_is_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
-                    storage_source.len = yylloc.offset - @7.offset;
 
-                    if (pl_bison_parse_create_package(stmt, $2, $4, $5, $6, $7, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_finish_create_source(yyscanner, @9.offset, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("record package source failed");
+                    }
+
+                    if (pl_bison_parse_create_package(stmt, $9, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create package failed");
                     }
 
@@ -15058,14 +15221,30 @@ CreatePackageStmt:
         ;
 
 CreateTypeStmt:
-            CREATE opt_or_replace TYPE_P opt_type_body opt_if_not_exists any_name opt_type_force pl_type_body
+            CREATE opt_or_replace TYPE_P
+            {
+                pl_bison_begin_object_name(yyscanner);
+            }
+            opt_type_body opt_if_not_exists pl_object_name opt_type_force
+            {
+                uint32 type = $5 ? PL_TYPE_BODY : PL_TYPE_SPEC;
+                int source_offset = $8 ? @8.offset + (int)(sizeof("FORCE") - 1) :
+                    og_yyget_extra(yyscanner)->pl_object_name_end;
+                if (pl_bison_prepare_create_source(yyscanner, $2, $6, $7, type, $8,
+                    source_offset) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("prepare create type failed");
+                }
+            }
+            pl_type_body
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @8.offset;
-                    storage_source.len = yylloc.offset - @8.offset;
 
-                    if (pl_bison_parse_create_type(stmt, $2, $4, $5, $6, $7, $8, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_finish_create_source(yyscanner, @10.offset, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("record type source failed");
+                    }
+
+                    if (pl_bison_parse_create_type(stmt, $10, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create type failed");
                     }
 
@@ -15074,14 +15253,37 @@ CreateTypeStmt:
         ;
 
 CreateTriggerStmt:
-            CREATE opt_or_replace TRIGGER opt_if_not_exists any_name pl_trigger_body
+            CREATE opt_or_replace TRIGGER
+            {
+                pl_bison_begin_object_name(yyscanner);
+            }
+            opt_if_not_exists pl_object_name
+            {
+                if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_TRIGGER, OG_FALSE,
+                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("prepare create trigger failed");
+                }
+            }
+            pl_trigger_header
+            {
+                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                if (pl_bison_prepare_trigger_desc(stmt, (pl_bison_trigger_def_t *)$8) != OG_SUCCESS) {
+                    parser_abort_or_yyerror("prepare trigger definition failed");
+                }
+            }
+            pl_trigger_block
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    pl_bison_trigger_def_t *trigger_def = (pl_bison_trigger_def_t *)$8;
                     text_t storage_source;
-                    storage_source.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @6.offset;
-                    storage_source.len = yylloc.offset - @6.offset;
+                    trigger_def->body = $10;
+                    trigger_def->action_loc = @10.loc;
 
-                    if (pl_bison_parse_create_trigger(stmt, $2, $4, $5, $6, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_finish_create_source(yyscanner, @8.offset, &storage_source) != OG_SUCCESS) {
+                        parser_yyerror("record trigger source failed");
+                    }
+
+                    if (pl_bison_parse_create_trigger(stmt, trigger_def, &storage_source) != OG_SUCCESS) {
                         parser_yyerror("parse create trigger failed");
                     }
 
@@ -18394,30 +18596,313 @@ static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
         og_yyget_extra(yyscanner)->core_yy_extra.stmt, trigger_def);
 }
 
-static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,
-    source_location_t loc)
+static void pl_bison_begin_object_name(core_yyscan_t yyscanner)
+{
+    og_yyget_extra(yyscanner)->pl_object_name_mode = OG_TRUE;
+}
+
+static bool32 pl_bison_is_identifier_char(char ch)
+{
+    uint8 uch = (uint8)ch;
+    return (uch >= 0x80 || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+        (ch >= '0' && ch <= '9') || ch == '_' || ch == '$' || ch == '#');
+}
+
+static status_t pl_bison_raw_quoted_name_end(const char *source, size_t source_len, size_t quote_offset,
+    char quote, size_t *end_offset)
+{
+    size_t pos = quote_offset + 1;
+
+    while (pos < source_len) {
+        if (source[pos] != quote) {
+            pos++;
+            continue;
+        }
+        if (quote == '"' && pos + 1 < source_len && source[pos + 1] == quote) {
+            pos += 2;
+            continue;
+        }
+        *end_offset = pos + 1;
+        return OG_SUCCESS;
+    }
+    return OG_ERROR;
+}
+
+static bool32 pl_bison_is_scanner_whitespace(char ch)
+{
+    return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f');
+}
+
+static size_t pl_bison_skip_scanner_whitespace(const char *source, size_t source_len, size_t pos)
+{
+    for (;;) {
+        while (pos < source_len && pl_bison_is_scanner_whitespace(source[pos])) {
+            pos++;
+        }
+        if (pos + 1 >= source_len || source[pos] != '-' || source[pos + 1] != '-') {
+            return pos;
+        }
+        pos += 2;
+        while (pos < source_len && source[pos] != '\n' && source[pos] != '\r') {
+            pos++;
+        }
+    }
+}
+
+static void pl_bison_raw_unicode_name_end(const char *source, size_t source_len, size_t *end_offset)
+{
+    const char *uescape = "UESCAPE";
+    size_t pos = *end_offset;
+    size_t keyword_pos;
+
+    pos = pl_bison_skip_scanner_whitespace(source, source_len, pos);
+    keyword_pos = pos;
+    if (source_len - keyword_pos < strlen(uescape) ||
+        cm_strcmpni(source + keyword_pos, uescape, strlen(uescape)) != 0) {
+        return;
+    }
+
+    pos += strlen(uescape);
+    pos = pl_bison_skip_scanner_whitespace(source, source_len, pos);
+    if (source_len - pos >= 3 && source[pos] == '\'' && source[pos + 1] != '\'' && source[pos + 2] == '\'') {
+        *end_offset = pos + 3;
+    }
+}
+
+static status_t pl_bison_raw_name_end(const base_yy_extra_type *extra, int name_offset, int *end_offset)
+{
+    const char *source = extra->sourcebuf;
+    size_t source_len = extra->sourcebuflen;
+    size_t pos;
+    bool32 is_unicode_name = OG_FALSE;
+
+    if (name_offset < 0 || (size_t)name_offset >= source_len) {
+        return OG_ERROR;
+    }
+
+    pos = (size_t)name_offset;
+    if (source[pos] == '"' || source[pos] == '`') {
+        if (pl_bison_raw_quoted_name_end(source, source_len, pos, source[pos], &pos) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    } else if (pos + 2 < source_len && (source[pos] == 'U' || source[pos] == 'u') &&
+        source[pos + 1] == '&' && source[pos + 2] == '"') {
+        is_unicode_name = OG_TRUE;
+        if (pl_bison_raw_quoted_name_end(source, source_len, pos + 2, '"', &pos) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    } else {
+        while (pos < source_len && pl_bison_is_identifier_char(source[pos])) {
+            pos++;
+        }
+    }
+
+    if (pos == (size_t)name_offset) {
+        return OG_ERROR;
+    }
+    if (is_unicode_name) {
+        pl_bison_raw_unicode_name_end(source, source_len, &pos);
+    }
+    if (pos > INT_MAX) {
+        return OG_ERROR;
+    }
+    *end_offset = (int)pos;
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_object_name_end(core_yyscan_t yyscanner, int name_offset, int *end_offset)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    if (pl_bison_raw_name_end(extra, name_offset, end_offset) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL object name");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_validate_object_name(core_yyscan_t yyscanner, int name_offset, source_location_t loc)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+
+    if (name_offset < 0 || (size_t)name_offset >= extra->sourcebuflen) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL object name");
+        return OG_ERROR;
+    }
+
+    for (size_t pos = (size_t)name_offset; pos < extra->sourcebuflen; pos++) {
+        uint8 ch = (uint8)extra->sourcebuf[pos];
+        if (ch <= ' ' || ch == '(' || ch == ';' || ch == ',') {
+            return OG_SUCCESS;
+        }
+        if (CM_IS_QUOTE_CHAR(ch) || ch == '$') {
+            continue;
+        }
+        if (is_nonnaming_char(ch)) {
+            OG_SRC_THROW_ERROR_EX(loc, ERR_PL_SYNTAX_ERROR_FMT,
+                "Can not using this special char '%c' as object name", ch);
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static bool32 pl_bison_object_name_is_quoted(const base_yy_extra_type *extra, int offset)
+{
+    if (offset < 0 || (size_t)offset >= extra->sourcebuflen) {
+        return OG_FALSE;
+    }
+    return (extra->sourcebuf[offset] == '"' || extra->sourcebuf[offset] == '`' ||
+        ((extra->sourcebuf[offset] == 'U' || extra->sourcebuf[offset] == 'u') &&
+        (size_t)offset + 2 < extra->sourcebuflen && extra->sourcebuf[offset + 1] == '&' &&
+        extra->sourcebuf[offset + 2] == '"'));
+}
+
+static status_t pl_bison_make_object_name_part(core_yyscan_t yyscanner, char *parsed_name, int offset,
+    text_t *name, bool32 *sensitive, int *end_offset)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    bool32 quoted;
+    int raw_end;
+
+    if (parsed_name == NULL || offset < 0) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL object name");
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(pl_bison_object_name_end(yyscanner, offset, &raw_end));
+    quoted = pl_bison_object_name_is_quoted(extra, offset);
+    if (!quoted && !IS_CASE_INSENSITIVE) {
+        name->str = (char *)extra->sourcebuf + offset;
+        name->len = (uint32)(raw_end - offset);
+    } else {
+        cm_str2text(parsed_name, name);
+    }
+    *sensitive = (quoted || !IS_CASE_INSENSITIVE);
+    if (end_offset != NULL) {
+        *end_offset = raw_end;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_preserve_type_name(core_yyscan_t yyscanner, type_word_t *type, int name_offset)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    sql_stmt_t *stmt = extra->core_yy_extra.stmt;
+    text_t name;
+    char *stored_name = NULL;
+
+    OG_RETURN_IFERR(pl_bison_make_object_name_part(yyscanner, type->str, name_offset, &name,
+        &type->name_sensitive, NULL));
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, name.len + 1, (void **)&stored_name));
+    if (name.len > 0) {
+        errno_t ret = memcpy_s(stored_name, name.len + 1, name.str, name.len);
+        knl_securec_check(ret);
+    }
+    stored_name[name.len] = '\0';
+    type->str = stored_name;
+    type->name_sensitive_set = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_make_raw_object_name(core_yyscan_t yyscanner, char *owner, char *name, int owner_offset,
+    int name_offset, name_with_owner **object_name)
 {
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-    trigger_column_t *column = NULL;
+    bool32 ignored_sensitive;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(name_with_owner), (void **)object_name));
+    if (owner == NULL) {
+        (*object_name)->owner = CM_NULL_TEXT;
+    } else {
+        OG_RETURN_IFERR(pl_bison_make_object_name_part(yyscanner, owner, owner_offset, &(*object_name)->owner,
+            &ignored_sensitive, NULL));
+    }
+    return pl_bison_make_object_name_part(yyscanner, name, name_offset, &(*object_name)->name,
+        &ignored_sensitive, NULL);
+}
+
+static status_t pl_bison_make_object_name(core_yyscan_t yyscanner, char *owner, char *name, int owner_offset,
+    int name_offset, source_location_t loc, name_with_owner **object_name)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    sql_stmt_t *stmt = extra->core_yy_extra.stmt;
+    bool32 ignored_sensitive;
+
+    extra->pl_object_name_mode = OG_FALSE;
+    OG_RETURN_IFERR(pl_bison_validate_object_name(yyscanner, owner == NULL ? name_offset : owner_offset, loc));
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(name_with_owner), (void **)object_name));
+    if (owner == NULL) {
+        (*object_name)->owner = CM_NULL_TEXT;
+    } else {
+        OG_RETURN_IFERR(pl_bison_make_object_name_part(yyscanner, owner, owner_offset, &(*object_name)->owner,
+            &ignored_sensitive, NULL));
+    }
+    return pl_bison_make_object_name_part(yyscanner, name, name_offset, &(*object_name)->name,
+        &extra->pl_object_name_sensitive, &extra->pl_object_name_end);
+}
+
+static status_t pl_bison_source_from_offset(core_yyscan_t yyscanner, int source_offset, text_t *source)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+
+    if (source_offset < 0 || (size_t)source_offset > extra->sourcebuflen) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL source offset");
+        return OG_ERROR;
+    }
+
+    source->str = (char *)extra->sourcebuf + source_offset;
+    source->len = (uint32)(extra->sourcebuflen - (size_t)source_offset);
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_finish_create_source(core_yyscan_t yyscanner, int source_offset, text_t *source)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    stmt->bison_pl_create_pending = OG_FALSE;
+    return pl_bison_source_from_offset(yyscanner, source_offset, source);
+}
+
+static status_t pl_bison_prepare_create_source(core_yyscan_t yyscanner, bool32 replace, bool32 if_not_exists,
+    name_with_owner *object_name, uint32 type, bool32 force, int source_offset)
+{
+    text_t source;
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+
+    OG_RETURN_IFERR(pl_bison_source_from_offset(yyscanner, source_offset, &source));
+    return pl_bison_prepare_create(extra->core_yy_extra.stmt, replace, if_not_exists, object_name,
+        extra->pl_object_name_sensitive, type, force, &source);
+}
+
+static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,
+    int name_offset, source_location_t loc)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_bison_trigger_column_t *column = NULL;
     text_t column_name;
+    bool32 sensitive;
+
+    OG_RETURN_IFERR(pl_bison_make_object_name_part(yyscanner, name, name_offset, &column_name, &sensitive, NULL));
 
     if (*columns == NULL) {
         OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(galist_t), (void **)columns));
         cm_galist_init(*columns, stmt->context, sql_alloc_mem);
     }
 
-    cm_str2text(name, &column_name);
     for (uint32 i = 0; i < (*columns)->count; i++) {
-        trigger_column_t *existing = (trigger_column_t *)cm_galist_get(*columns, i);
-        if (cm_text_str_equal_ins(&column_name, existing->col_name)) {
+        pl_bison_trigger_column_t *existing = (pl_bison_trigger_column_t *)cm_galist_get(*columns, i);
+        bool32 duplicate = sensitive ? cm_text_str_equal(&column_name, existing->column.col_name) :
+            cm_text_str_equal_ins(&column_name, existing->column.col_name);
+        if (duplicate) {
             OG_SRC_THROW_ERROR(loc, ERR_PL_DUP_OBJ_FMT, name);
             return OG_ERROR;
         }
     }
 
-    OG_RETURN_IFERR(cm_galist_new(*columns, sizeof(trigger_column_t), (void **)&column));
-    column->loc = loc;
-    OG_RETURN_IFERR(cm_text2str(&column_name, column->col_name, OG_NAME_BUFFER_SIZE));
+    OG_RETURN_IFERR(cm_galist_new(*columns, sizeof(pl_bison_trigger_column_t), (void **)&column));
+    column->column.loc = loc;
+    column->sensitive = sensitive;
+    OG_RETURN_IFERR(cm_text2str(&column_name, column->column.col_name, OG_NAME_BUFFER_SIZE));
     return OG_SUCCESS;
 }
 
@@ -18448,20 +18933,23 @@ static status_t pl_bison_copy_trigger_columns(sql_stmt_t *stmt, galist_t **dest,
     }
 
     for (uint32 i = 0; i < src->count; i++) {
-        trigger_column_t *src_column = (trigger_column_t *)cm_galist_get(src, i);
-        trigger_column_t *dest_column = NULL;
+        pl_bison_trigger_column_t *src_column = (pl_bison_trigger_column_t *)cm_galist_get(src, i);
+        pl_bison_trigger_column_t *dest_column = NULL;
         text_t column_name;
 
-        cm_str2text(src_column->col_name, &column_name);
+        cm_str2text(src_column->column.col_name, &column_name);
         for (uint32 j = 0; j < (*dest)->count; j++) {
-            trigger_column_t *existing = (trigger_column_t *)cm_galist_get(*dest, j);
-            if (cm_text_str_equal_ins(&column_name, existing->col_name)) {
-                OG_SRC_THROW_ERROR(src_column->loc, ERR_PL_DUP_OBJ_FMT, src_column->col_name);
+            pl_bison_trigger_column_t *existing = (pl_bison_trigger_column_t *)cm_galist_get(*dest, j);
+            bool32 duplicate = src_column->sensitive ?
+                cm_text_str_equal(&column_name, existing->column.col_name) :
+                cm_text_str_equal_ins(&column_name, existing->column.col_name);
+            if (duplicate) {
+                OG_SRC_THROW_ERROR(src_column->column.loc, ERR_PL_DUP_OBJ_FMT, src_column->column.col_name);
                 return OG_ERROR;
             }
         }
 
-        OG_RETURN_IFERR(cm_galist_new(*dest, sizeof(trigger_column_t), (void **)&dest_column));
+        OG_RETURN_IFERR(cm_galist_new(*dest, sizeof(pl_bison_trigger_column_t), (void **)&dest_column));
         *dest_column = *src_column;
     }
     return OG_SUCCESS;
@@ -18484,18 +18972,24 @@ static pl_bison_trigger_events_t *pl_bison_merge_trigger_events(core_yyscan_t yy
 
 static trigger_type_t pl_bison_apply_trigger_row(trigger_type_t type, bool32 for_each_row, source_location_t loc)
 {
-    if (!for_each_row || type == TRIG_INSTEAD_OF) {
+    if (!for_each_row) {
         return type;
     }
 
     if (type == TRIG_AFTER_STATEMENT) {
-        return TRIG_AFTER_EACH_ROW;
-    }
-    if (type == TRIG_BEFORE_STATEMENT) {
-        return TRIG_BEFORE_EACH_ROW;
+        type = TRIG_AFTER_EACH_ROW;
+    } else if (type == TRIG_BEFORE_STATEMENT) {
+        type = TRIG_BEFORE_EACH_ROW;
+    } else if (type != TRIG_INSTEAD_OF) {
+        OG_SRC_THROW_ERROR(loc, ERR_PL_SYNTAX_ERROR_FMT, "'FOR EACH ROW' only support 'AFTER' or 'BEFORE'");
+        return type;
     }
 
-    OG_SRC_THROW_ERROR(loc, ERR_PL_SYNTAX_ERROR_FMT, "'FOR EACH ROW' only support 'AFTER' or 'BEFORE'");
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR) {
+        OG_SRC_THROW_ERROR(loc, ERR_CAPABILITY_NOT_SUPPORT, "'FOR EACH ROW' on coordinator is");
+    }
+#endif
     return type;
 }
 

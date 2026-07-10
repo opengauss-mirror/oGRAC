@@ -835,6 +835,7 @@ static status_t sql_parse_core(sql_stmt_t *stmt, text_t *sql, source_location_t 
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     stmt->pl_failed = OG_FALSE;
+    stmt->bison_pl_create_pending = OG_FALSE;
     stmt->session->sql_audit.sql = *sql;
 
     sql_text.value = *sql;

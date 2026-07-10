@@ -1602,6 +1602,10 @@ static status_t plc_bison_compile_decl_type(pl_compiler_t *compiler, plv_decl_t 
     if (result) {
         return OG_SUCCESS;
     }
+    if (type->is_name_typemode) {
+        OG_SRC_THROW_ERROR(type->loc, ERR_UNSUPPORT_DATATYPE, type->str);
+        return OG_ERROR;
+    }
 
     decl->type = PLV_VAR;
     OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(decl->drct), &decl->variant.type, type));

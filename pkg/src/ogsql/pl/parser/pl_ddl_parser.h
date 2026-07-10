@@ -30,6 +30,11 @@
 #include "expr_parser.h"
 #include "pl_trigger.h"
 
+typedef struct st_pl_bison_trigger_column {
+    trigger_column_t column;
+    bool32 sensitive;
+} pl_bison_trigger_column_t;
+
 typedef struct st_pl_bison_trigger_def {
     trigger_type_t type;
     uint16 events;
@@ -54,16 +59,16 @@ status_t pl_parse_drop_type(sql_stmt_t *stmt, word_t *word);
 status_t pl_parse_drop_package(sql_stmt_t *stmt, word_t *word);
 status_t plc_parse_trigger_desc_core(sql_stmt_t *stmt, word_t *word, bool32 is_upgrade);
 status_t pl_parse_trigger_desc(sql_stmt_t *stmt, var_udo_t *obj, word_t *word);
-status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *proc_name, galist_t *args, text_t *body, text_t *source);
-status_t pl_bison_parse_create_function(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *func_name, galist_t *args, type_word_t *ret_type, text_t *body, text_t *source);
-status_t pl_bison_parse_create_package(sql_stmt_t *stmt, bool32 replace, bool32 is_body, bool32 if_not_exists,
-    name_with_owner *pkg_name, text_t *body, text_t *source);
-status_t pl_bison_parse_create_type(sql_stmt_t *stmt, bool32 replace, bool32 is_body, bool32 if_not_exists,
-    name_with_owner *type_name, bool32 force, text_t *body, text_t *source);
-status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *trig_name, pl_bison_trigger_def_t *trigger_def, text_t *source);
+status_t pl_bison_prepare_create(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
+    name_with_owner *object_name, bool32 name_sensitive, uint32 type, bool32 force, text_t *source);
+status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt);
+status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, galist_t *args, text_t *body, text_t *source);
+status_t pl_bison_parse_create_function(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body,
+    text_t *source);
+status_t pl_bison_parse_create_package(sql_stmt_t *stmt, text_t *body, text_t *source);
+status_t pl_bison_parse_create_type(sql_stmt_t *stmt, text_t *body, text_t *source);
+status_t pl_bison_prepare_trigger_desc(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def);
+status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def, text_t *source);
 status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body);
 status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, text_t *body);
 status_t pl_bison_compile_stored_body_source(sql_stmt_t *stmt, text_t *program_body, text_t *stored_body);

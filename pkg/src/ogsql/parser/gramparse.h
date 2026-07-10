@@ -82,6 +82,13 @@ typedef struct base_yy_extra_type {
     int lookahead_len; /* Length of `lookaheads`. Max to `MAX_LOOKAHEAD_LEN` */
     struct base_yy_lookahead lookaheads[MAX_LOOKAHEAD_LEN];
 
+    /* Immutable raw-parser input used by grammar actions that persist source text. */
+    const char *sourcebuf;
+    size_t sourcebuflen;
+    int pl_object_name_end;
+    bool32 pl_object_name_mode;
+    bool32 pl_object_name_sensitive;
+
     /**
      * State variables that belong to the grammar.
      */
