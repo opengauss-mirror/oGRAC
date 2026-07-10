@@ -1363,7 +1363,8 @@ indirection_el:
             '.' ColId
                 {
                     expr_tree_t *expr = NULL;
-                    if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, @2.loc) != OG_SUCCESS) {
+                    if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, $2, @2.loc) != OG_SUCCESS) {
                         parser_yyerror("init const expr failed");
                     }
                     $$ = expr;
@@ -3514,7 +3515,7 @@ opt_escape:
         ESCAPE SCONST
             {
                 expr_tree_t *escape_expr = NULL;
-                if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &escape_expr, $2, @2.loc) != OG_SUCCESS) {
                     parser_yyerror("init const expr failed");
                 }
@@ -6939,7 +6940,7 @@ func_name:      type_function_name
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
-                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, @1.loc) != OG_SUCCESS) {
                             parser_yyerror("init const expr failed");
                         }
@@ -6955,7 +6956,7 @@ func_name:      type_function_name
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
-                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, @1.loc) != OG_SUCCESS) {
                             parser_yyerror("init const expr failed");
                         }
@@ -7012,7 +7013,8 @@ AexprConst: ICONST
             | SCONST
             {
                 expr_tree_t *expr = NULL;
-                if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
+                if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $1, @1.loc) != OG_SUCCESS) {
                     parser_yyerror("init const expr failed");
                 }
                 $$ = expr;
@@ -7039,7 +7041,8 @@ AexprConst: ICONST
             {
                 /* National character string literal (N'...') - treat as regular string */
                 expr_tree_t *expr = NULL;
-                if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, @1.loc) != OG_SUCCESS) {
+                if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                    &expr, $2, @1.loc) != OG_SUCCESS) {
                     parser_yyerror("init const expr failed");
                 }
                 $$ = expr;
@@ -13526,10 +13529,10 @@ lob_store_params:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column name list failed.");
+                        parser_yyerror("create lob store param list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert column name failed.");
+                        parser_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13537,7 +13540,15 @@ lob_store_params:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert column name failed.");
+                        parser_yyerror("insert lob store param failed.");
+                    }
+                    $$ = list;
+                }
+            | lob_store_params lob_store_param
+                {
+                    galist_t *list = $1;
+                    if (cm_galist_insert(list, $2) != OG_SUCCESS) {
+                        parser_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13548,7 +13559,7 @@ lob_store_param:
                 {
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_TABLESPACE;
@@ -13559,7 +13570,7 @@ lob_store_param:
                 {
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_STORAGE_IN_ROW;
@@ -13570,7 +13581,7 @@ lob_store_param:
                 {
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_STORAGE_IN_ROW;
@@ -13679,7 +13690,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_TABLESPACE;
@@ -13690,7 +13701,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_TRANS) {
@@ -13704,7 +13715,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_LOCAL;
@@ -13715,7 +13726,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     if ($2 > OG_PCT_FREE_MAX) {
@@ -13729,7 +13740,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_CRMODE;
@@ -13740,7 +13751,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_ONLINE;
@@ -13750,7 +13761,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_INDEX_PARALLELISM) {
@@ -13764,7 +13775,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_REVERSE;
@@ -13774,7 +13785,7 @@ createidx_opt:
                 {
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
+                    if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_NOLOGGING;

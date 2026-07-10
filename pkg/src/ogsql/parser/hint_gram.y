@@ -141,7 +141,7 @@ arg_item:
     {
         expr_tree_t *expr = NULL;
         source_location_t loc = {.line = 0, .column = 0};
-        if (sql_create_string_const_expr(og_hint_yyget_extra(yyscanner)->stmt, &expr, $1, loc) != OG_SUCCESS) {
+        if (sql_create_scanned_string_const_expr(og_hint_yyget_extra(yyscanner)->stmt, &expr, $1, loc) != OG_SUCCESS) {
             hint_parser_yyerror("init const expr failed");
         }
         $$ = expr;
@@ -150,7 +150,7 @@ arg_item:
     {
         expr_tree_t *expr = NULL;
         source_location_t loc = {.line = 0, .column = 0};
-        if (sql_create_string_const_expr(og_hint_yyget_extra(yyscanner)->stmt, &expr, $1, loc) != OG_SUCCESS) {
+        if (sql_create_scanned_string_const_expr(og_hint_yyget_extra(yyscanner)->stmt, &expr, $1, loc) != OG_SUCCESS) {
             hint_parser_yyerror("init const expr failed");
         }
         $$ = expr;

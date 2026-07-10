@@ -28,6 +28,12 @@ create table bison_desc_idx_t(a int primary key, b int);
 create index bison_desc_idx1 on bison_desc_idx_t(a desc);
 create index bison_desc_idx2 on bison_desc_idx_t(a desc); --error
 drop table if exists bison_desc_idx_t;
+drop table if exists bison_lob_subpart_t purge;
+create table bison_lob_subpart_t (id int, c_date date, c_bin binary(10), c_clob clob) lob(c_clob) store as (enable storage in row disable storage in row) appendonly on partition by list(c_date) subpartition by list(c_bin)(partition p1 values('2000-10-10') (subpartition sp1 values('a')), partition p2 values('2020-10-10') (subpartition sp2 values(default)));
+drop table if exists bison_lob_subpart_t purge;
+drop table if exists bison_idx_option_t purge;
+create table bison_idx_option_t (id int, part_key int, constraint bison_idx_option_uk unique(id, part_key) using index local (partition ip1, partition ip2)) partition by range(part_key)(partition p1 values less than(10), partition p2 values less than(maxvalue));
+drop table if exists bison_idx_option_t purge;
 
 drop table if exists bison_part_t1;
 create table bison_part_t1(f1 number2, f2 number2)
