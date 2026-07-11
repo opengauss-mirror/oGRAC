@@ -1086,7 +1086,7 @@ static void drc_claim_new_page_hot_gbp(knl_session_t *session, claim_info_t *cla
     uint8 cur_owner = buf_res->claimed_owner;
     drc_req_info_t *converting_req = &(buf_res->converting.req_info);
 
-    OG_LOG_RUN_INF("[DRC-GBP][%u-%u][claim new page hot]: 5-2.current owner=%u, req_mode=%u, claim_mode=%u, "
+    OG_LOG_DEBUG_INF("[DRC-GBP][%u-%u][claim new page hot]: 5-2.current owner=%u, req_mode=%u, claim_mode=%u, "
         "master_id=%u", pagid.file, pagid.page, cur_owner, converting_req->req_mode, claim_info->mode, master_id);
 
     knl_panic(converting_req->req_mode == claim_info->mode);
@@ -1682,6 +1682,9 @@ status_t drc_request_page_owner(knl_session_t *session, page_id_t pagid, drc_req
     result->action = DRC_RES_INVALID_ACTION;
     result->is_retry = OG_FALSE;
     result->req_mode = req_info->req_mode;
+    result->gbp_action = DRC_NEED_NO_MOVE;
+    result->gbp_buf_ctrl = NULL;
+    result->shmem_page_addr = NULL;
     req_info->req_owner_result = DRC_REQ_OWNER_WAITING;
 
     if (req_info->inst_id >= OG_MAX_INSTANCES || IS_INVALID_PAGID(pagid)) {

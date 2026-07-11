@@ -1773,13 +1773,15 @@ static status_t dcs_prep_page_req(knl_session_t *session, drc_req_owner_result_t
     char *p_page = (char *)result->gbp_buf_ctrl->shmem_page_addr;
     char *p_meta = (char *)result->gbp_buf_ctrl->shmem_page_meta;
 
-    uint64 page_off64 = p_page - base;
-    uint64 meta_off64 = p_meta - base;
+    uint64 page_off64 = (uint64)(p_page - base);
+    uint64 meta_off64 = (uint64)(p_meta - base);
+    uint64 alloc = rsga->remote_buf_alloc_size;
+    uint64 page_sz = DEFAULT_PAGE_SIZE(session);
 
-    /* Must fit into uint32 offsets */
-    if (page_off64 > UINT32_MAX || meta_off64 > UINT32_MAX) {
-        OG_LOG_RUN_ERR("[DCS][%u-%u] prep page req failed: offset overflow for uint32: page_off=%llu meta_off=%llu",
-                       page_id.file, page_id.page, (unsigned long long)page_off64, (unsigned long long)meta_off64);
+    if (base == NULL || meta_off64 > alloc - page_sz || page_off64 > alloc - page_sz) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] prep page req failed: invalid gbp offset page_off=%llu meta_off=%llu alloc=%llu",
+                       page_id.file, page_id.page, (unsigned long long)page_off64, (unsigned long long)meta_off64,
+                       (unsigned long long)alloc);
         return OG_ERROR;
     }
     page_req->shmem_page_meta_off = meta_off64;
@@ -1880,9 +1882,9 @@ static status_t dcs_master_handle_ack_page_ready_in_gbp(knl_session_t *session, 
                       msg.head->flags);
 
     if (msg.head->cmd != MES_CMD_PAGE_READY_GBP) {
-        OG_LOG_RUN_ERR("[DCS][%u-%u][wait for owner ack]: Error", page_req->page_id.file, page_req->page_id.page);
+        OG_LOG_RUN_ERR("[DCS][%u-%u][wait for owner ack]: Error, cmd=%u", page_req->page_id.file, page_req->page_id.page,
+                       msg.head->cmd);
         mes_release_message_buf(msg.buffer);
-        knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
         return OG_ERROR;
     }
 
@@ -2037,8 +2039,10 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 // error handle logic
                 knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
-                // release gdb_buf_ctrl latch, if no release, next transfer will be blocked in buf_alloc_ctrl
-                remote_buf_unlatch(session, result.gbp_buf_ctrl, OG_TRUE);
+                // Must set LOAD_FAILED; bare unlatch leaves NEED_LOAD and blocks next buf_alloc_ctrl
+                OG_LOG_RUN_ERR("[DCS-GBP][%u-%u] release gbp alloc after notify owner failed, owner=%u, sid=%u",
+                               page_req.page_id.file, page_req.page_id.page, result.curr_owner_id, session->id);
+                remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
                 break;
             }
 
@@ -2051,6 +2055,15 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             }
 
             knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+                OG_LOG_RUN_ERR("[DCS-GBP][%u-%u] release gbp alloc after handle page ready in gbp failed, "
+                               "owner=%u, owner_is_master=%u, sid=%u",
+                               page_req.page_id.file, page_req.page_id.page, result.curr_owner_id,
+                               (uint32)owner_is_master, session->id);
+                remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
+                break;
+            }
+            remote_buf_release_gbp_alloc_success(session, result.gbp_buf_ctrl);
             dcs_send_requester_gbp_addr(session, &page_req, &ack_to_requester);
             break;
         }
@@ -2434,6 +2447,9 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
             ret = dcs_prep_page_req(session, &result, &req_info, page_id, &page_req);
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 knl_end_session_wait(session, DCS_REQ_MASTER4PAGE_1WAY);
+                OG_LOG_RUN_ERR("[DCS-GBP][%u-%u] release gbp alloc after prep page req failed, sid=%u",
+                               page_id.file, page_id.page, session->id);
+                remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
                 return ret;
             }
 
@@ -2444,8 +2460,10 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 // error handle logic here
                 knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
-                // release gdb_buf_ctrl latch, if no release, next transfer will be blocked in buf_alloc_ctrl
-                remote_buf_unlatch(session, result.gbp_buf_ctrl, OG_TRUE);
+                // Must set LOAD_FAILED; bare unlatch leaves NEED_LOAD and blocks next buf_alloc_ctrl
+                OG_LOG_RUN_ERR("[DCS-GBP][%u-%u] release gbp alloc after notify owner failed, owner=%u, sid=%u",
+                               page_id.file, page_id.page, result.curr_owner_id, session->id);
+                remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
                 return ret;
             }
 
@@ -2460,8 +2478,14 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
 
             knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+                OG_LOG_RUN_ERR("[DCS-GBP][%u-%u] release gbp alloc after handle page ready in gbp failed, "
+                               "owner=%u, owner_is_master=%u, sid=%u",
+                               page_id.file, page_id.page, result.curr_owner_id, (uint32)owner_is_master,
+                               session->id);
+                remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
                 return ret;
             }
+            remote_buf_release_gbp_alloc_success(session, result.gbp_buf_ctrl);
             ack_to_requester.head.cmd = MES_CMD_PAGE_READY;  // MES_CMD_PAGE_READY is correct here, because we are
                                                              // sending this ack to requester from Master. So PAGE_READY
                                                              // is expected

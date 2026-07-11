@@ -1020,6 +1020,11 @@ status_t sql_verify_als_remote_access_limit(void *se, void *lex, void *def)
     return OG_SUCCESS;
 }
 
+status_t sql_verify_als_remote_sga_size(void *se, void *lex, void *def)
+{
+    return sql_verify_pool_size(lex, def, (int64)SIZE_M(512), OG_MAX_SGA_BUF_SIZE);
+}
+
 status_t sql_notify_als_mes_elapsed_switch(void *se, void *item, char *value)
 {
     mes_set_elapsed_switch(value[0]);

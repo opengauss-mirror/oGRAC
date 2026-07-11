@@ -41,17 +41,14 @@
 extern "C" {
 #endif
 
-#define DRC_SHM_SIZE (SIZE_G(8))
+#define DRC_MIN_SHM_SIZE (SIZE_M(512))
 #define DRC_BASE_ADDR_0 0xA0000000000
 #define DRC_BASE_ADDR_1 0xB0000000000
 
-#define DRC_REMOTE_BUF_SIZE (SIZE_M(256))
 #define DRC_DIST_QUE_SIZE (SIZE_M(256))
-#define DRC_DISK_LCK_SIZE (SIZE_M(256))
+#define DRC_DISK_LCK_SIZE (SIZE_G(10))  /* max lock region size */
 
 #define DRC_REMOTE_BUF_OFFSET (uint64)0
-#define DRC_DIST_QUE_OFFSET (DRC_REMOTE_BUF_OFFSET + DRC_REMOTE_BUF_SIZE)
-#define DRC_DIST_LCK_OFFSET (DRC_DIST_QUE_OFFSET + DRC_DIST_QUE_SIZE)
 
 typedef struct st_remote_buf_context {
     buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];
@@ -65,7 +62,7 @@ typedef struct st_mes_remote_buf_mmap_bcast {
 } mes_remote_buf_mmap_bcast_t;
 
 typedef struct st_remote_sga {
-    uint64 remote_total_pool_size;  // total 8G  global_buffer_pool_size after align 128 size
+    uint64 remote_total_pool_size;  // DTC_REMOTE_SGA_SIZE after align 128M
     uint64 remote_buf_alloc_size;   // data buf  remote_data_buf_size after align 4k size
     uint64 remote_lock_alloc_size;  // lock buf  remote_lock_size
     uint64 remote_pool_reserve_offset;
@@ -74,6 +71,16 @@ typedef struct st_remote_sga {
     char *data_buf; /* each remote data buf is managed by master node. */
     char *lock_buf;
 } remote_sga_t;
+
+static inline uint64 drc_get_dist_que_offset(const remote_sga_t *remote_sga)
+{
+    return DRC_REMOTE_BUF_OFFSET + remote_sga->remote_buf_alloc_size;
+}
+
+static inline uint64 drc_get_dist_lck_offset(const remote_sga_t *remote_sga)
+{
+    return drc_get_dist_que_offset(remote_sga) + DRC_DIST_QUE_SIZE;
+}
 
 #pragma pack(push, 1)
 typedef struct st_remote_page_info {

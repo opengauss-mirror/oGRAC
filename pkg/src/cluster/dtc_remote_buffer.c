@@ -61,6 +61,13 @@ static inline uint64 drc_calc_buf_size(uint64 size)
     return align_size;
 }
 
+static inline uint64 drc_calc_remote_data_region_size(remote_buf_context_t *buf_ctx)
+{
+    /* include max 4K head padding, same as srv_create_sga malloc slack */
+    return OG_MAX_ALIGN_SIZE_4K +
+        (uint64)buf_ctx->buf_set_count * g_dtc->profile.remote_data_buf_part_align_size;
+}
+
 static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     /* adjust buf_ctx_count to match the data_buf_size */
@@ -75,16 +82,90 @@ static uint64 drc_calc_remote_data_buf_size(remote_sga_t *remote_sga, remote_buf
     }
     g_dtc->profile.remote_data_buf_part_size = g_dtc->profile.remote_data_buf_size / buf_ctx->buf_set_count;
     g_dtc->profile.remote_data_buf_part_align_size = drc_calc_buf_size(g_dtc->profile.remote_data_buf_part_size);
-    remote_sga->remote_buf_alloc_size = g_dtc->profile.remote_data_buf_part_size * buf_ctx->buf_set_count;
+    remote_sga->remote_buf_alloc_size = drc_calc_remote_data_region_size(buf_ctx);
     remote_sga->remote_pool_reserve_offset = remote_sga->remote_buf_alloc_size;
     return remote_sga->remote_buf_alloc_size;
+}
+
+static status_t drc_check_remote_lock_capacity(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+{
+    uint64 page_cost;
+    uint64 capacity_per_set;
+    uint64 total_page_count;
+    uint64 lock_mem_needed;
+    uint64 max_lock_count;
+
+    if (!g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        remote_sga->remote_lock_alloc_size = 0;
+        return OG_SUCCESS;
+    }
+
+    page_cost = REMOTE_BUF_PAGE_COST;
+    if (page_cost == 0) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] invalid remote buf page cost 0");
+        return OG_ERROR;
+    }
+
+    if (UB_RW_LOCK_SIZE == 0) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] invalid lock size 0");
+        return OG_ERROR;
+    }
+
+    capacity_per_set = g_dtc->profile.remote_data_buf_part_size / page_cost;
+    if (capacity_per_set == 0) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] remote data buf part size %llu is smaller than page cost %llu",
+                       g_dtc->profile.remote_data_buf_part_size, page_cost);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "DTC_REMOTE_DATA_BUF_SIZE", (int64)page_cost);
+        return OG_ERROR;
+    }
+
+    total_page_count = (uint64)buf_ctx->buf_set_count * capacity_per_set;
+    lock_mem_needed = total_page_count * (uint64)UB_RW_LOCK_SIZE;
+    max_lock_count = (uint64)DRC_DISK_LCK_SIZE / (uint64)UB_RW_LOCK_SIZE;
+
+    if (lock_mem_needed > DRC_DISK_LCK_SIZE) {
+        OG_LOG_RUN_ERR("[DRC-GBP-LOCK] remote lock memory %llu exceeds limit %llu, "
+                       "remote_buf_page_cost %llu, total_page_count %llu, lock_size %u, max_lock_count %llu",
+                       lock_mem_needed, (uint64)DRC_DISK_LCK_SIZE, page_cost, total_page_count,
+                       (uint32)UB_RW_LOCK_SIZE, max_lock_count);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_DATA_BUF_SIZE", (int64)DRC_DISK_LCK_SIZE);
+        return OG_ERROR;
+    }
+
+    remote_sga->remote_lock_alloc_size = lock_mem_needed;
+    OG_LOG_RUN_INF("[DRC-GBP-LOCK] remote_buf_alloc_size %llu, remote_buf_page_cost %llu, total_page_count %llu, "
+                   "remote_lock_alloc_size %llu, lock_size %u, max_lock_count %llu",
+                   remote_sga->remote_buf_alloc_size, page_cost, total_page_count, remote_sga->remote_lock_alloc_size,
+                   (uint32)UB_RW_LOCK_SIZE, max_lock_count);
+
+    return OG_SUCCESS;
+}
+
+static status_t drc_check_remote_pool_layout(remote_sga_t *remote_sga)
+{
+    uint64 layout_end = remote_sga->remote_buf_alloc_size + DRC_DIST_QUE_SIZE;
+
+    if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
+        layout_end = drc_get_dist_lck_offset(remote_sga) + remote_sga->remote_lock_alloc_size;
+    }
+
+    if (layout_end > remote_sga->remote_total_pool_size) {
+        OG_LOG_RUN_ERR("[DRC-GBP] remote pool layout %llu exceeds total pool size %llu, "
+                       "data_region %llu, que_size %llu, lock_alloc_size %llu",
+                       layout_end, remote_sga->remote_total_pool_size, remote_sga->remote_buf_alloc_size,
+                       (uint64)DRC_DIST_QUE_SIZE, remote_sga->remote_lock_alloc_size);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_DATA_BUF_SIZE", (int64)remote_sga->remote_total_pool_size);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 {
     int ret = OG_ERROR;
     void *start = (void *)(node_id == 0 ? DRC_BASE_ADDR_0 : DRC_BASE_ADDR_1);
-    remote_sga->remote_total_pool_size = align_to_128m(DRC_SHM_SIZE);
+    remote_sga->remote_total_pool_size = align_to_128m(g_dtc->profile.remote_sga_size);
     char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
     struct passwd *pwd;
     pwd = getpwuid(getuid());
@@ -118,7 +199,7 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
 {
     uint32 node_id = g_instance->kernel.id;
-    remote_sga->remote_total_pool_size = align_to_128m(DRC_SHM_SIZE);
+    remote_sga->remote_total_pool_size = align_to_128m(g_dtc->profile.remote_sga_size);
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
 
@@ -162,30 +243,56 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
     return ret;
 }
 
-static inline void drc_set_remote_buffer(char **buf, char *remote_buf_addr, uint64 size, uint64 *offset)
+static status_t drc_set_remote_buffer(char **buf, char *remote_buf_addr, uint64 pool_size, uint64 size,
+    uint64 *offset)
 {
     char *barrier = NULL;
+    uint64 next_offset = *offset + srv_calc_buf_size(size);
+
+    if (next_offset > pool_size) {
+        OG_LOG_RUN_ERR("[DRC-GBP] remote buffer allocation exceeds pool size %llu, need %llu, offset %llu, size %llu",
+                       pool_size, next_offset, *offset, size);
+        return OG_ERROR;
+    }
 
     *buf = remote_buf_addr + *offset;
     barrier = remote_buf_addr + *offset + size;
-    *offset += srv_calc_buf_size(size);
+    *offset = next_offset;
 
-    MEMS_RETVOID_IFERR(memset_s(barrier, SGA_BARRIER_SIZE, 0xFF, SGA_BARRIER_SIZE));
+    MEMS_RETURN_IFERR(memset_s(barrier, SGA_BARRIER_SIZE, 0xFF, SGA_BARRIER_SIZE));
+    return OG_SUCCESS;
 }
 
-static void drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
+static status_t drc_set_data_buf(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
     uint32 node_id = g_instance->kernel.id;
     uint32 data_buf_part_size = g_dtc->profile.remote_data_buf_part_size;
     char *temp_buf = NULL;
     uint64 offset = (OG_MAX_ALIGN_SIZE_4K - ((uint64)remote_sga->remote_buf_addr[node_id]) % OG_MAX_ALIGN_SIZE_4K);
+    status_t ret;
 
     /* * allocate each data buffer part */
-    drc_set_remote_buffer(&remote_sga->data_buf, remote_sga->remote_buf_addr[node_id], data_buf_part_size, &offset);
+    ret = drc_set_remote_buffer(&remote_sga->data_buf, remote_sga->remote_buf_addr[node_id],
+                                remote_sga->remote_total_pool_size, data_buf_part_size, &offset);
+    if (ret != OG_SUCCESS) {
+        return ret;
+    }
 
     for (uint32 i = 1; i < buf_ctx->buf_set_count; i++) {
-        drc_set_remote_buffer(&temp_buf, remote_sga->remote_buf_addr[node_id], data_buf_part_size, &offset);
+        ret = drc_set_remote_buffer(&temp_buf, remote_sga->remote_buf_addr[node_id],
+                                    remote_sga->remote_total_pool_size, data_buf_part_size, &offset);
+        if (ret != OG_SUCCESS) {
+            return ret;
+        }
     }
+
+    if (offset > remote_sga->remote_buf_alloc_size) {
+        OG_LOG_RUN_ERR("[DRC-GBP] remote data buf actual size %llu exceeds reserved data region %llu",
+                       offset, remote_sga->remote_buf_alloc_size);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 static void buf_init_list(buf_set_t *set)
@@ -257,7 +364,21 @@ status_t drc_init_remote_buffer()
     }
 
     (void)drc_calc_remote_data_buf_size(&ogx->remote_sga, &ogx->buf_ctx);
-    drc_set_data_buf(&ogx->remote_sga, &ogx->buf_ctx);
+    ret = drc_check_remote_lock_capacity(&ogx->remote_sga, &ogx->buf_ctx);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC]remote lock capacity check fail, return error:%u", ret);
+        return ret;
+    }
+    ret = drc_check_remote_pool_layout(&ogx->remote_sga);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC]remote pool layout check fail, return error:%u", ret);
+        return ret;
+    }
+    ret = drc_set_data_buf(&ogx->remote_sga, &ogx->buf_ctx);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC]set remote data buf fail, return error:%u", ret);
+        return ret;
+    }
     drc_init_remote_buf_struct(&ogx->remote_sga, &ogx->buf_ctx);
     return OG_SUCCESS;
 }

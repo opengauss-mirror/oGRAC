@@ -1129,6 +1129,8 @@ config_item_t g_parameters[] = {
       PARAM_DTC_REMOTE_DATA_BUF_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_data_buffer_size, NULL, NULL, NULL },
     { "DTC_REMOTE_BUF_POOL_NUM", OG_TRUE, ATTR_NONE, "1", NULL, NULL, "-", "[1, 128]", "OG_TYPE_INTEGER", NULL,
       PARAM_DTC_REMOTE_BUF_POOL_NUM, EFFECT_REBOOT, CFG_INS, sql_verify_als_buf_pool_num, NULL, NULL, NULL },
+    { "DTC_REMOTE_SGA_SIZE", OG_TRUE, ATTR_NONE, "8G", NULL, NULL, "-", "[512M, 32T]", "OG_TYPE_INTEGER", NULL,
+      PARAM_DTC_REMOTE_SGA_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_remote_sga_size, NULL, NULL, NULL },
     { "CPU_GROUP_INFO", OG_TRUE, ATTR_NONE, "0", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL, PARAM_CPU_GROUP_INFO,
       EFFECT_REBOOT, CFG_INS, sql_verify_als_cpu_inf_str, NULL, NULL, NULL },
 

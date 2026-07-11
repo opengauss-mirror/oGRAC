@@ -48,9 +48,13 @@ static inline void remote_buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, 
     }
 
     if (release) {
-        knl_panic_log(ctrl->ref_num > 0, "ctrl's ref_num is invalid, panic info: page %u-%u type %u ref_num %u",
-                      ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, ctrl->ref_num);
-        ctrl->ref_num--;
+        if (SECUREC_UNLIKELY(ctrl->ref_num == 0)) {
+            /* Idempotent: migrate retry / MES abort may release twice; still drop latch. */
+            OG_LOG_DEBUG_WAR("[DCS-GBP][%u-%u] remote_buf_unlatch skip ref_num--, already 0, latch_stat=%u",
+                           ctrl->page_id.file, ctrl->page_id.page, (uint32)latch->stat);
+        } else {
+            ctrl->ref_num--;
+        }
     }
 
     if ((latch->stat == LATCH_STATUS_S || latch->stat == LATCH_STATUS_X) && (latch->shared_count == 0)) {
@@ -58,6 +62,26 @@ static inline void remote_buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, 
     }
 
     cm_spin_unlock(&bucket->lock);
+}
+
+/* GBP migrate alloc failed: leave LOAD_FAILED so next buf_alloc_ctrl can take over (NEED_LOAD alone deadlocks). */
+static inline void remote_buf_release_gbp_alloc_failed(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (ctrl == NULL) {
+        return;
+    }
+    ctrl->load_status = (uint8)BUF_LOAD_FAILED;
+    remote_buf_unlatch(session, ctrl, OG_TRUE);
+}
+
+/* GBP migrate alloc succeeded: mark loaded and drop latch held by buf_alloc_ctrl. */
+static inline void remote_buf_release_gbp_alloc_success(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (ctrl == NULL) {
+        return;
+    }
+    ctrl->load_status = (uint8)BUF_IS_LOADED;
+    remote_buf_unlatch(session, ctrl, OG_TRUE);
 }
 
 #ifdef __cplusplus

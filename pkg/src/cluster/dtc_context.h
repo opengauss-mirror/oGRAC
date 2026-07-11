@@ -68,6 +68,7 @@ typedef struct st_dtc_profile {
     uint64 remote_data_buf_size;
     uint64 remote_data_buf_part_size;
     uint64 remote_data_buf_part_align_size;
+    uint64 remote_sga_size; /* DTC_REMOTE_SGA_SIZE: remote shm total pool size */
 } dtc_profile_t;
 
 typedef struct st_dtc_instance {

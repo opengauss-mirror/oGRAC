@@ -1106,10 +1106,9 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
             // tell others to map owner remote shared buffer
             broadcast_remote_buf_allocated();
         }
-
-        if (session->kernel->attr.enable_remote_distribute_lock) {
-            init_lock_comm_queue();
-        }
+        
+        // compile option decide atomic or distributed
+        init_lock_comm_queue();
     }
 
     if (log_check_asn(session, options->ignore_logs) != OG_SUCCESS) {

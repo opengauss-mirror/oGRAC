@@ -1472,6 +1472,15 @@ static void buf_latch_ctrl(knl_session_t *session, buf_bucket_t *bucket, buf_ctr
             break;
         }
 
+        /*
+         * With X latch already held, no other session can be loading this ctrl.
+         * NEED_LOAD left after a failed GBP migrate (unlatch without LOAD_FAILED)
+         * would otherwise spin forever in READ_BY_OTHER_SESSION.
+         */
+        if (mode == LATCH_MODE_X && ctrl->load_status == (uint8)BUF_NEED_LOAD) {
+            break;
+        }
+
         knl_begin_session_wait(session, READ_BY_OTHER_SESSION, OG_TRUE);
         times++;
         if (times > OG_SPIN_COUNT) {

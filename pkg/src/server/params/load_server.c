@@ -1175,6 +1175,21 @@ status_t srv_load_cluster_params(void)
         return OG_ERROR;
     }
 
+    // remote sga / shm total pool size
+    OG_RETURN_IFERR(srv_get_param_size_uint64("DTC_REMOTE_SGA_SIZE", &g_dtc->profile.remote_sga_size));
+    if (g_dtc->profile.remote_sga_size < SIZE_M(512)) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "DTC_REMOTE_SGA_SIZE", (int64)SIZE_M(512));
+        return OG_ERROR;
+    }
+    if (g_dtc->profile.remote_sga_size > OG_MAX_SGA_BUF_SIZE) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_SGA_SIZE", (int64)OG_MAX_SGA_BUF_SIZE);
+        return OG_ERROR;
+    }
+    if (g_dtc->profile.remote_sga_size < g_dtc->profile.remote_data_buf_size) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "DTC_REMOTE_SGA_SIZE", (int64)g_dtc->profile.remote_data_buf_size);
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 

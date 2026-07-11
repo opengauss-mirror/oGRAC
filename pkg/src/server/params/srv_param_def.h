@@ -418,6 +418,7 @@ typedef enum en_param_global {
     PARAM_DTC_RCY_PARAL_BUF_LIST_SIZE,
     PARAM_DTC_REMOTE_DATA_BUF_SIZE,
     PARAM_DTC_REMOTE_BUF_POOL_NUM,
+    PARAM_DTC_REMOTE_SGA_SIZE,
     // cpu info
     PARAM_CPU_GROUP_INFO,
     // deadlock
