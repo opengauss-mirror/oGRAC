@@ -26,16 +26,22 @@
 #include "rbp_config.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iostream>
+#include <limits>
 #include <map>
 
 namespace rbp {
 
 namespace {
 
-constexpr int RBP_MIN_BUCKET_COUNT = 16;
+constexpr int RBP_MIN_TCP_PORT = 1024;
 constexpr int RBP_MAX_TCP_PORT = 65535;
+constexpr int RBP_IPV4_PART_COUNT = 4;
+constexpr int RBP_IPV4_RADIX = 10;
+constexpr int RBP_IPV4_OCTET_MAX = 255;
 
 std::string trim(const std::string& s)
 {
@@ -109,12 +115,12 @@ bool parse_int_value(const std::string& text, int& out, std::string& err, const 
 {
     try {
         size_t pos = 0;
-        int value = std::stoi(text, &pos);
-        if (pos != text.size() || value < 0) {
+        long long value = std::stoll(text, &pos);
+        if (pos != text.size() || value < 0 || value > std::numeric_limits<int>::max()) {
             err = "invalid integer for " + key + ": " + text;
             return false;
         }
-        out = value;
+        out = static_cast<int>(value);
         return true;
     } catch (...) {
         err = "invalid integer for " + key + ": " + text;
@@ -122,12 +128,24 @@ bool parse_int_value(const std::string& text, int& out, std::string& err, const 
     }
 }
 
+bool parse_positive_int_value(const std::string& text, int& out, std::string& err, const std::string& key)
+{
+    if (!parse_int_value(text, out, err, key)) {
+        return false;
+    }
+    if (out < 1) {
+        err = key + " must be >= 1";
+        return false;
+    }
+    return true;
+}
+
 bool parse_double_value(const std::string& text, double& out, std::string& err, const std::string& key)
 {
     try {
         size_t pos = 0;
         double value = std::stod(text, &pos);
-        if (pos != text.size() || value < 0) {
+        if (pos != text.size() || !std::isfinite(value) || value < 0) {
             err = "invalid number for " + key + ": " + text;
             return false;
         }
@@ -141,16 +159,214 @@ bool parse_double_value(const std::string& text, double& out, std::string& err, 
 
 bool parse_bool_value(const std::string& text, bool& out, std::string& err, const std::string& key)
 {
-    if (env_truthy(text.c_str())) {
+    const std::string value = trim(text);
+    if (env_truthy(value.c_str())) {
         out = true;
         return true;
     }
-    if (env_falsy(text.c_str())) {
+    if (env_falsy(value.c_str())) {
         out = false;
         return true;
     }
-    err = "invalid boolean for " + key + ": " + text;
+    err = "invalid boolean for " + key + ": " + text + " (expected TRUE/FALSE/OFF/ON/0/1)";
     return false;
+}
+
+bool parse_env_int_value(const char* name, int& out, std::string& err)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return true;
+    }
+    return parse_int_value(trim(value), out, err, name);
+}
+
+bool parse_env_positive_int_value(const char* name, int& out, std::string& err)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return true;
+    }
+    return parse_positive_int_value(trim(value), out, err, name);
+}
+
+bool parse_env_double_value(const char* name, double& out, std::string& err)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return true;
+    }
+    return parse_double_value(trim(value), out, err, name);
+}
+
+bool parse_ratio_value(const std::string& text, double& out, std::string& err, const std::string& key)
+{
+    if (!parse_double_value(text, out, err, key)) {
+        return false;
+    }
+    if (out < 0.0 || out > 1.0) {
+        err = key + " must be in range 0..1";
+        return false;
+    }
+    return true;
+}
+
+bool parse_env_ratio_value(const char* name, double& out, std::string& err)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return true;
+    }
+    return parse_ratio_value(trim(value), out, err, name);
+}
+
+bool parse_env_bool_value(const char* name, bool& out, std::string& err)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return true;
+    }
+    return parse_bool_value(value, out, err, name);
+}
+
+bool parse_read_end_mode_value(const std::string& value, ReadEndMode& out, std::string& err)
+{
+    if (str_ieq(value.c_str(), "sync")) {
+        out = ReadEndMode::Sync;
+        return true;
+    }
+    if (str_ieq(value.c_str(), "async")) {
+        out = ReadEndMode::Async;
+        return true;
+    }
+    err = "invalid READ_END_MODE: " + value + " (expected sync or async)";
+    return false;
+}
+
+bool parse_ipv4_literal(const std::string& value)
+{
+    if (value.empty()) {
+        return false;
+    }
+    int parts = 0;
+    size_t begin = 0;
+    while (begin <= value.size()) {
+        const size_t end = value.find('.', begin);
+        const size_t part_end = (end == std::string::npos) ? value.size() : end;
+        if (part_end == begin || ++parts > RBP_IPV4_PART_COUNT) {
+            return false;
+        }
+        int octet = 0;
+        for (size_t i = begin; i < part_end; ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(value[i]))) {
+                return false;
+            }
+            octet = octet * RBP_IPV4_RADIX + (value[i] - '0');
+            if (octet > RBP_IPV4_OCTET_MAX) {
+                return false;
+            }
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1;
+    }
+    return parts == RBP_IPV4_PART_COUNT;
+}
+
+bool validate_port_value(const char* key, int port, bool allow_zero, std::string& err)
+{
+    if (allow_zero && port == 0) {
+        return true;
+    }
+    if (port < RBP_MIN_TCP_PORT || port > RBP_MAX_TCP_PORT) {
+        err = std::string(key) + (allow_zero ? " must be 0 or in range 1024..65535"
+                                             : " must be in range 1024..65535");
+        return false;
+    }
+    return true;
+}
+
+bool validate_endpoint_options(const ServerOptions& opt, std::string& err)
+{
+    if (!parse_ipv4_literal(opt.host)) {
+        err = "HOST must be an IPv4 address literal: " + opt.host;
+        return false;
+    }
+    if (!validate_port_value("PORT", opt.port, false, err)) {
+        return false;
+    }
+    if (!parse_ipv4_literal(opt.admin_host)) {
+        err = "ADMIN_HOST must be an IPv4 address literal: " + opt.admin_host;
+        return false;
+    }
+    if (!validate_port_value("ADMIN_PORT", opt.admin_port, true, err)) {
+        return false;
+    }
+    if (opt.admin_port != 0 && opt.port == opt.admin_port) {
+        err = "PORT and ADMIN_PORT must not use the same port: " + std::to_string(opt.port);
+        return false;
+    }
+    return true;
+}
+
+bool validate_path_options(const ServerOptions& opt, std::string& err)
+{
+    if (opt.log_file_set && opt.log_file.empty()) {
+        err = "LOG_FILE is empty";
+        return false;
+    }
+    if (opt.pid_file_set && opt.pid_file.empty()) {
+        err = "PID_FILE is empty";
+        return false;
+    }
+    return true;
+}
+
+bool validate_cache_options(const Config& cfg, std::string& err)
+{
+    if (cfg.max_cache_pages < 0) {
+        err = "MAX_CACHE_PAGES must be >= 0";
+        return false;
+    }
+    if (!std::isfinite(cfg.read_phase_timeout) || cfg.read_phase_timeout < 0.0) {
+        err = "READ_PHASE_TIMEOUT must be a finite non-negative number";
+        return false;
+    }
+    if (cfg.cache_high_water < 0.0 || cfg.cache_high_water > 1.0) {
+        err = "CACHE_HIGH_WATER must be in range 0..1";
+        return false;
+    }
+    if (cfg.cache_evict_ratio < 0.0 || cfg.cache_evict_ratio > 1.0) {
+        err = "CACHE_EVICT_RATIO must be in range 0..1";
+        return false;
+    }
+    if (cfg.capacity_evict_on_write && cfg.max_cache_pages > 0 && cfg.cache_evict_ratio <= 0.0) {
+        err = "CACHE_EVICT_RATIO must be > 0 when CAPACITY_EVICT_ON_WRITE=true and MAX_CACHE_PAGES>0";
+        return false;
+    }
+    return true;
+}
+
+bool validate_budget_options(const Config& cfg, std::string& err)
+{
+    if (cfg.evict_budget < 1) {
+        err = "EVICT_BUDGET must be >= 1";
+        return false;
+    }
+    if (cfg.purge_budget < 1) {
+        err = "PURGE_BUDGET must be >= 1";
+        return false;
+    }
+    return true;
+}
+
+bool validate_options(const ServerOptions& opt, std::string& err)
+{
+    return validate_endpoint_options(opt, err) &&
+           validate_path_options(opt, err) &&
+           validate_cache_options(opt.config, err) &&
+           validate_budget_options(opt.config, err);
 }
 
 bool load_config_file(const std::string& path, std::map<std::string, std::string>& kv, std::string& err)
@@ -184,9 +400,10 @@ bool load_config_file(const std::string& path, std::map<std::string, std::string
     return true;
 }
 
-bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& value, std::string& err)
+bool apply_server_kv(ServerOptions& opt, const std::string& key, const std::string& value, std::string& err,
+                     bool& matched)
 {
-    Config& c = opt.config;
+    matched = true;
     if (key == "HOST") {
         opt.host = value;
     } else if (key == "PORT") {
@@ -196,167 +413,249 @@ bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& val
     } else if (key == "ADMIN_PORT") {
         return parse_int_value(value, opt.admin_port, err, key);
     } else if (key == "LOG_FILE") {
-        opt.log_file = value;
-    } else if (key == "PID_FILE") {
-        opt.pid_file = value;
-    } else if (key == "MAX_CACHE_PAGES") {
-        return parse_int_value(value, c.max_cache_pages, err, key);
-    } else if (key == "CAPACITY_EVICT_ON_WRITE") {
-        return parse_bool_value(value, c.capacity_evict_on_write, err, key);
-    } else if (key == "READ_END_MODE") {
-        if (str_ieq(value.c_str(), "sync")) {
-            c.read_end_mode = ReadEndMode::Sync;
-        } else if (str_ieq(value.c_str(), "async")) {
-            c.read_end_mode = ReadEndMode::Async;
-        } else {
-            err = "invalid READ_END_MODE: " + value;
+        if (value.empty()) {
+            err = "LOG_FILE is empty";
             return false;
         }
-    } else if (key == "READ_PHASE_TIMEOUT") {
-        return parse_double_value(value, c.read_phase_timeout, err, key);
-    } else if (key == "VERBOSE") {
-        return parse_bool_value(value, c.verbose, err, key);
-    } else if (key == "TIMING_DIAG") {
-        return parse_bool_value(value, c.timing_diag, err, key);
-    } else if (key == "LOG_CMP_LSN_ONLY") {
-        return parse_bool_value(value, c.log_cmp_lsn_only, err, key);
-    } else if (key == "SMB_VERSION") {
-        return parse_bool_value(value, c.smb_version, err, key);
-    } else if (key == "LEGACY_BATCH_PENDING") {
-        return parse_bool_value(value, c.legacy_batch_pending, err, key);
-    } else if (key == "CKPT_WAIT_EVICT") {
-        return parse_bool_value(value, c.ckpt_wait_evict, err, key);
-    } else if (key == "CKPT_PARITY_CHECK") {
-        return parse_bool_value(value, c.ckpt_parity_check, err, key);
-    } else if (key == "CKPT_WAIT_MS") {
-        return parse_int_value(value, c.ckpt_wait_ms, err, key);
-    } else if (key == "RCY_DIAG_LAG") {
-        return parse_int_value(value, c.rcy_diag_lag, err, key);
-    } else if (key == "EVICT_SAMPLE_LOG") {
-        return parse_int_value(value, c.evict_sample_log, err, key);
-    } else if (key == "EVICT_BUDGET") {
-        return parse_int_value(value, c.evict_budget, err, key);
-    } else if (key == "PURGE_BUDGET") {
-        return parse_int_value(value, c.purge_budget, err, key);
-    } else if (key == "BUCKET_COUNT") {
-        return parse_int_value(value, c.bucket_count, err, key);
-    } else if (key == "BUCKET_SPAN") {
-        return parse_int_value(value, c.bucket_span, err, key);
-    } else if (key == "PAGE_WRITE_SLOW_US") {
-        return parse_int_value(value, c.page_write_slow_us, err, key);
-    } else if (key == "PAGE_WRITE_TIMING_US") {
-        return parse_int_value(value, c.page_write_timing_us, err, key);
-    } else if (key == "SELECTED_LSN_MISMATCH_LOG") {
-        return parse_int_value(value, c.selected_lsn_mismatch_log, err, key);
-    } else if (key == "CACHE_HIGH_WATER") {
-        return parse_double_value(value, c.cache_high_water, err, key);
-    } else if (key == "CACHE_EVICT_RATIO") {
-        return parse_double_value(value, c.cache_evict_ratio, err, key);
+        opt.log_file = value;
+        opt.log_file_set = true;
+    } else if (key == "PID_FILE") {
+        if (value.empty()) {
+            err = "PID_FILE is empty";
+            return false;
+        }
+        opt.pid_file = value;
+        opt.pid_file_set = true;
     } else {
-        err = "unknown config key: " + key;
+        matched = false;
+    }
+    return true;
+}
+
+bool apply_bool_kv(Config& cfg, const std::string& key, const std::string& value, std::string& err, bool& matched)
+{
+    matched = true;
+    if (key == "CAPACITY_EVICT_ON_WRITE") {
+        return parse_bool_value(value, cfg.capacity_evict_on_write, err, key);
+    } else if (key == "VERBOSE") {
+        return parse_bool_value(value, cfg.verbose, err, key);
+    } else if (key == "TIMING_DIAG") {
+        return parse_bool_value(value, cfg.timing_diag, err, key);
+    } else if (key == "LOG_CMP_LSN_ONLY") {
+        return parse_bool_value(value, cfg.log_cmp_lsn_only, err, key);
+    } else if (key == "SMB_VERSION") {
+        return parse_bool_value(value, cfg.smb_version, err, key);
+    } else if (key == "LEGACY_BATCH_PENDING") {
+        return parse_bool_value(value, cfg.legacy_batch_pending, err, key);
+    } else if (key == "CKPT_WAIT_EVICT") {
+        return parse_bool_value(value, cfg.ckpt_wait_evict, err, key);
+    } else if (key == "CKPT_PARITY_CHECK") {
+        return parse_bool_value(value, cfg.ckpt_parity_check, err, key);
+    }
+    matched = false;
+    return true;
+}
+
+bool apply_basic_numeric_kv(Config& cfg, const std::string& key, const std::string& value, std::string& err,
+                            bool& matched)
+{
+    matched = true;
+    if (key == "MAX_CACHE_PAGES") {
+        return parse_int_value(value, cfg.max_cache_pages, err, key);
+    } else if (key == "READ_PHASE_TIMEOUT") {
+        return parse_double_value(value, cfg.read_phase_timeout, err, key);
+    } else if (key == "CKPT_WAIT_MS") {
+        return parse_int_value(value, cfg.ckpt_wait_ms, err, key);
+    } else if (key == "RCY_DIAG_LAG") {
+        return parse_int_value(value, cfg.rcy_diag_lag, err, key);
+    } else if (key == "EVICT_SAMPLE_LOG") {
+        return parse_int_value(value, cfg.evict_sample_log, err, key);
+    } else if (key == "EVICT_BUDGET") {
+        return parse_positive_int_value(value, cfg.evict_budget, err, key);
+    } else if (key == "PURGE_BUDGET") {
+        return parse_positive_int_value(value, cfg.purge_budget, err, key);
+    }
+    matched = false;
+    return true;
+}
+
+bool apply_cache_numeric_kv(Config& cfg, const std::string& key, const std::string& value, std::string& err,
+                            bool& matched)
+{
+    matched = true;
+    if (key == "BUCKET_COUNT") {
+        std::cerr << "rbps: warning: BUCKET_COUNT is deprecated and ignored by current bucket logic\n";
+        return parse_int_value(value, cfg.bucket_count, err, key);
+    } else if (key == "BUCKET_SPAN") {
+        std::cerr << "rbps: warning: BUCKET_SPAN is deprecated and ignored by current bucket logic\n";
+        return parse_int_value(value, cfg.bucket_span, err, key);
+    } else if (key == "PAGE_WRITE_SLOW_US") {
+        return parse_int_value(value, cfg.page_write_slow_us, err, key);
+    } else if (key == "PAGE_WRITE_TIMING_US") {
+        return parse_int_value(value, cfg.page_write_timing_us, err, key);
+    } else if (key == "SELECTED_LSN_MISMATCH_LOG") {
+        return parse_int_value(value, cfg.selected_lsn_mismatch_log, err, key);
+    } else if (key == "CACHE_HIGH_WATER") {
+        return parse_ratio_value(value, cfg.cache_high_water, err, key);
+    } else if (key == "CACHE_EVICT_RATIO") {
+        return parse_ratio_value(value, cfg.cache_evict_ratio, err, key);
+    }
+    matched = false;
+    return true;
+}
+
+bool apply_kv(ServerOptions& opt, const std::string& key, const std::string& value, std::string& err)
+{
+    bool matched = false;
+    Config& cfg = opt.config;
+
+    if (!apply_server_kv(opt, key, value, err, matched)) {
+        return false;
+    }
+    if (matched) {
+        return true;
+    }
+    if (key == "READ_END_MODE") {
+        return parse_read_end_mode_value(value, cfg.read_end_mode, err);
+    }
+    if (!apply_bool_kv(cfg, key, value, err, matched)) {
+        return false;
+    }
+    if (matched) {
+        return true;
+    }
+    if (!apply_basic_numeric_kv(cfg, key, value, err, matched)) {
+        return false;
+    }
+    if (matched) {
+        return true;
+    }
+    if (!apply_cache_numeric_kv(cfg, key, value, err, matched)) {
+        return false;
+    }
+    if (matched) {
+        return true;
+    }
+
+    err = "unknown config key: " + key;
+    return false;
+}
+
+bool apply_server_env(ServerOptions& opt, std::string& err)
+{
+    const char* v = nullptr;
+
+    if ((v = std::getenv("RBPS_HOST")) != nullptr) {
+        opt.host = v;
+    }
+    if (!parse_env_int_value("RBPS_PORT", opt.port, err)) {
+        return false;
+    }
+    if ((v = std::getenv("RBPS_ADMIN_HOST")) != nullptr) {
+        opt.admin_host = v;
+    }
+    if (!parse_env_int_value("RBPS_ADMIN_PORT", opt.admin_port, err)) {
+        return false;
+    }
+    if ((v = std::getenv("RBPS_LOG_FILE")) != nullptr) {
+        opt.log_file = expand_env_vars(v);
+        opt.log_file_set = true;
+    }
+    if ((v = std::getenv("RBPS_PID_FILE")) != nullptr) {
+        opt.pid_file = expand_env_vars(v);
+        opt.pid_file_set = true;
+    }
+    return true;
+}
+
+bool apply_rbps_env(Config& c, std::string& err)
+{
+    const char* v = nullptr;
+    if (!parse_env_bool_value("RBPS_VERBOSE", c.verbose, err) ||
+        !parse_env_bool_value("RBPS_TIMING_DIAG", c.timing_diag, err) ||
+        !parse_env_bool_value("RBPS_LOG_CMP_LSN_ONLY", c.log_cmp_lsn_only, err) ||
+        !parse_env_bool_value("RBPS_SMB_VERSION", c.smb_version, err)) {
+        return false;
+    }
+    if (!parse_env_int_value("RBPS_MAX_CACHE_PAGES", c.max_cache_pages, err)) {
+        return false;
+    }
+    if (!parse_env_bool_value("RBPS_CAPACITY_EVICT_ON_WRITE", c.capacity_evict_on_write, err)) {
+        return false;
+    }
+    if ((v = std::getenv("RBPS_READ_END_MODE")) != nullptr) {
+        if (!parse_read_end_mode_value(trim(v), c.read_end_mode, err)) {
+            return false;
+        }
+    }
+    if (!parse_env_double_value("RBPS_READ_PHASE_TIMEOUT", c.read_phase_timeout, err)) {
         return false;
     }
     return true;
 }
 
-void apply_env(ServerOptions& opt)
+bool apply_demo_basic_env(Config& c, std::string& err)
+{
+    if (!parse_env_bool_value("RBP_DEMO_LOG_CMP_LSN_ONLY", c.log_cmp_lsn_only, err) ||
+        !parse_env_bool_value("RBP_DEMO_SMB_VERSION", c.smb_version, err)) {
+        return false;
+    }
+    if (!parse_env_int_value("RBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages, err)) {
+        return false;
+    }
+    if (!parse_env_bool_value("RBP_DEMO_CAPACITY_EVICT_ON_WRITE", c.capacity_evict_on_write, err) ||
+        !parse_env_bool_value("RBP_DEMO_LEGACY_BATCH_PENDING", c.legacy_batch_pending, err) ||
+        !parse_env_bool_value("RBP_DEMO_CKPT_WAIT_EVICT", c.ckpt_wait_evict, err) ||
+        !parse_env_bool_value("RBP_DEMO_CKPT_PARITY_CHECK", c.ckpt_parity_check, err)) {
+        return false;
+    }
+    return true;
+}
+
+bool apply_demo_numeric_env(Config& c, std::string& err)
+{
+    if (!parse_env_int_value("RBP_DEMO_CKPT_WAIT_MS", c.ckpt_wait_ms, err) ||
+        !parse_env_int_value("RBP_DEMO_RCY_DIAG_LAG", c.rcy_diag_lag, err) ||
+        !parse_env_int_value("RBP_DEMO_EVICT_SAMPLE_LOG", c.evict_sample_log, err) ||
+        !parse_env_positive_int_value("RBP_DEMO_EVICT_BUDGET", c.evict_budget, err) ||
+        !parse_env_positive_int_value("RBP_DEMO_PURGE_BUDGET", c.purge_budget, err) ||
+        !parse_env_int_value("RBP_DEMO_BUCKET_COUNT", c.bucket_count, err) ||
+        !parse_env_int_value("RBP_DEMO_BUCKET_SPAN", c.bucket_span, err) ||
+        !parse_env_int_value("RBP_DEMO_PAGE_WRITE_SLOW_US", c.page_write_slow_us, err) ||
+        !parse_env_int_value("RBP_DEMO_PAGE_WRITE_TIMING_US", c.page_write_timing_us, err) ||
+        !parse_env_int_value("RBP_DEMO_SELECTED_LSN_MISMATCH_LOG", c.selected_lsn_mismatch_log, err) ||
+        !parse_env_double_value("RBP_DEMO_READ_PHASE_TIMEOUT", c.read_phase_timeout, err) ||
+        !parse_env_ratio_value("RBP_DEMO_CACHE_HIGH_WATER", c.cache_high_water, err) ||
+        !parse_env_ratio_value("RBP_DEMO_CACHE_EVICT_RATIO", c.cache_evict_ratio, err)) {
+        return false;
+    }
+    return true;
+}
+
+bool apply_demo_misc_env(Config& c, std::string& err)
+{
+    const char* v = nullptr;
+
+    if ((v = std::getenv("RBP_DEMO_READ_END_MODE")) != nullptr) {
+        if (!parse_read_end_mode_value(trim(v), c.read_end_mode, err)) {
+            return false;
+        }
+    }
+    if (!parse_env_bool_value("RBP_DEMO_TIMING_DIAG", c.timing_diag, err)) {
+        return false;
+    }
+    return true;
+}
+
+bool apply_env(ServerOptions& opt, std::string& err)
 {
     Config& c = opt.config;
-    const char* v = nullptr;
-    if ((v = std::getenv("RBPS_HOST")) != nullptr && *v) {
-        opt.host = v;
-    }
-    if ((v = std::getenv("RBPS_PORT")) != nullptr && *v) {
-        opt.port = env_int("RBPS_PORT", opt.port);
-    }
-    if ((v = std::getenv("RBPS_ADMIN_HOST")) != nullptr && *v) {
-        opt.admin_host = v;
-    }
-    if ((v = std::getenv("RBPS_ADMIN_PORT")) != nullptr && *v) {
-        opt.admin_port = env_int("RBPS_ADMIN_PORT", opt.admin_port);
-    }
-    if ((v = std::getenv("RBPS_LOG_FILE")) != nullptr) {
-        opt.log_file = expand_env_vars(v);
-    }
-    if ((v = std::getenv("RBPS_PID_FILE")) != nullptr) {
-        opt.pid_file = expand_env_vars(v);
-    }
 
-    if ((v = std::getenv("RBPS_VERBOSE")) != nullptr) {
-        c.verbose = env_truthy(v);
-    }
-    if ((v = std::getenv("RBPS_TIMING_DIAG")) != nullptr) {
-        c.timing_diag = env_truthy(v);
-    }
-    if ((v = std::getenv("RBPS_LOG_CMP_LSN_ONLY")) != nullptr) {
-        c.log_cmp_lsn_only = env_truthy(v);
-    }
-    if ((v = std::getenv("RBPS_SMB_VERSION")) != nullptr) {
-        c.smb_version = !env_falsy(v);
-    }
-    if ((v = std::getenv("RBPS_MAX_CACHE_PAGES")) != nullptr && *v) {
-        c.max_cache_pages = env_int("RBPS_MAX_CACHE_PAGES", c.max_cache_pages);
-    }
-    if ((v = std::getenv("RBPS_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
-        c.capacity_evict_on_write = env_truthy(v);
-    }
-    if ((v = std::getenv("RBPS_READ_END_MODE")) != nullptr) {
-        if (str_ieq(v, "sync")) {
-            c.read_end_mode = ReadEndMode::Sync;
-        }
-        if (str_ieq(v, "async")) {
-            c.read_end_mode = ReadEndMode::Async;
-        }
-    }
-    if ((v = std::getenv("RBPS_READ_PHASE_TIMEOUT")) != nullptr && *v) {
-        c.read_phase_timeout = env_double("RBPS_READ_PHASE_TIMEOUT", c.read_phase_timeout);
-    }
-
-    if ((v = std::getenv("RBP_DEMO_LOG_CMP_LSN_ONLY")) != nullptr) {
-        c.log_cmp_lsn_only = env_truthy(v);
-    }
-    if ((v = std::getenv("RBP_DEMO_SMB_VERSION")) != nullptr) {
-        c.smb_version = !env_falsy(v);
-    }
-    if ((v = std::getenv("RBP_DEMO_MAX_CACHE_PAGES")) != nullptr && *v) {
-        c.max_cache_pages = env_int("RBP_DEMO_MAX_CACHE_PAGES", c.max_cache_pages);
-    }
-    if ((v = std::getenv("RBP_DEMO_CAPACITY_EVICT_ON_WRITE")) != nullptr) {
-        c.capacity_evict_on_write = env_truthy(v);
-    }
-    if ((v = std::getenv("RBP_DEMO_LEGACY_BATCH_PENDING")) != nullptr) {
-        c.legacy_batch_pending = !env_falsy(v);
-    }
-    if ((v = std::getenv("RBP_DEMO_CKPT_WAIT_EVICT")) != nullptr) {
-        c.ckpt_wait_evict = env_truthy(v);
-    }
-    if ((v = std::getenv("RBP_DEMO_CKPT_PARITY_CHECK")) != nullptr) {
-        c.ckpt_parity_check = env_truthy(v);
-    }
-    c.ckpt_wait_ms = env_int("RBP_DEMO_CKPT_WAIT_MS", c.ckpt_wait_ms);
-    c.rcy_diag_lag = env_int("RBP_DEMO_RCY_DIAG_LAG", c.rcy_diag_lag);
-    c.evict_sample_log = env_int("RBP_DEMO_EVICT_SAMPLE_LOG", c.evict_sample_log);
-    c.evict_budget = std::max(1, env_int("RBP_DEMO_EVICT_BUDGET", c.evict_budget));
-    c.purge_budget = std::max(1, env_int("RBP_DEMO_PURGE_BUDGET", c.purge_budget));
-    c.bucket_count = std::max(RBP_MIN_BUCKET_COUNT, env_int("RBP_DEMO_BUCKET_COUNT", c.bucket_count));
-    c.bucket_span = std::max(1, env_int("RBP_DEMO_BUCKET_SPAN", c.bucket_span));
-    c.page_write_slow_us = env_int("RBP_DEMO_PAGE_WRITE_SLOW_US", c.page_write_slow_us);
-    c.page_write_timing_us = env_int("RBP_DEMO_PAGE_WRITE_TIMING_US", c.page_write_timing_us);
-    c.selected_lsn_mismatch_log = env_int("RBP_DEMO_SELECTED_LSN_MISMATCH_LOG", c.selected_lsn_mismatch_log);
-    c.read_phase_timeout = env_double("RBP_DEMO_READ_PHASE_TIMEOUT", c.read_phase_timeout);
-    c.cache_high_water = std::min(1.0, std::max(0.0, env_double("RBP_DEMO_CACHE_HIGH_WATER", c.cache_high_water)));
-    c.cache_evict_ratio = std::min(1.0, std::max(0.0, env_double("RBP_DEMO_CACHE_EVICT_RATIO", c.cache_evict_ratio)));
-    if ((v = std::getenv("RBP_DEMO_READ_END_MODE")) != nullptr) {
-        if (str_ieq(v, "sync")) {
-            c.read_end_mode = ReadEndMode::Sync;
-        }
-        if (str_ieq(v, "async")) {
-            c.read_end_mode = ReadEndMode::Async;
-        }
-    }
-    if ((v = std::getenv("RBP_DEMO_TIMING_DIAG")) != nullptr) {
-        c.timing_diag = env_truthy(v);
-    }
+    return apply_server_env(opt, err) &&
+           apply_rbps_env(c, err) &&
+           apply_demo_basic_env(c, err) &&
+           apply_demo_numeric_env(c, err) &&
+           apply_demo_misc_env(c, err);
 }
 
 void apply_cli(const CliOverrides& cli, ServerOptions& opt)
@@ -375,9 +674,11 @@ void apply_cli(const CliOverrides& cli, ServerOptions& opt)
     }
     if (cli.log_file_set) {
         opt.log_file = expand_env_vars(cli.log_file);
+        opt.log_file_set = true;
     }
     if (cli.pid_file_set) {
         opt.pid_file = expand_env_vars(cli.pid_file);
+        opt.pid_file_set = true;
     }
     if (cli.verbose_set) {
         opt.config.verbose = cli.verbose;
@@ -439,21 +740,11 @@ bool build_server_options(const CliOverrides& cli, ServerOptions& out, std::stri
             }
         }
     }
-    apply_env(out);
+    if (!apply_env(out, err)) {
+        return false;
+    }
     apply_cli(cli, out);
-    out.config.cache_high_water = std::min(1.0, std::max(0.0, out.config.cache_high_water));
-    out.config.cache_evict_ratio = std::min(1.0, std::max(0.0, out.config.cache_evict_ratio));
-    out.config.evict_budget = std::max(1, out.config.evict_budget);
-    out.config.purge_budget = std::max(1, out.config.purge_budget);
-    if (out.port <= 0 || out.port > RBP_MAX_TCP_PORT) {
-        err = "PORT must be in range 1..65535";
-        return false;
-    }
-    if (out.admin_port < 0 || out.admin_port > RBP_MAX_TCP_PORT) {
-        err = "ADMIN_PORT must be in range 0..65535";
-        return false;
-    }
-    return true;
+    return validate_options(out, err);
 }
 
 }  // namespace rbp

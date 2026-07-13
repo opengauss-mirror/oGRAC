@@ -34,6 +34,8 @@
 
 namespace rbp {
 
+inline constexpr int RBP_DEFAULT_MAX_CACHE_PAGES = 3000000;
+
 enum class ReadEndMode { Async, Sync };
 
 struct Config {
@@ -43,7 +45,7 @@ struct Config {
     bool legacy_batch_pending = true;
     bool ckpt_wait_evict = false;
     bool ckpt_parity_check = false;
-    int max_cache_pages = 0;
+    int max_cache_pages = RBP_DEFAULT_MAX_CACHE_PAGES;
     bool capacity_evict_on_write = false;
     int ckpt_wait_ms = 5000;
     int rcy_diag_lag = 0;
@@ -69,7 +71,9 @@ struct ServerOptions {
     std::string admin_host = "127.0.0.1";
     int admin_port = 2711;
     std::string log_file;
+    bool log_file_set = false;
     std::string pid_file;
+    bool pid_file_set = false;
     Config config;
 };
 
@@ -125,7 +129,7 @@ inline bool env_truthy(const char* v)
     if (!v || !*v) {
         return false;
     }
-    return std::strcmp(v, "1") == 0 || str_ieq(v, "true") || str_ieq(v, "yes") || str_ieq(v, "on");
+    return std::strcmp(v, "1") == 0 || str_ieq(v, "true") || str_ieq(v, "on");
 }
 
 inline bool env_falsy(const char* v)
@@ -133,33 +137,7 @@ inline bool env_falsy(const char* v)
     if (!v || !*v) {
         return false;
     }
-    return std::strcmp(v, "0") == 0 || str_ieq(v, "false") || str_ieq(v, "no") || str_ieq(v, "off");
-}
-
-inline int env_int(const char* name, int def)
-{
-    const char* v = std::getenv(name);
-    if (!v || !*v) {
-        return def;
-    }
-    try {
-        return std::max(0, std::stoi(v));
-    } catch (...) {
-        return def;
-    }
-}
-
-inline double env_double(const char* name, double def)
-{
-    const char* v = std::getenv(name);
-    if (!v || !*v) {
-        return def;
-    }
-    try {
-        return std::stod(v);
-    } catch (...) {
-        return def;
-    }
+    return std::strcmp(v, "0") == 0 || str_ieq(v, "false") || str_ieq(v, "off");
 }
 
 }  // namespace rbp

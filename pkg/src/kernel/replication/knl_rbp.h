@@ -83,6 +83,9 @@ extern "C"{
 #define RBP_HEARTBEAT_INTERVAL      (2000 * MICROSECS_PER_MILLISEC) // 2s
 #define RBP_MAX_READ_WAIT_TIME      3000 // 3s
 #define RBP_SNAPSHOT_POOL_SIZE      (OG_RBP_SESSION_COUNT * RBP_BATCH_PAGE_NUM * 4)
+#define RBP_ASSEMBLE_MAX_SCAN_DEFAULT 300
+#define RBP_ASSEMBLE_MAX_SCAN_MIN     100
+#define RBP_ASSEMBLE_MAX_SCAN_MAX     1000000
 
 /* rbp config params */
 typedef struct st_rbp_attr {

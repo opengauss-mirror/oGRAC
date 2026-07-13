@@ -30,10 +30,13 @@
 #include "ddl_parser.h"
 #include "srv_param_common.h"
 #include "srv_params_raft_and_log.h"
+#include "set_others.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define SQL_BISON_QUOTED_VALUE_EXTRA_LEN 3
 
 static status_t sql_parse_alsys_switch(lex_t *lex, knl_alter_sys_def_t *def, word_t *word)
 {
@@ -143,6 +146,11 @@ static status_t sql_bison_normalize_sys_param_value(config_item_t *item, knl_alt
 
 static bool32 sql_bison_sys_param_needs_verify(config_item_t *item)
 {
+    if (item->verify == sql_verify_als_rbp_ip || item->verify == sql_verify_als_local_rbp_host ||
+        item->verify == sql_verify_als_rbp_bool) {
+        return OG_TRUE;
+    }
+
     return item->verify != NULL && item->datatype != NULL &&
         !cm_str_equal_ins(item->datatype, "OG_TYPE_BOOLEAN") &&
         !cm_str_equal_ins(item->datatype, "OG_TYPE_VARCHAR");
@@ -154,11 +162,23 @@ static status_t sql_bison_verify_sys_param_value(sql_stmt_t *stmt, config_item_t
     uint32 save_flags = lex->flags;
     status_t status;
     sql_text_t value_text;
+    char quoted_value[OG_PARAM_BUFFER_SIZE + 2] = { 0 };
 
     value_text.str = def->value;
     value_text.len = (uint32)strlen(def->value);
     value_text.loc = (source_location_t){ 1, 1 };
     value_text.implicit = OG_FALSE;
+
+    if (item->verify == sql_verify_als_rbp_ip || item->verify == sql_verify_als_local_rbp_host) {
+        if (value_text.len > sizeof(quoted_value) - SQL_BISON_QUOTED_VALUE_EXTRA_LEN ||
+            strchr(def->value, '\'') != NULL) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, def->param);
+            return OG_ERROR;
+        }
+        PRTS_RETURN_IFERR(snprintf_s(quoted_value, sizeof(quoted_value), sizeof(quoted_value) - 1, "'%s'", def->value));
+        value_text.str = quoted_value;
+        value_text.len = (uint32)strlen(quoted_value);
+    }
 
     if (lex_push(lex, &value_text) != OG_SUCCESS) {
         return OG_ERROR;

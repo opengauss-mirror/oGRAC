@@ -28,6 +28,9 @@
 #include "cm_config.h"
 #include "knl_context.h"
 
+#define RBP_ASSEMBLE_MAX_SCAN_RANGE "[" OG_STR(RBP_ASSEMBLE_MAX_SCAN_MIN) ", " \
+    OG_STR(RBP_ASSEMBLE_MAX_SCAN_MAX) "]"
+
 #ifdef __cplusplus
 extern "C"
 #endif
@@ -36,6 +39,7 @@ status_t sql_verify_uint32(void *lex, void *def, uint32 *num);
 status_t sql_verify_als_comm(void *se, void *lex, void *def);
 status_t sql_verify_als_onoff(void *se, void *lex, void *def);
 status_t sql_verify_als_uint32(void *se, void *lex, void *def);
+bool32 srv_match_bool_text_ext(const text_t *bool_text, bool32 *bool_value);
 status_t sql_verify_als_bool(void *se, void *lex, void *def);
 status_t sql_notify_als_bool(void *se, void *item, char *value);
 status_t sql_notify_als_onoff(void *se, void *item, char *value);

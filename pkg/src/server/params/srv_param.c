@@ -31,10 +31,14 @@
 #include "set_others.h"
 #include "srv_params_raft_and_log.h"
 #include "ddl_parser.h"
+#include "dtc_rbp_rt_aly.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define RBP_RT_PARSE_WORKERS_RANGE "[1, " OG_STR(DTC_RBP_RT_MAX_PARSE_WORKERS) "]"
+#define RBP_RT_PAGE_OWNER_WORKERS_RANGE "[1, " OG_STR(DTC_RBP_RT_MAX_OWNER_WORKERS) "]"
 
 // CAUTION !!! if add/del/modify g_parameter in srv_param.c,please reorder the id in srv_param_def.h
 config_item_t g_parameters[] = {
@@ -1180,20 +1184,29 @@ config_item_t g_parameters[] = {
       PARAM_RBP_PORT, EFFECT_REBOOT, CFG_INS, sql_verify_als_rbp_port, NULL, NULL, NULL },
     { "LOCAL_RBP_HOST", OG_TRUE, ATTR_NONE, "127.0.0.1", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL,
       PARAM_LOCAL_RBP_HOST, EFFECT_REBOOT, CFG_INS, sql_verify_als_local_rbp_host, NULL, NULL, NULL },
-    { "USE_RBP", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
-      PARAM_USE_RBP, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_use_rbp, sql_notify_als_bool,
+    { "USE_RBP", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE,OFF,ON,0,1", "OG_TYPE_BOOLEAN", NULL,
+      PARAM_USE_RBP, EFFECT_REBOOT, CFG_INS, sql_verify_als_rbp_bool, sql_notify_als_use_rbp,
+      sql_notify_als_rbp_bool,
       NULL },
-    { "RBP_FOR_RECOVERY", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
-      PARAM_RBP_FOR_RECOVERY, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_bool, sql_notify_als_bool,
+    { "RBP_FOR_RECOVERY", OG_TRUE, ATTR_NONE, "TRUE", NULL, NULL, "-", "FALSE,TRUE,OFF,ON,0,1",
+      "OG_TYPE_BOOLEAN", NULL,
+      PARAM_RBP_FOR_RECOVERY, EFFECT_REBOOT, CFG_INS, sql_verify_als_rbp_bool, sql_notify_als_rbp_bool,
+      sql_notify_als_rbp_bool,
       NULL },
-    { "RBP_RT_ANALYSIS", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
-      PARAM_RBP_RT_ANALYSIS, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_bool, sql_notify_als_bool,
+    { "RBP_RT_ANALYSIS", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE,OFF,ON,0,1",
+      "OG_TYPE_BOOLEAN", NULL,
+      PARAM_RBP_RT_ANALYSIS, EFFECT_REBOOT, CFG_INS, sql_verify_als_rbp_bool, sql_notify_als_rbp_bool,
+      sql_notify_als_rbp_bool,
       NULL },
-    { "RBP_RT_PARSE_WORKERS", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", "[1,8]", "OG_TYPE_INTEGER", NULL,
-      PARAM_RBP_RT_PARSE_WORKERS, EFFECT_REBOOT, CFG_INS, sql_verify_als_uint32, NULL, NULL, NULL },
-    { "RBP_RT_PAGE_OWNER_WORKERS", OG_TRUE, ATTR_NONE, "4", NULL, NULL, "-", "[1,8]", "OG_TYPE_INTEGER", NULL,
-      PARAM_RBP_RT_PAGE_OWNER_WORKERS, EFFECT_REBOOT, CFG_INS, sql_verify_als_uint32, NULL, NULL, NULL },
-    { "RBP_ASSEMBLE_MAX_SCAN", OG_TRUE, ATTR_NONE, "300", NULL, NULL, "-", "[100, 1000000]", "OG_TYPE_INTEGER", NULL,
+    { "RBP_RT_PARSE_WORKERS", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", RBP_RT_PARSE_WORKERS_RANGE,
+      "OG_TYPE_INTEGER", NULL,
+      PARAM_RBP_RT_PARSE_WORKERS, EFFECT_REBOOT, CFG_INS, sql_verify_als_rbp_rt_parse_workers, NULL, NULL, NULL },
+    { "RBP_RT_PAGE_OWNER_WORKERS", OG_TRUE, ATTR_NONE, "4", NULL, NULL, "-", RBP_RT_PAGE_OWNER_WORKERS_RANGE,
+      "OG_TYPE_INTEGER", NULL,
+      PARAM_RBP_RT_PAGE_OWNER_WORKERS, EFFECT_REBOOT, CFG_INS, sql_verify_als_rbp_rt_page_owner_workers, NULL, NULL,
+      NULL },
+    { "RBP_ASSEMBLE_MAX_SCAN", OG_TRUE, ATTR_NONE, "300", NULL, NULL, "-", RBP_ASSEMBLE_MAX_SCAN_RANGE,
+      "OG_TYPE_INTEGER", NULL,
       PARAM_RBP_ASSEMBLE_MAX_SCAN, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_rbp_assemble_max_scan,
       sql_notify_als_rbp_assemble_max_scan, NULL, NULL },
     // EXPLAIN

@@ -230,6 +230,8 @@ static inline bool32 cm_is_local_ip(const char *client_ip)
 status_t cm_ipport_to_sockaddr(const char *host, int port, sock_addr_t *sock_addr);
 status_t cm_ip_to_sockaddr(const char *host, sock_addr_t *sock_addr);
 bool32 cm_check_ip_valid(const char *ip);
+bool32 cm_check_ipv4_literal(const char *ip);
+bool32 cm_check_ipv4_nonzero_literal(const char *ip);
 status_t cm_parse_cidrs(text_t *cidr_texts, list_t *cidr_list);
 status_t cm_str_to_cidr(char *cidr_str, cidr_t *cidr, uint32 cidr_str_len);
 bool32 cm_check_ip(white_context_t *ogx, const char *ip_str, const char *user, bool32 *hostssl);

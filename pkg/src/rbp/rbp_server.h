@@ -69,13 +69,22 @@ struct ReadPhaseEndResult {
     int detached_pages = 0;
 };
 
+struct AdminServerLoopContext {
+    socket_t srv;
+    std::string host;
+    int port;
+    RbpServerState& state;
+    ReadPhase& read_phase;
+    Config cfg;
+};
+
 void run_server(const std::string& host, int port, const Config& cfg, int admin_port, const std::string& admin_host);
 void handle_conn(socket_t fd, const std::string& peer, RbpServerState& state, ReadPhase& read_phase, const Config& cfg);
 ReadPhaseSnapshot get_read_phase_snapshot(ReadPhase& read_phase);
 ReadPhaseEndResult force_read_phase_end(RbpServerState& state, ReadPhase& read_phase, const Config& cfg,
                                         const std::string& peer, const char* reason);
-void admin_server_loop(const std::string& host, int port, RbpServerState& state, ReadPhase& read_phase,
-                       const Config& cfg);
+bool setup_admin_server(const std::string& host, int port, socket_t& srv, std::string& err);
+void admin_server_loop(AdminServerLoopContext ctx);
 bool admin_query_once(const std::string& host, int port, const std::string& command,
                       std::string& response, std::string& err);
 

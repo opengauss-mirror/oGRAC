@@ -159,7 +159,9 @@ ADMIN_PORT=2711
 LOG_FILE={_rbps_log_file()}
 PID_FILE=$OGDB_HOME/run/rbps.pid
 
-MAX_CACHE_PAGES=0
+MAX_CACHE_PAGES=3000000
+# false: hard cap new cache pages at MAX_CACHE_PAGES; true: allow writes and evict by capacity in background.
+CAPACITY_EVICT_ON_WRITE=false
 READ_END_MODE=async
 READ_PHASE_TIMEOUT=3
 

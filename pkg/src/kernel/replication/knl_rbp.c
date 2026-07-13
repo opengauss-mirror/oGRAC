@@ -85,9 +85,6 @@ static void rbp_queue_notify_reset_point_one(knl_session_t *session, uint32 queu
 #define RBP_CKPT_PURGE_INTERVAL_FACTOR    5
 #define RBP_SEND_LATCH_WAIT               30
 #define RBP_SEND_LATCH_TIMEOUT            3
-#define RBP_ASSEMBLE_MAX_SCAN_DEFAULT     300
-#define RBP_ASSEMBLE_MAX_SCAN_MIN         100
-#define RBP_ASSEMBLE_MAX_SCAN_MAX         1000000
 #define RBP_DTC_PLANNED_REQUIRED_INIT_CAPACITY 4096
 #define RBP_DTC_PLANNED_REQUIRED_GROW_FACTOR   2
 #define RBP_PARTIAL_VERIFY_SAMPLE_LIMIT        16

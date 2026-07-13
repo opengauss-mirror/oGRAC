@@ -27,14 +27,15 @@
 #include "cbo_base.h"
 #include "pl_executor.h"
 #include "srv_param_common.h"
+#include "cm_ip.h"
+#include "dtc_rbp_rt_aly.h"
 #include "set_others.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define RBP_ASSEMBLE_MAX_SCAN_MIN 100
-#define RBP_ASSEMBLE_MAX_SCAN_MAX 1000000
+#define RBP_RT_WORKERS_MIN 1
 
 static inline bool32 sql_get_notify_bool_value(const char *value)
 {
@@ -132,7 +133,7 @@ status_t sql_verify_als_ip(void *se, void *lex, void *def)
 static status_t sql_verify_param_port(void *lex, void *def, const char *port_name)
 {
     word_t word;
-    uint16 port;
+    uint32 port;
     knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
     if (lex_expected_fetch((lex_t *)lex, &word) != OG_SUCCESS) {
         return OG_ERROR;
@@ -152,7 +153,7 @@ static status_t sql_verify_param_port(void *lex, void *def, const char *port_nam
     OG_RETURN_IFERR(cm_text2str((text_t *)&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE));
 
     /* check if the port specified is valid */
-    if (cm_str2uint16(sys_def->value, &port) != OG_SUCCESS) {
+    if (cm_str2uint32(sys_def->value, &port) != OG_SUCCESS) {
         cm_reset_error();
         OG_SRC_THROW_ERROR(((lex_t *)lex)->loc, ERR_INVALID_PARAMETER, port_name);
         return OG_ERROR;
@@ -160,6 +161,10 @@ static status_t sql_verify_param_port(void *lex, void *def, const char *port_nam
 
     if (port < OG_MIN_PORT) {
         OG_SRC_THROW_ERROR(((lex_t *)lex)->loc, ERR_PARAMETER_TOO_SMALL, port_name, (int64)OG_MIN_PORT);
+        return OG_ERROR;
+    }
+    if (port > OG_MAX_UINT16) {
+        OG_SRC_THROW_ERROR(((lex_t *)lex)->loc, ERR_PARAMETER_TOO_LARGE, port_name, (int64)OG_MAX_UINT16);
         return OG_ERROR;
     }
 
@@ -580,7 +585,12 @@ status_t sql_verify_als_rbp_ip(void *se, void *lex, void *def)
 {
     word_t word;
     knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    char hosts[OG_MAX_LSNR_HOST_COUNT][CM_MAX_IP_LEN] = { 0 };
+    uint32 raw_count = 0;
+    uint32 host_count = 0;
+    uint32 value_len;
 
+    (void)se;
     if (lex_expected_fetch((lex_t *)lex, &word) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -597,7 +607,36 @@ status_t sql_verify_als_rbp_ip(void *se, void *lex, void *def)
         return OG_ERROR;
     }
 
-    return cm_verify_lsnr_addr(sys_def->value, (uint32)strlen(sys_def->value), NULL);
+    /*
+     * cm_split_host_ip trims and skips empty items. Keep raw_count to reject
+     * empty components and semicolon-separated lists for RBP_IP.
+     */
+    value_len = (uint32)strlen(sys_def->value);
+    if (cm_verify_lsnr_addr(sys_def->value, value_len, &raw_count) != OG_SUCCESS) {
+        cm_reset_error();
+        OG_SRC_THROW_ERROR(word.loc, ERR_TCP_INVALID_IPADDRESS, sys_def->value);
+        return OG_ERROR;
+    }
+    if (raw_count > OG_MAX_LSNR_HOST_COUNT) {
+        OG_SRC_THROW_ERROR(word.loc, ERR_IPADDRESS_NUM_EXCEED, (uint32)OG_MAX_LSNR_HOST_COUNT);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_split_host_ip(hosts, sys_def->value));
+    while (host_count < OG_MAX_LSNR_HOST_COUNT && hosts[host_count][0] != '\0') {
+        if (!cm_check_ipv4_nonzero_literal(hosts[host_count])) {
+            OG_SRC_THROW_ERROR(word.loc, ERR_TCP_INVALID_IPADDRESS, hosts[host_count]);
+            return OG_ERROR;
+        }
+        host_count++;
+    }
+
+    if (host_count == 0 || host_count != raw_count) {
+        OG_SRC_THROW_ERROR(word.loc, ERR_TCP_INVALID_IPADDRESS, sys_def->value);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 status_t sql_verify_als_rbp_port(void *se, void *lex, void *def)
@@ -628,7 +667,85 @@ status_t sql_verify_als_local_rbp_host(void *se, void *lex, void *def)
         return OG_ERROR;
     }
 
-    return cm_verify_lsnr_addr(sys_def->value, (uint32)strlen(sys_def->value), NULL);
+    if (strlen(sys_def->value) >= CM_MAX_IP_LEN || strchr(sys_def->value, ',') != NULL ||
+        strchr(sys_def->value, ';') != NULL) {
+        OG_SRC_THROW_ERROR(word.loc, ERR_TCP_INVALID_IPADDRESS, sys_def->value);
+        return OG_ERROR;
+    }
+    if (!cm_check_ipv4_nonzero_literal(sys_def->value)) {
+        OG_SRC_THROW_ERROR(word.loc, ERR_TCP_INVALID_IPADDRESS, sys_def->value);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t sql_verify_rbp_bool_value(lex_t *lex, knl_alter_sys_def_t *sys_def)
+{
+    word_t word;
+    bool32 bool_value;
+
+    if (lex_expected_fetch(lex, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (word.type == WORD_TYPE_STRING) {
+        sql_remove_quota(&word.text.value);
+    }
+
+    cm_trim_text((text_t *)&word.text);
+    if (word.text.len == 0) {
+        OG_SRC_THROW_ERROR(word.loc, ERR_EMPTY_STRING_NOT_ALLOWED);
+        return OG_ERROR;
+    }
+
+    if (!srv_match_bool_text_ext((text_t *)&word.text, &bool_value)) {
+        OG_SRC_THROW_ERROR(word.loc, ERR_INVALID_PARAMETER, sys_def->param);
+        return OG_ERROR;
+    }
+
+    sys_def->value[0] = (char)bool_value;
+    sys_def->value[1] = '\0';
+    return OG_SUCCESS;
+}
+
+status_t sql_verify_als_rbp_bool(pointer_t se, pointer_t lex, pointer_t def)
+{
+    (void)se;
+    return sql_verify_rbp_bool_value((lex_t *)lex, (knl_alter_sys_def_t *)def);
+}
+
+static status_t sql_verify_rbp_rt_workers(lex_t *lex, knl_alter_sys_def_t *def, const char *param_name,
+    uint32 max_workers)
+{
+    uint32 num;
+
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (num < RBP_RT_WORKERS_MIN) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, param_name, (int64)RBP_RT_WORKERS_MIN);
+        return OG_ERROR;
+    }
+    if (num > max_workers) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, param_name, (int64)max_workers);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_verify_als_rbp_rt_parse_workers(pointer_t se, pointer_t lex, pointer_t def)
+{
+    (void)se;
+    return sql_verify_rbp_rt_workers((lex_t *)lex, (knl_alter_sys_def_t *)def, "RBP_RT_PARSE_WORKERS",
+        DTC_RBP_RT_MAX_PARSE_WORKERS);
+}
+
+status_t sql_verify_als_rbp_rt_page_owner_workers(pointer_t se, pointer_t lex, pointer_t def)
+{
+    (void)se;
+    return sql_verify_rbp_rt_workers((lex_t *)lex, (knl_alter_sys_def_t *)def, "RBP_RT_PAGE_OWNER_WORKERS",
+        DTC_RBP_RT_MAX_OWNER_WORKERS);
 }
 
 status_t sql_notify_als_restore_arch_compressed(void *se, void *item, char *value)
@@ -1964,16 +2081,27 @@ status_t sql_notify_als_strict_case_datatype(void *se, void *item, char *value)
 
 status_t sql_notify_als_use_rbp(void *se, void *item, char *value)
 {
+    return sql_notify_als_rbp_bool(se, item, value);
+}
+
+status_t sql_notify_als_rbp_bool(pointer_t se, pointer_t item, char *value)
+{
+    text_t text;
+    bool32 bool_value;
+
     if (value[1] == '\0' && ((bool32)value[0] == OG_TRUE || (bool32)value[0] == OG_FALSE)) {
         return sql_notify_als_bool(se, item, value);
     }
 
-    if (cm_str_equal_ins(value, "TRUE") || cm_str_equal_ins(value, "FALSE")) {
-        return sql_notify_als_bool(se, item, value);
+    cm_str2text(value, &text);
+    if (!srv_match_bool_text_ext(&text, &bool_value)) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "RBP boolean");
+        return OG_ERROR;
     }
 
-    OG_THROW_ERROR(ERR_INVALID_PARAMETER, "USE_RBP");
-    return OG_ERROR;
+    value[0] = (char)bool_value;
+    value[1] = '\0';
+    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_verify_als_rbp_assemble_max_scan(void *se, void *lex, void *def)
