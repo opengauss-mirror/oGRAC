@@ -32,6 +32,9 @@
 #include "pl_udt.h"
 #include "base_compiler.h"
 
+#define PLC_TRIG_QUOTE_ESCAPE_LEN 2
+#define PLC_TRIG_COMMENT_DELIM_LEN 2
+
 status_t plc_verify_trigger_modified_var(pl_compiler_t *compiler, plv_decl_t *decl)
 {
     pl_entity_t *entity = (pl_entity_t *)compiler->entity;
@@ -292,4 +295,406 @@ status_t plc_compile_trigger_variant(pl_compiler_t *compiler, text_t *sql, word_
     OG_RETURN_IFERR(plc_make_input_name(compiler->current_input, param, OG_NAME_BUFFER_SIZE, &name));
     cm_concat_text(sql, compiler->convert_buf_size, &name);
     return OG_SUCCESS;
+}
+
+static bool32 plc_trigger_ident_start(char c)
+{
+    unsigned char ch = (unsigned char)c;
+
+    return (bool32)(ch >= 0x80 || CM_IS_LETER(c) || c == '_' || c == '#');
+}
+
+static bool32 plc_trigger_ident_char(char c)
+{
+    return (bool32)(plc_trigger_ident_start(c) || CM_IS_DIGIT(c) || c == '$');
+}
+
+static bool32 plc_trigger_has_ident_left(text_t *src, uint32 pos)
+{
+    return (bool32)(pos > 0 && plc_trigger_ident_char(src->str[pos - 1]));
+}
+
+static void plc_trigger_advance_loc(source_location_t *loc, char c)
+{
+    if (c == '\n') {
+        loc->line++;
+        loc->column = 1;
+        return;
+    }
+    loc->column++;
+}
+
+static void plc_trigger_advance_chars(text_t *src, uint32 *pos, source_location_t *loc, uint32 count)
+{
+    for (uint32 i = 0; i < count && *pos < src->len; i++) {
+        plc_trigger_advance_loc(loc, src->str[(*pos)++]);
+    }
+}
+
+static source_location_t plc_trigger_range_end_loc(text_t *src, source_location_t loc, uint32 begin, uint32 end)
+{
+    for (uint32 i = begin; i < end; i++) {
+        plc_trigger_advance_loc(&loc, src->str[i]);
+    }
+    return loc;
+}
+
+static bool32 plc_trigger_is_extended_quote(text_t *src, uint32 pos, char quote)
+{
+    if (quote != '\'' || pos == 0) {
+        return OG_FALSE;
+    }
+
+    uint32 prefix_pos = pos - 1;
+    if (UPPER(src->str[prefix_pos]) != 'E') {
+        return OG_FALSE;
+    }
+
+    return (bool32)(!plc_trigger_has_ident_left(src, prefix_pos));
+}
+
+static uint32 plc_trigger_skip_quoted(text_t *src, uint32 pos, source_location_t *loc, char quote,
+    bool32 escape_backslash)
+{
+    uint32 i = pos;
+
+    plc_trigger_advance_loc(loc, src->str[i++]);
+    while (i < src->len) {
+        char c = src->str[i++];
+        plc_trigger_advance_loc(loc, c);
+        if (escape_backslash && c == '\\' && i < src->len) {
+            plc_trigger_advance_loc(loc, src->str[i++]);
+            continue;
+        }
+        if (c == quote) {
+            if (i < src->len && src->str[i] == quote) {
+                plc_trigger_advance_loc(loc, src->str[i++]);
+                continue;
+            }
+            break;
+        }
+    }
+    return i;
+}
+
+static bool32 plc_trigger_dolq_left_boundary(text_t *src, uint32 pos)
+{
+    return (bool32)(pos == 0 || !plc_trigger_ident_char(src->str[pos - 1]));
+}
+
+static bool32 plc_trigger_dolq_start(char c)
+{
+    unsigned char ch = (unsigned char)c;
+
+    return (bool32)(ch >= 0x80 || CM_IS_LETER(c) || c == '_');
+}
+
+static bool32 plc_trigger_dolq_char(char c)
+{
+    return (bool32)(plc_trigger_dolq_start(c) || CM_IS_DIGIT(c));
+}
+
+static uint32 plc_trigger_dolq_delim_len(text_t *src, uint32 pos)
+{
+    uint32 i = pos + 1;
+
+    if (pos >= src->len || src->str[pos] != '$' || i >= src->len ||
+        !plc_trigger_dolq_left_boundary(src, pos)) {
+        return 0;
+    }
+    if (src->str[i] == '$') {
+        return i - pos + 1;
+    }
+    if (!plc_trigger_dolq_start(src->str[i])) {
+        return 0;
+    }
+    i++;
+    while (i < src->len && plc_trigger_dolq_char(src->str[i])) {
+        i++;
+    }
+    return (i < src->len && src->str[i] == '$') ? (i - pos + 1) : 0;
+}
+
+static uint32 plc_trigger_skip_dollar_quote(text_t *src, uint32 pos, source_location_t *loc)
+{
+    uint32 delim_len = plc_trigger_dolq_delim_len(src, pos);
+    uint32 i = pos;
+
+    if (delim_len == 0) {
+        return pos;
+    }
+    while (i < pos + delim_len) {
+        plc_trigger_advance_loc(loc, src->str[i++]);
+    }
+    while (i + delim_len <= src->len) {
+        if (memcmp(src->str + i, src->str + pos, delim_len) == 0) {
+            uint32 end = i + delim_len;
+            while (i < end) {
+                plc_trigger_advance_loc(loc, src->str[i++]);
+            }
+            return i;
+        }
+        plc_trigger_advance_loc(loc, src->str[i++]);
+    }
+    while (i < src->len) {
+        plc_trigger_advance_loc(loc, src->str[i++]);
+    }
+    return i;
+}
+
+static uint32 plc_trigger_skip_comment(text_t *src, uint32 pos, source_location_t *loc)
+{
+    uint32 i = pos;
+    uint32 depth = 1;
+
+    if (pos + 1 >= src->len) {
+        plc_trigger_advance_loc(loc, src->str[i++]);
+        return i;
+    }
+
+    if (src->str[pos] == '-' && src->str[pos + 1] == '-') {
+        while (i < src->len) {
+            char c = src->str[i++];
+            plc_trigger_advance_loc(loc, c);
+            if (c == '\n') {
+                break;
+            }
+        }
+        return i;
+    }
+
+    plc_trigger_advance_chars(src, &i, loc, PLC_TRIG_COMMENT_DELIM_LEN);
+    while (i < src->len && depth > 0) {
+        if (i + 1 < src->len && src->str[i] == '/' && src->str[i + 1] == '*') {
+            plc_trigger_advance_chars(src, &i, loc, PLC_TRIG_COMMENT_DELIM_LEN);
+            depth++;
+            continue;
+        }
+
+        if (i + 1 < src->len && src->str[i] == '*' && src->str[i + 1] == '/') {
+            plc_trigger_advance_chars(src, &i, loc, PLC_TRIG_COMMENT_DELIM_LEN);
+            depth--;
+            continue;
+        }
+
+        plc_trigger_advance_loc(loc, src->str[i++]);
+    }
+    return i;
+}
+
+static bool32 plc_trigger_match_word(text_t *src, uint32 pos, const char *word)
+{
+    uint32 len = (uint32)strlen(word);
+    if (pos + len > src->len) {
+        return OG_FALSE;
+    }
+
+    for (uint32 i = 0; i < len; i++) {
+        if (UPPER(src->str[pos + i]) != UPPER(word[i])) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
+}
+
+static bool32 plc_trigger_prefix(text_t *src, uint32 pos, word_type_t *type)
+{
+    if (plc_trigger_match_word(src, pos, ":new.")) {
+        *type = WORD_TYPE_PL_NEW_COL;
+        return OG_TRUE;
+    }
+
+    if (plc_trigger_match_word(src, pos, ":old.")) {
+        *type = WORD_TYPE_PL_OLD_COL;
+        return OG_TRUE;
+    }
+
+    return OG_FALSE;
+}
+
+static status_t plc_trigger_make_quoted_word(text_t *src, uint32 pos, uint32 name_start,
+    source_location_t name_loc, word_t *word, uint32 *end_pos)
+{
+    uint32 i = name_start + 1;
+    uint32 quoted_start = name_start;
+
+    word->ex_words[0].type = WORD_TYPE_DQ_STRING;
+    word->ex_words[0].text.value.str = src->str + i;
+    word->ex_words[0].text.loc = name_loc;
+    while (i < src->len) {
+        if (src->str[i] != '"') {
+            i++;
+            continue;
+        }
+
+        if (i + 1 < src->len && src->str[i + 1] == '"') {
+            i += PLC_TRIG_QUOTE_ESCAPE_LEN;
+            continue;
+        }
+
+        word->ex_words[0].text.value.len = i - quoted_start - 1;
+        i++;
+        word->text.len = i - pos;
+        *end_pos = i;
+        return OG_SUCCESS;
+    }
+    return OG_ERROR;
+}
+
+static status_t plc_trigger_make_word(text_t *src, uint32 pos, source_location_t loc, word_t *word, uint32 *end_pos)
+{
+    uint32 name_start = pos + PLC_TRIG_NAME_RESERVERD_LEN;
+    uint32 i = name_start;
+    word_type_t word_type;
+    source_location_t name_loc;
+
+    if (!plc_trigger_prefix(src, pos, &word_type) || i >= src->len) {
+        return OG_ERROR;
+    }
+    name_loc = plc_trigger_range_end_loc(src, loc, pos, name_start);
+
+    *word = (word_t){ 0 };
+    word->type = word_type;
+    word->ori_type = word_type;
+    word->loc = loc;
+    word->text.str = src->str + pos;
+    word->text.len = 0;
+    word->text.loc = loc;
+    word->ex_count = 1;
+
+    if (src->str[i] == '"') {
+        return plc_trigger_make_quoted_word(src, pos, i, name_loc, word, end_pos);
+    }
+
+    if (!plc_trigger_ident_start(src->str[i])) {
+        return OG_ERROR;
+    }
+
+    word->ex_words[0].type = WORD_TYPE_VARIANT;
+    word->ex_words[0].text.value.str = src->str + i;
+    word->ex_words[0].text.loc = name_loc;
+    while (i < src->len && plc_trigger_ident_char(src->str[i])) {
+        i++;
+    }
+    word->ex_words[0].text.value.len = i - name_start;
+    word->text.len = i - pos;
+    *end_pos = i;
+    return OG_SUCCESS;
+}
+
+static status_t plc_trigger_concat_range(text_t *dst, uint32 max_len, text_t *src, uint32 begin, uint32 end)
+{
+    text_t part;
+
+    if (end <= begin) {
+        return OG_SUCCESS;
+    }
+    if (dst->len + end - begin > max_len) {
+        OG_THROW_ERROR(ERR_BUFFER_OVERFLOW, dst->len + end - begin, max_len);
+        return OG_ERROR;
+    }
+
+    part.str = src->str + begin;
+    part.len = end - begin;
+    cm_concat_text(dst, max_len, &part);
+    return OG_SUCCESS;
+}
+
+static status_t plc_trigger_concat_decl_name(text_t *dst, uint32 max_len, const text_t *name)
+{
+    OG_RETURN_IFERR(plc_concat_str(dst, max_len, "\""));
+    for (uint32 i = 0; i < name->len; i++) {
+        if (name->str[i] == '"') {
+            OG_RETURN_IFERR(plc_concat_str(dst, max_len, "\"\""));
+        } else {
+            if (dst->len + 1 > max_len) {
+                OG_THROW_ERROR(ERR_BUFFER_OVERFLOW, dst->len + 1, max_len);
+                return OG_ERROR;
+            }
+            CM_TEXT_APPEND(dst, name->str[i]);
+        }
+    }
+    return plc_concat_str(dst, max_len, "\"");
+}
+
+static status_t plc_compile_trigger_variant_name(pl_compiler_t *compiler, text_t *sql, word_t *word)
+{
+    plv_decl_t *decl = NULL;
+
+    OG_RETURN_IFERR(plc_get_trigger_decl(compiler, 0, word, PLV_VAR, &decl));
+    return plc_trigger_concat_decl_name(sql, compiler->convert_buf_size, &decl->name);
+}
+
+static status_t plc_rewrite_one_trigger_variant(pl_compiler_t *compiler, text_t *dst, word_t *word,
+    plc_trigger_rewrite_mode_t mode)
+{
+    if (mode == PLC_TRIGGER_REWRITE_AS_PARAM) {
+        return plc_compile_trigger_variant(compiler, dst, word);
+    }
+
+    return plc_compile_trigger_variant_name(compiler, dst, word);
+}
+
+status_t plc_rewrite_trigger_variants(pl_compiler_t *compiler, text_t *src, text_t *rewritten,
+    source_location_t loc, plc_trigger_rewrite_mode_t mode)
+{
+    uint32 pos = 0;
+    uint32 segment_start = 0;
+    bool32 changed = OG_FALSE;
+    source_location_t cur_loc = loc;
+
+    if (compiler == NULL || compiler->type != PL_TRIGGER ||
+        (mode == PLC_TRIGGER_REWRITE_AS_PARAM && compiler->current_input == NULL)) {
+        *rewritten = *src;
+        return OG_SUCCESS;
+    }
+
+    rewritten->str = compiler->convert_buf;
+    rewritten->len = 0;
+
+    while (pos < src->len) {
+        word_t word = { 0 };
+        uint32 end_pos = pos;
+
+        if (src->str[pos] == '$') {
+            uint32 next_pos = plc_trigger_skip_dollar_quote(src, pos, &cur_loc);
+            if (next_pos != pos) {
+                pos = next_pos;
+                continue;
+            }
+        }
+
+        if (src->str[pos] == '\'' || src->str[pos] == '"' || src->str[pos] == '`') {
+            bool32 escape_backslash = plc_trigger_is_extended_quote(src, pos, src->str[pos]);
+            pos = plc_trigger_skip_quoted(src, pos, &cur_loc, src->str[pos], escape_backslash);
+            continue;
+        }
+
+        if (pos + 1 < src->len &&
+            ((src->str[pos] == '-' && src->str[pos + 1] == '-') ||
+                (src->str[pos] == '/' && src->str[pos + 1] == '*'))) {
+            pos = plc_trigger_skip_comment(src, pos, &cur_loc);
+            continue;
+        }
+
+        if (plc_trigger_make_word(src, pos, cur_loc, &word, &end_pos) == OG_SUCCESS) {
+            OG_RETURN_IFERR(plc_trigger_concat_range(rewritten, compiler->convert_buf_size, src, segment_start, pos));
+            OG_RETURN_IFERR(plc_rewrite_one_trigger_variant(compiler, rewritten, &word, mode));
+            while (pos < end_pos) {
+                plc_trigger_advance_loc(&cur_loc, src->str[pos++]);
+            }
+            segment_start = end_pos;
+            changed = OG_TRUE;
+            continue;
+        }
+
+        plc_trigger_advance_loc(&cur_loc, src->str[pos++]);
+    }
+
+    if (!changed) {
+        *rewritten = *src;
+        return OG_SUCCESS;
+    }
+
+    return plc_trigger_concat_range(rewritten, compiler->convert_buf_size, src, segment_start, src->len);
 }

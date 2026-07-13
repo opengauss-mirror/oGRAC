@@ -22,6 +22,10 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <string.h>
+#ifndef WIN32
+#include <sys/vfs.h>
+#endif
 #include "knl_space_module.h"
 #include "knl_create_space.h"
 #include "knl_context.h"
@@ -35,6 +39,93 @@ extern "C" {
 #endif
 
 #define SPC_CLEAN_OPTION (TABALESPACE_INCLUDE | TABALESPACE_DFS_AND | TABALESPACE_CASCADE)
+#define SPC_CURRENT_DIR "."
+
+#ifndef WIN32
+#ifndef NFS_SUPER_MAGIC
+#define NFS_SUPER_MAGIC 0x6969
+#endif
+#ifndef CIFS_MAGIC_NUMBER
+#define CIFS_MAGIC_NUMBER 0xFF534D42
+#endif
+#ifndef SMB_SUPER_MAGIC
+#define SMB_SUPER_MAGIC 0x517B
+#endif
+#ifndef OCFS2_SUPER_MAGIC
+#define OCFS2_SUPER_MAGIC 0x7461636F
+#endif
+#ifndef GFS2_MAGIC
+#define GFS2_MAGIC 0x01161970
+#endif
+#endif
+
+static bool32 spc_is_configured_multi_instance(knl_session_t *session)
+{
+    if (!DB_IS_CLUSTER(session)) {
+        return OG_FALSE;
+    }
+    return (bool32)(DB_CORE_CTRL(session)->node_count > 1);
+}
+
+static status_t spc_get_datafile_dir(const char *file_name, char *dir, uint32 dir_size)
+{
+    const char *slash = strrchr(file_name, '/');
+#ifdef WIN32
+    const char *backslash = strrchr(file_name, '\\');
+    if (backslash != NULL && (slash == NULL || backslash > slash)) {
+        slash = backslash;
+    }
+#endif
+
+    if (slash == NULL) {
+        MEMS_RETURN_IFERR(strcpy_sp(dir, dir_size, SPC_CURRENT_DIR));
+        return OG_SUCCESS;
+    }
+
+    uint32 len = (slash == file_name) ? 1 : (uint32)(slash - file_name);
+    if (len >= dir_size) {
+        OG_THROW_ERROR(ERR_NAME_TOO_LONG, "datafile directory", len, dir_size - 1);
+        return OG_ERROR;
+    }
+
+    errno_t ret = memcpy_sp(dir, dir_size, file_name, len);
+    knl_securec_check(ret);
+    dir[len] = '\0';
+    return OG_SUCCESS;
+}
+
+static bool32 spc_is_shared_file_fs_type(uint64 fs_type)
+{
+    switch (fs_type) {
+#ifndef WIN32
+        case NFS_SUPER_MAGIC:
+        case CIFS_MAGIC_NUMBER:
+        case SMB_SUPER_MAGIC:
+        case OCFS2_SUPER_MAGIC:
+        case GFS2_MAGIC:
+            return OG_TRUE;
+#endif
+        default:
+            return OG_FALSE;
+    }
+}
+
+static status_t spc_is_shared_file_path(const char *file_name, bool32 *is_shared)
+{
+    *is_shared = OG_FALSE;
+#ifndef WIN32
+    char dir[OG_FILE_NAME_BUFFER_SIZE] = { 0 };
+    struct statfs fs;
+
+    OG_RETURN_IFERR(spc_get_datafile_dir(file_name, dir, OG_FILE_NAME_BUFFER_SIZE));
+    if (statfs(dir, &fs) != 0) {
+        OG_LOG_RUN_ERR("[SPACE] failed to get filesystem type of datafile directory %s", dir);
+        return OG_SUCCESS;
+    }
+    *is_shared = spc_is_shared_file_fs_type((uint64)fs.f_type);
+#endif
+    return OG_SUCCESS;
+}
 
 // record and set in memory, do not record redo
 static inline void spc_try_set_swap_bitmap(knl_session_t *session, space_t *space)
@@ -105,10 +196,21 @@ static status_t spc_create_datafile_precheck(knl_session_t *session, space_t *sp
     uint32 used_count = 0;
     datafile_t *df = NULL;
     datafile_t *new_df = NULL;
-    char buf[OG_MAX_FILE_NAME_LEN];
+    char buf[OG_FILE_NAME_BUFFER_SIZE];
 
-    (void)cm_text2str(&def->name, buf, OG_MAX_FILE_NAME_LEN - 1);
+    (void)cm_text2str(&def->name, buf, OG_FILE_NAME_BUFFER_SIZE);
     device_type_t type = cm_device_type(buf);
+    if (spc_is_configured_multi_instance(session) && type == DEV_TYPE_FILE) {
+        bool32 is_shared = OG_FALSE;
+        OG_RETURN_IFERR(spc_is_shared_file_path(buf, &is_shared));
+        if (!is_shared) {
+            OG_THROW_ERROR(ERR_OPERATIONS_NOT_SUPPORT, "create datafile on local file path",
+                "multi-node cluster mode, please use shared storage");
+            OG_LOG_RUN_ERR("[SPACE] local datafile %s is not allowed in multi-instance cluster mode", buf);
+            return OG_ERROR;
+        }
+    }
+
     if (!cm_dbs_is_enable_dbs() && (type == DEV_TYPE_PGPOOL || type == DEV_TYPE_ULOG)) {
         OG_THROW_ERROR(ERR_SPACE_NAME_INVALID, "name cannot start with - or * using non-dbstore mode");
         return OG_ERROR;

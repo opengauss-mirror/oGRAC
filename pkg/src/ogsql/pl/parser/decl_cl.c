@@ -33,6 +33,10 @@
 
 plv_decl_t *plc_find_param_by_id(pl_compiler_t *compiler, plv_id_t plv_id)
 {
+    if (compiler == NULL || compiler->params == NULL || plv_id.id >= compiler->params->count) {
+        return NULL;
+    }
+
     return (plv_decl_t *)cm_galist_get(compiler->params, plv_id.id);
 }
 

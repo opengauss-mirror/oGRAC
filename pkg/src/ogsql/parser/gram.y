@@ -132,6 +132,8 @@ static char *bison_copy_token_text(core_yyscan_t yyscanner, int offset);
 static void sql_bison_privilege_text(core_yyscan_t yyscanner, int start_offset, bool32 stop_on, text_t *priv_name);
 static bool32 sql_bison_lookup_role(sql_stmt_t *stmt, text_t *priv_name, char *role_buf, uint32 role_buf_len,
     uint32 *rid);
+static status_t sql_bison_make_all_priv_list(sql_stmt_t *stmt, const char *name, source_location_t loc,
+    galist_t **list);
 static status_t sql_bison_copy_cstr_if_present(sql_stmt_t *stmt, char *src, text_t *dst);
 static status_t sql_bison_copy_text_if_present(sql_stmt_t *stmt, text_t *src, text_t *dst);
 static status_t strGetInt64ByLen(const char *str, size_t len, int64 *value);
@@ -377,7 +379,8 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
 %type <str> ColId type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
-            debug_mode_value altsession_set_key altsession_set_value alter_param_value alter_session_extra_token case_invalid_word
+            debug_mode_value altsession_set_key altsession_set_value alter_system_param_name alter_param_value alter_session_extra_token
+            case_invalid_word
 
 %type <ival> opt_asc_desc opt_nulls_order opt_ckpt_type opt_charset opt_collate opt_wait opt_wait_time opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
@@ -8134,7 +8137,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P SET IDENT '=' alter_param_value opt_set_scope
+            | ALTER SYSTEM_P SET alter_system_param_name '=' alter_param_value opt_set_scope
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8532,7 +8535,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P ARCHIVE_SET IDENT '=' alter_param_value opt_set_scope opt_arch_set_type
+            | ALTER SYSTEM_P ARCHIVE_SET alter_system_param_name '=' alter_param_value opt_set_scope opt_arch_set_type
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8752,7 +8755,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P DEBUG MODE IDENT '=' debug_mode_value
+            | ALTER SYSTEM_P DEBUG MODE alter_system_param_name '=' debug_mode_value
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -9020,6 +9023,13 @@ alter_session_extra_token:
             | OPER_LSHIFT               { $$ = $1; }
             | OPER_RSHIFT               { $$ = $1; }
             | DOT_DOT                   { $$ = ".."; }
+        ;
+
+alter_system_param_name:
+            ColLabel
+                {
+                    $$ = $1;
+                }
         ;
 
 opt_drop_tbsp:
@@ -9343,6 +9353,9 @@ CommentStmt:
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
                         def->comment.len = 0;
                     }
+                    if (sql_verify_comment_def(stmt, def) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify comment failed");
+                    }
                     $$ = def;
                 }
             | COMMENT ON COLUMN insert_column_item IS SCONST
@@ -9377,6 +9390,9 @@ CommentStmt:
                     } else {
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
                         def->comment.len = 0;
+                    }
+                    if (sql_verify_comment_def(stmt, def) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify comment failed");
                     }
                     $$ = def;
                 }
@@ -11279,11 +11295,55 @@ GrantStmt:
                     }
                     $$ = def;
                 }
+            | GRANT ALL ON grant_objtype any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $4, $5, $7, $8) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
+            | GRANT ALL PRIVILEGES ON grant_objtype any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $5, $6, $8, $9) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
             | GRANT obj_priv_list ON any_name TO grantee_list opt_with_grant
                 {
                     knl_grant_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
+            | GRANT ALL ON any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
+                        parser_yyerror("parse grant failed");
+                    }
+                    $$ = def;
+                }
+            | GRANT ALL PRIVILEGES ON any_name TO grantee_list opt_with_grant
+                {
+                    knl_grant_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $5, $7, $8) != OG_SUCCESS) {
                         parser_yyerror("parse grant failed");
                     }
                     $$ = def;
@@ -18017,6 +18077,24 @@ static bool32 sql_bison_lookup_role(sql_stmt_t *stmt, text_t *priv_name, char *r
 
     *priv_name = role_name;
     return OG_TRUE;
+}
+
+static status_t sql_bison_make_all_priv_list(sql_stmt_t *stmt, const char *name, source_location_t loc,
+    galist_t **list)
+{
+    text_t priv_name;
+    knl_priv_def_t *priv_def = NULL;
+
+    OG_RETURN_IFERR(sql_create_list(stmt, list));
+    OG_RETURN_IFERR(cm_galist_new(*list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def));
+
+    cm_str2text((char *)name, &priv_name);
+    OG_RETURN_IFERR(sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name));
+
+    priv_def->priv_id = (uint32)ALL_PRIVILEGES;
+    priv_def->priv_type = PRIV_TYPE_ALL_PRIV;
+    priv_def->start_loc = loc;
+    return OG_SUCCESS;
 }
 
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc)

@@ -718,6 +718,7 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     sql_stmt_t *sub_stmt = NULL;
     status_t status = OG_ERROR;
     sql_text_t sql_text = { 0 };
+    text_t parsed_sql = { 0 };
     sql_stmt_t *save_curr_stmt = stmt->session->current_stmt;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     galist_t *save_input = (compiler == NULL) ? NULL : compiler->current_input;
@@ -728,7 +729,8 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     sub_stmt->context = NULL;
     sub_stmt->session->current_stmt = sub_stmt;
 
-    sql_text.value = *arg->sql;
+    parsed_sql = *arg->sql;
+    sql_text.value = parsed_sql;
     sql_text.loc = *arg->loc;
     sql_text.implicit = OG_FALSE;
 
@@ -737,6 +739,13 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     }
 
     do {
+        if (plc_rewrite_trigger_variants(compiler, arg->sql, &parsed_sql, *arg->loc,
+            PLC_TRIGGER_REWRITE_AS_PARAM) != OG_SUCCESS) {
+            pl_check_and_set_loc(*arg->loc);
+            break;
+        }
+        sql_text.value = parsed_sql;
+
         if (sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text) != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);
             break;

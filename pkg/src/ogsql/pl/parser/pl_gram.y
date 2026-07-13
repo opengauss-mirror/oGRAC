@@ -20,6 +20,7 @@
 #include "ogsql_dependency.h"
 #include "ogsql_privilege.h"
 #include "pragma_cl.h"
+#include "trigger_decl_cl.h"
 
 /* Location tracking support --- simpler than bison's default */
 
@@ -127,6 +128,8 @@ static bool32 pl_bison_is_ident_char(char c);
 static bool32 pl_bison_is_ident_text(const char *str, uint32 len);
 static text_t *current_label_name(pl_compiler_t *compiler);
 static status_t check_end_name(const text_t *expected, const char *actual, source_location_t loc);
+static status_t check_block_end_name(pl_compiler_t *compiler, const text_t *expected,
+    const pl_bison_end_name_t *actual, source_location_t loc);
 static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char *actual, source_location_t loc);
 static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
@@ -201,6 +204,13 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
 
 %}
 
+%code requires {
+typedef struct st_pl_bison_end_name {
+    const char *owner;
+    const char *name;
+} pl_bison_end_name_t;
+}
+
 %expect 0
 %name-prefix "plsql_yy"
 %define api.pure
@@ -224,6 +234,7 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
     bool boolean;
     galist_t *list;
     record_attr_t *record_attr;
+    pl_bison_end_name_t end_name;
 }
 
 %type <keyword>	unreserved_keyword
@@ -233,7 +244,8 @@ union YYSTYPE;					/* need forward reference for tok_is_keyword */
 %type <text> decl_rec_defval_expr cursor_query cursor_arg_defval_expr
 %type <type> decl_datatype
 %type <type> opt_collection_index
-%type <str> decl_varname simple_name label_name opt_block_end_name opt_loop_end_name opt_exit_label for_index_name
+%type <str> decl_varname simple_name label_name opt_loop_end_name opt_exit_label for_index_name
+%type <end_name> opt_block_end_name
 %type <word> pragma_exception_name
 %type <ival> pragma_error_code
 %type <boolean> decl_notnull
@@ -470,7 +482,7 @@ block_body_core:
                         if (expected_name == NULL && compiler->stack.depth == 1 && compiler->obj != NULL) {
                             expected_name = &compiler->obj->name;
                         }
-                        if (check_end_name(expected_name, $5, @5.loc) != OG_SUCCESS) {
+                        if (check_block_end_name(compiler, expected_name, &$5, @5.loc) != OG_SUCCESS) {
                             parser_yyerror("Undefined symbol");
                         }
                     }
@@ -506,14 +518,21 @@ opt_declare_keyword:
         ;
 
 opt_block_end_name:
-            T_WORD
+            simple_name
                 {
-                    $$ = pl_bison_word_name(yyscanner, &$1, @1.offset);
-                    if ($$ == NULL) {
-                        parser_yyerror("invalid block end name");
-                    }
+                    $$.owner = NULL;
+                    $$.name = $1;
                 }
-            | /* EMPTY */                               { $$ = NULL; }
+            | simple_name '.' simple_name
+                {
+                    $$.owner = $1;
+                    $$.name = $3;
+                }
+            | /* EMPTY */
+                {
+                    $$.owner = NULL;
+                    $$.name = NULL;
+                }
         ;
 
 opt_loop_end_name:
@@ -747,7 +766,8 @@ stmt_assign:
                             parser_yyerror("compile assignment failed");
                         }
                         line->left = left;
-                        if (parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
+                        if (plc_check_var_as_left(compiler, line->left, @1.loc, NULL) != OG_SUCCESS ||
+                            parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
                             plc_clone_expr_node(compiler, &line->left) != OG_SUCCESS ||
                             plc_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
                             plc_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
@@ -769,6 +789,7 @@ stmt_return:
                         .id = 0,
                         .input_id = 0
                     };
+                    YYLTYPE return_loc = @1;
 
                     if (plc_alloc_line(compiler, sizeof(pl_line_return_t), LINE_RETURN,
                         (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
@@ -780,6 +801,10 @@ stmt_return:
                         }
                         line->expr = NULL;
                     } else {
+                        if (compiler->type != PL_FUNCTION) {
+                            plsql_yyerror(&return_loc, yyscanner, "; expected");
+                            YYABORT;
+                        }
                         if (read_return_sql_construct(stmt, $2, line) != OG_SUCCESS) {
                             parser_yyerror("compile return expr failed");
                         }
@@ -2619,6 +2644,34 @@ static status_t check_end_name(const text_t *expected, const char *actual, sourc
     return OG_ERROR;
 }
 
+static status_t check_block_end_name(pl_compiler_t *compiler, const text_t *expected,
+    const pl_bison_end_name_t *actual, source_location_t loc)
+{
+    text_t actual_owner;
+
+    if (actual == NULL || actual->name == NULL) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(check_end_name(expected, actual->name, loc));
+    if (actual->owner == NULL) {
+        return OG_SUCCESS;
+    }
+
+    if (compiler == NULL || compiler->obj == NULL || expected != &compiler->obj->name) {
+        OG_SRC_THROW_ERROR(loc, ERR_UNDEFINED_SYMBOL_FMT, actual->owner);
+        return OG_ERROR;
+    }
+
+    cm_str2text((char *)actual->owner, &actual_owner);
+    if (!cm_text_equal_ins(&compiler->obj->user, &actual_owner)) {
+        OG_SRC_THROW_ERROR(loc, ERR_UNDEFINED_SYMBOL_FMT, actual->owner);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char *actual, source_location_t loc)
 {
     if (compiler->control_stack.depth == 0) {
@@ -2863,12 +2916,28 @@ static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefi
     return status;
 }
 
-static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+static status_t pl_bison_rewrite_trigger_fragment(sql_stmt_t *stmt, text_t *src, text_t *rewritten)
 {
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     source_location_t loc = { 0 };
 
+    if (compiler == NULL) {
+        *rewritten = *src;
+        return OG_SUCCESS;
+    }
+    loc = compiler->line_loc;
+    return plc_rewrite_trigger_variants(compiler, src, rewritten, loc, PLC_TRIGGER_REWRITE_AS_NAME);
+}
+
+static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    source_location_t loc = { 0 };
+    text_t rewritten_src;
+
     *expr = NULL;
+    OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
+    src = &rewritten_src;
     if (compiler != NULL) {
         loc = compiler->line_loc;
         OG_RETURN_IFERR(try_create_pl_var_expr_from_text(stmt, src, loc, expr));
@@ -2887,13 +2956,21 @@ static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t *
 
 static status_t get_valid_cond_tree(sql_stmt_t *stmt, text_t *src, cond_tree_t **cond)
 {
+    text_t rewritten_src;
+
     *cond = NULL;
+    OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
+    src = &rewritten_src;
     return pl_bison_parse_fragment_tree(stmt, "CHECK (", src, ")", PL_BISON_FRAGMENT_COND_TREE, (void **)cond);
 }
 
 static status_t get_valid_call_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
 {
+    text_t rewritten_src;
+
     *expr = NULL;
+    OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
+    src = &rewritten_src;
     /* PROCEDURE selects the SQL-bison entry for PL statement-level calls. */
     return pl_bison_parse_fragment_tree(stmt, "PROCEDURE ", src, "", PL_BISON_FRAGMENT_EXPR_TREE, (void **)expr);
 }

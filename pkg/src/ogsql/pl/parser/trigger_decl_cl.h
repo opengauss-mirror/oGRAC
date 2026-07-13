@@ -31,20 +31,27 @@
 extern "C" {
 #endif
 
-#define PLC_IS_TRIGGER_CONTEXT(compiler) ((compiler)->stmt->context->type == OGSQL_TYPE_CREATE_TRIG)
 #define PLC_TRIG_NAME_RESERVERD_LEN 5 /* :new.   :old. */
 #define TRIG_REAL_COLUMN_TABLE 0
 #define TRIG_PSEUDO_COLUMN_TALBE 1
 #define TRIG_RES_WORD_ROWID 0
 #define TRIG_RES_WORD_ROWSCN 1
 
+#define PLC_IS_TRIGGER_CONTEXT(compiler) ((compiler)->type == PL_TRIGGER)
 #define IS_TRIGGER_WORD_TYPE(word) ((word)->type == WORD_TYPE_PL_NEW_COL || (word)->type == WORD_TYPE_PL_OLD_COL)
+
+typedef enum en_plc_trigger_rewrite_mode {
+    PLC_TRIGGER_REWRITE_AS_PARAM = 0,
+    PLC_TRIGGER_REWRITE_AS_NAME
+} plc_trigger_rewrite_mode_t;
 
 status_t plc_verify_trigger_modified_var(pl_compiler_t *compiler, plv_decl_t *decl);
 void plc_get_trig_decl_name(pl_compiler_t *compiler, text_t *out, word_t *word, bool32 *is_upper_case);
 status_t plc_add_trigger_decl(pl_compiler_t *compiler, uint32 stack_id, word_t *word, uint32 type,
     plv_decl_t **res_decl);
 status_t plc_compile_trigger_variant(pl_compiler_t *compiler, text_t *sql, word_t *word);
+status_t plc_rewrite_trigger_variants(pl_compiler_t *compiler, text_t *src, text_t *rewritten,
+    source_location_t loc, plc_trigger_rewrite_mode_t mode);
 status_t plc_init_trigger_decls(pl_compiler_t *compiler);
 status_t plc_add_modified_new_cols(pl_compiler_t *compiler);
 
