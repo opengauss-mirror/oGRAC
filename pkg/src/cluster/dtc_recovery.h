@@ -398,6 +398,7 @@ typedef enum st_dtc_recovery_status {
 typedef struct st_dtc_rbp_lfn_point_entry {
     uint64 lfn;
     log_point_t point;
+    log_point_t head_point;
 } dtc_rbp_lfn_point_entry_t;
 
 typedef struct st_dtc_rbp_lfn_point_map {
@@ -458,6 +459,7 @@ typedef struct st_dtc_rcy_context {
     bool8 rbp_jump_taken[OG_MAX_INSTANCES];
     log_point_t rbp_begin_points[OG_MAX_INSTANCES];
     log_point_t rbp_rcy_points[OG_MAX_INSTANCES];
+    log_point_t rbp_rcy_head_points[OG_MAX_INSTANCES];
     log_point_t rbp_lrp_points[OG_MAX_INSTANCES];
     log_point_t rbp_skip_points[OG_MAX_INSTANCES];
     uint64 rbp_max_lsns[OG_MAX_INSTANCES];

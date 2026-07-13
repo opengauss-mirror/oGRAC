@@ -190,6 +190,7 @@ static void dtc_rbp_rt_record_lfn_point(dtc_rbp_rt_aly_ctx_t *ctx, log_batch_t *
     entry = &ctx->lfn_points[slot];
     entry->lfn = batch->head.point.lfn;
     entry->point = *end_point;
+    entry->head_point = batch->head.point;
 }
 
 static void dtc_rbp_rt_prune_lfn_points(dtc_rbp_rt_aly_ctx_t *ctx, uint64 prune_lfn)
@@ -202,6 +203,18 @@ static void dtc_rbp_rt_prune_lfn_points(dtc_rbp_rt_aly_ctx_t *ctx, uint64 prune_
         }
         ctx->lfn_point_start = (ctx->lfn_point_start + 1) % ctx->lfn_point_capacity;
         ctx->lfn_point_count--;
+    }
+}
+
+static void dtc_rbp_rt_export_lfn_point_entries(dtc_rbp_rt_aly_ctx_t *ctx, dtc_rbp_lfn_point_map_t *map,
+    uint32 rtCount)
+{
+    for (uint32 i = 0; i < rtCount; i++) {
+        uint32 idx = (ctx->lfn_point_start + i) % ctx->lfn_point_capacity;
+
+        map->entries[i].lfn = ctx->lfn_points[idx].lfn;
+        map->entries[i].point = ctx->lfn_points[idx].point;
+        map->entries[i].head_point = ctx->lfn_points[idx].head_point;
     }
 }
 
@@ -252,12 +265,7 @@ static status_t dtc_rbp_rt_export_lfn_points(dtc_rbp_rt_aly_ctx_t *ctx)
                         &map->entries[keep_count], size);
         knl_securec_check(ret);
     }
-    for (uint32 i = 0; i < rt_count; i++) {
-        uint32 idx = (ctx->lfn_point_start + i) % ctx->lfn_point_capacity;
-
-        map->entries[i].lfn = ctx->lfn_points[idx].lfn;
-        map->entries[i].point = ctx->lfn_points[idx].point;
-    }
+    dtc_rbp_rt_export_lfn_point_entries(ctx, map, rt_count);
     map->count = rt_count + (old_count - keep_count);
     return OG_SUCCESS;
 }
@@ -323,6 +331,7 @@ static status_t dtc_rbp_rt_init_peer_logset(knl_session_t *session, dtc_rbp_rt_a
     ctx->curr_point = ctrl->rcy_point;
     ctx->begin_point = ctx->curr_point;
     ctx->safe_analyzed_point = ctx->curr_point;
+    ctx->safe_analyzed_head_point = ctx->curr_point;
     ctx->peer_prune_point = ctrl->rcy_point;
     ctx->rt_start_lfn = ctrl->rcy_point.lfn;
     return OG_SUCCESS;
@@ -628,6 +637,7 @@ static void dtc_rbp_rt_commit_completed_batches_locked(dtc_rbp_rt_aly_ctx_t *ctx
         if (slot->seq != ctx->commit_seq || slot->state != DTC_RBP_RT_BATCH_DONE) {
             break;
         }
+        ctx->safe_analyzed_head_point = slot->begin_point;
         ctx->safe_analyzed_point = slot->end_point;
         ctx->safe_seq = slot->seq;
         ctx->analyzed_batches++;
@@ -1344,8 +1354,10 @@ static status_t dtc_rbp_rt_reset_runtime_window(knl_session_t *session, dtc_rbp_
     ctx->begin_point = reset_point;
     ctx->curr_point = reset_point;
     ctx->safe_analyzed_point = reset_point;
+    ctx->safe_analyzed_head_point = reset_point;
     ctx->peer_prune_point = reset_point;
     ctx->snapshot_safe_point = reset_point;
+    ctx->snapshot_safe_head_point = reset_point;
     ctx->snapshot_next_point = reset_point;
     ctx->rt_start_lfn = reset_point.lfn;
     ctx->snapshot_valid = OG_FALSE;
@@ -1956,11 +1968,26 @@ static void dtc_rbp_rt_snapshot_locals(dtc_rbp_rt_aly_ctx_t *ctx)
         knl_securec_check(ret);
     }
     ctx->snapshot_safe_point = ctx->safe_analyzed_point;
+    ctx->snapshot_safe_head_point = ctx->safe_analyzed_head_point;
     ctx->snapshot_next_point = ctx->safe_analyzed_point;
     ctx->snapshot_valid = OG_TRUE;
 }
 
-bool32 dtc_rbp_rt_aly_prepare_partial(knl_session_t *session, log_point_t *safe_point, log_point_t *next_point)
+static void dtc_rbp_rt_snapshot_active_stat(const dtc_rbp_rt_aly_ctx_t *ctx, uint64 *activeItems,
+    bool32 *activeReady)
+{
+    *activeItems = 0;
+    *activeReady = OG_TRUE;
+    for (uint32 i = 0; i < ctx->owner_worker_count; i++) {
+        *activeItems += ctx->snapshot_owner_rcy[i].active_item_count;
+        if (!dtc_rcy_local_set_active_ready(&ctx->snapshot_owner_rcy[i])) {
+            *activeReady = OG_FALSE;
+        }
+    }
+}
+
+bool32 dtc_rbp_rt_aly_prepare_partial(knl_session_t *session, log_point_t *safe_point,
+    log_point_t *safe_head_point, log_point_t *next_point)
 {
     dtc_rbp_rt_aly_ctx_t *ctx;
     dtc_rcy_context_t *dtc_rcy;
@@ -1993,17 +2020,16 @@ bool32 dtc_rbp_rt_aly_prepare_partial(knl_session_t *session, log_point_t *safe_
     if (safe_point != NULL) {
         *safe_point = ctx->snapshot_safe_point;
     }
+    if (safe_head_point != NULL) {
+        *safe_head_point = ctx->snapshot_safe_head_point;
+    }
     if (next_point != NULL) {
         *next_point = ctx->snapshot_next_point;
     }
-    uint64 active_items = 0;
-    bool32 active_ready = OG_TRUE;
-    for (uint32 i = 0; i < ctx->owner_worker_count; i++) {
-        active_items += ctx->snapshot_owner_rcy[i].active_item_count;
-        if (!dtc_rcy_local_set_active_ready(&ctx->snapshot_owner_rcy[i])) {
-            active_ready = OG_FALSE;
-        }
-    }
+    uint64 active_items;
+    bool32 active_ready;
+
+    dtc_rbp_rt_snapshot_active_stat(ctx, &active_items, &active_ready);
     OG_LOG_RUN_INF("[DTC RBP RT] runtime snapshot accepted, peer=%u safe_lfn=%llu rcy_lfn=%llu "
                    "rt_start_lfn=%llu prune_lfn=%llu active_items=%llu active_ready=%u batches=%llu pages=%llu "
                    "parsed_events=%llu applied_events=%llu",
@@ -2156,7 +2182,7 @@ bool32 dtc_rbp_rt_aly_try_build_partial(knl_session_t *session)
     log_point_t safe_point;
     log_point_t next_point;
 
-    if (!dtc_rbp_rt_aly_prepare_partial(session, &safe_point, &next_point)) {
+    if (!dtc_rbp_rt_aly_prepare_partial(session, &safe_point, NULL, &next_point)) {
         return OG_FALSE;
     }
     (void)next_point;
