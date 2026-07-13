@@ -285,6 +285,8 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
     ctrl->shmem_page_meta = shmem_page_meta;
     dcs_get_page_from_gbp(session, ctrl, mode);
 
+    session->ub_page_req_kind = (uint8)UB_PAGE_REQ_COLD_PROMOTE; // UB-stats
+
     DTC_DCS_DEBUG_INF(
         "[DCS][%u-%u][%s]: handle shmem addr from Master, lock mode=%u, edp=%d, src_id=%u, src_sid=%u, dest_id=%u,"
         "dest_sid=%u, mode=%u, dirty=%u, remote dirty=%u, remote remote diry=%u, page pcn=%d, page lsn=%llu,"
@@ -526,6 +528,8 @@ static status_t dcs_handle_ack_need_check_gbp(knl_session_t *session, uint32 mas
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
 
+    session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // UB-stats
+
     cm_reset_error();
     OG_THROW_ERROR(ERR_DCS_MSG_EAGAIN, "failed to send ask master request. Try again later");
     return OG_ERROR;
@@ -617,6 +621,9 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
     ctrl->load_status = (uint8)BUF_NEED_LOAD_FROM_GBP;
     ctrl->shmem_page_addr = (page_head_t *)(base + ack->shmem_page_meta_off + sizeof(remote_page_info_t));
     ctrl->shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
+
+    session->ub_page_req_kind = (flags & MES_FLAG_GBP_PROMOTED) ? (uint8)UB_PAGE_REQ_COLD_PROMOTE // UB-stats
+                                                                : (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // UB-stats
 
     if (ack->gbp_owner_id != ctrl->shmem_page_meta->claimed_owner) {
         OG_LOG_RUN_ERR("[DCS-GBP][%u-%u]: ack->gbp_owner_id %d, ctrl->shmem_page_meta->claimed_owner %d, meta addr:%p",
@@ -1201,7 +1208,7 @@ static inline void dcs_prepare_page_ready_gbp_ack(knl_session_t *session, uint8 
     ask_page->lsn = 0;
     ask_page->scn = 0;
     ask_page->mode = page_req->req_mode;
-    ask_page->head.flags = MES_FLAG_MOVED_TO_GBP;
+    ask_page->head.flags = MES_FLAG_MOVED_TO_GBP | MES_FLAG_GBP_PROMOTED; // UB-stats
     ask_page->req_version = page_req->req_version;
     ask_page->gbp_owner_id = page_req->gbp_owner_id;
     ask_page->shmem_page_meta_off = page_req->shmem_page_meta_off;
@@ -1456,7 +1463,7 @@ static status_t dcs_owner_transfer_page_to_gbp(knl_session_t *session, uint8 mas
 }
 
 static status_t dcs_send_requester_gbp_addr(knl_session_t *session, msg_page_req_t *page_req,
-                                            msg_ask_page_ack_t *ask_page)
+                                            msg_ask_page_ack_t *ask_page, bool32 promoted) // UB-stats
 {
     status_t ret;
     uint16 size = (uint16)sizeof(msg_ask_page_ack_t);
@@ -1478,6 +1485,10 @@ static status_t dcs_send_requester_gbp_addr(knl_session_t *session, msg_page_req
     mes_init_ack_head(&page_req->head, &ask_page->head, MES_CMD_MASTER_ACK_ALREADY_IN_GBP, size, DCS_SELF_SID(session));
     /* Mark as GBP so receiver dispatches to dcs_handle_gbp_from_owner() */
     ask_page->head.flags |= MES_FLAG_MOVED_TO_GBP;
+
+    if (promoted) { // UB-stats
+        ask_page->head.flags |= MES_FLAG_GBP_PROMOTED; // UB-stats
+    } // UB-stats
 
     knl_begin_session_wait(session, DCS_TRANSFER_SHMEM_ADDR, OG_TRUE);
 
@@ -1721,7 +1732,7 @@ static inline void dcs_send_requester_get_page_from_gbp(knl_session_t *session, 
     ack_to_requester.gbp_owner_id = DCS_SELF_INSTID(session);  // this function must run in master
     ack_to_requester.shmem_page_meta_off = meta_off64;
 
-    dcs_send_requester_gbp_addr(session, page_req, &ack_to_requester);
+    dcs_send_requester_gbp_addr(session, page_req, &ack_to_requester, OG_FALSE); // (already hot, no promotion) // UB-stats
 
     OG_LOG_DEBUG_INF("[DCS-GBP-GET-PAGE][%u-%u][%s]: dest_id=%u, dest_sid=%u, mode=%u, rsn=%u, meta_off=%llu, sync_lsn=%llu",
                    page_req->page_id.file, page_req->page_id.page, MES_CMD2NAME(ack_to_requester.head.cmd),
@@ -2065,7 +2076,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
                 break;
             }
             remote_buf_release_gbp_alloc_success(session, result.gbp_buf_ctrl);
-            dcs_send_requester_gbp_addr(session, &page_req, &ack_to_requester);
+            dcs_send_requester_gbp_addr(session, &page_req, &ack_to_requester, OG_TRUE); // (promoted during this request) // UB-stats
             break;
         }
         default:
@@ -2502,6 +2513,7 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
             ctrl->shmem_page_addr = result.shmem_page_addr;
             ctrl->shmem_page_meta = (remote_page_info_t *)((char *)result.shmem_page_addr - sizeof(remote_page_info_t));
             dcs_get_page_from_gbp(session, ctrl, result.req_mode);
+            session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // (page was already hot in GBP before this request, no promotion) // UB-stats
             knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE);
 
             DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][ask master local for hot page]: , src_id=%u, dest_id=%u, "

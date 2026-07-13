@@ -564,20 +564,32 @@ status_t dtc_buf_gbp_wait_reload_done(knl_session_t *session, buf_ctrl_t *ctrl)
     return OG_SUCCESS;
 }
 
-static status_t dtc_buf_wait_readonly_clear(ub_rw_lock_t *lock, page_id_t page_id)
+static status_t dtc_buf_wait_readonly_clear(knl_session_t *session, ub_rw_lock_t *lock, page_id_t page_id)
 {
     uint32 times = 0;
+    date_t wait_start = cm_monotonic_now(); // UB-stats
 
     while (ub_rw_lock_get_readonly(lock)) {
         times++;
         if (SECUREC_UNLIKELY(times > GBP_READONLY_WAIT_MAX_TIMES)) {
+            uint64 wait_us = (uint64)(cm_monotonic_now() - wait_start); // UB-stats
             OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] wait readonly clear timeout", page_id.file, page_id.page);
+            session->ub_req_readonly_wait_us += wait_us; // UB-stats
+            session->stat->ub_reload_from_gbp_readonly_wait_count++; // UB-stats
+            session->stat->ub_reload_from_gbp_readonly_wait_time += wait_us; // UB-stats
             return OG_ERROR;
         }
         if (times % 50 == 0) {
             cm_sleep(1);
         }
     }
+
+    if (times > 0) { // UB-stats
+        uint64 wait_us = (uint64)(cm_monotonic_now() - wait_start); // UB-stats
+        session->ub_req_readonly_wait_us += wait_us; // UB-stats
+        session->stat->ub_reload_from_gbp_readonly_wait_count++; // UB-stats
+        session->stat->ub_reload_from_gbp_readonly_wait_time += wait_us; // UB-stats
+    } // UB-stats
 
     return OG_SUCCESS;
 }
@@ -628,6 +640,7 @@ static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ct
     status_t ret;
     uint32 page_size = DEFAULT_PAGE_SIZE(session);
     page_head_t *temp_page = (page_head_t *)cm_push(session->stack, page_size);
+    date_t step_start; // UB-stats
 
     if (temp_page == NULL) {
         OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] session stack overflow while copying from gbp shmem",
@@ -635,12 +648,18 @@ static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ct
         return OG_ERROR;
     }
 
+    step_start = cm_monotonic_now(); // UB-stats
     ret = dcs_copy_page_to_temp(session, ctrl, (char *)temp_page);
+    session->stat->ub_reload_from_gbp_copy_buf_count++; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
     if (ret != OG_SUCCESS) {
         return ret;
     }
     if (CHECK_PAGE_PCN(temp_page)) {
-        return dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
+        step_start = cm_monotonic_now(); // UB-stats
+        ret = dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
+        session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
+        return ret;
     }
 
     if (!ub_rw_lock_get_readonly(lock)) {
@@ -649,12 +668,15 @@ static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ct
         return OG_ERROR;
     }
 
-    ret = dtc_buf_wait_readonly_clear(lock, ctrl->page_id);
+    ret = dtc_buf_wait_readonly_clear(session, lock, ctrl->page_id);
     if (ret != OG_SUCCESS) {
         return ret;
     }
 
+    step_start = cm_monotonic_now(); // UB-stats
     ret = dcs_copy_page_to_temp(session, ctrl, (char *)temp_page);
+    session->stat->ub_reload_from_gbp_copy_buf_count++; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
     if (ret != OG_SUCCESS) {
         return ret;
     }
@@ -664,7 +686,10 @@ static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ct
         return OG_ERROR;
     }
 
-    return dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
+    step_start = cm_monotonic_now(); // UB-stats
+    ret = dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
+    session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
+    return ret;
 }
 
 static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
@@ -798,6 +823,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     bool32 skip_shmem_s_lock = OG_FALSE;
     uint32 s_upgraded[KNL_MAX_PAGE_STACK_DEPTH];
     uint32 s_upgraded_count = 0;
+    date_t gbp_lock_start = cm_monotonic_now(); // UB-stats
 
     if (mode == LATCH_MODE_X) {
         ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_offset;
@@ -821,6 +847,12 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     } else {
         ret = drc_gbp_distribute_lock(session, lock_offset, ctrl->page_id, mode);
     }
+
+    if (!skip_shmem_s_lock) { // UB-stats
+        session->ub_req_gbp_lock_mode = (uint8)mode; // UB-stats
+        session->ub_req_gbp_lock_us = (uint64)(cm_monotonic_now() - gbp_lock_start); // UB-stats
+    } // UB-stats
+
     if (ret != OG_SUCCESS) {
         if (mode == LATCH_MODE_X && did_s_upgrade) {
             dtc_buf_gbp_restore_session_s_locks(session, ctrl, lock_offset, s_upgraded, s_upgraded_count);
@@ -890,7 +922,9 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
      * Atomically compare remote/local LSN and mark gbp_reload_in_progress under bucket lock.
      * Followers wait and retry until leader finishes, eliminating TOCTOU between reload wait and try_begin.
      */
+    date_t reload_decide_start = cm_monotonic_now(); // UB-stats
     ret = dtc_buf_gbp_reload_decide_or_wait(session, ctrl, shmem_page_meta, is_load);
+    session->ub_req_reload_wait_us += (uint64)(cm_monotonic_now() - reload_decide_start); // UB-stats
     if (ret != OG_SUCCESS) {
         if (mode == LATCH_MODE_X) {
             dtc_buf_gbp_abort_x_after_upgrade(session, ctrl, lock_offset, x_already_held, did_s_upgrade, s_upgraded,
@@ -937,7 +971,10 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         /* leader: check 里 is_load=1 时已 try_begin */
     } else if (ctrl->gbp_reload_in_progress) {
         /* follower: 等 leader 完成 reload */
+        date_t wait_start = cm_monotonic_now(); // UB-stats
         ret = dtc_buf_gbp_wait_reload_done(session, ctrl);
+        session->stat->ub_reload_from_gbp_wait_reload_count++; // UB-stats
+        session->stat->ub_reload_from_gbp_wait_reload_time += (uint64)(cm_monotonic_now() - wait_start); // UB-stats
         if (ret != OG_SUCCESS) {
             (void)dtc_buf_gbp_unhold(session, ctrl, mode);
             return ret;

@@ -272,6 +272,9 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
                 ctrl->rbp_ctrl->guard_lsn = 0;
             }
         }
+        if (try_load) {
+            session->ub_page_req_kind = (uint8)UB_PAGE_REQ_LOAD_FROM_DISK; // UB-stats
+        }
     } else {
         /* case enter
          * 1.lbp page transfer to gbp
@@ -293,7 +296,9 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
             if (!is_load_from_gbp && ctrl->gbp_reload_in_progress &&
                 !dtc_buf_gbp_reload_owned_by_session(session, ctrl)) {
+                date_t reload_wait_start = cm_monotonic_now(); // UB-stats
                 ret = dtc_buf_gbp_wait_reload_done(session, ctrl);
+                session->ub_req_reload_wait_us += (uint64)(cm_monotonic_now() - reload_wait_start); // UB-stats
                 if (ret != OG_SUCCESS) {
                     (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
                     return ret;
@@ -321,6 +326,13 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
                                ctrl->page_id.file, ctrl->page_id.page);
                 return ret;
             }
+
+            if (session->ub_page_req_kind != (uint8)UB_PAGE_REQ_COLD_PROMOTE && // UB-stats
+                session->ub_page_req_kind != (uint8)UB_PAGE_REQ_HOT_FIRST_COPY) { // UB-stats
+                session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_REFRESH; // UB-stats
+            } // UB-stats
+        } else if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) { // UB-stats
+            session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_VALIDATED_HIT; // UB-stats
         }
 
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
@@ -419,10 +431,80 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 // unit: ms
 #define DCS_LOG_LIMIT_INTERVAL (500)
 
+static inline void dtc_read_page_record_stat(knl_session_t *session, date_t elapsed_us) // UB-stats
+{ // UB-stats
+    switch ((ub_page_req_kind_t)session->ub_page_req_kind) { // UB-stats
+        case UB_PAGE_REQ_LOCAL_HIT: // UB-stats
+            session->stat->ub_local_hit_count++; // UB-stats
+            session->stat->ub_local_hit_time += (uint64)elapsed_us; // UB-stats
+            break; // UB-stats
+        case UB_PAGE_REQ_OLD_ROUTE: // UB-stats
+            session->stat->ub_cold_old_route_count++; // UB-stats
+            session->stat->ub_cold_old_route_time += (uint64)elapsed_us; // UB-stats
+            break; // UB-stats
+        case UB_PAGE_REQ_HOT_FIRST_COPY: // UB-stats
+            session->stat->ub_hot_first_copy_count++; // UB-stats
+            session->stat->ub_hot_first_copy_time += (uint64)elapsed_us; // UB-stats
+            break; // UB-stats
+        case UB_PAGE_REQ_HOT_VALIDATED_HIT: // UB-stats
+            session->stat->ub_hot_validated_hit_count++; // UB-stats
+            session->stat->ub_hot_validated_hit_time += (uint64)elapsed_us; // UB-stats
+            /* fold in the per-request breakdown scratch (see dtc_buf_check_local_page) */ // UB-stats
+            if (session->ub_req_gbp_lock_mode == (uint8)LATCH_MODE_X) { // UB-stats
+                session->stat->ub_vhit_gbp_lock_x_count++; // UB-stats
+                session->stat->ub_vhit_gbp_lock_x_time += session->ub_req_gbp_lock_us; // UB-stats
+            } else if (session->ub_req_gbp_lock_mode != OG_INVALID_ID8) { // UB-stats
+                session->stat->ub_vhit_gbp_lock_s_count++; // UB-stats
+                session->stat->ub_vhit_gbp_lock_s_time += session->ub_req_gbp_lock_us; // UB-stats
+            } // UB-stats
+            if (session->ub_req_reload_wait_us > 0) { // UB-stats
+                session->stat->ub_vhit_reload_wait_count++; // UB-stats
+                session->stat->ub_vhit_reload_wait_time += session->ub_req_reload_wait_us; // UB-stats
+            } // UB-stats
+            break; // UB-stats
+        case UB_PAGE_REQ_COLD_PROMOTE: // UB-stats
+            session->stat->ub_cold_promote_count++; // UB-stats
+            session->stat->ub_cold_promote_time += (uint64)elapsed_us; // UB-stats
+            break; // UB-stats
+        case UB_PAGE_REQ_HOT_REFRESH: // UB-stats
+            session->stat->ub_hot_refresh_count++; // UB-stats
+            session->stat->ub_hot_refresh_time += (uint64)elapsed_us; // UB-stats
+            if (session->ub_req_gbp_lock_mode == (uint8)LATCH_MODE_X) { // UB-stats
+                session->stat->ub_refresh_gbp_lock_x_count++; // UB-stats
+                session->stat->ub_refresh_gbp_lock_x_time += session->ub_req_gbp_lock_us; // UB-stats
+            } else if (session->ub_req_gbp_lock_mode != OG_INVALID_ID8) { // UB-stats
+                session->stat->ub_refresh_gbp_lock_s_count++; // UB-stats
+                session->stat->ub_refresh_gbp_lock_s_time += session->ub_req_gbp_lock_us; // UB-stats
+            } // UB-stats
+            if (session->ub_req_reload_wait_us > 0) { // UB-stats
+                session->stat->ub_refresh_reload_wait_count++; // UB-stats
+                session->stat->ub_refresh_reload_wait_time += session->ub_req_reload_wait_us; // UB-stats
+            } // UB-stats
+            if (session->ub_req_readonly_wait_us > 0) { // UB-stats
+                session->stat->ub_refresh_readonly_wait_count++; // UB-stats
+                session->stat->ub_refresh_readonly_wait_time += session->ub_req_readonly_wait_us; // UB-stats
+            } // UB-stats
+            break; // UB-stats
+        case UB_PAGE_REQ_LOAD_FROM_DISK: // UB-stats
+            session->stat->ub_load_from_disk_count++; // UB-stats
+            session->stat->ub_load_from_disk_time += (uint64)elapsed_us; // UB-stats
+            break; // UB-stats
+        default: // UB-stats
+            break; // UB-stats
+    } // UB-stats
+} // UB-stats
+
 status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
 {
     buf_ctrl_t *ctrl = NULL;
     knl_buf_wait_t temp_stat;
+    date_t req_start_time = cm_monotonic_now(); // UB-stats
+
+    session->ub_page_req_kind = (uint8)UB_PAGE_REQ_LOCAL_HIT; // UB-stats
+    session->ub_req_gbp_lock_mode = OG_INVALID_ID8; // UB-stats
+    session->ub_req_gbp_lock_us = 0; // UB-stats
+    session->ub_req_reload_wait_us = 0; // UB-stats
+    session->ub_req_readonly_wait_us = 0; // UB-stats
 
     stats_buf_init(session, &temp_stat);
     date_t last_time = 0;
@@ -460,6 +542,7 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
             break;
         }
 
+        session->ub_page_req_kind = (uint8)UB_PAGE_REQ_OLD_ROUTE; // UB-stats
         if (dtc_buf_try_remote(session, ra, ctrl)) {
             break;
         }
@@ -469,7 +552,11 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
     /* Evaluate after local/DCS resolution, not before it, so the checked page is the final ctrl body. */
     ra->rbp_keep_local = dtc_rbp_local_page_valid_for_no_read(session, ra, ctrl);
 
-    return dtc_buf_finish(session, ra, ctrl, &temp_stat);
+    status_t ret = dtc_buf_finish(session, ra, ctrl, &temp_stat); // UB-stats
+    if (session->kernel->attr.enable_ubsmem && ret == OG_SUCCESS) { // UB-stats
+        dtc_read_page_record_stat(session, cm_monotonic_now() - req_start_time); // UB-stats
+    } // UB-stats
+    return ret; // UB-stats
 }
 
 status_t dtc_get_exclusive_owner_pages(knl_session_t *session, buf_ctrl_t **ctrl_array, buf_ctrl_t *ctrl, uint32 count)

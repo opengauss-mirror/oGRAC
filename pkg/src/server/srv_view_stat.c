@@ -457,6 +457,40 @@ static stat_item_t g_sysstat_items[] = {
     { STAT_TYPE_KERNEL, "txn page waits" },
     { STAT_TYPE_KERNEL, "txn page end waits" },
     { STAT_TYPE_KERNEL, "redo log switch count"},
+    { STAT_TYPE_KERNEL, "ub cold old route count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub cold old route time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot first copy count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot first copy time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot validated hit count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot validated hit time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub cold promote count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub cold promote time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot refresh count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot refresh time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub load from disk count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub load from disk time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub local hit count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub local hit time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub vhit gbp lock s count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub vhit gbp lock s time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub vhit gbp lock x count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub vhit gbp lock x time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub vhit reload wait count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub vhit reload wait time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh reload wait count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh reload wait time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh readonly wait count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh readonly wait time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp wait reload count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp wait reload time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp copy buf count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp copy buf time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp readonly wait count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp readonly wait time" }, // UB-stats
     { STAT_TYPE_KERNEL, "pcr construct count"},
     { STAT_TYPE_KERNEL, "bcr construct count"},
     { STAT_TYPE_KERNEL, "cr pool capacity"},
@@ -557,6 +591,40 @@ typedef enum en_sysstat_id {
     TXN_PAGE_WAITS,
     TXN_PAGE_END_WAITS,
     REDO_SWITCH_COUNT,
+    UB_COLD_OLD_ROUTE_COUNT, // UB-stats
+    UB_COLD_OLD_ROUTE_TIME, // UB-stats
+    UB_HOT_FIRST_COPY_COUNT, // UB-stats
+    UB_HOT_FIRST_COPY_TIME, // UB-stats
+    UB_HOT_VALIDATED_HIT_COUNT, // UB-stats
+    UB_HOT_VALIDATED_HIT_TIME, // UB-stats
+    UB_COLD_PROMOTE_COUNT, // UB-stats
+    UB_COLD_PROMOTE_TIME, // UB-stats
+    UB_HOT_REFRESH_COUNT, // UB-stats
+    UB_HOT_REFRESH_TIME, // UB-stats
+    UB_LOAD_FROM_DISK_COUNT, // UB-stats
+    UB_LOAD_FROM_DISK_TIME, // UB-stats
+    UB_LOCAL_HIT_COUNT, // UB-stats
+    UB_LOCAL_HIT_TIME, // UB-stats
+    UB_VHIT_GBP_LOCK_S_COUNT, // UB-stats
+    UB_VHIT_GBP_LOCK_S_TIME, // UB-stats
+    UB_VHIT_GBP_LOCK_X_COUNT, // UB-stats
+    UB_VHIT_GBP_LOCK_X_TIME, // UB-stats
+    UB_VHIT_RELOAD_WAIT_COUNT, // UB-stats
+    UB_VHIT_RELOAD_WAIT_TIME, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_TIME, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_TIME, // UB-stats
+    UB_REFRESH_RELOAD_WAIT_COUNT, // UB-stats
+    UB_REFRESH_RELOAD_WAIT_TIME, // UB-stats
+    UB_REFRESH_READONLY_WAIT_COUNT, // UB-stats
+    UB_REFRESH_READONLY_WAIT_TIME, // UB-stats
+    UB_RELOAD_FROM_GBP_WAIT_RELOAD_COUNT, // UB-stats
+    UB_RELOAD_FROM_GBP_WAIT_RELOAD_TIME, // UB-stats
+    UB_RELOAD_FROM_GBP_COPY_BUF_COUNT, // UB-stats
+    UB_RELOAD_FROM_GBP_COPY_BUF_TIME, // UB-stats
+    UB_RELOAD_FROM_GBP_READONLY_WAIT_COUNT, // UB-stats
+    UB_RELOAD_FROM_GBP_READONLY_WAIT_TIME, // UB-stats
     PCR_CONSTRUCT_COUNT,
     BCR_CONSTRUCT_COUNT,
     CR_POOL_CAPACITY,
@@ -602,6 +670,40 @@ void vw_sysstat_accumulate(uint64 *stats, sql_stat_t *sql_stat, knl_stat_t *knl_
     stats[DCS_BUFFER_SENDS] += knl_stat->dcs_buffer_sends + knl_stat->dcs_cr_sends;
     stats[DCS_CR_GETS] += knl_stat->dcs_cr_gets;
     stats[DCS_CR_SENDS] += knl_stat->dcs_cr_sends;
+    stats[UB_COLD_OLD_ROUTE_COUNT] += knl_stat->ub_cold_old_route_count; // UB-stats
+    stats[UB_COLD_OLD_ROUTE_TIME] += knl_stat->ub_cold_old_route_time; // UB-stats
+    stats[UB_HOT_FIRST_COPY_COUNT] += knl_stat->ub_hot_first_copy_count; // UB-stats
+    stats[UB_HOT_FIRST_COPY_TIME] += knl_stat->ub_hot_first_copy_time; // UB-stats
+    stats[UB_HOT_VALIDATED_HIT_COUNT] += knl_stat->ub_hot_validated_hit_count; // UB-stats
+    stats[UB_HOT_VALIDATED_HIT_TIME] += knl_stat->ub_hot_validated_hit_time; // UB-stats
+    stats[UB_COLD_PROMOTE_COUNT] += knl_stat->ub_cold_promote_count; // UB-stats
+    stats[UB_COLD_PROMOTE_TIME] += knl_stat->ub_cold_promote_time; // UB-stats
+    stats[UB_HOT_REFRESH_COUNT] += knl_stat->ub_hot_refresh_count; // UB-stats
+    stats[UB_HOT_REFRESH_TIME] += knl_stat->ub_hot_refresh_time; // UB-stats
+    stats[UB_LOAD_FROM_DISK_COUNT] += knl_stat->ub_load_from_disk_count; // UB-stats
+    stats[UB_LOAD_FROM_DISK_TIME] += knl_stat->ub_load_from_disk_time; // UB-stats
+    stats[UB_LOCAL_HIT_COUNT] += knl_stat->ub_local_hit_count; // UB-stats
+    stats[UB_LOCAL_HIT_TIME] += knl_stat->ub_local_hit_time; // UB-stats
+    stats[UB_VHIT_GBP_LOCK_S_COUNT] += knl_stat->ub_vhit_gbp_lock_s_count; // UB-stats
+    stats[UB_VHIT_GBP_LOCK_S_TIME] += knl_stat->ub_vhit_gbp_lock_s_time; // UB-stats
+    stats[UB_VHIT_GBP_LOCK_X_COUNT] += knl_stat->ub_vhit_gbp_lock_x_count; // UB-stats
+    stats[UB_VHIT_GBP_LOCK_X_TIME] += knl_stat->ub_vhit_gbp_lock_x_time; // UB-stats
+    stats[UB_VHIT_RELOAD_WAIT_COUNT] += knl_stat->ub_vhit_reload_wait_count; // UB-stats
+    stats[UB_VHIT_RELOAD_WAIT_TIME] += knl_stat->ub_vhit_reload_wait_time; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_S_COUNT] += knl_stat->ub_refresh_gbp_lock_s_count; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_S_TIME] += knl_stat->ub_refresh_gbp_lock_s_time; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_X_COUNT] += knl_stat->ub_refresh_gbp_lock_x_count; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_X_TIME] += knl_stat->ub_refresh_gbp_lock_x_time; // UB-stats
+    stats[UB_REFRESH_RELOAD_WAIT_COUNT] += knl_stat->ub_refresh_reload_wait_count; // UB-stats
+    stats[UB_REFRESH_RELOAD_WAIT_TIME] += knl_stat->ub_refresh_reload_wait_time; // UB-stats
+    stats[UB_REFRESH_READONLY_WAIT_COUNT] += knl_stat->ub_refresh_readonly_wait_count; // UB-stats
+    stats[UB_REFRESH_READONLY_WAIT_TIME] += knl_stat->ub_refresh_readonly_wait_time; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_WAIT_RELOAD_COUNT] += knl_stat->ub_reload_from_gbp_wait_reload_count; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_WAIT_RELOAD_TIME] += knl_stat->ub_reload_from_gbp_wait_reload_time; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_COPY_BUF_COUNT] += knl_stat->ub_reload_from_gbp_copy_buf_count; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_COPY_BUF_TIME] += knl_stat->ub_reload_from_gbp_copy_buf_time; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_READONLY_WAIT_COUNT] += knl_stat->ub_reload_from_gbp_readonly_wait_count; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_READONLY_WAIT_TIME] += knl_stat->ub_reload_from_gbp_readonly_wait_time; // UB-stats
     stats[TEMP_ALLOCS] += knl_stat->temp_allocs;
     stats[SORTS] += knl_stat->sorts;
     stats[DISK_SORTS] += knl_stat->disk_sorts;

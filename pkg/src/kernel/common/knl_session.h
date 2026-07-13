@@ -202,7 +202,52 @@ typedef struct st_knl_stat {
     uint64 undo_disk_reads;
     uint64 undo_buf_reads;
     uint64 btree_leaf_recycled;
+
+    uint64 ub_cold_old_route_count; // UB-stats
+    uint64 ub_cold_old_route_time; // UB-stats
+    uint64 ub_hot_first_copy_count; // UB-stats
+    uint64 ub_hot_first_copy_time; // UB-stats
+    uint64 ub_hot_validated_hit_count; // UB-stats
+    uint64 ub_hot_validated_hit_time; // UB-stats
+    uint64 ub_cold_promote_count; // UB-stats
+    uint64 ub_cold_promote_time; // UB-stats
+    uint64 ub_hot_refresh_count; // UB-stats
+    uint64 ub_hot_refresh_time; // UB-stats
+    uint64 ub_load_from_disk_count; // UB-stats
+    uint64 ub_load_from_disk_time; // UB-stats
+    uint64 ub_local_hit_count; // UB-stats
+    uint64 ub_local_hit_time; // UB-stats
+    uint64 ub_vhit_gbp_lock_s_count; // UB-stats
+    uint64 ub_vhit_gbp_lock_s_time; // UB-stats
+    uint64 ub_vhit_gbp_lock_x_count; // UB-stats
+    uint64 ub_vhit_gbp_lock_x_time; // UB-stats
+    uint64 ub_vhit_reload_wait_count; // UB-stats
+    uint64 ub_vhit_reload_wait_time; // UB-stats
+    uint64 ub_refresh_gbp_lock_s_count; // UB-stats
+    uint64 ub_refresh_gbp_lock_s_time; // UB-stats
+    uint64 ub_refresh_gbp_lock_x_count; // UB-stats
+    uint64 ub_refresh_gbp_lock_x_time; // UB-stats
+    uint64 ub_refresh_reload_wait_count; // UB-stats
+    uint64 ub_refresh_reload_wait_time; // UB-stats
+    uint64 ub_refresh_readonly_wait_count; // UB-stats
+    uint64 ub_refresh_readonly_wait_time; // UB-stats
+    uint64 ub_reload_from_gbp_wait_reload_count; // UB-stats
+    uint64 ub_reload_from_gbp_wait_reload_time; // UB-stats
+    uint64 ub_reload_from_gbp_copy_buf_count; // UB-stats
+    uint64 ub_reload_from_gbp_copy_buf_time; // UB-stats
+    uint64 ub_reload_from_gbp_readonly_wait_count; // UB-stats
+    uint64 ub_reload_from_gbp_readonly_wait_time; // UB-stats
 } knl_stat_t;
+
+typedef enum en_ub_page_req_kind { // UB-stats
+    UB_PAGE_REQ_LOCAL_HIT = 0, // UB-stats
+    UB_PAGE_REQ_OLD_ROUTE, // UB-stats
+    UB_PAGE_REQ_HOT_FIRST_COPY, // UB-stats
+    UB_PAGE_REQ_HOT_VALIDATED_HIT, // UB-stats
+    UB_PAGE_REQ_COLD_PROMOTE, // UB-stats
+    UB_PAGE_REQ_HOT_REFRESH, // UB-stats
+    UB_PAGE_REQ_LOAD_FROM_DISK // UB-stats
+} ub_page_req_kind_t; // UB-stats
 
 typedef enum en_waitstat_id {
     DATA_BLOCK = 0,
@@ -427,6 +472,12 @@ typedef struct st_knl_session {
     uint8 rbp_queue_index; // which rbp queue to push rbp_dirty_pages, only rbp bg session's rbp_queue_index > 0
     uint32 rbp_dirty_count;
     struct st_buf_ctrl *rbp_dirty_pages[KNL_MAX_ATOMIC_PAGES];  // dirty pages that not flush to RBP if use rbp
+
+    uint8 ub_page_req_kind; // UB-stats
+    uint8 ub_req_gbp_lock_mode; // UB-stats
+    uint64 ub_req_gbp_lock_us; // UB-stats
+    uint64 ub_req_reload_wait_us; // UB-stats
+    uint64 ub_req_readonly_wait_us; // UB-stats
 
     uint32 lock_wait_timeout;  // lock wait timeout(ms)
     uint8 itl_id;   // current itl id
