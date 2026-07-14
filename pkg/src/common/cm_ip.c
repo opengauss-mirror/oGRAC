@@ -294,11 +294,12 @@ status_t cm_split_host_ip(char host[][CM_MAX_IP_LEN], const char *value)
         txt.len = pos - 1;
         cm_trim_text(&txt);
         if (txt.len != 0) {
-            MEMS_RETURN_IFERR(strncpy_s(host[host_count], CM_MAX_IP_LEN, txt.str, txt.len));
-            if (++host_count > OG_MAX_LSNR_HOST_COUNT) {
+            if (host_count >= OG_MAX_LSNR_HOST_COUNT) {
                 OG_THROW_ERROR(ERR_IPADDRESS_NUM_EXCEED, (uint32)OG_MAX_LSNR_HOST_COUNT);
                 return OG_ERROR;
             }
+            MEMS_RETURN_IFERR(strncpy_s(host[host_count], CM_MAX_IP_LEN, txt.str, txt.len));
+            host_count++;
         }
         str_pos[pos - 1] = ',';
         str_pos += pos;
@@ -310,12 +311,12 @@ status_t cm_split_host_ip(char host[][CM_MAX_IP_LEN], const char *value)
         txt.len = pos;
         cm_trim_text(&txt);
         if (txt.len != 0) {
-            MEMS_RETURN_IFERR(strncpy_s(host[host_count], CM_MAX_IP_LEN, txt.str, txt.len));
-
-            if (++host_count > OG_MAX_LSNR_HOST_COUNT) {
+            if (host_count >= OG_MAX_LSNR_HOST_COUNT) {
                 OG_THROW_ERROR(ERR_IPADDRESS_NUM_EXCEED, (uint32)OG_MAX_LSNR_HOST_COUNT);
                 return OG_ERROR;
             }
+            MEMS_RETURN_IFERR(strncpy_s(host[host_count], CM_MAX_IP_LEN, txt.str, txt.len));
+            host_count++;
         }
     }
     return OG_SUCCESS;
@@ -806,6 +807,43 @@ bool32 cm_check_ip_valid(const char *ip)
     }
 
     return OG_FALSE;
+}
+
+static bool32 cm_parse_ipv4_literal(const char *ip, struct in_addr *addr)
+{
+    if (ip == NULL || ip[0] == '\0' || addr == NULL) {
+        return OG_FALSE;
+    }
+#ifndef WIN32
+    if (inet_pton(AF_INET, ip, addr) != 1) {
+        return OG_FALSE;
+    }
+#else
+    if (InetPton(AF_INET, ip, addr) != 1) {
+        return OG_FALSE;
+    }
+#endif
+    return OG_TRUE;
+}
+
+bool32 cm_check_ipv4_literal(const char *ip)
+{
+    struct in_addr addr;
+
+    if (!cm_parse_ipv4_literal(ip, &addr)) {
+        return OG_FALSE;
+    }
+    return addr.s_addr == (uint32)-1 ? OG_FALSE : OG_TRUE;
+}
+
+bool32 cm_check_ipv4_nonzero_literal(const char *ip)
+{
+    struct in_addr addr;
+
+    if (!cm_parse_ipv4_literal(ip, &addr)) {
+        return OG_FALSE;
+    }
+    return (addr.s_addr == 0 || addr.s_addr == (uint32)-1) ? OG_FALSE : OG_TRUE;
 }
 
 // !!Caution: Invoker should cm_destroy_list(cidr_list) if OG_ERROR returned.

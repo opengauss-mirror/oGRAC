@@ -39,7 +39,6 @@ extern bool8 g_local_set_disaster_cluster_role;
 #define KNL_DEFAULT_RBP_RT_PARSE_WORKERS 2
 #define KNL_DEFAULT_RBP_RT_OWNER_WORKERS 4
 #define KNL_DEFAULT_RBP_PORT 2611
-#define KNL_DEFAULT_RBP_ASSEMBLE_MAX_SCAN 300
 
 void knl_init_attr(knl_handle_t kernel)
 {
@@ -78,7 +77,7 @@ void knl_init_attr(knl_handle_t kernel)
     knl_securec_check(err);
     err = strncpy_s(inst->rbp_attr.trans_type, OG_MAX_NAME_LEN, "tcp", OG_MAX_NAME_LEN - 1);
     knl_securec_check(err);
-    inst->rbp_attr.assemble_max_scan = KNL_DEFAULT_RBP_ASSEMBLE_MAX_SCAN;
+    inst->rbp_attr.assemble_max_scan = RBP_ASSEMBLE_MAX_SCAN_DEFAULT;
     param = cm_get_config_value(inst->attr.config, "COMMIT_WAIT");
     if (param != NULL) {
         inst->attr.commit_nowait = cm_str_equal(param, "NOWAIT");

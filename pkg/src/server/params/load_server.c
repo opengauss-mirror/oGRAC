@@ -40,9 +40,6 @@
 extern bool32 g_enable_fdsa;
 extern bool32 g_crc_verify;
 
-#define SRV_RBP_ASSEMBLE_MAX_SCAN_MIN 100
-#define SRV_RBP_ASSEMBLE_MAX_SCAN_MAX 1000000
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -845,6 +842,25 @@ static status_t srv_get_interconnect_type_param(cs_pipe_type_t *type)
     return OG_SUCCESS;
 }
 
+static status_t srv_get_rbp_param_bool32(char *param_name, bool32 *param_value)
+{
+    char *value = srv_get_param(param_name);
+    text_t text;
+
+    if (value == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, param_name);
+        return OG_ERROR;
+    }
+
+    cm_str2text(value, &text);
+    if (!srv_match_bool_text_ext(&text, param_value)) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, param_name);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 /* Apply RBP_* from cfg/$cnf after knl_init_attr() defaults. */
 status_t srv_load_rbp_params(void)
 {
@@ -852,12 +868,14 @@ status_t srv_load_rbp_params(void)
     rbp_attr_t *rbp = &kernel->rbp_attr;
     const char *value = NULL;
     uint32 addr_cnt = 0;
+    uint32 raw_addr_cnt = 0;
+    uint32 port = 0;
     bool32 use_rbp = OG_FALSE;
 
-    OG_RETURN_IFERR(srv_get_param_bool32("USE_RBP", &use_rbp));
+    OG_RETURN_IFERR(srv_get_rbp_param_bool32("USE_RBP", &use_rbp));
     rbp->use_rbp = use_rbp;
-    OG_RETURN_IFERR(srv_get_param_bool32("RBP_FOR_RECOVERY", &rbp->rbp_for_recovery));
-    OG_RETURN_IFERR(srv_get_param_bool32("RBP_RT_ANALYSIS", &rbp->rbp_rt_analysis));
+    OG_RETURN_IFERR(srv_get_rbp_param_bool32("RBP_FOR_RECOVERY", &rbp->rbp_for_recovery));
+    OG_RETURN_IFERR(srv_get_rbp_param_bool32("RBP_RT_ANALYSIS", &rbp->rbp_rt_analysis));
     OG_RETURN_IFERR(srv_get_param_uint32("RBP_RT_PARSE_WORKERS", &rbp->rbp_rt_parse_workers));
     if (rbp->rbp_rt_parse_workers < 1) {
         OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "RBP_RT_PARSE_WORKERS", (int64)1);
@@ -877,32 +895,72 @@ status_t srv_load_rbp_params(void)
         return OG_ERROR;
     }
     value = srv_get_param("RBP_IP");
-    if (value != NULL && strlen(value) > 0) {
-        MEMS_RETURN_IFERR(memset_s(rbp->server_addr, sizeof(rbp->server_addr), 0, sizeof(rbp->server_addr)));
-        OG_RETURN_IFERR(cm_split_host_ip(rbp->server_addr, value));
-        for (addr_cnt = 0; addr_cnt < OG_MAX_LSNR_HOST_COUNT; addr_cnt++) {
-            if (rbp->server_addr[addr_cnt][0] == '\0') {
-                break;
-            }
-        }
-        rbp->server_count = (addr_cnt == 0) ? 1 : addr_cnt;
-    }
-
-    OG_RETURN_IFERR(srv_get_param_uint16("RBP_PORT", &rbp->lsnr_port));
-    OG_RETURN_IFERR(srv_get_param_uint32("RBP_ASSEMBLE_MAX_SCAN", &rbp->assemble_max_scan));
-    if (rbp->assemble_max_scan < SRV_RBP_ASSEMBLE_MAX_SCAN_MIN) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "RBP_ASSEMBLE_MAX_SCAN", (int64)SRV_RBP_ASSEMBLE_MAX_SCAN_MIN);
+    if (value == NULL || strlen(value) == 0) {
+        OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, "");
         return OG_ERROR;
     }
-    if (rbp->assemble_max_scan > SRV_RBP_ASSEMBLE_MAX_SCAN_MAX) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "RBP_ASSEMBLE_MAX_SCAN", (int64)SRV_RBP_ASSEMBLE_MAX_SCAN_MAX);
+    MEMS_RETURN_IFERR(memset_s(rbp->server_addr, sizeof(rbp->server_addr), 0, sizeof(rbp->server_addr)));
+    /*
+     * cm_split_host_ip trims and skips empty items. Keep raw_addr_cnt to reject
+     * empty components and semicolon-separated lists for RBP_IP.
+     */
+    if (cm_verify_lsnr_addr(value, (uint32)strlen(value), &raw_addr_cnt) != OG_SUCCESS) {
+        cm_reset_error();
+        OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, value);
+        return OG_ERROR;
+    }
+    if (raw_addr_cnt > OG_MAX_LSNR_HOST_COUNT) {
+        OG_THROW_ERROR(ERR_IPADDRESS_NUM_EXCEED, (uint32)OG_MAX_LSNR_HOST_COUNT);
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(cm_split_host_ip(rbp->server_addr, value));
+    for (addr_cnt = 0; addr_cnt < OG_MAX_LSNR_HOST_COUNT && rbp->server_addr[addr_cnt][0] != '\0'; addr_cnt++) {
+        if (!cm_check_ipv4_nonzero_literal(rbp->server_addr[addr_cnt])) {
+            OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, rbp->server_addr[addr_cnt]);
+            return OG_ERROR;
+        }
+    }
+    if (addr_cnt == 0 || addr_cnt != raw_addr_cnt) {
+        OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, value);
+        return OG_ERROR;
+    }
+    rbp->server_count = addr_cnt;
+
+    OG_RETURN_IFERR(srv_get_param_uint32("RBP_PORT", &port));
+    if (port < OG_MIN_PORT) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "RBP_PORT", (int64)OG_MIN_PORT);
+        return OG_ERROR;
+    }
+    if (port > OG_MAX_UINT16) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "RBP_PORT", (int64)OG_MAX_UINT16);
+        return OG_ERROR;
+    }
+    rbp->lsnr_port = (uint16)port;
+
+    OG_RETURN_IFERR(srv_get_param_uint32("RBP_ASSEMBLE_MAX_SCAN", &rbp->assemble_max_scan));
+    if (rbp->assemble_max_scan < RBP_ASSEMBLE_MAX_SCAN_MIN) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "RBP_ASSEMBLE_MAX_SCAN", (int64)RBP_ASSEMBLE_MAX_SCAN_MIN);
+        return OG_ERROR;
+    }
+    if (rbp->assemble_max_scan > RBP_ASSEMBLE_MAX_SCAN_MAX) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "RBP_ASSEMBLE_MAX_SCAN", (int64)RBP_ASSEMBLE_MAX_SCAN_MAX);
         return OG_ERROR;
     }
 
     value = srv_get_param("LOCAL_RBP_HOST");
-    if (value != NULL && strlen(value) > 0) {
-        MEMS_RETURN_IFERR(strncpy_s(rbp->local_rbp_host, CM_MAX_IP_LEN, value, strlen(value)));
+    if (value == NULL || strlen(value) == 0) {
+        OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, "");
+        return OG_ERROR;
     }
+    if (strlen(value) >= CM_MAX_IP_LEN || strchr(value, ',') != NULL || strchr(value, ';') != NULL) {
+        OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, value);
+        return OG_ERROR;
+    }
+    if (!cm_check_ipv4_nonzero_literal(value)) {
+        OG_THROW_ERROR(ERR_TCP_INVALID_IPADDRESS, value);
+        return OG_ERROR;
+    }
+    MEMS_RETURN_IFERR(strncpy_s(rbp->local_rbp_host, CM_MAX_IP_LEN, value, strlen(value)));
 
     return OG_SUCCESS;
 }

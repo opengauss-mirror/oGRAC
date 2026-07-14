@@ -507,12 +507,17 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 #endif
     RbpServerState state(cfg);
     ReadPhase read_phase;
+    socket_t admin_srv = invalid_socket();
+    if (admin_port > 0) {
+        std::string err;
+        if (!setup_admin_server(admin_host, admin_port, admin_srv, err)) {
+            rbp_run_log(err);
+            std::exit(1);
+        }
+    }
     state.start_evict_worker();
     if (cfg.read_phase_timeout > 0) {
         std::thread(read_phase_timeout_watchdog, std::ref(state), std::ref(read_phase), cfg).detach();
-    }
-    if (admin_port > 0) {
-        std::thread(admin_server_loop, admin_host, admin_port, std::ref(state), std::ref(read_phase), cfg).detach();
     }
 
     socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
@@ -554,6 +559,10 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
     }
     rbp_run_log("RBPS listening on " + host + ":" + std::to_string(port) +
                 " SMB_page_version=" + std::to_string(cfg.smb_version));
+    if (!is_invalid_socket(admin_srv)) {
+        AdminServerLoopContext admin_ctx{admin_srv, admin_host, admin_port, state, read_phase, cfg};
+        std::thread(admin_server_loop, admin_ctx).detach();
+    }
 
     while (true) {
         sockaddr_in client{};

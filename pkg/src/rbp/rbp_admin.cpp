@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cctype>
 #include <exception>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <mutex>
@@ -62,6 +63,16 @@ constexpr int RBP_ADMIN_MILLISECONDS_PER_SECOND = 1000;
 constexpr int RBP_ADMIN_LISTEN_BACKLOG = 16;
 constexpr int RBP_ADMIN_WINSOCK_VERSION_MAJOR = 2;
 constexpr int RBP_ADMIN_WINSOCK_VERSION_MINOR = 2;
+constexpr size_t RBP_ADMIN_COMMAND_BUFFER_SIZE = 512;
+
+void close_admin_socket(socket_t fd)
+{
+#if defined(_WIN32)
+    closesocket(fd);
+#else
+    close(fd);
+#endif
+}
 
 }  // namespace
 
@@ -330,13 +341,12 @@ static std::string admin_force_read_end(RbpServerState& state, ReadPhase& read_p
     return os.str();
 }
 
-void admin_server_loop(const std::string& host, int port, RbpServerState& state, ReadPhase& read_phase,
-                       const Config& cfg)
+bool setup_admin_server(const std::string& host, int port, socket_t& srv, std::string& err)
 {
-    socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
+    srv = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(srv)) {
-        rbp_run_log("admin socket create failed");
-        return;
+        err = "admin socket create failed";
+        return false;
     }
     int yes = 1;
     setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
@@ -344,92 +354,103 @@ void admin_server_loop(const std::string& host, int port, RbpServerState& state,
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        rbp_run_log("admin bind failed: invalid host " + host);
-#if defined(_WIN32)
-        closesocket(srv);
-#else
-        close(srv);
-#endif
-        return;
+        err = "admin bind failed: invalid host " + host;
+        close_admin_socket(srv);
+        srv = invalid_socket();
+        return false;
     }
     if (bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        rbp_run_log("admin bind failed on " + host + ":" + std::to_string(port));
-#if defined(_WIN32)
-        closesocket(srv);
-#else
-        close(srv);
-#endif
-        return;
+        err = "admin bind failed on " + host + ":" + std::to_string(port);
+        close_admin_socket(srv);
+        srv = invalid_socket();
+        return false;
     }
     if (listen(srv, RBP_ADMIN_LISTEN_BACKLOG) != 0) {
-        rbp_run_log("admin listen failed on " + host + ":" + std::to_string(port));
-#if defined(_WIN32)
-        closesocket(srv);
-#else
-        close(srv);
-#endif
-        return;
+        err = "admin listen failed on " + host + ":" + std::to_string(port);
+        close_admin_socket(srv);
+        srv = invalid_socket();
+        return false;
     }
-    rbp_run_log("RBPS admin listening on " + host + ":" + std::to_string(port) +
+
+    return true;
+}
+
+static std::string read_admin_command(socket_t fd)
+{
+    char buf[RBP_ADMIN_COMMAND_BUFFER_SIZE];
+#if defined(_WIN32)
+    const int n = recv(fd, buf, sizeof(buf) - 1, 0);
+#else
+    const ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
+#endif
+    if (n <= 0) {
+        return "";
+    }
+
+    buf[n] = '\0';
+    std::string cmd(buf);
+    while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r')) {
+        cmd.pop_back();
+    }
+    return cmd;
+}
+
+static std::string execute_admin_command(const std::string& cmd, RbpServerState& state, ReadPhase& read_phase,
+                                         const Config& cfg)
+{
+    std::string out = "ERR usage: EXISTS <file>-<page> | DUMP <file>-<page> | WINDOW | STATS | "
+                      "READ_PHASE | FORCE_READ_END\n";
+    std::istringstream iss(cmd);
+    std::string verb;
+    std::string arg;
+    iss >> verb;
+    iss >> arg;
+    for (char& c : verb) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+
+    int file_no = 0;
+    int page_no = 0;
+    try {
+        if (verb == "EXISTS" && !arg.empty() && parse_file_page(arg, file_no, page_no)) {
+            out = admin_query_page(state, file_no, page_no);
+        } else if (verb == "DUMP" && !arg.empty() && parse_file_page(arg, file_no, page_no)) {
+            out = admin_dump_page(state, file_no, page_no);
+        } else if (verb == "WINDOW") {
+            out = admin_window(state);
+        } else if (verb == "STATS") {
+            out = admin_stats(state);
+        } else if (verb == "READ_PHASE") {
+            out = admin_read_phase(read_phase, cfg);
+        } else if (verb == "FORCE_READ_END") {
+            out = admin_force_read_end(state, read_phase, cfg);
+        }
+    } catch (const std::exception& exc) {
+        out = std::string("ERR ") + exc.what() + "\n";
+    }
+    return out;
+}
+
+static void handle_admin_client(socket_t fd, RbpServerState& state, ReadPhase& read_phase, const Config& cfg)
+{
+    const std::string out = execute_admin_command(read_admin_command(fd), state, read_phase, cfg);
+    send_full(fd, out.data(), out.size());
+    close_admin_socket(fd);
+}
+
+void admin_server_loop(AdminServerLoopContext ctx)
+{
+    rbp_run_log("RBPS admin listening on " + ctx.host + ":" + std::to_string(ctx.port) +
                 " (command: EXISTS|DUMP <file>-<page>, WINDOW, STATS, READ_PHASE, FORCE_READ_END)");
 
     while (true) {
         sockaddr_in client{};
         rbp_socklen_t clen = sizeof(client);
-        socket_t fd = accept(srv, reinterpret_cast<sockaddr*>(&client), &clen);
+        socket_t fd = accept(ctx.srv, reinterpret_cast<sockaddr*>(&client), &clen);
         if (is_invalid_socket(fd)) {
             continue;
         }
-        std::thread([fd, &state, &read_phase, cfg]() {
-            char buf[512];
-#if defined(_WIN32)
-            const int n = recv(fd, buf, sizeof(buf) - 1, 0);
-#else
-            const ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
-#endif
-            std::string out = "ERR usage: EXISTS <file>-<page> | DUMP <file>-<page> | WINDOW | STATS | "
-                              "READ_PHASE | FORCE_READ_END\n";
-            if (n > 0) {
-                buf[n] = '\0';
-                std::string cmd(buf);
-                while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r')) {
-                    cmd.pop_back();
-                }
-                std::istringstream iss(cmd);
-                std::string verb;
-                std::string arg;
-                iss >> verb;
-                iss >> arg;
-                for (char& c : verb) {
-                    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                }
-                int file_no = 0;
-                int page_no = 0;
-                try {
-                    if (verb == "EXISTS" && !arg.empty() && parse_file_page(arg, file_no, page_no)) {
-                        out = admin_query_page(state, file_no, page_no);
-                    } else if (verb == "DUMP" && !arg.empty() && parse_file_page(arg, file_no, page_no)) {
-                        out = admin_dump_page(state, file_no, page_no);
-                    } else if (verb == "WINDOW") {
-                        out = admin_window(state);
-                    } else if (verb == "STATS") {
-                        out = admin_stats(state);
-                    } else if (verb == "READ_PHASE") {
-                        out = admin_read_phase(read_phase, cfg);
-                    } else if (verb == "FORCE_READ_END") {
-                        out = admin_force_read_end(state, read_phase, cfg);
-                    }
-                } catch (const std::exception& exc) {
-                    out = std::string("ERR ") + exc.what() + "\n";
-                }
-            }
-            send_full(fd, out.data(), out.size());
-#if defined(_WIN32)
-            closesocket(fd);
-#else
-            close(fd);
-#endif
-        }).detach();
+        std::thread(handle_admin_client, fd, std::ref(ctx.state), std::ref(ctx.read_phase), ctx.cfg).detach();
     }
 }
 

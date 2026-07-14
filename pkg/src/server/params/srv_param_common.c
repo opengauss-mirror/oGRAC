@@ -102,6 +102,45 @@ status_t sql_verify_uint32(void *lex, void *def, uint32 *num)
     return OG_SUCCESS;
 }
 
+bool32 srv_match_bool_text_ext(const text_t *bool_text, bool32 *bool_value)
+{
+    text_t text;
+
+    if (bool_text == NULL) {
+        return OG_FALSE;
+    }
+
+    text = *bool_text;
+    cm_trim_text(&text);
+    if (text.len == 0) {
+        return OG_FALSE;
+    }
+
+    if (text.len == 1) {
+        if (text.str[0] == '0') {
+            *bool_value = OG_FALSE;
+            return OG_TRUE;
+        }
+        if (text.str[0] == '1') {
+            *bool_value = OG_TRUE;
+            return OG_TRUE;
+        }
+        return OG_FALSE;
+    }
+
+    if (cm_compare_text_str_ins(&text, "FALSE") == 0 || cm_compare_text_str_ins(&text, "OFF") == 0) {
+        *bool_value = OG_FALSE;
+        return OG_TRUE;
+    }
+
+    if (cm_compare_text_str_ins(&text, "TRUE") == 0 || cm_compare_text_str_ins(&text, "ON") == 0) {
+        *bool_value = OG_TRUE;
+        return OG_TRUE;
+    }
+
+    return OG_FALSE;
+}
+
 status_t sql_verify_als_bool(void *se, void *lex, void *def)
 {
     uint32 match_id;

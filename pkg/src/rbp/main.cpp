@@ -30,10 +30,33 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #if defined(_WIN32)
 #include <stdlib.h>
 #endif
+
+namespace {
+
+int parse_cli_int_arg(const std::string& value, const char* option)
+{
+    size_t pos = 0;
+    long long parsed = 0;
+
+    try {
+        parsed = std::stoll(value, &pos);
+    } catch (...) {
+        throw std::invalid_argument(std::string(option) + " expects an integer: " + value);
+    }
+    if (pos != value.size() || parsed < std::numeric_limits<int>::min() ||
+        parsed > std::numeric_limits<int>::max()) {
+        throw std::invalid_argument(std::string(option) + " expects an integer: " + value);
+    }
+    return static_cast<int>(parsed);
+}
+
+}  // namespace
 
 static void usage(const char* prog)
 {
@@ -61,7 +84,7 @@ int main(int argc, char** argv)
                 cli.host = argv[i++];
                 cli.host_set = true;
             } else if (arg == "--port" && i < argc) {
-                cli.port = std::stoi(argv[i++]);
+                cli.port = parse_cli_int_arg(argv[i++], "--port");
                 cli.port_set = true;
             } else if (arg == "--verbose") {
                 cli.verbose = true;
@@ -73,7 +96,7 @@ int main(int argc, char** argv)
                 cli.smb_version = false;
                 cli.smb_version_set = true;
             } else if (arg == "--max-cache-pages" && i < argc) {
-                cli.max_cache_pages = std::stoi(argv[i++]);
+                cli.max_cache_pages = parse_cli_int_arg(argv[i++], "--max-cache-pages");
                 cli.max_cache_pages_set = true;
             } else if (arg == "--capacity-evict-on-write") {
                 cli.capacity_evict_on_write = true;
@@ -82,7 +105,7 @@ int main(int argc, char** argv)
                 cli.admin_host = argv[i++];
                 cli.admin_host_set = true;
             } else if (arg == "--admin-port" && i < argc) {
-                cli.admin_port = std::stoi(argv[i++]);
+                cli.admin_port = parse_cli_int_arg(argv[i++], "--admin-port");
                 cli.admin_port_set = true;
             } else if (arg == "--log-file" && i < argc) {
                 cli.log_file = argv[i++];
@@ -126,6 +149,9 @@ int main(int argc, char** argv)
     if (!rbp::rbp_init_log_file(options.log_file, err)) {
         std::cerr << "rbps: " << err << "\n";
         return 1;
+    }
+    if (options.config.capacity_evict_on_write && options.config.max_cache_pages == 0) {
+        rbp::rbp_run_log("warning: CAPACITY_EVICT_ON_WRITE is ignored when MAX_CACHE_PAGES=0");
     }
 
     rbp::run_server(options.host, options.port, options.config, options.admin_port, options.admin_host);
