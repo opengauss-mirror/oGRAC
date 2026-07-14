@@ -89,6 +89,7 @@ typedef struct st_dtc_rbp_rt_batch_slot {
 typedef struct st_dtc_rbp_rt_lfn_point {
     uint64 lfn;
     log_point_t point;
+    log_point_t head_point;
 } dtc_rbp_rt_lfn_point_t;
 
 typedef enum en_dtc_rbp_rt_event_type {
@@ -152,9 +153,11 @@ typedef struct st_dtc_rbp_rt_aly_ctx {
     log_point_t begin_point;
     log_point_t curr_point;
     log_point_t safe_analyzed_point;
+    log_point_t safe_analyzed_head_point;
     log_point_t peer_prune_point;
     log_point_t reset_point;
     log_point_t snapshot_safe_point;
+    log_point_t snapshot_safe_head_point;
     log_point_t snapshot_next_point;
     uint64 rt_start_lfn;
     uint64 safe_seq;
@@ -208,7 +211,8 @@ typedef struct st_dtc_rbp_rt_aly_ctx {
 status_t dtc_rbp_rt_aly_start(knl_session_t *session);
 void dtc_rbp_rt_aly_close(knl_session_t *session);
 void dtc_rbp_rt_aly_mark_unsafe(uint64 reason);
-bool32 dtc_rbp_rt_aly_prepare_partial(knl_session_t *session, log_point_t *safe_point, log_point_t *next_point);
+bool32 dtc_rbp_rt_aly_prepare_partial(knl_session_t *session, log_point_t *safe_point,
+    log_point_t *safe_head_point, log_point_t *next_point);
 status_t dtc_rbp_rt_aly_finish_partial(knl_session_t *session);
 void dtc_rbp_rt_aly_abort_partial(knl_session_t *session);
 bool32 dtc_rbp_rt_aly_try_build_partial(knl_session_t *session);

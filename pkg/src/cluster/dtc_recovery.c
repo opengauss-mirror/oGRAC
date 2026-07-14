@@ -6975,7 +6975,8 @@ static void dtc_rcy_reset_node_read_ring(dtc_rcy_node_t *rcy_node)
     }
 }
 
-static void dtc_rcy_runtime_tail_set_start(knl_session_t *session, log_point_t *safe_point, log_point_t *next_point)
+static void dtc_rcy_runtime_tail_set_start(knl_session_t *session, log_point_t *safe_point,
+    log_point_t *safe_head_point, log_point_t *next_point)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     dtc_rcy_node_t *rcy_node = &dtc_rcy->rcy_nodes[0];
@@ -6989,7 +6990,7 @@ static void dtc_rcy_runtime_tail_set_start(knl_session_t *session, log_point_t *
     rcy_log_point->rcy_point = *next_point;
     rcy_log_point->rcy_point.lfn = safe_point->lfn;
     rcy_log_point->rcy_write_point = *next_point;
-    rcy_node->analysis_read_end_point = *safe_point;
+    rcy_node->analysis_read_end_point = *safe_head_point;
     rcy_node->recover_done = OG_FALSE;
     rcy_node->ulog_exist_data = OG_TRUE;
     rcy_node->latest_lsn = 0;
@@ -7007,6 +7008,7 @@ static status_t dtc_rcy_analyze_batches_runtime(knl_session_t *session)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     log_point_t runtime_safe;
+    log_point_t runtime_safe_head;
     log_point_t runtime_next;
     log_point_t original_rcy_point;
     log_point_t original_write_point;
@@ -7016,7 +7018,7 @@ static status_t dtc_rcy_analyze_batches_runtime(knl_session_t *session)
     status_t finish_status = OG_SUCCESS;
     bool32 runtime_prepared = OG_FALSE;
 
-    if (!dtc_rbp_rt_aly_prepare_partial(session, &runtime_safe, &runtime_next)) {
+    if (!dtc_rbp_rt_aly_prepare_partial(session, &runtime_safe, &runtime_safe_head, &runtime_next)) {
         return OG_ERROR;
     }
     runtime_prepared = OG_TRUE;
@@ -7027,7 +7029,7 @@ static status_t dtc_rcy_analyze_batches_runtime(knl_session_t *session)
         status = OG_ERROR;
         goto cleanup;
     }
-    dtc_rcy_runtime_tail_set_start(session, &runtime_safe, &runtime_next);
+    dtc_rcy_runtime_tail_set_start(session, &runtime_safe, &runtime_safe_head, &runtime_next);
     OG_LOG_RUN_INF("[DTC RBP RT] runtime tail analyze start, peer=%u safe_lfn=%llu next_lfn=%llu "
                    "recover_lrp_lfn=%llu safe_lsn=%llu recover_lrp_lsn=%llu "
                    "merge_order=tail_global_then_rt_snapshot",
@@ -8233,11 +8235,29 @@ static void dtc_rcy_rbp_reset_root_diag(uint32 inst_node_id)
     }
 }
 
+static status_t dtc_rcy_rbp_save_lfn_point(dtc_rbp_lfn_point_map_t *map, uint64 lfn,
+    log_point_t point, log_point_t headPoint)
+{
+    if (map->count > 0 && map->entries[map->count - 1].lfn == lfn) {
+        map->entries[map->count - 1].point = point;
+        map->entries[map->count - 1].head_point = headPoint;
+        return OG_SUCCESS;
+    }
+
+    if (dtc_rcy_rbp_ensure_lfn_point_capacity(map, map->count + 1) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    map->entries[map->count].lfn = lfn;
+    map->entries[map->count].point = point;
+    map->entries[map->count].head_point = headPoint;
+    map->count++;
+    return OG_SUCCESS;
+}
+
 static status_t dtc_rcy_rbp_record_lfn_point(knl_session_t *session, uint32 node_id, log_batch_t *batch,
     log_point_t *point)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
-    dtc_rbp_lfn_point_map_t *map = NULL;
     dtc_rcy_node_t *rcy_node = NULL;
     log_point_t mapped_point;
     dtc_rcy_point_bounds_t bounds;
@@ -8263,8 +8283,6 @@ static status_t dtc_rcy_rbp_record_lfn_point(knl_session_t *session, uint32 node
         return OG_SUCCESS;
     }
 
-    map = &dtc_rcy->rbp_lfn_point_maps[node_id];
-
     /* End-of-batch position from batch header; do not copy post-fetch rcy_point asn/block. */
     mapped_point = batch->head.point;
     mapped_point.lsn = batch->lsn;
@@ -8289,22 +8307,12 @@ static status_t dtc_rcy_rbp_record_lfn_point(knl_session_t *session, uint32 node
         }
     }
 
-    if (map->count > 0 && map->entries[map->count - 1].lfn == mapped_point.lfn) {
-        map->entries[map->count - 1].point = mapped_point;
-        return OG_SUCCESS;
-    }
-
-    if (dtc_rcy_rbp_ensure_lfn_point_capacity(map, map->count + 1) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-    map->entries[map->count].lfn = mapped_point.lfn;
-    map->entries[map->count].point = mapped_point;
-    map->count++;
-    return OG_SUCCESS;
+    return dtc_rcy_rbp_save_lfn_point(&dtc_rcy->rbp_lfn_point_maps[node_id], mapped_point.lfn, mapped_point,
+        batch->head.point);
 }
 
 static bool32 dtc_rcy_rbp_resolve_lfn_point(dtc_rcy_context_t *dtc_rcy, uint32 node_id, uint64 lfn,
-    log_point_t *point)
+    log_point_t *point, log_point_t *headPoint)
 {
     dtc_rbp_lfn_point_map_t *map = NULL;
 
@@ -8316,6 +8324,9 @@ static bool32 dtc_rcy_rbp_resolve_lfn_point(dtc_rcy_context_t *dtc_rcy, uint32 n
     for (uint32 i = map->count; i > 0; i--) {
         if (map->entries[i - 1].lfn == lfn) {
             *point = map->entries[i - 1].point;
+            if (headPoint != NULL) {
+                *headPoint = map->entries[i - 1].head_point;
+            }
             return OG_TRUE;
         }
     }
@@ -8326,29 +8337,32 @@ static status_t dtc_rcy_rbp_resolve_ckpt_resp(knl_session_t *session, uint32 nod
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     log_point_t point;
+    log_point_t head_point = { 0 };
 
     if (node_id >= OG_MAX_INSTANCES) {
         return OG_ERROR;
     }
 
-    if (resp->begin_point.lfn != 0 && dtc_rcy_rbp_resolve_lfn_point(dtc_rcy, node_id, resp->begin_point.lfn, &point)) {
+    if (resp->begin_point.lfn != 0 &&
+        dtc_rcy_rbp_resolve_lfn_point(dtc_rcy, node_id, resp->begin_point.lfn, &point, NULL)) {
         resp->begin_point = point;
     }
 
     if (resp->rcy_point.lfn != 0 &&
-        !dtc_rcy_rbp_resolve_lfn_point(dtc_rcy, node_id, resp->rcy_point.lfn, &point)) {
+        !dtc_rcy_rbp_resolve_lfn_point(dtc_rcy, node_id, resp->rcy_point.lfn, &point, &head_point)) {
         OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] node %u cannot resolve rcy_lfn %llu from analysis map",
                        node_id, (uint64)resp->rcy_point.lfn);
         return OG_ERROR;
     }
     if (resp->rcy_point.lfn != 0) {
         resp->rcy_point = point;
+        dtc_rcy->rbp_rcy_head_points[node_id] = head_point;
         dtc_rcy_rbp_check_point_root(session, node_id, "resolve", "RESOLVE_RCY_POINT_BEYOND_WRITE_POS", &point, NULL,
             0, point.block_id);
     }
 
     if (resp->lrp_point.lfn != 0 &&
-        !dtc_rcy_rbp_resolve_lfn_point(dtc_rcy, node_id, resp->lrp_point.lfn, &point)) {
+        !dtc_rcy_rbp_resolve_lfn_point(dtc_rcy, node_id, resp->lrp_point.lfn, &point, NULL)) {
         OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] node %u cannot resolve lrp_lfn %llu from analysis map",
                        node_id, (uint64)resp->lrp_point.lfn);
         return OG_ERROR;
@@ -8388,6 +8402,9 @@ static void dtc_rcy_rbp_reset_state(dtc_rcy_context_t *dtc_rcy)
     err = memset_sp(dtc_rcy->rbp_begin_points, sizeof(dtc_rcy->rbp_begin_points), 0, sizeof(dtc_rcy->rbp_begin_points));
     knl_securec_check(err);
     err = memset_sp(dtc_rcy->rbp_rcy_points, sizeof(dtc_rcy->rbp_rcy_points), 0, sizeof(dtc_rcy->rbp_rcy_points));
+    knl_securec_check(err);
+    err = memset_sp(dtc_rcy->rbp_rcy_head_points, sizeof(dtc_rcy->rbp_rcy_head_points), 0,
+                    sizeof(dtc_rcy->rbp_rcy_head_points));
     knl_securec_check(err);
     err = memset_sp(dtc_rcy->rbp_lrp_points, sizeof(dtc_rcy->rbp_lrp_points), 0, sizeof(dtc_rcy->rbp_lrp_points));
     knl_securec_check(err);
@@ -8626,7 +8643,7 @@ static void dtc_rcy_rbp_stage_jump_node(knl_session_t *session, uint32 node_idx,
     dtc_rcy_rbp_save_verify_node(session, node_id);
     node->rcy_point = dtc_rcy->rbp_rcy_points[node_id];
     node->rcy_write_point = dtc_rcy->rbp_rcy_points[node_id];
-    dtc_rcy->rcy_nodes[node_idx].recovery_read_end_point = dtc_rcy->rbp_rcy_points[node_id];
+    dtc_rcy->rcy_nodes[node_idx].recovery_read_end_point = dtc_rcy->rbp_rcy_head_points[node_id];
     dtc_rcy_rbp_update_global_lrp(session, node_id);
     session->kernel->rcy_ctx.max_lrp_lsn = MAX(session->kernel->rcy_ctx.max_lrp_lsn,
                                                dtc_rcy->rbp_global_lrp_lsn);
