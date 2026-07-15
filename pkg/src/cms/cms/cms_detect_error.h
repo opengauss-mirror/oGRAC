@@ -70,6 +70,7 @@ status_t cms_open_detect_file(void);
 typedef struct st_cms_disk_check_t {
     date_t last_check_time;
     bool32 read_timeout;
+    bool32 disk_perm_denied;
 } cms_disk_check_t;
 
 extern cms_disk_check_t g_check_disk;
