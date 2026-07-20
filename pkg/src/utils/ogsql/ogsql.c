@@ -22,12 +22,18 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <errno.h>
+#include <limits.h>
 #include <locale.h>
+#include <stdlib.h>
+#include <wchar.h>
 #include "cm_kmc.h"
 #include "cm_base.h"
 #include "cm_encrypt.h"
 #include "ogsql_common.h"
 #include "ogsql.h"
+#include "keywords.h"
+#include "kwlookup.h"
 #include "ogsql_dump.h"
 #include "ogsql_wsr.h"
 #include "ogsql_export.h"
@@ -35,6 +41,9 @@
 #include "ogsql_input_bind_param.h"
 #include "ogsql_load.h"
 #include "ogsql_option.h"
+#include "ogsql_history.h"
+#include "ogsql_completion.h"
+#include "ogsql_line_editor.h"
 #include "cm_config.h"
 #include "cm_log.h"
 #include "cm_timer.h"
@@ -50,8 +59,12 @@
 #include <windows.h>
 #else
 #include <termios.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <unistd.h>
 extern char **environ;
 #endif
 #include "cm_lex.h"
@@ -84,6 +97,14 @@ static const ogsql_cmd_def_t g_cmd_defs[] = {
     { CMD_AWR,      MODE_SINGLE_LINE, "wsr" },
 };
 #define OGSQL_CMD_COUNT (sizeof(g_cmd_defs) / sizeof(ogsql_cmd_def_t))
+#define OGSQL_ENV_UINT_BASE 10
+#define OGSQL_WIDE_CHAR_WIDTH 2
+#define OGSQL_RENDER_FRAME_INITIAL_CAPACITY 16
+#define OGSQL_RENDER_FRAME_GROWTH_FACTOR 2
+#define OGSQL_PROMPT_MIN_WIDTH 3
+#define OGSQL_FIRST_BLOCK_LINE_NO 1
+#define OGSQL_FIRST_MULTI_LINE_NO 2
+#define OGSQL_WELCOME_BUF_SIZE 16
 
 /* Three immediate command */
 static const ogsql_cmd_def_t CMD_NONE_TYPE = { CMD_NONE,     MODE_NONE,        NULL };
@@ -97,8 +118,58 @@ static const ogsql_cmd_def_t CMD_SHELL_TYPE = { CMD_SHELL, MODE_SINGLE_LINE, "\\
 
 #define OGSQL_RESET_CMD_TYPE(cmd_type) ((*(cmd_type)) = CMD_NONE_TYPE)
 
-/* Stores the history when the 'HISTORY' is turned on */
-static ogsql_cmd_history_list_t g_hist_list[OGSQL_MAX_HISTORY_SIZE];
+typedef struct OgsqlRenderFrameT {
+    uint32 rows;
+    uint32 historyLen;
+    bool32 historyOverflow;
+} OgsqlRenderFrameT;
+
+typedef struct OgsqlRenderFrameStackT {
+    OgsqlRenderFrameT *frames;
+    uint32 count;
+    uint32 capacity;
+} OgsqlRenderFrameStackT;
+
+typedef struct OgsqlRollbackLineT {
+    uint32 lineEnd;
+    uint32 lineStart;
+    uint32 copyLen;
+    bool32 stripTrailingLineBreak;
+    bool32 trailingLineBreak;
+    bool32 keepLineBreak;
+} OgsqlRollbackLineT;
+
+typedef struct OgsqlReadlineAbortCtxT {
+    uint32 *flag;
+    uint32 *lineNo;
+    char *cmdBuf;
+    uint32 inputMaxLen;
+    uint32 *preloadLen;
+    OgsqlPendingHistoryT *pendingHistory;
+} OgsqlReadlineAbortCtxT;
+
+typedef struct OgsqlRunCtxT {
+    FILE *in;
+    bool32 isFile;
+    char *cmdBuf;
+    uint32 inputMaxLen;
+    uint32 flag;
+    uint32 lineNo;
+    uint32 welcomeWidth;
+    uint32 preloadLen;
+    char welcomeBuf[OGSQL_WELCOME_BUF_SIZE];
+    int histCount;
+    int listNum;
+    bool32 useReadline;
+    OgsqlPendingHistoryT pendingHistory;
+    uint32 acceptedInputLen;
+    uint32 acceptedRenderRows;
+    bool32 abortLine;
+    text_t line;
+} OgsqlRunCtxT;
+
+static OgsqlRenderFrameStackT g_multilineRenderFrames = { NULL, 0, 0 };
+static bool32 g_readlineEnvConfigInited = OG_FALSE;
 
 config_item_t g_ogsql_parameters[] = {
     // name (30B)                     isdefault readonly  defaultvalue value runtime_value description range  datatype comment
@@ -143,7 +214,7 @@ static file_t g_spool_file = OG_NULL_FILE;
 static char g_spool_buf[SPOOL_BUFFER_SIZE];
 /* The maximal single line cmd is MAX_CMD_LEN. Here, the extra two bytes
  * used to reject too long inputs */
-char g_cmd_buf[MAX_CMD_LEN + 2];
+char g_cmd_buf[MAX_CMD_LEN + OGSQL_CMD_BUF_RESET_TAIL_LEN];
 static uint32 g_column_count = 0;
 static uint32 g_display_widths[OG_MAX_COLUMNS];
 static bool32 g_col_display[OG_MAX_COLUMNS];
@@ -152,7 +223,7 @@ static ogsql_cmd_def_t g_cmd_type;
 ogconn_inner_column_desc_t g_columns[OG_MAX_COLUMNS];
 char g_str_buf[OG_MAX_PACKET_SIZE + 1] = { 0 };
 char g_array_buf[OG_MAX_PACKET_SIZE + 1] = { 0 };
-char g_sql_buf[MAX_SQL_SIZE + 4];
+char g_sql_buf[MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN];
 spinlock_t g_cancel_lock = 0;
 static int32 g_in_enclosed_char = -1;
 static int32 g_in_comment_count = 0;
@@ -574,7 +645,7 @@ static status_t ogsql_try_parse_cmd_split_normal(char **sql_tmp, int32 split_num
 {
     bool32 is_has_sysdba = OG_FALSE;
     bool32 is_has_datadir = OG_FALSE;
-    if (split_num == 2) {
+    if (split_num == OGSQL_WIDE_CHAR_WIDTH) {
         OGSQL_PRINTF(ZSERR_OGSQL, "DB url is expected");
         return OG_ERROR;
     }
@@ -1722,10 +1793,10 @@ static void ogsql_print_column_titles(void)
                     ogsql_printf("%-.*s", g_display_widths[i], g_columns[i].name);
                 } else {
                     ogsql_printf("%-.*s%s", g_display_widths[i], g_columns[i].name, g_local_config.colsep.colsep_name);
-                }
             }
         }
     }
+}
 
     ogsql_printf("\n");
 
@@ -2275,6 +2346,7 @@ status_t ogsql_execute_sql(void)
     }
     ogsql_get_consumed_time_for_timer(start_time);
     ogsql_bind_param_uninit(param_count);
+
     return OG_SUCCESS;
 }
 
@@ -3108,6 +3180,9 @@ static status_t ogsql_process_multiline_cmd(text_t *line)
     bool32 is_end = OG_FALSE;
 
     cm_trim_text(line);
+    if (CM_IS_EMPTY(line)) {
+        return ogsql_concat_appendlf(line);
+    }
     if (CM_TEXT_END(line) == ';' && g_in_comment_count == 0) {
         is_end = OG_TRUE;
         line->len--;
@@ -3602,18 +3677,18 @@ static inline void ogsql_reset_curr_sql_work_dir(text_t *last_sql_dir)
     g_curr_sql_dir = last_sql_dir;
 }
 
-static inline void ogsql_run_sqlfile(FILE *file)
+static inline void OgsqlRunSqlfile(FILE *file)
 {
-    bool32 temp_slient_on = g_local_config.silent_on;
-    char cmd_buf[MAX_CMD_LEN + 2];
+    bool32 tempSilentOn = g_local_config.silent_on;
+    char cmdBuf[MAX_CMD_LEN + OGSQL_CMD_BUF_RESET_TAIL_LEN];
 
     g_is_print = OG_TRUE;
     g_local_config.silent_on = g_local_config.termout_on;
 
-    ogsql_reset_cmd_buf(cmd_buf, sizeof(cmd_buf));
-    ogsql_run(file, OG_TRUE, cmd_buf, sizeof(cmd_buf));
+    ogsql_reset_cmd_buf(cmdBuf, sizeof(cmdBuf));
+    ogsql_run(file, OG_TRUE, cmdBuf, sizeof(cmdBuf));
 
-    g_local_config.silent_on = temp_slient_on;
+    g_local_config.silent_on = tempSilentOn;
     g_is_print = OG_FALSE;
 }
 
@@ -3658,7 +3733,7 @@ static status_t ogsql_run_normal_sqlfile(text_t *file_name)
         ogsql_reset_curr_sql_work_dir(last_sql_dir);
         return OG_ERROR;
     }
-    ogsql_run_sqlfile(file);
+    OgsqlRunSqlfile(file);
     ogsql_printf("\n");
     (void)fclose(file);
     CM_FREE_PTR(str_realpath);
@@ -3698,11 +3773,178 @@ static status_t ogsql_run_nested_sqlfile(text_t *file_name)
         CM_FREE_PTR(str_realpath);
         return OG_ERROR;
     }
-    ogsql_run_sqlfile(file);
+    OgsqlRunSqlfile(file);
     ogsql_printf("\n");
     (void)fclose(file);
     CM_FREE_PTR(str_realpath);
     return OG_SUCCESS;
+}
+
+static const char *OgsqlGetNonemptyEnv(const char *name)
+{
+    const char *value;
+    uint32 nameLen;
+
+    if (name == NULL) {
+        return NULL;
+    }
+
+#ifdef WIN32
+    return NULL;
+#else
+    nameLen = (uint32)strlen(name);
+    for (char **env = environ; env != NULL && *env != NULL; env++) {
+        if (strncmp(*env, name, nameLen) == 0 && (*env)[nameLen] == '=') {
+            value = *env + nameLen + 1;
+            return (value[0] != '\0') ? value : NULL;
+        }
+    }
+
+    return NULL;
+#endif
+}
+
+static void OgsqlReadlineEnvWarn(const char *envName, const char *reason)
+{
+    if (envName == NULL || reason == NULL) {
+        return;
+    }
+    (void)fprintf(stderr, "warning: ignore %s, %s.\n", envName, reason);
+}
+
+static void OgsqlReadlineEnvClampWarn(const char *envName, uint32 maxValue)
+{
+    if (envName == NULL) {
+        return;
+    }
+    (void)fprintf(stderr, "warning: %s is greater than %u, use %u instead.\n", envName, maxValue, maxValue);
+}
+
+static uint32 OgsqlReadEnvUint32(const char *name, uint32 defaultValue, uint32 minValue, uint32 maxValue)
+{
+    const char *value = OgsqlGetNonemptyEnv(name);
+    char *end = NULL;
+    uint64 parsed;
+
+    if (value == NULL) {
+        return defaultValue;
+    }
+    if (value[0] == '-') {
+        OgsqlReadlineEnvWarn(name, "value must be a positive integer");
+        return defaultValue;
+    }
+
+    errno = 0;
+    parsed = (uint64)strtoull(value, &end, OGSQL_ENV_UINT_BASE);
+    if (errno == ERANGE || end == value || end == NULL || *end != '\0') {
+        OgsqlReadlineEnvWarn(name, "value must be a positive integer");
+        return defaultValue;
+    }
+    if (parsed < minValue) {
+        OgsqlReadlineEnvWarn(name, "value is below the allowed minimum");
+        return defaultValue;
+    }
+    if (parsed > maxValue) {
+        OgsqlReadlineEnvClampWarn(name, maxValue);
+        return maxValue;
+    }
+
+    return (uint32)parsed;
+}
+
+static bool32 OgsqlIsSensitiveWordDuplicate(const char *word)
+{
+    for (uint32 i = 0; i < g_local_config.history_sensitive_word_count; i++) {
+        if (strcmp(g_local_config.historySensitiveWords[i], word) == 0) {
+            return OG_TRUE;
+        }
+    }
+
+    return OG_FALSE;
+}
+
+static void OgsqlAddExtraSensitiveWord(const char *word, uint32 wordLen)
+{
+    char upperWord[OGSQL_MAX_SENSITIVE_WORD_LEN];
+    errno_t rc;
+
+    if (word == NULL || wordLen == 0) {
+        return;
+    }
+    if (wordLen >= OGSQL_MAX_SENSITIVE_WORD_LEN) {
+        (void)fprintf(stderr, "warning: ignore OGSQL_HISTORY_SENSITIVE_WORDS item, keyword is too long.\n");
+        return;
+    }
+    if (g_local_config.history_sensitive_word_count >= OGSQL_MAX_EXTRA_SENSITIVE_WORDS) {
+        (void)fprintf(stderr, "warning: ignore OGSQL_HISTORY_SENSITIVE_WORDS item, too many keywords.\n");
+        return;
+    }
+
+    for (uint32 i = 0; i < wordLen; i++) {
+        upperWord[i] = (word[i] >= 'a' && word[i] <= 'z') ? (word[i] - ('a' - 'A')) : word[i];
+    }
+    upperWord[wordLen] = '\0';
+    if (OgsqlIsSensitiveWordDuplicate(upperWord)) {
+        return;
+    }
+
+    rc = strcpy_s(g_local_config.historySensitiveWords[g_local_config.history_sensitive_word_count],
+        OGSQL_MAX_SENSITIVE_WORD_LEN, upperWord);
+    if (rc == EOK) {
+        g_local_config.history_sensitive_word_count++;
+    }
+}
+
+static void OgsqlInitSensitiveWordsFromEnv(void)
+{
+    const char *value = OgsqlGetNonemptyEnv("OGSQL_HISTORY_SENSITIVE_WORDS");
+    const char *start = value;
+    const char *end = NULL;
+
+    g_local_config.history_sensitive_word_count = 0;
+    if (value == NULL || value[0] == '\0') {
+        return;
+    }
+
+    while (start != NULL && *start != '\0') {
+        while (*start == ' ' || *start == '\t' || *start == ',') {
+            start++;
+        }
+        if (*start == '\0') {
+            break;
+        }
+
+        end = start;
+        while (*end != '\0' && *end != ',') {
+            end++;
+        }
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+            end--;
+        }
+
+        OgsqlAddExtraSensitiveWord(start, (uint32)(end - start));
+        start = (*end == ',') ? (end + 1) : end;
+    }
+}
+
+static void OgsqlInitReadlineEnvConfig(void)
+{
+    g_local_config.history_size = OgsqlReadEnvUint32("OGSQL_HISTSIZE",
+        OGSQL_DEFAULT_HISTORY_SIZE, OGSQL_MIN_HISTORY_SIZE, OGSQL_MAX_HISTORY_SIZE);
+    g_local_config.effective_max_sql_len = OgsqlReadEnvUint32("OGSQL_MAX_SQL_LEN",
+        MAX_CMD_LEN, OGSQL_MIN_SQL_LEN, MAX_CMD_LEN);
+    g_local_config.completion_max_records = OgsqlReadEnvUint32("OGSQL_COMPLETION_MAX_RECORDS",
+        OGSQL_DEFAULT_COMPLETION_RECORDS, 1, OGSQL_MAX_COMPLETION_RECORDS);
+    OgsqlInitSensitiveWordsFromEnv();
+}
+
+static void OgsqlEnsureReadlineEnvConfig(void)
+{
+    if (g_readlineEnvConfigInited == OG_TRUE) {
+        return;
+    }
+    OgsqlInitReadlineEnvConfig();
+    g_readlineEnvConfigInited = OG_TRUE;
 }
 
 static void ogsql_init_local_config(void)
@@ -3746,6 +3988,12 @@ static void ogsql_init_local_config(void)
     g_local_config.client_path[0] = '\0';
     g_local_config.bindparam_force_on  = OG_FALSE;
     g_local_config.shd_rw_split = OGCONN_SHD_RW_SPLIT_NONE;
+    g_local_config.history_on = OG_TRUE;
+    g_local_config.history_size = OGSQL_DEFAULT_HISTORY_SIZE;
+    g_local_config.effective_max_sql_len = MAX_CMD_LEN;
+    g_local_config.completion_max_records = OGSQL_DEFAULT_COMPLETION_RECORDS;
+    g_local_config.history_sensitive_word_count = 0;
+    g_readlineEnvConfigInited = OG_FALSE;
 }
 
 static inline void ogsql_init_backup_file_count(char *value, log_param_t *log_param)
@@ -3873,72 +4121,81 @@ status_t ogsql_alloc_conn(ogconn_conn_t *pconn)
     return OG_SUCCESS;
 }
 
-void ogsql_init(int32 argc, char *argv[])
+static void OgsqlInitConnInfo(void)
 {
-    int pos;
     errno_t errcode;
-    bool32 interactive_clt = OG_TRUE;
-    char home[OG_MAX_PATH_BUFFER_SIZE] = { 0x00 };
 
-    // init global conn info
     errcode = memset_s(&g_conn_info, sizeof(ogsql_conn_info_t), 0, sizeof(ogsql_conn_info_t));
     if (errcode != EOK) {
         OG_THROW_ERROR(ERR_SYSTEM_CALL, (errcode));
         exit(EXIT_FAILURE);
     }
+}
+
+static void OgsqlInitHomePath(int32 argc, char *argv[])
+{
+    int pos;
+    errno_t errcode = EOK;
+    char home[OG_MAX_PATH_BUFFER_SIZE] = { 0x00 };
 
     pos = ogsql_find_arg(argc, argv, "-D");
-    if (pos) {
-        if (pos + 1 >= argc) {
-            OGSQL_PRINTF(ZSERR_OGSQL, "The specified directory is missing.");
-            exit(EXIT_FAILURE);
-        }
-
-        if (realpath_file(argv[pos + 1], (char *)home, OG_MAX_PATH_LEN) != OG_SUCCESS) {
-            OG_THROW_ERROR(ERR_SYSTEM_CALL, (errcode));
-            exit(EXIT_FAILURE);
-        }
-        if (cm_check_exist_special_char(home, (uint32)strlen(home))) {
-            OG_THROW_ERROR(ERR_INVALID_DIR, argv[pos + 1]);
-            exit(EXIT_FAILURE);
-        }
-        errcode = strncpy_s(OG_HOME, OG_MAX_PATH_BUFFER_SIZE, argv[pos + 1], OG_MAX_PATH_LEN);
-        if (errcode != EOK) {
-            OG_THROW_ERROR(ERR_SYSTEM_CALL, (errcode));
-            exit(EXIT_FAILURE);
-        }
+    if (!pos) {
+        return;
     }
+    if (pos + 1 >= argc) {
+        OGSQL_PRINTF(ZSERR_OGSQL, "The specified directory is missing.");
+        exit(EXIT_FAILURE);
+    }
+    if (realpath_file(argv[pos + 1], (char *)home, OG_MAX_PATH_LEN) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, (errcode));
+        exit(EXIT_FAILURE);
+    }
+    if (cm_check_exist_special_char(home, (uint32)strlen(home))) {
+        OG_THROW_ERROR(ERR_INVALID_DIR, argv[pos + 1]);
+        exit(EXIT_FAILURE);
+    }
+    errcode = strncpy_s(OG_HOME, OG_MAX_PATH_BUFFER_SIZE, argv[pos + 1], OG_MAX_PATH_LEN);
+    if (errcode != EOK) {
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, (errcode));
+        exit(EXIT_FAILURE);
+    }
+}
 
-    // start timer thread
+static void OgsqlInitRuntimeConfig(void)
+{
     if (cm_start_timer(g_timer()) != OG_SUCCESS) {
         OGSQL_PRINTF(ZSERR_OGSQL, "aborted due to starting timer thread");
         exit(EXIT_FAILURE);
     }
-
-    // init local config
     ogsql_init_local_config();
-    // load ogsql config
     ogsql_load_ogsql_config();
-    // load ogsql config
     ogsql_init_ogsql_config();
-    // init ssl config
     ogsql_init_ssl_config();
-    // init loggers
     ogsql_init_loggers();
+}
 
-    // alloc global conn
+static void OgsqlInitConnection(void)
+{
+    bool32 interactiveClt = OG_TRUE;
+
     if (ogsql_alloc_conn(&CONN) != OG_SUCCESS) {
         ogsql_print_error(NULL);
         exit(EXIT_FAILURE);
     }
-    (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_INTERACTIVE_MODE, (void *)&interactive_clt, 0);
+    (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_INTERACTIVE_MODE, (void *)&interactiveClt, 0);
     (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_CONNECT_TIMEOUT, (void *)&g_local_config.connect_timeout,
         sizeof(int32));
     (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_SOCKET_TIMEOUT, (void *)&g_local_config.socket_timeout, sizeof(int32));
+}
 
+void ogsql_init(int32 argc, char *argv[])
+{
+    OgsqlInitConnInfo();
+    OgsqlInitHomePath(argc, argv);
+    OgsqlInitRuntimeConfig();
+    OgsqlInitConnection();
     g_sql_text.str = g_sql_buf;
     g_sql_text.len = 0;
-
     OGSQL_RESET_CMD_TYPE(&g_cmd_type);
     ogsql_reset_cmd_buf(g_cmd_buf, sizeof(g_cmd_buf));
 }
@@ -4096,8 +4353,14 @@ static void ogsql_if_block(text_t *line, uint32 *flag)
 static void ogsql_if_block_end(text_t *line, uint32 *flag)
 {
     int32 count = 0;
+    uint32 lineStart = 0;
 
     for (uint32 i = 0; i < line->len; i++) {
+        if (line->str[i] == '\n' && i + 1 < line->len) {
+            lineStart = i + 1;
+        }
+    }
+    for (uint32 i = lineStart; i < line->len; i++) {
         if ((line->str[i] > ' ' && line->str[i] != '/') || count > 1) {
             return;
         }
@@ -4123,48 +4386,56 @@ static void ogsql_if_comment_end(text_t *line, uint32 *flag)
     }
 }
 
-uint32 ogsql_print_welcome(uint32 multi_line, uint32 line_no)
+static bool32 ogsql_welcome_visible(void)
 {
-    uint32 nchars = 0;
     if (g_is_print == OG_TRUE &&
         g_local_config.script_output == OG_FALSE &&
         g_local_config.feedback.feedback_on == OG_FALSE) {
+        return OG_FALSE;
+    }
+
+    return g_local_config.silent_on ? OG_FALSE : OG_TRUE;
+}
+
+uint32 ogsql_print_welcome(uint32 multi_line, uint32 line_no)
+{
+    uint32 nchars = 0;
+    int32 print_len;
+
+    if (!ogsql_welcome_visible()) {
         return nchars;
     }
 
-    if (!g_local_config.silent_on) {
-        if (multi_line == OGSQL_SINGLE_TAG) {
-            if (!g_local_config.silent_on) {
-                nchars = printf("SQL> ");
-                fflush(stdout);
-            }
-            ogsql_try_spool_put("SQL> ");
-        } else {
-            if (!g_local_config.silent_on) {
-                nchars = printf("%3u ", line_no);
-                fflush(stdout);
-            }
-            ogsql_try_spool_put("%3d ", line_no);
-        }
+    if (multi_line == OGSQL_SINGLE_TAG) {
+        print_len = printf("SQL> ");
+        fflush(stdout);
+        nchars = (print_len > 0) ? (uint32)print_len : 0;
+        ogsql_try_spool_put("SQL> ");
+    } else {
+        print_len = printf("%3u ", line_no);
+        fflush(stdout);
+        nchars = (print_len > 0) ? (uint32)print_len : 0;
+        ogsql_try_spool_put("%3d ", line_no);
     }
     return nchars;
 }
 
-static bool32 ogsql_if_illega_line(FILE *in, char *cmd_buf, uint32 max_len)
+static bool32 ogsql_if_illega_line(FILE *in, char *cmdBuf, uint32 max_len)
 {
     char err_info[OG_MAX_CMD_LEN] = { 0 };
     int iret_snprintf = 0;
     int iret_fscanf = 0;
 
     /* If the single cmd is too long */
-    if (cmd_buf[max_len - 1] != OGSQL_BUF_RESET_CHAR) {
+    if (cmdBuf[max_len - 1] != OGSQL_BUF_RESET_CHAR) {
         iret_fscanf = fscanf_s(in, "%*[^\n]%*c");
         if (iret_fscanf == -1) {
             OG_THROW_ERROR(ERR_SYSTEM_CALL, iret_snprintf);
             return OG_FALSE;
         }
         iret_snprintf = snprintf_s(err_info, OG_MAX_CMD_LEN, OG_MAX_CMD_LEN - 1,
-                                   "Error: Input is too long (> %d characters) - line ignored.\n", MAX_CMD_LEN);
+            "Error: Input is too long (> %u characters) - line ignored.\n",
+            max_len - OGSQL_CMD_BUF_RESET_TAIL_LEN);
         if (iret_snprintf == -1) {
             OG_THROW_ERROR(ERR_SYSTEM_CALL, iret_snprintf);
             return OG_FALSE;
@@ -4173,7 +4444,7 @@ static bool32 ogsql_if_illega_line(FILE *in, char *cmd_buf, uint32 max_len)
             ogsql_oper_log(err_info, (uint32)strlen(err_info) - 1);  // record oper log, '\n' no need
         }
 
-        ogsql_reset_cmd_buf(cmd_buf, max_len);
+        ogsql_reset_cmd_buf(cmdBuf, max_len);
         return OG_TRUE;
     }
     return OG_FALSE;
@@ -4367,254 +4638,530 @@ static void ogsql_if_not_enclosed(text_t *line)
     }
 }
 
-static uint32 ogsql_utf8_chr_widths(char *chr, uint32 c_bytes)
+static void OgsqlRefreshMultilineState(void)
 {
-    wchar_t wchr;
-    uint32 c_widths = 0;
-    (void)mbtowc(&wchr, chr, c_bytes);
-#ifndef WIN32
-    c_widths = (uint32)wcwidth(wchr);
-#endif
-    return c_widths;
-}
+    char c;
 
-static void ogsql_push_history(uint32 cmd_bytes, uint32 cmd_width, int *hist_count, char *cmd_buf, uint32 max_len)
-{
-    text_t ignore_passwd_text;
-    int32 mattch_type;
-    bool32 mattched = OG_FALSE;
-    
-    if (cmd_bytes == 0) {
-        return;
-    }
+    ogsql_reset_in_enclosed_char();
+    g_in_comment_count = 0;
 
-    cm_str2text(cmd_buf, &ignore_passwd_text);
-    cm_text_try_map_key2type(&ignore_passwd_text, &mattch_type, &mattched);
-
-    if (mattched == OG_TRUE) {
-        return;
-    }
-    
-    if (*hist_count < OGSQL_MAX_HISTORY_SIZE - 1) {
-        *hist_count += 1;
-    }
-    for (int i = *hist_count; i > 1; i--) {
-        OGSQL_CHECK_MEMS_SECURE(memcpy_s(&g_hist_list[i], sizeof(ogsql_cmd_history_list_t),
-                                        &g_hist_list[i - 1], sizeof(ogsql_cmd_history_list_t)));
-    }
-    OGSQL_CHECK_MEMS_SECURE(memcpy_s(g_hist_list[1].hist_buf, OGSQL_HISTORY_BUF_SIZE, cmd_buf, OGSQL_HISTORY_BUF_SIZE));
-    g_hist_list[1].nbytes = cmd_bytes;
-    g_hist_list[1].nwidths = cmd_width;
-    return;
-}
-
-static void ogsql_cmd_clean_line(uint32 line_widths)
-{
-    uint32 line_wid = line_widths;
-    while (line_wid--) {
-        ogsql_write(3, "\b \b");
-    }
-}
-
-/* Calculate the position and total number of spaces used to space at the end of a line */
-static void ogsql_set_endspace(ogsql_cmd_history_list_t hist_list, uint32 ws_col, uint32 welcome_width,
-                       uint32 *spacenum, bool8 *endspace)
-{
-    uint32 offset = 0;
-    uint32 c_bytes = 0;
-    uint32 c_widths = 0;
-    uint32 nwidths = 0;
-    uint32 space_num = 0;
-
-    OGSQL_CHECK_MEMS_SECURE(memset_s(endspace, OGSQL_HISTORY_BUF_SIZE, 0, OGSQL_HISTORY_BUF_SIZE));
-    while (offset < hist_list.nbytes) {
-        (void)cm_utf8_chr_bytes(hist_list.hist_buf[offset], &c_bytes);
-        c_widths = ogsql_utf8_chr_widths(hist_list.hist_buf + offset, c_bytes);
-        offset += c_bytes;
-
-        if (c_widths == 2 && (nwidths + space_num + welcome_width + 1) % ws_col == 0) {
-            space_num++;
-            endspace[(nwidths + space_num + welcome_width + 1) / ws_col] = OG_TRUE;
+    for (uint32 i = 0; i < g_sql_text.len; i++) {
+        c = g_sql_text.str[i];
+        if (!g_in_comment_count && OGSQL_IS_ENCLOSED_CHAR(c)) {
+            if (g_in_enclosed_char < 0) {
+                g_in_enclosed_char = c;
+            } else if (g_in_enclosed_char == c) {
+                g_in_enclosed_char = -1;
+            }
+            continue;
         }
-        nwidths += c_widths;
-    }
-    *spacenum = space_num;
-}
 
-static void ogsql_hist_turn_up(const int *hist_count, int *list_num, uint32 *nbytes, uint32 *nwidths, uint32 ws_col,
-                       uint32 welcome_width, uint32 *spacenum, bool8 *endspace, char *cmd_buf, uint32 max_len)
-{
-    if (*list_num > *hist_count - 1) {
-        return;
-    }
-    if (*list_num == 0) {
-        OGSQL_CHECK_MEMS_SECURE(memcpy_s(g_hist_list[0].hist_buf, OGSQL_HISTORY_BUF_SIZE, cmd_buf, *nbytes));
-        g_hist_list[0].nbytes = *nbytes;
-        g_hist_list[0].nwidths = *nwidths;
-    }
-    ogsql_cmd_clean_line(*nwidths + *spacenum);
-    (*list_num)++;
+        if (g_in_enclosed_char > 0) {
+            continue;
+        }
 
-    *nbytes = g_hist_list[*list_num].nbytes;
-    *nwidths = g_hist_list[*list_num].nwidths;
+        if (c == '/' && (i + 1 < g_sql_text.len) && g_sql_text.str[i + 1] == '*') {
+            g_in_comment_count++;
+            i++;
+            continue;
+        }
 
-    OGSQL_CHECK_MEMS_SECURE(memcpy_s(cmd_buf, max_len, g_hist_list[*list_num].hist_buf, *nbytes));
-    ogsql_write(*nbytes, g_hist_list[*list_num].hist_buf);
-    ogsql_write(2, " \b");
-    ogsql_set_endspace(g_hist_list[*list_num], ws_col, welcome_width, spacenum, endspace);
-}
-
-static void ogsql_hist_turn_down(int *list_num, uint32 *nbytes, uint32 *nwidths, uint32 ws_col, uint32 welcome_width,
-                         uint32 *spacenum, bool8 *endspace, char *cmd_buf, uint32 max_len)
-{
-    if (*list_num < 1) {
-        return;
-    }
-    ogsql_cmd_clean_line(*nwidths + *spacenum);
-    (*list_num)--;
-        
-    *nbytes = g_hist_list[*list_num].nbytes;
-    *nwidths = g_hist_list[*list_num].nwidths;
-
-    OGSQL_CHECK_MEMS_SECURE(memcpy_s(cmd_buf, max_len, g_hist_list[*list_num].hist_buf, *nbytes));
-    ogsql_write(*nbytes, g_hist_list[*list_num].hist_buf);
-    ogsql_write(2, " \b");
-    ogsql_set_endspace(g_hist_list[*list_num], ws_col, welcome_width, spacenum, endspace);
-}
-
-static void ogsql_fgets_with_history(int *hist_count, int *list_num, uint32 welcome_width, char *cmd_buf, uint32 max_len)
-{
-    int32 key_char = 0;
-    int32 direction_key = 0;
-
-    uint32 c_bytes = 0;
-    uint32 c_widths = 0;
-    uint32 nbytes = 0;
-    uint32 nwidths = 0;
-    uint32 spacenum = 0; /* Record the number of spaces filled at the end of the line. */
-    bool8 endspace[OGSQL_HISTORY_BUF_SIZE]; /* Record the line number with space at the end of the line. */
-    char chr[OGSQL_UTF8_CHR_SIZE];
-    uint32 ws_col = 0;
-#ifndef WIN32
-    struct winsize size;
-    (void)ioctl(0, TIOCGWINSZ, &size);
-    ws_col = size.ws_col;
-    struct termios oldt;
-    struct termios newt;
-    (void)tcgetattr(STDIN_FILENO, &oldt);
-    OGSQL_CHECK_MEMS_SECURE(memcpy_s(&newt, sizeof(newt), &oldt, sizeof(oldt)));
-    newt.c_lflag &= ~(ECHO | ICANON | ECHOE | ECHOK | ECHONL | ICRNL);
-    newt.c_cc[VMIN] = 1;
-    newt.c_cc[VTIME] = 0;
-    (void)tcsetattr(STDIN_FILENO, TCSANOW, &newt); /* Set terminal input echo off */
-#endif
-    OGSQL_CHECK_MEMS_SECURE(memset_s(endspace, OGSQL_HISTORY_BUF_SIZE, 0, OGSQL_HISTORY_BUF_SIZE));
-    while (key_char != CMD_KEY_ASCII_LF && key_char != CMD_KEY_ASCII_CR) {
-        key_char = getchar();
-        switch (key_char) {
-            case CMD_KEY_ESCAPE:
-                (void)getchar(); // '['
-                direction_key = getchar();
-                if (direction_key == CMD_KEY_UP) {
-                    ogsql_hist_turn_up(hist_count, list_num, &nbytes, &nwidths, ws_col, welcome_width, &spacenum,
-                                      endspace, cmd_buf, max_len);
-                    continue;
-                } else if (direction_key == CMD_KEY_DOWN) {
-                    ogsql_hist_turn_down(list_num, &nbytes, &nwidths, ws_col, welcome_width, &spacenum, endspace,
-                                        cmd_buf, max_len);
-                    continue;
-                } else if (direction_key == CMD_KEY_DEL) {
-                    (void)getchar(); // '~'
-                } else {
-                    continue;
-                }
-            case CMD_KEY_ASCII_DEL:
-            case CMD_KEY_ASCII_BS:
-                if (nbytes == 0) {
-                    continue;
-                }
-                (void)cm_utf8_reverse_str_bytes(cmd_buf + nbytes - 1, nbytes, &c_bytes);
-                nbytes -= c_bytes;
-                OGSQL_CHECK_MEMS_SECURE(memcpy_s(chr, OGSQL_UTF8_CHR_SIZE, cmd_buf + nbytes, c_bytes));
- 
-                c_widths = ogsql_utf8_chr_widths(chr, c_bytes);
-                for (int i = c_widths; i > 0; i--) {
-                    ogsql_write(3, "\b \b");
-                }
-                nwidths -= c_widths;
-                /* When there is a filled in space at the end of the line, one more space should be deleted. */
-                if ((nwidths + spacenum + welcome_width) % ws_col == 0 && c_widths == 2 &&
-                    endspace[(nwidths + spacenum + welcome_width) / ws_col] == OG_TRUE) {
-                    endspace[(nwidths + spacenum + welcome_width) / ws_col] = OG_FALSE;
-                    spacenum--;
-                    ogsql_write(3, "\b \b");
-                }
-                continue;
-
-            case CMD_KEY_ASCII_CR:
-            case CMD_KEY_ASCII_LF:
-                *list_num = 0;
-                ogsql_write(1, "\n");
-                continue;
-
-            default:
-                (void)cm_utf8_chr_bytes((uint8)key_char, &c_bytes);
-                if (nbytes + c_bytes > OGSQL_HISTORY_BUF_SIZE - 2) {
-                    continue;
-                }
-                OGSQL_CHECK_MEMS_SECURE(memset_s(chr, OGSQL_UTF8_CHR_SIZE, key_char, 1));
-                for (uint32 i = 1; i < c_bytes; i++) {
-                    key_char = getchar();
-                    OGSQL_CHECK_MEMS_SECURE(memset_s(chr + i, OGSQL_UTF8_CHR_SIZE - i, key_char, 1));
-                }
-                c_widths = ogsql_utf8_chr_widths(chr, c_bytes);
-                /* If the char is invisible, skip */
-                if (c_widths == -1) {
-                    continue;
-                }
-                OGSQL_CHECK_MEMS_SECURE(memcpy_s(cmd_buf + nbytes, MAX_CMD_LEN + 2 - nbytes, chr, c_bytes));
-                nbytes += c_bytes;
-                ogsql_write(c_bytes, chr);
-                /* UNIX console standard output requires special handling when the cursor is at the end of the line.
-                   When the end of the line is exactly full of characters, the cursor needs to jump to the next line.
-                   When there is only one space at the end of the line and the next character is full width, a space
-                   needs to be filled in. */
-                if (((nwidths + spacenum + welcome_width + 1) % ws_col == 0 && c_widths == 1) ||
-                    ((nwidths + spacenum + welcome_width + 2) % ws_col == 0 && c_widths == 2)) {
-                    ogsql_write(2, " \b");
-                } else if ((nwidths + spacenum + welcome_width + 1) % ws_col == 0 && c_widths == 2) {
-                    spacenum++;
-                    endspace[(nwidths + spacenum + welcome_width + 1) / ws_col] = OG_TRUE;
-                }
-                nwidths += c_widths;
-                continue;
+        if (c == '*' && (i + 1 < g_sql_text.len) && g_sql_text.str[i + 1] == '/') {
+            if (g_in_comment_count > 0) {
+                g_in_comment_count = 0;
+            }
+            i++;
         }
     }
-    ogsql_push_history(nbytes, nwidths, hist_count, cmd_buf, max_len);
-    OGSQL_CHECK_MEMS_SECURE(memcpy_s(cmd_buf + nbytes, max_len - nbytes, "\n", 2));
-#ifndef WIN32
-    (void)tcsetattr(STDIN_FILENO, TCSANOW, &oldt); /* Set terminal input echo on */
-#endif
-    return;
 }
 
-EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmd_buf, uint32 max_len)
+static uint32 ogsql_continuation_prompt_width(uint32 line_no)
 {
-    text_t line;
+    uint32 digits = 1;
+    uint32 value = line_no;
 
-    uint32 flag = OGSQL_SINGLE_TAG;
-    uint32 line_no = 0;
+    while (value >= OGSQL_ENV_UINT_BASE) {
+        digits++;
+        value /= OGSQL_ENV_UINT_BASE;
+    }
 
-    uint32 welcome_width = 0;
-    int hist_count = 0;
-    int list_num = 0;
+    return ((digits < OGSQL_PROMPT_MIN_WIDTH) ? OGSQL_PROMPT_MIN_WIDTH : digits) + 1;
+}
 
+static uint32 ogsql_multiline_prompt_width_at(uint32 line_start)
+{
+    uint32 prompt_line_no = 1;
+
+    if (!ogsql_welcome_visible()) {
+        return 0;
+    }
+
+    if (line_start == 0) {
+        return (uint32)strlen("SQL> ");
+    }
+
+    for (uint32 i = 0; i < line_start; i++) {
+        if (g_sql_text.str[i] == '\n') {
+            prompt_line_no++;
+        }
+    }
+
+    return ogsql_continuation_prompt_width(prompt_line_no);
+}
+
+static void OgsqlMultilineRenderFramesReset(void)
+{
+    g_multilineRenderFrames.count = 0;
+}
+
+static void OgsqlMultilineRenderFramesFree(void)
+{
+    free(g_multilineRenderFrames.frames);
+    g_multilineRenderFrames.frames = NULL;
+    g_multilineRenderFrames.count = 0;
+    g_multilineRenderFrames.capacity = 0;
+}
+
+static status_t OgsqlMultilineRenderFramePush(uint32 rows, const OgsqlPendingHistoryT *pendingHistory)
+{
+    OgsqlRenderFrameT *newFrames = NULL;
+    uint32 newCapacity;
+    errno_t rc;
+
+    if (rows == 0) {
+        rows = 1;
+    }
+    if (g_multilineRenderFrames.count == g_multilineRenderFrames.capacity) {
+        newCapacity = (g_multilineRenderFrames.capacity == 0) ? OGSQL_RENDER_FRAME_INITIAL_CAPACITY :
+            (g_multilineRenderFrames.capacity * OGSQL_RENDER_FRAME_GROWTH_FACTOR);
+        newFrames = (OgsqlRenderFrameT *)malloc(sizeof(OgsqlRenderFrameT) * newCapacity);
+        if (newFrames == NULL) {
+            return OG_ERROR;
+        }
+        if (g_multilineRenderFrames.count > 0) {
+            rc = memcpy_s(newFrames, sizeof(OgsqlRenderFrameT) * newCapacity, g_multilineRenderFrames.frames,
+                sizeof(OgsqlRenderFrameT) * g_multilineRenderFrames.count);
+            if (rc != EOK) {
+                free(newFrames);
+                OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+                return OG_ERROR;
+            }
+        }
+        free(g_multilineRenderFrames.frames);
+        g_multilineRenderFrames.frames = newFrames;
+        g_multilineRenderFrames.capacity = newCapacity;
+    }
+
+    g_multilineRenderFrames.frames[g_multilineRenderFrames.count].rows = rows;
+    g_multilineRenderFrames.frames[g_multilineRenderFrames.count].historyLen =
+        (pendingHistory == NULL) ? 0 : pendingHistory->len;
+    g_multilineRenderFrames.frames[g_multilineRenderFrames.count].historyOverflow =
+        (pendingHistory == NULL) ? OG_FALSE : pendingHistory->overflow;
+    g_multilineRenderFrames.count++;
+    return OG_SUCCESS;
+}
+
+static bool32 OgsqlMultilineRenderFramePop(uint32 *rows, uint32 *historyLen, bool32 *historyOverflow)
+{
+    if (rows == NULL || historyLen == NULL || historyOverflow == NULL || g_multilineRenderFrames.count == 0 ||
+        g_multilineRenderFrames.frames == NULL) {
+        return OG_FALSE;
+    }
+
+    g_multilineRenderFrames.count--;
+    *rows = g_multilineRenderFrames.frames[g_multilineRenderFrames.count].rows;
+    if (g_multilineRenderFrames.count == 0) {
+        *historyLen = 0;
+        *historyOverflow = OG_FALSE;
+    } else {
+        *historyLen = g_multilineRenderFrames.frames[g_multilineRenderFrames.count - 1].historyLen;
+        *historyOverflow = g_multilineRenderFrames.frames[g_multilineRenderFrames.count - 1].historyOverflow;
+    }
+    return (*rows > 0) ? OG_TRUE : OG_FALSE;
+}
+
+static uint32 ogsql_get_next_multiline_line_no(uint32 flag)
+{
+    uint32 next_line_no = (flag == OGSQL_BLOCK_TAG || flag == OGSQL_COMMENT_TAG) ?
+        OGSQL_FIRST_BLOCK_LINE_NO : OGSQL_FIRST_MULTI_LINE_NO;
+
+    for (uint32 i = 0; i < g_sql_text.len; i++) {
+        if (g_sql_text.str[i] == '\n') {
+            next_line_no++;
+        }
+    }
+
+    return next_line_no;
+}
+
+static void ogsql_reset_rollback_to_single(uint32 *flag, uint32 *line_no, char *cmdBuf, uint32 max_len)
+{
+    ogsql_reset_in_enclosed_char();
+    g_in_comment_count = 0;
+    OGSQL_RESET_CMD_TYPE(&g_cmd_type);
+    *line_no = 0;
+    *flag = OGSQL_SINGLE_TAG;
+    if (cmdBuf != NULL) {
+        ogsql_reset_cmd_buf(cmdBuf, max_len);
+    }
+}
+
+static void ogsql_prepare_rollback_line(uint32 flag, OgsqlRollbackLineT *lineInfo)
+{
+    if (lineInfo == NULL) {
+        return;
+    }
+    lineInfo->lineEnd = g_sql_text.len;
+    lineInfo->lineStart = 0;
+    lineInfo->copyLen = 0;
+    lineInfo->stripTrailingLineBreak = OG_FALSE;
+    lineInfo->keepLineBreak = (flag == OGSQL_BLOCK_TAG || flag == OGSQL_COMMENT_TAG);
+    lineInfo->trailingLineBreak = (g_sql_text.str[lineInfo->lineEnd - 1] == '\n') ? OG_TRUE : OG_FALSE;
+    if (lineInfo->trailingLineBreak && lineInfo->keepLineBreak) {
+        lineInfo->stripTrailingLineBreak = OG_TRUE;
+        lineInfo->lineStart = lineInfo->lineEnd - 1;
+        while (lineInfo->lineStart > 0 && g_sql_text.str[lineInfo->lineStart - 1] != '\n') {
+            lineInfo->lineStart--;
+        }
+    } else if (lineInfo->trailingLineBreak) {
+        lineInfo->lineStart = lineInfo->lineEnd;
+    } else {
+        lineInfo->lineStart = lineInfo->lineEnd;
+        while (lineInfo->lineStart > 0 && g_sql_text.str[lineInfo->lineStart - 1] != '\n') {
+            lineInfo->lineStart--;
+        }
+    }
+    lineInfo->copyLen = lineInfo->stripTrailingLineBreak ?
+        ((lineInfo->lineEnd - 1) - lineInfo->lineStart) : (lineInfo->lineEnd - lineInfo->lineStart);
+}
+
+static uint32 ogsql_get_rollback_new_len(const OgsqlRollbackLineT *lineInfo)
+{
+    if (lineInfo == NULL || lineInfo->lineStart == 0) {
+        return 0;
+    }
+    if (lineInfo->trailingLineBreak && !lineInfo->keepLineBreak) {
+        return lineInfo->lineEnd - 1;
+    }
+    if (lineInfo->keepLineBreak) {
+        return lineInfo->lineStart;
+    }
+    return lineInfo->lineStart - 1;
+}
+
+static void ogsql_rollback_multiline_input(uint32 *flag, uint32 *line_no, char *cmdBuf, uint32 max_len,
+    uint32 *preload_len, OgsqlPendingHistoryT *pendingHistory)
+{
+    OgsqlRollbackLineT lineInfo;
+    uint32 new_len;
+    uint32 prompt_width = 0;
+    uint32 line_width = 0;
+    uint32 recorded_rows = 0;
+    uint32 history_len = 0;
+    bool32 history_overflow = OG_FALSE;
+
+    *preload_len = 0;
+    if (g_sql_text.len == 0) {
+        ogsql_history_pending_reset(pendingHistory);
+        ogsql_reset_rollback_to_single(flag, line_no, cmdBuf, max_len);
+        return;
+    }
+
+    ogsql_prepare_rollback_line(*flag, &lineInfo);
+    if (lineInfo.copyLen > max_len - OGSQL_CMD_BUF_RESET_TAIL_LEN) {
+        lineInfo.copyLen = max_len - OGSQL_CMD_BUF_RESET_TAIL_LEN;
+    }
+    if (lineInfo.copyLen > 0) {
+        OGSQL_CHECK_MEMS_SECURE(memcpy_s(cmdBuf, max_len, g_sql_text.str + lineInfo.lineStart, lineInfo.copyLen));
+    }
+    cmdBuf[lineInfo.copyLen] = '\0';
+    *preload_len = lineInfo.copyLen;
+    line_width = ogsql_text_display_width(cmdBuf, lineInfo.copyLen);
+    prompt_width = ogsql_multiline_prompt_width_at(lineInfo.lineStart);
+
+    new_len = ogsql_get_rollback_new_len(&lineInfo);
+    if (new_len < g_sql_text.len) {
+        (void)memset_s(g_sql_text.str + new_len, MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN - new_len, 0,
+            g_sql_text.len - new_len);
+        g_sql_text.len = new_len;
+    }
+
+    if (OgsqlMultilineRenderFramePop(&recorded_rows, &history_len, &history_overflow) == OG_TRUE) {
+        ogsql_history_pending_restore(pendingHistory, history_len, history_overflow);
+    } else if (pendingHistory != NULL) {
+        pendingHistory->overflow = OG_TRUE;
+    }
+    ogsql_clear_previous_input_line(cmdBuf, lineInfo.copyLen, prompt_width, line_width, recorded_rows);
+
+    if (g_sql_text.len == 0) {
+        CM_TEXT_CLEAR(&g_sql_text);
+        ogsql_reset_rollback_to_single(flag, line_no, NULL, max_len);
+        return;
+    }
+
+    OgsqlRefreshMultilineState();
+    *line_no = ogsql_get_next_multiline_line_no(*flag);
+}
+
+static bool32 ogsql_is_readline_empty_multiline_line(bool32 use_readline, uint32 flag, text_t *line)
+{
+    text_t trim_line;
+
+    if (!use_readline || flag != OGSQL_MULTI_TAG || g_cmd_type.mode == MODE_NONE || g_in_enclosed_char != -1 ||
+        line == NULL) {
+        return OG_FALSE;
+    }
+
+    trim_line = *line;
+    cm_trim_text(&trim_line);
+    return CM_IS_EMPTY(&trim_line) ? OG_TRUE : OG_FALSE;
+}
+
+static status_t ogsql_process_readline_empty_multiline_line(text_t *line)
+{
+    text_t empty_line;
+
+    if (line == NULL) {
+        return OG_SUCCESS;
+    }
+
+    empty_line = *line;
+    cm_trim_text(&empty_line);
+    return ogsql_concat_appendlf(&empty_line);
+}
+
+static void OgsqlRunHandleReadlineAbort(OgsqlReadlineAbortCtxT *ctx)
+{
+    if (ctx == NULL) {
+        return;
+    }
+    if (*ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
+        ogsql_rollback_multiline_input(ctx->flag, ctx->lineNo, ctx->cmdBuf, ctx->inputMaxLen, ctx->preloadLen,
+            ctx->pendingHistory);
+        if (*ctx->flag == OGSQL_SINGLE_TAG) {
+            OgsqlMultilineRenderFramesReset();
+        }
+        return;
+    }
+    ogsql_reset_cmd_buf(ctx->cmdBuf, ctx->inputMaxLen);
+    ogsql_history_pending_reset(ctx->pendingHistory);
+    OgsqlMultilineRenderFramesReset();
+}
+
+static void OgsqlRunInitCtx(OgsqlRunCtxT *ctx, FILE *in, bool32 isFile, char *cmdBuf, uint32 maxLen)
+{
+    ctx->in = in;
+    ctx->isFile = isFile;
+    ctx->cmdBuf = cmdBuf;
+    ctx->inputMaxLen = maxLen;
+    ctx->flag = OGSQL_SINGLE_TAG;
+    ctx->lineNo = 0;
+    ctx->preloadLen = 0;
+    ctx->histCount = 0;
+    ctx->listNum = 0;
+    ctx->useReadline = OG_FALSE;
+    ogsql_history_pending_reset(&ctx->pendingHistory);
+    ctx->acceptedInputLen = 0;
+    ogsql_reset_cmd_buf(ctx->cmdBuf, ctx->inputMaxLen);
+}
+
+static void OgsqlRunClearHistory(void)
+{
+    ogsql_history_reset();
+}
+
+static void OgsqlRunPreparePrompt(OgsqlRunCtxT *ctx)
+{
+    ctx->welcomeWidth = ogsql_print_welcome(ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG),
+        ctx->lineNo);
+    if (ctx->welcomeWidth == 0) {
+        ctx->welcomeBuf[0] = '\0';
+    } else if (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
+        (void)snprintf_s(ctx->welcomeBuf, sizeof(ctx->welcomeBuf), sizeof(ctx->welcomeBuf) - 1, "%3u ",
+            ctx->lineNo);
+    } else {
+        (void)snprintf_s(ctx->welcomeBuf, sizeof(ctx->welcomeBuf), sizeof(ctx->welcomeBuf) - 1, "SQL> ");
+    }
+}
+
+static bool32 OgsqlRunReadLine(OgsqlRunCtxT *ctx)
+{
+    ctx->abortLine = OG_FALSE;
+    ctx->acceptedInputLen = 0;
+    ctx->acceptedRenderRows = 0;
+    OgsqlRunPreparePrompt(ctx);
+    IS_WORKING = OG_FALSE;
+
+#ifndef WIN32
+    ctx->useReadline = ogsql_line_editor_should_use(ctx->in, ctx->isFile);
+    if (ctx->useReadline) {
+        uint32 inputMaxLen = ctx->inputMaxLen;
+        OgsqlEnsureReadlineEnvConfig();
+        if (g_local_config.effective_max_sql_len + OGSQL_CMD_BUF_RESET_TAIL_LEN < inputMaxLen) {
+            inputMaxLen = g_local_config.effective_max_sql_len + OGSQL_CMD_BUF_RESET_TAIL_LEN;
+        }
+        OgsqlLineEditStateT editState = { ctx->cmdBuf, inputMaxLen, 0, 0, 0, 0, 0, NULL };
+        OgsqlRenderCtxT renderCtx = OgsqlMakeRenderCtx(ctx->welcomeBuf, ctx->welcomeWidth, 0, NULL);
+        OgsqlReadlineCtxT readlineCtx = { &ctx->histCount, &ctx->listNum,
+            (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) != 0, ctx->preloadLen,
+            &ctx->abortLine, &ctx->acceptedInputLen, &ctx->acceptedRenderRows, g_cmd_defs, OGSQL_CMD_COUNT };
+        OgsqlReadlineResultT readlineResult = ogsql_line_editor_read(&editState, &renderCtx, &readlineCtx);
+        if (readlineResult == OGSQL_READLINE_RESULT_STOP) {
+            return OG_FALSE;
+        }
+        ctx->preloadLen = 0;
+        if (readlineResult == OGSQL_READLINE_RESULT_FALLBACK && fgets(ctx->cmdBuf, ctx->inputMaxLen, ctx->in) ==
+            NULL) {
+            return OG_FALSE;
+        }
+        return OG_TRUE;
+    }
+#else
+    ctx->useReadline = OG_FALSE;
+#endif
+    return (fgets(ctx->cmdBuf, ctx->inputMaxLen, ctx->in) == NULL) ? OG_FALSE : OG_TRUE;
+}
+
+static bool32 OgsqlRunHandleAbortIfNeeded(OgsqlRunCtxT *ctx)
+{
+#ifndef WIN32
+    if (ctx->abortLine) {
+        OgsqlReadlineAbortCtxT abortCtx = { &ctx->flag, &ctx->lineNo, ctx->cmdBuf, ctx->inputMaxLen,
+            &ctx->preloadLen, &ctx->pendingHistory };
+        OgsqlRunHandleReadlineAbort(&abortCtx);
+        return OG_TRUE;
+    }
+#else
+    (void)ctx;
+#endif
+    return OG_FALSE;
+}
+
+static bool32 OgsqlRunSkipInvalidOrEmpty(OgsqlRunCtxT *ctx)
+{
+    if (ogsql_if_illega_line(ctx->in, ctx->cmdBuf, ctx->inputMaxLen)) {
+        if (ctx->flag == OGSQL_SINGLE_TAG) {
+            ogsql_history_pending_reset(&ctx->pendingHistory);
+        }
+        return OG_TRUE;
+    }
+
+    cm_str2text(ctx->cmdBuf, &ctx->line);
+    if (ctx->line.len == 0) {
+        if (ctx->flag == OGSQL_SINGLE_TAG) {
+            ogsql_history_pending_reset(&ctx->pendingHistory);
+        }
+        return OG_TRUE;
+    }
+    return OG_FALSE;
+}
+
+static bool32 OgsqlRunDetectCommandMode(OgsqlRunCtxT *ctx)
+{
+    if (ctx->flag != OGSQL_SINGLE_TAG) {
+        return OG_FALSE;
+    }
+    ogsql_if_multi_line(&ctx->line, &ctx->flag);
+    if (ctx->flag == OGSQL_EMPTY_TAG) {
+        ogsql_print_blank_line();
+        ctx->flag = OGSQL_SINGLE_TAG;
+        ogsql_history_pending_reset(&ctx->pendingHistory);
+        return OG_TRUE;
+    }
+
+    if (ctx->flag != OGSQL_BLOCK_TAG && ctx->flag != OGSQL_COMMENT_TAG) {
+        ogsql_if_block(&ctx->line, &ctx->flag);
+    }
+    if (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
+        ctx->lineNo = OGSQL_FIRST_BLOCK_LINE_NO;
+    }
+    return OG_FALSE;
+}
+
+static void OgsqlRunProcessComment(OgsqlRunCtxT *ctx)
+{
+    ogsql_if_comment_end(&ctx->line, &ctx->flag);
+    (void)ogsql_concat(&ctx->line);
+    if (ctx->flag == OGSQL_COMMENT_END_TAG) {
+        ctx->flag = OGSQL_SINGLE_TAG;
+    } else {
+        ctx->lineNo++;
+    }
+}
+
+static void OgsqlRunProcessBlock(OgsqlRunCtxT *ctx)
+{
+    ogsql_if_block_end(&ctx->line, &ctx->flag);
+    (void)ogsql_concat(&ctx->line);
+    if (ctx->flag == OGSQL_BLOCK_END_TAG) {
+        print_sql_command(g_sql_text.str, g_sql_text.len);
+        ogsql_reset_in_enclosed_char();
+        (void)ogsql_execute(NULL);
+        OGSQL_RESET_CMD_TYPE(&g_cmd_type);
+        CM_TEXT_CLEAR(&g_sql_text);
+        ctx->flag = OGSQL_SINGLE_TAG;
+    } else {
+        ctx->lineNo++;
+    }
+}
+
+static void OgsqlRunProcessMulti(OgsqlRunCtxT *ctx)
+{
+    bool32 readlineEmptyLine = ogsql_is_readline_empty_multiline_line(ctx->useReadline, ctx->flag, &ctx->line);
+
+    ogsql_if_not_enclosed(&ctx->line);
+    if (readlineEmptyLine) {
+        (void)ogsql_process_readline_empty_multiline_line(&ctx->line);
+    } else {
+        ogsql_if_multi_line_end(&ctx->line, &ctx->flag);
+        (void)ogsql_process_cmd(&ctx->line);
+    }
+
+    if (ctx->flag == OGSQL_MULTI_END_TAG) {
+        ctx->flag = OGSQL_SINGLE_TAG;
+    } else {
+        ctx->lineNo++;
+    }
+}
+
+static void OgsqlRunProcessLine(OgsqlRunCtxT *ctx)
+{
+    ogsql_try_spool_directly_put(ctx->cmdBuf);
+    if (ctx->flag == OGSQL_SINGLE_TAG) {
+        (void)ogsql_process_cmd(&ctx->line);
+    } else if (ctx->flag == OGSQL_COMMENT_TAG) {
+        OgsqlRunProcessComment(ctx);
+    } else if (ctx->flag == OGSQL_BLOCK_TAG) {
+        OgsqlRunProcessBlock(ctx);
+    } else {
+        OgsqlRunProcessMulti(ctx);
+    }
+}
+
+static void OgsqlRunFinishIteration(OgsqlRunCtxT *ctx)
+{
+    if (ctx->flag == OGSQL_SINGLE_TAG) {
+        if (ctx->useReadline) {
+            uint32 historyWidth = ogsql_text_display_width(ctx->pendingHistory.buf, ctx->pendingHistory.len);
+            ogsql_history_pending_commit(&ctx->pendingHistory, &ctx->histCount, historyWidth);
+        }
+        OgsqlMultilineRenderFramesReset();
+    } else if (ctx->useReadline) {
+        (void)OgsqlMultilineRenderFramePush(ctx->acceptedRenderRows, &ctx->pendingHistory);
+    }
+
+    ogsql_reset_cmd_buf(ctx->cmdBuf, ctx->inputMaxLen);
+}
+
+EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmdBuf, uint32 max_len)
+{
+    OgsqlRunCtxT ctx;
+
+    OgsqlRunInitCtx(&ctx, in, is_file, cmdBuf, max_len);
     if (is_file == OG_FALSE) {
-        for (int i = 0; i < OGSQL_MAX_HISTORY_SIZE; i++) {
-            OGSQL_CHECK_MEMS_SECURE(memset_s(g_hist_list[i].hist_buf, OGSQL_HISTORY_BUF_SIZE, 0,
-                OGSQL_HISTORY_BUF_SIZE));
-        }
+        OgsqlRunClearHistory();
     }
+    OgsqlMultilineRenderFramesReset();
 
     (void)setlocale(LC_CTYPE, "");
 #ifndef WIN32
@@ -4622,95 +5169,33 @@ EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmd_buf, uint32 max_
     (void)setvbuf(in, NULL, _IONBF, 0);
 #endif
     while (!feof(in)) {
-        welcome_width = ogsql_print_welcome(flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG), line_no);
-
-        IS_WORKING = OG_FALSE;
-
-#ifndef WIN32
-        if (g_local_config.history_on == OG_TRUE && is_file == OG_FALSE) {
-            ogsql_fgets_with_history(&hist_count, &list_num, welcome_width, cmd_buf, max_len);
-        } else {
-            if (fgets(cmd_buf, max_len, in) == NULL) {
-                break;
-            }
-        }
-#else
-        if (fgets(cmd_buf, max_len, in) == NULL) {
+        if (!OgsqlRunReadLine(&ctx)) {
             break;
         }
-#endif
         IS_WORKING = OG_TRUE;
         g_local_config.is_cancel = OG_FALSE;
 
-        /* If the single cmd is too long */
-        if (ogsql_if_illega_line(in, cmd_buf, max_len)) {
+        if (OgsqlRunHandleAbortIfNeeded(&ctx)) {
             continue;
         }
 
-        cm_str2text(cmd_buf, &line);
-
-        /* if got empty line */
-        if (line.len == 0) {
+        if (OgsqlRunSkipInvalidOrEmpty(&ctx)) {
             continue;
         }
 
-        if (flag == OGSQL_SINGLE_TAG) {
-            // Attention: avoid trim input string, since the line-no dedicate in server will mismatch with client.
-            ogsql_if_multi_line(&line, &flag);
-            if (flag == OGSQL_EMPTY_TAG) {
-                ogsql_print_blank_line();
-                flag = OGSQL_SINGLE_TAG;
-                continue;
-            }
-
-            // Attention: block input pri higher than multi-line, need check if block
-            if (flag != OGSQL_BLOCK_TAG && flag != OGSQL_COMMENT_TAG) {
-                ogsql_if_block(&line, &flag);
-            }
-
-            if (flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
-                line_no = 1;
-            }
+        if (ctx.useReadline) {
+            ogsql_history_pending_append(&ctx.pendingHistory, ctx.cmdBuf, ctx.acceptedInputLen);
         }
 
-        ogsql_try_spool_directly_put(cmd_buf);
-        if (flag == OGSQL_SINGLE_TAG) {
-            (void)ogsql_process_cmd(&line);
-        } else if (flag == OGSQL_COMMENT_TAG) {
-            ogsql_if_comment_end(&line, &flag);
-            (void)ogsql_concat(&line);
-            if (flag == OGSQL_COMMENT_END_TAG) {
-                flag = OGSQL_SINGLE_TAG;
-            } else {
-                line_no++;
-            }
-        } else if (flag == OGSQL_BLOCK_TAG) {
-            ogsql_if_block_end(&line, &flag);
-            (void)ogsql_concat(&line);
-            if (flag == OGSQL_BLOCK_END_TAG) {
-                print_sql_command(g_sql_text.str, g_sql_text.len);
-                ogsql_reset_in_enclosed_char();
-                (void)ogsql_execute(NULL);
-                OGSQL_RESET_CMD_TYPE(&g_cmd_type);
-                CM_TEXT_CLEAR(&g_sql_text);
-                flag = OGSQL_SINGLE_TAG;
-            } else {
-                line_no++;
-            }
-        } else {
-            ogsql_if_not_enclosed(&line);
-            ogsql_if_multi_line_end(&line, &flag);
-            (void)ogsql_process_cmd(&line);
-
-            if (flag == OGSQL_MULTI_END_TAG) {
-                flag = OGSQL_SINGLE_TAG;
-            } else {
-                line_no++;
-            }
+        if (OgsqlRunDetectCommandMode(&ctx)) {
+            continue;
         }
 
-        ogsql_reset_cmd_buf(cmd_buf, max_len);
+        OgsqlRunProcessLine(&ctx);
+        OgsqlRunFinishIteration(&ctx);
     }
+    ogsql_history_pending_reset(&ctx.pendingHistory);
+    OgsqlMultilineRenderFramesFree();
 }
 
 status_t ogsql_conn_cancel(ogsql_conn_info_t *conn_info)

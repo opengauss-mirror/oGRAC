@@ -56,18 +56,58 @@ extern "C" {
 #define OG_MIN_PAGESIZE                  (uint32)4
 #define OGSQL_INTERACTION_DEFAULT_TIMEOUT (uint32)5
 #define OGSQL_HISTORY_BUF_SIZE            4096
-#define OGSQL_MAX_HISTORY_SIZE            20
+#define OGSQL_DEFAULT_HISTORY_SIZE        32
+#define OGSQL_MAX_HISTORY_SIZE            100
+#define OGSQL_MIN_HISTORY_SIZE            1
+#define OGSQL_MIN_SQL_LEN                 1024
+#define OGSQL_DEFAULT_COMPLETION_RECORDS  1024
+#define OGSQL_MAX_COMPLETION_RECORDS      10000
+#define OGSQL_MAX_EXTRA_SENSITIVE_WORDS   64
+#define OGSQL_MAX_SENSITIVE_WORD_LEN      128
 #define OGSQL_UTF8_CHR_SIZE               6
+#define OGSQL_MAX_COMPLETION_MATCHES      256
+#define OGSQL_MAX_COMPLETION_WORD_LEN     (OG_MAX_NAME_LEN + 1)
+#define OGSQL_OBJ_NAME_LEN               (OG_MAX_NAME_LEN + 1)
+#define OGSQL_CMD_BUF_RESET_TAIL_LEN      2
+#define OGSQL_SQL_TEXT_GUARD_LEN          4
+
+/* Database object completion context. Determines what kind of objects to suggest. */
+typedef enum EnOgsqlCompletionCtxT {
+    OGSQL_COMPLETION_CTX_DEFAULT,      /* SQL keywords + all object names */
+    OGSQL_COMPLETION_CTX_TABLE,       /* table and view names */
+    OGSQL_COMPLETION_CTX_COLUMN,      /* column names + builtin functions */
+    OGSQL_COMPLETION_CTX_PROCEDURE,   /* stored procedure and function names */
+    OGSQL_COMPLETION_CTX_SEQUENCE,    /* sequence names */
+    OGSQL_COMPLETION_CTX_SCHEMA_TABLE /* tables/views under a given schema prefix */
+} OgsqlCompletionCtxT;
 
 #define CMD_KEY_ASCII_BS                 8
+#define CMD_KEY_TAB                      9
 #define CMD_KEY_ASCII_DEL                127
 #define CMD_KEY_ASCII_LF                 10
 #define CMD_KEY_ASCII_CR                 13
+#define CMD_KEY_CTRL_A                   1
+#define CMD_KEY_CTRL_D                   4
+#define CMD_KEY_CTRL_E                   5
+#define CMD_KEY_CTRL_G                   7
+#define CMD_KEY_CTRL_K                   11
+#define CMD_KEY_CTRL_L                   12
+#define CMD_KEY_CTRL_R                   18
+#define CMD_KEY_CTRL_U                   21
+#define CMD_KEY_CTRL_W                   23
 
 #define CMD_KEY_ESCAPE                   27
-#define CMD_KEY_UP                       65
-#define CMD_KEY_DOWN                     66
-#define CMD_KEY_DEL                      51
+#define CMD_KEY_UP                       65   // ESC [ A
+#define CMD_KEY_DOWN                     66   // ESC [ B
+#define CMD_KEY_RIGHT                    67   // ESC [ C
+#define CMD_KEY_LEFT                     68   // ESC [ D
+#define CMD_KEY_DEL                      51   // ESC [ 3 ~ (Delete key)
+#define CMD_KEY_HOME                     72   // ESC [ H
+#define CMD_KEY_END                      70   // ESC [ F
+#define CMD_KEY_HOME_OLD                 49   // ESC [ 1 ~
+#define CMD_KEY_END_OLD                  52   // ESC [ 4 ~
+#define CMD_KEY_HOME_ALT                 55   // ESC [ 7 ~
+#define CMD_KEY_END_ALT                  56   // ESC [ 8 ~
 
 #define OGSQL_IS_STRING_TYPE_EX(type) (OG_IS_STRING_TYPE((type) + OG_TYPE_BASE))
 #define OGSQL_IS_BINARY_TYPE_EX(type) (OG_IS_BINARY_TYPE((type) + OG_TYPE_BASE))
@@ -242,14 +282,19 @@ typedef struct st_ogsql_local_info_t {
     bool32 bindparam_force_on;
     uint8 shd_rw_split;  // attention: need add to connection
     bool32 history_on;
+    uint32 history_size;
+    uint32 effective_max_sql_len;
+    uint32 completion_max_records;
+    uint32 history_sensitive_word_count;
+    char historySensitiveWords[OGSQL_MAX_EXTRA_SENSITIVE_WORDS][OGSQL_MAX_SENSITIVE_WORD_LEN];
     uint32 trace_mode;
 } ogsql_local_config_t;
 
 extern ogsql_local_config_t g_local_config;
 extern ogsql_conn_info_t g_conn_info;
 extern ogconn_inner_column_desc_t g_columns[OG_MAX_COLUMNS];
-extern char g_cmd_buf[MAX_CMD_LEN + 2];
-extern char g_sql_buf[MAX_SQL_SIZE + 4];
+extern char g_cmd_buf[MAX_CMD_LEN + OGSQL_CMD_BUF_RESET_TAIL_LEN];
+extern char g_sql_buf[MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN];
 extern char g_str_buf[OG_MAX_PACKET_SIZE + 1];  // for print a column data
 extern char g_replace_mark;
 extern bool32 g_is_print;
@@ -270,7 +315,7 @@ extern status_t ogsql_alloc_conn(ogconn_conn_t *pconn);
 extern void ogsql_print_error(ogconn_conn_t conn);
 extern void ogsql_try_spool_put(const char *fmt, ...);
 extern void ogsql_init(int32 argc, char *argv[]);
-extern void ogsql_run(FILE *in, bool32 is_file, char *cmd_buf, uint32 max_len);
+EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmdBuf, uint32 max_len);
 extern void ogsql_exit(bool32 from_whenever, status_t status);
 extern status_t ogsql_connect(text_t *conn_text);
 extern uint32 ogsql_print_welcome(uint32 multi_line, uint32 line_no);
@@ -380,11 +425,14 @@ static inline int ogsql_nlsparam_geter(char *nlsbuf, int nls_id, text_t *text)
 #define OGSQL_BUF_RESET_CHAR EOF
 
 /* Reset the single-line command buffer */
-static inline void ogsql_reset_cmd_buf(char *cmd_buf, uint32 max_len)
+static inline void ogsql_reset_cmd_buf(char *cmdBuf, uint32 max_len)
 {
-    cmd_buf[max_len - 1] = OGSQL_BUF_RESET_CHAR;
-    cmd_buf[max_len - 2] = OGSQL_BUF_RESET_CHAR;
-    if (memset_s(cmd_buf, max_len, 0, MAX_CMD_LEN) != EOK) {
+    if (max_len < OGSQL_CMD_BUF_RESET_TAIL_LEN) {
+        return;
+    }
+    cmdBuf[max_len - 1] = OGSQL_BUF_RESET_CHAR;
+    cmdBuf[max_len - OGSQL_CMD_BUF_RESET_TAIL_LEN] = OGSQL_BUF_RESET_CHAR;
+    if (memset_s(cmdBuf, max_len, 0, max_len - OGSQL_CMD_BUF_RESET_TAIL_LEN) != EOK) {
         return;
     }
 }

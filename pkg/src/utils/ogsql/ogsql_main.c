@@ -148,7 +148,7 @@ static status_t ogsql_execute_cmd(ogsql_cmd_t type, text_t *conn, text_t *cmd)
                 status = ogsql_execute(cmd);
             } else {
                 if (CM_TEXT_END(cmd) != ';') {
-                    PRTS_RETURN_IFERR(sprintf_s(g_cmd_buf, MAX_CMD_LEN, "%s;", cmd->str));
+                    PRTS_RETURN_IFERR(sprintf_s(g_cmd_buf, sizeof(g_cmd_buf), "%s;", cmd->str));
                     (void)cm_text_set(cmd, cmd->len, '\0');
                     cm_str2text(g_cmd_buf, cmd);
                 }
@@ -157,7 +157,7 @@ static status_t ogsql_execute_cmd(ogsql_cmd_t type, text_t *conn, text_t *cmd)
             ogsql_exit(OG_FALSE, status);
 
         case CMD_FILE:
-            PRTS_RETURN_IFERR(sprintf_s(g_cmd_buf, MAX_CMD_LEN, "@%s", cmd->str));
+            PRTS_RETURN_IFERR(sprintf_s(g_cmd_buf, sizeof(g_cmd_buf), "@%s", cmd->str));
             (void)cm_text_set(cmd, cmd->len, '\0');
             cm_str2text(g_cmd_buf, cmd);
             status = ogsql_process_cmd(cmd);
@@ -276,12 +276,13 @@ static status_t ogsql_clone_argv(const text_t *src, char **dest)
 
 static status_t ogsql_fetch_and_exec_connect(int32 argc, char *argv[])
 {
-    text_t conn_text = { .str = g_cmd_buf, .len = 0 }, cmd = { 0 };
+    text_t conn_text = { .str = g_cmd_buf, .len = 0 };
+    text_t cmd = { 0 };
     ogsql_cmd_t exter_cmd = CMD_NONE;
     status_t ret;
     char *cmd_str = NULL;
 
-    OG_RETURN_IFERR(cm_concat_string(&conn_text, MAX_CMD_LEN + 2, "conn"));
+    OG_RETURN_IFERR(cm_concat_string(&conn_text, sizeof(g_cmd_buf), "conn"));
     OG_RETURN_IFERR(ogsql_parse_conn_args(argc, argv, &conn_text, &cmd, &exter_cmd));
 
     if (exter_cmd == CMD_COMMAND) {

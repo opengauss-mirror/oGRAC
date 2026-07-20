@@ -1610,4 +1610,3 @@ static bool8 ogsql_show_parameters_opt(const text_t *value)
     }
     return OG_FALSE;
 }
-
