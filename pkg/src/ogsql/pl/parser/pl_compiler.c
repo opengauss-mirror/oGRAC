@@ -1710,7 +1710,8 @@ static status_t pl_bison_compile_proc_desc(pl_compiler_t *compiler, text_t *name
     return OG_SUCCESS;
 }
 
-static status_t plc_bison_compile_procedure(pl_compiler_t *compiler, galist_t *args, text_t *body)
+static status_t plc_bison_compile_procedure(pl_compiler_t *compiler, galist_t *args, text_t *body,
+    const pl_bison_language_def_t *language)
 {
     procedure_t *proc = NULL;
     compiler->type = PL_PROCEDURE;
@@ -1735,7 +1736,8 @@ static status_t plc_bison_compile_procedure(pl_compiler_t *compiler, galist_t *a
         compiler->proc = proc;
     }
 
-    status = pl_parser(compiler->stmt, body);
+    status = (language == NULL) ? pl_parser(compiler->stmt, body) :
+        plc_bison_compile_language(compiler, proc, language);
     proc->body = (void *)compiler->body;
     entity->procedure = proc;
     OG_RETURN_IFERR(status);
@@ -1747,7 +1749,7 @@ static status_t plc_bison_compile_procedure(pl_compiler_t *compiler, galist_t *a
 }
 
 static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *args, type_word_t *ret_type,
-    text_t *body)
+    text_t *body, const pl_bison_language_def_t *language)
 {
     function_t *func = NULL;
     compiler->type = PL_FUNCTION;
@@ -1775,7 +1777,8 @@ static status_t plc_bison_compile_function(pl_compiler_t *compiler, galist_t *ar
         compiler->proc = func;
     }
 
-    status = pl_parser(compiler->stmt, body);
+    status = (language == NULL) ? pl_parser(compiler->stmt, body) :
+        plc_bison_compile_language(compiler, func, language);
     func->body = (void *)compiler->body;
     OG_RETURN_IFERR(status);
     OG_RETURN_IFERR(plc_verify_label(compiler));
@@ -1903,7 +1906,8 @@ status_t plc_bison_compile_anonymous(sql_stmt_t *stmt, plc_desc_t *desc, text_t 
     return status;
 }
 
-status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, type_word_t *ret_type, text_t *body)
+status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, type_word_t *ret_type, text_t *body,
+    const pl_bison_language_def_t *language)
 {
     status_t status;
     pl_compiler_t compiler;
@@ -1930,11 +1934,11 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
 
     switch (desc->type) {
         case PL_FUNCTION:
-            status = plc_bison_compile_function(&compiler, args, ret_type, body);
+            status = plc_bison_compile_function(&compiler, args, ret_type, body, language);
             break;
 
         case PL_PROCEDURE:
-            status = plc_bison_compile_procedure(&compiler, args, body);
+            status = plc_bison_compile_procedure(&compiler, args, body, language);
             break;
 
         case PL_TRIGGER:

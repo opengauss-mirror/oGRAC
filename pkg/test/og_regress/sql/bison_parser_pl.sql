@@ -1,5 +1,8 @@
 alter system set use_bison_parser = true;
 
+drop view if exists bison_pl_c_alias_view;
+create view bison_pl_c_alias_view as select 1 c from sys_dummy;
+drop view bison_pl_c_alias_view;
 drop function if exists bison_pl_func;
 drop function if exists bison_pl_refcur;
 drop procedure if exists bison_pl_inout_proc;
@@ -13,6 +16,43 @@ drop package if exists bison_pl_pkg;
 drop table if exists bison_pl_src;
 drop table if exists bison_pl_type_t;
 drop table if exists bison_pl_t;
+drop function if exists bison_pl_c_semicolon;
+drop function if exists bison_pl_c_missing_library;
+drop function if exists bison_pl_c_missing_name;
+drop function if exists bison_pl_c_extra_token;
+drop library if exists bison_pl_c_noexists;
+--error
+create or replace library bison_pl_c_noexists as '/tmp/bison_pl_noexists.so';
+create or replace function bison_pl_c_semicolon(p varchar2)
+return int
+as language c name og_ext_len library bison_pl_c_noexists;
+/
+create or replace function bison_pl_c_missing_library return int
+as language c name og_ext_len;
+/
+create or replace function bison_pl_c_missing_name return int
+as language c library bison_pl_c_noexists;
+/
+create or replace function bison_pl_c_extra_token return int
+as language c name og_ext_len library bison_pl_c_noexists extra;
+/
+declare
+    invalid_count int;
+    invalid_status exception;
+begin
+    select count(*) into invalid_count from my_objects
+    where object_name in ('BISON_PL_C_MISSING_LIBRARY', 'BISON_PL_C_MISSING_NAME', 'BISON_PL_C_EXTRA_TOKEN')
+    and status = 'INVALID';
+    if invalid_count <> 3 then
+        raise invalid_status;
+    end if;
+end;
+/
+drop function if exists bison_pl_c_semicolon;
+drop function if exists bison_pl_c_missing_library;
+drop function if exists bison_pl_c_missing_name;
+drop function if exists bison_pl_c_extra_token;
+drop library if exists bison_pl_c_noexists;
 
 create table bison_pl_t(id int, name varchar(32));
 create table bison_pl_src(id int, name varchar(32));

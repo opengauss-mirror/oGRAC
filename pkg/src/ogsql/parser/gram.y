@@ -189,6 +189,12 @@ static pl_bison_trigger_events_t *pl_bison_merge_trigger_events(core_yyscan_t yy
 static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner, trigger_type_t type,
     pl_bison_trigger_events_t *events, name_with_owner *table_name, bool32 for_each_row, text_t *body,
     source_location_t trigger_loc, source_location_t table_loc, source_location_t action_loc);
+static pl_bison_program_body_t *pl_bison_make_program_body(core_yyscan_t yyscanner, text_t *body,
+    pl_bison_language_def_t *language);
+static pl_bison_language_def_t *pl_bison_make_language_def(core_yyscan_t yyscanner, char *func_name,
+    name_with_owner *library);
+static pl_bison_language_def_t *pl_bison_make_invalid_language_def(core_yyscan_t yyscanner,
+    source_location_t error_loc);
 static sql_array_t *bison_push_pending_ssa(core_yyscan_t yyscanner);
 static void bison_pop_pending_ssa(core_yyscan_t yyscanner);
 static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
@@ -196,6 +202,11 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-prologue.y.h"*/
 %}
+
+%code requires {
+typedef struct st_pl_bison_program_body pl_bison_program_body_t;
+typedef struct st_pl_bison_language_def pl_bison_language_def_t;
+}
 
 %define api.pure
 %expect 0
@@ -279,6 +290,9 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
     parse_column_t      *parse_col;
     parse_table_element_t *table_element;
     text_t              *text;
+    pl_bison_program_body_t *program_body;
+    pl_bison_language_def_t *language_def;
+    source_location_t   source_loc;
     sql_array_t         *array;
     alterts_opt         *alts_opt;
 }
@@ -414,6 +428,9 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 %type <alter_idx_act> alter_index_action
 %type <text> subprogram_body pl_as_is_body pl_type_body pl_trigger_block opt_dump_to_file
+%type <program_body> pl_program_body pl_program_body_complete
+%type <language_def> pl_language_c_tail pl_language_c_invalid_tail
+%type <source_loc> pl_program_body_end
 
 %token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
                 OPER_CAT OPER_LSHIFT OPER_RSHIFT
@@ -616,6 +633,9 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
  * Like the UNBOUNDED PRECEDING/FOLLOWING case, NESTED is assigned a lower
  * precedence than PATH to fix ambiguity in the json_table production.
  */
+%nonassoc    PL_RAW_BODY
+%nonassoc    LANGUAGE
+%nonassoc    NAME_P LIBRARY ';'
 %nonassoc    UNBOUNDED NESTED /* ideally would have same precedence as IDENT */
 %nonassoc    IDENT PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
              SET KEYS OBJECT_P SCALAR VALUE_P WITH WITHOUT PATH FORMAT REGEXP
@@ -14935,6 +14955,143 @@ pl_as_is_body:
             as_is subprogram_body                       { $$ = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc); }
         ;
 
+pl_program_body:
+            subprogram_body
+                {
+                    $$ = pl_bison_make_program_body(yyscanner, $1, NULL);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("prepare PL body failed");
+                    }
+                }
+            | LANGUAGE ColId subprogram_body
+                {
+                    text_t *body = pl_prepend_body_start(yyscanner, $3, @1.offset, @1.loc);
+                    pl_bison_language_def_t *language = NULL;
+                    if (cm_str_equal_ins($2, "C")) {
+                        language = pl_bison_make_invalid_language_def(yyscanner, @3.loc);
+                        if (language == NULL) {
+                            parser_abort_or_yyerror("prepare invalid LANGUAGE C definition failed");
+                        }
+                    }
+                    $$ = pl_bison_make_program_body(yyscanner, body, language);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("prepare PL body failed");
+                    }
+                }
+            | LANGUAGE ColId pl_language_c_tail
+                {
+                    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+                    pl_bison_language_def_t *language = NULL;
+                    $3->body.value.str = extra->scanbuf + @1.offset;
+                    $3->body.value.len = (uint32)(extra->scanbuflen - @1.offset);
+                    $3->body.loc = @1.loc;
+                    $3->body.implicit = OG_FALSE;
+                    $3->loc = @1.loc;
+                    if (cm_str_equal_ins($2, "C")) {
+                        language = $3;
+                    }
+                    $$ = pl_bison_make_program_body(yyscanner, (text_t *)&$3->body, language);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("prepare LANGUAGE body failed");
+                    }
+                }
+        ;
+
+pl_program_body_complete:
+            pl_program_body pl_program_body_end
+                {
+                    if ($2.line != 0) {
+                        if ($1->language == NULL) {
+                            parser_yyerror("syntax error");
+                        }
+                        $1->language->syntax_valid = OG_FALSE;
+                        $1->language->syntax_error_loc = $2;
+                    }
+                    $$ = $1;
+                }
+        ;
+
+pl_program_body_end:
+            /* EMPTY */
+                {
+                    int tok;
+                    if (yychar == YYEMPTY) {
+                        tok = YYLEX;
+                    } else {
+                        tok = yychar;
+                        yyclearin;
+                    }
+                    if (tok == YYEOF) {
+                        $$.line = 0;
+                        $$.column = 0;
+                    } else {
+                        $$ = yylloc.loc;
+                    }
+                    while (tok != YYEOF) {
+                        tok = YYLEX;
+                    }
+                    if ($$.line != 0) {
+                        cm_reset_error();
+                    }
+                }
+        ;
+
+pl_language_c_tail:
+            NAME_P ColId LIBRARY any_name pl_language_terminator
+                {
+                    $$ = pl_bison_make_language_def(yyscanner, $2, $4);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("prepare LANGUAGE C definition failed");
+                    }
+                }
+            | LIBRARY any_name NAME_P ColId pl_language_terminator
+                {
+                    $$ = pl_bison_make_language_def(yyscanner, $4, $2);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("prepare LANGUAGE C definition failed");
+                    }
+                }
+            | NAME_P pl_language_c_invalid_tail          { $$ = $2; }
+            | NAME_P ColId pl_language_c_invalid_tail    { $$ = $3; }
+            | LIBRARY pl_language_c_invalid_tail         { $$ = $2; }
+            | LIBRARY any_name pl_language_c_invalid_tail { $$ = $3; }
+        ;
+
+pl_language_c_invalid_tail:
+            error
+                {
+                    source_location_t error_loc = yylloc.loc;
+                    if (yychar != YYEMPTY) {
+                        yyclearin;
+                    }
+                    while (YYLEX != YYEOF) {
+                    }
+                    cm_reset_error();
+                    $$ = pl_bison_make_invalid_language_def(yyscanner, error_loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("prepare invalid LANGUAGE C definition failed");
+                    }
+                    yyerrok;
+                }
+        ;
+
+pl_language_terminator:
+            /* EMPTY */                                 %prec PL_RAW_BODY
+            | ';'                                       %prec PL_RAW_BODY
+            | pl_language_slash
+            | ';' pl_language_slash
+        ;
+
+pl_language_slash:
+            '/'
+                {
+                    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+                    if (!pl_bison_is_body_terminator_slash(extra->scanbuf, extra->scanbuflen, @1.offset)) {
+                        parser_yyerror("invalid LANGUAGE C terminator");
+                    }
+                }
+        ;
+
 pl_type_body:
             as_is subprogram_body
                 {
@@ -15054,7 +15211,7 @@ pl_trigger_block:
         ;
 
 compileFunctionSource:
-            proc_args RETURN func_type as_is subprogram_body
+            proc_args RETURN func_type as_is pl_program_body_complete
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
@@ -15062,7 +15219,7 @@ compileFunctionSource:
                         parser_yyerror("syntax error");
                     }
 
-                    if (pl_bison_compile_function_source(stmt, $1, $3, $5) != OG_SUCCESS) {
+                    if (pl_bison_compile_function_source(stmt, $1, $3, $5->body, $5->language) != OG_SUCCESS) {
                         parser_yyerror("compile function failed");
                     }
 
@@ -15071,7 +15228,7 @@ compileFunctionSource:
         ;
 
 compileProcedureSource:
-            func_args_with_defaults opt_authid as_is subprogram_body
+            func_args_with_defaults opt_authid as_is pl_program_body_complete
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
@@ -15079,13 +15236,13 @@ compileProcedureSource:
                         parser_yyerror("syntax error");
                     }
 
-                    if (pl_bison_compile_procedure_source(stmt, $1, $4) != OG_SUCCESS) {
+                    if (pl_bison_compile_procedure_source(stmt, $1, $4->body, $4->language) != OG_SUCCESS) {
                         parser_yyerror("compile procedure failed");
                     }
 
                     $$ = NULL;
                 }
-            | AUTHID CURRENT_USER as_is subprogram_body
+            | AUTHID CURRENT_USER as_is pl_program_body_complete
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
@@ -15093,7 +15250,7 @@ compileProcedureSource:
                         parser_yyerror("syntax error");
                     }
 
-                    if (pl_bison_compile_procedure_source(stmt, NULL, $4) != OG_SUCCESS) {
+                    if (pl_bison_compile_procedure_source(stmt, NULL, $4->body, $4->language) != OG_SUCCESS) {
                         parser_yyerror("compile procedure failed");
                     }
 
@@ -15141,7 +15298,7 @@ CreateProcedureStmt:
                     parser_abort_or_yyerror("prepare create procedure failed");
                 }
             }
-            proc_args opt_authid as_is subprogram_body
+            proc_args opt_authid as_is pl_program_body_complete
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
@@ -15151,7 +15308,8 @@ CreateProcedureStmt:
                         parser_yyerror("record procedure source failed");
                     }
 
-                    if (pl_bison_parse_create_procedure(stmt, $8, $11, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_parse_create_procedure(stmt, $8, $11->body, &storage_source,
+                        $11->language) != OG_SUCCESS) {
                         parser_yyerror("parse create procedure failed");
                     }
 
@@ -15172,7 +15330,7 @@ CreateFunctionStmt:
                 }
             }
             proc_args RETURN func_type
-            as_is subprogram_body
+            as_is pl_program_body_complete
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
@@ -15182,7 +15340,8 @@ CreateFunctionStmt:
                         parser_yyerror("record function source failed");
                     }
 
-                    if (pl_bison_parse_create_function(stmt, $8, $10, $12, &storage_source) != OG_SUCCESS) {
+                    if (pl_bison_parse_create_function(stmt, $8, $10, $12->body, &storage_source,
+                        $12->language) != OG_SUCCESS) {
                         parser_yyerror("parse create function failed");
                     }
 
@@ -15318,9 +15477,15 @@ AlterFunctionStmt:
                 }
         ;
 
-subprogram_body: {
+subprogram_body: %prec PL_RAW_BODY {
                 sql_text_t *body_src = NULL;
-                int	tok = YYLEX;
+                int tok;
+                if (yychar == YYEMPTY) {
+                    tok = YYLEX;
+                } else {
+                    tok = yychar;
+                    yyclearin;
+                }
                 int proc_b = yylloc.offset;
                 int proc_e = yylloc.offset;
                 source_location_t proc_loc = yylloc.loc;
@@ -19021,6 +19186,58 @@ static pl_bison_trigger_def_t *pl_bison_make_trigger_def(core_yyscan_t yyscanner
     trigger_def->table_loc = table_loc;
     trigger_def->action_loc = action_loc;
     return trigger_def;
+}
+
+static pl_bison_program_body_t *pl_bison_make_program_body(core_yyscan_t yyscanner, text_t *body,
+    pl_bison_language_def_t *language)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_bison_program_body_t *program_body = NULL;
+
+    if (body == NULL || sql_alloc_mem(stmt->context, sizeof(pl_bison_program_body_t),
+        (void **)&program_body) != OG_SUCCESS) {
+        return NULL;
+    }
+    program_body->body = body;
+    program_body->language = language;
+    return program_body;
+}
+
+static pl_bison_language_def_t *pl_bison_make_language_def(core_yyscan_t yyscanner, char *func_name,
+    name_with_owner *library)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_bison_language_def_t *language = NULL;
+    errno_t ret;
+
+    if (func_name == NULL || library == NULL || sql_alloc_mem(stmt->context, sizeof(pl_bison_language_def_t),
+        (void **)&language) != OG_SUCCESS) {
+        return NULL;
+    }
+    ret = memset_s(language, sizeof(pl_bison_language_def_t), 0, sizeof(pl_bison_language_def_t));
+    knl_securec_check(ret);
+    cm_str2text(func_name, &language->func_name);
+    language->lib_user = library->owner;
+    language->lib_name = library->name;
+    language->syntax_valid = OG_TRUE;
+    return language;
+}
+
+static pl_bison_language_def_t *pl_bison_make_invalid_language_def(core_yyscan_t yyscanner,
+    source_location_t error_loc)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    pl_bison_language_def_t *language = NULL;
+    errno_t ret;
+
+    if (sql_alloc_mem(stmt->context, sizeof(pl_bison_language_def_t), (void **)&language) != OG_SUCCESS) {
+        return NULL;
+    }
+    ret = memset_s(language, sizeof(pl_bison_language_def_t), 0, sizeof(pl_bison_language_def_t));
+    knl_securec_check(ret);
+    language->syntax_error_loc = error_loc;
+    language->syntax_valid = OG_FALSE;
+    return language;
 }
 
 static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_t *alter_idx_act, knl_alindex_def_t *def)

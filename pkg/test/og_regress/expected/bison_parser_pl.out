@@ -5,6 +5,18 @@ SQL> alter system set use_bison_parser = true;
 Succeed.
 
 SQL> 
+SQL> drop view if exists bison_pl_c_alias_view;
+
+Succeed.
+
+SQL> create view bison_pl_c_alias_view as select 1 c from sys_dummy;
+
+Succeed.
+
+SQL> drop view bison_pl_c_alias_view;
+
+Succeed.
+
 SQL> drop function if exists bison_pl_func;
 
 Succeed.
@@ -54,6 +66,106 @@ SQL> drop table if exists bison_pl_type_t;
 Succeed.
 
 SQL> drop table if exists bison_pl_t;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_semicolon;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_library;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_name;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_extra_token;
+
+Succeed.
+
+SQL> drop library if exists bison_pl_c_noexists;
+
+Succeed.
+
+SQL> --error
+SQL> create or replace library bison_pl_c_noexists as '/tmp/bison_pl_noexists.so';
+
+OG-00771, [1:50]library file /tmp/bison_pl_noexists.so does not exist
+SQL> create or replace function bison_pl_c_semicolon(p varchar2)
+  2 return int
+  3 as language c name og_ext_len library bison_pl_c_noexists;
+  4 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_SEMICOLON) terminated with compiling errors
+[3:4] PLC-00888 Library SYS.BISON_PL_C_NOEXISTS does not exist
+
+
+SQL> create or replace function bison_pl_c_missing_library return int
+  2 as language c name og_ext_len;
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_MISSING_LIBRARY) terminated with compiling errors
+[2:30] PLC-00916 PL/SQL:syntax error(invalid LANGUAGE C definition)
+
+
+SQL> create or replace function bison_pl_c_missing_name return int
+  2 as language c library bison_pl_c_noexists;
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_MISSING_NAME) terminated with compiling errors
+[2:42] PLC-00916 PL/SQL:syntax error(invalid LANGUAGE C definition)
+
+
+SQL> create or replace function bison_pl_c_extra_token return int
+  2 as language c name og_ext_len library bison_pl_c_noexists extra;
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_EXTRA_TOKEN) terminated with compiling errors
+[2:59] PLC-00916 PL/SQL:syntax error(invalid LANGUAGE C definition)
+
+
+SQL> declare
+  2     invalid_count int;
+  3     invalid_status exception;
+  4 begin
+  5     select count(*) into invalid_count from my_objects
+  6     where object_name in ('BISON_PL_C_MISSING_LIBRARY', 'BISON_PL_C_MISSING_NAME', 'BISON_PL_C_EXTRA_TOKEN')
+  7     and status = 'INVALID';
+  8     if invalid_count <> 3 then
+  9         raise invalid_status;
+ 10     end if;
+ 11 end;
+ 12 /
+
+PL/SQL procedure successfully completed.
+
+SQL> drop function if exists bison_pl_c_semicolon;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_library;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_name;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_extra_token;
+
+Succeed.
+
+SQL> drop library if exists bison_pl_c_noexists;
 
 Succeed.
 
