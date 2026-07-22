@@ -261,6 +261,7 @@ class DeployParams:
         self.auto_tune = dp.get("auto_tune", "")
 
         self.use_gss = self.deploy_mode in USE_LUN
+        self.dss_vg_list = dp.get("dss_vg_list", {})
 
         storage_archive_fs = dp.get("storage_archive_fs", "").strip()
         if self.deploy_mode in USE_LUN:
@@ -944,7 +945,8 @@ def _patch_create_sql(sql_file, dp):
     if dp.use_gss:
         _sed_replace(sql_file, "dbfiles1", "+vg1")
         _sed_replace(sql_file, "dbfiles2", "+vg2")
-        _sed_replace(sql_file, "dbfiles3", "+vg2")
+        dbfiles3_vg = "+vg4" if "vg4" in dp.dss_vg_list else "+vg2"
+        _sed_replace(sql_file, "dbfiles3", dbfiles3_vg)
     else:
         db_data = os.path.join(data_path, "data").replace("/", r"\/")
         _sed_replace(sql_file, "dbfiles1", db_data)
