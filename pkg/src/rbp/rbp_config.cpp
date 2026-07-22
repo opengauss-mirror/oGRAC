@@ -25,9 +25,11 @@
 
 #include "rbp_config.h"
 
+#include <cerrno>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -371,9 +373,12 @@ bool validate_options(const ServerOptions& opt, std::string& err)
 
 bool load_config_file(const std::string& path, std::map<std::string, std::string>& kv, std::string& err)
 {
+    errno = 0;
     std::ifstream in(path);
     if (!in.is_open()) {
-        err = "failed to open config file: " + path;
+        const int code = errno;
+        err = "failed to open config file: " + path + ": " + std::strerror(code) +
+              " (errno=" + std::to_string(code) + ")";
         return false;
     }
     std::string line;

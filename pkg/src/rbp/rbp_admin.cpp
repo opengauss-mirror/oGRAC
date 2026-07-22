@@ -345,7 +345,7 @@ bool setup_admin_server(const std::string& host, int port, socket_t& srv, std::s
 {
     srv = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(srv)) {
-        err = "admin socket create failed";
+        err = "admin socket create failed: " + RbpSocketErrorDetail(RbpLastSocketError());
         return false;
     }
     int yes = 1;
@@ -360,13 +360,17 @@ bool setup_admin_server(const std::string& host, int port, socket_t& srv, std::s
         return false;
     }
     if (bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        err = "admin bind failed on " + host + ":" + std::to_string(port);
+        const int code = RbpLastSocketError();
+        err = "admin bind failed on " + host + ":" + std::to_string(port) + ": " +
+              RbpSocketErrorDetail(code);
         close_admin_socket(srv);
         srv = invalid_socket();
         return false;
     }
     if (listen(srv, RBP_ADMIN_LISTEN_BACKLOG) != 0) {
-        err = "admin listen failed on " + host + ":" + std::to_string(port);
+        const int code = RbpLastSocketError();
+        err = "admin listen failed on " + host + ":" + std::to_string(port) + ": " +
+              RbpSocketErrorDetail(code);
         close_admin_socket(srv);
         srv = invalid_socket();
         return false;
@@ -467,7 +471,7 @@ bool admin_query_once(const std::string& host, int port, const std::string& comm
 #endif
     socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(fd)) {
-        err = "failed to create admin socket";
+        err = "failed to create admin socket: " + RbpSocketErrorDetail(RbpLastSocketError());
         return false;
     }
     sockaddr_in addr{};
@@ -483,7 +487,9 @@ bool admin_query_once(const std::string& host, int port, const std::string& comm
         return false;
     }
     if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        err = "failed to connect rbps admin " + host + ":" + std::to_string(port);
+        const int code = RbpLastSocketError();
+        err = "failed to connect rbps admin " + host + ":" + std::to_string(port) + ": " +
+              RbpSocketErrorDetail(code);
 #if defined(_WIN32)
         closesocket(fd);
 #else
@@ -496,7 +502,7 @@ bool admin_query_once(const std::string& host, int port, const std::string& comm
         wire.push_back('\n');
     }
     if (!send_full(fd, wire.data(), wire.size())) {
-        err = "failed to send admin command";
+        err = "failed to send admin command: " + RbpSocketErrorDetail(RbpLastSocketError());
 #if defined(_WIN32)
         closesocket(fd);
 #else
