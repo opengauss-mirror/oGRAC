@@ -382,7 +382,7 @@ xufailed		[uU]&
                     if (yyextra->literallen == 0)
                         hint_scanner_yyerror("zero-length delimited identifier", yyscanner);
                     ident = litbufdup(yyscanner);
-                    if (yyextra->literallen >= NAMEDATALEN)
+                    if (yyextra->literallen > NAMEDATALEN)
                         truncate_identifier(ident, yyextra->literallen, yyextra->warnOnTruncateIdent);
                     yylval->str = ident;
                     yyextra->ident_quoted = true;
@@ -398,7 +398,7 @@ xufailed		[uU]&
                         hint_scanner_yyerror("zero-length delimited identifier", yyscanner);
                     ident = litbuf_udeescape('\\', yyscanner);
                     identlen = strlen(ident);
-                    if (identlen >= NAMEDATALEN)
+                    if (identlen > NAMEDATALEN)
                         truncate_identifier(ident, identlen, yyextra->warnOnTruncateIdent);
                     yylval->str = ident;
                     /* throw back all but the quote */
@@ -416,7 +416,7 @@ xufailed		[uU]&
                         hint_scanner_yyerror("zero-length delimited identifier", yyscanner);
                     ident = litbuf_udeescape(yytext[yyleng - 2], yyscanner);
                     identlen = strlen(ident);
-                    if (identlen >= NAMEDATALEN)
+                    if (identlen > NAMEDATALEN)
                         truncate_identifier(ident, identlen, yyextra->warnOnTruncateIdent);
                     yylval->str = ident;
                     yyextra->ident_quoted = false;

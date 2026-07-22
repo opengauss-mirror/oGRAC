@@ -809,6 +809,10 @@ other            .
                     BEGIN(INITIAL);
                     if (yyextra->literallen == 0)
                         yyerror("zero-length delimited identifier");
+                    if (yyextra->literallen > NAMEDATALEN) {
+                        yyerror("identifier is too long");
+                        return 0;
+                    }
                     ident = litbufdup(yyscanner);
                     yylval->str = ident;
                     yyleng = yyextra->literallen + 2;
@@ -825,6 +829,10 @@ other            .
                         yyerror("zero-length delimited identifier");
                     if (litbuf_udeescape('\\', yyscanner, &ident) != OG_SUCCESS) {
                         yyerror("invalid Unicode character");
+                    }
+                    if (strlen(ident) > NAMEDATALEN) {
+                        yyerror("identifier is too long");
+                        return 0;
                     }
                     yylval->str = ident;
                     /* throw back all but the quote */
@@ -844,6 +852,10 @@ other            .
                     if (litbuf_udeescape(yytext[yyleng - 2], yyscanner, &ident) != OG_SUCCESS) {
                         yyerror("invalid Unicode character");
                     }
+                    if (strlen(ident) > NAMEDATALEN) {
+                        yyerror("identifier is too long");
+                        return 0;
+                    }
                     yylval->str = ident;
                     yyleng = yyextra->literallen + 3 + yyleng;
                     yyextra->ident_quoted = false;
@@ -855,6 +867,10 @@ other            .
                 BEGIN(INITIAL);
                 if (yyextra->literallen == 0)
                     yyerror("zero-length delimited identifier");
+                if (yyextra->literallen > NAMEDATALEN) {
+                    yyerror("identifier is too long");
+                    return 0;
+                }
                 char *ident = litbufdup(yyscanner);
                 yylval->str = ident;
                 yyextra->ident_quoted = true;
@@ -879,6 +895,10 @@ other            .
                     /* throw back all but the initial u/U */
                     yyless(1);
                     /* and treat it as {identifier} */
+                    if (yyleng > NAMEDATALEN) {
+                        yyerror("identifier is too long");
+                        return 0;
+                    }
                     ident = downcase_truncate_identifier(yytext, yyleng, yyextra->warnOnTruncateIdent);
                     yylval->str = ident;
                     yyextra->ident_quoted = false;
@@ -1273,6 +1293,10 @@ other            .
                      * No.  Convert the identifier to upper case, and truncate
                      * if necessary.
                      */
+                    if (yyleng > NAMEDATALEN) {
+                        yyerror("identifier is too long");
+                        return 0;
+                    }
                     ident = upcase_truncate_identifier(yytext, yyleng, yyextra->warnOnTruncateIdent);
                     /* Is it _charset? */
                     yylval->str = ident;

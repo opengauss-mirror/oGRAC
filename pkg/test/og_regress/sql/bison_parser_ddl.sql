@@ -2,6 +2,9 @@ alter system set use_bison_parser = true;
 
 drop trigger if exists bison_ddl_trig_stmt;
 drop trigger if exists bison_ddl_trig;
+drop trigger if exists bison_ddl_252_trig;
+drop trigger if exists bison_ddl_252_quoted_trig;
+drop package if exists bison_ddl_252_invalid_pkg;
 drop package body if exists bison_ddl_pkg_if;
 drop package if exists bison_ddl_pkg_if;
 drop package body if exists bison_ddl_pkg;
@@ -14,11 +17,23 @@ drop function if exists bison_ddl_func_if;
 drop function if exists bison_ddl_func_args;
 drop function if exists bison_ddl_func_empty_args;
 drop function if exists bison_ddl_func;
+drop function if exists bison_ddl_252_result_func;
+drop function if exists bison_ddl_252_parallel_func;
+drop function if exists bison_ddl_252_owner_func;
+drop function if exists bison_ddl_252_quoted_type_func;
 drop procedure if exists bison_ddl_proc_if;
 drop procedure if exists bison_ddl_proc_modes;
 drop procedure if exists bison_ddl_proc_args;
 drop procedure if exists bison_ddl_proc_empty_args;
 drop procedure if exists bison_ddl_proc;
+drop procedure if exists bison_ddl_252_proc;
+drop procedure if exists bison_ddl_252_unknown_proc;
+drop procedure if exists bison_ddl_252_quoted_proc;
+drop procedure if exists bison_ddl_252_multi3;
+drop procedure if exists bison_ddl_252_multi6;
+drop type if exists bison_ddl_252_invalid_type force;
+drop type if exists bison_ddl_252_boundary_type;
+drop type if exists "BisonDdl252QuotedType" force;
 drop sequence if exists bison_ddl_seq_flags;
 drop sequence if exists sys.bison_ddl_seq_schema;
 drop sequence if exists bison_ddl_seq;
@@ -31,12 +46,22 @@ drop table if exists bison_ddl_comp_tab;
 drop table if exists bison_ddl_hash_tab;
 drop table if exists bison_ddl_part_tab;
 drop table if exists bison_ddl_tab_renamed;
+drop table if exists "BisonDdl252QuotedTab";
 drop table if exists bison_ddl_tab;
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number);
+drop table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number); --error
+create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number);
+drop table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number); --error
 
 create or replace profile bison_ddl_profile limit sessions_per_user 1;
 drop profile bison_ddl_profile;
 
 create table bison_ddl_tab(id int, val int);
+-- A 65-byte quoted hint identifier exercises hint scanner truncation.
+select /*+ full("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") */ count(*)
+from bison_ddl_tab;
 comment on table sys.bison_ddl_tab is 'bison table comment';
 comment on column sys.bison_ddl_tab.id is 'bison id comment';
 comment on column sys.bison_ddl_tab.id is '';
@@ -181,6 +206,204 @@ begin
 end;
 /
 
+create procedure pivot() as
+begin
+    null;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'PIVOT';
+drop procedure pivot;
+
+create procedure bison_ddl_252_proc(p_id int) as
+begin
+    null;
+end;
+/
+create function bison_ddl_252_result_func(p_id int) return int as
+begin
+    return p_id;
+end;
+/
+create type bison_ddl_252_boundary_type as object(id int);
+/
+create or replace procedure bison_ddl_252_proc(p_id int) authid definer as
+begin
+    null;
+end;
+/
+create or replace function bison_ddl_252_result_func(p_id int)
+return int result_cache authid definer
+is
+begin
+    return p_id + 10;
+end;
+/
+create or replace function bison_ddl_252_parallel_func(p_id int) return int parallel_enable
+is
+begin
+    return p_id * 2;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name in ('BISON_DDL_252_PROC', 'BISON_DDL_252_RESULT_FUNC',
+    'BISON_DDL_252_PARALLEL_FUNC')
+order by object_name, object_type;
+
+create or replace function bison_ddl_252_owner_func(
+    p_obj sys.bison_ddl_252_boundary_type)
+return sys.bison_ddl_252_boundary_type as
+begin
+    return p_obj;
+end;
+/
+create procedure bison_ddl_252_unknown_proc(
+    p_obj sys.bison_ddl_252_missing_type) as
+begin
+    null;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name in ('BISON_DDL_252_OWNER_FUNC', 'BISON_DDL_252_UNKNOWN_PROC')
+order by object_name, object_type;
+
+create package bison_ddl_252_invalid_pkg invalid_header as
+    procedure p;
+end bison_ddl_252_invalid_pkg;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_INVALID_PKG'
+order by object_type;
+create or replace package bison_ddl_252_invalid_pkg as
+    procedure p;
+end bison_ddl_252_invalid_pkg;
+/
+create package body bison_ddl_252_invalid_pkg as
+    procedure p as
+    begin
+        bison_ddl_252_missing_symbol := 1;
+    end;
+end bison_ddl_252_invalid_pkg;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_INVALID_PKG'
+order by object_type;
+create or replace package body bison_ddl_252_invalid_pkg as
+    procedure p as
+    begin
+        null;
+    end;
+end bison_ddl_252_invalid_pkg;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_INVALID_PKG'
+order by object_type;
+
+create type bison_ddl_252_invalid_type force
+invalid_header as object(id int);
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_INVALID_TYPE';
+create or replace type bison_ddl_252_invalid_type force as object(id int);
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_INVALID_TYPE';
+
+create trigger bison_ddl_252_trig
+before insert on bison_ddl_tab
+begin
+    null;
+end;
+/
+create or replace trigger bison_ddl_252_trig
+before insert on bison_ddl_tab
+begin
+    bison_ddl_252_missing_symbol := 1;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_TRIG';
+create or replace trigger bison_ddl_252_trig
+before insert on bison_ddl_tab
+begin
+    null;
+end;
+/
+-- descriptor validation remains a hard error and must preserve the VALID trigger.
+create or replace trigger bison_ddl_252_trig
+before update of bison_ddl_252_missing_col on bison_ddl_tab
+begin
+    null;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_TRIG';
+
+create procedure sys."BISON_DDL_252_QUOTED_PROC" select
+as
+begin
+    null;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_QUOTED_PROC';
+create or replace procedure sys.bison_ddl_252_quoted_proc as
+begin
+    null;
+end;
+/
+
+create type "BisonDdl252QuotedType" as object(id int);
+/
+create function bison_ddl_252_quoted_type_func(
+    p_obj sys."BisonDdl252QuotedType")
+return sys."BisonDdl252QuotedType" as
+begin
+    return p_obj;
+end;
+/
+create table "BisonDdl252QuotedTab"(id int);
+create trigger bison_ddl_252_quoted_trig
+before insert on "BisonDdl252QuotedTab"
+begin
+    null;
+end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name in ('BisonDdl252QuotedType', 'BISON_DDL_252_QUOTED_TYPE_FUNC',
+    'BISON_DDL_252_QUOTED_TRIG')
+order by object_name, object_type;
+
+-- Native PL keeps the first component of three-to-six-part object names.
+create procedure bison_ddl_252_multi3.a.b as begin null; end;
+/
+create procedure bison_ddl_252_multi6.a.b.c.d.e as begin null; end;
+/
+create procedure bison_ddl_252_multi7.a.b.c.d.e.f as begin null; end;
+/
+select object_name, object_type, status
+from my_objects
+where object_name in ('BISON_DDL_252_MULTI3', 'BISON_DDL_252_MULTI6', 'BISON_DDL_252_MULTI7')
+order by object_name;
+
+-- Errors before a complete object name stay hard errors.
+create procedure () as begin null; end;
+/
+create procedure sys.() as begin null; end;
+/
+
 create package bison_ddl_pkg as
     procedure p;
     function f return int;
@@ -300,13 +523,22 @@ alter profile bison_ddl_profile limit
     password_grace_time default
     sessions_per_user unlimited;
 drop profile bison_ddl_profile;
-
 create user bison_ddl_user identified by 'Bison_ddl_123'
     password expire account unlock profile default permanent;
 alter user bison_ddl_user identified by 'Bison_ddl_456';
 alter user bison_ddl_user identified by 'Bison_ddl_789' replace 'Bison_ddl_456' account lock;
 alter user bison_ddl_user account unlock password expire profile default;
-
+alter system set use_bison_parser = false;
+alter system set recyclebin = true;
+alter system set use_bison_parser = true;
+create table bison_ddl_user.purge_owner_tab(a int);
+drop table bison_ddl_user.purge_owner_tab;
+purge table bison_ddl_user.purge_owner_tab;
+create table bison_ddl_user.purge_local_tab(a int);
+alter session set current_schema = bison_ddl_user;
+drop table purge_local_tab;
+purge table purge_local_tab;
+alter session set current_schema = sys;
 -- ALTER TENANT requires environment-specific tablespaces, keep its bison syntax samples non-executed here.
 create tenant bison_ddl_tenant tablespaces (bison_ddl_ts1) default tablespace bison_ddl_ts1;
 alter tenant bison_ddl_tenant add tablespaces (bison_ddl_ts2);
@@ -337,6 +569,8 @@ drop table bison_ddl_issue269_basic;
 
 drop trigger if exists bison_ddl_trig_stmt;
 drop trigger if exists bison_ddl_trig;
+drop trigger if exists bison_ddl_252_trig;
+drop trigger if exists bison_ddl_252_quoted_trig;
 drop type if exists bison_ddl_type_arr force;
 drop type if exists bison_ddl_type_tab force;
 drop type if exists bison_ddl_type_force force;
@@ -345,15 +579,28 @@ drop package body if exists bison_ddl_pkg_if;
 drop package if exists bison_ddl_pkg_if;
 drop package body if exists bison_ddl_pkg;
 drop package if exists bison_ddl_pkg;
+drop package if exists bison_ddl_252_invalid_pkg;
 drop function if exists bison_ddl_func_if;
 drop function if exists bison_ddl_func_args;
 drop function if exists bison_ddl_func_empty_args;
 drop function if exists bison_ddl_func;
+drop function if exists bison_ddl_252_result_func;
+drop function if exists bison_ddl_252_parallel_func;
+drop function if exists bison_ddl_252_owner_func;
+drop function if exists bison_ddl_252_quoted_type_func;
 drop procedure if exists bison_ddl_proc_if;
 drop procedure if exists bison_ddl_proc_modes;
 drop procedure if exists bison_ddl_proc_args;
 drop procedure if exists bison_ddl_proc_empty_args;
 drop procedure if exists bison_ddl_proc;
+drop procedure if exists bison_ddl_252_proc;
+drop procedure if exists bison_ddl_252_unknown_proc;
+drop procedure if exists bison_ddl_252_quoted_proc;
+drop procedure if exists bison_ddl_252_multi3;
+drop procedure if exists bison_ddl_252_multi6;
+drop type if exists bison_ddl_252_invalid_type force;
+drop type if exists bison_ddl_252_boundary_type;
+drop type if exists "BisonDdl252QuotedType" force;
 drop sequence if exists bison_ddl_seq_flags;
 drop sequence if exists sys.bison_ddl_seq_schema;
 drop sequence if exists bison_ddl_seq;
@@ -366,4 +613,5 @@ drop table if exists bison_ddl_comp_tab;
 drop table if exists bison_ddl_hash_tab;
 drop table if exists bison_ddl_part_tab;
 drop table if exists bison_ddl_tab_renamed;
+drop table if exists "BisonDdl252QuotedTab";
 drop table if exists bison_ddl_tab;

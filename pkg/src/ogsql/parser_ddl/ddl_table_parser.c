@@ -50,6 +50,21 @@ static inline bool8 sql_table_has_special_char(text_t *name)
     return OG_FALSE;
 }
 
+static status_t og_check_create_table_name_len(name_with_owner *table_name)
+{
+    if (table_name->owner.len > OG_MAX_NAME_LEN) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "'%s' is too long to as name", T2S(&table_name->owner));
+        return OG_ERROR;
+    }
+
+    if (table_name->name.len > OG_MAX_NAME_LEN) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "'%s' is too long to as name", T2S(&table_name->name));
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 static status_t sql_parse_altable_table_rename(sql_stmt_t *stmt, lex_t *lex, knl_altable_def_t *def)
 {
     word_t word;
@@ -1583,6 +1598,7 @@ status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bo
     }
 
     def->type = is_temp ? TABLE_TYPE_TRANS_TEMP : TABLE_TYPE_HEAP;
+    OG_RETURN_IFERR(og_check_create_table_name_len(table_name));
     if (table_name->owner.len > 0) {
         def->schema = table_name->owner;
     } else {

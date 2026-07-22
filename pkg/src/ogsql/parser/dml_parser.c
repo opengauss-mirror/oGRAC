@@ -207,6 +207,9 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
         cur_token = yylex_func(&(lvalp->core_yystype), llocp, yyscanner);
         cur_yyleng = ct_yyget_leng(yyscanner);
     }
+    if (yyextra->pl_object_name_mode) {
+        return cur_token;
+    }
 
     /* Do we need to look ahead for a possible multiword token? */
     switch (cur_token) {
@@ -879,6 +882,15 @@ int c_base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
     return base_yylex_common(lvalp, llocp, yyscanner, c_core_yylex);
 }
 
+static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_text_t *sql)
+{
+    yyextra->sourcebuf = sql->str;
+    yyextra->sourcebuflen = sql->len;
+    yyextra->pl_object_name_end = -1;
+    yyextra->pl_object_name_mode = OG_FALSE;
+    yyextra->pl_object_name_sensitive = OG_FALSE;
+}
+
 static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
 {
     core_yyscan_t yyscanner;
@@ -888,6 +900,7 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
+    raw_parser_init_extra(&yyextra, sql);
 
     /* initialize the flex scanner */
     yyscanner = a_scanner_init(sql, &yyextra.core_yy_extra, &dialect_a_ScanKeywords, a_format_ScanKeywordTokens, stmt);
@@ -931,6 +944,7 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
+    raw_parser_init_extra(&yyextra, sql);
 
     /* initialize the flex scanner */
     yyscanner = b_scanner_init(sql, &yyextra.core_yy_extra, &dialect_b_ScanKeywords, b_format_ScanKeywordTokens, stmt);
@@ -974,6 +988,7 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
+    raw_parser_init_extra(&yyextra, sql);
 
     /* initialize the flex scanner */
     yyscanner = c_scanner_init(sql, &yyextra.core_yy_extra, &dialect_c_ScanKeywords, c_format_ScanKeywordTokens, stmt);

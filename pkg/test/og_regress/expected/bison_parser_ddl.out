@@ -4,12 +4,24 @@ SQL> alter system set use_bison_parser = true;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> drop trigger if exists bison_ddl_trig_stmt;
 
 Succeed.
 
 SQL> drop trigger if exists bison_ddl_trig;
+
+Succeed.
+
+SQL> drop trigger if exists bison_ddl_252_trig;
+
+Succeed.
+
+SQL> drop trigger if exists bison_ddl_252_quoted_trig;
+
+Succeed.
+
+SQL> drop package if exists bison_ddl_252_invalid_pkg;
 
 Succeed.
 
@@ -61,6 +73,22 @@ SQL> drop function if exists bison_ddl_func;
 
 Succeed.
 
+SQL> drop function if exists bison_ddl_252_result_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_parallel_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_owner_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_quoted_type_func;
+
+Succeed.
+
 SQL> drop procedure if exists bison_ddl_proc_if;
 
 Succeed.
@@ -78,6 +106,38 @@ SQL> drop procedure if exists bison_ddl_proc_empty_args;
 Succeed.
 
 SQL> drop procedure if exists bison_ddl_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_unknown_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_quoted_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_multi3;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_multi6;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_252_invalid_type force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_252_boundary_type;
+
+Succeed.
+
+SQL> drop type if exists "BisonDdl252QuotedType" force;
 
 Succeed.
 
@@ -129,11 +189,37 @@ SQL> drop table if exists bison_ddl_tab_renamed;
 
 Succeed.
 
+SQL> drop table if exists "BisonDdl252QuotedTab";
+
+Succeed.
+
 SQL> drop table if exists bison_ddl_tab;
 
 Succeed.
 
-SQL> 
+SQL> create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number);
+
+Succeed.
+
+SQL> drop table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+
+Succeed.
+
+SQL> create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (id number); --error
+
+OG-00601, [1:14]Sql syntax error: identifier is too long
+SQL> create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number);
+
+Succeed.
+
+SQL> drop table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+Succeed.
+
+SQL> create table "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" (id number); --error
+
+OG-00601, [1:14]Sql syntax error: identifier is too long
+SQL>
 SQL> create or replace profile bison_ddl_profile limit sessions_per_user 1;
 
 Succeed.
@@ -142,10 +228,20 @@ SQL> drop profile bison_ddl_profile;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create table bison_ddl_tab(id int, val int);
 
 Succeed.
+
+SQL> -- A 65-byte quoted hint identifier exercises hint scanner truncation.
+SQL> select /*+ full("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") */ count(*)
+  2 from bison_ddl_tab;
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
 
 SQL> comment on table sys.bison_ddl_tab is 'bison table comment';
 
@@ -159,7 +255,7 @@ SQL> comment on column sys.bison_ddl_tab.id is '';
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> alter table bison_ddl_tab add column txt varchar(20) default 'x';
 
 Succeed.
@@ -251,7 +347,7 @@ SQL> alter table bison_ddl_tab_renamed rename to bison_ddl_tab;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create table bison_ddl_auto_tab(id bigint primary key auto_increment, val int);
 
 Succeed.
@@ -264,7 +360,7 @@ SQL> drop table if exists bison_ddl_auto_tab;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create table bison_ddl_part_tab(id int, val int)
   2 partition by range(id) (
   3     partition p1 values less than (10),
@@ -273,7 +369,7 @@ SQL> create table bison_ddl_part_tab(id int, val int)
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> alter table bison_ddl_part_tab add partition p3 values less than (30);
 
 Succeed.
@@ -323,7 +419,7 @@ SQL> drop table if exists bison_ddl_part_tab;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create table bison_ddl_hash_tab(id int, val int)
   2 partition by hash(id) partitions 4;
 
@@ -337,7 +433,7 @@ SQL> drop table if exists bison_ddl_hash_tab;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create table bison_ddl_comp_tab(id int, val int)
   2 partition by hash(id) subpartition by hash(val)
   3 (
@@ -353,7 +449,7 @@ SQL> create table bison_ddl_comp_tab(id int, val int)
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> alter table bison_ddl_comp_tab enable subpartition cp21 nologging;
 
 Succeed.
@@ -378,7 +474,7 @@ SQL> drop table if exists bison_ddl_comp_tab;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create procedure bison_ddl_proc as
   2 begin
   3     null;
@@ -387,7 +483,7 @@ SQL> create procedure bison_ddl_proc as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create procedure bison_ddl_proc_empty_args() as
   2 begin
   3     null;
@@ -396,7 +492,7 @@ SQL> create procedure bison_ddl_proc_empty_args() as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create or replace procedure bison_ddl_proc_args(
   2     p_plain int,
   3     p_default int default 1,
@@ -409,7 +505,7 @@ SQL> create or replace procedure bison_ddl_proc_args(
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create procedure bison_ddl_proc_modes(
   2     p_in in int,
   3     p_out out int,
@@ -423,7 +519,7 @@ SQL> create procedure bison_ddl_proc_modes(
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create procedure if not exists bison_ddl_proc_if as
   2 begin
   3     null;
@@ -432,7 +528,7 @@ SQL> create procedure if not exists bison_ddl_proc_if as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create function bison_ddl_func return int as
   2 begin
   3     return 1;
@@ -441,7 +537,7 @@ SQL> create function bison_ddl_func return int as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create function bison_ddl_func_empty_args() return int is
   2 begin
   3     return 1;
@@ -450,7 +546,7 @@ SQL> create function bison_ddl_func_empty_args() return int is
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create or replace function bison_ddl_func_args(
   2     p_plain int,
   3     p_default int default 1,
@@ -463,7 +559,7 @@ SQL> create or replace function bison_ddl_func_args(
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create function if not exists bison_ddl_func_if return int as
   2 begin
   3     return 1;
@@ -472,7 +568,431 @@ SQL> create function if not exists bison_ddl_func_if return int as
 
 Succeed.
 
-SQL> 
+SQL>
+SQL> create procedure pivot() as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'PIVOT';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+PIVOT                                                            PROCEDURE          VALID
+
+1 rows fetched.
+
+SQL> drop procedure pivot;
+
+Succeed.
+
+SQL>
+SQL> create procedure bison_ddl_252_proc(p_id int) as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> create function bison_ddl_252_result_func(p_id int) return int as
+  2 begin
+  3     return p_id;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> create type bison_ddl_252_boundary_type as object(id int);
+  2 /
+
+Succeed.
+
+SQL> create or replace procedure bison_ddl_252_proc(p_id int) authid definer as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_PROC) terminated with compiling errors
+[1:65] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> create or replace function bison_ddl_252_result_func(p_id int)
+  2 return int result_cache authid definer
+  3 is
+  4 begin
+  5     return p_id + 10;
+  6 end;
+  7 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_RESULT_FUNC) terminated with compiling errors
+[2:12] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> create or replace function bison_ddl_252_parallel_func(p_id int) return int parallel_enable
+  2 is
+  3 begin
+  4     return p_id * 2;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_PARALLEL_FUNC) terminated with compiling errors
+[1:77] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name in ('BISON_DDL_252_PROC', 'BISON_DDL_252_RESULT_FUNC',
+  4     'BISON_DDL_252_PARALLEL_FUNC')
+  5 order by object_name, object_type;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_PARALLEL_FUNC                                      FUNCTION           INVALID
+BISON_DDL_252_PROC                                               PROCEDURE          INVALID
+BISON_DDL_252_RESULT_FUNC                                        FUNCTION           INVALID
+
+3 rows fetched.
+
+SQL>
+SQL> create or replace function bison_ddl_252_owner_func(
+  2     p_obj sys.bison_ddl_252_boundary_type)
+  3 return sys.bison_ddl_252_boundary_type as
+  4 begin
+  5     return p_obj;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> create procedure bison_ddl_252_unknown_proc(
+  2     p_obj sys.bison_ddl_252_missing_type) as
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_UNKNOWN_PROC) terminated with compiling errors
+[2:11] PLC-01304 Data type 'SYS' is not supported
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name in ('BISON_DDL_252_OWNER_FUNC', 'BISON_DDL_252_UNKNOWN_PROC')
+  4 order by object_name, object_type;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_OWNER_FUNC                                         FUNCTION           VALID
+BISON_DDL_252_UNKNOWN_PROC                                       PROCEDURE          INVALID
+
+2 rows fetched.
+
+SQL>
+SQL> create package bison_ddl_252_invalid_pkg invalid_header as
+  2     procedure p;
+  3 end bison_ddl_252_invalid_pkg;
+  4 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_INVALID_PKG) terminated with compiling errors
+[1:42] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_INVALID_PKG'
+  4 order by object_type;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_INVALID_PKG                                        PACKAGE SPEC       INVALID
+
+1 rows fetched.
+
+SQL> create or replace package bison_ddl_252_invalid_pkg as
+  2     procedure p;
+  3 end bison_ddl_252_invalid_pkg;
+  4 /
+
+Succeed.
+
+SQL> create package body bison_ddl_252_invalid_pkg as
+  2     procedure p as
+  3     begin
+  4         bison_ddl_252_missing_symbol := 1;
+  5     end;
+  6 end bison_ddl_252_invalid_pkg;
+  7 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_INVALID_PKG) terminated with compiling errors
+[2:17] PLC-00944 PL/SQL(SYS.BISON_DDL_252_INVALID_PKG.P) terminated with compiling errors
+[4:9] PLC-00916 PL/SQL:syntax error(unexpected pl-variant occurs)
+
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_INVALID_PKG'
+  4 order by object_type;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_INVALID_PKG                                        PACKAGE BODY       INVALID
+BISON_DDL_252_INVALID_PKG                                        PACKAGE SPEC       VALID
+
+2 rows fetched.
+
+SQL> create or replace package body bison_ddl_252_invalid_pkg as
+  2     procedure p as
+  3     begin
+  4         null;
+  5     end;
+  6 end bison_ddl_252_invalid_pkg;
+  7 /
+
+Succeed.
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_INVALID_PKG'
+  4 order by object_type;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_INVALID_PKG                                        PACKAGE BODY       VALID
+BISON_DDL_252_INVALID_PKG                                        PACKAGE SPEC       VALID
+
+2 rows fetched.
+
+SQL>
+SQL> create type bison_ddl_252_invalid_type force
+  2 invalid_header as object(id int);
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_INVALID_TYPE) terminated with compiling errors
+[2:1] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_INVALID_TYPE';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_INVALID_TYPE                                       TYPE SPEC          INVALID
+
+1 rows fetched.
+
+SQL> create or replace type bison_ddl_252_invalid_type force as object(id int);
+  2 /
+
+Succeed.
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_INVALID_TYPE';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_INVALID_TYPE                                       TYPE SPEC          VALID
+
+1 rows fetched.
+
+SQL>
+SQL> create trigger bison_ddl_252_trig
+  2 before insert on bison_ddl_tab
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> create or replace trigger bison_ddl_252_trig
+  2 before insert on bison_ddl_tab
+  3 begin
+  4     bison_ddl_252_missing_symbol := 1;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_TRIG) terminated with compiling errors
+[1:40] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_TRIG';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_TRIG                                               TRIGGER            INVALID
+
+1 rows fetched.
+
+SQL> create or replace trigger bison_ddl_252_trig
+  2 before insert on bison_ddl_tab
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> -- descriptor validation remains a hard error and must preserve the VALID trigger.
+SQL> create or replace trigger bison_ddl_252_trig
+  2 before update of bison_ddl_252_missing_col on bison_ddl_tab
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+OG-00920, [2:18]Undefined symbol BISON_DDL_252_MISSING_COL
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_TRIG';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_TRIG                                               TRIGGER            VALID
+
+1 rows fetched.
+
+SQL>
+SQL> create procedure sys."BISON_DDL_252_QUOTED_PROC" select
+  2 as
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_QUOTED_PROC) terminated with compiling errors
+[1:50] PLC-00601 Sql syntax error: syntax error
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_QUOTED_PROC';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_QUOTED_PROC                                        PROCEDURE          INVALID
+
+1 rows fetched.
+
+SQL> create or replace procedure sys.bison_ddl_252_quoted_proc as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL>
+SQL> create type "BisonDdl252QuotedType" as object(id int);
+  2 /
+
+Succeed.
+
+SQL> create function bison_ddl_252_quoted_type_func(
+  2     p_obj sys."BisonDdl252QuotedType")
+  3 return sys."BisonDdl252QuotedType" as
+  4 begin
+  5     return p_obj;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> create table "BisonDdl252QuotedTab"(id int);
+
+Succeed.
+
+SQL> create trigger bison_ddl_252_quoted_trig
+  2 before insert on "BisonDdl252QuotedTab"
+  3 begin
+  4     null;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name in ('BisonDdl252QuotedType', 'BISON_DDL_252_QUOTED_TYPE_FUNC',
+  4     'BISON_DDL_252_QUOTED_TRIG')
+  5 order by object_name, object_type;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_QUOTED_TRIG                                        TRIGGER            VALID
+BISON_DDL_252_QUOTED_TYPE_FUNC                                   FUNCTION           VALID
+BisonDdl252QuotedType                                            TYPE SPEC          VALID
+
+3 rows fetched.
+
+SQL>
+SQL> -- Native PL keeps the first component of three-to-six-part object names.
+SQL> create procedure bison_ddl_252_multi3.a.b as begin null; end;
+  2 /
+
+Succeed.
+
+SQL> create procedure bison_ddl_252_multi6.a.b.c.d.e as begin null; end;
+  2 /
+
+Succeed.
+
+SQL> create procedure bison_ddl_252_multi7.a.b.c.d.e.f as begin null; end;
+  2 /
+
+OG-00601, [1:48]Sql syntax error: too many '.' found
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name in ('BISON_DDL_252_MULTI3', 'BISON_DDL_252_MULTI6', 'BISON_DDL_252_MULTI7')
+  4 order by object_name;
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_MULTI3                                             PROCEDURE          VALID
+BISON_DDL_252_MULTI6                                             PROCEDURE          VALID
+
+2 rows fetched.
+
+SQL>
+SQL> -- Errors before a complete object name stay hard errors.
+SQL> create procedure () as begin null; end;
+  2 /
+
+OG-00601, [1:18]Sql syntax error: syntax error
+SQL> create procedure sys.() as begin null; end;
+  2 /
+
+OG-00601, [1:22]Sql syntax error: syntax error
+SQL>
 SQL> create package bison_ddl_pkg as
   2     procedure p;
   3     function f return int;
@@ -481,13 +1001,13 @@ SQL> create package bison_ddl_pkg as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create package body bison_ddl_pkg as
   2     procedure p as
   3     begin
   4         null;
   5     end;
-  6 
+  6
   7     function f return int as
   8     begin
   9         return 1;
@@ -497,7 +1017,7 @@ SQL> create package body bison_ddl_pkg as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create or replace package bison_ddl_pkg as
   2     procedure p;
   3     function f return int;
@@ -506,13 +1026,13 @@ SQL> create or replace package bison_ddl_pkg as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create or replace package body bison_ddl_pkg as
   2     procedure p as
   3     begin
   4         null;
   5     end;
-  6 
+  6
   7     function f return int as
   8     begin
   9         return 1;
@@ -522,7 +1042,7 @@ SQL> create or replace package body bison_ddl_pkg as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create package if not exists bison_ddl_pkg_if as
   2     procedure p;
   3 end;
@@ -530,7 +1050,7 @@ SQL> create package if not exists bison_ddl_pkg_if as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create package body if not exists bison_ddl_pkg_if as
   2     procedure p as
   3     begin
@@ -541,37 +1061,37 @@ SQL> create package body if not exists bison_ddl_pkg_if as
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create type bison_ddl_type as object(id int);
   2 /
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create or replace type bison_ddl_type force as object(id int, val int);
   2 /
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create type if not exists bison_ddl_type_force force as object(id int, val int);
   2 /
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create type bison_ddl_type_tab is table of int;
   2 /
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create type bison_ddl_type_arr is varray(3) of bison_ddl_type_tab;
   2 /
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create trigger bison_ddl_trig
   2 before insert on bison_ddl_tab
   3 for each row
@@ -582,7 +1102,7 @@ SQL> create trigger bison_ddl_trig
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create or replace trigger bison_ddl_trig
   2 before insert on bison_ddl_tab
   3 for each row
@@ -593,7 +1113,7 @@ SQL> create or replace trigger bison_ddl_trig
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create trigger if not exists bison_ddl_trig_stmt
   2 after update on bison_ddl_tab
   3 begin
@@ -603,7 +1123,7 @@ SQL> create trigger if not exists bison_ddl_trig_stmt
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> alter trigger bison_ddl_trig disable;
 
 Succeed.
@@ -628,7 +1148,7 @@ SQL> alter table bison_ddl_tab enable all triggers;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create sequence bison_ddl_seq_empty;
 
 Succeed.
@@ -661,7 +1181,7 @@ SQL> alter sequence bison_ddl_seq_flags restart;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> create profile bison_ddl_profile limit
   2     sessions_per_user 10
   3     password_life_time 30
@@ -688,7 +1208,6 @@ SQL> drop profile bison_ddl_profile;
 
 Succeed.
 
-SQL> 
 SQL> create user bison_ddl_user identified by 'Bison_ddl_123'
   2     password expire account unlock profile default permanent;
 
@@ -706,7 +1225,50 @@ SQL> alter user bison_ddl_user account unlock password expire profile default;
 
 Succeed.
 
-SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> alter system set recyclebin = true;
+
+Succeed.
+
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> create table bison_ddl_user.purge_owner_tab(a int);
+
+Succeed.
+
+SQL> drop table bison_ddl_user.purge_owner_tab;
+
+Succeed.
+
+SQL> purge table bison_ddl_user.purge_owner_tab;
+
+Succeed.
+
+SQL> create table bison_ddl_user.purge_local_tab(a int);
+
+Succeed.
+
+SQL> alter session set current_schema = bison_ddl_user;
+
+Succeed.
+
+SQL> drop table purge_local_tab;
+
+Succeed.
+
+SQL> purge table purge_local_tab;
+
+Succeed.
+
+SQL> alter session set current_schema = sys;
+
+Succeed.
+
 SQL> -- ALTER TENANT requires environment-specific tablespaces, keep its bison syntax samples non-executed here.
 SQL> create tenant bison_ddl_tenant tablespaces (bison_ddl_ts1) default tablespace bison_ddl_ts1;
 
@@ -721,7 +1283,7 @@ SQL> drop tenant if exists bison_ddl_tenant cascade;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> -- CREATE/DROP DATABASE and temporary tablespace syntax is environment-sensitive or unsupported.
 SQL> -- Keep these samples here to cover the bison grammar paths without executing them in regress.
 SQL> create database bison_ddl_db;
@@ -736,14 +1298,14 @@ OG-00101, Capability: DROP DATABASE not supported
 SQL> create temporary tablespace bison_ddl_temp_ts tempfile 'bison_ddl_temp_ts.dbf';
 
 OG-00130, Operation create temporary lead  is not supported on temporary tablespace
-SQL> 
+SQL>
 SQL> ALTER FUNCTION is unsupported by the native parser; bison keeps the same capability error.
 
 OG-00101, Capability: alter function not supported
 SQL> alter function bison_ddl_func;
 
 OG-00101, Capability: alter function not supported
-SQL> 
+SQL>
 SQL> alter database set time_zone='+08:00';
 
 Succeed.
@@ -780,12 +1342,20 @@ SQL> drop table bison_ddl_issue269_basic;
 
 Succeed.
 
-SQL> 
+SQL>
 SQL> drop trigger if exists bison_ddl_trig_stmt;
 
 Succeed.
 
 SQL> drop trigger if exists bison_ddl_trig;
+
+Succeed.
+
+SQL> drop trigger if exists bison_ddl_252_trig;
+
+Succeed.
+
+SQL> drop trigger if exists bison_ddl_252_quoted_trig;
 
 Succeed.
 
@@ -821,6 +1391,10 @@ SQL> drop package if exists bison_ddl_pkg;
 
 Succeed.
 
+SQL> drop package if exists bison_ddl_252_invalid_pkg;
+
+Succeed.
+
 SQL> drop function if exists bison_ddl_func_if;
 
 Succeed.
@@ -834,6 +1408,22 @@ SQL> drop function if exists bison_ddl_func_empty_args;
 Succeed.
 
 SQL> drop function if exists bison_ddl_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_result_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_parallel_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_owner_func;
+
+Succeed.
+
+SQL> drop function if exists bison_ddl_252_quoted_type_func;
 
 Succeed.
 
@@ -854,6 +1444,38 @@ SQL> drop procedure if exists bison_ddl_proc_empty_args;
 Succeed.
 
 SQL> drop procedure if exists bison_ddl_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_unknown_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_quoted_proc;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_multi3;
+
+Succeed.
+
+SQL> drop procedure if exists bison_ddl_252_multi6;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_252_invalid_type force;
+
+Succeed.
+
+SQL> drop type if exists bison_ddl_252_boundary_type;
+
+Succeed.
+
+SQL> drop type if exists "BisonDdl252QuotedType" force;
 
 Succeed.
 
@@ -905,10 +1527,12 @@ SQL> drop table if exists bison_ddl_tab_renamed;
 
 Succeed.
 
+SQL> drop table if exists "BisonDdl252QuotedTab";
+
+Succeed.
+
 SQL> drop table if exists bison_ddl_tab;
 
 Succeed.
 
-SQL> 
-
-
+SQL>

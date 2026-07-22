@@ -1525,6 +1525,20 @@ static inline galist_t *plc_bison_name_typemode(type_word_t *type)
     return (type->is_name_typemode) ? type->typemode : NULL;
 }
 
+static inline text_t *plc_bison_name_part_value(type_word_t *type, uint32 id)
+{
+    type_name_part_t *part = (type_name_part_t *)cm_galist_get(plc_bison_name_typemode(type), id);
+    return &part->value;
+}
+
+static inline bool32 plc_bison_name_part_sensitive(type_word_t *type, uint32 id)
+{
+    if (!type->name_sensitive_set) {
+        return !IS_CASE_INSENSITIVE;
+    }
+    return ((type_name_part_t *)cm_galist_get(plc_bison_name_typemode(type), id))->sensitive;
+}
+
 static inline bool32 plc_bison_is_datatype(type_word_t *type)
 {
     word_t typword;
@@ -1969,7 +1983,7 @@ static status_t plc_bison_copy_simple_coll_type(pl_compiler_t *compiler, plv_dec
 
 static void plc_bison_get_attr_name(type_word_t *type, uint32 id, sql_text_t *name)
 {
-    name->value = *(text_t *)cm_galist_get(plc_bison_name_typemode(type), id);
+    name->value = *plc_bison_name_part_value(type, id);
     name->loc = type->loc;
 }
 
@@ -1997,7 +2011,7 @@ static plv_record_attr_t *plc_bison_record_recurse_find_attr(sql_stmt_t *stmt, u
     }
 
     plc_bison_get_attr_name(type, *id, &name);
-    record_attr = udt_seek_field_by_name(stmt, record, &name, !IS_CASE_INSENSITIVE);
+    record_attr = udt_seek_field_by_name(stmt, record, &name, plc_bison_name_part_sensitive(type, *id));
     if (record_attr == NULL) {
         return NULL;
     }
@@ -2024,7 +2038,7 @@ static plv_object_attr_t *plc_bison_object_recurse_find_attr(sql_stmt_t *stmt, u
     }
 
     plc_bison_get_attr_name(type, *id, &name);
-    object_attr = udt_seek_obj_field_byname(stmt, object, &name, !IS_CASE_INSENSITIVE);
+    object_attr = udt_seek_obj_field_byname(stmt, object, &name, plc_bison_name_part_sensitive(type, *id));
     if (object_attr == NULL) {
         return NULL;
     }
@@ -2244,8 +2258,8 @@ static status_t plc_bison_parse_global_type_name(pl_compiler_t *compiler, type_w
         cm_str2text(buf, &user);
         cm_concat_text(&obj->user, OG_NAME_BUFFER_SIZE, &user);
         cm_text_upper_self_name(&obj->user);
-        cm_concat_text(&obj->name, OG_NAME_BUFFER_SIZE, (text_t *)cm_galist_get(name_parts, 0));
-        obj->name_sensitive = !IS_CASE_INSENSITIVE;
+        cm_concat_text(&obj->name, OG_NAME_BUFFER_SIZE, plc_bison_name_part_value(type, 0));
+        obj->name_sensitive = plc_bison_name_part_sensitive(type, 0);
         if (!obj->name_sensitive) {
             cm_text_upper_self_name(&obj->name);
         }
@@ -2260,7 +2274,7 @@ static status_t plc_bison_parse_global_type_name(pl_compiler_t *compiler, type_w
         cm_concat_text(&obj->user, OG_NAME_BUFFER_SIZE, &user);
         cm_str2text(type->str, &name);
         cm_concat_text(&obj->name, OG_NAME_BUFFER_SIZE, &name);
-        obj->name_sensitive = !IS_CASE_INSENSITIVE;
+        obj->name_sensitive = type->name_sensitive_set ? type->name_sensitive : !IS_CASE_INSENSITIVE;
         if (!obj->name_sensitive) {
             cm_text_upper_self_name(&obj->name);
         }

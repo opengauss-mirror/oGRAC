@@ -74,12 +74,10 @@ static status_t pl_record_source(sql_stmt_t *stmt, pl_entity_t *pl_ctx, text_t *
     }
     knl_end_session_wait(session, LARGE_POOL_ALLOC);
 
-    pl_ctx->create_def->source.len = 0;
     pl_ctx->create_def->source.str =
         mpool_page_addr(KNL_SESSION(stmt)->kernel->attr.large_pool, pl_ctx->create_def->large_page_id);
-    OG_RETURN_IFERR(sql_text_concat_n_str(&pl_ctx->create_def->source, OG_LARGE_PAGE_SIZE, source->str, source->len));
-
-    return OG_SUCCESS;
+    pl_ctx->create_def->source.len = 0;
+    return sql_text_concat_n_str(&pl_ctx->create_def->source, OG_LARGE_PAGE_SIZE, source->str, source->len);
 }
 
 static status_t pl_diag_pacakge_type(sql_stmt_t *stmt, word_t *word, uint32 *type)
@@ -676,7 +674,7 @@ static status_t plc_parse_trigger_event(sql_stmt_t *stmt, word_t *word, trig_des
         return OG_ERROR;
     }
 
-    if (trig->events == TRIG_INSTEAD_OF) {
+    if (trig->type == TRIG_INSTEAD_OF) {
         bool32 result = OG_FALSE;
         OG_RETURN_IFERR(lex_try_fetch(lex, "REFERENCING ", &result));
         if (result) {
@@ -765,7 +763,7 @@ status_t plc_parse_trigger_desc_core(sql_stmt_t *stmt, word_t *word, bool32 is_u
     OG_RETURN_IFERR(plc_parse_trigger_event(stmt, word, trig));
     OG_RETURN_IFERR(plc_parse_for_each_row(stmt, word, trig));
 
-    if (trig->events == TRIG_INSTEAD_OF) {
+    if (trig->type == TRIG_INSTEAD_OF) {
         bool32 result = OG_FALSE;
         OG_RETURN_IFERR(lex_try_fetch(lex, "WHEN", &result));
         if (result) {
@@ -949,20 +947,24 @@ static uint16 pl_bison_make_create_option(bool32 replace, bool32 if_not_exists)
     return create_option;
 }
 
-static void pl_bison_copy_object_name(sql_stmt_t *stmt, name_with_owner *object_name, var_udo_t *obj)
+static status_t pl_bison_copy_object_name(sql_stmt_t *stmt, name_with_owner *object_name, bool32 name_sensitive,
+    var_udo_t *obj)
 {
     if (object_name->owner.str != NULL && object_name->owner.len > 0) {
-        obj->user = object_name->owner;
+        /* Match native PL behavior: schema owners are normalized even when quoted. */
+        OG_RETURN_IFERR(sql_copy_prefix_tenant(stmt, &object_name->owner, &obj->user, sql_copy_name));
         obj->user_explicit = OG_TRUE;
     } else {
         cm_str2text(stmt->session->curr_schema, &obj->user);
         obj->user_explicit = OG_FALSE;
     }
 
-    obj->name = object_name->name;
+    OG_RETURN_IFERR(name_sensitive ? sql_copy_text(stmt->context, &object_name->name, &obj->name) :
+        sql_copy_name(stmt->context, &object_name->name, &obj->name));
     obj->pack = CM_NULL_TEXT;
-    obj->name_sensitive = OG_FALSE;
+    obj->name_sensitive = name_sensitive;
     obj->pack_sensitive = OG_FALSE;
+    return OG_SUCCESS;
 }
 
 static void pl_bison_init_sql_text(text_t *text, sql_text_t *sql_text)
@@ -972,7 +974,7 @@ static void pl_bison_init_sql_text(text_t *text, sql_text_t *sql_text)
 }
 
 static status_t pl_bison_prepare_create_common(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *object_name, uint32 type)
+    name_with_owner *object_name, bool32 name_sensitive, uint32 type)
 {
     pl_entity_t *pl_ctx = NULL;
 
@@ -981,7 +983,7 @@ static status_t pl_bison_prepare_create_common(sql_stmt_t *stmt, bool32 replace,
     SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
 
     pl_ctx = (pl_entity_t *)stmt->pl_context;
-    pl_bison_copy_object_name(stmt, object_name, &pl_ctx->def);
+    OG_RETURN_IFERR(pl_bison_copy_object_name(stmt, object_name, name_sensitive, &pl_ctx->def));
     pl_ctx->create_def->create_option = pl_bison_make_create_option(replace, if_not_exists);
     pl_ctx->pl_type = type;
     plc_diag_ctx_type(stmt->context, type);
@@ -989,7 +991,83 @@ static status_t pl_bison_prepare_create_common(sql_stmt_t *stmt, bool32 replace,
     return OG_SUCCESS;
 }
 
-static status_t pl_bison_compile_create_from_current_lex(sql_stmt_t *stmt, var_udo_t *obj, uint32 type, text_t *source)
+status_t pl_bison_prepare_create(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
+    name_with_owner *object_name, bool32 name_sensitive, uint32 type, bool32 force, text_t *source)
+{
+    pl_entity_t *pl_ctx = NULL;
+
+    if (stmt->pl_context != NULL) {
+        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "unexpected CREATE in stored PLSQL source");
+        return OG_ERROR;
+    }
+
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR && IS_APP_CONN(stmt->session) &&
+        (type == PL_PACKAGE_SPEC || type == PL_PACKAGE_BODY || type == PL_TYPE_SPEC || type == PL_TYPE_BODY)) {
+        OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, type == PL_PACKAGE_SPEC || type == PL_PACKAGE_BODY ?
+            "create package" : "create type");
+        return OG_ERROR;
+    }
+#endif
+
+    if (type == PL_TYPE_BODY) {
+        stmt->context->type = OGSQL_TYPE_CREATE_TYPE_BODY;
+        OG_THROW_ERROR(ERR_PL_UNSUPPORT);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, object_name, name_sensitive, type));
+    pl_ctx = (pl_entity_t *)stmt->pl_context;
+    OG_RETURN_IFERR(pl_check_packname_validity(&pl_ctx->def, type));
+
+    if (force) {
+        pl_ctx->create_def->create_option |= CREATE_TYPE_FORCE;
+    }
+
+    /* Keep a borrowed view until the success or INVALID path persists the source once. */
+    pl_ctx->create_def->source = *source;
+    stmt->bison_pl_create_pending = (type == PL_TRIGGER) ? OG_FALSE : OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static void pl_bison_wrap_create_error(sql_stmt_t *stmt, pl_entity_t *pl_ctx, const error_info_t *error)
+{
+    cm_reset_error();
+    set_inter_plc_cnt();
+    plc_set_tls_plc_error();
+    cm_set_error_loc(error->loc);
+    cm_set_error((char *)__FILE__, (uint32)__LINE__, error->code, "%s", error->message);
+    plc_set_compiling_errors(stmt, &pl_ctx->def);
+    reset_inter_plc_cnt();
+    plc_reset_tls_plc_error();
+}
+
+status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt)
+{
+    pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
+    error_info_t error;
+    text_t source;
+
+    if (pl_ctx == NULL || pl_ctx->create_def == NULL || !stmt->bison_pl_create_pending ||
+        cm_get_error_code() == 0) {
+        return OG_ERROR;
+    }
+
+    error = *cm_error_info();
+    stmt->bison_pl_create_pending = OG_FALSE;
+    if (pl_ctx->pl_type == PL_TRIGGER && pl_check_trigger_create_priv(stmt, &pl_ctx->def) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    source = pl_ctx->create_def->source;
+    OG_RETURN_IFERR(pl_record_source(stmt, pl_ctx, &source));
+    stmt->pl_failed = OG_TRUE;
+    pl_ctx->create_def->compl_result = OG_FALSE;
+    pl_bison_wrap_create_error(stmt, pl_ctx, &error);
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_compile_create_from_current_lex(sql_stmt_t *stmt, var_udo_t *obj, uint32 type)
 {
     plc_desc_t desc = { 0 };
     word_t word = { 0 };
@@ -1013,21 +1091,17 @@ static status_t pl_bison_compile_create_from_current_lex(sql_stmt_t *stmt, var_u
         pl_ctx->create_def->compl_result = OG_TRUE;
     }
 
-    if (type == PL_TRIGGER) {
-        OG_RETURN_IFERR(pl_check_trigger_create_priv(stmt, obj));
-    }
-
-    return pl_record_source(stmt, pl_ctx, source);
+    return OG_SUCCESS;
 }
 
-static status_t pl_bison_compile_create_body(sql_stmt_t *stmt, var_udo_t *obj, uint32 type, text_t *body, text_t *source)
+static status_t pl_bison_compile_create_body(sql_stmt_t *stmt, var_udo_t *obj, uint32 type, text_t *body)
 {
     sql_text_t body_text = { 0 };
     status_t status;
 
     pl_bison_init_sql_text(body, &body_text);
     OG_RETURN_IFERR(lex_push(stmt->session->lex, &body_text));
-    status = pl_bison_compile_create_from_current_lex(stmt, obj, type, source);
+    status = pl_bison_compile_create_from_current_lex(stmt, obj, type);
     lex_pop(stmt->session->lex);
     return status;
 }
@@ -1049,10 +1123,11 @@ static status_t pl_bison_parse_create_core(sql_stmt_t *stmt, var_udo_t *obj, uin
         pl_ctx->create_def->compl_result = OG_TRUE;
     }
 
+    stmt->bison_pl_create_pending = OG_FALSE;
     return pl_record_source(stmt, pl_ctx, source);
 }
 
-static status_t pl_bison_compile_trigger_body(sql_stmt_t *stmt, var_udo_t *obj, text_t *body, text_t *source)
+static status_t pl_bison_compile_trigger_body(sql_stmt_t *stmt, var_udo_t *obj, text_t *body)
 {
     plc_desc_t desc = { 0 };
     status_t compl_ret;
@@ -1069,11 +1144,8 @@ static status_t pl_bison_compile_trigger_body(sql_stmt_t *stmt, var_udo_t *obj, 
         pl_ctx->create_def->compl_result = OG_TRUE;
     }
 
-    if (compl_ret == OG_SUCCESS) {
-        OG_RETURN_IFERR(pl_check_trigger_create_priv(stmt, obj));
-    }
-
-    return pl_record_source(stmt, pl_ctx, source);
+    stmt->bison_pl_create_pending = OG_FALSE;
+    return pl_check_trigger_create_priv(stmt, obj);
 }
 
 status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, text_t *body)
@@ -1154,118 +1226,43 @@ status_t pl_bison_compile_stored_body_source(sql_stmt_t *stmt, text_t *program_b
     }
 }
 
-status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *proc_name, galist_t *args, text_t *body, text_t *source)
+status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, galist_t *args, text_t *body, text_t *source)
 {
-    uint16 create_option = 0;
-    uint32 type;
     pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
 
-    SQL_SET_IGNORE_PWD(stmt->session);
-    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
-
-    stmt->context->type = OGSQL_TYPE_CREATE_PROC;
-    type = PL_PROCEDURE;
-
-    if (replace) {
-        create_option |= CREATE_OR_REPLACE;
-    }
-
-    if (if_not_exists) {
-        create_option |= CREATE_IF_NOT_EXISTS;
-    }
-
-    if (proc_name->owner.len > 0) {
-        pl_ctx->def.user = proc_name->owner;
-    } else {
-        cm_str2text(stmt->session->curr_schema, &pl_ctx->def.user);
-    }
-    pl_ctx->def.name = proc_name->name;
-
-    pl_ctx->create_def->create_option = create_option;
-    pl_ctx->pl_type = type;
-
-    return pl_bison_parse_create_core(stmt, &pl_ctx->def, type, args, NULL, body, source);
+    return pl_bison_parse_create_core(stmt, &pl_ctx->def, PL_PROCEDURE, args, NULL, body, source);
 }
 
-status_t pl_bison_parse_create_function(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *func_name, galist_t *args, type_word_t *ret_type, text_t *body, text_t *source)
+status_t pl_bison_parse_create_function(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body,
+    text_t *source)
 {
-    uint16 create_option = 0;
-    uint32 type;
     pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
 
-    SQL_SET_IGNORE_PWD(stmt->session);
-    SQL_SET_COPY_LOG(stmt->session, OG_TRUE);
-
-    stmt->context->type = OGSQL_TYPE_CREATE_FUNC;
-    type = PL_FUNCTION;
-
-    if (replace) {
-        create_option |= CREATE_OR_REPLACE;
-    }
-
-    if (if_not_exists) {
-        create_option |= CREATE_IF_NOT_EXISTS;
-    }
-
-    if (func_name->owner.len > 0) {
-        pl_ctx->def.user = func_name->owner;
-    } else {
-        cm_str2text(stmt->session->curr_schema, &pl_ctx->def.user);
-    }
-    pl_ctx->def.name = func_name->name;
-
-    pl_ctx->create_def->create_option = create_option;
-    pl_ctx->pl_type = type;
-
-    return pl_bison_parse_create_core(stmt, &pl_ctx->def, type, args, ret_type, body, source);
+    return pl_bison_parse_create_core(stmt, &pl_ctx->def, PL_FUNCTION, args, ret_type, body, source);
 }
 
-status_t pl_bison_parse_create_package(sql_stmt_t *stmt, bool32 replace, bool32 is_body, bool32 if_not_exists,
-    name_with_owner *pkg_name, text_t *body, text_t *source)
+status_t pl_bison_parse_create_package(sql_stmt_t *stmt, text_t *body, text_t *source)
 {
-    uint32 type = is_body ? PL_PACKAGE_BODY : PL_PACKAGE_SPEC;
-    pl_entity_t *pl_ctx = NULL;
+    pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
+    status_t status;
 
-#ifdef OG_RAC_ING
-    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
-        OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "create package");
-        return OG_ERROR;
-    }
-#endif
-    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, pkg_name, type));
-    pl_ctx = (pl_entity_t *)stmt->pl_context;
-    OG_RETURN_IFERR(pl_check_packname_validity(&pl_ctx->def, type));
+    status = pl_bison_compile_create_body(stmt, &pl_ctx->def, pl_ctx->pl_type, body);
 
-    return pl_bison_compile_create_body(stmt, &pl_ctx->def, type, body, source);
+    stmt->bison_pl_create_pending = OG_FALSE;
+    OG_RETURN_IFERR(status);
+    return pl_record_source(stmt, pl_ctx, source);
 }
 
-status_t pl_bison_parse_create_type(sql_stmt_t *stmt, bool32 replace, bool32 is_body, bool32 if_not_exists,
-    name_with_owner *type_name, bool32 force, text_t *body, text_t *source)
+status_t pl_bison_parse_create_type(sql_stmt_t *stmt, text_t *body, text_t *source)
 {
-    uint32 type = is_body ? PL_TYPE_BODY : PL_TYPE_SPEC;
-    pl_entity_t *pl_ctx = NULL;
+    pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
+    status_t status;
 
-#ifdef OG_RAC_ING
-    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
-        OG_THROW_ERROR(ERR_COORD_NOT_SUPPORT, "create type");
-        return OG_ERROR;
-    }
-#endif
-    if (is_body) {
-        stmt->context->type = OGSQL_TYPE_CREATE_TYPE_BODY;
-        OG_THROW_ERROR(ERR_PL_UNSUPPORT);
-        return OG_ERROR;
-    }
+    status = pl_bison_compile_create_body(stmt, &pl_ctx->def, pl_ctx->pl_type, body);
 
-    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, type_name, type));
-    pl_ctx = (pl_entity_t *)stmt->pl_context;
-    if (force) {
-        pl_ctx->create_def->create_option |= CREATE_TYPE_FORCE;
-    }
-
-    return pl_bison_compile_create_body(stmt, &pl_ctx->def, type, body, source);
+    stmt->bison_pl_create_pending = OG_FALSE;
+    OG_RETURN_IFERR(status);
+    return pl_record_source(stmt, pl_ctx, source);
 }
 
 static void pl_bison_set_trigger_action_loc(trig_desc_t *trig, source_location_t trigger_loc,
@@ -1287,29 +1284,31 @@ static status_t pl_bison_copy_trigger_columns(sql_stmt_t *stmt, trig_desc_t *tri
     }
 
     for (uint32 i = 0; i < columns->count; i++) {
-        trigger_column_t *src_column = (trigger_column_t *)cm_galist_get(columns, i);
+        pl_bison_trigger_column_t *src_column = (pl_bison_trigger_column_t *)cm_galist_get(columns, i);
         trigger_column_t *dest_column = NULL;
 
         OG_RETURN_IFERR(cm_galist_new(&trig->columns, sizeof(trigger_column_t), (void **)&dest_column));
-        *dest_column = *src_column;
+        *dest_column = src_column->column;
     }
     return OG_SUCCESS;
 }
 
-static void pl_bison_init_trigger_table(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def,
+static status_t pl_bison_init_trigger_table(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def,
     sql_text_t *tab_user, sql_text_t *tab_name)
 {
     if (trigger_def->table_name->owner.len > 0) {
-        tab_user->value = trigger_def->table_name->owner;
+        OG_RETURN_IFERR(sql_copy_prefix_tenant(stmt, &trigger_def->table_name->owner, &tab_user->value,
+            sql_copy_name));
     } else {
         cm_str2text(stmt->session->curr_schema, &tab_user->value);
     }
     tab_name->value = trigger_def->table_name->name;
     tab_user->loc = trigger_def->table_loc;
     tab_name->loc = trigger_def->table_loc;
+    return OG_SUCCESS;
 }
 
-static status_t pl_bison_prepare_trigger_desc(sql_stmt_t *stmt, var_udo_t *obj,
+static status_t pl_bison_prepare_trigger_desc_core(sql_stmt_t *stmt, var_udo_t *obj,
     pl_bison_trigger_def_t *trigger_def)
 {
     pl_entity_t *pl_ctx = stmt->pl_context;
@@ -1330,7 +1329,13 @@ static status_t pl_bison_prepare_trigger_desc(sql_stmt_t *stmt, var_udo_t *obj,
     trig->events = trigger_def->events;
     pl_bison_set_trigger_action_loc(trig, trigger_def->trigger_loc, trigger_def->action_loc);
     OG_RETURN_IFERR(pl_bison_copy_trigger_columns(stmt, trig, trigger_def->columns));
-    pl_bison_init_trigger_table(stmt, trigger_def, &tab_user, &tab_name);
+    OG_RETURN_IFERR(pl_bison_init_trigger_table(stmt, trigger_def, &tab_user, &tab_name));
+
+    if (g_instance->kernel.attr.enable_ltt && tab_name.value.len > 0 && knl_is_llt_by_name(tab_name.value.str[0])) {
+        OG_SRC_THROW_ERROR(trigger_def->table_loc, ERR_PL_SYNTAX_ERROR_FMT,
+            "unsupport create trigger on local temp table");
+        return OG_ERROR;
+    }
 
     OG_RETURN_IFERR(sql_switch_schema_by_name(stmt, &obj->user, &save_schema));
     status = plc_verify_trigger_tab_columns(stmt, trig, &tab_user, &tab_name);
@@ -1341,24 +1346,22 @@ static status_t pl_bison_prepare_trigger_desc(sql_stmt_t *stmt, var_udo_t *obj,
     return status;
 }
 
-status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, bool32 replace, bool32 if_not_exists,
-    name_with_owner *trig_name, pl_bison_trigger_def_t *trigger_def, text_t *source)
+status_t pl_bison_prepare_trigger_desc(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def)
 {
-    status_t status;
-    pl_entity_t *pl_ctx = NULL;
+    pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
 
-    OG_RETURN_IFERR(pl_bison_prepare_create_common(stmt, replace, if_not_exists, trig_name, PL_TRIGGER));
-    pl_ctx = (pl_entity_t *)stmt->pl_context;
-    OG_RETURN_IFERR(pl_bison_prepare_trigger_desc(stmt, &pl_ctx->def, trigger_def));
-
-    status = pl_bison_compile_trigger_body(stmt, &pl_ctx->def, trigger_def->body, source);
-    if (status != OG_SUCCESS) {
-        sql_check_user_priv(stmt, &pl_ctx->def.user);
-        OG_THROW_ERROR(ERR_INSUFFICIENT_PRIV);
-        return OG_ERROR;
-    }
-
+    OG_RETURN_IFERR(pl_bison_prepare_trigger_desc_core(stmt, &pl_ctx->def, trigger_def));
+    stmt->bison_pl_create_pending = OG_TRUE;
     return OG_SUCCESS;
+}
+
+status_t pl_bison_parse_create_trigger(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def, text_t *source)
+{
+    pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
+
+    pl_bison_set_trigger_action_loc(&pl_ctx->trigger->desc, trigger_def->trigger_loc, trigger_def->action_loc);
+    OG_RETURN_IFERR(pl_bison_compile_trigger_body(stmt, &pl_ctx->def, trigger_def->body));
+    return pl_record_source(stmt, pl_ctx, source);
 }
 
 status_t pl_bison_compile_stored_trigger_body_source(sql_stmt_t *stmt, pl_bison_trigger_def_t *trigger_def)
@@ -1371,7 +1374,7 @@ status_t pl_bison_compile_stored_trigger_body_source(sql_stmt_t *stmt, pl_bison_
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(pl_bison_prepare_trigger_desc(stmt, &entity->def, trigger_def));
+    OG_RETURN_IFERR(pl_bison_prepare_trigger_desc_core(stmt, &entity->def, trigger_def));
     pl_prepare_compile_desc(&desc, stmt, &entity->def, PL_TRIGGER);
     if (plc_bison_compile(stmt, &desc, NULL, NULL, trigger_def->body) != OG_SUCCESS) {
         return OG_ERROR;
