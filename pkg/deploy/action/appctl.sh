@@ -11,14 +11,14 @@ set +x
 CURRENT_PATH=$(dirname "$(readlink -f "$0")")
 
 SHELL_ENV=$(python3 "${CURRENT_PATH}/config.py" --shell-env 2>/dev/null)
-_DEPLOY_LOCK_USER="${OGRAC_USER:-ograc}"
-[ -n "${_DEPLOY_LOCK_USER}" ] || _DEPLOY_LOCK_USER="ograc"
-LOCK_DIR="/tmp/ograc_deploy_lock_${_DEPLOY_LOCK_USER}"
 if [ $? -ne 0 ]; then
     echo "[ERROR] failed to load new-flow config from ${CURRENT_PATH}/config.py" >&2
     exit 1
 fi
 eval "${SHELL_ENV}"
+_DEPLOY_LOCK_USER="${OGRAC_USER:-ograc}"
+[ -n "${_DEPLOY_LOCK_USER}" ] || _DEPLOY_LOCK_USER="ograc"
+LOCK_DIR="/tmp/ograc_deploy_lock_${_DEPLOY_LOCK_USER}"
 DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-${OGRAC_HOME}/log/deploy}"
 OM_DEPLOY_LOG_FILE="${OM_DEPLOY_LOG_FILE:-${DEPLOY_LOG_DIR}/deploy.log}"
 mkdir -p "${DEPLOY_LOG_DIR}"
