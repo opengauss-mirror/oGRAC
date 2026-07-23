@@ -42,7 +42,6 @@ status_t plc_convert_typedecl(pl_compiler_t *compiler, galist_t *decls)
         OG_RETURN_IFERR(cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl));
         type_decl = cm_galist_get(compiler->type_decls, i);
         *decl = *type_decl;
-        decl->vid.block = (int16)compiler->stack.depth;
         decl->vid.id = decls->count - 1;
     }
     return OG_SUCCESS;

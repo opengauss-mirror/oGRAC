@@ -113,11 +113,17 @@ typedef struct {
     int pushback_token[MAX_PUSHBACKS];
     TokenAuxData pushback_auxdata[MAX_PUSHBACKS];
     TokenAuxData last_token;
+    bool8 lookup_variables;
 } plsql_yy_extra_type;
 
 static inline plsql_yy_extra_type *plsql_yyget_extra(core_yyscan_t yyscanner)
 {
     return (plsql_yy_extra_type *)og_yyget_extra(yyscanner);
+}
+
+void plsql_set_identifier_lookup(core_yyscan_t yyscanner, bool32 lookup_variables)
+{
+    plsql_yyget_extra(yyscanner)->lookup_variables = (bool8)lookup_variables;
 }
 
 static void push_back_token(plsql_yy_extra_type *yyextra, int token, TokenAuxData* auxdata);
@@ -428,7 +434,7 @@ int plsql_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
             token = T_DATUM;
         }
     } else if (token == IDENT) {
-        if (parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+        if (yyextra->lookup_variables && parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
             token = T_DATUM;
         } else if ((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
             aux.lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);
@@ -447,7 +453,8 @@ int plsql_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
          */
         if (plsql_copy_token_word(stmt, &aux, yyscanner) != OG_SUCCESS) {
             token = LEX_ERROR_TOKEN;
-        } else if (parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+        } else if (yyextra->lookup_variables &&
+            parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
             token = T_DATUM;
         } else if (plsql_match_reserved_keyword(&aux, &token)) {
             /* token set by plsql_match_reserved_keyword */

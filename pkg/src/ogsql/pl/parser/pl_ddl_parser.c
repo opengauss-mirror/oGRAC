@@ -1042,6 +1042,20 @@ static void pl_bison_wrap_create_error(sql_stmt_t *stmt, pl_entity_t *pl_ctx, co
     plc_reset_tls_plc_error();
 }
 
+static status_t pl_bison_prepare_invalid_function(pl_entity_t *pl_ctx)
+{
+    if (pl_ctx->pl_type != PL_FUNCTION || pl_ctx->function != NULL) {
+        return OG_SUCCESS;
+    }
+
+    /*
+     * A syntax error in the outer Bison grammar can occur before the PL
+     * compiler allocates the function descriptor.  The legacy DDL executor
+     * expects that descriptor even when it persists an INVALID function.
+     */
+    return pl_alloc_mem(pl_ctx, sizeof(function_t), (void **)&pl_ctx->function);
+}
+
 status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt)
 {
     pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
@@ -1060,6 +1074,7 @@ status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt)
     }
 
     source = pl_ctx->create_def->source;
+    OG_RETURN_IFERR(pl_bison_prepare_invalid_function(pl_ctx));
     OG_RETURN_IFERR(pl_record_source(stmt, pl_ctx, &source));
     stmt->pl_failed = OG_TRUE;
     pl_ctx->create_def->compl_result = OG_FALSE;

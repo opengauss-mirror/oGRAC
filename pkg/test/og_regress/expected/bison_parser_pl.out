@@ -1431,6 +1431,149 @@ SQL> drop table if exists bison_pl_issue245_log;
 Succeed.
 
 SQL>
+SQL> drop table if exists bison_pl_scope_log;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_scope_src;
+
+Succeed.
+
+SQL> create table bison_pl_scope_src(id int, note varchar2(20));
+
+Succeed.
+
+SQL> create table bison_pl_scope_log(parser_name varchar2(10), stage varchar2(20), val int, note varchar2(20));
+
+Succeed.
+
+SQL> insert into bison_pl_scope_src values(1, 'one');
+
+1 rows affected.
+
+SQL> insert into bison_pl_scope_src values(2, 'two');
+
+1 rows affected.
+
+SQL>
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     v_scope int := 100;
+  3     rc sys_refcursor;
+  4     v_filter int := 2;
+  5     v_id int;
+  6 begin
+  7     declare
+  8         type local_row_t is record(id int, note varchar2(20));
+  9         v_scope local_row_t;
+ 10         v_row bison_pl_scope_src%rowtype;
+ 11     begin
+ 12         select * into v_row from bison_pl_scope_src where id = 1;
+ 13         v_scope.id := v_row.id;
+ 14         v_scope.note := v_row.note;
+ 15         insert into bison_pl_scope_log values('bison', 'first', v_scope.id, v_scope.note);
+ 16     end;
+ 17
+ 18     declare
+ 19         type local_row_t is record(code int, label varchar2(20));
+ 20         v_scope local_row_t;
+ 21         v_row bison_pl_scope_src%rowtype;
+ 22     begin
+ 23         select * into v_row from bison_pl_scope_src where id = 2;
+ 24         v_scope.code := v_row.id;
+ 25         v_scope.label := v_row.note;
+ 26         insert into bison_pl_scope_log values('bison', 'second', v_scope.code, v_scope.label);
+ 27     end;
+ 28
+ 29     open rc for select id from bison_pl_scope_src where id = v_filter;
+ 30     fetch rc into v_id;
+ 31     close rc;
+ 32     insert into bison_pl_scope_log values('bison', 'outer', v_scope, 'unchanged');
+ 33     insert into bison_pl_scope_log values('bison', 'refcursor', v_id, 'mapped');
+ 34 end;
+ 35 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     v_scope int := 100;
+  3     rc sys_refcursor;
+  4     v_filter int := 2;
+  5     v_id int;
+  6 begin
+  7     declare
+  8         type local_row_t is record(id int, note varchar2(20));
+  9         v_scope local_row_t;
+ 10         v_row bison_pl_scope_src%rowtype;
+ 11     begin
+ 12         select * into v_row from bison_pl_scope_src where id = 1;
+ 13         v_scope.id := v_row.id;
+ 14         v_scope.note := v_row.note;
+ 15         insert into bison_pl_scope_log values('native', 'first', v_scope.id, v_scope.note);
+ 16     end;
+ 17
+ 18     declare
+ 19         type local_row_t is record(code int, label varchar2(20));
+ 20         v_scope local_row_t;
+ 21         v_row bison_pl_scope_src%rowtype;
+ 22     begin
+ 23         select * into v_row from bison_pl_scope_src where id = 2;
+ 24         v_scope.code := v_row.id;
+ 25         v_scope.label := v_row.note;
+ 26         insert into bison_pl_scope_log values('native', 'second', v_scope.code, v_scope.label);
+ 27     end;
+ 28
+ 29     open rc for select id from bison_pl_scope_src where id = v_filter;
+ 30     fetch rc into v_id;
+ 31     close rc;
+ 32     insert into bison_pl_scope_log values('native', 'outer', v_scope, 'unchanged');
+ 33     insert into bison_pl_scope_log values('native', 'refcursor', v_id, 'mapped');
+ 34 end;
+ 35 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL>
+SQL> select parser_name, stage, val, note from bison_pl_scope_log order by parser_name, stage;
+
+PARSER_NAME STAGE                VAL          NOTE
+----------- -------------------- ------------ --------------------
+bison       first                1            one
+bison       outer                100          unchanged
+bison       refcursor            2            mapped
+bison       second               2            two
+native      first                1            one
+native      outer                100          unchanged
+native      refcursor            2            mapped
+native      second               2            two
+
+8 rows fetched.
+
+SQL>
+SQL> drop table bison_pl_scope_log;
+
+Succeed.
+
+SQL> drop table bison_pl_scope_src;
+
+Succeed.
+
+SQL>
 SQL> drop function if exists sys.bison_pl_issue259_func_end3;
 
 Succeed.

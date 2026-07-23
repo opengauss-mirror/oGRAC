@@ -4438,7 +4438,7 @@ json_column:
 
                 expr_node_t *func_node = new_col->expr->root;
                 text_t func_name = { $2, strlen($2) };
-                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
                 func_node->json_func_attr.return_size = JSON_FUNC_LEN_DEFAULT;
@@ -4512,7 +4512,7 @@ json_column:
 
                 expr_node_t *func_node = new_col->expr->root;
                 text_t func_name = { $3, strlen($3) };
-                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_CLOB;
@@ -4584,7 +4584,7 @@ json_column:
 
                 expr_node_t *func_node = new_col->expr->root;
                 text_t func_name = { $3, strlen($3) };
-                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_JSONB;
@@ -4656,7 +4656,7 @@ json_column:
 
                 expr_node_t *func_node = new_col->expr->root;
                 text_t func_name = { $3, strlen($3) };
-                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
                 func_node->json_func_attr.return_size = JSON_FUNC_LEN_DEFAULT;
@@ -4729,7 +4729,7 @@ json_column:
 
                 expr_node_t *func_node = new_col->expr->root;
                 text_t func_name = { $6, strlen($6) };
-                if (sql_init_json_table_func_node(stmt, func_node, &func_name) != OG_SUCCESS) {
+                if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
                 if ($4 <= 0 || $4 > JSON_MAX_STRING_LEN) {

@@ -468,10 +468,6 @@ expr_node_t *plc_get_param_vid(pl_compiler_t *compiler, uint32 p_nid)
     plv_decl_t *decl = NULL;
     pl_line_ctrl_t *line_ctrl = compiler->last_line;
 
-    if (line_ctrl == NULL) {
-        return NULL;
-    }
-
     switch (line_ctrl->type) {
         case LINE_SQL:
             input = ((pl_line_sql_t *)line_ctrl)->input;
@@ -495,10 +491,6 @@ expr_node_t *plc_get_param_vid(pl_compiler_t *compiler, uint32 p_nid)
             break;
         default:
             return NULL;
-    }
-
-    if (input == NULL || p_nid >= input->count) {
-        return NULL;
     }
 
     return (expr_node_t *)cm_galist_get(input, p_nid);

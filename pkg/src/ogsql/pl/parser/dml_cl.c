@@ -713,6 +713,43 @@ status_t pl_compile_parse_sql(sql_stmt_t *stmt, sql_context_t **ogx, text_t *sql
     return status;
 }
 
+static bool32 pl_bison_line_uses_input(pl_compiler_t *compiler, pl_line_ctrl_t *line, galist_t *input)
+{
+    plv_decl_t *decl = NULL;
+    galist_t *line_input = NULL;
+
+    if (line == NULL || input == NULL) {
+        return OG_FALSE;
+    }
+
+    switch (line->type) {
+        case LINE_SQL:
+            line_input = ((pl_line_sql_t *)line)->input;
+            break;
+        case LINE_OPEN:
+            decl = plc_find_decl_by_id(compiler, ((pl_line_open_t *)line)->vid);
+            if (decl == NULL || decl->cursor.ogx == NULL) {
+                return OG_FALSE;
+            }
+            line_input = decl->cursor.ogx->is_sysref ? ((pl_line_open_t *)line)->input : decl->cursor.input;
+            break;
+        case LINE_FOR:
+            if (!((pl_line_for_t *)line)->is_cur) {
+                return OG_FALSE;
+            }
+            decl = plc_find_decl_by_id(compiler, ((pl_line_for_t *)line)->cursor_id);
+            if (decl == NULL) {
+                return OG_FALSE;
+            }
+            line_input = decl->cursor.input;
+            break;
+        default:
+            return OG_FALSE;
+    }
+
+    return line_input == input;
+}
+
 status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *arg)
 {
     sql_stmt_t *sub_stmt = NULL;
@@ -722,6 +759,13 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     sql_stmt_t *save_curr_stmt = stmt->session->current_stmt;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     galist_t *save_input = (compiler == NULL) ? NULL : compiler->current_input;
+    pl_line_ctrl_t *save_last_line = (compiler == NULL) ? NULL : compiler->last_line;
+    pl_line_sql_t verify_line = { 0 };
+
+    if (compiler != NULL && arg->input == NULL) {
+        OG_SRC_THROW_ERROR(*arg->loc, ERR_PLSQL_ILLEGAL_LINE_FMT, "missing bison static SQL input");
+        return OG_ERROR;
+    }
 
     OG_RETURN_IFERR(sql_push(stmt, sizeof(sql_stmt_t), (void **)&sub_stmt));
     sql_init_stmt(stmt->session, sub_stmt, stmt->id);
@@ -736,6 +780,11 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
 
     if (compiler != NULL) {
         compiler->current_input = arg->input;
+        if (!pl_bison_line_uses_input(compiler, compiler->last_line, arg->input)) {
+            verify_line.ctrl.type = LINE_SQL;
+            verify_line.input = arg->input;
+            compiler->last_line = (pl_line_ctrl_t *)&verify_line;
+        }
     }
 
     do {
@@ -767,6 +816,7 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
 
     if (compiler != NULL) {
         compiler->current_input = save_input;
+        compiler->last_line = save_last_line;
     }
     stmt->session->current_stmt = save_curr_stmt;
     *arg->ogx = sub_stmt->context;

@@ -2084,7 +2084,7 @@ status_t sql_word2number(word_t *word, expr_node_t *node)
 #define CHECK_PARAM_NAME_NEEDED(stmt) \
     ((stmt)->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK || (stmt)->plsql_mode == PLSQL_DYNSQL)
 
-static inline bool32 sql_is_pl_compile_context(sql_stmt_t *stmt)
+static inline bool32 sql_is_bison_pl_compile_context(sql_stmt_t *stmt)
 {
     if ((stmt->context->type >= OGSQL_TYPE_CREATE_PROC && stmt->context->type < OGSQL_TYPE_PL_CEIL_END) ||
         stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK) {
@@ -2098,43 +2098,6 @@ static inline bool32 sql_is_pl_compile_context(sql_stmt_t *stmt)
     return ((pl_compiler_t *)stmt->pl_compiler)->current_input != NULL;
 }
 
-static inline bool32 sql_param_uses_parser_text(sql_stmt_t *stmt)
-{
-    return (bool32)(g_instance->sql.use_bison_parser && stmt->parser_text_valid);
-}
-
-static inline char *sql_param_text_base(sql_stmt_t *stmt)
-{
-    if (sql_param_uses_parser_text(stmt)) {
-        return stmt->parser_text.str;
-    }
-
-    if (stmt->session == NULL || stmt->session->lex == NULL) {
-        return NULL;
-    }
-
-    return stmt->session->lex->text.str;
-}
-
-static status_t sql_param_text_offset(sql_stmt_t *stmt, word_t *word, uint32 *offset)
-{
-    char *base = sql_param_text_base(stmt);
-    uintptr_t base_addr = (uintptr_t)base;
-    uintptr_t word_addr = (uintptr_t)word->text.str;
-
-    if (SECUREC_UNLIKELY(base == NULL || word->text.str == NULL || word_addr < base_addr)) {
-        OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
-        return OG_ERROR;
-    }
-
-    *offset = (uint32)(word_addr - base_addr);
-    if (SECUREC_UNLIKELY(sql_param_uses_parser_text(stmt) && *offset + word->text.len > stmt->parser_text.len)) {
-        OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
-        return OG_ERROR;
-    }
-    return OG_SUCCESS;
-}
-
 status_t sql_add_param_mark(sql_stmt_t *stmt, word_t *word, bool32 *is_repeated, uint32 *pnid)
 {
     sql_param_mark_t *param_mark = NULL;
@@ -2142,10 +2105,8 @@ status_t sql_add_param_mark(sql_stmt_t *stmt, word_t *word, bool32 *is_repeated,
     uint32 i;
     uint32 num;
     text_t num_text;
-    uint32 offset;
 
     *is_repeated = OG_FALSE;
-    OG_RETURN_IFERR(sql_param_text_offset(stmt, word, &offset));
 
     if (word->text.len >= 2 && word->text.str[0] == '$') { // $parameter minimum length2
         /* using '$' as param identifier can only be followed with number */
@@ -2157,13 +2118,8 @@ status_t sql_add_param_mark(sql_stmt_t *stmt, word_t *word, bool32 *is_repeated,
         *pnid = stmt->context->pname_count;                     // paramter name id
         for (i = 0; i < stmt->context->params->count; i++) {
             param_mark = (sql_param_mark_t *)cm_galist_get(stmt->context->params, i);
-            if (sql_param_uses_parser_text(stmt) &&
-                (param_mark->offset < stmt->text_shift ||
-                    param_mark->offset - stmt->text_shift + param_mark->len > stmt->parser_text.len)) {
-                continue;
-            }
             name.len = param_mark->len;
-            name.str = sql_param_text_base(stmt) + param_mark->offset - stmt->text_shift;
+            name.str = stmt->session->lex->text.str + param_mark->offset - stmt->text_shift;
 
             if (cm_text_equal_ins(&name, &word->text.value)) {
                 // parameter name is found
@@ -2187,7 +2143,69 @@ status_t sql_add_param_mark(sql_stmt_t *stmt, word_t *word, bool32 *is_repeated,
         return OG_ERROR;
     }
 
-    param_mark->offset = offset + stmt->text_shift;
+    param_mark->offset = LEX_OFFSET(stmt->session->lex, word) + stmt->text_shift;
+    param_mark->len = word->text.len;
+    param_mark->pnid = *pnid;
+    return OG_SUCCESS;
+}
+
+static status_t sql_add_param_mark_bison(sql_stmt_t *stmt, const sql_text_t *source, word_t *word,
+    int32 source_offset, bool32 *is_repeated, uint32 *pnid)
+{
+    sql_param_mark_t *param_mark = NULL;
+    text_t name;
+    text_t num_text;
+    int64 mark_offset;
+    int64 parser_offset;
+    uint32 num;
+
+    if (source == NULL || source->str == NULL || source_offset < 0 ||
+        (uint64)source_offset + word->text.len > source->len) {
+        OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
+        return OG_ERROR;
+    }
+
+    *is_repeated = OG_FALSE;
+    if (word->text.len >= 2 && word->text.str[0] == '$') {
+        num_text.str = word->text.str + 1;
+        num_text.len = word->text.len - 1;
+        OG_RETURN_IFERR(cm_text2uint32(&num_text, &num));
+    }
+
+    if (word->text.len >= 2 && CHECK_PARAM_NAME_NEEDED(stmt)) {
+        *pnid = stmt->context->pname_count;
+        for (uint32 i = 0; i < stmt->context->params->count; i++) {
+            param_mark = (sql_param_mark_t *)cm_galist_get(stmt->context->params, i);
+            parser_offset = (int64)param_mark->offset - stmt->text_shift;
+            if (parser_offset < 0 || (uint64)parser_offset + param_mark->len > source->len) {
+                continue;
+            }
+
+            name.str = source->str + parser_offset;
+            name.len = param_mark->len;
+            if (cm_text_equal_ins(&name, &word->text.value)) {
+                *is_repeated = OG_TRUE;
+                *pnid = param_mark->pnid;
+                break;
+            }
+        }
+
+        if (!(*is_repeated)) {
+            stmt->context->pname_count++;
+        }
+    } else {
+        *pnid = stmt->context->pname_count;
+        stmt->context->pname_count++;
+    }
+
+    mark_offset = (int64)source_offset + stmt->text_shift;
+    if (mark_offset < 0 || mark_offset > UINT32_MAX) {
+        OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_galist_new(stmt->context->params, sizeof(sql_param_mark_t), (void **)&param_mark));
+    param_mark->offset = (uint32)mark_offset;
     param_mark->len = word->text.len;
     param_mark->pnid = *pnid;
     return OG_SUCCESS;
@@ -2327,17 +2345,14 @@ status_t sql_create_pl_attr_expr(sql_stmt_t *stmt, expr_tree_t **expr, const tex
 
 static status_t sql_word2column(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word, expr_node_t *node)
 {
+    lex_t *lex = stmt->session->lex;
+
     node->value.type = OG_TYPE_COLUMN;
     if (sql_word_as_column(stmt, word, &node->word) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
-    /* Bison words are self-contained; legacy lex lookahead may point at stale parser state. */
-    if (g_instance->sql.use_bison_parser) {
-        return OG_SUCCESS;
-    }
-
-    return lex_try_fetch_subscript(stmt->session->lex, &node->word.column.ss_start, &node->word.column.ss_end);
+    return lex_try_fetch_subscript(lex, &node->word.column.ss_start, &node->word.column.ss_end);
 }
 
 static status_t sql_word2reserved(expr_tree_t *expr, word_t *word, expr_node_t *node)
@@ -2479,14 +2494,15 @@ static status_t sql_convert_expr_word(sql_stmt_t *stmt, expr_tree_t *expr, word_
         case WORD_TYPE_VARIANT:
         case WORD_TYPE_DQ_STRING:
         case WORD_TYPE_JOIN_COL:
-            if (sql_is_pl_compile_context(stmt)) {
+            if (stmt->context->type >= OGSQL_TYPE_CREATE_PROC && stmt->context->type < OGSQL_TYPE_PL_CEIL_END) {
                 return plc_word2var(stmt, word, node);
             }
             return sql_word2column(stmt, expr, word, node);
         case WORD_TYPE_KEYWORD:
         case WORD_TYPE_DATATYPE:
             /* when used as variant */
-            if (sql_is_pl_compile_context(stmt) && word->namable == OG_TRUE) {
+            if (stmt->context->type >= OGSQL_TYPE_CREATE_PROC && stmt->context->type < OGSQL_TYPE_PL_CEIL_END &&
+                word->namable == OG_TRUE) {
                 return plc_word2var(stmt, word, node);
             }
             return sql_word2column(stmt, expr, word, node);
@@ -3655,7 +3671,7 @@ static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t *
     word_t word = { 0 };
 
     *converted = OG_FALSE;
-    if (arg->type != EXPR_NODE_COLUMN || !sql_is_pl_compile_context(stmt)) {
+    if (arg->type != EXPR_NODE_COLUMN || !sql_is_bison_pl_compile_context(stmt)) {
         return OG_SUCCESS;
     }
     if (sql_is_nameable_reserved_columnref(arg)) {
@@ -3723,7 +3739,7 @@ status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const c
         var->column.ss_start = OG_INVALID_ID32;
         var->column.ss_end = OG_INVALID_ID32;
 
-        if (sql_is_pl_compile_context(stmt)) {
+        if (sql_is_bison_pl_compile_context(stmt)) {
             pl_compiler_t *compiler = stmt->pl_compiler;
             uint32 types = PLV_TYPE | PLV_VARIANT_AND_CUR;
             plv_decl_t *decl = NULL;
@@ -3796,11 +3812,12 @@ status_t sql_create_paramref_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 t
         OG_SRC_THROW_ERROR(lex_loc.loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
         return OG_ERROR;
     }
-    base = sql_param_text_base(stmt);
-    if (base == NULL) {
+    if (!stmt->parser_text_valid || stmt->parser_text.str == NULL ||
+        (uint64)lex_loc.offset + token_len > stmt->parser_text.len) {
         OG_SRC_THROW_ERROR(lex_loc.loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
         return OG_ERROR;
     }
+    base = stmt->parser_text.str;
 
     VALUE(uint32, &node->value) = stmt->context->params->count;
 
@@ -3811,10 +3828,11 @@ status_t sql_create_paramref_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 t
     word.text.value.str = base + lex_loc.offset;
     word.text.value.len = token_len;
     word.text.loc = lex_loc.loc;
-    OG_RETURN_IFERR(sql_add_param_mark(stmt, &word, &is_repeated, &param_id));
+    OG_RETURN_IFERR(sql_add_param_mark_bison(stmt, &stmt->parser_text, &word, lex_loc.offset,
+        &is_repeated, &param_id));
 
     if (stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK) {
-        OG_RETURN_IFERR(plc_convert_param_node(stmt, node, is_repeated, param_id));
+        OG_RETURN_IFERR(plc_convert_param_node_bison(stmt, node, is_repeated, param_id));
     }
 
     APPEND_CHAIN(&((*expr)->chain), node);

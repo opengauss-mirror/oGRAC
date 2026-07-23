@@ -600,40 +600,6 @@ static status_t sql_reform_call_bison(sql_stmt_t *stmt, word_t *leader)
     return sql_reform_pl_text_bison(stmt, &body, loc, (int32)body_offset - SQL_REFORM_CALL_HEAD_SIZE);
 }
 
-static status_t sql_reform_execute_immediate_bison(sql_stmt_t *stmt)
-{
-    sql_text_t *origin_sql = sql_current_parse_text(stmt);
-    source_location_t loc = {
-        .line = 0,
-        .column = 1
-    };
-
-    return sql_reform_pl_text_bison(stmt, &origin_sql->value, loc, -SQL_REFORM_CALL_HEAD_SIZE);
-}
-
-static bool32 sql_is_execute_immediate(sql_stmt_t *stmt, word_t *leader)
-{
-    sql_text_t *sql_text = sql_current_parse_text(stmt);
-    text_t sql = sql_text->value;
-    uint32 pos = (uint32)((leader->text.value.str + leader->text.value.len) - sql.str);
-    uint32 immediate_len = (uint32)strlen("immediate");
-
-    if (leader->id != KEY_WORD_EXECUTE) {
-        return OG_FALSE;
-    }
-
-    sql_skip_blank_chars(&sql, &pos);
-    return (bool32)(pos + immediate_len <= sql.len &&
-        cm_strcmpni(sql.str + pos, "immediate", immediate_len) == 0 &&
-        (pos + immediate_len == sql.len || !sql_is_name_char(sql.str[pos + immediate_len])));
-}
-
-static bool32 sql_need_reform_pl_call(sql_stmt_t *stmt, word_t *leader)
-{
-    return leader->id == KEY_WORD_CALL || leader->id == KEY_WORD_EXEC ||
-        (leader->id == KEY_WORD_EXECUTE && !sql_is_execute_immediate(stmt, leader));
-}
-
 static status_t sql_parse_pl(sql_stmt_t *stmt, word_t *leader)
 {
     status_t status;
@@ -653,13 +619,12 @@ static status_t sql_parse_pl(sql_stmt_t *stmt, word_t *leader)
 
     OGSQL_SAVE_STACK(stmt);
     if (g_instance->sql.use_bison_parser) {
-        if (sql_is_execute_immediate(stmt, leader)) {
-            status = sql_reform_execute_immediate_bison(stmt);
+        if (leader->id == KEY_WORD_CALL || leader->id == KEY_WORD_EXEC || leader->id == KEY_WORD_EXECUTE) {
+            status = sql_reform_call_bison(stmt, leader);
         } else {
-            status = sql_need_reform_pl_call(stmt, leader) ?
-                sql_reform_call_bison(stmt, leader) : sql_parse_pl_bison(stmt);
+            status = sql_parse_pl_bison(stmt);
         }
-    } else if (sql_need_reform_pl_call(stmt, leader)) {
+    } else if (leader->id == KEY_WORD_CALL || leader->id == KEY_WORD_EXEC || leader->id == KEY_WORD_EXECUTE) {
         status = sql_reform_call(stmt);
     } else {
         status = sql_parse_anonymous(stmt, leader);

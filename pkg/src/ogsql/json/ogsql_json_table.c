@@ -131,7 +131,7 @@ static json_col_parse_attr_t g_json_column_parse_attr[] = {
     { "PATH", 4, "JSON_VALUE", 10, sql_parse_json_value_column },
 };
 
-status_t sql_init_json_table_func_node(sql_stmt_t *stmt, expr_node_t *func_node, text_t *func_name)
+status_t sql_init_json_table_func_node_bison(sql_stmt_t *stmt, expr_node_t *func_node, text_t *func_name)
 {
     sql_text_t name;
     var_func_t invalid_func = {
@@ -237,22 +237,23 @@ static status_t sql_create_json_func_column(sql_stmt_t *stmt, word_t *word, sql_
     rs_column_t *new_col =
         (rs_column_t *)cm_galist_get(&table->json_table_info->columns, table->json_table_info->columns.count - 1);
     expr_node_t *func_node = new_col->expr->root;
-    text_t func_name = { NULL, 0 };
+    text_t temp = { NULL, 0 };
     uint32 i;
 
     json_func_att_init(&func_node->json_func_attr);
     func_node->json_func_attr.ignore_returning = OG_TRUE;
     OG_RETURN_IFERR(sql_set_json_func_attr(stmt, &lex->curr_text->value, &func_node->json_func_attr,
         json_func_att_match_returning));
+    func_node->type = EXPR_NODE_FUNC;
 
     for (i = 0; i < column_type_count; i++) {
         OG_RETURN_IFERR(lex_try_fetch(lex, g_json_column_parse_attr[i].start_word, &result));
         if (!result) {
             continue;
         }
-        func_name.str = g_json_column_parse_attr[i].func_name;
-        func_name.len = g_json_column_parse_attr[i].func_len;
-        OG_RETURN_IFERR(sql_init_json_table_func_node(stmt, func_node, &func_name));
+        temp.str = g_json_column_parse_attr[i].func_name;
+        temp.len = g_json_column_parse_attr[i].func_len;
+        OG_RETURN_IFERR(sql_copy_text(stmt->context, &temp, &func_node->word.func.name.value));
         OG_RETURN_IFERR(g_json_column_parse_attr[i].json_column_parse_func(stmt, word, new_col));
         OG_RETURN_IFERR(sql_set_json_func_attr(stmt, &lex->curr_text->value, &func_node->json_func_attr,
             json_func_att_match_on_error));

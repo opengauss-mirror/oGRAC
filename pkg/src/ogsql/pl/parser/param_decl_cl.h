@@ -36,6 +36,7 @@ extern "C" {
 #define CURR_BLOCK_BASE(compiler) (((compiler)->stack.depth == 0) ? NULL : (compiler)->stack.items[0].entry)
 
 status_t plc_convert_param_node(sql_stmt_t *stmt, expr_node_t *node, bool32 is_repeated, uint32 p_nid);
+status_t plc_convert_param_node_bison(sql_stmt_t *stmt, expr_node_t *node, bool32 is_repeated, uint32 p_nid);
 status_t plc_compile_sql_param(pl_compiler_t *compiler, text_t *sql, word_t *word);
 status_t plc_find_param_as_expr_left(pl_compiler_t *compiler, word_t *word, plv_decl_t **decl);
 

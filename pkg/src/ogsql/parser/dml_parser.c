@@ -1269,10 +1269,33 @@ static status_t sql_parse_anonymous_prepare(sql_stmt_t *stmt)
 {
     pl_entity_t *pl_entity = NULL;
 
+    if (sql_alloc_context(stmt) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    sql_context_uncacheable(stmt->context);
+    stmt->context->type = OGSQL_TYPE_ANONYMOUS_BLOCK;
+    if (sql_create_list(stmt, &stmt->context->params) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (pl_alloc_context(&pl_entity, stmt->context) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    SET_STMT_PL_CONTEXT(stmt, pl_entity);
+
+    if (pl_alloc_mem((void *)pl_entity, sizeof(anonymous_t), (void **)&pl_entity->anonymous) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t sql_parse_bison_anonymous_prepare(sql_stmt_t *stmt)
+{
+    pl_entity_t *pl_entity = NULL;
+
     if (stmt->context == NULL) {
-        if (sql_alloc_context(stmt) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
+        OG_THROW_ERROR(ERR_PLSQL_ILLEGAL_LINE_FMT, "missing bison anonymous block context");
+        return OG_ERROR;
     }
     sql_context_uncacheable(stmt->context);
     stmt->context->type = OGSQL_TYPE_ANONYMOUS_BLOCK;
@@ -1337,7 +1360,7 @@ status_t sql_parse_bison_anonymous_directly(sql_stmt_t *stmt, sql_text_t *sql_te
     status_t status = OG_ERROR;
 
     do {
-        OG_BREAK_IF_ERROR(sql_parse_anonymous_prepare(stmt));
+        OG_BREAK_IF_ERROR(sql_parse_bison_anonymous_prepare(stmt));
         pl_entity_uncacheable(stmt->pl_context);
         sql_init_plan_count(stmt);
         (void)cm_gettimeofday(&timeval_begin);
