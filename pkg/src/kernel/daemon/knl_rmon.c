@@ -238,6 +238,42 @@ static void rmon_free_spc_extents(knl_session_t *session, rmon_t *rmon_ctx)
     }
 }
 
+static void rmon_move_clean_page(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl)
+{
+    buf_remove_ctrl(&set->write_list, ctrl);
+    cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
+    buf_lru_add_tail(list, ctrl);
+    ctrl->list_id = LRU_LIST_CLEAN;
+    cm_spin_unlock(&list->lock);
+}
+
+static void rmon_migrate_write_list(knl_session_t *session, buf_set_t *set)
+{
+    buf_ctrl_t *item = NULL;
+    buf_ctrl_t *shift = NULL;
+    item = set->write_list.lru_last;
+    while (item != NULL) {
+        cm_spin_lock(&set->write_list.lock, &session->stat->spin_stat.stat_buffer);
+        shift = item;
+        item = item->prev;
+        if (shift->list_id != LRU_LIST_WRITE) {
+            cm_spin_unlock(&set->write_list.lock);
+            continue;
+        }
+
+        if (shift->bucket_id != OG_INVALID_ID32) {
+            if (shift->is_dirty || shift->is_marked) {
+                cm_spin_unlock(&set->write_list.lock);
+                continue;
+            }
+        }
+
+        rmon_move_clean_page(session, set, &set->clean_list, shift);
+        cm_spin_unlock(&set->write_list.lock);
+    }
+    set->write_list.clean_page_count = 0;
+}
+
 /* move cold page from main list to aux list periodically */
 static void rmon_monitor_buffer_set(knl_session_t *session, uint32 count)
 {
@@ -249,6 +285,12 @@ static void rmon_monitor_buffer_set(knl_session_t *session, uint32 count)
 
         if (count % RMON_MONITOR_BUFFER_CLOCK == 0 || BUF_NEED_BALANCE(set)) {
             buf_balance_set_list(set);
+        }
+
+        uint32 clean_page_count = set->write_list.clean_page_count;
+        uint32 write_list_count = set->write_list.count;
+        if (clean_page_count >= BUF_CLEAN_PAGE_COUNT || clean_page_count > write_list_count * BUF_CLEAN_PAGE_RATIO) {
+            rmon_migrate_write_list(session, set);
         }
     }
 }

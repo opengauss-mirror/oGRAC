@@ -152,7 +152,7 @@ static inline void buf_lru_add_head(buf_lru_list_t *list, buf_ctrl_t *ctrl)
     list->count++;
 }
 
-static inline void buf_lru_add_tail(buf_lru_list_t *list, buf_ctrl_t *ctrl)
+void buf_lru_add_tail(buf_lru_list_t *list, buf_ctrl_t *ctrl)
 {
     ctrl->in_old = 1;
     ctrl->prev = list->lru_last;
@@ -279,7 +279,7 @@ void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos)
 #endif
 }
 
-static inline void buf_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
+void buf_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
 {
     if (ctrl->prev != NULL) {
         ctrl->prev->next = ctrl->next;
@@ -360,7 +360,7 @@ static void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
 }
 
 /* add source list to tail of target list */
-static void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source)
+void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source)
 {
     if (source->count == 0) {
         return;
@@ -805,6 +805,22 @@ static bool32 buf_can_evict_general(knl_session_t *session, buf_ctrl_t *head)
     return OG_TRUE;
 }
 
+static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
+{
+    buf_ctrl_t *shift = NULL;
+    cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
+    buf_ctrl_t *item = list->lru_last;
+    while (item != NULL) {
+        shift = item;
+        item = shift->prev;
+        buf_add_pos_t pos = shift->is_resident ? BUF_ADD_HOT : BUF_ADD_COLD;
+        buf_lru_add_ctrl(&set->scan_list, shift, pos);
+    }
+    *list = g_init_list_t;
+    cm_spin_unlock(&list->lock);
+    cm_release_cond(&set->set_cond);
+}
+
 /*
  * search a single LRU to reclaim a ctrl for use. strategy:
  * 1.if exceed searching threshold, waiting for cleaning up dirty page.
@@ -824,7 +840,6 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
     buf_ctrl_t *item = list->lru_last;
 
     while (item != NULL) {
-        step++;
         /* if exceed threshold, stop and wait for cleaning */
         if (step + set->write_list.count > threshold) {
             item = NULL;
@@ -841,6 +856,7 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
         } else {
             expired_num = buf_expire_normal(session, set, item, BUF_EVICT);
         }
+        step++;
         if (expired_num != 0) {
             break; // We evict a page to reuse.
         }
@@ -870,6 +886,11 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
         item->list_id = list->type;
         session->stat->buffer_recycle_step += step;
     }
+
+    if (list->type == LRU_LIST_SCAN && set->clean_list.count > 0) {
+        buf_move_clean_list(session, set, &set->clean_list);
+    }
+
     buf_lru_adjust_old_len(list);
     cm_spin_unlock(&list->lock);
     buf_lru_append_list(&set->write_list, &dirty_list);
@@ -1499,6 +1520,7 @@ void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctr
 {
     cm_spin_lock(&set->write_list.lock, NULL);
     buf_remove_ctrl(&set->write_list, ctrl);
+    ctrl->list_id = LRU_LIST_CLEAN;
     cm_spin_unlock(&set->write_list.lock);
 
     buf_lru_add_tail(list, ctrl);

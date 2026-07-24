@@ -108,6 +108,7 @@ typedef enum en_buf_lru_list_type {
     LRU_LIST_MAIN = 0,
     LRU_LIST_SCAN = 1,
     LRU_LIST_WRITE = 2,
+    LRU_LIST_CLEAN = 3,
     LRU_LIST_TYPE_COUNT,
 } buf_lru_list_type_t;
 
@@ -226,6 +227,7 @@ typedef struct st_buf_lru_list {
     uint32 count;      // buffer count in LRU queue
     uint32 old_count;  // old buffer in LRU list
     uint8 type;        // lru list type
+    volatile uint32 clean_page_count;
 } buf_lru_list_t;
 
 typedef struct st_buf_set {
@@ -249,6 +251,7 @@ typedef struct st_buf_set {
             buf_lru_list_t main_list;
             buf_lru_list_t scan_list;
             buf_lru_list_t write_list;
+            buf_lru_list_t clean_list;
         };
     };
 } buf_set_t;
@@ -411,6 +414,9 @@ void buf_unlatch_page(knl_session_t *session, buf_ctrl_t *ctrl);
 void buf_dec_ref(knl_session_t *session, buf_ctrl_t *ctrl);
 void buf_set_force_request(knl_session_t *session, page_id_t page_id);
 buf_bucket_t *buf_find_bucket(knl_session_t *session, page_id_t page_id);
+void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source);
+void buf_lru_add_tail(buf_lru_list_t *list, buf_ctrl_t *ctrl);
+void buf_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl);
 
 #ifdef __cplusplus
 }
