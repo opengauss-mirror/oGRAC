@@ -1511,6 +1511,67 @@ EMPLOYEE_ID                              EMPLOYEE_NAME                          
 10 rows fetched.
 
 SQL> 
+SQL> -- PRIOR accepts function expressions in a hierarchical query with nested derived tables.
+SQL> drop table if exists bison_subquery_startwith_003;
+
+Succeed.
+
+SQL> create table bison_subquery_startwith_003 (
+  2     id integer,
+  3     c_int integer,
+  4     c_real real,
+  5     c_vchar varchar(64),
+  6     c_number number
+  7 );
+
+Succeed.
+
+SQL> 
+SQL> select count(*)
+  2 from (bison_subquery_startwith_003 as t1)
+  3 left join
+  4 (
+  5     select distinct
+  6         ef5.c0 as c0, ef5.c1 as c1, ef5.c2 as c2,
+  7         ef5.c3 as c3, ef5.c4 as c4
+  8     from
+  9     (
+ 10         select
+ 11             t5.id as c0, t5.c_int as c1, t5.c_real as c2,
+ 12             t5.c_vchar as c3, t5.c_number as c4
+ 13         from (bison_subquery_startwith_003 as t5)
+ 14         left join (select * from bison_subquery_startwith_003) on (true)
+ 15     ) as ef5
+ 16     inner join
+ 17     (
+ 18         select *
+ 19         from bison_subquery_startwith_003
+ 20         left join
+ 21         (
+ 22             select *
+ 23             from bison_subquery_startwith_003
+ 24             left join (select * from bison_subquery_startwith_003) on (true)
+ 25         ) on (true)
+ 26     ) as ef6 on (true)
+ 27 ) as t2 on t1.id > t2.c0
+ 28 start with 1 = 1
+ 29 and t2.c2 < 116.123
+ 30 and t2.c3 is not null
+ 31 connect by prior to_char(t2.c4 + 1) > to_char(t1.c_number)
+ 32 and prior t2.c3 between prior t1.c_vchar and prior t2.c3 || t1.c_int;
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> 
+SQL> drop table if exists bison_subquery_startwith_003;
+
+Succeed.
+
+SQL> 
 SQL> -- 创建示例表
 SQL> drop table sales_data;
 

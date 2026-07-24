@@ -340,7 +340,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %type <trim_list> trim_list
 %type <extract_list> extract_list
 %type <expr> expr_with_select expr_list_with_select expr_list_with_select_row implicit_row parenthesized_bare_expr
-             parenthesized_oper_expr opt_escape expr_list_with_paren connect_by_root_expr
+             parenthesized_oper_expr opt_escape expr_list_with_paren hierarchical_unary_expr
              func_expr_windowless opt_column_on_update
 %type <join_node> using_clause from_list table_ref joined_table from_clause
 %type <join_type> join_type
@@ -5319,7 +5319,7 @@ c_expr:     columnref       { $$ = $1; }
                     }
                     $$ = expr;
                 }
-            | PRIOR columnref
+            | PRIOR hierarchical_unary_expr %prec PRIOR
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_prior_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
@@ -5328,7 +5328,7 @@ c_expr:     columnref       { $$ = $1; }
                     }
                     $$ = expr;
                 }
-            | CONNECT_BY_ROOT connect_by_root_expr %prec PRIOR
+            | CONNECT_BY_ROOT hierarchical_unary_expr %prec PRIOR
                 {
                     if ($2->root == NULL) {
                         parser_yyerror("init connect_by_root expr failed");
@@ -5366,7 +5366,7 @@ c_expr:     columnref       { $$ = $1; }
                 }
         ;
 
-connect_by_root_expr:
+hierarchical_unary_expr:
             columnref       { $$ = $1; }
             | AexprConst    { $$ = $1; }
             | PARAM
@@ -5398,6 +5398,24 @@ connect_by_root_expr:
                     if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, RES_WORD_LEVEL, OG_FALSE, @1.loc) != OG_SUCCESS) {
                         parser_yyerror("init LEVEL reserved expr failed");
+                    }
+                    $$ = expr;
+                }
+            | ARRAY '[' ']'
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, NULL, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create array expr failed");
+                    }
+                    $$ = expr;
+                }
+            | ARRAY '[' expr_elem_list ']'
+                {
+                    expr_tree_t *expr = NULL;
+                    if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &expr, $3, @1.loc) != OG_SUCCESS) {
+                        parser_yyerror("create array expr failed");
                     }
                     $$ = expr;
                 }

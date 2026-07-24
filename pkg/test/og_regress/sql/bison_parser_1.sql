@@ -516,6 +516,51 @@ FROM employees
 START WITH manager_id IS NULL
 CONNECT BY PRIOR employee_id = manager_id;
 
+-- PRIOR accepts function expressions in a hierarchical query with nested derived tables.
+drop table if exists bison_subquery_startwith_003;
+create table bison_subquery_startwith_003 (
+    id integer,
+    c_int integer,
+    c_real real,
+    c_vchar varchar(64),
+    c_number number
+);
+
+select count(*)
+from (bison_subquery_startwith_003 as t1)
+left join
+(
+    select distinct
+        ef5.c0 as c0, ef5.c1 as c1, ef5.c2 as c2,
+        ef5.c3 as c3, ef5.c4 as c4
+    from
+    (
+        select
+            t5.id as c0, t5.c_int as c1, t5.c_real as c2,
+            t5.c_vchar as c3, t5.c_number as c4
+        from (bison_subquery_startwith_003 as t5)
+        left join (select * from bison_subquery_startwith_003) on (true)
+    ) as ef5
+    inner join
+    (
+        select *
+        from bison_subquery_startwith_003
+        left join
+        (
+            select *
+            from bison_subquery_startwith_003
+            left join (select * from bison_subquery_startwith_003) on (true)
+        ) on (true)
+    ) as ef6 on (true)
+) as t2 on t1.id > t2.c0
+start with 1 = 1
+and t2.c2 < 116.123
+and t2.c3 is not null
+connect by prior to_char(t2.c4 + 1) > to_char(t1.c_number)
+and prior t2.c3 between prior t1.c_vchar and prior t2.c3 || t1.c_int;
+
+drop table if exists bison_subquery_startwith_003;
+
 -- 创建示例表
 drop table sales_data;
 CREATE TABLE sales_data (
