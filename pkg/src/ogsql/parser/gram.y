@@ -115,6 +115,10 @@ static status_t make_type_modifiers(core_yyscan_t yyscanner, galist_t **list, in
 static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr);
 static void bison_set_select_type(sql_select_t *select_ctx, select_type_t type);
 static status_t bison_apply_table_pivot(sql_stmt_t *stmt, sql_table_t *table, galist_t *pivot_list);
+static status_t bison_create_delete_target_table(sql_stmt_t *stmt, char *name, galist_t *indirection,
+    sql_table_t **table);
+static status_t bison_create_delete_object(sql_stmt_t *stmt, sql_table_t *table, bool32 only,
+    source_location_t only_loc, del_object_t **delete_obj);
 static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
@@ -309,7 +313,7 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
                func_arg_expr func_arg_list expr_elem_list func_expr_common_subexpr substr_list multi_expr_list
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
                pl_call_expr
-%type <table>  insert_target qualified_name relation_expr table_func json_table
+%type <table>  insert_target qualified_name delete_target_name delete_target_base relation_expr table_func json_table
 %type <case_pair> when_expr_clause when_cond_clause
 %type <column> insert_column_item
 %type <table_attr> table_attr
@@ -3610,7 +3614,11 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                         sql_remove_join_table(stmt, delete_ctx->query);
                     }
                 } else {
-                    sql_array_put(&delete_ctx->query->tables, ((del_object_t *)cm_galist_get(delete_ctx->objects, 0))->table);
+                    sql_table_t *table = ((del_object_t *)cm_galist_get(delete_ctx->objects, 0))->table;
+                    if (sql_regist_table(stmt, table) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("register delete target failed");
+                    }
+                    sql_array_put(&delete_ctx->query->tables, table);
                 }
 
                 if (bison_current_pending_ssa(yyscanner)->count > 0) {
@@ -3678,7 +3686,11 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                         sql_remove_join_table(stmt, delete_ctx->query);
                     }
                 } else {
-                    sql_array_put(&delete_ctx->query->tables, ((del_object_t *)cm_galist_get(delete_ctx->objects, 0))->table);
+                    sql_table_t *table = ((del_object_t *)cm_galist_get(delete_ctx->objects, 0))->table;
+                    if (sql_regist_table(stmt, table) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("register delete target failed");
+                    }
+                    sql_array_put(&delete_ctx->query->tables, table);
                 }
 
                 if (bison_current_pending_ssa(yyscanner)->count > 0) {
@@ -3742,32 +3754,58 @@ delete_target_list:
     ;
 
 delete_target:
-        insert_target opt_delete_only
+        delete_target_name opt_delete_only
         {
             sql_table_t *table = $1;
             del_object_t *delete_obj = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            if (sql_alloc_mem(stmt->context, sizeof(del_object_t), (void **)&delete_obj) != OG_SUCCESS) {
-                parser_yyerror("alloc delete obj failed");
+            if (bison_create_delete_object(stmt, table, $2, @2.loc, &delete_obj) != OG_SUCCESS) {
+                parser_abort_or_yyerror("create delete object failed");
             }
-
-            if ($2) {
-                if (table->alias.len > 0) {
-                    parser_yyerror("invalid delete target");
-                }
-                sql_text_t only_alias = { 0 };
-                only_alias.value.str = (char *)"ONLY";
-                only_alias.value.len = 4;
-                only_alias.loc = @2.loc;
-                if (sql_copy_name_loc(stmt->context, &only_alias, &table->alias) != OG_SUCCESS) {
-                    parser_yyerror("copy delete alias failed");
-                }
-            }
-            delete_obj->user = table->user;
-            delete_obj->name = (table->alias.len > 0) ? table->alias : table->name;
-            delete_obj->alias = table->alias;
-            delete_obj->table = table;
             $$ = delete_obj;
+        }
+    ;
+
+delete_target_name:
+        delete_target_base %prec UMINUS
+        {
+            sql_table_t *table = $1;
+            $$ = table;
+        }
+        | delete_target_base alias_without_as
+        {
+            sql_table_t *table = $1;
+            table->alias.value.str = $2;
+            table->alias.value.len = strlen($2);
+            $$ = table;
+        }
+        | delete_target_base AS ColId
+        {
+            sql_table_t *table = $1;
+            table->alias.value.str = $3;
+            table->alias.value.len = strlen($3);
+            $$ = table;
+        }
+    ;
+
+delete_target_base:
+        ColId
+        {
+            sql_table_t *table = NULL;
+            sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+            if (bison_create_delete_target_table(stmt, $1, NULL, &table) != OG_SUCCESS) {
+                parser_abort_or_yyerror("create delete target failed");
+            }
+            $$ = table;
+        }
+        | ColId indirection
+        {
+            sql_table_t *table = NULL;
+            sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+            if (bison_create_delete_target_table(stmt, $1, $2, &table) != OG_SUCCESS) {
+                parser_abort_or_yyerror("create delete target failed");
+            }
+            $$ = table;
         }
     ;
 
@@ -17776,6 +17814,66 @@ parser_init(base_yy_extra_type *yyext)
 }
 
 /*$$exclude in dialect end*/
+
+static status_t bison_create_delete_target_table(sql_stmt_t *stmt, char *name, galist_t *indirection,
+    sql_table_t **table)
+{
+    sql_table_t *delete_target = NULL;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&delete_target));
+
+    /*
+     * A DELETE target can be an alias resolved by a following FROM/USING clause.
+     * Keep it out of context->tables until the direct-delete branch establishes
+     * that it is the physical source table.
+     */
+    if (indirection == NULL) {
+        text_t user = { stmt->session->curr_schema, (uint32)strlen(stmt->session->curr_schema) };
+        delete_target->user.implicit = OG_TRUE;
+        delete_target->name.value.str = name;
+        delete_target->name.value.len = strlen(name);
+        if (IS_DUAL_TABLE_NAME(&delete_target->name.value)) {
+            cm_text_upper(&delete_target->name.value);
+        }
+        OG_RETURN_IFERR(sql_copy_name(stmt->context, &user, (text_t *)&delete_target->user));
+    } else {
+        if (indirection->count != 1) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "improper qualified name (too many dotted names)");
+            return OG_ERROR;
+        }
+        delete_target->user.value.str = name;
+        delete_target->user.value.len = strlen(name);
+        delete_target->name.value = ((expr_tree_t *)cm_galist_get(indirection, 0))->root->value.v_text;
+    }
+
+    *table = delete_target;
+    return OG_SUCCESS;
+}
+
+static status_t bison_create_delete_object(sql_stmt_t *stmt, sql_table_t *table, bool32 only,
+    source_location_t only_loc, del_object_t **delete_obj)
+{
+    del_object_t *object = NULL;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(del_object_t), (void **)&object));
+
+    if (only) {
+        if (table->alias.len > 0) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid delete target");
+            return OG_ERROR;
+        }
+        sql_text_t only_alias = { 0 };
+        only_alias.value.str = (char *)"ONLY";
+        only_alias.value.len = 4;
+        only_alias.loc = only_loc;
+        OG_RETURN_IFERR(sql_copy_name_loc(stmt->context, &only_alias, &table->alias));
+    }
+
+    object->user = table->user;
+    object->name = (table->alias.len > 0) ? table->alias : table->name;
+    object->alias = table->alias;
+    object->table = table;
+    *delete_obj = object;
+    return OG_SUCCESS;
+}
 
 static status_t bison_rewind_native_alter(core_yyscan_t yyscanner, const char *object_word)
 {

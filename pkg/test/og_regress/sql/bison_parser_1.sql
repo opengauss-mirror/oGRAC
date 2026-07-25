@@ -1481,3 +1481,22 @@ drop table bison_alias_print_media;
 create table bison_alias_emp(empno number(4) not null, ename varchar2(10), job varchar2(9), mgr number(4), hiredate date, sal number(7, 2), comm number(7, 2), deptno number(2));
 select deptno, ename, sal, dense_rank() over (partition by deptno order by sal) dense_rank from bison_alias_emp where deptno = 30 order by dense_rank, ename;
 drop table bison_alias_emp;
+
+-- The DELETE target alias must not be registered as a source table before FROM/JOIN is parsed.
+drop table if exists bison_delete_alias_t1;
+drop table if exists bison_delete_alias_t2;
+create table bison_delete_alias_t1(id int);
+create table bison_delete_alias_t2(id int);
+insert into bison_delete_alias_t1 values (1);
+insert into bison_delete_alias_t2 values (1);
+commit;
+delete d
+from bison_delete_alias_t2 d
+join bison_delete_alias_t1 j on d.id = j.id
+where d.id < 100
+  and d.id < 200
+  and j.id < 3000;
+select count(*) from bison_delete_alias_t2;
+rollback;
+drop table bison_delete_alias_t2;
+drop table bison_delete_alias_t1;

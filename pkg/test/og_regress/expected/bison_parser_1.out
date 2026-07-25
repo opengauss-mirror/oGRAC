@@ -4955,5 +4955,64 @@ SQL> drop table bison_alias_emp;
 
 Succeed.
 
+SQL> 
+SQL> -- The DELETE target alias must not be registered as a source table before FROM/JOIN is parsed.
+SQL> drop table if exists bison_delete_alias_t1;
+
+Succeed.
+
+SQL> drop table if exists bison_delete_alias_t2;
+
+Succeed.
+
+SQL> create table bison_delete_alias_t1(id int);
+
+Succeed.
+
+SQL> create table bison_delete_alias_t2(id int);
+
+Succeed.
+
+SQL> insert into bison_delete_alias_t1 values (1);
+
+1 rows affected.
+
+SQL> insert into bison_delete_alias_t2 values (1);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> delete d
+  2 from bison_delete_alias_t2 d
+  3 join bison_delete_alias_t1 j on d.id = j.id
+  4 where d.id < 100
+  5   and d.id < 200
+  6   and j.id < 3000;
+
+1 rows affected.
+
+SQL> select count(*) from bison_delete_alias_t2;
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> rollback;
+
+Succeed.
+
+SQL> drop table bison_delete_alias_t2;
+
+Succeed.
+
+SQL> drop table bison_delete_alias_t1;
+
+Succeed.
+
 SQL>
 
