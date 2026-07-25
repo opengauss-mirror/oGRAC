@@ -29,12 +29,15 @@
 #include "cm_defs.h"
 #include "cm_thread.h"
 #include "knl_session.h"
+#include "knl_buffer.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define RMON_MONITOR_BUFFER_CLOCK  20
+#define BUF_CLEAN_PAGE_COUNT  50
+#define BUF_CLEAN_PAGE_RATIO  0.25
 
 typedef struct st_rmon {
     thread_t thread;

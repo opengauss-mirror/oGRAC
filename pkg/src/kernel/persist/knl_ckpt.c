@@ -448,6 +448,41 @@ void ckpt_reset_point(knl_session_t *session, log_point_t *point)
     dtc_my_ctrl(session)->consistent_lfn = point->lfn;
 }
 
+static void ckpt_move_cleaned_pages(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
+{
+    cm_spin_lock(&set->clean_list.lock, &session->stat->spin_stat.stat_buffer);
+    buf_lru_append_list(&set->clean_list, list);
+    cm_spin_unlock(&set->clean_list.lock);
+}
+
+static void ckpt_move_cleaned_pages_all_bufset(knl_session_t *session, buf_lru_list_t *list)
+{
+    buf_context_t *buf_ctx = &session->kernel->buf_ctx;
+    buf_ctrl_t *ctrl = list->lru_last;
+    buf_ctrl_t *shift = NULL;
+    uint32 pool_id = 0;
+    buf_lru_list_t temp_list[OG_MAX_BUF_POOL_NUM] = {0};
+
+    while (ctrl != NULL) {
+        pool_id = ctrl->buf_pool_id;
+        shift = ctrl;
+        ctrl = ctrl->prev;
+        buf_lru_add_ctrl(&temp_list[pool_id], shift, BUF_ADD_COLD);
+    }
+
+    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+        cm_spin_lock(&buf_ctx->buf_set[i].clean_list.lock, NULL);
+        ctrl = temp_list[i].lru_last;
+        while (ctrl != NULL) {
+            shift = ctrl;
+            ctrl = ctrl->prev;
+            buf_lru_add_ctrl(&buf_ctx->buf_set[i].clean_list, shift, BUF_ADD_COLD);
+        }
+        cm_spin_unlock(&buf_ctx->buf_set[i].clean_list.lock);
+        cm_release_cond(&buf_ctx->buf_set[i].set_cond);
+    }
+}
+
 static status_t ckpt_save_ctrl(knl_session_t *session)
 {
     if (session->kernel->attr.clustered) {
@@ -476,6 +511,7 @@ static void ckpt_remove_clean_page(knl_session_t *session, buf_set_t *set, buf_l
             buf_stash_marked_page(set, page_list, shift);
         }
     }
+    ckpt_move_cleaned_pages(session, set, page_list);
 }
 
 static void ckpt_remove_clean_page_all_set(knl_session_t *session)
@@ -491,7 +527,6 @@ static void ckpt_remove_clean_page_all_set(knl_session_t *session)
 
         page_list = g_init_list_t;
         ckpt_remove_clean_page(session, set, &page_list);
-        buf_reset_cleaned_pages(set, &page_list);
     }
 }
 
@@ -2351,6 +2386,21 @@ static void ckpt_switch_group(knl_session_t *session, ckpt_context_t *ogx)
     (void)sem_post(&ogx->flush_sem);
 }
 
+static void ckpt_update_write_list(knl_session_t *session)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    ckpt_group_t *group = &ogx->group[ogx->fid];
+    for (uint32 i = 0; i < group->count; i++) {
+        buf_ctrl_t *item = group->items[i].ctrl;
+        if (item->list_id == LRU_LIST_WRITE) {
+            page_id_t page_id = item->page_id;
+            uint32 buf_pool_id = buf_get_pool_id(page_id, session->kernel->buf_ctx.buf_set_count);
+            buf_set_t *set = &session->kernel->buf_ctx.buf_set[buf_pool_id];
+            set->write_list.clean_page_count++;
+        }
+    }
+}
+
 static status_t ckpt_flush_group(knl_session_t *session)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
@@ -2377,7 +2427,7 @@ static status_t ckpt_flush_group(knl_session_t *session)
     }
 
     dcs_clean_edp(session, ogx);
-
+    ckpt_update_write_list(session);
     group->count = 0;
     ogx->dw_ckpt_start = ogx->dw_ckpt_end;
     dtc_my_ctrl(session)->ckpt_id++;
@@ -3566,7 +3616,7 @@ static status_t ckpt_clean_single_set(knl_session_t *session, ckpt_context_t *ck
 
         if (w_group->count == 0) {
             dcs_clean_edp(session, ckpt_ctx);
-            buf_reset_cleaned_pages(set, &page_list);
+            ckpt_move_cleaned_pages(session, set, &page_list);
             return OG_SUCCESS;
         }
 
@@ -3588,7 +3638,7 @@ static status_t ckpt_clean_single_set(knl_session_t *session, ckpt_context_t *ck
         }
 
         dcs_clean_edp(session, ckpt_ctx);
-        buf_reset_cleaned_pages(set, &page_list);
+        ckpt_move_cleaned_pages(session, set, &page_list);
 
         clean_cnt -= flushed_group->count;
         flushed_group->count = 0;
@@ -3748,7 +3798,7 @@ static status_t ckpt_clean_all_set(knl_session_t *session, ckpt_stat_items_t *st
         stat->flush_pages += w_group->count;
         if (w_group->count == 0) {
             dcs_clean_edp(session, ckpt_ctx);
-            buf_reset_cleaned_pages_all_bufset(buf_ctx, &page_list);
+            ckpt_move_cleaned_pages_all_bufset(session, &page_list);
             return OG_SUCCESS;
         }
 
@@ -3770,7 +3820,7 @@ static status_t ckpt_clean_all_set(knl_session_t *session, ckpt_stat_items_t *st
         }
 
         dcs_clean_edp(session, ckpt_ctx);
-        buf_reset_cleaned_pages_all_bufset(buf_ctx, &page_list);
+        ckpt_move_cleaned_pages_all_bufset(session, &page_list);
 
         flushed_group->count = 0;
         ckpt_ctx->dw_ckpt_start = ckpt_ctx->dw_ckpt_end;
