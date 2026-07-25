@@ -5220,7 +5220,7 @@ static void sql_init_part_info(sql_table_cursor_t *table_cur, uint32* parts, uin
 {
     do {
         for (uint32 part_no = table_cur->curr_part.left; part_no < table_cur->curr_part.right; part_no++) {
-            if (*offset <= MAX_CBO_CALU_PARTS_COUNT) {
+            if (*offset < MAX_CBO_CALU_PARTS_COUNT) {
                 parts[*offset] = part_no;
             }
             (*offset)++;
@@ -5233,7 +5233,7 @@ static void sql_init_compart_part_info(sql_stmt_t *stmt, sql_table_cursor_t *tab
 {
     do {
         for (uint32 part_no = table_cur->curr_part.left; part_no < table_cur->curr_part.right; part_no++) {
-            if (*offset <= MAX_CBO_CALU_PARTS_COUNT) {
+            if (*offset < MAX_CBO_CALU_PARTS_COUNT) {
                 parts[*offset] = part_no;
                 subparts[*offset] = sql_get_subpart_by_part_no(stmt, table_cur, scan_subpart_type, part_no);
             }
@@ -5247,7 +5247,7 @@ static void sql_init_subpart_info(sql_table_cursor_t *table_cur, uint32* parts, 
     for (uint32 part_no = table_cur->curr_part.left; part_no < table_cur->curr_part.right; part_no++) {
         for (uint32 subpart_no = table_cur->curr_subpart.left; subpart_no < table_cur->curr_subpart.right;
              subpart_no++) {
-            if (*offset <= MAX_CBO_CALU_PARTS_COUNT) {
+            if (*offset < MAX_CBO_CALU_PARTS_COUNT) {
                 parts[*offset] = part_no;
                 subparts[*offset] = subpart_no;
             }

@@ -61,3 +61,4 @@ test: bison_parser_dcl
 test: bison_parser_ddl
 test: bison_parser_explain
 test: bison_parser_pl
+test: og_cbo_partition_bounds
