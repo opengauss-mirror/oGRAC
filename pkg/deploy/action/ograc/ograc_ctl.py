@@ -1030,14 +1030,52 @@ def _create_database(dp, ogracd_configs):
     LOG.info("Database created successfully")
 
 
-def _create_3rd_pkg():
-    """Run 3rd-party package creation script after DB create."""
+REFORM_STATUS_DONE = 6
+
+
+def _wait_cluster_ddl_ready(timeout=300):
+    sql = "SELECT VALUE FROM SYS.DV_REFORM_STATS WHERE NAME = 'reform status'"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            res = _execute_sql(sql, "check reform status")
+        except Exception as err:
+            LOG.info("wait reform done retry: %s", err)
+            time.sleep(2)
+            continue
+        if "1 rows fetched" in res:
+            lines = [l for l in res.strip().split("\n") if l.strip()]
+            if len(lines) >= 2:
+                parts = re.split(r"\s+", lines[-2].strip())
+                if parts and parts[0].isdigit():
+                    if int(parts[0]) >= REFORM_STATUS_DONE:
+                        LOG.info("Cluster reform done, DDL available")
+                        return
+                    LOG.info("Reform status %s, waiting for DONE", parts[0])
+        time.sleep(2)
+    raise RuntimeError(
+        f"Cluster DDL not available after {timeout}s: reform not done")
+
+
+def _create_3rd_pkg(retry_timeout=60):
     sql_file = os.path.join(install_path, "admin", "scripts", "create_3rd_pkg.sql")
     if not os.path.isfile(sql_file):
         LOG.warning("create_3rd_pkg.sql not found, skipping")
         return
+    _wait_cluster_ddl_ready()
     LOG.info("Creating third package ...")
-    _execute_sql_file(sql_file)
+    deadline = time.time() + retry_timeout
+    while True:
+        try:
+            _execute_sql_file(sql_file)
+            break
+        except RuntimeError as err:
+            if "OG-03200" in str(err) and time.time() < deadline:
+                LOG.warning("Cluster DDL not ready yet, retrying: %s", err)
+                time.sleep(2)
+                continue
+            raise
+    _update_start_status({"third_pkg_status": "done"})
     LOG.info("Creating third package succeed.")
 
 
@@ -1103,6 +1141,7 @@ def action_install():
     _write_json(START_STATUS_FILE, {
         "start_status": "default",
         "db_create_status": "default",
+        "third_pkg_status": "default",
         "ever_started": False,
     })
 
@@ -1210,7 +1249,12 @@ def action_start():
     if len(sys.argv) > 2:
         start_mode_arg = sys.argv[2]
     if start_mode_arg == "standby":
-        _update_start_status({"db_create_status": "done"})
+        # Standby skips both DB creation and package creation (DDL is
+        # disabled on standby; packages come from the primary via redo).
+        _update_start_status({
+            "db_create_status": "done",
+            "third_pkg_status": "done",
+        })
 
 
     _update_start_status({"start_status": "starting"})
@@ -1241,6 +1285,10 @@ def action_start():
             db_status = _read_start_status().get("db_create_status", "default")
             if db_status != "done":
                 _create_database(dp, ogracd_configs_for_start)
+            # Checked separately from db_create_status: if the previous start
+            # failed between DB creation and package creation, this retries
+            # the package instead of leaving the DB without UTL_RAW.
+            if _read_start_status().get("third_pkg_status", "default") != "done":
                 _create_3rd_pkg()
 
         _check_db_open(timeout=600)
