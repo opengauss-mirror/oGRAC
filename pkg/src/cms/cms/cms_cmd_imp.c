@@ -45,6 +45,17 @@
 #include "cms_uds_client.h"
 #include "cm_dbstor.h"
 #include "cm_dbs_file.h"
+#include "cms_disk_usage.h"
+
+#define CMS_DISK_USAGE_GIB_BYTES ((double)SIZE_K(1) * SIZE_K(1) * SIZE_K(1))
+#define CMS_DISK_USAGE_PERCENT_MAX 100U
+#define CMS_DISK_USAGE_PERCENT_PRECISION 1000U
+#define CMS_DISK_CMD_ARG_VALUE_INDEX 2
+#define CMS_DISK_CMD_ARG_WITH_VALUE 3
+#define CMS_DISK_CMD_ARG_EXTRA_INDEX 3
+#define CMS_DISK_CMD_ARG_SET_VALUE_INDEX 4
+#define CMS_DISK_CMD_ARG_WITH_TWO_VALUES 4
+#define CMS_DISK_CMD_ARG_WITH_THREE_VALUES 5
 
 static const char *g_cms_lock_file = "cms_server.lck";
 
@@ -1571,6 +1582,186 @@ int32 cms_local_disk_iostat(int32 argc, char *argv[])
     }
     cms_print_disk_iostat(&res);
     return OG_SUCCESS;
+}
+
+static double cms_disk_usage_bytes_to_gib(uint64 bytes)
+{
+    return (double)bytes / CMS_DISK_USAGE_GIB_BYTES;
+}
+
+static void CmsPrintDiskUsageItem(CmsDiskUsageItemT *item)
+{
+    const char *type = (item->item_type == CMS_DISK_USAGE_TYPE_LOCAL) ? "LOCAL" : "DSS";
+    char time_str[OG_MAX_TIME_STRLEN] = {0};
+    if (item->last_check_time != 0) {
+        cms_date2str(item->last_check_time, time_str, sizeof(time_str));
+    } else {
+        errno_t err = strcpy_sp(time_str, sizeof(time_str), "NA");
+        if (err != EOK) {
+            time_str[0] = '\0';
+        }
+    }
+
+    if (item->valid == OG_FALSE) {
+        return;
+    }
+
+    if (item->collect_success != OG_TRUE) {
+        printf("%-6s %-12s %-32s %-10s %-10s %-10s %-8s %-9u %-8s %-20s %s\n",
+            type, item->name, item->source, "NA", "NA", "NA", "NA", item->threshold_percent, "ERROR", time_str,
+            item->info);
+        return;
+    }
+
+    printf("%-6s %-12s %-32s %-10.3f %-10.3f %-10.3f %-8.3f %-9u %-8s %-20s %s\n",
+        type, item->name, item->source, cms_disk_usage_bytes_to_gib(item->total_bytes),
+        cms_disk_usage_bytes_to_gib(item->used_bytes), cms_disk_usage_bytes_to_gib(item->free_bytes),
+        (double)item->use_percent_x1000 / CMS_DISK_USAGE_PERCENT_PRECISION, item->threshold_percent,
+        item->alarm == OG_TRUE ? "WARN" : "OK", time_str, item->info);
+}
+
+static void CmsPrintDiskUsage(CmsToolMsgResDiskUsageT *resMsg)
+{
+    CmsDiskUsageSnapshotT *snapshot = &resMsg->snapshot;
+    printf("DISK_USAGE_CHECK_INTERVAL = %u\n", snapshot->interval_sec);
+    printf("DISK_USAGE_THRESHOLD = %u\n", snapshot->threshold_percent);
+    printf("DISK_USAGE_PROTECT_ENABLE = %s\n",
+        snapshot->readonly_config.protect_enabled == OG_TRUE ? "TRUE" : "FALSE");
+    printf("DISK_USAGE_READONLY_COOLDOWN = %u\n", snapshot->readonly_config.cooldown_sec);
+    printf("DISK_USAGE_READONLY_STATE = %s\n", snapshot->readonly_config.state);
+    printf("%-6s %-12s %-32s %-10s %-10s %-10s %-8s %-9s %-8s %-20s %s\n",
+        "TYPE", "NAME", "SOURCE", "TOTAL_GB", "USED_GB", "FREE_GB", "USE%", "THRESHOLD", "STATUS",
+        "LAST_CHECK", "INFO");
+    CmsPrintDiskUsageItem(&snapshot->local);
+    for (uint32 i = 0; i < snapshot->dss_count; i++) {
+        CmsPrintDiskUsageItem(&snapshot->dss[i]);
+    }
+}
+
+static int32 cms_query_disk_usage(CmsToolMsgResDiskUsageT *res, const char *operation)
+{
+    status_t ret = OG_SUCCESS;
+    CmsToolMsgReqDiskUsageT req = {0};
+    char err_info[CMS_INFO_BUFFER_SIZE] = {0};
+
+    req.head.msg_type = CMS_TOOL_MSG_REQ_GET_DISK_USAGE;
+    req.head.msg_size = sizeof(CmsToolMsgReqDiskUsageT);
+    req.head.msg_version = CMS_MSG_VERSION;
+    req.head.msg_seq = cms_uds_cli_get_msg_seq();
+    ret = cms_send_to_server(&req.head, &res->head, sizeof(CmsToolMsgResDiskUsageT),
+        CMS_CLIENT_REQUEST_TIMEOUT, err_info);
+    if (ret != OG_SUCCESS) {
+        printf("%s, %s failed.\n", err_info, operation);
+        return OG_ERROR;
+    }
+    if (res->result != OG_SUCCESS) {
+        printf("get disk usage failed.\n");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static const char *cms_disk_readonly_get_set_key(const char *item)
+{
+    if (strcmp(item, "threshold") == 0) {
+        return "_DISK_USAGE_THRESHOLD";
+    }
+    if (strcmp(item, "cooldown") == 0) {
+        return "_DISK_USAGE_READONLY_COOLDOWN";
+    }
+    if (strcmp(item, "interval") == 0) {
+        return "_DISK_USAGE_CHECK_INTERVAL";
+    }
+    return NULL;
+}
+
+static const char *cms_disk_readonly_normalize_value(const char *key, const char *value)
+{
+    bool32 bool_value;
+    if (strcmp(key, "_DISK_USAGE_PROTECT_ENABLE") == 0 && cm_str2bool(value, &bool_value) == OG_SUCCESS) {
+        return bool_value == OG_TRUE ? "TRUE" : "FALSE";
+    }
+    return value;
+}
+
+static int32 cms_disk_readonly_update_config(const char *key, const char *value)
+{
+    const char *normalizedValue = cms_disk_readonly_normalize_value(key, value);
+    char err_info[CMS_INFO_BUFFER_SIZE] = {0};
+    if (cms_disk_usage_update_config(key, normalizedValue, err_info, sizeof(err_info)) != OG_SUCCESS) {
+        printf("update diskreadonly failed: %s\n", err_info);
+        return OG_ERROR;
+    }
+    printf("update diskreadonly succeed, %s = %s\n", key, normalizedValue);
+    return OG_SUCCESS;
+}
+
+static int32 cms_disk_readonly_show(void)
+{
+    CmsToolMsgResDiskUsageT res = {0};
+    if (cms_query_disk_usage(&res, "diskreadonly show") != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    CmsPrintDiskUsage(&res);
+    return OG_SUCCESS;
+}
+
+static int32 cms_disk_readwrite_recover_now(void)
+{
+    status_t ret = OG_SUCCESS;
+    CmsToolMsgReqDiskReadwriteRecoverT req = {0};
+    CmsToolMsgResDiskReadwriteRecoverT res = {0};
+    char err_info[CMS_INFO_BUFFER_SIZE] = {0};
+
+    req.head.msg_type = CMS_TOOL_MSG_REQ_DISK_READWRITE_RECOVER;
+    req.head.msg_size = sizeof(CmsToolMsgReqDiskReadwriteRecoverT);
+    req.head.msg_version = CMS_MSG_VERSION;
+    req.head.msg_seq = cms_uds_cli_get_msg_seq();
+    ret = cms_send_to_server(&req.head, &res.head, sizeof(CmsToolMsgResDiskReadwriteRecoverT),
+        CMS_CLIENT_REQUEST_TIMEOUT, err_info);
+    if (ret != OG_SUCCESS) {
+        printf("%s, diskreadonly recover-now failed.\n", err_info);
+        return OG_ERROR;
+    }
+    if (res.result != OG_SUCCESS) {
+        printf("diskreadonly recover-now failed: %s\n", res.err_info);
+        return OG_ERROR;
+    }
+    printf("diskreadonly recover-now succeed.\n");
+    return OG_SUCCESS;
+}
+
+int32 cms_disk_readonly(int32 argc, char *argv[])
+{
+    if (argc < CMS_DISK_CMD_ARG_WITH_VALUE) {
+        printf("invalid diskreadonly argument.\n");
+        return OG_ERROR;
+    }
+
+    if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-show") == 0 &&
+        argc == CMS_DISK_CMD_ARG_WITH_VALUE) {
+        return cms_disk_readonly_show();
+    }
+    if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-recover-now") == 0 &&
+        argc == CMS_DISK_CMD_ARG_WITH_VALUE) {
+        return cms_disk_readwrite_recover_now();
+    }
+    if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-auto_change") == 0 &&
+        argc == CMS_DISK_CMD_ARG_WITH_TWO_VALUES) {
+        return cms_disk_readonly_update_config("_DISK_USAGE_PROTECT_ENABLE", argv[CMS_DISK_CMD_ARG_EXTRA_INDEX]);
+    }
+    if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-set") == 0 &&
+        argc == CMS_DISK_CMD_ARG_WITH_THREE_VALUES) {
+        const char *key = cms_disk_readonly_get_set_key(argv[CMS_DISK_CMD_ARG_EXTRA_INDEX]);
+        if (key == NULL) {
+            printf("invalid diskreadonly set item. usage: cms diskreadonly -set threshold|cooldown|interval [VALUE]\n");
+            return OG_ERROR;
+        }
+        return cms_disk_readonly_update_config(key, argv[CMS_DISK_CMD_ARG_SET_VALUE_INDEX]);
+    }
+
+    printf("invalid diskreadonly argument.\n");
+    return OG_ERROR;
 }
 
 static status_t cms_cmd_proc_start_res(const char* name, cms_msg_scope_t scope, uint16 target_node, uint32 timeout_ms)

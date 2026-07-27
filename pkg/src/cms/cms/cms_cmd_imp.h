@@ -113,6 +113,7 @@ EXTER_ATTACK int32 cms_iostat(int32 argc, char* argv[]);
 EXTER_ATTACK int32 cms_iostat_reset(int32 argc, char *argv[]);
 status_t cm_alloc_conf_file_retry(char *config_name);
 int32 cms_local_disk_iostat(int32 argc, char* argv[]);
+int32 cms_disk_readonly(int32 argc, char* argv[]);
 void cms_print_iostat_inner(cms_tool_msg_res_iostat_t *res, char *msg_name, uint8 msg_type);
 void cms_print_iostat(cms_tool_msg_res_iostat_t *res_msg, uint8 msg_type);
 status_t cms_add_res_server(cms_res_desc_t* cms_res_desc);

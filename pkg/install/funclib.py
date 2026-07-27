@@ -189,6 +189,10 @@ class DefaultConfigValue(object):
         "_CMS_MES_PIPE_TYPE" : "TCP",
         "_CMS_MES_CRC_CHECK_SWITCH" : "TRUE",
         "SHARED_PATH": "/home/ogracdba/data/data",
+        "_DISK_USAGE_CHECK_INTERVAL": "30",
+        "_DISK_USAGE_THRESHOLD": "85",
+        "_DISK_USAGE_PROTECT_ENABLE": "TRUE",
+        "_DISK_USAGE_READONLY_COOLDOWN": "120",
     }
     
     OGRACD_DBG_CONFIG = {

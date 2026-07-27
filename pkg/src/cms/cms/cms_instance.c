@@ -44,6 +44,7 @@
 #include "mes_config.h"
 #include "cms_log.h"
 #include "cm_dbstor.h"
+#include "cms_disk_usage.h"
 
 static cms_instance_t g_cms_instance = {.is_server = OG_FALSE, .is_dbstor_cli_init = OG_FALSE};
 
@@ -350,6 +351,13 @@ static status_t cms_create_threads(void)
     }
     CMS_LOG_INF("cms create check disk threads success");
 
+    if (cm_create_thread(cms_disk_usage_check_entry, OG_DFLT_THREAD_STACK_SIZE, NULL,
+        &g_cms_inst->disk_usage_thread) != OG_SUCCESS) {
+        CMS_LOG_ERR("cms create disk usage check thread failed");
+        return OG_ERROR;
+    }
+    CMS_LOG_INF("cms create disk usage check thread success");
+
     return OG_SUCCESS;
 }
 
@@ -372,6 +380,7 @@ static status_t cms_close_threads(void)
     cm_close_thread(&g_cms_inst->uds_hb_thread);
     cm_close_thread(&g_cms_inst->gcc_loader_thread);
     cm_close_thread(&g_cms_inst->gcc_backup_thread);
+    cm_close_thread(&g_cms_inst->disk_usage_thread);
     if (g_cms_param->split_brain == CMS_OPEN_WITH_SPLIT_BRAIN) {
         cm_close_thread(&g_cms_inst->voting_thread);
         cm_close_thread(&g_cms_inst->detect_voting_thread);
@@ -597,6 +606,7 @@ void cms_shutdown(void)
     }
     g_cms_inst->judge_disk_error_thread.closed = OG_TRUE;
     g_cms_inst->detect_disk_error_thread.closed = OG_TRUE;
+    g_cms_inst->disk_usage_thread.closed = OG_TRUE;
 }
 
 static pthread_key_t        g_inst_local_var;

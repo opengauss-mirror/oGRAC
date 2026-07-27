@@ -22,14 +22,19 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <stdarg.h>
+
 #include "cm_common_module.h"
-#include "knl_db_alter.h"
 #include "knl_database.h"
 #include "knl_context.h"
 #include "knl_ctlg.h"
 #include "cm_file.h"
 #include "dtc_database.h"
 #include "dtc_dc.h"
+#include "cms_client.h"
+#include "knl_db_alter.h"
+
+#define DB_CMS_READMODE_WAIT_INTERVAL_MS 10
 
 typedef enum st_failover_fail_type {
     FAILOVER_INVALID_STATUS = 1,
@@ -169,6 +174,93 @@ static status_t db_alter_readmode_precheck(knl_session_t *session, bool32 conver
     OG_LOG_RUN_INF("[DB] precheck finished for converting to %s", convert_to_readonly ? "readonly" : "readwrite");
 
     return OG_SUCCESS;
+}
+
+static void db_cms_set_info(char *info, uint32 info_len, const char *fmt, ...)
+{
+    if (info == NULL || info_len == 0) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int32 ret = vsnprintf_s(info, info_len, info_len - 1, fmt, args);
+    va_end(args);
+    if (ret == -1) {
+        info[0] = '\0';
+    }
+}
+
+status_t db_cms_convert_to_readonly(knl_session_t *session, uint32 timeout_sec, char *info, uint32 info_len)
+{
+    if (session == NULL || session->kernel == NULL) {
+        db_cms_set_info(info, info_len, "invalid kernel session");
+        return OG_ERROR;
+    }
+
+    knl_instance_t *kernel = (knl_instance_t *)session->kernel;
+    switch_ctrl_t *ctrl = &kernel->switch_ctrl;
+    if (DB_IS_READONLY(session)) {
+        db_cms_set_info(info, info_len, "database is already readonly");
+        return OG_SUCCESS;
+    }
+
+    if (db_alter_readmode_precheck(session, OG_TRUE) != OG_SUCCESS) {
+        db_cms_set_info(info, info_len, "readonly precheck failed");
+        return OG_ERROR;
+    }
+
+    if (db_notify_open_mode_reset(session, SWITCH_REQ_READONLY) != OG_SUCCESS) {
+        db_cms_set_info(info, info_len, "notify readonly switch request failed");
+        return OG_ERROR;
+    }
+
+    date_t begin = cm_now();
+    date_t timeout = (date_t)(timeout_sec == 0 ? 30 : timeout_sec) * MICROSECS_PER_SECOND_LL;
+    while (!DB_IS_READONLY(session) || ctrl->request != SWITCH_REQ_NONE) {
+        if (cm_now() - begin > timeout) {
+            db_cms_set_info(info, info_len, "wait readonly switch timeout");
+            return OG_ERROR;
+        }
+        cm_sleep(DB_CMS_READMODE_WAIT_INTERVAL_MS);
+    }
+
+    db_cms_set_info(info, info_len, "database converted to readonly");
+    return OG_SUCCESS;
+}
+
+status_t db_cms_convert_to_readwrite(knl_session_t *session, char *info, uint32 info_len)
+{
+    if (session == NULL || session->kernel == NULL) {
+        db_cms_set_info(info, info_len, "invalid kernel session");
+        return OG_ERROR;
+    }
+    if (!DB_IS_READONLY(session)) {
+        db_cms_set_info(info, info_len, "database is already readwrite");
+        return OG_SUCCESS;
+    }
+    if (db_alter_convert_to_readwrite(session) != OG_SUCCESS) {
+        db_cms_set_info(info, info_len, "convert to readwrite failed");
+        return OG_ERROR;
+    }
+    db_cms_set_info(info, info_len, "database converted to readwrite");
+    return OG_SUCCESS;
+}
+
+status_t db_cms_readmode_switch(knl_session_t *session, const CmsReadmodeSwitchCtxT *ctx)
+{
+    if (ctx == NULL) {
+        return OG_ERROR;
+    }
+    if (ctx->action == CMS_READMODE_ACTION_READONLY) {
+        return db_cms_convert_to_readonly(session, ctx->timeout_sec, ctx->info, ctx->info_len);
+    }
+    if (ctx->action == CMS_READMODE_ACTION_READWRITE) {
+        return db_cms_convert_to_readwrite(session, ctx->info, ctx->info_len);
+    }
+
+    db_cms_set_info(ctx->info, ctx->info_len, "invalid readmode action %u", ctx->action);
+    return OG_ERROR;
 }
 
 status_t db_alter_convert_to_readonly(knl_session_t *session)

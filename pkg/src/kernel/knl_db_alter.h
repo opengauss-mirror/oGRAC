@@ -26,6 +26,7 @@
 #define __KNL_DB_ALTER_H__
 
 #include "cm_defs.h"
+#include "cms_client.h"
 #include "knl_interface.h"
 #include "knl_session.h"
 
@@ -36,6 +37,9 @@ extern "C" {
 status_t db_alter_convert_to_standby(knl_session_t *session, knl_alterdb_def_t *def);
 status_t db_alter_convert_to_readonly(knl_session_t *session);
 status_t db_alter_convert_to_readwrite(knl_session_t *session);
+status_t db_cms_readmode_switch(knl_session_t *session, const CmsReadmodeSwitchCtxT *ctx);
+status_t db_cms_convert_to_readonly(knl_session_t *session, uint32 timeout_sec, char *info, uint32 info_len);
+status_t db_cms_convert_to_readwrite(knl_session_t *session, char *info, uint32 info_len);
 status_t db_alter_cancel_upgrade(knl_session_t *session);
 status_t db_alter_delete_archivelog(knl_session_t *session, knl_alterdb_def_t *def);
 status_t db_alter_delete_backupset(knl_session_t *session, knl_alterdb_def_t *def);

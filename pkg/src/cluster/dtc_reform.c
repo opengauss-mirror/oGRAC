@@ -39,6 +39,7 @@
 #include "dtc_backup.h"
 #include "repl_log_replay.h"
 #include "dtc_rbp_rt_aly.h"
+#include "knl_db_alter.h"
 status_t init_dtc_rc(void)
 {
     knl_session_t *session;
@@ -61,6 +62,7 @@ status_t init_dtc_rc(void)
     init_st.callback.rc_start_lrpl_proc = (rc_cb_start_lrpl_proc)rc_start_lrpl_proc;
     init_st.callback.rc_notify_reform_status = (rc_cb_notify_reform_stat)rc_notify_reform_status;
     init_st.callback.rc_after_reform_done = (rc_cb_after_reform_done)rc_after_reform_done;
+    init_st.callback.rc_readmode_switch = db_cms_readmode_switch;
 
     return init_cms_rc(&g_dtc->rf_ctx, &init_st);
 }

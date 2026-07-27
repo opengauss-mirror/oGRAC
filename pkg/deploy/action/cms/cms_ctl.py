@@ -136,6 +136,10 @@ def _build_cms_config():
         "_CMS_MES_SSL_KEY_PWD": None,
         "_CMS_MES_SSL_CRT_KEY_PATH": _cfg.paths.certificates_dir,
         "KMC_KEY_FILES": f"({_cfg.paths.primary_keystore}, {_cfg.paths.standby_keystore})",
+        "_DISK_USAGE_CHECK_INTERVAL": "30",
+        "_DISK_USAGE_THRESHOLD": "85",
+        "_DISK_USAGE_PROTECT_ENABLE": "TRUE",
+        "_DISK_USAGE_READONLY_COOLDOWN": "120",
     }
     return config
 

@@ -351,6 +351,10 @@ typedef enum en_cms_tool_msg_type {
     CMS_TOOL_MSG_RES_RESGRP_LIST,
     CMS_TOOL_MSG_REQ_RES_LIST,
     CMS_TOOL_MSG_RES_RES_LIST,
+    CMS_TOOL_MSG_REQ_GET_DISK_USAGE,
+    CMS_TOOL_MSG_RES_GET_DISK_USAGE,
+    CMS_TOOL_MSG_REQ_DISK_READWRITE_RECOVER,
+    CMS_TOOL_MSG_RES_DISK_READWRITE_RECOVER,
 } cms_tool_msg_type_t;
 
 typedef struct st_cms_tool_msg_req_add_node {
@@ -514,6 +518,70 @@ typedef struct st_cms_tool_msg_res_disk_iostat_t {
     cms_disk_check_stat_t detail;
     status_t result;
 } cms_tool_msg_res_disk_iostat_t;
+
+#define CMS_DISK_USAGE_MAX_DSS_VG 16
+#define CMS_DISK_USAGE_TYPE_LOCAL 1
+#define CMS_DISK_USAGE_TYPE_DSS 2
+#define CMS_DISK_READONLY_MATCH_ALL 0
+#define CMS_DISK_READONLY_MATCH_ANY 1
+
+typedef struct st_cms_disk_usage_item_t {
+    bool32 valid;
+    bool32 collect_success;
+    bool32 alarm;
+    uint32 item_type;
+    uint64 total_bytes;
+    uint64 used_bytes;
+    uint64 free_bytes;
+    uint32 use_percent_x1000;
+    uint32 threshold_percent;
+    date_t last_check_time;
+    date_t last_alarm_log_time;
+    char name[CMS_NAME_BUFFER_SIZE];
+    char source[CMS_FILE_NAME_BUFFER_SIZE];
+    char info[CMS_INFO_BUFFER_SIZE];
+} CmsDiskUsageItemT;
+
+typedef struct st_cms_disk_readonly_config_info_t {
+    bool32 protect_enabled;
+    uint32 cooldown_sec;
+    date_t last_trigger_time;
+    date_t last_recover_time;
+    date_t last_action_time;
+    char state[CMS_NAME_BUFFER_SIZE];
+    char info[CMS_INFO_BUFFER_SIZE];
+} CmsDiskReadonlyConfigInfoT;
+
+typedef struct st_cms_disk_usage_snapshot_t {
+    uint32 interval_sec;
+    uint32 threshold_percent;
+    date_t last_check_time;
+    CmsDiskReadonlyConfigInfoT readonly_config;
+    CmsDiskUsageItemT local;
+    uint32 dss_count;
+    CmsDiskUsageItemT dss[CMS_DISK_USAGE_MAX_DSS_VG];
+    char info[CMS_INFO_BUFFER_SIZE];
+} CmsDiskUsageSnapshotT;
+
+typedef struct st_cms_tool_msg_req_disk_usage_t {
+    cms_packet_head_t head;
+} CmsToolMsgReqDiskUsageT;
+
+typedef struct st_cms_tool_msg_res_disk_usage_t {
+    cms_packet_head_t head;
+    CmsDiskUsageSnapshotT snapshot;
+    status_t result;
+} CmsToolMsgResDiskUsageT;
+
+typedef struct st_cms_tool_msg_req_disk_readwrite_recover_t {
+    cms_packet_head_t head;
+} CmsToolMsgReqDiskReadwriteRecoverT;
+
+typedef struct st_cms_tool_msg_res_disk_readwrite_recover_t {
+    cms_packet_head_t head;
+    status_t result;
+    char err_info[CMS_INFO_BUFFER_SIZE];
+} CmsToolMsgResDiskReadwriteRecoverT;
 
 typedef struct st_cms_tool_msg_req_stop_res {
     cms_packet_head_t head;

@@ -82,6 +82,7 @@ typedef struct st_cms_instance {
     thread_t                detect_voting_thread;
     thread_t                detect_disk_error_thread;
     thread_t                judge_disk_error_thread;
+    thread_t                disk_usage_thread;
     socket_t                uds_server;
     cms_que_t               recv_que;
     cms_que_t               send_que;
