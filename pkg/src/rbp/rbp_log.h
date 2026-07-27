@@ -60,6 +60,14 @@ inline constexpr size_t RBP_PAGE_CHECKSUM_SIZE = sizeof(uint16_t);
 inline std::FILE* g_rbp_log_file = stderr;
 inline std::mutex g_rbp_log_lock;
 
+inline std::string RbpErrnoErrorDetail(int code)
+{
+    if (code == 0) {
+        return "unknown error (errno=0)";
+    }
+    return std::string(std::strerror(code)) + " (errno=" + std::to_string(code) + ")";
+}
+
 inline bool rbp_mkdir_one(const std::string& path)
 {
     if (path.empty()) {
@@ -103,7 +111,8 @@ inline bool rbp_mkdirs_for_file(const std::string& file, std::string& err)
             continue;
         }
         if (!rbp_mkdir_one(part)) {
-            err = "failed to create log directory: " + part;
+            const int code = errno;
+            err = "failed to create log directory: " + part + ": " + RbpErrnoErrorDetail(code);
             return false;
         }
     }
@@ -120,12 +129,38 @@ inline bool rbp_init_log_file(const std::string& file, std::string& err)
     }
     std::FILE* fp = std::fopen(file.c_str(), "a");
     if (fp == nullptr) {
-        err = "failed to open log file: " + file;
+        const int code = errno;
+        err = "failed to open log file: " + file + ": " + RbpErrnoErrorDetail(code);
         return false;
     }
     std::lock_guard<std::mutex> guard(g_rbp_log_lock);
     g_rbp_log_file = fp;
     return true;
+}
+
+inline int RbpLastSocketError()
+{
+#if defined(_WIN32)
+    return WSAGetLastError();
+#else
+    return errno;
+#endif
+}
+
+inline std::string RbpSocketErrorDetail(int code)
+{
+#if defined(_WIN32)
+    std::string detail = "socket_error=" + std::to_string(code);
+    if (code == WSAEADDRINUSE) {
+        return "port conflict: port is already in use (socket_error=" + std::to_string(code) + ")";
+    }
+    return detail;
+#else
+    if (code == EADDRINUSE) {
+        return "port conflict: port is already in use (errno=" + std::to_string(code) + ")";
+    }
+    return RbpErrnoErrorDetail(code);
+#endif
 }
 
 inline void rbp_run_log(const std::string& msg)

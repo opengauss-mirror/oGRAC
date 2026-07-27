@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iostream>
 #include <thread>
 #if !defined(_WIN32)
 #include <csignal>
@@ -56,6 +57,13 @@ constexpr int RBP_READ_PHASE_WATCHDOG_MS = 100;
 constexpr int RBP_SERVER_LISTEN_BACKLOG = 64;
 constexpr int RBP_WINSOCK_VERSION_MAJOR = 2;
 constexpr int RBP_WINSOCK_VERSION_MINOR = 2;
+
+[[noreturn]] void RbpStartupFatal(const std::string& msg)
+{
+    rbp_run_log(msg);
+    std::cerr << msg << std::endl;
+    std::exit(1);
+}
 
 }  // namespace
 
@@ -511,8 +519,7 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
     if (admin_port > 0) {
         std::string err;
         if (!setup_admin_server(admin_host, admin_port, admin_srv, err)) {
-            rbp_run_log(err);
-            std::exit(1);
+            RbpStartupFatal(err);
         }
     }
     state.start_evict_worker();
@@ -522,8 +529,7 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
 
     socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
     if (is_invalid_socket(srv)) {
-        rbp_run_log("socket create failed");
-        std::exit(1);
+        RbpStartupFatal("socket create failed: " + RbpSocketErrorDetail(RbpLastSocketError()));
     }
     int yes = 1;
     setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
@@ -531,31 +537,35 @@ void run_server(const std::string& host, int port, const Config& cfg, int admin_
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        rbp_run_log("bind failed: invalid host " + host);
+        const std::string err = "bind failed: invalid host " + host;
 #if defined(_WIN32)
         closesocket(srv);
 #else
         close(srv);
 #endif
-        std::exit(1);
+        RbpStartupFatal(err);
     }
     if (bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        rbp_run_log("bind failed on " + host + ":" + std::to_string(port));
+        const int code = RbpLastSocketError();
+        const std::string err = "bind failed on " + host + ":" + std::to_string(port) + ": " +
+                                RbpSocketErrorDetail(code);
 #if defined(_WIN32)
         closesocket(srv);
 #else
         close(srv);
 #endif
-        std::exit(1);
+        RbpStartupFatal(err);
     }
     if (listen(srv, RBP_SERVER_LISTEN_BACKLOG) != 0) {
-        rbp_run_log("listen failed on " + host + ":" + std::to_string(port));
+        const int code = RbpLastSocketError();
+        const std::string err = "listen failed on " + host + ":" + std::to_string(port) + ": " +
+                                RbpSocketErrorDetail(code);
 #if defined(_WIN32)
         closesocket(srv);
 #else
         close(srv);
 #endif
-        std::exit(1);
+        RbpStartupFatal(err);
     }
     rbp_run_log("RBPS listening on " + host + ":" + std::to_string(port) +
                 " SMB_page_version=" + std::to_string(cfg.smb_version));

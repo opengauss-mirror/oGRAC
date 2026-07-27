@@ -184,15 +184,36 @@ start_rbps()
 
     bin=$(rbps_bin)
     [ -n "$bin" ] || die "rbps binary not found"
-    mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
-    RBPS_LOG_FILE="$LOG_FILE" nohup "$bin" --config "$CONF" >> "$LOG_FILE" 2>&1 &
+    pid_dir=$(dirname "$PID_FILE")
+    log_dir=$(dirname "$LOG_FILE")
+    mkdir -p "$pid_dir" "$log_dir" || die "failed to create runtime/log directories: pid_dir=$pid_dir log_dir=$log_dir"
+    : >> "$LOG_FILE" || die "failed to write log file: $LOG_FILE"
+    startup_err="${log_dir}/.rbps_startup.$$.err"
+    : > "$startup_err" || die "failed to create startup error file: $startup_err"
+    RBPS_LOG_FILE="$LOG_FILE" nohup "$bin" --config "$CONF" </dev/null >> "$LOG_FILE" 2> "$startup_err" &
     pid=$!
-    echo "$pid" > "$PID_FILE"
+    if ! echo "$pid" > "$PID_FILE"; then
+        kill "$pid" 2>/dev/null || true
+        rm -f "$startup_err"
+        die "failed to write pid file: $PID_FILE"
+    fi
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid" 2>/dev/null
+        rc=$?
         rm -f "$PID_FILE"
-        die "rbps failed to start; check $LOG_FILE"
+        err=$(sed -n '$p' "$startup_err" 2>/dev/null)
+        err=${err#rbps: }
+        rm -f "$startup_err"
+        if [ -n "$err" ]; then
+            die "rbps failed to start: $err"
+        fi
+        die "rbps failed to start: exit code=$rc"
     fi
+    if [ -s "$startup_err" ]; then
+        cat "$startup_err" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+    rm -f "$startup_err"
     echo "rbps started: pid=$pid listen=$HOST:$PORT admin=$ADMIN_HOST:$ADMIN_PORT conf=$CONF log=$LOG_FILE"
 }
 
