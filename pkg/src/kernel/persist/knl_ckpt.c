@@ -150,7 +150,7 @@ static bool32 ckpt_gbp_read_stable_lsn(buf_ctrl_t *ctrl, uint64 *remote_lsn)
     }
 
     remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+    remote_tail_lsn = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, g_dtc->kernel->attr.page_size);
     if (remote_head_lsn != remote_tail_lsn) {
         OG_LOG_DEBUG_WAR("[DTC-GBP-CKPT][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu)",
             ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, remote_tail_lsn);
@@ -1627,8 +1627,10 @@ static bool32 ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_
         to_flush_ctrl->page_id.file, to_flush_ctrl->page_id.page, to_flush_ctrl->page->type);
 
     if (session->kernel->attr.enable_ubsmem) {
+        knl_begin_session_wait(session, CKPT_GBP_PREPARE_FLUSH, OG_TRUE);
         gbp_result = ckpt_gbp_prepare_flush(session, ogx, to_flush_ctrl, &gbp_ckpt_lsn, &gbp_claimed_state,
             &gbp_old_state);
+        knl_end_session_wait(session, CKPT_GBP_PREPARE_FLUSH);
         if (gbp_result == CKPT_GBP_PREPARE_RETRY || gbp_result == CKPT_GBP_PREPARE_SKIP) {
             return OG_FALSE;
         }
@@ -4033,7 +4035,9 @@ static status_t ckpt_clean_prepare_normal(knl_session_t *session, ckpt_context_t
         AS_PAGID(shift->page->id).page, shift->page->type);
 
     if (session->kernel->attr.enable_ubsmem) {
+        knl_begin_session_wait(session, CKPT_GBP_PREPARE_FLUSH, OG_TRUE);
         gbp_result = ckpt_gbp_prepare_flush(session, ogx, shift, &gbp_ckpt_lsn, &gbp_claimed_state, &gbp_old_state);
+        knl_end_session_wait(session, CKPT_GBP_PREPARE_FLUSH);
         if (gbp_result == CKPT_GBP_PREPARE_RETRY || gbp_result == CKPT_GBP_PREPARE_SKIP) {
             buf_unlatch(session, shift, OG_FALSE);
             return OG_SUCCESS;

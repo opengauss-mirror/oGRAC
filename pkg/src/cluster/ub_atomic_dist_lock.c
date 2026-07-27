@@ -31,6 +31,7 @@
 #include "cm_defs.h"
 #include "cm_log.h"
 #include "cm_thread.h"
+#include "cm_spinlock.h"
 #include "knl_cluster_module.h"
 
 #include "cm_ub_sdk.h"

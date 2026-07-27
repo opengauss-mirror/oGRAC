@@ -145,9 +145,91 @@ typedef enum buffer_type {
     LOCK_QUEUE,
 } buffer_type_t;
 
+/*
+ * GBP buf_set layout (128B-aligned page starts):
+ *   [ meta×N ] + pad + [ page | tail_lsn | pad_slot ]×N + [ ctrl×N ] + [ bucket×... ]
+ * tail_lsn remains immediately after each page; slot pad makes next page 128B-aligned.
+ */
+#define GBP_SLOT_ALIGN 128ULL
+#define GBP_META_SIZE ((uint64)sizeof(remote_page_info_t))
+#define GBP_PAGE_SLOT_SIZE(page_size) CM_CALC_ALIGN((uint64)(page_size) + sizeof(uint64), GBP_SLOT_ALIGN)
+
 #define OFFSET_PAGE_ID offsetof(remote_page_info_t, page_id)
 #define OFFSET_HEAD_LSN offsetof(remote_page_info_t, head_lsn)
-#define OFFSET_TAIL_LSN sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size
+
+/* Prefer gbp_tail_ptr_from_page(ctrl->shmem_page_addr, page_size). */
+static inline uint64 *gbp_tail_ptr_from_page(const void *page, uint32 page_size)
+{
+    return (uint64 *)((char *)page + page_size);
+}
+
+static inline uint64 gbp_page_slot_size(uint32 page_size)
+{
+    return GBP_PAGE_SLOT_SIZE(page_size);
+}
+
+static inline uint32 gbp_calc_part_capacity(uint64 part_size, uint32 page_size)
+{
+    uint64 page_slot = gbp_page_slot_size(page_size);
+    uint64 per = GBP_META_SIZE + page_slot + sizeof(buf_ctrl_t) + (uint64)BUCKET_TIMES * sizeof(buf_bucket_t);
+    uint32 n;
+
+    if (per == 0 || part_size < per) {
+        return 0;
+    }
+    n = (uint32)(part_size / per);
+    while (n > 0) {
+        uint64 meta_bytes = (uint64)n * GBP_META_SIZE;
+        uint64 page_off = CM_CALC_ALIGN(meta_bytes, GBP_SLOT_ALIGN);
+        uint64 total = page_off + (uint64)n * page_slot + (uint64)n * sizeof(buf_ctrl_t) +
+            (uint64)n * BUCKET_TIMES * sizeof(buf_bucket_t);
+        if (total <= part_size) {
+            return n;
+        }
+        n--;
+    }
+    return 0;
+}
+
+static inline remote_page_info_t *gbp_meta_at(const buf_set_t *set, uint32 id)
+{
+    return (remote_page_info_t *)(set->meta_buf + (uint64)id * GBP_META_SIZE);
+}
+
+static inline page_head_t *gbp_page_at(const buf_set_t *set, uint32 id, uint32 page_size)
+{
+    return (page_head_t *)(set->page_buf + (uint64)id * gbp_page_slot_size(page_size));
+}
+
+static inline uint64 *gbp_tail_at(const buf_set_t *set, uint32 id, uint32 page_size)
+{
+    return gbp_tail_ptr_from_page(gbp_page_at(set, id, page_size), page_size);
+}
+
+static inline uint32 gbp_slot_from_meta(const buf_set_t *set, const remote_page_info_t *meta)
+{
+    return (uint32)(((const char *)meta - set->meta_buf) / GBP_META_SIZE);
+}
+
+static inline page_head_t *gbp_page_from_meta(const buf_set_t *set, remote_page_info_t *meta, uint32 page_size)
+{
+    return gbp_page_at(set, gbp_slot_from_meta(set, meta), page_size);
+}
+
+static inline uint64 *gbp_tail_from_meta(const buf_set_t *set, remote_page_info_t *meta, uint32 page_size)
+{
+    return gbp_tail_at(set, gbp_slot_from_meta(set, meta), page_size);
+}
+
+/* Resolve meta/page from pool base + meta_off (MES path). */
+status_t gbp_resolve_from_meta_off(char *pool_base, uint64 meta_off, remote_page_info_t **meta_out,
+    page_head_t **page_out);
+
+/* Local GBP: derive meta from page address (page is in local buf_set page region). */
+status_t gbp_meta_from_page_local(page_head_t *page, remote_page_info_t **meta_out);
+
+/* Local GBP: derive page from meta address. */
+status_t gbp_page_from_meta_local(remote_page_info_t *meta, page_head_t **page_out);
 
 static inline void remote_page_info_set_timeline_id(remote_page_info_t *info, uint64 timeline_id)
 {
@@ -202,7 +284,15 @@ void broadcast_remote_buf_allocated();
 EXTER_ATTACK void drc_process_remote_buf_mmap(void *sess, mes_message_t *msg);
 status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
 status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode);
+void dtc_buf_free_gbp_copy_temp(knl_session_t *session);
 status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint64 curr_lsn);
+/* UB-stats: LBP->GBP raw memcpy latency by kind (meta / page / tail lsn). */
+typedef enum en_ub_gbp_store_copy_kind {
+    UB_GBP_STORE_COPY_META = 0,
+    UB_GBP_STORE_COPY_PAGE,
+    UB_GBP_STORE_COPY_TAIL_LSN
+} ub_gbp_store_copy_kind_t;
+void dtc_buf_stat_gbp_store_copy(knl_session_t *session, ub_gbp_store_copy_kind_t kind, uint64 copy_us);
 status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode, bool32 *is_load);
 status_t dtc_buf_gbp_wait_reload_done(knl_session_t *session, buf_ctrl_t *ctrl);
 static inline bool32 dtc_buf_gbp_reload_owned_by_session(knl_session_t *session, buf_ctrl_t *ctrl)

@@ -1950,11 +1950,17 @@ status_t sql_func_try_get_lock_by_gbp_meta_addr(sql_stmt_t *stmt, expr_node_t *f
     }
 
     /*
-     * Layout matches drc_init_remote_buf_struct / buf_bind_compound_shmem_slot:
-     * slot = [ remote_page_info_t | page bytes | tail uint64 ]; lock_ptr field holds UB dist-lock absolute address.
+     * Layout: meta region + [page|tail|pad]×N. lock_ptr holds UB dist-lock absolute address.
      */
     lock_ptr = meta->lock_ptr;
-    page_addr_u64 = (uint64)(uintptr_t)((const char *)meta + sizeof(remote_page_info_t));
+    {
+        page_head_t *page = NULL;
+        if (gbp_page_from_meta_local((remote_page_info_t *)(uintptr_t)meta_u64, &page) != OG_SUCCESS || page == NULL) {
+            OG_THROW_ERROR(ERR_ASSERT_ERROR, "get_lock_by_gbp_meta_addr resolve page");
+            return OG_ERROR;
+        }
+        page_addr_u64 = (uint64)(uintptr_t)page;
+    }
 
     len = sprintf_s(buf, sizeof(buf), "lock_ptr=0x%llx,page_addr=0x%llx", (unsigned long long)lock_ptr,
                     (unsigned long long)page_addr_u64);

@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <pwd.h>
 #include <sys/syscall.h>
+#include <numa.h>
 #include "knl_cluster_module.h"
 #include "cm_defs.h"
 #include "dtc_drc.h"
@@ -50,9 +51,9 @@ static ub_rw_lock_t *g_ub_lock = NULL;
 static ub_lock_config_t g_ub_lock_config = { 0 };
 static ub_location_t g_ub_lock_creator = { 0 };
 
-// page_info_t + page + end_lsn + bucket_t + buf_ctrl_t
+// meta×N + [page|tail|pad]×N + ctrl + buckets (pad between meta/page absorbed in gbp_calc_part_capacity)
 #define REMOTE_BUF_PAGE_COST                                                       \
-    (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64) + \
+    (GBP_META_SIZE + GBP_PAGE_SLOT_SIZE(g_dtc->kernel->attr.page_size) +           \
      BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 
 static inline uint64 drc_calc_buf_size(uint64 size)
@@ -111,7 +112,8 @@ static status_t drc_check_remote_lock_capacity(remote_sga_t *remote_sga, remote_
         return OG_ERROR;
     }
 
-    capacity_per_set = g_dtc->profile.remote_data_buf_part_size / page_cost;
+    capacity_per_set = gbp_calc_part_capacity(g_dtc->profile.remote_data_buf_part_size,
+        g_dtc->kernel->attr.page_size);
     if (capacity_per_set == 0) {
         OG_LOG_RUN_ERR("[DRC-GBP-LOCK] remote data buf part size %llu is smaller than page cost %llu",
                        g_dtc->profile.remote_data_buf_part_size, page_cost);
@@ -301,8 +303,8 @@ static void buf_init_list(buf_set_t *set)
 
 static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_context_t *buf_ctx)
 {
-    uint32 page_size = sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64);
-
+    uint32 page_size = g_dtc->kernel->attr.page_size;
+    uint64 page_slot = gbp_page_slot_size(page_size);
     buf_set_t *set = NULL;
     uint64 offset;
     if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
@@ -313,32 +315,43 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
         set = &buf_ctx->buf_set[i];
         set->lock = 0;
         set->size = g_dtc->profile.remote_data_buf_part_size;
-        set->addr = remote_sga->data_buf + i * g_dtc->profile.remote_data_buf_part_align_size;  // start addr of each
-                                                                                                // buf_set in UB shm.
+        set->addr = remote_sga->data_buf + i * g_dtc->profile.remote_data_buf_part_align_size;
         cm_init_cond(&set->set_cond);
-        /* set->size <= 32T, BUF_PAGE_COST >= 8360, set->capacity cannot overflow */
-        set->capacity = (uint32)(set->size / REMOTE_BUF_PAGE_COST);
+        set->capacity = gbp_calc_part_capacity(set->size, page_size);
         set->hwm = 0;
-        set->page_buf = set->addr;  // in UB shm, page_buf includes remote_page_info_t, page and tail_lsn
+        knl_panic_log(set->capacity > 0, "[DRC-GBP] invalid capacity for buf_set %u size %llu", i, set->size);
 
-        offset = (uint64)page_size * set->capacity;
+        /* [ meta×N ] + pad + [ page|tail|pad ]×N + ctrls + buckets */
+        set->meta_buf = set->addr;
+        offset = CM_CALC_ALIGN((uint64)set->capacity * GBP_META_SIZE, GBP_SLOT_ALIGN);
+        set->page_buf = set->addr + offset;
+        knl_panic_log(((uint64)(uintptr_t)set->page_buf % GBP_SLOT_ALIGN) == 0,
+            "[DRC-GBP] page_buf %p not %llu-aligned", set->page_buf, GBP_SLOT_ALIGN);
+
+        offset += (uint64)set->capacity * page_slot;
         set->ctrls = (buf_ctrl_t *)(set->addr + offset);
         offset += (uint64)set->capacity * sizeof(buf_ctrl_t);
         set->buckets = (buf_bucket_t *)(set->addr + offset);
         set->bucket_num = BUCKET_TIMES * set->capacity;
+        knl_panic_log(offset + (uint64)set->bucket_num * sizeof(buf_bucket_t) <= set->size,
+            "[DRC-GBP] layout overflow set %u offset %llu size %llu capacity %u", i, offset, set->size, set->capacity);
+
+        OG_LOG_RUN_INF("[DRC-GBP] buf_set %u capacity %u meta_buf %p page_buf %p page_slot %llu", i, set->capacity,
+            set->meta_buf, set->page_buf, page_slot);
 
         for (uint32 j = 0; j < set->capacity; j++) {
-            char *page_addr = set->page_buf + j * page_size;
-            remote_page_info_t *page_info = (remote_page_info_t *)page_addr;
+            remote_page_info_t *page_info = gbp_meta_at(set, j);
+            page_head_t *page = gbp_page_at(set, j, page_size);
             gbp_ckpt_set_state(page_info, 0);
             if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
-                // each page corresponds to a lock in the lock buffer.
                 uint64 lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
                 ub_rw_lock_create((ub_rw_lock_t *)(page_info->lock_ptr), &g_ub_lock_config, &g_ub_lock_creator);
-                OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, addr %p, lock addr: %p", j, (void *)page_addr,
-                               (void *)page_info->lock_ptr);
+                OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, meta %p, page %p, lock addr: %p", j, (void *)page_info,
+                    (void *)page, (void *)page_info->lock_ptr);
             }
+            knl_panic_log(((uint64)(uintptr_t)page % GBP_SLOT_ALIGN) == 0,
+                "[DRC-GBP] page[%u] %p not %llu-aligned", j, page, GBP_SLOT_ALIGN);
         }
 
         knl_reset_large_memory((char *)set->buckets, (uint64)sizeof(buf_bucket_t) * set->bucket_num);
@@ -348,6 +361,149 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
     cm_init_thread_lock(&buf_ctx->buf_mutex);
 
     return;
+}
+
+status_t gbp_resolve_from_meta_off(char *pool_base, uint64 meta_off, remote_page_info_t **meta_out,
+    page_head_t **page_out)
+{
+    uint32 page_size;
+    uint64 page_slot;
+    uint64 part_size;
+    uint64 part_align;
+    uint32 set_count;
+    uint32 capacity;
+    uint64 head_pad;
+    char *data_buf;
+    uint32 i;
+
+    if (pool_base == NULL || meta_out == NULL || page_out == NULL) {
+        return OG_ERROR;
+    }
+
+    page_size = g_dtc->kernel->attr.page_size;
+    page_slot = gbp_page_slot_size(page_size);
+    part_size = g_dtc->profile.remote_data_buf_part_size;
+    part_align = g_dtc->profile.remote_data_buf_part_align_size;
+    set_count = DRC_RES_CTX->buf_ctx.buf_set_count;
+    if (set_count == 0) {
+        set_count = g_dtc->profile.remote_buf_pool_num;
+    }
+    capacity = DRC_RES_CTX->buf_ctx.buf_set[0].capacity;
+    if (capacity == 0) {
+        capacity = gbp_calc_part_capacity(part_size, page_size);
+    }
+    if (capacity == 0 || set_count == 0 || part_align == 0) {
+        OG_LOG_RUN_ERR("[DRC-GBP] resolve meta_off failed, capacity=%u set_count=%u part_align=%llu", capacity,
+            set_count, part_align);
+        return OG_ERROR;
+    }
+
+    head_pad = OG_MAX_ALIGN_SIZE_4K - ((uint64)(uintptr_t)pool_base % OG_MAX_ALIGN_SIZE_4K);
+    data_buf = pool_base + head_pad;
+
+    for (i = 0; i < set_count; i++) {
+        char *meta_base = data_buf + (uint64)i * part_align;
+        uint64 meta_begin = (uint64)(meta_base - pool_base);
+        uint64 meta_bytes = (uint64)capacity * GBP_META_SIZE;
+        uint64 meta_end = meta_begin + meta_bytes;
+        char *page_base;
+        uint32 slot;
+
+        if (meta_off < meta_begin || meta_off >= meta_end) {
+            continue;
+        }
+        if ((meta_off - meta_begin) % GBP_META_SIZE != 0) {
+            OG_LOG_RUN_ERR("[DRC-GBP] meta_off %llu not aligned to meta size in part %u", meta_off, i);
+            return OG_ERROR;
+        }
+        slot = (uint32)((meta_off - meta_begin) / GBP_META_SIZE);
+        page_base = (char *)(uintptr_t)CM_CALC_ALIGN((uint64)(uintptr_t)(meta_base + meta_bytes), GBP_SLOT_ALIGN);
+        *meta_out = (remote_page_info_t *)(meta_base + (uint64)slot * GBP_META_SIZE);
+        *page_out = (page_head_t *)(page_base + (uint64)slot * page_slot);
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_RUN_ERR("[DRC-GBP] meta_off %llu not in any meta region, pool_base %p", meta_off, pool_base);
+    return OG_ERROR;
+}
+
+status_t gbp_meta_from_page_local(page_head_t *page, remote_page_info_t **meta_out)
+{
+    uint32 page_size = g_dtc->kernel->attr.page_size;
+    uint64 page_slot = gbp_page_slot_size(page_size);
+    remote_buf_context_t *ctx = &DRC_RES_CTX->buf_ctx;
+    uint32 i;
+
+    if (page == NULL || meta_out == NULL) {
+        return OG_ERROR;
+    }
+
+    for (i = 0; i < ctx->buf_set_count; i++) {
+        buf_set_t *set = &ctx->buf_set[i];
+        char *begin;
+        char *end;
+        uint64 delta;
+        uint32 slot;
+
+        if (set->page_buf == NULL || set->meta_buf == NULL || set->capacity == 0) {
+            continue;
+        }
+        begin = set->page_buf;
+        end = begin + (uint64)set->capacity * page_slot;
+        if ((char *)page < begin || (char *)page >= end) {
+            continue;
+        }
+        delta = (uint64)((char *)page - begin);
+        if (delta % page_slot != 0) {
+            OG_LOG_RUN_ERR("[DRC-GBP] page %p not aligned to page_slot in set %u", page, i);
+            return OG_ERROR;
+        }
+        slot = (uint32)(delta / page_slot);
+        *meta_out = gbp_meta_at(set, slot);
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_RUN_ERR("[DRC-GBP] page %p not in local GBP page region", page);
+    return OG_ERROR;
+}
+
+status_t gbp_page_from_meta_local(remote_page_info_t *meta, page_head_t **page_out)
+{
+    uint32 page_size = g_dtc->kernel->attr.page_size;
+    remote_buf_context_t *ctx = &DRC_RES_CTX->buf_ctx;
+    uint32 i;
+
+    if (meta == NULL || page_out == NULL) {
+        return OG_ERROR;
+    }
+
+    for (i = 0; i < ctx->buf_set_count; i++) {
+        buf_set_t *set = &ctx->buf_set[i];
+        char *begin;
+        char *end;
+        uint64 delta;
+        uint32 slot;
+
+        if (set->meta_buf == NULL || set->page_buf == NULL || set->capacity == 0) {
+            continue;
+        }
+        begin = set->meta_buf;
+        end = begin + (uint64)set->capacity * GBP_META_SIZE;
+        if ((char *)meta < begin || (char *)meta >= end) {
+            continue;
+        }
+        delta = (uint64)((char *)meta - begin);
+        if (delta % GBP_META_SIZE != 0) {
+            OG_LOG_RUN_ERR("[DRC-GBP] meta %p not aligned in set %u", meta, i);
+            return OG_ERROR;
+        }
+        slot = (uint32)(delta / GBP_META_SIZE);
+        *page_out = gbp_page_at(set, slot, page_size);
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_RUN_ERR("[DRC-GBP] meta %p not in local GBP meta region", meta);
+    return OG_ERROR;
 }
 
 status_t drc_init_remote_buffer()
@@ -498,7 +654,7 @@ static status_t dtc_buf_gbp_reload_decide_or_wait(knl_session_t *session, buf_ct
 
     for (;;) {
         uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-        uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+        uint64 remote_tail_lsn = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, DEFAULT_PAGE_SIZE(session));
         gbp_reload_decide_t decide;
 
         if (remote_head_lsn != remote_tail_lsn) {
@@ -594,11 +750,28 @@ static status_t dtc_buf_wait_readonly_clear(knl_session_t *session, ub_rw_lock_t
     return OG_SUCCESS;
 }
 
-static inline status_t dcs_copy_page_to_temp(knl_session_t *session, buf_ctrl_t *ctrl, char *temp_page)
+static inline void dtc_buf_stat_gbp_raw_copy(knl_session_t *session, uint64 lock_offset, uint64 copy_us)
+{
+    uint8 home = drc_gbp_lock_home_node(lock_offset);
+
+    session->stat->ub_reload_from_gbp_copy_buf_count++; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_buf_time += copy_us; // UB-stats
+    if (home == DCS_SELF_INSTID(session)) { // UB-stats
+        session->stat->ub_reload_from_gbp_copy_local_count++; // UB-stats
+        session->stat->ub_reload_from_gbp_copy_local_time += copy_us; // UB-stats
+    } else if (home == 0 || home == 1) { // UB-stats
+        session->stat->ub_reload_from_gbp_copy_remote_count++; // UB-stats
+        session->stat->ub_reload_from_gbp_copy_remote_time += copy_us; // UB-stats
+    } // UB-stats
+}
+
+static inline status_t dcs_copy_page_to_temp(knl_session_t *session, buf_ctrl_t *ctrl, char *temp_page,
+    uint64 lock_offset)
 {
     char *page = (char *)ctrl->shmem_page_addr;
     uint32 page_size = DEFAULT_PAGE_SIZE(session);
     errno_t err;
+    date_t copy_start; // UB-stats
 
     if (temp_page == NULL || page == NULL || page_size == 0) {
         OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] invalid copy args, temp_page=%p, shmem_page_addr=%p, page_size=%u",
@@ -606,7 +779,10 @@ static inline status_t dcs_copy_page_to_temp(knl_session_t *session, buf_ctrl_t 
         return OG_ERROR;
     }
 
+    /* Raw GBP memcpy only (exclude PCN check / readonly wait / commit). */
+    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(temp_page, page_size, page, page_size);
+    dtc_buf_stat_gbp_raw_copy(session, lock_offset, (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     if (err != EOK) {
         OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] memcpy_s from shmem failed, err=%d, temp_page=%p, shmem_page_addr=%p",
             ctrl->page_id.file, ctrl->page_id.page, (int32)err, temp_page, page);
@@ -630,36 +806,63 @@ static status_t dtc_buf_commit_temp_page(knl_session_t *session, buf_ctrl_t *ctr
     return OG_SUCCESS;
 }
 
+void dtc_buf_free_gbp_copy_temp(knl_session_t *session)
+{
+    if (session == NULL || session->gbp_copy_temp == NULL) {
+        return;
+    }
+
+    numa_free(session->gbp_copy_temp, session->gbp_copy_temp_size);
+    session->gbp_copy_temp = NULL;
+    session->gbp_copy_temp_size = 0;
+    session->gbp_copy_temp_phys_numa = -1;
+}
+
+/* Allocate once on session, reuse for subsequent GBP -> local copies. */
+static status_t dtc_buf_ensure_gbp_copy_temp(knl_session_t *session, uint32 page_size, int phys_numa)
+{
+    if (session->gbp_copy_temp != NULL && session->gbp_copy_temp_size >= page_size &&
+        session->gbp_copy_temp_phys_numa == phys_numa) {
+        return OG_SUCCESS;
+    }
+
+    dtc_buf_free_gbp_copy_temp(session);
+
+    session->gbp_copy_temp = (char *)numa_alloc_onnode(page_size, phys_numa);
+    if (session->gbp_copy_temp == NULL) {
+        OG_LOG_RUN_ERR("[DTC-GBP-COPY] numa_alloc_onnode(%d) failed, size:%u, sid:%u",
+            phys_numa, page_size, session->id);
+        return OG_ERROR;
+    }
+
+    session->gbp_copy_temp_size = page_size;
+    session->gbp_copy_temp_phys_numa = phys_numa;
+    return OG_SUCCESS;
+}
+
 /*
  * Copy page from GBP shmem into a temp buffer first; validate PCN on temp page,
  * then commit to ctrl->page atomically under bucket lock.
+ * Temp buffer is session-owned and allocated on phys_numa.
  */
-static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
+static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset, int phys_numa)
 {
     ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_offset;
     status_t ret;
     uint32 page_size = DEFAULT_PAGE_SIZE(session);
-    page_head_t *temp_page = (page_head_t *)cm_push(session->stack, page_size);
-    date_t step_start; // UB-stats
+    page_head_t *temp_page;
 
-    if (temp_page == NULL) {
-        OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] session stack overflow while copying from gbp shmem",
-            ctrl->page_id.file, ctrl->page_id.page);
+    if (dtc_buf_ensure_gbp_copy_temp(session, page_size, phys_numa) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    temp_page = (page_head_t *)session->gbp_copy_temp;
 
-    step_start = cm_monotonic_now(); // UB-stats
-    ret = dcs_copy_page_to_temp(session, ctrl, (char *)temp_page);
-    session->stat->ub_reload_from_gbp_copy_buf_count++; // UB-stats
-    session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
+    ret = dcs_copy_page_to_temp(session, ctrl, (char *)temp_page, lock_offset);
     if (ret != OG_SUCCESS) {
         return ret;
     }
     if (CHECK_PAGE_PCN(temp_page)) {
-        step_start = cm_monotonic_now(); // UB-stats
-        ret = dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
-        session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
-        return ret;
+        return dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
     }
 
     if (!ub_rw_lock_get_readonly(lock)) {
@@ -673,10 +876,7 @@ static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ct
         return ret;
     }
 
-    step_start = cm_monotonic_now(); // UB-stats
-    ret = dcs_copy_page_to_temp(session, ctrl, (char *)temp_page);
-    session->stat->ub_reload_from_gbp_copy_buf_count++; // UB-stats
-    session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
+    ret = dcs_copy_page_to_temp(session, ctrl, (char *)temp_page, lock_offset);
     if (ret != OG_SUCCESS) {
         return ret;
     }
@@ -686,21 +886,7 @@ static status_t dtc_buf_copy_from_gbp_shmem_inner(knl_session_t *session, buf_ct
         return OG_ERROR;
     }
 
-    step_start = cm_monotonic_now(); // UB-stats
-    ret = dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
-    session->stat->ub_reload_from_gbp_copy_buf_time += (uint64)(cm_monotonic_now() - step_start); // UB-stats
-    return ret;
-}
-
-static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *ctrl, uint64 lock_offset)
-{
-    status_t ret;
-
-    CM_SAVE_STACK(session->stack);
-    ret = dtc_buf_copy_from_gbp_shmem_inner(session, ctrl, lock_offset);
-    CM_RESTORE_STACK(session->stack);
-
-    return ret;
+    return dtc_buf_commit_temp_page(session, ctrl, (char *)temp_page);
 }
 
 void dtc_buf_gbp_hold(buf_ctrl_t *ctrl, latch_mode_t mode)
@@ -851,6 +1037,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     if (!skip_shmem_s_lock) { // UB-stats
         session->ub_req_gbp_lock_mode = (uint8)mode; // UB-stats
         session->ub_req_gbp_lock_us = (uint64)(cm_monotonic_now() - gbp_lock_start); // UB-stats
+        session->ub_req_gbp_lock_home_node = drc_gbp_lock_home_node(lock_offset); // UB-stats
     } // UB-stats
 
     if (ret != OG_SUCCESS) {
@@ -884,7 +1071,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     // LSN Check: Ensure the requester doesn't have a "newer" LSN than the gbp owner
     bool32 readonly = ub_rw_lock_get_readonly((ub_rw_lock_t *)(uintptr_t)lock_offset);
     uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+    uint64 remote_tail_lsn = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, DEFAULT_PAGE_SIZE(session));
 
     if (remote_head_lsn != remote_tail_lsn) {
         OG_LOG_RUN_ERR("[DTC-GBP-CHECK][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu)",
@@ -1007,7 +1194,7 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     //     *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN), ctrl->page->lsn,
     //     ctrl->gbp_reload_generation, (int32)cm_get_current_thread_id());
 
-    ret = dtc_buf_copy_from_gbp_shmem(session, ctrl, lock_offset);
+    ret = dtc_buf_copy_from_gbp_shmem(session, ctrl, lock_offset, 2);
     if (ret != OG_SUCCESS) {
         dtc_buf_gbp_reload_end(session, ctrl, OG_FALSE);
         (void)dtc_buf_gbp_unhold(session, ctrl, mode);
@@ -1040,7 +1227,7 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         return OG_ERROR;
     }
     remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+    uint64 remote_tail_lsn = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, DEFAULT_PAGE_SIZE(session));
 
     if (remote_head_lsn != remote_tail_lsn) {
         OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u]: head/tail lsn mismatch, head lsn(%llu), tail lsn(%llu), pcn: %u, "
@@ -1079,11 +1266,32 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     return OG_SUCCESS;
 }
 
+void dtc_buf_stat_gbp_store_copy(knl_session_t *session, ub_gbp_store_copy_kind_t kind, uint64 copy_us)
+{
+    switch (kind) {
+        case UB_GBP_STORE_COPY_META:
+            session->stat->ub_store_to_gbp_copy_meta_count++;
+            session->stat->ub_store_to_gbp_copy_meta_time += copy_us;
+            break;
+        case UB_GBP_STORE_COPY_PAGE:
+            session->stat->ub_store_to_gbp_copy_page_count++;
+            session->stat->ub_store_to_gbp_copy_page_time += copy_us;
+            break;
+        case UB_GBP_STORE_COPY_TAIL_LSN:
+            session->stat->ub_store_to_gbp_copy_tail_lsn_count++;
+            session->stat->ub_store_to_gbp_copy_tail_lsn_time += copy_us;
+            break;
+        default:
+            break;
+    }
+}
+
 status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint64 curr_lsn)
 {
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
     page_head_t *shmem_page_addr = ctrl->shmem_page_addr;
     uint8 curr_node_id = DCS_SELF_INSTID(session);
+    date_t copy_start; // UB-stats
 
     // to do: check local ctrl page lsn and remote page lsn
     uint64 remote_page_lsn = curr_lsn;
@@ -1101,24 +1309,33 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     remote_page_info_set_timeline_id(&new_shmem_page_meta,
                                      session->kernel->db.ctrl.core.instance_timeline_id[curr_node_id]);
 
-    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
+    char *page_tail_lsn_addr = (char *)gbp_tail_ptr_from_page(shmem_page_addr, DEFAULT_PAGE_SIZE(session));
     uint64 page_tail_lsn = remote_page_lsn;
 
+    copy_start = cm_monotonic_now(); // UB-stats
     errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &new_shmem_page_meta,
                            offsetof(remote_page_info_t, ckpt_flush_state));
+    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_META,
+        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
+    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
+    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_PAGE,
+        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
     // tail lsn
+    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
+    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_TAIL_LSN,
+        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
 #ifdef DB_DEBUG_VERSION
     uint64 ctrl_page_lsn = ctrl->page->lsn;
     uint64 remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
-    uint64 remote_tail_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_TAIL_LSN);
+    uint64 remote_tail_lsn = *gbp_tail_ptr_from_page(shmem_page_addr, DEFAULT_PAGE_SIZE(session));
     // Release global Lock: drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
     OG_LOG_DEBUG_INF("[OG_LOG_DEBUG_INF][%u-%u]: Success to copy page to gbp, current page lsn: %llu, "
         "remote page lsn head: %llu, remote page lsn tail: %llu", ctrl->page_id.file, ctrl->page_id.page,

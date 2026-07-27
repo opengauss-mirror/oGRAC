@@ -596,8 +596,10 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
         }
 
         if (session->kernel->attr.enable_ubsmem) {
+            knl_begin_session_wait(session, CKPT_GBP_PREPARE_FLUSH, OG_TRUE);
             gbp_result = ckpt_gbp_prepare_flush(session, ogx, ctrl, &gbp_ckpt_lsn, &gbp_claimed_state,
                 &gbp_old_state);
+            knl_end_session_wait(session, CKPT_GBP_PREPARE_FLUSH);
             if (gbp_result == CKPT_GBP_PREPARE_RETRY) {
                 i--;
                 buf_unlatch_page(session, ctrl);

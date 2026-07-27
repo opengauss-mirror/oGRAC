@@ -48,6 +48,7 @@
 #include "knl_buffer_access.h"
 #include "knl_rbp.h"
 #include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
 
 bool32 dcs_page_latch_usable[][DRC_LOCK_MODE_MAX] = {
     // DRC_LOCK_NULL,  DRC_LOCK_SHARE, DRC_LOCK_EXCLUSIVE, DRC_LOCK_MODE_MAX
@@ -278,8 +279,15 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
     }
 
     char *base = rsga->remote_buf_addr[gbp_owner];
-    page_head_t *shmem_page_addr = (page_head_t *)(base + ack->shmem_page_meta_off + sizeof(remote_page_info_t));
-    remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
+    remote_page_info_t *shmem_page_meta = NULL;
+    page_head_t *shmem_page_addr = NULL;
+    if (gbp_resolve_from_meta_off(base, ack->shmem_page_meta_off, &shmem_page_meta, &shmem_page_addr) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] resolve gbp meta_off failed: owner=%u meta_off=%llu", ctrl->page_id.file,
+                       ctrl->page_id.page, gbp_owner, ack->shmem_page_meta_off);
+        ctrl->lock_mode = DRC_LOCK_NULL;
+        ctrl->load_status = BUF_LOAD_FAILED;
+        return OG_ERROR;
+    }
 
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
@@ -521,8 +529,13 @@ static status_t dcs_handle_ack_need_check_gbp(knl_session_t *session, uint32 mas
     uint64 meta_off64 = ack->shmem_page_meta_off;
 
     char *base = rsga->remote_buf_addr[gbp_owner];
-    page_head_t *shmem_page_addr = (page_head_t *)(base + meta_off64 + sizeof(remote_page_info_t));
-    remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + meta_off64);
+    remote_page_info_t *shmem_page_meta = NULL;
+    page_head_t *shmem_page_addr = NULL;
+    if (gbp_resolve_from_meta_off(base, meta_off64, &shmem_page_meta, &shmem_page_addr) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] resolve gbp meta_off failed: owner=%u meta_off=%llu", page_id.file, page_id.page,
+                       gbp_owner, meta_off64);
+        return OG_ERROR;
+    }
 
     ctrl->is_hot = OG_TRUE;
     ctrl->shmem_page_addr = shmem_page_addr;
@@ -619,8 +632,14 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
     }
 
     ctrl->load_status = (uint8)BUF_NEED_LOAD_FROM_GBP;
-    ctrl->shmem_page_addr = (page_head_t *)(base + ack->shmem_page_meta_off + sizeof(remote_page_info_t));
-    ctrl->shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
+    if (gbp_resolve_from_meta_off(base, ack->shmem_page_meta_off, &ctrl->shmem_page_meta, &ctrl->shmem_page_addr) !=
+        OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] resolve gbp meta_off failed: owner=%u meta_off=%llu", page_id.file, page_id.page,
+            gbp_owner, ack->shmem_page_meta_off);
+        ctrl->lock_mode = DRC_LOCK_NULL;
+        ctrl->load_status = BUF_LOAD_FAILED;
+        return OG_ERROR;
+    }
 
     session->ub_page_req_kind = (flags & MES_FLAG_GBP_PROMOTED) ? (uint8)UB_PAGE_REQ_COLD_PROMOTE // UB-stats
                                                                 : (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // UB-stats
@@ -1332,8 +1351,16 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     }
 
     uint8 *base = (uint8 *)rsga->remote_buf_addr[gbp_owner];
-    remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + page_req->shmem_page_meta_off);
-    page_head_t *shmem_page_addr = (page_head_t *)(base + page_req->shmem_page_meta_off + sizeof(remote_page_info_t));
+    remote_page_info_t *shmem_page_meta = NULL;
+    page_head_t *shmem_page_addr = NULL;
+    if (gbp_resolve_from_meta_off((char *)base, page_req->shmem_page_meta_off, &shmem_page_meta, &shmem_page_addr) !=
+        OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] resolve gbp meta_off failed: meta_off=%llu", page_req->page_id.file,
+                       page_req->page_id.page, page_req->shmem_page_meta_off);
+        mes_send_error_msg(&page_req->head);
+        dcs_leave_page(session);
+        return OG_ERROR;
+    }
     // Acquire global lock
     uint64 lock_ptr = shmem_page_meta->lock_ptr;
 
@@ -1352,7 +1379,7 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
         return ret;
     }
 
-    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
+    char *page_tail_lsn_addr = (char *)gbp_tail_ptr_from_page(shmem_page_addr, DEFAULT_PAGE_SIZE(session));
     uint64 page_tail_lsn = ctrl->page->lsn;
 
     remote_page_info_t master_shmem_page_meta = {0};
@@ -1365,15 +1392,24 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     remote_page_info_set_timeline_id(&master_shmem_page_meta, dst_timeline_id);
     master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
+    date_t copy_start = cm_monotonic_now(); // UB-stats
     errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &master_shmem_page_meta,
                            offsetof(remote_page_info_t, ckpt_flush_state));
+    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_META,
+        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
+    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
+    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_PAGE,
+        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
     // tail lsn
+    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
+    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_TAIL_LSN,
+        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
     // Release global Lock
@@ -1724,8 +1760,15 @@ static inline void dcs_send_requester_get_page_from_gbp(knl_session_t *session, 
     remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
     char *base = rsga->remote_buf_addr[DCS_SELF_INSTID(session)];
     char *p_addr = (char *)result->shmem_page_addr;
-    char *p_meta = p_addr - sizeof(remote_page_info_t);
-    uint64 meta_off64 = p_meta - base;
+    remote_page_info_t *p_meta = NULL;
+    uint64 meta_off64;
+
+    if (gbp_meta_from_page_local((page_head_t *)p_addr, &p_meta) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS-GBP-GET-PAGE][%u-%u] failed to resolve meta from page %p", page_req->page_id.file,
+                       page_req->page_id.page, p_addr);
+        return;
+    }
+    meta_off64 = (uint64)((char *)p_meta - base);
 
     ack_to_requester.lsn = DB_CURR_LSN(session);
     ack_to_requester.scn = DB_CURR_SCN(session);
@@ -2511,7 +2554,11 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
         }
         case DRC_REQ_OWNER_IN_GBP:
             ctrl->shmem_page_addr = result.shmem_page_addr;
-            ctrl->shmem_page_meta = (remote_page_info_t *)((char *)result.shmem_page_addr - sizeof(remote_page_info_t));
+            if (gbp_meta_from_page_local(result.shmem_page_addr, &ctrl->shmem_page_meta) != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DCS][%u-%u] failed to resolve meta from gbp page %p", page_id.file, page_id.page,
+                    result.shmem_page_addr);
+                return OG_ERROR;
+            }
             dcs_get_page_from_gbp(session, ctrl, result.req_mode);
             session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // (page was already hot in GBP before this request, no promotion) // UB-stats
             knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE);

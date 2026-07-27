@@ -1402,8 +1402,12 @@ static status_t dtc_view_gbp_lock_info_fetch(knl_handle_t se, knl_cursor_t *curs
         uint32 slot = scan->ctrl_id;
         scan->ctrl_id++;
 
-        uint32 per_page = sizeof(remote_page_info_t) + session->kernel->attr.page_size + sizeof(uint64);
-        remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(set->page_buf + (uint64)slot * (uint64)per_page);
+        uint32 page_size = session->kernel->attr.page_size;
+        remote_page_info_t *shmem_page_meta = gbp_meta_at(set, slot);
+        if (set->meta_buf == NULL) {
+            continue;
+        }
+        (void)page_size;
         uint64 lock_addr = shmem_page_meta->lock_ptr;
         if (lock_addr == 0) {
             continue;

@@ -25,14 +25,167 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <limits.h>
+#include <stdlib.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"
 #include "dtc_remote_lock.h"
+#include "cm_spinlock.h"
 
 void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *atomic_state, int32 *x_owner_node,
     int32 *write_waiters, int32 *owner_tid, int32 *readonly, int32 *readonly_owner_node,
     int32 *readonly_owner_tid);
+#define UB_GBP_LAT_CAP 8192
+
+typedef enum en_ub_lat_hist_id {
+    UB_LAT_GBP_LOCK_X = 0,
+    UB_LAT_GBP_LOCK_S,
+    UB_LAT_HOT_REFRESH,
+    UB_LAT_HOT_VALIDATED_HIT,
+    UB_LAT_HIST_COUNT
+} ub_lat_hist_id_t;
+
+typedef struct st_ub_gbp_lat_hist {
+    spinlock_t lock;
+    uint32 size;
+    uint32 next;
+    uint64 samples[UB_GBP_LAT_CAP];
+} ub_gbp_lat_hist_t;
+
+static ub_gbp_lat_hist_t g_ub_lat_hist[UB_LAT_HIST_COUNT] = { 0 };
+
+static int ub_gbp_lat_cmp_u64(const void *a, const void *b)
+{
+    uint64 va = *(const uint64 *)a;
+    uint64 vb = *(const uint64 *)b;
+
+    if (va < vb) {
+        return -1;
+    }
+    if (va > vb) {
+        return 1;
+    }
+    return 0;
+}
+
+static void drc_ub_lat_hist_record(ub_lat_hist_id_t id, uint64 value)
+{
+    ub_gbp_lat_hist_t *hist;
+
+    if (id >= UB_LAT_HIST_COUNT) {
+        return;
+    }
+    hist = &g_ub_lat_hist[id];
+    cm_spin_lock(&hist->lock, NULL);
+    hist->samples[hist->next] = value;
+    hist->next = (hist->next + 1) % UB_GBP_LAT_CAP;
+    if (hist->size < UB_GBP_LAT_CAP) {
+        hist->size++;
+    }
+    cm_spin_unlock(&hist->lock);
+}
+
+static void drc_ub_lat_hist_percentile(ub_lat_hist_id_t id, uint64 *p80_v, uint64 *p90_v, uint64 *p80_count,
+    uint64 *p90_count)
+{
+    ub_gbp_lat_hist_t *hist;
+    uint64 local[UB_GBP_LAT_CAP];
+    uint32 n;
+    uint32 i;
+    uint64 p80;
+    uint64 p90;
+    uint64 c80 = 0;
+    uint64 c90 = 0;
+
+    if (p80_v != NULL) {
+        *p80_v = 0;
+    }
+    if (p90_v != NULL) {
+        *p90_v = 0;
+    }
+    if (p80_count != NULL) {
+        *p80_count = 0;
+    }
+    if (p90_count != NULL) {
+        *p90_count = 0;
+    }
+    if (id >= UB_LAT_HIST_COUNT) {
+        return;
+    }
+
+    hist = &g_ub_lat_hist[id];
+    cm_spin_lock(&hist->lock, NULL);
+    n = hist->size;
+    if (n > 0) {
+        errno_t err = memcpy_s(local, sizeof(local), hist->samples, (size_t)n * sizeof(uint64));
+        cm_spin_unlock(&hist->lock);
+        if (SECUREC_UNLIKELY(err != EOK)) {
+            return;
+        }
+    } else {
+        cm_spin_unlock(&hist->lock);
+        return;
+    }
+
+    qsort(local, n, sizeof(uint64), ub_gbp_lat_cmp_u64);
+    p80 = local[(n - 1) * 80 / 100];
+    p90 = local[(n - 1) * 90 / 100];
+    for (i = 0; i < n; i++) {
+        if (local[i] >= p80) {
+            c80++;
+        }
+        if (local[i] >= p90) {
+            c90++;
+        }
+    }
+
+    if (p80_v != NULL) {
+        *p80_v = p80;
+    }
+    if (p90_v != NULL) {
+        *p90_v = p90;
+    }
+    if (p80_count != NULL) {
+        *p80_count = c80;
+    }
+    if (p90_count != NULL) {
+        *p90_count = c90;
+    }
+}
+
+uint8 drc_gbp_lock_home_node(uint64 lock_ptr)
+{
+    if (lock_ptr >= (uint64)DRC_BASE_ADDR_1) {
+        return 1;
+    }
+    if (lock_ptr >= (uint64)DRC_BASE_ADDR_0) {
+        return 0;
+    }
+    return OG_INVALID_ID8;
+}
+
+void drc_gbp_lock_lat_record(bool32 is_x, uint64 time_us)
+{
+    drc_ub_lat_hist_record(is_x ? UB_LAT_GBP_LOCK_X : UB_LAT_GBP_LOCK_S, time_us);
+}
+
+void drc_gbp_lock_lat_percentile(bool32 is_x, uint64 *p80_us, uint64 *p90_us, uint64 *p80_count, uint64 *p90_count)
+{
+    drc_ub_lat_hist_percentile(is_x ? UB_LAT_GBP_LOCK_X : UB_LAT_GBP_LOCK_S, p80_us, p90_us, p80_count, p90_count);
+}
+
+void drc_ub_path_lat_record(bool32 is_hot_refresh, uint64 time_us)
+{
+    drc_ub_lat_hist_record(is_hot_refresh ? UB_LAT_HOT_REFRESH : UB_LAT_HOT_VALIDATED_HIT, time_us);
+}
+
+void drc_ub_path_lat_percentile(bool32 is_hot_refresh, uint64 *p80_us, uint64 *p90_us, uint64 *p80_count,
+    uint64 *p90_count)
+{
+    drc_ub_lat_hist_percentile(is_hot_refresh ? UB_LAT_HOT_REFRESH : UB_LAT_HOT_VALIDATED_HIT, p80_us, p90_us,
+        p80_count, p90_count);
+}
+
 
 // The distributed lock is the in-tree atomic implementation (ub_atomic_dist_lock.c),
 // so there is no SDK lock queue to initialise.

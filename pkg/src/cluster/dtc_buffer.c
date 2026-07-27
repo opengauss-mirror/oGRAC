@@ -449,6 +449,7 @@ static inline void dtc_read_page_record_stat(knl_session_t *session, date_t elap
         case UB_PAGE_REQ_HOT_VALIDATED_HIT: // UB-stats
             session->stat->ub_hot_validated_hit_count++; // UB-stats
             session->stat->ub_hot_validated_hit_time += (uint64)elapsed_us; // UB-stats
+            drc_ub_path_lat_record(OG_FALSE, (uint64)elapsed_us); // UB-stats
             /* fold in the per-request breakdown scratch (see dtc_buf_check_local_page) */ // UB-stats
             if (session->ub_req_gbp_lock_mode == (uint8)LATCH_MODE_X) { // UB-stats
                 session->stat->ub_vhit_gbp_lock_x_count++; // UB-stats
@@ -469,12 +470,25 @@ static inline void dtc_read_page_record_stat(knl_session_t *session, date_t elap
         case UB_PAGE_REQ_HOT_REFRESH: // UB-stats
             session->stat->ub_hot_refresh_count++; // UB-stats
             session->stat->ub_hot_refresh_time += (uint64)elapsed_us; // UB-stats
+            drc_ub_path_lat_record(OG_TRUE, (uint64)elapsed_us); // UB-stats
             if (session->ub_req_gbp_lock_mode == (uint8)LATCH_MODE_X) { // UB-stats
                 session->stat->ub_refresh_gbp_lock_x_count++; // UB-stats
                 session->stat->ub_refresh_gbp_lock_x_time += session->ub_req_gbp_lock_us; // UB-stats
+                if (session->ub_req_gbp_lock_home_node == 0) { // UB-stats
+                    session->stat->ub_refresh_gbp_lock_x_home_node0_count++; // UB-stats
+                } else if (session->ub_req_gbp_lock_home_node == 1) { // UB-stats
+                    session->stat->ub_refresh_gbp_lock_x_home_node1_count++; // UB-stats
+                } // UB-stats
+                drc_gbp_lock_lat_record(OG_TRUE, session->ub_req_gbp_lock_us); // UB-stats
             } else if (session->ub_req_gbp_lock_mode != OG_INVALID_ID8) { // UB-stats
                 session->stat->ub_refresh_gbp_lock_s_count++; // UB-stats
                 session->stat->ub_refresh_gbp_lock_s_time += session->ub_req_gbp_lock_us; // UB-stats
+                if (session->ub_req_gbp_lock_home_node == 0) { // UB-stats
+                    session->stat->ub_refresh_gbp_lock_s_home_node0_count++; // UB-stats
+                } else if (session->ub_req_gbp_lock_home_node == 1) { // UB-stats
+                    session->stat->ub_refresh_gbp_lock_s_home_node1_count++; // UB-stats
+                } // UB-stats
+                drc_gbp_lock_lat_record(OG_FALSE, session->ub_req_gbp_lock_us); // UB-stats
             } // UB-stats
             if (session->ub_req_reload_wait_us > 0) { // UB-stats
                 session->stat->ub_refresh_reload_wait_count++; // UB-stats
@@ -502,6 +516,7 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
 
     session->ub_page_req_kind = (uint8)UB_PAGE_REQ_LOCAL_HIT; // UB-stats
     session->ub_req_gbp_lock_mode = OG_INVALID_ID8; // UB-stats
+    session->ub_req_gbp_lock_home_node = OG_INVALID_ID8; // UB-stats
     session->ub_req_gbp_lock_us = 0; // UB-stats
     session->ub_req_reload_wait_us = 0; // UB-stats
     session->ub_req_readonly_wait_us = 0; // UB-stats

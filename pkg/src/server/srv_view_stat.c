@@ -33,6 +33,7 @@
 #include "knl_interface.h"
 #include "cm_io_record.h"
 #include "dtc_context.h"
+#include "dtc_remote_lock.h"
 
 typedef enum en_sysstat_class {
     STAT_TYPE_SQL,
@@ -463,10 +464,18 @@ static stat_item_t g_sysstat_items[] = {
     { STAT_TYPE_KERNEL, "ub hot first copy time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub hot validated hit count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub hot validated hit time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot validated hit p80 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot validated hit p80 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot validated hit p90 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot validated hit p90 count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub cold promote count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub cold promote time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub hot refresh count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub hot refresh time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot refresh p80 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot refresh p80 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot refresh p90 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub hot refresh p90 count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub load from disk count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub load from disk time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub local hit count" }, // UB-stats
@@ -481,6 +490,18 @@ static stat_item_t g_sysstat_items[] = {
     { STAT_TYPE_KERNEL, "ub refresh gbp lock s time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub refresh gbp lock x count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub refresh gbp lock x time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x home node0 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x home node1 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s home node0 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s home node1 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x p80 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x p80 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x p90 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock x p90 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s p80 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s p80 count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s p90 us" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub refresh gbp lock s p90 count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub refresh reload wait count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub refresh reload wait time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub refresh readonly wait count" }, // UB-stats
@@ -489,6 +510,16 @@ static stat_item_t g_sysstat_items[] = {
     { STAT_TYPE_KERNEL, "ub reload from gbp wait reload time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub reload from gbp copy buf count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub reload from gbp copy buf time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp copy local count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp copy local time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp copy remote count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub reload from gbp copy remote time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub store to gbp copy meta count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub store to gbp copy meta time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub store to gbp copy page count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub store to gbp copy page time" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub store to gbp copy tail lsn count" }, // UB-stats
+    { STAT_TYPE_KERNEL, "ub store to gbp copy tail lsn time" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub reload from gbp readonly wait count" }, // UB-stats
     { STAT_TYPE_KERNEL, "ub reload from gbp readonly wait time" }, // UB-stats
     { STAT_TYPE_KERNEL, "pcr construct count"},
@@ -597,10 +628,18 @@ typedef enum en_sysstat_id {
     UB_HOT_FIRST_COPY_TIME, // UB-stats
     UB_HOT_VALIDATED_HIT_COUNT, // UB-stats
     UB_HOT_VALIDATED_HIT_TIME, // UB-stats
+    UB_HOT_VALIDATED_HIT_P80_US, // UB-stats
+    UB_HOT_VALIDATED_HIT_P80_COUNT, // UB-stats
+    UB_HOT_VALIDATED_HIT_P90_US, // UB-stats
+    UB_HOT_VALIDATED_HIT_P90_COUNT, // UB-stats
     UB_COLD_PROMOTE_COUNT, // UB-stats
     UB_COLD_PROMOTE_TIME, // UB-stats
     UB_HOT_REFRESH_COUNT, // UB-stats
     UB_HOT_REFRESH_TIME, // UB-stats
+    UB_HOT_REFRESH_P80_US, // UB-stats
+    UB_HOT_REFRESH_P80_COUNT, // UB-stats
+    UB_HOT_REFRESH_P90_US, // UB-stats
+    UB_HOT_REFRESH_P90_COUNT, // UB-stats
     UB_LOAD_FROM_DISK_COUNT, // UB-stats
     UB_LOAD_FROM_DISK_TIME, // UB-stats
     UB_LOCAL_HIT_COUNT, // UB-stats
@@ -615,6 +654,18 @@ typedef enum en_sysstat_id {
     UB_REFRESH_GBP_LOCK_S_TIME, // UB-stats
     UB_REFRESH_GBP_LOCK_X_COUNT, // UB-stats
     UB_REFRESH_GBP_LOCK_X_TIME, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_HOME_NODE0_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_HOME_NODE1_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_HOME_NODE0_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_HOME_NODE1_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_P80_US, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_P80_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_P90_US, // UB-stats
+    UB_REFRESH_GBP_LOCK_X_P90_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_P80_US, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_P80_COUNT, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_P90_US, // UB-stats
+    UB_REFRESH_GBP_LOCK_S_P90_COUNT, // UB-stats
     UB_REFRESH_RELOAD_WAIT_COUNT, // UB-stats
     UB_REFRESH_RELOAD_WAIT_TIME, // UB-stats
     UB_REFRESH_READONLY_WAIT_COUNT, // UB-stats
@@ -623,6 +674,16 @@ typedef enum en_sysstat_id {
     UB_RELOAD_FROM_GBP_WAIT_RELOAD_TIME, // UB-stats
     UB_RELOAD_FROM_GBP_COPY_BUF_COUNT, // UB-stats
     UB_RELOAD_FROM_GBP_COPY_BUF_TIME, // UB-stats
+    UB_RELOAD_FROM_GBP_COPY_LOCAL_COUNT, // UB-stats
+    UB_RELOAD_FROM_GBP_COPY_LOCAL_TIME, // UB-stats
+    UB_RELOAD_FROM_GBP_COPY_REMOTE_COUNT, // UB-stats
+    UB_RELOAD_FROM_GBP_COPY_REMOTE_TIME, // UB-stats
+    UB_STORE_TO_GBP_COPY_META_COUNT, // UB-stats
+    UB_STORE_TO_GBP_COPY_META_TIME, // UB-stats
+    UB_STORE_TO_GBP_COPY_PAGE_COUNT, // UB-stats
+    UB_STORE_TO_GBP_COPY_PAGE_TIME, // UB-stats
+    UB_STORE_TO_GBP_COPY_TAIL_LSN_COUNT, // UB-stats
+    UB_STORE_TO_GBP_COPY_TAIL_LSN_TIME, // UB-stats
     UB_RELOAD_FROM_GBP_READONLY_WAIT_COUNT, // UB-stats
     UB_RELOAD_FROM_GBP_READONLY_WAIT_TIME, // UB-stats
     PCR_CONSTRUCT_COUNT,
@@ -694,6 +755,10 @@ void vw_sysstat_accumulate(uint64 *stats, sql_stat_t *sql_stat, knl_stat_t *knl_
     stats[UB_REFRESH_GBP_LOCK_S_TIME] += knl_stat->ub_refresh_gbp_lock_s_time; // UB-stats
     stats[UB_REFRESH_GBP_LOCK_X_COUNT] += knl_stat->ub_refresh_gbp_lock_x_count; // UB-stats
     stats[UB_REFRESH_GBP_LOCK_X_TIME] += knl_stat->ub_refresh_gbp_lock_x_time; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_X_HOME_NODE0_COUNT] += knl_stat->ub_refresh_gbp_lock_x_home_node0_count; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_X_HOME_NODE1_COUNT] += knl_stat->ub_refresh_gbp_lock_x_home_node1_count; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_S_HOME_NODE0_COUNT] += knl_stat->ub_refresh_gbp_lock_s_home_node0_count; // UB-stats
+    stats[UB_REFRESH_GBP_LOCK_S_HOME_NODE1_COUNT] += knl_stat->ub_refresh_gbp_lock_s_home_node1_count; // UB-stats
     stats[UB_REFRESH_RELOAD_WAIT_COUNT] += knl_stat->ub_refresh_reload_wait_count; // UB-stats
     stats[UB_REFRESH_RELOAD_WAIT_TIME] += knl_stat->ub_refresh_reload_wait_time; // UB-stats
     stats[UB_REFRESH_READONLY_WAIT_COUNT] += knl_stat->ub_refresh_readonly_wait_count; // UB-stats
@@ -702,6 +767,16 @@ void vw_sysstat_accumulate(uint64 *stats, sql_stat_t *sql_stat, knl_stat_t *knl_
     stats[UB_RELOAD_FROM_GBP_WAIT_RELOAD_TIME] += knl_stat->ub_reload_from_gbp_wait_reload_time; // UB-stats
     stats[UB_RELOAD_FROM_GBP_COPY_BUF_COUNT] += knl_stat->ub_reload_from_gbp_copy_buf_count; // UB-stats
     stats[UB_RELOAD_FROM_GBP_COPY_BUF_TIME] += knl_stat->ub_reload_from_gbp_copy_buf_time; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_COPY_LOCAL_COUNT] += knl_stat->ub_reload_from_gbp_copy_local_count; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_COPY_LOCAL_TIME] += knl_stat->ub_reload_from_gbp_copy_local_time; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_COPY_REMOTE_COUNT] += knl_stat->ub_reload_from_gbp_copy_remote_count; // UB-stats
+    stats[UB_RELOAD_FROM_GBP_COPY_REMOTE_TIME] += knl_stat->ub_reload_from_gbp_copy_remote_time; // UB-stats
+    stats[UB_STORE_TO_GBP_COPY_META_COUNT] += knl_stat->ub_store_to_gbp_copy_meta_count; // UB-stats
+    stats[UB_STORE_TO_GBP_COPY_META_TIME] += knl_stat->ub_store_to_gbp_copy_meta_time; // UB-stats
+    stats[UB_STORE_TO_GBP_COPY_PAGE_COUNT] += knl_stat->ub_store_to_gbp_copy_page_count; // UB-stats
+    stats[UB_STORE_TO_GBP_COPY_PAGE_TIME] += knl_stat->ub_store_to_gbp_copy_page_time; // UB-stats
+    stats[UB_STORE_TO_GBP_COPY_TAIL_LSN_COUNT] += knl_stat->ub_store_to_gbp_copy_tail_lsn_count; // UB-stats
+    stats[UB_STORE_TO_GBP_COPY_TAIL_LSN_TIME] += knl_stat->ub_store_to_gbp_copy_tail_lsn_time; // UB-stats
     stats[UB_RELOAD_FROM_GBP_READONLY_WAIT_COUNT] += knl_stat->ub_reload_from_gbp_readonly_wait_count; // UB-stats
     stats[UB_RELOAD_FROM_GBP_READONLY_WAIT_TIME] += knl_stat->ub_reload_from_gbp_readonly_wait_time; // UB-stats
     stats[TEMP_ALLOCS] += knl_stat->temp_allocs;
@@ -816,6 +891,16 @@ status_t vw_sysstat_open(knl_handle_t se, knl_cursor_t *cursor)
     uint64 pcrh_lock_row_count = cm_atomic_get(&area->pcrh_lock_row_count);
     uint64 pcrh_lock_row_time = cm_atomic_get(&area->pcrh_lock_row_time);
     stats[PCRH_LOCK_ROW_AVG_TIME] = pcrh_lock_row_count == 0 ? 0 : pcrh_lock_row_time / pcrh_lock_row_count;
+
+    /* Latency / loop-count percentiles from recent ring samples (not summable across sessions). */
+    drc_gbp_lock_lat_percentile(OG_TRUE, &stats[UB_REFRESH_GBP_LOCK_X_P80_US], &stats[UB_REFRESH_GBP_LOCK_X_P90_US],
+        &stats[UB_REFRESH_GBP_LOCK_X_P80_COUNT], &stats[UB_REFRESH_GBP_LOCK_X_P90_COUNT]);
+    drc_gbp_lock_lat_percentile(OG_FALSE, &stats[UB_REFRESH_GBP_LOCK_S_P80_US], &stats[UB_REFRESH_GBP_LOCK_S_P90_US],
+        &stats[UB_REFRESH_GBP_LOCK_S_P80_COUNT], &stats[UB_REFRESH_GBP_LOCK_S_P90_COUNT]);
+    drc_ub_path_lat_percentile(OG_TRUE, &stats[UB_HOT_REFRESH_P80_US], &stats[UB_HOT_REFRESH_P90_US],
+        &stats[UB_HOT_REFRESH_P80_COUNT], &stats[UB_HOT_REFRESH_P90_COUNT]);
+    drc_ub_path_lat_percentile(OG_FALSE, &stats[UB_HOT_VALIDATED_HIT_P80_US], &stats[UB_HOT_VALIDATED_HIT_P90_US],
+        &stats[UB_HOT_VALIDATED_HIT_P80_COUNT], &stats[UB_HOT_VALIDATED_HIT_P90_COUNT]);
 
     return OG_SUCCESS;
 }

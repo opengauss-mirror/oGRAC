@@ -273,7 +273,8 @@ typedef struct st_buf_set {
     buf_bucket_t *buckets;                         // bucket pool
     buf_ctrl_t *ctrls;                             // page control pool
     buf_rbp_ctrl_t *rbp_ctrls;                     // page rbp control pool
-    char *page_buf;                                // page buffer
+    char *meta_buf;                                // GBP: contiguous remote_page_info_t[N]; NULL for local LBP
+    char *page_buf;                                // LBP: pages; GBP: [page|tail|pad]×N region
     union {
         buf_lru_list_t list[LRU_LIST_TYPE_COUNT];
         struct {
