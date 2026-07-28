@@ -450,9 +450,7 @@ void ckpt_reset_point(knl_session_t *session, log_point_t *point)
 
 static void ckpt_move_cleaned_pages(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
 {
-    cm_spin_lock(&set->clean_list.lock, &session->stat->spin_stat.stat_buffer);
     buf_lru_append_list(&set->clean_list, list);
-    cm_spin_unlock(&set->clean_list.lock);
 }
 
 static void ckpt_move_cleaned_pages_all_bufset(knl_session_t *session, buf_lru_list_t *list)
