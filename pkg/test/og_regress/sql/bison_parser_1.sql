@@ -516,6 +516,51 @@ FROM employees
 START WITH manager_id IS NULL
 CONNECT BY PRIOR employee_id = manager_id;
 
+-- PRIOR accepts function expressions in a hierarchical query with nested derived tables.
+drop table if exists bison_subquery_startwith_003;
+create table bison_subquery_startwith_003 (
+    id integer,
+    c_int integer,
+    c_real real,
+    c_vchar varchar(64),
+    c_number number
+);
+
+select count(*)
+from (bison_subquery_startwith_003 as t1)
+left join
+(
+    select distinct
+        ef5.c0 as c0, ef5.c1 as c1, ef5.c2 as c2,
+        ef5.c3 as c3, ef5.c4 as c4
+    from
+    (
+        select
+            t5.id as c0, t5.c_int as c1, t5.c_real as c2,
+            t5.c_vchar as c3, t5.c_number as c4
+        from (bison_subquery_startwith_003 as t5)
+        left join (select * from bison_subquery_startwith_003) on (true)
+    ) as ef5
+    inner join
+    (
+        select *
+        from bison_subquery_startwith_003
+        left join
+        (
+            select *
+            from bison_subquery_startwith_003
+            left join (select * from bison_subquery_startwith_003) on (true)
+        ) on (true)
+    ) as ef6 on (true)
+) as t2 on t1.id > t2.c0
+start with 1 = 1
+and t2.c2 < 116.123
+and t2.c3 is not null
+connect by prior to_char(t2.c4 + 1) > to_char(t1.c_number)
+and prior t2.c3 between prior t1.c_vchar and prior t2.c3 || t1.c_int;
+
+drop table if exists bison_subquery_startwith_003;
+
 -- 创建示例表
 drop table sales_data;
 CREATE TABLE sales_data (
@@ -1436,3 +1481,22 @@ drop table bison_alias_print_media;
 create table bison_alias_emp(empno number(4) not null, ename varchar2(10), job varchar2(9), mgr number(4), hiredate date, sal number(7, 2), comm number(7, 2), deptno number(2));
 select deptno, ename, sal, dense_rank() over (partition by deptno order by sal) dense_rank from bison_alias_emp where deptno = 30 order by dense_rank, ename;
 drop table bison_alias_emp;
+
+-- The DELETE target alias must not be registered as a source table before FROM/JOIN is parsed.
+drop table if exists bison_delete_alias_t1;
+drop table if exists bison_delete_alias_t2;
+create table bison_delete_alias_t1(id int);
+create table bison_delete_alias_t2(id int);
+insert into bison_delete_alias_t1 values (1);
+insert into bison_delete_alias_t2 values (1);
+commit;
+delete d
+from bison_delete_alias_t2 d
+join bison_delete_alias_t1 j on d.id = j.id
+where d.id < 100
+  and d.id < 200
+  and j.id < 3000;
+select count(*) from bison_delete_alias_t2;
+rollback;
+drop table bison_delete_alias_t2;
+drop table bison_delete_alias_t1;

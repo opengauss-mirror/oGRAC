@@ -1,0 +1,111 @@
+SQL> -- Keep statistics absent and scan 65 composite LIST partitions to cover the CBO sampling bound.
+SQL> declare
+  2     ddl_sql varchar2(32767) := 'create table cbo_part_bound_t (id integer, sub_id integer) partition by list(id) subpartition by list(sub_id) (';
+  3 begin
+  4     for i in 0..64 loop
+  5         if i > 0 then
+  6             ddl_sql := ddl_sql || ',';
+  7         end if;
+  8         ddl_sql := ddl_sql || 'partition p' || i || ' values (' || i || ') (subpartition sp' || i || ' values (' || i || '))';
+  9     end loop;
+ 10     execute immediate ddl_sql || ')';
+ 11 end;
+ 12 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> declare
+  2 begin
+  3     for i in 0..64 loop
+  4         insert into cbo_part_bound_t values(i, i);
+  5     end loop;
+  6     commit;
+  7 end;
+  8 /
+
+PL/SQL procedure successfully completed.
+
+SQL> 
+SQL> select id, rank(4) within group (order by id) as "rank"
+  2 from cbo_part_bound_t
+  3 group by id
+  4 order by id;
+
+ID           rank        
+------------ ------------
+
+0            2           
+1            2           
+2            2           
+3            2           
+4            1           
+5            1           
+6            1           
+7            1           
+8            1           
+9            1           
+10            1           
+11            1           
+12            1           
+13            1           
+14            1           
+15            1           
+16            1           
+17            1           
+18            1           
+19            1           
+20            1           
+21            1           
+22            1           
+23            1           
+24            1           
+25            1           
+26            1           
+27            1           
+28            1           
+29            1           
+30            1           
+31            1           
+32            1           
+33            1           
+34            1           
+35            1           
+36            1           
+37            1           
+38            1           
+39            1           
+40            1           
+41            1           
+42            1           
+43            1           
+44            1           
+45            1           
+46            1           
+47            1           
+48            1           
+49            1           
+50            1           
+51            1           
+52            1           
+53            1           
+54            1           
+55            1           
+56            1           
+57            1           
+58            1           
+59            1           
+60            1           
+61            1           
+62            1           
+63            1           
+64            1           
+
+65 rows fetched.
+
+SQL> 
+SQL> drop table cbo_part_bound_t;
+
+Succeed.
+
+SQL> 

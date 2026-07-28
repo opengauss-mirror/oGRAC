@@ -920,6 +920,10 @@ void check_table_stats(sql_stmt_t *stmt)
     sql_table_entry_t *table = NULL;
     for (uint32 i = 0; i < stmt->context->tables->count; i++) {
         table = (sql_table_entry_t *)cm_galist_get(stmt->context->tables, i);
+        if (table == NULL || table->dc.handle == NULL) {
+            stmt->context->opt_by_rbo = OG_TRUE;
+            return;
+        }
         dc_entity_t *entity = (dc_entity_t *)table->dc.handle;
         if (entity->type == DICT_TYPE_VIEW) {
             continue;

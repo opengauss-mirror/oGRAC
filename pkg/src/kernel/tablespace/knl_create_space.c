@@ -30,6 +30,8 @@
 #include "knl_create_space.h"
 #include "knl_context.h"
 #include "knl_punch_space.h"
+#include "cm_ip.h"
+#include "srv_param.h"
 #include "dtc_dc.h"
 #include "dtc_dls.h"
 #include "dtc_database.h"
@@ -59,12 +61,38 @@ extern "C" {
 #endif
 #endif
 
-static bool32 spc_is_configured_multi_instance(knl_session_t *session)
+/*
+ * Deployment contract for INTERCONNECT_ADDR: supported multi-instance
+ * installations use routable addresses for every node, while a loopback
+ * first address identifies a single-instance layout (which may retain a
+ * trailing compatibility placeholder). Keep this predicate in sync with any
+ * installation layout change; do not infer instance count from separators.
+ */
+static bool32 spc_is_loopback_interconnect(void)
 {
-    if (!DB_IS_CLUSTER(session)) {
+    char *interconnect_addr = srv_get_param("INTERCONNECT_ADDR");
+    text_t interconnect_addrs;
+    text_t first_node;
+    text_t first_addr;
+    char addr[OG_MAX_INST_IP_LEN] = { 0 };
+
+    if (interconnect_addr == NULL) {
         return OG_FALSE;
     }
-    return (bool32)(DB_CORE_CTRL(session)->node_count > 1);
+
+    cm_str2text(interconnect_addr, &interconnect_addrs);
+    if (!cm_fetch_text(&interconnect_addrs, ';', '\0', &first_node) ||
+        !cm_fetch_text(&first_node, ',', '\0', &first_addr) ||
+        cm_text2str(&first_addr, addr, OG_MAX_INST_IP_LEN) != OG_SUCCESS) {
+        return OG_FALSE;
+    }
+
+    return cm_is_loopback_ip(addr);
+}
+
+static bool32 spc_is_configured_multi_instance(void)
+{
+    return (bool32)!spc_is_loopback_interconnect();
 }
 
 static status_t spc_get_datafile_dir(const char *file_name, char *dir, uint32 dir_size)
@@ -200,7 +228,7 @@ static status_t spc_create_datafile_precheck(knl_session_t *session, space_t *sp
 
     (void)cm_text2str(&def->name, buf, OG_FILE_NAME_BUFFER_SIZE);
     device_type_t type = cm_device_type(buf);
-    if (spc_is_configured_multi_instance(session) && type == DEV_TYPE_FILE) {
+    if (spc_is_configured_multi_instance() && type == DEV_TYPE_FILE) {
         bool32 is_shared = OG_FALSE;
         OG_RETURN_IFERR(spc_is_shared_file_path(buf, &is_shared));
         if (!is_shared) {

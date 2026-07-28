@@ -119,7 +119,7 @@ static inline const char *cm_inet_ntop(struct sockaddr *addr, char *buffer, int 
     return buffer;
 }
 
-static inline bool32 cm_is_lookback_ip(const char *client_ip)
+static inline bool32 cm_is_loopback_ip(const char *client_ip)
 {
     if (cm_str_equal(client_ip, "127.0.0.1") ||
         cm_str_equal(client_ip, "::1") ||
@@ -154,7 +154,7 @@ static inline bool32 cm_is_localip_4win32(const char *client_ip)
     char ipv4[CM_MAX_IP_LEN];
     errno_t rc_memzero;
 
-    if (cm_is_lookback_ip(client_ip)) {
+    if (cm_is_loopback_ip(client_ip)) {
         return OG_TRUE;
     }
 
@@ -196,7 +196,7 @@ static inline bool32 cm_is_local_ip(const char *client_ip)
     struct ifaddrs *ifa = NULL;
     struct ifaddrs *if_list = NULL;
 
-    if (cm_is_lookback_ip(client_ip)) {
+    if (cm_is_loopback_ip(client_ip)) {
         return OG_TRUE;
     }
 
