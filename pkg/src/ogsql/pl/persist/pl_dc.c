@@ -2042,7 +2042,8 @@ void pl_revert_last_error(status_t status)
     }
 }
 
-status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body)
+status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body,
+    const pl_bison_language_def_t *language)
 {
     pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
     plc_desc_t desc = { 0 };
@@ -2055,7 +2056,7 @@ status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type
     desc.is_synonym = OG_FALSE;
     desc.entity = entity;
 
-    if (plc_bison_compile(stmt, &desc, args, ret_type, body) != OG_SUCCESS) {
+    if (plc_bison_compile(stmt, &desc, args, ret_type, body, language) != OG_SUCCESS) {
         return OG_ERROR;
     }
     if (g_tls_plc_error.plc_cnt == 0) {

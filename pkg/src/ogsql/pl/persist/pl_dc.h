@@ -26,6 +26,7 @@
 #define __PL_DC_H__
 
 #include "pl_dc_util.h"
+#include "call_cl.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -107,7 +108,8 @@ char *pl_get_node_type_string(expr_node_type_t type);
 status_t pl_load_entity(sql_stmt_t *stmt, pl_entry_t *entry, pl_entity_t **entity_out);
 knl_dictionary_t *pl_get_regist_knl_dc(sql_stmt_t *stmt, var_udo_t *udo_obj);
 status_t pl_regist_knl_dc(sql_stmt_t *stmt, knl_dictionary_t *dc);
-status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body);
+status_t pl_bison_compile_function_source(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body,
+    const pl_bison_language_def_t *language);
 
 static void inline pl_update_entry_status(pl_entry_t *entry, object_status_t obj_status)
 {

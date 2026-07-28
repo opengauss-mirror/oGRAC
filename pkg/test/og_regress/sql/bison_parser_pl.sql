@@ -1,5 +1,8 @@
 alter system set use_bison_parser = true;
 
+drop view if exists bison_pl_c_alias_view;
+create view bison_pl_c_alias_view as select 1 c from sys_dummy;
+drop view bison_pl_c_alias_view;
 drop function if exists bison_pl_func;
 drop function if exists bison_pl_refcur;
 drop procedure if exists bison_pl_inout_proc;
@@ -13,6 +16,43 @@ drop package if exists bison_pl_pkg;
 drop table if exists bison_pl_src;
 drop table if exists bison_pl_type_t;
 drop table if exists bison_pl_t;
+drop function if exists bison_pl_c_semicolon;
+drop function if exists bison_pl_c_missing_library;
+drop function if exists bison_pl_c_missing_name;
+drop function if exists bison_pl_c_extra_token;
+drop library if exists bison_pl_c_noexists;
+--error
+create or replace library bison_pl_c_noexists as '/tmp/bison_pl_noexists.so';
+create or replace function bison_pl_c_semicolon(p varchar2)
+return int
+as language c name og_ext_len library bison_pl_c_noexists;
+/
+create or replace function bison_pl_c_missing_library return int
+as language c name og_ext_len;
+/
+create or replace function bison_pl_c_missing_name return int
+as language c library bison_pl_c_noexists;
+/
+create or replace function bison_pl_c_extra_token return int
+as language c name og_ext_len library bison_pl_c_noexists extra;
+/
+declare
+    invalid_count int;
+    invalid_status exception;
+begin
+    select count(*) into invalid_count from my_objects
+    where object_name in ('BISON_PL_C_MISSING_LIBRARY', 'BISON_PL_C_MISSING_NAME', 'BISON_PL_C_EXTRA_TOKEN')
+    and status = 'INVALID';
+    if invalid_count <> 3 then
+        raise invalid_status;
+    end if;
+end;
+/
+drop function if exists bison_pl_c_semicolon;
+drop function if exists bison_pl_c_missing_library;
+drop function if exists bison_pl_c_missing_name;
+drop function if exists bison_pl_c_extra_token;
+drop library if exists bison_pl_c_noexists;
 
 create table bison_pl_t(id int, name varchar(32));
 create table bison_pl_src(id int, name varchar(32));
@@ -793,6 +833,96 @@ drop table bison_pl_issue245_type_t;
 select name, val from bison_pl_issue245_log order by name;
 
 drop table if exists bison_pl_issue245_log;
+
+drop table if exists bison_pl_scope_log;
+drop table if exists bison_pl_scope_src;
+create table bison_pl_scope_src(id int, note varchar2(20));
+create table bison_pl_scope_log(parser_name varchar2(10), stage varchar2(20), val int, note varchar2(20));
+insert into bison_pl_scope_src values(1, 'one');
+insert into bison_pl_scope_src values(2, 'two');
+
+alter system set use_bison_parser = true;
+
+declare
+    v_scope int := 100;
+    rc sys_refcursor;
+    v_filter int := 2;
+    v_id int;
+begin
+    declare
+        type local_row_t is record(id int, note varchar2(20));
+        v_scope local_row_t;
+        v_row bison_pl_scope_src%rowtype;
+    begin
+        select * into v_row from bison_pl_scope_src where id = 1;
+        v_scope.id := v_row.id;
+        v_scope.note := v_row.note;
+        insert into bison_pl_scope_log values('bison', 'first', v_scope.id, v_scope.note);
+    end;
+
+    declare
+        type local_row_t is record(code int, label varchar2(20));
+        v_scope local_row_t;
+        v_row bison_pl_scope_src%rowtype;
+    begin
+        select * into v_row from bison_pl_scope_src where id = 2;
+        v_scope.code := v_row.id;
+        v_scope.label := v_row.note;
+        insert into bison_pl_scope_log values('bison', 'second', v_scope.code, v_scope.label);
+    end;
+
+    open rc for select id from bison_pl_scope_src where id = v_filter;
+    fetch rc into v_id;
+    close rc;
+    insert into bison_pl_scope_log values('bison', 'outer', v_scope, 'unchanged');
+    insert into bison_pl_scope_log values('bison', 'refcursor', v_id, 'mapped');
+end;
+/
+
+alter system set use_bison_parser = false;
+
+declare
+    v_scope int := 100;
+    rc sys_refcursor;
+    v_filter int := 2;
+    v_id int;
+begin
+    declare
+        type local_row_t is record(id int, note varchar2(20));
+        v_scope local_row_t;
+        v_row bison_pl_scope_src%rowtype;
+    begin
+        select * into v_row from bison_pl_scope_src where id = 1;
+        v_scope.id := v_row.id;
+        v_scope.note := v_row.note;
+        insert into bison_pl_scope_log values('native', 'first', v_scope.id, v_scope.note);
+    end;
+
+    declare
+        type local_row_t is record(code int, label varchar2(20));
+        v_scope local_row_t;
+        v_row bison_pl_scope_src%rowtype;
+    begin
+        select * into v_row from bison_pl_scope_src where id = 2;
+        v_scope.code := v_row.id;
+        v_scope.label := v_row.note;
+        insert into bison_pl_scope_log values('native', 'second', v_scope.code, v_scope.label);
+    end;
+
+    open rc for select id from bison_pl_scope_src where id = v_filter;
+    fetch rc into v_id;
+    close rc;
+    insert into bison_pl_scope_log values('native', 'outer', v_scope, 'unchanged');
+    insert into bison_pl_scope_log values('native', 'refcursor', v_id, 'mapped');
+end;
+/
+
+alter system set use_bison_parser = true;
+
+select parser_name, stage, val, note from bison_pl_scope_log order by parser_name, stage;
+
+drop table bison_pl_scope_log;
+drop table bison_pl_scope_src;
 
 drop function if exists sys.bison_pl_issue259_func_end3;
 create or replace function sys.bison_pl_issue259_func_end3 return number is

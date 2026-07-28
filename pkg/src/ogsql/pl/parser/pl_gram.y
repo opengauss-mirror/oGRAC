@@ -59,17 +59,38 @@ typedef struct st_pl_bison_cursor_arg {
     source_location_t loc;
 } pl_bison_cursor_arg_t;
 
+typedef struct st_pl_bison_decl_scope {
+    galist_t *outer_decls;
+    galist_t *outer_type_decls;
+} pl_bison_decl_scope_t;
+
 typedef enum en_pl_bison_fragment_type {
     PL_BISON_FRAGMENT_EXPR_LIST,
     PL_BISON_FRAGMENT_EXPR_TREE,
     PL_BISON_FRAGMENT_COND_TREE
 } pl_bison_fragment_type_t;
 
+static status_t pl_bison_enter_decl_scope(pl_compiler_t *compiler, pl_bison_decl_scope_t **scope)
+{
+    OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(pl_bison_decl_scope_t), (void **)scope));
+    (*scope)->outer_decls = compiler->decls;
+    (*scope)->outer_type_decls = compiler->type_decls;
+    OG_RETURN_IFERR(plc_init_galist(compiler, &compiler->decls));
+    return plc_init_galist(compiler, &compiler->type_decls);
+}
+
+static void pl_bison_leave_decl_scope(pl_compiler_t *compiler, pl_bison_decl_scope_t *scope)
+{
+    compiler->decls = scope->outer_decls;
+    compiler->type_decls = scope->outer_type_decls;
+}
+
 extern int plsql_yylex(union YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner);
 extern void plsql_push_back_token(int token, core_yyscan_t yyscanner);
 extern union YYSTYPE *plsql_last_yylval(core_yyscan_t yyscanner);
 extern YYLTYPE *plsql_last_yylloc(core_yyscan_t yyscanner);
 extern int plsql_last_yyleng(core_yyscan_t yyscanner);
+extern void plsql_set_identifier_lookup(core_yyscan_t yyscanner, bool32 lookup_variables);
 static void plsql_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner, const char* message);
 
 #define PLSQL_YYLVAL(yyscanner) plsql_last_yylval(yyscanner)
@@ -239,6 +260,7 @@ typedef struct st_pl_bison_end_name {
 
 %type <keyword>	unreserved_keyword
 %type <res> loop_start while_start for_start case_start case_when_clause case_when_header cursor_arg
+%type <res> nested_decl_scope nested_empty_scope
 %type <expr> decl_defval decl_rec_defval cursor_arg_defval
 %type <text> expr_until_semi expr_until_then expr_until_loop expr_until_range expr_until_when
 %type <text> decl_rec_defval_expr cursor_query cursor_arg_defval_expr
@@ -439,8 +461,51 @@ pl_top_block:
         ;
 
 pl_block:
-            K_DECLARE declare_sect_b pl_block_body
-            | pl_block_body
+            nested_decl_scope declare_sect_b pl_block_body
+                {
+                    pl_compiler_t *compiler =
+                        (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    pl_bison_leave_decl_scope(compiler, (pl_bison_decl_scope_t *)$1);
+                }
+            | nested_empty_scope pl_block_body
+                {
+                    pl_compiler_t *compiler =
+                        (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    pl_bison_leave_decl_scope(compiler, (pl_bison_decl_scope_t *)$1);
+                }
+        ;
+
+nested_decl_scope:
+            nested_decl_start K_DECLARE
+                {
+                    pl_compiler_t *compiler =
+                        (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    pl_bison_decl_scope_t *scope = NULL;
+                    if (pl_bison_enter_decl_scope(compiler, &scope) != OG_SUCCESS) {
+                        parser_yyerror("init nested declaration scope failed");
+                    }
+                    $$ = scope;
+                }
+        ;
+
+nested_decl_start:
+            /* EMPTY */
+                {
+                    plsql_set_identifier_lookup(yyscanner, OG_FALSE);
+                }
+        ;
+
+nested_empty_scope:
+            /* EMPTY */
+                {
+                    pl_compiler_t *compiler =
+                        (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
+                    pl_bison_decl_scope_t *scope = NULL;
+                    if (pl_bison_enter_decl_scope(compiler, &scope) != OG_SUCCESS) {
+                        parser_yyerror("init nested block scope failed");
+                    }
+                    $$ = scope;
+                }
         ;
 
 pl_top_block_body:
@@ -452,7 +517,7 @@ pl_block_body:
         ;
 
 block_body_core:
-            K_BEGIN
+            block_body_start K_BEGIN
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     pl_line_begin_t *line = NULL;
@@ -482,11 +547,11 @@ block_body_core:
                         if (expected_name == NULL && compiler->stack.depth == 1 && compiler->obj != NULL) {
                             expected_name = &compiler->obj->name;
                         }
-                        if (check_block_end_name(compiler, expected_name, &$5, @5.loc) != OG_SUCCESS) {
+                        if (check_block_end_name(compiler, expected_name, &$6, @6.loc) != OG_SUCCESS) {
                             parser_yyerror("Undefined symbol");
                         }
                     }
-                    compiler->line_loc = @4.loc;
+                    compiler->line_loc = @5.loc;
                     plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END, (pl_line_ctrl_t **)&line);
                     if (begin_line != NULL) {
                         begin_line->end = line;
@@ -494,6 +559,13 @@ block_body_core:
                     if (plc_pop(compiler, compiler->line_loc, PBE_END, NULL) != OG_SUCCESS) {
                         parser_yyerror("pop block failed");
                     }
+                }
+        ;
+
+block_body_start:
+            /* EMPTY */
+                {
+                    plsql_set_identifier_lookup(yyscanner, OG_TRUE);
                 }
         ;
 

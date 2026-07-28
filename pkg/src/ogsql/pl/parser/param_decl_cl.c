@@ -119,11 +119,33 @@ status_t plc_convert_param_node(sql_stmt_t *stmt, expr_node_t *node, bool32 is_r
 {
     plv_decl_t *decl = NULL;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    lex_t *lex = compiler->stmt->session->lex;
 
     if (is_repeated) {
         plc_find_param_decl(compiler, p_nid, &decl);
     } else {
         // if begin line is null,it means it ocurrs in declare block, it's forbidden to use param in plv's default value
+        if ((pl_line_begin_t *)compiler->stack.items[0].entry == NULL) {
+            OG_SRC_THROW_ERROR(lex->loc, ERR_PL_PARAM_USE);
+            return OG_ERROR;
+        }
+        OG_RETURN_IFERR(plc_add_param_decl(compiler, p_nid, (uint32)node->value.v_int, &decl));
+    }
+
+    node->typmod = decl->variant.type;
+    node->value.type = OG_TYPE_INTEGER;
+    node->value.is_null = OG_FALSE;
+    return plc_build_var_address(stmt, decl, node, UDT_STACK_ADDR);
+}
+
+status_t plc_convert_param_node_bison(sql_stmt_t *stmt, expr_node_t *node, bool32 is_repeated, uint32 p_nid)
+{
+    plv_decl_t *decl = NULL;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+
+    if (is_repeated) {
+        plc_find_param_decl(compiler, p_nid, &decl);
+    } else {
         if ((pl_line_begin_t *)compiler->stack.items[0].entry == NULL) {
             OG_SRC_THROW_ERROR(node->loc, ERR_PL_PARAM_USE);
             return OG_ERROR;
@@ -131,6 +153,10 @@ status_t plc_convert_param_node(sql_stmt_t *stmt, expr_node_t *node, bool32 is_r
         OG_RETURN_IFERR(plc_add_param_decl(compiler, p_nid, (uint32)node->value.v_int, &decl));
     }
 
+    if (decl == NULL) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_PL_SYNTAX_ERROR_FMT, "unexpected null PL parameter");
+        return OG_ERROR;
+    }
     node->typmod = decl->variant.type;
     node->value.type = OG_TYPE_INTEGER;
     node->value.is_null = OG_FALSE;

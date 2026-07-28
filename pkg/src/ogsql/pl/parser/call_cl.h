@@ -33,8 +33,20 @@
 extern "C" {
 #endif
 
+typedef struct st_pl_bison_language_def {
+    text_t func_name;
+    text_t lib_user;
+    text_t lib_name;
+    sql_text_t body;
+    source_location_t loc;
+    source_location_t syntax_error_loc;
+    bool32 syntax_valid;
+} pl_bison_language_def_t;
+
 status_t plc_compile_call(pl_compiler_t *compiler, expr_node_t *expr, pl_line_normal_t *line);
 status_t plc_compile_language(pl_compiler_t *compiler, function_t *func);
+status_t plc_bison_compile_language(pl_compiler_t *compiler, function_t *func,
+    const pl_bison_language_def_t *language);
 
 #ifdef __cplusplus
 }

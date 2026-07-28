@@ -1042,6 +1042,20 @@ static void pl_bison_wrap_create_error(sql_stmt_t *stmt, pl_entity_t *pl_ctx, co
     plc_reset_tls_plc_error();
 }
 
+static status_t pl_bison_prepare_invalid_function(pl_entity_t *pl_ctx)
+{
+    if (pl_ctx->pl_type != PL_FUNCTION || pl_ctx->function != NULL) {
+        return OG_SUCCESS;
+    }
+
+    /*
+     * A syntax error in the outer Bison grammar can occur before the PL
+     * compiler allocates the function descriptor.  The legacy DDL executor
+     * expects that descriptor even when it persists an INVALID function.
+     */
+    return pl_alloc_mem(pl_ctx, sizeof(function_t), (void **)&pl_ctx->function);
+}
+
 status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt)
 {
     pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
@@ -1060,6 +1074,7 @@ status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt)
     }
 
     source = pl_ctx->create_def->source;
+    OG_RETURN_IFERR(pl_bison_prepare_invalid_function(pl_ctx));
     OG_RETURN_IFERR(pl_record_source(stmt, pl_ctx, &source));
     stmt->pl_failed = OG_TRUE;
     pl_ctx->create_def->compl_result = OG_FALSE;
@@ -1107,14 +1122,15 @@ static status_t pl_bison_compile_create_body(sql_stmt_t *stmt, var_udo_t *obj, u
 }
 
 static status_t pl_bison_parse_create_core(sql_stmt_t *stmt, var_udo_t *obj, uint32 type,
-    galist_t *args, type_word_t *ret_type, text_t *body, text_t *source)
+    galist_t *args, type_word_t *ret_type, text_t *body, text_t *source,
+    const pl_bison_language_def_t *language)
 {
     plc_desc_t desc = { 0 };
     status_t compl_ret;
     pl_entity_t *pl_ctx = stmt->pl_context;
 
     pl_prepare_compile_desc(&desc, stmt, obj, type);
-    compl_ret = plc_bison_compile(stmt, &desc, args, ret_type, body);
+    compl_ret = plc_bison_compile(stmt, &desc, args, ret_type, body, language);
     if (compl_ret != OG_SUCCESS) {
         stmt->pl_failed = OG_TRUE;
         pl_ctx->create_def->compl_result = OG_FALSE;
@@ -1134,7 +1150,7 @@ static status_t pl_bison_compile_trigger_body(sql_stmt_t *stmt, var_udo_t *obj, 
     pl_entity_t *pl_ctx = stmt->pl_context;
 
     pl_prepare_compile_desc(&desc, stmt, obj, PL_TRIGGER);
-    compl_ret = plc_bison_compile(stmt, &desc, NULL, NULL, body);
+    compl_ret = plc_bison_compile(stmt, &desc, NULL, NULL, body, NULL);
     if (compl_ret != OG_SUCCESS) {
         stmt->pl_failed = OG_TRUE;
         pl_ctx->create_def->compl_result = OG_FALSE;
@@ -1148,14 +1164,15 @@ static status_t pl_bison_compile_trigger_body(sql_stmt_t *stmt, var_udo_t *obj, 
     return pl_check_trigger_create_priv(stmt, obj);
 }
 
-status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, text_t *body)
+status_t pl_bison_compile_procedure_source(sql_stmt_t *stmt, galist_t *args, text_t *body,
+    const pl_bison_language_def_t *language)
 {
     pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
     plc_desc_t desc = { 0 };
 
     pl_prepare_compile_desc(&desc, stmt, &entity->def, PL_PROCEDURE);
 
-    if (plc_bison_compile(stmt, &desc, args, NULL, body) != OG_SUCCESS) {
+    if (plc_bison_compile(stmt, &desc, args, NULL, body, language) != OG_SUCCESS) {
         return OG_ERROR;
     }
     if (g_tls_plc_error.plc_cnt == 0) {
@@ -1211,7 +1228,7 @@ status_t pl_bison_compile_stored_body_source(sql_stmt_t *stmt, text_t *program_b
                 OG_THROW_ERROR(ERR_PL_SYNTAX_ERROR_FMT, "procedure body expected");
                 return OG_ERROR;
             }
-            return pl_bison_compile_procedure_source(stmt, NULL, program_body);
+            return pl_bison_compile_procedure_source(stmt, NULL, program_body, NULL);
         case PL_PACKAGE_SPEC:
         case PL_PACKAGE_BODY:
         case PL_TYPE_SPEC:
@@ -1226,19 +1243,20 @@ status_t pl_bison_compile_stored_body_source(sql_stmt_t *stmt, text_t *program_b
     }
 }
 
-status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, galist_t *args, text_t *body, text_t *source)
+status_t pl_bison_parse_create_procedure(sql_stmt_t *stmt, galist_t *args, text_t *body, text_t *source,
+    const pl_bison_language_def_t *language)
 {
     pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
 
-    return pl_bison_parse_create_core(stmt, &pl_ctx->def, PL_PROCEDURE, args, NULL, body, source);
+    return pl_bison_parse_create_core(stmt, &pl_ctx->def, PL_PROCEDURE, args, NULL, body, source, language);
 }
 
 status_t pl_bison_parse_create_function(sql_stmt_t *stmt, galist_t *args, type_word_t *ret_type, text_t *body,
-    text_t *source)
+    text_t *source, const pl_bison_language_def_t *language)
 {
     pl_entity_t *pl_ctx = (pl_entity_t *)stmt->pl_context;
 
-    return pl_bison_parse_create_core(stmt, &pl_ctx->def, PL_FUNCTION, args, ret_type, body, source);
+    return pl_bison_parse_create_core(stmt, &pl_ctx->def, PL_FUNCTION, args, ret_type, body, source, language);
 }
 
 status_t pl_bison_parse_create_package(sql_stmt_t *stmt, text_t *body, text_t *source)
@@ -1376,7 +1394,7 @@ status_t pl_bison_compile_stored_trigger_body_source(sql_stmt_t *stmt, pl_bison_
 
     OG_RETURN_IFERR(pl_bison_prepare_trigger_desc_core(stmt, &entity->def, trigger_def));
     pl_prepare_compile_desc(&desc, stmt, &entity->def, PL_TRIGGER);
-    if (plc_bison_compile(stmt, &desc, NULL, NULL, trigger_def->body) != OG_SUCCESS) {
+    if (plc_bison_compile(stmt, &desc, NULL, NULL, trigger_def->body, NULL) != OG_SUCCESS) {
         return OG_ERROR;
     }
     if (g_tls_plc_error.plc_cnt == 0) {

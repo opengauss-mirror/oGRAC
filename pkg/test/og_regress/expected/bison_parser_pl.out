@@ -5,6 +5,18 @@ SQL> alter system set use_bison_parser = true;
 Succeed.
 
 SQL> 
+SQL> drop view if exists bison_pl_c_alias_view;
+
+Succeed.
+
+SQL> create view bison_pl_c_alias_view as select 1 c from sys_dummy;
+
+Succeed.
+
+SQL> drop view bison_pl_c_alias_view;
+
+Succeed.
+
 SQL> drop function if exists bison_pl_func;
 
 Succeed.
@@ -54,6 +66,106 @@ SQL> drop table if exists bison_pl_type_t;
 Succeed.
 
 SQL> drop table if exists bison_pl_t;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_semicolon;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_library;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_name;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_extra_token;
+
+Succeed.
+
+SQL> drop library if exists bison_pl_c_noexists;
+
+Succeed.
+
+SQL> --error
+SQL> create or replace library bison_pl_c_noexists as '/tmp/bison_pl_noexists.so';
+
+OG-00771, [1:50]library file /tmp/bison_pl_noexists.so does not exist
+SQL> create or replace function bison_pl_c_semicolon(p varchar2)
+  2 return int
+  3 as language c name og_ext_len library bison_pl_c_noexists;
+  4 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_SEMICOLON) terminated with compiling errors
+[3:4] PLC-00888 Library SYS.BISON_PL_C_NOEXISTS does not exist
+
+
+SQL> create or replace function bison_pl_c_missing_library return int
+  2 as language c name og_ext_len;
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_MISSING_LIBRARY) terminated with compiling errors
+[2:30] PLC-00916 PL/SQL:syntax error(invalid LANGUAGE C definition)
+
+
+SQL> create or replace function bison_pl_c_missing_name return int
+  2 as language c library bison_pl_c_noexists;
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_MISSING_NAME) terminated with compiling errors
+[2:42] PLC-00916 PL/SQL:syntax error(invalid LANGUAGE C definition)
+
+
+SQL> create or replace function bison_pl_c_extra_token return int
+  2 as language c name og_ext_len library bison_pl_c_noexists extra;
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_C_EXTRA_TOKEN) terminated with compiling errors
+[2:59] PLC-00916 PL/SQL:syntax error(invalid LANGUAGE C definition)
+
+
+SQL> declare
+  2     invalid_count int;
+  3     invalid_status exception;
+  4 begin
+  5     select count(*) into invalid_count from my_objects
+  6     where object_name in ('BISON_PL_C_MISSING_LIBRARY', 'BISON_PL_C_MISSING_NAME', 'BISON_PL_C_EXTRA_TOKEN')
+  7     and status = 'INVALID';
+  8     if invalid_count <> 3 then
+  9         raise invalid_status;
+ 10     end if;
+ 11 end;
+ 12 /
+
+PL/SQL procedure successfully completed.
+
+SQL> drop function if exists bison_pl_c_semicolon;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_library;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_missing_name;
+
+Succeed.
+
+SQL> drop function if exists bison_pl_c_extra_token;
+
+Succeed.
+
+SQL> drop library if exists bison_pl_c_noexists;
 
 Succeed.
 
@@ -1315,6 +1427,149 @@ pls_integer                              1
 
 SQL>
 SQL> drop table if exists bison_pl_issue245_log;
+
+Succeed.
+
+SQL>
+SQL> drop table if exists bison_pl_scope_log;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_scope_src;
+
+Succeed.
+
+SQL> create table bison_pl_scope_src(id int, note varchar2(20));
+
+Succeed.
+
+SQL> create table bison_pl_scope_log(parser_name varchar2(10), stage varchar2(20), val int, note varchar2(20));
+
+Succeed.
+
+SQL> insert into bison_pl_scope_src values(1, 'one');
+
+1 rows affected.
+
+SQL> insert into bison_pl_scope_src values(2, 'two');
+
+1 rows affected.
+
+SQL>
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     v_scope int := 100;
+  3     rc sys_refcursor;
+  4     v_filter int := 2;
+  5     v_id int;
+  6 begin
+  7     declare
+  8         type local_row_t is record(id int, note varchar2(20));
+  9         v_scope local_row_t;
+ 10         v_row bison_pl_scope_src%rowtype;
+ 11     begin
+ 12         select * into v_row from bison_pl_scope_src where id = 1;
+ 13         v_scope.id := v_row.id;
+ 14         v_scope.note := v_row.note;
+ 15         insert into bison_pl_scope_log values('bison', 'first', v_scope.id, v_scope.note);
+ 16     end;
+ 17
+ 18     declare
+ 19         type local_row_t is record(code int, label varchar2(20));
+ 20         v_scope local_row_t;
+ 21         v_row bison_pl_scope_src%rowtype;
+ 22     begin
+ 23         select * into v_row from bison_pl_scope_src where id = 2;
+ 24         v_scope.code := v_row.id;
+ 25         v_scope.label := v_row.note;
+ 26         insert into bison_pl_scope_log values('bison', 'second', v_scope.code, v_scope.label);
+ 27     end;
+ 28
+ 29     open rc for select id from bison_pl_scope_src where id = v_filter;
+ 30     fetch rc into v_id;
+ 31     close rc;
+ 32     insert into bison_pl_scope_log values('bison', 'outer', v_scope, 'unchanged');
+ 33     insert into bison_pl_scope_log values('bison', 'refcursor', v_id, 'mapped');
+ 34 end;
+ 35 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     v_scope int := 100;
+  3     rc sys_refcursor;
+  4     v_filter int := 2;
+  5     v_id int;
+  6 begin
+  7     declare
+  8         type local_row_t is record(id int, note varchar2(20));
+  9         v_scope local_row_t;
+ 10         v_row bison_pl_scope_src%rowtype;
+ 11     begin
+ 12         select * into v_row from bison_pl_scope_src where id = 1;
+ 13         v_scope.id := v_row.id;
+ 14         v_scope.note := v_row.note;
+ 15         insert into bison_pl_scope_log values('native', 'first', v_scope.id, v_scope.note);
+ 16     end;
+ 17
+ 18     declare
+ 19         type local_row_t is record(code int, label varchar2(20));
+ 20         v_scope local_row_t;
+ 21         v_row bison_pl_scope_src%rowtype;
+ 22     begin
+ 23         select * into v_row from bison_pl_scope_src where id = 2;
+ 24         v_scope.code := v_row.id;
+ 25         v_scope.label := v_row.note;
+ 26         insert into bison_pl_scope_log values('native', 'second', v_scope.code, v_scope.label);
+ 27     end;
+ 28
+ 29     open rc for select id from bison_pl_scope_src where id = v_filter;
+ 30     fetch rc into v_id;
+ 31     close rc;
+ 32     insert into bison_pl_scope_log values('native', 'outer', v_scope, 'unchanged');
+ 33     insert into bison_pl_scope_log values('native', 'refcursor', v_id, 'mapped');
+ 34 end;
+ 35 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL>
+SQL> select parser_name, stage, val, note from bison_pl_scope_log order by parser_name, stage;
+
+PARSER_NAME STAGE                VAL          NOTE
+----------- -------------------- ------------ --------------------
+bison       first                1            one
+bison       outer                100          unchanged
+bison       refcursor            2            mapped
+bison       second               2            two
+native      first                1            one
+native      outer                100          unchanged
+native      refcursor            2            mapped
+native      second               2            two
+
+8 rows fetched.
+
+SQL>
+SQL> drop table bison_pl_scope_log;
+
+Succeed.
+
+SQL> drop table bison_pl_scope_src;
 
 Succeed.
 

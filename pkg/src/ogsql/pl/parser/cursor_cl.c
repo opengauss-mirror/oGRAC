@@ -697,16 +697,8 @@ status_t plc_compile_syscursor_def(pl_compiler_t *compiler, word_t *word, plv_de
     pl_entity_t *pl_entity = compiler->entity;
     OG_RETURN_IFERR(pl_copy_object_name_ci(pl_entity, word->type, (text_t *)&word->text, &decl->name));
     OG_RETURN_IFERR(pl_alloc_mem(pl_entity, sizeof(plv_cursor_context_t), (void **)&decl->cursor.ogx));
-    decl->type = PLV_CUR;
-    decl->cursor.sql.value = CM_NULL_TEXT;
-    decl->cursor.sql.loc = word->loc;
-    decl->cursor.sql.implicit = OG_FALSE;
     decl->cursor.ogx->is_sysref = (bool8)OG_TRUE;
-    decl->cursor.ogx->is_err = (bool8)OG_FALSE;
-    decl->cursor.ogx->args = NULL;
-    decl->cursor.ogx->context = NULL;
     decl->cursor.input = NULL;
-    decl->cursor.record = NULL;
     return OG_SUCCESS;
 }
 

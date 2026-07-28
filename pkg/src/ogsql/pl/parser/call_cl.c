@@ -157,20 +157,25 @@ static status_t plc_compile_language_prepare(pl_compiler_t *compiler, function_t
     return OG_SUCCESS;
 }
 
-status_t plc_compile_language(pl_compiler_t *compiler, function_t *func)
+static status_t plc_check_language_param_count(pl_compiler_t *compiler, function_t *func)
 {
     galist_t *decls = func->desc.params;
     pl_entity_t *entity = compiler->entity;
-    sql_stmt_t *stmt = compiler->stmt;
-    pl_line_begin_t *begin_line = NULL;
     uint32 param_count = (entity->pl_type == PL_PROCEDURE) ? decls->count : (decls->count - 1);
+
     if (param_count > FUNC_MAX_ARGS) {
         OG_THROW_ERROR(ERR_TOO_MANY_OBJECTS, param_count, "C-LANG function params count(100)");
         return OG_ERROR;
     }
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN, (pl_line_ctrl_t **)&begin_line));
-    func->body = (void *)begin_line;
-    OG_RETURN_IFERR(plc_compile_language_prepare(compiler, func, begin_line));
+
+    return OG_SUCCESS;
+}
+
+static status_t plc_compile_language_verify(pl_compiler_t *compiler, function_t *func,
+    pl_line_begin_t *begin_line)
+{
+    galist_t *decls = func->desc.params;
+    sql_stmt_t *stmt = compiler->stmt;
 
     bool32 exists = OG_FALSE;
     uint32 uid = 0;
@@ -198,4 +203,47 @@ status_t plc_compile_language(pl_compiler_t *compiler, function_t *func)
     OG_RETURN_IFERR(plc_language_verify_args(decls));
 
     return OG_SUCCESS;
+}
+
+status_t plc_compile_language(pl_compiler_t *compiler, function_t *func)
+{
+    pl_line_begin_t *begin_line = NULL;
+
+    OG_RETURN_IFERR(plc_check_language_param_count(compiler, func));
+    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN, (pl_line_ctrl_t **)&begin_line));
+    func->body = (void *)begin_line;
+    OG_RETURN_IFERR(plc_compile_language_prepare(compiler, func, begin_line));
+    return plc_compile_language_verify(compiler, func, begin_line);
+}
+
+status_t plc_bison_compile_language(pl_compiler_t *compiler, function_t *func,
+    const pl_bison_language_def_t *language)
+{
+    pl_line_begin_t *begin_line = NULL;
+    text_t curr_schema;
+
+    OG_RETURN_IFERR(plc_check_language_param_count(compiler, func));
+    compiler->line_loc = language->loc;
+    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN, (pl_line_ctrl_t **)&begin_line));
+    compiler->body = begin_line;
+    func->body = (void *)begin_line;
+
+    if (!language->syntax_valid) {
+        compiler->line_loc = language->syntax_error_loc;
+        OG_SRC_THROW_ERROR(language->syntax_error_loc, ERR_PL_SYNTAX_ERROR_FMT, "invalid LANGUAGE C definition");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(pl_copy_text(compiler->entity, (text_t *)&language->func_name, &begin_line->func));
+    if (language->lib_user.len == 0) {
+        cm_str2text(compiler->stmt->session->curr_schema, &curr_schema);
+        OG_RETURN_IFERR(pl_copy_text(compiler->entity, &curr_schema, &begin_line->lib_user));
+    } else {
+        OG_RETURN_IFERR(pl_copy_prefix_tenant(compiler->stmt, (text_t *)&language->lib_user,
+            &begin_line->lib_user, pl_copy_name));
+    }
+    OG_RETURN_IFERR(pl_copy_text(compiler->entity, (text_t *)&language->lib_name, &begin_line->lib_name));
+
+    func->desc.lang_type = LANG_C;
+    return plc_compile_language_verify(compiler, func, begin_line);
 }
