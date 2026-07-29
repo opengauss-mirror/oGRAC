@@ -122,7 +122,7 @@ static status_t spc_extend_temp_extent(knl_session_t *session, space_t *space, p
     return OG_SUCCESS;
 }
 
-static status_t spc_load_temp_page_header(knl_session_t *session, page_id_t page_id, page_head_t *page)
+status_t spc_load_temp_page_header(knl_session_t *session, page_id_t page_id, page_head_t *page)
 {
     datafile_t *df = NULL;
     int32 *handle = NULL;

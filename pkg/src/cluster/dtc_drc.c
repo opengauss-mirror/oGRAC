@@ -647,7 +647,7 @@ status_t drc_get_page_owner_id(knl_session_t *session, page_id_t pagid, uint8 *i
     if (NULL == buf_res) {
         cm_spin_unlock(&bucket->lock);
         *id = OG_INVALID_ID8;
-        return OG_ERROR;
+        return OG_SUCCESS;
     }
 
     if ((buf_res->claimed_owner == OG_INVALID_ID8) && (g_rc_ctx->status >= REFORM_RECOVER_DONE)) {

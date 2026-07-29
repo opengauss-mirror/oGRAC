@@ -2810,6 +2810,11 @@ static status_t pcrb_try_split_page(knl_session_t *session, knl_cursor_t *cursor
     btree = CURSOR_BTREE(cursor);
 
     dls_latch_x(session, &btree->struct_latch, session->id, &session->stat_btree);
+    if (session->is_btree_splitting == OG_TRUE) {
+        OG_LOG_DEBUG_WAR("[BTREE] the remote node is doing btree splitting!");
+        session->is_btree_splitting = OG_FALSE;
+        return OG_SUCCESS;
+    }
 
     /*
      * In case of struct version is the same but btree is splitting,
@@ -2824,6 +2829,19 @@ static status_t pcrb_try_split_page(knl_session_t *session, knl_cursor_t *cursor
     if (struct_ver != version || btree->is_splitting || trigger_version != DRC_GET_CURR_REFORM_VERSION) {
         dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
         return OG_SUCCESS;
+    }
+
+    drid_t *lock_id = &(btree->struct_latch.drid);
+    knl_part_locate_t part_loc;
+    part_loc.part_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->parentpart : lock_id->part;
+    part_loc.subpart_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->part : lock_id->parentpart;
+
+    bool8 other_node_splitting = false;
+    if (dtc_get_btree_split_status(session, btree, part_loc, &other_node_splitting) == OG_SUCCESS) {
+        if (other_node_splitting) {
+            dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
+            return OG_SUCCESS;
+        }
     }
 
     btree->is_splitting = OG_TRUE;
@@ -3585,8 +3603,22 @@ void pcrb_recycle_leaf(knl_session_t *session, btree_t *btree, knl_part_locate_t
     log_atomic_op_begin(session);
     for (;;) {
         dls_latch_x(session, &btree->struct_latch, session->id, &session->stat_btree);
-        if (!btree->is_splitting) {
+        if (session->is_btree_splitting == OG_FALSE) {
             break;
+        }
+
+        if (!btree->is_splitting) {
+            drid_t *lock_id = &(btree->struct_latch.drid);
+            knl_part_locate_t part_loc;
+            part_loc.part_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->parentpart : lock_id->part;
+            part_loc.subpart_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->part : lock_id->parentpart;
+
+            bool8 other_node_splitting = false;
+            if (dtc_get_btree_split_status(session, btree, part_loc, &other_node_splitting) == OG_SUCCESS) {
+                if (!other_node_splitting) {
+                    break;
+                }
+            }
         }
         dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
         cm_spin_sleep();
@@ -3630,16 +3662,6 @@ void pcrb_recycle_leaf(knl_session_t *session, btree_t *btree, knl_part_locate_t
     log_atomic_op_end(session);
     CM_RESTORE_STACK(session->stack);
 
-    if (DB_IS_CLUSTER(session)) {
-        status_t ret = dtc_broadcast_btree_split(session, btree, part_loc, OG_TRUE);
-        if (ret != OG_SUCCESS) {
-            knl_panic_log(
-                0,
-                "[DTC] pcrb_recycle_leaf failed to broadcast btree split info, abort, uid/table_id/index_id/part:[%d-%d-%d-%u-%u], struct version:%llu",
-                btree->index->desc.uid, btree->index->desc.table_id, btree->index->desc.id, part_loc.part_no,
-                part_loc.subpart_no, btree->struct_ver);
-        }
-    }
     dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
 }
 

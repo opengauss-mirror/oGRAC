@@ -36,6 +36,7 @@ status_t spc_alloc_swap_extent(knl_session_t *session, space_t *space, page_id_t
 page_id_t spc_try_get_next_temp_ext(knl_session_t *session, page_id_t extent);
 space_t *spc_get_temp_undo(knl_session_t *session);
 void spc_free_temp_extent(knl_session_t *session, space_t *space, page_id_t extent);
+status_t spc_load_temp_page_header(knl_session_t *session, page_id_t page_id, page_head_t *page);
 
 #ifdef __cplusplus
 }

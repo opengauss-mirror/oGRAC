@@ -23,6 +23,7 @@
  * -------------------------------------------------------------------------
  */
 #include "knl_cluster_module.h"
+#include "knl_temp_space.h"
 #include "dtc_ckpt.h"
 #include "dtc_dcs.h"
 #include "dtc_buffer.h"
@@ -139,6 +140,22 @@ bool32 dtc_need_empty_ckpt(knl_session_t* session)
     ckpt_context_t* ckpt_ctx = &session->kernel->ckpt_ctx;
     dtc_node_ctrl_t *node_ctrl = dtc_my_ctrl(session);
     return log_cmp_point(&node_ctrl->rcy_point, &ckpt_ctx->lrp_point) < 0;
+}
+
+static status_t dtc_get_disk_page_lsn(knl_session_t *session, page_id_t page_id, uint64 *disk_lsn)
+{
+    char *alloc_buffer = (char *)cm_push(session->stack, (uint32)(DEFAULT_PAGE_SIZE(session) + OG_MAX_ALIGN_SIZE_4K));
+    char *buffer = (char *)cm_aligned_buf(alloc_buffer);
+    page_head_t *page_head = (page_head_t *)buffer;
+    if (OG_SUCCESS != spc_load_temp_page_header(session, page_id, page_head)) {
+        cm_pop(session->stack);
+        *disk_lsn = 0;
+        return OG_ERROR;
+    }
+
+    *disk_lsn = page_head->lsn;
+    cm_pop(session->stack);
+    return OG_SUCCESS;
 }
 
 bool32 dtc_add_to_edp_group(knl_session_t *session, ckpt_edp_group_t *dst, uint32 count, page_id_t page, uint64 lsn)
@@ -536,12 +553,14 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
             /* if it's local clean shared copy from remote dirty page, it may be swapped out of memory. Notify requester
                with invalid lsn, and requester need to load from disk and check.
             */
+            uint64 disk_lsn = 0;
             i++;
-            (void)dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session), page_id,
-                clean_lsn);
-            OG_LOG_RUN_WAR("[CKPT][%u-%u][ckpt remote prepare]: not found in memory, page is clean, and resend clean "
-                "edp message, requester needs to double check disk page, clean_lsn:%llu, current_lsn:%llu",
-                page_id.file, page_id.page, clean_lsn, DB_CURR_LSN(session));
+            (void)dtc_get_disk_page_lsn(session, page_id, &disk_lsn);
+            if (!dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session), page_id,
+                disk_lsn)) {
+                break;
+            }
+
             continue;
         }
 

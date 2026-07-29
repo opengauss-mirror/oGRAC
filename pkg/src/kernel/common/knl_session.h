@@ -484,6 +484,7 @@ typedef struct st_knl_session {
     int32 logic_log_num;
     dtc_session_type_e dtc_session_type;
     bool8 is_loading;    // is loading dc
+    bool8 is_btree_splitting;
     text_t *dist_ddl_id;
 
     lock_group_t alck_lock_group;

@@ -129,6 +129,12 @@ static inline void *cm_aligned_buf(void *buf)
     return (char *)buf + (OG_MAX_ALIGN_SIZE_4K - ((uintptr_t)buf) % OG_MAX_ALIGN_SIZE_4K);
 }
 
+static inline void *cm_aligned_with_size(void *buf, uint32 size)
+{
+    return (char *)buf + (size - ((uintptr_t)buf) % size);
+}
+
+
 status_t cm_aligned_malloc(int64 size, const char *name, aligned_buf_t *buf);
 status_t cm_aligned_realloc(int64 size, const char *name, aligned_buf_t *buf);
 static inline void cm_aligned_free(aligned_buf_t *buf)

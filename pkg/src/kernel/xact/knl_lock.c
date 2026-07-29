@@ -1510,7 +1510,7 @@ void lock_free(knl_session_t *session, knl_rm_t *rm)
 {
     lock_group_t *row = &rm->row_lock_group;
     lock_group_t *key = &rm->key_lock_group;
-    bool32 delay_cleanout = OG_TRUE;
+    bool32 delay_cleanout = OG_FALSE;
 
     if (row->glocks.count + key->glocks.count > LOCKS_THRESHOLD(session) && session->kernel->attr.delay_cleanout) {
         delay_cleanout = OG_TRUE;

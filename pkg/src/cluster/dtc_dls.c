@@ -85,6 +85,9 @@ static status_t dls_request_msg(knl_session_t *session, drid_t *id, uint8 dst_in
     }
 
     ret = lock_ack->lock_status;
+    if (ret == OG_ERROR && lock_ack->is_btree_splitting) {
+        session->is_btree_splitting = OG_TRUE;
+    }
     mes_release_message_buf(recv_msg.buffer);
 
     return ret;
@@ -260,7 +263,7 @@ static status_t dls_broadcast_btree_split(knl_session_t *session, drid_t *lock_i
 }
 
 static status_t dls_process_release_ownership(knl_session_t *session, drid_t *lock_id, drc_lock_mode_e mode,
-                                              uint64 req_version, uint32 release_timeout_ticks)
+    uint64 req_version, uint32 release_timeout_ticks, bool8 *is_btree_splitting)
 {
     bool8 is_locked = OG_TRUE;
     bool8 is_owner = OG_FALSE;
@@ -347,6 +350,9 @@ static status_t dls_process_release_ownership(knl_session_t *session, drid_t *lo
             }
             if (dls_broadcast_btree_split(session, lock_id, mode) != OG_SUCCESS) {
                 lock_res->is_releasing = OG_FALSE;
+                if (is_btree_splitting != NULL) {
+                    *is_btree_splitting = true;
+                }
                 drc_unlock_local_resx(lock_res);
                 return OG_ERROR;
             }
@@ -503,7 +509,7 @@ status_t dls_process_ask_master_for_lock(knl_session_t *session, mes_message_t *
         if (self_id == owner_id) {
             // master is the owner
             ret = dls_process_release_ownership(session, lock_id, lock_req.req_mode, req_version,
-                                                lock_req.release_timeout_ticks);
+                                                lock_req.release_timeout_ticks, NULL);
         } else {
             // somebody is the owner
             ret = dls_request_lock_msg(session, lock_id, owner_id, MES_CMD_RELEASE_LOCK, &req_info, DLS_REQ_LOCK,
@@ -575,7 +581,7 @@ status_t dls_process_ask_master_for_latch(knl_session_t *session, mes_message_t 
             // master is the owner
             if (self_id == i) {
                 ret = dls_process_release_ownership(session, lock_id, req_info.req_mode, req_version,
-                                                    lock_req.release_timeout_ticks);
+                                                    lock_req.release_timeout_ticks, NULL);
             } else {
                 // somebody is the owner
                 ret = dls_request_lock_msg(session, lock_id, i, MES_CMD_RELEASE_LOCK, &req_info, DLS_REQ_LOCK,
@@ -745,6 +751,7 @@ void dls_process_lock_msg(void *sess, mes_message_t *receive_msg)
     bool32 claim = OG_FALSE;
     uint8 cmd = MES_CMD_LOCK_ACK;
     knl_session_t *session = (knl_session_t *)sess;
+    bool8 is_btree_splitting = false;
 
     DTC_DLS_DEBUG_INF("[DLS] process message type(%u),resource id(%u/%u/%u/%u/%u), from %d, sid:%d, req mode:%d ",
                       receive_msg->head->cmd, lock_id->type, lock_id->uid, lock_id->id, lock_id->idx, lock_id->part,
@@ -770,7 +777,7 @@ void dls_process_lock_msg(void *sess, mes_message_t *receive_msg)
         case MES_CMD_RELEASE_LOCK:
             // owner receive message, others want the spinlock ownership, so i should release the ownership
             ret = dls_process_release_ownership(session, lock_id, lock_req.req_mode, req_version,
-                                                lock_req.release_timeout_ticks);
+                                                lock_req.release_timeout_ticks, &is_btree_splitting);
             break;
         case MES_CMD_TRY_RELEASE_LOCK:
             ret = dls_process_try_release_ownership(session, lock_id, lock_req.req_mode, req_version);
@@ -806,6 +813,11 @@ void dls_process_lock_msg(void *sess, mes_message_t *receive_msg)
     mes_init_ack_head(&lock_req.head, &lock_ack.head, cmd, sizeof(msg_lock_ack_t), OG_INVALID_ID16);
     lock_ack.lock_status = ret;
     lock_ack.req_version = req_version;
+    if (ret == OG_ERROR && is_btree_splitting) {
+        lock_ack.is_btree_splitting = true;
+    } else {
+        lock_ack.is_btree_splitting = false;
+    }
     mes_release_message_buf(receive_msg->buffer);
 
     ret = dcs_send_data_retry(&lock_ack);
@@ -906,6 +918,10 @@ static status_t dls_request_lock(knl_session_t *session, drid_t *lock_id, drc_re
         }
         SYNC_POINT_GLOBAL_START(OGRAC_DLS_REQUEST_LOCK_MSG_SEND_SUCC_ABORT, NULL, 0);
         SYNC_POINT_GLOBAL_END;
+    }
+
+    if (ret == OG_SUCCESS) {
+        session->is_btree_splitting = OG_FALSE;
     }
 
     DTC_DRC_DEBUG_INF("[DRC][%u/%u/%u/%u/%u][finish lock res]: req mode=%u, from %d, sid:%d", lock_id->type,
@@ -1370,6 +1386,8 @@ bool32 dls_request_latch_x(knl_session_t *session, drid_t *lock_id, bool32 timeo
         ret = dls_request_lock(session, lock_id, &req_info, MES_CMD_REQUEST_LATCH_X);
         if (ret == OG_SUCCESS) {
             return OG_TRUE;
+        } else if (session->is_btree_splitting == OG_TRUE) {
+            return OG_FALSE;
         }
 
         if (timeout && SECUREC_UNLIKELY(wait_ticks >= timeout_ticks)) {
@@ -1499,6 +1517,11 @@ void dls_latch_x(knl_session_t *session, drlatch_t *dlatch, uint32 sid, latch_st
                     locked = dls_request_latch_x(session, &dlatch->drid, OG_TRUE, 1, OG_INVALID_ID32);
                     if (!locked) {
                         drc_unlock_local_resx(lock_res);
+                        if ((dlatch->drid.type == DR_TYPE_BTREE_LATCH ||
+                            dlatch->drid.type == DR_TYPE_BRTEE_PART_LATCH) &&
+                            session->is_btree_splitting == OG_TRUE) {
+                            return;
+                        }
                         cm_spin_sleep();
                         continue;
                     }
