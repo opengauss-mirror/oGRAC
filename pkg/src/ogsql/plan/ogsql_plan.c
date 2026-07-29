@@ -453,9 +453,15 @@ sql_table_t *sql_get_driver_table(plan_assist_t *plan_ass)
 
 bool32 check_stats_empty(cbo_stats_table_t *tab_stats)
 {
-    return (bool32)(tab_stats == NULL ||
-                    tab_stats->col_map == NULL ||
-                    (tab_stats->rows == 0 && tab_stats->blocks == 0));
+    if (tab_stats == NULL || tab_stats->col_map == NULL) {
+        return OG_TRUE;
+    }
+
+    if (tab_stats->rows == 0 && tab_stats->blocks == 0) {
+        return (bool32)(tab_stats->analyse_time == 0);
+    }
+
+    return OG_FALSE;
 }
 
 bool32 check_table_stats_empty(knl_handle_t handle, sql_table_t *table)
