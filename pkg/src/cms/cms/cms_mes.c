@@ -520,12 +520,18 @@ void cms_mes_send_entry(thread_t* thread)
 
         ret = cms_mes_send_to(msg);
         if (ret != OG_SUCCESS) {
-            CMS_LOG_MSG(OG_LOG_DEBUG_ERR, "send msg faild", msg);
+            CMS_LOG_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                "send msg to node %u failed, msg type %u",
+                msg->dest_node, msg->msg_type);
+            CMS_LOG_DEBUG_ERR("send msg to node %u faild, msg type %u",
+                msg->dest_node, msg->msg_type);
         } else {
             if (CMS_IS_TIMER_MSG(msg->msg_type)) {
-                CMS_LOG_MSG(CMS_LOG_TIMER, "send msg succeed", msg);
+                CMS_LOG_TIMER("send msg to node %u succeed, msg type %u",
+                    msg->dest_node, msg->msg_type);
             } else {
-                CMS_LOG_MSG(CMS_LOG_DEBUG_INF, "send msg succeed", msg);
+                CMS_LOG_DEBUG_INF("send msg to node %u succeed, msg type %u",
+                    msg->dest_node, msg->msg_type);
             }
         }
         cms_que_free_node(node);
