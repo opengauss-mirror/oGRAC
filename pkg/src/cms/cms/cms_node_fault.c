@@ -57,6 +57,7 @@ void cms_hb_counter_update(cms_packet_head_t *head)
     stat->last_time = cm_now();
     cm_atomic_set(&stat->lost_cnt, 0);
     cm_atomic_inc(&stat->recv_cnt);
+    CMS_LOG_DEBUG_INF("hb counter update, node id %u", node_id);
 }
 
 void cms_res_offline_broadcast(uint32 offline_node)

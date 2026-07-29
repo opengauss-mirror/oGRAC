@@ -64,6 +64,7 @@ void cms_proc_msg_req_hb(cms_packet_head_t* msg)
         CMS_LOG_ERR("msg size %u is invalid", msg->msg_size);
         return;
     }
+    CMS_LOG_DEBUG_INF("recv req hb msg from node %u, msg type %u.", msg->src_node, msg->msg_type);
     cms_msg_req_hb_t* req_hb = (cms_msg_req_hb_t*)msg;
     biqueue_node_t* node = cms_que_alloc_node(sizeof(cms_msg_res_hb_t));
     if (node == NULL) {
