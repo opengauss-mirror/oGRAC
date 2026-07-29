@@ -1871,6 +1871,39 @@ SQL> drop table if exists bison_pl_pushback_src;
 Succeed.
 
 SQL>
+SQL> drop procedure if exists bison_pl_null_concat_proc;
+
+Succeed.
+
+SQL> create or replace procedure bison_pl_null_concat_proc(p_out out varchar2) as
+  2     local_value varchar2(20) := '12345678';
+  3 begin
+  4     p_out := local_value || null;
+  5     p_out := case when local_value is not null then local_value || null else null end;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL>
+SQL> declare
+  2     result_value varchar2(20);
+  3 begin
+  4     bison_pl_null_concat_proc(result_value);
+  5     if result_value || null is null then
+  6         null;
+  7     end if;
+  8 end;
+  9 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> drop procedure if exists bison_pl_null_concat_proc;
+
+Succeed.
+
+SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.

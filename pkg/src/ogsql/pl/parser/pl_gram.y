@@ -16,6 +16,7 @@
 #include "dml_cl.h"
 #include "dml_parser.h"
 #include "func_parser.h"
+#include "ogsql_func.h"
 #include "pl_dc.h"
 #include "ogsql_dependency.h"
 #include "ogsql_privilege.h"
@@ -133,6 +134,10 @@ static status_t find_named_loop(pl_compiler_t *compiler, source_location_t loc, 
 static status_t get_valid_expr_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr);
 static status_t get_valid_cond_tree(sql_stmt_t *stmt, text_t *src, cond_tree_t **cond);
 static status_t get_valid_call_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr);
+static void pl_bison_bind_expr_tree_owner(expr_tree_t *expr);
+static void pl_bison_bind_cond_tree_expr_owner(cond_tree_t *cond);
+static status_t pl_bison_clone_expr_tree(pl_compiler_t *compiler, expr_tree_t **src_expr);
+static status_t pl_bison_clone_cond_tree(pl_compiler_t *compiler, cond_tree_t **src_cond);
 static status_t pl_bison_make_parse_text(sql_stmt_t *stmt, const char *prefix, text_t *body, const char *suffix,
     sql_text_t *sql_text);
 static status_t pl_bison_column_to_proc_node(sql_stmt_t *stmt, expr_node_t *proc);
@@ -841,8 +846,8 @@ stmt_assign:
                         if (plc_check_var_as_left(compiler, line->left, @1.loc, NULL) != OG_SUCCESS ||
                             parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
                             plc_clone_expr_node(compiler, &line->left) != OG_SUCCESS ||
-                            plc_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
-                            plc_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
+                            pl_bison_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
+                            pl_bison_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
                             parser_yyerror("compile assignment failed");
                         }
                     }
@@ -891,7 +896,7 @@ stmt_return:
                         if (plc_verify_expr(compiler, line->expr) != OG_SUCCESS) {
                             parser_yyerror("verify expr failed");
                         }
-                        if (plc_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS) {
+                        if (pl_bison_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS) {
                             parser_yyerror("clone expr failed");
                         }
                         if (!sql_is_skipped_expr(line->expr)) {
@@ -1042,7 +1047,7 @@ while_start:
                     }
                     if (get_valid_cond_tree(stmt, $2, &line->cond) != OG_SUCCESS ||
                         plc_verify_cond(compiler, line->cond) != OG_SUCCESS ||
-                        plc_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
+                        pl_bison_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
                         parser_yyerror("compile while condition failed");
                     }
                     if (plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &loop_name) != OG_SUCCESS) {
@@ -1587,7 +1592,7 @@ stmt_if_expr:
                     if (plc_verify_cond(compiler, line->cond) != OG_SUCCESS) {
                         parser_yyerror("verify condition expr failed");
                     }
-                    plc_clone_cond_tree(compiler, &line->cond);
+                    pl_bison_clone_cond_tree(compiler, &line->cond);
                     plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT);
                     line->t_line = NULL;
                 }
@@ -1609,7 +1614,7 @@ stmt_elsifs:    /* EMPTY */
                         if (plc_verify_cond(compiler, line->cond) != OG_SUCCESS) {
                             parser_yyerror("verify condition expr failed");
                         }
-                        plc_clone_cond_tree(compiler, &line->cond);
+                        pl_bison_clone_cond_tree(compiler, &line->cond);
                         plc_pop(compiler, compiler->line_loc, PBE_ELIF, (pl_line_ctrl_t **)&brother_line);
                         line->if_line = (pl_line_if_t *)brother_line;
                         line->if_line->f_line = (pl_line_ctrl_t *)line;
@@ -2882,7 +2887,7 @@ static status_t compile_exit_or_continue_stmt(sql_stmt_t *stmt, bool32 is_contin
     if (cond_src != NULL) {
         OG_RETURN_IFERR(get_valid_cond_tree(stmt, cond_src, (cond_tree_t **)cond));
         OG_RETURN_IFERR(plc_verify_cond(compiler, (cond_tree_t *)*cond));
-        OG_RETURN_IFERR(plc_clone_cond_tree(compiler, (cond_tree_t **)cond));
+        OG_RETURN_IFERR(pl_bison_clone_cond_tree(compiler, (cond_tree_t **)cond));
     } else {
         *cond = NULL;
     }
@@ -2910,7 +2915,9 @@ static status_t pl_bison_clone_fragment_tree(pl_compiler_t *compiler, pl_bison_f
                 OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
                 return OG_ERROR;
             }
-            return sql_clone_expr_tree(compiler->entity, expr, (expr_tree_t **)tree, pl_alloc_mem);
+            OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &expr));
+            *tree = expr;
+            return OG_SUCCESS;
 
         case PL_BISON_FRAGMENT_EXPR_TREE:
             expr = (expr_tree_t *)raw_tree;
@@ -2918,7 +2925,9 @@ static status_t pl_bison_clone_fragment_tree(pl_compiler_t *compiler, pl_bison_f
                 OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
                 return OG_ERROR;
             }
-            return sql_clone_expr_tree(compiler->entity, expr, (expr_tree_t **)tree, pl_alloc_mem);
+            OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &expr));
+            *tree = expr;
+            return OG_SUCCESS;
 
         case PL_BISON_FRAGMENT_COND_TREE:
             cond = (cond_tree_t *)raw_tree;
@@ -2926,7 +2935,9 @@ static status_t pl_bison_clone_fragment_tree(pl_compiler_t *compiler, pl_bison_f
                 OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
                 return OG_ERROR;
             }
-            return sql_clone_cond_tree(compiler->entity, cond, (cond_tree_t **)tree, pl_alloc_mem);
+            OG_RETURN_IFERR(pl_bison_clone_cond_tree(compiler, &cond));
+            *tree = cond;
+            return OG_SUCCESS;
 
         default:
             OG_THROW_ERROR(ERR_INVALID_EXPRESSION);
@@ -3033,6 +3044,158 @@ static status_t get_valid_cond_tree(sql_stmt_t *stmt, text_t *src, cond_tree_t *
     OG_RETURN_IFERR(pl_bison_rewrite_trigger_fragment(stmt, src, &rewritten_src));
     src = &rewritten_src;
     return pl_bison_parse_fragment_tree(stmt, "CHECK (", src, ")", PL_BISON_FRAGMENT_COND_TREE, (void **)cond);
+}
+
+static void pl_bison_bind_sort_item_expr_owner(galist_t *sort_items)
+{
+    if (sort_items == NULL) {
+        return;
+    }
+
+    for (uint32 i = 0; i < sort_items->count; i++) {
+        sort_item_t *item = (sort_item_t *)cm_galist_get(sort_items, i);
+        pl_bison_bind_expr_tree_owner(item->expr);
+    }
+}
+
+static void pl_bison_bind_case_expr_owner(case_expr_t *case_expr)
+{
+    if (case_expr == NULL) {
+        return;
+    }
+
+    if (!case_expr->is_cond) {
+        pl_bison_bind_expr_tree_owner(case_expr->expr);
+    }
+    for (uint32 i = 0; i < case_expr->pairs.count; i++) {
+        case_pair_t *pair = (case_pair_t *)cm_galist_get(&case_expr->pairs, i);
+        if (case_expr->is_cond) {
+            pl_bison_bind_cond_tree_expr_owner(pair->when_cond);
+        } else {
+            pl_bison_bind_expr_tree_owner(pair->when_expr);
+        }
+        pl_bison_bind_expr_tree_owner(pair->value);
+    }
+    pl_bison_bind_expr_tree_owner(case_expr->default_expr);
+}
+
+static void pl_bison_bind_winsort_expr_owner(winsort_args_t *args)
+{
+    if (args == NULL) {
+        return;
+    }
+
+    if (args->group_exprs != NULL) {
+        for (uint32 i = 0; i < args->group_exprs->count; i++) {
+            expr_tree_t *expr = (expr_tree_t *)cm_galist_get(args->group_exprs, i);
+            pl_bison_bind_expr_tree_owner(expr);
+        }
+    }
+    pl_bison_bind_sort_item_expr_owner(args->sort_items);
+    if (args->windowing != NULL) {
+        pl_bison_bind_expr_tree_owner(args->windowing->l_expr);
+        pl_bison_bind_expr_tree_owner(args->windowing->r_expr);
+    }
+}
+
+static void pl_bison_bind_func_expr_owner(expr_node_t *node)
+{
+    sql_func_t *func = NULL;
+
+    if (node->value.v_func.is_winsort_func) {
+        return;
+    }
+    func = sql_get_func(&node->value.v_func);
+    switch (func->builtin_func_id) {
+        case ID_FUNC_ITEM_IF:
+        case ID_FUNC_ITEM_LNNVL:
+            pl_bison_bind_cond_tree_expr_owner(node->cond_arg);
+            break;
+        case ID_FUNC_ITEM_GROUP_CONCAT:
+        case ID_FUNC_ITEM_MEDIAN:
+            pl_bison_bind_sort_item_expr_owner(node->sort_items);
+            break;
+        default:
+            break;
+    }
+}
+
+static void pl_bison_bind_expr_node_owner(expr_node_t *node, expr_tree_t *owner)
+{
+    if (node == NULL) {
+        return;
+    }
+
+    node->owner = owner;
+    pl_bison_bind_expr_tree_owner(node->argument);
+    pl_bison_bind_expr_node_owner(node->left, owner);
+    pl_bison_bind_expr_node_owner(node->right, owner);
+
+    switch (node->type) {
+        case EXPR_NODE_CASE:
+            pl_bison_bind_case_expr_owner((case_expr_t *)node->value.v_pointer);
+            break;
+        case EXPR_NODE_FUNC:
+            pl_bison_bind_func_expr_owner(node);
+            break;
+        case EXPR_NODE_OVER:
+            pl_bison_bind_winsort_expr_owner(node->win_args);
+            break;
+        default:
+            break;
+    }
+}
+
+static void pl_bison_bind_expr_tree_owner(expr_tree_t *expr)
+{
+    while (expr != NULL) {
+        pl_bison_bind_expr_node_owner(expr->root, expr);
+        expr = expr->next;
+    }
+}
+
+static void pl_bison_bind_cond_node_expr_owner(cond_node_t *node)
+{
+    if (node == NULL) {
+        return;
+    }
+
+    switch (node->type) {
+        case COND_NODE_AND:
+        case COND_NODE_OR:
+            pl_bison_bind_cond_node_expr_owner(node->left);
+            pl_bison_bind_cond_node_expr_owner(node->right);
+            break;
+        case COND_NODE_COMPARE:
+            if (node->cmp != NULL) {
+                pl_bison_bind_expr_tree_owner(node->cmp->left);
+                pl_bison_bind_expr_tree_owner(node->cmp->right);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void pl_bison_bind_cond_tree_expr_owner(cond_tree_t *cond)
+{
+    if (cond != NULL) {
+        pl_bison_bind_cond_node_expr_owner(cond->root);
+    }
+}
+
+static status_t pl_bison_clone_expr_tree(pl_compiler_t *compiler, expr_tree_t **src_expr)
+{
+    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, src_expr));
+    pl_bison_bind_expr_tree_owner(*src_expr);
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_clone_cond_tree(pl_compiler_t *compiler, cond_tree_t **src_cond)
+{
+    OG_RETURN_IFERR(plc_clone_cond_tree(compiler, src_cond));
+    pl_bison_bind_cond_tree_expr_owner(*src_cond);
+    return OG_SUCCESS;
 }
 
 static status_t get_valid_call_tree(sql_stmt_t *stmt, text_t *src, expr_tree_t **expr)
@@ -3244,7 +3407,7 @@ static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, pl_li
     } else {
         OG_RETURN_IFERR(get_valid_expr_tree(stmt, selector_src, &(*case_line)->selector));
         OG_RETURN_IFERR(plc_verify_expr(compiler, (*case_line)->selector));
-        OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &(*case_line)->selector));
+        OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &(*case_line)->selector));
     }
 
     return plc_push_ctl(compiler, (pl_line_ctrl_t *)*case_line, &CM_NULL_TEXT);
@@ -3267,11 +3430,11 @@ static status_t compile_case_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, tex
     if (selector == NULL) {
         OG_RETURN_IFERR(get_valid_cond_tree(stmt, cond_src, (cond_tree_t **)&(*when_line)->cond));
         OG_RETURN_IFERR(plc_verify_cond(compiler, (cond_tree_t *)(*when_line)->cond));
-        OG_RETURN_IFERR(plc_clone_cond_tree(compiler, (cond_tree_t **)&(*when_line)->cond));
+        OG_RETURN_IFERR(pl_bison_clone_cond_tree(compiler, (cond_tree_t **)&(*when_line)->cond));
     } else {
         OG_RETURN_IFERR(get_valid_expr_tree(stmt, cond_src, (expr_tree_t **)&(*when_line)->cond));
         OG_RETURN_IFERR(plc_verify_expr(compiler, (expr_tree_t *)(*when_line)->cond));
-        OG_RETURN_IFERR(plc_clone_expr_tree(compiler, (expr_tree_t **)&(*when_line)->cond));
+        OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, (expr_tree_t **)&(*when_line)->cond));
     }
 
     OG_RETURN_IFERR(plc_pop(compiler, PLSQL_YYLLOC(yyscanner)->loc, PBE_WHEN_CASE, &brother_line));
@@ -4091,7 +4254,7 @@ static status_t compile_execute_using_item(core_yyscan_t yyscanner, pl_compiler_
         OG_RETURN_IFERR(plc_verify_out_expr(compiler, expr, NULL));
         OG_RETURN_IFERR(plc_verify_using_out_cursor(compiler, expr));
     }
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &expr));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &expr));
     OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(pl_using_expr_t), (void **)&using_expr));
     using_expr->expr = expr;
     using_expr->dir = dir;
@@ -4123,7 +4286,7 @@ static status_t compile_execute_immediate_stmt(core_yyscan_t yyscanner, source_l
     dynamic_sql_src = read_sql_construct(K_INTO, K_BULK, K_USING, ';', 0, 0, yyscanner, &endtoken);
     OG_RETURN_IFERR(compile_dynamic_sql_expr(stmt, dynamic_sql_src, &line->dynamic_sql));
     OG_RETURN_IFERR(plc_verify_expr(compiler, line->dynamic_sql));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &line->dynamic_sql));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &line->dynamic_sql));
 
     if (endtoken == K_INTO) {
         OG_RETURN_IFERR(compile_execute_into_clause(yyscanner, compiler, &line->into, &endtoken));
@@ -4326,7 +4489,7 @@ static status_t compile_open_arg_expr(pl_compiler_t *compiler, galist_t *exprs, 
 
     OG_RETURN_IFERR(get_valid_expr_tree(compiler->stmt, expr_src, &expr));
     OG_RETURN_IFERR(plc_verify_expr(compiler, expr));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &expr));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &expr));
     if (arg_name != NULL) {
         cm_str2text((char *)arg_name, &name_text);
         OG_RETURN_IFERR(pl_copy_text(compiler->entity, &name_text, &expr->arg_name));
@@ -4447,7 +4610,7 @@ static status_t compile_refcur_using_item(core_yyscan_t yyscanner, pl_compiler_t
     expr_src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ',', ';', 0, 0, 0, 0, yyscanner, endtoken);
     OG_RETURN_IFERR(get_valid_expr_tree(compiler->stmt, expr_src, &expr));
     OG_RETURN_IFERR(plc_verify_expr(compiler, expr));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &expr));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &expr));
     return cm_galist_insert(using_exprs, expr);
 }
 
@@ -4512,7 +4675,7 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
     line->is_dynamic_sql = OG_TRUE;
     OG_RETURN_IFERR(get_valid_expr_tree(stmt, src, &line->dynamic_sql));
     OG_RETURN_IFERR(plc_verify_expr(compiler, line->dynamic_sql));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &line->dynamic_sql));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &line->dynamic_sql));
     if (endtoken == K_USING) {
         OG_RETURN_IFERR(compile_refcur_using_clause(yyscanner, compiler, line, &endtoken));
     }
@@ -4540,7 +4703,7 @@ static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cu
         limit_src = read_sql_expression(';', yyscanner);
         OG_RETURN_IFERR(get_valid_expr_tree(stmt, limit_src, &line->into.limit));
         OG_RETURN_IFERR(plc_verify_limit_expr(compiler, line->into.limit));
-        OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &line->into.limit));
+        OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &line->into.limit));
         endtoken = ';';
     }
     if (endtoken != ';') {
@@ -4739,7 +4902,7 @@ static status_t compile_for_bound_expr(sql_stmt_t *stmt, pl_compiler_t *compiler
         OG_RETURN_IFERR(get_valid_expr_tree(stmt, src, expr));
     }
     OG_RETURN_IFERR(plc_verify_expr(compiler, *expr));
-    return plc_clone_expr_tree(compiler, expr);
+    return pl_bison_clone_expr_tree(compiler, expr);
 }
 
 static status_t finish_numeric_for_start(core_yyscan_t yyscanner, const char *index_name, bool32 reverse,
@@ -4946,10 +5109,10 @@ static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_n
     OG_RETURN_IFERR(pl_copy_name(compiler->entity, &idx_name, &line->id->name));
     OG_RETURN_IFERR(get_valid_expr_tree(stmt, lower_src, &lower));
     OG_RETURN_IFERR(plc_verify_expr(compiler, lower));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &lower));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &lower));
     OG_RETURN_IFERR(get_valid_expr_tree(stmt, upper_src, &upper));
     OG_RETURN_IFERR(plc_verify_expr(compiler, upper));
-    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &upper));
+    OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, &upper));
     line->is_cur = OG_FALSE;
     line->is_push = OG_FALSE;
     line->reverse = OG_FALSE;

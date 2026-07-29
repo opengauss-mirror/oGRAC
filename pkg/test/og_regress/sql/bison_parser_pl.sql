@@ -1057,6 +1057,27 @@ select * from bison_pl_pushback_log order by stage;
 drop table if exists bison_pl_pushback_log;
 drop table if exists bison_pl_pushback_src;
 
+drop procedure if exists bison_pl_null_concat_proc;
+create or replace procedure bison_pl_null_concat_proc(p_out out varchar2) as
+    local_value varchar2(20) := '12345678';
+begin
+    p_out := local_value || null;
+    p_out := case when local_value is not null then local_value || null else null end;
+end;
+/
+
+declare
+    result_value varchar2(20);
+begin
+    bison_pl_null_concat_proc(result_value);
+    if result_value || null is null then
+        null;
+    end if;
+end;
+/
+
+drop procedure if exists bison_pl_null_concat_proc;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;
