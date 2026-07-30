@@ -204,6 +204,7 @@ typedef struct st_session {
     bool8 priv;
     bool8 priv_upgrade; // if set this to true, when return the session, should set the priv to false and this too
     uint16 reserved;
+    uint32 mem_size;
 
     cs_pipe_t pipe_entity; // if pipe info specified when create a session, pointer pipe will point to
     // if pipe info specified when create a session, it will point to pipe_entity, otherwise null assigned
@@ -479,6 +480,7 @@ status_t srv_alloc_session(session_t **session, cs_pipe_t *pipe, session_type_e 
 status_t srv_alloc_reserved_session(uint32 *sid);
 status_t srv_alloc_knl_session(bool32 knl_reserved, knl_handle_t *knl_session);
 void srv_release_knl_session(knl_handle_t sess);
+void srv_free_session_memory(session_t *session);
 status_t srv_create_session(cs_pipe_t *pipe);
 void srv_release_session(session_t *session);
 void srv_deinit_session(session_t *session);

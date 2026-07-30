@@ -139,8 +139,9 @@ static void srv_destory_reserved_session(void)
         if (session != NULL) {
             knl_destroy_session(&g_instance->kernel, i);
             CM_FREE_PTR(session->stack);
-            CM_FREE_PTR(session);
+            srv_free_session_memory(session);
             g_instance->session_pool.sessions[i] = NULL;
+            g_instance->kernel.sessions[i] = NULL;
         }
     }
 
@@ -309,6 +310,7 @@ static status_t srv_init_session_pool(void)
     // init system sessions
     for (i = 0; i < g_instance->kernel.reserved_sessions; i++) {
         if (srv_alloc_reserved_session(&id) != OG_SUCCESS) {
+            srv_destory_reserved_session();
             return OG_ERROR;
         }
     }
