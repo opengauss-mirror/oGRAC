@@ -249,6 +249,7 @@ status_t ckpt_init(knl_session_t *session)
     OG_INIT_SPIN_LOCK(ogx->disable_lock);
     ogx->disable_cnt = 0;
     ogx->ckpt_enable_update_point = OG_TRUE;
+    ogx->page_cleanning = OG_FALSE;
     ogx->disable_update_point_cnt = 0;
     ogx->wid = 0;
     ogx->fid = (kernel->attr.enable_quick_ckpt) ? 1 : 0;
@@ -524,6 +525,7 @@ static void ckpt_remove_clean_page_all_set(knl_session_t *session)
         }
 
         page_list = g_init_list_t;
+        page_list.type = LRU_LIST_TEMP;
         ckpt_remove_clean_page(session, set, &page_list);
     }
 }
@@ -3604,6 +3606,7 @@ static status_t ckpt_clean_single_set(knl_session_t *session, ckpt_context_t *ck
 
     for (;;) {
         page_list = g_init_list_t;
+        page_list.type = LRU_LIST_TEMP;
         if (ckpt_clean_prepare_pages(session, ckpt_ctx, set, &page_list, stat) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -3789,6 +3792,7 @@ static status_t ckpt_clean_all_set(knl_session_t *session, ckpt_stat_items_t *st
     buf_lru_list_t page_list;
     for (;;) {
         page_list = g_init_list_t;
+        page_list.type = LRU_LIST_TEMP;
         if (ckpt_clean_prepare_pages_all_set(session, ckpt_ctx, &page_list, &page_clean_ctx, stat) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -3851,6 +3855,7 @@ static void ckpt_page_clean(knl_session_t *session, ckpt_stat_items_t *stat)
         return;
     }
     uint64 task_begin = KNL_NOW(session);
+    ckpt_ctx->page_cleanning = OG_TRUE;
     stat->ckpt_begin_time = (date_t)task_begin;
     if (clean_mode == PAGE_CLEAN_MODE_ALLSET) {
         ckpt_block_and_wait_enable(&session->kernel->ckpt_ctx);
@@ -3880,6 +3885,7 @@ static void ckpt_page_clean(knl_session_t *session, ckpt_stat_items_t *stat)
     }
     uint64 task_end = KNL_NOW(session);
     stat->task_us += ckpt_stat_time_diff(task_begin, task_end);
+    ckpt_ctx->page_cleanning = OG_FALSE;
 }
 
 void ckpt_put_to_part_group(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *to_flush_ctrl)

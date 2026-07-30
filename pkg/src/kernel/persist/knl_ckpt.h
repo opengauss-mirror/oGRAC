@@ -262,7 +262,8 @@ typedef struct st_ckpt_ctx {
     ckpt_clean_edp_group_t remote_edp_group;       // request from other nodes for page owner to flush page
     ckpt_clean_edp_group_t local_edp_clean_group;  // request from other nodes to clean edp pages
     volatile bool8 ckpt_blocked;    // to block the checkpoint temporarily.
-    uint8 reserved[3];
+    bool8 page_cleanning;
+    uint8 reserved[2];
     volatile uint32 disable_cnt;
     spinlock_t disable_lock;
     volatile bool32 ckpt_enable_update_point;
