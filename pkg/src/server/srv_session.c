@@ -76,6 +76,12 @@ void srv_reset_session(session_t *session, cs_pipe_t *pipe)
 {
     srv_set_session_pipe(session, pipe);
 
+    /* the vmp/vms pools were destroyed by srv_deinit_session when the session was released,
+       so they must be recreated before the session returns to service.
+       pools are always empty here (init_pages is 0), thus vmp_create only re-initializes fields */
+    OG_RETVOID_IFERR(vmp_create(&g_instance->sga.vma, 0, &session->vmp));
+    OG_RETVOID_IFERR(vmp_create(&g_instance->sga.vma, 0, &session->vms));
+
     session->logon_time = g_timer()->now;
     session->interval_time = cm_monotonic_now();
     session->is_log_out = OG_FALSE;
@@ -557,6 +563,8 @@ status_t srv_alloc_knl_session(bool32 knl_reserved, knl_handle_t *knl_session)
     }
 
     if (srv_alloc_agent_res(agent) != OG_SUCCESS) {
+        /* roll back the already allocated session, otherwise it leaks from the session pool */
+        srv_release_session(session);
         CM_FREE_PTR(agent);
         return OG_ERROR;
     }
