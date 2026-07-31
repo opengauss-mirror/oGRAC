@@ -529,7 +529,9 @@ block_body_core:
                     text_t *label_name = current_label_name(compiler);
                     text_t block_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
                     plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN, (pl_line_ctrl_t **)&line);
-                    plc_push(compiler, (pl_line_ctrl_t *)line, &block_name);
+                    if (plc_push(compiler, (pl_line_ctrl_t *)line, &block_name) != OG_SUCCESS) {
+                        YYABORT;
+                    }
                     plc_convert_typedecl(compiler, compiler->decls);
                     line->decls = compiler->decls;
                     line->type_decls = compiler->type_decls;
@@ -1593,7 +1595,9 @@ stmt_if_expr:
                         parser_yyerror("verify condition expr failed");
                     }
                     pl_bison_clone_cond_tree(compiler, &line->cond);
-                    plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT);
+                    if (plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT) != OG_SUCCESS) {
+                        YYABORT;
+                    }
                     line->t_line = NULL;
                 }
             proc_sect

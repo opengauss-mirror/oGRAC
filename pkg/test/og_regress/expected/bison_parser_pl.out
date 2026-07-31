@@ -69,6 +69,685 @@ SQL> drop table if exists bison_pl_t;
 
 Succeed.
 
+SQL> create or replace function bison_pl_depth_if_guard(num int) return clob
+  2 is
+  3     v_lang clob := 'abc';
+  4 BEGIN
+  5     FOR I IN 1 .. num
+  6     LOOP
+  7     FOR I IN 1 .. num
+  8     LOOP
+  9     FOR I IN 1 .. num
+ 10     LOOP
+ 11     FOR I IN 1 .. num
+ 12     LOOP
+ 13     FOR I IN 1 .. num
+ 14     LOOP
+ 15     FOR I IN 1 .. num
+ 16     LOOP
+ 17     FOR I IN 1 .. num
+ 18     LOOP
+ 19     FOR I IN 1 .. num
+ 20     LOOP
+ 21     FOR I IN 1 .. num
+ 22     LOOP
+ 23     FOR I IN 1 .. num
+ 24     LOOP
+ 25     FOR I IN 1 .. num
+ 26     LOOP
+ 27     FOR I IN 1 .. num
+ 28     LOOP
+ 29     FOR I IN 1 .. num
+ 30     LOOP
+ 31     FOR I IN 1 .. num
+ 32     LOOP
+ 33     FOR I IN 1 .. num
+ 34     LOOP
+ 35     FOR I IN 1 .. num
+ 36     LOOP
+ 37     FOR I IN 1 .. num
+ 38     LOOP
+ 39     FOR I IN 1 .. num
+ 40     LOOP
+ 41     FOR I IN 1 .. num
+ 42     LOOP
+ 43     FOR I IN 1 .. num
+ 44     LOOP
+ 45     FOR I IN 1 .. num
+ 46     LOOP
+ 47     FOR I IN 1 .. num
+ 48     LOOP
+ 49     FOR I IN 1 .. num
+ 50     LOOP
+ 51     FOR I IN 1 .. num
+ 52     LOOP
+ 53     FOR I IN 1 .. num
+ 54     LOOP
+ 55     FOR I IN 1 .. num
+ 56     LOOP
+ 57     FOR I IN 1 .. num
+ 58     LOOP
+ 59     FOR I IN 1 .. num
+ 60     LOOP
+ 61     FOR I IN 1 .. num
+ 62     LOOP
+ 63     FOR I IN 1 .. num
+ 64     LOOP
+ 65     FOR I IN 1 .. num
+ 66     LOOP
+ 67     FOR I IN 1 .. num
+ 68     LOOP
+ 69     FOR I IN 1 .. num
+ 70     LOOP
+ 71     FOR I IN 1 .. num
+ 72     LOOP
+ 73     FOR I IN 1 .. num
+ 74     LOOP
+ 75     FOR I IN 1 .. num
+ 76     LOOP
+ 77     FOR I IN 1 .. num
+ 78     LOOP
+ 79     FOR I IN 1 .. num
+ 80     LOOP
+ 81     FOR I IN 1 .. num
+ 82     LOOP
+ 83     FOR I IN 1 .. num
+ 84     LOOP
+ 85     FOR I IN 1 .. num
+ 86     LOOP
+ 87     FOR I IN 1 .. num
+ 88     LOOP
+ 89     FOR I IN 1 .. num
+ 90     LOOP
+ 91     FOR I IN 1 .. num
+ 92     LOOP
+ 93     FOR I IN 1 .. num
+ 94     LOOP
+ 95     FOR I IN 1 .. num
+ 96     LOOP
+ 97     FOR I IN 1 .. num
+ 98     LOOP
+ 99     FOR I IN 1 .. num
+100     LOOP
+101     FOR I IN 1 .. num
+102     LOOP
+103     FOR I IN 1 .. num
+104     LOOP
+105     FOR I IN 1 .. num
+106     LOOP
+107     FOR I IN 1 .. num
+108     LOOP
+109     FOR I IN 1 .. num
+110     LOOP
+111     FOR I IN 1 .. num
+112     LOOP
+113     FOR I IN 1 .. num
+114     LOOP
+115     FOR I IN 1 .. num
+116     LOOP
+117     FOR I IN 1 .. num
+118     LOOP
+119     FOR I IN 1 .. num
+120     LOOP
+121     FOR I IN 1 .. num
+122     LOOP
+123     FOR I IN 1 .. num
+124     LOOP
+125     FOR I IN 1 .. num
+126     LOOP
+127     FOR I IN 1 .. num
+128     LOOP
+129     FOR I IN 1 .. num
+130     LOOP
+131     FOR I IN 1 .. num
+132     LOOP
+133     FOR I IN 1 .. num
+134     LOOP
+135     FOR I IN 1 .. num
+136     LOOP
+137     FOR I IN 1 .. num
+138     LOOP
+139     FOR I IN 1 .. num
+140     LOOP
+141     FOR I IN 1 .. num
+142     LOOP
+143     FOR I IN 1 .. num
+144     LOOP
+145     FOR I IN 1 .. num
+146     LOOP
+147     FOR I IN 1 .. num
+148     LOOP
+149     FOR I IN 1 .. num
+150     LOOP
+151     FOR I IN 1 .. num
+152     LOOP
+153     FOR I IN 1 .. num
+154     LOOP
+155     FOR I IN 1 .. num
+156     LOOP
+157     FOR I IN 1 .. num
+158     LOOP
+159     FOR I IN 1 .. num
+160     LOOP
+161     FOR I IN 1 .. num
+162     LOOP
+163     FOR I IN 1 .. num
+164     LOOP
+165     FOR I IN 1 .. num
+166     LOOP
+167     FOR I IN 1 .. num
+168     LOOP
+169     FOR I IN 1 .. num
+170     LOOP
+171     FOR I IN 1 .. num
+172     LOOP
+173     FOR I IN 1 .. num
+174     LOOP
+175     FOR I IN 1 .. num
+176     LOOP
+177     FOR I IN 1 .. num
+178     LOOP
+179     FOR I IN 1 .. num
+180     LOOP
+181     FOR I IN 1 .. num
+182     LOOP
+183     FOR I IN 1 .. num
+184     LOOP
+185     FOR I IN 1 .. num
+186     LOOP
+187     FOR I IN 1 .. num
+188     LOOP
+189     FOR I IN 1 .. num
+190     LOOP
+191     FOR I IN 1 .. num
+192     LOOP
+193     FOR I IN 1 .. num
+194     LOOP
+195     FOR I IN 1 .. num
+196     LOOP
+197     FOR I IN 1 .. num
+198     LOOP
+199     FOR I IN 1 .. num
+200     LOOP
+201     FOR I IN 1 .. num
+202     LOOP
+203     FOR I IN 1 .. num
+204     LOOP
+205     FOR I IN 1 .. num
+206     LOOP
+207     FOR I IN 1 .. num
+208     LOOP
+209     FOR I IN 1 .. num
+210     LOOP
+211     FOR I IN 1 .. num
+212     LOOP
+213     FOR I IN 1 .. num
+214     LOOP
+215     FOR I IN 1 .. num
+216     LOOP
+217     FOR I IN 1 .. num
+218     LOOP
+219     FOR I IN 1 .. num
+220     LOOP
+221     FOR I IN 1 .. num
+222     LOOP
+223     FOR I IN 1 .. num
+224     LOOP
+225     FOR I IN 1 .. num
+226     LOOP
+227     FOR I IN 1 .. num
+228     LOOP
+229     FOR I IN 1 .. num
+230     LOOP
+231     FOR I IN 1 .. num
+232     LOOP
+233     FOR I IN 1 .. num
+234     LOOP
+235     FOR I IN 1 .. num
+236     LOOP
+237     FOR I IN 1 .. num
+238     LOOP
+239     FOR I IN 1 .. num
+240     LOOP
+241     FOR I IN 1 .. num
+242     LOOP
+243     FOR I IN 1 .. num
+244     LOOP
+245     FOR I IN 1 .. num
+246     LOOP
+247     FOR I IN 1 .. num
+248     LOOP
+249     FOR I IN 1 .. num
+250     LOOP
+251     FOR I IN 1 .. num
+252     LOOP
+253     FOR I IN 1 .. num
+254     LOOP
+255     FOR I IN 1 .. num
+256     LOOP
+257     FOR I IN 1 .. num
+258     LOOP
+259     if num > -1 then
+260     if num > 0 then
+261         v_lang := v_lang || 'e';
+262     end if;
+263     end if;
+264     end loop;
+265     end loop;
+266     end loop;
+267     end loop;
+268     end loop;
+269     end loop;
+270     end loop;
+271     end loop;
+272     end loop;
+273     end loop;
+274     end loop;
+275     end loop;
+276     end loop;
+277     end loop;
+278     end loop;
+279     end loop;
+280     end loop;
+281     end loop;
+282     end loop;
+283     end loop;
+284     end loop;
+285     end loop;
+286     end loop;
+287     end loop;
+288     end loop;
+289     end loop;
+290     end loop;
+291     end loop;
+292     end loop;
+293     end loop;
+294     end loop;
+295     end loop;
+296     end loop;
+297     end loop;
+298     end loop;
+299     end loop;
+300     end loop;
+301     end loop;
+302     end loop;
+303     end loop;
+304     end loop;
+305     end loop;
+306     end loop;
+307     end loop;
+308     end loop;
+309     end loop;
+310     end loop;
+311     end loop;
+312     end loop;
+313     end loop;
+314     end loop;
+315     end loop;
+316     end loop;
+317     end loop;
+318     end loop;
+319     end loop;
+320     end loop;
+321     end loop;
+322     end loop;
+323     end loop;
+324     end loop;
+325     end loop;
+326     end loop;
+327     end loop;
+328     end loop;
+329     end loop;
+330     end loop;
+331     end loop;
+332     end loop;
+333     end loop;
+334     end loop;
+335     end loop;
+336     end loop;
+337     end loop;
+338     end loop;
+339     end loop;
+340     end loop;
+341     end loop;
+342     end loop;
+343     end loop;
+344     end loop;
+345     end loop;
+346     end loop;
+347     end loop;
+348     end loop;
+349     end loop;
+350     end loop;
+351     end loop;
+352     end loop;
+353     end loop;
+354     end loop;
+355     end loop;
+356     end loop;
+357     end loop;
+358     end loop;
+359     end loop;
+360     end loop;
+361     end loop;
+362     end loop;
+363     end loop;
+364     end loop;
+365     end loop;
+366     end loop;
+367     end loop;
+368     end loop;
+369     end loop;
+370     end loop;
+371     end loop;
+372     end loop;
+373     end loop;
+374     end loop;
+375     end loop;
+376     end loop;
+377     end loop;
+378     end loop;
+379     end loop;
+380     end loop;
+381     end loop;
+382     end loop;
+383     end loop;
+384     end loop;
+385     end loop;
+386     end loop;
+387     end loop;
+388     end loop;
+389     end loop;
+390     end loop;
+391     return v_lang;
+392 end;
+393 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_DEPTH_IF_GUARD) terminated with compiling errors
+PLC-00943 PL/SQL: block too complex, depth exceed the limitation 128
+
+
+SQL> 
+SQL> drop function if exists bison_pl_depth_if_guard;
+
+Succeed.
+
+SQL> 
+SQL> create or replace procedure bison_pl_depth_block_guard as
+  2 begin
+  3     begin
+  4     begin
+  5     begin
+  6     begin
+  7     begin
+  8     begin
+  9     begin
+ 10     begin
+ 11     begin
+ 12     begin
+ 13     begin
+ 14     begin
+ 15     begin
+ 16     begin
+ 17     begin
+ 18     begin
+ 19     begin
+ 20     begin
+ 21     begin
+ 22     begin
+ 23     begin
+ 24     begin
+ 25     begin
+ 26     begin
+ 27     begin
+ 28     begin
+ 29     begin
+ 30     begin
+ 31     begin
+ 32     begin
+ 33     begin
+ 34     begin
+ 35     begin
+ 36     begin
+ 37     begin
+ 38     begin
+ 39     begin
+ 40     begin
+ 41     begin
+ 42     begin
+ 43     begin
+ 44     begin
+ 45     begin
+ 46     begin
+ 47     begin
+ 48     begin
+ 49     begin
+ 50     begin
+ 51     begin
+ 52     begin
+ 53     begin
+ 54     begin
+ 55     begin
+ 56     begin
+ 57     begin
+ 58     begin
+ 59     begin
+ 60     begin
+ 61     begin
+ 62     begin
+ 63     begin
+ 64     begin
+ 65     begin
+ 66     begin
+ 67     begin
+ 68     begin
+ 69     begin
+ 70     begin
+ 71     begin
+ 72     begin
+ 73     begin
+ 74     begin
+ 75     begin
+ 76     begin
+ 77     begin
+ 78     begin
+ 79     begin
+ 80     begin
+ 81     begin
+ 82     begin
+ 83     begin
+ 84     begin
+ 85     begin
+ 86     begin
+ 87     begin
+ 88     begin
+ 89     begin
+ 90     begin
+ 91     begin
+ 92     begin
+ 93     begin
+ 94     begin
+ 95     begin
+ 96     begin
+ 97     begin
+ 98     begin
+ 99     begin
+100     begin
+101     begin
+102     begin
+103     begin
+104     begin
+105     begin
+106     begin
+107     begin
+108     begin
+109     begin
+110     begin
+111     begin
+112     begin
+113     begin
+114     begin
+115     begin
+116     begin
+117     begin
+118     begin
+119     begin
+120     begin
+121     begin
+122     begin
+123     begin
+124     begin
+125     begin
+126     begin
+127     begin
+128     begin
+129     begin
+130     begin
+131         null;
+132     end;
+133     end;
+134     end;
+135     end;
+136     end;
+137     end;
+138     end;
+139     end;
+140     end;
+141     end;
+142     end;
+143     end;
+144     end;
+145     end;
+146     end;
+147     end;
+148     end;
+149     end;
+150     end;
+151     end;
+152     end;
+153     end;
+154     end;
+155     end;
+156     end;
+157     end;
+158     end;
+159     end;
+160     end;
+161     end;
+162     end;
+163     end;
+164     end;
+165     end;
+166     end;
+167     end;
+168     end;
+169     end;
+170     end;
+171     end;
+172     end;
+173     end;
+174     end;
+175     end;
+176     end;
+177     end;
+178     end;
+179     end;
+180     end;
+181     end;
+182     end;
+183     end;
+184     end;
+185     end;
+186     end;
+187     end;
+188     end;
+189     end;
+190     end;
+191     end;
+192     end;
+193     end;
+194     end;
+195     end;
+196     end;
+197     end;
+198     end;
+199     end;
+200     end;
+201     end;
+202     end;
+203     end;
+204     end;
+205     end;
+206     end;
+207     end;
+208     end;
+209     end;
+210     end;
+211     end;
+212     end;
+213     end;
+214     end;
+215     end;
+216     end;
+217     end;
+218     end;
+219     end;
+220     end;
+221     end;
+222     end;
+223     end;
+224     end;
+225     end;
+226     end;
+227     end;
+228     end;
+229     end;
+230     end;
+231     end;
+232     end;
+233     end;
+234     end;
+235     end;
+236     end;
+237     end;
+238     end;
+239     end;
+240     end;
+241     end;
+242     end;
+243     end;
+244     end;
+245     end;
+246     end;
+247     end;
+248     end;
+249     end;
+250     end;
+251     end;
+252     end;
+253     end;
+254     end;
+255     end;
+256     end;
+257     end;
+258     end;
+259     end;
+260 end;
+261 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_DEPTH_BLOCK_GUARD) terminated with compiling errors
+PLC-00943 PL/SQL: block too complex, depth exceed the limitation 128
+
+
+SQL> 
+SQL> drop procedure if exists bison_pl_depth_block_guard;
+
+Succeed.
+
 SQL> drop function if exists bison_pl_c_semicolon;
 
 Succeed.
