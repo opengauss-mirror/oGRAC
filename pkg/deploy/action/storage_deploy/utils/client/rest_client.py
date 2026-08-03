@@ -19,6 +19,10 @@ from om_log import REST_LOG as LOG
 NORMAL_STATE, ABNORMAL_STATE = 0, 1
 
 
+def get_request_verify():
+    return os.environ.get('OGRAC_STORAGE_REST_CA_BUNDLE') or True
+
+
 def get_cur_timestamp():
     utc_now = datetime.utcnow()
     return utc_now.replace(tzinfo=timezone.utc).astimezone(tz=None).strftime('%Y%m%d%H%M%S')
@@ -31,6 +35,7 @@ class ExecutionError(Exception):
 class RestClient:
     def __init__(self, login_tuple: object) -> object:
         self.ip_addr, self.user_name, self.passwd = login_tuple
+        self.verify = get_request_verify()
         self.device_id = None
         self.token = None
         self.ism_session = None
@@ -95,9 +100,8 @@ class RestClient:
             'Cookie': '__LANGUAGE_KEY__=zh-CN; __IBASE_LANGUAGE_KEY__=zh-CN'
         }
 
-        requests.packages.urllib3.disable_warnings()
         with requests.session() as session:
-            res = session.post(url, data=json.dumps(user_info), headers=login_header, verify=False)
+            res = session.post(url, data=json.dumps(user_info), headers=login_header, verify=self.verify)
             status_code, err_code, err_details = self.response_parse(res)
             if err_code:
                 err_msg = ('Login DM failed {}, status_code: {}, err_code: {}, '
@@ -132,7 +136,6 @@ class RestClient:
         """
         if data:
             data = json.dumps(data)
-        requests.packages.urllib3.disable_warnings()
         timeout, keep_session = kwargs.get("timeout"), kwargs.get("keepsession")
         url = Constant.HTTPS + self.ip_addr + ":" + Constant.PORT + url
         if keep_session:
@@ -144,13 +147,13 @@ class RestClient:
         headers = self.make_header()
         with req as session:
             if method == 'put':
-                res = session.put(url, data=data, headers=headers, verify=False, timeout=timeout)
+                res = session.put(url, data=data, headers=headers, verify=self.verify, timeout=timeout)
             elif method == 'post':
-                res = session.post(url, data=data, headers=headers, verify=False, timeout=timeout)
+                res = session.post(url, data=data, headers=headers, verify=self.verify, timeout=timeout)
             elif method == 'get':
-                res = session.get(url, data=data, headers=headers, verify=False, timeout=timeout)
+                res = session.get(url, data=data, headers=headers, verify=self.verify, timeout=timeout)
             elif method == 'delete':
-                res = session.delete(url, data=data, headers=headers, verify=False, timeout=timeout)
+                res = session.delete(url, data=data, headers=headers, verify=self.verify, timeout=timeout)
 
             res.close()
         return res
