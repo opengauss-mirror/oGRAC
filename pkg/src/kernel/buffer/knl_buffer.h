@@ -110,6 +110,7 @@ typedef enum en_buf_lru_list_type {
     LRU_LIST_WRITE = 2,
     LRU_LIST_CLEAN = 3,
     LRU_LIST_TYPE_COUNT,
+    LRU_LIST_TEMP,
 } buf_lru_list_type_t;
 
 typedef enum en_buf_load_status {

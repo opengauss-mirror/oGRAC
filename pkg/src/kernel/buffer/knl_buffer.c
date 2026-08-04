@@ -360,14 +360,11 @@ static void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
 }
 
 /* add source list to tail of target list */
-void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source)
+static void buf_lru_append_list_inner(buf_lru_list_t *target, buf_lru_list_t *source)
 {
-    if (source->count == 0) {
-        return;
+    if (source->lru_first != NULL) {
+        source->lru_first->prev = target->lru_last;
     }
-
-    cm_spin_lock(&target->lock, NULL);
-    source->lru_first->prev = target->lru_last;
 
     if (target->lru_last != NULL) {
         target->lru_last->next = source->lru_first;
@@ -379,6 +376,23 @@ void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source)
 
     target->lru_last = source->lru_last;
     target->count += source->count;
+}
+
+void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source)
+{
+    if (source->count == 0) {
+        return;
+    }
+
+    cm_spin_lock(&target->lock, NULL);
+    buf_ctrl_t *cur_ctrl = source->lru_first;
+    uint32 count = source->count;
+    while (cur_ctrl != NULL && count > 0) {
+        cur_ctrl->list_id = target->type;
+        cur_ctrl = cur_ctrl->next;
+        count--;
+    }
+    buf_lru_append_list_inner(target, source);
     cm_spin_unlock(&target->lock);
 }
 
@@ -817,6 +831,7 @@ static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_
         buf_lru_add_ctrl(&set->scan_list, shift, pos);
     }
     *list = g_init_list_t;
+    list->type = LRU_LIST_CLEAN;
     cm_spin_unlock(&list->lock);
     cm_release_cond(&set->set_cond);
 }
@@ -834,6 +849,7 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
     uint32 threshold = BUF_LRU_SEARCH_THRESHOLD(set, session);
     uint32 step = 0;
     buf_lru_list_t dirty_list = g_init_list_t;
+    dirty_list.type = LRU_LIST_TEMP;
     uint32 expired_num;
 
     cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
@@ -867,7 +883,7 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
         if (buf_is_cold_dirty_general(session, shift)) {
             /* move cold dirty page to write list. */
             buf_lru_remove_ctrl(list, shift);
-            shift->list_id = LRU_LIST_WRITE;
+            shift->list_id = LRU_LIST_TEMP;
             buf_lru_add_tail(&dirty_list, shift);
         } else if (!buf_can_evict_general(session, shift)) {
             /* move the currently un-evicted page to the main head,
@@ -1519,6 +1535,10 @@ buf_ctrl_t *buf_find_by_pageid(knl_session_t *session, page_id_t page_id)
 void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl)
 {
     cm_spin_lock(&set->write_list.lock, NULL);
+    if (ctrl->list_id != LRU_LIST_WRITE || set->write_list.count == 0) {
+        cm_spin_unlock(&set->write_list.lock);
+        return;
+    }
     buf_remove_ctrl(&set->write_list, ctrl);
     ctrl->list_id = LRU_LIST_CLEAN;
     cm_spin_unlock(&set->write_list.lock);

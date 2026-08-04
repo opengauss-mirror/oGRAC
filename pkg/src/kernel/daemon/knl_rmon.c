@@ -249,29 +249,39 @@ static void rmon_move_clean_page(knl_session_t *session, buf_set_t *set, buf_lru
 
 static void rmon_migrate_write_list(knl_session_t *session, buf_set_t *set)
 {
-    buf_ctrl_t *item = NULL;
     buf_ctrl_t *shift = NULL;
-    item = set->write_list.lru_last;
-    while (item != NULL) {
-        cm_spin_lock(&set->write_list.lock, &session->stat->spin_stat.stat_buffer);
-        shift = item;
-        item = item->prev;
-        if (shift->list_id != LRU_LIST_WRITE) {
+    buf_ctrl_t *prev = NULL;
+    ckpt_context_t *ckpt_ctx = &session->kernel->ckpt_ctx;
+    if (ckpt_ctx->page_cleanning) {
+        return;
+    }
+
+    cm_spin_lock(&set->write_list.lock, &session->stat->spin_stat.stat_buffer);
+    shift = set->write_list.lru_last;
+    while (shift != NULL) {
+        if (ckpt_ctx->page_cleanning) {
             cm_spin_unlock(&set->write_list.lock);
+            return;
+        }
+
+        prev = shift->prev;
+        if (shift->list_id != LRU_LIST_WRITE) {
+            shift = prev;
             continue;
         }
 
         if (shift->bucket_id != OG_INVALID_ID32) {
             if (shift->is_dirty || shift->is_marked) {
-                cm_spin_unlock(&set->write_list.lock);
+                shift = prev;
                 continue;
             }
         }
 
         rmon_move_clean_page(session, set, &set->clean_list, shift);
-        cm_spin_unlock(&set->write_list.lock);
+        shift = prev;
     }
     set->write_list.clean_page_count = 0;
+    cm_spin_unlock(&set->write_list.lock);
 }
 
 /* move cold page from main list to aux list periodically */
