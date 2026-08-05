@@ -613,12 +613,21 @@ static inline status_t cs_get_data(cs_packet_t *pack, uint32 size, void **buf)
 static inline status_t cs_get_str(cs_packet_t *pack, char **buf)
 {
     char *str = NULL;
+    char *str_end = NULL;
     int64 len;
     size_t str_len;
+    uint32 remain_size;
     CM_POINTER(pack);
 
+    CM_CHECK_RECV_PACK_FREE(pack, sizeof(char));
     str = CS_READ_ADDR(pack);
-    str_len = strlen(str) + 1;
+    remain_size = (uint32)CS_REMAIN_RECV_SIZE(pack);
+    str_end = (char *)memchr(str, '\0', remain_size);
+    if (str_end == NULL) {
+        OG_THROW_ERROR(ERR_PACKET_READ, pack->head->size, pack->offset, remain_size);
+        return OG_ERROR;
+    }
+    str_len = (size_t)(str_end - str) + 1;
     
     len = CM_ALIGN4(str_len);
     TO_UINT32_OVERFLOW_CHECK(len, int64);
