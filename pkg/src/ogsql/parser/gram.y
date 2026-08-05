@@ -1,5 +1,6 @@
 %{
 #include "gramparse.h"
+#include "bison_gram_common.h"
 #include "table_parser.h"
 #include "expr_parser.h"
 #include "ogsql_hint_parser.h"
@@ -21,39 +22,11 @@
 #include "ddl_sequence_parser.h"
 #include "ddl_column_parser.h"
 #include "ddl_constraint_parser.h"
-#include "ddl_table_attr_parser.h"
 #include "ddl_privilege_parser.h"
 #include "ogsql_privilege.h"
 #include "pl_ddl_parser.h"
-#include "cm_error.h"
 #include "cm_utils.h"
 #include "decl.h"
-
-/* Location tracking support --- simpler than bison's default */
-
-#define YYLLOC_DEFAULT(Current, Rhs, N) \
-    do { \
-        if (N) \
-            (Current) = (Rhs)[1]; \
-        else \
-            (Current) = (Rhs)[0]; \
-    } while (0)
-
-/*
- * Bison doesn't allocate anything that needs to live across parser calls,
- * so we can easily have it use palloc instead of malloc.  This prevents
- * memory leaks if we error out during parsing.  Note this only works with
- * bison >= 2.0.  However, in bison 1.875 the default is to use alloca()
- * if possible, so there's not really much problem anyhow, at least if
- * you're building with gcc.
- */
-#define YYMALLOC(size) core_yyalloc(size, yyscanner)
-#define YYFREE(ptr)   core_yyfree(ptr, yyscanner)
-#ifdef YYLEX_PARAM
-# define YYLEX yylex (&yylval, &yylloc, YYLEX_PARAM)
-#else
-# define YYLEX yylex (&yylval, &yylloc, yyscanner)
-#endif
 
 #define parser_yyerror(msg)             \
 do {                                    \
@@ -900,7 +873,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -922,7 +895,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -964,7 +937,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -988,7 +961,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -1013,7 +986,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -1039,7 +1012,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -1084,7 +1057,8 @@ InsertStmt:
         | INSERT hint_string ALL all_insert_into_list SelectStmt
         {
             sql_insert_t *insert_context = NULL;
-            sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $2, &insert_context->hint_info);
             }
@@ -1099,7 +1073,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -1128,7 +1102,7 @@ InsertStmt:
         {
             sql_insert_t *insert_context = NULL;
             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-            sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_context));
             if ($2) {
                 og_get_hint_info(stmt, $2, &insert_context->hint_info);
             }
@@ -1173,11 +1147,12 @@ upsert_clause:
         ON DUPLICATE KEY UPDATE set_clause_list
         {
             sql_update_t *update_context = NULL;
-            sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(sql_update_t), (void **)&update_context);
+            BISON_ABORT_IFERR(sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                sizeof(sql_update_t), (void **)&update_context));
             if (sql_init_update(og_yyget_extra(yyscanner)->core_yy_extra.stmt, update_context) != OG_SUCCESS) {
                 parser_yyerror("init sql_update_t failed.");
             }
-            cm_galist_copy(update_context->pairs, $5);
+            BISON_ABORT_IFERR(cm_galist_copy(update_context->pairs, $5));
             $$ = update_context;
         }
         ;
@@ -1187,7 +1162,7 @@ set_clause_list:
             | set_clause_list ',' set_clause
             {
                 galist_t *list = $1;
-                cm_galist_copy(list, $3);
+                BISON_ABORT_IFERR(cm_galist_copy(list, $3));
                 $$ = list;
             }
         ;
@@ -1196,10 +1171,10 @@ set_clause:
             single_set_clause
             {
                 galist_t *list = NULL;
-                if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                     parser_yyerror("create column pair list failed.");
                 }
-                cm_galist_insert(list, $1);
+                BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                 $$ = list;
             }
             | multiple_set_clause                   { $$ = $1; }
@@ -1213,8 +1188,9 @@ single_set_clause:
                         parser_yyerror("init column pair failed");
                     }
                     pair->column_expr = $1;
-                    sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pair->exprs);
-                    cm_galist_insert(pair->exprs, $3);
+                    BISON_ABORT_IFERR(sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                        &pair->exprs));
+                    BISON_ABORT_IFERR(cm_galist_insert(pair->exprs, $3));
                     $$ = pair;
                 }
         ;
@@ -1236,9 +1212,9 @@ multiple_set_clause:
                         parser_yyerror("create column pair list failed.");
                     }
                     column_value_pair_t *pair = $2;
-                    sql_create_list(stmt, &pair->exprs);
-                    cm_galist_insert(pair->exprs, expr);
-                    cm_galist_insert(list, pair);
+                    BISON_ABORT_IFERR(sql_create_list(stmt, &pair->exprs));
+                    BISON_ABORT_IFERR(cm_galist_insert(pair->exprs, expr));
+                    BISON_ABORT_IFERR(cm_galist_insert(list, pair));
 
                     if (pair->column_expr->next != NULL) {
                         expr_tree_t *tmp_expr = pair->column_expr->next;
@@ -1247,9 +1223,10 @@ multiple_set_clause:
                         pair->rs_no = rs_no = 1; // Ref to subquery rs_column, start with 1, 0 for non-multi set
                         while (tmp_expr != NULL) {
                             column_value_pair_t *next_pair = NULL;
-                            cm_galist_new(list, sizeof(column_value_pair_t), (pointer_t *)&next_pair);
-                            sql_create_list(stmt, &next_pair->exprs);
-                            cm_galist_insert(next_pair->exprs, expr);
+                            BISON_ABORT_IFERR(cm_galist_new(list, sizeof(column_value_pair_t),
+                                (pointer_t *)&next_pair));
+                            BISON_ABORT_IFERR(sql_create_list(stmt, &next_pair->exprs));
+                            BISON_ABORT_IFERR(cm_galist_insert(next_pair->exprs, expr));
 
                             next_pair->column_expr = tmp_expr;
                             tmp_expr = tmp_expr->next;
@@ -1356,14 +1333,14 @@ insert_column_list:
         insert_column_item
         {
             galist_t *list = NULL;
-            (void)sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list);
-            cm_galist_insert(list, $1);
+            BISON_ABORT_IFERR(sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list));
+            BISON_ABORT_IFERR(cm_galist_insert(list, $1));
             $$ = list;
         }
         | insert_column_list ',' insert_column_item
         {
             galist_t *list = $1;
-            cm_galist_insert(list, $3);
+            BISON_ABORT_IFERR(cm_galist_insert(list, $3));
             $$ = list;
         }
         ;
@@ -1503,13 +1480,13 @@ indirection:
             indirection_el
                 {
                     galist_t *list = NULL;
-                    (void)sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list);
-                    cm_galist_insert(list, $1);
+                    BISON_ABORT_IFERR(sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list));
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
                 }
             | indirection indirection_el
                 {
-                    cm_galist_insert($1, $2);
+                    BISON_ABORT_IFERR(cm_galist_insert($1, $2));
                     $$ = $1;
                 }
         ;
@@ -1520,11 +1497,11 @@ opt_indirection:
             {
                 galist_t *list = $1;
                 if (list == NULL) {
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("init list failed");
                     }
                 }
-                cm_galist_insert(list, $2);
+                BISON_ABORT_IFERR(cm_galist_insert(list, $2));
                 $$ = list;
             }
         ;
@@ -1534,7 +1511,7 @@ qualified_name:
                 {
                     sql_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                     table->user.implicit = OG_TRUE;
                     table->name.value.str = $1;
                     table->name.value.len = strlen($1);
@@ -1560,7 +1537,7 @@ qualified_name:
                 {
                     sql_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
 
                     galist_t *list = $2;
 
@@ -1633,13 +1610,15 @@ values_clause:
             VALUES ctext_row
                 {
                     galist_t *pairs = NULL;
-                    (void)sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pairs);
+                    BISON_ABORT_IFERR(sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pairs));
                     column_value_pair_t *pair = NULL;
                     galist_t *row = $2;
                     for (uint32 i = 0; i < row->count; i++) {
-                        (void)cm_galist_new(pairs, sizeof(column_value_pair_t), (pointer_t *)&pair);
-                        (void)sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pair->exprs);
-                        cm_galist_insert(pair->exprs, cm_galist_get(row, i));
+                        BISON_ABORT_IFERR(cm_galist_new(pairs, sizeof(column_value_pair_t),
+                            (pointer_t *)&pair));
+                        BISON_ABORT_IFERR(sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &pair->exprs));
+                        BISON_ABORT_IFERR(cm_galist_insert(pair->exprs, cm_galist_get(row, i)));
                     }
                     $$ = pairs;
                 }
@@ -1650,7 +1629,7 @@ values_clause:
                     galist_t *row = $3;
                     for (uint32 i = 0; i < row->count; i++) {
                         pair = (column_value_pair_t*)cm_galist_get(pairs, i);
-                        cm_galist_insert(pair->exprs, cm_galist_get(row, i));
+                        BISON_ABORT_IFERR(cm_galist_insert(pair->exprs, cm_galist_get(row, i)));
                     }
                     $$ = pairs;
                 }
@@ -1663,14 +1642,14 @@ ctext_expr_list:
             ctext_expr
                 {
                     galist_t* row = NULL;
-                    (void)sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &row);
-                    cm_galist_insert(row, $1);
+                    BISON_ABORT_IFERR(sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &row));
+                    BISON_ABORT_IFERR(cm_galist_insert(row, $1));
                     $$ = row;
                 }
             | ctext_expr_list ',' ctext_expr
                 {
                     galist_t* row = $1;
-                    cm_galist_insert(row, $3);
+                    BISON_ABORT_IFERR(cm_galist_insert(row, $3));
                     $$ = row;
                 }
         ;
@@ -1732,7 +1711,7 @@ cte_list:
             common_table_expr
                 {
                     galist_t* cte_list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &cte_list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &cte_list) != OG_SUCCESS) {
                         parser_yyerror("create expr list failed.");
                     }
                     if (cm_galist_insert(cte_list, $1) != OG_SUCCESS) {
@@ -1806,7 +1785,7 @@ select_no_parens:
                     for (uint32 i = 0; i < $1->count; i++) {
                         factor = (sql_withas_factor_t*)cm_galist_get($1, i);
                         factor->owner = select_ctx;
-                        cm_galist_insert(select_ctx->withass, factor);
+                        BISON_ABORT_IFERR(cm_galist_insert(select_ctx->withass, factor));
                     }
                     (void)obj_stack_pop(&og_yyget_extra(yyscanner)->core_yy_extra.withas_stack);
                     $$ = select_ctx;
@@ -1904,7 +1883,7 @@ select_no_parens:
                     for (uint32 i = 0; i < $1->count; i++) {
                         factor = (sql_withas_factor_t*)cm_galist_get($1, i);
                         factor->owner = select_ctx;
-                        cm_galist_insert(select_ctx->withass, factor);
+                        BISON_ABORT_IFERR(cm_galist_insert(select_ctx->withass, factor));
                     }
                     (void)obj_stack_pop(&og_yyget_extra(yyscanner)->core_yy_extra.withas_stack);
 
@@ -1931,7 +1910,7 @@ select_no_parens:
                     for (uint32 i = 0; i < $1->count; i++) {
                         factor = (sql_withas_factor_t*)cm_galist_get($1, i);
                         factor->owner = select_ctx;
-                        cm_galist_insert(select_ctx->withass, factor);
+                        BISON_ABORT_IFERR(cm_galist_insert(select_ctx->withass, factor));
                     }
                     (void)obj_stack_pop(&og_yyget_extra(yyscanner)->core_yy_extra.withas_stack);
 
@@ -1968,7 +1947,7 @@ select_no_parens:
                     for (uint32 i = 0; i < $1->count; i++) {
                         factor = (sql_withas_factor_t*)cm_galist_get($1, i);
                         factor->owner = select_ctx;
-                        cm_galist_insert(select_ctx->withass, factor);
+                        BISON_ABORT_IFERR(cm_galist_insert(select_ctx->withass, factor));
                     }
                     (void)obj_stack_pop(&og_yyget_extra(yyscanner)->core_yy_extra.withas_stack);
 
@@ -2076,7 +2055,7 @@ pivot_in_list:
             pivot_in_list_element
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -2184,7 +2163,7 @@ unpivot_in_list:
             unpivot_in_list_element
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -2344,16 +2323,16 @@ pivot_clause_list:
             pivot_clause
                 {
                     galist_t *pivot_list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pivot_list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pivot_list) != OG_SUCCESS) {
                         parser_yyerror("create expr list failed.");
                     }
-                    cm_galist_insert(pivot_list, $1);
+                    BISON_ABORT_IFERR(cm_galist_insert(pivot_list, $1));
                     $$ = pivot_list;
                 }
             | pivot_clause_list pivot_clause
                 {
                     galist_t *pivot_list = $1;
-                    cm_galist_insert(pivot_list, $2);
+                    BISON_ABORT_IFERR(cm_galist_insert(pivot_list, $2));
                     $$ = pivot_list;
                 }
         ;
@@ -2367,7 +2346,7 @@ expr_or_implicit_row_list:
             expr_or_implicit_row
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -2394,7 +2373,7 @@ cube_clause:
             CUBE '(' expr_or_implicit_row_list ')'
                 {
                     galist_t *group_sets = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
                     if (sql_extract_group_cube(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $3, group_sets) != OG_SUCCESS) {
@@ -2408,7 +2387,7 @@ rollup_clause:
             ROLLUP '(' expr_or_implicit_row_list ')'
                 {
                     galist_t *group_sets = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
                     if (sql_extract_group_rollup(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $3, group_sets) != OG_SUCCESS) {
@@ -2546,7 +2525,7 @@ group_by_list:
                     galist_t *group_sets = $1;
                     group_set_t *group_set = NULL;
 
-                    if (sql_create_list(stmt, &new_grp_sets) != OG_SUCCESS) {
+                    if (sql_create_temp_list(stmt, &new_grp_sets) != OG_SUCCESS) {
                         parser_yyerror("create list failed.");
                     }
 
@@ -2619,7 +2598,7 @@ simple_select:
                         parser_yyerror("ORDER SIBLINGS BY clause not allowed here.");
                     }
                     select_ctx->first_query->order_siblings = OG_TRUE;
-                    cm_galist_copy(select_ctx->first_query->sort_items, $13);
+                    BISON_ABORT_IFERR(cm_galist_copy(select_ctx->first_query->sort_items, $13));
                 }
                 if (attach_pending_subselects_to_query(select_ctx->first_query, $2) != OG_SUCCESS) {
                     parser_yyerror("attach subselects failed");
@@ -3520,16 +3499,16 @@ expr_list_with_select_rows:
         expr_list_with_select_row
             {
                 galist_t *list = NULL;
-                if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                     parser_yyerror("create expr list failed.");
                 }
-                cm_galist_insert(list, $1);
+                BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                 $$ = list;
             }
         | expr_list_with_select_rows ',' expr_list_with_select_row
             {
                 galist_t *list = $1;
-                cm_galist_insert(list, $3);
+                BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                 $$ = list;
             }
         ;
@@ -3610,7 +3589,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                     og_get_hint_info(stmt, $2, &delete_ctx->hint_info);
                 }
 
-                sql_alloc_mem(stmt->context, sizeof(sql_query_t), (void **)&delete_ctx->query);
+                BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_query_t), (void **)&delete_ctx->query));
                 sql_init_query(stmt, NULL, @1.loc, delete_ctx->query);
                 sql_copy_str(stmt->context, "DEL$1", &delete_ctx->query->block_info->origin_name);
                 delete_ctx->plan = NULL;
@@ -3654,7 +3633,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                     parser_yyerror("multi delete do not support order by");
                 }
                 if ($7 != NULL) {
-                    cm_galist_copy(delete_ctx->query->sort_items, $7);
+                    BISON_ABORT_IFERR(cm_galist_copy(delete_ctx->query->sort_items, $7));
                 }
 
                 if (delete_ctx->query->tables.count > 1 && $8 != NULL) {
@@ -3682,7 +3661,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                     og_get_hint_info(stmt, $2, &delete_ctx->hint_info);
                 }
 
-                sql_alloc_mem(stmt->context, sizeof(sql_query_t), (void **)&delete_ctx->query);
+                BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_query_t), (void **)&delete_ctx->query));
                 sql_init_query(stmt, NULL, @1.loc, delete_ctx->query);
                 sql_copy_str(stmt->context, "DEL$1", &delete_ctx->query->block_info->origin_name);
                 delete_ctx->plan = NULL;
@@ -3725,7 +3704,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                     parser_yyerror("multi delete do not support order by");
                 }
                 if ($6 != NULL) {
-                    cm_galist_copy(delete_ctx->query->sort_items, $6);
+                    BISON_ABORT_IFERR(cm_galist_copy(delete_ctx->query->sort_items, $6));
                 }
 
                 if (delete_ctx->query->tables.count > 1 && $7 != NULL) {
@@ -3752,7 +3731,7 @@ delete_target_list:
             if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                 parser_yyerror("create delete objects failed");
             }
-            cm_galist_insert(list, $1);
+            BISON_ABORT_IFERR(cm_galist_insert(list, $1));
             $$ = list;
 
         }
@@ -3768,7 +3747,7 @@ delete_target_list:
                     parser_yyerror("duplicated object found");
                 }
             }
-            cm_galist_insert(list, delete_obj);
+            BISON_ABORT_IFERR(cm_galist_insert(list, delete_obj));
             $$ = list;
         }
     ;
@@ -4220,7 +4199,7 @@ table_ref:
                 {
                     sql_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                     text_t curr_schema;
                     cm_str2text(stmt->session->curr_schema, &curr_schema);
                     table->user.value = curr_schema;
@@ -4239,7 +4218,7 @@ table_ref:
                 {
                     sql_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                     text_t curr_schema;
                     cm_str2text(stmt->session->curr_schema, &curr_schema);
                     table->user.value = curr_schema;
@@ -4260,7 +4239,7 @@ table_ref:
                 {
                     sql_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                     text_t curr_schema;
                     cm_str2text(stmt->session->curr_schema, &curr_schema);
                     table->user.value = curr_schema;
@@ -4327,7 +4306,7 @@ table_func:  TABLE_P '(' func_name '(' expr_list_with_select ')' ')'
             {
                 sql_table_t *table = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                 galist_t *func_name = $3;
                 var_word_t word;
                 if (sql_expr_list_as_func(stmt, func_name, &word) != OG_SUCCESS) {
@@ -4352,7 +4331,7 @@ table_func:  TABLE_P '(' func_name '(' expr_list_with_select ')' ')'
             {
                 sql_table_t *table = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table);
+                BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                 table->func.name.str = "cast";
                 table->func.name.len = 4;
                 text_t schema;
@@ -4815,16 +4794,16 @@ json_column_list:
             json_column
             {
                 galist_t *list = NULL;
-                if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                     parser_yyerror("create column pair list failed.");
                 }
-                cm_galist_insert(list, $1);
+                BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                 $$ = list;
             }
             | json_column_list ',' json_column
             {
                 galist_t *list = $1;
-                cm_galist_insert(list, $3);
+                BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                 $$ = list;
             }
         ;
@@ -4861,7 +4840,7 @@ json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_on_erro
                 table->json_table_info->basic_path_txt.len = len;
                 table->json_table_info->json_error_info.type = $7 ? JSON_RETURN_ERROR : JSON_RETURN_NULL;
 
-                cm_galist_copy(&table->json_table_info->columns, $10);
+                BISON_ABORT_IFERR(cm_galist_copy(&table->json_table_info->columns, $10));
                 rs_column_t *new_col = NULL;
                 expr_node_t *func_node = NULL;
                 for (uint32 i = 0; i < table->json_table_info->columns.count; i++) {
@@ -4903,7 +4882,7 @@ json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_on_erro
                 table->json_table_info->json_error_info.type = JSON_RETURN_DEFAULT;
                 table->json_table_info->json_error_info.default_value = $8;
 
-                cm_galist_copy(&table->json_table_info->columns, $13);
+                BISON_ABORT_IFERR(cm_galist_copy(&table->json_table_info->columns, $13));
                 rs_column_t *new_col = NULL;
                 expr_node_t *func_node = NULL;
                 for (uint32 i = 0; i < table->json_table_info->columns.count; i++) {
@@ -5491,7 +5470,7 @@ func_application: func_name '(' ')'
                 | CHAR_P '(' func_arg_list ')'
                     {
                         galist_t *name_list = NULL;
-                        if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
+                        if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *name = NULL;
@@ -6521,7 +6500,7 @@ opt_array_bounds:
             '[' ']'
                 {
                     galist_t *opt_array_bounds = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &opt_array_bounds) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &opt_array_bounds) != OG_SUCCESS) {
                         parser_yyerror("create array bounds list failed.");
                     }
                     int *ival = NULL;
@@ -6537,7 +6516,7 @@ opt_array_bounds:
             | '[' ICONST ']'
                 {
                     galist_t *opt_array_bounds = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &opt_array_bounds) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &opt_array_bounds) != OG_SUCCESS) {
                         parser_yyerror("create array bounds list failed.");
                     }
                     int *ival = NULL;
@@ -7041,7 +7020,7 @@ type_function_name:    IDENT                        { $$ = $1; }
 func_name:      type_function_name
                     {
                         galist_t *name_list = NULL;
-                        if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
+                        if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
@@ -7057,7 +7036,7 @@ func_name:      type_function_name
                 | ColId indirection
                     {
                         galist_t *name_list = NULL;
-                        if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
+                        if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
                             parser_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
@@ -7342,7 +7321,7 @@ UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return
                     }
                 }
 
-                cm_galist_copy(update_context->pairs, $5);
+                BISON_ABORT_IFERR(cm_galist_copy(update_context->pairs, $5));
                 update_context->query->cond = $6;
                 update_context->ret_columns = $7;
                 if (sql_set_table_qb_name(stmt, update_context->query) != OG_SUCCESS) {
@@ -7393,7 +7372,7 @@ merge_update:
                     if (sql_init_update(og_yyget_extra(yyscanner)->core_yy_extra.stmt, update_context) != OG_SUCCESS) {
                         parser_yyerror("init sql_update_t failed.");
                     }
-                    cm_galist_copy(update_context->pairs, $3);
+                    BISON_ABORT_IFERR(cm_galist_copy(update_context->pairs, $3));
                     $$ = update_context;
                 }
         ;
@@ -7722,13 +7701,13 @@ replace_set_clause_list:
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create column pair list failed.");
                     }
-                    cm_galist_insert(list, $1);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
                 }
             | replace_set_clause_list ',' single_set_clause
                 {
                     galist_t *list = $1;
-                    cm_galist_insert(list, $3);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                     $$ = list;
                 }
         ;
@@ -9889,7 +9868,7 @@ logfiles:
             logfile
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create logfile list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -10032,7 +10011,7 @@ datafiles:
             datafile
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create datafile list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -10109,7 +10088,7 @@ instance_node_opts:
             instance_node_opt
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -10146,7 +10125,7 @@ instance_nodes:
             instance_node
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -10304,7 +10283,7 @@ createdb_opts:
             createdb_opt
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -11280,16 +11259,16 @@ view_column_list:
             ColLabel
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create view column list failed.");
                     }
-                    cm_galist_insert(list, $1);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
                 }
             | view_column_list ',' ColLabel
                 {
                     galist_t *list = $1;
-                    cm_galist_insert(list, $3);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                     $$ = list;
                 }
         ;
@@ -12138,7 +12117,7 @@ ctrlfile_opts:
             ctrlfile_opt
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create ctrlfile opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -12223,7 +12202,7 @@ ctrlfile_files:
             ctrlfile_file
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create ctrlfile list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -12368,7 +12347,7 @@ OptTableElementList:
             TableElement
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create table column list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -12882,16 +12861,16 @@ table_column_list:
             table_column
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create column list failed");
                     }
-                    cm_galist_insert(list, $1);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
                 }
             | table_column_list ',' table_column
                 {
                     galist_t *list = $1;
-                    cm_galist_insert(list, $3);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                     $$ = list;
                 }
         ;
@@ -12918,7 +12897,7 @@ column_name_list:
             ColId
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create column name list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -12945,7 +12924,7 @@ table_attrs:
             table_attr
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create table attr list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -13855,16 +13834,16 @@ index_column_list:
             index_column
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create column list failed");
                     }
-                    cm_galist_insert(list, $1);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
                 }
             | index_column_list ',' index_column
                 {
                     galist_t *list = $1;
-                    cm_galist_insert(list, $3);
+                    BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                     $$ = list;
                 }
         ;
@@ -14038,7 +14017,7 @@ partition_index_list:
             partition_index_item
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create part_parse_info list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -14080,7 +14059,7 @@ part_options:
             part_option
                 {
                     galist_t* list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create part option list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -14298,7 +14277,7 @@ subpartition_index_list:
             subpartition_index_item
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create subpartition list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -14348,7 +14327,7 @@ createidx_opts:
             createidx_opt
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -14418,7 +14397,7 @@ createts_opts:
             createts_opt
                 {
                     galist_t *list = NULL;
-                    if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -14479,7 +14458,7 @@ user_option_list:
                 {
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create user option list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -14502,7 +14481,7 @@ alter_user_options:
                 {
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create alter user option list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
@@ -16330,9 +16309,7 @@ TransactionStmt:
                     if ($7->type != BACKUP_BUFFER_OPT) {
                         parser_yyerror("buffer expected but unknown restore option");
                     }
-                    if (og_parse_backup_buffer(stmt, &param->buffer_size, $7) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(og_parse_backup_buffer(stmt, &param->buffer_size, $7));
                     $$ = param;
                 }
             | RESTORE FILERECOVER FILEID ICONST FROM SCONST 
@@ -16399,9 +16376,7 @@ TransactionStmt:
                     if ($7->type != BACKUP_BUFFER_OPT) {
                         parser_yyerror("buffer expected but unknown restore option");
                     }
-                    if (og_parse_backup_buffer(stmt, &param->buffer_size, $7) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(og_parse_backup_buffer(stmt, &param->buffer_size, $7));
                     $$ = param;
                 }
             | RESTORE ARCHIVELOG FROM SCONST
@@ -16448,9 +16423,7 @@ TransactionStmt:
                     if ($5->type != BACKUP_BUFFER_OPT) {
                         parser_yyerror("buffer expected but unknown restore option");
                     }
-                    if (og_parse_backup_buffer(stmt, &param->buffer_size, $5) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(og_parse_backup_buffer(stmt, &param->buffer_size, $5));
                     $$ = param;
                 }
             | RESTORE FLUSHPAGE FROM SCONST opt_backup_opts
@@ -16951,7 +16924,7 @@ any_name_list:
                     table->schema = $1->owner;
                     
                     galist_t *list = NULL;
-                    if (sql_create_list(stmt, &list) != OG_SUCCESS) {
+                    if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
                         parser_yyerror("create list failed");
                     }
                     if (cm_galist_insert(list, table) != OG_SUCCESS) {
@@ -18241,7 +18214,7 @@ static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr,
     }
     expr_tree_t *tmp = expr;
     while (tmp != NULL) {
-        cm_galist_insert(*list, tmp);
+        OG_RETURN_IFERR(cm_galist_insert(*list, tmp));
         tmp = expr->next;
         expr->next = NULL;
         expr = tmp;

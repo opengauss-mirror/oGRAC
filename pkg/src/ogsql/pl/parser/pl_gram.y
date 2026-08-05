@@ -12,6 +12,7 @@
 #include "pl_common.h"
 #include "pl_gram.h"
 #include "gramparse.h"
+#include "bison_gram_common.h"
 #include "cond_parser.h"
 #include "dml_cl.h"
 #include "dml_parser.h"
@@ -22,25 +23,6 @@
 #include "ogsql_privilege.h"
 #include "pragma_cl.h"
 #include "trigger_decl_cl.h"
-
-/* Location tracking support --- simpler than bison's default */
-
-#define YYLLOC_DEFAULT(Current, Rhs, N) \
-    do { \
-        if (N) \
-            (Current) = (Rhs)[1]; \
-        else \
-            (Current) = (Rhs)[0]; \
-    } while (0)
-
-#define YYMALLOC(size) core_yyalloc(size, yyscanner)
-#define YYFREE(ptr)   core_yyfree(ptr, yyscanner)
-
-#ifdef YYLEX_PARAM
-# define YYLEX yylex (&yylval, &yylloc, YYLEX_PARAM)
-#else
-# define YYLEX yylex (&yylval, &yylloc, yyscanner)
-#endif
 
 #define parser_yyerror(msg)             \
 do {                                    \
@@ -528,10 +510,9 @@ block_body_core:
                     pl_line_begin_t *line = NULL;
                     text_t *label_name = current_label_name(compiler);
                     text_t block_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
-                    plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN, (pl_line_ctrl_t **)&line);
-                    if (plc_push(compiler, (pl_line_ctrl_t *)line, &block_name) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_push(compiler, (pl_line_ctrl_t *)line, &block_name));
                     plc_convert_typedecl(compiler, compiler->decls);
                     line->decls = compiler->decls;
                     line->type_decls = compiler->type_decls;
@@ -559,13 +540,12 @@ block_body_core:
                         }
                     }
                     compiler->line_loc = @5.loc;
-                    plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END, (pl_line_ctrl_t **)&line);
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END,
+                        (pl_line_ctrl_t **)&line));
                     if (begin_line != NULL) {
                         begin_line->end = line;
                     }
-                    if (plc_pop(compiler, compiler->line_loc, PBE_END, NULL) != OG_SUCCESS) {
-                        parser_yyerror("pop block failed");
-                    }
+                    BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END, NULL));
                 }
         ;
 
@@ -675,7 +655,7 @@ exception_choice_list:
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
-                    if (sql_create_list(stmt, &list) != OG_SUCCESS ||
+                    if (sql_create_temp_list(stmt, &list) != OG_SUCCESS ||
                         compile_exception_choice(compiler, $1, @1.loc, &choice) != OG_SUCCESS ||
                         cm_galist_insert(list, choice) != OG_SUCCESS) {
                         parser_yyerror("compile exception choice failed");
@@ -779,9 +759,7 @@ stmt_null:
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     pl_line_ctrl_t *line = NULL;
-                    if (plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_NULL, &line) != OG_SUCCESS) {
-                        parser_yyerror("compile null failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_NULL, &line));
                 }
         ;
 
@@ -807,13 +785,9 @@ stmt_assign:
                         plsql_push_back_token(tok, yyscanner);
                         left_src = read_sql_construct_from(@1.offset, COLON_EQUALS, ';', 0, 0, 0, 0, yyscanner, &tok);
                         if (tok == ';') {
-                            if (plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
-                                (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                                parser_yyerror("compile procedure call failed");
-                            }
-                            if (parse_call_from_sql(stmt, left_src, line, @1.loc) != OG_SUCCESS) {
-                                YYABORT;
-                            }
+                            BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                                (pl_line_ctrl_t **)&line));
+                            BISON_ABORT_IFERR(parse_call_from_sql(stmt, left_src, line, @1.loc));
                             if (plc_clone_expr_node(compiler, &line->proc) != OG_SUCCESS) {
                                 parser_yyerror("clone procedure call failed");
                             }
@@ -840,18 +814,14 @@ stmt_assign:
                             parser_yyerror("compile assignment target failed");
                         }
                         expr_src = read_sql_expression(';', yyscanner);
-                        if (plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
-                            (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                            parser_yyerror("compile assignment failed");
-                        }
+                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                            (pl_line_ctrl_t **)&line));
                         line->left = left;
-                        if (plc_check_var_as_left(compiler, line->left, @1.loc, NULL) != OG_SUCCESS ||
-                            parse_expr_from_sql(stmt, expr_src, line) != OG_SUCCESS ||
-                            plc_clone_expr_node(compiler, &line->left) != OG_SUCCESS ||
-                            pl_bison_clone_expr_tree(compiler, &line->expr) != OG_SUCCESS ||
-                            pl_bison_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
-                            parser_yyerror("compile assignment failed");
-                        }
+                        BISON_ABORT_IFERR(plc_check_var_as_left(compiler, line->left, @1.loc, NULL));
+                        BISON_ABORT_IFERR(parse_expr_from_sql(stmt, expr_src, line));
+                        BISON_ABORT_IFERR(plc_clone_expr_node(compiler, &line->left));
+                        BISON_ABORT_IFERR(pl_bison_clone_expr_tree(compiler, &line->expr));
+                        BISON_ABORT_IFERR(pl_bison_clone_cond_tree(compiler, &line->cond));
                     }
                 }
         ;
@@ -870,10 +840,8 @@ stmt_return:
                     };
                     YYLTYPE return_loc = @1;
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_return_t), LINE_RETURN,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile return failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_return_t), LINE_RETURN,
+                        (pl_line_ctrl_t **)&line));
                     if ($2->len == 0) {
                         if (compiler->type == PL_FUNCTION) {
                             parser_yyerror("function return value expected");
@@ -921,8 +889,9 @@ stmt_if:        stmt_if_expr stmt_elsifs stmt_else K_END K_IF ';'
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                         compiler->line_loc = @4.loc;
 
-                        plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_IF, (pl_line_ctrl_t **)&line);
-                        plc_pop(compiler, compiler->line_loc, PBE_END_IF, &pop_line);
+                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_IF,
+                            (pl_line_ctrl_t **)&line));
+                        BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_IF, &pop_line));
 
                         if (pop_line->type == LINE_IF) {
                             if_line = (pl_line_if_t *)pop_line;
@@ -969,10 +938,9 @@ stmt_proc_call:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL, (pl_line_ctrl_t **)&line);
-                    if (parse_call_from_sql(stmt, src, line, @1.loc) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(parse_call_from_sql(stmt, src, line, @1.loc));
                     if (plc_clone_expr_node(compiler, &line->proc) != OG_SUCCESS) {
                         parser_yyerror("clone procedure call failed");
                     }
@@ -997,13 +965,9 @@ loop_start:
                     text_t *label_name = current_label_name(compiler);
                     text_t loop_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_loop_t), LINE_LOOP,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile loop failed");
-                    }
-                    if (plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &loop_name) != OG_SUCCESS) {
-                        parser_yyerror("push loop failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_loop_t), LINE_LOOP,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &loop_name));
                     line->stack_line = CURR_BLOCK_BEGIN(compiler);
                     $$ = line;
                 }
@@ -1019,16 +983,12 @@ stmt_loop:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
                     compiler->line_loc = @3.loc;
-                    if (plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
-                        (pl_line_ctrl_t **)&end_line) != OG_SUCCESS) {
-                        parser_yyerror("compile end loop failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+                        (pl_line_ctrl_t **)&end_line));
                     if (check_current_loop_end_name(compiler, $5, @5.loc) != OG_SUCCESS) {
                         parser_yyerror("Undefined symbol");
                     }
-                    if (plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line) != OG_SUCCESS) {
-                        parser_yyerror("pop loop failed");
-                    }
+                    BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line));
                     end_line->loop = pop_line;
                     loop_line->next = (pl_line_ctrl_t *)end_line;
                 }
@@ -1043,18 +1003,12 @@ while_start:
                     text_t *label_name = current_label_name(compiler);
                     text_t loop_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_while_t), LINE_WHILE,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile while failed");
-                    }
-                    if (get_valid_cond_tree(stmt, $2, &line->cond) != OG_SUCCESS ||
-                        plc_verify_cond(compiler, line->cond) != OG_SUCCESS ||
-                        pl_bison_clone_cond_tree(compiler, &line->cond) != OG_SUCCESS) {
-                        parser_yyerror("compile while condition failed");
-                    }
-                    if (plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &loop_name) != OG_SUCCESS) {
-                        parser_yyerror("push while failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_while_t), LINE_WHILE,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(get_valid_cond_tree(stmt, $2, &line->cond));
+                    BISON_ABORT_IFERR(plc_verify_cond(compiler, line->cond));
+                    BISON_ABORT_IFERR(pl_bison_clone_cond_tree(compiler, &line->cond));
+                    BISON_ABORT_IFERR(plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &loop_name));
                     line->name = label_name;
                     line->stack_line = CURR_BLOCK_BEGIN(compiler);
                     $$ = line;
@@ -1071,16 +1025,12 @@ stmt_while:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
                     compiler->line_loc = @3.loc;
-                    if (plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
-                        (pl_line_ctrl_t **)&end_line) != OG_SUCCESS) {
-                        parser_yyerror("compile end while failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+                        (pl_line_ctrl_t **)&end_line));
                     if (check_current_loop_end_name(compiler, $5, @5.loc) != OG_SUCCESS) {
                         parser_yyerror("Undefined symbol");
                     }
-                    if (plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line) != OG_SUCCESS) {
-                        parser_yyerror("pop while failed");
-                    }
+                    BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line));
                     end_line->loop = pop_line;
                     while_line->next = (pl_line_ctrl_t *)end_line;
                 }
@@ -1124,16 +1074,12 @@ stmt_for:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
                     compiler->line_loc = @3.loc;
-                    if (plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
-                        (pl_line_ctrl_t **)&end_line) != OG_SUCCESS) {
-                        parser_yyerror("compile end for failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+                        (pl_line_ctrl_t **)&end_line));
                     if (check_current_loop_end_name(compiler, $5, @5.loc) != OG_SUCCESS) {
                         parser_yyerror("Undefined symbol");
                     }
-                    if (plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line) != OG_SUCCESS) {
-                        parser_yyerror("pop for loop failed");
-                    }
+                    BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line));
                     end_line->loop = pop_line;
                     for_line->next = (pl_line_ctrl_t *)end_line;
                 }
@@ -1192,10 +1138,8 @@ stmt_open:
                     if (decl->cursor.ogx->is_sysref || decl->cursor.ogx->context == NULL) {
                         parser_yyerror("explicit cursor expected");
                     }
-                    if (plc_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile open cursor failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN,
+                        (pl_line_ctrl_t **)&line));
                     line->vid = decl->vid;
                     line->exprs = NULL;
                 }
@@ -1232,10 +1176,8 @@ stmt_fetch:
                     if (find_cursor_decl_by_node(compiler, $2, @2.loc, &decl) != OG_SUCCESS) {
                         parser_yyerror("cursor expected");
                     }
-                    if (plc_alloc_line(compiler, sizeof(pl_line_fetch_t), LINE_FETCH,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile fetch failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_fetch_t), LINE_FETCH,
+                        (pl_line_ctrl_t **)&line));
                     line->vid = decl->vid;
                     line->into.output = $4;
                     line->into.prefetch_rows = INTO_COMMON_PREFETCH_COUNT;
@@ -1273,10 +1215,8 @@ stmt_close:
                     if (find_cursor_decl_by_node(compiler, $2, @2.loc, &decl) != OG_SUCCESS) {
                         parser_yyerror("cursor expected");
                     }
-                    if (plc_alloc_line(compiler, sizeof(pl_line_close_t), LINE_CLOSE,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile close failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_close_t), LINE_CLOSE,
+                        (pl_line_ctrl_t **)&line));
                     line->vid = decl->vid;
                 }
         ;
@@ -1288,10 +1228,8 @@ into_var_list:
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
-                    if (plc_init_galist(compiler, &list) != OG_SUCCESS ||
-                        compile_into_var_list(compiler, list, $1, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("compile into variable failed");
-                    }
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &list));
+                    BISON_ABORT_IFERR(compile_into_var_list(compiler, list, $1, @1.loc));
                     $$ = list;
                 }
             | into_var_list ',' T_DATUM
@@ -1313,12 +1251,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_SELECT, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_SELECT, @1.loc, line));
                 }
             | K_INSERT
                 {
@@ -1327,12 +1263,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_INSERT, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_INSERT, @1.loc, line));
                 }
             | K_UPDATE
                 {
@@ -1341,12 +1275,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_UPDATE, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_UPDATE, @1.loc, line));
                 }
             | K_DELETE
                 {
@@ -1355,12 +1287,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_DELETE, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_DELETE, @1.loc, line));
                 }
             | K_MERGE
                 {
@@ -1369,12 +1299,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_MERGE, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_MERGE, @1.loc, line));
                 }
             | K_REPLACE
                 {
@@ -1383,12 +1311,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_REPLACE, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_REPLACE, @1.loc, line));
                 }
             | K_WITH
                 {
@@ -1397,12 +1323,10 @@ stmt_sql:
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                     text_t *src = read_sql_construct_from(@1.offset, ';', 0, 0, 0, 0, 0, yyscanner, NULL);
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS ||
-                        plc_init_galist(compiler, &line->input) != OG_SUCCESS ||
-                        compile_static_sql_line(stmt, src, KEY_WORD_WITH, @1.loc, line) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
+                    BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_WITH, @1.loc, line));
                 }
         ;
 
@@ -1412,9 +1336,7 @@ stmt_commit:
                     pl_line_ctrl_t *line = NULL;
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    if (plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_COMMIT, &line) != OG_SUCCESS) {
-                        parser_yyerror("compile commit failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_COMMIT, &line));
                 }
         ;
 
@@ -1424,10 +1346,8 @@ stmt_rollback:
                     pl_line_rollback_t *line = NULL;
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    if (plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile rollback failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
+                        (pl_line_ctrl_t **)&line));
                     line->savepoint = CM_NULL_TEXT;
                 }
             | K_ROLLBACK K_TO T_WORD ';'
@@ -1437,10 +1357,8 @@ stmt_rollback:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     text_t name;
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile rollback failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
+                        (pl_line_ctrl_t **)&line));
                     cm_str2text($3.ident, &name);
                     if (pl_copy_text(compiler->entity, &name, &line->savepoint) != OG_SUCCESS) {
                         parser_yyerror("copy rollback savepoint failed");
@@ -1453,10 +1371,8 @@ stmt_rollback:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     text_t name;
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile rollback failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
+                        (pl_line_ctrl_t **)&line));
                     cm_str2text($4.ident, &name);
                     if (pl_copy_text(compiler->entity, &name, &line->savepoint) != OG_SUCCESS) {
                         parser_yyerror("copy rollback savepoint failed");
@@ -1472,10 +1388,8 @@ stmt_savepoint:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     text_t name;
 
-                    if (plc_alloc_line(compiler, sizeof(pl_line_savepoint_t), LINE_SAVEPOINT,
-                        (pl_line_ctrl_t **)&line) != OG_SUCCESS) {
-                        parser_yyerror("compile savepoint failed");
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_savepoint_t), LINE_SAVEPOINT,
+                        (pl_line_ctrl_t **)&line));
                     cm_str2text($2.ident, &name);
                     if (pl_copy_text(compiler->entity, &name, &line->savepoint) != OG_SUCCESS) {
                         parser_yyerror("copy savepoint failed");
@@ -1511,7 +1425,7 @@ case_when_list:
                 {
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_list(stmt, &list) != OG_SUCCESS ||
+                    if (sql_create_temp_list(stmt, &list) != OG_SUCCESS ||
                         cm_galist_insert(list, $1) != OG_SUCCESS) {
                         parser_yyerror("record case when failed");
                     }
@@ -1587,17 +1501,12 @@ stmt_if_expr:
                     pl_line_if_t *line = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
-                    plc_alloc_line(compiler, sizeof(pl_line_if_t), LINE_IF, (pl_line_ctrl_t **)&line);
-                    if (get_valid_cond_tree(stmt, $2, &line->cond) != OG_SUCCESS) {
-                        parser_yyerror("invalid condition expr");
-                    }
-                    if (plc_verify_cond(compiler, line->cond) != OG_SUCCESS) {
-                        parser_yyerror("verify condition expr failed");
-                    }
-                    pl_bison_clone_cond_tree(compiler, &line->cond);
-                    if (plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT) != OG_SUCCESS) {
-                        YYABORT;
-                    }
+                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_if_t), LINE_IF,
+                        (pl_line_ctrl_t **)&line));
+                    BISON_ABORT_IFERR(get_valid_cond_tree(stmt, $2, &line->cond));
+                    BISON_ABORT_IFERR(plc_verify_cond(compiler, line->cond));
+                    BISON_ABORT_IFERR(pl_bison_clone_cond_tree(compiler, &line->cond));
+                    BISON_ABORT_IFERR(plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT));
                     line->t_line = NULL;
                 }
             proc_sect
@@ -1611,19 +1520,17 @@ stmt_elsifs:    /* EMPTY */
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                         compiler->line_loc = @2.loc;
-                        plc_alloc_line(compiler, sizeof(pl_line_elsif_t), LINE_ELIF, (pl_line_ctrl_t **)&line);
-                        if (get_valid_cond_tree(stmt, $3, &line->cond) != OG_SUCCESS) {
-                            parser_yyerror("invalid condition expr");
-                        }
-                        if (plc_verify_cond(compiler, line->cond) != OG_SUCCESS) {
-                            parser_yyerror("verify condition expr failed");
-                        }
-                        pl_bison_clone_cond_tree(compiler, &line->cond);
-                        plc_pop(compiler, compiler->line_loc, PBE_ELIF, (pl_line_ctrl_t **)&brother_line);
+                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_elsif_t), LINE_ELIF,
+                            (pl_line_ctrl_t **)&line));
+                        BISON_ABORT_IFERR(get_valid_cond_tree(stmt, $3, &line->cond));
+                        BISON_ABORT_IFERR(plc_verify_cond(compiler, line->cond));
+                        BISON_ABORT_IFERR(pl_bison_clone_cond_tree(compiler, &line->cond));
+                        BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_ELIF,
+                            (pl_line_ctrl_t **)&brother_line));
                         line->if_line = (pl_line_if_t *)brother_line;
                         line->if_line->f_line = (pl_line_ctrl_t *)line;
                         line->t_line = NULL;
-                        plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT);
+                        BISON_ABORT_IFERR(plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &CM_NULL_TEXT));
                     }
                 proc_sect
         ;
@@ -1636,11 +1543,13 @@ stmt_else:      /* EMPTY */
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
                         compiler->line_loc = @1.loc;
-                        plc_alloc_line(compiler, sizeof(pl_line_else_t), LINE_ELSE, (pl_line_ctrl_t **)&else_line);
-                        plc_pop(compiler, compiler->line_loc, PBE_ELSE, (pl_line_ctrl_t **)&brother_line);
+                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_else_t), LINE_ELSE,
+                            (pl_line_ctrl_t **)&else_line));
+                        BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_ELSE,
+                            (pl_line_ctrl_t **)&brother_line));
                         else_line->if_line = (pl_line_if_t *)brother_line;
                         else_line->if_line->f_line = (pl_line_ctrl_t *)else_line;
-                        plc_push_ctl(compiler, (pl_line_ctrl_t *)else_line, &CM_NULL_TEXT);
+                        BISON_ABORT_IFERR(plc_push_ctl(compiler, (pl_line_ctrl_t *)else_line, &CM_NULL_TEXT));
                     }
                 proc_sect
         ;
@@ -1734,9 +1643,7 @@ decl_stmt:
                     text_t name_text;
                     bool32 is_sys_refcursor = pl_bison_type_is_sys_refcursor(type);
 
-                    if (cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl) != OG_SUCCESS) {
-                        parser_yyerror("alloc declaration failed");
-                    }
+                    BISON_ABORT_IFERR(cm_galist_new(decls, sizeof(plv_decl_t), (void **)&decl));
                     errno_t rc = memset_s(decl, sizeof(plv_decl_t), 0, sizeof(plv_decl_t));
                     knl_securec_check(rc);
                     decl->vid.block = (int16)compiler->stack.depth;
@@ -1810,9 +1717,7 @@ decl_stmt:
                     text_t name_text;
                     errno_t rc;
 
-                    if (cm_galist_new(compiler->decls, sizeof(plv_decl_t), (void **)&decl) != OG_SUCCESS) {
-                        parser_yyerror("alloc exception decl failed");
-                    }
+                    BISON_ABORT_IFERR(cm_galist_new(compiler->decls, sizeof(plv_decl_t), (void **)&decl));
                     rc = memset_s(decl, sizeof(plv_decl_t), 0, sizeof(plv_decl_t));
                     knl_securec_check(rc);
                     decl->vid.block = (int16)compiler->stack.depth;
@@ -1934,7 +1839,7 @@ cursor_arg_list:
                 {
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_list(stmt, &list) != OG_SUCCESS ||
+                    if (sql_create_temp_list(stmt, &list) != OG_SUCCESS ||
                         cm_galist_insert(list, $1) != OG_SUCCESS) {
                         parser_yyerror("create cursor arg list failed");
                     }
@@ -1954,9 +1859,7 @@ cursor_arg:
                 {
                     pl_bison_cursor_arg_t *arg = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_alloc_mem(stmt->context, sizeof(pl_bison_cursor_arg_t), (void **)&arg) != OG_SUCCESS) {
-                        parser_yyerror("alloc cursor arg failed");
-                    }
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(pl_bison_cursor_arg_t), (void **)&arg));
                     arg->name = $1;
                     arg->type = $3;
                     arg->def_expr = $4;
@@ -2001,20 +1904,14 @@ record_attr_list:   record_attr
                         {
                             galist_t *list = NULL;
                             sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                            if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                                parser_yyerror("create list failed");
-                            }
-                            if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                                parser_yyerror("insert list failed");
-                            }
+                            BISON_ABORT_IFERR(sql_create_temp_list(stmt, &list));
+                            BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                             $$ = list;
                         }
                     | record_attr_list ',' record_attr
                         {
                             galist_t *list = $1;
-                            if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                                parser_yyerror("insert list failed");
-                            }
+                            BISON_ABORT_IFERR(cm_galist_insert(list, $3));
                             $$ = list;
                         }
         ;
@@ -2025,9 +1922,8 @@ record_attr:    decl_varname decl_datatype decl_notnull decl_rec_defval
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
 
-                        if (sql_alloc_mem(compiler->stmt->context, sizeof(record_attr_t), (void **)&attr_def) != OG_SUCCESS) {
-                            parser_yyerror("alloc mem failed");
-                        }
+                        BISON_ABORT_IFERR(sql_alloc_mem(compiler->stmt->context, sizeof(record_attr_t),
+                            (void **)&attr_def));
 
                         attr_def->name = $1;
                         attr_def->type = $2;
@@ -2095,27 +1991,23 @@ decl_datatype:
                                 parser_yyerror("expected identifier after '.'");
                             }
                             if (typemode == NULL) {
-                                sql_create_list(stmt, &typemode);
+                                BISON_ABORT_IFERR(sql_create_list(stmt, &typemode));
                             }
                             is_name_typemode = OG_TRUE;
-                            cm_galist_new(typemode, sizeof(text_t), (pointer_t *)&text);
+                            BISON_ABORT_IFERR(cm_galist_new(typemode, sizeof(text_t), (pointer_t *)&text));
                             cm_str2text(sub_name, text);
                         }
                         if (tok == '(') {
                             expr_tree_t *expr = NULL;
                             is_name_typemode = OG_FALSE;
-                            if (sql_create_list(stmt, &typemode) != OG_SUCCESS) {
-                                parser_yyerror("create typemode failed");
-                            }
+                            BISON_ABORT_IFERR(sql_create_list(stmt, &typemode));
                             for (;;) {
                                 tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
                                 if (tok != ICONST) {
                                     parser_yyerror("expected type modifier");
                                 }
-                                if (sql_create_int_const_expr(stmt, &expr, tok_lval.ival, tok_lloc.loc) != OG_SUCCESS ||
-                                    cm_galist_insert(typemode, expr) != OG_SUCCESS) {
-                                    parser_yyerror("append type modifier failed");
-                                }
+                                BISON_ABORT_IFERR(sql_create_int_const_expr(stmt, &expr, tok_lval.ival, tok_lloc.loc));
+                                BISON_ABORT_IFERR(cm_galist_insert(typemode, expr));
                                 tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
                                 if (pl_token_text_equal(yyscanner, tok, &tok_lval, &tok_lloc, tok_len, "char")) {
                                     is_char = OG_TRUE;
@@ -2997,6 +2889,7 @@ static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefi
         sql_release_lob_info(sub_stmt);
         sql_release_resource(sub_stmt, OG_TRUE);
         sql_release_context(sub_stmt);
+        CM_FREE_PTR(sub_stmt->stat);
     }
     OGSQL_RESTORE_STACK(stmt);
     return status;

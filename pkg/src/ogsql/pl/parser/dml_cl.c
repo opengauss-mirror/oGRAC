@@ -797,6 +797,7 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
 
         if (sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text) != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);
+            sql_release_context(sub_stmt);
             break;
         }
 
@@ -822,6 +823,7 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     *arg->ogx = sub_stmt->context;
     sql_release_lob_info(sub_stmt);
     sql_release_resource(sub_stmt, OG_TRUE);
+    CM_FREE_PTR(sub_stmt->stat);
     return status;
 }
 
