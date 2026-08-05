@@ -73,6 +73,7 @@ typedef struct st_upgrade_version {
 typedef void(*cms_notify_func_t)(cms_res_status_list_t* res_list);
 typedef status_t(*cms_master_op_t)(uint8 oper);                     // 1 rise, 2 drop
 typedef status_t(*cms_upgrade_op_t)(void *func_ptr);
+typedef status_t(*cms_readmode_op_t)(const CmsReadmodeSwitchCtxT *ctx);
 
 status_t cms_cli_init(void);
 status_t cms_res_inst_register(const char res_type[CMS_MAX_RES_TYPE_LEN], uint8 inst_id, res_init_info_t *res_init_info,
@@ -90,6 +91,7 @@ status_t cms_set_res_data(uint32 slot_id, char* data, uint32 size);
 status_t cms_get_res_data(uint32 slot_id, char* data, uint32 max_size, uint32* size);
 status_t cms_env_init(void);
 void cms_res_inst_register_upgrade(cms_upgrade_op_t upgrade_func);
+void CmsResInstRegisterReadmode(cms_readmode_op_t readmodeFunc);
 
 #ifdef __cplusplus
 }

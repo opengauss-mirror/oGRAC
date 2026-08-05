@@ -371,7 +371,11 @@ CMS_CONFIG = {
     "_CLUSTER_ID": 0,
     "_USE_DBSTOR": "", # generate by installer
     "_DBSTOR_NAMESPACE": "", # generate by installer
-    "_CMS_MES_PIPE_TYPE": mes_type
+    "_CMS_MES_PIPE_TYPE": mes_type,
+        "_DISK_USAGE_CHECK_INTERVAL": "30",
+        "_DISK_USAGE_THRESHOLD": "85",
+        "_DISK_USAGE_PROTECT_ENABLE": "TRUE",
+        "_DISK_USAGE_READONLY_COOLDOWN": "120",
 }
 PRIMARY_KEYSTORE = "/opt/ograc/common/config/primary_keystore_bak.ks"
 STANDBY_KEYSTORE = "/opt/ograc/common/config/standby_keystore_bak.ks"

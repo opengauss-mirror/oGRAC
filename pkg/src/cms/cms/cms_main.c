@@ -173,6 +173,12 @@ cms_cmd_def_t    g_cms_cmd_defs[] = {
     {{"iostat"}, cms_iostat, "display message statistics."},
     {{"iostat", "-reset"}, cms_iostat_reset, "reset cms statistics."},
     {{"diskiostat"}, cms_local_disk_iostat, "display local disk io message statistics."},
+    {{"diskreadonly", "-show"}, cms_disk_readonly, "display disk usage and readonly protect configuration."},
+    {{"diskreadonly", "-recover-now"}, cms_disk_readonly, "recover database readwrite immediately."},
+    {{"diskreadonly", "-auto_change", "*[BOOLEAN]"}, cms_disk_readonly,
+        "enable or disable disk usage protect switch."},
+    {{"diskreadonly", "-set", "*[ITEM]", "*[VALUE]"}, cms_disk_readonly,
+        "set disk readonly protect configuration."},
     {{"upgrade",  "-version", "*[MAIN]", "*[MAJOR]", "*[REVISION]"}, cms_upgrade, "upgrage version"},
     {{"version"}, cms_get_version, "get upgrage version"},
     {{"degrade",  "-version", "-force", "*[MAIN]", "*[MAJOR]", "*[REVISION]"}, cms_degrade_force, "degrage version force"},
@@ -246,6 +252,7 @@ status_t cms_alloc_g_master_info(void)
 static inline void cms_info_log_print(cms_cmd_def_t* cmd_def)
 {
     if (cmd_def->cmd_pro_func == cms_local_disk_iostat ||
+        cmd_def->cmd_pro_func == cms_disk_readonly ||
         cmd_def->cmd_pro_func == cms_node_connected ||
         cmd_def->cmd_pro_func == cms_node_list) {
         OG_LOG_RUN_INF("CMS_CMD_DESC:%s.", cmd_def->desc);

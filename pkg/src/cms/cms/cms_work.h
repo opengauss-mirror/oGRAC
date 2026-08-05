@@ -105,6 +105,8 @@ status_t cms_stop_res_node(cms_packet_head_t* msg, char* err_info, uint32 err_in
 void cms_proc_msg_req_get_iostat(cms_packet_head_t *msg);
 void cms_proc_msg_req_reset_iostat(cms_packet_head_t *msg);
 void cms_proc_msg_req_get_disk_iostat(cms_packet_head_t *msg);
+void cms_proc_msg_req_get_disk_usage(cms_packet_head_t *msg);
+void cms_proc_msg_req_disk_readwrite_recover(cms_packet_head_t *msg);
 void cms_proc_msg_req_start_res_common(cms_packet_head_t* msg, status_t (*res_action_fp)(uint32, uint32),
     uint8 res_msg_type);
 void cms_proc_uds_msg_req_stop_res(cms_packet_head_t* msg);

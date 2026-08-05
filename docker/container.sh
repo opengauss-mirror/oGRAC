@@ -27,12 +27,27 @@ function err()
     exit 1
 }
 
+function remove_existing_container()
+{
+    if docker ps -a --format '{{.Names}}' | grep -Fxq "${container}"; then
+        echo "remove existing container ${container}"
+        set -x
+        docker rm -f ${container}
+        local ret=$?
+        set +x
+        if [[ ${ret} -ne 0 ]]; then
+            err "remove existing container ${container} failed"
+        fi
+    fi
+}
+
 function run_docker()
 {
     init
     extra="$*"
     # Ensure docker image name is lowercase to satisfy Docker's reference format
     image_name=$(echo "${docker_name}" | tr '[:upper:]' '[:lower:]')
+    remove_existing_container
     set -x
     docker run -dit --rm --privileged --shm-size 10240M    \
                --ulimit core=-1 --ulimit memlock=-1        \
@@ -43,7 +58,11 @@ function run_docker()
                ${docker_conf} --name ${container}          \
                ${mounts} --network=${network_name}         \
                ${extra} ${image_name} /usr/sbin/init
+    local ret=$?
     set +x
+    if [[ ${ret} -ne 0 ]]; then
+        err "run docker container ${container} failed"
+    fi
 }
 
 function create_network()
@@ -61,8 +80,12 @@ function create_network()
 function init_container()
 {
     set -x
-    docker exec -it ${container} /bin/bash ${regress_dir}/ogracKernel/docker/init_container.sh ${user} ${core_dir} ${commitID}
+    docker exec -i ${container} /bin/bash ${regress_dir}/ogracKernel/docker/init_container.sh ${user} ${core_dir} ${commitID}
+    local ret=$?
     set +x
+    if [[ ${ret} -ne 0 ]]; then
+        err "init container ${container} failed"
+    fi
 }
 
 function startnode()
@@ -97,6 +120,10 @@ function enternode()
         exit 1
     fi
     container="ograc_${mode}-node${node_id}"
+    if [[ ! -t 0 ]]; then
+        echo "skip entering ${container}: no interactive TTY"
+        return 0
+    fi
     
     set -x
     docker exec -it ${container} /bin/bash
@@ -137,6 +164,10 @@ function rundev()
 function enterdev()
 {
     container="${docker_name}-dev"
+    if [[ ! -t 0 ]]; then
+        echo "skip entering ${container}: no interactive TTY"
+        return 0
+    fi
 
     set -x
     docker exec -it ${container} /bin/bash
