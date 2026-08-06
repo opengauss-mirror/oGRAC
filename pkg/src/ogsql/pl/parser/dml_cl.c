@@ -1383,6 +1383,10 @@ status_t plc_word2var(sql_stmt_t *stmt, word_t *word, expr_node_t *node)
         sql_convert_pack_func(&standard_pack_name, &word->text.value, &v);
         if (v.pack_id != OG_INVALID_ID32 && v.func_id != OG_INVALID_ID32) {
             node->type = EXPR_NODE_FUNC;
+            if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
+                /* Bison has already consumed the complete no-argument function syntax. */
+                return sql_build_bison_noarg_func_node(stmt, word, node);
+            }
             return sql_build_func_node(stmt, word, node);
         }
     }

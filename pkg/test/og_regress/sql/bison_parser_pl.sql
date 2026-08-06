@@ -1737,6 +1737,25 @@ end;
 
 drop procedure if exists bison_pl_null_concat_proc;
 
+drop procedure if exists bison_pl_standard_error_probe;
+drop procedure if exists bison_pl_standard_error_sink;
+create or replace procedure bison_pl_standard_error_sink(p_msg varchar2) as
+begin
+    null;
+end;
+/
+
+create or replace procedure bison_pl_standard_error_probe as
+begin
+    bison_pl_standard_error_sink(substrb(sql_err_msg, 1, 2000));
+end;
+/
+
+call bison_pl_standard_error_probe;
+
+drop procedure bison_pl_standard_error_probe;
+drop procedure bison_pl_standard_error_sink;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;

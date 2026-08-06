@@ -962,6 +962,22 @@ status_t sql_build_func_node(sql_stmt_t *stmt, word_t *word, expr_node_t *node)
     return status;
 }
 
+status_t sql_build_bison_noarg_func_node(sql_stmt_t *stmt, word_t *word, expr_node_t *node)
+{
+    text_t user;
+
+    user.str = stmt->session->db_user;
+    user.len = (uint32)strlen(stmt->session->db_user);
+    node->word.func.user_func_first = OG_FALSE;
+    OG_RETURN_IFERR(plc_prepare_noarg_call(word));
+    OG_RETURN_IFERR(sql_word_as_func(stmt, word, &node->word));
+
+    if (node->word.func.user.len > 0 || sql_self_func_configed_direct(&user, &node->word.func.name.value)) {
+        node->word.func.user_func_first = OG_TRUE;
+    }
+    return OG_SUCCESS;
+}
+
 static status_t sql_create_winsort_partlist(sql_stmt_t *stmt, word_t *word, winsort_args_t *winsort_args)
 {
     lex_t *lex = stmt->session->lex;

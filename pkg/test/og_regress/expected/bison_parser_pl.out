@@ -2583,6 +2583,46 @@ SQL> drop procedure if exists bison_pl_null_concat_proc;
 Succeed.
 
 SQL>
+SQL> drop procedure if exists bison_pl_standard_error_probe;
+
+Succeed.
+
+SQL> drop procedure if exists bison_pl_standard_error_sink;
+
+Succeed.
+
+SQL> create or replace procedure bison_pl_standard_error_sink(p_msg varchar2) as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL>
+SQL> create or replace procedure bison_pl_standard_error_probe as
+  2 begin
+  3     bison_pl_standard_error_sink(substrb(sql_err_msg, 1, 2000));
+  4 end;
+  5 /
+
+Succeed.
+
+SQL>
+SQL> call bison_pl_standard_error_probe;
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> drop procedure bison_pl_standard_error_probe;
+
+Succeed.
+
+SQL> drop procedure bison_pl_standard_error_sink;
+
+Succeed.
+
+SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.
