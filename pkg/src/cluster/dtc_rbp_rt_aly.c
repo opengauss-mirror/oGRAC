@@ -59,6 +59,7 @@ static void dtc_rbp_rt_clear_local_sets(dtc_rbp_rt_aly_ctx_t *ctx);
 #define DTC_RBP_RT_UNSAFE_EVENT_CHUNK_INVALID_BATCH 36
 #define DTC_RBP_RT_UNSAFE_PARSER_ANALYZE_BATCH_FAILED 25
 #define DTC_RBP_RT_UNSAFE_OWNER_RECORD_PAGE_FAILED 37
+#define DTC_RBP_RT_UNSAFE_RUNTIME_RESET_LOCAL_BUSY_TIMEOUT 38
 #define DTC_RBP_RT_UNSAFE_RUNTIME_RESET_DRAIN_TIMEOUT 30
 #define DTC_RBP_RT_UNSAFE_RUNTIME_RESET_LOCAL_INIT_FAILED 31
 #define DTC_RBP_RT_UNSAFE_PEER_REDO_GAP 7
@@ -849,6 +850,69 @@ static bool32 dtc_rbp_rt_event_queues_drained(dtc_rbp_rt_aly_ctx_t *ctx)
     return drained;
 }
 
+static bool32 dtc_rbp_rt_enter_local_access(dtc_rbp_rt_aly_ctx_t *ctx)
+{
+    /* Runtime reset frees/reinitializes rt_owner_rcy while owner threads stay alive. */
+    for (;;) {
+        if (ctx->closing || ctx->unsafe) {
+            return OG_FALSE;
+        }
+        cm_spin_lock(&ctx->state_lock, NULL);
+        if (!ctx->local_resetting) {
+            ctx->local_accessor_count++;
+            cm_spin_unlock(&ctx->state_lock);
+            return OG_TRUE;
+        }
+        cm_spin_unlock(&ctx->state_lock);
+        cm_sleep(1);
+    }
+}
+
+static void dtc_rbp_rt_leave_local_access(dtc_rbp_rt_aly_ctx_t *ctx)
+{
+    cm_spin_lock(&ctx->state_lock, NULL);
+    if (ctx->local_accessor_count > 0) {
+        ctx->local_accessor_count--;
+    }
+    cm_spin_unlock(&ctx->state_lock);
+}
+
+static status_t dtc_rbp_rt_begin_local_reset(dtc_rbp_rt_aly_ctx_t *ctx)
+{
+    uint32 wait_ms = 0;
+
+    cm_spin_lock(&ctx->state_lock, NULL);
+    ctx->local_resetting = OG_TRUE;
+    cm_spin_unlock(&ctx->state_lock);
+
+    while (wait_ms < DTC_RBP_RT_DRAIN_TIMEOUT_MS && !ctx->closing && !ctx->unsafe) {
+        uint32 accessor_count;
+
+        cm_spin_lock(&ctx->state_lock, NULL);
+        accessor_count = ctx->local_accessor_count;
+        cm_spin_unlock(&ctx->state_lock);
+        if (accessor_count == 0) {
+            return OG_SUCCESS;
+        }
+        cm_sleep(1);
+        wait_ms++;
+    }
+
+    if (ctx->closing || ctx->unsafe) {
+        return OG_ERROR;
+    }
+    dtc_rbp_rt_mark_unsafe(ctx, DTC_RBP_RT_UNSAFE_RUNTIME_RESET_LOCAL_BUSY_TIMEOUT,
+                           "runtime reset local access timeout");
+    return OG_ERROR;
+}
+
+static void dtc_rbp_rt_end_local_reset(dtc_rbp_rt_aly_ctx_t *ctx)
+{
+    cm_spin_lock(&ctx->state_lock, NULL);
+    ctx->local_resetting = OG_FALSE;
+    cm_spin_unlock(&ctx->state_lock);
+}
+
 static status_t dtc_rbp_rt_reserve_event_chunk(dtc_rbp_rt_aly_ctx_t *ctx, uint32 batch_idx)
 {
     uint32 wait_ms = 0;
@@ -1252,22 +1316,32 @@ static void dtc_rbp_rt_owner_proc(thread_t *thread)
         dtc_rbp_rt_event_chunk_t *chunk = dtc_rbp_rt_dequeue_event_chunk(ctx, owner_id);
 
         if (chunk == NULL) {
-            dtc_rcy_local_set_rebuild_active_budget(&ctx->rt_owner_rcy[owner_id], DTC_RBP_RT_ACTIVE_REBUILD_BUDGET);
+            if (dtc_rbp_rt_enter_local_access(ctx)) {
+                dtc_rcy_local_set_rebuild_active_budget(&ctx->rt_owner_rcy[owner_id],
+                                                        DTC_RBP_RT_ACTIVE_REBUILD_BUDGET);
+                dtc_rbp_rt_leave_local_access(ctx);
+            }
             cm_sleep(1);
             continue;
+        }
+        if (!dtc_rbp_rt_enter_local_access(ctx)) {
+            dtc_rbp_rt_finish_event_chunk(ctx, chunk);
+            CM_FREE_PTR(chunk);
+            break;
         }
         for (uint32 i = 0; i < chunk->count; i++) {
             dtc_rbp_rt_apply_event(session, ctx, owner_id, &chunk->events[i]);
             events++;
         }
+        dtc_rbp_rt_owner_prune_local(ctx, owner_id);
+        dtc_rcy_local_set_rebuild_active_budget(&ctx->rt_owner_rcy[owner_id], DTC_RBP_RT_ACTIVE_REBUILD_BUDGET);
+        dtc_rbp_rt_leave_local_access(ctx);
         chunks++;
         cm_spin_lock(&ctx->state_lock, NULL);
         ctx->applied_events += chunk->count;
         cm_spin_unlock(&ctx->state_lock);
         dtc_rbp_rt_finish_event_chunk(ctx, chunk);
         CM_FREE_PTR(chunk);
-        dtc_rbp_rt_owner_prune_local(ctx, owner_id);
-        dtc_rcy_local_set_rebuild_active_budget(&ctx->rt_owner_rcy[owner_id], DTC_RBP_RT_ACTIVE_REBUILD_BUDGET);
     }
     cm_atomic32_dec(&ctx->running_owner_num);
     OG_LOG_DEBUG_INF("[DTC RBP RT] owner stopped, owner=%u chunks=%llu events=%llu unsafe=%u reason=%llu",
@@ -1343,7 +1417,11 @@ static status_t dtc_rbp_rt_reset_runtime_window(knl_session_t *session, dtc_rbp_
         return OG_ERROR;
     }
 
+    if (dtc_rbp_rt_begin_local_reset(ctx) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
     if (dtc_rbp_rt_reinit_local_sets(ctx) != OG_SUCCESS) {
+        dtc_rbp_rt_end_local_reset(ctx);
         dtc_rbp_rt_mark_unsafe(ctx, DTC_RBP_RT_UNSAFE_RUNTIME_RESET_LOCAL_INIT_FAILED,
                                "runtime reset local set init failed");
         return OG_ERROR;
@@ -1372,6 +1450,7 @@ static status_t dtc_rbp_rt_reset_runtime_window(knl_session_t *session, dtc_rbp_
     }
     cm_spin_unlock(&ctx->state_lock);
     dtc_rbp_rt_reset_batch_queue(ctx);
+    dtc_rbp_rt_end_local_reset(ctx);
 
     OG_LOG_RUN_WAR("[DTC RBP RT] runtime window reset, peer=%u restart_lfn=%llu restart_lsn=%llu "
                    "wait_ms=%u",

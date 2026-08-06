@@ -148,6 +148,7 @@ typedef struct st_dtc_rbp_rt_aly_ctx {
     volatile bool32 unsafe;
     volatile bool32 has_gap;
     volatile bool32 reset_requested;
+    volatile bool32 local_resetting;
     volatile uint32 status;
 
     log_point_t begin_point;
@@ -179,6 +180,7 @@ typedef struct st_dtc_rbp_rt_aly_ctx {
     uint64 tail_retry_count;
     uint32 outstanding_event_chunks;
     uint32 event_chunk_peak;
+    uint32 local_accessor_count;
 
     knl_session_t *rt_session;
     knl_session_t *parser_sessions[DTC_RBP_RT_MAX_PARSE_WORKERS];
