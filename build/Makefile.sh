@@ -33,7 +33,6 @@ CMAKE_CXX_COMPILER=$(which g++)
 PYTHON3_HOME=${PYTHON3_HOME}
 INSTALL_DIR=/opt/ogracdb
 INITSQL_DIR=../
-func_prepare_git_msg
 PROJECT_VERSION=$(cat ${CONFIG_IN_FILE} | grep 'PROJECT_VERSION' | awk '{print $3}')
 OGRACD_BIN=ogracd-${PROJECT_VERSION}
 JDBC_DIR=${OGRACDB_HOME}/src/jdbc/ograc-jdbc/build/oGRAC_PKG
@@ -465,25 +464,8 @@ func_pkg_ogsql()
 
 }
 
-func_making_package()
+func_pkg_all()
 {
-    build_package_mode=$1
-    if [[ -z "${build_package_mode}" ]]; then
-        build_package_mode='Debug'
-    fi
-
-    if [[ "${build_package_mode}" = 'Debug' ]] || [[ "${build_package_mode}" = 'Shard_Debug' ]]; then
-        func_make_debug
-    else
-        echo "make release"
-        func_all Release
-        func_prepare_pkg_name
-    fi
-
-    if [[ "${build_package_mode}" = 'Release' ]] || [[ "${build_package_mode}" = 'Shard_Release' ]]; then
-        func_release_symbol
-        func_pkg_run
-    fi
     rm -rf ${OGRACDB_HOME}/../${ALL_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}.tar.gz
@@ -506,6 +488,109 @@ func_making_package()
 
     find ${OGRACDB_BIN} -name "*.sha256" -exec chmod 400 {} \;
     cp -arf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME} ${OGRACDB_HOME}/../${ALL_PACK_DIR_NAME}
+}
+
+func_making_package()
+{
+    build_package_mode=$1
+    if [[ -z "${build_package_mode}" ]]; then
+        build_package_mode='Debug'
+    fi
+
+    if [[ "${build_package_mode}" = 'Debug' ]] || [[ "${build_package_mode}" = 'Shard_Debug' ]]; then
+        func_make_debug
+    else
+        echo "make release"
+        func_all Release
+        func_prepare_pkg_name
+    fi
+
+    if [[ "${build_package_mode}" = 'Release' ]] || [[ "${build_package_mode}" = 'Shard_Release' ]]; then
+        func_release_symbol
+        func_pkg_run
+    fi
+
+    func_pkg_all
+}
+
+func_cache_value()
+{
+    local key=$1
+    (grep -m1 "^${key}:" "${OGRACDB_BUILD}/CMakeCache.txt" 2>/dev/null | cut -d= -f2-) || true
+}
+
+func_check_incremental_debug()
+{
+    if [[ ! -f "${OGRACDB_BUILD}/CMakeCache.txt" ]] || [[ ! -f "${OG_SRC_BUILD_DIR}/Makefile" ]]; then
+        echo "Error: incremental compile requires an existing full debug build."
+        return 1
+    fi
+
+    local cache_source
+    cache_source=$(readlink -f "$(func_cache_value CMAKE_HOME_DIRECTORY)" 2>/dev/null || true)
+    if [[ "${cache_source}" != "$(readlink -f "${CODE_HOME_PATH}")" ]]; then
+        echo "Error: the CMake cache belongs to a different source directory."
+        return 1
+    fi
+
+    local expected
+    local expected_value
+    local key
+    local value
+    for expected in CMAKE_BUILD_TYPE:Debug USE32BIT:OFF USE_PROTECT_VM:ON \
+        CMS_UT_TEST:OFF USE_CBOTEST:OFF USE_PROTECT_BUF:OFF USE_OGRACD_CN:OFF \
+        USE_TEST_MEM:OFF USE_CRC:OFF USE_LCOV:OFF USE_LLT:OFF USE_ASAN:OFF \
+        USE_TSAN:OFF USE_FUZZASAN:OFF USE_OSS_BUILD:OFF; do
+        key=${expected%%:*}
+        expected_value=${expected#*:}
+        value=$(func_cache_value "${key}")
+        if [[ "${value^^}" != "${expected_value^^}" ]]; then
+            echo "Error: incremental compile requires ${key}=${expected_value}, found ${value:-<unset>}."
+            return 1
+        fi
+    done
+
+    value=$(func_cache_value USE_H1620)
+    if [[ -n "${value}" ]] && [[ "${value^^}" != "OFF" ]]; then
+        echo "Error: incremental compile requires USE_H1620=OFF, found ${value}."
+        return 1
+    fi
+
+    local cached_compiler
+    local current_compiler
+    for expected in CMAKE_C_COMPILER:gcc CMAKE_CXX_COMPILER:g++; do
+        key=${expected%%:*}
+        cached_compiler=$(readlink -f "$(func_cache_value "${key}")" 2>/dev/null || true)
+        current_compiler=$(readlink -f "$(command -v "${expected#*:}" 2>/dev/null)" 2>/dev/null || true)
+        if [[ -z "${cached_compiler}" ]] || [[ "${cached_compiler}" != "${current_compiler}" ]]; then
+            echo "Error: the cached ${expected#*:} compiler does not match the current toolchain."
+            return 1
+        fi
+    done
+}
+
+func_making_package_incrementally()
+{
+    func_check_incremental_debug
+    func_prepare_git_msg
+    export BUILD_MODE=Debug
+
+    echo "Refreshing the existing CMake configuration..."
+    cmake -S "${CODE_HOME_PATH}" -B "${OGRACDB_BUILD}"
+
+    echo "Running incremental make..."
+    local jobs
+    jobs=$(nproc 2>/dev/null || echo 8)
+    cd "${OG_SRC_BUILD_DIR}"
+    if ! make all -sj "${jobs}"; then
+        echo "Incremental build failed."
+        exit 1
+    fi
+
+    echo "Packaging incremental build..."
+    func_prepare_pkg_name
+    func_pkg_run
+    func_pkg_all
 }
 
 func_download_3rdparty()
@@ -839,6 +924,11 @@ main()
     }
     done
 
+    if [[ "${arg1}" != "check-incremental-debug" ]] &&
+       [[ "${arg1}" != "incremental-package-debug" ]]; then
+        func_prepare_git_msg
+    fi
+
     case "${arg1}" in
     'all')
         COMPILE_OPTS="${COMPILE_OPTS} -DUSE_PROTECT_VM=ON"
@@ -864,6 +954,12 @@ main()
         ;;
     'package-release')
         func_making_package Release
+        ;;
+    'check-incremental-debug')
+        func_check_incremental_debug
+        ;;
+    'incremental-package-debug')
+        func_making_package_incrementally
         ;;
     'bazel_dependency')
         prepare_bazel_dependency

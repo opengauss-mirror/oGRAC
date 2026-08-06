@@ -12,6 +12,7 @@ ENV_TYPE=$(uname -p)
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
 DSSENABLED="FALSE"
+INCREMENTAL_BUILD="FALSE"
 THIRD_PARTY_PATH=""
 OGRAC_IMAGE="${OGDB_CODE_PATH}/image"
 
@@ -46,7 +47,13 @@ function buildDssPackage() {
 }
 
 function usage() {
-  echo "Usage: ${0##*/} {debug|release} [--with-dss] [--third-party-path <path>]"
+  echo "Usage: ${0##*/} {debug|release} [--incremental] [--with-dss] [--third-party-path <path>]"
+  echo "  --incremental is supported for debug builds only."
+  echo "  With --with-dss, it reuses DSS artifacts from a previous full debug --with-dss build."
+}
+
+function buildKernelPackage() {
+  sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
 }
 
 function newPackageTarget() {
@@ -73,6 +80,7 @@ function newPackageTarget() {
   local pkg_real_path=${TMP_PKG_PATH}/${pkg_dir_name}
   echo "Current directory: $(pwd)"
   ls -la
+  rm -rf "${pkg_real_path}"
   mkdir -p ${pkg_real_path}/{action,repo,config,common,dss,odbc}
   cp -arf "${CURRENT_PATH}"/versions.yml ${pkg_real_path}/
   cp -arf "${OGRACDB_BIN}"/ograc*.tar.gz ${pkg_real_path}/repo/
@@ -141,29 +149,28 @@ function prepare() {
     echo "compiling multiple process"
     if [[ ${BUILD_TYPE} == "debug" ]]; then
       echo "compiling multiple process debug"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      buildKernelPackage
     else
       echo "compiling multiple process release"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      buildKernelPackage
     fi
   elif [[ ${BUILD_MODE} == "single" ]]; then
     echo "compiling single process"
     if [[ ${BUILD_TYPE} == "debug" ]]; then
       echo "compiling single process debug"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      buildKernelPackage
     else
       echo "compiling single process release"
-      sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+      buildKernelPackage
     fi
   else
     echo "unsupported build mode"
     exit 1
   fi
 
-  if [ ! -d "${OGDB_TARGET_PATH}" ];then
-    mkdir -p "${OGDB_TARGET_PATH}"
-    chmod 700 "${OGDB_TARGET_PATH}"
-  fi
+  rm -rf "${OGDB_TARGET_PATH}"
+  mkdir -p "${OGDB_TARGET_PATH}"
+  chmod 700 "${OGDB_TARGET_PATH}"
   cp -arf "${OGDB_CODE_PATH}"/oGRAC-DATABASE-LINUX-64bit "${OGDB_TARGET_PATH}"/
 }
 
@@ -177,6 +184,10 @@ shift
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --incremental)
+      INCREMENTAL_BUILD="TRUE"
+      shift
+      ;;
     --with-dss)
       DSSENABLED="TRUE"
       shift
@@ -211,16 +222,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-OG_BUILD_TYPE="package-${BUILD_TYPE}"
+if [[ ${INCREMENTAL_BUILD} == "TRUE" ]]; then
+  if [[ ${BUILD_TYPE} != "debug" ]]; then
+    echo "Error: incremental build is supported for debug builds only."
+    exit 1
+  fi
+  OG_BUILD_TYPE="incremental-package-debug"
+else
+  OG_BUILD_TYPE="package-${BUILD_TYPE}"
+fi
 
-if [[ ${DSSENABLED} == "TRUE" ]]; then
+if [[ ${DSSENABLED} == "TRUE" ]] && [[ ${INCREMENTAL_BUILD} == "TRUE" ]]; then
+  sh "${CURRENT_PATH}"/build_dss.sh debug "${THIRD_PARTY_PATH}" --validate-cache
+elif [[ ${DSSENABLED} == "TRUE" ]]; then
   sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}" --check-only
 fi
 
 prepare
 buildCtOmPackage
 packageTarget
-if [[ ${DSSENABLED} == "TRUE" ]]; then
+if [[ ${DSSENABLED} == "TRUE" ]] && [[ ${INCREMENTAL_BUILD} != "TRUE" ]]; then
   buildDssPackage
 fi
 newPackageTarget
