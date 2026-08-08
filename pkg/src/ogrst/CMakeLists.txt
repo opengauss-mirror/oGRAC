@@ -2,6 +2,7 @@
 set(OGRST_ALL_SRC
         ogrst_main.c
         ${CMAKE_SOURCE_DIR}/pkg/src/utils/ogsql/ogsql.c
+        ${CMAKE_SOURCE_DIR}/pkg/src/utils/ogsql/ogsql_vertical.c
         ${CMAKE_SOURCE_DIR}/pkg/src/utils/ogsql/ogsql_completion.c
         ${CMAKE_SOURCE_DIR}/pkg/src/utils/ogsql/ogsql_history.c
         ${CMAKE_SOURCE_DIR}/pkg/src/utils/ogsql/ogsql_line_editor.c

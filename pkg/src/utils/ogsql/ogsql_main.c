@@ -83,9 +83,11 @@ static void ogsql_show_usage(void)
     ogsql_printf("\n");
     ogsql_printf("  <start> allows [-c \"execute-sql-command\"], [-f \"execute-sql-file\"], and [-s \"destination-file\"]\n");
     ogsql_printf("          start options can only exists one case at the same time.\n");
-    ogsql_printf("    -c: Executes an SQL statement.\n");
+    ogsql_printf("    -c: Executes an SQL statement. Append \\v or \\V to the statement to print its result vertically.\n");
     ogsql_printf("    -f: Executes an SQL script file.\n");
     ogsql_printf("    -s: Redirects command prompt and output to a specified file.\n");
+    ogsql_printf("    In interactive mode or SQL files, terminate a statement with \\v or \\V (optionally followed by ';')\n"
+                "    to print the result vertically.\n");
     ogsql_printf("\n");
     ogsql_printf("  For example\n");
     ogsql_printf("     ogsql / as sysdba\n"
@@ -97,6 +99,8 @@ static void ogsql_show_usage(void)
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611 -c \"SELECT 1 FROM SYS_DUMMY\"\n"
                 "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611(default port), \n"
                 "                               and then execute the SQL statement \"SELECT 1 FROM SYS_DUMMY\".\n");
+    ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611 -c \"SELECT 1 FROM SYS_DUMMY;\\v\"\n"
+                "                               Execute the SQL statement and print its result vertically.\n");
     ogsql_printf("     ogsql user/user_pwd@127.0.0.1:1611 -f \"/home/user/example.sql\"\n"
                 "                               Log in to the database as the specified user through the IP address 127.0.0.1 and port 1611(default port),\n"
                 "                               and then execute the \"/home/user/example.sql\".\n");
