@@ -51,7 +51,7 @@ status_t spc_df_alloc_extent(knl_session_t *session, space_t *space, uint32 exte
 
 void spc_create_segment(knl_session_t *session, space_t *space);
 void spc_drop_segment(knl_session_t *session, space_t *space);
-status_t spc_free_extent_from_list(knl_session_t *session, space_t *space, const char *oper);
+status_t spc_free_extent_from_list(knl_session_t *session, space_t *space, const char *oper, bool32 *has_more);
 
 status_t spc_rebuild_space(knl_session_t *session, space_t *space);
 void spc_wait_data_buffer(knl_session_t *session, space_t *space);

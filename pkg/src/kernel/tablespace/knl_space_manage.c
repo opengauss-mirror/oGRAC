@@ -1271,8 +1271,12 @@ void spc_free_extents(knl_session_t *session, space_t *space, page_list_t *exten
 /*
  * free extents on space free list back to bitmap
  */
-status_t spc_free_extent_from_list(knl_session_t *session, space_t *space, const char *oper)
+status_t spc_free_extent_from_list(knl_session_t *session, space_t *space, const char *oper, bool32 *has_more)
 {
+    if (has_more != NULL) {
+        *has_more = OG_FALSE;
+    }
+
     log_atomic_op_begin(session);
 
     if (!dls_spin_try_lock(session, &space->lock)) {
@@ -1285,7 +1289,7 @@ status_t spc_free_extent_from_list(knl_session_t *session, space_t *space, const
     }
 
     /* space has been dropped or no free page when been reused */
-    if (!SPACE_IS_ONLINE(space)) {
+    if (!space->ctrl->used || !SPACE_IS_ONLINE(space) || space->head == NULL || IS_INVALID_PAGID(space->entry)) {
         OG_THROW_ERROR(ERR_SPACE_OFFLINE, space->ctrl->name, "bitmap space free extents failed");
         dls_spin_unlock(session, &space->lock);
         log_atomic_op_end(session);
@@ -1299,6 +1303,9 @@ status_t spc_free_extent_from_list(knl_session_t *session, space_t *space, const
     }
 
     spc_do_free_extent_list(session, space);
+    if (has_more != NULL) {
+        *has_more = (space->head->free_extents.count != 0);
+    }
 
     dls_spin_unlock(session, &space->lock);
     log_atomic_op_end(session);

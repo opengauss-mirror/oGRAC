@@ -666,7 +666,7 @@ static status_t spc_shrink_space_prepare(knl_session_t *session, space_t *space)
 
     if (SPACE_IS_BITMAPMANAGED(space)) {
         while (SPACE_HEAD_RESIDENT(session, space)->free_extents.count != 0) {
-            if (spc_free_extent_from_list(session, space, "shink space") != OG_SUCCESS) {
+            if (spc_free_extent_from_list(session, space, "shink space", NULL) != OG_SUCCESS) {
                 return OG_ERROR;
             }
         }

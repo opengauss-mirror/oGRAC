@@ -210,6 +210,7 @@ static void rmon_free_spc_extents(knl_session_t *session, rmon_t *rmon_ctx)
     switch_ctrl_t *ctrl = &session->kernel->switch_ctrl;
     space_t *space = NULL;
     space_head_t *head = NULL;
+    bool32 has_more = OG_FALSE;
 
     for (uint32 i = 0; i < OG_MAX_SPACES; i++) {
         space = SPACE_GET(session, i);
@@ -217,8 +218,8 @@ static void rmon_free_spc_extents(knl_session_t *session, rmon_t *rmon_ctx)
             continue;
         }
 
-        head = SPACE_HEAD_RESIDENT(session, space);
-        if (head == NULL || head->free_extents.count == 0) {
+        head = space->head;
+        if (head == NULL || IS_INVALID_PAGID(space->entry)) {
             continue;
         }
 
@@ -227,12 +228,14 @@ static void rmon_free_spc_extents(knl_session_t *session, rmon_t *rmon_ctx)
             return;
         }
 
-        while (head->free_extents.count != 0) {
+        has_more = OG_TRUE;
+        while (has_more) {
+            has_more = OG_FALSE;
             /* space has been dropped when return error */
-            if (spc_free_extent_from_list(session, space, NULL) != OG_SUCCESS) {
+            if (spc_free_extent_from_list(session, space, NULL, &has_more) != OG_SUCCESS) {
+                cm_reset_error();
                 break;
             }
-            head = SPACE_HEAD_RESIDENT(session, space);
         }
         rmon_ctx->working = OG_FALSE;
     }
