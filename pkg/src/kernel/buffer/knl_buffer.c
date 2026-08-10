@@ -301,11 +301,17 @@ void buf_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
     list->count--;
 }
 
-static void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
+void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
 {
     knl_panic_log(list->count > 0, "the buffer count of lru_list is abnormal, panic info: page %u-%u type %u count %u",
                   ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, list->count);
     buf_remove_ctrl(list, ctrl);
+    if (list->type != LRU_LIST_MAIN && list->type != LRU_LIST_SCAN) {
+        ctrl->prev = NULL;
+        ctrl->next = NULL;
+        return;
+    }
+
     if (list->lru_old == ctrl) {
         knl_panic_log(list->lru_old->in_old == 1, "the lru_old page is not in_old, panic info: page %u-%u type %u",
                       ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
@@ -827,11 +833,10 @@ static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_
     while (item != NULL) {
         shift = item;
         item = shift->prev;
+        buf_lru_remove_ctrl(list, shift);
         buf_add_pos_t pos = shift->is_resident ? BUF_ADD_HOT : BUF_ADD_COLD;
         buf_lru_add_ctrl(&set->scan_list, shift, pos);
     }
-    *list = g_init_list_t;
-    list->type = LRU_LIST_CLEAN;
     cm_spin_unlock(&list->lock);
     cm_release_cond(&set->set_cond);
 }
@@ -1539,10 +1544,9 @@ void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctr
         cm_spin_unlock(&set->write_list.lock);
         return;
     }
-    buf_remove_ctrl(&set->write_list, ctrl);
-    ctrl->list_id = LRU_LIST_CLEAN;
+    buf_lru_remove_ctrl(&set->write_list, ctrl);
+    ctrl->list_id = LRU_LIST_TEMP;
     cm_spin_unlock(&set->write_list.lock);
-
     buf_lru_add_tail(list, ctrl);
 }
 

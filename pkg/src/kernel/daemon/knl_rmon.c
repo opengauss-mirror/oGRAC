@@ -240,7 +240,7 @@ static void rmon_free_spc_extents(knl_session_t *session, rmon_t *rmon_ctx)
 
 static void rmon_move_clean_page(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl)
 {
-    buf_remove_ctrl(&set->write_list, ctrl);
+    buf_lru_remove_ctrl(&set->write_list, ctrl);
     cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
     buf_lru_add_tail(list, ctrl);
     ctrl->list_id = LRU_LIST_CLEAN;

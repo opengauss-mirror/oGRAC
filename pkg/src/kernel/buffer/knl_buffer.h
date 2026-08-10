@@ -418,6 +418,7 @@ buf_bucket_t *buf_find_bucket(knl_session_t *session, page_id_t page_id);
 void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source);
 void buf_lru_add_tail(buf_lru_list_t *list, buf_ctrl_t *ctrl);
 void buf_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl);
+void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl);
 
 #ifdef __cplusplus
 }
