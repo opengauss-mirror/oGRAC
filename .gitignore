@@ -44,3 +44,5 @@ CMakeCache.txt
 /build/CMakeFiles
 /build/pkg
 /build_dependence/
+# pre-commit local isolated environment created by setup-pre-commit.sh
+.pre-commit-venv/
