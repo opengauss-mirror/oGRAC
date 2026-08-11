@@ -1845,7 +1845,7 @@ static void rbp_timed_heart_beat(knl_session_t *session)
 /* get page lsn record on disk */
 static uint64 rbp_get_disk_lsn(knl_session_t *session, page_id_t page_id, bool32 ignore_crc)
 {
-    buf_ctrl_t ctrl;
+    buf_ctrl_t ctrl = { 0 };
     uint64 lsn;
     char *buf = (char *)cm_push(session->stack, DEFAULT_PAGE_SIZE(session) + OG_MAX_ALIGN_SIZE_4K);
 

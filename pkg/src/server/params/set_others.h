@@ -95,6 +95,8 @@ status_t sql_verify_als_backup_buf_size(void *se, void *lex, void *def);
 status_t sql_notify_als_restore_arch_compressed(void *se, void *item, char *value);
 status_t sql_notify_als_backup_buf_size(void *se, void *item, char *value);
 status_t sql_notify_als_lrpl_res_logsize(void *se, void *item, char *value);
+status_t sql_verify_als_page_protect_check(pointer_t se, pointer_t lex, pointer_t def);
+status_t sql_notify_als_page_protect_check(pointer_t se, pointer_t item, char *value);
 status_t sql_notify_als_sql_compat(void *se, void *item, char *value);
 status_t sql_notify_als_hash_area_size(void *se, void *item, char *value);
 status_t sql_notify_als__hint_force(void *se, void *item, char *value);

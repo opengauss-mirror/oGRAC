@@ -51,7 +51,6 @@ extern "C" {
 #define ENTER_PAGE_FROM_REMOTE (uint8)0x80     // remote access mode
 
 #define RD_ENTER_PAGE_MASK        (~(ENTER_PAGE_PINNED | ENTER_PAGE_NO_READ | ENTER_PAGE_TRY | ENTER_PAGE_RESIDENT))
-
 #define BUF_IS_RESIDENT(ctrl)     ((ctrl)->is_resident)
 #define BUF_IN_USE(ctrl)          (cm_atomic32_get(&(ctrl)->ref_num) > 0)
 #define BUF_IS_HOT(ctrl)          ((ctrl)->touch_number >= BUF_TCH_AGE)
@@ -96,7 +95,12 @@ extern "C" {
 #define PAGE_GROUP_COUNT 8
 #define MAX_PCB_VM_COUNT 8192           // OG_MAX_TAB_COMPRESS_BUF_SIZE(1G)  / 128k (vm page size)
 
+#define PAGE_PROTECT_CHECK_CKPT  0x01
+#define PAGE_PROTECT_CHECK_EVICT 0x02
+#define PAGE_PROTECT_CHECK_MAX   (PAGE_PROTECT_CHECK_CKPT | PAGE_PROTECT_CHECK_EVICT)
+
 extern uint32 g_cks_level;
+extern uint32 g_page_protect_check;
 
 typedef enum en_buf_add_pos {
     BUF_ADD_HOT = 0,
@@ -401,6 +405,7 @@ void buf_balance_set_list(buf_set_t *set);
 status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl);
 bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id);
 bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *buf_ctrl, page_id_t page_id);
+void buf_verify_page_on_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_head_t *page, const char *reason);
 void buf_expire_datafile_pages(knl_session_t *session, uint32 file_id);
 status_t pcb_get_buf(knl_session_t *session, pcb_assist_t *pcb_assist);
 void pcb_release_buf(knl_session_t *session, pcb_assist_t *pcb_assist);

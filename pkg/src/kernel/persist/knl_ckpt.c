@@ -58,6 +58,14 @@ extern dtc_rcy_replay_paral_node_t g_replay_paral_mgr;
 static uint8 g_page_clean_finish_flag[PAGE_CLEAN_MAX_BYTES] = {0};
 bool32 g_crc_verify = 0;
 
+static inline void ckpt_verify_written_page(knl_session_t *session, buf_ctrl_t *ctrl, page_head_t *page,
+                                            const char *reason)
+{
+    if (SECUREC_UNLIKELY(g_page_protect_check & PAGE_PROTECT_CHECK_CKPT)) {
+        buf_verify_page_on_disk(session, ctrl, page, reason);
+    }
+}
+
 void ckpt_proc(thread_t *thread);
 void dbwr_proc(thread_t *thread);
 static status_t ckpt_perform(knl_session_t *session, ckpt_stat_items_t *stat);
@@ -1927,6 +1935,14 @@ static status_t dbwr_flush_async_io(knl_session_t *session, dbwr_context_t *dbwr
         ckpt_unlatch_datafiles(asyncio_ctx->datafiles, latch_cnt, DEFAULT_PAGE_SIZE(session));
         return OG_ERROR;
     }
+
+    for (uint16 i = dbwr->begin; i <= dbwr->end; i++) {
+        if (!group->items[i].need_punch) {
+            buf_id = group->items[i].buf_id;
+            page = (page_head_t *)(group->buf + ((uint64)buf_id) * DEFAULT_PAGE_SIZE(session));
+            ckpt_verify_written_page(session, group->items[i].ctrl, page, "ckpt_aio_write");
+        }
+    }
     ckpt_unlatch_datafiles(asyncio_ctx->datafiles, latch_cnt, DEFAULT_PAGE_SIZE(session));
 
     for (uint16 i = dbwr->begin; i <= dbwr->end; i++) {
@@ -1983,6 +1999,9 @@ static status_t dbwr_async_io_write_dbs(knl_session_t *session, ckpt_context_t *
         }
         for (uint16 i = begin; i < end; i++) {
             uint32 group_index = ogx->ckpt_part_group[dbwr->id].item_index[i];
+            buf_id = group->items[group_index].buf_id;
+            page = (page_head_t *)(group->buf + ((uint64)buf_id) * size);
+            ckpt_verify_written_page(session, group->items[group_index].ctrl, page, "ckpt_dbs_write");
             group->items[group_index].ctrl->is_marked = 0;
         }
         begin = end;
@@ -2637,6 +2656,7 @@ status_t dbwr_save_page(knl_session_t *session, dbwr_context_t *dbwr, page_head_
         OG_LOG_RUN_ERR("[CKPT] failed to write datafile %s", df->ctrl->name);
         return OG_ERROR;
     }
+    ckpt_verify_written_page(session, NULL, page, "ckpt_dbwr_save_page");
 
     if (!dbwr->flags[page_id->file]) {
         dbwr->flags[page_id->file] = OG_TRUE;
@@ -2741,6 +2761,7 @@ static status_t dbwr_save_page_by_id(knl_session_t *session, dbwr_context_t *dbw
             return OG_ERROR;
         }
 
+        ckpt_verify_written_page(session, ctrl, page, "ckpt_sync_write");
         ctrl->is_marked = 0;
     }
 

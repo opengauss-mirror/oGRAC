@@ -40,6 +40,7 @@
 
 static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32, .latch.lock = 0, .ref_num = 0 };
 uint32 g_cks_level;
+uint32 g_page_protect_check = 0;
 
 static bool32 buf_rbp_post_recovery_check_enabled(knl_session_t *session)
 {
@@ -524,6 +525,58 @@ static inline bool32 buf_can_expire(buf_ctrl_t *ctrl, buf_expire_type_t expire_t
     return OG_FALSE;
 }
 
+void buf_verify_page_on_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_head_t *page, const char *reason)
+{
+    page_id_t page_id = (ctrl != NULL) ? ctrl->page_id : AS_PAGID(page->id);
+    if (page_compress(session, page_id) || page->type == PAGE_TYPE_PUNCH_PAGE || PAGE_SIZE(*page) == 0) {
+        return;
+    }
+
+    datafile_t *df = DATAFILE_GET(session, page_id.file);
+    int32 *handle = DATAFILE_FD(session, page_id.file);
+    int64 offset = (int64)page_id.page * DEFAULT_PAGE_SIZE(session);
+    char *buf = (char *)cm_push(session->stack, DEFAULT_PAGE_SIZE(session) + OG_MAX_ALIGN_SIZE_4K);
+    page_head_t *diskPage = (page_head_t *)cm_aligned_buf(buf);
+
+    if (spc_read_datafile(session, df, handle, offset, diskPage, DEFAULT_PAGE_SIZE(session)) != OG_SUCCESS) {
+        cm_pop(session->stack);
+        knl_panic_log(0, "[PAGE_PROTECT][DISK_CHECK_LOAD_FAIL] reason=%s page=%u-%u mem_lsn=%llu mem_pcn=%u "
+                      "offset=%lld dirty=%u remote_dirty=%u edp=%u marked=%u in_ckpt=%u lock=%u ctrl=%p datafile=%s",
+                      reason, page_id.file, page_id.page, (uint64)page->lsn, (uint32)page->pcn, offset,
+                      (ctrl != NULL) ? (uint32)ctrl->is_dirty : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->is_remote_dirty : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->is_edp : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->is_marked : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->in_ckpt : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->lock_mode : 0,
+                      (void *)ctrl, df->ctrl->name);
+    }
+
+    bool32 same_page = IS_SAME_PAGID(page_id, AS_PAGID(diskPage->id));
+    bool32 lsn_regress = diskPage->lsn < page->lsn;
+    bool32 pcn_regress = (diskPage->lsn == page->lsn && (int32)(page->pcn - diskPage->pcn) > 0);
+    if (!same_page || lsn_regress || pcn_regress) {
+        knl_panic_log(0, "[PAGE_PROTECT][DISK_PAGE_OLDER] reason=%s page=%u-%u disk_page=%u-%u "
+                      "mem_lsn=%llu mem_pcn=%u disk_lsn=%llu disk_pcn=%u offset=%lld dirty=%u remote_dirty=%u "
+                      "edp=%u marked=%u in_ckpt=%u lock=%u load=%u edp_map=%llu latest_lfn=%llu ctrl=%p regress=%s "
+                      "datafile=%s",
+                      reason, page_id.file, page_id.page, AS_PAGID(diskPage->id).file,
+                      AS_PAGID(diskPage->id).page, (uint64)page->lsn, (uint32)page->pcn,
+                      (uint64)diskPage->lsn, (uint32)diskPage->pcn, offset,
+                      (ctrl != NULL) ? (uint32)ctrl->is_dirty : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->is_remote_dirty : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->is_edp : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->is_marked : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->in_ckpt : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->lock_mode : 0,
+                      (ctrl != NULL) ? (uint32)ctrl->load_status : 0,
+                      (ctrl != NULL) ? (uint64)ctrl->edp_map : 0,
+                      (ctrl != NULL) ? (uint64)ctrl->lastest_lfn : 0,
+                      (void *)ctrl, !same_page ? "page_id" : (lsn_regress ? "lsn" : "pcn"), df->ctrl->name);
+    }
+    cm_pop(session->stack);
+}
+
 static inline void buf_expire_compress_remove(buf_bucket_t **bucket_visited, uint32 bucket_visisted_num,
     int32 *map_ctrl_to_bucket, buf_ctrl_t *head, buf_expire_type_t expire_type)
 {
@@ -993,6 +1046,10 @@ static void buf_get_ctrl(knl_session_t *session, buf_set_t *set, uint32 options,
         session->stat->buffer_recycle_wait++;
     }
 
+    if (SECUREC_UNLIKELY((g_page_protect_check & PAGE_PROTECT_CHECK_EVICT) &&
+        item->load_status == (uint8)BUF_IS_LOADED)) {
+        buf_verify_page_on_disk(session, item, item->page, "evict_reuse");
+    }
     buf_init_ctrl(session, set, item, OG_FALSE, options);
     *ctrl = item;
 }
