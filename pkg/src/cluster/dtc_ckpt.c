@@ -341,7 +341,7 @@ status_t dcs_notify_owner_for_ckpt_l(knl_session_t *session, edp_page_info_t *pa
             drc_res_action_e action;
 
             if (SECUREC_UNLIKELY(drc_get_page_owner_id(session, page_id, &cur_owner_id, &action) != OG_SUCCESS)) {
-                OG_LOG_RUN_WAR(
+                OG_LOG_DEBUG_WAR(
                     "[CKPT][%u-%u][notify page owner for ckpt page]: master src_id=%u, get owner failed, clean edp msg may be lost, node id=%d, index=%d, start=%d, end=%d, curr owner=%d",
                     page_id.file, page_id.page, DCS_SELF_INSTID(session), i, j, start, end, cur_owner_id);
                 action = DRC_RES_CLEAN_EDP_ACTION;
