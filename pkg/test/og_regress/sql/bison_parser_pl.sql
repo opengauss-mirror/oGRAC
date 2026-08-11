@@ -16,6 +16,665 @@ drop package if exists bison_pl_pkg;
 drop table if exists bison_pl_src;
 drop table if exists bison_pl_type_t;
 drop table if exists bison_pl_t;
+create or replace function bison_pl_depth_if_guard(num int) return clob
+is
+    v_lang clob := 'abc';
+BEGIN
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    FOR I IN 1 .. num
+    LOOP
+    if num > -1 then
+    if num > 0 then
+        v_lang := v_lang || 'e';
+    end if;
+    end if;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    end loop;
+    return v_lang;
+end;
+/
+
+drop function if exists bison_pl_depth_if_guard;
+
+create or replace procedure bison_pl_depth_block_guard as
+begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+    begin
+        null;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+    end;
+end;
+/
+
+drop procedure if exists bison_pl_depth_block_guard;
 drop function if exists bison_pl_c_semicolon;
 drop function if exists bison_pl_c_missing_library;
 drop function if exists bison_pl_c_missing_name;
@@ -1056,6 +1715,46 @@ select * from bison_pl_pushback_log order by stage;
 
 drop table if exists bison_pl_pushback_log;
 drop table if exists bison_pl_pushback_src;
+
+drop procedure if exists bison_pl_null_concat_proc;
+create or replace procedure bison_pl_null_concat_proc(p_out out varchar2) as
+    local_value varchar2(20) := '12345678';
+begin
+    p_out := local_value || null;
+    p_out := case when local_value is not null then local_value || null else null end;
+end;
+/
+
+declare
+    result_value varchar2(20);
+begin
+    bison_pl_null_concat_proc(result_value);
+    if result_value || null is null then
+        null;
+    end if;
+end;
+/
+
+drop procedure if exists bison_pl_null_concat_proc;
+
+drop procedure if exists bison_pl_standard_error_probe;
+drop procedure if exists bison_pl_standard_error_sink;
+create or replace procedure bison_pl_standard_error_sink(p_msg varchar2) as
+begin
+    null;
+end;
+/
+
+create or replace procedure bison_pl_standard_error_probe as
+begin
+    bison_pl_standard_error_sink(substrb(sql_err_msg, 1, 2000));
+end;
+/
+
+call bison_pl_standard_error_probe;
+
+drop procedure bison_pl_standard_error_probe;
+drop procedure bison_pl_standard_error_sink;
 
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;

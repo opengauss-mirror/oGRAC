@@ -52,6 +52,7 @@ typedef struct st_extract_list {
 
 status_t sql_convert_to_cast(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word);
 status_t sql_build_func_node(sql_stmt_t *stmt, word_t *word, expr_node_t *node);
+status_t sql_build_bison_noarg_func_node(sql_stmt_t *stmt, word_t *word, expr_node_t *node);
 status_t sql_build_func_over(sql_stmt_t *stmt, expr_tree_t *expr, word_t *word, expr_node_t **node);
 status_t sql_try_fetch_func_arg(sql_stmt_t *stmt, text_t *arg_name);
 status_t sql_create_const_string_expr(sql_stmt_t *stmt, expr_tree_t **new_expr, const char *char_str);

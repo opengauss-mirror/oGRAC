@@ -797,6 +797,7 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
 
         if (sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text) != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);
+            sql_release_context(sub_stmt);
             break;
         }
 
@@ -822,6 +823,7 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     *arg->ogx = sub_stmt->context;
     sql_release_lob_info(sub_stmt);
     sql_release_resource(sub_stmt, OG_TRUE);
+    CM_FREE_PTR(sub_stmt->stat);
     return status;
 }
 
@@ -1381,6 +1383,10 @@ status_t plc_word2var(sql_stmt_t *stmt, word_t *word, expr_node_t *node)
         sql_convert_pack_func(&standard_pack_name, &word->text.value, &v);
         if (v.pack_id != OG_INVALID_ID32 && v.func_id != OG_INVALID_ID32) {
             node->type = EXPR_NODE_FUNC;
+            if (g_instance->sql.use_bison_parser && stmt->parser_text_valid) {
+                /* Bison has already consumed the complete no-argument function syntax. */
+                return sql_build_bison_noarg_func_node(stmt, word, node);
+            }
             return sql_build_func_node(stmt, word, node);
         }
     }

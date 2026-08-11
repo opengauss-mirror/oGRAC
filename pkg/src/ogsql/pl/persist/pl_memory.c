@@ -98,6 +98,8 @@ status_t pl_alloc_context(pl_entity_t **pl_ctx, sql_context_t *context)
     memory_context_t *memory = NULL;
     memory_pool_t *pool = sql_pool->memory;
 
+    *pl_ctx = NULL;
+
     while (!mctx_try_create(pool, &memory)) {
         if (!pl_recycle()) {
             return OG_ERROR;
@@ -105,17 +107,29 @@ status_t pl_alloc_context(pl_entity_t **pl_ctx, sql_context_t *context)
     }
 
     if (mctx_alloc(memory, sizeof(pl_entity_t), (void **)pl_ctx) != OG_SUCCESS) {
+        mctx_destroy(memory);
         return OG_ERROR;
     }
 
-    MEMS_RETURN_IFERR(memset_sp(*pl_ctx, sizeof(pl_entity_t), 0, sizeof(pl_entity_t)));
+    errno_t errcode = memset_sp(*pl_ctx, sizeof(pl_entity_t), 0, sizeof(pl_entity_t));
+    if (SECUREC_UNLIKELY(errcode != EOK)) {
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
+        mctx_destroy(memory);
+        *pl_ctx = NULL;
+        return OG_ERROR;
+    }
     (*pl_ctx)->memory = memory;
     (*pl_ctx)->cached = OG_FALSE;
     (*pl_ctx)->cacheable = OG_TRUE;
     (*pl_ctx)->entry = NULL;
     (*pl_ctx)->context = context;
 
-    return pl_init_context(*pl_ctx);
+    if (pl_init_context(*pl_ctx) != OG_SUCCESS) {
+        mctx_destroy(memory);
+        *pl_ctx = NULL;
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
 }
 
 status_t pl_alloc_entity(pl_entry_t *entry, pl_entity_t **entity_out)
