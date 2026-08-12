@@ -1255,7 +1255,10 @@ void init_runtime_params(void)
 debug_config_item_t g_debug_parameters[] = {
         /* name                  default value    current value    range           type                  verify notify
          */
-    { "_MRP_RES_LOGSIZE",    "0",             "0",             "[0,32T]",      "OG_TYPE_INTEGER",    sql_verify_als_lrpl_res_logsize,    sql_notify_als_lrpl_res_logsize },
+    { "_MRP_RES_LOGSIZE",    "0",             "0",             "[0,32T]",      "OG_TYPE_INTEGER",
+      sql_verify_als_lrpl_res_logsize,    sql_notify_als_lrpl_res_logsize },
+    { "_PAGE_PROTECT_CHECK", "0",             "0",             "[0,3]",        "OG_TYPE_INTEGER",
+      sql_verify_als_page_protect_check, sql_notify_als_page_protect_check },
 };
 
 void srv_get_debug_config_info(debug_config_item_t **params, uint32 *count)

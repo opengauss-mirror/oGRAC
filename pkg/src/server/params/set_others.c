@@ -29,11 +29,14 @@
 #include "srv_param_common.h"
 #include "cm_ip.h"
 #include "dtc_rbp_rt_aly.h"
+#include "knl_buffer.h"
 #include "set_others.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define PAGE_PROTECT_CHECK_MIN 0
 
 #define RBP_RT_WORKERS_MIN 1
 
@@ -1944,6 +1947,32 @@ status_t sql_notify_als_lrpl_res_logsize(void *se, void *item, char *value)
     }
 
     g_instance->kernel.rbp_attr.lrpl_res_logsize = (uint64)val_int64;
+    return OG_SUCCESS;
+}
+
+status_t sql_verify_als_page_protect_check(pointer_t se, pointer_t lex, pointer_t def)
+{
+    uint32 num;
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if ((num & ~PAGE_PROTECT_CHECK_MAX) != 0) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_PAGE_PROTECT_CHECK",
+                       (int64)PAGE_PROTECT_CHECK_MIN, (int64)PAGE_PROTECT_CHECK_MAX);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_page_protect_check(pointer_t se, pointer_t item, char *value)
+{
+    uint32 num;
+    if (cm_str2uint32(value, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    g_page_protect_check = num;
     return OG_SUCCESS;
 }
 

@@ -706,6 +706,7 @@ void dcs_clean_local_ctrl(knl_session_t *session, buf_ctrl_t *ctrl, drc_res_acti
         tmp_ctrl->is_edp = 0;
         tmp_ctrl->is_dirty = 0;
         tmp_ctrl->page = (page_head_t *)cm_aligned_buf((char *)tmp_ctrl + (uint64)sizeof(buf_ctrl_t));
+        TO_PAGID_DATA(tmp_ctrl->page_id, tmp_ctrl->page->id);
         tmp_ctrl->page->lsn = 0;
         /*
          * tmp_ctrl is stack-local and only used to compare the disk image with the local EDP image.

@@ -397,7 +397,6 @@ static status_t buf_construct_group_members(knl_session_t *session, buf_ctrl_t *
 
     for (int32 i = (PAGE_GROUP_COUNT - 1); i >= 0; i--) {
         ctrl = head_ctrl->compress_group[i];
-
         BUF_UNPROTECT_PAGE(ctrl->page);
         errno_t ret = memcpy_sp(ctrl->page, DEFAULT_PAGE_SIZE(session), src + i * DEFAULT_PAGE_SIZE(session),
                                 DEFAULT_PAGE_SIZE(session));
@@ -2316,6 +2315,7 @@ bool32 buf_clean_edp(knl_session_t *session, edp_page_info_t page)
         tmp_ctrl->is_edp = 0;
         tmp_ctrl->is_dirty = 0;
         tmp_ctrl->page = (page_head_t *)cm_aligned_buf((char *)tmp_ctrl + (uint64)sizeof(buf_ctrl_t));
+        TO_PAGID_DATA(tmp_ctrl->page_id, tmp_ctrl->page->id);
         tmp_ctrl->page->lsn = 0;
         /*
          * tmp_ctrl is stack-local and only used to compare the disk image with the local EDP image.
