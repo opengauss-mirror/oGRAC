@@ -181,8 +181,27 @@ endif (USE_PROTECT_BUF)
 
 option(USE_PROTECT_VM OFF)
 if (USE_PROTECT_VM)
-    add_compile_definitions(__PROTECT_VM__)
-    message(STATUS "Toolchain: Build use -D__PROTECT_VM__")
+    # PROTECT_VM guard pages rely on mprotect(), which requires the address to be
+    # aligned to the system page size. The 4K alignment here is an oGRAC code
+    # constraint: vm_init_pool() computes the VM page buffer with
+    # OG_MAX_ALIGN_SIZE_4K (cm_memory.c), and page->data is derived from it, so
+    # page addresses are only guaranteed 4K-aligned. On kernels with 64K pages
+    # (e.g. Kunpeng/openEuler aarch64) mprotect returns EINVAL and triggers
+    # CM_ASSERT inside PROTECT_PAGE. Detect the system page size at configure
+    # time and degrade gracefully: do not define __PROTECT_VM__ when pages are
+    # larger than 4K, and keep USE_PROTECT_VM unchanged so incremental-build
+    # checks are not affected.
+    execute_process(
+            COMMAND getconf PAGESIZE
+            OUTPUT_VARIABLE SYSTEM_PAGE_SIZE
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (SYSTEM_PAGE_SIZE GREATER 4096)
+        message(WARNING "Toolchain: PROTECT_VM requested but system page size "
+                        "${SYSTEM_PAGE_SIZE}B > 4K, __PROTECT_VM__ disabled")
+    else ()
+        add_compile_definitions(__PROTECT_VM__)
+        message(STATUS "Toolchain: Build use -D__PROTECT_VM__")
+    endif ()
 endif (USE_PROTECT_VM)
 
 option(USE_OGRACD_CN OFF)
