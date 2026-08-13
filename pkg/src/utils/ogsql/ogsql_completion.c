@@ -24,6 +24,7 @@
 #include "kwlookup.h"
 #include "ogsql_common.h"
 #include "ogsql_completion.h"
+#include "ogsql_option.h"
 
 typedef struct OgsqlSchemaCompletionRequestT {
     const char *schema;
@@ -123,6 +124,7 @@ static const char *g_sqlCompletionWords[] = {
     "foreign",      /* FOREIGN KEY                              */
     "global",       /* GLOBAL TEMPORARY TABLE                   */
     "instead",      /* CREATE TRIGGER ... INSTEAD OF           */
+    "identified",   /* CREATE USER ... IDENTIFIED BY            */
     "language",     /* CREATE LANGUAGE                         */
     "local",        /* LOCAL TEMPORARY TABLE                    */
     "lock",         /* LOCK TABLE                               */
@@ -136,10 +138,12 @@ static const char *g_sqlCompletionWords[] = {
     "public",       /* CREATE PUBLIC SYNONYM                    */
     "rename",       /* RENAME                                   */
     "replace",      /* CREATE OR REPLACE                        */
+    "resource",     /* GRANT RESOURCE                           */
     "return",       /* PL/SQL RETURN                            */
     "row",          /* FOR EACH ROW                             */
     "savepoint",    /* SAVEPOINT                                */
     "schema",       /* CREATE SCHEMA                            */
+    "session",      /* ALTER/GRANT ... SESSION                  */
     "statement",    /* FOR EACH STATEMENT                       */
     "synonym",      /* CREATE SYNONYM                           */
     "tablespace",   /* CREATE/ALTER TABLESPACE                  */
@@ -668,6 +672,107 @@ static void ogsql_collect_command_matches(const char *prefix, uint32 prefixLen,
         }
     }
 }
+
+static bool32 ogsql_completion_has_words_before(const OgsqlCompletionRequestT *request, const char *nearest,
+    const char *second, const char *third)
+{
+    uint32 wordStart = request->tokenStart;
+    char word[OGSQL_MAX_COMPLETION_WORD_LEN];
+    const char *expected[] = { nearest, second, third };
+
+    for (uint32 i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        if (expected[i] == NULL) {
+            return OG_TRUE;
+        }
+        if (!ogsql_get_lower_completion_word_before(request->cmdBuf, wordStart, word, sizeof(word), &wordStart) ||
+            strcmp(word, expected[i]) != 0) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
+}
+
+static bool32 ogsql_completion_has_ordered_words_before(const OgsqlCompletionRequestT *request,
+    const char *nearest, const char *earlier)
+{
+    uint32 wordStart = request->tokenStart;
+    bool32 foundNearest = OG_FALSE;
+    char word[OGSQL_MAX_COMPLETION_WORD_LEN];
+
+    while (ogsql_get_lower_completion_word_before(request->cmdBuf, wordStart, word, sizeof(word), &wordStart)) {
+        if (foundNearest == OG_TRUE && strcmp(word, earlier) == 0) {
+            return OG_TRUE;
+        }
+        if (strcmp(word, nearest) == 0) {
+            foundNearest = OG_TRUE;
+        }
+        if (wordStart == 0) {
+            break;
+        }
+    }
+    return OG_FALSE;
+}
+
+static bool32 ogsql_completion_has_word_before(const OgsqlCompletionRequestT *request, const char *expected)
+{
+    uint32 wordStart = request->tokenStart;
+    char word[OGSQL_MAX_COMPLETION_WORD_LEN];
+
+    while (ogsql_get_lower_completion_word_before(request->cmdBuf, wordStart, word, sizeof(word), &wordStart)) {
+        if (strcmp(word, expected) == 0) {
+            return OG_TRUE;
+        }
+        if (wordStart == 0) {
+            break;
+        }
+    }
+    return OG_FALSE;
+}
+
+static void ogsql_add_preferred_keyword_match(const OgsqlCompletionRequestT *request, const char *word,
+    const char **matches, uint32 *matchCount)
+{
+    if (ogsql_completion_word_matches(word, request->prefix, request->prefixLen)) {
+        ogsql_add_completion_match(matches, matchCount, word);
+    }
+}
+
+static void ogsql_collect_preferred_keyword_matches(const OgsqlCompletionRequestT *request,
+    const char **matches, uint32 *matchCount)
+{
+    if (ogsql_completion_has_words_before(request, "select", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "distinct", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "alter", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "session", matches, matchCount);
+    }
+    if (ogsql_completion_has_ordered_words_before(request, "user", "create")) {
+        ogsql_add_preferred_keyword_match(request, "identified", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "grant", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "resource", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "create", "grant", NULL)) {
+        ogsql_add_preferred_keyword_match(request, "session", matches, matchCount);
+    }
+    if (ogsql_completion_has_word_before(request, "select")) {
+        ogsql_add_preferred_keyword_match(request, "from", matches, matchCount);
+    }
+}
+
+static void ogsql_collect_option_matches(const char *prefix, uint32 prefixLen, bool32 forSet,
+    const char **matches, uint32 *matchCount)
+{
+    uint32 optionCount = ogsql_option_count();
+
+    for (uint32 i = 0; i < optionCount; i++) {
+        const char *name = ogsql_option_name(i, forSet);
+
+        if (name != NULL && ogsql_completion_word_matches(name, prefix, prefixLen)) {
+            ogsql_add_completion_match(matches, matchCount, name);
+        }
+    }
+}
 static void ogsql_collect_builtin_function_matches(const char *prefix, uint32 prefix_len, const char **matches,
     uint32 *match_count)
 {
@@ -678,26 +783,31 @@ static void ogsql_collect_builtin_function_matches(const char *prefix, uint32 pr
     }
 }
 
-static void ogsql_collect_static_completion_matches(OgsqlCompletionCtxT ctx, const char *prefix, uint32 prefix_len,
-    const ogsql_cmd_def_t *commandDefs, uint32 commandCount, const char **matches, uint32 *match_count)
-{
-    if (matches == NULL || match_count == NULL || prefix == NULL) {
-        return;
-    }
-    if (ogsql_completion_ctx_allows_sql_words(ctx)) {
-        ogsql_collect_kernel_keyword_matches(prefix, prefix_len, matches, match_count);
-        ogsql_collect_supplement_keyword_matches(prefix, prefix_len, matches, match_count);
-    }
-    ogsql_collect_command_matches(prefix, prefix_len, commandDefs, commandCount, matches, match_count);
-    if (ctx == OGSQL_COMPLETION_CTX_COLUMN || ctx == OGSQL_COMPLETION_CTX_DEFAULT) {
-        ogsql_collect_builtin_function_matches(prefix, prefix_len, matches, match_count);
-    }
-}
-
 static bool32 ogsql_completion_ctx_is_dynamic(OgsqlCompletionCtxT ctx)
 {
     return (ctx == OGSQL_COMPLETION_CTX_TABLE || ctx == OGSQL_COMPLETION_CTX_COLUMN ||
         ctx == OGSQL_COMPLETION_CTX_PROCEDURE || ctx == OGSQL_COMPLETION_CTX_SEQUENCE) ? OG_TRUE : OG_FALSE;
+}
+
+static bool32 OgsqlCompletionGetClientOptionMode(const OgsqlCompletionRequestT *request, bool32 *forSet)
+{
+    uint32 priorStart = 0;
+    char priorWord[OGSQL_MAX_COMPLETION_WORD_LEN];
+    char leadingWord[OGSQL_MAX_COMPLETION_WORD_LEN];
+
+    if (request == NULL || forSet == NULL ||
+        !ogsql_get_lower_completion_word_before(request->cmdBuf, request->tokenStart, priorWord,
+        sizeof(priorWord), &priorStart)) {
+        return OG_FALSE;
+    }
+    if (strcmp(priorWord, "set") != 0 && strcmp(priorWord, "show") != 0) {
+        return OG_FALSE;
+    }
+    if (ogsql_get_lower_completion_word_before(request->cmdBuf, priorStart, leadingWord, sizeof(leadingWord), NULL)) {
+        return OG_FALSE;
+    }
+    *forSet = (strcmp(priorWord, "set") == 0) ? OG_TRUE : OG_FALSE;
+    return OG_TRUE;
 }
 
 static status_t OgsqlCollectDynamicMatches(OgsqlCompletionCtxT ctx, const char *prefix, uint32 prefixLen,
@@ -738,6 +848,7 @@ uint32 ogsql_completion_collect(const OgsqlCompletionRequestT *request, OgsqlCom
     OgsqlSchemaCompletionRequestT schemaRequest;
     uint32 schema_start = 0;
     uint32 schema_len = 0;
+    bool32 forSet = OG_FALSE;
 
     if (request == NULL || store == NULL || store->matchCount == NULL || store->dynamicCount == NULL) {
         return 0;
@@ -753,20 +864,40 @@ uint32 ogsql_completion_collect(const OgsqlCompletionRequestT *request, OgsqlCom
         return 0;
     }
 
+    if (OgsqlCompletionGetClientOptionMode(request, &forSet)) {
+        ogsql_collect_option_matches(request->prefix, request->prefixLen, forSet, store->matches,
+            store->matchCount);
+        return *store->matchCount;
+    }
+
     ctx = OgsqlClassifyCompletionContext(request->cmdBuf, request->cursorPos, request->prefixLen > 0);
     if (request->prefixLen == 0 && ctx == OGSQL_COMPLETION_CTX_DEFAULT) {
         return 0;
     }
 
-    if (ogsql_completion_ctx_is_dynamic(ctx) == OG_TRUE &&
-        OgsqlCollectDynamicMatches(ctx, request->prefix, request->prefixLen, store) == OG_SUCCESS &&
-        *store->matchCount > 0) {
-        return *store->matchCount;
+    if (ogsql_completion_ctx_allows_sql_words(ctx)) {
+        ogsql_collect_preferred_keyword_matches(request, store->matches, store->matchCount);
+        if (*store->matchCount > 0) {
+            return *store->matchCount;
+        }
     }
 
-    *store->matchCount = 0;
-    ogsql_collect_static_completion_matches(ctx, request->prefix, request->prefixLen, request->commandDefs,
+    if (ogsql_completion_ctx_is_dynamic(ctx) == OG_TRUE) {
+        (void)OgsqlCollectDynamicMatches(ctx, request->prefix, request->prefixLen, store);
+    }
+
+    if (ogsql_completion_ctx_allows_sql_words(ctx)) {
+        ogsql_collect_kernel_keyword_matches(request->prefix, request->prefixLen, store->matches,
+            store->matchCount);
+        ogsql_collect_supplement_keyword_matches(request->prefix, request->prefixLen, store->matches,
+            store->matchCount);
+    }
+    ogsql_collect_command_matches(request->prefix, request->prefixLen, request->commandDefs,
         request->commandCount, store->matches, store->matchCount);
+    if (ctx == OGSQL_COMPLETION_CTX_COLUMN || ctx == OGSQL_COMPLETION_CTX_DEFAULT) {
+        ogsql_collect_builtin_function_matches(request->prefix, request->prefixLen, store->matches,
+            store->matchCount);
+    }
     return *store->matchCount;
 }
 

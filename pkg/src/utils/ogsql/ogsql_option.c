@@ -183,6 +183,25 @@ typedef enum en_ogsql_option_id {
 
 #define OGSQL_OPTION_COUNT (sizeof(g_options) / sizeof(ogsql_option_t))
 
+uint32 ogsql_option_count(void)
+{
+    return OGSQL_OPTION_COUNT;
+}
+
+const char *ogsql_option_name(uint32 index, bool32 forSet)
+{
+    if (index >= OGSQL_OPTION_COUNT) {
+        return NULL;
+    }
+    if (forSet == OG_TRUE && g_options[index].set_att_func == NULL) {
+        return NULL;
+    }
+    if (forSet == OG_FALSE && g_options[index].show_att_func == NULL) {
+        return NULL;
+    }
+    return g_options[index].name;
+}
+
 static void ogsql_display_set_usage(void)
 {
     ogsql_printf("Usage:\n");

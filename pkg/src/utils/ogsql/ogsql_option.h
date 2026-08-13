@@ -42,6 +42,8 @@ extern "C" {
 status_t ogsql_set(text_t *line, text_t *params);
 void ogsql_show(text_t *params);
 void ogsql_init_ssl_config(void);
+uint32 ogsql_option_count(void);
+const char *ogsql_option_name(uint32 index, bool32 forSet);
 
 #ifdef __cplusplus
 }
