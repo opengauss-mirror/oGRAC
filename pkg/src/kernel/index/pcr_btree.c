@@ -3603,8 +3603,10 @@ void pcrb_recycle_leaf(knl_session_t *session, btree_t *btree, knl_part_locate_t
     log_atomic_op_begin(session);
     for (;;) {
         dls_latch_x(session, &btree->struct_latch, session->id, &session->stat_btree);
-        if (session->is_btree_splitting == OG_FALSE) {
-            break;
+        if (session->is_btree_splitting == OG_TRUE) {
+            OG_LOG_DEBUG_WAR("[BTREE] the remote node is doing btree splitting while recycle leaf!");
+            session->is_btree_splitting = OG_FALSE;
+            continue;
         }
 
         if (!btree->is_splitting) {
@@ -3624,7 +3626,6 @@ void pcrb_recycle_leaf(knl_session_t *session, btree_t *btree, knl_part_locate_t
         cm_spin_sleep();
         OG_LOG_DEBUG_INF("index %s recycle page %u-%u try latch btree struct latch.",
             btree->index->desc.name, (uint32)desc->leaf_id.file, (uint32)desc->leaf_id.page);
-        continue;
     }
 
     buf_enter_page(session, desc->leaf_id, LATCH_MODE_S, ENTER_PAGE_NORMAL);
