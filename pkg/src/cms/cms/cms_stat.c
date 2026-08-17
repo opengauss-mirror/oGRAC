@@ -1605,8 +1605,10 @@ status_t cms_res_detect_online(uint32 res_id, cms_res_stat_t *old_stat)
     res_stat->work_stat = 1;
     res_stat->hb_time = cm_now();
     res_stat->session_id = res_id;
-    res_stat->target_stat = CMS_RES_ONLINE;
     res_stat->inst_id = g_cms_param->node_id;
+    if (res_stat->target_stat != CMS_RES_OFFLINE) {
+        res_stat->target_stat = CMS_RES_ONLINE;
+    }
     if (cms_res_is_script_detect_res(&res)) {
         int result = snprintf_s(res_stat->res_type, CMS_MAX_RES_TYPE_LEN, CMS_MAX_RES_TYPE_LEN - 1, "%s", res.type);
         if (result == OG_ERROR) {
@@ -1704,7 +1706,7 @@ status_t cms_res_detect_offline(uint32 res_id, cms_res_stat_t *old_stat)
         return OG_SUCCESS;
     }
 
-    if (!cms_res_is_no_fence_res(&res)) {
+    if (!cms_res_is_no_fence_res(&res) && res_stat->target_stat != CMS_RES_OFFLINE) {
         try_cms_kick_node(g_cms_param->node_id, res_id, IOFENCE_BY_DETECT_OFFLINE);
     }
     cms_stat_set(res_stat, CMS_RES_OFFLINE, &is_changed);
