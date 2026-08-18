@@ -34,6 +34,9 @@ drop table if exists bison_lob_subpart_t purge;
 drop table if exists bison_idx_option_t purge;
 create table bison_idx_option_t (id int, part_key int, constraint bison_idx_option_uk unique(id, part_key) using index local (partition ip1, partition ip2)) partition by range(part_key)(partition p1 values less than(10), partition p2 values less than(maxvalue));
 drop table if exists bison_idx_option_t purge;
+drop table if exists bison_range_subpart_multikey;
+create table bison_range_subpart_multikey(a int, b int, c int) partition by range(a) subpartition by range(b, c)(partition p1 values less than(10)(subpartition sp1 values less than(10, 10)));
+drop table if exists bison_range_subpart_multikey;
 
 drop table if exists bison_part_t1;
 create table bison_part_t1(f1 number2, f2 number2)

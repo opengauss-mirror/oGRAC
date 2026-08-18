@@ -133,6 +133,18 @@ SQL> drop table if exists bison_idx_option_t purge;
 
 Succeed.
 
+SQL> drop table if exists bison_range_subpart_multikey;
+
+Succeed.
+
+SQL> create table bison_range_subpart_multikey(a int, b int, c int) partition by range(a) subpartition by range(b, c)(partition p1 values less than(10)(subpartition sp1 values less than(10, 10)));
+
+Succeed.
+
+SQL> drop table if exists bison_range_subpart_multikey;
+
+Succeed.
+
 SQL> 
 SQL> drop table if exists bison_part_t1;
 

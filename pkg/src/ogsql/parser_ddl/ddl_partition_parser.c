@@ -2943,17 +2943,13 @@ static status_t og_parse_range_values(sql_stmt_t *stmt, knl_part_def_t *part_def
     expr_tree_t *value_expr = NULL;
     sql_verifier_t verf = { 0 };
     knl_part_column_def_t *key = NULL;
-    galist_t *tmp_part_keys = &obj_def->part_keys;
+    galist_t *tmp_part_keys = parent_def == NULL ? &obj_def->part_keys : &obj_def->subpart_keys;
 
     sql_init_verifier(stmt, &verf);
 
     if (boundaries->count != tmp_part_keys->count) {
         OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "value count must equal to partition keys");
         return OG_ERROR;
-    }
-
-    if (parent_def != NULL) {
-        tmp_part_keys = &obj_def->subpart_keys;
     }
 
     part_key_init(part_def->partkey, tmp_part_keys->count);
