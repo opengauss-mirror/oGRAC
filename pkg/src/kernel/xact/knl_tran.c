@@ -41,6 +41,9 @@
 #include "dtc_context.h"
 #include "oGRAC_fdsa.h"
 
+#define TX_ROLLBACK_WAIT_TIME 200
+#define TX_DEPOSIT_ROLLBACK_WAIT_TIME 50
+
 pcr_itl_t g_init_pcr_itl = { .scn = 0, .xid.value = 0, .undo_page.value = 0, .undo_slot = 0, .flags = 0 };
 
 static inline void tx_reset_rm(knl_session_t *session, knl_rm_t *rm)
@@ -68,16 +71,57 @@ void knl_tx_reset_rm(knl_handle_t session, void *rm)
     tx_reset_rm((knl_session_t *)session, (knl_rm_t *)rm);
 }
 
+static inline void tx_area_reset_id_list(id_list_t *list)
+{
+    list->count = 0;
+    list->first = OG_INVALID_ID32;
+    list->last = OG_INVALID_ID32;
+}
+
+typedef struct st_tx_deposit_prepare_ctx {
+    knl_session_t *session;
+    undo_set_t *undoSet;
+    uint32 rcyRmId;
+    bool32 tempHoldReleased;
+    date_t systime;
+} tx_deposit_prepare_ctx_t;
+
+static void tx_area_init_item(tx_item_t *item, uint32 segId, uint16 slot, date_t systime)
+{
+    item->xmap.seg_id = segId;
+    item->xmap.slot = slot;
+    item->lock = 0;
+    item->prev = OG_INVALID_ID32;
+    item->next = OG_INVALID_ID32;
+    item->rmid = OG_INVALID_ID16;
+    item->in_progress = OG_FALSE;
+    item->systime = systime;
+}
+
+static void tx_area_init_segment_items(knl_session_t *session, undo_set_t *undoSet, undo_t *undo, uint32 segNo)
+{
+    tx_item_t *item = NULL;
+    uint32 id = 0;
+    uint32 pageCapacity = TXN_PER_PAGE(session);
+    uint32 segId = segNo + OG_MAX_UNDO_SEGMENT * undoSet->inst_id;
+    uint16 slot;
+
+    for (uint32 txnNo = 0; txnNo < pageCapacity; txnNo++) {
+        for (uint32 pageNo = 0; pageNo < UNDO_DEF_TXN_PAGE(session); pageNo++) {
+            item = &undo->items[id];
+            slot = (uint16)(pageNo * pageCapacity + txnNo);
+            tx_area_init_item(item, segId, slot, KNL_NOW(session));
+            id++;
+        }
+    }
+}
+
 status_t tx_area_init_impl(knl_session_t *session, undo_set_t *undo_set, uint32 lseg_no, uint32 rseg_no,
                            bool32 is_extend)
 {
     undo_context_t *ogx = &session->kernel->undo_ctx;
     undo_t *undo = NULL;
-    tx_item_t *item = NULL;
-    uint32 txn_no;
-    uint32 page_no;
     uint32 seg_no;
-    uint32 id;
 
     if (is_extend && ogx->extend_cnt == 0) {
         ogx->extend_segno = lseg_no;
@@ -102,25 +146,12 @@ status_t tx_area_init_impl(knl_session_t *session, undo_set_t *undo_set, uint32 
             undo->items = (tx_item_t *)(undo_set->tx_buf + seg_no * undo->capacity * sizeof(tx_item_t));
         }
         
-        undo->free_items.count = 0;
-        undo->free_items.first = OG_INVALID_ID32;
-        undo->free_items.last = OG_INVALID_ID32;
-
-        id = 0;
-        for (txn_no = 0; txn_no < TXN_PER_PAGE(session); txn_no++) {
-            for (page_no = 0; page_no < UNDO_DEF_TXN_PAGE(session); page_no++) {
-                item = &undo->items[id];
-                item->xmap.seg_id = seg_no + OG_MAX_UNDO_SEGMENT * undo_set->inst_id;
-                item->xmap.slot = (uint16)(page_no * TXN_PER_PAGE(session) + txn_no);
-                item->lock = 0;
-                item->prev = OG_INVALID_ID32;
-                item->next = OG_INVALID_ID32;
-                item->rmid = OG_INVALID_ID16;
-                item->in_progress = OG_FALSE;
-                item->systime = KNL_NOW(session);
-                id++;
-            }
+        tx_area_reset_id_list(&undo->free_items);
+        for (uint32 worker_id = 0; worker_id < OG_MAX_ROLLBACK_PROC; worker_id++) {
+            tx_area_reset_id_list(&undo->deposit_rcy_items[worker_id]);
         }
+
+        tx_area_init_segment_items(session, undo_set, undo, seg_no);
     }
 
     return OG_SUCCESS;
@@ -349,6 +380,113 @@ static inline void tx_area_append_free_item(undo_t *undo, id_list_t *free_items,
     item->next = OG_INVALID_ID32;
 }
 
+static void tx_area_append_deposit_rcy_item(undo_t *undo, uint32 workerId, uint32 itemId)
+{
+    tx_area_append_free_item(undo, &undo->deposit_rcy_items[workerId], itemId);
+}
+
+static void tx_area_prepare_free_deposit_item(tx_deposit_prepare_ctx_t *ctx, undo_t *undo, id_list_t *freeItems,
+                                             uint32 itemId)
+{
+    if (!ctx->tempHoldReleased && ctx->session->temp_table_count != 0) {
+        tx_release_temp_table_hold_rmid(ctx->session);
+        ctx->tempHoldReleased = OG_TRUE;
+    }
+    tx_area_append_free_item(undo, freeItems, itemId);
+}
+
+static void tx_area_prepare_residual_deposit_item(tx_deposit_prepare_ctx_t *ctx, undo_t *undo, tx_item_t *item,
+                                                  uint32 itemId)
+{
+    uint32 workerId = ctx->rcyRmId % ctx->undoSet->assign_workers;
+    item->rmid = ctx->undoSet->rb_ctx[workerId].session->rmid;
+    tx_area_append_deposit_rcy_item(undo, workerId, itemId);
+    ctx->undoSet->rb_ctx[workerId].active = OG_TRUE;
+    ctx->undoSet->rb_ctx[workerId].rcy_item_count++;
+    ctx->rcyRmId++;
+}
+
+static void tx_area_reset_deposit_worker_ctx(undo_set_t *undoSet)
+{
+    for (uint32 i = 0; i < undoSet->assign_workers; i++) {
+        undoSet->rb_ctx[i].active = OG_FALSE;
+        undoSet->rb_ctx[i].rcy_item_count = 0;
+    }
+}
+
+static void tx_area_init_deposit_segment(tx_deposit_prepare_ctx_t *ctx, undo_t *undo, uint32 segNo)
+{
+    undo->lock = 0;
+    undo->ow_scn = DB_CURR_SCN(ctx->session);
+    undo->capacity = UNDO_DEF_TXN_PAGE(ctx->session) * TXN_PER_PAGE(ctx->session);
+    undo->items = (tx_item_t *)(ctx->undoSet->tx_buf + segNo * undo->capacity * sizeof(tx_item_t));
+    tx_area_reset_id_list(&undo->free_items);
+    for (uint32 workerId = 0; workerId < OG_MAX_ROLLBACK_PROC; workerId++) {
+        tx_area_reset_id_list(&undo->deposit_rcy_items[workerId]);
+    }
+}
+
+static void tx_area_prepare_deposit_segment(tx_deposit_prepare_ctx_t *ctx, uint32 segNo)
+{
+    undo_t *undo = &ctx->undoSet->undos[segNo];
+    uint32 id = 0;
+    uint32 pageCapacity = TXN_PER_PAGE(ctx->session);
+    uint32 segId = segNo + OG_MAX_UNDO_SEGMENT * ctx->undoSet->inst_id;
+    id_list_t segFreeItems;
+
+    tx_area_init_deposit_segment(ctx, undo, segNo);
+    tx_area_reset_id_list(&segFreeItems);
+    for (uint32 txnNo = 0; txnNo < pageCapacity; txnNo++) {
+        for (uint32 pageNo = 0; pageNo < UNDO_DEF_TXN_PAGE(ctx->session); pageNo++) {
+            tx_item_t *item = &undo->items[id];
+            uint16 slot = (uint16)(pageNo * pageCapacity + txnNo);
+            tx_area_init_item(item, segId, slot, ctx->systime);
+            txn_t *txn = tx_area_item_txn_addr(ctx->session, undo, item, segNo);
+            if (txn->status == (uint8)XACT_END) {
+                tx_area_prepare_free_deposit_item(ctx, undo, &segFreeItems, id);
+            } else {
+                tx_area_prepare_residual_deposit_item(ctx, undo, item, id);
+            }
+            id++;
+        }
+    }
+
+    cm_spin_lock(&undo->lock, &ctx->session->stat->spin_stat.stat_txn_list);
+    undo->free_items = segFreeItems;
+    cm_spin_unlock(&undo->lock);
+}
+
+void tx_area_deposit_prepare(knl_session_t *session, undo_set_t *undoSet)
+{
+    core_ctrl_t *coreCtrl = DB_CORE_CTRL(session);
+    bool32 tempHoldReleased = OG_FALSE;
+    if (session->temp_table_count != 0) {
+        tx_release_temp_table_hold_rmid(session);
+        tempHoldReleased = OG_TRUE;
+    }
+    tx_deposit_prepare_ctx_t prepareCtx = {
+        .session = session,
+        .undoSet = undoSet,
+        .rcyRmId = 0,
+        .tempHoldReleased = tempHoldReleased,
+        .systime = KNL_NOW(session),
+    };
+
+    tx_area_reset_deposit_worker_ctx(undoSet);
+    for (uint32 segNo = 0; segNo < coreCtrl->undo_segments; segNo++) {
+        tx_area_prepare_deposit_segment(&prepareCtx, segNo);
+    }
+
+    undoSet->active_workers = 0;
+    for (uint32 i = 0; i < undoSet->assign_workers; i++) {
+        if (undoSet->rb_ctx[i].active) {
+            undoSet->active_workers++;
+        }
+    }
+    OG_LOG_RUN_INF("[tx_area_deposit_prepare] inst_id=%u, rcy_items=%u, active_workers=%lld",
+        undoSet->inst_id, prepareCtx.rcyRmId, undoSet->active_workers);
+}
+
 void tx_area_release_impl(knl_session_t *session, uint32 lseg_no, uint32 rseg_no, uint32 inst_id)
 {
     undo_context_t *ogx = &session->kernel->undo_ctx;
@@ -429,13 +567,32 @@ void tx_area_release(knl_session_t *session, undo_set_t *undo_set)
     }
 }
 
-static void tx_rollback_items(knl_session_t *session, thread_t *thread, undo_t *undo)
+static void tx_rollback_one_item(knl_session_t *session, tx_item_t *item, txn_t *txn, uint32 item_id)
 {
     knl_rm_t *rm = session->rm;
+    status_t status;
+
+    switch (txn->status) {
+        case XACT_PHASE1:
+            status = xa_recover(session, item, txn, item_id);
+            knl_panic(status == OG_SUCCESS);
+            break;
+        case XACT_PHASE2:
+        case XACT_BEGIN:
+            tx_rm_attach_trans(rm, item, txn, item_id);
+            knl_rollback(session, NULL);
+            break;
+        case XACT_END:
+        default:
+            break;
+    }
+}
+
+static void tx_rollback_items(knl_session_t *session, thread_t *thread, undo_t *undo)
+{
     tx_item_t *item = NULL;
     txn_t *txn = NULL;
     uint32 id;
-    status_t status;
 
     for (id = 0; id < undo->capacity; id++) {
         if (thread->closed) {
@@ -448,22 +605,55 @@ static void tx_rollback_items(knl_session_t *session, thread_t *thread, undo_t *
         }
 
         txn = txn_addr(session, item->xmap);
-
-        switch (txn->status) {
-            case XACT_PHASE1:
-                status = xa_recover(session, item, txn, id);
-                knl_panic(status == OG_SUCCESS);
-                break;
-            case XACT_PHASE2:
-            case XACT_BEGIN:
-                tx_rm_attach_trans(rm, item, txn, id);
-                knl_rollback(session, NULL);
-                break;
-            case XACT_END:
-            default:
-                break;
-        }
+        tx_rollback_one_item(session, item, txn, id);
     }
+}
+
+static bool32 tx_rollback_deposit_items(knl_session_t *session, thread_t *thread, undo_t *undo, uint32 worker_id)
+{
+    tx_item_t *item = NULL;
+    txn_t *txn = NULL;
+    uint32 id = undo->deposit_rcy_items[worker_id].first;
+
+    while (id != OG_INVALID_ID32) {
+        if (thread->closed) {
+            return OG_FALSE;
+        }
+
+        item = &undo->items[id];
+        /* Rollback may append item to free_items and overwrite item->next. */
+        uint32 next = item->next;
+        if (item->rmid == session->rmid) {
+            txn = txn_addr(session, item->xmap);
+            tx_rollback_one_item(session, item, txn, id);
+        }
+        id = next;
+    }
+
+    return OG_TRUE;
+}
+
+static bool32 tx_area_deposit_rollback(knl_session_t *session, thread_t *thread, undo_set_t *undo_set,
+                                       uint32 worker_id)
+{
+    if ((!DB_IS_READONLY(session) || DB_IS_MAXFIX(session) ||
+        (!DB_IS_PRIMARY(&session->kernel->db) && session->kernel->lrpl_ctx.is_promoting == OG_TRUE)) &&
+        DB_IS_BG_ROLLBACK_SE(session) && DB_IN_BG_ROLLBACK(session)) {
+        core_ctrl_t *coreCtrl = DB_CORE_CTRL(session);
+        for (uint32 seg_no = 0; seg_no < coreCtrl->undo_segments; seg_no++) {
+            if (thread->closed) {
+                return OG_FALSE;
+            }
+
+            if (!tx_rollback_deposit_items(session, thread, &undo_set->undos[seg_no], worker_id)) {
+                return OG_FALSE;
+            }
+        }
+
+        return OG_TRUE;
+    }
+
+    return OG_FALSE;
 }
 
 void tx_area_rollback(knl_session_t *session, thread_t *thread, undo_set_t *undo_set)
@@ -1571,6 +1761,7 @@ void tx_rollback_proc(thread_t *thread)
     knl_session_t *session = rb_ctx->session;
     undo_set_t *undo_set = UNDO_SET(session, rb_ctx->inst_id);
     undo_context_t *ogx = &session->kernel->undo_ctx;
+    bool32 deposit_finished = OG_FALSE;
 
     session->bg_rollback = OG_TRUE;
 
@@ -1599,19 +1790,33 @@ void tx_rollback_proc(thread_t *thread)
                 break;
             }
         }
-        cm_sleep(200);
+        cm_sleep(rb_ctx->deposit_rollback ? TX_DEPOSIT_ROLLBACK_WAIT_TIME : TX_ROLLBACK_WAIT_TIME);
     }
 
     if (!thread->closed) {
-        tx_area_rollback(session, thread, undo_set);
+        if (rb_ctx->deposit_rollback) {
+            deposit_finished = tx_area_deposit_rollback(session, thread, undo_set, rb_ctx->worker_id);
+        } else {
+            tx_area_rollback(session, thread, undo_set);
+        }
 
         OG_LOG_RUN_INF("[tx_rollback_proc] undo_set->active_workers=%lld, undo_ctx->active_workers=%lld",
             undo_set->active_workers, ogx->active_workers);
-        if (undo_set->active_workers > 0) {
+        if (!rb_ctx->deposit_rollback && undo_set->active_workers > 0) {
             (void)cm_atomic_dec(&ogx->active_workers);
             OG_LOG_RUN_INF("[tx_rollback_proc] dec active_workers in undo ogx, undo_set->active_workers=%lld, "
                 "undo_ctx->active_workers=%lld", undo_set->active_workers, ogx->active_workers);
         }
+    }
+    if (rb_ctx->deposit_rollback && rb_ctx->active) {
+        if (undo_set->active_workers > 0) {
+            (void)cm_atomic_dec(&undo_set->active_workers);
+        }
+        if (ogx->active_workers > 0) {
+            (void)cm_atomic_dec(&ogx->active_workers);
+        }
+        OG_LOG_RUN_INF("[tx_rollback_proc] dec deposit active workers, finished=%u, undo_set->active_workers=%lld, "
+            "undo_ctx->active_workers=%lld", deposit_finished, undo_set->active_workers, ogx->active_workers);
     }
 
     session->bg_rollback = OG_FALSE;
@@ -1630,6 +1835,10 @@ status_t tx_rollback_start(knl_session_t *session)
     for (i = 0; i < session->kernel->attr.tx_rollback_proc_num; i++) {
         undo_set->rb_ctx[i].session = kernel->sessions[SESSION_ID_ROLLBACK + i];
         undo_set->rb_ctx[i].inst_id = session->kernel->id;
+        undo_set->rb_ctx[i].worker_id = i;
+        undo_set->rb_ctx[i].deposit_rollback = OG_FALSE;
+        undo_set->rb_ctx[i].active = OG_TRUE;
+        undo_set->rb_ctx[i].rcy_item_count = 0;
         if (cm_create_thread(tx_rollback_proc, 0, &undo_set->rb_ctx[i], &kernel->tran_ctx.rollback_proc[i]) !=
             OG_SUCCESS) {
             return OG_ERROR;
