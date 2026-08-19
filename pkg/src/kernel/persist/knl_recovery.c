@@ -1968,6 +1968,9 @@ status_t rcy_load(knl_session_t *session, log_point_t *point, uint32 *data_size,
 static void rcy_init_callback_proc(log_context_t *ogx)
 {
     for (uint32 i = 0; i < LMGR_COUNT; i++) {
+        knl_panic_log(ogx->replay_procs[g_lmgrs[i].type] == NULL,
+                      "redo type %u is registered more than once, current name: %s.",
+                      (uint32)g_lmgrs[i].type, g_lmgrs[i].name);
         ogx->replay_procs[g_lmgrs[i].type] = g_lmgrs[i].replay_proc;
         ogx->analysis_procs[g_lmgrs[i].type] = g_lmgrs[i].analysis_proc;
         ogx->verify_page_format_proc[g_lmgrs[i].type] = g_lmgrs[i].verify_page_format_proc;
