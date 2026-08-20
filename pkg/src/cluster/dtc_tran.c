@@ -398,6 +398,10 @@ status_t dtc_tx_area_init(knl_session_t *session, uint8 inst_id)
     undo_set->assign_workers = 1;
     for (uint32 i = 0; i < undo_set->assign_workers; i++) {
         undo_set->rb_ctx[i].inst_id = inst_id;
+        undo_set->rb_ctx[i].worker_id = i;
+        undo_set->rb_ctx[i].deposit_rollback = OG_FALSE;
+        undo_set->rb_ctx[i].active = OG_TRUE;
+        undo_set->rb_ctx[i].rcy_item_count = 0;
 
         if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&undo_set->rb_ctx[i].session) != OG_SUCCESS) {
             CM_FREE_PTR(undo_set->tx_buf);
@@ -409,6 +413,55 @@ status_t dtc_tx_area_init(knl_session_t *session, uint8 inst_id)
     return tx_area_init_impl(session, undo_set, 0, UNDO_SEGMENT_COUNT(session), OG_FALSE);
 }
 
+status_t dtc_tx_area_init_partial(knl_session_t *session, uint8 inst_id)
+{
+    undo_set_t *undo_set = UNDO_SET(session, inst_id);
+
+    if (inst_id == session->kernel->id) {
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_RUN_INF("[RC] init partial deposit transaction area for instance %u", inst_id);
+    if (undo_set->tx_buf == NULL) {
+        undo_set->tx_buf = (char *)malloc((size_t)session->kernel->attr.tran_buf_size);
+        if (undo_set->tx_buf == NULL) {
+            OG_LOG_RUN_ERR("[RC] failed to malloc memory for partial deposit tx_buf in undo_set");
+            OG_THROW_ERROR(ERR_ALLOC_MEMORY, session->kernel->attr.tran_buf_size, "partial deposit transaction");
+            return OG_ERROR;
+        }
+    }
+
+    undo_set->assign_workers = session->kernel->attr.tx_rollback_proc_num;
+    undo_set->active_workers = 0;
+    for (uint32 i = 0; i < undo_set->assign_workers; i++) {
+        rollback_ctx_t *rb_ctx = &undo_set->rb_ctx[i];
+        rb_ctx->inst_id = inst_id;
+        rb_ctx->worker_id = i;
+        rb_ctx->deposit_rollback = OG_TRUE;
+        rb_ctx->active = OG_FALSE;
+        rb_ctx->rcy_item_count = 0;
+
+        if (rb_ctx->session == NULL &&
+            g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&rb_ctx->session) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[RC] failed to alloc kernel session for partial undo rollback");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static void dtc_close_started_deposit_rollback_workers(undo_set_t *undoSet, uint32 workerCount)
+{
+    for (uint32 i = 0; i < workerCount; i++) {
+        rollback_ctx_t *rbCtx = &undoSet->rb_ctx[i];
+        if (!rbCtx->deposit_rollback || !rbCtx->active) {
+            continue;
+        }
+        cm_close_thread(&rbCtx->thread);
+    }
+}
+
 status_t dtc_tx_rollback_start(knl_session_t *session, uint8 inst_id)
 {
     undo_set_t *undo_set = UNDO_SET(session, inst_id);
@@ -418,11 +471,52 @@ status_t dtc_tx_rollback_start(knl_session_t *session, uint8 inst_id)
     }
 
     for (uint32 i = 0; i < undo_set->assign_workers; i++) {
-        if (cm_create_thread(tx_rollback_proc, 0, &undo_set->rb_ctx[i], &undo_set->rb_ctx[i].thread) != OG_SUCCESS) {
-            OG_LOG_RUN_ERR("failed to create tx_rollback_proc %u", i);
-            return OG_ERROR;
+        rollback_ctx_t *rbCtx = &undo_set->rb_ctx[i];
+        if (rbCtx->deposit_rollback && !rbCtx->active) {
+            continue;
         }
+        if (rbCtx->deposit_rollback) {
+            (void)cm_atomic_inc(&session->kernel->undo_ctx.active_workers);
+        }
+        if (cm_create_thread(tx_rollback_proc, 0, rbCtx, &rbCtx->thread) == OG_SUCCESS) {
+            continue;
+        }
+        if (rbCtx->deposit_rollback) {
+            (void)cm_atomic_dec(&session->kernel->undo_ctx.active_workers);
+        }
+        dtc_close_started_deposit_rollback_workers(undo_set, i);
+        for (uint32 j = i; j < undo_set->assign_workers; j++) {
+            rollback_ctx_t *unstarted = &undo_set->rb_ctx[j];
+            if (!unstarted->deposit_rollback || !unstarted->active) {
+                continue;
+            }
+            unstarted->active = OG_FALSE;
+            if (undo_set->active_workers > 0) {
+                (void)cm_atomic_dec(&undo_set->active_workers);
+            }
+        }
+        OG_LOG_RUN_ERR("failed to create tx_rollback_proc %u", i);
+        return OG_ERROR;
     }
+
+    return OG_SUCCESS;
+}
+
+status_t dtc_tx_area_load_partial(knl_session_t *session, uint8 inst_id)
+{
+    if (DB_IS_PRIMARY(&session->kernel->db) && inst_id == session->kernel->id) {
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_RUN_INF("[RC] prepare partial deposit transaction area for instance %u", inst_id);
+
+    undo_set_t *undo_set = UNDO_SET(session, inst_id);
+    tx_area_deposit_prepare(session, undo_set);
+    if (dtc_tx_rollback_start(session, inst_id) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] failed to start partial dtc_tx_rollback");
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_INF("[RC] start partial dtc_tx_rollback");
 
     return OG_SUCCESS;
 }
@@ -448,21 +542,25 @@ status_t dtc_tx_area_load(knl_session_t *session, uint8 inst_id)
 
 void dtc_tx_rollback_close(knl_session_t *session, uint8 inst_id)
 {
-    undo_set_t *undo_set = UNDO_SET(session, inst_id);
+    undo_set_t *undoSet = UNDO_SET(session, inst_id);
 
     if (inst_id == session->kernel->id) {
         return;
     }
 
-    for (uint32 i = 0; i < undo_set->assign_workers; i++) {
-        if (undo_set->rb_ctx[i].session != NULL) {
-            undo_set->rb_ctx[i].session->killed = OG_TRUE;
-            undo_set->rb_ctx[i].session->force_kill = OG_TRUE;
+    for (uint32 i = 0; i < undoSet->assign_workers; i++) {
+        rollback_ctx_t *rbCtx = &undoSet->rb_ctx[i];
+        if (rbCtx->deposit_rollback && !rbCtx->active) {
+            continue;
         }
-        cm_close_thread(&undo_set->rb_ctx[i].thread);
+        if (rbCtx->session != NULL) {
+            rbCtx->session->killed = OG_TRUE;
+            rbCtx->session->force_kill = OG_TRUE;
+        }
+        cm_close_thread(&rbCtx->thread);
     }
 
-    if (undo_set->active_workers > 0) {
+    if (undoSet->active_workers > 0) {
         OG_LOG_RUN_WAR("[RC] incomplete deposit rollback %u", inst_id);
     }
 }
@@ -484,6 +582,10 @@ void dtc_rollback_close(knl_session_t *session, uint8 inst_id)
             g_knl_callback.release_knl_session(undo_set->rb_ctx[i].session);
             undo_set->rb_ctx[i].session = NULL;
         }
+        undo_set->rb_ctx[i].worker_id = 0;
+        undo_set->rb_ctx[i].deposit_rollback = OG_FALSE;
+        undo_set->rb_ctx[i].active = OG_FALSE;
+        undo_set->rb_ctx[i].rcy_item_count = 0;
     }
 
     // CM_FREE_PTR(undo_set->tx_buf);

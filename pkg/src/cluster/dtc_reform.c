@@ -151,6 +151,18 @@ status_t rc_tx_area_init(instance_list_t *list)
     return OG_SUCCESS;
 }
 
+static status_t rc_tx_area_init_partial(instance_list_t *list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        if (dtc_tx_area_init_partial(g_rc_ctx->session, list->inst_id_list[i]) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to init partial tx area");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t rc_undo_init(instance_list_t *list)
 {
     for (uint8 i = 0; i < list->inst_id_count; i++) {
@@ -164,6 +176,18 @@ status_t rc_tx_area_load(instance_list_t *list)
 {
     for (uint8 i = 0; i < list->inst_id_count; i++) {
         dtc_tx_area_load(g_rc_ctx->session, list->inst_id_list[i]);
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t rc_tx_area_load_partial(instance_list_t *list)
+{
+    for (uint8 i = 0; i < list->inst_id_count; i++) {
+        if (dtc_tx_area_load_partial(g_rc_ctx->session, list->inst_id_list[i]) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to load partial tx area");
+            return OG_ERROR;
+        }
     }
 
     return OG_SUCCESS;
@@ -276,73 +300,79 @@ static status_t dtc_standby_partial_recovery(void)
     return OG_SUCCESS;
 }
 
-status_t dtc_rollback_node(void)
+static status_t dtc_standby_load_deposit_tx_area(knl_session_t *session, instance_list_t *depositList)
 {
-    // init deposit undo && transaction for abort or leave instances
-    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
-    OG_LOG_RUN_INF("[RC] start process undo, session->kernel->lsn=%llu, g_rc_ctx->status=%u",
-        session->kernel->lsn, g_rc_ctx->status);
-
-    // init deposit transaction for abort or leave instances
-    instance_list_t deposit_list;
-    instance_list_t deposit_free_list;
-    rc_get_tx_deposit_inst_list(&deposit_list, &deposit_free_list);
-    rc_log_instance_list(&deposit_list, "deposit");
-    rc_log_instance_list(&deposit_free_list, "deposit free");
-
-    if (rc_undo_init(&deposit_list) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[RC] failed to rc_undo_init");
-        return OG_ERROR;
-    }
-
-    if (rc_tx_area_init(&deposit_list) != OG_SUCCESS) {
+    if (rc_tx_area_init(depositList) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[RC][partial restart] failed to do tx area init, g_rc_ctx->status=%u", g_rc_ctx->status);
         return OG_ERROR;
     }
 
-    if (!DB_IS_PRIMARY(&session->kernel->db)) {
-        core_ctrl_t *core_ctrl = DB_CORE_CTRL(session);
-        for (uint8 i = 0; i < deposit_list.inst_id_count; i++) {
-            tx_area_release_impl(session, 0, core_ctrl->undo_segments, deposit_list.inst_id_list[i]);
-        }
-        g_rc_ctx->info.standby_get_txn = OG_TRUE;
-        g_rc_ctx->status = REFORM_OPEN;
-        return OG_SUCCESS;
+    core_ctrl_t *coreCtrl = DB_CORE_CTRL(session);
+    for (uint8 i = 0; i < depositList->inst_id_count; i++) {
+        tx_area_release_impl(session, 0, coreCtrl->undo_segments, depositList->inst_id_list[i]);
     }
+    g_rc_ctx->info.standby_get_txn = OG_TRUE;
+    g_rc_ctx->status = REFORM_OPEN;
+    return OG_SUCCESS;
+}
 
+static status_t dtc_primary_load_partial_deposit_tx_area(knl_session_t *session, instance_list_t *depositList)
+{
     if (g_instance->kernel.db.open_status == DB_OPEN_STATUS_MAX_FIX) {
         g_instance->kernel.db.is_readonly = OG_TRUE;
     }
+    if (rc_tx_area_init_partial(depositList) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC][partial restart] failed to do partial tx area init, g_rc_ctx->status=%u",
+                       g_rc_ctx->status);
+        return OG_ERROR;
+    }
 
-    if (rc_tx_area_load(&deposit_list) != OG_SUCCESS) {
+    if (rc_tx_area_load_partial(depositList) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[RC][partial restart] failed to do tx area load, session->kernel->lsn=%llu, "
                        "g_rc_ctx->status=%u",
-                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+                       session->kernel->lsn, g_rc_ctx->status);
         return OG_ERROR;
     }
 
     g_rc_ctx->status = REFORM_OPEN;
 
-    while (DB_IN_BG_ROLLBACK((knl_session_t *)g_rc_ctx->session)) {
+    while (DB_IN_BG_ROLLBACK(session)) {
         cm_sleep(DTC_REFORM_WAIT_TIME);
     }
     OG_LOG_RUN_INF("[RC] finish undo_rollback, session->kernel->lsn=%llu, g_rc_ctx->status=%u",
-                   ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+                   session->kernel->lsn, g_rc_ctx->status);
 
-    if (rc_rollback_close(&deposit_list) != OG_SUCCESS) {
+    if (rc_rollback_close(depositList) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[RC][partial restart] failed to rc_tx_area_release, session->kernel->lsn=%llu, "
                        "g_rc_ctx->status=%u",
-                       ((knl_session_t *)g_rc_ctx->session)->kernel->lsn, g_rc_ctx->status);
+                       session->kernel->lsn, g_rc_ctx->status);
         return OG_ERROR;
     }
 
-    /*            if (rc_undo_release(&deposit_free_list) != OG_SUCCESS) {
-                    OG_LOG_RUN_ERR("[RC] failed to rc_undo_release");
-                    g_rc_ctx->status = REFORM_DONE;
-                    return OG_ERROR;
-                }
-    */
     return OG_SUCCESS;
+}
+
+status_t dtc_rollback_node(void)
+{
+    knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
+    instance_list_t depositList;
+    instance_list_t depositFreeList;
+
+    OG_LOG_RUN_INF("[RC] start process undo, session->kernel->lsn=%llu, g_rc_ctx->status=%u",
+        session->kernel->lsn, g_rc_ctx->status);
+    rc_get_tx_deposit_inst_list(&depositList, &depositFreeList);
+    rc_log_instance_list(&depositList, "deposit");
+    rc_log_instance_list(&depositFreeList, "deposit free");
+
+    if (rc_undo_init(&depositList) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[RC] failed to rc_undo_init");
+        return OG_ERROR;
+    }
+    if (!DB_IS_PRIMARY(&session->kernel->db)) {
+        return dtc_standby_load_deposit_tx_area(session, &depositList);
+    }
+
+    return dtc_primary_load_partial_deposit_tx_area(session, &depositList);
 }
 
 static void rc_reform_init(reform_info_t *reform_info)

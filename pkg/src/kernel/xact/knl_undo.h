@@ -123,6 +123,7 @@ typedef struct st_undo {
     spinlock_t lock;
     knl_scn_t ow_scn;
     id_list_t free_items;
+    id_list_t deposit_rcy_items[OG_MAX_ROLLBACK_PROC];
     tx_item_t *items;
     uint32 capacity;
     undo_page_id_t entry;     // segment entry

@@ -63,6 +63,8 @@ void dtc_undo_release(knl_session_t *session, uint8 inst_id);
 
 status_t dtc_tx_area_init(knl_session_t *session, uint8 inst_id);
 status_t dtc_tx_area_load(knl_session_t *session, uint8 inst_id);
+status_t dtc_tx_area_init_partial(knl_session_t *session, uint8 inst_id);
+status_t dtc_tx_area_load_partial(knl_session_t *session, uint8 inst_id);
 void dtc_rollback_close(knl_session_t *session, uint8 inst_id);
 
 status_t dtc_tx_rollback_start(knl_session_t *session, uint8 inst_id);
