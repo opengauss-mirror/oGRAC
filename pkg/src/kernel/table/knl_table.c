@@ -8138,6 +8138,7 @@ static status_t db_set_default_value(knl_session_t *session, void *stmt, row_ass
         case OG_TYPE_INTERVAL_YM:
             return row_put_yminterval(ra, value.v_itvl_ym);
 
+        case OG_TYPE_DATE:
         case OG_TYPE_TIMESTAMP:
         case OG_TYPE_TIMESTAMP_TZ_FAKE:
         case OG_TYPE_TIMESTAMP_LTZ:
