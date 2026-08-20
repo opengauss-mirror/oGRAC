@@ -97,8 +97,7 @@ static dbe_func_param_t g_collect_index_stats_params[] = {
     // id, name                ,datatype,      nullable      parameter len
     { 0,  "table_schema",      OG_TYPE_VARCHAR, OG_FALSE,    OG_MAX_NAME_LEN },
     { 1,  "index_name",        OG_TYPE_VARCHAR, OG_FALSE,   OG_MAX_NAME_LEN },
-    { 2,  "table_name",        OG_TYPE_VARCHAR, OG_FALSE,   OG_MAX_NAME_LEN },
-    { 3,  "sample_ratio",      OG_TYPE_NUMBER,  OG_TRUE,    OG_INVALID_ID32 },
+    { 2,  "sample_ratio",      OG_TYPE_NUMBER,  OG_TRUE,    OG_INVALID_ID32 },
 };
 
 static dbe_func_param_t g_delete_table_stats_params[] = {
@@ -3452,7 +3451,6 @@ static status_t sql_collect_index_stats(sql_stmt_t *stmt, expr_node_t *func, var
     knl_analyze_index_def_t *def = NULL;
     variant_t ownname;
     variant_t indexname;
-    variant_t tablename;
     status_t status = OG_ERROR;
     errno_t ret;
     bool32 is_default = OG_FALSE;
@@ -3471,9 +3469,6 @@ static status_t sql_collect_index_stats(sql_stmt_t *stmt, expr_node_t *func, var
         OG_BREAK_IF_ERROR(sql_get_dbe_param_value(stmt, func, g_collect_index_stats_params, 2, &indexname));
         sql_keep_stack_var(stmt, &indexname);
 
-        OG_BREAK_IF_ERROR(sql_get_dbe_param_value(stmt, func, g_collect_index_stats_params, 3, &tablename));
-        sql_keep_stack_var(stmt, &tablename);
-
         OG_BREAK_IF_ERROR(sql_push(stmt, sizeof(knl_analyze_index_def_t), (void **)&def));
         ret = memset_sp(def, sizeof(knl_analyze_index_def_t), 0, sizeof(knl_analyze_index_def_t));
         if (ret != EOK) {
@@ -3485,10 +3480,9 @@ static status_t sql_collect_index_stats(sql_stmt_t *stmt, expr_node_t *func, var
         def->name = indexname.v_text;
         def->sample_ratio = STATS_MAX_ESTIMATE_PERCENT;
         def->sample_level = BLOCK_SAMPLE;
-        def->table_name = tablename.v_text;
 
         OG_BREAK_IF_ERROR(
-            sql_compute_sample_ratio(stmt, func, g_collect_index_stats_params, 4, &def->sample_ratio, &is_default));
+            sql_compute_sample_ratio(stmt, func, g_collect_index_stats_params, 3, &def->sample_ratio, &is_default));
         def->sample_ratio = def->sample_ratio / 100; // sample ratio divided by 100
         cm_text_upper(&def->owner);
         process_name_case_sensitive(&def->name);
@@ -3507,7 +3501,7 @@ static status_t sql_collect_index_stats(sql_stmt_t *stmt, expr_node_t *func, var
 
 static status_t sql_verify_collect_index_stats(sql_verifier_t *verf, expr_node_t *func)
 {
-    if (sql_verify_func_node(verf, func, 3, 4, OG_INVALID_ID32) != OG_SUCCESS) {
+    if (sql_verify_func_node(verf, func, 2, 3, OG_INVALID_ID32) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
