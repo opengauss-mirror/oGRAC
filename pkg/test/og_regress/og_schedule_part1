@@ -20,6 +20,7 @@ test: og_exp_imp
 test: bison_parser_1
 test: og_auto_increment
 test: og_index_unique
+test: og_alter_add_date_default
 test: og_explain
 test: og_slowsql
 test: og_hint

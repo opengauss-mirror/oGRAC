@@ -1,0 +1,35 @@
+-- issue #334 看护用例：
+-- ALTER TABLE ADD DATE 列带默认值时，需要回填已有行的默认值。
+-- 修复前 db_set_default_value() 缺少 OG_TYPE_DATE 分支，DATE 默认值被误当
+-- binary_t 处理，bmp_put_bin -> memcpy_s 读无效地址导致 core（或误报
+-- "row is too large"），本用例在修复前应失败，修复后应通过。
+DROP TABLE IF EXISTS T_OG334_SIMPLE;
+CREATE TABLE T_OG334_SIMPLE (ID INT);
+INSERT INTO T_OG334_SIMPLE VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),
+                                  (11),(12),(13),(14),(15),(16),(17),(18),(19),(20);
+SELECT COUNT(*) AS ROWS_BEFORE FROM T_OG334_SIMPLE;
+
+-- 字符串字面量默认值：修复前稳定命中 memcpy 崩溃分支
+ALTER TABLE T_OG334_SIMPLE ADD D DATE DEFAULT '2026-08-13';
+SELECT COUNT(*) AS CNT, COUNT(D) AS CNT_D,
+       TO_CHAR(MIN(D), 'YYYY-MM-DD') AS MIN_D,
+       TO_CHAR(MAX(D), 'YYYY-MM-DD') AS MAX_D
+FROM T_OG334_SIMPLE;
+
+-- 分区表 + SYSDATE 默认值：对应 issue 原始场景
+DROP TABLE IF EXISTS T_OG334_PART;
+CREATE TABLE T_OG334_PART (ID INT) PARTITION BY RANGE (ID) (
+  PARTITION P1 VALUES LESS THAN (10),
+  PARTITION P2 VALUES LESS THAN (20),
+  PARTITION P3 VALUES LESS THAN (MAXVALUE)
+);
+INSERT INTO T_OG334_PART VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),
+                                (11),(12),(13),(14),(15),(16),(17),(18),(19),(20);
+SELECT COUNT(*) AS ROWS_BEFORE FROM T_OG334_PART;
+
+ALTER TABLE T_OG334_PART ADD D DATE DEFAULT SYSDATE;
+SELECT COUNT(*) AS CNT, COUNT(D) AS CNT_D FROM T_OG334_PART;
+
+DROP TABLE T_OG334_SIMPLE;
+DROP TABLE T_OG334_PART;
+COMMIT;
