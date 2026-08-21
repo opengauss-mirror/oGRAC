@@ -648,7 +648,7 @@ status_t knl_set_session_trans(knl_handle_t session, isolation_level_t level, bo
 
     se->rm->isolevel = (uint8)level;
     se->rm->query_scn = DB_CURR_SCN(se);
-
+    
     return OG_SUCCESS;
 }
 
@@ -4520,7 +4520,7 @@ status_t knl_crosspart_update(knl_handle_t se, knl_cursor_t *cursor, knl_part_lo
 status_t knl_fetch_by_rowid(knl_handle_t session, knl_cursor_t *cursor, bool32 *is_found)
 {
     if (cursor->isolevel == ISOLATION_CURR_COMMITTED) {
-        cursor->query_scn = DB_CURR_SCN((knl_session_t *)session);
+        cursor->query_scn = DB_CURR_SCN(session);
         cursor->cc_cache_time = KNL_NOW((knl_session_t *)session);
     }
 

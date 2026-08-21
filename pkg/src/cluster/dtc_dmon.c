@@ -26,6 +26,7 @@
 #include "dtc_dmon.h"
 #include "dtc_database.h"
 #include "dtc_tran.h"
+#include "dtc_shmem_scn.h"
 
 #define SCN_BROADCAST_CLOCK 5  // broadcast scn per 5ms
 #define TIME_BROADCAST_CLOCK (10 * SECONDS_PER_MIN * MILLISECS_PER_SECOND)  // broadcast time per 10 mins
@@ -40,7 +41,11 @@ static void dmon_scn_broadcast(knl_session_t *session)
 
     mes_init_send_head(&bcast.head, MES_CMD_SCN_BROADCAST, sizeof(mes_scn_bcast_t), OG_INVALID_ID32,
                        g_dtc->profile.inst_id, OG_INVALID_ID8, session->id, OG_INVALID_ID16);
-    bcast.scn = KNL_GET_SCN(&g_dtc->kernel->scn);
+    if (shmem_scn_need_broadcast()) {
+        bcast.scn = DB_CURR_SCN(session);
+    } else {
+        bcast.scn = 0;
+    }
     bcast.min_scn = KNL_GET_SCN(&g_dtc->kernel->local_min_scn);
     bcast.lsn = cm_atomic_get(&g_dtc->kernel->lsn);
     (void)cm_gettimeofday(&(bcast.cur_time));
@@ -113,7 +118,7 @@ void dmon_close(void)
         ogx->session = NULL;
     }
 }
-
+// TODO: 是否需要保留
 void dtc_process_scn_req(void *sess, mes_message_t *msg)
 {
     mes_scn_bcast_t bcast;
@@ -122,7 +127,7 @@ void dtc_process_scn_req(void *sess, mes_message_t *msg)
     mes_init_send_head(&bcast.head, MES_CMD_SCN_BROADCAST, sizeof(mes_scn_bcast_t), msg->head->rsn, msg->head->dst_inst,
                        msg->head->src_inst, session->id, msg->head->src_sid);
 
-    bcast.scn = DB_CURR_SCN(session);
+    bcast.scn = DB_CURR_SCN(session);  // 不影响
 
     mes_release_message_buf(msg->buffer);
     mes_send_data((void *)&bcast);
@@ -172,7 +177,9 @@ void dtc_process_scn_broadcast(void *sess, mes_message_t *msg)
     KNL_SET_SCN(&g_dtc->profile.min_scn[msg->head->src_inst], bcast->min_scn);
     mes_release_message_buf(msg->buffer);
 
-    dtc_update_scn(session, lamport_scn);
+    if (shmem_scn_need_broadcast()) {
+        dtc_update_scn(session, lamport_scn);
+    }
     dtc_update_lsn(session, lamport_lsn);
 }
 

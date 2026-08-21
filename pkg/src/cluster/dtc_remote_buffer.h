@@ -51,6 +51,7 @@ extern "C" {
 #define DRC_REMOTE_BUF_OFFSET (uint64)0
 
 #define DRC_NODE_FLUSH_LSN_SIZE align_to_128m(sizeof(atomic_t))
+#define SHMEM_SCN_SIZE (64)
 
 typedef struct st_remote_buf_context {
     buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];
@@ -88,6 +89,12 @@ static inline uint64 drc_get_dist_lck_offset(const remote_sga_t *remote_sga)
 static inline uint64 drc_get_node_flush_lsn_offset(const remote_sga_t *remote_sga)
 {
     return drc_get_dist_lck_offset(remote_sga) + remote_sga->remote_lock_alloc_size;
+}
+
+/* layout: data | dist_que | dist_lck | node_flush_lsn | shmem_scn */
+static inline uint64 drc_get_shmem_scn_offset(const remote_sga_t *remote_sga)
+{
+    return drc_get_node_flush_lsn_offset(remote_sga) + DRC_NODE_FLUSH_LSN_SIZE;
 }
 
 #pragma pack(push, 1)

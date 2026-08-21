@@ -449,6 +449,9 @@ typedef struct st_knl_instance {
     /* for para log flush only */
     para_log_context_t *para_log_ctx[CPU_SEG_MAX_NUM];
     bool8 para_log_init;
+    para_log_flush_lsn_bitmap_t *para_log_bitmap;
+
+    atomic_t ub_local_scn;  // for gbp using ub
 } knl_instance_t;
 
 #define KNL_MAX_ROW_SIZE(session)     ((session)->kernel->attr.max_row_size)

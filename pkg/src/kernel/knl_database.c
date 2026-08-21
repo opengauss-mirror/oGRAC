@@ -43,7 +43,7 @@
 #include "cm_dss_iofence.h"
 #include "srv_view.h"
 #include "cm_ubs_mem.h"
-#include "dtc_remote_lock.h"
+#include "dtc_shmem_scn.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -158,7 +158,7 @@ knl_scn_t db_inc_scn(knl_session_t *session)
     }
 
     cm_spin_lock(&area->scn_lock, &session->stat->spin_stat.stat_inc_scn);
-    scn = knl_inc_scn(init_time, &now, seq, &session->kernel->scn, session->kernel->attr.systime_inc_threshold);
+    scn = knl_inc_scn(DB_CURR_SCN_PTR(session), init_time, &now, seq, session->kernel->attr.systime_inc_threshold);
     cm_spin_unlock(&area->scn_lock);
 
     return scn;
@@ -166,13 +166,11 @@ knl_scn_t db_inc_scn(knl_session_t *session)
 
 knl_scn_t db_next_scn(knl_session_t *session)
 {
-    atomic_t curr_scn;
     timeval_t now;
     time_t init_time;
     uint64 seq = 1;
 
     init_time = DB_INIT_TIME(session);
-    curr_scn = (int64)DB_CURR_SCN(session);
 
 #ifdef OG_RAC_ING
     knl_scn_t gts_scn;
@@ -187,7 +185,8 @@ knl_scn_t db_next_scn(knl_session_t *session)
     {
         (void)cm_gettimeofday(&now);
     }
-    return knl_inc_scn(init_time, &now, seq, &curr_scn, session->kernel->attr.systime_inc_threshold);
+    return knl_peek_next_scn(init_time, &now, seq, DB_CURR_SCN(session),
+        session->kernel->attr.systime_inc_threshold);
 }
 
 knl_scn_t db_time_scn(knl_session_t *session, uint32 second, uint32 msecond)
@@ -582,7 +581,7 @@ static void db_load_systables(knl_session_t *session)
 static status_t db_verify_systime(knl_session_t *session, bool32 ignore_systime)
 {
     time_t init_time = DB_INIT_TIME(session);
-    knl_scn_t curr_scn = (uint64)session->kernel->scn;
+    knl_scn_t curr_scn = (uint64)DB_CURR_SCN(session);
     int64 threshold = session->kernel->attr.systime_inc_threshold;
     timeval_t sys_time;
     timeval_t db_time;
@@ -600,8 +599,7 @@ static status_t db_verify_systime(knl_session_t *session, bool32 ignore_systime)
     }
 
     curr_scn = KNL_TIMESEQ_TO_SCN(&sys_time, init_time, 0);
-    KNL_SET_SCN(&session->kernel->scn, curr_scn);
-
+    DB_SET_CURR_SCN(session, curr_scn);
     return OG_SUCCESS;
 }
 
@@ -1343,6 +1341,11 @@ static status_t db_open_precheck(knl_session_t *session, db_open_opt_t *options)
         return OG_ERROR;
     }
 
+    if (DB_ATTR_CLUSTER(session) && shmem_scn_ensure_ready() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DB OPEN] shmem_scn_ensure_ready failed");
+        return OG_ERROR;
+    }
+
     if (db_verify_systime(session, options->ignore_systime) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DB OPEN] db_verify_systime failed");
         return OG_ERROR;
@@ -1898,11 +1901,6 @@ char *db_get_status(knl_session_t *session)
             OG_LOG_RUN_ERR("[DB] unexpected database status %d", db->status);
             return "INVALID STATUS";
     }
-}
-
-uint64 knl_current_scn(knl_handle_t session)
-{
-    return (uint64)DB_CURR_SCN((knl_session_t *)session);
 }
 
 uint64 knl_next_scn(knl_handle_t session)

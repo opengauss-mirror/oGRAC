@@ -399,6 +399,7 @@ status_t db_load_ctrlspace(knl_session_t *session, text_t *files)
     kernel->lfn = dtc_my_ctrl(session)->lfn;
 
     g_timer()->db_init_time = db->ctrl.core.init_time;
+    // TODO: 什么时候更新system_scn从共享内存获取
     g_timer()->system_scn = &kernel->scn;
     CM_MFENCE;
     cm_atomic_set(&(g_timer()->sys_scn_valid), (int64)OG_TRUE);

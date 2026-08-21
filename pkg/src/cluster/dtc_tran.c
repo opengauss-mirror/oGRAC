@@ -63,7 +63,7 @@ status_t dtc_get_remote_txn_info(knl_session_t *session, bool32 is_scan, xid_t x
             *txn_info = *(txn_info_t *)MES_MESSAGE_BODY(&message);
             mes_release_message_buf(message.buffer);
             if (DB_IS_PRIMARY(&session->kernel->db)) {
-                dtc_update_scn(session, txn_info->scn);
+                DB_SET_CURR_SCN(session, txn_info->scn);
             }
             return OG_SUCCESS;
         case MES_CMD_ERROR_MSG:
@@ -126,7 +126,7 @@ void dtc_process_txn_info_req(void *sess, mes_message_t *msg)
     }
 
     /* try update local scn to keep read consistent */
-    dtc_update_scn(session, request->curr_scn);
+    DB_SET_CURR_SCN(session, request->curr_scn);
     if (!DB_IS_PRIMARY(&session->kernel->db) && rc_is_master()) {
         if (session->kernel->db.status >= DB_STATUS_INIT_PHASE2) {
             tx_get_info(session, is_scan, request->xid, &txn_info);
@@ -221,7 +221,7 @@ status_t dtc_get_remote_txn_snapshot(knl_session_t *session, xmap_t xmap, uint32
             mes_release_message_buf(message.buffer);
 
             if (snapshot->status == XACT_END) {
-                dtc_update_scn(session, snapshot->scn);
+                DB_SET_CURR_SCN(session, snapshot->scn);
             }
             return OG_SUCCESS;
         case MES_CMD_ERROR_MSG:

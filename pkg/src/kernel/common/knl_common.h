@@ -255,29 +255,57 @@ static inline void knl_reset_large_memory(char *dest, uint64 size)
  * If current time is bigger than current kernel scn, set scn as true time.
  * @param database init time, current time pointer, increased based scn pointer
  */
-static inline knl_scn_t knl_inc_scn(time_t init_time, timeval_t *p_now, uint64 seq, atomic_t *p_scn, int64 threshold)
+static inline knl_scn_t knl_peek_next_scn(time_t init_time, timeval_t *p_now, uint64 seq, knl_scn_t base_scn,
+    int64 threshold)
 {
     knl_scn_t curr_scn;
     timeval_t db_time;
 
     if (p_now->tv_sec < init_time) {
-        return KNL_INC_SCN(p_scn);
+        return base_scn + 1;
     }
 
     curr_scn = KNL_TIMESEQ_TO_SCN(p_now, init_time, seq);
-    if (curr_scn <= KNL_GET_SCN(p_scn)) {
-        return KNL_INC_SCN(p_scn);
+    if (curr_scn <= base_scn) {
+        return base_scn + 1;
     }
 
     if (threshold != 0) {
-        KNL_SCN_TO_TIME(*p_scn, &db_time, init_time);
+        KNL_SCN_TO_TIME(base_scn, &db_time, init_time);
         if ((int64)(p_now->tv_sec - db_time.tv_sec) > threshold) {
             knl_panic_log(0, "[SCN] ABORT INFO: system time has been changed exceed the range allowed");
         }
     }
 
-    KNL_SET_SCN(p_scn, curr_scn);
-    return curr_scn;
+    /* Match knl_inc_scn time-jump path: SET(curr_scn) then INC. */
+    return curr_scn + 1;
+}
+
+static inline knl_scn_t knl_inc_scn(atomic_t *local_scn, time_t init_time, timeval_t *p_now, uint64 seq,
+    int64 threshold)
+{
+    knl_scn_t curr_scn;
+    timeval_t db_time;
+
+    if (p_now->tv_sec < init_time) {
+        return KNL_INC_UB_SCN(local_scn);
+    }
+
+    curr_scn = KNL_TIMESEQ_TO_SCN(p_now, init_time, seq);
+    if (curr_scn <= KNL_GET_UB_SCN(local_scn)) {
+        return KNL_INC_UB_SCN(local_scn);
+    }
+
+    if (threshold != 0) {
+        KNL_SCN_TO_TIME(KNL_GET_UB_SCN(local_scn), &db_time, init_time);
+        if ((int64)(p_now->tv_sec - db_time.tv_sec) > threshold) {
+            knl_panic_log(0, "[SCN] ABORT INFO: system time has been changed exceed the range allowed");
+        }
+    }
+
+    /* Raise global floor to time-based scn, then INC for a cluster-unique value. */
+    KNL_SET_UB_SCN(local_scn, curr_scn);
+    return KNL_INC_UB_SCN(local_scn);
 }
 
 static inline page_id_t knl_get_rowid_page(rowid_t rowid)

@@ -1854,7 +1854,7 @@ static status_t bak_set_break_point_params(knl_session_t *session, bak_context_t
             ogx->bak.need_check = OG_FALSE;
             ret = memset_sp(local_build_progress, sizeof(build_progress_t), 0, sizeof(build_progress_t));
             knl_securec_check(ret);
-            local_build_progress->start_time = (int32)session->kernel->scn;
+            local_build_progress->start_time = (int32)DB_CURR_SCN(session);
             break;
         case BACKUP_DATA_STAGE:
         case BACKUP_LOG_STAGE:

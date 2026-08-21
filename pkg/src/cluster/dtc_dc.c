@@ -75,7 +75,7 @@ static status_t dtc_send_sync_ddl_msg(knl_handle_t knl_session, char *logic_log_
 {
     knl_session_t *session = (knl_session_t *)knl_session;
     msg_ddl_info_t info;
-    info.scn = KNL_GET_SCN(&session->kernel->scn);
+    info.scn = DB_CURR_SCN(session);
     info.log_len = logic_log_size;
     mes_init_send_head(&info.head, MES_CMD_DDL_BROADCAST, (uint16)(sizeof(msg_ddl_info_t) + logic_log_size),
         OG_INVALID_ID32, session->kernel->dtc_attr.inst_id, 0, session->id, OG_INVALID_ID16);

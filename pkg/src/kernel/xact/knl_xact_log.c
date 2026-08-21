@@ -344,7 +344,8 @@ void rd_tx_end(knl_session_t *session, log_entry_t *log)
     // standby cluster update scn after replaying a log_batch
     if ((!DB_IS_CLUSTER(session) || DB_IS_PRIMARY(&session->kernel->db)) && redo->scn > DB_CURR_SCN(session) &&
         !SESSION_IS_LOG_ANALYZE(session)) {
-        KNL_SET_SCN(&session->kernel->scn, redo->scn);
+        // KNL_SET_SCN(&session->kernel->scn, redo->scn);
+        DB_SET_CURR_SCN(session, redo->scn);
     }
 
     if (XMAP_INST_ID(redo->xmap) == session->kernel->id && !is_skip && !DB_IS_PRIMARY(&session->kernel->db) &&
@@ -420,7 +421,8 @@ void rd_xa_phase1(knl_session_t *session, log_entry_t *log)
     }
 
     if (redo->scn > DB_CURR_SCN(session) && !SESSION_IS_LOG_ANALYZE(session)) {
-        KNL_SET_SCN(&session->kernel->scn, redo->scn);
+        // KNL_SET_SCN(&session->kernel->scn, redo->scn);
+        DB_SET_CURR_SCN(session, redo->scn);
     }
 }
 

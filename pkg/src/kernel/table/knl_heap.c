@@ -7735,7 +7735,7 @@ static status_t heap_check_restart(knl_session_t *session, knl_cursor_t *cursor)
         return OG_ERROR;
     }
 
-    if (heap_get_row(session, cursor, page, DB_CURR_SCN(session), &is_found) != OG_SUCCESS) {
+    if (heap_get_row(session, cursor, page, cursor->query_scn, &is_found) != OG_SUCCESS) {
         buf_leave_page(session, OG_FALSE);
         return OG_ERROR;
     }

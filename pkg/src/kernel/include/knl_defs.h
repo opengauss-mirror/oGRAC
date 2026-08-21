@@ -66,6 +66,16 @@ typedef uint64 knl_scn_t;
 #define KNL_INC_SCN(p_scn)      (knl_scn_t)(++(*(p_scn)))
 #endif
 
+/* Forward declarations for global SCN functions to avoid circular dependency */
+knl_scn_t shmem_scn_read_atomic(atomic_t *local_scn);
+knl_scn_t shmem_scn_add_atomic(atomic_t *local_scn);
+void shmem_scn_update_max_atomic(atomic_t *local_scn, knl_scn_t scn);
+
+/* local_scn: kernel->scn; used when UB disabled or slot not bound; ignored when UB slot is bound */
+#define KNL_GET_UB_SCN(local_scn) shmem_scn_read_atomic(local_scn)
+#define KNL_SET_UB_SCN(local_scn, scn) shmem_scn_update_max_atomic(local_scn, scn)
+#define KNL_INC_UB_SCN(local_scn) shmem_scn_add_atomic(local_scn)
+
 // gen scn with given seq
 #define KNL_TIMESEQ_TO_SCN(time_val, init_time, seq) OG_TIMESEQ_TO_SCN(time_val, init_time, seq)
 
@@ -76,7 +86,6 @@ typedef uint64 knl_scn_t;
 
 #define KNL_SCN_TO_TIME(scn, time_val, init_time) OG_SCN_TO_TIME(scn, time_val, init_time)
 
-uint64 knl_current_scn(knl_handle_t session);
 uint64 knl_next_scn(knl_handle_t session);
 time_t knl_init_time(knl_handle_t session);
 

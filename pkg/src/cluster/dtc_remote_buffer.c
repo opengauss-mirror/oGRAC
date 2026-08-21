@@ -35,6 +35,7 @@
 #include "dtc_drc_stat.h"
 #include "dtc_remote_lock.h"
 #include "dtc_database.h"
+#include "dtc_shmem_scn.h"
 #include "cm_malloc.h"
 #include "cm_date.h"
 #include "cm_thread.h"
@@ -145,14 +146,15 @@ static status_t drc_check_remote_lock_capacity(remote_sga_t *remote_sga, remote_
 
 static status_t drc_check_remote_pool_layout(remote_sga_t *remote_sga)
 {
-    uint64 layout_end = drc_get_node_flush_lsn_offset(remote_sga) + DRC_NODE_FLUSH_LSN_SIZE;
+    uint64 layout_end = drc_get_shmem_scn_offset(remote_sga) + SHMEM_SCN_SIZE;
 
     if (layout_end > remote_sga->remote_total_pool_size) {
         OG_LOG_RUN_ERR("[DRC-GBP] remote pool layout %llu exceeds total pool size %llu, "
-                       "data_region %llu, que_size %llu, lock_alloc_size %llu, node_flush_lsn_size %llu",
+                       "data_region %llu, que_size %llu, lock_alloc_size %llu, node_flush_lsn_size %llu, "
+                       "shmem_scn_size %llu",
                        layout_end, remote_sga->remote_total_pool_size, remote_sga->remote_buf_alloc_size,
                        (uint64)DRC_DIST_QUE_SIZE, remote_sga->remote_lock_alloc_size,
-                       (uint64)DRC_NODE_FLUSH_LSN_SIZE);
+                       (uint64)DRC_NODE_FLUSH_LSN_SIZE, (uint64)SHMEM_SCN_SIZE);
         OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_DATA_BUF_SIZE", (int64)remote_sga->remote_total_pool_size);
         return OG_ERROR;
     }
@@ -180,6 +182,8 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
         return OG_SUCCESS;
     }
 
+    // OG_LOG_RUN_INF("[DRC-GBP] start mmap remote data buffer, node_id=%u, start=%p, total_pool_size=%llu, name=%s",
+    //     node_id, start, remote_sga->remote_total_pool_size, data_buf_name);
     ret = ubsmem_shmem_map(start, remote_sga->remote_total_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
                            data_buf_name, 0, (void **)&(remote_sga->remote_buf_addr[node_id]));
     OG_LOG_RUN_WAR("[DRC-GBP] sprintf remote data buf addr start: %p", remote_sga->remote_buf_addr[node_id]);
@@ -192,6 +196,9 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
     remote_sga->map_success[node_id] = OG_TRUE;
     OG_LOG_RUN_INF("[DRC-GBP-BUFFER] Successfully mapped data buffer %s on node_id %u, addr: %p", data_buf_name,
                    node_id, remote_sga->remote_buf_addr[node_id]);
+    if (g_instance->kernel.attr.enable_ubsmem && node_id == shmem_scn_get_owner_id()) {
+        shmem_scn_bind();
+    }
     return OG_SUCCESS;
 }
 
@@ -225,12 +232,15 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
         return ret;
     }
 
+    // OG_LOG_RUN_INF("[DRC] start allocate data buffer, node_id=%u, region=%s, name=%s, size=%llu",
+    //     node_id, region_name, data_buf_name, remote_sga->remote_total_pool_size);
     ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_sga->remote_total_pool_size, 0600,
                                 UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
     if (ret == UBSM_ERR_ALREADY_EXIST) {
         OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", data_buf_name, ret);
     } else if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d", data_buf_name, ret);
+        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d, node_id=%u, region=%s, size=%llu",
+            data_buf_name, ret, node_id, region_name, remote_sga->remote_total_pool_size);
         return ret;
     }
 
@@ -536,7 +546,7 @@ status_t drc_init_remote_buffer()
     uint32 node_id = g_instance->kernel.id;
     uint64 node_flush_lsn_offset = drc_get_node_flush_lsn_offset(&ogx->remote_sga);
     ogx->remote_sga.node_flush_lsn = ogx->remote_sga.remote_buf_addr[node_id] + node_flush_lsn_offset;
-    ogx->remote_sga.remote_pool_reserve_offset = node_flush_lsn_offset + DRC_NODE_FLUSH_LSN_SIZE;
+    ogx->remote_sga.remote_pool_reserve_offset = drc_get_shmem_scn_offset(&ogx->remote_sga) + SHMEM_SCN_SIZE;
 
     if (ogx->remote_sga.node_flush_lsn != NULL) {
         knl_reset_large_memory(ogx->remote_sga.node_flush_lsn, sizeof(atomic_t) * 2);
@@ -544,6 +554,9 @@ status_t drc_init_remote_buffer()
         uint64 my_timeline_id = g_instance->kernel.db.ctrl.core.instance_timeline_id[self_id];
         drc_set_node_timeline_id(&ogx->remote_sga, my_timeline_id);
     }
+
+    // init scn shmem
+    shmem_scn_init();
     return OG_SUCCESS;
 }
 

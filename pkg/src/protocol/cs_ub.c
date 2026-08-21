@@ -137,7 +137,7 @@ static status_t ub_get_cluster_host(const char *cluster_hosts, uint32 host_idx,
 
 status_t ub_create_shm_region(uint32 host_id, uint32 inst_count, const char *cluster_hosts)
 {
-    char *host_name = cm_sys_host_name();
+    const char *local_host = cm_sys_host_name();
     char ubs_host0[MAX_HOST_NAME_DESC_LENGTH];
     char ubs_host1[MAX_HOST_NAME_DESC_LENGTH];
     char region_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
@@ -156,7 +156,7 @@ status_t ub_create_shm_region(uint32 host_id, uint32 inst_count, const char *clu
 
     ubsmem_region_attributes_t region;
     region.host_num = inst_count;
-    errno_t err = strcpy_s(region.hosts[0].host_name, sizeof(region.hosts[0].host_name), host_name);
+    errno_t err = strcpy_s(region.hosts[0].host_name, sizeof(region.hosts[0].host_name), local_host);
     if (err != EOK) {
         OG_LOG_RUN_ERR("Failed to copy host name for shm region, error:%d", err);
         return OG_ERROR;
@@ -164,14 +164,17 @@ status_t ub_create_shm_region(uint32 host_id, uint32 inst_count, const char *clu
 
     region.hosts[0].affinity = true;
     for (int i = 1; i < region.host_num; i++) {
-        host_name = strcmp(cm_sys_host_name(), ubs_host0) == 0 ? ubs_host1 : ubs_host0;
-        err = strcpy_s(region.hosts[i].host_name, sizeof(region.hosts[i].host_name), host_name);
+        const char *remote_host = strcmp(local_host, ubs_host0) == 0 ? ubs_host1 : ubs_host0;
+        err = strcpy_s(region.hosts[i].host_name, sizeof(region.hosts[i].host_name), remote_host);
         if (err != EOK) {
             OG_LOG_RUN_ERR("Failed to copy host name for shm region, error:%d", err);
             return OG_ERROR;
         }
         region.hosts[i].affinity = false;
     }
+    OG_LOG_RUN_INF("ubsmem create region begin, region=%s, host_id=%u, inst_count=%u, local_host=%s, host0=%s, host1=%s",
+        region_name, host_id, inst_count, local_host, region.hosts[0].host_name,
+        (region.host_num > 1) ? region.hosts[1].host_name : "N/A");
 
     ret = ubsmem_create_region(region_name, 0, &region);
     if (ret == UBSM_ERR_ALREADY_EXIST) {

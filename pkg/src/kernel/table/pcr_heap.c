@@ -734,7 +734,7 @@ static status_t pcrh_check_restart(knl_session_t *session, knl_cursor_t *cursor)
 
     cursor->chain_count = 0;
     SET_ROWID_PAGE(&cursor->link_rid, INVALID_PAGID);
-    if (pcrh_enter_crpage(session, cursor, DB_CURR_SCN(session), cursor->rowid) != OG_SUCCESS) {
+    if (pcrh_enter_crpage(session, cursor, cursor->query_scn, cursor->rowid) != OG_SUCCESS) {
         return OG_ERROR;
     }
 

@@ -46,7 +46,7 @@ void cm_set_sync_time(date_t time)
 {
     sync_time = time;
 }
-
+// TODO: 可能要把system_scn改成从共享内存获取
 static void timer_set_now_scn(og_timer_t *timer_temp, date_t interval_us)
 {
     if (!cm_atomic_get(&timer_temp->sys_scn_valid)) {

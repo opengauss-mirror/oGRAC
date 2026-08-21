@@ -761,6 +761,7 @@ knl_scn_t tx_inc_scn(knl_session_t *session, uint32 seg_id, txn_t *txn, knl_scn_
     undo_context_t *ogx = &session->kernel->undo_ctx;
     tx_area_t *area = &session->kernel->tran_ctx;
     knl_scn_t scn;
+    // knl_scn_t global_scn;
     timeval_t now;
     time_t init_time;
     uint64 seq = 1;
@@ -785,11 +786,12 @@ knl_scn_t tx_inc_scn(knl_session_t *session, uint32 seg_id, txn_t *txn, knl_scn_
 
     if (xa_scn != OG_INVALID_ID64) {
         scn = xa_scn;
-        if (scn > KNL_GET_SCN(&session->kernel->scn)) {
-            KNL_SET_SCN(&session->kernel->scn, scn);
-        }
+        // if (scn > KNL_GET_SCN(&session->kernel->scn)) {
+        //     KNL_SET_SCN(&session->kernel->scn, scn);
+        // }
+        DB_SET_CURR_SCN(session, scn);
     } else {
-        scn = knl_inc_scn(init_time, &now, seq, &session->kernel->scn, session->kernel->attr.systime_inc_threshold);
+        scn = knl_inc_scn(DB_CURR_SCN_PTR(session), init_time, &now, seq, session->kernel->attr.systime_inc_threshold);
     }
 
     if (undo->ow_scn < txn->scn && txn->status != (uint8)XACT_PHASE1) {
