@@ -73,9 +73,10 @@ extern "C" {
 
 /* Database object completion context. Determines what kind of objects to suggest. */
 typedef enum EnOgsqlCompletionCtxT {
-    OGSQL_COMPLETION_CTX_DEFAULT,      /* SQL keywords + all object names */
+    OGSQL_COMPLETION_CTX_DEFAULT,      /* SQL keywords and expression names */
     OGSQL_COMPLETION_CTX_TABLE,       /* table and view names */
     OGSQL_COMPLETION_CTX_COLUMN,      /* column names + builtin functions */
+    OGSQL_COMPLETION_CTX_INDEX,       /* index names */
     OGSQL_COMPLETION_CTX_PROCEDURE,   /* stored procedure and function names */
     OGSQL_COMPLETION_CTX_SEQUENCE,    /* sequence names */
     OGSQL_COMPLETION_CTX_SCHEMA_TABLE /* tables/views under a given schema prefix */
