@@ -32,6 +32,12 @@ void rd_heap_format_page(knl_session_t *session, log_entry_t *log)
     heap_page_t *page = (heap_page_t *)CURR_PAGE(session);
     int32 ret;
 
+    knl_panic_log(page != NULL, "replay RD_HEAP_FORMAT_PAGE failed, current page is NULL, log size %u.",
+                  (uint32)log->size);
+    knl_panic_log((uint32)log->size >= (uint32)OFFSET_OF(heap_page_t, reserved),
+                  "replay RD_HEAP_FORMAT_PAGE failed, invalid log size %u, expect no less than %u.",
+                  (uint32)log->size, (uint32)OFFSET_OF(heap_page_t, reserved));
+
     ret = memset_sp(page, DEFAULT_PAGE_SIZE(session), 0, DEFAULT_PAGE_SIZE(session));
     knl_securec_check(ret);
     ret = memcpy_sp(page, DEFAULT_PAGE_SIZE(session), log->data, (uint32)OFFSET_OF(heap_page_t, reserved));
@@ -195,4 +201,3 @@ void print_heap_change_list(log_entry_t *log)
     uint8 lid = *(uint8 *)log->data;
     printf("lid %u\n", (uint32)lid);
 }
-

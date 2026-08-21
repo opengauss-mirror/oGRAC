@@ -31,7 +31,9 @@ extern "C" {
 
 #define LOG_TYPE_BASIC 0
 #define LOG_TYPE_SPACE 10
-#define LOG_TYPE_HEAP  30
+/* heap starts from 35 to avoid colliding with the space segment 10..32
+   (RD_SPC_SET_FLAG/RENAME_SPACE/CHANGE_AUTOEXTEND = 30/31/32) */
+#define LOG_TYPE_HEAP  35
 #define LOG_TYPE_UNDO  70
 #define LOG_TYPE_BTREE 90
 #define LOG_TYPE_LOB   130
