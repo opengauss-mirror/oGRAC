@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
+import ast
+import atexit
 import os
 import re
 import stat
 import base64
+import tempfile
 
 import requests
 import urllib3
@@ -11,42 +14,109 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+def _read_kubeconfig_value(config_content, key):
+    pattern = r"^\s*{}\s*:\s*(.*?)\s*$".format(re.escape(key))
+    match = re.search(pattern, config_content, re.MULTILINE)
+    if not match:
+        return None
+
+    value = match.group(1).strip()
+    if value.startswith(("'", '"')):
+        try:
+            return ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            try:
+                return ast.literal_eval(value.split(" #", 1)[0].rstrip())
+            except (SyntaxError, ValueError) as error:
+                raise ValueError("invalid {} value in kubeconfig".format(key)) from error
+    return value.split(" #", 1)[0].rstrip()
+
+
+def _decode_config_data(value, field_name):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("{} must be a non-empty string".format(field_name))
+    try:
+        encoded_value = re.sub(r"\s+", "", value.strip())
+        return base64.b64decode(encoded_value, validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError("{} is not valid base64 data".format(field_name)) from error
+
+
+def _write_private_file(path, data):
+    file_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                      stat.S_IRUSR | stat.S_IWUSR)
+    with os.fdopen(file_fd, "wb") as output_file:
+        output_file.write(data)
+
+
 class KubernetesService:
     def __init__(self, kube_config_path):
         self.kube_config_path = kube_config_path
         self.api_server = "https://kubernetes.default.svc"
         self.cert = None
+        self.verify = True
+        self._cert_dir = None
         self.headers = {"Accept": "application/json"}
-        self._load_kube_config()
+        atexit.register(self.close)
+        try:
+            self._load_kube_config()
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        if self._cert_dir is not None:
+            self._cert_dir.cleanup()
+            self._cert_dir = None
+        self.cert = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
 
     def _load_kube_config(self):
         with open(self.kube_config_path, "r") as kube_config_file:
             kube_config_content = kube_config_file.read()
 
-        client_cert_data = re.search(r'client-certificate-data: (.+)', kube_config_content).group(1)
-        client_key_data = re.search(r'client-key-data: (.+)', kube_config_content).group(1)
-        client_cert_data = base64.b64decode(client_cert_data)
-        client_key_data = base64.b64decode(client_key_data)
+        client_cert_data = _decode_config_data(
+            _read_kubeconfig_value(kube_config_content, "client-certificate-data"),
+            "client-certificate-data")
+        client_key_data = _decode_config_data(
+            _read_kubeconfig_value(kube_config_content, "client-key-data"),
+            "client-key-data")
 
-        cert_file_path = "/tmp/client-cert.pem"
-        key_file_path = "/tmp/client-key.pem"
-
-        cert_fd = os.open(cert_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-        with os.fdopen(cert_fd, "wb") as cert_file:
-            cert_file.write(client_cert_data)
-
-        key_fd = os.open(key_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-        with os.fdopen(key_fd, "wb") as key_file:
-            key_file.write(client_key_data)
-
-        os.chmod(cert_file_path, 0o666)
-        os.chmod(key_file_path, 0o666)
-
+        self._cert_dir = tempfile.TemporaryDirectory(prefix="ograc-kube-")
+        cert_dir = self._cert_dir.name
+        os.chmod(cert_dir, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        cert_file_path = os.path.join(cert_dir, "client-cert.pem")
+        key_file_path = os.path.join(cert_dir, "client-key.pem")
+        _write_private_file(cert_file_path, client_cert_data)
+        _write_private_file(key_file_path, client_key_data)
         self.cert = (cert_file_path, key_file_path)
+
+        ca_data = _read_kubeconfig_value(kube_config_content, "certificate-authority-data")
+        ca_path = _read_kubeconfig_value(kube_config_content, "certificate-authority")
+        if ca_data is not None:
+            ca_file_path = os.path.join(cert_dir, "ca.pem")
+            _write_private_file(ca_file_path, _decode_config_data(
+                ca_data, "certificate-authority-data"))
+            self.verify = ca_file_path
+        elif ca_path is not None:
+            if not isinstance(ca_path, str) or not ca_path.strip():
+                raise ValueError("certificate-authority must be a non-empty path")
+            ca_path = os.path.expandvars(os.path.expanduser(ca_path.strip()))
+            if not os.path.isabs(ca_path):
+                ca_path = os.path.join(os.path.dirname(os.path.abspath(self.kube_config_path)), ca_path)
+            ca_path = os.path.abspath(ca_path)
+            if not os.path.isfile(ca_path) or not os.access(ca_path, os.R_OK):
+                raise FileNotFoundError("certificate-authority file is missing or unreadable: {}".format(ca_path))
+            self.verify = ca_path
 
     def _get(self, path, timeout=5):
         url = f"{self.api_server}{path}"
-        response = requests.get(url, headers=self.headers, cert=self.cert, verify=False, timeout=timeout)
+        response = requests.get(url, headers=self.headers, cert=self.cert, verify=self.verify, timeout=timeout)
         response.raise_for_status()
         return response.json()
 
@@ -151,7 +221,7 @@ class KubernetesService:
 
     def delete_pod(self, name, namespace, timeout=5):
         url = f"{self.api_server}/api/v1/namespaces/{namespace}/pods/{name}"
-        response = requests.delete(url, headers=self.headers, cert=self.cert, verify=False, timeout=timeout)
+        response = requests.delete(url, headers=self.headers, cert=self.cert, verify=self.verify, timeout=timeout)
         response.raise_for_status()
         return response.json()
 

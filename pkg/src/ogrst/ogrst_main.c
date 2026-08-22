@@ -2233,14 +2233,6 @@ static void ogrst_init_imp_params(void)
 static bool32 ogrst_confirm_risk()
 {
     char confirm[OG_MAX_CMD_LEN] = { 0 };
-    char *env_val = getenv("OGRST_CONFIRM_QUIET");
-    bool32 val_bool32 = OG_FALSE;
-
-    if (env_val != NULL && cm_str2bool(env_val, &val_bool32) == OG_SUCCESS) {
-        if (val_bool32) {
-            return OG_TRUE;
-        }
-    }
 
     for (;;) {
         (void)printf("Warning: ogrst tool is a database repair tool only for emergencies. "
