@@ -57,7 +57,9 @@ extern "C" {
 #define BUF_IN_USE_IS_RECYCLABLE(ctrl) \
     ((ctrl)->is_pinned == 0 && (ctrl)->is_dirty == 0 && (ctrl)->is_remote_dirty == 0 && \
      (ctrl)->is_marked == 0 && (ctrl)->is_edp == 0)
-#define BUF_CAN_EXPIRE_PAGE(ctrl) (BUF_IN_USE_IS_RECYCLABLE(ctrl) && !BUF_IN_USE(ctrl))
+#define BUF_CAN_EXPIRE_PAGE(ctrl) \
+    (!BUF_IN_USE(ctrl) && BUF_IN_USE_IS_RECYCLABLE(ctrl) && \
+    !((ctrl)->edp_map != 0 && (ctrl)->lock_mode != DRC_LOCK_NULL))
 #define BUF_CAN_EXPIRE_CACHE(ctrl)  (BUF_CAN_EXPIRE_PAGE(ctrl) && !(ctrl)->is_resident)
 #define BUF_CAN_EVICT(ctrl)         (BUF_CAN_EXPIRE_CACHE(ctrl) && !BUF_IS_HOT(ctrl))
 
