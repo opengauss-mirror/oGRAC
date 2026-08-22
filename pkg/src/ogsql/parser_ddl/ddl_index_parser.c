@@ -24,6 +24,7 @@
  */
 
 #include "ddl_index_parser.h"
+#include "index_defs.h"
 #include "ddl_parser_common.h"
 #include "ddl_partition_parser.h"
 #include "ddl_table_parser.h"
@@ -721,21 +722,34 @@ static status_t sql_parse_rebuild_index_partition_list(sql_stmt_t *stmt, lex_t *
     return OG_SUCCESS;
 }
 
+void sql_init_rebuild_index_def(rebuild_index_def_t *rebuild_def)
+{
+    errno_t err;
+
+    rebuild_def->cr_mode = OG_INVALID_ID8;
+    rebuild_def->is_online = OG_FALSE;
+    rebuild_def->build_stats = OG_FALSE;
+    rebuild_def->space.len = 0;
+    rebuild_def->space.str = NULL;
+    rebuild_def->pctfree = OG_INVALID_ID32;
+    rebuild_def->keep_storage = 0;
+    rebuild_def->parallelism = 0;
+    rebuild_def->specified_parts = 0;
+    rebuild_def->lock_timeout = LOCK_INF_WAIT;
+    rebuild_def->org_scn = 0;
+    rebuild_def->is_for_create_db = 0;
+    err = memset_sp(rebuild_def->part_name, MAX_REBUILD_PARTS * sizeof(text_t), 0,
+        MAX_REBUILD_PARTS * sizeof(text_t));
+    knl_securec_check(err);
+}
+
 static status_t sql_parse_rebuild_index(sql_stmt_t *stmt, lex_t *lex, knl_alindex_def_t *def)
 {
     word_t word;
     uint32 match_id;
     rebuild_index_def_t *rebuild_def = &def->rebuild;
 
-    rebuild_def->cr_mode = OG_INVALID_ID8;
-    rebuild_def->is_online = OG_FALSE;
-    rebuild_def->build_stats = OG_FALSE;
-    rebuild_def->space.len = 0;
-    rebuild_def->pctfree = OG_INVALID_ID32;
-    rebuild_def->keep_storage = 0;
-    rebuild_def->parallelism = 0;
-    rebuild_def->specified_parts = 0;
-    rebuild_def->lock_timeout = LOCK_INF_WAIT;
+    sql_init_rebuild_index_def(rebuild_def);
 
     if (lex_try_fetch_1of2(lex, "PARTITION", "SUBPARTITION", &match_id) != OG_SUCCESS) {
         return OG_ERROR;

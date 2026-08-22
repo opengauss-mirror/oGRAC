@@ -19355,14 +19355,17 @@ static status_t process_alter_index_action(sql_stmt_t *stmt, alter_index_action_
                 break;
 
             case ALINDEX_TYPE_REBUILD:
+                sql_init_rebuild_index_def(&def->rebuild);
                 break;
 
             case ALINDEX_TYPE_REBUILD_PART:
+                sql_init_rebuild_index_def(&def->rebuild);
                 def->rebuild.specified_parts = 1;
                 def->rebuild.part_name[0] = alter_idx_act->rebuild.part_name[0];
                 break;
 
             case ALINDEX_TYPE_REBUILD_SUBPART:
+                sql_init_rebuild_index_def(&def->rebuild);
                 def->rebuild.specified_parts = 1;
                 def->rebuild.part_name[0] = alter_idx_act->rebuild.part_name[0];
                 break;

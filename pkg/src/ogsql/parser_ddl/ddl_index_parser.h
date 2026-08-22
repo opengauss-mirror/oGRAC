@@ -34,6 +34,9 @@
 extern "C" {
 #endif
 
+struct st_rebuild_index_def;
+void sql_init_rebuild_index_def(struct st_rebuild_index_def *rebuild_def);
+
 typedef struct st_index_column_def {
     text_t index_column_name;
     bool32 is_in_function_mode;

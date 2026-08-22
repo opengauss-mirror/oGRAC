@@ -28,6 +28,7 @@
 #include "knl_table.h"
 #include "knl_context.h"
 #include "ostat_load.h"
+#include "dc_util.h"
 #include "knl_sequence.h"
 #include "knl_user.h"
 #include "dc_priv.h"

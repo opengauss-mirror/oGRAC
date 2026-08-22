@@ -28,6 +28,7 @@
 #include "knl_context.h"
 #include "ostat_load.h"
 #include "knl_space_base.h"
+#include "dc_util.h"
 #include "knl_table.h"
 #include "dc_subpart.h"
 #include "index_common.h"
