@@ -50,6 +50,8 @@
 #define OGSQL_COMPLETION_INDENT_LEN 4
 #define OGSQL_REVERSE_RENDER_BUF_FACTOR 2
 #define OGSQL_CURSOR_MOVE_BUF_SIZE 64
+#define OGSQL_BRACKETED_PASTE_START 200
+#define OGSQL_BRACKETED_PASTE_END 201
 
 typedef struct OgsqlRenderPositionT {
     uint32 row;
@@ -131,8 +133,16 @@ typedef struct OgsqlReadlineLoopT {
     char *chr;
     uint32 *cursorRenderTotal;
     bool32 *cursorRenderTotalValid;
+    const char *completionPrefix;
+    uint32 completionPrefixLen;
+    bool32 *bracketedPasteActive;
     const ogsql_cmd_def_t *commandDefs;
     uint32 commandCount;
+    void *historyDraftContext;
+    OgsqlReadlineDraftSaveFunc saveHistoryDraft;
+    OgsqlReadlineDraftRestoreFunc restoreHistoryDraft;
+    bool32 *historyBrowsing;
+    bool32 *historySelected;
 } OgsqlReadlineLoopT;
 
 typedef struct OgsqlReadlineSessionT {
@@ -293,6 +303,12 @@ static void OgsqlWriteWrappedText(const char *text, uint32 len, uint32 startTota
             offset++;
             continue;
         }
+        if (text[offset] == '\t') {
+            ogsql_terminal_write(1, " ");
+            total++;
+            offset++;
+            continue;
+        }
         if (cm_utf8_chr_bytes((uint8)text[offset], &c_bytes) != OG_SUCCESS || c_bytes == 0 ||
             offset + c_bytes > len || c_bytes > OGSQL_UTF8_CHR_SIZE) {
             c_bytes = 1;
@@ -331,6 +347,11 @@ static status_t ogsql_get_prev_char(char *cmdBuf, uint32 cursor_pos, uint32 *c_b
     if (cmdBuf[cursor_pos - 1] == '\n') {
         *c_bytes = 1;
         *c_widths = 0;
+        return OG_SUCCESS;
+    }
+    if (cmdBuf[cursor_pos - 1] == '\t') {
+        *c_bytes = 1;
+        *c_widths = 1;
         return OG_SUCCESS;
     }
 
@@ -383,7 +404,10 @@ static void OgsqlSetEndspaceByText(const OgsqlEndspaceRequestT *request, const O
             offset++;
             continue;
         }
-        if (cm_utf8_chr_bytes((uint8)request->text[offset], &c_bytes) != OG_SUCCESS || c_bytes == 0 ||
+        if (request->text[offset] == '\t') {
+            c_bytes = 1;
+            c_widths = 1;
+        } else if (cm_utf8_chr_bytes((uint8)request->text[offset], &c_bytes) != OG_SUCCESS || c_bytes == 0 ||
             offset + c_bytes > request->nbytes || c_bytes > OGSQL_UTF8_CHR_SIZE) {
             c_bytes = 1;
             c_widths = 1;
@@ -432,6 +456,10 @@ static void OgsqlRefreshCurrentEndspace(OgsqlLineEditStateT *state, const OgsqlR
 static uint32 OgsqlRenderTotalAtCursor(const OgsqlLineEditStateT *state, const OgsqlRenderCtxT *renderCtx,
     OgsqlCursorT cursor);
 static void ogsql_move_cursor_between_render_totals(uint32 from_total, uint32 to_total, uint32 ws_col);
+static void OgsqlClearScreenAndRedraw(const OgsqlLineEditStateT *state, const OgsqlRenderCtxT *ctx);
+static void OgsqlClearScreenAndRedrawLogical(const OgsqlLineEditStateT *state, const OgsqlRenderCtxT *ctx,
+    const char *prefix, uint32 prefixLen);
+static void OgsqlReadlineRenderHistoryEntry(const OgsqlReadlineLoopT *loop, OgsqlLineEditStateT *state);
 
 /* Clear the current input display across all physical lines.
    Unlike ogsql_cmd_clean_line (which uses \b \b and cannot cross line
@@ -507,7 +535,7 @@ static status_t OgsqlCopyHistoryEntryToCmd(const ogsql_cmd_history_list_t *entry
     return OG_SUCCESS;
 }
 
-static void OgsqlHistTurnUp(const int *histCount, int *listNum, OgsqlLineEditStateT *state,
+static bool32 OgsqlHistTurnUp(const int *histCount, int *listNum, OgsqlLineEditStateT *state,
     const OgsqlRenderCtxT *ctx)
 {
     const ogsql_cmd_history_list_t *targetEntry;
@@ -515,12 +543,7 @@ static void OgsqlHistTurnUp(const int *histCount, int *listNum, OgsqlLineEditSta
 
     if (histCount == NULL || listNum == NULL || state == NULL || ctx == NULL ||
         *histCount <= 0 || *listNum >= *histCount) {
-        return;
-    }
-    if (*listNum == 0) {
-        if (ogsql_history_save_draft(state->cmdBuf, state->nbytes, state->nwidths) != OG_SUCCESS) {
-            return;
-        }
+        return OG_FALSE;
     }
     targetListNum = *listNum + 1;
     targetEntry = ogsql_history_get(*histCount, (uint32)targetListNum);
@@ -529,26 +552,24 @@ static void OgsqlHistTurnUp(const int *histCount, int *listNum, OgsqlLineEditSta
         targetEntry = ogsql_history_get(*histCount, (uint32)targetListNum);
     }
     if (targetListNum > *histCount || targetEntry == NULL) {
-        return;
+        return OG_FALSE;
     }
 
-    OgsqlClearEditInputDisplay(state, ctx);
     if (OgsqlCopyHistoryEntryToCmd(targetEntry, state) != OG_SUCCESS) {
-        return;
+        return OG_FALSE;
     }
     *listNum = targetListNum;
-    ogsql_set_endspace(*targetEntry, ctx->wsCol, ctx->welcomeWidth, &state->spacenum, state->endspace);
-    OgsqlWriteWrappedText(targetEntry->hist_buf, state->nbytes, ctx->welcomeWidth, ctx);
+    return OG_TRUE;
 }
 
-static void OgsqlHistTurnDown(const int *histCount, int *listNum, OgsqlLineEditStateT *state,
+static bool32 OgsqlHistTurnDown(const int *histCount, int *listNum, OgsqlLineEditStateT *state,
     const OgsqlRenderCtxT *ctx)
 {
     const ogsql_cmd_history_list_t *targetEntry;
     int targetListNum;
 
     if (histCount == NULL || listNum == NULL || state == NULL || ctx == NULL || *listNum < 1) {
-        return;
+        return OG_FALSE;
     }
     targetListNum = *listNum - 1;
     targetEntry = (targetListNum == 0) ? ogsql_history_get_draft() :
@@ -559,16 +580,14 @@ static void OgsqlHistTurnDown(const int *histCount, int *listNum, OgsqlLineEditS
             ogsql_history_get(*histCount, (uint32)targetListNum);
     }
     if (targetListNum < 0 || targetEntry == NULL) {
-        return;
+        return OG_FALSE;
     }
 
-    OgsqlClearEditInputDisplay(state, ctx);
     if (OgsqlCopyHistoryEntryToCmd(targetEntry, state) != OG_SUCCESS) {
-        return;
+        return OG_FALSE;
     }
     *listNum = targetListNum;
-    ogsql_set_endspace(*targetEntry, ctx->wsCol, ctx->welcomeWidth, &state->spacenum, state->endspace);
-    OgsqlWriteWrappedText(targetEntry->hist_buf, state->nbytes, ctx->welcomeWidth, ctx);
+    return OG_TRUE;
 }
 
 uint32 ogsql_text_display_width(const char *text, uint32 len)
@@ -580,6 +599,11 @@ uint32 ogsql_text_display_width(const char *text, uint32 len)
 
     while (offset < len) {
         if (text[offset] == '\n') {
+            offset++;
+            continue;
+        }
+        if (text[offset] == '\t') {
+            total_widths++;
             offset++;
             continue;
         }
@@ -612,7 +636,10 @@ static uint32 ogsql_render_padding_before_cursor(char *cmdBuf, uint32 nbytes, ui
     }
 
     while (offset < cursor_pos && offset < nbytes) {
-        if (cm_utf8_chr_bytes((uint8)cmdBuf[offset], &c_bytes) != OG_SUCCESS || c_bytes == 0 ||
+        if (cmdBuf[offset] == '\t') {
+            c_bytes = 1;
+            c_widths = 1;
+        } else if (cm_utf8_chr_bytes((uint8)cmdBuf[offset], &c_bytes) != OG_SUCCESS || c_bytes == 0 ||
             offset + c_bytes > nbytes || offset + c_bytes > cursor_pos || c_bytes > OGSQL_UTF8_CHR_SIZE) {
             c_bytes = 1;
             c_widths = 1;
@@ -632,12 +659,15 @@ static uint32 ogsql_render_padding_before_cursor(char *cmdBuf, uint32 nbytes, ui
     }
 
     if (cursor_pos < nbytes && offset == cursor_pos) {
-        if (cm_utf8_chr_bytes((uint8)cmdBuf[cursor_pos], &c_bytes) == OG_SUCCESS && c_bytes > 0 &&
+        if (cmdBuf[cursor_pos] == '\t') {
+            c_bytes = 1;
+            c_widths = 1;
+        } else if (cm_utf8_chr_bytes((uint8)cmdBuf[cursor_pos], &c_bytes) == OG_SUCCESS && c_bytes > 0 &&
             cursor_pos + c_bytes <= nbytes && c_bytes <= OGSQL_UTF8_CHR_SIZE) {
             c_widths = ogsql_utf8_chr_widths(cmdBuf + cursor_pos, c_bytes);
-            if (c_widths == OGSQL_WIDE_CHAR_WIDTH && (logical_width + space_num + welcome_width + 1) % ws_col == 0) {
-                space_num++;
-            }
+        }
+        if (c_widths == OGSQL_WIDE_CHAR_WIDTH && (logical_width + space_num + welcome_width + 1) % ws_col == 0) {
+            space_num++;
         }
     }
 
@@ -666,7 +696,10 @@ static OgsqlRenderPositionT ogsql_render_position_at(const char *text, uint32 nb
             offset++;
             continue;
         }
-        if (cm_utf8_chr_bytes((uint8)text[offset], &cBytes) != OG_SUCCESS || cBytes == 0 ||
+        if (text[offset] == '\t') {
+            cBytes = 1;
+            cWidths = 1;
+        } else if (cm_utf8_chr_bytes((uint8)text[offset], &cBytes) != OG_SUCCESS || cBytes == 0 ||
             cBytes > OGSQL_UTF8_CHR_SIZE || offset + cBytes > nbytes || offset + cBytes > cursorPos) {
             cBytes = 1;
             cWidths = 1;
@@ -813,6 +846,11 @@ static status_t ogsql_get_current_char(char *cmdBuf, uint32 cursor_pos, uint32 n
     if (cmdBuf[cursor_pos] == '\n') {
         *c_bytes = 1;
         *c_widths = 0;
+        return OG_SUCCESS;
+    }
+    if (cmdBuf[cursor_pos] == '\t') {
+        *c_bytes = 1;
+        *c_widths = 1;
         return OG_SUCCESS;
     }
     if (cm_utf8_chr_bytes((uint8)cmdBuf[cursor_pos], c_bytes) != OG_SUCCESS ||
@@ -1161,6 +1199,65 @@ static void OgsqlClearScreenAndRedraw(const OgsqlLineEditStateT *state, const Og
             ogsql_cmd_move_left(state->nwidths - state->cursorWidth, state->nwidths, ctx->welcomeWidth, ctx->wsCol,
                 ctx->endspace);
         }
+    }
+}
+
+static void OgsqlWriteLogicalPrefix(const char *prefix, uint32 prefixLen, const OgsqlRenderCtxT *ctx)
+{
+    uint32 lineStart = 0;
+    uint32 lineNo = 0;
+    char prompt[OGSQL_CURSOR_MOVE_BUF_SIZE];
+    OgsqlRenderCtxT lineCtx;
+
+    if (prefix == NULL || prefixLen == 0 || ctx == NULL) {
+        return;
+    }
+    while (lineStart < prefixLen) {
+        uint32 lineEnd = lineStart;
+        uint32 promptLen = 0;
+
+        while (lineEnd < prefixLen && prefix[lineEnd] != '\n') {
+            lineEnd++;
+        }
+        if (ctx->welcomeWidth > 0) {
+            if (lineNo == 0) {
+                promptLen = (uint32)strlen("SQL> ");
+                ogsql_terminal_write(promptLen, "SQL> ");
+            } else {
+                int32 written = snprintf_s(prompt, sizeof(prompt), sizeof(prompt) - 1, "%3u ", lineNo + 1);
+                if (written > 0) {
+                    promptLen = (uint32)written;
+                    ogsql_terminal_write(promptLen, prompt);
+                }
+            }
+        }
+        lineCtx = OgsqlMakeRenderCtx(NULL, promptLen, ctx->wsCol, NULL);
+        OgsqlWriteWrappedText(prefix + lineStart, lineEnd - lineStart, promptLen, &lineCtx);
+        ogsql_terminal_write(OGSQL_TERMINAL_CRLF_LEN, "\r\n");
+        lineStart = lineEnd + 1;
+        lineNo++;
+    }
+}
+
+static void OgsqlClearScreenAndRedrawLogical(const OgsqlLineEditStateT *state, const OgsqlRenderCtxT *ctx,
+    const char *prefix, uint32 prefixLen)
+{
+    const char clearScreen[] = "\033[H\033[J";
+    uint32 welcomeLen;
+
+    if (state == NULL || ctx == NULL) {
+        return;
+    }
+    ogsql_terminal_write((uint32)strlen(clearScreen), clearScreen);
+    OgsqlWriteLogicalPrefix(prefix, prefixLen, ctx);
+    welcomeLen = (ctx->welcomeBuf == NULL) ? 0 : (uint32)strlen(ctx->welcomeBuf);
+    if (welcomeLen > 0) {
+        ogsql_terminal_write(welcomeLen, ctx->welcomeBuf);
+    }
+    OgsqlWriteWrappedText(state->cmdBuf, state->nbytes, ctx->welcomeWidth, ctx);
+    if (state->cursorPos < state->nbytes) {
+        OgsqlMoveCursorToRenderPos(state, ctx, (OgsqlCursorT){ state->nbytes, state->nwidths },
+            (OgsqlCursorT){ state->cursorPos, state->cursorWidth });
     }
 }
 
@@ -1871,7 +1968,8 @@ static void OgsqlPrintCompletionMatches(const OgsqlCompletionPrintCtxT *printCtx
 }
 
 static void OgsqlHandleTabCompletion(OgsqlLineEditStateT *state, const OgsqlRenderCtxT *ctx,
-    uint32 *displayBaseRows, const ogsql_cmd_def_t *commandDefs, uint32 commandCount);
+    uint32 *displayBaseRows, const char *completionPrefix, uint32 completionPrefixLen,
+    const ogsql_cmd_def_t *commandDefs, uint32 commandCount);
 
 static void OgsqlReadlineMakeEditState(const OgsqlReadlineLoopT *loop, OgsqlLineEditStateT *state,
     OgsqlRenderCtxT *ctx)
@@ -1967,7 +2065,8 @@ static void OgsqlReadlineHandleTab(const OgsqlReadlineLoopT *loop)
     OgsqlRenderCtxT ctx;
 
     OgsqlReadlineMakeEditState(loop, &state, &ctx);
-    OgsqlHandleTabCompletion(&state, &ctx, loop->displayBaseRows, loop->commandDefs, loop->commandCount);
+    OgsqlHandleTabCompletion(&state, &ctx, loop->displayBaseRows, loop->completionPrefix,
+        loop->completionPrefixLen, loop->commandDefs, loop->commandCount);
     OgsqlReadlineSaveEditState(loop, &state, &ctx);
 }
 
@@ -1977,6 +2076,9 @@ static bool32 ogsql_readline_handle_reverse_search(const OgsqlReadlineLoopT *loo
     OgsqlRenderCtxT ctx;
     OgsqlReverseSearchResultT result;
 
+    if (loop->allowAbortLine) {
+        return OG_FALSE;
+    }
     OgsqlReadlineMakeEditState(loop, &state, &ctx);
     result = OgsqlReverseHistorySearch(*loop->histCount, loop->listNum, &state, &ctx);
     OgsqlReadlineSaveEditState(loop, &state, &ctx);
@@ -2009,7 +2111,13 @@ static void OgsqlReadlineClearScreen(const OgsqlReadlineLoopT *loop)
     OgsqlRenderCtxT ctx;
 
     OgsqlReadlineMakeEditState(loop, &state, &ctx);
-    OgsqlClearScreenAndRedraw(&state, &ctx);
+    if (loop->historyBrowsing != NULL && *loop->historyBrowsing) {
+        OgsqlReadlineRenderHistoryEntry(loop, &state);
+    } else if (loop->allowAbortLine && loop->completionPrefixLen > 0) {
+        OgsqlClearScreenAndRedrawLogical(&state, &ctx, loop->completionPrefix, loop->completionPrefixLen);
+    } else {
+        OgsqlClearScreenAndRedraw(&state, &ctx);
+    }
     *loop->displayBaseRows = 0;
 }
 
@@ -2052,6 +2160,55 @@ static bool32 ogsql_readline_consume_tilde_key(int32 escKey, int32 directionKey)
     return OG_FALSE;
 }
 
+static bool32 OgsqlReadlineCanBrowseMultilineHistory(const OgsqlReadlineLoopT *loop)
+{
+    return (loop != NULL && loop->allowAbortLine && loop->completionPrefixLen > 0 &&
+        loop->saveHistoryDraft != NULL && loop->restoreHistoryDraft != NULL && loop->historyBrowsing != NULL) ?
+        OG_TRUE : OG_FALSE;
+}
+
+static bool32 OgsqlHistoryEntryHasNewline(const ogsql_cmd_history_list_t *entry)
+{
+    if (entry == NULL || entry->nbytes == 0) {
+        return OG_FALSE;
+    }
+    for (uint32 i = 0; i < entry->nbytes; i++) {
+        if (entry->hist_buf[i] == '\n') {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static void OgsqlReadlineRenderHistoryEntry(const OgsqlReadlineLoopT *loop, OgsqlLineEditStateT *state)
+{
+    static const char historyPrompt[] = "SQL> ";
+    OgsqlRenderCtxT historyCtx;
+    const char *prompt = (loop != NULL && loop->welcomeWidth > 0) ? historyPrompt : "";
+
+    if (loop == NULL || state == NULL) {
+        return;
+    }
+    historyCtx = OgsqlMakeRenderCtx(prompt, (uint32)strlen(prompt), *loop->wsCol,
+        state->endspace);
+    OgsqlClearScreenAndRedraw(state, &historyCtx);
+    if (loop->displayBaseRows != NULL) {
+        *loop->displayBaseRows = 0;
+    }
+}
+
+static void OgsqlReadlineRenderMultilineDraft(const OgsqlReadlineLoopT *loop, OgsqlLineEditStateT *state,
+    const OgsqlRenderCtxT *ctx)
+{
+    if (loop == NULL || state == NULL || ctx == NULL) {
+        return;
+    }
+    OgsqlClearScreenAndRedrawLogical(state, ctx, loop->completionPrefix, loop->completionPrefixLen);
+    if (loop->displayBaseRows != NULL) {
+        *loop->displayBaseRows = 0;
+    }
+}
+
 static bool32 ogsql_readline_handle_home_end(const OgsqlReadlineLoopT *loop, int32 escKey, int32 directionKey)
 {
     if (directionKey == CMD_KEY_HOME || directionKey == CMD_KEY_HOME_OLD || directionKey == CMD_KEY_HOME_ALT) {
@@ -2073,21 +2230,122 @@ static bool32 ogsql_readline_handle_history_key(const OgsqlReadlineLoopT *loop, 
 {
     OgsqlLineEditStateT state;
     OgsqlRenderCtxT ctx;
+    const ogsql_cmd_history_list_t *targetEntry;
+    bool32 multilineHistory = OgsqlReadlineCanBrowseMultilineHistory(loop);
+    bool32 historyRender = (loop != NULL && loop->historyBrowsing != NULL && *loop->historyBrowsing == OG_TRUE) ?
+        OG_TRUE : multilineHistory;
+    bool32 targetMultiline;
+    bool32 renderHistory;
+    uint32 historyPromptWidth = (loop->welcomeWidth > 0) ? (uint32)strlen("SQL> ") : 0;
 
     if (directionKey == CMD_KEY_UP) {
+        if (loop->allowAbortLine && !multilineHistory) {
+            return OG_TRUE;
+        }
         if (*loop->histCount > 0 && *loop->listNum < *loop->histCount) {
-            OgsqlReadlineMoveEnd(loop);
             OgsqlReadlineMakeEditState(loop, &state, &ctx);
-            OgsqlHistTurnUp(loop->histCount, loop->listNum, &state, &ctx);
+            if (*loop->listNum == 0) {
+                if (multilineHistory) {
+                    if (loop->saveHistoryDraft(loop->historyDraftContext, &state) != OG_SUCCESS) {
+                        return OG_TRUE;
+                    }
+                } else if (ogsql_history_save_draft(loop->cmdBuf, *loop->nbytes, *loop->nwidths) != OG_SUCCESS) {
+                    return OG_TRUE;
+                }
+            }
+            if (!multilineHistory && !historyRender) {
+                OgsqlReadlineMoveEnd(loop);
+            }
+            OgsqlReadlineMakeEditState(loop, &state, &ctx);
+            if (multilineHistory || historyRender) {
+                state.cursorPos = state.nbytes;
+                state.cursorWidth = state.nwidths;
+            } else {
+                OgsqlClearEditInputDisplay(&state, &ctx);
+            }
+            if (OgsqlHistTurnUp(loop->histCount, loop->listNum, &state, &ctx) != OG_TRUE) {
+                if (!multilineHistory && !historyRender) {
+                    OgsqlClearScreenAndRedraw(&state, &ctx);
+                }
+                return OG_TRUE;
+            }
+            targetEntry = ogsql_history_get(*loop->histCount, (uint32)*loop->listNum);
+            if (targetEntry == NULL) {
+                return OG_TRUE;
+            }
+            targetMultiline = OgsqlHistoryEntryHasNewline(targetEntry);
+            renderHistory = (multilineHistory || historyRender || targetMultiline);
+            ogsql_set_endspace(*targetEntry, *loop->wsCol,
+                renderHistory ? historyPromptWidth : loop->welcomeWidth, &state.spacenum, state.endspace);
+            if (renderHistory) {
+                if (loop->historyBrowsing != NULL) {
+                    *loop->historyBrowsing = OG_TRUE;
+                }
+                OgsqlReadlineRenderHistoryEntry(loop, &state);
+            } else {
+                OgsqlWriteWrappedText(targetEntry->hist_buf, state.nbytes, ctx.welcomeWidth, &ctx);
+            }
             OgsqlReadlineSaveEditState(loop, &state, &ctx);
         }
         return OG_TRUE;
     }
     if (directionKey == CMD_KEY_DOWN) {
+        if (loop->allowAbortLine && !multilineHistory) {
+            return OG_TRUE;
+        }
         if (*loop->listNum >= 1) {
-            OgsqlReadlineMoveEnd(loop);
+            if (!multilineHistory && !historyRender) {
+                OgsqlReadlineMoveEnd(loop);
+            }
             OgsqlReadlineMakeEditState(loop, &state, &ctx);
-            OgsqlHistTurnDown(loop->histCount, loop->listNum, &state, &ctx);
+            if (multilineHistory && *loop->listNum == 1) {
+                if (loop->restoreHistoryDraft(loop->historyDraftContext, &state) != OG_SUCCESS) {
+                    return OG_TRUE;
+                }
+                *loop->listNum = 0;
+                *loop->historyBrowsing = OG_FALSE;
+                OgsqlReadlineRenderMultilineDraft(loop, &state, &ctx);
+            } else if (historyRender && !multilineHistory && *loop->listNum == 1) {
+                targetEntry = ogsql_history_get_draft();
+                if (targetEntry == NULL || OgsqlCopyHistoryEntryToCmd(targetEntry, &state) != OG_SUCCESS) {
+                    return OG_TRUE;
+                }
+                *loop->listNum = 0;
+                if (loop->historyBrowsing != NULL) {
+                    *loop->historyBrowsing = OG_FALSE;
+                }
+                ogsql_set_endspace(*targetEntry, *loop->wsCol, loop->welcomeWidth,
+                    &state.spacenum, state.endspace);
+                OgsqlClearScreenAndRedraw(&state, &ctx);
+            } else {
+                if (!multilineHistory) {
+                    if (!historyRender) {
+                        OgsqlClearEditInputDisplay(&state, &ctx);
+                    }
+                }
+                if (OgsqlHistTurnDown(loop->histCount, loop->listNum, &state, &ctx) != OG_TRUE) {
+                    if (!multilineHistory && !historyRender) {
+                        OgsqlClearScreenAndRedraw(&state, &ctx);
+                    }
+                    return OG_TRUE;
+                }
+                targetEntry = ogsql_history_get(*loop->histCount, (uint32)*loop->listNum);
+                if (targetEntry == NULL) {
+                    return OG_TRUE;
+                }
+                targetMultiline = OgsqlHistoryEntryHasNewline(targetEntry);
+                renderHistory = (multilineHistory || historyRender || targetMultiline);
+                ogsql_set_endspace(*targetEntry, *loop->wsCol,
+                    renderHistory ? historyPromptWidth : loop->welcomeWidth, &state.spacenum, state.endspace);
+                if (renderHistory) {
+                    if (loop->historyBrowsing != NULL) {
+                        *loop->historyBrowsing = (*loop->listNum > 0) ? OG_TRUE : OG_FALSE;
+                    }
+                    OgsqlReadlineRenderHistoryEntry(loop, &state);
+                } else {
+                    OgsqlWriteWrappedText(targetEntry->hist_buf, state.nbytes, ctx.welcomeWidth, &ctx);
+                }
+            }
             OgsqlReadlineSaveEditState(loop, &state, &ctx);
         }
         return OG_TRUE;
@@ -2137,12 +2395,81 @@ static bool32 ogsql_readline_handle_arrow_key(const OgsqlReadlineLoopT *loop, in
     return OG_FALSE;
 }
 
+static bool32 OgsqlReadCsiTildeCode(int32 firstKey, uint32 *code)
+{
+    int32 key = firstKey;
+    uint32 value = 0;
+
+    if (code == NULL || key < '0' || key > '9') {
+        return OG_FALSE;
+    }
+    while (key >= '0' && key <= '9') {
+        value = value * 10 + (uint32)(key - '0');
+        if (!ogsql_getchar_with_timeout(&key, OGSQL_SELECT_RETRY_TIMEOUT_MS)) {
+            return OG_FALSE;
+        }
+    }
+    if (key != '~') {
+        ogsql_drain_escape_sequence(key);
+        return OG_FALSE;
+    }
+    *code = value;
+    return OG_TRUE;
+}
+
+static bool32 OgsqlReadlineHandleBracketedPaste(const OgsqlReadlineLoopT *loop, int32 escKey, int32 sequenceKey)
+{
+    uint32 code;
+
+    if (loop->bracketedPasteActive == NULL || escKey != '[' || sequenceKey != '2') {
+        return OG_FALSE;
+    }
+    if (!OgsqlReadCsiTildeCode(sequenceKey, &code)) {
+        return OG_TRUE;
+    }
+    if (code == OGSQL_BRACKETED_PASTE_START) {
+        *loop->bracketedPasteActive = OG_TRUE;
+        return OG_TRUE;
+    }
+    if (code == OGSQL_BRACKETED_PASTE_END) {
+        *loop->bracketedPasteActive = OG_FALSE;
+        return OG_TRUE;
+    }
+    return OG_TRUE;
+}
+
 static void OgsqlReadlineHandleEscape(const OgsqlReadlineLoopT *loop)
 {
     int32 escKey;
     int32 directionKey;
+    OgsqlLineEditStateT state;
+    OgsqlRenderCtxT ctx;
+    const ogsql_cmd_history_list_t *draftEntry;
 
     if (!ogsql_read_escape_keys(&escKey, &directionKey)) {
+        if (loop != NULL && loop->historyBrowsing != NULL && *loop->historyBrowsing == OG_TRUE &&
+            loop->restoreHistoryDraft != NULL) {
+            OgsqlReadlineMakeEditState(loop, &state, &ctx);
+            if (loop->restoreHistoryDraft(loop->historyDraftContext, &state) == OG_SUCCESS) {
+                *loop->listNum = 0;
+                *loop->historyBrowsing = OG_FALSE;
+                OgsqlReadlineRenderMultilineDraft(loop, &state, &ctx);
+                OgsqlReadlineSaveEditState(loop, &state, &ctx);
+            } else if (loop->listNum != NULL && *loop->listNum > 0) {
+                draftEntry = ogsql_history_get_draft();
+                if (draftEntry != NULL && OgsqlCopyHistoryEntryToCmd(draftEntry, &state) == OG_SUCCESS) {
+                    *loop->listNum = 0;
+                    *loop->historyBrowsing = OG_FALSE;
+                    ogsql_set_endspace(*draftEntry, *loop->wsCol, loop->welcomeWidth,
+                        &state.spacenum, state.endspace);
+                    OgsqlClearScreenAndRedraw(&state, &ctx);
+                    OgsqlReadlineSaveEditState(loop, &state, &ctx);
+                }
+            }
+        }
+        return;
+    }
+    if (OgsqlReadlineHandleBracketedPaste(loop, escKey, directionKey)) {
         return;
     }
     if (ogsql_readline_handle_home_end(loop, escKey, directionKey) ||
@@ -2294,8 +2621,15 @@ static void ogsql_readline_handle_printable(const OgsqlReadlineLoopT *loop, int3
     }
 }
 
+static void OgsqlReadlineInsertLiteralTab(const OgsqlReadlineLoopT *loop)
+{
+    loop->chr[0] = '\t';
+    ogsql_readline_insert_char(loop, 1, 1);
+}
+
 static void OgsqlHandleTabCompletion(OgsqlLineEditStateT *state, const OgsqlRenderCtxT *ctx,
-    uint32 *displayBaseRows, const ogsql_cmd_def_t *commandDefs, uint32 commandCount)
+    uint32 *displayBaseRows, const char *completionPrefix, uint32 completionPrefixLen,
+    const ogsql_cmd_def_t *commandDefs, uint32 commandCount)
 {
     uint32 token_start = 0;
     uint32 token_len = 0;
@@ -2310,15 +2644,42 @@ static void OgsqlHandleTabCompletion(OgsqlLineEditStateT *state, const OgsqlRend
     OgsqlCompletionStoreT store = { matches, &match_count, dynamic_words, &dynamic_count };
     OgsqlCompletionRequestT request;
     OgsqlCompletionPrintCtxT printCtx;
+    char *logicalBuf = NULL;
+    const char *requestBuf;
+    uint32 requestCursor;
+    uint32 requestTokenStart;
+    uint32 separatorLen = 0;
 
     if (state == NULL || ctx == NULL ||
         ogsql_completion_find_token(state->cmdBuf, state->cursorPos, &token_start, &token_len) != OG_SUCCESS) {
         return;
     }
 
-    request = (OgsqlCompletionRequestT){ state->cmdBuf, state->cursorPos, token_start, state->cmdBuf + token_start,
-        token_len, commandDefs, commandCount };
+    requestBuf = state->cmdBuf;
+    requestCursor = state->cursorPos;
+    requestTokenStart = token_start;
+    if (completionPrefix != NULL && completionPrefixLen > 0) {
+        separatorLen = (completionPrefix[completionPrefixLen - 1] == '\n') ? 0 : 1;
+        logicalBuf = (char *)malloc(completionPrefixLen + separatorLen + state->nbytes + 1);
+        if (logicalBuf != NULL &&
+            memcpy_s(logicalBuf, completionPrefixLen + separatorLen + state->nbytes + 1, completionPrefix,
+            completionPrefixLen) == EOK) {
+            if (separatorLen > 0) {
+                logicalBuf[completionPrefixLen] = '\n';
+            }
+            if (memcpy_s(logicalBuf + completionPrefixLen + separatorLen, state->nbytes + 1, state->cmdBuf,
+                state->nbytes) == EOK) {
+                logicalBuf[completionPrefixLen + separatorLen + state->nbytes] = '\0';
+                requestBuf = logicalBuf;
+                requestCursor += completionPrefixLen + separatorLen;
+                requestTokenStart += completionPrefixLen + separatorLen;
+            }
+        }
+    }
+    request = (OgsqlCompletionRequestT){ requestBuf, requestCursor, requestTokenStart,
+        requestBuf + requestTokenStart, token_len, commandDefs, commandCount };
     match_count = ogsql_completion_collect(&request, &store);
+    free(logicalBuf);
     if (match_count == 0) {
         return;
     }
@@ -2374,6 +2735,12 @@ static bool32 ogsql_readline_init_session(OgsqlReadlineSessionT *session, OgsqlL
     session->readlineCtx = readlineCtx;
     session->readResult = OGSQL_READLINE_RESULT_OK;
     *readlineCtx->abortLine = OG_FALSE;
+    if (readlineCtx->historyBrowsing != NULL) {
+        *readlineCtx->historyBrowsing = OG_FALSE;
+    }
+    if (readlineCtx->historySelected != NULL) {
+        *readlineCtx->historySelected = OG_FALSE;
+    }
     if (readlineCtx->acceptedInputLen != NULL) {
         *readlineCtx->acceptedInputLen = 0;
     }
@@ -2387,8 +2754,10 @@ static bool32 ogsql_readline_init_session(OgsqlReadlineSessionT *session, OgsqlL
         state->maxLen, baseRenderCtx->welcomeBuf, baseRenderCtx->welcomeWidth, &session->wsCol, &session->nbytes,
         &session->nwidths, &session->cursorPos, &session->cursorWidth, &session->spacenum, session->endspace,
         &session->displayBaseRows, readlineCtx->allowAbortLine, &session->lineAborted, &session->readResult,
-        session->chr, &session->cursorRenderTotal, &session->cursorRenderTotalValid, readlineCtx->commandDefs,
-        readlineCtx->commandCount };
+        session->chr, &session->cursorRenderTotal, &session->cursorRenderTotalValid, readlineCtx->completionPrefix,
+        readlineCtx->completionPrefixLen, readlineCtx->bracketedPasteActive, readlineCtx->commandDefs,
+        readlineCtx->commandCount, readlineCtx->historyDraftContext, readlineCtx->saveHistoryDraft,
+        readlineCtx->restoreHistoryDraft, readlineCtx->historyBrowsing, readlineCtx->historySelected };
     session->cursorRenderTotal = baseRenderCtx->welcomeWidth;
     session->cursorRenderTotalValid = OG_TRUE;
     return OG_TRUE;
@@ -2417,6 +2786,7 @@ static OgsqlReadlineResultT OgsqlReadlineEnterRawMode(OgsqlReadlineSessionT *ses
         return OGSQL_READLINE_RESULT_FALLBACK;
     }
     session->terminalRawEnabled = OG_TRUE;
+    ogsql_terminal_write((uint32)strlen("\033[?2004h"), "\033[?2004h");
 #else
     (void)session;
 #endif
@@ -2427,6 +2797,7 @@ static void OgsqlReadlineLeaveRawMode(OgsqlReadlineSessionT *session)
 {
 #ifndef WIN32
     if (session->terminalRawEnabled) {
+        ogsql_terminal_write((uint32)strlen("\033[?2004l"), "\033[?2004l");
         (void)tcsetattr(STDIN_FILENO, TCSANOW, &session->oldt);
     }
 #else
@@ -2482,7 +2853,12 @@ static void OgsqlReadlineDispatchKey(OgsqlReadlineSessionT *session)
             OgsqlReadlineHandleEscape(&session->loop);
             return;
         case CMD_KEY_TAB:
-            OgsqlReadlineHandleTab(&session->loop);
+            if (session->readlineCtx->bracketedPasteActive != NULL &&
+                *session->readlineCtx->bracketedPasteActive) {
+                OgsqlReadlineInsertLiteralTab(&session->loop);
+            } else {
+                OgsqlReadlineHandleTab(&session->loop);
+            }
             return;
         case CMD_KEY_CTRL_R:
             if (ogsql_readline_handle_reverse_search(&session->loop)) {
@@ -2516,6 +2892,14 @@ static void OgsqlReadlineDispatchKey(OgsqlReadlineSessionT *session)
             return;
         case CMD_KEY_ASCII_CR:
         case CMD_KEY_ASCII_LF:
+            if (session->readlineCtx->historySelected != NULL && session->readlineCtx->listNum != NULL &&
+                *session->readlineCtx->listNum > 0 && session->readlineCtx->historyBrowsing != NULL &&
+                *session->readlineCtx->historyBrowsing == OG_TRUE) {
+                *session->readlineCtx->historySelected = OG_TRUE;
+            }
+            if (session->readlineCtx->historyBrowsing != NULL) {
+                *session->readlineCtx->historyBrowsing = OG_FALSE;
+            }
             *session->readlineCtx->listNum = 0;
             ogsql_terminal_write(1, "\n");
             return;
@@ -2541,14 +2925,19 @@ static void OgsqlReadlineReadLoop(OgsqlReadlineSessionT *session)
 static void OgsqlReadlineFinishSuccess(OgsqlReadlineSessionT *session)
 {
     OgsqlReadlineCtxT *ctx = session->readlineCtx;
+    uint32 welcomeWidth;
     errno_t rc;
 
+    welcomeWidth = session->baseRenderCtx->welcomeWidth;
+    if (ctx->historySelected != NULL && *ctx->historySelected == OG_TRUE) {
+        welcomeWidth = (welcomeWidth > 0) ? (uint32)strlen("SQL> ") : 0;
+    }
     if (ctx->acceptedInputLen != NULL) {
         *ctx->acceptedInputLen = session->nbytes;
     }
     if (ctx->acceptedRenderRows != NULL) {
         *ctx->acceptedRenderRows = session->displayBaseRows + ogsql_input_render_rows(session->state->cmdBuf,
-            session->nbytes, session->nwidths, session->baseRenderCtx->welcomeWidth, session->wsCol);
+            session->nbytes, session->nwidths, welcomeWidth, session->wsCol);
     }
     OgsqlReadlineUpdateEditState(session);
     rc = memcpy_s(session->state->cmdBuf + session->nbytes, session->state->maxLen - session->nbytes, "\n",
