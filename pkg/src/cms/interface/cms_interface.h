@@ -84,6 +84,7 @@ status_t cms_send_disconn_req(void);
 status_t cms_set_res_work_stat(uint8 stat);
 status_t cms_get_res_stat_list(cms_res_status_list_t* res_list);
 status_t cms_get_res_stat_list1(const char* res_type, cms_res_status_list_t* res_list);
+status_t cms_get_dss_local_stat(cms_res_status_t *local_stat);
 const char* cms_stat_str(cms_stat_t stat);
 status_t cms_set_res_data_new(uint32 slot_id, char* data, uint32 size, uint64 old_version);
 status_t cms_get_res_data_new(uint32 slot_id, char* data, uint32 max_size, uint32* size, uint64* new_version);

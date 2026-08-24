@@ -63,6 +63,9 @@
 #include "dtc_context.h"
 #include "dtc_dls.h"
 #include "dtc_database.h"
+#include "rc_reform.h"
+#include "knl_ckpt.h"
+#include "cm_debug.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +80,9 @@ static status_t srv_wait_agents_done(void);
 static void srv_close_threads(bool32 knl_flag);
 static void srv_deinit_resource(void);
 static status_t init_job_manager(void);
+static void SrvProcessDssLost(void);
+
+static bool32 g_dss_lost_quiescing = OG_FALSE;
 
 os_run_desc_t g_os_stat_desc_array[TOTAL_OS_RUN_INFO_TYPES] = {
     /* cpu numbers */
@@ -1441,6 +1447,11 @@ status_t srv_instance_loop(void)
             srv_deinit_resource();
             return OG_SUCCESS;
         }
+        if (rc_is_dss_lost()) {
+            SrvProcessDssLost();
+            cm_sleep(5);
+            continue;
+        }
         if (g_instance->lsnr_abort_status == OG_TRUE) {
             exec_abnormal_terminal();
             return OG_SUCCESS;
@@ -1463,6 +1474,24 @@ status_t srv_instance_loop(void)
         cm_sleep(5);
         periods++;
     }
+}
+
+static void SrvProcessDssLost(void)
+{
+    if (g_dss_lost_quiescing) {
+        return;
+    }
+
+    g_dss_lost_quiescing = OG_TRUE;
+    OG_LOG_RUN_ERR("[DSS] DSS_LOST detected, pause listener and block new checkpoint tasks; exit immediately");
+    srv_pause_lsnr(LSNR_TYPE_ALL);
+    knl_session_t *session = g_instance->kernel.sessions[SESSION_ID_KERNEL];
+    if (session != NULL) {
+        ckpt_block_new_tasks(session);
+    }
+    cm_fync_logfile();
+    cm_pre_exit();
+    cm_exit(-1);
 }
 
 static status_t srv_kernel_startup(bool32 is_coordinator)

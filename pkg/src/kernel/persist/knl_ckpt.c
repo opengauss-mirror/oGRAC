@@ -3282,6 +3282,20 @@ void ckpt_disable(knl_session_t *session)
     }
 }
 
+/*
+ * Block future checkpoint scheduling without waiting for an already running
+ * CKPT/DBWR task.  This is used by the DSS_LOST exit path: the task that is
+ * already inside DSS may be uninterruptible, so joining it is unsafe.
+ */
+void ckpt_block_new_tasks(knl_session_t *session)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    cm_spin_lock(&ogx->disable_lock, NULL);
+    ogx->disable_cnt++;
+    ogx->ckpt_enabled = OG_FALSE;
+    cm_spin_unlock(&ogx->disable_lock);
+}
+
 void ckpt_enable(knl_session_t *session)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;

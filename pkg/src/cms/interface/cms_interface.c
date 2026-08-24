@@ -1087,6 +1087,27 @@ status_t cms_get_res_stat_list1(const char* res_type, cms_res_status_list_t* res
     return OG_SUCCESS;
 }
 
+status_t cms_get_dss_local_stat(cms_res_status_t *local_stat)
+{
+    if (!g_dss_enable) {
+        return OG_ERROR;
+    }
+
+    cms_res_status_list_t dssStat = {0};
+    if (cms_get_res_stat_list1(CMS_RES_TYPE_DSS, &dssStat) != OG_SUCCESS ||
+        dssStat.inst_count > OG_MAX_INSTANCES) {
+        return OG_ERROR;
+    }
+
+    for (uint8 i = 0; i < dssStat.inst_count; i++) {
+        if (dssStat.inst_list[i].node_id == (uint8)g_node_id) {
+            *local_stat = dssStat.inst_list[i];
+            return OG_SUCCESS;
+        }
+    }
+    return OG_ERROR;
+}
+
 static cms_cli_msg_req_set_data_t* cms_get_new_set_data_req(uint32 slot_id, char* data, uint32 size, uint64 old_version)
 {
     cms_cli_msg_req_set_data_t* req = malloc(sizeof(cms_cli_msg_req_set_data_t));
