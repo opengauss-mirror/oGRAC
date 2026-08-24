@@ -991,6 +991,11 @@ static double ineq_frequence_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, 
 static double btw_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
     cbo_stats_column_t *column_stats, expr_node_t *node, cbo_hist_type_t hist_type)
 {
+    if (node == NULL || node->owner == NULL ||
+        node->owner->next == NULL || node->owner->next->root == NULL) {
+        return CBO_DEFAULT_BTW_FF;
+    }
+
     if (hist_type == HEIGHT_BALANCED) {
         double hist_frac_left = NODE_IS_RES_NULL(node) ? 1 :
             ineq_balanced_hist_factor(stmt, entity, col_id, column_stats, node, false);
@@ -1017,6 +1022,11 @@ static double btw_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_
 static double not_btw_hist_factor(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
     cbo_stats_column_t *column_stats, expr_node_t *node, cbo_hist_type_t hist_type)
 {
+    if (node == NULL || node->owner == NULL ||
+        node->owner->next == NULL || node->owner->next->root == NULL) {
+        return sql_normalize_ff(1 - CBO_DEFAULT_BTW_FF - is_null_hist_factor(column_stats));
+    }
+
     if (hist_type == HEIGHT_BALANCED) {
         double hist_frac_left = NODE_IS_RES_NULL(node) ? 0 :
             ineq_balanced_hist_factor(stmt, entity, col_id, column_stats, node, false);
