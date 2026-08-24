@@ -1381,7 +1381,7 @@ insert_column_item:
                         }
                     }
                     if (!(og_yyget_extra(yyscanner))->core_yy_extra.ident_quoted) {
-                        cm_str_upper(column->col_name.str);
+                        cm_text_upper(&column->col_name);
                     }
                     $$ = column;
                 }
