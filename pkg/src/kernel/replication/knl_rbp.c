@@ -83,6 +83,7 @@ static void rbp_queue_notify_reset_point_one(knl_session_t *session, uint32 queu
 #define RBP_READ_STEP_ACCUM(var, acc)     ((void)sizeof(var), (void)sizeof(acc))
 #endif
 #define RBP_CKPT_PURGE_INTERVAL_FACTOR    5
+#define RBP_CKPT_PURGE_RETRY_US           MICROSECS_PER_SECOND
 #define RBP_SEND_LATCH_WAIT               30
 #define RBP_SEND_LATCH_TIMEOUT            3
 #define RBP_DTC_PLANNED_REQUIRED_INIT_CAPACITY 4096
@@ -478,6 +479,20 @@ static void rbp_drop_pending_item(knl_session_t *session, buf_ctrl_t *ctrl, cons
                    queue_id, page_id.file, page_id.page, (uint64)trunc_lfn, (uint64)lastest_lfn, reason);
 }
 
+static bool32 rbp_wait_snapshot_detach_ready(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    uint32 wait_ticks = 0;
+
+    while (ctrl->is_readonly) {
+        if (wait_ticks >= RBP_SEND_LATCH_WAIT || session->killed) {
+            return OG_FALSE;
+        }
+        cm_spin_sleep();
+        wait_ticks++;
+    }
+    return OG_TRUE;
+}
+
 /*
 * Multi-writer RBP placement:
 * - In a cluster, each node writes local dirty pages to the peer RBP process.
@@ -644,9 +659,24 @@ bool32 rbp_try_detach_pending_page(knl_session_t *session, buf_ctrl_t *ctrl)
         return OG_TRUE;
     }
 
-    snapshot = rbp_alloc_snapshot(session);
     queue_id = ctrl->page_id.page % OG_RBP_SESSION_COUNT;
     queue = &rbp_ctx->queue[queue_id];
+
+    /* The X latch protects the page body; is_readonly protects the pending LSN update. */
+    if (!rbp_wait_snapshot_detach_ready(session, ctrl)) {
+        OG_LOG_RUN_WAR("[RBP] snapshot detach waits readonly page timeout, set gap: queue=%u page=%u-%u "
+                       "page_lsn=%llu page_pcn=%u lastest_lfn=%llu trunc_lfn=%llu curr_lfn=%llu",
+                       queue_id, ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn,
+                       (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
+                       (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
+                       (uint64)session->kernel->redo_ctx.curr_point.lfn);
+        rbp_drop_pending_item(session, ctrl, "snapshot_detach_readonly_timeout");
+        rbp_queue_notify_reset_point_one(session, queue_id, &session->kernel->redo_ctx.curr_point,
+                                         "snapshot_detach_readonly_timeout", OG_TRUE);
+        return OG_FALSE;
+    }
+
+    snapshot = rbp_alloc_snapshot(session);
 
     cm_spin_lock(&queue->lock, &session->stat->spin_stat.stat_rbp_queue);
     item = ctrl->rbp_ctrl->pending_item;
@@ -3136,7 +3166,7 @@ static rbp_queue_item_t *rbp_remove_queue_item(knl_session_t *session, rbp_queue
 * the interval begin so the queue frontier matches the reset notified to RBPS.
 */
 static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *thread, rbp_queue_t *rbp_queue,
-                                        log_point_t gap_end_point)
+                                        log_point_t gap_end_point, bool32 *deferred)
 {
     rbp_queue_item_t *item = rbp_queue->first;
     rbp_queue_item_t *prev = NULL;
@@ -3147,6 +3177,9 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
     uint32 keep_num = 0;
     uint32 trim_num = 0;
     uint32 latch_fail_num = 0;
+    rbp_latch_result_t latch_result;
+
+    *deferred = OG_FALSE;
 
     while (item != NULL && !session->killed && !thread->closed) {
         scan_num++;
@@ -3207,12 +3240,12 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
             remove_num++;
             continue;
         }
-        if (rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_FALSE, NULL) != RBP_LATCH_OK) {
+        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE, NULL);
+        if (latch_result != RBP_LATCH_OK) {
             latch_fail_num++;
             keep_num++;
-            prev = item;
-            item = item->next;
-            continue;
+            *deferred = OG_TRUE;
+            break;
         }
 
         if (ctrl->lastest_lfn < gap_end_point.lfn) {
@@ -3250,11 +3283,19 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
             item = item->next;
         }
     }
-    if (remove_num > 0 || trim_num > 0 || latch_fail_num > 0) {
+    if (item != NULL && (session->killed || thread->closed)) {
+        *deferred = OG_TRUE;
+    }
+    if (remove_num > 0 || trim_num > 0) {
         OG_LOG_RUN_WAR("[RBP] gap cleanup summary: queue=%u gap_end_lfn=%llu scanned=%u removed=%u trimmed=%u "
-                       "kept=%u latch_fail=%u remaining=%u",
+                       "kept=%u latch_fail=%u deferred=%u remaining=%u",
                        rbp_queue->id, (uint64)gap_end_point.lfn, scan_num, remove_num, trim_num, keep_num,
-                       latch_fail_num, rbp_queue->count);
+                       latch_fail_num, (uint32)*deferred, rbp_queue->count);
+    } else if (latch_fail_num > 0) {
+        OG_LOG_DEBUG_INF("[RBP] gap cleanup deferred: queue=%u gap_end_lfn=%llu scanned=%u kept=%u "
+                        "latch_fail=%u remaining=%u",
+                        rbp_queue->id, (uint64)gap_end_point.lfn, scan_num, keep_num, latch_fail_num,
+                        rbp_queue->count);
     }
     return remove_num;
 }
@@ -3268,7 +3309,8 @@ typedef struct st_rbp_ckpt_cleanup_diag {
 } rbp_ckpt_cleanup_diag_t;
 
 static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread_t *thread, rbp_queue_t *rbp_queue,
-                                                  log_point_t reset_point, rbp_ckpt_cleanup_diag_t *diag)
+                                                  log_point_t reset_point, rbp_ckpt_cleanup_diag_t *diag,
+                                                  bool32 *deferred)
 {
     rbp_queue_item_t *item = rbp_queue->first;
     rbp_queue_item_t *prev = NULL;
@@ -3279,6 +3321,9 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
     uint32 keep_num = 0;
     uint32 trim_num = 0;
     uint32 latch_fail_num = 0;
+    rbp_latch_result_t latch_result;
+
+    *deferred = OG_FALSE;
 
     while (item != NULL && !session->killed && !thread->closed) {
         scan_num++;
@@ -3339,12 +3384,12 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
             remove_num++;
             continue;
         }
-        if (rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_FALSE, NULL) != RBP_LATCH_OK) {
+        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE, NULL);
+        if (latch_result != RBP_LATCH_OK) {
             latch_fail_num++;
             keep_num++;
-            prev = item;
-            item = item->next;
-            continue;
+            *deferred = OG_TRUE;
+            break;
         }
 
         if (ctrl->lastest_lfn < reset_point.lfn) {
@@ -3381,6 +3426,9 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
             prev = item;
             item = item->next;
         }
+    }
+    if (item != NULL && (session->killed || thread->closed)) {
+        *deferred = OG_TRUE;
     }
     if (remove_num > 0 || trim_num > 0) {
         OG_LOG_RUN_INF("[RBP] ckpt reset cleanup summary: queue=%u reset_lfn=%llu scanned=%u removed=%u trimmed=%u "
@@ -3902,16 +3950,24 @@ status_t rbp_wait_redo_visible(knl_session_t *session, thread_t *thread, uint64 
 }
 
 /* if has gap, remove pages and just update begin_point, lrp_point */
-static void rbp_knl_reset_queue(knl_session_t *session, thread_t *thread, rbp_write_req_t *request,
-                                rbp_queue_t *rbp_queue)
+static bool32 rbp_knl_reset_queue(knl_session_t *session, thread_t *thread, rbp_write_req_t *request,
+                                  rbp_queue_t *rbp_queue)
 {
     log_context_t *redo_ctx = &session->kernel->redo_ctx;
     uint32 throw_num = request->page_num;
     log_point_t frontier_point;
+    bool32 cleanup_deferred = OG_FALSE;
 
     while (rbp_queue->has_gap) {
         rbp_queue->has_gap = OG_FALSE;
-        throw_num += rbp_queue_remove_gap_pages(session, thread, rbp_queue, redo_ctx->curr_point);
+        throw_num += rbp_queue_remove_gap_pages(session, thread, rbp_queue, redo_ctx->curr_point, &cleanup_deferred);
+        if (cleanup_deferred) {
+            rbp_queue->has_gap = OG_TRUE;
+            OG_LOG_DEBUG_INF("[RBP] defer PAGE_WRITE gap reset for unstable readonly page: queue=%u "
+                            "gap_end_lfn=%llu remaining=%u",
+                            rbp_queue->id, (uint64)redo_ctx->curr_point.lfn, rbp_queue->count);
+            return OG_FALSE;
+        }
     }
 
     request->page_num = 0;
@@ -3930,6 +3986,17 @@ static void rbp_knl_reset_queue(knl_session_t *session, thread_t *thread, rbp_wr
                    request->batch_trunc_point.asn, request->batch_trunc_point.block_id,
                    (uint64)request->batch_trunc_point.lfn, (uint64)request->batch_trunc_point.lsn,
                    rbp_queue->count);
+    return OG_TRUE;
+}
+
+static void rbp_restore_ckpt_reset(rbp_queue_t *rbp_queue, log_point_t *reset_point)
+{
+    cm_spin_lock(&rbp_queue->lock, NULL);
+    if (!rbp_queue->has_ckpt_reset || log_cmp_point(&rbp_queue->ckpt_reset_point, reset_point) < 0) {
+        rbp_queue->ckpt_reset_point = *reset_point;
+    }
+    rbp_queue->has_ckpt_reset = OG_TRUE;
+    cm_spin_unlock(&rbp_queue->lock);
 }
 
 static bool32 rbp_take_ckpt_reset(rbp_queue_t *rbp_queue, log_point_t *reset_point)
@@ -4043,6 +4110,7 @@ static status_t rbp_send_ckpt_purge_if_due(knl_session_t *session, thread_t *thr
     date_t cleanup_begin;
     uint64 cleanup_us;
     uint32 covered_pages;
+    bool32 cleanup_deferred = OG_FALSE;
     uint64 send_us = 0;
 
     if (rbp_queue->last_ckpt_purge_check_time != 0 &&
@@ -4076,8 +4144,17 @@ static status_t rbp_send_ckpt_purge_if_due(knl_session_t *session, thread_t *thr
     }
 
     cleanup_begin = g_timer()->now;
-    covered_pages = rbp_queue_remove_ckpt_covered_pages(session, thread, rbp_queue, latest_point, &cleanup_diag);
+    covered_pages = rbp_queue_remove_ckpt_covered_pages(session, thread, rbp_queue, latest_point, &cleanup_diag,
+                                                        &cleanup_deferred);
     cleanup_us = (uint64)(g_timer()->now - cleanup_begin);
+    if (cleanup_deferred) {
+        rbp_queue->last_ckpt_purge_check_time = now - interval_us + RBP_CKPT_PURGE_RETRY_US;
+        OG_LOG_DEBUG_INF("[RBP] defer periodic ckpt purge for unstable readonly page: queue=%u latest_lfn=%llu "
+                        "remaining=%u retry_us=%lld",
+                        rbp_queue->id, (uint64)latest_point.lfn, rbp_queue->count,
+                        (long long)RBP_CKPT_PURGE_RETRY_US);
+        return OG_SUCCESS;
+    }
     rbp_init_page_write_request(request, pipe);
     rbp_prepare_ckpt_reset_request(session, request, rbp_queue, &latest_point);
     if (rbp_send_page_write_request(pipe, rbp_mgr, request, &send_us, NULL, NULL) != OG_SUCCESS) {
@@ -4123,6 +4200,7 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
     bool32 has_gap_before;
     bool32 took_ckpt_reset;
     bool32 took_gap_reset;
+    bool32 ckpt_cleanup_deferred;
     int64 enqueue_delta;
     rbp_assemble_diag_t assemble_diag;
     rbp_assemble_diag_t *assemble_diag_ptr = &assemble_diag;
@@ -4168,6 +4246,7 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
         has_gap_before = rbp_queue->has_gap;
         took_ckpt_reset = OG_FALSE;
         took_gap_reset = OG_FALSE;
+        ckpt_cleanup_deferred = OG_FALSE;
         memset_ret = memset_sp(&assemble_diag, sizeof(rbp_assemble_diag_t), 0, sizeof(rbp_assemble_diag_t));
         knl_securec_check(memset_ret);
 
@@ -4234,7 +4313,13 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
             }
         } else if (rbp_take_ckpt_reset(rbp_queue, &ckpt_reset_point)) {
             took_ckpt_reset = OG_TRUE;
-            covered_pages = rbp_queue_remove_ckpt_covered_pages(session, thread, rbp_queue, ckpt_reset_point, NULL);
+            covered_pages = rbp_queue_remove_ckpt_covered_pages(session, thread, rbp_queue, ckpt_reset_point, NULL,
+                                                                &ckpt_cleanup_deferred);
+            if (ckpt_cleanup_deferred) {
+                rbp_restore_ckpt_reset(rbp_queue, &ckpt_reset_point);
+                cm_spin_sleep();
+                break;
+            }
             rbp_prepare_ckpt_reset_request(session, request, rbp_queue, &ckpt_reset_point);
             if (covered_pages > 0) {
                 OG_LOG_RUN_INF("[RBP] queue id %u drop %u local queued pages covered by reset lfn=%llu",
@@ -4251,7 +4336,11 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
         if (rbp_queue->has_gap) {
             took_gap_reset = OG_TRUE;
             step_begin = g_timer()->now;
-            rbp_knl_reset_queue(session, thread, request, rbp_queue);
+            if (!rbp_knl_reset_queue(session, thread, request, rbp_queue)) {
+                gap_reset_us = (uint64)(g_timer()->now - step_begin);
+                cm_spin_sleep();
+                break;
+            }
             gap_reset_us = (uint64)(g_timer()->now - step_begin);
         }
 
