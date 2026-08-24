@@ -72,6 +72,7 @@ typedef enum ddl_exec_status {
     DDL_PART_DISABLE_CLEAN_GARBAGE_SUBPART,
     DDL_PART_DISABLE_DEL_PENDING_TRANS,
     DDL_PART_DISABLE_SET_DC_COMPLETING,
+    DDL_DISABLE_DISK_WRITE_PROTECT,
 } ddl_exec_status_t;
 
 typedef struct ddl_exec_status_str {
@@ -90,6 +91,7 @@ static ddl_exec_status_str_t ddl_exec_status_strs[] = {
     { DDL_PART_DISABLE_CLEAN_GARBAGE_SUBPART, "DDL_PART_DISABLE_CLEAN_GARBAGE_SUBPART" },
     { DDL_PART_DISABLE_DEL_PENDING_TRANS, "DDL_PART_DISABLE_DEL_PENDING_TRANS" },
     { DDL_PART_DISABLE_SET_DC_COMPLETING, "DDL_PART_DISABLE_SET_DC_COMPLETING" },
+    { DDL_DISABLE_DISK_WRITE_PROTECT, "DDL_DISABLE_DISK_WRITE_PROTECT" },
 };
 static inline const char *get_ddl_exec_stat_str(ddl_exec_status_t ddl_stat)
 {

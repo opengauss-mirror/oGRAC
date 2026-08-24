@@ -34,8 +34,6 @@
 #include "cms_client.h"
 #include "knl_db_alter.h"
 
-#define DB_CMS_READMODE_WAIT_INTERVAL_MS 10
-
 typedef enum st_failover_fail_type {
     FAILOVER_INVALID_STATUS = 1,
     FAILOVER_INVALID_ROLE = 2,
@@ -191,75 +189,72 @@ static void db_cms_set_info(char *info, uint32 info_len, const char *fmt, ...)
     }
 }
 
-status_t db_cms_convert_to_readonly(knl_session_t *session, uint32 timeout_sec, char *info, uint32 info_len)
+static status_t db_cms_enable_disk_write_protect(knl_session_t *session, char *info, uint32 info_len)
 {
     if (session == NULL || session->kernel == NULL) {
         db_cms_set_info(info, info_len, "invalid kernel session");
         return OG_ERROR;
     }
 
-    knl_instance_t *kernel = (knl_instance_t *)session->kernel;
-    switch_ctrl_t *ctrl = &kernel->switch_ctrl;
+    database_t *db = &session->kernel->db;
+    if (db->status != DB_STATUS_OPEN) {
+        db_cms_set_info(info, info_len, "operation only supported in OPEN mode");
+        return OG_ERROR;
+    }
+
+    cm_spin_lock(&db->lock, NULL);
+    if (db->disk_write_protected == OG_TRUE) {
+        cm_spin_unlock(&db->lock);
+        db_cms_set_info(info, info_len, "disk write protect is already enabled");
+        return OG_SUCCESS;
+    }
+    db->disk_write_protected = OG_TRUE;
+    cm_spin_unlock(&db->lock);
+
+    db_cms_set_info(info, info_len, "disk write protect enabled");
+    OG_LOG_RUN_WAR("[DB] disk write protect enabled by CMS disk usage");
+    return OG_SUCCESS;
+}
+
+static status_t db_cms_disable_disk_write_protect(knl_session_t *session, char *info, uint32 info_len)
+{
+    if (session == NULL || session->kernel == NULL) {
+        db_cms_set_info(info, info_len, "invalid kernel session");
+        return OG_ERROR;
+    }
+
+    database_t *db = &session->kernel->db;
+    cm_spin_lock(&db->lock, NULL);
+    if (db->disk_write_protected != OG_TRUE) {
+        cm_spin_unlock(&db->lock);
+        db_cms_set_info(info, info_len, "disk write protect is already disabled");
+        return OG_SUCCESS;
+    }
+    db->disk_write_protected = OG_FALSE;
+    cm_spin_unlock(&db->lock);
+
     if (DB_IS_READONLY(session)) {
-        db_cms_set_info(info, info_len, "database is already readonly");
-        return OG_SUCCESS;
+        db_cms_set_info(info, info_len, "disk write protect disabled, database remains readonly");
+    } else {
+        db_cms_set_info(info, info_len, "disk write protect disabled");
     }
-
-    if (db_alter_readmode_precheck(session, OG_TRUE) != OG_SUCCESS) {
-        db_cms_set_info(info, info_len, "readonly precheck failed");
-        return OG_ERROR;
-    }
-
-    if (db_notify_open_mode_reset(session, SWITCH_REQ_READONLY) != OG_SUCCESS) {
-        db_cms_set_info(info, info_len, "notify readonly switch request failed");
-        return OG_ERROR;
-    }
-
-    date_t begin = cm_now();
-    date_t timeout = (date_t)(timeout_sec == 0 ? 30 : timeout_sec) * MICROSECS_PER_SECOND_LL;
-    while (!DB_IS_READONLY(session) || ctrl->request != SWITCH_REQ_NONE) {
-        if (cm_now() - begin > timeout) {
-            db_cms_set_info(info, info_len, "wait readonly switch timeout");
-            return OG_ERROR;
-        }
-        cm_sleep(DB_CMS_READMODE_WAIT_INTERVAL_MS);
-    }
-
-    db_cms_set_info(info, info_len, "database converted to readonly");
+    OG_LOG_RUN_WAR("[DB] disk write protect disabled by CMS disk usage");
     return OG_SUCCESS;
 }
 
-status_t db_cms_convert_to_readwrite(knl_session_t *session, char *info, uint32 info_len)
-{
-    if (session == NULL || session->kernel == NULL) {
-        db_cms_set_info(info, info_len, "invalid kernel session");
-        return OG_ERROR;
-    }
-    if (!DB_IS_READONLY(session)) {
-        db_cms_set_info(info, info_len, "database is already readwrite");
-        return OG_SUCCESS;
-    }
-    if (db_alter_convert_to_readwrite(session) != OG_SUCCESS) {
-        db_cms_set_info(info, info_len, "convert to readwrite failed");
-        return OG_ERROR;
-    }
-    db_cms_set_info(info, info_len, "database converted to readwrite");
-    return OG_SUCCESS;
-}
-
-status_t db_cms_readmode_switch(knl_session_t *session, const CmsReadmodeSwitchCtxT *ctx)
+status_t db_cms_write_protect_switch(knl_session_t *session, const CmsWriteProtectSwitchCtxT *ctx)
 {
     if (ctx == NULL) {
         return OG_ERROR;
     }
-    if (ctx->action == CMS_READMODE_ACTION_READONLY) {
-        return db_cms_convert_to_readonly(session, ctx->timeout_sec, ctx->info, ctx->info_len);
+    if (ctx->action == CMS_WRITE_PROTECT_ACTION_ENABLE) {
+        return db_cms_enable_disk_write_protect(session, ctx->info, ctx->info_len);
     }
-    if (ctx->action == CMS_READMODE_ACTION_READWRITE) {
-        return db_cms_convert_to_readwrite(session, ctx->info, ctx->info_len);
+    if (ctx->action == CMS_WRITE_PROTECT_ACTION_DISABLE) {
+        return db_cms_disable_disk_write_protect(session, ctx->info, ctx->info_len);
     }
 
-    db_cms_set_info(ctx->info, ctx->info_len, "invalid readmode action %u", ctx->action);
+    db_cms_set_info(ctx->info, ctx->info_len, "invalid write protect action %u", ctx->action);
     return OG_ERROR;
 }
 

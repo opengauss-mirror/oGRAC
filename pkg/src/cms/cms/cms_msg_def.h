@@ -353,8 +353,8 @@ typedef enum en_cms_tool_msg_type {
     CMS_TOOL_MSG_RES_RES_LIST,
     CMS_TOOL_MSG_REQ_GET_DISK_USAGE,
     CMS_TOOL_MSG_RES_GET_DISK_USAGE,
-    CMS_TOOL_MSG_REQ_DISK_READWRITE_RECOVER,
-    CMS_TOOL_MSG_RES_DISK_READWRITE_RECOVER,
+    CMS_TOOL_MSG_REQ_DISK_WRITE_PROTECT_DISABLE,
+    CMS_TOOL_MSG_RES_DISK_WRITE_PROTECT_DISABLE,
 } cms_tool_msg_type_t;
 
 typedef struct st_cms_tool_msg_req_add_node {
@@ -522,8 +522,8 @@ typedef struct st_cms_tool_msg_res_disk_iostat_t {
 #define CMS_DISK_USAGE_MAX_DSS_VG 16
 #define CMS_DISK_USAGE_TYPE_LOCAL 1
 #define CMS_DISK_USAGE_TYPE_DSS 2
-#define CMS_DISK_READONLY_MATCH_ALL 0
-#define CMS_DISK_READONLY_MATCH_ANY 1
+#define CMS_DISK_WRITE_PROTECT_MATCH_ALL 0
+#define CMS_DISK_WRITE_PROTECT_MATCH_ANY 1
 
 typedef struct st_cms_disk_usage_item_t {
     bool32 valid;
@@ -542,7 +542,7 @@ typedef struct st_cms_disk_usage_item_t {
     char info[CMS_INFO_BUFFER_SIZE];
 } CmsDiskUsageItemT;
 
-typedef struct st_cms_disk_readonly_config_info_t {
+typedef struct st_cms_disk_write_protect_config_info_t {
     bool32 protect_enabled;
     uint32 cooldown_sec;
     date_t last_trigger_time;
@@ -550,13 +550,13 @@ typedef struct st_cms_disk_readonly_config_info_t {
     date_t last_action_time;
     char state[CMS_NAME_BUFFER_SIZE];
     char info[CMS_INFO_BUFFER_SIZE];
-} CmsDiskReadonlyConfigInfoT;
+} CmsDiskWriteProtectConfigInfoT;
 
 typedef struct st_cms_disk_usage_snapshot_t {
     uint32 interval_sec;
     uint32 threshold_percent;
     date_t last_check_time;
-    CmsDiskReadonlyConfigInfoT readonly_config;
+    CmsDiskWriteProtectConfigInfoT write_protect_config;
     CmsDiskUsageItemT local;
     uint32 dss_count;
     CmsDiskUsageItemT dss[CMS_DISK_USAGE_MAX_DSS_VG];
@@ -573,15 +573,15 @@ typedef struct st_cms_tool_msg_res_disk_usage_t {
     status_t result;
 } CmsToolMsgResDiskUsageT;
 
-typedef struct st_cms_tool_msg_req_disk_readwrite_recover_t {
+typedef struct st_cms_tool_msg_req_disk_write_protect_disable_t {
     cms_packet_head_t head;
-} CmsToolMsgReqDiskReadwriteRecoverT;
+} CmsToolMsgReqDiskWriteProtectDisableT;
 
-typedef struct st_cms_tool_msg_res_disk_readwrite_recover_t {
+typedef struct st_cms_tool_msg_res_disk_write_protect_disable_t {
     cms_packet_head_t head;
     status_t result;
     char err_info[CMS_INFO_BUFFER_SIZE];
-} CmsToolMsgResDiskReadwriteRecoverT;
+} CmsToolMsgResDiskWriteProtectDisableT;
 
 typedef struct st_cms_tool_msg_req_stop_res {
     cms_packet_head_t head;

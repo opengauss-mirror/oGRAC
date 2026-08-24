@@ -1102,6 +1102,7 @@ const char *g_error_desc[] = {
 
     [ERR_CHILD_DUPLICATE_KEY] = "Foreign key constraint would lead to a duplicate entry in child table",
     [ERR_WRITE_OPT_IN_READONLY] = "oGRAC can not execute write-operation in readonly mode.",
+    [ERR_WRITE_OPT_IN_DISK_PROTECT] = "oGRAC can not execute write-operation in disk write protect mode.",
 
     // ARCH
     [ERR_FORCE_ARCH_FAILED] = "failed to force archive with lrp point lsn",

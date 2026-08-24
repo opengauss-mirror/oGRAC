@@ -3370,20 +3370,20 @@ void cms_proc_msg_res_client_upgrade(cms_packet_head_t* msg)
         msg->msg_type, msg->msg_size, msg->msg_seq, msg->src_msg_seq);
 }
 
-static void cms_proc_msg_res_readmode_switch(cms_packet_head_t* msg)
+static void cms_proc_msg_res_write_protect_switch(cms_packet_head_t* msg)
 {
-    CMS_LOG_INF("begin cms process readmode switch res");
-    if (sizeof(CmsCliMsgResReadmodeSwitchT) > msg->msg_size) {
-        CMS_LOG_ERR("proc readmode switch res msg size %u is invalid.", msg->msg_size);
+    CMS_LOG_INF("begin cms process write protect switch res");
+    if (sizeof(CmsCliMsgResWriteProtectSwitchT) > msg->msg_size) {
+        CMS_LOG_ERR("proc write protect switch res msg size %u is invalid.", msg->msg_size);
         return;
     }
-    CmsCliMsgResReadmodeSwitchT *res = malloc(sizeof(CmsCliMsgResReadmodeSwitchT));
+    CmsCliMsgResWriteProtectSwitchT *res = malloc(sizeof(CmsCliMsgResWriteProtectSwitchT));
     if (res == NULL) {
-        OG_LOG_RUN_ERR("malloc failed, size %d", (int32)sizeof(CmsCliMsgResReadmodeSwitchT));
+        OG_LOG_RUN_ERR("malloc failed, size %d", (int32)sizeof(CmsCliMsgResWriteProtectSwitchT));
         return;
     }
 
-    errno_t err = memcpy_s(res, sizeof(CmsCliMsgResReadmodeSwitchT), msg, msg->msg_size);
+    errno_t err = memcpy_s(res, sizeof(CmsCliMsgResWriteProtectSwitchT), msg, msg->msg_size);
     if (err != EOK) {
         OG_LOG_RUN_ERR("memcpy_s failed, err %d, errno %d, msg type %u, msg size %u, msg seq %llu, "
             "msg src seq %llu", err, errno, msg->msg_type, msg->msg_size, msg->msg_seq, msg->src_msg_seq);
@@ -3398,7 +3398,7 @@ static void cms_proc_msg_res_readmode_switch(cms_packet_head_t* msg)
         CM_FREE_PTR(res);
         return;
     }
-    CMS_LOG_INF("end cms process readmode switch res, result %d, info %s", res->result, res->info);
+    CMS_LOG_INF("end cms process write protect switch res, result %d, info %s", res->result, res->info);
 }
 
 #ifdef DB_DEBUG_VERSION
@@ -3549,30 +3549,30 @@ void cms_proc_msg_req_get_disk_usage(cms_packet_head_t *msg)
     cms_enque(&g_cms_inst->cli_send_que, node);
 }
 
-void cms_proc_msg_req_disk_readwrite_recover(cms_packet_head_t *msg)
+void cms_proc_msg_req_disk_write_protect_disable(cms_packet_head_t *msg)
 {
-    if (sizeof(CmsToolMsgReqDiskReadwriteRecoverT) > msg->msg_size) {
-        CMS_LOG_ERR("uds msg req disk readwrite recover msg size %u is invalid.", msg->msg_size);
+    if (sizeof(CmsToolMsgReqDiskWriteProtectDisableT) > msg->msg_size) {
+        CMS_LOG_ERR("uds msg req disk write protect disable msg size %u is invalid.", msg->msg_size);
         return;
     }
-    CmsToolMsgReqDiskReadwriteRecoverT *req = (CmsToolMsgReqDiskReadwriteRecoverT *)msg;
-    biqueue_node_t *node = cms_que_alloc_node(sizeof(CmsToolMsgResDiskReadwriteRecoverT));
+    CmsToolMsgReqDiskWriteProtectDisableT *req = (CmsToolMsgReqDiskWriteProtectDisableT *)msg;
+    biqueue_node_t *node = cms_que_alloc_node(sizeof(CmsToolMsgResDiskWriteProtectDisableT));
     if (node == NULL) {
-        CMS_LOG_ERR("cms malloc msg CmsToolMsgResDiskReadwriteRecoverT buf failed.");
+        CMS_LOG_ERR("cms malloc msg CmsToolMsgResDiskWriteProtectDisableT buf failed.");
         return;
     }
-    CmsToolMsgResDiskReadwriteRecoverT *res =
-        (CmsToolMsgResDiskReadwriteRecoverT *)cms_que_node_data(node);
+    CmsToolMsgResDiskWriteProtectDisableT *res =
+        (CmsToolMsgResDiskWriteProtectDisableT *)cms_que_node_data(node);
     res->head.dest_node = msg->src_node;
     res->head.src_node = g_cms_param->node_id;
-    res->head.msg_size = sizeof(CmsToolMsgResDiskReadwriteRecoverT);
-    res->head.msg_type = CMS_TOOL_MSG_RES_DISK_READWRITE_RECOVER;
+    res->head.msg_size = sizeof(CmsToolMsgResDiskWriteProtectDisableT);
+    res->head.msg_type = CMS_TOOL_MSG_RES_DISK_WRITE_PROTECT_DISABLE;
     res->head.msg_version = CMS_MSG_VERSION;
     res->head.msg_seq = cm_now();
     res->head.src_msg_seq = req->head.msg_seq;
     res->head.uds_sid = msg->uds_sid;
     res->err_info[0] = '\0';
-    res->result = cms_disk_usage_recover_readwrite_now(res->err_info, sizeof(res->err_info));
+    res->result = cms_disk_usage_disable_write_protect_now(res->err_info, sizeof(res->err_info));
     cms_enque(&g_cms_inst->cli_send_que, node);
 }
 
@@ -4391,8 +4391,8 @@ void cms_uds_proc_cli_msg(cms_packet_head_t* msg)
         case CMS_CLI_MSG_RES_UPGRADE:
             cms_proc_msg_res_client_upgrade(msg);
             break;
-        case CMS_CLI_MSG_RES_READMODE_SWITCH:
-            cms_proc_msg_res_readmode_switch(msg);
+        case CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH:
+            cms_proc_msg_res_write_protect_switch(msg);
             break;
         default:
             CMS_LOG_ERR("unknown msg_type:%d", msg->msg_type);
@@ -4470,8 +4470,8 @@ void cms_uds_proc_tool_oper_msg(cms_packet_head_t* msg)
         case CMS_TOOL_MSG_REQ_GET_DISK_USAGE:
             cms_proc_msg_req_get_disk_usage(msg);
             break;
-        case CMS_TOOL_MSG_REQ_DISK_READWRITE_RECOVER:
-            cms_proc_msg_req_disk_readwrite_recover(msg);
+        case CMS_TOOL_MSG_REQ_DISK_WRITE_PROTECT_DISABLE:
+            cms_proc_msg_req_disk_write_protect_disable(msg);
             break;
         default:
             CMS_LOG_ERR("unknown msg_type:%d", msg->msg_type);
@@ -4504,7 +4504,7 @@ static void cms_uds_proc_tool_gcc_res_msg(cms_packet_head_t* msg)
 void cms_uds_proc_msg(cms_packet_head_t* msg)
 {
     if ((msg->msg_type >= CMS_CLI_MSG_REQ_CONNECT && msg->msg_type <= CMS_CLI_MSG_RES_IOF_KICK) ||
-        msg->msg_type == CMS_CLI_MSG_RES_READMODE_SWITCH) {
+        msg->msg_type == CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH) {
         cms_uds_proc_cli_msg(msg);
         return;
     } else if (msg->msg_type >= CMS_TOOL_MSG_REQ_ADD_NODE && msg->msg_type <= CMS_TOOL_MSG_RES_DEL_RES) {
@@ -4517,7 +4517,7 @@ void cms_uds_proc_msg(cms_packet_head_t* msg)
         cms_uds_proc_tool_gcc_res_msg(msg);
         return;
     } else if (msg->msg_type == CMS_TOOL_MSG_REQ_GET_DISK_USAGE ||
-        msg->msg_type == CMS_TOOL_MSG_REQ_DISK_READWRITE_RECOVER) {
+        msg->msg_type == CMS_TOOL_MSG_REQ_DISK_WRITE_PROTECT_DISABLE) {
         cms_uds_proc_tool_oper_msg(msg);
         return;
     }

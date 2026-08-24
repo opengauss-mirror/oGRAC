@@ -60,8 +60,8 @@ extern char **g_environ __asm__("environ");
 #define CMS_DISK_USAGE_OUTPUT_SIZE SIZE_K(8)
 #define CMS_DISK_USAGE_GIB ((double)SIZE_K(1) * SIZE_K(1) * SIZE_K(1))
 #define CMS_DISK_USAGE_DSS_SOCKET ".dss_unix_d_socket"
-#define CMS_DISK_READONLY_DEFAULT_COOLDOWN 120
-#define CMS_DISK_READONLY_MAX_COOLDOWN 3600
+#define CMS_DISK_WRITE_PROTECT_DEFAULT_COOLDOWN 120
+#define CMS_DISK_WRITE_PROTECT_MAX_COOLDOWN 3600
 #define CMS_DISK_USAGE_PERCENT_MAX 100U
 #define CMS_DISK_USAGE_PERCENT_PRECISION 1000U
 #define CMS_DISK_USAGE_PERCENT_SCALE (CMS_DISK_USAGE_PERCENT_MAX * CMS_DISK_USAGE_PERCENT_PRECISION)
@@ -89,7 +89,7 @@ typedef struct st_cms_disk_usage_config {
     bool32 protect_enabled;
     uint32 interval_sec;
     uint32 threshold_percent;
-    uint32 readonly_cooldown_sec;
+    uint32 write_protect_cooldown_sec;
 } CmsDiskUsageConfigT;
 
 typedef struct st_cms_disk_usage_cmd_result {
@@ -133,17 +133,18 @@ typedef struct st_cms_disk_usage_dss_ctx {
 static thread_lock_t g_disk_usage_lock;
 static CmsDiskUsageSnapshotT g_diskUsageSnapshot;
 static pthread_once_t g_diskUsageOnce = PTHREAD_ONCE_INIT;
-static bool32 g_disk_readonly_triggered = OG_FALSE;
-static date_t g_disk_readonly_last_action_time = 0;
-static date_t g_disk_readonly_last_trigger_time = 0;
-static date_t g_disk_readonly_last_recover_time = 0;
-static char g_disk_readonly_state[CMS_NAME_BUFFER_SIZE] = "NORMAL";
-static char g_disk_readonly_info[CMS_INFO_BUFFER_SIZE] = "not triggered";
-static char g_disk_readonly_trigger_items[CMS_FILE_NAME_BUFFER_SIZE] = "";
+static bool32 g_disk_write_protect_triggered = OG_FALSE;
+static date_t g_disk_write_protect_last_action_time = 0;
+static date_t g_disk_write_protect_last_trigger_time = 0;
+static date_t g_disk_write_protect_last_recover_time = 0;
+static char g_disk_write_protect_state[CMS_NAME_BUFFER_SIZE] = "NORMAL";
+static char g_disk_write_protect_info[CMS_INFO_BUFFER_SIZE] = "not triggered";
+static char g_disk_write_protect_trigger_items[CMS_FILE_NAME_BUFFER_SIZE] = "";
+static uint64 g_disk_write_protect_last_session_id = (uint64)CMS_CLI_INVALID_SESS_ID;
 
-static void CmsDiskUsageFillReadonlyConfig(CmsDiskReadonlyConfigInfoT *info,
+static void CmsDiskUsageFillWriteProtectConfig(CmsDiskWriteProtectConfigInfoT *info,
     const CmsDiskUsageConfigT *cfg);
-static void CmsDiskUsageSetReadonlyState(const char *state, const char *fmt, ...);
+static void CmsDiskUsageSetWriteProtectState(const char *state, const char *fmt, ...);
 static void cms_disk_usage_copy_str(char *dst, uint32 dst_size, const char *src);
 
 #define CMS_DISK_USAGE_MEMSET(dst, destMax, count) \
@@ -178,10 +179,10 @@ static void CmsDiskUsageOnceInit(void)
     }
     g_diskUsageSnapshot.interval_sec = CMS_DISK_USAGE_DEFAULT_INTERVAL;
     g_diskUsageSnapshot.threshold_percent = CMS_DISK_USAGE_DEFAULT_THRESHOLD;
-    g_diskUsageSnapshot.readonly_config.protect_enabled = OG_TRUE;
-    g_diskUsageSnapshot.readonly_config.cooldown_sec = CMS_DISK_READONLY_DEFAULT_COOLDOWN;
-    cms_disk_usage_copy_str(g_diskUsageSnapshot.readonly_config.state, CMS_NAME_BUFFER_SIZE, "NORMAL");
-    cms_disk_usage_copy_str(g_diskUsageSnapshot.readonly_config.info, CMS_INFO_BUFFER_SIZE, "not triggered");
+    g_diskUsageSnapshot.write_protect_config.protect_enabled = OG_TRUE;
+    g_diskUsageSnapshot.write_protect_config.cooldown_sec = CMS_DISK_WRITE_PROTECT_DEFAULT_COOLDOWN;
+    cms_disk_usage_copy_str(g_diskUsageSnapshot.write_protect_config.state, CMS_NAME_BUFFER_SIZE, "NORMAL");
+    cms_disk_usage_copy_str(g_diskUsageSnapshot.write_protect_config.info, CMS_INFO_BUFFER_SIZE, "not triggered");
     cms_disk_usage_copy_str(g_diskUsageSnapshot.info, CMS_INFO_BUFFER_SIZE, "not collected yet");
 }
 
@@ -225,6 +226,11 @@ static char *CmsDiskUsageTrim(char *text)
 static bool32 cms_disk_usage_str_equal(const char *left, const char *right)
 {
     return left != NULL && right != NULL && cm_strcmpi(left, right) == 0;
+}
+
+static bool32 cms_disk_usage_strict_bool(const char *value)
+{
+    return cms_disk_usage_str_equal(value, "TRUE") || cms_disk_usage_str_equal(value, "FALSE");
 }
 
 static void cms_disk_usage_copy_str(char *dst, uint32 dst_size, const char *src)
@@ -303,17 +309,18 @@ static void CmsDiskUsageConfigDefault(CmsDiskUsageConfigT *cfg)
     cfg->protect_enabled = OG_TRUE;
     cfg->interval_sec = CMS_DISK_USAGE_DEFAULT_INTERVAL;
     cfg->threshold_percent = CMS_DISK_USAGE_DEFAULT_THRESHOLD;
-    cfg->readonly_cooldown_sec = CMS_DISK_READONLY_DEFAULT_COOLDOWN;
+    cfg->write_protect_cooldown_sec = CMS_DISK_WRITE_PROTECT_DEFAULT_COOLDOWN;
 }
 
 static void CmsDiskUsageApplyConfigValue(CmsDiskUsageConfigT *cfg, const char *key, const char *value)
 {
     uint32 num_value;
-    bool32 bool_value;
 
     if (cms_disk_usage_str_equal(key, "_DISK_USAGE_PROTECT_ENABLE")) {
-        if (cm_str2bool(value, &bool_value) == OG_SUCCESS) {
-            cfg->protect_enabled = bool_value;
+        if (cms_disk_usage_str_equal(value, "TRUE")) {
+            cfg->protect_enabled = OG_TRUE;
+        } else if (cms_disk_usage_str_equal(value, "FALSE")) {
+            cfg->protect_enabled = OG_FALSE;
         }
     } else if (cms_disk_usage_str_equal(key, "_DISK_USAGE_CHECK_INTERVAL")) {
         if (cm_str2uint32(value, &num_value) == OG_SUCCESS && num_value >= CMS_DISK_USAGE_MIN_INTERVAL &&
@@ -322,8 +329,8 @@ static void CmsDiskUsageApplyConfigValue(CmsDiskUsageConfigT *cfg, const char *k
         }
     } else if (cms_disk_usage_str_equal(key, "_DISK_USAGE_READONLY_COOLDOWN")) {
         if (cm_str2uint32(value, &num_value) == OG_SUCCESS && num_value > 0 &&
-            num_value <= CMS_DISK_READONLY_MAX_COOLDOWN) {
-            cfg->readonly_cooldown_sec = num_value;
+            num_value <= CMS_DISK_WRITE_PROTECT_MAX_COOLDOWN) {
+            cfg->write_protect_cooldown_sec = num_value;
         }
     } else if (cms_disk_usage_str_equal(key, "_DISK_USAGE_THRESHOLD")) {
         if (cm_str2uint32(value, &num_value) == OG_SUCCESS && num_value > 0 &&
@@ -401,7 +408,6 @@ static bool32 cms_disk_usage_config_key_equal(char *line, const char *key)
 static status_t cms_disk_usage_validate_update_value(const char *key, const char *value, char *err_info, uint32 err_len)
 {
     (void)err_len;
-    bool32 bool_value;
     uint32 num_value;
 
     if (value == NULL) {
@@ -409,8 +415,8 @@ static status_t cms_disk_usage_validate_update_value(const char *key, const char
         return OG_ERROR;
     }
     if (cms_disk_usage_str_equal(key, "_DISK_USAGE_PROTECT_ENABLE")) {
-        if (cm_str2bool(value, &bool_value) != OG_SUCCESS) {
-            CmsDiskUsageSetInfo(err_info, "invalid boolean value %s", value);
+        if (!cms_disk_usage_strict_bool(value)) {
+            CmsDiskUsageSetInfo(err_info, "_DISK_USAGE_PROTECT_ENABLE only supports TRUE or FALSE");
             return OG_ERROR;
         }
         return OG_SUCCESS;
@@ -425,7 +431,7 @@ static status_t cms_disk_usage_validate_update_value(const char *key, const char
     }
     if (cms_disk_usage_str_equal(key, "_DISK_USAGE_READONLY_COOLDOWN")) {
         if (cm_str2uint32(value, &num_value) != OG_SUCCESS || num_value == 0 ||
-            num_value > CMS_DISK_READONLY_MAX_COOLDOWN) {
+            num_value > CMS_DISK_WRITE_PROTECT_MAX_COOLDOWN) {
             CmsDiskUsageSetInfo(err_info, "cooldown must be an integer in [1,3600]");
             return OG_ERROR;
         }
@@ -539,16 +545,16 @@ status_t cms_disk_usage_update_config(const char *key, const char *value, char *
     return OG_SUCCESS;
 }
 
-status_t cms_disk_usage_update_readonly_config(const char *key, const char *value, char *err_info, uint32 err_len)
+status_t cms_disk_usage_update_write_protect_config(const char *key, const char *value, char *err_info, uint32 err_len)
 {
     return cms_disk_usage_update_config(key, value, err_info, err_len);
 }
 
-void CmsDiskUsageGetReadonlyConfig(CmsDiskReadonlyConfigInfoT *config)
+void CmsDiskUsageGetWriteProtectConfig(CmsDiskWriteProtectConfigInfoT *config)
 {
     CmsDiskUsageConfigT cfg;
     CmsDiskUsageLoadConfig(&cfg);
-    CmsDiskUsageFillReadonlyConfig(config, &cfg);
+    CmsDiskUsageFillWriteProtectConfig(config, &cfg);
 }
 
 static bool32 cms_disk_usage_parse_pgdata_from_argv(char *buf, char *pgdata, uint32 pgdata_size)
@@ -1533,20 +1539,20 @@ static void CmsDiskUsageCollectDss(const CmsDiskUsageConfigT *cfg, CmsDiskUsageS
     }
 }
 
-static void CmsDiskUsageFillReadonlyConfig(CmsDiskReadonlyConfigInfoT *info,
+static void CmsDiskUsageFillWriteProtectConfig(CmsDiskWriteProtectConfigInfoT *info,
     const CmsDiskUsageConfigT *cfg)
 {
-    if (CMS_DISK_USAGE_MEMSET(info, sizeof(CmsDiskReadonlyConfigInfoT), sizeof(CmsDiskReadonlyConfigInfoT)) !=
+    if (CMS_DISK_USAGE_MEMSET(info, sizeof(CmsDiskWriteProtectConfigInfoT), sizeof(CmsDiskWriteProtectConfigInfoT)) !=
         OG_SUCCESS) {
         return;
     }
     info->protect_enabled = cfg->protect_enabled;
-    info->cooldown_sec = cfg->readonly_cooldown_sec;
-    info->last_trigger_time = g_disk_readonly_last_trigger_time;
-    info->last_recover_time = g_disk_readonly_last_recover_time;
-    info->last_action_time = g_disk_readonly_last_action_time;
-    cms_disk_usage_copy_str(info->state, CMS_NAME_BUFFER_SIZE, g_disk_readonly_state);
-    cms_disk_usage_copy_str(info->info, CMS_INFO_BUFFER_SIZE, g_disk_readonly_info);
+    info->cooldown_sec = cfg->write_protect_cooldown_sec;
+    info->last_trigger_time = g_disk_write_protect_last_trigger_time;
+    info->last_recover_time = g_disk_write_protect_last_recover_time;
+    info->last_action_time = g_disk_write_protect_last_action_time;
+    cms_disk_usage_copy_str(info->state, CMS_NAME_BUFFER_SIZE, g_disk_write_protect_state);
+    cms_disk_usage_copy_str(info->info, CMS_INFO_BUFFER_SIZE, g_disk_write_protect_info);
 }
 
 static void cms_disk_usage_build_item_id(const CmsDiskUsageItemT *item, char *id, uint32 id_len)
@@ -1645,11 +1651,11 @@ static bool32 cms_disk_usage_all_success_items_recovered(CmsDiskUsageSnapshotT *
 
 static bool32 cms_disk_usage_trigger_items_recovered(CmsDiskUsageSnapshotT *snapshot)
 {
-    if (g_disk_readonly_trigger_items[0] == '\0') {
+    if (g_disk_write_protect_trigger_items[0] == '\0') {
         return OG_TRUE;
     }
     char buf[CMS_FILE_NAME_BUFFER_SIZE];
-    cms_disk_usage_copy_str(buf, sizeof(buf), g_disk_readonly_trigger_items);
+    cms_disk_usage_copy_str(buf, sizeof(buf), g_disk_write_protect_trigger_items);
     char *save = NULL;
     char *token = strtok_r(buf, ",", &save);
     while (token != NULL) {
@@ -1663,7 +1669,7 @@ static bool32 cms_disk_usage_trigger_items_recovered(CmsDiskUsageSnapshotT *snap
     return OG_TRUE;
 }
 
-static bool32 cms_disk_usage_readwrite_should_recover(CmsDiskUsageSnapshotT *snapshot)
+static bool32 cms_disk_usage_should_disable_write_protect(CmsDiskUsageSnapshotT *snapshot)
 {
     return (cms_disk_usage_all_success_items_recovered(snapshot) == OG_TRUE &&
         cms_disk_usage_trigger_items_recovered(snapshot) == OG_TRUE) ? OG_TRUE : OG_FALSE;
@@ -1695,7 +1701,7 @@ static status_t cms_disk_usage_find_local_db_session(uint64 *session_id, char *e
     return OG_ERROR;
 }
 
-static status_t cms_disk_usage_execute_readmode_message(const CmsDiskUsageConfigT *cfg, uint32 action,
+static status_t cms_disk_usage_execute_write_protect_message(const CmsDiskUsageConfigT *cfg, uint32 action,
     const char *items, char *err_info, uint32 err_len)
 {
     uint64 session_id = 0;
@@ -1703,30 +1709,30 @@ static status_t cms_disk_usage_execute_readmode_message(const CmsDiskUsageConfig
         return OG_ERROR;
     }
 
-    CmsCliMsgReqReadmodeSwitchT req;
-    CmsCliMsgResReadmodeSwitchT res;
+    CmsCliMsgReqWriteProtectSwitchT req;
+    CmsCliMsgResWriteProtectSwitchT res;
     if (CMS_DISK_USAGE_MEMSET(&req, sizeof(req), sizeof(req)) != OG_SUCCESS ||
         CMS_DISK_USAGE_MEMSET(&res, sizeof(res), sizeof(res)) != OG_SUCCESS) {
-        CmsDiskUsageSetInfo(err_info, "init readmode message failed");
+        CmsDiskUsageSetInfo(err_info, "init write protect message failed");
         return OG_ERROR;
     }
 
-    req.head.msg_type = CMS_CLI_MSG_REQ_READMODE_SWITCH;
-    req.head.msg_size = sizeof(CmsCliMsgReqReadmodeSwitchT);
+    req.head.msg_type = CMS_CLI_MSG_REQ_WRITE_PROTECT_SWITCH;
+    req.head.msg_size = sizeof(CmsCliMsgReqWriteProtectSwitchT);
     req.head.msg_version = CMS_MSG_VERSION;
     req.head.msg_seq = cm_now();
     req.head.src_node = g_cms_param->node_id;
     req.head.dest_node = g_cms_param->node_id;
     req.head.uds_sid = session_id;
     req.action = action;
-    req.reason = CMS_READMODE_REASON_DISK_USAGE;
+    req.reason = CMS_WRITE_PROTECT_REASON_DISK_USAGE;
     req.timeout_sec = CMS_DISK_USAGE_CMD_TIMEOUT;
     req.threshold = cfg->threshold_percent;
     cms_disk_usage_copy_str(req.vg_names, sizeof(req.vg_names), items == NULL ? "" : items);
     cms_disk_usage_copy_str(req.match_mode, sizeof(req.match_mode), "ANY");
     int32 printRet = snprintf_s(req.detail, sizeof(req.detail), sizeof(req.detail) - 1,
-        "disk usage action %s, objects %s, mode MESSAGE, match ANY, threshold %u",
-        action == CMS_READMODE_ACTION_READONLY ? "READONLY" : "READWRITE", req.vg_names, req.threshold);
+        "disk usage write protect action %s, objects %s, mode MESSAGE, match ANY, threshold %u",
+        action == CMS_WRITE_PROTECT_ACTION_ENABLE ? "ENABLE" : "DISABLE", req.vg_names, req.threshold);
     if (printRet == -1) {
         req.detail[0] = '\0';
     }
@@ -1734,132 +1740,165 @@ static status_t cms_disk_usage_execute_readmode_message(const CmsDiskUsageConfig
     status_t ret = cms_uds_srv_request(&req.head, &res.head, sizeof(res),
         CMS_DISK_USAGE_CMD_TIMEOUT * MILLISECS_PER_SECOND);
     if (ret != OG_SUCCESS) {
-        CmsDiskUsageSetInfo(err_info, "send readmode message failed, ret %d", ret);
+        CmsDiskUsageSetInfo(err_info, "send write protect message failed, ret %d", ret);
         return OG_ERROR;
     }
     res.info[CMS_MAX_INFO_SIZE - 1] = '\0';
     if (res.result != OG_SUCCESS) {
-        CmsDiskUsageSetInfo(err_info, "readmode message failed, result %d, info %s", res.result, res.info);
+        CmsDiskUsageSetInfo(err_info, "write protect message failed, result %d, info %s", res.result, res.info);
         return OG_ERROR;
     }
-    CmsDiskUsageSetInfo(err_info, "readmode message succeed, info %s", res.info);
+    CmsDiskUsageSetInfo(err_info, "write protect message succeed, info %s", res.info);
     return OG_SUCCESS;
 }
 
-static status_t CmsDiskUsageExecuteReadmodeAction(const CmsDiskUsageConfigT *cfg, bool32 toReadonly,
+static status_t CmsDiskUsageExecuteWriteProtectAction(const CmsDiskUsageConfigT *cfg, bool32 enable,
     const char *items, char *err_info, uint32 err_len)
 {
-    return cms_disk_usage_execute_readmode_message(cfg,
-        toReadonly == OG_TRUE ? CMS_READMODE_ACTION_READONLY : CMS_READMODE_ACTION_READWRITE,
+    return cms_disk_usage_execute_write_protect_message(cfg,
+        enable == OG_TRUE ? CMS_WRITE_PROTECT_ACTION_ENABLE : CMS_WRITE_PROTECT_ACTION_DISABLE,
         items, err_info, err_len);
 }
 
-static status_t cms_disk_usage_execute_readwrite_recover(const CmsDiskUsageConfigT *cfg, const char *action,
+static void CmsDiskUsageReplayWriteProtect(const CmsDiskUsageConfigT *cfg)
+{
+    uint64 session_id = 0;
+    char detail[CMS_INFO_BUFFER_SIZE] = {0};
+
+    if (cfg->protect_enabled != OG_TRUE || g_disk_write_protect_triggered != OG_TRUE) {
+        g_disk_write_protect_last_session_id = (uint64)CMS_CLI_INVALID_SESS_ID;
+        return;
+    }
+    if (cms_disk_usage_find_local_db_session(&session_id, detail, sizeof(detail)) != OG_SUCCESS) {
+        g_disk_write_protect_last_session_id = (uint64)CMS_CLI_INVALID_SESS_ID;
+        return;
+    }
+    if (session_id == g_disk_write_protect_last_session_id) {
+        return;
+    }
+
+    g_disk_write_protect_last_session_id = session_id;
+    if (CmsDiskUsageExecuteWriteProtectAction(cfg, OG_TRUE, g_disk_write_protect_trigger_items, detail,
+        sizeof(detail)) == OG_SUCCESS) {
+        CmsDiskUsageSetWriteProtectState("WRITE_PROTECT_TRIGGERED", "write protection replayed after DB registration: %s",
+            detail);
+        CMS_LOG_WAR("cms disk usage replayed write protection after DB registration, session %llu, detail %s",
+            session_id, detail);
+        return;
+    }
+
+    CmsDiskUsageSetWriteProtectState("WRITE_PROTECT_FAILED", "write protection replay failed after DB registration: %s",
+        detail);
+    CMS_LOG_ERR("cms disk usage replay write protection failed after DB registration, session %llu, detail %s",
+        session_id, detail);
+}
+
+static status_t cms_disk_usage_disable_write_protect(const CmsDiskUsageConfigT *cfg, const char *action,
     char *err_info, uint32 err_len)
 {
     date_t now = cm_now();
-    g_disk_readonly_last_action_time = now;
+    g_disk_write_protect_last_action_time = now;
     char detail[CMS_INFO_BUFFER_SIZE] = {0};
-    status_t ret = CmsDiskUsageExecuteReadmodeAction(cfg, OG_FALSE, g_disk_readonly_trigger_items, detail,
+    status_t ret = CmsDiskUsageExecuteWriteProtectAction(cfg, OG_FALSE, g_disk_write_protect_trigger_items, detail,
         sizeof(detail));
     if (ret == OG_SUCCESS) {
         char recovered_items[CMS_FILE_NAME_BUFFER_SIZE];
-        cms_disk_usage_copy_str(recovered_items, sizeof(recovered_items), g_disk_readonly_trigger_items);
-        g_disk_readonly_triggered = OG_FALSE;
-        g_disk_readonly_trigger_items[0] = '\0';
-        g_disk_readonly_last_recover_time = now;
-        CmsDiskUsageSetReadonlyState("NORMAL", "%s", detail);
-        CMS_LOG_WAR("cms disk usage readwrite recovered, action %s, mode MESSAGE, objects %s, detail %s",
+        cms_disk_usage_copy_str(recovered_items, sizeof(recovered_items), g_disk_write_protect_trigger_items);
+        g_disk_write_protect_triggered = OG_FALSE;
+        g_disk_write_protect_trigger_items[0] = '\0';
+        g_disk_write_protect_last_recover_time = now;
+        CmsDiskUsageSetWriteProtectState("NORMAL", "%s", detail);
+        CMS_LOG_WAR("cms disk usage write protection disabled, action %s, mode MESSAGE, objects %s, detail %s",
             action, recovered_items, detail);
         return OG_SUCCESS;
     }
 
-    CmsDiskUsageSetReadonlyState("READWRITE_FAILED", "%s", detail);
+    CmsDiskUsageSetWriteProtectState("WRITE_UNPROTECT_FAILED", "%s", detail);
     if (err_info != NULL && err_len > 0) {
-        CmsDiskUsageSetInfo(err_info, "readwrite recover failed, detail %s", detail);
+        CmsDiskUsageSetInfo(err_info, "disable write protection failed, detail %s", detail);
     }
-    CMS_LOG_ERR("cms disk usage readwrite recover failed, action %s, mode MESSAGE, detail %s", action, detail);
+    CMS_LOG_ERR("cms disk usage disable write protection failed, action %s, mode MESSAGE, detail %s", action, detail);
     return OG_ERROR;
 }
 
-status_t cms_disk_usage_recover_readwrite_now(char *err_info, uint32 err_len)
+status_t cms_disk_usage_disable_write_protect_now(char *err_info, uint32 err_len)
 {
     CmsDiskUsageEnsureInit();
 
     CmsDiskUsageConfigT cfg;
     CmsDiskUsageLoadConfig(&cfg);
-    return cms_disk_usage_execute_readwrite_recover(&cfg, "manual", err_info, err_len);
+    return cms_disk_usage_disable_write_protect(&cfg, "manual", err_info, err_len);
 }
 
-static void CmsDiskUsageSetReadonlyState(const char *state, const char *fmt, ...)
+static void CmsDiskUsageSetWriteProtectState(const char *state, const char *fmt, ...)
 {
-    cms_disk_usage_copy_str(g_disk_readonly_state, sizeof(g_disk_readonly_state), state);
+    cms_disk_usage_copy_str(g_disk_write_protect_state, sizeof(g_disk_write_protect_state), state);
 
     va_list args;
     va_start(args, fmt);
-    int32 ret = vsnprintf_s(g_disk_readonly_info, sizeof(g_disk_readonly_info), sizeof(g_disk_readonly_info) - 1,
+    int32 ret = vsnprintf_s(g_disk_write_protect_info, sizeof(g_disk_write_protect_info), sizeof(g_disk_write_protect_info) - 1,
         fmt, args);
     va_end(args);
     if (ret == -1) {
-        g_disk_readonly_info[0] = '\0';
+        g_disk_write_protect_info[0] = '\0';
     }
 }
 
-static void CmsDiskUsageHandleReadonlyAction(const CmsDiskUsageConfigT *cfg,
+static void CmsDiskUsageHandleWriteProtectAction(const CmsDiskUsageConfigT *cfg,
     CmsDiskUsageSnapshotT *snapshot)
 {
     date_t now = cm_now();
-    date_t cooldown = (date_t)cfg->readonly_cooldown_sec * MICROSECS_PER_SECOND_LL;
-    bool32 should_recover = cms_disk_usage_readwrite_should_recover(snapshot);
+    date_t cooldown = (date_t)cfg->write_protect_cooldown_sec * MICROSECS_PER_SECOND_LL;
+    bool32 should_recover = cms_disk_usage_should_disable_write_protect(snapshot);
     char alarm_items[CMS_FILE_NAME_BUFFER_SIZE] = {0};
     bool32 should_trigger = cms_disk_usage_has_success_alarm(snapshot, alarm_items, sizeof(alarm_items));
 
     if (cfg->protect_enabled != OG_TRUE) {
-        CmsDiskUsageSetReadonlyState(g_disk_readonly_triggered == OG_TRUE ? "READONLY_TRIGGERED" : "NORMAL",
+        CmsDiskUsageSetWriteProtectState(g_disk_write_protect_triggered == OG_TRUE ? "WRITE_PROTECT_TRIGGERED" : "NORMAL",
             "disk usage protect disabled");
         return;
     }
 
-    if (g_disk_readonly_triggered != OG_TRUE && should_trigger == OG_TRUE) {
-        if (g_disk_readonly_last_action_time != 0 && now - g_disk_readonly_last_action_time < cooldown) {
-            CmsDiskUsageSetReadonlyState("READONLY_PENDING", "readonly action is in cooldown, objects %s",
+    if (g_disk_write_protect_triggered != OG_TRUE && should_trigger == OG_TRUE) {
+        if (g_disk_write_protect_last_action_time != 0 && now - g_disk_write_protect_last_action_time < cooldown) {
+            CmsDiskUsageSetWriteProtectState("WRITE_PROTECT_PENDING", "write protect action is in cooldown, objects %s",
                 alarm_items);
             return;
         }
 
-        g_disk_readonly_last_action_time = now;
+        g_disk_write_protect_last_action_time = now;
         char detail[CMS_INFO_BUFFER_SIZE] = {0};
-        if (CmsDiskUsageExecuteReadmodeAction(cfg, OG_TRUE, alarm_items, detail, sizeof(detail)) == OG_SUCCESS) {
-            g_disk_readonly_triggered = OG_TRUE;
-            cms_disk_usage_copy_str(g_disk_readonly_trigger_items, sizeof(g_disk_readonly_trigger_items), alarm_items);
-            g_disk_readonly_last_trigger_time = now;
-            CmsDiskUsageSetReadonlyState("READONLY_TRIGGERED", "%s", detail);
-            CMS_LOG_WAR("cms disk usage readonly triggered, mode MESSAGE, match ANY, objects %s, detail %s",
+        if (CmsDiskUsageExecuteWriteProtectAction(cfg, OG_TRUE, alarm_items, detail, sizeof(detail)) == OG_SUCCESS) {
+            g_disk_write_protect_triggered = OG_TRUE;
+            cms_disk_usage_copy_str(g_disk_write_protect_trigger_items, sizeof(g_disk_write_protect_trigger_items), alarm_items);
+            g_disk_write_protect_last_trigger_time = now;
+            CmsDiskUsageSetWriteProtectState("WRITE_PROTECT_TRIGGERED", "%s", detail);
+            CMS_LOG_WAR("cms disk usage write protection triggered, mode MESSAGE, match ANY, objects %s, detail %s",
                 alarm_items, detail);
         } else {
-            CmsDiskUsageSetReadonlyState("READONLY_FAILED", "%s", detail);
-            CMS_LOG_ERR("cms disk usage readonly trigger failed, mode MESSAGE, objects %s, detail %s",
+            CmsDiskUsageSetWriteProtectState("WRITE_PROTECT_FAILED", "%s", detail);
+            CMS_LOG_ERR("cms disk usage write protection trigger failed, mode MESSAGE, objects %s, detail %s",
                 alarm_items, detail);
         }
         return;
     }
 
-    if (g_disk_readonly_triggered == OG_TRUE && should_recover == OG_TRUE) {
-        if (g_disk_readonly_last_action_time != 0 && now - g_disk_readonly_last_action_time < cooldown) {
-            CmsDiskUsageSetReadonlyState("READWRITE_PENDING", "readwrite action is in cooldown");
+    if (g_disk_write_protect_triggered == OG_TRUE && should_recover == OG_TRUE) {
+        if (g_disk_write_protect_last_action_time != 0 && now - g_disk_write_protect_last_action_time < cooldown) {
+            CmsDiskUsageSetWriteProtectState("WRITE_UNPROTECT_PENDING", "disable write protection is in cooldown");
             return;
         }
 
-        (void)cms_disk_usage_execute_readwrite_recover(cfg, "auto", NULL, 0);
+        (void)cms_disk_usage_disable_write_protect(cfg, "auto", NULL, 0);
         return;
     }
 
-    if (g_disk_readonly_triggered == OG_TRUE) {
-        CmsDiskUsageSetReadonlyState("READONLY_TRIGGERED", should_recover == OG_TRUE ?
-            "readonly triggered" : "readonly triggered, disk objects are still above threshold or unavailable");
+    if (g_disk_write_protect_triggered == OG_TRUE) {
+        CmsDiskUsageSetWriteProtectState("WRITE_PROTECT_TRIGGERED", should_recover == OG_TRUE ?
+            "write protection triggered" : "write protection triggered, disk objects are still above threshold or unavailable");
     } else {
-        CmsDiskUsageSetReadonlyState("NORMAL", should_trigger == OG_TRUE ?
-            "readonly condition matched but no action executed" : "readonly condition not matched");
+        CmsDiskUsageSetWriteProtectState("NORMAL", should_trigger == OG_TRUE ?
+            "write protect condition matched but no action executed" : "write protect condition not matched");
     }
 }
 
@@ -1993,12 +2032,12 @@ static void CmsDiskUsageCollectOnce(void)
     snapshot.interval_sec = cfg.interval_sec;
     snapshot.threshold_percent = cfg.threshold_percent;
     snapshot.last_check_time = cm_now();
-    CmsDiskUsageFillReadonlyConfig(&snapshot.readonly_config, &cfg);
+    CmsDiskUsageFillWriteProtectConfig(&snapshot.write_protect_config, &cfg);
 
     CmsDiskUsageCollectLocal(&cfg, &snapshot.local);
     CmsDiskUsageCollectDss(&cfg, &snapshot);
-    CmsDiskUsageHandleReadonlyAction(&cfg, &snapshot);
-    CmsDiskUsageFillReadonlyConfig(&snapshot.readonly_config, &cfg);
+    CmsDiskUsageHandleWriteProtectAction(&cfg, &snapshot);
+    CmsDiskUsageFillWriteProtectConfig(&snapshot.write_protect_config, &cfg);
     CmsDiskUsageBuildSnapshotInfo(&snapshot);
     CmsDiskUsagePublishSnapshot(&snapshot);
 }
@@ -2025,6 +2064,9 @@ void cms_disk_usage_check_entry(thread_t *thread)
             interval = CMS_DISK_USAGE_DEFAULT_INTERVAL;
         }
         for (uint32 i = 0; i < interval && !thread->closed; i++) {
+            CmsDiskUsageConfigT cfg;
+            CmsDiskUsageLoadConfig(&cfg);
+            CmsDiskUsageReplayWriteProtect(&cfg);
             cm_sleep(MILLISECS_PER_SECOND);
         }
     }

@@ -767,6 +767,12 @@ status_t sql_verify_table_dml_object(knl_handle_t session, sql_stmt_t *stmt, sou
         return OG_ERROR;
     }
 
+    if (DB_IS_DISK_WRITE_PROTECTED(se) && dc.type != DICT_TYPE_TEMP_TABLE_SESSION &&
+        dc.type != DICT_TYPE_TEMP_TABLE_TRANS) {
+        OG_SRC_THROW_ERROR(loc, ERR_WRITE_OPT_IN_DISK_PROTECT);
+        return OG_ERROR;
+    }
+
     if (DB_IS_READONLY(se)) {
         OG_SRC_THROW_ERROR(loc, ERR_DATABASE_ROLE, "dml", "in read only mode");
         return OG_ERROR;

@@ -24,6 +24,7 @@
  */
 #include "knl_common_module.h"
 #include "knl_lob.h"
+#include "knl_interface.h"
 #include "knl_context.h"
 #include "knl_table.h"
 #include "knl_sys_part_defs.h"
@@ -2330,6 +2331,10 @@ status_t knl_write_lob(knl_handle_t se, knl_cursor_t *cursor, char *locator, knl
     uint64 writed_lob_size;
     knl_session_t *session = (knl_session_t *)se;
     errno_t ret;
+
+    if (knl_check_disk_write_protect_dml(se, cursor) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
 
     if (column->datatype == OG_TYPE_CLOB || column->datatype == OG_TYPE_IMAGE) {
         lob.str = ((text_t *)data)->str;

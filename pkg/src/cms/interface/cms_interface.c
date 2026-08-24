@@ -56,7 +56,7 @@ int8                        g_inst_id = -1;
 static cms_notify_func_t    g_notify_func;
 static cms_master_op_t      g_master_func;
 static cms_upgrade_op_t     g_upgrade_func;
-static cms_readmode_op_t    g_readmodeFunc;
+static cms_write_protect_op_t g_writeProtectFunc;
 static thread_t             g_cli_hb_thread;
 static bool32               g_cli_hbt_term = OG_TRUE;
 static thread_t             g_cli_recv_thread;
@@ -633,18 +633,18 @@ static void cms_cli_proc_msg_req_iof_kick(cms_packet_head_t* msg)
     }
 }
 
-static void CmsCliProcMsgReqReadmodeSwitch(cms_packet_head_t *msg)
+static void CmsCliProcMsgReqWriteProtectSwitch(cms_packet_head_t *msg)
 {
-    CmsCliMsgReqReadmodeSwitchT *req = (CmsCliMsgReqReadmodeSwitchT *)msg;
-    CmsCliMsgResReadmodeSwitchT res;
+    CmsCliMsgReqWriteProtectSwitchT *req = (CmsCliMsgReqWriteProtectSwitchT *)msg;
+    CmsCliMsgResWriteProtectSwitchT res;
     errno_t err = memset_s(&res, sizeof(res), 0, sizeof(res));
     if (err != EOK) {
         OG_LOG_RUN_ERR("memset_s failed, err %d", err);
         return;
     }
 
-    res.head.msg_size = sizeof(CmsCliMsgResReadmodeSwitchT);
-    res.head.msg_type = CMS_CLI_MSG_RES_READMODE_SWITCH;
+    res.head.msg_size = sizeof(CmsCliMsgResWriteProtectSwitchT);
+    res.head.msg_type = CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH;
     res.head.msg_version = CMS_MSG_VERSION;
     res.head.msg_seq = cms_uds_cli_get_msg_seq();
     res.head.src_msg_seq = msg->msg_seq;
@@ -653,19 +653,19 @@ static void CmsCliProcMsgReqReadmodeSwitch(cms_packet_head_t *msg)
     res.result = OG_ERROR;
 
     int32 ret = 0;
-    if (msg->msg_size != sizeof(CmsCliMsgReqReadmodeSwitchT)) {
+    if (msg->msg_size != sizeof(CmsCliMsgReqWriteProtectSwitchT)) {
         ret = snprintf_s(res.info, sizeof(res.info), sizeof(res.info) - 1,
-            "invalid readmode switch msg size %u", msg->msg_size);
-    } else if (req->action != CMS_READMODE_ACTION_READONLY && req->action != CMS_READMODE_ACTION_READWRITE) {
+            "invalid write protect switch msg size %u", msg->msg_size);
+    } else if (req->action != CMS_WRITE_PROTECT_ACTION_ENABLE && req->action != CMS_WRITE_PROTECT_ACTION_DISABLE) {
         ret = snprintf_s(res.info, sizeof(res.info), sizeof(res.info) - 1,
-            "invalid readmode action %u", req->action);
-    } else if (g_readmodeFunc == NULL) {
+            "invalid write protect action %u", req->action);
+    } else if (g_writeProtectFunc == NULL) {
         ret = snprintf_s(res.info, sizeof(res.info), sizeof(res.info) - 1,
-            "readmode callback is not registered");
+            "write protect callback is not registered");
     } else {
         req->detail[CMS_MAX_INFO_SIZE - 1] = '\0';
-        CmsReadmodeSwitchCtxT ctx = {req->action, req->timeout_sec, req->detail, res.info, sizeof(res.info)};
-        res.result = g_readmodeFunc(&ctx);
+        CmsWriteProtectSwitchCtxT ctx = {req->action, req->timeout_sec, req->detail, res.info, sizeof(res.info)};
+        res.result = g_writeProtectFunc(&ctx);
     }
     if (ret == -1) {
         res.info[0] = '\0';
@@ -673,11 +673,11 @@ static void CmsCliProcMsgReqReadmodeSwitch(cms_packet_head_t *msg)
 
     status_t status = cms_uds_cli_send(&res.head, CMS_CLI_UDS_SEND_TMOUT);
     if (status != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("send readmode switch response failed, action %u, result %d, info %s",
+        OG_LOG_RUN_ERR("send write protect switch response failed, action %u, result %d, info %s",
             req->action, res.result, res.info);
         return;
     }
-    OG_LOG_RUN_INF("send readmode switch response succeed, action %u, result %d, info %s",
+    OG_LOG_RUN_INF("send write protect switch response succeed, action %u, result %d, info %s",
         req->action, res.result, res.info);
 }
 
@@ -720,8 +720,8 @@ static void cms_cli_proc_msg(cms_packet_head_t* msg)
             cms_cli_proc_msg_req_upgrade(msg);
             break;
         }
-        case CMS_CLI_MSG_REQ_READMODE_SWITCH: {
-            CmsCliProcMsgReqReadmodeSwitch(msg);
+        case CMS_CLI_MSG_REQ_WRITE_PROTECT_SWITCH: {
+            CmsCliProcMsgReqWriteProtectSwitch(msg);
             break;
         }
         default:
@@ -1272,7 +1272,7 @@ void cms_res_inst_register_upgrade(cms_upgrade_op_t upgrade_func)
     g_upgrade_func = upgrade_func;
 }
 
-void CmsResInstRegisterReadmode(cms_readmode_op_t readmodeFunc)
+void CmsResInstRegisterWriteProtect(cms_write_protect_op_t writeProtectFunc)
 {
-    g_readmodeFunc = readmodeFunc;
+    g_writeProtectFunc = writeProtectFunc;
 }

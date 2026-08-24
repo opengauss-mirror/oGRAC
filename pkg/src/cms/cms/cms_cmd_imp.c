@@ -1626,9 +1626,9 @@ static void CmsPrintDiskUsage(CmsToolMsgResDiskUsageT *resMsg)
     printf("DISK_USAGE_CHECK_INTERVAL = %u\n", snapshot->interval_sec);
     printf("DISK_USAGE_THRESHOLD = %u\n", snapshot->threshold_percent);
     printf("DISK_USAGE_PROTECT_ENABLE = %s\n",
-        snapshot->readonly_config.protect_enabled == OG_TRUE ? "TRUE" : "FALSE");
-    printf("DISK_USAGE_READONLY_COOLDOWN = %u\n", snapshot->readonly_config.cooldown_sec);
-    printf("DISK_USAGE_READONLY_STATE = %s\n", snapshot->readonly_config.state);
+        snapshot->write_protect_config.protect_enabled == OG_TRUE ? "TRUE" : "FALSE");
+    printf("DISK_USAGE_WRITE_PROTECT_COOLDOWN = %u\n", snapshot->write_protect_config.cooldown_sec);
+    printf("DISK_USAGE_WRITE_PROTECT_STATE = %s\n", snapshot->write_protect_config.state);
     printf("%-6s %-12s %-32s %-10s %-10s %-10s %-8s %-9s %-8s %-20s %s\n",
         "TYPE", "NAME", "SOURCE", "TOTAL_GB", "USED_GB", "FREE_GB", "USE%", "THRESHOLD", "STATUS",
         "LAST_CHECK", "INFO");
@@ -1661,7 +1661,7 @@ static int32 cms_query_disk_usage(CmsToolMsgResDiskUsageT *res, const char *oper
     return OG_SUCCESS;
 }
 
-static const char *cms_disk_readonly_get_set_key(const char *item)
+static const char *cms_disk_write_protect_get_set_key(const char *item)
 {
     if (strcmp(item, "threshold") == 0) {
         return "_DISK_USAGE_THRESHOLD";
@@ -1675,28 +1675,32 @@ static const char *cms_disk_readonly_get_set_key(const char *item)
     return NULL;
 }
 
-static const char *cms_disk_readonly_normalize_value(const char *key, const char *value)
+static const char *cms_disk_write_protect_normalize_value(const char *key, const char *value)
 {
-    bool32 bool_value;
-    if (strcmp(key, "_DISK_USAGE_PROTECT_ENABLE") == 0 && cm_str2bool(value, &bool_value) == OG_SUCCESS) {
-        return bool_value == OG_TRUE ? "TRUE" : "FALSE";
+    if (strcmp(key, "_DISK_USAGE_PROTECT_ENABLE") == 0) {
+        if (cm_strcmpi(value, "TRUE") == 0) {
+            return "TRUE";
+        }
+        if (cm_strcmpi(value, "FALSE") == 0) {
+            return "FALSE";
+        }
     }
     return value;
 }
 
-static int32 cms_disk_readonly_update_config(const char *key, const char *value)
+static int32 cms_disk_write_protect_update_config(const char *key, const char *value)
 {
-    const char *normalizedValue = cms_disk_readonly_normalize_value(key, value);
+    const char *normalizedValue = cms_disk_write_protect_normalize_value(key, value);
     char err_info[CMS_INFO_BUFFER_SIZE] = {0};
     if (cms_disk_usage_update_config(key, normalizedValue, err_info, sizeof(err_info)) != OG_SUCCESS) {
-        printf("update diskreadonly failed: %s\n", err_info);
+        printf("update disk write protection failed: %s\n", err_info);
         return OG_ERROR;
     }
-    printf("update diskreadonly succeed, %s = %s\n", key, normalizedValue);
+    printf("update disk write protection succeed, %s = %s\n", key, normalizedValue);
     return OG_SUCCESS;
 }
 
-static int32 cms_disk_readonly_show(void)
+static int32 cms_disk_write_protect_show(void)
 {
     CmsToolMsgResDiskUsageT res = {0};
     if (cms_query_disk_usage(&res, "diskreadonly show") != OG_SUCCESS) {
@@ -1706,28 +1710,28 @@ static int32 cms_disk_readonly_show(void)
     return OG_SUCCESS;
 }
 
-static int32 cms_disk_readwrite_recover_now(void)
+static int32 cms_disk_write_protect_disable_now(void)
 {
     status_t ret = OG_SUCCESS;
-    CmsToolMsgReqDiskReadwriteRecoverT req = {0};
-    CmsToolMsgResDiskReadwriteRecoverT res = {0};
+    CmsToolMsgReqDiskWriteProtectDisableT req = {0};
+    CmsToolMsgResDiskWriteProtectDisableT res = {0};
     char err_info[CMS_INFO_BUFFER_SIZE] = {0};
 
-    req.head.msg_type = CMS_TOOL_MSG_REQ_DISK_READWRITE_RECOVER;
-    req.head.msg_size = sizeof(CmsToolMsgReqDiskReadwriteRecoverT);
+    req.head.msg_type = CMS_TOOL_MSG_REQ_DISK_WRITE_PROTECT_DISABLE;
+    req.head.msg_size = sizeof(CmsToolMsgReqDiskWriteProtectDisableT);
     req.head.msg_version = CMS_MSG_VERSION;
     req.head.msg_seq = cms_uds_cli_get_msg_seq();
-    ret = cms_send_to_server(&req.head, &res.head, sizeof(CmsToolMsgResDiskReadwriteRecoverT),
+    ret = cms_send_to_server(&req.head, &res.head, sizeof(CmsToolMsgResDiskWriteProtectDisableT),
         CMS_CLIENT_REQUEST_TIMEOUT, err_info);
     if (ret != OG_SUCCESS) {
-        printf("%s, diskreadonly recover-now failed.\n", err_info);
+        printf("%s, disable disk write protection failed.\n", err_info);
         return OG_ERROR;
     }
     if (res.result != OG_SUCCESS) {
-        printf("diskreadonly recover-now failed: %s\n", res.err_info);
+        printf("disable disk write protection failed: %s\n", res.err_info);
         return OG_ERROR;
     }
-    printf("diskreadonly recover-now succeed.\n");
+    printf("disk write protection disabled.\n");
     return OG_SUCCESS;
 }
 
@@ -1740,24 +1744,24 @@ int32 cms_disk_readonly(int32 argc, char *argv[])
 
     if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-show") == 0 &&
         argc == CMS_DISK_CMD_ARG_WITH_VALUE) {
-        return cms_disk_readonly_show();
+        return cms_disk_write_protect_show();
     }
     if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-recover-now") == 0 &&
         argc == CMS_DISK_CMD_ARG_WITH_VALUE) {
-        return cms_disk_readwrite_recover_now();
+        return cms_disk_write_protect_disable_now();
     }
     if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-auto_change") == 0 &&
         argc == CMS_DISK_CMD_ARG_WITH_TWO_VALUES) {
-        return cms_disk_readonly_update_config("_DISK_USAGE_PROTECT_ENABLE", argv[CMS_DISK_CMD_ARG_EXTRA_INDEX]);
+        return cms_disk_write_protect_update_config("_DISK_USAGE_PROTECT_ENABLE", argv[CMS_DISK_CMD_ARG_EXTRA_INDEX]);
     }
     if (strcmp(argv[CMS_DISK_CMD_ARG_VALUE_INDEX], "-set") == 0 &&
         argc == CMS_DISK_CMD_ARG_WITH_THREE_VALUES) {
-        const char *key = cms_disk_readonly_get_set_key(argv[CMS_DISK_CMD_ARG_EXTRA_INDEX]);
+        const char *key = cms_disk_write_protect_get_set_key(argv[CMS_DISK_CMD_ARG_EXTRA_INDEX]);
         if (key == NULL) {
             printf("invalid diskreadonly set item. usage: cms diskreadonly -set threshold|cooldown|interval [VALUE]\n");
             return OG_ERROR;
         }
-        return cms_disk_readonly_update_config(key, argv[CMS_DISK_CMD_ARG_SET_VALUE_INDEX]);
+        return cms_disk_write_protect_update_config(key, argv[CMS_DISK_CMD_ARG_SET_VALUE_INDEX]);
     }
 
     printf("invalid diskreadonly argument.\n");

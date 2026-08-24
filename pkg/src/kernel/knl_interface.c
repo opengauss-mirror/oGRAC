@@ -590,6 +590,10 @@ status_t knl_set_session_trans(knl_handle_t session, isolation_level_t level, bo
 {
     knl_session_t *se = (knl_session_t *)session;
 
+    if (DB_IS_DISK_WRITE_PROTECTED(se) && (is_select == OG_FALSE)) {
+        return knl_check_disk_write_protect(session);
+    }
+
     if (DB_IS_READONLY(se) && (is_select == OG_FALSE)) {
         OG_THROW_ERROR(ERR_WRITE_OPT_IN_READONLY, "operation on read only mode");
         return OG_ERROR;
@@ -609,6 +613,38 @@ status_t knl_set_session_trans(knl_handle_t session, isolation_level_t level, bo
     se->rm->query_scn = DB_CURR_SCN(se);
 
     return OG_SUCCESS;
+}
+
+status_t knl_check_disk_write_protect(knl_handle_t handle)
+{
+    knl_session_t *session = (knl_session_t *)handle;
+
+    if (!DB_IS_DISK_WRITE_PROTECTED(session) || IS_SYS_SESSION(session)) {
+        return OG_SUCCESS;
+    }
+
+    OG_THROW_ERROR(ERR_WRITE_OPT_IN_DISK_PROTECT);
+    return OG_ERROR;
+}
+
+status_t knl_check_disk_write_protect_dml(knl_handle_t handle, knl_cursor_t *cursor)
+{
+    knl_session_t *session = (knl_session_t *)handle;
+    dc_entity_t *entity = cursor == NULL ? NULL : (dc_entity_t *)cursor->dc_entity;
+
+    if (!DB_IS_DISK_WRITE_PROTECTED(session) || IS_SYS_SESSION(session)) {
+        return OG_SUCCESS;
+    }
+    if (cursor != NULL && (cursor->dc_type == DICT_TYPE_TEMP_TABLE_SESSION ||
+        cursor->dc_type == DICT_TYPE_TEMP_TABLE_TRANS)) {
+        return OG_SUCCESS;
+    }
+    if (entity != NULL && IS_SYS_TABLE(&entity->table)) {
+        return OG_SUCCESS;
+    }
+
+    OG_THROW_ERROR(ERR_WRITE_OPT_IN_DISK_PROTECT);
+    return OG_ERROR;
 }
 
 /*
@@ -1788,6 +1824,13 @@ status_t knl_open_cursor(knl_handle_t handle, knl_cursor_t *cursor, knl_dictiona
     knl_session_t *session = (knl_session_t *)handle;
     knl_rm_t *rm = session->rm;
     dc_entity_t *entity = DC_ENTITY(dc);
+
+    if (cursor->action != CURSOR_ACTION_SELECT && DB_IS_DISK_WRITE_PROTECTED(session) &&
+        !IS_SYS_SESSION(session) && dc->type != DICT_TYPE_TEMP_TABLE_SESSION &&
+        dc->type != DICT_TYPE_TEMP_TABLE_TRANS && !IS_SYS_TABLE(&entity->table)) {
+        OG_THROW_ERROR(ERR_WRITE_OPT_IN_DISK_PROTECT);
+        return OG_ERROR;
+    }
 
     if (DB_IS_READONLY(session) && cursor->action > CURSOR_ACTION_SELECT) {
         if (DB_IS_PRIMARY(&session->kernel->db) ||
@@ -3993,6 +4036,10 @@ status_t knl_internal_insert(knl_handle_t session, knl_cursor_t *cursor)
 
     knl_session_t *se = (knl_session_t *)session;
 
+    if (knl_check_disk_write_protect_dml(session, cursor) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     if (SECUREC_UNLIKELY(!cursor->logging)) {
         if (se->kernel->lsnd_ctx.standby_num > 0) {
             OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW, "insert data in nologging mode when standby server is available");
@@ -4080,6 +4127,11 @@ status_t knl_internal_delete(knl_handle_t handle, knl_cursor_t *cursor)
 
     if (!cursor->is_valid) {
         OG_THROW_ERROR(ERR_INVALID_CURSOR);
+        oGRAC_record_io_stat_end(IO_RECORD_EVENT_KNL_INTERNAL_DELETE, &tv_begin);
+        return OG_ERROR;
+    }
+
+    if (knl_check_disk_write_protect_dml(handle, cursor) != OG_SUCCESS) {
         oGRAC_record_io_stat_end(IO_RECORD_EVENT_KNL_INTERNAL_DELETE, &tv_begin);
         return OG_ERROR;
     }
@@ -4193,6 +4245,11 @@ status_t knl_internal_update(knl_handle_t session, knl_cursor_t *cursor)
 
     if (!cursor->is_valid) {
         OG_THROW_ERROR(ERR_INVALID_CURSOR);
+        oGRAC_record_io_stat_end(IO_RECORD_EVENT_KNL_INTERNAL_UPDATE, &tv_begin);
+        return OG_ERROR;
+    }
+
+    if (knl_check_disk_write_protect_dml(session, cursor) != OG_SUCCESS) {
         oGRAC_record_io_stat_end(IO_RECORD_EVENT_KNL_INTERNAL_UPDATE, &tv_begin);
         return OG_ERROR;
     }
@@ -4450,6 +4507,10 @@ status_t knl_lock_row(knl_handle_t session, knl_cursor_t *cursor, bool32 *is_fou
         return OG_ERROR;
     }
 
+    if (knl_check_disk_write_protect_dml(session, cursor) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     if (cursor->action <= CURSOR_ACTION_SELECT) {
         OG_THROW_ERROR(ERR_INVALID_CURSOR);
         return OG_ERROR;
@@ -4639,6 +4700,10 @@ status_t knl_get_serial_value(knl_handle_t handle, knl_handle_t dc_entity, uint6
     dc_entity_t *entity = (dc_entity_t *)dc_entity;
     dc_entry_t *entry = entity->entry;
     uint64 start_val = entity->table.desc.serial_start;
+    if (entity->type != DICT_TYPE_TEMP_TABLE_SESSION && entity->type != DICT_TYPE_TEMP_TABLE_TRANS &&
+        knl_check_disk_write_protect(handle) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
     if (lock_table_shared(session, dc_entity, LOCK_INF_WAIT) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -5539,17 +5604,26 @@ status_t knl_get_seq_def(knl_handle_t session, text_t *user, text_t *name, knl_s
 
 status_t knl_seq_nextval(knl_handle_t session, text_t *user, text_t *name, int64 *nextval)
 {
+    if (knl_check_disk_write_protect(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
     return db_next_seq_value((knl_session_t *)session, user, name, nextval);
 }
 
 status_t knl_get_nextval_for_cn(knl_handle_t session, text_t *user, text_t *name, int64 *value)
 {
+    if (knl_check_disk_write_protect(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
     return db_get_nextval_for_cn((knl_session_t *)session, user, name, value);
 }
 
 status_t knl_seq_multi_val(knl_handle_t session, knl_sequence_def_t *def, uint32 group_order, uint32 group_cnt,
                            uint32 count)
 {
+    if (knl_check_disk_write_protect(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
     return db_multi_seq_value((knl_session_t *)session, def, group_order, group_cnt, count);
 }
 
@@ -9220,6 +9294,10 @@ status_t knl_lock_tables(knl_handle_t session, lock_tables_def_t *def)
     schema_lock_t *lock = NULL;
     dc_entity_t *entity = NULL;
 
+    if (knl_check_disk_write_protect(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     if (DB_IS_READONLY(se)) {
         OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "operation on read only mode");
         return OG_ERROR;
@@ -11471,6 +11549,9 @@ status_t knl_update_serial_value(knl_handle_t session, knl_handle_t dc_entity, i
     if (entity->type == DICT_TYPE_TEMP_TABLE_SESSION || entity->type == DICT_TYPE_TEMP_TABLE_TRANS) {
         return knl_update_serial_value_tmp_table(session, entity, value, is_uint64);
     }
+    if (knl_check_disk_write_protect(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
     if (entity->table.heap.segment == NULL) {
         if (heap_create_entry(se, &entity->table.heap) != OG_SUCCESS) {
             return OG_ERROR;
@@ -12025,6 +12106,13 @@ static status_t chk_ddl_enable_rd_only(knl_session_t *session, ddl_exec_status_t
         return OG_ERROR;
     }
 
+    if (DB_IS_DISK_WRITE_PROTECTED(session)) {
+        *exec_stat = DDL_DISABLE_DISK_WRITE_PROTECT;
+        OG_LOG_RUN_WAR("[DDL] refuse DDL because database is in disk write protect mode");
+        OG_THROW_ERROR(ERR_WRITE_OPT_IN_DISK_PROTECT);
+        return OG_ERROR;
+    }
+
     if (DB_IS_READONLY(session)) {
         *exec_stat = DDL_DISABLE_READ_ONLY;
         OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "operation on read only mode");
@@ -12203,6 +12291,11 @@ status_t knl_create_interval_part(knl_handle_t session, knl_dictionary_t *dc, ui
     knl_session_t *se = (knl_session_t *)session;
     dc_entity_t *dc_entity = DC_ENTITY(dc);
     table_t *table = DC_TABLE(dc);
+
+    if (dc->type != DICT_TYPE_TEMP_TABLE_SESSION && dc->type != DICT_TYPE_TEMP_TABLE_TRANS &&
+        knl_check_disk_write_protect(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
 
     // check whether dc is corrupted or not, if corrupted, could not create interval partition
     if (dc_entity->corrupted) {
