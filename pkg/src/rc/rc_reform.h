@@ -404,6 +404,7 @@ bool32 rc_reform_trigger_disable(void);
 void rc_reform_trigger_enable(void);
 cms_res_status_list_t *rc_get_current_stat(void);
 cms_res_status_list_t *rc_get_target_stat(void);
+bool32 rc_is_dss_lost(void);
 
 #ifdef __cplusplus
 }

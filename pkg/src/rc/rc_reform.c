@@ -26,12 +26,19 @@
 #include "rc_module.h"
 #include "rc_reform.h"
 #include "cm_log.h"
+#include "cm_atomic.h"
 #include "knl_database.h"
 #include "knl_context.h"
 
 reform_ctx_t *g_rc_ctx = NULL;
 static cluster_view_t g_cluster_view = { .is_stable = OG_TRUE };
 reform_callback_t g_rc_callback = { 0 };
+
+enum { RC_DSS_RUNNING = 0, RC_DSS_LOST = 1 };
+#define RC_DSS_STATUS_CHECK_INTERVAL_MS 1000
+#define RC_DSS_STATUS_CHECK_SLEEP_MS 10
+static atomic32_t g_dss_fault_state = RC_DSS_RUNNING;
+static bool8 g_dss_seen_online = OG_FALSE;
 
 static void rc_update_cluster_view(cms_res_status_list_t *res_list)
 {
@@ -168,6 +175,39 @@ cms_res_status_t *get_res_stat_by_inst_id(cms_res_status_list_t *list, uint8 ins
         }
     }
     return NULL;
+}
+
+static void RcCheckDssStatus(void)
+{
+    if (cm_atomic32_get(&g_dss_fault_state) != RC_DSS_RUNNING) {
+        return;
+    }
+
+    cms_res_status_t local_stat;
+    if (cms_get_dss_local_stat(&local_stat) != OG_SUCCESS) {
+        return;
+    }
+
+    if (local_stat.stat == CMS_RES_ONLINE) {
+        g_dss_seen_online = OG_TRUE;
+        return;
+    }
+
+    /* Ignore startup and non-authoritative states. An observed OFFLINE is irreversible for this process. */
+    if (!g_dss_seen_online || local_stat.stat != CMS_RES_OFFLINE) {
+        return;
+    }
+
+    if (!cm_atomic32_cas(&g_dss_fault_state, RC_DSS_RUNNING, RC_DSS_LOST)) {
+        return;
+    }
+    OG_LOG_RUN_ERR("[RC] local DSS is OFFLINE, node_id:%u, work_stat:%u, entering DSS_LOST",
+                   local_stat.node_id, local_stat.work_stat);
+}
+
+bool32 rc_is_dss_lost(void)
+{
+    return g_rc_ctx != NULL && cm_atomic32_get(&g_dss_fault_state) == RC_DSS_LOST;
 }
 
 static bool32 rc_cluster_stat_suspicious(const cms_res_status_list_t *res_list)
@@ -589,6 +629,8 @@ static void rc_init_redo_stat(void)
 static status_t init_reform_ctx(reform_init_t *init_st)
 {
     g_rc_ctx->started = OG_FALSE;
+    g_dss_fault_state = RC_DSS_RUNNING;
+    g_dss_seen_online = OG_FALSE;
     reset_reform_info(OG_TRUE);
     char *buf;
     buf = (char *)malloc(2 * sizeof(struct st_cms_res_status_list_t));
@@ -1055,10 +1097,19 @@ static void rc_wait_cms_notify(void)
     }
 
     int64 remain_wait_time = RC_WAIT_CMS_NOTIFY_TIME;
+    uint32 dss_check_elapsed = 0;
 
     while (SECUREC_LIKELY(g_rc_ctx->info.fetch_cms_time == 0) && SECUREC_LIKELY(remain_wait_time >= 0)) {
-        cm_sleep(10);
-        remain_wait_time -= 10;
+        cm_sleep(RC_DSS_STATUS_CHECK_SLEEP_MS);
+        remain_wait_time -= RC_DSS_STATUS_CHECK_SLEEP_MS;
+        dss_check_elapsed += RC_DSS_STATUS_CHECK_SLEEP_MS;
+        if (dss_check_elapsed >= RC_DSS_STATUS_CHECK_INTERVAL_MS) {
+            RcCheckDssStatus();
+            if (rc_is_dss_lost()) {
+                return;
+            }
+            dss_check_elapsed = 0;
+        }
     }
 }
 
@@ -1149,6 +1200,11 @@ bool32 rc_detect_reform_triggered(void)
 void rc_reform_trigger_proc(thread_t *thread)
 {
     while (!thread->closed) {
+        RcCheckDssStatus();
+        if (rc_is_dss_lost()) {
+            cm_sleep(RC_DSS_STATUS_CHECK_SLEEP_MS);
+            continue;
+        }
         rc_refresh_cluster_info();
         if (g_rc_ctx->info.have_error) {
             g_rc_callback.stop_cur_reform();

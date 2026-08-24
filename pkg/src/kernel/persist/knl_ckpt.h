@@ -294,6 +294,7 @@ bool32 ckpt_check(knl_session_t *session);
 void ckpt_reset_point(knl_session_t *session, log_point_t *point);
 page_id_t page_first_group_id(knl_session_t *session, page_id_t page_id);
 void ckpt_disable(knl_session_t *session);
+void ckpt_block_new_tasks(knl_session_t *session);
 void ckpt_enable(knl_session_t *session);
 void ckpt_remove_df_page(knl_session_t *session, datafile_t *df, bool32 need_disable);
 bool32 ckpt_try_latch_ctrl(knl_session_t *session, buf_ctrl_t *ctrl);
