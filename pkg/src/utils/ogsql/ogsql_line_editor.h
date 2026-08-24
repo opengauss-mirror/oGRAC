@@ -45,6 +45,9 @@ typedef struct OgsqlLineEditStateT {
     bool8 *endspace;
 } OgsqlLineEditStateT;
 
+typedef status_t (*OgsqlReadlineDraftSaveFunc)(void *context, const OgsqlLineEditStateT *state);
+typedef status_t (*OgsqlReadlineDraftRestoreFunc)(void *context, OgsqlLineEditStateT *state);
+
 typedef enum EnOgsqlReadlineResultT {
     OGSQL_READLINE_RESULT_OK,
     OGSQL_READLINE_RESULT_STOP,
@@ -56,11 +59,19 @@ typedef struct OgsqlReadlineCtxT {
     int *listNum;
     bool32 allowAbortLine;
     uint32 preloadLen;
+    const char *completionPrefix;
+    uint32 completionPrefixLen;
+    bool32 *bracketedPasteActive;
     bool32 *abortLine;
     uint32 *acceptedInputLen;
     uint32 *acceptedRenderRows;
     const ogsql_cmd_def_t *commandDefs;
     uint32 commandCount;
+    void *historyDraftContext;
+    OgsqlReadlineDraftSaveFunc saveHistoryDraft;
+    OgsqlReadlineDraftRestoreFunc restoreHistoryDraft;
+    bool32 *historyBrowsing;
+    bool32 *historySelected;
 } OgsqlReadlineCtxT;
 
 static inline OgsqlRenderCtxT OgsqlMakeRenderCtx(const char *welcomeBuf, uint32 welcomeWidth, uint32 wsCol,

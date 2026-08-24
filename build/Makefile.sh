@@ -537,7 +537,10 @@ func_check_incremental_debug()
     local expected_value
     local key
     local value
-    for expected in CMAKE_BUILD_TYPE:Debug USE32BIT:OFF USE_PROTECT_VM:ON \
+    # USE_PROTECT_VM only changes the optional VM page protection code.  It is
+    # independent of the incremental build machinery, so local Debug caches
+    # with either value can be reused safely.
+    for expected in CMAKE_BUILD_TYPE:Debug USE32BIT:OFF \
         CMS_UT_TEST:OFF USE_CBOTEST:OFF USE_PROTECT_BUF:OFF USE_OGRACD_CN:OFF \
         USE_TEST_MEM:OFF USE_CRC:OFF USE_LCOV:OFF USE_LLT:OFF USE_ASAN:OFF \
         USE_TSAN:OFF USE_FUZZASAN:OFF USE_OSS_BUILD:OFF; do
@@ -549,6 +552,12 @@ func_check_incremental_debug()
             return 1
         fi
     done
+
+    value=$(func_cache_value USE_PROTECT_VM)
+    if [[ "${value^^}" != "ON" ]] && [[ "${value^^}" != "OFF" ]]; then
+        echo "Error: incremental compile requires USE_PROTECT_VM=ON or OFF, found ${value:-<unset>}."
+        return 1
+    fi
 
     value=$(func_cache_value USE_H1620)
     if [[ -n "${value}" ]] && [[ "${value^^}" != "OFF" ]]; then

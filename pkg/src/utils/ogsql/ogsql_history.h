@@ -35,6 +35,10 @@ typedef struct OgsqlPendingHistoryT {
 
 uint32 ogsql_history_text_limit(void);
 void ogsql_history_reset(void);
+void ogsql_history_reset_draft(void);
+uint32 ogsql_history_count(void);
+status_t ogsql_history_load(const char *username);
+status_t ogsql_history_save(void);
 status_t ogsql_history_save_draft(const char *text, uint32 nbytes, uint32 nwidths);
 const ogsql_cmd_history_list_t *ogsql_history_get_draft(void);
 const ogsql_cmd_history_list_t *ogsql_history_get(int histCount, uint32 logicalIndex);

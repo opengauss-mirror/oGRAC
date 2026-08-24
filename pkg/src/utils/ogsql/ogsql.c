@@ -148,6 +148,30 @@ typedef struct OgsqlReadlineAbortCtxT {
     OgsqlPendingHistoryT *pendingHistory;
 } OgsqlReadlineAbortCtxT;
 
+typedef struct OgsqlMultilineHistorySnapshotT {
+    bool32 valid;
+    char *sqlText;
+    char *cmdBuf;
+    OgsqlRenderFrameT *frames;
+    uint32 sqlLen;
+    uint32 cmdLen;
+    uint32 cmdWidth;
+    uint32 cursorPos;
+    uint32 cursorWidth;
+    uint32 spacenum;
+    uint32 flag;
+    uint32 lineNo;
+    uint32 preloadLen;
+    uint32 acceptedInputLen;
+    uint32 acceptedRenderRows;
+    int32 enclosedChar;
+    int32 commentCount;
+    uint32 frameCount;
+    OgsqlPendingHistoryT pendingHistory;
+    ogsql_cmd_def_t cmdType;
+    bool8 endspace[OGSQL_HISTORY_BUF_SIZE];
+} OgsqlMultilineHistorySnapshotT;
+
 typedef struct OgsqlRunCtxT {
     FILE *in;
     bool32 isFile;
@@ -165,6 +189,10 @@ typedef struct OgsqlRunCtxT {
     uint32 acceptedInputLen;
     uint32 acceptedRenderRows;
     bool32 abortLine;
+    bool32 bracketedPasteActive;
+    bool32 historyBrowsing;
+    bool32 historySelected;
+    OgsqlMultilineHistorySnapshotT historySnapshot;
     text_t line;
 } OgsqlRunCtxT;
 
@@ -239,6 +267,7 @@ static void ogsql_print_column_data(void);
 static bool32 ogsql_fetch_cmd(text_t *line, text_t *sub_cmd);
 static void ogsql_print_serveroutput(void);
 static status_t ogsql_process_autotrace_cmd(void);
+static void OgsqlEnsureReadlineEnvConfig(void);
 /* the definition should be the same as the CLIENT_KIND_OGSQL of client_kind_t(cs_protocol.h) */
 #define CLIENT_KIND_OGSQL ((int16)3)
 
@@ -1379,6 +1408,11 @@ status_t ogsql_conn_to_server(ogsql_conn_info_t *conn_info, bool8 print_conn, bo
     }
 
     (void)ogconn_get_conn_attr(conn_info->conn, OGCONN_ATTR_DBTIMEZONE, "DBTIMEZONE", 11, NULL);
+
+    if (is_background == OG_FALSE) {
+        OgsqlEnsureReadlineEnvConfig();
+        (void)ogsql_history_load(conn_info->schemaname);
+    }
     
     return OG_SUCCESS;
 }
@@ -4191,6 +4225,7 @@ static void OgsqlInitConnection(void)
 void ogsql_init(int32 argc, char *argv[])
 {
     OgsqlInitConnInfo();
+    ogsql_history_reset();
     OgsqlInitHomePath(argc, argv);
     OgsqlInitRuntimeConfig();
     OgsqlInitConnection();
@@ -4709,6 +4744,167 @@ static uint32 ogsql_multiline_prompt_width_at(uint32 line_start)
     return ogsql_continuation_prompt_width(prompt_line_no);
 }
 
+static void OgsqlMultilineHistorySnapshotReset(OgsqlMultilineHistorySnapshotT *snapshot)
+{
+    if (snapshot == NULL) {
+        return;
+    }
+    free(snapshot->sqlText);
+    free(snapshot->cmdBuf);
+    free(snapshot->frames);
+    (void)memset_s(snapshot, sizeof(OgsqlMultilineHistorySnapshotT), 0, sizeof(OgsqlMultilineHistorySnapshotT));
+}
+
+static status_t OgsqlMultilineHistorySnapshotSave(void *context, const OgsqlLineEditStateT *state)
+{
+    OgsqlRunCtxT *ctx = (OgsqlRunCtxT *)context;
+    OgsqlMultilineHistorySnapshotT *snapshot;
+    errno_t rc;
+
+    if (ctx == NULL || state == NULL || state->cmdBuf == NULL || state->maxLen < OGSQL_CMD_BUF_RESET_TAIL_LEN ||
+        g_sql_text.str == NULL || g_sql_text.len > MAX_SQL_SIZE ||
+        state->nbytes > state->maxLen - OGSQL_CMD_BUF_RESET_TAIL_LEN) {
+        return OG_ERROR;
+    }
+    snapshot = &ctx->historySnapshot;
+    if (snapshot->valid == OG_TRUE) {
+        return OG_SUCCESS;
+    }
+
+    snapshot->sqlText = (char *)malloc(MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN);
+    snapshot->cmdBuf = (char *)malloc(state->maxLen);
+    if (snapshot->sqlText == NULL || snapshot->cmdBuf == NULL) {
+        OgsqlMultilineHistorySnapshotReset(snapshot);
+        return OG_ERROR;
+    }
+    if (g_multilineRenderFrames.count > 0) {
+        snapshot->frames = (OgsqlRenderFrameT *)malloc(sizeof(OgsqlRenderFrameT) * g_multilineRenderFrames.count);
+        if (snapshot->frames == NULL) {
+            OgsqlMultilineHistorySnapshotReset(snapshot);
+            return OG_ERROR;
+        }
+        rc = memcpy_s(snapshot->frames, sizeof(OgsqlRenderFrameT) * g_multilineRenderFrames.count,
+            g_multilineRenderFrames.frames, sizeof(OgsqlRenderFrameT) * g_multilineRenderFrames.count);
+        if (rc != EOK) {
+            OgsqlMultilineHistorySnapshotReset(snapshot);
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+            return OG_ERROR;
+        }
+    }
+
+    rc = memcpy_s(snapshot->sqlText, MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN, g_sql_text.str, g_sql_text.len);
+    if (rc != EOK) {
+        OgsqlMultilineHistorySnapshotReset(snapshot);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+        return OG_ERROR;
+    }
+    snapshot->sqlText[g_sql_text.len] = '\0';
+    rc = memcpy_s(snapshot->cmdBuf, state->maxLen, state->cmdBuf, state->nbytes);
+    if (rc != EOK) {
+        OgsqlMultilineHistorySnapshotReset(snapshot);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+        return OG_ERROR;
+    }
+    snapshot->cmdBuf[state->nbytes] = '\0';
+    snapshot->sqlLen = g_sql_text.len;
+    snapshot->cmdLen = state->nbytes;
+    snapshot->cmdWidth = state->nwidths;
+    snapshot->cursorPos = state->cursorPos;
+    snapshot->cursorWidth = state->cursorWidth;
+    snapshot->spacenum = state->spacenum;
+    snapshot->flag = ctx->flag;
+    snapshot->lineNo = ctx->lineNo;
+    snapshot->preloadLen = ctx->preloadLen;
+    snapshot->acceptedInputLen = ctx->acceptedInputLen;
+    snapshot->acceptedRenderRows = ctx->acceptedRenderRows;
+    snapshot->enclosedChar = g_in_enclosed_char;
+    snapshot->commentCount = g_in_comment_count;
+    snapshot->frameCount = g_multilineRenderFrames.count;
+    snapshot->pendingHistory = ctx->pendingHistory;
+    snapshot->cmdType = g_cmd_type;
+    rc = memcpy_s(snapshot->endspace, sizeof(snapshot->endspace), state->endspace, sizeof(snapshot->endspace));
+    if (rc != EOK) {
+        OgsqlMultilineHistorySnapshotReset(snapshot);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+        return OG_ERROR;
+    }
+    snapshot->valid = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t OgsqlMultilineHistorySnapshotRestore(void *context, OgsqlLineEditStateT *state)
+{
+    OgsqlRunCtxT *ctx = (OgsqlRunCtxT *)context;
+    OgsqlMultilineHistorySnapshotT *snapshot;
+    OgsqlRenderFrameT *frames = NULL;
+    errno_t rc;
+
+    if (ctx == NULL || state == NULL || state->cmdBuf == NULL || state->maxLen < OGSQL_CMD_BUF_RESET_TAIL_LEN) {
+        return OG_ERROR;
+    }
+    snapshot = &ctx->historySnapshot;
+    if (snapshot->valid != OG_TRUE || snapshot->sqlText == NULL || snapshot->cmdBuf == NULL ||
+        snapshot->sqlLen > MAX_SQL_SIZE || snapshot->cmdLen > state->maxLen - OGSQL_CMD_BUF_RESET_TAIL_LEN) {
+        return OG_ERROR;
+    }
+    if (snapshot->frameCount > 0) {
+        frames = (OgsqlRenderFrameT *)malloc(sizeof(OgsqlRenderFrameT) * snapshot->frameCount);
+        if (frames == NULL) {
+            return OG_ERROR;
+        }
+        rc = memcpy_s(frames, sizeof(OgsqlRenderFrameT) * snapshot->frameCount, snapshot->frames,
+            sizeof(OgsqlRenderFrameT) * snapshot->frameCount);
+        if (rc != EOK) {
+            free(frames);
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+            return OG_ERROR;
+        }
+    }
+
+    rc = memcpy_s(g_sql_text.str, MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN, snapshot->sqlText, snapshot->sqlLen);
+    if (rc != EOK) {
+        free(frames);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+        return OG_ERROR;
+    }
+    g_sql_text.str[snapshot->sqlLen] = '\0';
+    g_sql_text.len = snapshot->sqlLen;
+    rc = memcpy_s(state->cmdBuf, state->maxLen, snapshot->cmdBuf, snapshot->cmdLen);
+    if (rc != EOK) {
+        free(frames);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+        return OG_ERROR;
+    }
+    state->cmdBuf[snapshot->cmdLen] = '\0';
+    state->nbytes = snapshot->cmdLen;
+    state->nwidths = snapshot->cmdWidth;
+    state->cursorPos = snapshot->cursorPos;
+    state->cursorWidth = snapshot->cursorWidth;
+    state->spacenum = snapshot->spacenum;
+    rc = memcpy_s(state->endspace, sizeof(snapshot->endspace), snapshot->endspace, sizeof(snapshot->endspace));
+    if (rc != EOK) {
+        free(frames);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
+        return OG_ERROR;
+    }
+
+    free(g_multilineRenderFrames.frames);
+    g_multilineRenderFrames.frames = frames;
+    g_multilineRenderFrames.count = snapshot->frameCount;
+    g_multilineRenderFrames.capacity = snapshot->frameCount;
+    ctx->flag = snapshot->flag;
+    ctx->lineNo = snapshot->lineNo;
+    ctx->preloadLen = snapshot->preloadLen;
+    ctx->acceptedInputLen = snapshot->acceptedInputLen;
+    ctx->acceptedRenderRows = snapshot->acceptedRenderRows;
+    ctx->pendingHistory = snapshot->pendingHistory;
+    g_in_enclosed_char = snapshot->enclosedChar;
+    g_in_comment_count = snapshot->commentCount;
+    g_cmd_type = snapshot->cmdType;
+    OgsqlMultilineHistorySnapshotReset(snapshot);
+    return OG_SUCCESS;
+}
+
 static void OgsqlMultilineRenderFramesReset(void)
 {
     g_multilineRenderFrames.count = 0;
@@ -4957,17 +5153,22 @@ static void OgsqlRunInitCtx(OgsqlRunCtxT *ctx, FILE *in, bool32 isFile, char *cm
     ctx->flag = OGSQL_SINGLE_TAG;
     ctx->lineNo = 0;
     ctx->preloadLen = 0;
-    ctx->histCount = 0;
+    ctx->histCount = (int)ogsql_history_count();
     ctx->listNum = 0;
     ctx->useReadline = OG_FALSE;
     ogsql_history_pending_reset(&ctx->pendingHistory);
     ctx->acceptedInputLen = 0;
+    ctx->acceptedRenderRows = 0;
+    ctx->bracketedPasteActive = OG_FALSE;
+    ctx->historyBrowsing = OG_FALSE;
+    ctx->historySelected = OG_FALSE;
+    ctx->historySnapshot = (OgsqlMultilineHistorySnapshotT){ 0 };
     ogsql_reset_cmd_buf(ctx->cmdBuf, ctx->inputMaxLen);
 }
 
 static void OgsqlRunClearHistory(void)
 {
-    ogsql_history_reset();
+    ogsql_history_reset_draft();
 }
 
 static void OgsqlRunPreparePrompt(OgsqlRunCtxT *ctx)
@@ -4986,7 +5187,10 @@ static void OgsqlRunPreparePrompt(OgsqlRunCtxT *ctx)
 
 static bool32 OgsqlRunReadLine(OgsqlRunCtxT *ctx)
 {
+    OgsqlMultilineHistorySnapshotReset(&ctx->historySnapshot);
     ctx->abortLine = OG_FALSE;
+    ctx->historyBrowsing = OG_FALSE;
+    ctx->historySelected = OG_FALSE;
     ctx->acceptedInputLen = 0;
     ctx->acceptedRenderRows = 0;
     OgsqlRunPreparePrompt(ctx);
@@ -5004,7 +5208,10 @@ static bool32 OgsqlRunReadLine(OgsqlRunCtxT *ctx)
         OgsqlRenderCtxT renderCtx = OgsqlMakeRenderCtx(ctx->welcomeBuf, ctx->welcomeWidth, 0, NULL);
         OgsqlReadlineCtxT readlineCtx = { &ctx->histCount, &ctx->listNum,
             (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) != 0, ctx->preloadLen,
-            &ctx->abortLine, &ctx->acceptedInputLen, &ctx->acceptedRenderRows, g_cmd_defs, OGSQL_CMD_COUNT };
+            g_sql_text.str, g_sql_text.len, &ctx->bracketedPasteActive, &ctx->abortLine, &ctx->acceptedInputLen,
+            &ctx->acceptedRenderRows, g_cmd_defs, OGSQL_CMD_COUNT, ctx,
+            OgsqlMultilineHistorySnapshotSave, OgsqlMultilineHistorySnapshotRestore, &ctx->historyBrowsing,
+            &ctx->historySelected };
         OgsqlReadlineResultT readlineResult = ogsql_line_editor_read(&editState, &renderCtx, &readlineCtx);
         if (readlineResult == OGSQL_READLINE_RESULT_STOP) {
             return OG_FALSE;
@@ -5029,12 +5236,34 @@ static bool32 OgsqlRunHandleAbortIfNeeded(OgsqlRunCtxT *ctx)
         OgsqlReadlineAbortCtxT abortCtx = { &ctx->flag, &ctx->lineNo, ctx->cmdBuf, ctx->inputMaxLen,
             &ctx->preloadLen, &ctx->pendingHistory };
         OgsqlRunHandleReadlineAbort(&abortCtx);
+        OgsqlMultilineHistorySnapshotReset(&ctx->historySnapshot);
+        ctx->historyBrowsing = OG_FALSE;
+        ctx->historySelected = OG_FALSE;
         return OG_TRUE;
     }
 #else
     (void)ctx;
 #endif
     return OG_FALSE;
+}
+
+static void OgsqlRunDiscardMultilineDraft(OgsqlRunCtxT *ctx)
+{
+    if (ctx == NULL || ctx->historySelected != OG_TRUE) {
+        return;
+    }
+    CM_TEXT_CLEAR(&g_sql_text);
+    ogsql_reset_in_enclosed_char();
+    g_in_comment_count = 0;
+    OGSQL_RESET_CMD_TYPE(&g_cmd_type);
+    ctx->flag = OGSQL_SINGLE_TAG;
+    ctx->lineNo = 0;
+    ctx->preloadLen = 0;
+    ogsql_history_pending_reset(&ctx->pendingHistory);
+    OgsqlMultilineRenderFramesReset();
+    OgsqlMultilineHistorySnapshotReset(&ctx->historySnapshot);
+    ctx->historyBrowsing = OG_FALSE;
+    ctx->historySelected = OG_FALSE;
 }
 
 static bool32 OgsqlRunSkipInvalidOrEmpty(OgsqlRunCtxT *ctx)
@@ -5144,6 +5373,7 @@ static void OgsqlRunFinishIteration(OgsqlRunCtxT *ctx)
         if (ctx->useReadline) {
             uint32 historyWidth = ogsql_text_display_width(ctx->pendingHistory.buf, ctx->pendingHistory.len);
             ogsql_history_pending_commit(&ctx->pendingHistory, &ctx->histCount, historyWidth);
+            ctx->histCount = (int)ogsql_history_count();
         }
         OgsqlMultilineRenderFramesReset();
     } else if (ctx->useReadline) {
@@ -5179,6 +5409,8 @@ EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmdBuf, uint32 max_l
             continue;
         }
 
+        OgsqlRunDiscardMultilineDraft(&ctx);
+
         if (OgsqlRunSkipInvalidOrEmpty(&ctx)) {
             continue;
         }
@@ -5195,6 +5427,7 @@ EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmdBuf, uint32 max_l
         OgsqlRunFinishIteration(&ctx);
     }
     ogsql_history_pending_reset(&ctx.pendingHistory);
+    OgsqlMultilineHistorySnapshotReset(&ctx.historySnapshot);
     OgsqlMultilineRenderFramesFree();
 }
 
