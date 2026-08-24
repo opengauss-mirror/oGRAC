@@ -24,6 +24,7 @@
 #include "kwlookup.h"
 #include "ogsql_common.h"
 #include "ogsql_completion.h"
+#include "ogsql_option.h"
 
 typedef struct OgsqlSchemaCompletionRequestT {
     const char *schema;
@@ -38,6 +39,34 @@ typedef struct OgsqlCompletionFetchCtxT {
     uint32 prefixLen;
     uint32 maxCount;
 } OgsqlCompletionFetchCtxT;
+
+#define OGSQL_MAX_COMPLETION_TOKENS 256
+#define OGSQL_MAX_COMPLETION_SOURCES 8
+
+typedef enum EnOgsqlCompletionTokenKindT {
+    OGSQL_COMPLETION_TOKEN_WORD,
+    OGSQL_COMPLETION_TOKEN_DOT,
+    OGSQL_COMPLETION_TOKEN_COMMA,
+    OGSQL_COMPLETION_TOKEN_LEFT_PAREN,
+    OGSQL_COMPLETION_TOKEN_RIGHT_PAREN
+} OgsqlCompletionTokenKindT;
+
+typedef struct OgsqlCompletionTokenT {
+    OgsqlCompletionTokenKindT kind;
+    char text[OGSQL_OBJ_NAME_LEN];
+} OgsqlCompletionTokenT;
+
+typedef struct OgsqlCompletionSourceT {
+    char schema[OGSQL_OBJ_NAME_LEN];
+    char table[OGSQL_OBJ_NAME_LEN];
+    char alias[OGSQL_OBJ_NAME_LEN];
+} OgsqlCompletionSourceT;
+
+typedef struct OgsqlCompletionSqlContextT {
+    OgsqlCompletionSourceT sources[OGSQL_MAX_COMPLETION_SOURCES];
+    uint32 sourceCount;
+    bool32 insertColumnContext;
+} OgsqlCompletionSqlContextT;
 static const char *g_sqlCompletionWords[] = {
     "alter",
     "analyze",
@@ -62,6 +91,7 @@ static const char *g_sqlCompletionWords[] = {
     "grant",
     "group",
     "having",
+    "identified",
     "in",
     "index",
     "inner",
@@ -80,6 +110,7 @@ static const char *g_sqlCompletionWords[] = {
     "package",
     "procedure",
     "revoke",
+    "resource",
     "right",
     "rollback",
     "role",
@@ -120,6 +151,7 @@ static const char *g_sqlCompletionWords[] = {
     "escape",       /* LIKE '...' ESCAPE '...'                  */
     "exec",         /* EXEC procedure                           */
     "execute",      /* EXECUTE statement/procedure              */
+    "flashback",    /* FLASHBACK TABLE/DATABASE                 */
     "foreign",      /* FOREIGN KEY                              */
     "global",       /* GLOBAL TEMPORARY TABLE                   */
     "instead",      /* CREATE TRIGGER ... INSTEAD OF           */
@@ -134,14 +166,17 @@ static const char *g_sqlCompletionWords[] = {
     "primary",      /* PRIMARY KEY                              */
     "profile",      /* CREATE PROFILE                           */
     "public",       /* CREATE PUBLIC SYNONYM                    */
+    "rebuild",      /* ALTER INDEX ... REBUILD                  */
     "rename",       /* RENAME                                   */
     "replace",      /* CREATE OR REPLACE                        */
     "return",       /* PL/SQL RETURN                            */
     "row",          /* FOR EACH ROW                             */
     "savepoint",    /* SAVEPOINT                                */
     "schema",       /* CREATE SCHEMA                            */
+    "session",      /* ALTER/GRANT ... SESSION                  */
     "statement",    /* FOR EACH STATEMENT                       */
     "synonym",      /* CREATE SYNONYM                           */
+    "system",       /* ALTER SYSTEM                             */
     "tablespace",   /* CREATE/ALTER TABLESPACE                  */
     "temporary",    /* CREATE TEMPORARY TABLE                   */
     "tenant",       /* CREATE TENANT                            */
@@ -163,6 +198,10 @@ static const char *g_builtinFunctions[] = {
     "EXTRACT",
     "FLOOR",
     "GREATEST",
+    "GS_DECRYPT",
+    "GS_DECRYPT_AES128",
+    "GS_ENCRYPT",
+    "GS_ENCRYPT_AES128",
     "INSTR",
     "LEAST",
     "LENGTH",
@@ -194,6 +233,14 @@ static const char *g_builtinFunctions[] = {
     "USER"
 };
 #define OGSQL_BUILTIN_FUNC_COUNT (sizeof(g_builtinFunctions) / sizeof(char *))
+
+static const char *g_createTableCompletionWords[] = {
+    "auto_increment",
+    "text",
+    "unsigned"
+};
+#define OGSQL_CREATE_TABLE_COMPLETION_WORD_COUNT \
+    (sizeof(g_createTableCompletionWords) / sizeof(g_createTableCompletionWords[0]))
 
 static bool32 ogsql_is_completion_token_char(char ch)
 {
@@ -280,6 +327,126 @@ static bool32 ogsql_completion_word_matches(const char *word, const char *prefix
     }
 
     return OG_TRUE;
+}
+
+static bool32 OgsqlCompletionWordAt(const char *cmdBuf, uint32 limit, uint32 *pos, const char *expected)
+{
+    uint32 start;
+    uint32 length;
+
+    while (*pos < limit && (cmdBuf[*pos] == ' ' || cmdBuf[*pos] == '\t' ||
+        cmdBuf[*pos] == '\r' || cmdBuf[*pos] == '\n')) {
+        (*pos)++;
+    }
+    start = *pos;
+    while (*pos < limit && ogsql_is_completion_token_char(cmdBuf[*pos])) {
+        (*pos)++;
+    }
+    length = *pos - start;
+    return (length == (uint32)strlen(expected) &&
+        ogsql_completion_word_matches(expected, cmdBuf + start, length)) ? OG_TRUE : OG_FALSE;
+}
+
+static void OgsqlCompletionSkipSpace(const char *cmdBuf, uint32 limit, uint32 *pos)
+{
+    while (*pos < limit && (cmdBuf[*pos] == ' ' || cmdBuf[*pos] == '\t' ||
+        cmdBuf[*pos] == '\r' || cmdBuf[*pos] == '\n')) {
+        (*pos)++;
+    }
+}
+
+static bool32 OgsqlCompletionSkipIdentifier(const char *cmdBuf, uint32 limit, uint32 *pos)
+{
+    bool32 hasCharacter = OG_FALSE;
+
+    if (*pos < limit && cmdBuf[*pos] == '"') {
+        (*pos)++;
+        while (*pos < limit) {
+            if (cmdBuf[*pos] == '"') {
+                if (*pos + 1 < limit && cmdBuf[*pos + 1] == '"') {
+                    *pos += 2;
+                    hasCharacter = OG_TRUE;
+                    continue;
+                }
+                (*pos)++;
+                return hasCharacter;
+            }
+            (*pos)++;
+            hasCharacter = OG_TRUE;
+        }
+        return OG_FALSE;
+    }
+    while (*pos < limit && ogsql_is_completion_token_char(cmdBuf[*pos])) {
+        (*pos)++;
+        hasCharacter = OG_TRUE;
+    }
+    return hasCharacter;
+}
+
+/* Keep type-name candidates scoped to an unfinished CREATE TABLE column list. */
+static bool32 OgsqlCompletionIsCreateTableDefinitionContext(const OgsqlCompletionRequestT *request)
+{
+    uint32 statementStart = 0;
+    uint32 pos;
+    uint32 depth = 0;
+    char quote = '\0';
+
+    for (pos = 0; pos < request->tokenStart; pos++) {
+        if (request->cmdBuf[pos] == ';') {
+            statementStart = pos + 1;
+        }
+    }
+    pos = statementStart;
+    if (!OgsqlCompletionWordAt(request->cmdBuf, request->tokenStart, &pos, "create") ||
+        !OgsqlCompletionWordAt(request->cmdBuf, request->tokenStart, &pos, "table")) {
+        return OG_FALSE;
+    }
+
+    OgsqlCompletionSkipSpace(request->cmdBuf, request->tokenStart, &pos);
+    if (!OgsqlCompletionSkipIdentifier(request->cmdBuf, request->tokenStart, &pos)) {
+        return OG_FALSE;
+    }
+    OgsqlCompletionSkipSpace(request->cmdBuf, request->tokenStart, &pos);
+    if (pos < request->tokenStart && request->cmdBuf[pos] == '.') {
+        pos++;
+        OgsqlCompletionSkipSpace(request->cmdBuf, request->tokenStart, &pos);
+        if (!OgsqlCompletionSkipIdentifier(request->cmdBuf, request->tokenStart, &pos)) {
+            return OG_FALSE;
+        }
+        OgsqlCompletionSkipSpace(request->cmdBuf, request->tokenStart, &pos);
+    }
+    if (pos >= request->tokenStart || request->cmdBuf[pos] != '(') {
+        return OG_FALSE;
+    }
+
+    for (; pos < request->tokenStart; pos++) {
+        char current = request->cmdBuf[pos];
+
+        if (quote != '\0') {
+            if (current == quote) {
+                if (pos + 1 < request->tokenStart && request->cmdBuf[pos + 1] == quote) {
+                    pos++;
+                } else {
+                    quote = '\0';
+                }
+            }
+            continue;
+        }
+        if (current == '\'' || current == '"') {
+            quote = current;
+        } else if (current == '(') {
+            depth++;
+        } else if (current == ')') {
+            if (depth == 0) {
+                return OG_FALSE;
+            }
+            depth--;
+            if (depth == 0) {
+                return OG_FALSE;
+            }
+        }
+    }
+    return (depth > 0) ? OG_TRUE : OG_FALSE;
 }
 
 static bool32 ogsql_completion_word_equal(const char *left, const char *right)
@@ -450,34 +617,53 @@ static status_t OgsqlQueryCompletionMatches(const char *baseSql, const char *pre
     return OG_SUCCESS;
 }
 
+static status_t OgsqlCopyCompletionToken(const char *token, uint32 tokenLen, char *buffer, uint32 bufferSize)
+{
+    errno_t rc;
+
+    if (token == NULL || buffer == NULL || bufferSize == 0 || tokenLen >= bufferSize) {
+        return OG_ERROR;
+    }
+    for (uint32 i = 0; i < tokenLen; i++) {
+        if (!ogsql_is_completion_token_char(token[i])) {
+            return OG_ERROR;
+        }
+    }
+    rc = memcpy_s(buffer, bufferSize, token, tokenLen);
+    if (rc != EOK) {
+        return OG_ERROR;
+    }
+    buffer[tokenLen] = '\0';
+    return OG_SUCCESS;
+}
+
 static status_t OgsqlCollectSchemaTableMatches(const OgsqlSchemaCompletionRequestT *request,
     OgsqlCompletionStoreT *store)
 {
     char schema_buf[OGSQL_OBJ_NAME_LEN];
+    char prefix_buf[OGSQL_OBJ_NAME_LEN];
     char sql_buf[OGSQL_MAX_TEMP_SQL + 1];
-    uint32 copy_len;
-    errno_t rc;
     int ret;
 
     if (request == NULL || request->schema == NULL || request->schemaLen == 0 ||
-        request->schemaLen >= OGSQL_OBJ_NAME_LEN) {
+        OgsqlCopyCompletionToken(request->schema, request->schemaLen, schema_buf, sizeof(schema_buf)) != OG_SUCCESS ||
+        OgsqlCopyCompletionToken(request->prefix, request->prefixLen, prefix_buf, sizeof(prefix_buf)) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
-    copy_len = (request->schemaLen < OGSQL_OBJ_NAME_LEN - 1) ? request->schemaLen : (OGSQL_OBJ_NAME_LEN - 1);
-    rc = memcpy_s(schema_buf, sizeof(schema_buf), request->schema, copy_len);
-    if (rc != EOK) {
-        OG_THROW_ERROR(ERR_SYSTEM_CALL, rc);
-        return OG_ERROR;
+    if (request->prefixLen == 0) {
+        ret = snprintf_s(sql_buf, sizeof(sql_buf), sizeof(sql_buf) - 1,
+            "SELECT TABLE_NAME FROM SYS.DB_TABLES WHERE UPPER(OWNER) = UPPER('%s') "
+            "UNION SELECT VIEW_NAME FROM SYS.DB_VIEWS WHERE UPPER(OWNER) = UPPER('%s') ORDER BY 1",
+            schema_buf, schema_buf);
+    } else {
+        ret = snprintf_s(sql_buf, sizeof(sql_buf), sizeof(sql_buf) - 1,
+            "SELECT TABLE_NAME FROM SYS.DB_TABLES WHERE UPPER(OWNER) = UPPER('%s') "
+            "AND SUBSTR(UPPER(TABLE_NAME), 1, %u) = UPPER('%s') "
+            "UNION SELECT VIEW_NAME FROM SYS.DB_VIEWS WHERE UPPER(OWNER) = UPPER('%s') "
+            "AND SUBSTR(UPPER(VIEW_NAME), 1, %u) = UPPER('%s') ORDER BY 1",
+            schema_buf, request->prefixLen, prefix_buf, schema_buf, request->prefixLen, prefix_buf);
     }
-    schema_buf[copy_len] = '\0';
-
-    ret = snprintf_s(sql_buf, sizeof(sql_buf), sizeof(sql_buf) - 1,
-        "SELECT T.NAME FROM SYS.SYS_TABLES T, SYS.SYS_USERS U "
-        "WHERE T.USER# = U.ID AND T.RECYCLED = 0 AND UPPER(U.NAME) = UPPER('%s') "
-        "UNION SELECT V.NAME FROM SYS.SYS_VIEWS V, SYS.SYS_USERS U "
-        "WHERE V.USER# = U.ID AND UPPER(U.NAME) = UPPER('%s')",
-        schema_buf, schema_buf);
     if (ret < 0) {
         return OG_ERROR;
     }
@@ -668,6 +854,380 @@ static void ogsql_collect_command_matches(const char *prefix, uint32 prefixLen,
         }
     }
 }
+
+static bool32 ogsql_completion_has_words_before(const OgsqlCompletionRequestT *request, const char *nearest,
+    const char *second, const char *third)
+{
+    uint32 wordStart = request->tokenStart;
+    char word[OGSQL_MAX_COMPLETION_WORD_LEN];
+    const char *expected[] = { nearest, second, third };
+
+    for (uint32 i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        if (expected[i] == NULL) {
+            return OG_TRUE;
+        }
+        if (!ogsql_get_lower_completion_word_before(request->cmdBuf, wordStart, word, sizeof(word), &wordStart) ||
+            strcmp(word, expected[i]) != 0) {
+            return OG_FALSE;
+        }
+    }
+    return OG_TRUE;
+}
+
+static bool32 ogsql_completion_has_ordered_words_before(const OgsqlCompletionRequestT *request,
+    const char *nearest, const char *earlier)
+{
+    uint32 wordStart = request->tokenStart;
+    bool32 foundNearest = OG_FALSE;
+    char word[OGSQL_MAX_COMPLETION_WORD_LEN];
+
+    while (ogsql_get_lower_completion_word_before(request->cmdBuf, wordStart, word, sizeof(word), &wordStart)) {
+        if (foundNearest == OG_TRUE && strcmp(word, earlier) == 0) {
+            return OG_TRUE;
+        }
+        if (strcmp(word, nearest) == 0) {
+            foundNearest = OG_TRUE;
+        }
+        if (wordStart == 0) {
+            break;
+        }
+    }
+    return OG_FALSE;
+}
+
+static bool32 ogsql_completion_has_word_before(const OgsqlCompletionRequestT *request, const char *expected)
+{
+    uint32 wordStart = request->tokenStart;
+    char word[OGSQL_MAX_COMPLETION_WORD_LEN];
+
+    while (ogsql_get_lower_completion_word_before(request->cmdBuf, wordStart, word, sizeof(word), &wordStart)) {
+        if (strcmp(word, expected) == 0) {
+            return OG_TRUE;
+        }
+        if (wordStart == 0) {
+            break;
+        }
+    }
+    return OG_FALSE;
+}
+
+static void ogsql_add_preferred_keyword_match(const OgsqlCompletionRequestT *request, const char *word,
+    const char **matches, uint32 *matchCount)
+{
+    if (request->prefixLen > 0 && ogsql_completion_word_matches(word, request->prefix, request->prefixLen)) {
+        ogsql_add_completion_match(matches, matchCount, word);
+    }
+}
+
+/* Keep the #289 DDL keyword fixes with the object-context implementation. */
+static void ogsql_collect_issue289_keyword_matches(const OgsqlCompletionRequestT *request,
+    const char **matches, uint32 *matchCount)
+{
+    if (ogsql_completion_has_words_before(request, "create", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "global", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "alter", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "system", matches, matchCount);
+    }
+    if (ogsql_completion_has_ordered_words_before(request, "index", "alter")) {
+        ogsql_add_preferred_keyword_match(request, "rebuild", matches, matchCount);
+    }
+    if (request->tokenStart == 0) {
+        ogsql_add_preferred_keyword_match(request, "flashback", matches, matchCount);
+    }
+}
+
+static void ogsql_collect_preferred_keyword_matches(const OgsqlCompletionRequestT *request,
+    const char **matches, uint32 *matchCount)
+{
+    if (ogsql_completion_has_words_before(request, "select", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "distinct", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "alter", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "session", matches, matchCount);
+    }
+    if (ogsql_completion_has_ordered_words_before(request, "user", "create")) {
+        ogsql_add_preferred_keyword_match(request, "identified", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "grant", NULL, NULL)) {
+        ogsql_add_preferred_keyword_match(request, "resource", matches, matchCount);
+    }
+    if (ogsql_completion_has_words_before(request, "create", "grant", NULL)) {
+        ogsql_add_preferred_keyword_match(request, "session", matches, matchCount);
+    }
+    if (ogsql_completion_has_word_before(request, "select")) {
+        ogsql_add_preferred_keyword_match(request, "from", matches, matchCount);
+    }
+}
+
+static bool32 OgsqlCompletionTokenIsWord(const OgsqlCompletionTokenT *token, const char *word)
+{
+    return (token != NULL && token->kind == OGSQL_COMPLETION_TOKEN_WORD && strcmp(token->text, word) == 0) ?
+        OG_TRUE : OG_FALSE;
+}
+
+static void OgsqlAddCompletionToken(OgsqlCompletionTokenT *tokens, uint32 *tokenCount,
+    OgsqlCompletionTokenKindT kind, const char *text, uint32 textLen)
+{
+    OgsqlCompletionTokenT *token;
+
+    if (*tokenCount >= OGSQL_MAX_COMPLETION_TOKENS || textLen >= OGSQL_OBJ_NAME_LEN) {
+        return;
+    }
+    token = &tokens[*tokenCount];
+    token->kind = kind;
+    token->text[0] = '\0';
+    for (uint32 i = 0; i < textLen; i++) {
+        token->text[i] = OgsqlCompletionLowerChar(text[i]);
+    }
+    token->text[textLen] = '\0';
+    (*tokenCount)++;
+}
+
+static uint32 OgsqlTokenizeCompletionSql(const char *cmdBuf, uint32 endPos, OgsqlCompletionTokenT *tokens)
+{
+    uint32 tokenCount = 0;
+    uint32 pos = 0;
+
+    while (pos < endPos) {
+        if (cmdBuf[pos] == '-' && pos + 1 < endPos && cmdBuf[pos + 1] == '-') {
+            pos += 2;
+            while (pos < endPos && cmdBuf[pos] != '\n') {
+                pos++;
+            }
+            continue;
+        }
+        if (cmdBuf[pos] == '/' && pos + 1 < endPos && cmdBuf[pos + 1] == '*') {
+            pos += 2;
+            while (pos + 1 < endPos && !(cmdBuf[pos] == '*' && cmdBuf[pos + 1] == '/')) {
+                pos++;
+            }
+            pos = (pos + 1 < endPos) ? pos + 2 : endPos;
+            continue;
+        }
+        if (cmdBuf[pos] == '\'' || cmdBuf[pos] == '"') {
+            char quote = cmdBuf[pos++];
+
+            while (pos < endPos) {
+                if (cmdBuf[pos] != quote) {
+                    pos++;
+                    continue;
+                }
+                if (pos + 1 < endPos && cmdBuf[pos + 1] == quote) {
+                    pos += 2;
+                    continue;
+                }
+                pos++;
+                break;
+            }
+            continue;
+        }
+        if (cmdBuf[pos] == ';') {
+            tokenCount = 0;
+            pos++;
+            continue;
+        }
+        if (ogsql_is_completion_token_char(cmdBuf[pos])) {
+            uint32 wordStart = pos;
+
+            while (pos < endPos && ogsql_is_completion_token_char(cmdBuf[pos])) {
+                pos++;
+            }
+            OgsqlAddCompletionToken(tokens, &tokenCount, OGSQL_COMPLETION_TOKEN_WORD,
+                cmdBuf + wordStart, pos - wordStart);
+            continue;
+        }
+        switch (cmdBuf[pos]) {
+            case '.':
+                OgsqlAddCompletionToken(tokens, &tokenCount, OGSQL_COMPLETION_TOKEN_DOT, NULL, 0);
+                break;
+            case ',':
+                OgsqlAddCompletionToken(tokens, &tokenCount, OGSQL_COMPLETION_TOKEN_COMMA, NULL, 0);
+                break;
+            case '(':
+                OgsqlAddCompletionToken(tokens, &tokenCount, OGSQL_COMPLETION_TOKEN_LEFT_PAREN, NULL, 0);
+                break;
+            case ')':
+                OgsqlAddCompletionToken(tokens, &tokenCount, OGSQL_COMPLETION_TOKEN_RIGHT_PAREN, NULL, 0);
+                break;
+            default:
+                break;
+        }
+        pos++;
+    }
+    return tokenCount;
+}
+
+static bool32 OgsqlCompletionIsSourceBoundary(const OgsqlCompletionTokenT *token)
+{
+    static const char *boundaries[] = {
+        "where", "join", "inner", "left", "right", "full", "cross", "on", "using", "group", "order",
+        "having", "set", "values", "returning", "union", "minus", "except", "intersect", "connect", "start"
+    };
+
+    if (token == NULL || token->kind != OGSQL_COMPLETION_TOKEN_WORD) {
+        return OG_TRUE;
+    }
+    for (uint32 i = 0; i < sizeof(boundaries) / sizeof(boundaries[0]); i++) {
+        if (strcmp(token->text, boundaries[i]) == 0) {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static void OgsqlCopyParsedName(char *destination, const char *source)
+{
+    if (source != NULL) {
+        (void)strncpy_s(destination, OGSQL_OBJ_NAME_LEN, source, strlen(source));
+    }
+}
+
+static bool32 OgsqlCompletionSourceExists(const OgsqlCompletionSqlContextT *context,
+    const OgsqlCompletionSourceT *candidate)
+{
+    for (uint32 i = 0; i < context->sourceCount; i++) {
+        const OgsqlCompletionSourceT *source = &context->sources[i];
+
+        if (ogsql_completion_word_equal(source->schema, candidate->schema) &&
+            ogsql_completion_word_equal(source->table, candidate->table) &&
+            ogsql_completion_word_equal(source->alias, candidate->alias)) {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static uint32 OgsqlParseCompletionSource(const OgsqlCompletionTokenT *tokens, uint32 tokenCount,
+    uint32 sourceIndex, OgsqlCompletionSqlContextT *context, uint32 *objectEnd)
+{
+    OgsqlCompletionSourceT *source;
+    uint32 next = sourceIndex;
+
+    if (sourceIndex >= tokenCount || tokens[sourceIndex].kind != OGSQL_COMPLETION_TOKEN_WORD ||
+        context->sourceCount >= OGSQL_MAX_COMPLETION_SOURCES) {
+        return sourceIndex;
+    }
+    if (sourceIndex + 1 < tokenCount && tokens[sourceIndex + 1].kind == OGSQL_COMPLETION_TOKEN_DOT &&
+        (sourceIndex + 2 >= tokenCount || tokens[sourceIndex + 2].kind != OGSQL_COMPLETION_TOKEN_WORD)) {
+        return sourceIndex + 2;
+    }
+    source = &context->sources[context->sourceCount];
+    (void)memset_s(source, sizeof(*source), 0, sizeof(*source));
+    if (sourceIndex + 2 < tokenCount && tokens[sourceIndex + 1].kind == OGSQL_COMPLETION_TOKEN_DOT &&
+        tokens[sourceIndex + 2].kind == OGSQL_COMPLETION_TOKEN_WORD) {
+        OgsqlCopyParsedName(source->schema, tokens[sourceIndex].text);
+        OgsqlCopyParsedName(source->table, tokens[sourceIndex + 2].text);
+        next = sourceIndex + 3;
+    } else {
+        OgsqlCopyParsedName(source->table, tokens[sourceIndex].text);
+        next = sourceIndex + 1;
+    }
+    if (objectEnd != NULL) {
+        *objectEnd = next;
+    }
+    if (next + 1 < tokenCount && OgsqlCompletionTokenIsWord(&tokens[next], "as") &&
+        tokens[next + 1].kind == OGSQL_COMPLETION_TOKEN_WORD) {
+        OgsqlCopyParsedName(source->alias, tokens[next + 1].text);
+        next += 2;
+    } else if (next < tokenCount && tokens[next].kind == OGSQL_COMPLETION_TOKEN_WORD &&
+        !OgsqlCompletionIsSourceBoundary(&tokens[next])) {
+        OgsqlCopyParsedName(source->alias, tokens[next].text);
+        next++;
+    }
+    if (OgsqlCompletionSourceExists(context, source) == OG_FALSE) {
+        context->sourceCount++;
+    }
+    return next;
+}
+
+static bool32 OgsqlCompletionEndsSourceList(const OgsqlCompletionTokenT *token)
+{
+    return (OgsqlCompletionTokenIsWord(token, "where") || OgsqlCompletionTokenIsWord(token, "group") ||
+        OgsqlCompletionTokenIsWord(token, "order") || OgsqlCompletionTokenIsWord(token, "having") ||
+        OgsqlCompletionTokenIsWord(token, "on") || OgsqlCompletionTokenIsWord(token, "using") ||
+        OgsqlCompletionTokenIsWord(token, "union") || OgsqlCompletionTokenIsWord(token, "minus") ||
+        OgsqlCompletionTokenIsWord(token, "except") || OgsqlCompletionTokenIsWord(token, "intersect") ||
+        OgsqlCompletionTokenIsWord(token, "connect") || OgsqlCompletionTokenIsWord(token, "start")) ?
+        OG_TRUE : OG_FALSE;
+}
+
+static bool32 OgsqlCompletionParenthesisIsOpen(const OgsqlCompletionTokenT *tokens, uint32 tokenCount,
+    uint32 leftParenthesis)
+{
+    uint32 depth = 0;
+
+    for (uint32 i = leftParenthesis; i < tokenCount; i++) {
+        if (tokens[i].kind == OGSQL_COMPLETION_TOKEN_LEFT_PAREN) {
+            depth++;
+        } else if (tokens[i].kind == OGSQL_COMPLETION_TOKEN_RIGHT_PAREN && depth > 0) {
+            depth--;
+            if (depth == 0) {
+                return OG_FALSE;
+            }
+        }
+    }
+    return (depth > 0) ? OG_TRUE : OG_FALSE;
+}
+
+static void OgsqlParseCompletionSqlContext(const OgsqlCompletionRequestT *request,
+    OgsqlCompletionSqlContextT *context)
+{
+    OgsqlCompletionTokenT tokens[OGSQL_MAX_COMPLETION_TOKENS];
+    uint32 tokenCount;
+    uint32 parenthesisDepth = 0;
+    bool32 inSourceList = OG_FALSE;
+
+    (void)memset_s(context, sizeof(*context), 0, sizeof(*context));
+    tokenCount = OgsqlTokenizeCompletionSql(request->cmdBuf, request->tokenStart, tokens);
+    for (uint32 i = 0; i < tokenCount;) {
+        uint32 objectEnd = 0;
+
+        if (tokens[i].kind == OGSQL_COMPLETION_TOKEN_LEFT_PAREN) {
+            parenthesisDepth++;
+            i++;
+            continue;
+        }
+        if (tokens[i].kind == OGSQL_COMPLETION_TOKEN_RIGHT_PAREN) {
+            if (parenthesisDepth > 0) {
+                parenthesisDepth--;
+            }
+            i++;
+            continue;
+        }
+        if (parenthesisDepth > 0) {
+            i++;
+            continue;
+        }
+        if (OgsqlCompletionTokenIsWord(&tokens[i], "insert") && i + 1 < tokenCount &&
+            OgsqlCompletionTokenIsWord(&tokens[i + 1], "into")) {
+            i = OgsqlParseCompletionSource(tokens, tokenCount, i + 2, context, &objectEnd);
+            if (objectEnd < tokenCount && tokens[objectEnd].kind == OGSQL_COMPLETION_TOKEN_LEFT_PAREN &&
+                OgsqlCompletionParenthesisIsOpen(tokens, tokenCount, objectEnd)) {
+                context->insertColumnContext = OG_TRUE;
+            }
+            continue;
+        }
+        if (OgsqlCompletionTokenIsWord(&tokens[i], "update")) {
+            i = OgsqlParseCompletionSource(tokens, tokenCount, i + 1, context, NULL);
+            continue;
+        }
+        if (OgsqlCompletionTokenIsWord(&tokens[i], "from") || OgsqlCompletionTokenIsWord(&tokens[i], "join")) {
+            inSourceList = OG_TRUE;
+            i = OgsqlParseCompletionSource(tokens, tokenCount, i + 1, context, NULL);
+            continue;
+        }
+        if (inSourceList == OG_TRUE && tokens[i].kind == OGSQL_COMPLETION_TOKEN_COMMA) {
+            i = OgsqlParseCompletionSource(tokens, tokenCount, i + 1, context, NULL);
+            continue;
+        }
+        if (OgsqlCompletionEndsSourceList(&tokens[i])) {
+            inSourceList = OG_FALSE;
+        }
+        i++;
+    }
+}
+
 static void ogsql_collect_builtin_function_matches(const char *prefix, uint32 prefix_len, const char **matches,
     uint32 *match_count)
 {
@@ -678,8 +1238,9 @@ static void ogsql_collect_builtin_function_matches(const char *prefix, uint32 pr
     }
 }
 
-static void ogsql_collect_static_completion_matches(OgsqlCompletionCtxT ctx, const char *prefix, uint32 prefix_len,
-    const ogsql_cmd_def_t *commandDefs, uint32 commandCount, const char **matches, uint32 *match_count)
+static void ogsql_collect_static_completion_matches(OgsqlCompletionCtxT ctx, const char *prefix,
+    uint32 prefix_len, const ogsql_cmd_def_t *commandDefs, uint32 commandCount,
+    const char **matches, uint32 *match_count)
 {
     if (matches == NULL || match_count == NULL || prefix == NULL) {
         return;
@@ -694,79 +1255,328 @@ static void ogsql_collect_static_completion_matches(OgsqlCompletionCtxT ctx, con
     }
 }
 
+static void OgsqlCollectCreateTableWordMatches(const char *prefix, uint32 prefixLen,
+    const char **matches, uint32 *matchCount)
+{
+    if (prefixLen == 0) {
+        return;
+    }
+    for (uint32 i = 0; i < OGSQL_CREATE_TABLE_COMPLETION_WORD_COUNT; i++) {
+        if (ogsql_completion_word_matches(g_createTableCompletionWords[i], prefix, prefixLen)) {
+            ogsql_add_completion_match(matches, matchCount, g_createTableCompletionWords[i]);
+        }
+    }
+}
+
+static bool32 OgsqlCompletionGetClientOptionMode(const OgsqlCompletionRequestT *request, bool32 *forSet)
+{
+    uint32 priorStart = 0;
+    char priorWord[OGSQL_MAX_COMPLETION_WORD_LEN];
+    char leadingWord[OGSQL_MAX_COMPLETION_WORD_LEN];
+
+    if (request == NULL || forSet == NULL ||
+        !ogsql_get_lower_completion_word_before(request->cmdBuf, request->tokenStart, priorWord,
+        sizeof(priorWord), &priorStart)) {
+        return OG_FALSE;
+    }
+    if (strcmp(priorWord, "set") != 0 && strcmp(priorWord, "show") != 0) {
+        return OG_FALSE;
+    }
+    if (ogsql_get_lower_completion_word_before(request->cmdBuf, priorStart, leadingWord, sizeof(leadingWord), NULL)) {
+        return OG_FALSE;
+    }
+    *forSet = (strcmp(priorWord, "set") == 0) ? OG_TRUE : OG_FALSE;
+    return OG_TRUE;
+}
+
+static void ogsql_collect_option_matches(const char *prefix, uint32 prefixLen, bool32 forSet,
+    const char **matches, uint32 *matchCount)
+{
+    uint32 optionCount = ogsql_option_count();
+
+    for (uint32 i = 0; i < optionCount; i++) {
+        const char *name = ogsql_option_name(i, forSet);
+
+        if (name != NULL && ogsql_completion_word_matches(name, prefix, prefixLen)) {
+            ogsql_add_completion_match(matches, matchCount, name);
+        }
+    }
+}
+
 static bool32 ogsql_completion_ctx_is_dynamic(OgsqlCompletionCtxT ctx)
 {
     return (ctx == OGSQL_COMPLETION_CTX_TABLE || ctx == OGSQL_COMPLETION_CTX_COLUMN ||
-        ctx == OGSQL_COMPLETION_CTX_PROCEDURE || ctx == OGSQL_COMPLETION_CTX_SEQUENCE) ? OG_TRUE : OG_FALSE;
+        ctx == OGSQL_COMPLETION_CTX_INDEX || ctx == OGSQL_COMPLETION_CTX_PROCEDURE ||
+        ctx == OGSQL_COMPLETION_CTX_SEQUENCE) ? OG_TRUE : OG_FALSE;
+}
+
+static bool32 OgsqlCompletionIsIndexNameContext(const OgsqlCompletionRequestT *request)
+{
+    return ogsql_completion_has_words_before(request, "index", "alter", NULL) ||
+        ogsql_completion_has_words_before(request, "index", "drop", NULL) ||
+        ogsql_completion_has_words_before(request, "index", "analyze", NULL);
+}
+
+static const OgsqlCompletionSourceT *OgsqlFindCompletionSource(const OgsqlCompletionSqlContextT *context,
+    const char *qualifier, uint32 qualifierLen)
+{
+    char qualifierBuf[OGSQL_OBJ_NAME_LEN];
+
+    if (qualifier == NULL ||
+        OgsqlCopyCompletionToken(qualifier, qualifierLen, qualifierBuf, sizeof(qualifierBuf)) != OG_SUCCESS) {
+        return NULL;
+    }
+    for (uint32 i = 0; i < context->sourceCount; i++) {
+        const OgsqlCompletionSourceT *source = &context->sources[i];
+
+        if ((source->alias[0] != '\0' && ogsql_completion_word_equal(source->alias, qualifierBuf)) ||
+            ogsql_completion_word_equal(source->table, qualifierBuf)) {
+            return source;
+        }
+    }
+    return NULL;
+}
+
+static status_t OgsqlAppendColumnSourceSql(char *sqlBuf, uint32 sqlBufSize,
+    const OgsqlCompletionSourceT *source, const char *prefix, uint32 prefixLen, bool32 addUnion)
+{
+    char fragment[512];
+    int ret;
+    errno_t rc;
+
+    if (source->schema[0] == '\0') {
+        if (prefixLen == 0) {
+            ret = snprintf_s(fragment, sizeof(fragment), sizeof(fragment) - 1,
+                "%sSELECT COLUMN_NAME FROM SYS.MY_TAB_COLUMNS WHERE UPPER(TABLE_NAME) = UPPER('%s') ",
+                addUnion == OG_TRUE ? "UNION " : "", source->table);
+        } else {
+            ret = snprintf_s(fragment, sizeof(fragment), sizeof(fragment) - 1,
+                "%sSELECT COLUMN_NAME FROM SYS.MY_TAB_COLUMNS WHERE UPPER(TABLE_NAME) = UPPER('%s') "
+                "AND SUBSTR(UPPER(COLUMN_NAME), 1, %u) = UPPER('%s') ",
+                addUnion == OG_TRUE ? "UNION " : "", source->table, prefixLen, prefix);
+        }
+    } else {
+        if (prefixLen == 0) {
+            ret = snprintf_s(fragment, sizeof(fragment), sizeof(fragment) - 1,
+                "%sSELECT COLUMN_NAME FROM SYS.DB_TAB_COLUMNS WHERE UPPER(OWNER) = UPPER('%s') "
+                "AND UPPER(TABLE_NAME) = UPPER('%s') ",
+                addUnion == OG_TRUE ? "UNION " : "", source->schema, source->table);
+        } else {
+            ret = snprintf_s(fragment, sizeof(fragment), sizeof(fragment) - 1,
+                "%sSELECT COLUMN_NAME FROM SYS.DB_TAB_COLUMNS WHERE UPPER(OWNER) = UPPER('%s') "
+                "AND UPPER(TABLE_NAME) = UPPER('%s') "
+                "AND SUBSTR(UPPER(COLUMN_NAME), 1, %u) = UPPER('%s') ",
+                addUnion == OG_TRUE ? "UNION " : "", source->schema, source->table, prefixLen, prefix);
+        }
+    }
+    if (ret < 0) {
+        return OG_ERROR;
+    }
+    rc = strcat_s(sqlBuf, sqlBufSize, fragment);
+    return (rc == EOK) ? OG_SUCCESS : OG_ERROR;
+}
+
+static status_t OgsqlCollectColumnMatches(const OgsqlCompletionSqlContextT *context,
+    const OgsqlCompletionSourceT *qualifiedSource, const char *prefix, uint32 prefixLen,
+    OgsqlCompletionStoreT *store)
+{
+    char prefixBuf[OGSQL_OBJ_NAME_LEN];
+    char sqlBuf[OGSQL_MAX_TEMP_SQL + 1] = { 0 };
+    bool32 addUnion = OG_FALSE;
+
+    if (OgsqlCopyCompletionToken(prefix, prefixLen, prefixBuf, sizeof(prefixBuf)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    for (uint32 i = 0; i < context->sourceCount; i++) {
+        const OgsqlCompletionSourceT *source = &context->sources[i];
+
+        if (qualifiedSource != NULL && source != qualifiedSource) {
+            continue;
+        }
+        if (OgsqlAppendColumnSourceSql(sqlBuf, sizeof(sqlBuf), source, prefixBuf, prefixLen,
+            addUnion) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        addUnion = OG_TRUE;
+    }
+    if (addUnion == OG_FALSE || strcat_s(sqlBuf, sizeof(sqlBuf), "ORDER BY 1") != EOK) {
+        return OG_ERROR;
+    }
+    return OgsqlQueryCompletionMatches(sqlBuf, prefix, prefixLen, store);
 }
 
 static status_t OgsqlCollectDynamicMatches(OgsqlCompletionCtxT ctx, const char *prefix, uint32 prefixLen,
+    const OgsqlCompletionSqlContextT *sqlContext, const OgsqlCompletionSourceT *qualifiedSource,
     OgsqlCompletionStoreT *store)
 {
-    const char *sql = NULL;
+    char prefixBuf[OGSQL_OBJ_NAME_LEN];
+    char sql[OGSQL_MAX_TEMP_SQL + 1];
+    int ret;
+
+    if (ctx == OGSQL_COMPLETION_CTX_COLUMN) {
+        return OgsqlCollectColumnMatches(sqlContext, qualifiedSource, prefix, prefixLen, store);
+    }
+    if (OgsqlCopyCompletionToken(prefix, prefixLen, prefixBuf, sizeof(prefixBuf)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
 
     switch (ctx) {
         case OGSQL_COMPLETION_CTX_TABLE:
-            sql = "SELECT NAME FROM SYS.SYS_TABLES T, SYS.DV_ME M "
-                "WHERE T.USER# = M.USER_ID AND T.RECYCLED = 0 "
-                "UNION SELECT NAME FROM SYS.SYS_VIEWS V, SYS.DV_ME M WHERE V.USER# = M.USER_ID";
+            if (prefixLen == 0) {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT TABLE_NAME FROM SYS.MY_TABLES UNION SELECT VIEW_NAME FROM SYS.MY_VIEWS ORDER BY 1");
+            } else {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT TABLE_NAME FROM SYS.MY_TABLES "
+                    "WHERE SUBSTR(UPPER(TABLE_NAME), 1, %u) = UPPER('%s') "
+                    "UNION SELECT VIEW_NAME FROM SYS.MY_VIEWS "
+                    "WHERE SUBSTR(UPPER(VIEW_NAME), 1, %u) = UPPER('%s') ORDER BY 1",
+                    prefixLen, prefixBuf, prefixLen, prefixBuf);
+            }
             break;
-        case OGSQL_COMPLETION_CTX_COLUMN:
-            sql = "SELECT C.NAME FROM SYS.SYS_TABLES T, SYS.DV_ME M, SYS.SYS_COLUMNS C "
-                "WHERE T.USER# = M.USER_ID AND C.USER# = T.USER# AND C.TABLE# = T.ID AND T.RECYCLED = 0 "
-                "UNION SELECT OBJECT_NAME FROM SYS.MY_PROCEDURES WHERE OBJECT_TYPE = 'FUNCTION'";
+        case OGSQL_COMPLETION_CTX_INDEX:
+            if (prefixLen == 0) {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT INDEX_NAME FROM SYS.MY_INDEXES ORDER BY 1");
+            } else {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT INDEX_NAME FROM SYS.MY_INDEXES "
+                    "WHERE SUBSTR(UPPER(INDEX_NAME), 1, %u) = UPPER('%s') ORDER BY 1",
+                    prefixLen, prefixBuf);
+            }
             break;
         case OGSQL_COMPLETION_CTX_PROCEDURE:
-            sql = "SELECT OBJECT_NAME FROM SYS.MY_PROCEDURES WHERE OBJECT_TYPE = 'PROCEDURE' "
-                "UNION SELECT OBJECT_NAME FROM SYS.MY_PROCEDURES WHERE OBJECT_TYPE = 'FUNCTION'";
+            if (prefixLen == 0) {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT OBJECT_NAME FROM SYS.MY_PROCEDURES "
+                    "WHERE OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION') ORDER BY 1");
+            } else {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT OBJECT_NAME FROM SYS.MY_PROCEDURES WHERE OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION') "
+                    "AND SUBSTR(UPPER(OBJECT_NAME), 1, %u) = UPPER('%s') ORDER BY 1", prefixLen, prefixBuf);
+            }
             break;
         case OGSQL_COMPLETION_CTX_SEQUENCE:
-            sql = "SELECT NAME FROM SYS.SYS_SEQUENCES S, SYS.DV_ME M WHERE S.UID = M.USER_ID";
+            if (prefixLen == 0) {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT SEQUENCE_NAME FROM SYS.MY_SEQUENCES ORDER BY 1");
+            } else {
+                ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+                    "SELECT SEQUENCE_NAME FROM SYS.MY_SEQUENCES "
+                    "WHERE SUBSTR(UPPER(SEQUENCE_NAME), 1, %u) = UPPER('%s') ORDER BY 1", prefixLen, prefixBuf);
+            }
             break;
+        case OGSQL_COMPLETION_CTX_COLUMN:
         case OGSQL_COMPLETION_CTX_DEFAULT:
         case OGSQL_COMPLETION_CTX_SCHEMA_TABLE:
         default:
             return OG_ERROR;
     }
-
+    if (ret < 0) {
+        return OG_ERROR;
+    }
     return OgsqlQueryCompletionMatches(sql, prefix, prefixLen, store);
+}
+
+static void OgsqlCollectExpressionObjectMatches(const char *prefix, uint32 prefixLen,
+    OgsqlCompletionStoreT *store)
+{
+    char prefixBuf[OGSQL_OBJ_NAME_LEN];
+    char sql[OGSQL_MAX_TEMP_SQL + 1];
+    int ret;
+
+    if (prefixLen == 0 ||
+        OgsqlCopyCompletionToken(prefix, prefixLen, prefixBuf, sizeof(prefixBuf)) != OG_SUCCESS) {
+        return;
+    }
+    ret = snprintf_s(sql, sizeof(sql), sizeof(sql) - 1,
+        "SELECT OBJECT_NAME FROM SYS.MY_PROCEDURES WHERE OBJECT_TYPE = 'FUNCTION' "
+        "AND SUBSTR(UPPER(OBJECT_NAME), 1, %u) = UPPER('%s') "
+        "UNION SELECT SEQUENCE_NAME FROM SYS.MY_SEQUENCES "
+        "WHERE SUBSTR(UPPER(SEQUENCE_NAME), 1, %u) = UPPER('%s') ORDER BY 1",
+        prefixLen, prefixBuf, prefixLen, prefixBuf);
+    if (ret >= 0) {
+        (void)OgsqlQueryCompletionMatches(sql, prefix, prefixLen, store);
+    }
 }
 
 uint32 ogsql_completion_collect(const OgsqlCompletionRequestT *request, OgsqlCompletionStoreT *store)
 {
     OgsqlCompletionCtxT ctx;
+    OgsqlCompletionSqlContextT sqlContext;
+    const OgsqlCompletionSourceT *qualifiedSource = NULL;
     OgsqlSchemaCompletionRequestT schemaRequest;
     uint32 schema_start = 0;
     uint32 schema_len = 0;
+    bool32 hasDotPrefix = OG_FALSE;
+    bool32 forSet = OG_FALSE;
 
     if (request == NULL || store == NULL || store->matchCount == NULL || store->dynamicCount == NULL) {
         return 0;
     }
     *store->matchCount = 0;
     *store->dynamicCount = 0;
-    if (ogsql_get_completion_schema_prefix(request->cmdBuf, request->tokenStart, &schema_start, &schema_len)) {
-        schemaRequest = (OgsqlSchemaCompletionRequestT){ request->cmdBuf + schema_start, schema_len,
-            request->prefix, request->prefixLen };
-        if (OgsqlCollectSchemaTableMatches(&schemaRequest, store) == OG_SUCCESS && *store->matchCount > 0) {
-            return *store->matchCount;
-        }
-        return 0;
+    hasDotPrefix = ogsql_get_completion_schema_prefix(request->cmdBuf, request->tokenStart,
+        &schema_start, &schema_len);
+
+    if (OgsqlCompletionGetClientOptionMode(request, &forSet)) {
+        ogsql_collect_option_matches(request->prefix, request->prefixLen, forSet, store->matches,
+            store->matchCount);
+        return *store->matchCount;
     }
 
     ctx = OgsqlClassifyCompletionContext(request->cmdBuf, request->cursorPos, request->prefixLen > 0);
+    if (OgsqlCompletionIsIndexNameContext(request)) {
+        ctx = OGSQL_COMPLETION_CTX_INDEX;
+    }
+    OgsqlParseCompletionSqlContext(request, &sqlContext);
+    if (sqlContext.insertColumnContext == OG_TRUE) {
+        ctx = OGSQL_COMPLETION_CTX_COLUMN;
+    }
+    if (OgsqlCompletionIsCreateTableDefinitionContext(request)) {
+        OgsqlCollectCreateTableWordMatches(request->prefix, request->prefixLen, store->matches,
+            store->matchCount);
+        if (*store->matchCount > 0) {
+            return *store->matchCount;
+        }
+    }
+    if (hasDotPrefix == OG_TRUE) {
+        qualifiedSource = OgsqlFindCompletionSource(&sqlContext, request->cmdBuf + schema_start, schema_len);
+        if (qualifiedSource == NULL) {
+            if (ctx != OGSQL_COMPLETION_CTX_TABLE) {
+                return 0;
+            }
+            schemaRequest = (OgsqlSchemaCompletionRequestT){ request->cmdBuf + schema_start, schema_len,
+                request->prefix, request->prefixLen };
+            (void)OgsqlCollectSchemaTableMatches(&schemaRequest, store);
+            return *store->matchCount;
+        }
+        ctx = OGSQL_COMPLETION_CTX_COLUMN;
+    }
     if (request->prefixLen == 0 && ctx == OGSQL_COMPLETION_CTX_DEFAULT) {
         return 0;
     }
 
+    if (ogsql_completion_ctx_allows_sql_words(ctx)) {
+        ogsql_collect_preferred_keyword_matches(request, store->matches, store->matchCount);
+        ogsql_collect_issue289_keyword_matches(request, store->matches, store->matchCount);
+        if (*store->matchCount > 0) {
+            return *store->matchCount;
+        }
+    }
+
     if (ogsql_completion_ctx_is_dynamic(ctx) == OG_TRUE &&
-        OgsqlCollectDynamicMatches(ctx, request->prefix, request->prefixLen, store) == OG_SUCCESS &&
-        *store->matchCount > 0) {
+        OgsqlCollectDynamicMatches(ctx, request->prefix, request->prefixLen, &sqlContext,
+        qualifiedSource, store) == OG_SUCCESS && *store->matchCount > 0) {
         return *store->matchCount;
     }
 
     *store->matchCount = 0;
-    ogsql_collect_static_completion_matches(ctx, request->prefix, request->prefixLen, request->commandDefs,
-        request->commandCount, store->matches, store->matchCount);
+    ogsql_collect_static_completion_matches(ctx, request->prefix, request->prefixLen,
+        request->commandDefs, request->commandCount, store->matches, store->matchCount);
+    if (ctx == OGSQL_COMPLETION_CTX_COLUMN || ctx == OGSQL_COMPLETION_CTX_DEFAULT) {
+        OgsqlCollectExpressionObjectMatches(request->prefix, request->prefixLen, store);
+    }
     return *store->matchCount;
 }
 
