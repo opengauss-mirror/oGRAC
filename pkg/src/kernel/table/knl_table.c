@@ -26,6 +26,7 @@
 #include "knl_table.h"
 #include "dc_tbl.h"
 #include "dc_part.h"
+#include "dc_util.h"
 #include "knl_mtrl.h"
 #include "knl_database.h"
 #include "knl_context.h"
@@ -13995,7 +13996,7 @@ static status_t db_init_shadow_index(knl_session_t *session, rebuild_index_def_t
     desc.space_id = spc_id;
     desc.is_invalid = OG_FALSE;
     desc.entry = INVALID_PAGID;
-    desc.cr_mode = (def->cr_mode == OG_INVALID_ID8) ? old_index->desc.cr_mode : def->cr_mode;
+    desc.cr_mode = (def->cr_mode == OG_INVALID_ID8) ? desc.cr_mode : def->cr_mode;
     desc.pctfree = (def->pctfree == OG_INVALID_ID32) ? old_index->desc.pctfree : def->pctfree;
     desc.columns_info = old_index->desc.columns_info;
     shadow_index->btree.is_shadow = OG_TRUE;
