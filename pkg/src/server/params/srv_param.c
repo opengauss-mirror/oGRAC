@@ -23,12 +23,15 @@
  * -------------------------------------------------------------------------
  */
 #include "srv_module.h"
+#include "ogsql_stmt.h"
 #include "srv_param.h"
 #include "srv_instance.h"
 #include "srv_param_common.h"
 #include "set_kernel.h"
 #include "set_server.h"
 #include "set_others.h"
+#include "cbo_base.h"
+#include "srv_device_adpt.h"
 #include "srv_params_raft_and_log.h"
 #include "ddl_parser.h"
 #include "dtc_rbp_rt_aly.h"
@@ -1122,7 +1125,7 @@ config_item_t g_parameters[] = {
     { "ENABLE_DBSTOR", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_DBSTOR, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, sql_notify_als_bool, sql_notify_als_bool, NULL },
     { "DBSTOR_DEPLOY_MODE", OG_TRUE, ATTR_NONE, "0", NULL, NULL, "-", "[0,1]", "OG_TYPE_INTEGER", NULL,
-      PARAM_DBSTOR_DEPLOY_MODE, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, NULL, NULL, NULL },
+      PARAM_DBSTOR_DEPLOY_MODE, EFFECT_REBOOT, CFG_INS, sql_verify_als_zero_one, NULL, NULL, NULL },
     { "DBSTOR_NAMESPACE", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL,
       PARAM_DBSTOR_NAMESPACE, EFFECT_REBOOT, CFG_INS, sql_verify_als_comm, NULL, NULL, NULL },
     { "ENABLE_OGRAC_STATS", OG_TRUE, ATTR_NONE, "OFF", NULL, NULL, "-", "OFF,ON", "OG_TYPE_VARCHAR", NULL,
@@ -1695,6 +1698,833 @@ status_t srv_apply_param_plan_display_format(sql_instance_t *sql)
     (void)sql_set_plan_display_format(format_str, &sql->plan_display_format);
     return OG_SUCCESS;
 }
+
+
+/* Bison ALTER SYSTEM verifier adapters. */
+static status_t sql_bison_get_plan_display_format_value(const bison_sys_param_value_t *source,
+    bison_param_token_t *token)
+{
+    text_t value = source->is_string ? source->decoded_string : source->text;
+
+    MEMS_RETURN_IFERR(memset_s(token, sizeof(*token), 0, sizeof(*token)));
+    token->text.str = token->value;
+    token->type = source->is_string ? BISON_PARAM_TOKEN_STRING : BISON_PARAM_TOKEN_WORD;
+    cm_trim_text(&value);
+    if (value.len >= sizeof(token->value)) {
+        OG_THROW_ERROR(ERR_BUFFER_OVERFLOW, value.len, sizeof(token->value) - 1);
+        return OG_ERROR;
+    }
+    if (value.len > 0) {
+        MEMS_RETURN_IFERR(memcpy_s(token->value, sizeof(token->value), value.str, value.len));
+    }
+    token->value[value.len] = '\0';
+    token->text.len = value.len;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_extra_dtc_rcy_paral_buf_list_size(SQL_BISON_VERIFY_ARGS)
+{
+    uint32 num;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (num < OG_MIN_DTC_RCY_PARAL_BUF_LIST_SIZE) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "DTC_RCY_PARAL_BUF_LIST_SIZE", (int64)OG_MIN_DTC_RCY_PARAL_BUF_LIST_SIZE);
+        return OG_ERROR;
+    }
+    if (num > OG_MAX_DTC_RCY_PARAL_BUF_LIST_SIZE) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_RCY_PARAL_BUF_LIST_SIZE", (int64)OG_MAX_DTC_RCY_PARAL_BUF_LIST_SIZE);
+        return OG_ERROR;
+    }
+    if ((num & (num - 1)) != 0) {
+        OG_THROW_ERROR(ERR_PARAMETER_NOT_POWER_OF_TWO, "DTC_RCY_PARAL_BUF_LIST_SIZE", (int64)num);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_get_plan_display_format_info(const bison_sys_param_value_t *source, uint32 *format_index,
+    bool32 *option_flag)
+{
+    text_t left = { 0 };
+    text_t right = { 0 };
+    bison_param_token_t word;
+    OG_RETURN_IFERR(sql_bison_get_plan_display_format_value(source, &word));
+
+    for (;;) {
+        bool32 format_mismatch = OG_FALSE;
+        bool32 option_mismatch = OG_FALSE;
+        cm_ltrim_text(&word.text);
+        if (word.text.len == 0) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "Invalid value for PLAN_DISPLAY_FORMAT");
+            return OG_ERROR;
+        }
+
+        cm_split_text(&word.text, ',', '\0', &left, &right);
+        cm_text_skip(&word.text, left.len);
+        cm_rtrim_text(&left);
+        if ((left.len == 0 && right.len != 0) || (right.len == 0 && word.text.len != 0)) {
+            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "Invalid value for PLAN_DISPLAY_FORMAT");
+            return OG_ERROR;
+        }
+
+        OG_RETURN_IFERR(sql_get_plan_format_index(&left, format_index, &format_mismatch));
+        OG_RETURN_IFERR(sql_get_plan_option_flag(&left, option_flag, &option_mismatch));
+        if (format_mismatch && option_mismatch) {
+            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "Invalid value %s for PLAN_DISPLAY_FORMAT", T2S(&left));
+            return OG_ERROR;
+        }
+
+        if (right.len == 0) {
+            break;
+        }
+
+        cm_text_skip(&word.text, 1);
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_parse_plan_display_format(const bison_sys_param_value_t *source, uint32 *value)
+{
+    uint32 format_index = OG_INVALID_ID32;
+    // 3 is PLAN_DISPLAY_OPTION_COUNT
+    bool32 option_flag[3] = { OG_FALSE };
+    char normalized_value[OG_PARAM_BUFFER_SIZE];
+
+    OG_RETURN_IFERR(sql_bison_get_plan_display_format_info(source, &format_index, option_flag));
+    OG_RETURN_IFERR(sql_normalize_plan_display_format_value(normalized_value, format_index, option_flag));
+    sql_set_plan_display_format(normalized_value, value);
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_extra_als_plan_display_format(SQL_BISON_VERIFY_ARGS)
+{
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    uint32 format_index = OG_INVALID_ID32;
+    // 3 is PLAN_DISPLAY_OPTION_COUNT
+    bool32 option_flag[3] = { OG_FALSE };
+    OG_RETURN_IFERR(sql_bison_get_plan_display_format_info(source, &format_index, option_flag));
+    OG_RETURN_IFERR(sql_normalize_plan_display_format_value(sys_def->value, format_index, option_flag));
+    return OG_SUCCESS;
+}
+
+#define SQL_BISON_PARAM(name, verifier) \
+    { name, verifier, 0, 0 }
+#define SQL_BISON_PARAM_RANGE(name, verifier, min_value, max_value) \
+    { name, verifier, (int64)(min_value), (int64)(max_value) }
+
+/* Bison-only copy of the ALTER SYSTEM verifier registry. Use canonical config names. */
+/* Names must remain in cm_compare_text_ins dictionary order for binary lookup. */
+static const sql_bison_sys_param_verifier_t g_bison_sys_param_verifiers[] = {
+    SQL_BISON_PARAM("ALARM_LOG_DIR", sql_bison_extra_als_file_dir),
+    SQL_BISON_PARAM("ARCHIVE_CONFIG", sql_bison_extra_als_log_archive_config),
+    SQL_BISON_PARAM("ARCHIVE_DEST_1", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_10", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_2", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_3", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_4", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_5", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_6", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_7", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_8", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_9", sql_bison_extra_als_log_archive_dest_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_1", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_10", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_2", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_3", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_4", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_5", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_6", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_7", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_8", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_DEST_STATE_9", sql_bison_extra_als_log_archive_dest_state_n),
+    SQL_BISON_PARAM("ARCHIVE_FORMAT", sql_bison_verify_comm),
+    SQL_BISON_PARAM("ARCHIVE_FORMAT_WITH_LSN", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("ARCHIVE_MAX_THREADS", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("ARCHIVE_MIN_SUCCEED_DEST", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("ARCHIVE_TRACE", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("ARCH_CLEAN_IGNORE_BACKUP", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ARCH_CLEAN_IGNORE_STANDBY", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ARCH_CLEAN_LOWER_LIMIT", sql_bison_extra_als_arch_lower_limit),
+    SQL_BISON_PARAM("ARCH_CLEAN_UPPER_LIMIT", sql_bison_extra_als_arch_upper_limit),
+    SQL_BISON_PARAM_RANGE("ARCH_FILE_SIZE", sql_bison_verify_pool_size,
+        BUDDY_MIN_ARCH_FILE_SIZE, BUDDY_MAX_ARCH_FILE_SIZE),
+    SQL_BISON_PARAM("ARCH_LOG_CHECK", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("ARCH_SIZE", sql_bison_verify_pool_size,
+        0, OG_MAX_BACKUP_BUF_SIZE),
+    SQL_BISON_PARAM_RANGE("ARCH_TIME", sql_bison_verify_pool_size,
+        OG_MIN_ARCH_TIME, OG_MAX_ARCH_TIME),
+    SQL_BISON_PARAM("ARRAY_STORAGE_OPTIMIZATION", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("AUDIT_LEVEL", sql_bison_verify_uint32_range,
+        0, DDL_AUDIT_ALL),
+    SQL_BISON_PARAM("AUDIT_SYSLOG_LEVEL", sql_bison_extra_als_audit_syslog_level),
+    SQL_BISON_PARAM("AUDIT_TRAIL_MODE", sql_bison_extra_als_audit_trail_mode),
+    SQL_BISON_PARAM_RANGE("AUTONOMOUS_SESSIONS", sql_bison_verify_uint32_range,
+        1, OG_MAX_AUTON_SESSIONS),
+    SQL_BISON_PARAM("AUTO_INHERIT_USER", sql_bison_verify_onoff),
+    SQL_BISON_PARAM_RANGE("BACKUP_BUFFER_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_BACKUP_BUF_SIZE, OG_MAX_BACKUP_BUF_SIZE),
+    SQL_BISON_PARAM("BACKUP_RETRY", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("BATCH_FLUSH_CAPACITY", sql_bison_verify_uint32_range,
+        OG_MIN_BATCH_FLUSH_CAPACITY, OG_MAX_BATCH_FLUSH_CAPACITY),
+    SQL_BISON_PARAM("BLOCK_REPAIR_ENABLE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("BLOCK_REPAIR_TIMEOUT", sql_bison_verify_uint32_range,
+        1, ABR_MAX_TIMEOUT),
+    SQL_BISON_PARAM_RANGE("BUFFER_LRU_SEARCH_THRE", sql_bison_verify_uint32_range,
+        OG_MIN_LRU_SEARCH_THRESHOLD, OG_MAX_LRU_SEARCH_THRESHOLD),
+    SQL_BISON_PARAM_RANGE("BUFFER_PAGE_CLEAN_PERIOD", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("BUFFER_PAGE_CLEAN_RATIO", sql_bison_extra_als_page_clean_ratio),
+    SQL_BISON_PARAM_RANGE("BUF_POOL_NUM", sql_bison_verify_uint32_range,
+        1, OG_MAX_BUF_POOL_NUM),
+    SQL_BISON_PARAM("BUILD_DATAFILE_PARALLEL", sql_bison_verify_bool),
+    SQL_BISON_PARAM("BUILD_DATAFILE_PREALLOCATE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("BUILD_KEEP_ALIVE_TIMEOUT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("CBO", sql_bison_verify_onoff),
+    SQL_BISON_PARAM("CBO_HINT_ENABLED", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("CBO_INDEX_CACHING", sql_bison_verify_uint32_range,
+        0, CBO_MAX_INDEX_CACHING),
+    SQL_BISON_PARAM_RANGE("CBO_INDEX_COST_ADJ", sql_bison_verify_uint32_range,
+        CBO_MIN_INDEX_COST_ADJ, CBO_MAX_INDEX_COST_ADJ),
+    SQL_BISON_PARAM_RANGE("CBO_PATH_CACHING", sql_bison_verify_uint32_range,
+        CBO_MIN_PATH_CACHING, CBO_MAX_PATH_CACHING),
+    SQL_BISON_PARAM_RANGE("CHECKPOINT_GROUP_SIZE", sql_bison_verify_uint32_range,
+        OG_MIN_CKPT_GROUP_SIZE, OG_MAX_CKPT_GROUP_SIZE),
+    SQL_BISON_PARAM("CHECKPOINT_IO_CAPACITY", sql_bison_extra_als_checkpoint_io_capacity),
+    SQL_BISON_PARAM_RANGE("CHECKPOINT_PAGES", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("CHECKPOINT_PERIOD", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM("CLUSTER_DATABASE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("CLUSTER_ID", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("CLUSTER_NO_CMS", sql_bison_verify_bool),
+    SQL_BISON_PARAM("COMMIT_MODE", sql_bison_extra_als_commit_logging),
+    SQL_BISON_PARAM("COMMIT_ON_DISCONNECT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("COMMIT_WAIT_LOGGING", sql_bison_extra_als_commit_wait),
+    SQL_BISON_PARAM("CONTROL_FILES", sql_bison_verify_comm),
+    SQL_BISON_PARAM("COVERAGE_ENABLE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("CPU_GROUP_INFO", sql_bison_extra_als_cpu_inf_str),
+    SQL_BISON_PARAM("CPU_NODE_BIND", sql_bison_verify_cpu_node_bind),
+    SQL_BISON_PARAM_RANGE("CREATE_INDEX_PARALLELISM", sql_bison_verify_uint32_range,
+        OG_MIN_CREATE_INDEX_PARALLELISM, OG_MAX_CREATE_INDEX_PARALLELISM),
+    SQL_BISON_PARAM("CR_MODE", sql_bison_extra_als_cr_mode),
+    SQL_BISON_PARAM_RANGE("CR_POOL_COUNT", sql_bison_verify_uint32_range,
+        1, OG_MAX_CR_POOL_COUNT),
+    SQL_BISON_PARAM_RANGE("CR_POOL_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_CR_POOL_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM("CTRLLOG_BACKUP_LEVEL", sql_bison_extra_als_ctrllog_backup_level),
+    SQL_BISON_PARAM_RANGE("DATA_BUFFER_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_DATA_BUFFER_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM("DBSTOR_DEPLOY_MODE", sql_bison_verify_zero_one),
+    SQL_BISON_PARAM("DBSTOR_NAMESPACE", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("DBWR_PROCESSES", sql_bison_verify_uint32_range,
+        1, OG_MAX_DBWR_PROCESS),
+    SQL_BISON_PARAM("DB_FILE_NAME_CONVERT", sql_bison_extra_als_convert),
+    SQL_BISON_PARAM("DB_ISOLEVEL", sql_bison_extra_als_db_isolevel),
+    SQL_BISON_PARAM("DB_TIMEZONE", sql_bison_extra_als_db_tz),
+    SQL_BISON_PARAM_RANGE("DDL_LOCK_TIMEOUT", sql_bison_verify_uint32_range,
+        OG_MIN_DDL_LOCK_TIMEOUT, OG_MAX_DDL_LOCK_TIMEOUT),
+    SQL_BISON_PARAM("DEFAULT_EXTENTS", sql_bison_extra_als_default_extents),
+    SQL_BISON_PARAM("DEFAULT_TABLESPACE_TYPE", sql_bison_extra_als_default_space_type),
+    SQL_BISON_PARAM("DEGRADE_SEARCH_MAP", sql_bison_verify_bool),
+    SQL_BISON_PARAM("DELAY_CLEANOUT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("DRC_IN_REFORMER_MODE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("DROP_NOLOGGING", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("DSS_LOG_LEVEL", sql_bison_verify_uint32_range,
+        0, OG_MAX_DSS_LOG_LEVEL),
+    SQL_BISON_PARAM("DTC_CKPT_NOTIFY_TASK_RATIO", sql_bison_extra_als_mes_task_ratio),
+    SQL_BISON_PARAM("DTC_CLEAN_EDP_TASK_RATIO", sql_bison_extra_als_mes_task_ratio),
+    SQL_BISON_PARAM("DTC_RCY_PARAL_BUF_LIST_SIZE", sql_bison_extra_dtc_rcy_paral_buf_list_size),
+    SQL_BISON_PARAM("DTC_TXN_INFO_TASK_RATIO", sql_bison_extra_als_mes_task_ratio),
+    SQL_BISON_PARAM("EMPTY_STRING_AS_NULL", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_ACCESS_DC", sql_bison_extra_als_bool_only_sys_allowed),
+    SQL_BISON_PARAM("ENABLE_ARCH_COMPRESS", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_BROADCAST_ON_COMMIT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_CHECK_SECURITY_LOG", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_DBSTOR", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_DBSTOR_BATCH_FLUSH", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_DSS", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_ERR_SUPERPOSED", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_FDSA", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_HASH_JOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_HWN_CHANGE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_IDX_CONFS_NAME_DUPL", sql_bison_extra_als_idx_duplicate_enable),
+    SQL_BISON_PARAM("ENABLE_IDX_KEY_LEN_CHECK", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_LOCAL_INFILE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_MERGE_JOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_NESTLOOP_JOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_OGRAC_STATS", sql_bison_verify_onoff),
+    SQL_BISON_PARAM("ENABLE_PASSWORD_CIPHER", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_PERMISSIVE_UNICODE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_QUICK_CKPT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_RAFT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_SAMPLE_LIMIT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_SYSDBA_LOGIN", sql_bison_extra_als_bool_only_sys_allowed),
+    SQL_BISON_PARAM("ENABLE_SYSDBA_REMOTE_LOGIN", sql_bison_extra_als_bool_only_sys_allowed),
+    SQL_BISON_PARAM("ENABLE_SYS_CRC_CHECK", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_SYS_REMOTE_LOGIN", sql_bison_extra_als_bool_only_sys_allowed),
+    SQL_BISON_PARAM("ENABLE_TEMP_SPACE_BITMAP", sql_bison_verify_bool),
+    SQL_BISON_PARAM("ENABLE_TX_FREE_PAGE_LIST", sql_bison_verify_bool),
+    SQL_BISON_PARAM("FILE_OPTIONS", sql_bison_extra_als_filesystemio_options),
+    SQL_BISON_PARAM_RANGE("HASH_AREA_SIZE", sql_bison_verify_pool_size,
+        0, PMA_MAX_SIZE),
+    SQL_BISON_PARAM_RANGE("HASH_TABLE_PAGES_HOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_HASH_PAGES_HOLD),
+    SQL_BISON_PARAM("HAVE_SSL", sql_bison_extra_als_have_ssl),
+    SQL_BISON_PARAM_RANGE("INDEX_DEFER_RECYCLE_TIME", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("INIT_LOCK_POOL_PAGES", sql_bison_verify_uint32_range,
+        OG_MIN_LOCK_PAGES, OG_MAX_LOCK_PAGES),
+    SQL_BISON_PARAM_RANGE("INI_TRANS", sql_bison_verify_uint32_range,
+        1, OG_MAX_TRANS),
+    SQL_BISON_PARAM_RANGE("INSTANCE_ID", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("INSTANCE_NAME", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("INTERACTIVE_TIMEOUT", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM("INTERCONNECT_ADDR", sql_bison_extra_als_ip),
+    SQL_BISON_PARAM("INTERCONNECT_BY_PROFILE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("INTERCONNECT_CHANNEL_NUM", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("INTERCONNECT_PORT", sql_bison_extra_als_interconnect_port),
+    SQL_BISON_PARAM("INTERCONNECT_TYPE", sql_bison_extra_als_interconnect_type),
+    SQL_BISON_PARAM_RANGE("INT_SYSINDEX_TRANS", sql_bison_verify_uint32_range,
+        OG_INI_TRANS, OG_MAX_SYSINDEX_TRANS),
+    SQL_BISON_PARAM_RANGE("JOB_THREADS", sql_bison_verify_uint32_range,
+        0, OG_MAX_JOB_THREADS),
+    SQL_BISON_PARAM("KMC_KEY_FILES", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("KNL_AUTONOMOUS_SESSIONS", sql_bison_verify_uint32_range,
+        1, OG_MAX_AUTON_SESSIONS),
+    SQL_BISON_PARAM_RANGE("LARGE_POOL_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_LARGE_POOL_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM_RANGE("LARGE_VARIANT_MEMORY_AREA_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_LARGE_VMA_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM_RANGE("LOB_REUSE_THRESHOLD", sql_bison_verify_pool_size,
+        OG_MIN_LOB_REUSE_SIZE, OG_INVALID_ID32),
+    SQL_BISON_PARAM("LOCAL_KEY", sql_bison_extra_als_local_key),
+    SQL_BISON_PARAM("LOCAL_RBP_HOST", sql_bison_verify_local_rbp_host),
+    SQL_BISON_PARAM("LOCAL_TEMPORARY_TABLE_ENABLED", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("LOCK_WAIT_TIMEOUT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("LOG_BUFFER_COUNT", sql_bison_verify_uint32_range,
+        OG_MIN_LOG_BUFFERS, OG_MAX_LOG_BUFFERS),
+    SQL_BISON_PARAM_RANGE("LOG_BUFFER_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_LOG_BUFFER_SIZE, OG_MAX_LOG_BUFFER_SIZE),
+    SQL_BISON_PARAM("LOG_FILE_NAME_CONVERT", sql_bison_extra_als_convert),
+    SQL_BISON_PARAM("LOG_HOME", sql_bison_extra_als_file_dir),
+    SQL_BISON_PARAM_RANGE("LOG_REPLAY_PROCESSES", sql_bison_verify_uint32_range,
+        OG_DEFAULT_PARAL_RCY, OG_MAX_PARAL_RCY),
+    SQL_BISON_PARAM("LSNR_ADDR", sql_bison_extra_als_ip),
+    SQL_BISON_PARAM_RANGE("LSNR_PORT", sql_bison_verify_uint32_range,
+        OG_MIN_PORT, OG_MAX_UINT16),
+    SQL_BISON_PARAM_RANGE("MASTER_SLAVE_DIFFTIME", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("MAX_ALLOWED_PACKET", sql_bison_verify_pool_size,
+        OG_MAX_PACKET_SIZE, OG_MAX_ALLOWED_PACKET_SIZE),
+    SQL_BISON_PARAM_RANGE("MAX_ARCH_FILES_SIZE", sql_bison_verify_pool_size,
+        0, OG_MAX_ARCH_FILES_SIZE),
+    SQL_BISON_PARAM("MAX_COLUMN_COUNT", sql_bison_extra_als_max_column_count),
+    SQL_BISON_PARAM_RANGE("MAX_LINK_TABLES", sql_bison_verify_uint32_range,
+        0, OG_MAX_LINK_TABLES),
+    SQL_BISON_PARAM_RANGE("MAX_PBL_FILE_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_PBL_FILE_SIZE, OG_MAX_PBL_FILE_SIZE),
+    SQL_BISON_PARAM_RANGE("MAX_REMOTE_PARAMS", sql_bison_verify_uint32_range,
+        0, OG_MAX_SQL_PARAM_COUNT),
+    SQL_BISON_PARAM_RANGE("MAX_TEMP_TABLES", sql_bison_verify_uint32_range,
+        OG_RESERVED_TEMP_TABLES, OG_MAX_TEMP_TABLES),
+    SQL_BISON_PARAM_RANGE("MAX_WORKER_THREADS", sql_bison_verify_uint32_range,
+        OG_MIN_OPTIMIZED_WORKER_COUNT, OG_MAX_OPTIMIZED_WORKER_COUNT),
+    SQL_BISON_PARAM_RANGE("MERGE_SORT_BATCH_SIZE", sql_bison_verify_uint32_range,
+        OG_MIN_MERGE_SORT_BATCH_SIZE, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("MES_CHANNEL_DEGRADE_TIME_MS", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("MES_CHANNEL_UPGRADE_TIME_MS", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("MES_CPU_INFO", sql_bison_extra_als_cpu_inf_str),
+    SQL_BISON_PARAM("MES_CRC_CHECK_SWITCH", sql_bison_verify_bool),
+    SQL_BISON_PARAM("MES_ELAPSED_SWITCH", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("MES_POOL_SIZE", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("MES_SSL_CRT_KEY_PATH", sql_bison_extra_als_file_dir),
+    SQL_BISON_PARAM("MES_SSL_KEY_PWD", sql_bison_verify_comm),
+    SQL_BISON_PARAM("MES_SSL_SWITCH", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("NBU_BACKUP_TIMEOUT", sql_bison_verify_uint32_range,
+        OG_NBU_BACKUP_MIN_WAIT_TIME, OG_INVALID_ID32),
+    SQL_BISON_PARAM("NODE_LOCK_STATUS", sql_bison_extra_als_node_lock_status),
+    SQL_BISON_PARAM("NORMAL_USER_RESERVED_SESSIONS_FACTOR", sql_bison_extra_normal_emerge_sess_factor),
+    SQL_BISON_PARAM_RANGE("OGRAC_TASK_NUM", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("OGSTORE_INST_PATH", sql_bison_extra_als_uds_file_path),
+    SQL_BISON_PARAM_RANGE("OGSTORE_MAX_OPEN_FILES", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("OG_CLUSTER_STRICT_CHECK", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("OG_GDV_SQL_SESS_TMOUT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("OPEN_CURSORS", sql_bison_verify_uint32_range,
+        OG_MIN_OPEN_CURSORS, OG_MAX_OPEN_CURSORS),
+    SQL_BISON_PARAM_RANGE("OPTIMIZED_WORKER_THREADS", sql_bison_verify_uint32_range,
+        OG_MIN_OPTIMIZED_WORKER_COUNT, OG_MAX_OPTIMIZED_WORKER_COUNT),
+    SQL_BISON_PARAM("PAGE_CHECKSUM", sql_bison_extra_als_db_block_checksum),
+    SQL_BISON_PARAM("PAGE_CLEAN_MODE", sql_bison_extra_als_page_clean_mode),
+    SQL_BISON_PARAM("PAGE_SIZE", sql_bison_extra_als_page_size),
+    SQL_BISON_PARAM_RANGE("PARALLEL_MAX_THREADS", sql_bison_verify_uint32_range,
+        0, OG_PARALLEL_MAX_THREADS),
+    SQL_BISON_PARAM("PARALLEL_POLICY", sql_bison_verify_onoff),
+    SQL_BISON_PARAM("PLAN_DISPLAY_FORMAT", sql_bison_extra_als_plan_display_format),
+    SQL_BISON_PARAM_RANGE("PMA_BUFFER_SIZE", sql_bison_verify_pool_size,
+        0, PMA_MAX_SIZE),
+    SQL_BISON_PARAM("QUORUM_ANY", sql_bison_extra_als_quorum_any),
+    SQL_BISON_PARAM_RANGE("RAFT_ELECTION_TIMEOUT", sql_bison_verify_uint32_range,
+        OG_MIN_RAFT_ELECTION_TIMEOUT, OG_MAX_RAFT_ELECTION_TIMEOUT),
+    SQL_BISON_PARAM_RANGE("RAFT_FAILOVER_LIB_TIMEOUT", sql_bison_verify_uint32_range,
+        OG_MIN_RAFT_FAILOVER_WAIT_TIME, OG_INVALID_ID32),
+    SQL_BISON_PARAM("RAFT_KUDU_DIR", sql_bison_verify_comm),
+    SQL_BISON_PARAM("RAFT_LAYOUT_INFO", sql_bison_verify_comm),
+    SQL_BISON_PARAM("RAFT_LOCAL_ADDR", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("RAFT_LOG_ASYNC_BUF_NUM", sql_bison_verify_uint32_range,
+        1, OG_MAX_RAFT_LOG_ASYNC_BUF),
+    SQL_BISON_PARAM_RANGE("RAFT_LOG_LEVEL", sql_bison_verify_uint32_range,
+        0, OG_MAX_RAFT_LOG_LEVELE),
+    SQL_BISON_PARAM("RAFT_MAX_SIZE_PER_MSG", sql_bison_verify_comm),
+    SQL_BISON_PARAM("RAFT_MEMORY_THRESHOLD", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("RAFT_NODE_ID", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM("RAFT_PEER_ADDRS", sql_bison_verify_comm),
+    SQL_BISON_PARAM("RAFT_PEER_IDS", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("RAFT_PENDING_CMDS_BUFFER_SIZE", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("RAFT_PRIORITY_LEVEL", sql_bison_verify_uint32_range,
+        0, OG_MAX_RAFT_PRIORITY_LEVEL),
+    SQL_BISON_PARAM("RAFT_PRIORITY_TYPE", sql_bison_extra_als_raft_priority_type),
+    SQL_BISON_PARAM("RAFT_RAFT_ENTRY_CACHE_MEMORY_SIZE", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("RAFT_RECEIVE_BUFFER_SIZE", sql_bison_verify_uint32_range,
+        1, OG_MAX_RAFT_RECEIVE_BUFFER_SIZE),
+    SQL_BISON_PARAM_RANGE("RAFT_SEND_BUFFER_SIZE", sql_bison_verify_uint32_range,
+        1, OG_MAX_RAFT_SEND_BUFFER_SIZE),
+    SQL_BISON_PARAM_RANGE("RAFT_START_MODE", sql_bison_verify_uint32_range,
+        0, OG_MAX_RAFT_START_MODE),
+    SQL_BISON_PARAM("RAFT_TLS_DIR", sql_bison_extra_als_raft_tls_dir),
+    SQL_BISON_PARAM("RAFT_TOKEN_VERIFY", sql_bison_extra_als_raft_token_verify),
+    SQL_BISON_PARAM_RANGE("RBP_ASSEMBLE_MAX_SCAN", sql_bison_verify_uint32_range,
+        RBP_ASSEMBLE_MAX_SCAN_MIN, RBP_ASSEMBLE_MAX_SCAN_MAX),
+    SQL_BISON_PARAM("RBP_FOR_RECOVERY", sql_bison_verify_rbp_bool),
+    SQL_BISON_PARAM("RBP_IP", sql_bison_verify_rbp_ip),
+    SQL_BISON_PARAM_RANGE("RBP_PORT", sql_bison_verify_uint32_range,
+        OG_MIN_PORT, OG_MAX_UINT16),
+    SQL_BISON_PARAM("RBP_RT_ANALYSIS", sql_bison_verify_rbp_bool),
+    SQL_BISON_PARAM_RANGE("RBP_RT_PAGE_OWNER_WORKERS", sql_bison_verify_uint32_range,
+        1, DTC_RBP_RT_MAX_OWNER_WORKERS),
+    SQL_BISON_PARAM_RANGE("RBP_RT_PARSE_WORKERS", sql_bison_verify_uint32_range,
+        1, DTC_RBP_RT_MAX_PARSE_WORKERS),
+    SQL_BISON_PARAM_RANGE("RCY_NODE_READ_BUF_SIZE", sql_bison_verify_uint32_range,
+        OG_MIN_RCY_NODE_BUF_SIZE, OG_MAX_RCY_NODE_BUF_SIZE),
+    SQL_BISON_PARAM_RANGE("REACTOR_THREADS", sql_bison_verify_uint32_range,
+        1, OG_MAX_REACTOR_POOL_COUNT),
+    SQL_BISON_PARAM_RANGE("REACTOR_THREAD_NUM", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("RECYCLEBIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("REPLACE_PASSWORD_VERIFY", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("REPLAY_PRELOAD_PROCESSES", sql_bison_verify_uint32_range,
+        0, OG_MAX_PARAL_RCY),
+    SQL_BISON_PARAM("REPL_ADDR", sql_bison_extra_als_ip),
+    SQL_BISON_PARAM("REPL_AUTH", sql_bison_verify_bool),
+    SQL_BISON_PARAM("REPL_PORT", sql_bison_verify_repl_port),
+    SQL_BISON_PARAM("REPL_SCRAM_AUTH", sql_bison_verify_bool),
+    SQL_BISON_PARAM("REPL_TRUST_HOST", sql_bison_extra_als_ip),
+    SQL_BISON_PARAM_RANGE("REPL_WAIT_TIMEOUT", sql_bison_verify_uint32_range,
+        OG_REPL_MIN_WAIT_TIME, OG_INVALID_ID32),
+    SQL_BISON_PARAM("RESOURCE_LIMIT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("RESOURCE_PLAN", sql_bison_verify_comm),
+    SQL_BISON_PARAM("RESTORE_ARCH_COMPRESSED", sql_bison_verify_bool),
+    SQL_BISON_PARAM("RESTOR_ARCH_PREFER_BAK_SET", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("RES_RECYCLE_RATIO", sql_bison_verify_uint32_range,
+        OG_MIN_RES_RECYCLE_RATIO, OG_MAX_RES_RECYCLE_RATIO),
+    SQL_BISON_PARAM("ROW_FORMAT", sql_bison_extra_als_row_format),
+    SQL_BISON_PARAM_RANGE("SEGMENT_PAGES_HOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_SEGMENT_PAGES_HOLD),
+    SQL_BISON_PARAM("SESSIONS", sql_bison_extra_als_sessions),
+    SQL_BISON_PARAM("SHARED_PATH", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("SHARED_POOL_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_SHARED_POOL_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM("SLOWSQL_STATS_ENABLE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("SQL_COMPAT", sql_bison_extra_als_sql_compat),
+    SQL_BISON_PARAM("SQL_STAGE_THRESHOLD", sql_bison_verify_comm),
+    SQL_BISON_PARAM("SQL_STAT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("SSL_CA", sql_bison_extra_als_ssl_file),
+    SQL_BISON_PARAM("SSL_CERT", sql_bison_extra_als_ssl_file),
+    SQL_BISON_PARAM("SSL_CIPHER", sql_bison_extra_als_ssl_cipher),
+    SQL_BISON_PARAM("SSL_CRL", sql_bison_extra_als_ssl_file),
+    SQL_BISON_PARAM("SSL_EXPIRE_ALERT_THRESHOLD", sql_bison_extra_ssl_alt_threshold),
+    SQL_BISON_PARAM("SSL_KEY", sql_bison_extra_als_ssl_file),
+    SQL_BISON_PARAM("SSL_KEY_PASSWORD", sql_bison_verify_comm),
+    SQL_BISON_PARAM("SSL_PERIOD_DETECTION", sql_bison_extra_ssl_period_detection),
+    SQL_BISON_PARAM("SSL_VERIFY_PEER", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("STATISTICS_SAMPLE_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_SAMPLE_SIZE, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("STATS_COST_DELAY", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("STATS_COST_LIMIT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("STATS_ENABLE_PARALL", sql_bison_verify_bool),
+    SQL_BISON_PARAM("STATS_LEVEL", sql_bison_extra_als_statistics_level),
+    SQL_BISON_PARAM_RANGE("STATS_MAX_BUCKET_SIZE", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("STATS_PARALL_THREADS", sql_bison_verify_uint32_range,
+        OG_MIN_STATS_PARALL_THREADS, OG_MAX_STATS_PARALL_THREADS),
+    SQL_BISON_PARAM("STRING_AS_HEX_FOR_BINARY", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("SUPER_USER_RESERVED_SESSIONS", sql_bison_verify_uint32_range,
+        1, OG_MAX_EMERG_SESSIONS),
+    SQL_BISON_PARAM_RANGE("TABLESPACE_USAGE_ALARM_THRESHOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_SPC_ALARM_THRESHOLD),
+    SQL_BISON_PARAM("TCP_EXCLUDED_NODES", sql_bison_verify_comm),
+    SQL_BISON_PARAM("TCP_INVITED_NODES", sql_bison_verify_comm),
+    SQL_BISON_PARAM("TCP_VALID_NODE_CHECKING", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("TC_LEVEL", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("TEMP_BUFFER_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_TEMP_BUFFER_SIZE, OG_MAX_TEMP_BUFFER_SIZE),
+    SQL_BISON_PARAM_RANGE("TEMP_POOL_NUM", sql_bison_verify_uint32_range,
+        1, OG_MAX_TEMP_POOL_NUM),
+    SQL_BISON_PARAM("TIMED_STATS", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("TXN_UNDO_USAGE_ALARM_THRESHOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_TXN_UNDO_ALARM_THRESHOLD),
+    SQL_BISON_PARAM("TYPE_MAP_FILE", NULL),
+    SQL_BISON_PARAM("UDS_FILE_PATH", sql_bison_extra_als_uds_file_path),
+    SQL_BISON_PARAM("UDS_FILE_PERMISSIONS", sql_bison_extra_als_uds_file_permissions),
+    SQL_BISON_PARAM_RANGE("UNAUTH_SESSION_EXPIRE_TIME", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("UNDO_PREFETCH_PAGE_NUM", sql_bison_verify_uint32_range,
+        OG_MIN_UNDO_PREFETCH_PAGES, OG_MAX_UNDO_PREFETCH_PAGES),
+    SQL_BISON_PARAM_RANGE("UNDO_RESERVE_SIZE", sql_bison_verify_uint32_range,
+        OG_UNDO_MIN_RESERVE_SIZE, OG_UNDO_MAX_RESERVE_SIZE),
+    SQL_BISON_PARAM_RANGE("UNDO_RETENTION_TIME", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM("UNDO_TABLESPACE", sql_bison_verify_comm),
+    SQL_BISON_PARAM_RANGE("UNDO_USAGE_ALARM_THRESHOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_UNDO_ALARM_THRESHOLD),
+    SQL_BISON_PARAM("UPPER_CASE_TABLE_NAMES", sql_bison_verify_bool),
+    SQL_BISON_PARAM("USE_BISON_PARSER", sql_bison_verify_bool),
+    SQL_BISON_PARAM("USE_LARGE_PAGES", sql_bison_verify_bool),
+    SQL_BISON_PARAM("USE_NATIVE_DATATYPE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("USE_RBP", sql_bison_verify_rbp_bool),
+    SQL_BISON_PARAM_RANGE("VARIANT_MEMORY_AREA_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_VMA_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM_RANGE("WORKER_THREADS", sql_bison_verify_uint32_range,
+        OG_MIN_WORKER_THREADS, OG_MAX_WORKER_THREADS),
+    SQL_BISON_PARAM_RANGE("WORKER_THREADS_SHRINK_THRESHOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_SECS_AGENTS_SHRINK),
+    SQL_BISON_PARAM("XA_FORMAT_ID", sql_bison_extra_als_xa_format_id),
+    SQL_BISON_PARAM_RANGE("XA_SUSPEND_TIMEOUT", sql_bison_verify_uint32_range,
+        1, OG_MAX_SUSPEND_TIMEOUT),
+    SQL_BISON_PARAM("ZERO_DIVISOR_ACCEPTED", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_AGENT_STACK_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_STACK_SIZE, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_ASHRINK_WAIT_TIME", sql_bison_verify_uint32_range,
+        OG_MIN_ASHRINK_WAIT_TIME, OG_MAX_ASHRINK_WAIT_TIME),
+    SQL_BISON_PARAM_RANGE("_AUDIT_BACKUP_FILE_COUNT", sql_bison_verify_uint32_range,
+        0, OG_MAX_LOG_FILE_COUNT),
+    SQL_BISON_PARAM_RANGE("_AUDIT_MAX_FILE_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_LOG_FILE_SIZE, OG_MAX_LOG_FILE_SIZE),
+    SQL_BISON_PARAM("_AUTO_INDEX_RECYCLE", sql_bison_extra_als_auto_index_recycle),
+    SQL_BISON_PARAM_RANGE("_AUTO_UNDO_RETENTION", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("_BACKUP_LOG_PARALLEL", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_BLACKBOX_STACK_DEPTH", sql_bison_verify_uint32_range,
+        OG_INIT_BLACK_BOX_DEPTH, OG_MAX_BLACK_BOX_DEPTH),
+    SQL_BISON_PARAM_RANGE("_BUFFER_PAGE_CLEAN_WAIT_TIMEOUT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("_CHECKPOINT_MERGE_IO", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_CHECKPOINT_TIMED_TASK_DELAY", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("_CHECK_SYSDATA_VERSION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_CONNECT_BY_MATERIALIZE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_DEADLOCK_DETECT_INTERVAL", sql_bison_extra_als_deadlock_detect_interval),
+    SQL_BISON_PARAM("_DISABLE_SOFT_PARSE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_DISTINCT_PRUNING", sql_bison_verify_onoff),
+    SQL_BISON_PARAM("_DOUBLEWRITE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_ENABLE_MULTI_INDEX_SCAN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_ENABLE_QOS", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_ENABLE_RMO_CR", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_ENCRYPTION_ALG", sql_bison_extra_als_encryption_alg),
+    SQL_BISON_PARAM_RANGE("_ENCRYPTION_ITERATION", sql_bison_verify_uint32_range,
+        OG_KDF2MINITERATION, OG_KDF2MAXITERATION),
+    SQL_BISON_PARAM("_FACTOR_KEY", sql_bison_extra_als_factor_key),
+    SQL_BISON_PARAM_RANGE("_FORCE_INDEX_RECYCLE", sql_bison_verify_uint32_range,
+        0, OG_MAX_INDEX_FORCE_RECYCLE),
+    SQL_BISON_PARAM_RANGE("_HINT_FORCE", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("_INDEX_AUTO_REBUILD", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_INDEX_AUTO_REBUILD_START_TIME", sql_bison_extra_als_index_auto_rebuild_start_time),
+    SQL_BISON_PARAM_RANGE("_INDEX_BUFFER_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_INDEX_CACHE_SIZE, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM_RANGE("_INDEX_REBUILD_KEEP_STORAGE", sql_bison_verify_uint32_range,
+        0, OG_MAX_INDEX_REBUILD_STORAGE),
+    SQL_BISON_PARAM_RANGE("_INDEX_RECYCLE_PERCENT", sql_bison_verify_uint32_range,
+        0, OG_MAX_INDEX_RECYCLE_PERCENT),
+    SQL_BISON_PARAM_RANGE("_INDEX_RECYCLE_REUSE", sql_bison_verify_uint32_range,
+        0, OG_MAX_INDEX_RECYCLE_REUSE),
+    SQL_BISON_PARAM_RANGE("_INDEX_RECYCLE_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_INDEX_RECYCLE_SIZE, OG_MAX_INDEX_RECYCLE_SIZE),
+    SQL_BISON_PARAM_RANGE("_INDEX_SCAN_RANGE_CACHE", sql_bison_verify_uint32_range,
+        OG_MIN_OPT_THRESHOLD, OG_MAX_OPT_THRESHOLD),
+    SQL_BISON_PARAM_RANGE("_INIT_CURSORS", sql_bison_verify_uint32_range,
+        0, OG_MAX_INIT_CURSORS),
+    SQL_BISON_PARAM_RANGE("_LNS_WAIT_TIME", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("_LOB_MAX_EXEC_SIZE", sql_bison_extra_als_lob_max_exec_size),
+    SQL_BISON_PARAM_RANGE("_LOG_BACKUP_FILE_COUNT", sql_bison_verify_uint32_range,
+        0, OG_MAX_LOG_FILE_COUNT),
+    SQL_BISON_PARAM("_LOG_FILE_PERMISSIONS", sql_bison_extra_als_log_file),
+    SQL_BISON_PARAM("_LOG_LEVEL", sql_bison_verify_log_level),
+    SQL_BISON_PARAM_RANGE("_LOG_MAX_FILE_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_LOG_FILE_SIZE, OG_MAX_LOG_FILE_SIZE),
+    SQL_BISON_PARAM("_LOG_PATH_PERMISSIONS", sql_bison_extra_als_log_path),
+    SQL_BISON_PARAM_RANGE("_MAX_CONNECT_BY_LEVEL", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_MAX_JSON_DYNAMIC_BUFFER_SIZE", sql_bison_verify_pool_size,
+        OG_JSON_MIN_DYN_BUF_SIZE, OG_JSON_MAX_DYN_BUF_SIZE),
+    SQL_BISON_PARAM("_MAX_RM_COUNT", sql_bison_extra_als_max_rm_count),
+    SQL_BISON_PARAM_RANGE("_MAX_VM_FUNC_STACK_COUNT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_MRP_RES_LOGSIZE", sql_bison_verify_pool_size,
+        0, OG_MAX_SGA_BUF_SIZE),
+    SQL_BISON_PARAM("_OPTIMIZER_AGGR_PLACEMENT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ADAPTIVE_FULL_OUTER_JOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ALL_TRANSFORM", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ANY_TRANSFORM", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_CONNECT_BY_PLACEMENT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_DISTINCT_ELIMINATION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ENABLE_RIGHT_ANTIJOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ENABLE_RIGHT_LEFTJOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ENABLE_RIGHT_SEMIJOIN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_FILTER_PUSHDOWN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_FUNC_INDEX_SCAN_ONLY", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_GROUP_BY_ELIMINATION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_HASH_MATERIALIZE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_INDEX_COND_PRUNING", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_OPTIM_INDEX_SCAN_MAX_PARTS", sql_bison_verify_uint32_range,
+        0, OG_MAX_MULTI_PARTS_NUM),
+    SQL_BISON_PARAM("_OPTIM_IN_TRANSFORM", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_JOIN_ELIMINATION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_JOIN_PRED_PUSHDOWN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ORDER_BY_ELIMINATION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_ORDER_BY_PLACEMENT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_OR_EXPANSION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_PRED_DELIVERY", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_PRED_MOVE_AROUND", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_PRED_PUSHDOWN", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_PRED_REORDER", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_PROJECT_LIST_PRUNING", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_SEMI2INNER", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_SIMPLIFY_EXISTS_SUBQ", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_SUBQUERY_ELIMINATION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_SUBQUERY_REWRITE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_UNNEST_SET_SUBQUERY", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_VM_VIEW_ENABLED", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_OPTIM_WINMAGIC_REWRITE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_OPT_CBO_STAT_SAMPLING_LEVEL", sql_bison_verify_uint32_range,
+        0, CBO_MAX_DYN_SAMPLING_LEVEL),
+    SQL_BISON_PARAM("_OUTER_JOIN_OPTIMIZATION", sql_bison_verify_onoff),
+    SQL_BISON_PARAM_RANGE("_PREFETCH_ROWS", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_PRIVATE_KEY_LOCKS", sql_bison_verify_uint32_range,
+        OG_MIN_PRIVATE_LOCKS, OG_MAX_PRIVATE_LOCKS),
+    SQL_BISON_PARAM_RANGE("_PRIVATE_ROW_LOCKS", sql_bison_verify_uint32_range,
+        OG_MIN_PRIVATE_LOCKS, OG_MAX_PRIVATE_LOCKS),
+    SQL_BISON_PARAM("_QOS_CTRL_FACTOR", sql_bison_extra_als_qos_ctrl_fat),
+    SQL_BISON_PARAM_RANGE("_QOS_RANDOM_RANGE", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_QOS_SLEEP_TIME", sql_bison_verify_uint32_range,
+        1, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_QUERY_TOPN_THRESHOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_TOPN_THRESHOLD),
+    SQL_BISON_PARAM("_RCY_CHECK_PCN", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_RCY_SLEEP_INTERVAL", sql_bison_verify_uint32_range,
+        OG_MIN_RCY_SLEEP_INTERVAL, OG_MAX_RCY_SLEEP_INTERVAL),
+    SQL_BISON_PARAM_RANGE("_REMOTE_ACCESS_LIMIT", sql_bison_verify_uint32_range,
+        0, OG_REMOTE_ACCESS_LIMIT),
+    SQL_BISON_PARAM("_REPL_MAX_PKG_SIZE", sql_bison_extra_als_repl_max_pkg_size),
+    SQL_BISON_PARAM("_RESERVED_SQL_CURSORS", sql_bison_extra_als_reserved_sql_cursors),
+    SQL_BISON_PARAM("_RESTORE_CHECK_VERSION", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_SERIALIZED_COMMIT", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_SGA_CORE_DUMP_CONFIG", sql_bison_verify_uint32_range,
+        0, OG_MAX_SGA_CORE_DUMP_CONFIG),
+    SQL_BISON_PARAM("_SHOW_EXPLAIN_PREDICATE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_SHRINK_WAIT_RECYCLED_PAGES", sql_bison_verify_uint32_range,
+        OG_MIN_SHRINK_WAIT_RECYCLED_PAGES, OG_MAX_SHRINK_WAIT_RECYCLED_PAGES),
+    SQL_BISON_PARAM_RANGE("_SMALL_TABLE_SAMPLING_THRESHOLD", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_SPIN_COUNT", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM_RANGE("_SQL_CURSORS_EACH_SESSION", sql_bison_verify_uint32_range,
+        0, OG_MAX_SQL_CURSORS_EACH_SESSION),
+    SQL_BISON_PARAM("_SQL_POOL_FACTOR", sql_bison_extra_als_sql_pool_fat),
+    SQL_BISON_PARAM("_STRICT_CASE_DATATYPE", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_SYSTIME_INCREASE_THREASHOLD", sql_bison_verify_uint32_range,
+        0, OG_MAX_SYSTIME_INC_THRE),
+    SQL_BISON_PARAM("_SYS_PASSWORD", sql_bison_extra_als_sys_password),
+    SQL_BISON_PARAM("_TABLE_COMPRESS_ALGO", sql_bison_extra_als_compress_algo),
+    SQL_BISON_PARAM("_TABLE_COMPRESS_BUFFER_SIZE", sql_bison_extra_als_compress_buf_size),
+    SQL_BISON_PARAM("_TABLE_COMPRESS_ENABLE_BUFFER", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_TEMPTABLE_SUPPORT_BATCH_INSERT", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_THREAD_STACK_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_THREAD_STACK_SIZE, OG_MAX_THREAD_STACK_SIZE - OG_STACK_DEPTH_SLOP),
+    SQL_BISON_PARAM_RANGE("_TX_ROLLBACK_PROC_NUM", sql_bison_verify_uint32_range,
+        OG_MIN_ROLLBACK_PROC, OG_MAX_ROLLBACK_PROC),
+    SQL_BISON_PARAM("_UNDO_ACTIVE_SEGMENTS", sql_bison_extra_als_active_undo_segments),
+    SQL_BISON_PARAM("_UNDO_AUTON_BIND_OWN_SEGMENT", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_UNDO_AUTON_TRANS_SEGMENTS", sql_bison_extra_als_auton_trans_segments),
+    SQL_BISON_PARAM("_UNDO_AUTO_SHRINK", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_UNDO_AUTO_SHRINK_INACTIVE", sql_bison_verify_bool),
+    SQL_BISON_PARAM("_UNDO_PERF_PREALLOC", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_UNDO_PREALLOC_PAGES", sql_bison_verify_uint32_range,
+        0, 65536),
+    SQL_BISON_PARAM_RANGE("_UNDO_SEGMENTS", sql_bison_verify_uint32_range,
+        OG_MIN_UNDO_SEGMENT, OG_MAX_UNDO_SEGMENT),
+    SQL_BISON_PARAM_RANGE("_VARIANT_AREA_SIZE", sql_bison_verify_pool_size,
+        OG_MIN_VARIANT_SIZE, OG_MAX_VARIANT_SIZE),
+    SQL_BISON_PARAM("_VIEW_ACCESS_DC", sql_bison_extra_als_bool_only_sys_allowed),
+    SQL_BISON_PARAM("_VMA_MEM_CHECK", sql_bison_verify_bool),
+    SQL_BISON_PARAM_RANGE("_VMP_CACHES_EACH_SESSION", sql_bison_verify_uint32_range,
+        0, OG_INVALID_ID32),
+    SQL_BISON_PARAM("_WITHAS_SUBQUERY", sql_bison_extra_als_withas_subquery),
+};
+
+#undef SQL_BISON_PARAM_RANGE
+#undef SQL_BISON_PARAM
+
+static const sql_bison_sys_param_verifier_t *sql_bison_find_sys_param_verifier(const char *name)
+{
+    text_t search_name = {
+        .str = (char *)name,
+        .len = (uint32)strlen(name)
+    };
+    text_t verifier_name;
+
+    for (uint32 left = 0, right = ELEMENT_COUNT(g_bison_sys_param_verifiers); left < right;) {
+        uint32 mid = (left + right) >> 1;
+        verifier_name.str = (char *)g_bison_sys_param_verifiers[mid].name;
+        verifier_name.len = (uint32)strlen(g_bison_sys_param_verifiers[mid].name);
+        int32 compare_result = cm_compare_text_ins(&search_name, &verifier_name);
+        if (compare_result == 0) {
+            return &g_bison_sys_param_verifiers[mid];
+        } else if (compare_result < 0) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    return NULL;
+}
+
+status_t sql_bison_verify_sys_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def,
+    bison_sys_param_value_t *value)
+{
+    config_item_t *item = NULL;
+    knl_session_t *se = &stmt->session->knl_session;
+    const sql_bison_sys_param_verifier_t *verifier;
+    bison_sys_param_value_t verifier_value;
+    bool32 has_outer_quote;
+
+    if (value == NULL || value->text.str == NULL || value->text.len == 0) {
+        return OG_ERROR;
+    }
+
+    if (IS_LOG_MODE(def->param)) {
+        text_t name = {
+            .str = "_LOG_LEVEL",
+            .len = sizeof("_LOG_LEVEL") - 1
+        };
+        item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
+    } else {
+        text_t name = {
+            .str = def->param,
+            .len = (uint32)strlen(def->param)
+        };
+        item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
+    }
+
+    if (item == NULL) {
+        OG_SRC_THROW_ERROR(value->loc, ERR_INVALID_PARAMETER_NAME, def->param);
+        return OG_ERROR;
+    }
+
+    def->param_id = item->id;
+
+    if (se->kernel->db.ctrl.core.lrep_mode == LOG_REPLICATION_ON &&
+        strcmp(def->param, "ARCH_TIME") == 0) {
+        OG_THROW_ERROR(ERR_NOT_COMPATIBLE, "arch time while lrep_mode is LOG_REPLICATION_ON");
+        return OG_ERROR;
+    }
+
+    has_outer_quote = value->text.len >= 2 && CM_IS_QUOTE_CHAR(value->text.str[0]) &&
+        value->text.str[0] == CM_TEXT_END(&value->text);
+    OG_RETURN_IFERR(sql_bison_copy_sys_param_value(value, def));
+    verifier_value = *value;
+    verifier_value.text.str = def->value;
+    verifier_value.text.len = (uint32)strlen(def->value);
+    verifier_value.decoded_string = verifier_value.text;
+    verifier_value.is_string = has_outer_quote;
+    verifier = sql_bison_find_sys_param_verifier(item->name);
+    if (verifier != NULL && verifier->bison_verify != NULL) {
+        return verifier->bison_verify((void *)se, (void *)&verifier_value, (void *)def,
+            verifier->min_value, verifier->max_value);
+    }
+
+    if (verifier == NULL) {
+        /* A parameter missing from the Bison registry is unsupported; never persist an unchecked value. */
+        OG_SRC_THROW_ERROR_EX(value->loc, ERR_CAPABILITY_NOT_SUPPORT,
+            "Bison ALTER SYSTEM verifier adapter for %s", def->param);
+        return OG_ERROR;
+    }
+
+    OG_SRC_THROW_ERROR_EX(value->loc, ERR_SQL_SYNTAX_ERROR, "unexpected parameter value");
+    return OG_ERROR;
+}
+
+status_t sql_bison_verify_debug_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def,
+    bison_sys_param_value_t *value)
+{
+    debug_config_item_t *debug_params = NULL;
+    debug_config_item_t *item = NULL;
+    knl_session_t *se = &stmt->session->knl_session;
+    const sql_bison_sys_param_verifier_t *verifier;
+    uint32 count;
+
+    if (value == NULL || value->text.str == NULL || value->text.len == 0) {
+        return OG_ERROR;
+    }
+
+    srv_get_debug_config_info(&debug_params, &count);
+    for (uint32 i = 0; i < count; i++) {
+        if (cm_str_equal_ins(debug_params[i].name, def->param)) {
+            item = &debug_params[i];
+            break;
+        }
+    }
+
+    if (item == NULL) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, def->param);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(sql_bison_copy_sys_param_value(value, def));
+    verifier = sql_bison_find_sys_param_verifier(item->name);
+    if (verifier != NULL && verifier->bison_verify != NULL) {
+        return verifier->bison_verify((void *)se, (void *)value, (void *)def,
+            verifier->min_value, verifier->max_value);
+    }
+
+    OG_SRC_THROW_ERROR_EX(value->loc, ERR_CAPABILITY_NOT_SUPPORT,
+        "Bison ALTER SYSTEM DEBUG verifier adapter for %s", def->param);
+    return OG_ERROR;
+}
+
 
 #ifdef __cplusplus
 }

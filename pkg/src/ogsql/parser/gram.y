@@ -139,10 +139,10 @@ static status_t pl_bison_raw_quoted_name_end(const char *source, size_t source_l
 static bool32 pl_bison_is_scanner_whitespace(char ch);
 static size_t pl_bison_skip_scanner_whitespace(const char *source, size_t source_len, size_t pos);
 static void pl_bison_raw_unicode_name_end(const char *source, size_t source_len, size_t *end_offset);
-static status_t pl_bison_raw_name_end(const base_yy_extra_type *extra, int name_offset, int *end_offset);
+static status_t pl_bison_raw_name_end(const base_yy_raw_parse_state_t *state, int name_offset, int *end_offset);
 static status_t pl_bison_object_name_end(core_yyscan_t yyscanner, int name_offset, int *end_offset);
 static status_t pl_bison_validate_object_name(core_yyscan_t yyscanner, int name_offset, source_location_t loc);
-static bool32 pl_bison_object_name_is_quoted(const base_yy_extra_type *extra, int offset);
+static bool32 pl_bison_object_name_is_quoted(const base_yy_raw_parse_state_t *state, int offset);
 static status_t pl_bison_make_object_name_part(core_yyscan_t yyscanner, char *parsed_name, int offset,
     text_t *name, bool32 *sensitive, int *end_offset);
 static status_t pl_bison_make_object_name(core_yyscan_t yyscanner, char *owner, char *name, int owner_offset,
@@ -181,6 +181,8 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
 %}
 
 %code requires {
+#include "dcl_alter_parser.h"
+
 typedef struct st_pl_bison_program_body pl_bison_program_body_t;
 typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 }
@@ -267,6 +269,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
     parse_column_t      *parse_col;
     parse_table_element_t *table_element;
     text_t              *text;
+    bison_sys_param_value_t *sys_param_value;
     pl_bison_program_body_t *program_body;
     pl_bison_language_def_t *language_def;
     source_location_t   source_loc;
@@ -393,8 +396,10 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
 %type <str> ColId type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
-            debug_mode_value altsession_set_key altsession_set_value alter_system_param_name alter_param_value alter_session_extra_token
+            altsession_set_key alter_system_param_name alter_session_extra_token
             case_invalid_word
+
+%type <sys_param_value> alter_system_param_value alter_system_arch_param_value alter_value
 
 %type <ival> opt_asc_desc opt_nulls_order opt_ckpt_type opt_charset opt_collate opt_wait opt_wait_time opt_truncate_options truncate_option truncate_options
              year_month_unit day_hour_minute_unit opt_year_month_unit row_or_page opt_compress_for opt_drop_tbsp no_arg_func_name_id delete_or_perserve
@@ -416,6 +421,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 
 %token            LEX_ERROR_TOKEN
 %token            TYPECAST ORA_JOINOP DOT_DOT COLON_EQUALS PARA_EQUALS SET_IDENT_SESSION SET_IDENT_GLOBAL NULLS_FIRST NULLS_LAST
+%token <sys_param_value> ALTER_SYSTEM_VALUE
 %token <str>      SIZE_B SIZE_KB SIZE_MB SIZE_GB SIZE_TB SIZE_PB SIZE_EB
 %token            DIALECT_A_FORMAT_SQL
 %token            DIALECT_B_FORMAT_SQL
@@ -7796,13 +7802,13 @@ pl_object_name:
             | ColId '.' ColId '.' pl_extra_object_name_parts
                 {
                     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
-                    int object_name_end = extra->pl_object_name_end;
+                    int object_name_end = extra->raw_parse.pl_object_name_end;
                     if (pl_bison_make_object_name(yyscanner, NULL, $1, -1, @1.offset, @1.loc,
                         &$$) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare multi-part PLSQL object name failed");
                     }
                     /* Native PL keeps the first component when a name has three to six components. */
-                    extra->pl_object_name_end = object_name_end;
+                    extra->raw_parse.pl_object_name_end = object_name_end;
                 }
         ;
 
@@ -7811,7 +7817,7 @@ pl_extra_object_name_parts:
                 {
                     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
                     if (pl_bison_object_name_end(yyscanner, @1.offset,
-                        &extra->pl_object_name_end) != OG_SUCCESS) {
+                        &extra->raw_parse.pl_object_name_end) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare extra PLSQL object name part failed");
                     }
                     $$ = 3;
@@ -7824,7 +7830,7 @@ pl_extra_object_name_parts:
                         YYABORT;
                     }
                     if (pl_bison_object_name_end(yyscanner, @3.offset,
-                        &extra->pl_object_name_end) != OG_SUCCESS) {
+                        &extra->raw_parse.pl_object_name_end) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare extra PLSQL object name part failed");
                     }
                     $$ = $1 + 1;
@@ -8287,7 +8293,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P SET alter_system_param_name '=' alter_param_value opt_set_scope
+            | ALTER SYSTEM_P SET alter_system_param_name '=' alter_system_param_value opt_set_scope
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8304,11 +8310,10 @@ AlterSystemStmt:
                     sys_def->action = ALTER_SYS_SET_PARAM;
                     BISON_MEM_STRDUP(sys_def->param, $4);
                     cm_str_upper(sys_def->param);
-                    BISON_MEM_STRDUP(sys_def->value, $6);
                     sys_def->scope = $7;
 
-                    if (sql_bison_verify_sys_param(stmt, sys_def) != OG_SUCCESS) {
-                        parser_yyerror("verify system parameter failed");
+                    if (sql_bison_verify_sys_param(stmt, sys_def, $6) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify system parameter failed");
                     }
 
                     stmt->context->entry = sys_def;
@@ -8685,7 +8690,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P ARCHIVE_SET alter_system_param_name '=' alter_param_value opt_set_scope opt_arch_set_type
+            | ALTER SYSTEM_P ARCHIVE_SET alter_system_param_name '=' alter_system_arch_param_value opt_set_scope opt_arch_set_type
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8702,12 +8707,11 @@ AlterSystemStmt:
                     sys_def->action = ALTER_SYS_ARCHIVE_SET;
                     BISON_MEM_STRDUP(sys_def->param, $4);
                     cm_str_upper(sys_def->param);
-                    BISON_MEM_STRDUP(sys_def->value, $6);
                     sys_def->scope = $7;
                     sys_def->arch_set_type = $8;
 
-                    if (sql_bison_verify_sys_param(stmt, sys_def) != OG_SUCCESS) {
-                        parser_yyerror("verify system parameter failed");
+                    if (sql_bison_verify_sys_param(stmt, sys_def, $6) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify system parameter failed");
                     }
 
                     stmt->context->entry = sys_def;
@@ -8905,7 +8909,7 @@ AlterSystemStmt:
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
-            | ALTER SYSTEM_P DEBUG MODE alter_system_param_name '=' debug_mode_value
+            | ALTER SYSTEM_P DEBUG MODE alter_system_param_name '=' alter_value
                 {
                     knl_alter_sys_def_t *sys_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -8920,26 +8924,12 @@ AlterSystemStmt:
 
                     BISON_MEM_STRDUP(sys_def->param, $5);
                     cm_str_upper(sys_def->param);
-                    BISON_MEM_STRDUP(sys_def->value, $7);
-
                     sys_def->action = ALTER_SYS_DEBUG_MODE;
-                    debug_config_item_t *debug_params = NULL;
-                    debug_config_item_t *item = NULL;
-                    uint32 count;
 
-                    srv_get_debug_config_info(&debug_params, &count);
-
-                    for (uint32 i = 0; i < count; i++) {
-                        if (cm_str_equal_ins(debug_params[i].name, sys_def->param)) {
-                            item = &debug_params[i];
-                            break;
-                        }
+                    if (sql_bison_verify_debug_param(stmt, sys_def, $7) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("verify debug parameter failed");
                     }
 
-                    if (item == NULL) {
-                        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, sys_def->param);
-                        YYABORT;
-                    }
                     stmt->context->entry = sys_def;
                     $$ = sys_def;
                 }
@@ -8994,7 +8984,7 @@ AlterSessionStmt:
         ;
 
 AlterSessionStmtValid:
-            ALTER SESSION SET altsession_set_key '=' altsession_set_value
+            ALTER SESSION SET altsession_set_key '=' alter_value
                 {
                     alter_session_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -9006,8 +8996,8 @@ AlterSessionStmtValid:
                     }
 
                     def->action = ALTSES_SET;
-                    if (sql_parse_altses_set_bison(stmt, &def->setting, $4, $6, @4.loc) != OG_SUCCESS) {
-                        parser_yyerror("parse alter session set failed");
+                    if (sql_parse_altses_set_bison(stmt, &def->setting, $4, $6) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse alter session set failed");
                     }
 
                     stmt->context->entry = def;
@@ -15329,7 +15319,7 @@ CreateProcedureStmt:
             opt_if_not_exists pl_object_name
             {
                 if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_PROCEDURE, OG_FALSE,
-                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
                     parser_abort_or_yyerror("prepare create procedure failed");
                 }
             }
@@ -15360,7 +15350,7 @@ CreateFunctionStmt:
             opt_if_not_exists pl_object_name
             {
                 if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_FUNCTION, OG_FALSE,
-                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
                     parser_abort_or_yyerror("prepare create function failed");
                 }
             }
@@ -15393,7 +15383,7 @@ CreatePackageStmt:
             {
                 uint32 type = $5 ? PL_PACKAGE_BODY : PL_PACKAGE_SPEC;
                 if (pl_bison_prepare_create_source(yyscanner, $2, $6, $7, type, OG_FALSE,
-                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
                     parser_abort_or_yyerror("prepare create package failed");
                 }
             }
@@ -15423,7 +15413,7 @@ CreateTypeStmt:
             {
                 uint32 type = $5 ? PL_TYPE_BODY : PL_TYPE_SPEC;
                 int source_offset = $8 ? @8.offset + (int)(sizeof("FORCE") - 1) :
-                    og_yyget_extra(yyscanner)->pl_object_name_end;
+                    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end;
                 if (pl_bison_prepare_create_source(yyscanner, $2, $6, $7, type, $8,
                     source_offset) != OG_SUCCESS) {
                     parser_abort_or_yyerror("prepare create type failed");
@@ -15454,7 +15444,7 @@ CreateTriggerStmt:
             opt_if_not_exists pl_object_name
             {
                 if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_TRIGGER, OG_FALSE,
-                    og_yyget_extra(yyscanner)->pl_object_name_end) != OG_SUCCESS) {
+                    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
                     parser_abort_or_yyerror("prepare create trigger failed");
                 }
             }
@@ -16968,13 +16958,6 @@ opt_wait_time:
                 }
         ;
 
-debug_mode_value:
-            alter_param_value
-                {
-                    $$ = $1;
-                }
-        ;
-
 altsession_set_key:
             IDENT
                 {
@@ -16990,43 +16973,48 @@ altsession_set_key:
                 }
         ;
 
-altsession_set_value:
-            alter_param_value
+alter_system_param_value:
+            alter_system_param_value_start ALTER_SYSTEM_VALUE
                 {
-                    $$ = $1;
+                    $$ = $2;
                 }
         ;
 
-alter_param_value:
-            ColLabel
+alter_system_arch_param_value:
+            alter_system_arch_param_value_start ALTER_SYSTEM_VALUE
                 {
-                    $$ = $1;
+                    $$ = $2;
                 }
-            | SCONST
+        ;
+
+alter_value:
+            alter_value_start ALTER_SYSTEM_VALUE
                 {
-                    $$ = $1;
+                    $$ = $2;
                 }
-            | FCONST
+        ;
+
+alter_system_param_value_start:
+            /* EMPTY */
                 {
-                    $$ = $1;
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    extra->raw_parse.alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NORMAL;
                 }
-            | FCONST_F
+        ;
+
+alter_system_arch_param_value_start:
+            /* EMPTY */
                 {
-                    $$ = $1;
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    extra->raw_parse.alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_ARCH;
                 }
-            | FCONST_D
+        ;
+
+alter_value_start:
+            /* EMPTY */
                 {
-                    $$ = $1;
-                }
-            | SignedIconst
-                {
-                    char tmp_buf[OG_MAX_INT64_STRLEN + 1] = { 0 };
-                    if (snprintf_s(tmp_buf, sizeof(tmp_buf), OG_MAX_INT64_STRLEN, PRINT_FMT_BIGINT, $1) < 0) {
-                        parser_yyerror("format alter parameter value failed");
-                    }
-                    char *tmp = NULL;
-                    BISON_MEM_STRDUP(tmp, tmp_buf);
-                    $$ = tmp;
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    extra->raw_parse.alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_TO_END;
                 }
         ;
 
@@ -18852,7 +18840,7 @@ static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
 
 static void pl_bison_begin_object_name(core_yyscan_t yyscanner)
 {
-    og_yyget_extra(yyscanner)->pl_object_name_mode = OG_TRUE;
+    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_mode = OG_TRUE;
 }
 
 static bool32 pl_bison_is_identifier_char(char ch)
@@ -18923,10 +18911,10 @@ static void pl_bison_raw_unicode_name_end(const char *source, size_t source_len,
     }
 }
 
-static status_t pl_bison_raw_name_end(const base_yy_extra_type *extra, int name_offset, int *end_offset)
+static status_t pl_bison_raw_name_end(const base_yy_raw_parse_state_t *state, int name_offset, int *end_offset)
 {
-    const char *source = extra->sourcebuf;
-    size_t source_len = extra->sourcebuflen;
+    const char *source = state->sourcebuf;
+    size_t source_len = state->sourcebuflen;
     size_t pos;
     bool32 is_unicode_name = OG_FALSE;
 
@@ -18967,7 +18955,7 @@ static status_t pl_bison_raw_name_end(const base_yy_extra_type *extra, int name_
 static status_t pl_bison_object_name_end(core_yyscan_t yyscanner, int name_offset, int *end_offset)
 {
     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
-    if (pl_bison_raw_name_end(extra, name_offset, end_offset) != OG_SUCCESS) {
+    if (pl_bison_raw_name_end(&extra->raw_parse, name_offset, end_offset) != OG_SUCCESS) {
         OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL object name");
         return OG_ERROR;
     }
@@ -18977,14 +18965,15 @@ static status_t pl_bison_object_name_end(core_yyscan_t yyscanner, int name_offse
 static status_t pl_bison_validate_object_name(core_yyscan_t yyscanner, int name_offset, source_location_t loc)
 {
     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    const base_yy_raw_parse_state_t *state = &extra->raw_parse;
 
-    if (name_offset < 0 || (size_t)name_offset >= extra->sourcebuflen) {
+    if (name_offset < 0 || (size_t)name_offset >= state->sourcebuflen) {
         OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL object name");
         return OG_ERROR;
     }
 
-    for (size_t pos = (size_t)name_offset; pos < extra->sourcebuflen; pos++) {
-        uint8 ch = (uint8)extra->sourcebuf[pos];
+    for (size_t pos = (size_t)name_offset; pos < state->sourcebuflen; pos++) {
+        uint8 ch = (uint8)state->sourcebuf[pos];
         if (ch <= ' ' || ch == '(' || ch == ';' || ch == ',') {
             return OG_SUCCESS;
         }
@@ -19000,21 +18989,22 @@ static status_t pl_bison_validate_object_name(core_yyscan_t yyscanner, int name_
     return OG_SUCCESS;
 }
 
-static bool32 pl_bison_object_name_is_quoted(const base_yy_extra_type *extra, int offset)
+static bool32 pl_bison_object_name_is_quoted(const base_yy_raw_parse_state_t *state, int offset)
 {
-    if (offset < 0 || (size_t)offset >= extra->sourcebuflen) {
+    if (offset < 0 || (size_t)offset >= state->sourcebuflen) {
         return OG_FALSE;
     }
-    return (extra->sourcebuf[offset] == '"' || extra->sourcebuf[offset] == '`' ||
-        ((extra->sourcebuf[offset] == 'U' || extra->sourcebuf[offset] == 'u') &&
-        (size_t)offset + 2 < extra->sourcebuflen && extra->sourcebuf[offset + 1] == '&' &&
-        extra->sourcebuf[offset + 2] == '"'));
+    return (state->sourcebuf[offset] == '"' || state->sourcebuf[offset] == '`' ||
+        ((state->sourcebuf[offset] == 'U' || state->sourcebuf[offset] == 'u') &&
+        (size_t)offset + 2 < state->sourcebuflen && state->sourcebuf[offset + 1] == '&' &&
+        state->sourcebuf[offset + 2] == '"'));
 }
 
 static status_t pl_bison_make_object_name_part(core_yyscan_t yyscanner, char *parsed_name, int offset,
     text_t *name, bool32 *sensitive, int *end_offset)
 {
     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    const base_yy_raw_parse_state_t *state = &extra->raw_parse;
     bool32 quoted;
     int raw_end;
 
@@ -19023,9 +19013,9 @@ static status_t pl_bison_make_object_name_part(core_yyscan_t yyscanner, char *pa
         return OG_ERROR;
     }
     OG_RETURN_IFERR(pl_bison_object_name_end(yyscanner, offset, &raw_end));
-    quoted = pl_bison_object_name_is_quoted(extra, offset);
+    quoted = pl_bison_object_name_is_quoted(state, offset);
     if (!quoted && !IS_CASE_INSENSITIVE) {
-        name->str = (char *)extra->sourcebuf + offset;
+        name->str = (char *)state->sourcebuf + offset;
         name->len = (uint32)(raw_end - offset);
     } else {
         cm_str2text(parsed_name, name);
@@ -19078,10 +19068,11 @@ static status_t pl_bison_make_object_name(core_yyscan_t yyscanner, char *owner, 
     int name_offset, source_location_t loc, name_with_owner **object_name)
 {
     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    base_yy_raw_parse_state_t *state = &extra->raw_parse;
     sql_stmt_t *stmt = extra->core_yy_extra.stmt;
     bool32 ignored_sensitive;
 
-    extra->pl_object_name_mode = OG_FALSE;
+    state->pl_object_name_mode = OG_FALSE;
     OG_RETURN_IFERR(pl_bison_validate_object_name(yyscanner, owner == NULL ? name_offset : owner_offset, loc));
 
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(name_with_owner), (void **)object_name));
@@ -19092,20 +19083,21 @@ static status_t pl_bison_make_object_name(core_yyscan_t yyscanner, char *owner, 
             &ignored_sensitive, NULL));
     }
     return pl_bison_make_object_name_part(yyscanner, name, name_offset, &(*object_name)->name,
-        &extra->pl_object_name_sensitive, &extra->pl_object_name_end);
+        &state->pl_object_name_sensitive, &state->pl_object_name_end);
 }
 
 static status_t pl_bison_source_from_offset(core_yyscan_t yyscanner, int source_offset, text_t *source)
 {
     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    const base_yy_raw_parse_state_t *state = &extra->raw_parse;
 
-    if (source_offset < 0 || (size_t)source_offset > extra->sourcebuflen) {
+    if (source_offset < 0 || (size_t)source_offset > state->sourcebuflen) {
         OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "invalid PLSQL source offset");
         return OG_ERROR;
     }
 
-    source->str = (char *)extra->sourcebuf + source_offset;
-    source->len = (uint32)(extra->sourcebuflen - (size_t)source_offset);
+    source->str = (char *)state->sourcebuf + source_offset;
+    source->len = (uint32)(state->sourcebuflen - (size_t)source_offset);
     return OG_SUCCESS;
 }
 
@@ -19122,10 +19114,11 @@ static status_t pl_bison_prepare_create_source(core_yyscan_t yyscanner, bool32 r
 {
     text_t source;
     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    const base_yy_raw_parse_state_t *state = &extra->raw_parse;
 
     OG_RETURN_IFERR(pl_bison_source_from_offset(yyscanner, source_offset, &source));
     return pl_bison_prepare_create(extra->core_yy_extra.stmt, replace, if_not_exists, object_name,
-        extra->pl_object_name_sensitive, type, force, &source);
+        state->pl_object_name_sensitive, type, force, &source);
 }
 
 static status_t pl_bison_append_trigger_column(core_yyscan_t yyscanner, galist_t **columns, char *name,

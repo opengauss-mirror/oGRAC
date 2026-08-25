@@ -25,6 +25,7 @@
 
 #include "dcl_alter_parser.h"
 #include "srv_instance.h"
+#include "srv_param.h"
 #include "cbo_base.h"
 #include "ogsql_privilege.h"
 #include "ddl_parser.h"
@@ -35,8 +36,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define SQL_BISON_QUOTED_VALUE_EXTRA_LEN 3
 
 static status_t sql_parse_alsys_switch(lex_t *lex, knl_alter_sys_def_t *def, word_t *word)
 {
@@ -92,105 +91,30 @@ static status_t sql_parse_match_config(knl_session_t *se, knl_alter_sys_def_t *d
     return OG_SUCCESS;
 }
 
-static status_t sql_bison_normalize_sys_param_value(config_item_t *item, knl_alter_sys_def_t *def)
+status_t sql_bison_make_sys_param_value(sql_stmt_t *stmt, const char *source, uint32 start, uint32 end,
+    const char *decoded_string, bool32 is_string, source_location_t loc, source_location_t extra_token_loc,
+    uint32 token_count, bison_sys_param_value_t **result)
 {
-    if (IS_LOG_MODE(def->param)) {
-        return sql_bison_normalize_als_log_level(def);
+    bison_sys_param_value_t *value = NULL;
+
+    if (stmt == NULL || source == NULL || result == NULL || start >= end || token_count == 0 ||
+        (is_string && decoded_string == NULL)) {
+        return OG_ERROR;
     }
-
-    if (item->datatype == NULL) {
-        return OG_SUCCESS;
-    }
-
-    if (item->verify == sql_verify_als_onoff) {
-        if (cm_str_equal_ins(def->value, "ON")) {
-            def->value[0] = (char)OG_TRUE;
-            def->value[1] = '\0';
-            return OG_SUCCESS;
-        }
-
-        if (cm_str_equal_ins(def->value, "OFF")) {
-            def->value[0] = (char)OG_FALSE;
-            def->value[1] = '\0';
-            return OG_SUCCESS;
-        }
-
-        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+    if (sql_alloc_mem(stmt->context, sizeof(bison_sys_param_value_t), (void **)&value) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
-    /*
-     * Native ALTER SYSTEM boolean verification stores OG_FALSE/OG_TRUE in
-     * def->value[0]. The bison path keeps textual values first, so normalize
-     * them here before the shared notify callbacks consume def->value.
-     */
-    if (!cm_str_equal_ins(item->datatype, "OG_TYPE_BOOLEAN")) {
-        return OG_SUCCESS;
-    }
-
-    if (cm_str_equal_ins(def->value, "TRUE")) {
-        def->value[0] = (char)OG_TRUE;
-        def->value[1] = '\0';
-        return OG_SUCCESS;
-    }
-
-    if (cm_str_equal_ins(def->value, "FALSE")) {
-        def->value[0] = (char)OG_FALSE;
-        def->value[1] = '\0';
-        return OG_SUCCESS;
-    }
-
-    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-    return OG_ERROR;
-}
-
-static bool32 sql_bison_sys_param_needs_verify(config_item_t *item)
-{
-    if (item->verify == sql_verify_als_rbp_ip || item->verify == sql_verify_als_local_rbp_host ||
-        item->verify == sql_verify_als_rbp_bool) {
-        return OG_TRUE;
-    }
-
-    return item->verify != NULL && item->datatype != NULL &&
-        !cm_str_equal_ins(item->datatype, "OG_TYPE_BOOLEAN") &&
-        !cm_str_equal_ins(item->datatype, "OG_TYPE_VARCHAR");
-}
-
-static status_t sql_bison_verify_sys_param_value(sql_stmt_t *stmt, config_item_t *item, knl_alter_sys_def_t *def)
-{
-    lex_t *lex = stmt->session->lex;
-    uint32 save_flags = lex->flags;
-    status_t status;
-    sql_text_t value_text;
-    char quoted_value[OG_PARAM_BUFFER_SIZE + 2] = { 0 };
-
-    value_text.str = def->value;
-    value_text.len = (uint32)strlen(def->value);
-    value_text.loc = (source_location_t){ 1, 1 };
-    value_text.implicit = OG_FALSE;
-
-    if (item->verify == sql_verify_als_rbp_ip || item->verify == sql_verify_als_local_rbp_host) {
-        if (value_text.len > sizeof(quoted_value) - SQL_BISON_QUOTED_VALUE_EXTRA_LEN ||
-            strchr(def->value, '\'') != NULL) {
-            OG_THROW_ERROR(ERR_INVALID_PARAMETER, def->param);
-            return OG_ERROR;
-        }
-        PRTS_RETURN_IFERR(snprintf_s(quoted_value, sizeof(quoted_value), sizeof(quoted_value) - 1, "'%s'", def->value));
-        value_text.str = quoted_value;
-        value_text.len = (uint32)strlen(quoted_value);
-    }
-
-    if (lex_push(lex, &value_text) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
-    status = item->verify((knl_handle_t)&stmt->session->knl_session, (void *)lex, (void *)def);
-    if (status == OG_SUCCESS) {
-        status = lex_expected_end(lex);
-    }
-    lex->flags = save_flags;
-    lex_pop(lex);
-    return status;
+    value->text.str = (char *)source + start;
+    value->text.len = end - start;
+    value->decoded_string.str = is_string ? (char *)decoded_string : NULL;
+    value->decoded_string.len = is_string ? (uint32)strlen(decoded_string) : 0;
+    value->is_string = is_string;
+    value->loc = loc;
+    value->extra_token_loc = extra_token_loc;
+    value->token_count = token_count;
+    *result = value;
+    return OG_SUCCESS;
 }
 
 static status_t sql_parse_alsys_modify_replica(lex_t *lex, knl_alter_sys_def_t *def)
@@ -1513,246 +1437,438 @@ status_t sql_parse_dcl_alter(sql_stmt_t *stmt)
     return status;
 }
 
-status_t sql_bison_verify_sys_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def)
+typedef struct st_bison_altset_item bison_altset_item_t;
+typedef status_t (*sql_bison_value_parser)(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *setting, const bison_altset_item_t *item);
+struct st_bison_altset_item {
+    text_t name;
+    altset_type_t type;
+    uint32 id;
+    sql_bison_value_parser parser;
+};
+
+static status_t sql_bison_parse_set_commit_wait_logging(sql_stmt_t *stmt,
+    const bison_sys_param_value_t *source, altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_commit_mode(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_lockwait_timeout(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_curr_schema(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_session_timezone(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_nlsparam(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_show_explain_predicate(sql_stmt_t *stmt,
+    const bison_sys_param_value_t *source, altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_shd_socket_timeout(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_tenant(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_outer_join_opt(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_cbo_index_caching(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_cbo_index_cost_adj(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_withas_subquery(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_cursor_sharing(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+static status_t sql_bison_parse_set_plan_display_format(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item);
+
+static const bison_altset_item_t g_bison_altsession_items[] = {
+    { { "cbo_index_caching", 17 }, SET_CBO_INDEX_CACHING, OG_INVALID_ID32,
+        sql_bison_parse_set_cbo_index_caching },
+    { { "cbo_index_cost_adj", 18 }, SET_CBO_INDEX_COST_ADJ, OG_INVALID_ID32,
+        sql_bison_parse_set_cbo_index_cost_adj },
+    { { "commit_logging", 14 }, SET_COMMIT, OG_INVALID_ID32, sql_bison_parse_set_commit_mode },
+    { { "commit_mode", 11 }, SET_COMMIT, OG_INVALID_ID32, sql_bison_parse_set_commit_mode },
+    { { "commit_wait", 11 }, SET_COMMIT, OG_INVALID_ID32, sql_bison_parse_set_commit_wait_logging },
+    { { "commit_wait_logging", 19 }, SET_COMMIT, OG_INVALID_ID32, sql_bison_parse_set_commit_wait_logging },
+    { { "current_schema", 14 }, SET_SCHEMA, OG_INVALID_ID32, sql_bison_parse_set_curr_schema },
+    { { "lock_wait_timeout", 17 }, SET_LOCKWAIT_TIMEOUT, OG_INVALID_ID32,
+        sql_bison_parse_set_lockwait_timeout },
+    { { "plan_display_format", 19 }, SET_PLAN_DISPLAY_FORMAT, OG_INVALID_ID32,
+        sql_bison_parse_set_plan_display_format },
+    { { "shd_socket_timeout", 18 }, SET_SHD_SOCKET_TIMEOUT, OG_INVALID_ID32,
+        sql_bison_parse_set_shd_socket_timeout },
+    { { "tenant", 6 }, SET_TENANT, OG_INVALID_ID32, sql_bison_parse_set_tenant },
+    { { "time_zone", 9 }, SET_SESSION_TIMEZONE, OG_INVALID_ID32, sql_bison_parse_set_session_timezone },
+    { { "_cursor_sharing", 15 }, SET_CURSOR_SHARING, OG_INVALID_ID32,
+        sql_bison_parse_set_cursor_sharing },
+    { { "_outer_join_optimization", 24 }, SET_OUTER_JOIN_OPT, OG_INVALID_ID32,
+        sql_bison_parse_set_outer_join_opt },
+    { { "_show_explain_predicate", 23 }, SET_SHOW_EXPLAIN_PREDICATE, OG_INVALID_ID32,
+        sql_bison_parse_set_show_explain_predicate },
+    { { "_withas_subquery", 16 }, SET_WITHAS_SUBQUERY, OG_INVALID_ID32,
+        sql_bison_parse_set_withas_subquery },
+};
+
+static status_t sql_bison_get_altses_name_token(const bison_sys_param_value_t *source,
+    bison_param_token_t *token)
 {
-    config_item_t *item = NULL;
-    knl_session_t *se = &stmt->session->knl_session;
+    text_t unexpected;
+    uint32 offset;
 
-    if (IS_LOG_MODE(def->param)) {
-        text_t name = {
-            .str = "_LOG_LEVEL",
-            .len = sizeof("_LOG_LEVEL") - 1
-        };
-        item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
-    } else {
-        text_t name = {
-            .str = def->param,
-            .len = (uint32)strlen(def->param)
-        };
-        item = cm_get_config_item(GET_CONFIG, &name, OG_TRUE);
+    if (source->token_count == 1) {
+        return sql_bison_extra_get_decoded_single_token(source, token);
     }
 
-    if (item == NULL) {
-        OG_THROW_ERROR(ERR_INVALID_PARAMETER_NAME, def->param);
+    if (source->extra_token_loc.line != source->loc.line ||
+        source->extra_token_loc.column < source->loc.column) {
+        OG_SRC_THROW_ERROR_EX(source->extra_token_loc, ERR_SQL_SYNTAX_ERROR, "expected end");
+        return OG_ERROR;
+    }
+    offset = source->extra_token_loc.column - source->loc.column;
+    if (offset >= source->text.len) {
+        OG_SRC_THROW_ERROR_EX(source->extra_token_loc, ERR_SQL_SYNTAX_ERROR, "expected end");
         return OG_ERROR;
     }
 
-    def->param_id = item->id;
-
-    if (se->kernel->db.ctrl.core.lrep_mode == LOG_REPLICATION_ON &&
-        strcmp(def->param, "ARCH_TIME") == 0) {
-        OG_THROW_ERROR(ERR_NOT_COMPATIBLE, "arch time while lrep_mode is LOG_REPLICATION_ON");
-        return OG_ERROR;
-    }
-
-    if (sql_bison_sys_param_needs_verify(item)) {
-        return sql_bison_verify_sys_param_value(stmt, item, def);
-    }
-
-    return sql_bison_normalize_sys_param_value(item, def);
+    unexpected.str = source->text.str + offset;
+    unexpected.len = 1;
+    OG_SRC_THROW_ERROR_EX(source->extra_token_loc, ERR_SQL_SYNTAX_ERROR, "expected end but %.*s found",
+        (int)unexpected.len, unexpected.str);
+    return OG_ERROR;
 }
 
-status_t sql_parse_altses_set_bison(sql_stmt_t *stmt, altset_def_t *def, const char *key, const char *value,
-    source_location_t loc)
+static status_t sql_bison_altses_expected_fetch_1of2(const bison_sys_param_value_t *source,
+    const char *word1, const char *word2, uint32 *matched_id)
+{
+    bison_param_token_t token;
+
+    OG_RETURN_IFERR(sql_bison_extra_get_decoded_single_token(source, &token));
+    if (token.type == BISON_PARAM_TOKEN_WORD && cm_text_str_equal_ins(&token.text, word1)) {
+        *matched_id = 0;
+        return OG_SUCCESS;
+    }
+    if (token.type == BISON_PARAM_TOKEN_WORD && cm_text_str_equal_ins(&token.text, word2)) {
+        *matched_id = 1;
+        return OG_SUCCESS;
+    }
+
+    *matched_id = OG_INVALID_ID32;
+    OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "%s or %s expected", word1, word2);
+    return OG_ERROR;
+}
+
+static status_t sql_bison_altses_expected_fetch_1of3(const bison_sys_param_value_t *source,
+    const char *word1, const char *word2, const char *word3, uint32 *matched_id)
+{
+    bison_param_token_t token;
+
+    OG_RETURN_IFERR(sql_bison_extra_get_decoded_single_token(source, &token));
+    if (token.type == BISON_PARAM_TOKEN_WORD && cm_text_str_equal_ins(&token.text, word1)) {
+        *matched_id = 0;
+        return OG_SUCCESS;
+    }
+    if (token.type == BISON_PARAM_TOKEN_WORD && cm_text_str_equal_ins(&token.text, word2)) {
+        *matched_id = 1;
+        return OG_SUCCESS;
+    }
+    if (token.type == BISON_PARAM_TOKEN_WORD && cm_text_str_equal_ins(&token.text, word3)) {
+        *matched_id = 2;
+        return OG_SUCCESS;
+    }
+
+    *matched_id = OG_INVALID_ID32;
+    OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "%s or %s or %s expected", word1, word2, word3);
+    return OG_ERROR;
+}
+
+static status_t sql_bison_altses_fetch_uint32(const bison_sys_param_value_t *source, uint32 *value)
+{
+    bison_param_token_t token;
+
+    OG_RETURN_IFERR(sql_bison_extra_get_decoded_single_token(source, &token));
+    if (token.type == BISON_PARAM_TOKEN_WORD && cm_text2uint32(&token.text, value) == OG_SUCCESS) {
+        return OG_SUCCESS;
+    }
+
+    cm_reset_error();
+    OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "unsigned integer expected");
+    return OG_ERROR;
+}
+
+static status_t sql_bison_altses_fetch_string(const bison_sys_param_value_t *source, bison_param_token_t *token)
+{
+    OG_RETURN_IFERR(sql_bison_extra_get_decoded_single_token(source, token));
+    if (token->type == BISON_PARAM_TOKEN_STRING) {
+        return OG_SUCCESS;
+    }
+
+    OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "'...' expected but %.*s found",
+        (int)token->text.len, token->text.str);
+    return OG_ERROR;
+}
+
+static status_t sql_bison_parse_set_commit_wait_logging(sql_stmt_t *stmt,
+    const bison_sys_param_value_t *source, altset_def_t *def, const bison_altset_item_t *item)
+{
+    bison_param_token_t token;
+    text_t value;
+
+    OG_RETURN_IFERR(sql_bison_extra_get_decoded_single_token(source, &token));
+    value = token.text;
+    cm_trim_text(&value);
+    if (cm_text_str_equal_ins(&value, "WAIT")) {
+        def->commit.nowait = OG_FALSE;
+    } else if (cm_text_str_equal_ins(&value, "NOWAIT")) {
+        def->commit.nowait = OG_TRUE;
+    } else {
+        OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+        return OG_ERROR;
+    }
+    def->set_type = item->type;
+    def->commit.action = COMMIT_WAIT;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_commit_mode(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    bison_param_token_t token;
+    text_t value;
+
+    OG_RETURN_IFERR(sql_bison_extra_get_decoded_single_token(source, &token));
+    if (token.type != BISON_PARAM_TOKEN_WORD && token.type != BISON_PARAM_TOKEN_STRING) {
+        OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+        return OG_ERROR;
+    }
+    value = token.text;
+    cm_trim_text(&value);
+    if (cm_text_str_equal_ins(&value, "IMMEDIATE")) {
+        def->commit.batch = OG_FALSE;
+    } else if (cm_text_str_equal_ins(&value, "BATCH")) {
+        def->commit.batch = OG_TRUE;
+    } else {
+        OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
+        return OG_ERROR;
+    }
+    def->set_type = item->type;
+    def->commit.action = COMMIT_LOGGING;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_lockwait_timeout(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 value;
+
+    OG_RETURN_IFERR(sql_bison_altses_fetch_uint32(source, &value));
+    def->set_type = item->type;
+    def->lock_wait_timeout.lock_wait_timeout = value;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_curr_schema(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    bison_param_token_t token;
+    text_t schema;
+    char buf[OG_NAME_BUFFER_SIZE];
+
+    OG_RETURN_IFERR(sql_bison_get_altses_name_token(source, &token));
+    if (token.text.len == 0) {
+        OG_SRC_THROW_ERROR(source->loc, ERR_EMPTY_STRING_NOT_ALLOWED);
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(cm_text2str(&token.text, buf, OG_NAME_BUFFER_SIZE));
+    OG_RETURN_IFERR(sql_user_prefix_tenant(stmt->session, buf));
+    cm_str2text(buf, &schema);
+    def->set_type = item->type;
+    return sql_copy_name(stmt->context, &schema, &def->curr_schema);
+}
+
+static status_t sql_bison_parse_set_session_timezone(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    bison_param_token_t token;
+
+    OG_RETURN_IFERR(sql_bison_altses_fetch_string(source, &token));
+    def->set_type = item->type;
+    return sql_copy_name(stmt->context, &token.text, &def->timezone_offset_name);
+}
+
+static status_t sql_bison_parse_set_nlsparam(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    bison_param_token_t token;
+    text_t value;
+
+    OG_RETURN_IFERR(sql_bison_altses_fetch_string(source, &token));
+    value = token.text;
+    cm_trim_text(&value);
+    def->set_type = item->type;
+    def->nls_seting.id = (nlsparam_id_t)item->id;
+    return sql_copy_text(stmt->context, &value, &def->nls_seting.value);
+}
+
+static status_t sql_bison_parse_set_show_explain_predicate(sql_stmt_t *stmt,
+    const bison_sys_param_value_t *source, altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 matched_id;
+
+    OG_RETURN_IFERR(sql_bison_altses_expected_fetch_1of2(source, "FALSE", "TRUE", &matched_id));
+    def->on_off = (matched_id == 0) ? OG_FALSE : OG_TRUE;
+    def->set_type = item->type;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_shd_socket_timeout(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 value;
+
+    OG_RETURN_IFERR(sql_bison_altses_fetch_uint32(source, &value));
+    if (value > OG_MAX_TIMEOUT_VALUE) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "SHD_SOCKET_TIMEOUT", (int64)0, (int64)OG_MAX_TIMEOUT_VALUE);
+        return OG_ERROR;
+    }
+    def->set_type = item->type;
+    def->shd_socket_timeout = value;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_tenant(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    bison_param_token_t token;
+
+    OG_RETURN_IFERR(sql_bison_get_altses_name_token(source, &token));
+    if (source->is_string && token.text.len == 0) {
+        OG_THROW_ERROR(ERR_TENANT_NOT_EXIST, "''");
+        return OG_ERROR;
+    }
+    def->set_type = item->type;
+    return sql_copy_name(stmt->context, &token.text, &def->tenant);
+}
+
+static status_t sql_bison_parse_set_outer_join_opt(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 matched_id;
+
+    OG_RETURN_IFERR(sql_bison_altses_expected_fetch_1of2(source, "OFF", "ON", &matched_id));
+    def->on_off = (matched_id == 0) ? OG_FALSE : OG_TRUE;
+    def->set_type = item->type;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_cbo_index_caching(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 value;
+
+    OG_RETURN_IFERR(sql_bison_altses_fetch_uint32(source, &value));
+    if (value > CBO_MAX_INDEX_CACHING) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_INDEX_CACHING", (int64)CBO_MAX_INDEX_CACHING);
+        return OG_ERROR;
+    }
+    def->set_type = item->type;
+    def->cbo_index_caching = value;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_cbo_index_cost_adj(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 value;
+
+    OG_RETURN_IFERR(sql_bison_altses_fetch_uint32(source, &value));
+    if (value > CBO_MAX_INDEX_COST_ADJ) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_INDEX_COST_ADJ", (int64)CBO_MAX_INDEX_COST_ADJ);
+        return OG_ERROR;
+    }
+    if (value < CBO_MIN_INDEX_COST_ADJ) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "CBO_INDEX_COST_ADJ", (int64)CBO_MIN_INDEX_COST_ADJ);
+        return OG_ERROR;
+    }
+    def->set_type = item->type;
+    def->cbo_index_cost_adj = value;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_withas_subquery(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 matched_id;
+
+    OG_RETURN_IFERR(sql_bison_altses_expected_fetch_1of3(source, "OPTIMIZER", "MATERIALIZE", "INLINE",
+        &matched_id));
+    def->withas_subquery = matched_id;
+    def->set_type = item->type;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_cursor_sharing(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    uint32 matched_id;
+
+    OG_RETURN_IFERR(sql_bison_altses_expected_fetch_1of2(source, "OFF", "ON", &matched_id));
+    def->on_off = (matched_id == 0) ? OG_FALSE : OG_TRUE;
+    def->set_type = item->type;
+    return OG_SUCCESS;
+}
+
+static status_t sql_bison_parse_set_plan_display_format(sql_stmt_t *stmt, const bison_sys_param_value_t *source,
+    altset_def_t *def, const bison_altset_item_t *item)
+{
+    def->set_type = item->type;
+    return sql_bison_parse_plan_display_format(source, &def->plan_display_format);
+}
+
+static const bison_altset_item_t *sql_bison_find_altset_item(const text_t *key, bison_altset_item_t *nls_item)
+{
+    for (uint32 left = 0, right = ELEMENT_COUNT(g_bison_altsession_items); left < right;) {
+        uint32 mid = (left + right) >> 1;
+        int32 cmp_result = cm_compare_text_ins(key, &g_bison_altsession_items[mid].name);
+        if (cmp_result == 0) {
+            return &g_bison_altsession_items[mid];
+        } else if (cmp_result < 0) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+
+    for (uint32 left = 0, right = NLS__MAX_PARAM_NUM; left < right;) {
+        uint32 mid = (left + right) >> 1;
+        int32 cmp_result = cm_compare_text_ins(key, &g_nlsparam_items[mid].key);
+        if (cmp_result == 0) {
+            nls_item->name = g_nlsparam_items[mid].key;
+            nls_item->type = SET_NLS_PARAMS;
+            nls_item->id = g_nlsparam_items[mid].id;
+            nls_item->parser = sql_bison_parse_set_nlsparam;
+            return nls_item;
+        } else if (cmp_result < 0) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    return NULL;
+}
+
+status_t sql_parse_altses_set_bison(sql_stmt_t *stmt, altset_def_t *def, const char *key,
+    const bison_sys_param_value_t *source)
 {
     text_t key_text;
-    text_t value_text;
-    uint32 uint32_value;
-    char buf[OG_PARAM_BUFFER_SIZE];
+    bison_altset_item_t nls_item;
+    const bison_altset_item_t *item;
 
     cm_str2text((char *)key, &key_text);
-    cm_str2text((char *)value, &value_text);
-
-    if (sql_copy_text(stmt->context, &key_text, &def->pkey) != OG_SUCCESS) {
+    item = sql_bison_find_altset_item(&key_text, &nls_item);
+    if (item == NULL || item->parser == NULL) {
+        OG_SRC_THROW_ERROR_EX(source->loc, ERR_SQL_SYNTAX_ERROR, "missing or invalid parameter");
         return OG_ERROR;
     }
 
-    if (cm_text_str_equal_ins(&key_text, "commit_wait") || cm_text_str_equal_ins(&key_text, "commit_wait_logging")) {
-        if (cm_text_str_equal_ins(&value_text, "WAIT")) {
-            def->commit.nowait = OG_FALSE;
-        } else if (cm_text_str_equal_ins(&value_text, "NOWAIT")) {
-            def->commit.nowait = OG_TRUE;
-        } else {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_COMMIT;
-        def->commit.action = COMMIT_WAIT;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "commit_logging") || cm_text_str_equal_ins(&key_text, "commit_mode")) {
-        if (cm_text_str_equal_ins(&value_text, "IMMEDIATE")) {
-            def->commit.batch = OG_FALSE;
-        } else if (cm_text_str_equal_ins(&value_text, "BATCH")) {
-            def->commit.batch = OG_TRUE;
-        } else {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_COMMIT;
-        def->commit.action = COMMIT_LOGGING;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "lock_wait_timeout")) {
-        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_LOCKWAIT_TIMEOUT;
-        def->lock_wait_timeout.lock_wait_timeout = uint32_value;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "current_schema")) {
-        text_t schema;
-        if (value_text.len == 0) {
-            OG_SRC_THROW_ERROR(loc, ERR_EMPTY_STRING_NOT_ALLOWED);
-            return OG_ERROR;
-        }
-        if (cm_text2str(&value_text, buf, OG_NAME_BUFFER_SIZE) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-        if (sql_user_prefix_tenant(stmt->session, buf) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-        cm_str2text(buf, &schema);
-        def->set_type = SET_SCHEMA;
-        return sql_copy_name(stmt->context, &schema, &def->curr_schema);
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "time_zone")) {
-        def->set_type = SET_SESSION_TIMEZONE;
-        return sql_copy_name(stmt->context, &value_text, &def->timezone_offset_name);
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "_show_explain_predicate")) {
-        if (cm_text_str_equal_ins(&value_text, "FALSE")) {
-            def->on_off = OG_FALSE;
-        } else if (cm_text_str_equal_ins(&value_text, "TRUE")) {
-            def->on_off = OG_TRUE;
-        } else {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_SHOW_EXPLAIN_PREDICATE;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "shd_socket_timeout")) {
-        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        if (uint32_value > OG_MAX_TIMEOUT_VALUE) {
-            OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "SHD_SOCKET_TIMEOUT", (int64)0, (int64)OG_MAX_TIMEOUT_VALUE);
-            return OG_ERROR;
-        }
-        def->set_type = SET_SHD_SOCKET_TIMEOUT;
-        def->shd_socket_timeout = uint32_value;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "tenant")) {
-        def->set_type = SET_TENANT;
-        return sql_copy_name(stmt->context, &value_text, &def->tenant);
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "_outer_join_optimization")) {
-        if (cm_text_str_equal_ins(&value_text, "OFF")) {
-            def->on_off = OG_FALSE;
-        } else if (cm_text_str_equal_ins(&value_text, "ON")) {
-            def->on_off = OG_TRUE;
-        } else {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_OUTER_JOIN_OPT;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "cbo_index_caching")) {
-        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        if (uint32_value > CBO_MAX_INDEX_CACHING) {
-            OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_INDEX_CACHING", (int64)CBO_MAX_INDEX_CACHING);
-            return OG_ERROR;
-        }
-        def->set_type = SET_CBO_INDEX_CACHING;
-        def->cbo_index_caching = uint32_value;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "cbo_index_cost_adj")) {
-        if (cm_text2uint32(&value_text, &uint32_value) != OG_SUCCESS) {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        if (uint32_value > CBO_MAX_INDEX_COST_ADJ) {
-            OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "CBO_INDEX_COST_ADJ", (int64)CBO_MAX_INDEX_COST_ADJ);
-            return OG_ERROR;
-        }
-        if (uint32_value < CBO_MIN_INDEX_COST_ADJ) {
-            OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "CBO_INDEX_COST_ADJ", (int64)CBO_MIN_INDEX_COST_ADJ);
-            return OG_ERROR;
-        }
-        def->set_type = SET_CBO_INDEX_COST_ADJ;
-        def->cbo_index_cost_adj = uint32_value;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "_withas_subquery")) {
-        if (cm_text_str_equal_ins(&value_text, "OPTIMIZER")) {
-            def->withas_subquery = 0;
-        } else if (cm_text_str_equal_ins(&value_text, "MATERIALIZE")) {
-            def->withas_subquery = 1;
-        } else if (cm_text_str_equal_ins(&value_text, "INLINE")) {
-            def->withas_subquery = 2;
-        } else {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_WITHAS_SUBQUERY;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "_cursor_sharing")) {
-        if (cm_text_str_equal_ins(&value_text, "OFF")) {
-            def->on_off = OG_FALSE;
-        } else if (cm_text_str_equal_ins(&value_text, "ON")) {
-            def->on_off = OG_TRUE;
-        } else {
-            OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter value");
-            return OG_ERROR;
-        }
-        def->set_type = SET_CURSOR_SHARING;
-        return OG_SUCCESS;
-    }
-
-    if (cm_text_str_equal_ins(&key_text, "plan_display_format")) {
-        uint32 plan_display_format = 0;
-        if (cm_text2str(&value_text, buf, sizeof(buf)) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-        sql_set_plan_display_format(buf, &plan_display_format);
-        def->set_type = SET_PLAN_DISPLAY_FORMAT;
-        def->plan_display_format = plan_display_format;
-        return OG_SUCCESS;
-    }
-
-    for (uint32 i = 0; i < NLS__MAX_PARAM_NUM; i++) {
-        if (cm_text_equal_ins(&key_text, &g_nlsparam_items[i].key)) {
-            def->set_type = SET_NLS_PARAMS;
-            def->nls_seting.id = g_nlsparam_items[i].id;
-            return sql_copy_text(stmt->context, &value_text, &def->nls_seting.value);
-        }
-    }
-
-    OG_SRC_THROW_ERROR_EX(loc, ERR_SQL_SYNTAX_ERROR, "missing or invalid parameter");
-    return OG_ERROR;
+    OG_RETURN_IFERR(sql_copy_text(stmt->context, &key_text, &def->pkey));
+    return item->parser(stmt, source, def, item);
 }
 
 status_t sql_parse_sid_serial_bison(text_t *src, source_location_t loc, uint32 *sid, uint32 *serial, uint32 *nodeid)

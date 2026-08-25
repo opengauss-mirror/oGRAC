@@ -197,7 +197,7 @@ SQL> drop table if exists bison_lock_t2;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_dcl_issue270_basic;
 
 Succeed.
@@ -295,7 +295,7 @@ SQL> alter system dump catalog user username to '/path/to/file';
 OG-00781, The user USERNAME does not exist.
 SQL> alter system archive_set param = 'value' global;
 
-OG-00201, [1:42]The parameter name "PARAM" was invalid
+OG-00201, [1:34]The parameter name "PARAM" was invalid
 SQL> alter system archive_set replication on 'arch_dest';
 
 OG-00601, Sql syntax error: the port must be entered

@@ -2068,6 +2068,18 @@ int ct_yyget_leng(core_yyscan_t yyscanner)
 {
     return ((struct yyguts_t *) yyscanner)->yyleng_r;
 }
+
+int ct_yyget_raw_token_end(core_yyscan_t yyscanner)
+{
+    struct yyguts_t *yyg = (struct yyguts_t *)yyscanner;
+    core_yy_extra_type *scanner_extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    char *raw_end = yyg->yy_c_buf_p;
+
+    if (raw_end < scanner_extra->scanbuf || raw_end > scanner_extra->scanbuf + scanner_extra->scanbuflen) {
+        return -1;
+    }
+    return (int)(raw_end - scanner_extra->scanbuf);
+}
 /*$$exclude in dialect end*/
 
 static void update_current_location(char *cur_pos, char *origin_str, lex_location_t *loc, bool8 multi_line_sql)

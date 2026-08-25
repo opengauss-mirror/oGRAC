@@ -31,6 +31,25 @@ add_custom_command(
     COMMENT "Generating kwlist_d.h from kwlist.h"
 )
 
+set(BISON_PARAM_ORDER_STAMP "${CMAKE_CURRENT_BINARY_DIR}/bison_param_order.checked")
+set(BISON_PARAM_ORDER_CHECKER "${CMAKE_CURRENT_SOURCE_DIR}/parser/check_bison_param_order.pl")
+add_custom_command(
+    OUTPUT ${BISON_PARAM_ORDER_STAMP}
+    COMMAND perl ${BISON_PARAM_ORDER_CHECKER}
+        ${CMAKE_SOURCE_DIR}/pkg/src/server/params/srv_param.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/dcl_alter_parser.c
+        ${CMAKE_SOURCE_DIR}/pkg/src/common/cm_nls.c
+    COMMAND ${CMAKE_COMMAND} -E touch ${BISON_PARAM_ORDER_STAMP}
+    DEPENDS
+        ${BISON_PARAM_ORDER_CHECKER}
+        ${CMAKE_SOURCE_DIR}/pkg/src/server/params/srv_param.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/dcl_alter_parser.c
+        ${CMAKE_SOURCE_DIR}/pkg/src/common/cm_nls.c
+    COMMENT "Checking Bison parameter table order"
+    VERBATIM
+)
+add_custom_target(check_bison_param_order DEPENDS ${BISON_PARAM_ORDER_STAMP})
+
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.inc
     COMMAND rm -fr lex.backup
@@ -335,6 +354,9 @@ set(SQL_ALL_SRC
 link_directories(${OGRACDB_LIB} ${PCRE_LIB_PATH} ${VPP_LIB_PATH} ${Z_LIB_PATH})
 
 add_library(ogracsql STATIC ${SQL_ALL_SRC} ${PL_TOTAL_SRC})
+add_dependencies(ogserver check_bison_param_order)
+add_dependencies(oGRAC check_bison_param_order)
+add_dependencies(ogracsql check_bison_param_order)
 if (USE_FUZZASAN)
 target_link_libraries(ogracsql PRIVATE ogkernel)
 endif(USE_FUZZASAN)

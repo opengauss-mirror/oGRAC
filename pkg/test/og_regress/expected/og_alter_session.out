@@ -85,13 +85,13 @@ Succeed.
 
 SQL> ALTER SYSTEM ARCHIVE_SET ARCH_TIME=400000 LOCAL;
 
-OG-00626, [1:43]Set arch time while lrep_mode is LOG_REPLICATION_ON is not supported
+OG-00626, Set arch time while lrep_mode is LOG_REPLICATION_ON is not supported
 SQL> ALTER SYSTEM ARCHIVE_SET ARCH_TIME=500000 GLOBAL;
 
-OG-00626, [1:43]Set arch time while lrep_mode is LOG_REPLICATION_ON is not supported
+OG-00626, Set arch time while lrep_mode is LOG_REPLICATION_ON is not supported
 SQL> ALTER SYSTEM SET ARCH_TIME=600000;
 
-OG-00626, [1:34]Set arch time while lrep_mode is LOG_REPLICATION_ON is not supported
+OG-00626, Set arch time while lrep_mode is LOG_REPLICATION_ON is not supported
 SQL> ALTER DATABASE ENABLE_LOGIC_REPLICATION OFF;
 
 Succeed.

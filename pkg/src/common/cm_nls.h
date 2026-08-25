@@ -44,6 +44,7 @@ extern "C" {
 *       National Language Support
 * The support session parameter id */
 typedef enum en_nlsparam_id {
+    /* Keep this enum in alphabetical order for Bison binary search. */
     NLS_CALENDAR = 0,
     NLS_CHARACTERSET,
     NLS_COMP,

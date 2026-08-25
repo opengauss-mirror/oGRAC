@@ -66,6 +66,29 @@ struct base_yy_lookahead {
     char prev_hold_char;
 };
 
+typedef enum en_base_yy_alter_system_value_mode {
+    ALTER_SYSTEM_VALUE_CAPTURE_NONE = 0,
+    ALTER_SYSTEM_VALUE_CAPTURE_NORMAL,
+    ALTER_SYSTEM_VALUE_CAPTURE_ARCH,
+    ALTER_SYSTEM_VALUE_CAPTURE_TO_END
+} base_yy_alter_system_value_mode_t;
+
+/**
+ * Temporary state shared by grammar actions and base_yylex() during one raw
+ * parse. The state owns no memory and is discarded with base_yy_extra_type.
+ */
+typedef struct st_base_yy_raw_parse_state {
+    /* Immutable parser input used when an action must preserve original text. */
+    const char *sourcebuf;
+    size_t sourcebuflen;
+
+    int pl_object_name_end;
+    bool32 pl_object_name_mode;
+    bool32 pl_object_name_sensitive;
+
+    base_yy_alter_system_value_mode_t alter_system_value_mode;
+} base_yy_raw_parse_state_t;
+
 /**
  * The `YY_EXTRA` data that a flex scanner allows us to pass around. Private
  * state needed for raw parsing/lexing goes here.
@@ -82,12 +105,7 @@ typedef struct base_yy_extra_type {
     int lookahead_len; /* Length of `lookaheads`. Max to `MAX_LOOKAHEAD_LEN` */
     struct base_yy_lookahead lookaheads[MAX_LOOKAHEAD_LEN];
 
-    /* Immutable raw-parser input used by grammar actions that persist source text. */
-    const char *sourcebuf;
-    size_t sourcebuflen;
-    int pl_object_name_end;
-    bool32 pl_object_name_mode;
-    bool32 pl_object_name_sensitive;
+    base_yy_raw_parse_state_t raw_parse;
 
     /**
      * State variables that belong to the grammar.
