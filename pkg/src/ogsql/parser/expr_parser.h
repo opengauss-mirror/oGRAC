@@ -68,13 +68,13 @@ typedef struct st_type_word {
         };
         // for string
         struct {
-            int array_size;
             uint8 charset;
             uint8 collation;
             bool8 is_char;
-            bool8 is_array;
         };
     };
+    int array_size;
+    bool8 is_array;
     bool32 name_sensitive;
     bool32 name_sensitive_set;
 } type_word_t;

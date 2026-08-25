@@ -233,6 +233,19 @@ SQL> create table bison_ddl_tab(id int, val int);
 
 Succeed.
 
+SQL> create table bison_ddl_type_array_tab (
+  2     i_default_array interval day(4) to second[6],
+  3     i_prec interval day(5) to second(3)[],
+  4     ts_plain timestamp(2) without time zone[],
+  5     ts_ltz timestamp(4) with local time zone[6]
+  6 );
+
+Succeed.
+
+SQL> drop table bison_ddl_type_array_tab;
+
+Succeed.
+
 SQL> -- A 65-byte quoted hint identifier exercises hint scanner truncation.
 SQL> select /*+ full("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") */ count(*)
   2 from bison_ddl_tab;
