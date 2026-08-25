@@ -128,6 +128,7 @@ function install_ogracdb() {
                        -Z EMPTY_STRING_AS_NULL=TRUE  \
                        -Z SHARED_POOL_SIZE=2G  \
                        -f ${CREATEDB_SQL}  \
+                       -C "_DISK_USAGE_PROTECT_ENABLE=FALSE"  \
                        -g withoutroot -d -M ogracd -c
     result=`cat ${TEST_DATA_DIR}/data/log/ogracstatus.log |grep 'instance started'|wc -l`
     sed -i 's/'${ESCAPE_DATA_PATH}'/dbfiles1/g' ${CREATEDB_SQL}
