@@ -547,14 +547,6 @@ static void repair_warning_timeout(uint32 timeout)
     return;
 #else
     char confirm[OG_MAX_CMD_LEN] = { 0 };
-    char *env_quiet = getenv("OGBOX_CONFIRM_QUIET");
-    bool32 quiet_flag = OG_FALSE;
-
-    if (env_quiet != NULL && cm_str2bool(env_quiet, &quiet_flag) == OG_SUCCESS) {
-        if (quiet_flag) {
-            return;
-        }
-    }
 
     while (OG_TRUE) {
         printf("Warning: modifying datafile may cause unexpected results(unable to start DB, data lost, etc), must be sure the page size you input correctly. Continue anyway? (y/n):");

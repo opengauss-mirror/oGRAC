@@ -1,5 +1,7 @@
 import os
 import stat
+import ast
+import json
 from pathlib import Path
 from datetime import datetime
 from datetime import timezone
@@ -12,6 +14,25 @@ DIR_NAME, _ = os.path.split(os.path.abspath(__file__))
 INSPECTION_PATH = str(Path('{}/../inspections'.format(DIR_NAME)))
 
 
+def _parse_audit_info(response):
+    response_data = json.loads(str(response))
+    audit_output = response_data.get('data', {}).get('ogmgr_common_output', '')
+    if isinstance(audit_output, dict):
+        audit_info = audit_output
+    elif isinstance(audit_output, str):
+        try:
+            audit_info = json.loads(audit_output)
+        except json.JSONDecodeError:
+            # Existing inspection scripts emit Python-literal dictionaries.
+            audit_info = ast.literal_eval(audit_output)
+    else:
+        raise ValueError('audit output must be a dictionary or serialized dictionary')
+
+    if not isinstance(audit_info, dict):
+        raise ValueError('audit output must decode to a dictionary')
+    return audit_info
+
+
 class AuditTask(PyTask):
 
     def __init__(self, task_name, handler, file_path, py_input, params_check_dict):
@@ -22,7 +43,7 @@ class AuditTask(PyTask):
     def task_execute(self, input_params, task_logger):
         res = super(AuditTask, self).task_execute(input_params=input_params, task_logger=task_logger)
 
-        audit_info = eval(eval(res.__str__()).get('data', {}).get('ogmgr_common_output', ''))
+        audit_info = _parse_audit_info(res)
 
         audit_result = audit_info.get('RESULT')
         if str(audit_result) == '0':
