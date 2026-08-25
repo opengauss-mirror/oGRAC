@@ -10083,7 +10083,7 @@ void dtc_stop_recovery(void)
                    dtc_rcy->ss->canceled, dtc_rcy->ss->killed);
 
     if (dtc_rcy->failed) {
-        CM_ABORT(0, "[DTC RCY] DTC RCY failed");
+        CM_ABORT_REASONABLE(0, "[DTC RCY] DTC RCY failed");
     }
 
     dtc_rcy->canceled = OG_TRUE;
