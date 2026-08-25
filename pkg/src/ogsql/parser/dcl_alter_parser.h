@@ -27,16 +27,23 @@
 #define __DCL_ALTER_PARSER_H__
 
 #include "ogsql_stmt.h"
+#include "srv_param_common.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 status_t sql_parse_dcl_alter(sql_stmt_t *stmt);
-status_t sql_bison_verify_sys_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def);
+status_t sql_bison_make_sys_param_value(sql_stmt_t *stmt, const char *source, uint32 start, uint32 end,
+    const char *decoded_string, bool32 is_string, source_location_t loc, source_location_t extra_token_loc,
+    uint32 token_count, bison_sys_param_value_t **result);
+status_t sql_bison_verify_sys_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def,
+    bison_sys_param_value_t *value);
+status_t sql_bison_verify_debug_param(sql_stmt_t *stmt, knl_alter_sys_def_t *def,
+    bison_sys_param_value_t *value);
 status_t sql_parse_sid_serial_bison(text_t *src, source_location_t loc, uint32 *sid, uint32 *serial, uint32 *nodeid);
-status_t sql_parse_altses_set_bison(sql_stmt_t *stmt, altset_def_t *def, const char *key, const char *value,
-    source_location_t loc);
+status_t sql_parse_altses_set_bison(sql_stmt_t *stmt, altset_def_t *def, const char *key,
+    const bison_sys_param_value_t *value);
 
 #ifdef __cplusplus
 }

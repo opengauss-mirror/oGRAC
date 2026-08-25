@@ -23,10 +23,12 @@
  * -------------------------------------------------------------------------
  */
 #include "srv_module.h"
+#include "ogsql_stmt.h"
 #include "srv_param.h"
 #include "ddl_parser.h"
 #include "srv_instance.h"
 #include "srv_param_common.h"
+#include "cm_encrypt.h"
 #include "knl_spm.h"
 #include "dtc_context.h"
 #include "srv_device_adpt.h"
@@ -1094,6 +1096,317 @@ status_t sql_verify_als_mes_task_ratio(void *se, void *lex, void *def)
         return OG_ERROR;
     }
 
+    return OG_SUCCESS;
+}
+
+
+/* Bison ALTER SYSTEM verifier adapters. */
+status_t sql_bison_extra_als_deadlock_detect_interval(SQL_BISON_VERIFY_ARGS)
+{
+    uint32 num;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (!IS_DEADLOCK_INTERVAL_PARAM_VALID(num)) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_DEADLOCK_DETECT_INTERVAL");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_sessions(SQL_BISON_VERIFY_ARGS)
+{
+    uint32 num;
+
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (num <= g_instance->kernel.reserved_sessions + g_instance->sql_emerg_pool.max_sessions) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "SESSIONS",
+            (int64)(g_instance->kernel.reserved_sessions + g_instance->sql_emerg_pool.max_sessions + 1));
+        return OG_ERROR;
+    }
+
+    if (num > OG_MAX_SESSIONS) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "SESSIONS", (int64)OG_MAX_SESSIONS);
+        return OG_ERROR;
+    }
+
+    // SESSIONS modified:  current_value <= num <= expanded_max_sessions will work immediately,
+    // otherwise use SCOPE=PFILE to work after reboot
+    if (num <= g_instance->session_pool.expanded_max_sessions && num >= g_instance->session_pool.max_sessions) {
+        g_instance->session_pool.max_sessions = num;
+        return OG_SUCCESS;
+    }
+
+    // The Bison grammar has already parsed SCOPE into sys_def before this verifier is called.
+    if (sys_def->scope != CONFIG_SCOPE_DISK) {
+        OG_SET_HINT("[NOTICE]%s", "Use SCOPE=PFILE to take effect after reboot.");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_uds_file_permissions(SQL_BISON_VERIFY_ARGS)
+{
+    uint32 num;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    return verify_uds_file_permission((uint16)num);
+}
+
+status_t sql_bison_extra_als_bool_only_sys_allowed(SQL_BISON_VERIFY_ARGS)
+{
+    knl_session_t *session = (knl_session_t *)se;
+    if (session->uid != DB_SYS_USER_ID) {
+        OG_THROW_ERROR(ERR_INSUFFICIENT_PRIV);
+        return OG_ERROR;
+    }
+    return sql_bison_verify_bool(se, source, def, min_value, max_value);
+}
+
+status_t sql_bison_extra_als_encryption_alg(SQL_BISON_VERIFY_ARGS)
+{
+    bool32 result = OG_FALSE;
+    const char *match_words = "SCRAM_SHA256";
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    result = word.type == BISON_PARAM_TOKEN_WORD && cm_text_str_equal_ins(&word.text, match_words);
+    if (!result) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_ENCRYPTION_ALG");
+        return OG_ERROR;
+    }
+
+    MEMS_RETURN_IFERR(strcpy_s(sys_def->value, OG_PARAM_BUFFER_SIZE, match_words));
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_mes_task_ratio(SQL_BISON_VERIFY_ARGS)
+{
+    double num;
+
+    OG_RETURN_IFERR(sql_bison_extra_parse_real(source, def, &num));
+
+    if (num > OG_MES_MAX_TASK_RATIO || num < OG_MES_MIN_TASK_RATIO) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "MES_TASK_RATIO");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_normal_emerge_sess_factor(SQL_BISON_VERIFY_ARGS)
+{
+    double num;
+
+    OG_RETURN_IFERR(sql_bison_extra_parse_real(source, def, &num));
+
+    if (num > 1 || num < 0) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "NORMAL_USER_RESERVED_SESSIONS_FACTOR");
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_interconnect_type(SQL_BISON_VERIFY_ARGS)
+{
+    // 禁止通过ogsql命令修改 INTERCONNECT_TYPE
+    OG_THROW_ERROR(ERR_PARAMETER_NOT_MODIFIABLE, "INTERCONNECT_TYPE");
+    return OG_ERROR;
+}
+
+status_t sql_bison_extra_als_xa_format_id(SQL_BISON_VERIFY_ARGS)
+{
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    OG_THROW_ERROR(ERR_ALTER_READONLY_PARAMETER, sys_def->param);
+    return OG_ERROR;
+}
+
+status_t sql_bison_extra_als_db_tz(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t value;
+    timezone_info_t dbtz_new;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    char param_new_value[TIMEZONE_OFFSET_STRLEN] = { 0 };
+    text_t normal_tz;
+
+    OG_RETURN_IFERR(sql_bison_extra_get_single_token(source, &value));
+
+    if (value.text.len >= OG_PARAM_BUFFER_SIZE) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, sys_def->param, (int64)OG_PARAM_BUFFER_SIZE - 1);
+        return OG_ERROR;
+    }
+
+    // normalize this tz str and to check if this value is valid
+    OG_RETURN_IFERR(cm_text2tzoffset(&value.text, &dbtz_new));
+    normal_tz.str = param_new_value;
+    OG_RETURN_IFERR(cm_tzoffset2text(dbtz_new, &normal_tz));
+
+    OG_RETURN_IFERR(cm_text2str(&normal_tz, sys_def->value, OG_PARAM_BUFFER_SIZE));
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_factor_key(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    char buf[OG_AESBLOCKSIZE * 2];
+    char key_buf[OG_MAX_FACTOR_KEY_STR_LEN + 4];
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (sys_def->scope != CONFIG_SCOPE_BOTH) {
+        OG_THROW_ERROR(ERR_PARAMETER_NOT_MODIFIABLE, "_FACTOR_KEY");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_text2str(&word.text, key_buf, sizeof(key_buf)));
+
+    if (word.text.len != OG_MAX_FACTOR_KEY_STR_LEN ||
+        cm_base64_decode(key_buf, word.text.len, (uchar *)buf, sizeof(buf)) == 0) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_FACTOR_KEY");
+        return OG_ERROR;
+    }
+    return sql_bison_store_sys_param_text(&word.text, sys_def);
+}
+
+status_t sql_bison_extra_als_local_key(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    char cipher[OG_PASSWORD_BUFFER_SIZE];
+    char key_buf[OG_MAX_LOCAL_KEY_STR_LEN_DOUBLE + 4];
+    uint32 cipher_len = sizeof(cipher);
+
+    char *factor_key = cm_get_config_value(&g_instance->config, "_FACTOR_KEY");
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        cm_reset_error();
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "LOCAL_KEY");
+        return OG_ERROR;
+    }
+
+    if (sys_def->scope != CONFIG_SCOPE_BOTH) {
+        OG_THROW_ERROR(ERR_PARAMETER_NOT_MODIFIABLE, "LOCAL_KEY");
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_text2str(&word.text, key_buf, sizeof(key_buf)));
+
+    if (word.text.len != OG_MAX_LOCAL_KEY_STR_LEN_DOUBLE || cm_encrypt_passwd(OG_TRUE, (char *)"sys",
+        SYS_USER_NAME_LEN, cipher, &cipher_len, key_buf, factor_key) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "LOCAL_KEY");
+        return OG_ERROR;
+    }
+    return sql_bison_store_sys_param_text(&word.text, sys_def);
+}
+
+static status_t sql_bison_verify_interconnect_port(const bison_sys_param_value_t *source, char *portstr,
+    uint32 len)
+{
+    uint32 port_len = 0;
+    uint32 port_count = 0;
+    char *port = portstr;
+    uint16 value;
+    char *pos = NULL;
+    uint32 tmp_len = len;
+    for (pos = portstr; tmp_len > 0; tmp_len--) {
+        if (*pos != ',') {
+            port_len++;
+            pos++;
+            continue;
+        }
+
+        *pos = '\0';
+        if (cm_str2uint16(port, &value) != OG_SUCCESS) {
+            cm_reset_error();
+            OG_SRC_THROW_ERROR(source->loc, ERR_INVALID_PARAMETER, "port");
+            return OG_ERROR;
+        }
+
+        if (value < OG_MIN_PORT) {
+            OG_SRC_THROW_ERROR(source->loc, ERR_PARAMETER_TOO_SMALL, "port", (int64)OG_MIN_PORT);
+            return OG_ERROR;
+        }
+
+        *pos = ',';
+        port += (port_len + 1);
+        port_count++;
+        port_len = 0;
+        pos = port;
+    }
+
+    if (port_len > 0) {
+        if (cm_str2uint16(port, &value) != OG_SUCCESS) {
+            cm_reset_error();
+            OG_SRC_THROW_ERROR(source->loc, ERR_INVALID_PARAMETER, "port");
+            return OG_ERROR;
+        }
+
+        if (value < OG_MIN_PORT) {
+            OG_SRC_THROW_ERROR(source->loc, ERR_PARAMETER_TOO_SMALL, "port", (int64)OG_MIN_PORT);
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_interconnect_port(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    cm_trim_text(&word.text);
+    cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+
+    /* check if the interconnect port specified is valid */
+    return sql_bison_verify_interconnect_port((bison_sys_param_value_t *)source, sys_def->value,
+        (uint32)strlen(sys_def->value));
+}
+
+status_t sql_bison_extra_als_uds_file_path(SQL_BISON_VERIFY_ARGS)
+{
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    bison_param_token_t word;
+    OG_RETURN_IFERR(sql_bison_extra_get_single_token(source, &word));
+    OG_RETURN_IFERR(sql_bison_store_sys_param_text(&word.text, sys_def));
+    return verify_uds_file_path((const char *)sys_def->value);
+}
+
+status_t sql_bison_extra_als_sys_password(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(sql_bison_store_sys_param_text(&word.text, sys_def));
+
+    if (word.text.len == OG_KDF2MAXSTRSIZE) {
+        if (cm_convert_kdf2_scram_sha256(sys_def->value, sys_def->value, OG_PARAM_BUFFER_SIZE) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_SYS_PASSWORD");
+            return OG_ERROR;
+        }
+    } else if (!cm_is_password_valid(sys_def->value)) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_SYS_PASSWORD");
+        return OG_ERROR;
+    }
     return OG_SUCCESS;
 }
 

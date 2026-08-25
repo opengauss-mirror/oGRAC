@@ -166,14 +166,118 @@ static void set_lookahead_three_token(int *lookahead_len, struct base_yy_lookahe
     *llocp = cur_yylloc_1;
 }
 
+static inline bool32 is_alter_system_value_end(int token, base_yy_alter_system_value_mode_t mode,
+    bool32 has_value)
+{
+    if (token == ';' || token == 0) {
+        return OG_TRUE;
+    }
+    if (!has_value || mode == ALTER_SYSTEM_VALUE_CAPTURE_TO_END) {
+        return OG_FALSE;
+    }
+    return token == SCOPE || (mode == ALTER_SYSTEM_VALUE_CAPTURE_ARCH && (token == GLOBAL || token == LOCAL));
+}
+
+static int capture_alter_system_value(base_yy_extra_type *yyextra, YYSTYPE *lvalp, YYLTYPE *llocp,
+    core_yyscan_t yyscanner, core_yylex_func yylex_func, int cur_token, int cur_raw_token_end)
+{
+    base_yy_raw_parse_state_t *state = &yyextra->raw_parse;
+    struct base_yy_lookahead *lookahead = &yyextra->lookaheads[0];
+    bool32 is_string;
+    char *decoded_string;
+    int next_token;
+    int next_yyleng;
+    int next_raw_token_end;
+    int value_start;
+    int value_end;
+    YYLTYPE value_loc;
+    source_location_t extra_token_loc;
+    uint32 token_count = 1;
+    char *scanbuf = yyextra->core_yy_extra.scanbuf;
+    bison_sys_param_value_t *value = NULL;
+
+    if (cur_token == LEX_ERROR_TOKEN ||
+        is_alter_system_value_end(cur_token, state->alter_system_value_mode, OG_FALSE)) {
+        state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+        return cur_token;
+    }
+
+    value_start = llocp->offset;
+    value_loc = *llocp;
+    extra_token_loc = value_loc.loc;
+    value_end = cur_raw_token_end;
+    is_string = (cur_token == SCONST && lvalp->str != NULL);
+    decoded_string = is_string ? lvalp->str : NULL;
+
+    for (;;) {
+        if (yyextra->lookahead_len != 0) {
+            state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+            OG_SRC_THROW_ERROR_EX(llocp->loc, ERR_SQL_SYNTAX_ERROR,
+                "invalid alter system parameter lookahead state");
+            return LEX_ERROR_TOKEN;
+        }
+        next_token = yylex_func(&(lvalp->core_yystype), llocp, yyscanner);
+        next_yyleng = ct_yyget_leng(yyscanner);
+        next_raw_token_end = ct_yyget_raw_token_end(yyscanner);
+        if (next_token == LEX_ERROR_TOKEN) {
+            state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+            return next_token;
+        }
+        if (next_raw_token_end < llocp->offset) {
+            state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+            OG_SRC_THROW_ERROR_EX(llocp->loc, ERR_SQL_SYNTAX_ERROR,
+                "invalid alter system parameter token location");
+            return LEX_ERROR_TOKEN;
+        }
+        if (is_alter_system_value_end(next_token, state->alter_system_value_mode, OG_TRUE)) {
+            state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+
+            if (next_token != 0) {
+                yyextra->lookahead_len = 1;
+                lookahead->token = next_token;
+                lookahead->yylval = lvalp->core_yystype;
+                lookahead->yylloc = *llocp;
+                lookahead->yyleng = next_yyleng;
+                lookahead->prev_hold_char_loc = value_end;
+                lookahead->prev_hold_char = scanbuf[value_end];
+            }
+
+            if (value_start < 0 || value_end <= value_start || state->sourcebuf == NULL ||
+                (size_t)value_end > state->sourcebuflen) {
+                OG_SRC_THROW_ERROR_EX(value_loc.loc, ERR_SQL_SYNTAX_ERROR,
+                    "invalid alter system parameter value location");
+                return LEX_ERROR_TOKEN;
+            }
+            if (sql_bison_make_sys_param_value(yyextra->core_yy_extra.stmt, state->sourcebuf,
+                (uint32)value_start, (uint32)value_end, decoded_string, is_string, value_loc.loc,
+                extra_token_loc, token_count, &value) != OG_SUCCESS) {
+                return LEX_ERROR_TOKEN;
+            }
+            lvalp->sys_param_value = value;
+            *llocp = value_loc;
+            return ALTER_SYSTEM_VALUE;
+        }
+        if (token_count == 1) {
+            extra_token_loc = llocp->loc;
+        }
+        token_count++;
+        value_end = next_raw_token_end;
+        is_string = OG_FALSE;
+        decoded_string = NULL;
+    }
+}
+
 int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, core_yylex_func yylex_func_hook)
 {
     base_yy_extra_type* yyextra = og_yyget_extra(yyscanner);
+    base_yy_raw_parse_state_t *state = &yyextra->raw_parse;
     char* scanbuf = yyextra->core_yy_extra.scanbuf;
     struct base_yy_lookahead* lookaheads = yyextra->lookaheads;
     int* lookahead_len = &yyextra->lookahead_len;
     int cur_token;
     int cur_yyleng = 0;
+    int cur_raw_token_end = -1;
+    bool32 cur_from_lookahead = OG_FALSE;
     int next_token;
     int next_yyleng = 0;
     core_YYSTYPE cur_yylval;
@@ -195,6 +299,7 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
         
     /* Get next token --- we might already have it */
     if (yyextra->lookahead_len != 0) {
+        cur_from_lookahead = OG_TRUE;
         const struct base_yy_lookahead lookahead = lookaheads[yyextra->lookahead_len - 1];
         cur_token = lookahead.token;
         cur_yyleng = lookahead.yyleng;
@@ -206,8 +311,23 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
     } else {
         cur_token = yylex_func(&(lvalp->core_yystype), llocp, yyscanner);
         cur_yyleng = ct_yyget_leng(yyscanner);
+        cur_raw_token_end = ct_yyget_raw_token_end(yyscanner);
     }
-    if (yyextra->pl_object_name_mode) {
+    if (state->alter_system_value_mode != ALTER_SYSTEM_VALUE_CAPTURE_NONE) {
+        if (cur_token == LEX_ERROR_TOKEN) {
+            state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+            return cur_token;
+        }
+        if (cur_from_lookahead || cur_raw_token_end < llocp->offset) {
+            state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+            OG_SRC_THROW_ERROR_EX(llocp->loc, ERR_SQL_SYNTAX_ERROR,
+                "invalid alter system parameter lookahead state");
+            return LEX_ERROR_TOKEN;
+        }
+        return capture_alter_system_value(yyextra, lvalp, llocp, yyscanner, yylex_func, cur_token,
+            cur_raw_token_end);
+    }
+    if (state->pl_object_name_mode) {
         return cur_token;
     }
 
@@ -884,11 +1004,14 @@ int c_base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
 
 static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_text_t *sql)
 {
-    yyextra->sourcebuf = sql->str;
-    yyextra->sourcebuflen = sql->len;
-    yyextra->pl_object_name_end = -1;
-    yyextra->pl_object_name_mode = OG_FALSE;
-    yyextra->pl_object_name_sensitive = OG_FALSE;
+    base_yy_raw_parse_state_t *state = &yyextra->raw_parse;
+
+    state->sourcebuf = sql->str;
+    state->sourcebuflen = sql->len;
+    state->pl_object_name_end = -1;
+    state->pl_object_name_mode = OG_FALSE;
+    state->pl_object_name_sensitive = OG_FALSE;
+    state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
 }
 
 static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)

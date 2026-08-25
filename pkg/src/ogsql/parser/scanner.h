@@ -381,6 +381,7 @@ extern int scanner_errposition(int location, core_yyscan_t yyscanner);
 extern void scanner_yyerror(const char* message, core_yyscan_t yyscanner);
 extern void addErrorList(const char* message, int lines);
 extern int ct_yyget_leng(core_yyscan_t yyscanner);
+extern int ct_yyget_raw_token_end(core_yyscan_t yyscanner);
 extern void *core_yyalloc(size_t bytes, core_yyscan_t yyscanner);
 extern void *core_yyrealloc(void *ptr, size_t bytes, core_yyscan_t yyscanner);
 extern void core_yyfree(void *ptr, core_yyscan_t yyscanner);

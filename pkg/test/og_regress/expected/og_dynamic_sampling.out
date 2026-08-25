@@ -278,13 +278,13 @@ DATA_DS_TEST                                                     128          TR
 SQL> 
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = 10;
 
-OG-00210, [1:51]The value of parameter "_OPT_CBO_STAT_SAMPLING_LEVEL" is too large, at most 9
+OG-00636, [1:49]Invalid number, range is [0,9]
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = -1;
 
-OG-00601, [1:51]Sql syntax error: Convert uint32 failed, text = -
+OG-00636, [1:49]Invalid number, range is [0,9]
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = 5.5;
 
-OG-00601, [1:52]Sql syntax error: Convert uint32 failed, text = 5.5
+OG-00636, [1:49]Invalid number, range is [0,9]
 SQL> 
 SQL> ANALYZE TABLE DATA_DS_TEST COMPUTE STATISTICS;
 

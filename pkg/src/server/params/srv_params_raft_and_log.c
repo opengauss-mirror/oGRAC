@@ -366,26 +366,29 @@ static status_t cm_set_log_level_value(knl_alter_sys_def_t *def)
     return OG_SUCCESS;
 }
 
-status_t sql_bison_normalize_als_log_level(knl_alter_sys_def_t *sys_def)
+static status_t sql_bison_verify_als_log_mode_value(const bison_sys_param_value_t *source, knl_alter_sys_def_t *def)
 {
-    text_t value_text;
-
-    cm_str2text(sys_def->value, &value_text);
-    if (IS_SLOWSQL_LOG_MODE(sys_def->param)) {
-        if (!cm_text_str_equal_ins(&value_text, "ON") && !cm_text_str_equal_ins(&value_text, "OFF")) {
-            OG_THROW_ERROR(ERR_INVALID_PARAMETER, sys_def->value);
-            return OG_ERROR;
-        }
-    } else if (IS_LOG_LEVEL_MODE(sys_def->param)) {
-        if (!cm_text_str_equal_ins(&value_text, "DEBUG") && !cm_text_str_equal_ins(&value_text, "WARN") &&
-            !cm_text_str_equal_ins(&value_text, "ERROR") && !cm_text_str_equal_ins(&value_text, "RUN") &&
-            !cm_text_str_equal_ins(&value_text, "FATAL")) {
-            OG_THROW_ERROR(ERR_INVALID_PARAMETER, sys_def->value);
-            return OG_ERROR;
-        }
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = def;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
     }
 
-    return cm_set_log_level_value(sys_def);
+    if (IS_SLOWSQL_LOG_MODE(sys_def->param)) {
+        if (cm_text_str_equal_ins(&word.text, "ON") || cm_text_str_equal_ins(&word.text, "OFF")) {
+            cm_text2str_with_upper(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+            return OG_SUCCESS;
+        }
+    } else if (IS_LOG_LEVEL_MODE(sys_def->param)) {
+        if (cm_text_str_equal_ins(&word.text, "DEBUG") || cm_text_str_equal_ins(&word.text, "WARN") ||
+            cm_text_str_equal_ins(&word.text, "ERROR") || cm_text_str_equal_ins(&word.text, "RUN") ||
+            cm_text_str_equal_ins(&word.text, "FATAL")) {
+            cm_text2str_with_upper(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+            return OG_SUCCESS;
+        }
+    }
+    OG_SRC_THROW_ERROR_EX(source->loc, ERR_INVALID_PARAMETER, "%s", word.value);
+    return OG_ERROR;
 }
 
 static status_t sql_verify_als_log_level_value(lex_t *lex, knl_alter_sys_def_t *def)
@@ -1072,6 +1075,227 @@ status_t sql_notify_als_raft_mem_threshold(void *se, void *item, char *value)
 
     return OG_SUCCESS;
 }
+
+
+/* Bison ALTER SYSTEM verifier adapters. */
+status_t sql_bison_extra_als_log_file(SQL_BISON_VERIFY_ARGS)
+{
+    uint32 num;
+    uint32 usr_perm;
+    uint32 grp_perm;
+    uint32 oth_perm;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    usr_perm = (num / 100) % 10;
+    grp_perm = (num / 10) % 10;
+    oth_perm = num % 10;
+
+    if (usr_perm > OG_MAX_LOG_USER_PERMISSION || grp_perm > OG_MAX_LOG_USER_PERMISSION ||
+        oth_perm > OG_MAX_LOG_USER_PERMISSION) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_LOG_FILE_PERMISSIONS");
+        return OG_ERROR;
+    }
+
+    if (num < OG_DEF_LOG_FILE_PERMISSIONS || num > OG_MAX_LOG_PERMISSIONS) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_LOG_FILE_PERMISSIONS", (int64)OG_DEF_LOG_FILE_PERMISSIONS,
+            (int64)OG_MAX_LOG_PERMISSIONS);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_log_path(SQL_BISON_VERIFY_ARGS)
+{
+    uint32 num;
+    uint32 usr_perm;
+    uint32 grp_perm;
+    uint32 oth_perm;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    usr_perm = (num / 100) % 10;
+    grp_perm = (num / 10) % 10;
+    oth_perm = num % 10;
+
+    if (usr_perm > OG_MAX_LOG_USER_PERMISSION || grp_perm > OG_MAX_LOG_USER_PERMISSION ||
+        oth_perm > OG_MAX_LOG_USER_PERMISSION) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_LOG_PATH_PERMISSIONS");
+        return OG_ERROR;
+    }
+
+    if (num < OG_DEF_LOG_PATH_PERMISSIONS || num > OG_MAX_LOG_PERMISSIONS) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_LOG_PATH_PERMISSIONS", (int64)OG_DEF_LOG_PATH_PERMISSIONS,
+            (int64)OG_MAX_LOG_PERMISSIONS);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_extra_als_audit_syslog_level(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    audit_log_param_t audit_log_param;
+
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    cm_text2str_with_upper(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+    return sql_parse_audit_syslog(sys_def->value, &audit_log_param);
+}
+
+status_t sql_bison_extra_als_audit_trail_mode(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (cm_text_str_equal_ins(&word.text, "ALL") || cm_text_str_equal_ins(&word.text, "FILE") ||
+        cm_text_str_equal_ins(&word.text, "DB") || cm_text_str_equal_ins(&word.text, "SYSLOG") ||
+        cm_text_str_equal_ins(&word.text, "NONE")) {
+        cm_text2str_with_upper(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+        return OG_SUCCESS;
+    }
+
+    OG_SRC_THROW_ERROR_EX(((bison_sys_param_value_t *)source)->loc, ERR_INVALID_PARAMETER, "%s", word.value);
+    return OG_ERROR;
+}
+
+status_t sql_bison_extra_als_raft_priority_type(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (OG_SUCCESS != sql_bison_extra_get_single_token(source, &word)) {
+        return OG_ERROR;
+    }
+    if (strncmp(word.text.str, "AZFirst", word.text.len) && strncmp(word.text.str, "External", word.text.len) &&
+        strncmp(word.text.str, "Static", word.text.len) && strncmp(word.text.str, "Random", word.text.len)) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "Priority Type");
+        return OG_ERROR;
+    }
+
+    return cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+}
+
+status_t sql_bison_extra_als_raft_token_verify(SQL_BISON_VERIFY_ARGS)
+{
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    bison_param_token_t word;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE));
+    if (strcmp((const char *)sys_def->value, "TRUE") == 0 || strcmp((const char *)sys_def->value, "FALSE") == 0) {
+        return OG_SUCCESS;
+    }
+    OG_THROW_ERROR(ERR_INVALID_PARAMETER, "RAFT_TOKEN_VERIFY");
+    return OG_ERROR;
+}
+
+status_t sql_bison_extra_als_file_dir(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (word.text.len >= OG_MAX_LOG_HOME_LEN) {
+        OG_SRC_THROW_ERROR(((bison_sys_param_value_t *)source)->loc, ERR_FILE_PATH_TOO_LONG,
+            OG_MAX_LOG_HOME_LEN - 1);
+        return OG_ERROR;
+    }
+    char *file_path = word.value;
+    if (!cm_dir_exist(file_path)) {
+        OG_SRC_THROW_ERROR_EX(((bison_sys_param_value_t *)source)->loc, ERR_SQL_SYNTAX_ERROR,
+            "%s is not an existing folder", file_path);
+        return OG_ERROR;
+    }
+    char real_path[OG_FILE_NAME_BUFFER_SIZE] = { 0x00 };
+    OG_RETURN_IFERR(realpath_file(file_path, real_path, OG_FILE_NAME_BUFFER_SIZE));
+    if (access(real_path, W_OK | R_OK) != 0) {
+        OG_SRC_THROW_ERROR_EX(((bison_sys_param_value_t *)source)->loc, ERR_SQL_SYNTAX_ERROR,
+            "%s is not an readable or writable folder", file_path);
+        return OG_ERROR;
+    }
+    return cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+}
+
+status_t sql_bison_extra_als_log_archive_dest_n(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (OG_SUCCESS != sql_bison_extra_get_single_token(source, &word)) {
+        return OG_ERROR;
+    }
+    return cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+}
+
+status_t sql_bison_extra_als_log_archive_dest_state_n(SQL_BISON_VERIFY_ARGS)
+{
+    bison_param_token_t word;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    if (OG_SUCCESS != sql_bison_extra_get_single_token(source, &word)) {
+        return OG_ERROR;
+    }
+    if (word.type == BISON_PARAM_TOKEN_BACKTICK_STRING || word.type == BISON_PARAM_TOKEN_PUNCTUATION) {
+        OG_SRC_THROW_ERROR_EX(((bison_sys_param_value_t *)source)->loc, ERR_SQL_SYNTAX_ERROR,
+            ", expected string type, but %s found", word.value);
+        return OG_ERROR;
+    }
+    return cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE);
+}
+
+status_t sql_bison_extra_als_raft_tls_dir(SQL_BISON_VERIFY_ARGS)
+{
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+    bison_param_token_t word;
+    if (sql_bison_extra_get_single_token(source, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_text2str(&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE));
+    return verify_file_path((const char *)sys_def->value);
+}
+
+static status_t sql_bison_verify_als_log_level_value(const bison_sys_param_value_t *source, knl_alter_sys_def_t *def)
+{
+    uint32 num;
+    if (sql_bison_extra_parse_uint32(source, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (num > MAX_LOG_LEVEL) {
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_LOG_LEVEL");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_bison_verify_log_level(SQL_BISON_VERIFY_ARGS)
+{
+    if (IS_LOG_MODE(((knl_alter_sys_def_t *)def)->param)) {
+        OG_RETURN_IFERR(sql_bison_verify_als_log_mode_value((const bison_sys_param_value_t *)source,
+            (knl_alter_sys_def_t *)def));
+
+        OG_RETURN_IFERR(cm_set_log_level_value((knl_alter_sys_def_t *)def));
+    } else {
+        OG_RETURN_IFERR(sql_bison_verify_als_log_level_value((const bison_sys_param_value_t *)source,
+            (knl_alter_sys_def_t *)def));
+    }
+    return OG_SUCCESS;
+}
+
 
 #ifdef __cplusplus
 }

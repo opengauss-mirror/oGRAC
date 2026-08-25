@@ -1519,6 +1519,16 @@ status_t og_parse_purge(sql_stmt_t *stmt, knl_purge_def_t **purge_def, purge_typ
     return OG_SUCCESS;
 }
 
+
+/* Bison ALTER SYSTEM verifier adapters. */
+status_t sql_bison_extra_als_cpu_inf_str(SQL_BISON_VERIFY_ARGS)
+{
+    OG_SRC_THROW_ERROR_EX(((bison_sys_param_value_t *)source)->loc, ERR_SQL_SYNTAX_ERROR,
+        "unexpected parameter value");
+    return OG_ERROR;
+}
+
+
 #ifdef __cplusplus
 }
 #endif
