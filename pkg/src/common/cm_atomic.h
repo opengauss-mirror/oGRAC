@@ -587,7 +587,7 @@ static inline int32 cm_atomic32_exchange(atomic32_t *val, int32 newval)
 #endif
 
 #ifndef WIN32
- 	 
+
 static inline int32 ub_atomic_add_32(volatile int32* ptr, int32 inc)
 {
     return __sync_fetch_and_add(ptr, inc) + inc;
@@ -863,10 +863,10 @@ static inline status_t cm_ub_set_scn(uint64_t *addr, uint64_t value)
         return OG_ERROR;
     }
 
-    /* 
+    /*
     * 使用 ub_atomic_write_u64
     * 该函数执行原子写入。虽然原代码要求 release 语义，
-    * 但在单变量覆盖写场景下，ub_atomic_write_u64 (通常包含必要的屏障或直接原子指令) 
+    * 但在单变量覆盖写场景下，ub_atomic_write_u64 (通常包含必要的屏障或直接原子指令)
     * 足以保证可见性。如果需要严格的 Release 语义且平台相关，可能需要额外屏障，
     * 但通常 ub_atomic_write 已足够用于此类状态更新。
     */
@@ -885,7 +885,7 @@ static inline status_t cm_ub_get_scn(uint64_t *addr, uint64_t *scn)
         return OG_ERROR;
     }
 
-    /* 
+    /*
     * 使用 ub_atomic_read_u64
     * 对应 acquire load。在大多数架构上，对齐的 64 位读取本身就是原子的，
     * 该函数确保编译器不进行重排序优化。
@@ -905,14 +905,14 @@ static inline status_t cm_ub_fetch_add_scn(uint64_t *addr, uint64_t tgt_scn, uin
         return OG_ERROR;
     }
 
-    /* 
+    /*
     * 使用 ub_atomic_fetch_add_u64
-    * 
+    *
     * 关键匹配点：
     * 原 C++ std::atomic::fetch_add 返回的是【加法前】的旧值。
     * 此库中的 ub_atomic_fetch_add_u64 文档明确说明："return the old value"。
     * 完美匹配！不需要像之前那样手动计算旧值。
-    * 
+    *
     * 该函数在 x86_64 上使用 'lock xadd' 指令，效率极高。
     */
     *old_scn = (uint64_t)ub_atomic_fetch_add_u64((volatile uint64 *)(void *)addr, (uint64)tgt_scn);
@@ -920,11 +920,11 @@ static inline status_t cm_ub_fetch_add_scn(uint64_t *addr, uint64_t tgt_scn, uin
     return OG_SUCCESS;
 }
 
-static inline status_t cm_ub_update_scn(uint64_t *addr, uint64_t candidate) 
-{ 
-    if (!addr) { 
-        return OG_ERROR; 
-    } 
+static inline status_t cm_ub_update_scn(uint64_t *addr, uint64_t candidate)
+{
+    if (!addr) {
+        return OG_ERROR;
+    }
 
 
     if ((uintptr_t)addr % sizeof(uint64_t) != 0) {

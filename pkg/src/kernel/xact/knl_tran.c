@@ -40,6 +40,7 @@
 #include "dtc_drc.h"
 #include "dtc_context.h"
 #include "oGRAC_fdsa.h"
+#include "dtc_txn_hot.h"
 
 #define TX_ROLLBACK_WAIT_TIME 200
 #define TX_DEPOSIT_ROLLBACK_WAIT_TIME 50
@@ -154,6 +155,7 @@ status_t tx_area_init_impl(knl_session_t *session, undo_set_t *undo_set, uint32 
         tx_area_init_segment_items(session, undo_set, undo, seg_no);
     }
 
+    dtc_txn_hot_rebuild(session, undo_set, lseg_no, rseg_no);
     return OG_SUCCESS;
 }
 
@@ -733,6 +735,7 @@ status_t tx_begin(knl_session_t *session)
     txn->undo_pages.last = INVALID_UNDO_PAGID;
     tx_item->rmid = session->rmid;
     rm->xid.xnum = txn->xnum;
+    dtc_txn_hot_publish_item_locked(session, tx_item, txn, 0);
     cm_spin_unlock(&tx_item->lock);
 
     rm->txn = txn;
@@ -849,7 +852,10 @@ static void tx_end(knl_session_t *session, bool32 is_commit, knl_scn_t xa_scn, b
     tx_end_stat(session, txn, tx_item);
 
     /* from now on, we are entering transaction end progress */
+    cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
     tx_item->in_progress = OG_TRUE;
+    dtc_txn_hot_publish_item_locked(session, tx_item, txn, 0);
+    cm_spin_unlock(&tx_item->lock);
 
     if (session->kernel->attr.serialized_commit) {
         cm_spin_lock(&area->seri_lock, &session->stat->spin_stat.stat_seri_commit);
@@ -863,6 +869,8 @@ static void tx_end(knl_session_t *session, bool32 is_commit, knl_scn_t xa_scn, b
     txn->scn = tx_inc_scn(session, rm->tx_id.seg_id, txn, xa_scn);
     tx_item->rmid = OG_INVALID_ID16;
     txn->status = (uint8)XACT_END;
+    /* publish T2: END + in_progress=1, align UB with owner before unlock */
+    dtc_txn_hot_publish_item_locked(session, tx_item, txn, 0);
     cm_spin_unlock(&tx_item->lock);
     cm_atomic_set(&session->kernel->commit_scn, (int64)txn->scn);
 
@@ -900,7 +908,10 @@ static void tx_end(knl_session_t *session, bool32 is_commit, knl_scn_t xa_scn, b
         cm_spin_unlock(&area->seri_lock);
     }
 
+    cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
     tx_item->in_progress = OG_FALSE;
+    dtc_txn_hot_publish_item_locked(session, tx_item, txn, session->curr_lsn);
+    cm_spin_unlock(&tx_item->lock);
     // cm_release_cond(&rm->cond);
     dls_release_txn(session, rm);
 }
@@ -1560,9 +1571,9 @@ void tx_get_info(knl_session_t *session, bool32 is_scan, xid_t xid, txn_info_t *
         txn_info->is_owscn = OG_FALSE;
         txn_info->status = (uint8)XACT_END;
     } else {
-        /* commit info has been overwritten, get from undo global overwrite area */
         undo_set_t *undo_set = UNDO_SET(session, XID_INST_ID(xid));
         undo_t *undo = &undo_set->undos[XID_SEG_ID(xid)];
+
         txn_info->status = (uint8)XACT_END;
         txn_info->is_owscn = OG_TRUE;
         txn_info->scn = undo->ow_scn;
@@ -1738,6 +1749,10 @@ inline void tx_get_snapshot(knl_session_t *session, xmap_t xmap, txn_snapshot_t 
             if (g_dtc->profile.node_count <= curr_id) {
                 OG_LOG_RUN_ERR("current id get from xmap is invalid, curr_id(%u)", curr_id);
                 break;
+            }
+            if (dtc_txn_hot_enabled(session) &&
+                dtc_get_txn_snapshot_from_hot(session, xmap, inst_id, snapshot) == OG_SUCCESS) {
+                return;
             }
             if (dtc_get_remote_txn_snapshot(session, xmap, curr_id, snapshot) != OG_SUCCESS) {
                 cm_reset_error();

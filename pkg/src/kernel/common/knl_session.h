@@ -227,28 +227,14 @@ typedef struct st_knl_stat {
     uint64 ub_refresh_gbp_lock_s_time; // UB-stats
     uint64 ub_refresh_gbp_lock_x_count; // UB-stats
     uint64 ub_refresh_gbp_lock_x_time; // UB-stats
-    uint64 ub_refresh_gbp_lock_x_home_node0_count; // UB-stats
-    uint64 ub_refresh_gbp_lock_x_home_node1_count; // UB-stats
-    uint64 ub_refresh_gbp_lock_s_home_node0_count; // UB-stats
-    uint64 ub_refresh_gbp_lock_s_home_node1_count; // UB-stats
     uint64 ub_refresh_reload_wait_count; // UB-stats
     uint64 ub_refresh_reload_wait_time; // UB-stats
     uint64 ub_refresh_readonly_wait_count; // UB-stats
     uint64 ub_refresh_readonly_wait_time; // UB-stats
     uint64 ub_reload_from_gbp_wait_reload_count; // UB-stats
     uint64 ub_reload_from_gbp_wait_reload_time; // UB-stats
-    uint64 ub_reload_from_gbp_copy_buf_count; // UB-stats: raw memcpy_s count
-    uint64 ub_reload_from_gbp_copy_buf_time; // UB-stats: raw memcpy_s us
-    uint64 ub_reload_from_gbp_copy_local_count; // UB-stats: home == self
-    uint64 ub_reload_from_gbp_copy_local_time; // UB-stats
-    uint64 ub_reload_from_gbp_copy_remote_count; // UB-stats: home != self
-    uint64 ub_reload_from_gbp_copy_remote_time; // UB-stats
-    uint64 ub_store_to_gbp_copy_meta_count; // UB-stats: LBP->GBP meta memcpy
-    uint64 ub_store_to_gbp_copy_meta_time; // UB-stats
-    uint64 ub_store_to_gbp_copy_page_count; // UB-stats: LBP->GBP page memcpy
-    uint64 ub_store_to_gbp_copy_page_time; // UB-stats
-    uint64 ub_store_to_gbp_copy_tail_lsn_count; // UB-stats: LBP->GBP tail lsn memcpy
-    uint64 ub_store_to_gbp_copy_tail_lsn_time; // UB-stats
+    uint64 ub_reload_from_gbp_copy_buf_count; // UB-stats
+    uint64 ub_reload_from_gbp_copy_buf_time; // UB-stats
     uint64 ub_reload_from_gbp_readonly_wait_count; // UB-stats
     uint64 ub_reload_from_gbp_readonly_wait_time; // UB-stats
 } knl_stat_t;
@@ -492,7 +478,6 @@ typedef struct st_knl_session {
 
     uint8 ub_page_req_kind; // UB-stats
     uint8 ub_req_gbp_lock_mode; // UB-stats
-    uint8 ub_req_gbp_lock_home_node; // UB-stats: 0/1 by lock_ptr base addr
     uint64 ub_req_gbp_lock_us; // UB-stats
     uint64 ub_req_reload_wait_us; // UB-stats
     uint64 ub_req_readonly_wait_us; // UB-stats

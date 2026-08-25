@@ -25,7 +25,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <limits.h>
-#include <stdlib.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"

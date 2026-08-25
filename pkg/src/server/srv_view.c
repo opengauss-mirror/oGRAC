@@ -7030,6 +7030,7 @@ knl_dynview_t g_dynamic_views[] = {
     { DYN_VIEW_DTC_MES_CHANNEL_STAT, vw_describe_dtc },
     { DYN_VIEW_DTC_NODE_INFO, vw_describe_dtc },
     { DYN_VIEW_DTC_MES_TASK_QUEUE, vw_describe_dtc },
+    { DYN_VIEW_DTC_TXN_HOT_STAT, vw_describe_dtc },
     { DYN_VIEW_BUFFER_ACCESS_STATS, vw_describe_local },
     { DYN_VIEW_BUFFER_RECYCLE_STATS, vw_describe_local },
     // ===Global dynamic view  for DTC end===

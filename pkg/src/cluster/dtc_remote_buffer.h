@@ -74,6 +74,8 @@ typedef struct st_remote_sga {
     char *data_buf; /* each remote data buf is managed by master node. */
     char *lock_buf;
     char *node_flush_lsn;
+    uint64 txn_hot_offset;
+    uint64 txn_hot_region_size;
 } remote_sga_t;
 
 static inline uint64 drc_get_dist_que_offset(const remote_sga_t *remote_sga)
@@ -290,13 +292,6 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id);
 status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode);
 void dtc_buf_free_gbp_copy_temp(knl_session_t *session);
 status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint64 curr_lsn);
-/* UB-stats: LBP->GBP raw memcpy latency by kind (meta / page / tail lsn). */
-typedef enum en_ub_gbp_store_copy_kind {
-    UB_GBP_STORE_COPY_META = 0,
-    UB_GBP_STORE_COPY_PAGE,
-    UB_GBP_STORE_COPY_TAIL_LSN
-} ub_gbp_store_copy_kind_t;
-void dtc_buf_stat_gbp_store_copy(knl_session_t *session, ub_gbp_store_copy_kind_t kind, uint64 copy_us);
 status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode, bool32 *is_load);
 status_t dtc_buf_gbp_wait_reload_done(knl_session_t *session, buf_ctrl_t *ctrl);
 static inline bool32 dtc_buf_gbp_reload_owned_by_session(knl_session_t *session, buf_ctrl_t *ctrl)

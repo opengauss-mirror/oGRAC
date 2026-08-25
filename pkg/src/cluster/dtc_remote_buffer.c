@@ -36,6 +36,7 @@
 #include "dtc_remote_lock.h"
 #include "dtc_database.h"
 #include "dtc_shmem_scn.h"
+#include "dtc_txn_hot.h"
 #include "cm_malloc.h"
 #include "cm_date.h"
 #include "cm_thread.h"
@@ -148,13 +149,19 @@ static status_t drc_check_remote_pool_layout(remote_sga_t *remote_sga)
 {
     uint64 layout_end = drc_get_shmem_scn_offset(remote_sga) + SHMEM_SCN_SIZE;
 
+    if (g_instance->kernel.attr.enable_ubsmem) {
+        layout_end = dtc_txn_hot_pool_layout_end(remote_sga, g_instance->kernel.attr.undo_segments,
+            g_instance->kernel.attr.tran_buf_size);
+    }
+
     if (layout_end > remote_sga->remote_total_pool_size) {
         OG_LOG_RUN_ERR("[DRC-GBP] remote pool layout %llu exceeds total pool size %llu, "
                        "data_region %llu, que_size %llu, lock_alloc_size %llu, node_flush_lsn_size %llu, "
-                       "shmem_scn_size %llu",
+                       "shmem_scn_size %llu, enable_ubsmem %u, txn_hot_layout_end %llu",
                        layout_end, remote_sga->remote_total_pool_size, remote_sga->remote_buf_alloc_size,
                        (uint64)DRC_DIST_QUE_SIZE, remote_sga->remote_lock_alloc_size,
-                       (uint64)DRC_NODE_FLUSH_LSN_SIZE, (uint64)SHMEM_SCN_SIZE);
+                       (uint64)DRC_NODE_FLUSH_LSN_SIZE, (uint64)SHMEM_SCN_SIZE,
+                       (uint32)g_instance->kernel.attr.enable_ubsmem, layout_end);
         OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_DATA_BUF_SIZE", (int64)remote_sga->remote_total_pool_size);
         return OG_ERROR;
     }
@@ -557,6 +564,49 @@ status_t drc_init_remote_buffer()
 
     // init scn shmem
     shmem_scn_init();
+    if (g_instance->kernel.attr.enable_ubsmem) {
+        ret = dtc_txn_hot_region_init(&ogx->remote_sga);
+        if (ret != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DRC] txn hot region init fail, return error:%u", ret);
+            return ret;
+        }
+    }
+
+    /* ---- UB SGA layout summary ---- */
+    {
+        remote_sga_t *sga = &ogx->remote_sga;
+        uint32 page_size = g_dtc->kernel->attr.page_size;
+        uint64 page_slot = gbp_page_slot_size(page_size);
+        uint32 total_pages = 0;
+        for (uint32 i = 0; i < ogx->buf_ctx.buf_set_count; i++) {
+            total_pages += ogx->buf_ctx.buf_set[i].capacity;
+        }
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] total_pool_size=%llu", sga->remote_total_pool_size);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] data_buf: count=%u, slot_size=%llu(meta=%llu + page_slot=%llu + "
+            "ctrl=%llu + bucket=%llu×%u), total_size=%llu",
+            total_pages, (uint64)(GBP_META_SIZE + page_slot + sizeof(buf_ctrl_t) +
+            (uint64)BUCKET_TIMES * sizeof(buf_bucket_t)),
+            (uint64)GBP_META_SIZE, page_slot, (uint64)sizeof(buf_ctrl_t),
+            (uint64)sizeof(buf_bucket_t), (uint32)BUCKET_TIMES, sga->remote_buf_alloc_size);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] dist_que: count=1, total_size=%llu", (uint64)DRC_DIST_QUE_SIZE);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] dist_lock: count=%u, slot_size=%u, total_size=%llu",
+            total_pages, (uint32)UB_RW_LOCK_SIZE, sga->remote_lock_alloc_size);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] flush_lsn: total_size=%llu", (uint64)DRC_NODE_FLUSH_LSN_SIZE);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] shmem_scn: total_size=%llu", (uint64)SHMEM_SCN_SIZE);
+        if (g_instance->kernel.attr.enable_ubsmem && sga->txn_hot_region_size > 0) {
+            uint32 hot_cap = (uint32)(sga->txn_hot_region_size > sizeof(dtc_txn_hot_hdr_t) ?
+                (sga->txn_hot_region_size - sizeof(dtc_txn_hot_hdr_t)) / sizeof(dtc_txn_hot_t) : 0);
+            OG_LOG_RUN_INF("[UB-SGA-LAYOUT] txn_hot: count=%u, slot_size=%llu, header_size=%llu, "
+                "total_size=%llu, offset=%llu",
+                hot_cap, (uint64)sizeof(dtc_txn_hot_t), (uint64)sizeof(dtc_txn_hot_hdr_t),
+                sga->txn_hot_region_size, sga->txn_hot_offset);
+        }
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] used=%llu, remain=%llu",
+            sga->remote_pool_reserve_offset,
+            sga->remote_total_pool_size > sga->remote_pool_reserve_offset ?
+            sga->remote_total_pool_size - sga->remote_pool_reserve_offset : 0);
+    }
+
     return OG_SUCCESS;
 }
 
@@ -763,19 +813,10 @@ static status_t dtc_buf_wait_readonly_clear(knl_session_t *session, ub_rw_lock_t
     return OG_SUCCESS;
 }
 
-static inline void dtc_buf_stat_gbp_raw_copy(knl_session_t *session, uint64 lock_offset, uint64 copy_us)
+static inline void dtc_buf_stat_gbp_raw_copy(knl_session_t *session, uint64 copy_us)
 {
-    uint8 home = drc_gbp_lock_home_node(lock_offset);
-
     session->stat->ub_reload_from_gbp_copy_buf_count++; // UB-stats
     session->stat->ub_reload_from_gbp_copy_buf_time += copy_us; // UB-stats
-    if (home == DCS_SELF_INSTID(session)) { // UB-stats
-        session->stat->ub_reload_from_gbp_copy_local_count++; // UB-stats
-        session->stat->ub_reload_from_gbp_copy_local_time += copy_us; // UB-stats
-    } else if (home == 0 || home == 1) { // UB-stats
-        session->stat->ub_reload_from_gbp_copy_remote_count++; // UB-stats
-        session->stat->ub_reload_from_gbp_copy_remote_time += copy_us; // UB-stats
-    } // UB-stats
 }
 
 static inline status_t dcs_copy_page_to_temp(knl_session_t *session, buf_ctrl_t *ctrl, char *temp_page,
@@ -795,7 +836,7 @@ static inline status_t dcs_copy_page_to_temp(knl_session_t *session, buf_ctrl_t 
     /* Raw GBP memcpy only (exclude PCN check / readonly wait / commit). */
     copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(temp_page, page_size, page, page_size);
-    dtc_buf_stat_gbp_raw_copy(session, lock_offset, (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
+    dtc_buf_stat_gbp_raw_copy(session, (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     if (err != EOK) {
         OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] memcpy_s from shmem failed, err=%d, temp_page=%p, shmem_page_addr=%p",
             ctrl->page_id.file, ctrl->page_id.page, (int32)err, temp_page, page);
@@ -1050,7 +1091,6 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     if (!skip_shmem_s_lock) { // UB-stats
         session->ub_req_gbp_lock_mode = (uint8)mode; // UB-stats
         session->ub_req_gbp_lock_us = (uint64)(cm_monotonic_now() - gbp_lock_start); // UB-stats
-        session->ub_req_gbp_lock_home_node = drc_gbp_lock_home_node(lock_offset); // UB-stats
     } // UB-stats
 
     if (ret != OG_SUCCESS) {
@@ -1279,32 +1319,12 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     return OG_SUCCESS;
 }
 
-void dtc_buf_stat_gbp_store_copy(knl_session_t *session, ub_gbp_store_copy_kind_t kind, uint64 copy_us)
-{
-    switch (kind) {
-        case UB_GBP_STORE_COPY_META:
-            session->stat->ub_store_to_gbp_copy_meta_count++;
-            session->stat->ub_store_to_gbp_copy_meta_time += copy_us;
-            break;
-        case UB_GBP_STORE_COPY_PAGE:
-            session->stat->ub_store_to_gbp_copy_page_count++;
-            session->stat->ub_store_to_gbp_copy_page_time += copy_us;
-            break;
-        case UB_GBP_STORE_COPY_TAIL_LSN:
-            session->stat->ub_store_to_gbp_copy_tail_lsn_count++;
-            session->stat->ub_store_to_gbp_copy_tail_lsn_time += copy_us;
-            break;
-        default:
-            break;
-    }
-}
-
 status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint64 curr_lsn)
 {
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
     page_head_t *shmem_page_addr = ctrl->shmem_page_addr;
     uint8 curr_node_id = DCS_SELF_INSTID(session);
-    date_t copy_start; // UB-stats
+    errno_t err;
 
     // to do: check local ctrl page lsn and remote page lsn
     uint64 remote_page_lsn = curr_lsn;
@@ -1325,24 +1345,14 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     char *page_tail_lsn_addr = (char *)gbp_tail_ptr_from_page(shmem_page_addr, DEFAULT_PAGE_SIZE(session));
     uint64 page_tail_lsn = remote_page_lsn;
 
-    copy_start = cm_monotonic_now(); // UB-stats
-    errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &new_shmem_page_meta,
-                           offsetof(remote_page_info_t, ckpt_flush_state));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_META,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
+    err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &new_shmem_page_meta,
+                   offsetof(remote_page_info_t, ckpt_flush_state));
     knl_securec_check(err);
 
-    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_PAGE,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
-    // tail lsn
-    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_TAIL_LSN,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
 #ifdef DB_DEBUG_VERSION

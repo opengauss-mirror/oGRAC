@@ -23,6 +23,7 @@
  * -------------------------------------------------------------------------
  */
 #include "knl_xact_module.h"
+#include "dtc_txn_hot.h"
 #include "knl_xact_log.h"
 #include "knl_context.h"
 #include "knl_xa.h"
@@ -267,10 +268,10 @@ void rd_tx_begin(knl_session_t *session, log_entry_t *log)
     if (XID_INST_ID(*xid) != session->kernel->id) {
         return;
     }
+    tx_id_t tx_id = tx_xmap_get_txid(session, xid->xmap);
+    undo_t *undo = &session->kernel->undo_ctx.undos[tx_id.seg_id];
+    tx_item_t *tx_item = &undo->items[tx_id.item_id];
     if (!DB_IS_PRIMARY(&session->kernel->db) && !DB_NOT_READY(session) && dtc_rcy->full_recovery) {
-        tx_id_t tx_id = tx_xmap_get_txid(session, xid->xmap);
-        undo_t *undo = &session->kernel->undo_ctx.undos[tx_id.seg_id];
-        tx_item_t *tx_item = &undo->items[tx_id.item_id];
         tx_area_t *area = &session->kernel->tran_ctx;
         cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
         tx_item->rmid = session->kernel->sessions[SESSION_ID_ROLLBACK]->rmid;
@@ -294,6 +295,7 @@ void rd_tx_begin(knl_session_t *session, log_entry_t *log)
         }
         cm_spin_unlock(&undo->lock);
     }
+    dtc_txn_hot_publish_item(session, tx_item, txn, 0);
 }
 
 void rbp_aly_tx_begin(knl_session_t *session, log_entry_t *log, uint64 lsn)
@@ -372,6 +374,7 @@ void rd_tx_end(knl_session_t *session, log_entry_t *log)
     if (!SESSION_IS_LOG_ANALYZE(session)) {
         session->query_scn = redo->scn;
     }
+    dtc_txn_hot_publish_item(session, tx_item, txn, session->curr_lsn);
 }
 
 void rbp_aly_tx_end(knl_session_t *session, log_entry_t *log, uint64 lsn)
@@ -403,6 +406,7 @@ void rd_xa_phase1(knl_session_t *session, log_entry_t *log)
     tx_id_t tx_id = tx_xmap_get_txid(session, redo->xmap);
     undo_set_t *undo_set = UNDO_SET(session, XMAP_INST_ID(redo->xmap));
     undo_t *undo = &undo_set->undos[tx_id.seg_id];
+    tx_item_t *tx_item = &undo->items[tx_id.item_id];
     bool32 is_skip = session->page_stack.is_skip[session->page_stack.depth - 1];
 
     if (session->log_diag) {
@@ -424,6 +428,7 @@ void rd_xa_phase1(knl_session_t *session, log_entry_t *log)
         // KNL_SET_SCN(&session->kernel->scn, redo->scn);
         DB_SET_CURR_SCN(session, redo->scn);
     }
+    dtc_txn_hot_publish_item(session, tx_item, txn, session->curr_lsn);
 }
 
 void print_xa_phase1(log_entry_t *log)
@@ -444,12 +449,17 @@ void rd_xa_rollback_phase2(knl_session_t *session, log_entry_t *log)
     xmap_t *xmap = (xmap_t *)log->data;
     txn_page_t *txn_page = (txn_page_t *)CURR_PAGE(session);
     txn_t *txn = &txn_page->items[xmap->slot % TXN_PER_PAGE(session)];
+    tx_id_t tx_id = tx_xmap_get_txid(session, *xmap);
+    undo_set_t *undo_set = UNDO_SET(session, XMAP_INST_ID(*xmap));
+    undo_t *undo = &undo_set->undos[tx_id.seg_id];
+    tx_item_t *tx_item = &undo->items[tx_id.item_id];
 
     txn->status = (uint8)XACT_PHASE2;
 
     if (session->log_diag) {
         return;
     }
+    dtc_txn_hot_publish_item(session, tx_item, txn, session->curr_lsn);
 }
 
 void print_xa_rollback_phase2(log_entry_t *log)

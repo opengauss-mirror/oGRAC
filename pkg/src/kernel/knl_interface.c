@@ -221,6 +221,7 @@ const wait_event_desc_t g_wait_event_desc[] = {
     { "dcs: request master4page 3-way", "", "Cluster" },
     { "dcs: request master4page try", "", "Cluster" },
     { "dcs: request owner4page", "", "Cluster" },
+    { "dcs: request owner4page gbp", "", "Cluster" },
     { "dcs: claim owner", "", "Cluster" },
     { "dcs: recycle owner", "", "Cluster" },
     { "dcs: invalidate readonly copy", "", "Cluster" },
@@ -229,6 +230,7 @@ const wait_event_desc_t g_wait_event_desc[] = {
     { "dcs: transfer page readonly2x", "", "Cluster" },
     { "dcs: transfer page flush log", "", "Cluster" },
     { "dcs: transfer page", "", "Cluster" },
+    { "dcs: transfer shmem addr", "", "Cluster" },
     { "dcs: transfer last edp page", "", "Cluster" },
     { "dcs: transfer last edp page latch", "", "Cluster" },
     { "pcr: request btree page", "", "Cluster" },
@@ -648,7 +650,7 @@ status_t knl_set_session_trans(knl_handle_t session, isolation_level_t level, bo
 
     se->rm->isolevel = (uint8)level;
     se->rm->query_scn = DB_CURR_SCN(se);
-    
+
     return OG_SUCCESS;
 }
 
@@ -776,10 +778,6 @@ static inline void knl_init_session_stat(knl_session_t *session)
     session->stat->ub_refresh_gbp_lock_s_time = 0; // UB-stats
     session->stat->ub_refresh_gbp_lock_x_count = 0; // UB-stats
     session->stat->ub_refresh_gbp_lock_x_time = 0; // UB-stats
-    session->stat->ub_refresh_gbp_lock_x_home_node0_count = 0; // UB-stats
-    session->stat->ub_refresh_gbp_lock_x_home_node1_count = 0; // UB-stats
-    session->stat->ub_refresh_gbp_lock_s_home_node0_count = 0; // UB-stats
-    session->stat->ub_refresh_gbp_lock_s_home_node1_count = 0; // UB-stats
     session->stat->ub_refresh_reload_wait_count = 0; // UB-stats
     session->stat->ub_refresh_reload_wait_time = 0; // UB-stats
     session->stat->ub_refresh_readonly_wait_count = 0; // UB-stats
@@ -788,16 +786,6 @@ static inline void knl_init_session_stat(knl_session_t *session)
     session->stat->ub_reload_from_gbp_wait_reload_time = 0; // UB-stats
     session->stat->ub_reload_from_gbp_copy_buf_count = 0; // UB-stats
     session->stat->ub_reload_from_gbp_copy_buf_time = 0; // UB-stats
-    session->stat->ub_reload_from_gbp_copy_local_count = 0; // UB-stats
-    session->stat->ub_reload_from_gbp_copy_local_time = 0; // UB-stats
-    session->stat->ub_reload_from_gbp_copy_remote_count = 0; // UB-stats
-    session->stat->ub_reload_from_gbp_copy_remote_time = 0; // UB-stats
-    session->stat->ub_store_to_gbp_copy_meta_count = 0; // UB-stats
-    session->stat->ub_store_to_gbp_copy_meta_time = 0; // UB-stats
-    session->stat->ub_store_to_gbp_copy_page_count = 0; // UB-stats
-    session->stat->ub_store_to_gbp_copy_page_time = 0; // UB-stats
-    session->stat->ub_store_to_gbp_copy_tail_lsn_count = 0; // UB-stats
-    session->stat->ub_store_to_gbp_copy_tail_lsn_time = 0; // UB-stats
     session->stat->ub_reload_from_gbp_readonly_wait_count = 0; // UB-stats
     session->stat->ub_reload_from_gbp_readonly_wait_time = 0; // UB-stats
     session->stat->cr_reads = 0;

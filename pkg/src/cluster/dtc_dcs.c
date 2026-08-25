@@ -292,7 +292,7 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
     dcs_get_page_from_gbp(session, ctrl, mode);
-    
+
     //if (ack->scn != 0) {
     //    DB_SET_CURR_SCN(session, ack->scn);
     //}
@@ -1399,24 +1399,14 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     remote_page_info_set_timeline_id(&master_shmem_page_meta, dst_timeline_id);
     master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
-    date_t copy_start = cm_monotonic_now(); // UB-stats
     errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &master_shmem_page_meta,
                            offsetof(remote_page_info_t, ckpt_flush_state));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_META,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
-    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_PAGE,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
-    // tail lsn
-    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_TAIL_LSN,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
     // Release global Lock

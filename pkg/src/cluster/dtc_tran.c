@@ -26,6 +26,7 @@
 #include "dtc_tran.h"
 #include "dtc_database.h"
 #include "dtc_reform.h"
+#include "dtc_txn_hot.h"
 
 status_t dtc_get_remote_txn_info(knl_session_t *session, bool32 is_scan, xid_t xid, uint8 dst_id, txn_info_t *txn_info)
 {
@@ -65,6 +66,7 @@ status_t dtc_get_remote_txn_info(knl_session_t *session, bool32 is_scan, xid_t x
             if (DB_IS_PRIMARY(&session->kernel->db)) {
                 DB_SET_CURR_SCN(session, txn_info->scn);
             }
+            dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_INFO_REMOTE);
             return OG_SUCCESS;
         case MES_CMD_ERROR_MSG:
             mes_handle_error_msg(message.buffer);
@@ -223,6 +225,7 @@ status_t dtc_get_remote_txn_snapshot(knl_session_t *session, xmap_t xmap, uint32
             if (snapshot->status == XACT_END) {
                 DB_SET_CURR_SCN(session, snapshot->scn);
             }
+            dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_SNAPSHOT_REMOTE);
             return OG_SUCCESS;
         case MES_CMD_ERROR_MSG:
             mes_handle_error_msg(message.buffer);
@@ -308,6 +311,9 @@ static status_t dtc_standby_get_txn_info(knl_session_t *session, bool32 is_scan,
             cm_sleep(MES_MSG_RETRY_TIME);
         }
         if (dtc_get_remote_txn_info(session, is_scan, xid, g_rc_ctx->info.master_id, txn_info) != OG_SUCCESS) {
+            OG_LOG_RUN_WAR("[TXN][%u-%u-%u][standby request txn info failed] src_inst %u src_sid %u master_id %u",
+                           xid.xmap.seg_id, xid.xmap.slot, xid.xnum, session->kernel->id, session->id,
+                           g_rc_ctx->info.master_id);
             cm_reset_error();
             cm_sleep(MES_MSG_RETRY_TIME);
             return OG_ERROR;
@@ -346,7 +352,14 @@ void dtc_get_txn_info(knl_session_t *session, bool32 is_scan, xid_t xid, txn_inf
                 OG_LOG_RUN_WAR("inst_id is %d, curr_id is %d, seg_id is %d", inst_id, curr_id, xid.xmap.seg_id);
                 knl_panic(0);
             }
+            if (dtc_txn_hot_enabled(session) &&
+                dtc_get_txn_info_from_hot(session, is_scan, xid, inst_id, txn_info) == OG_SUCCESS) {
+                return;
+            }
             if (dtc_get_remote_txn_info(session, is_scan, xid, curr_id, txn_info) != OG_SUCCESS) {
+                OG_LOG_RUN_WAR("[TXN][%u-%u-%u][remote request txn info failed] src_inst %u src_sid %u owner_inst %u curr_id %u",
+                               xid.xmap.seg_id, xid.xmap.slot, xid.xnum, session->kernel->id, session->id, inst_id,
+                               curr_id);
                 cm_reset_error();
                 cm_sleep(MES_MSG_RETRY_TIME);
                 continue;
