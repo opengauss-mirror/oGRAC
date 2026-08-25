@@ -223,6 +223,7 @@ typedef struct st_database {
     bool32 cluster_ready;
     volatile bool32 recover_for_restore; /* recover by command */
     volatile bool32 is_readonly;
+    volatile bool32 disk_write_protected;
     uint32 readonly_reason;
     volatile bool32 has_load_role;
     db_open_status_t open_status;
@@ -287,6 +288,7 @@ knl_scn_t db_time_scn(knl_session_t *session, uint32 second, uint32 msecond);
 #define DB_SET_LFN(p_lfn, lfn) (*(p_lfn) = (lfn))
 
 #define DB_IS_READONLY(session) ((session)->kernel->db.is_readonly)
+#define DB_IS_DISK_WRITE_PROTECTED(session) ((session)->kernel->db.disk_write_protected)
 #define DB_IS_MAXFIX(session) ((session)->kernel->db.open_status == DB_OPEN_STATUS_MAX_FIX)
 #define DB_IS_RESTRICT(session) ((session)->kernel->db.open_status == DB_OPEN_STATUS_RESTRICT)
 #define DB_IS_UPGRADE(session) ((session)->kernel->db.open_status >= DB_OPEN_STATUS_UPGRADE)

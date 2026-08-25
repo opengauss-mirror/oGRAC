@@ -75,7 +75,7 @@ status_t rc_change_role(uint8 oper)
     return OG_SUCCESS;
 }
 
-static status_t rc_cms_readmode_switch(const CmsReadmodeSwitchCtxT *ctx)
+static status_t rc_cms_write_protect_switch(const CmsWriteProtectSwitchCtxT *ctx)
 {
     if (g_rc_ctx == NULL || g_rc_ctx->session == NULL) {
         if (ctx != NULL && ctx->info != NULL && ctx->info_len > 0) {
@@ -84,16 +84,16 @@ static status_t rc_cms_readmode_switch(const CmsReadmodeSwitchCtxT *ctx)
         }
         return OG_ERROR;
     }
-    if (g_rc_callback.rc_readmode_switch == NULL) {
+    if (g_rc_callback.rc_write_protect_switch == NULL) {
         if (ctx != NULL && ctx->info != NULL && ctx->info_len > 0) {
             (void)snprintf_s(ctx->info, ctx->info_len, ctx->info_len - 1,
-                "readmode switch callback is not initialized");
+                "write protect switch callback is not initialized");
         }
         return OG_ERROR;
     }
 
     knl_session_t *session = (knl_session_t *)g_rc_ctx->session;
-    return g_rc_callback.rc_readmode_switch(session, ctx);
+    return g_rc_callback.rc_write_protect_switch(session, ctx);
 }
 
 // inner-use helper functions
@@ -681,7 +681,7 @@ status_t init_cms_rc(reform_ctx_t *rf_ctx, reform_init_t *init_st)
     OG_RETURN_IFERR(cms_cli_init());
     OG_RETURN_IFERR(cms_res_inst_register(g_rc_ctx->res_type, g_rc_ctx->self_id, &res_init_info,
         (cms_notify_func_t)rc_notify_cluster_change, (cms_master_op_t)rc_change_role));
-    CmsResInstRegisterReadmode(rc_cms_readmode_switch);
+    CmsResInstRegisterWriteProtect(rc_cms_write_protect_switch);
 
     rc_refresh_cluster_info();
 

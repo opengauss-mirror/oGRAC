@@ -33,10 +33,10 @@ extern "C" {
 
 void cms_disk_usage_check_entry(thread_t *thread);
 void CmsDiskUsageGetSnapshot(CmsDiskUsageSnapshotT *snapshot);
-void CmsDiskUsageGetReadonlyConfig(CmsDiskReadonlyConfigInfoT *config);
+void CmsDiskUsageGetWriteProtectConfig(CmsDiskWriteProtectConfigInfoT *config);
 status_t cms_disk_usage_update_config(const char *key, const char *value, char *err_info, uint32 err_len);
-status_t cms_disk_usage_update_readonly_config(const char *key, const char *value, char *err_info, uint32 err_len);
-status_t cms_disk_usage_recover_readwrite_now(char *err_info, uint32 err_len);
+status_t cms_disk_usage_update_write_protect_config(const char *key, const char *value, char *err_info, uint32 err_len);
+status_t cms_disk_usage_disable_write_protect_now(char *err_info, uint32 err_len);
 
 #ifdef __cplusplus
 }

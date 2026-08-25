@@ -975,6 +975,12 @@ status_t sql_try_execute_dml(sql_stmt_t *ogsql_stmt)
         return OG_ERROR;
     }
 
+    if (ogsql_stmt->context->type != OGSQL_TYPE_SELECT && ogsql_stmt->context->type < OGSQL_TYPE_DML_CEIL &&
+        DB_IS_DISK_WRITE_PROTECTED(KNL_SESSION(ogsql_stmt)) && !ogsql_stmt->context->has_ltt &&
+        knl_check_disk_write_protect(KNL_SESSION(ogsql_stmt)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     OG_RETURN_IFERR(sql_check_ltt_dc(ogsql_stmt));
 
     if (sql_begin_dml(ogsql_stmt) != OG_SUCCESS) {

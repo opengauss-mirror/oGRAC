@@ -695,6 +695,8 @@ void knl_reset_index_conflicts(knl_handle_t session);
 void knl_set_logbuf_stack(knl_handle_t kernel, uint32 sid, char *plog_buf, cm_stack_t *stack);
 void knl_logic_log_put(knl_handle_t session, uint32 type, const void *data, uint32 size);
 status_t knl_tx_enabled(knl_handle_t session);
+status_t knl_check_disk_write_protect(knl_handle_t session);
+status_t knl_check_disk_write_protect_dml(knl_handle_t session, knl_cursor_t *cursor);
 status_t knl_get_serial_cached_value(knl_handle_t session, knl_handle_t dc_entity, int64 *value);
 status_t knl_get_serial_value(knl_handle_t handle, knl_handle_t dc_entity, uint64 *value,
                                      uint16 auto_inc_step, uint16 auto_inc_offset);

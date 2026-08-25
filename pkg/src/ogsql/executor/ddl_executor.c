@@ -935,6 +935,13 @@ static status_t sql_execute_revoke(sql_stmt_t *ogsql_stmt)
 status_t sql_execute_ddl(sql_stmt_t *ogsql_stmt)
 {
     status_t status;
+    knl_session_t *session = KNL_SESSION(ogsql_stmt);
+
+    if (DB_IS_DISK_WRITE_PROTECTED(session)) {
+        OG_THROW_ERROR(ERR_WRITE_OPT_IN_DISK_PROTECT);
+        return OG_ERROR;
+    }
+
     ogsql_stmt->session->sql_audit.audit_type = SQL_AUDIT_DDL;
     if (pl_check_trig_and_udf(ogsql_stmt->parent_stmt) != OG_SUCCESS) {
         return OG_ERROR;

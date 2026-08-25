@@ -62,26 +62,26 @@ enum cms_cli_msg_type_t {
     CMS_CLI_MSG_RES_UPGRADE,
     CMS_CLI_MSG_REQ_IOF_KICK,       // iof kick: recv->send
     CMS_CLI_MSG_RES_IOF_KICK,
-    CMS_CLI_MSG_REQ_READMODE_SWITCH, // readmode switch: recv->send
-    CMS_CLI_MSG_RES_READMODE_SWITCH,
+    CMS_CLI_MSG_REQ_WRITE_PROTECT_SWITCH, // write protect switch: recv->send
+    CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH,
 };
 
-typedef enum EnCmsReadmodeAction {
-    CMS_READMODE_ACTION_READONLY = 1,
-    CMS_READMODE_ACTION_READWRITE = 2,
-} CmsReadmodeActionT;
+typedef enum EnCmsWriteProtectAction {
+    CMS_WRITE_PROTECT_ACTION_ENABLE = 1,
+    CMS_WRITE_PROTECT_ACTION_DISABLE = 2,
+} CmsWriteProtectActionT;
 
-typedef enum EnCmsReadmodeReason {
-    CMS_READMODE_REASON_DISK_USAGE = 1,
-} CmsReadmodeReasonT;
+typedef enum EnCmsWriteProtectReason {
+    CMS_WRITE_PROTECT_REASON_DISK_USAGE = 1,
+} CmsWriteProtectReasonT;
 
-typedef struct st_cms_readmode_switch_ctx {
+typedef struct st_cms_write_protect_switch_ctx {
     uint32 action;
     uint32 timeout_sec;
     const char *detail;
     char *info;
     uint32 info_len;
-} CmsReadmodeSwitchCtxT;
+} CmsWriteProtectSwitchCtxT;
 
 typedef enum {
     CMS_RES_UNKNOWN     = 0,
@@ -250,7 +250,7 @@ typedef struct st_cms_cli_msg_res_iof_kick_t {
     status_t                result;
 }cms_cli_msg_res_iof_kick_t;
 
-typedef struct st_cms_cli_msg_req_readmode_switch_t {
+typedef struct st_cms_cli_msg_req_write_protect_switch_t {
     cms_packet_head_t       head;
     uint32                  action;
     uint32                  reason;
@@ -259,13 +259,13 @@ typedef struct st_cms_cli_msg_req_readmode_switch_t {
     char                    vg_names[OG_FILE_NAME_BUFFER_SIZE];
     char                    match_mode[OG_NAME_BUFFER_SIZE];
     char                    detail[CMS_MAX_INFO_SIZE];
-}CmsCliMsgReqReadmodeSwitchT;
+}CmsCliMsgReqWriteProtectSwitchT;
 
-typedef struct st_cms_cli_msg_res_readmode_switch_t {
+typedef struct st_cms_cli_msg_res_write_protect_switch_t {
     cms_packet_head_t       head;
     status_t                result;
     char                    info[CMS_MAX_INFO_SIZE];
-}CmsCliMsgResReadmodeSwitchT;
+}CmsCliMsgResWriteProtectSwitchT;
 
 typedef struct st_cms_cli_msg_req_upgrade_t {
     cms_packet_head_t       head;

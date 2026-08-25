@@ -78,6 +78,7 @@ status_t db_init(knl_session_t *session)
     dls_init_spinlock(&(db->df_ctrl_lock), DR_TYPE_DATABASE, DR_ID_DATABASE_CTRL, 0);
     dls_init_latch(&(db->ddl_latch), DR_TYPE_DDL, DR_ID_DDL_OP, 0);
     dls_init_latch(&(db->ctrl_latch), DR_TYPE_DDL, DR_ID_DATABASE_CTRL, 0);
+    db->disk_write_protected = OG_FALSE;
 
     OG_LOG_RUN_INF("[DB INIT] db init start.");
     if (cm_aligned_malloc((int64)size, "ctrl", &db->ctrl.buf) != OG_SUCCESS) {
