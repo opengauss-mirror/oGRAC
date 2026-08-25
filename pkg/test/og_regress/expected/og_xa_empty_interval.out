@@ -1,0 +1,95 @@
+SQL> drop table if exists og_xa_empty_interval_t;
+
+Succeed.
+
+SQL> 
+SQL> create table og_xa_empty_interval_t(id int, value varchar(32)) partition by range(id) interval(1000) (partition p1 values less than (201), partition p2 values less than (401));
+
+Succeed.
+
+SQL> 
+SQL> insert into og_xa_empty_interval_t values(1, 'seed');
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> -- Empty interval partition table scan must still start a write transaction.
+SQL> update og_xa_empty_interval_t set value = 'table scan' where id = 1000001;
+
+0 rows affected.
+
+SQL> savepoint aa;
+
+Succeed.
+
+SQL> update og_xa_empty_interval_t set value = 'table scan again' where id = 1000001;
+
+0 rows affected.
+
+SQL> prepare transaction '35.AA08240000000001.000001';
+
+Succeed.
+
+SQL> commit prepared '35.AA08240000000001.000001';
+
+Succeed.
+
+SQL> 
+SQL> create index og_xa_empty_interval_idx on og_xa_empty_interval_t(id);
+
+Succeed.
+
+SQL> 
+SQL> -- Keep partition-key index metadata present, matching the production case.
+SQL> update og_xa_empty_interval_t set value = 'index scan' where id = 2000001;
+
+0 rows affected.
+
+SQL> prepare transaction '35.AA08240000000002.000002';
+
+Succeed.
+
+SQL> commit prepared '35.AA08240000000002.000002';
+
+Succeed.
+
+SQL> 
+SQL> delete from og_xa_empty_interval_t where id = 3000001;
+
+0 rows affected.
+
+SQL> prepare transaction '35.AA08240000000003.000003';
+
+Succeed.
+
+SQL> commit prepared '35.AA08240000000003.000003';
+
+Succeed.
+
+SQL> 
+SQL> -- A read-only empty partition scan must not start a transaction.
+SQL> select count(*) from og_xa_empty_interval_t where id = 4000001;
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> prepare transaction '35.AA08240000000004.000004';
+
+OG-01502, Specified branch does not exists
+SQL> rollback;
+
+Succeed.
+
+SQL> 
+SQL> drop table og_xa_empty_interval_t;
+
+Succeed.
+
+SQL> 

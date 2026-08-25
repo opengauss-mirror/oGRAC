@@ -933,6 +933,29 @@ static bool32 sql_set_table_scan_key(sql_table_cursor_t *table_cur)
     return OG_TRUE;
 }
 
+static status_t sql_open_empty_part_scan(sql_stmt_t *stmt, sql_table_cursor_t *table_cur)
+{
+    knl_cursor_t *knl_cur = table_cur->knl_cur;
+    knl_dictionary_t *dc = &table_cur->table->entry->dc;
+    dc_entity_t *entity = DC_ENTITY(dc);
+
+    /*
+     * A write statement must start a transaction even when partition pruning
+     * finds no physical partition to scan. Keep the lock behavior consistent
+     * with knl_open_cursor so XA prepare can convert the local transaction.
+     */
+    if (knl_cur->action != CURSOR_ACTION_SELECT && !knl_cur->skip_lock) {
+        if (knl_cur->action == CURSOR_ACTION_UPDATE && knl_cur->rowmark.type != ROWMARK_WAIT_BLOCK) {
+            OG_RETURN_IFERR(lock_table_shared(KNL_SESSION(stmt), entity, knl_cur->rowmark.wait_seconds));
+        } else {
+            OG_RETURN_IFERR(lock_table_shared(KNL_SESSION(stmt), entity, LOCK_INF_WAIT));
+        }
+    }
+
+    knl_cur->eof = OG_TRUE;
+    return OG_SUCCESS;
+}
+
 static status_t sql_execute_index_scan(sql_stmt_t *stmt, sql_table_cursor_t *table_cur, plan_node_t *plan)
 {
     knl_cursor_t *knl_cur;
@@ -952,8 +975,7 @@ static status_t sql_execute_index_scan(sql_stmt_t *stmt, sql_table_cursor_t *tab
     }
 
     if (!sql_set_table_scan_key(table_cur)) {
-        knl_cur->eof = OG_TRUE;
-        return OG_SUCCESS;
+        return sql_open_empty_part_scan(stmt, table_cur);
     }
 
     if (table_cur->scan_flag == PAR_SQL_SCAN) {
@@ -1021,8 +1043,7 @@ status_t sql_execute_table_scan(sql_stmt_t *stmt, sql_table_cursor_t *table_cur)
     knl_cur->index_flag = 0;
 
     if (!sql_set_table_scan_key(table_cur)) {
-        knl_cur->eof = OG_TRUE;
-        return OG_SUCCESS;
+        return sql_open_empty_part_scan(stmt, table_cur);
     }
 
     // scan as table function
