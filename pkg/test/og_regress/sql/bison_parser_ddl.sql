@@ -59,6 +59,13 @@ create or replace profile bison_ddl_profile limit sessions_per_user 1;
 drop profile bison_ddl_profile;
 
 create table bison_ddl_tab(id int, val int);
+create table bison_ddl_type_array_tab (
+    i_default_array interval day(4) to second[6],
+    i_prec interval day(5) to second(3)[],
+    ts_plain timestamp(2) without time zone[],
+    ts_ltz timestamp(4) with local time zone[6]
+);
+drop table bison_ddl_type_array_tab;
 -- A 65-byte quoted hint identifier exercises hint scanner truncation.
 select /*+ full("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") */ count(*)
 from bison_ddl_tab;
