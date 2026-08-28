@@ -49,6 +49,7 @@ void clean_conn_handle(SQLHDBC hdbc)
 static void __attribute__((destructor)) close_config(void)
 {
     close_odbc_config();
+    free_load_balance_info();
 }
 
 status_t set_conn_attr(connection_class *conn, SQLPOINTER Value, SQLINTEGER StringLength, int32 attr)
@@ -133,8 +134,7 @@ static SQLRETURN set_sql_params(statement *stmt)
             input_data->param_count = param_count;
             ret = malloc_bind_param(input_data);
             if (ret != SQL_SUCCESS) {
-                stmt->conn->err_sign = 1;
-                stmt->conn->error_msg = "Couldn't allocate memory for stmt object.";
+                set_conn_error(stmt->conn, "Couldn't allocate memory for stmt object.");
                 return ret;
             }
             if (input_data->size != NULL) {
@@ -218,8 +218,7 @@ static SQLRETURN set_param_value(statement *stmt, bilist_t *params, SQLPOINTER *
 
     input_data = generate_bind_param_instance(params->head, index);
     if (input_data == NULL) {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "the parameter value is NULL";
+        set_conn_error(stmt->conn, "the parameter value is NULL");
         return SQL_ERROR;
     }
     if (input_data->is_binded) {
@@ -262,8 +261,7 @@ SQLRETURN bind_param_value(statement *stmt, SQLPOINTER *value, uint32 process)
 
 static SQLRETURN handle_number_convert_err(statement *stmt)
 {
-    stmt->conn->err_sign = 1;
-    stmt->conn->error_msg = "failed to convert number to decimal type.";
+    set_conn_error(stmt->conn, "failed to convert number to decimal type.");
     return SQL_ERROR;
 }
 
@@ -342,8 +340,7 @@ static SQLRETURN numeric_type_transfer(statement *stmt, sql_input_data *input_da
 
     ret = transfer_dec_type(stmt, numeric_value, &dec_data);
     if (ret != SQL_SUCCESS) {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "invalid input numeric2 type.";
+        set_conn_error(stmt->conn, "invalid input numeric2 type.");
         return ret;
     }
     status = cm_dec8_scale(&dec_data, input_data->number, ROUND_TRUNC);
@@ -500,8 +497,7 @@ static SQLRETURN convert_param_to_decimal(statement *stmt, sql_input_data *input
         }
     }
     if (!is_bind) {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "bind C type is not supported yet.";
+        set_conn_error(stmt->conn, "bind C type is not supported yet.");
         return SQL_ERROR;
     }
     ret = trans_func(stmt, input_data, value, data_struct);
@@ -509,8 +505,7 @@ static SQLRETURN convert_param_to_decimal(statement *stmt, sql_input_data *input
         return ret;
     }
     if (var_as_string(NULL, data_struct, &str) != OG_SUCCESS) {
-        conn->err_sign = 1;
-        conn->error_msg = "failed to transfer variant to string";
+        set_conn_error(conn, "failed to transfer variant to string");
         return SQL_ERROR;
     }
     uint32 text_len = data_struct->v_text.len;
@@ -522,8 +517,7 @@ static SQLRETURN convert_param_to_decimal(statement *stmt, sql_input_data *input
 
 static SQLRETURN get_date_err(statement *stmt)
 {
-    stmt->conn->err_sign = 1;
-    stmt->conn->error_msg = "The value related to the date type is invalid.";
+    set_conn_error(stmt->conn, "The value related to the date type is invalid.");
     return SQL_ERROR;
 }
 
@@ -632,8 +626,7 @@ static SQLRETURN convert_param_to_timestamp(statement *stmt, sql_input_data *inp
     } else if (input_data->sql_type == SQL_C_ULONG) {
         cm_decode_time(*(time_t *)value, &value_detail);
     } else {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "bind c type is not supported yet.";
+        set_conn_error(stmt->conn, "bind c type is not supported yet.");
         return SQL_ERROR;
     }
     if (ret != SQL_SUCCESS) {
@@ -751,8 +744,7 @@ SQLRETURN ograc_execute(statement *stmt)
         return SQL_ERROR;
     }
     if (execute_flag != OGCONN_STMT_EXPLAIN && input_num != stmt->params.count) {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "failed to execute because there are some parameters not binded";
+        set_conn_error(stmt->conn, "failed to execute because there are some parameters not binded");
         return SQL_ERROR;
     }
 

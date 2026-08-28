@@ -108,6 +108,7 @@ SQLRETURN SQL_API SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
         case SQL_HANDLE_ENV: {
             environment_class *env = (environment_class *)Handle;
             clean_env_handle(Handle);
+            release_load_balance_env();
             free(env);
             env = NULL;
             break;
@@ -155,6 +156,7 @@ SQLRETURN SQL_API SQLFreeEnv(SQLHENV henv)
         return SQL_INVALID_HANDLE;
     }
     clean_env_handle(henv);
+    release_load_balance_env();
     free(env);
     env = NULL;
     return SQL_SUCCESS;

@@ -39,5 +39,6 @@ SQLRETURN ograc_AllocEnv(SQLHANDLE *phenv)
     environment->err_sign = 0;
     environment->version = 0;
     *phenv = (HENV)environment;
+    retain_load_balance_env();
     return ret;
 }

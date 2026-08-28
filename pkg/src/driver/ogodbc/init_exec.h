@@ -39,9 +39,11 @@
 #define USERNAME   "Username"    /* user name */
 #define PASSWORD   "Password"    /* password */
 #define PORT   "Port"    /* port */
+#define AUTO_BALANCE       "Autobalance"   /* load balancing mode */
 #define CHARSET   "Charset"    /* character set */
 #define TENANTNAME   "Tenantname"    /* tenantname */
 #define LOGDIR   "logdir"    /* log directory */
+#define ODBC_LOG_FILE   "ogodbc.log"
 #define SSL_MODE   "sslmode"    /* ssl mode */
 #define SSL_KEY   "sslkey"    /* ssl key */
 #define SSL_PASSWORD   "sslpassword"    /* ssl key password */
@@ -56,7 +58,7 @@
 #define ODBC_INI           ".odbc.ini"
 #define ODBCINST_INI       "odbcinst.ini"
 
-#define LARGE_PARAM_LEN          256
+#define LARGE_PARAM_LEN          512
 #define SMALL_PARAM_LEN          10
 #define MAX_NUMBER_LEN           128
 #define MAX_VALUE_BUFF_LEN       4096
@@ -75,6 +77,16 @@
 #define SSL_MAX_CIPHER_LEN       4096
 #define SSL_MAX_KEY_LEN          92
 #define SSL_ENCRYPTION_KEY_LEN   28
+#define MAX_HOST_SIZE            100
+#define MAX_ADDRESS_LEN          256
+#define MAX_URL_LEN              (MAX_HOST_SIZE * MAX_ADDRESS_LEN)
+#define MAX_SUFFIX_LEN           32
+
+/* parse_host_or_port() error codes (negative; success returns host/port count >= 0) */
+#define PARSE_HOST_PORT_ERR_NOMEM     (-1) /* malloc/memcpy failure */
+#define PARSE_HOST_PORT_ERR_TOO_MANY  (-2) /* entry count exceeds MAX_HOST_SIZE */
+#define PARSE_HOST_PORT_ERR_EMPTY     (-3) /* empty / whitespace-only entry */
+#define PARSE_HOST_PORT_ERR_TOO_LONG  (-4) /* single entry length >= MAX_ADDRESS_LEN */
 
 #define INIT_STMT       1
 #define DEL_STMT        2
@@ -86,6 +98,11 @@
 #define NOT_EXEC_PARAM  2
 #define EXEC_PARAM      3
 #define FREE_PARAM      4
+
+#define ROUNDROBIN   "roundrobin"
+#define SHUFFLE      "shuffle"
+#define LEASTCONN    "leastconn"
+#define PRIORITY     "priority"
 
 typedef struct {
     unsigned short *param_size;
@@ -123,6 +140,17 @@ typedef struct type_size {
     uint32 size;
 } type_size_map;
 
+typedef struct roundrobin_counter {
+    char *multi_host;
+    uint32 count;
+} roundrobin_counter_map;
+
+typedef struct connection_list {
+    char *host;
+    uint32 connection_count;
+    uint32 cached_connection;
+} connection_list_map;
+
 typedef struct {
     ogconn_type_t og_type;
     int sql_type;
@@ -145,11 +173,20 @@ typedef struct {
 } column_param;
 
 typedef struct {
+    char *hosts[MAX_HOST_SIZE];
+    char *ports[MAX_HOST_SIZE];
+    int host_number;
+    int port_number;
+} parsed_address_lists_t;
+
+typedef struct {
     char          dsn[LARGE_PARAM_LEN];
     char          database[LARGE_PARAM_LEN];
     char          password[LARGE_PARAM_LEN];
-    char          port[SMALL_PARAM_LEN];
+    char          port[LARGE_PARAM_LEN];
     char          server[LARGE_PARAM_LEN];
+    char          auto_balance[MAX_NUMBER_LEN];
+    char          logdir[LARGE_PARAM_LEN];
     char          drivername[LARGE_PARAM_LEN];
     char          username[LARGE_PARAM_LEN];
     char          charset[LARGE_PARAM_LEN];
@@ -179,6 +216,7 @@ typedef struct ConnectionHandle {
     environment_class   *environment;
     int              error_code;
     ConnInfo           connInfo;
+    char               connected_host[MAX_ADDRESS_LEN];
     char               *error_msg;
     ogconn_conn_t      ogconn;
     unsigned char      flag;
@@ -219,6 +257,9 @@ SQLRETURN bind_param_by_c_type(statement *stmt, sql_input_data *input_data);
 void clean_up_param(bilist_node_t *node, bilist_t *params, sql_input_data *input_data);
 sql_input_data *generate_bind_param_instance(bilist_node_t *node, uint32 pos);
 void get_err(HDBC conn);
+void write_odbc_error_log(connection_class *conn);
+void write_odbc_info_log(connection_class *conn, const char *msg);
+void set_conn_error(connection_class *conn, char *msg);
 ogconn_type_t sql_type_map_to_db_type(SQLSMALLINT type);
 SQLSMALLINT db_type_map_to_c_type(uint16 type);
 sql_input_data *build_bind_param(bilist_t *param_list, uint32 pos);
@@ -230,4 +271,8 @@ void load_odbc_config();
 void close_odbc_config();
 void clean_up_bind_param(sql_input_data *input_data);
 SQLRETURN malloc_bind_param(sql_input_data *input_data);
+void free_load_balance_info(void);
+void retain_load_balance_env(void);
+void release_load_balance_env(void);
+void release_least_connect(connection_class *conn);
 #endif

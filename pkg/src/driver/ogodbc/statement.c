@@ -63,8 +63,7 @@ SQLRETURN ograc_AllocStmt(SQLHDBC hdbc, SQLHSTMT *phstmt)
     stmt = stmt_constructor(conn);
     if (!stmt) {
         *phstmt = SQL_NULL_HSTMT;
-        conn->error_msg = "Couldn't allocate memory for statement object.";
-        conn->err_sign = STMT_ERROR;
+        set_conn_error(conn, "Couldn't allocate memory for statement object.");
         return SQL_ERROR;
     }
 
@@ -72,8 +71,7 @@ SQLRETURN ograc_AllocStmt(SQLHDBC hdbc, SQLHSTMT *phstmt)
     stmt->ctconn_stmt = ctconn_stmt;
     if (alloc_stmt_ret != OG_SUCCESS) {
         *phstmt = SQL_NULL_HSTMT;
-        conn->error_msg = "alloc statement failed.";
-        conn->err_sign = STMT_ERROR;
+        set_conn_error(conn, "alloc statement failed.");
         free(stmt);
         stmt = NULL;
         return SQL_ERROR;
