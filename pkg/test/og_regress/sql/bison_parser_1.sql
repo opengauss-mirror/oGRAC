@@ -116,6 +116,21 @@ delete from bison_t1 where a in ((select 1), (select 2));
 
 delete from bison_t1 where a not in (2, 3);
 delete from bison_t1 where a not in ((select 1), (select 2));
+
+-- Subqueries in a comparison expression list are scalar expressions, while a single nested
+-- subquery keeps list semantics even when it is wrapped in additional parentheses.
+delete from bison_t1 where a = all ((select 2) - 1, (select 1, 1)); --error
+delete from bison_t1 where a > any ((select 2) - 1, (select 1, 1)); --error
+delete from bison_t1 where a < some ((select 2) - 1, (select 1, 1)); --error
+delete from bison_t1 where a >= all ((select 2) - 1, (select 1, 1)); --error
+delete from bison_t1 where a in ((select 2) - 1, (select 1, 1)); --error
+delete from bison_t1 where a not in ((select 2) - 1, (select 1, 1)); --error
+delete from bison_t1 where a = all ((select 1, 1)); --error
+delete from bison_t1 where a = all (((select 1, 1))); --error
+delete from bison_t1 where a in ((select 1, 1)); --error
+delete from bison_t1 where a = all ((select 1));
+delete from bison_t1 where a in ((select 1));
+
 delete from bison_t1 where (a, b) not in (select 1,1);
 
 delete from bison_t1 where (a, b) in (select 1,1);
@@ -123,7 +138,30 @@ delete from bison_t1 where (a,b) in (((select 2), 2));
 delete from bison_t1 where (a,b) in (((select 2), 2),(3, (select 3)));
 delete from bison_t1 where (a, b) in ((2,3));
 delete from bison_t1 where (a,b) in (((select 2), (select 3)), (1,1));
+delete from bison_t1 where (a,b) in ((1, (select 2, 2))); --error
+delete from bison_t1 where (a,b) not in ((1, (select 2, 2))); --error
 
+-- Tuple IN row lists must retain every row and verify scalar subqueries in every row.
+select count(*) as bison_in_middle_row from sys_dummy where (2, 2) in ((1, 1), (2, 2), (3, 3));
+select count(*) as bison_not_in_middle_row from sys_dummy where (2, 2) not in ((1, 1), (2, 2), (3, 3));
+select count(*) as bison_in_middle_subquery from sys_dummy where (2, 2) in ((1, 1), (2, (select 2, 2)), (3, 3)); --error
+select count(*) as bison_not_in_middle_subquery from sys_dummy where (2, 2) not in ((1, 1), (2, (select 2, 2)), (3, 3)); --error
+-- A single reduced SELECT retains direct subquery list semantics.
+select count(*) as bison_unary_equal_all from sys_dummy where 1 = all (+(select 1, 1)); --error
+select count(*) as bison_unary_great_any from sys_dummy where 1 > any (+(select 1, 1)); --error
+select count(*) as bison_unary_less_some from sys_dummy where 1 < some (+(select 1, 1)); --error
+select count(*) as bison_unary_ge_all from sys_dummy where 1 >= all (+(select 1, 1)); --error
+select count(*) as bison_unary_in from sys_dummy where 1 in (+(select 1, 1)); --error
+select count(*) as bison_unary_not_in from sys_dummy where 1 not in (+(select 1, 1)); --error
+select count(*) as bison_tuple_unary_in from sys_dummy where (1, 2) in ((+(select 1, 2)));
+select count(*) as bison_tuple_unary_not_in from sys_dummy where (9, 9) not in ((+(select 1, 2)));
+select count(*) as bison_connect_root_all from sys_dummy where 1 = all (connect_by_root (select 1, 1)) connect by 1 = 0; --error
+select count(*) as bison_connect_root_tuple from sys_dummy where (1, 2) in ((connect_by_root (select 1, 2))) connect by 1 = 0;
+-- Direct subqueries retain list semantics, while subqueries inside expression lists stay scalar.
+select count(*) as bison_direct_all from sys_dummy where 1 = all ((select 1, 1)); --error
+select count(*) as bison_direct_in from sys_dummy where 1 in ((select 1, 1)); --error
+select count(*) as bison_tuple_direct_in from sys_dummy where (1, 2) in ((select 1, 2));
+select count(*) as bison_scalar_expr_list from sys_dummy where 1 = all ((select 2) - 1, (select 1, 1)); --error
 delete from bison_t1 where (a, b) in ((2), (3)); --error
 delete from bison_t1 where (a, b) in (2,3); --error
 delete from bison_t1 where (a, b) in (select 2); --error

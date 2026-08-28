@@ -93,6 +93,7 @@ static status_t bison_create_delete_target_table(sql_stmt_t *stmt, char *name, g
 static status_t bison_create_delete_object(sql_stmt_t *stmt, sql_table_t *table, bool32 only,
     source_location_t only_loc, del_object_t **delete_obj);
 static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type);
+static void fix_type_for_compare_expr_list(expr_tree_t *expr);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
@@ -2917,7 +2918,7 @@ cond_node:
                 node->cmp->left = $1;
                 node->cmp->right = $5;
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | expr_with_select '>' sub_type select_with_parens
@@ -2956,7 +2957,7 @@ cond_node:
                 node->cmp->left = $1;
                 node->cmp->right = $5;
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | expr_with_select '<' sub_type select_with_parens
@@ -2995,7 +2996,7 @@ cond_node:
                 node->cmp->left = $1;
                 node->cmp->right = $5;
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | expr_with_select CmpOp sub_type select_with_parens
@@ -3052,7 +3053,7 @@ cond_node:
                 node->cmp->left = $1;
                 node->cmp->right = $5;
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | expr_with_select IN_P select_with_parens
@@ -3099,7 +3100,7 @@ cond_node:
                 node->cmp->left = $1;
                 node->cmp->right = $4;
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | implicit_row IN_P select_with_parens
@@ -3140,7 +3141,7 @@ cond_node:
                     parser_yyerror("not enough values");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | expr_with_select NOT IN_P select_with_parens
@@ -3187,7 +3188,7 @@ cond_node:
                 node->cmp->left = $1;
                 node->cmp->right = $5;
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | implicit_row NOT IN_P select_with_parens
@@ -3228,7 +3229,7 @@ cond_node:
                     parser_yyerror("not enough values");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
+                fix_type_for_compare_expr_list(node->cmp->right);
                 $$ = node;
             }
             | expr_with_select IS NULL_P
@@ -18112,7 +18113,6 @@ static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr)
     expr_tree_t *head = (expr_tree_t*)cm_galist_get(rows, 0);
     expr_tree_t *tail = NULL;
 
-    /* return true if (a, b) in ((select 1)) */
     if (rows->count == 1 && head->next == NULL && head->root->type == EXPR_NODE_SELECT) {
         *expr = head;
         return true;
@@ -18132,11 +18132,10 @@ static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr)
             return false;
         }
 
-        if (tail == NULL) {
-            tail = tmp;
-        } else {
+        if (tail != NULL) {
             tail->next = curr;
         }
+        tail = tmp;
     }
 
     *expr = head;
@@ -18193,6 +18192,13 @@ static void fix_type_for_select_node(expr_tree_t *expr, select_type_t type)
         }
         expr = expr->next;
     }
+}
+
+static void fix_type_for_compare_expr_list(expr_tree_t *expr)
+{
+    select_type_t type = (expr != NULL && expr->next == NULL && expr->root != NULL &&
+        expr->root->type == EXPR_NODE_SELECT) ? SELECT_AS_LIST : SELECT_AS_VARIANT;
+    fix_type_for_select_node(expr, type);
 }
 
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list)
