@@ -381,6 +381,27 @@ static status_t cm_disk_destory_lock_lun(cms_disk_lock_t* lock)
     return OG_SUCCESS;
 }
 
+status_t cms_disk_lock_force_clean(cms_disk_lock_t *lock, uint64 inst_id)
+{
+    if (lock == NULL) {
+        return OG_ERROR;
+    }
+
+    if (lock->type == CMS_DEV_TYPE_LUN) {
+        int32 ret = cm_dl_clean(lock->lock_id, inst_id);
+        if (ret != OG_SUCCESS) {
+            CMS_LOG_ERR("force clean lun lock failed, lock_id %u inst_id %llu ret %d",
+                lock->lock_id, inst_id, ret);
+            return OG_ERROR;
+        }
+        CMS_LOG_WAR("force clean lun lock success, lock_id %u inst_id %llu", lock->lock_id, inst_id);
+        return OG_SUCCESS;
+    }
+
+    CMS_LOG_INF("force clean skip, lock type %d does not need lease preempt", lock->type);
+    return OG_SUCCESS;
+}
+
 status_t cms_get_exit_num(uint32 *exit_num)
 {
     char buf[CMS_EXIT_NUM] = { 0 };

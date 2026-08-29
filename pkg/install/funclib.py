@@ -193,6 +193,7 @@ class DefaultConfigValue(object):
         "_DISK_USAGE_THRESHOLD": "85",
         "_DISK_USAGE_PROTECT_ENABLE": "TRUE",
         "_DISK_USAGE_READONLY_COOLDOWN": "120",
+        "XALARM_NODE_MAP": "",
     }
     
     OGRACD_DBG_CONFIG = {

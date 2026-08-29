@@ -67,6 +67,7 @@ typedef struct st_cms_params {
     uint16          node_id;
     bool8           cms_mes_crc_check_switch;
     int8            unused;
+    char            xalarm_node_map[CMS_PATH_BUFFER_SIZE * 4];
 }cms_param_t;
 
 status_t cms_load_param(int64* time);

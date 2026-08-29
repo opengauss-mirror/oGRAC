@@ -35,6 +35,7 @@ extern "C" {
 typedef enum e_iofence_type {
     IOFENCE_BY_VOTING = 0,
     IOFENCE_BY_DETECT_OFFLINE = 1,
+    IOFENCE_BY_XALARM = 2,
 } iofence_type_t;
 
 status_t cms_iofence_list(const char* res_name, uint32 node_id);
@@ -45,6 +46,7 @@ void cms_finish_iof_kick(void);
 status_t cms_kick_node(const char* name, uint32 node_id, iofence_type_t iofence_type);
 status_t cms_send_msg_kick_node(cms_msg_req_iof_kick_t *req, cms_msg_res_iof_kick_t *res, iofence_type_t iofence_type);
 void try_cms_kick_node(uint32 node_id, uint32 res_id, iofence_type_t iofence_type);
+status_t cms_kick_node_best_effort(uint32 node_id);
 status_t cms_kick_node_by_ns(const char* name, uint32 node_id, iofence_type_t iofence_type);
 
 #ifdef __cplusplus

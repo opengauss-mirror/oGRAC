@@ -358,6 +358,12 @@ static status_t cms_create_threads(void)
     }
     CMS_LOG_INF("cms create disk usage check thread success");
 
+    if (cms_xalarm_start_threads() != OG_SUCCESS) {
+        CMS_LOG_ERR("cms create xalarm event thread failed");
+        return OG_ERROR;
+    }
+    CMS_LOG_INF("cms create xalarm threads success");
+
     return OG_SUCCESS;
 }
 
@@ -381,6 +387,8 @@ static status_t cms_close_threads(void)
     cm_close_thread(&g_cms_inst->gcc_loader_thread);
     cm_close_thread(&g_cms_inst->gcc_backup_thread);
     cm_close_thread(&g_cms_inst->disk_usage_thread);
+    cm_close_thread(&g_cms_inst->xalarm_event_thread);
+    cms_xalarm_shutdown();
     if (g_cms_param->split_brain == CMS_OPEN_WITH_SPLIT_BRAIN) {
         cm_close_thread(&g_cms_inst->voting_thread);
         cm_close_thread(&g_cms_inst->detect_voting_thread);
@@ -607,6 +615,8 @@ void cms_shutdown(void)
     g_cms_inst->judge_disk_error_thread.closed = OG_TRUE;
     g_cms_inst->detect_disk_error_thread.closed = OG_TRUE;
     g_cms_inst->disk_usage_thread.closed = OG_TRUE;
+    g_cms_inst->xalarm_event_thread.closed = OG_TRUE;
+    cms_xalarm_shutdown();
 }
 
 static pthread_key_t        g_inst_local_var;
@@ -686,4 +696,18 @@ status_t cms_broadcast_srv_msg(cms_packet_head_t* msg)
         }
     }
     return OG_SUCCESS;
+}
+
+void cms_broadcast_srv_msg_best_effort(cms_packet_head_t *msg)
+{
+    uint32 node_count = cms_get_gcc_node_count();
+    for (uint32 i = 0; i < node_count; i++) {
+        if (cms_node_is_invalid(i) || i == g_cms_param->node_id) {
+            continue;
+        }
+        if (cms_send_srv_msg_to((uint16)i, msg) != OG_SUCCESS) {
+            CMS_LOG_WAR("cms best effort send srv msg failed, node id %u, msg type %u, msg seq %llu",
+                i, msg->msg_type, msg->msg_seq);
+        }
+    }
 }

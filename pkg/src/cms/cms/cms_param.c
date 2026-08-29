@@ -136,11 +136,30 @@ config_item_t g_cms_params[] = {
       CFG_INS, NULL, NULL },
     { "SHARED_PATH", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_STRING", NULL, 0, EFFECT_REBOOT, CFG_INS,
       NULL, NULL },
+    { "XALARM_NODE_MAP", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_STRING", NULL, 0, EFFECT_REBOOT,
+      CFG_INS, NULL, NULL },
 };
 
 cms_param_t g_param;
 const cms_param_t *g_cms_param = &g_param;
 bool32 g_cms_dbstor_enable = OG_FALSE;
+
+static void cms_load_xalarm_param(config_t *cfg)
+{
+    g_param.xalarm_node_map[0] = '\0';
+    const char *value = cm_get_config_value(cfg, "XALARM_NODE_MAP");
+    if (value != NULL && value[0] != '\0') {
+        errno_t ret = strncpy_sp(g_param.xalarm_node_map, sizeof(g_param.xalarm_node_map), value,
+            sizeof(g_param.xalarm_node_map) - 1);
+        if (ret != EOK) {
+            CMS_LOG_WAR("copy XALARM_NODE_MAP failed, ret=%d", ret);
+            g_param.xalarm_node_map[0] = '\0';
+        }
+    }
+
+    CMS_LOG_INF("load xalarm params: XALARM_NODE_MAP=%s",
+        g_param.xalarm_node_map[0] != '\0' ? g_param.xalarm_node_map : "<empty>");
+}
 
 status_t cms_get_cms_home(void)
 {
@@ -643,6 +662,8 @@ status_t cms_load_param(int64 *time_stamp)
     if (cms_get_mes_ssl_config(&cfg) != OG_SUCCESS) {
         return OG_ERROR;
     }
+
+    cms_load_xalarm_param(&cfg);
 
     if (g_param.cms_mes_pipe_type == CS_TYPE_UC || g_param.cms_mes_pipe_type == CS_TYPE_UC_RDMA || enable) {
         OG_RETURN_IFERR(set_all_inst_lsid(val_uint32, 1));

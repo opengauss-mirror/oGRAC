@@ -681,6 +681,41 @@ static void CmsCliProcMsgReqWriteProtectSwitch(cms_packet_head_t *msg)
         req->action, res.result, res.info);
 }
 
+static void cms_cli_proc_msg_req_xalarm_notify(cms_packet_head_t *msg)
+{
+    cms_cli_msg_req_xalarm_notify_t *req = (cms_cli_msg_req_xalarm_notify_t *)msg;
+    cms_cli_msg_res_xalarm_notify_t res;
+    errno_t err = memset_s(&res, sizeof(res), 0, sizeof(res));
+    if (err != EOK) {
+        OG_LOG_RUN_ERR("memset_s failed, err %d", err);
+        return;
+    }
+
+    res.head.msg_size = sizeof(cms_cli_msg_res_xalarm_notify_t);
+    res.head.msg_type = CMS_CLI_MSG_RES_XALARM_NOTIFY;
+    res.head.msg_version = CMS_MSG_VERSION;
+    res.head.msg_seq = cms_uds_cli_get_msg_seq();
+    res.head.src_msg_seq = msg->msg_seq;
+    res.head.dest_node = g_node_id;
+    res.head.src_node = g_node_id;
+    res.result = OG_ERROR;
+
+    if (msg->msg_size != sizeof(cms_cli_msg_req_xalarm_notify_t)) {
+        OG_LOG_RUN_ERR("recv xalarm notify from cms, invalid msg size %u", msg->msg_size);
+    } else {
+        OG_LOG_RUN_INF("recv xalarm notify from cms, alarmId=%u, faultNode=%u, cna=%u, srcNode=%u",
+            req->alarm_id, req->alarm_node_id, req->cna, req->source_node_id);
+        res.result = OG_SUCCESS;
+    }
+
+    status_t status = cms_uds_cli_send(&res.head, CMS_CLI_UDS_SEND_TMOUT);
+    if (status != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("send xalarm notify ack to cms failed, result %d", res.result);
+        return;
+    }
+    OG_LOG_RUN_INF("send xalarm notify ack to cms succeed, result %d", res.result);
+}
+
 static void cms_cli_proc_msg(cms_packet_head_t* msg)
 {
     switch (msg->msg_type) {
@@ -722,6 +757,10 @@ static void cms_cli_proc_msg(cms_packet_head_t* msg)
         }
         case CMS_CLI_MSG_REQ_WRITE_PROTECT_SWITCH: {
             CmsCliProcMsgReqWriteProtectSwitch(msg);
+            break;
+        }
+        case CMS_CLI_MSG_REQ_XALARM_NOTIFY: {
+            cms_cli_proc_msg_req_xalarm_notify(msg);
             break;
         }
         default:

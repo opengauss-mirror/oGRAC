@@ -147,3 +147,8 @@ fi
 if [[ -z "${OS_DISTRO_NAME}" ]]; then
     OS_DISTRO_NAME=$(echo "${OS_SUFFIX}" | tr '[:upper:]' '[:lower:]')
 fi
+
+# CMS sysSentry/xalarm: auto-detect by OS (logic in build/detect_syssentry.sh; keep in sync with OgracDetectSysSentry.cmake).
+source "$(dirname "${BASH_SOURCE[0]}")/detect_syssentry.sh"
+echo "xalarm compile opts by OS: arch=$(uname -m) distro=${OS_DISTRO_NAME} xalarmd=${ENABLE_XALARMD} xalarm_report_len=${ENABLE_XALARM_REPORT_EVENT_LEN}"
+

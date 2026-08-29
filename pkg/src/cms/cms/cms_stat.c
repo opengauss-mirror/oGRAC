@@ -70,6 +70,7 @@ cms_res_session_t g_res_session[CMS_MAX_UDS_SESSION_COUNT];
 uint32 g_tool_session_count = CMS_MAX_RESOURCE_COUNT;
 thread_lock_t g_session_lock;
 thread_lock_t g_node_lock[CMS_MAX_NODE_COUNT];
+static volatile bool32 g_cms_local_powering_off = OG_FALSE;
 cms_channel_info_t *g_channel_info = NULL;
 cms_io_record_wait_t g_cms_io_record_event_wait[CMS_IO_COUNT];
 
@@ -324,6 +325,43 @@ status_t cms_release_dss_master(uint16 offline_node)
     CMS_LOG_ERR("release dss master lock failed. dss_master_id: %u, offline_node: %u",
                 dss_master_id, offline_node);
     return OG_ERROR;
+}
+
+status_t cms_force_release_master_lock(uint16 fault_node)
+{
+    uint64 inst_id = OG_INVALID_ID64;
+    cms_disk_lock_t *master_lock = &g_cms_inst->master_lock;
+
+    if (fault_node >= CMS_MAX_NODE_COUNT) {
+        CMS_LOG_ERR("force release master lock failed, invalid fault node %u", fault_node);
+        return OG_ERROR;
+    }
+
+    /* oGRAC only uses LUN; SD force-clean is not implemented. */
+    if (master_lock->type != CMS_DEV_TYPE_LUN) {
+        CMS_LOG_INF("force release master lock skip, lock type %d is not lun, fault node %u",
+            master_lock->type, fault_node);
+        return OG_SUCCESS;
+    }
+
+    if (cms_disk_lock_get_inst(master_lock, &inst_id) != OG_SUCCESS) {
+        CMS_LOG_ERR("force release master lock: get owner failed, fault node %u", fault_node);
+        return OG_ERROR;
+    }
+
+    if (inst_id == OG_INVALID_ID64 || inst_id == CM_INVALID_INST_ID) {
+        CMS_LOG_INF("force release master lock: no owner, skip clean, fault node %u", fault_node);
+        return OG_SUCCESS;
+    }
+
+    if (inst_id != (uint64)fault_node) {
+        CMS_LOG_INF("force release master lock: owner %llu is not fault node %u, skip clean",
+            inst_id, fault_node);
+        return OG_SUCCESS;
+    }
+
+    CMS_LOG_WAR("force release cms master lock held by fault node %u", fault_node);
+    return cms_disk_lock_force_clean(master_lock, inst_id);
 }
 
 status_t cms_init_vote_info(void)
@@ -1555,6 +1593,11 @@ status_t cms_res_hb(uint32 res_id)
         CMS_LOG_ERR("invalid resource, res_id %u", res_id);
         return OG_ERROR;
     }
+    if (cms_stat_is_local_powering_off()) {
+        CMS_LOG_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "ignore resource hb, local node is powering off, res_id %u", res_id);
+        return OG_SUCCESS;
+    }
 
     cms_res_stat_t* res_stat = CMS_CUR_RES_STAT(res_id);
     res_stat->hb_time = cm_now(); // cluster time
@@ -1596,6 +1639,12 @@ status_t cms_res_detect_online(uint32 res_id, cms_res_stat_t *old_stat)
         return OG_ERROR;
     }
     cm_thread_lock(&g_res_session[res_id].lock);
+    if (cms_stat_is_local_powering_off()) {
+        CMS_LOG_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "reject detect resource online, local node is powering off, res_id %u", res_id);
+        cm_thread_unlock(&g_res_session[res_id].lock);
+        return OG_ERROR;
+    }
     if (old_stat != NULL && res_stat->cur_stat != old_stat->cur_stat) {
         CMS_LOG_INF("res stat has been changed, res_stat = %d, old_stat = %d", res_stat->cur_stat, old_stat->cur_stat);
         cm_thread_unlock(&g_res_session[res_id].lock);
@@ -1915,10 +1964,28 @@ void get_cur_res_stat(uint32 res_id, cms_res_stat_t* res_stat)
     MEMS_RETVOID_IFERR(ret);
 }
 
+void cms_stat_set_local_powering_off(void)
+{
+    g_cms_local_powering_off = OG_TRUE;
+    CMS_LOG_WAR("cms local resource powering-off fence is set");
+}
+
+bool32 cms_stat_is_local_powering_off(void)
+{
+    return g_cms_local_powering_off;
+}
+
 void cms_stat_set(cms_res_stat_t* res_stat, cms_stat_t new_stat, bool32* isChanged)
 {
     char hb_time[32];
     char last_check[32];
+
+    if (new_stat == CMS_RES_ONLINE && cms_stat_is_local_powering_off()) {
+        CMS_LOG_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "reject set resource online, local node is powering off");
+        *isChanged = OG_FALSE;
+        return;
+    }
 
     if (res_stat->cur_stat != new_stat) {
         res_stat->pre_stat = res_stat->cur_stat;
@@ -1950,6 +2017,37 @@ void cms_stat_set(cms_res_stat_t* res_stat, cms_stat_t new_stat, bool32* isChang
     } else {
         *isChanged = OG_FALSE;
     }
+}
+
+status_t cms_stat_force_local_res_offline(void)
+{
+    for (uint32 res_id = 0; res_id < CMS_MAX_RESOURCE_COUNT; res_id++) {
+        cms_res_t res;
+        bool32 is_changed = OG_FALSE;
+        if (cms_get_res_by_id(res_id, &res) != OG_SUCCESS) {
+            continue;
+        }
+
+        cms_res_stat_t *res_stat = CMS_CUR_RES_STAT(res_id);
+        cm_thread_lock(&g_res_session[res_id].lock);
+        res_stat->target_stat = CMS_RES_OFFLINE;
+        res_stat->restart_count = 0;
+        cms_stat_set(res_stat, CMS_RES_OFFLINE, &is_changed);
+        if (cms_sync_cur_res_stat(res_id, res_stat) != OG_SUCCESS) {
+            CMS_LOG_ERR("force local res offline sync failed, res_id %u, res_name %s", res_id, res.name);
+            cm_thread_unlock(&g_res_session[res_id].lock);
+            continue;
+        }
+        cm_thread_unlock(&g_res_session[res_id].lock);
+        CMS_LOG_WAR("force local res offline, res_id %u, res_name %s, changed %u",
+            res_id, res.name, is_changed);
+    }
+
+    if (inc_stat_version() != OG_SUCCESS) {
+        CMS_LOG_ERR("force local res offline inc stat version failed");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
 }
 
 static void cms_get_res_init_info(const char *res_type, uint32 res_id, res_init_info_t *res_info)
@@ -1985,6 +2083,11 @@ static status_t cms_res_register_conn(socket_t sock, cms_cli_msg_req_conn_t *req
 {
     bool32 is_changed;
     cm_thread_lock(&g_res_session[res_id].lock);
+    if (cms_stat_is_local_powering_off()) {
+        CMS_LOG_WAR("reject resource register, local node is powering off, res_id %u", res_id);
+        cm_thread_unlock(&g_res_session[res_id].lock);
+        return OG_ERROR;
+    }
     res_stat->inst_id = req->inst_id;
     res_stat->hb_time = cm_now(); // cluster time
     res_stat->target_stat = CMS_RES_ONLINE;
@@ -2033,6 +2136,10 @@ status_t cms_res_connect(socket_t sock, cms_cli_msg_req_conn_t *req, cms_cli_msg
     }
     if (req->is_retry_conn) {
         CMS_LOG_INF("cli retry connect, res id %u, inst_id %u", res_id, req->inst_id);
+        if (cms_stat_is_local_powering_off()) {
+            CMS_LOG_WAR("reject resource retry connect, local node is powering off, res_id %u", res_id);
+            return OG_ERROR;
+        }
         res_stat = CMS_CUR_RES_STAT(res_id);
         cm_thread_lock(&g_res_session[res_id].lock);
         res_stat->hb_time = cm_now(); // cluster time
@@ -2215,6 +2322,11 @@ status_t cms_res_set_workstat(const char* res_type, uint32 inst_id, uint8 work_s
 
     cms_res_stat_t* res_stat = CMS_CUR_RES_STAT(res_id);
     cm_thread_lock(&g_res_session[res_id].lock);
+    if (cms_stat_is_local_powering_off()) {
+        CMS_LOG_WAR("reject set work stat, local node is powering off, res_id %u", res_id);
+        cm_thread_unlock(&g_res_session[res_id].lock);
+        return OG_ERROR;
+    }
     res_stat->last_stat_change = cm_now(); // cluster time
     res_stat->work_stat = work_stat;
     res_stat->hb_time = cm_now(); // cluster time
@@ -2671,6 +2783,12 @@ status_t cms_try_be_master(void)
 {
     cms_res_reformer_t reformers;
     timeval_t tv_begin;
+
+    if (cms_stat_is_local_powering_off()) {
+        CMS_LOG_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "skip try be master, local node is powering off");
+        return OG_SUCCESS;
+    }
     cms_record_io_stat_begin(CMS_IO_RECORD_TRY_BE_MASTER, &tv_begin);
     OG_RETURN_IFERR(cms_disk_lock_get_data(&g_cms_inst->master_lock, (char *)&reformers, sizeof(cms_res_reformer_t)));
 
@@ -2825,6 +2943,11 @@ status_t cms_aync_update_res_hb(cms_res_stat_t *res_stat_disk, uint32 res_id)
     cms_res_stat_t *res_stat = CMS_CUR_RES_STAT(res_id);
     biqueue_node_t *node_hb_aync = cms_deque(&g_hb_aync_gap_que);
     cm_thread_lock(&g_res_session[res_id].lock);
+    if (cms_stat_is_local_powering_off()) {
+        cm_thread_unlock(&g_res_session[res_id].lock);
+        cms_record_io_aync_hb_gap_end(node_hb_aync, OG_SUCCESS);
+        return OG_SUCCESS;
+    }
 
     cms_disk_lock_t *res_stat_lock = cms_get_res_stat_lock(g_cms_param->node_id, res_id);
     if (cms_disk_lock(res_stat_lock, DISK_LOCK_WAIT_TIMEOUT, DISK_LOCK_WRITE) != OG_SUCCESS) {

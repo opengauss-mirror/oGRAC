@@ -6,6 +6,8 @@ load ("//:global_options.bzl","GLOBAL_COPTS","GLOBAL_LOCAL_DEFINES","GLOBAL_LINK
 
 load ("//:cc_combine.bzl", "cc_combine")
 
+load ("//build:syssentry.bzl", "syssentry_linkopts", "syssentry_local_defines")
+
 package(default_visibility = ["//visibility:public"])
 
 COMMON_LINKOPTS = GLOBAL_LINKOPTS + []
@@ -81,6 +83,7 @@ cc_binary (
         "cms/cms_uds_server.c",
         "cms/cms_vote.c",
         "cms/cms_work.c",
+        "cms/cms_xalarm.c",
         "interface/cms_comm.c",
         "interface/cms_interface.c",
         "interface/cms_msgque.c",
@@ -101,7 +104,8 @@ cc_binary (
     linkstatic = True,
     local_defines = [
         "GETDBVERSION=ogracd_get_dbversion",
-    ] + COMMON_LOCAL_DEFINES,
+        "BUILD_CMS_MAIN",
+    ] + COMMON_LOCAL_DEFINES + syssentry_local_defines(),
     copts =  [
         '-DGS_LIB_VERSION="static char* str_GS_LIB_VERSION=\'oGRAC Debug 2.0.0 a1d2efcd5a\'"',
         "-fPIE",
@@ -136,7 +140,7 @@ cc_binary (
         "-lrt",
         "-lpthread",
         "-ldl",
-    ] + COMMON_LINKOPTS,
+    ] + COMMON_LINKOPTS + syssentry_linkopts(),
     deps = [
         "//pkg/src/rc:ogrc",
         "//pkg/src/mec:ogmes",
@@ -234,6 +238,7 @@ cc_library (
         "cms/cms_uds_server.c",
         "cms/cms_vote.c",
         "cms/cms_work.c",
+        "cms/cms_xalarm.c",
         "cms/cms_cmd_upgrade.c",
         ":interface_hdrs",
         ":cms_hdrs",
