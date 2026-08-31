@@ -29,6 +29,7 @@
 #include "ogbackup_archivelog.h"
 #include "ogbackup_query.h"
 #include "ogbackup_purge_logs.h"
+#include "ogbackup_restore.h"
 
 const char* g_ogbak_cmd_name[] = {
     [OGBAK_INVALID] = "invalid",
@@ -38,7 +39,8 @@ const char* g_ogbak_cmd_name[] = {
     [OGBAK_PREPARE] = "prepare",
     [OGBAK_ARCHIVE_LOG] = "archivelog",
     [OGBAK_QUERY_INCREMENTAL_MODE] = "query_incremental_mode",
-    [OGBAK_PURGE_LOGS] = "purge_logs"
+    [OGBAK_PURGE_LOGS] = "purge_logs",
+    [OGBAK_RESTORE] = "restore"
 };
 
 ogbak_cmd_generate_interface g_ogbak_cmd_generate_set[] = {
@@ -46,7 +48,8 @@ ogbak_cmd_generate_interface g_ogbak_cmd_generate_set[] = {
     [OGBAK_PREPARE] = (ogbak_cmd_generate_interface) ogbak_generate_prepare_cmd,
     [OGBAK_ARCHIVE_LOG] = (ogbak_cmd_generate_interface) ogbak_generate_archivelog_cmd,
     [OGBAK_QUERY_INCREMENTAL_MODE] = (ogbak_cmd_generate_interface) ogbak_generate_query_incremental_mode_cmd,
-    [OGBAK_PURGE_LOGS] = (ogbak_cmd_generate_interface) ogbak_generate_purge_logs_cmd
+    [OGBAK_PURGE_LOGS] = (ogbak_cmd_generate_interface) ogbak_generate_purge_logs_cmd,
+    [OGBAK_RESTORE] = (ogbak_cmd_generate_interface) ogbak_generate_restore_cmd
 };
 
 ogbak_cmd_t* ogbak_factory_generate_cmd(ogbak_topic_t ogbak_topic)

@@ -7,9 +7,14 @@ OGDB_CODE_PATH=$(readlink -f "${CURRENT_PATH}/..")
 BUILD_TYPE=$1
 THIRD_PARTY_PATH=$2
 CHECK_ONLY=$3
+WITHOUT_DEPS_ARG=$4
 if [[ ${THIRD_PARTY_PATH} == "--check-only" ]];then
     THIRD_PARTY_PATH=""
     CHECK_ONLY="--check-only"
+fi
+if [[ ${CHECK_ONLY} == "--without-deps" ]];then
+    CHECK_ONLY=""
+    WITHOUT_DEPS_ARG="--without-deps"
 fi
 if [[ ! -d ${OGDB_CODE_PATH} ]];then
     mkdir -p ${OGDB_CODE_PATH}
@@ -451,6 +456,15 @@ echo "build dss start."
 cd ${OGDB_CODE_PATH}
 if [[ ${CHECK_ONLY} == "--validate-cache" ]];then
     validate_incremental_cache
+    exit 0
+fi
+if [[ ${WITHOUT_DEPS_ARG} == "--without-deps" ]];then
+    if [[ ! -d "${OGDB_CODE_PATH}/dss/bin" || ! -d "${OGDB_CODE_PATH}/dss/lib" ||
+          ! -f "${OGDB_CODE_PATH}/dss/lib/libdssapi.so" ]];then
+        echo "Error: --without-deps requires existing DSS artifacts in ${OGDB_CODE_PATH}/dss."
+        exit 1
+    fi
+    echo "Reuse existing DSS artifacts in ${OGDB_CODE_PATH}/dss for offline --without-deps build."
     exit 0
 fi
 check_third_party_path

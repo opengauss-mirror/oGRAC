@@ -24,7 +24,10 @@
  */
 #include <sys/wait.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
 #include "ogbackup_module.h"
 #include "cm_text.h"
 #include "cm_date.h"
@@ -140,7 +143,14 @@ void free_input_params(ogbak_param_t* ogbak_param)
 {
     CM_FREE_PTR(ogbak_param->host.str);
     CM_FREE_PTR(ogbak_param->user.str);
-    CM_FREE_PTR(ogbak_param->password.str);
+    if (ogbak_param->password.str != NULL) {
+        size_t password_size = strlen(ogbak_param->password.str);
+        if (password_size > 0) {
+            (void)memset_s(ogbak_param->password.str, password_size, 0, password_size);
+        }
+        CM_FREE_PTR(ogbak_param->password.str);
+    }
+    CM_FREE_PTR(ogbak_param->password_file.str);
     CM_FREE_PTR(ogbak_param->port.str);
     CM_FREE_PTR(ogbak_param->target_dir.str);
     CM_FREE_PTR(ogbak_param->defaults_file.str);
@@ -153,6 +163,70 @@ void free_input_params(ogbak_param_t* ogbak_param)
     CM_FREE_PTR(ogbak_param->pitr_scn.str);
     CM_FREE_PTR(ogbak_param->compress_algo.str);
     CM_FREE_PTR(ogbak_param->buffer_size.str);
+    CM_FREE_PTR(ogbak_param->backup_dir.str);
+    CM_FREE_PTR(ogbak_param->backup_id.str);
+    CM_FREE_PTR(ogbak_param->target_time.str);
+    CM_FREE_PTR(ogbak_param->path_map.str);
+    CM_FREE_PTR(ogbak_param->storage.str);
+    CM_FREE_PTR(ogbak_param->dss_scheme_d_evidence.str);
+    CM_FREE_PTR(ogbak_param->dss_target_manifest_out.str);
+    CM_FREE_PTR(ogbak_param->dss_write_plan_out.str);
+    CM_FREE_PTR(ogbak_param->dss_write_plan.str);
+}
+
+status_t ogbak_load_password_file(ogbak_param_t *param)
+{
+    if (param == NULL || param->password_file.str == NULL) {
+        return OG_SUCCESS;
+    }
+    struct stat st;
+    if (lstat(param->password_file.str, &st) != 0 || !S_ISREG(st.st_mode) ||
+        (st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO)) != (S_IRUSR | S_IWUSR) || st.st_size <= 0 ||
+        st.st_size >= OG_PASSWORD_BUFFER_SIZE) {
+        printf("[ogbackup]--password-file must be a non-empty mode 0600 regular file smaller than %u bytes\n",
+            (uint32)OG_PASSWORD_BUFFER_SIZE);
+        return OG_ERROR;
+    }
+    int32 fd = open(param->password_file.str, O_RDONLY | O_BINARY | O_NOFOLLOW);
+    if (fd < 0) {
+        printf("[ogbackup]open password file failed, errno=%d (%s)\n", errno, strerror(errno));
+        return OG_ERROR;
+    }
+    struct stat opened_st;
+    if (fstat(fd, &opened_st) != 0 || !S_ISREG(opened_st.st_mode) ||
+        (opened_st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO)) != (S_IRUSR | S_IWUSR) ||
+        opened_st.st_dev != st.st_dev || opened_st.st_ino != st.st_ino || opened_st.st_size != st.st_size) {
+        (void)close(fd);
+        printf("[ogbackup]password file changed or became unsafe while opening\n");
+        return OG_ERROR;
+    }
+    char password[OG_PASSWORD_BUFFER_SIZE] = {0};
+    ssize_t read_size = 0;
+    while (read_size < opened_st.st_size) {
+        ssize_t current = read(fd, password + read_size, (size_t)(opened_st.st_size - read_size));
+        if (current < 0 && errno == EINTR) {
+            continue;
+        }
+        if (current <= 0) {
+            break;
+        }
+        read_size += current;
+    }
+    (void)close(fd);
+    if (read_size != opened_st.st_size) {
+        (void)memset_s(password, sizeof(password), 0, sizeof(password));
+        printf("[ogbackup]read password file failed\n");
+        return OG_ERROR;
+    }
+    while (read_size > 0 && (password[read_size - 1] == '\n' || password[read_size - 1] == '\r')) {
+        password[--read_size] = '\0';
+    }
+    status_t status = read_size == 0 ? OG_ERROR : ogbak_parse_single_arg(password, &param->password);
+    (void)memset_s(password, sizeof(password), 0, sizeof(password));
+    if (status != OG_SUCCESS) {
+        printf("[ogbackup]password file is empty or invalid\n");
+    }
+    return status;
 }
 
 status_t ogbak_parse_single_arg(char *optarg_local, text_t *ogbak_param_option)

@@ -396,7 +396,6 @@ prepare_bazel_dependency()
     fi
 
     cp -d ${ZSTD_LIB_PATH}/libzstd.so*  ${OGRACDB_HOME}/add-ons/
-    cp -d ${LZ4_LIB_PATH}/liblz4.so* ${OGRACDB_HOME}/add-ons/
     cp -rf ${OGRACDB_BIN} ${OGRACDB_HOME}
     cp -rf ${OGRACDB_LIB} ${OGRACDB_HOME}
     cp -rf ${OGRACDB_LIBRARY} ${OGRACDB_HOME}
@@ -473,12 +472,15 @@ func_pkg_all()
     cp ${OGRACDB_HOME}/install/install.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/funclib.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/installdb.sh ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
+    mkdir -p ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin
+    cp ${OGRACDB_BIN}/ogbackup ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/
     mkdir -p ${OGRACDB_LIBRARY}/shared_lib/lib/
     cp -f ${OGRACDB_HOME}/../platform/HuaweiSecureC/lib/* ${OGRACDB_LIBRARY}/shared_lib/lib/
 
     chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/install.py
     chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/funclib.py
     chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/installdb.sh
+    chmod 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/ogbackup
     mv ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}.tar.gz ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     sha256sum ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256
     chmod 400 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256
@@ -742,7 +744,6 @@ func_make_raft()
     func_prepare_dependency
 
     echo "make raft"
-
     raft_build_mode=$1
     if [[ -z "${raft_build_mode}" ]]; then
         raft_build_mode='Debug'
@@ -832,10 +833,13 @@ func_making_package_test()
     cp ${OGRACDB_HOME}/install/install.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/funclib.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/installdb.sh ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
+    mkdir -p ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin
+    cp ${OGRACDB_BIN}/ogbackup ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/
 
     chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/install.py
     chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/funclib.py
     chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/installdb.sh
+    chmod 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/ogbackup
     mv ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}.tar.gz ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     sha256sum ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256
     chmod 400 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256

@@ -514,6 +514,9 @@ typedef struct st_bak_file {
     char unused[7];  // reserved field
 } bak_file_t;
 
+/* bak_file_t.reserved disk-format flags */
+#define BAK_FILE_FLAG_PLAIN_LOG_HEAD 0x00000001U
+
 typedef struct st_bak_stat {
     atomic_t reads;
     atomic_t writes;

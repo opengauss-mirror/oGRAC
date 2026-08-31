@@ -16,6 +16,7 @@ include_directories(
         "${PROJECT_SOURCE_DIR}/open_source/pcre/include"
         "${PROJECT_SOURCE_DIR}/open_source/zlib/include"
         "${PROJECT_SOURCE_DIR}/open_source/Zstandard/include"
+        "${PROJECT_SOURCE_DIR}/library/numactl/include"
 
         "${PROJECT_SOURCE_DIR}/platform/huawei_security/include"
         "${PROJECT_SOURCE_DIR}/library/kmc"
@@ -298,6 +299,7 @@ set(Z_LIB_PATH "${OGRACDB_LIBRARY}/zlib/lib")
 set(ODBC_LIB_PATH "${OGRACDB_LIBRARY}/odbc/lib")
 set(ZSTD_LIB_PATH "${OGRACDB_LIBRARY}/Zstandard/lib")
 set(KMC_LIB_PATH "${OGRACDB_LIBRARY}/kmc/lib")
+set(NUMA_LIB_PATH "${OGRACDB_LIBRARY}/numactl/lib")
 
 set(VPP_LIB_PATH "${SECUREC_LIB_PATH}")
 
@@ -422,7 +424,7 @@ if (UNIX)
 endif()
 
 link_directories(${OGRACDB_LIB} "${OGRACDB_LIBRARY}/protobuf/lib" ${OGRACDB_LIBRARY} ${OPENSSL_LIB_PATH} ${PCRE_LIB_PATH} ${Z_LIB_PATH} ${ODBC_LIB_PATH} ${VPP_LIB_PATH}
-         ${ZSTD_LIB_PATH} ${KMC_LIB_PATH} ${AES_LIB_PATH})
+         ${ZSTD_LIB_PATH} ${KMC_LIB_PATH} ${AES_LIB_PATH} ${NUMA_LIB_PATH})
 
 # add subdir, this should be the last line!!
 add_subdirectory(pkg)

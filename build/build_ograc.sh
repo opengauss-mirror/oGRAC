@@ -15,6 +15,7 @@ DSSENABLED="FALSE"
 INCREMENTAL_BUILD="FALSE"
 THIRD_PARTY_PATH=""
 OGRAC_IMAGE="${OGDB_CODE_PATH}/image"
+WITHOUT_DEPS_ARG=""
 
 mkdir -p ${TMP_PKG_PATH}
 
@@ -43,17 +44,17 @@ function buildCtOmPackage() {
 }
 
 function buildDssPackage() {
-  sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}"
+  sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}" "${WITHOUT_DEPS_ARG}"
 }
 
 function usage() {
-  echo "Usage: ${0##*/} {debug|release} [--incremental] [--with-dss] [--third-party-path <path>]"
+  echo "Usage: ${0##*/} {debug|release} [--incremental] [--with-dss] [--third-party-path <path>] [--without-deps]"
   echo "  --incremental is supported for debug builds only."
   echo "  With --with-dss, it reuses DSS artifacts from a previous full debug --with-dss build."
 }
 
 function buildKernelPackage() {
-  sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}"
+  THIRD_PARTY_PATH="${THIRD_PARTY_PATH}" sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" ${WITHOUT_DEPS_ARG}
 }
 
 function newPackageTarget() {
@@ -171,7 +172,7 @@ function prepare() {
   rm -rf "${OGDB_TARGET_PATH}"
   mkdir -p "${OGDB_TARGET_PATH}"
   chmod 700 "${OGDB_TARGET_PATH}"
-  cp -arf "${OGDB_CODE_PATH}"/oGRAC-DATABASE-LINUX-64bit "${OGDB_TARGET_PATH}"/
+  cp -arf "${OGRACDB_BIN}"/oGRAC-DATABASE-LINUX-64bit "${OGDB_TARGET_PATH}"/
 }
 
 BUILD_TYPE=${1,,}
@@ -210,6 +211,10 @@ while [[ $# -gt 0 ]]; do
       fi
       shift
       ;;
+    --without-deps)
+      WITHOUT_DEPS_ARG="--without-deps"
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -235,7 +240,7 @@ fi
 if [[ ${DSSENABLED} == "TRUE" ]] && [[ ${INCREMENTAL_BUILD} == "TRUE" ]]; then
   sh "${CURRENT_PATH}"/build_dss.sh debug "${THIRD_PARTY_PATH}" --validate-cache
 elif [[ ${DSSENABLED} == "TRUE" ]]; then
-  sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}" --check-only
+  sh "${CURRENT_PATH}"/build_dss.sh "${BUILD_TYPE}" "${THIRD_PARTY_PATH}" --check-only "${WITHOUT_DEPS_ARG}"
 fi
 
 prepare
