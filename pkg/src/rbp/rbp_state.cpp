@@ -464,6 +464,8 @@ PageRecord page_record_from_item(const rbp_page_item_t& item)
     rec.payload = payload;
     rec.writer_inst = item.writer_inst_id;
     rec.writer_seq = item.writer_global_seq;
+    rec.guard_lsn = item.guard_lsn;
+    rec.guard_pcn = item.guard_pcn;
     return rec;
 }
 
@@ -490,14 +492,16 @@ MetaSnapshotRow meta_row_from_page_meta(uint64_t pid_key, uint32_t qid, const Pa
     return row;
 }
 
-void shard_meta_index_upsert(RbpShard& shard, uint32_t qid, uint64_t pid_key, const PageMeta& meta)
+void shard_meta_index_refresh(RbpShard& shard, uint64_t pid_key)
 {
-    shard.meta_index_[meta_index_key_from_pid_key(pid_key)] = meta_row_from_page_meta(pid_key, qid, meta);
-}
+    const auto key = meta_index_key_from_pid_key(pid_key);
+    auto mit = shard.page_meta.find(pid_key);
+    if (mit != shard.page_meta.end()) {
+        shard.meta_index_[key] = meta_row_from_page_meta(pid_key, mit->second.qid, mit->second);
+        return;
+    }
 
-void shard_meta_index_remove(RbpShard& shard, uint64_t pid_key)
-{
-    shard.meta_index_.erase(meta_index_key_from_pid_key(pid_key));
+    shard.meta_index_.erase(key);
 }
 
 }  // namespace
@@ -513,6 +517,9 @@ void wire_item_fill(rbp_page_item_t& item, const BatchPageHandle& handle)
     item.session_id = 0;
     item.writer_inst_id = handle.writer_inst;
     item.writer_global_seq = handle.writer_seq;
+    item.guard_lsn = handle.guard_lsn;
+    item.guard_pcn = handle.guard_pcn;
+    item.reserved = 0;
     if (handle.payload) {
         std::memcpy(item.block, handle.payload->block, RBP_PAGE_SIZE);
     } else {
@@ -528,6 +535,8 @@ void wire_item_fill(rbp_page_item_t& item, const PageRecord& rec, uint64_t pid_k
     handle.coverage_lrp = rec.coverage_lrp;
     handle.writer_inst = rec.writer_inst;
     handle.writer_seq = rec.writer_seq;
+    handle.guard_lsn = rec.guard_lsn;
+    handle.guard_pcn = rec.guard_pcn;
     handle.payload = rec.payload;
     wire_item_fill(item, handle);
 }
@@ -700,12 +709,76 @@ PageMeta build_page_meta(uint64_t pid_key, const PageRecord& rec)
     page_id_t pid{};
     std::memcpy(&pid, &pid_key, sizeof(pid));
     m.qid = page_queue_id(pid.page);
+    m.guard_lsn = rec.guard_lsn;
+    m.guard_pcn = rec.guard_pcn;
     return m;
 }
 
-bool install_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
-                  bool legacy_pending)
+namespace {
+
+bool guard_newer(uint64_t lsn, uint32_t pcn, uint64_t old_lsn, uint32_t old_pcn)
 {
+    return lsn > old_lsn || (lsn == old_lsn && pcn > old_pcn);
+}
+
+void clear_record_guard(PageRecord& rec, PageMeta& meta)
+{
+    rec.guard_lsn = 0;
+    rec.guard_pcn = 0;
+    meta.guard_lsn = 0;
+    meta.guard_pcn = 0;
+}
+
+void set_record_guard(PageRecord& rec, PageMeta& meta, uint64_t guard_lsn, uint32_t guard_pcn)
+{
+    rec.guard_lsn = guard_lsn;
+    rec.guard_pcn = guard_pcn;
+    meta.guard_lsn = guard_lsn;
+    meta.guard_pcn = guard_pcn;
+}
+
+void apply_guard_for_page_install(RbpShard& shard, uint64_t pid_key, bool replaced, PageRecord& rec, PageMeta& meta)
+{
+    uint64_t guard_lsn = rec.guard_lsn;
+    uint32_t guard_pcn = rec.guard_pcn;
+
+    if (replaced) {
+        auto old_rec = shard.page_cache.find(pid_key);
+        if (old_rec != shard.page_cache.end() &&
+            guard_newer(old_rec->second.guard_lsn, old_rec->second.guard_pcn, guard_lsn, guard_pcn)) {
+            guard_lsn = old_rec->second.guard_lsn;
+            guard_pcn = old_rec->second.guard_pcn;
+        }
+    }
+
+    auto git = shard.disk_guard.find(pid_key);
+    if (git != shard.disk_guard.end() && guard_newer(git->second.guard_lsn, git->second.guard_pcn,
+        guard_lsn, guard_pcn)) {
+        guard_lsn = git->second.guard_lsn;
+        guard_pcn = git->second.guard_pcn;
+    }
+
+    if (guard_lsn == 0) {
+        clear_record_guard(rec, meta);
+        return;
+    }
+
+    if (meta.page_lsn < guard_lsn) {
+        set_record_guard(rec, meta, guard_lsn, guard_pcn);
+        return;
+    }
+
+    clear_record_guard(rec, meta);
+    if (git != shard.disk_guard.end() && meta.page_lsn >= git->second.guard_lsn) {
+        shard.disk_guard.erase(git);
+    }
+}
+
+}  // namespace
+
+bool install_page(RbpServerState& state, RbpShard& shard, PageRecord rec, PageMeta meta, bool legacy_pending)
+{
+    const uint64_t pid_key = meta.pid_key;
     rec.install_gen = g_next_install_gen.fetch_add(1, std::memory_order_relaxed);
     auto old_it = shard.page_meta.find(pid_key);
     const bool replaced = old_it != shard.page_meta.end();
@@ -724,12 +797,14 @@ bool install_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, Page
             return false;
         }
     }
+
+    apply_guard_for_page_install(shard, pid_key, replaced, rec, meta);
     shard.page_cache[pid_key] = std::move(rec);
     shard.page_meta[pid_key] = meta;
     shard.lrp_index_.add(pid_key, meta.lrp_lfn);
     shard.trunc_index_.add(pid_key, meta.trunc_lfn);
     shard.writer_index_.add(pid_key, meta.writer_seq);
-    shard_meta_index_upsert(shard, meta.qid, pid_key, meta);
+    shard_meta_index_refresh(shard, pid_key);
     snap_on_install(shard, meta, replaced);
     if (replaced_snapshot_edge) {
         shard.snap.dirty = true;
@@ -814,7 +889,7 @@ void remove_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, bool 
     shard.batch_pending.pop(pid_key);
     shard.page_cache.erase(cit);
     shard.page_meta.erase(mit);
-    shard_meta_index_remove(shard, pid_key);
+    shard_meta_index_refresh(shard, pid_key);
     state.note_page_removed();
     snap_on_remove(shard, meta);
     if (record_hole) {
@@ -868,8 +943,15 @@ void apply_queue_reset(RbpServerState& state, RbpShard& shard, uint32_t qid, con
 {
     log_point_t reset = reset_point;
     log_point_t frontier = log_point_is_zero(frontier_point) ? reset : frontier_point;
+    const uint64_t guard_cleanup_lsn = reset.lsn;
+    if (!lsn_only) {
+        /* Non-DBS RESET uses LFN for the window; reset.lsn is only the CKPT guard cleanup watermark. */
+        reset.lsn = 0;
+        frontier.lsn = 0;
+    }
     shard.reset_point = update_point_monotonic(shard.reset_point, reset, lsn_only);
     shard.frontier_point = update_point_monotonic(shard.frontier_point, frontier, lsn_only);
+    shard.guard_cleanup_lsn = std::max(shard.guard_cleanup_lsn, guard_cleanup_lsn);
     const uint64_t reset_lfn = log_point_lfn(reset);
     int removed_pages = 0;
     while (true) {
@@ -880,11 +962,27 @@ void apply_queue_reset(RbpServerState& state, RbpShard& shard, uint32_t qid, con
             break;
         }
     }
-    if (verbose) {
+    int removed_guards = 0;
+    if (guard_cleanup_lsn != 0) {
+        for (auto it = shard.disk_guard.begin(); it != shard.disk_guard.end();) {
+            if (it->second.guard_lsn <= shard.guard_cleanup_lsn &&
+                shard.page_cache.find(it->first) == shard.page_cache.end()) {
+                it = shard.disk_guard.erase(it);
+                removed_guards++;
+            } else {
+                ++it;
+            }
+        }
+    }
+    if (verbose || removed_pages > 0 || removed_guards > 0) {
         rbp_run_log("PAGE_WRITE reset barrier peer=" + peer + " qid=" + std::to_string(qid) +
                     " reset[" + format_log_point_short(reset) + "] frontier[" +
-                    format_log_point_short(frontier) + "] purged_cache_pages=" + std::to_string(removed_pages) +
+                    format_log_point_short(frontier) + "] guard_cleanup_lsn=" +
+                    std::to_string(shard.guard_cleanup_lsn) + " purged_cache_pages=" +
+                    std::to_string(removed_pages) +
+                    " purged_guards=" + std::to_string(removed_guards) +
                     " cache_total=" + std::to_string(shard.page_cache.size()) +
+                    " guard_total=" + std::to_string(shard.disk_guard.size()) +
                     " pending_total=" + std::to_string(shard.batch_pending.size()));
     }
 }
@@ -1000,36 +1098,101 @@ CkptResult merge_ckpt_from_shards(RbpServerState& state, bool lsn_only)
     return out;
 }
 
+bool RbpServerState::ckpt_snapshot_guard_ready(CkptResult& out) const
+{
+    std::shared_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    const bool guard_enforced = guard_enforced_.load(std::memory_order_acquire);
+    const bool guard_session_ready = guard_ready_.load(std::memory_order_acquire);
+    const bool guard_read_frozen = guard_read_frozen_.load(std::memory_order_acquire);
+
+    out.page_write_reset_mask = page_write_reset_mask_.load(std::memory_order_acquire);
+    out.guard_generation = guard_generation_.load(std::memory_order_acquire);
+    out.guard_ready = !guard_enforced || (guard_session_ready && !guard_read_frozen &&
+                      out.page_write_reset_mask == RBP_ALL_PAGE_WRITE_RESET_MASK);
+    if (out.guard_ready) {
+        return true;
+    }
+    if (!guard_session_ready) {
+        out.diag.empty_reason = "guard_session_unavailable";
+    } else if (guard_read_frozen) {
+        out.diag.empty_reason = "guard_read_frozen";
+    } else {
+        out.diag.empty_reason = "page_write_reset_incomplete";
+    }
+    return false;
+}
+
+bool RbpServerState::ckpt_snapshot_wait_for_evict(CkptResult& out)
+{
+    {
+        std::lock_guard<std::mutex> g(evict_state.mtx);
+        out.diag.evict_in_progress = evict_state.job_running ? 1 : 0;
+        out.diag.purge_stable = evict_state.purge_stable ? 1 : 0;
+    }
+    if (!out.diag.evict_in_progress && out.diag.purge_stable) {
+        return true;
+    }
+    if (!cfg_.ckpt_wait_evict) {
+        out.diag.empty_reason = out.diag.evict_in_progress ? "evict_in_progress" : "purge_unstable";
+        return false;
+    }
+    if (!evict_state.wait_stable(cfg_.ckpt_wait_ms)) {
+        out.diag.wait_timeout = 1;
+        out.diag.empty_reason = "wait_timeout";
+        return false;
+    }
+    std::lock_guard<std::mutex> g(evict_state.mtx);
+    out.diag.evict_in_progress = evict_state.job_running ? 1 : 0;
+    out.diag.purge_stable = evict_state.purge_stable ? 1 : 0;
+    if (out.diag.evict_in_progress || !out.diag.purge_stable) {
+        out.diag.empty_reason = "purge_unstable";
+        return false;
+    }
+    return true;
+}
+
 CkptResult RbpServerState::ckpt_snapshot(bool lsn_only)
 {
     CkptResult out;
+
+    if (!ckpt_snapshot_guard_ready(out) || !ckpt_snapshot_wait_for_evict(out)) {
+        return out;
+    }
+
+    std::shared_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+
+    const bool guard_enforced = guard_enforced_.load(std::memory_order_acquire);
+    const bool guard_session_ready = guard_ready_.load(std::memory_order_acquire);
+    const bool guard_read_frozen = guard_read_frozen_.load(std::memory_order_acquire);
+    out.page_write_reset_mask = page_write_reset_mask_.load(std::memory_order_acquire);
+    out.guard_generation = guard_generation_.load(std::memory_order_acquire);
+    out.guard_ready = !guard_enforced || (guard_session_ready && !guard_read_frozen &&
+                      out.page_write_reset_mask == RBP_ALL_PAGE_WRITE_RESET_MASK);
+    if (!out.guard_ready) {
+        if (!guard_session_ready) {
+            out.diag.empty_reason = "guard_session_unavailable";
+        } else if (guard_read_frozen) {
+            out.diag.empty_reason = "guard_read_frozen";
+        } else {
+            out.diag.empty_reason = "page_write_reset_incomplete";
+        }
+        return out;
+    }
     {
         std::lock_guard<std::mutex> g(evict_state.mtx);
         out.diag.evict_in_progress = evict_state.job_running ? 1 : 0;
         out.diag.purge_stable = evict_state.purge_stable ? 1 : 0;
     }
     if (out.diag.evict_in_progress || !out.diag.purge_stable) {
-        if (cfg_.ckpt_wait_evict) {
-            if (!evict_state.wait_stable(cfg_.ckpt_wait_ms)) {
-                out.diag.wait_timeout = 1;
-                out.diag.empty_reason = "wait_timeout";
-                return out;
-            }
-            std::lock_guard<std::mutex> g(evict_state.mtx);
-            out.diag.evict_in_progress = evict_state.job_running ? 1 : 0;
-            out.diag.purge_stable = evict_state.purge_stable ? 1 : 0;
-            if (out.diag.evict_in_progress || !out.diag.purge_stable) {
-                out.diag.empty_reason = "purge_unstable";
-                return out;
-            }
-        } else {
-            out.diag.empty_reason = out.diag.evict_in_progress ? "evict_in_progress" : "purge_unstable";
-            return out;
-        }
+        out.diag.empty_reason = out.diag.evict_in_progress ? "evict_in_progress" : "purge_unstable";
+        return out;
     }
     lock_all();
     out = merge_ckpt_from_shards(*this, lsn_only);
     unlock_all();
+    out.guard_ready = true;
+    out.page_write_reset_mask = page_write_reset_mask_.load(std::memory_order_acquire);
+    out.guard_generation = guard_generation_.load(std::memory_order_acquire);
     return out;
 }
 
@@ -1051,6 +1214,7 @@ RetiredReadPhaseState RbpServerState::detach_read_phase_generation()
         retired.detached_pages += static_cast<int>(shard.page_cache.size());
         out.page_cache.swap(shard.page_cache);
         out.page_meta.swap(shard.page_meta);
+        out.disk_guard.swap(shard.disk_guard);
         out.meta_index_.swap(shard.meta_index_);
         std::swap(out.batch_pending, shard.batch_pending);
         out.lrp_index.emplace(cfg_);
@@ -1066,6 +1230,7 @@ RetiredReadPhaseState RbpServerState::detach_read_phase_generation()
         shard.snap = WindowSnap{};
         shard.reset_point = zero_log_point();
         shard.frontier_point = zero_log_point();
+        shard.guard_cleanup_lsn = 0;
         shard.pending_seeded = false;
     }
     unlock_all();
@@ -1105,11 +1270,13 @@ void RbpServerState::clear_all(int& cache_pages, int& pending_pages, int& reset_
         }
         shard.page_cache.clear();
         shard.page_meta.clear();
+        shard.disk_guard.clear();
         shard.meta_index_.clear();
         shard.batch_pending.clear();
         shard.pending_seeded = false;
         shard.reset_point = zero_log_point();
         shard.frontier_point = zero_log_point();
+        shard.guard_cleanup_lsn = 0;
         shard.lrp_index_ = LfnBucketIndex(cfg_);
         shard.trunc_index_ = LfnBucketIndex(cfg_);
         shard.writer_index_ = LfnBucketIndex(cfg_);
@@ -1160,6 +1327,326 @@ void RbpServerState::note_pending_delta(int delta)
         return;
     }
     pending_total_.fetch_add(delta, std::memory_order_relaxed);
+}
+
+uint64_t RbpServerState::next_guard_generation()
+{
+    uint64_t generation = guard_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (generation == 0) {
+        generation = guard_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
+    return generation;
+}
+
+void RbpServerState::require_disk_guard()
+{
+    if (guard_enforced_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    std::unique_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    if (guard_enforced_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    int cache_pages = 0;
+    int pending_pages = 0;
+    int reset_count = 0;
+    int frontier_count = 0;
+    if (!guard_read_frozen_.load(std::memory_order_acquire)) {
+        clear_all(cache_pages, pending_pages, reset_count, frontier_count);
+    }
+    guard_ready_.store(false, std::memory_order_release);
+    guard_owner_id_.store(0, std::memory_order_release);
+    page_write_reset_mask_.store(0, std::memory_order_release);
+    for (auto& owner : page_write_owner_ids_) {
+        owner.store(0, std::memory_order_release);
+    }
+    const uint64_t generation = next_guard_generation();
+    guard_enforced_.store(true, std::memory_order_release);
+    rbp_run_log("DISK_GUARD enforcement enabled generation=" + std::to_string(generation) +
+                " cleared_cache=" + std::to_string(cache_pages) +
+                " cleared_pending=" + std::to_string(pending_pages));
+}
+
+uint64_t RbpServerState::ensure_guard_session(uint64_t owner_id, uint64_t known_generation)
+{
+    std::unique_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    if (!guard_enforced_.load(std::memory_order_acquire) || owner_id == 0 ||
+        guard_read_frozen_.load(std::memory_order_acquire)) {
+        return 0;
+    }
+
+    const uint64_t current_generation = guard_generation_.load(std::memory_order_acquire);
+    const uint64_t current_owner = guard_owner_id_.load(std::memory_order_acquire);
+    const bool session_ready = guard_ready_.load(std::memory_order_acquire);
+    if (known_generation != 0) {
+        if (current_owner != owner_id || current_generation != known_generation) {
+            return 0;
+        }
+        if (session_ready) {
+            return current_generation;
+        }
+    }
+
+    int cache_pages = 0;
+    int pending_pages = 0;
+    int reset_count = 0;
+    int frontier_count = 0;
+    clear_all(cache_pages, pending_pages, reset_count, frontier_count);
+    const uint64_t generation = next_guard_generation();
+    guard_owner_id_.store(owner_id, std::memory_order_release);
+    page_write_reset_mask_.store(0, std::memory_order_release);
+    for (auto& writer_owner : page_write_owner_ids_) {
+        writer_owner.store(0, std::memory_order_release);
+    }
+    guard_ready_.store(true, std::memory_order_release);
+    rbp_run_log("DISK_GUARD session begin owner=" + std::to_string(owner_id) +
+                " generation=" + std::to_string(generation) +
+                " replaced_owner=" + std::to_string(current_owner) +
+                " cleared_cache=" + std::to_string(cache_pages) +
+                " cleared_pending=" + std::to_string(pending_pages));
+    return generation;
+}
+
+void RbpServerState::end_guard_session(uint64_t owner_id)
+{
+    if (owner_id == 0 || owner_id != guard_owner_id_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    std::unique_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    if (owner_id != guard_owner_id_.load(std::memory_order_acquire)) {
+        return;
+    }
+    guard_ready_.store(false, std::memory_order_release);
+    guard_owner_id_.store(0, std::memory_order_release);
+    page_write_reset_mask_.store(0, std::memory_order_release);
+    for (auto& writer_owner : page_write_owner_ids_) {
+        writer_owner.store(0, std::memory_order_release);
+    }
+    const uint64_t generation = guard_generation_.load(std::memory_order_acquire);
+    if (guard_read_frozen_.load(std::memory_order_acquire)) {
+        rbp_run_log("DISK_GUARD session end owner=" + std::to_string(owner_id) +
+                    " generation=" + std::to_string(generation) +
+                    " window_preserved=1");
+        return;
+    }
+
+    int cache_pages = 0;
+    int pending_pages = 0;
+    int reset_count = 0;
+    int frontier_count = 0;
+    clear_all(cache_pages, pending_pages, reset_count, frontier_count);
+    (void)next_guard_generation();
+    rbp_run_log("DISK_GUARD session end owner=" + std::to_string(owner_id) +
+                " generation=" + std::to_string(generation) +
+                " cleared_cache=" + std::to_string(cache_pages) +
+                " cleared_pending=" + std::to_string(pending_pages));
+}
+
+void RbpServerState::finish_frozen_read()
+{
+    std::unique_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    guard_read_frozen_.store(false, std::memory_order_release);
+    if (guard_enforced_.load(std::memory_order_acquire)) {
+        guard_ready_.store(false, std::memory_order_release);
+        page_write_reset_mask_.store(0, std::memory_order_release);
+        for (auto& writer_owner : page_write_owner_ids_) {
+            writer_owner.store(0, std::memory_order_release);
+        }
+    }
+}
+
+bool RbpServerState::writer_generation_active(uint64_t generation, uint32_t qid, uint64_t connection_id,
+                                              bool reset_seen) const
+{
+    std::shared_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    if (!guard_enforced_.load(std::memory_order_acquire)) {
+        return true;
+    }
+    if (qid >= OG_RBP_SESSION_COUNT || generation == 0 ||
+        generation != guard_generation_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (!guard_ready_.load(std::memory_order_acquire) || guard_read_frozen_.load(std::memory_order_acquire)) {
+        return true;
+    }
+    return !reset_seen || page_write_owner_ids_[qid].load(std::memory_order_acquire) == connection_id;
+}
+
+bool RbpServerState::acquire_guard_window(uint64_t generation, uint32_t qid, uint64_t connection_id,
+                                         bool reset_seen, bool is_reset)
+{
+    if (is_reset) {
+        guard_state_mtx_.lock();
+    } else {
+        guard_state_mtx_.lock_shared();
+    }
+    if (!guard_enforced_.load(std::memory_order_acquire)) {
+        return true;
+    }
+    const uint32_t reset_mask = page_write_reset_mask_.load(std::memory_order_acquire);
+    const bool valid = qid < OG_RBP_SESSION_COUNT && generation != 0 &&
+                       !guard_read_frozen_.load(std::memory_order_acquire) &&
+                       generation == guard_generation_.load(std::memory_order_acquire) &&
+                       (is_reset || (guard_ready_.load(std::memory_order_acquire) &&
+                        reset_seen && (reset_mask & (1U << qid)) != 0 &&
+                        page_write_owner_ids_[qid].load(std::memory_order_acquire) == connection_id));
+    if (!valid) {
+        if (is_reset) {
+            guard_state_mtx_.unlock();
+        } else {
+            guard_state_mtx_.unlock_shared();
+        }
+        return false;
+    }
+    return true;
+}
+
+std::string RbpServerState::guard_window_reject_reason(uint64_t generation, uint32_t qid, uint64_t connection_id,
+                                                       bool reset_seen, bool is_reset) const
+{
+    std::shared_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    if (!guard_enforced_.load(std::memory_order_acquire)) {
+        return "not_enforced";
+    }
+    if (qid >= OG_RBP_SESSION_COUNT) {
+        return "invalid_qid";
+    }
+    if (generation == 0) {
+        return "zero_generation";
+    }
+    if (guard_read_frozen_.load(std::memory_order_acquire)) {
+        return "guard_read_frozen";
+    }
+    const uint64_t current_generation = guard_generation_.load(std::memory_order_acquire);
+    if (generation != current_generation) {
+        return "stale_generation";
+    }
+    if (is_reset) {
+        return "unknown_reset_reject";
+    }
+    if (!guard_ready_.load(std::memory_order_acquire)) {
+        return "guard_session_unavailable";
+    }
+    if (!reset_seen) {
+        return "reset_not_seen";
+    }
+    const uint32_t reset_mask = page_write_reset_mask_.load(std::memory_order_acquire);
+    if ((reset_mask & (1U << qid)) == 0) {
+        return "reset_fence_incomplete";
+    }
+    if (page_write_owner_ids_[qid].load(std::memory_order_acquire) != connection_id) {
+        return "writer_owner_mismatch";
+    }
+    return "unknown";
+}
+
+bool RbpServerState::mark_page_write_reset(uint64_t generation, uint32_t qid, uint64_t connection_id)
+{
+    if (!guard_enforced_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (qid >= OG_RBP_SESSION_COUNT || generation == 0 ||
+        generation != guard_generation_.load(std::memory_order_acquire) ||
+        !guard_ready_.load(std::memory_order_acquire) ||
+        guard_read_frozen_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    const uint32_t bit = 1U << qid;
+    page_write_owner_ids_[qid].store(connection_id, std::memory_order_release);
+    const uint32_t old_mask = page_write_reset_mask_.fetch_or(bit, std::memory_order_acq_rel);
+    return old_mask != RBP_ALL_PAGE_WRITE_RESET_MASK &&
+           (old_mask | bit) == RBP_ALL_PAGE_WRITE_RESET_MASK;
+}
+
+void RbpServerState::release_guard_window(bool is_reset)
+{
+    if (is_reset) {
+        guard_state_mtx_.unlock();
+    } else {
+        guard_state_mtx_.unlock_shared();
+    }
+}
+
+bool RbpServerState::acquire_guard_freeze()
+{
+    guard_state_mtx_.lock();
+    if (guard_enforced_.load(std::memory_order_acquire)) {
+        const bool ready = guard_ready_.load(std::memory_order_acquire) &&
+                           page_write_reset_mask_.load(std::memory_order_acquire) ==
+                               RBP_ALL_PAGE_WRITE_RESET_MASK;
+        if (!ready) {
+            guard_state_mtx_.unlock();
+            return false;
+        }
+    }
+    guard_read_frozen_.store(true, std::memory_order_release);
+    return true;
+}
+
+void RbpServerState::release_guard_freeze()
+{
+    guard_state_mtx_.unlock();
+}
+
+int RbpServerState::apply_disk_guard(const rbp_disk_guard_item_t* items, uint32_t count, uint64_t owner_id,
+                                    uint64_t generation)
+{
+    if (items == nullptr || count == 0) {
+        return 0;
+    }
+
+    std::shared_lock<std::shared_mutex> guard_lock(guard_state_mtx_);
+    if (!guard_ready_.load(std::memory_order_acquire) || guard_read_frozen_.load(std::memory_order_acquire) ||
+        owner_id == 0 || owner_id != guard_owner_id_.load(std::memory_order_acquire) ||
+        generation != guard_generation_.load(std::memory_order_acquire)) {
+        return RBP_GUARD_APPLY_INVALID;
+    }
+
+    int applied = 0;
+    const uint32_t n = std::min(count, RBP_GUARD_BATCH_NUM);
+    for (uint32_t i = 0; i < n; ++i) {
+        const rbp_disk_guard_item_t& item = items[i];
+        if (item.disk_lsn == 0) {
+            continue;
+        }
+        const uint64_t pid_key = page_id_key_from_raw(item.page_id);
+        RbpShard& s = shard(page_queue_id(item.page_id.page));
+        std::lock_guard<std::mutex> g(s.mtx);
+
+        if (s.page_cache.find(pid_key) == s.page_cache.end() && s.guard_cleanup_lsn >= item.disk_lsn) {
+            s.disk_guard.erase(pid_key);
+            shard_meta_index_refresh(s, pid_key);
+            continue;
+        }
+        auto git = s.disk_guard.find(pid_key);
+        DiskGuard& guard = (git == s.disk_guard.end()) ? s.disk_guard.emplace(pid_key, DiskGuard{}).first->second :
+                                                        git->second;
+        if (item.disk_lsn > guard.guard_lsn ||
+            (item.disk_lsn == guard.guard_lsn && item.disk_pcn > guard.guard_pcn)) {
+            guard.guard_lsn = item.disk_lsn;
+            guard.guard_pcn = item.disk_pcn;
+            applied++;
+        }
+
+        auto mit = s.page_meta.find(pid_key);
+        auto cit = s.page_cache.find(pid_key);
+        if (mit == s.page_meta.end() || cit == s.page_cache.end()) {
+            shard_meta_index_refresh(s, pid_key);
+            continue;
+        }
+
+        if (mit->second.page_lsn >= guard.guard_lsn) {
+            clear_record_guard(cit->second, mit->second);
+            s.disk_guard.erase(pid_key);
+        } else {
+            set_record_guard(cit->second, mit->second, guard.guard_lsn, guard.guard_pcn);
+        }
+        shard_meta_index_refresh(s, pid_key);
+    }
+    return applied;
 }
 
 void RbpServerState::build_read_meta_snapshot(std::vector<MetaSnapshotRow>& out) const

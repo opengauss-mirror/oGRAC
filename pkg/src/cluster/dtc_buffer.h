@@ -40,6 +40,7 @@ typedef struct st_buf_read_assist {
     latch_mode_t    mode;
     uint8           options;
     bool8           try_edp;    // check edp if local page not usable
+    bool8           rbp_keep_local; // RBP partial recovery keeps a validated local baseline
     uint16          read_num;   // == 1 no prefetch, > 1 prefetch multiple pages
 } buf_read_assist_t;
 
@@ -68,6 +69,7 @@ static inline void dtc_read_init(buf_read_assist_t *ra, page_id_t page_id, latch
     ra->mode = mode;
     ra->options = options;
     ra->try_edp = (query_scn == OG_INVALID_ID64 ? OG_FALSE : OG_TRUE);
+    ra->rbp_keep_local = OG_FALSE;
     ra->read_num = read_num;
 }
 

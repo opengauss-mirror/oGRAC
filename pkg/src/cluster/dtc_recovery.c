@@ -37,6 +37,7 @@
 #include "rcr_btree.h"
 #include "knl_create_space.h"
 #include "knl_buffer.h"
+#include "knl_buffer_access.h"
 #include "knl_page.h"
 #include "knl_undo.h"
 #include "knl_punch_space.h"
@@ -928,11 +929,11 @@ static bool32 dtc_rcy_rbp_touch_coalesce_nearest(rcy_set_analyze_rbp_t *meta, ui
 
     meta->touches[best_slot].touch_min_lfn = best_min;
     meta->touches[best_slot].touch_max_lfn = best_max;
-    OG_LOG_RUN_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                         "[DTC RCY][RBP][partial] touch slots coalesced overflow_node=%u input=%llu-%llu "
-                         "slot=%u merged=%llu-%llu slots=%u",
-                         node_id, (uint64)min_lfn, (uint64)max_lfn, best_slot, (uint64)best_min,
-                         (uint64)best_max, (uint32)RBP_PARTIAL_TOUCH_SLOT_COUNT);
+    OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                           "[DTC RCY][RBP][partial] touch slots coalesced overflow_node=%u input=%llu-%llu "
+                           "slot=%u merged=%llu-%llu slots=%u",
+                           node_id, (uint64)min_lfn, (uint64)max_lfn, best_slot, (uint64)best_min,
+                           (uint64)best_max, (uint32)RBP_PARTIAL_TOUCH_SLOT_COUNT);
     return OG_TRUE;
 }
 
@@ -2517,8 +2518,9 @@ bool32 dtc_rcy_rbp_partial_enabled(knl_session_t *session)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
 
-    return (bool32)(dtc_rcy->in_progress && !dtc_rcy->full_recovery && KNL_RBP_ENABLE(session->kernel) &&
-                    KNL_RBP_FOR_RECOVERY(session->kernel) && dtc_rcy->rbp_partial_ctx.enabled);
+    return (bool32)(dtc_rcy->in_progress && !dtc_rcy->full_recovery && OGRAC_PARTIAL_RECOVER_SESSION(session) &&
+                    KNL_RBP_ENABLE(session->kernel) && KNL_RBP_FOR_RECOVERY(session->kernel) &&
+                    dtc_rcy->rbp_partial_ctx.enabled);
 }
 
 static rbp_partial_item_pool_t *dtc_rcy_rbp_partial_alloc_pool(void)
@@ -8418,20 +8420,6 @@ static void dtc_rcy_rbp_reset_state(dtc_rcy_context_t *dtc_rcy)
     }
 }
 
-static uint32 dtc_rcy_rbp_jump_count(dtc_rcy_context_t *dtc_rcy)
-{
-    uint32 count = 0;
-
-    for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
-        uint32 node_id = (uint32)dtc_rcy->rcy_log_points[i].node_id;
-        if (node_id < OG_MAX_INSTANCES && dtc_rcy->rbp_jump_taken[node_id]) {
-            count++;
-        }
-    }
-
-    return count;
-}
-
 static uint64 dtc_rcy_get_global_local_lrp_lsn(knl_session_t *session)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
@@ -8602,8 +8590,6 @@ static status_t dtc_rcy_rbp_begin_planned_read(knl_session_t *session, bool8 *ca
     if (planned != NULL) {
         *planned = (bool32)(dtc_rcy_rbp_planned_count(dtc_rcy) > 0);
     }
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] %s planned RBP read: planned_nodes=%u candidate_nodes=%u total_nodes=%u",
-                   stage, dtc_rcy_rbp_planned_count(dtc_rcy), candidate_count, dtc_rcy->node_count);
     return OG_SUCCESS;
 }
 
@@ -8631,7 +8617,7 @@ static void dtc_rcy_rbp_save_verify_node(knl_session_t *session, uint32 node_id)
     rbp_context->dtc_verify_rcy_points[idx] = dtc_rcy->rbp_rcy_points[node_id];
 }
 
-static void dtc_rcy_rbp_stage_jump_node(knl_session_t *session, uint32 node_idx, const char *stage)
+static void dtc_rcy_rbp_stage_jump_node(knl_session_t *session, uint32 node_idx)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     reform_rcy_node_t *node = &dtc_rcy->rcy_log_points[node_idx];
@@ -8648,9 +8634,6 @@ static void dtc_rcy_rbp_stage_jump_node(knl_session_t *session, uint32 node_idx,
     session->kernel->rcy_ctx.max_lrp_lsn = MAX(session->kernel->rcy_ctx.max_lrp_lsn,
                                                dtc_rcy->rbp_global_lrp_lsn);
 
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] %s staged jump node %u from lfn %llu to lfn %llu, rbp_lrp_lsn=%llu",
-                   stage, node_id, (uint64)skip_point.lfn, (uint64)dtc_rcy->rbp_rcy_points[node_id].lfn,
-                   MAX(dtc_rcy->rbp_lrp_points[node_id].lsn, dtc_rcy->rbp_max_lsns[node_id]));
     dtc_rcy_rbp_check_point_root(session, node_id, "staged_jump", "JUMP_TARGET_BEYOND_WRITE_POS",
         &dtc_rcy->rbp_rcy_points[node_id], NULL, 0, dtc_rcy->rbp_rcy_points[node_id].block_id);
 }
@@ -8700,7 +8683,7 @@ static status_t dtc_rcy_try_delayed_rbp_jump(knl_session_t *session)
             return OG_SUCCESS;
         }
 
-        dtc_rcy_rbp_stage_jump_node(session, i, "staged");
+        dtc_rcy_rbp_stage_jump_node(session, i);
         jump_count++;
     }
 
@@ -8708,8 +8691,6 @@ static status_t dtc_rcy_try_delayed_rbp_jump(knl_session_t *session)
         return OG_SUCCESS;
     }
 
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] staged jump completed: jumped_now=%u total_jumped=%u planned=%u",
-                   jump_count, dtc_rcy_rbp_jump_count(dtc_rcy), dtc_rcy_rbp_planned_count(dtc_rcy));
     return OG_SUCCESS;
 }
 
@@ -8776,6 +8757,28 @@ uint64 dtc_rcy_rbp_partial_get_expect_lsn(rbp_partial_item_t *item)
         return 0;
     }
     return item->expect_lsn;
+}
+
+uint64 dtc_rcy_rbp_partial_get_local_guard_lsn(rbp_partial_item_t *item)
+{
+    return item == NULL ? 0 : (uint64)cm_atomic_get(&item->local_guard_lsn);
+}
+
+void dtc_rcy_rbp_partial_update_local_guard(rbp_partial_item_t *item, uint64 guard_lsn)
+{
+    int64 current;
+
+    if (item == NULL || !item->required || guard_lsn == 0) {
+        return;
+    }
+
+    current = cm_atomic_get(&item->local_guard_lsn);
+    while ((uint64)current < guard_lsn) {
+        if (cm_atomic_cas(&item->local_guard_lsn, current, (int64)guard_lsn)) {
+            return;
+        }
+        current = cm_atomic_get(&item->local_guard_lsn);
+    }
 }
 
 void dtc_rcy_rbp_partial_update_candidate(rbp_partial_item_t *item, uint32 source_node, uint64 lsn)
@@ -8918,6 +8921,7 @@ static void dtc_rcy_rbp_partial_reset_required_cache(rbp_partial_context_t *ctx)
         item->selected_valid = OG_FALSE;
         item->selected_pulled = OG_FALSE;
         item->seen_node_bitmap = 0;
+        (void)cm_atomic_set(&item->local_guard_lsn, 0);
     }
     ctx->required_count = 0;
     ctx->required_built = OG_TRUE;
@@ -9165,8 +9169,6 @@ static status_t dtc_rcy_rbp_prepare_partial(knl_session_t *session)
         return OG_SUCCESS;
     }
 
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] prepare planned: planned_nodes=%u candidate_nodes=%u jump_allowed=%u",
-                   dtc_rcy_rbp_planned_count(dtc_rcy), candidate_count, jump_allowed_count);
     if (rbp_knl_dtc_read_failed(session)) {
         OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] RBP read failed before jump, abort read phase and keep redo recovery");
         rbp_knl_abort_dtc_read(session);
@@ -9178,8 +9180,6 @@ static status_t dtc_rcy_rbp_prepare_partial(knl_session_t *session)
         dtc_rcy_pcn_diag_finish_rbp_prepare(session, DTC_PCND_RBP_PREP_PARTIAL_CHECKED);
         return OG_ERROR;
     }
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] prepare immediate jump check done: jumped=%u planned=%u",
-                   dtc_rcy_rbp_jump_count(dtc_rcy), dtc_rcy_rbp_planned_count(dtc_rcy));
     dtc_rcy_pcn_diag_finish_rbp_prepare(session, DTC_PCND_RBP_PREP_PARTIAL_CHECKED);
     return OG_SUCCESS;
 }
@@ -9191,7 +9191,6 @@ static status_t dtc_rcy_rbp_prepare_partial(knl_session_t *session)
 static status_t dtc_rcy_rbp_prepare(knl_session_t *session)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
-    uint32 rbp_conn = 0;
     uint64 global_local_lrp_lsn = 0;
 
     if (dtc_rcy->full_recovery) {
@@ -9210,25 +9209,6 @@ static status_t dtc_rcy_rbp_prepare(knl_session_t *session)
         global_local_lrp_lsn > session->kernel->rcy_ctx.max_lrp_lsn) {
         session->kernel->rcy_ctx.max_lrp_lsn = global_local_lrp_lsn;
     }
-
-    if (KNL_RBP_ENABLE(session->kernel)) {
-        for (uint32 i = 0; i < OG_RBP_SESSION_COUNT; i++) {
-            if (session->kernel->rbp_context.rbp_buf_manager[i].is_connected) {
-                rbp_conn++;
-            }
-        }
-    }
-
-    /* RUN_WAR is intentional here because default ogracd logs may hide RUN_INF during recovery. */
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] prepare enter inst=%u phase=%u node_count=%u USE_RBP=%u RBP_FOR_RECOVERY=%u "
-                   "SAFE=%u rbp_unsafe=%u recover_for_restore=%u rbp_connected_queues=%u/%u "
-                   "side_table=%u",
-                   (uint32)session->kernel->id, (uint32)dtc_rcy->phase, dtc_rcy->node_count,
-                   (uint32)KNL_RBP_ENABLE(session->kernel),
-                   (uint32)KNL_RBP_FOR_RECOVERY(session->kernel), (uint32)KNL_RBP_SAFE(session->kernel),
-                   (uint32)session->kernel->redo_ctx.rbp_aly_result.rbp_unsafe,
-                   (uint32)session->kernel->db.recover_for_restore, rbp_conn, (uint32)OG_RBP_SESSION_COUNT,
-                   (uint32)dtc_rcy->rbp_partial_ctx.enabled);
 
     if (!KNL_RBP_ENABLE(session->kernel) || !KNL_RBP_FOR_RECOVERY(session->kernel) ||
         session->kernel->db.recover_for_restore) {
@@ -9438,12 +9418,6 @@ static status_t dtc_rcy_partial_recovery(knl_session_t *session)
     // move partial recovery to next phase
     dtc_rcy_next_phase(session);
 
-    OG_LOG_RUN_WAR("[DTC RCY][RBP][partial] call rbp prepare before replay: phase=%u node_count=%u "
-                   "side_table=%u USE_RBP=%u RBP_FOR_RECOVERY=%u",
-                   (uint32)dtc_rcy->phase, dtc_rcy->node_count,
-                   (uint32)dtc_rcy->rbp_partial_ctx.enabled,
-                   (uint32)KNL_RBP_ENABLE(session->kernel),
-                   (uint32)KNL_RBP_FOR_RECOVERY(session->kernel));
     if (dtc_rcy_rbp_prepare(session) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DTC RCY][RBP][partial] rbp prepare failed before partial replay");
         rbp_knl_abort_dtc_read(session);

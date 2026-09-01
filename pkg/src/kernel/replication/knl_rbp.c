@@ -39,6 +39,7 @@
 #include "dtc_database.h"
 #include "dtc_context.h"
 #include "dtc_drc.h"
+#include "knl_ckpt.h"
 #include "knl_rbp.h"
 
 #ifdef __cplusplus
@@ -64,13 +65,8 @@ static void rbp_clear_ctrl_pending(buf_ctrl_t *ctrl, rbp_queue_item_t *item, con
 static void rbp_queue_notify_reset_point_one(knl_session_t *session, uint32 queue_id, log_point_t *point,
                                             const char *reason, bool32 warn_log);
 
-#define RBP_PAGE_WRITE_BACKLOG_WARN_COUNT 4096
 #define RBP_PAGE_WRITE_ASSEMBLE_DIAG_US   1000000
-#define RBP_PAGE_WRITE_ITEM_DIAG_US       100000
-#define RBP_PAGE_WRITE_SEND_DIAG_US       500000
-#define RBP_PAGE_WRITE_REDO_DIAG_US       500000
 #define RBP_PAGE_WRITE_LOG_INTERVAL_US    (5 * MICROSECS_PER_SECOND)
-#define RBP_ASSEMBLE_DIAG_INTERVAL_US     MICROSECS_PER_SECOND
 #define RBP_READ_BATCH_SLOW_US            200000
 #define RBP_READ_BATCH_SLOW_INTERVAL_US   (5 * MICROSECS_PER_SECOND)
 #define RBP_READ_SAMPLE_LIMIT             5
@@ -128,30 +124,10 @@ typedef struct st_rbp_assemble_diag {
     uint32 busy_num;
     uint32 scanned;
     uint32 max_scan;
-    uint64 latch_us;
-    uint64 first_latch_us;
-    uint64 retry_latch_us;
-    uint64 readonly_wait_us;
-    uint64 need_load_wait_us;
-    uint64 copy_us;
-    uint64 pop_us;
-    uint64 free_us;
-    uint64 max_item_us;
-    uint32 retry_latch_count;
-    uint32 readonly_wait_count;
-    uint32 need_load_wait_count;
-    page_id_t max_item_page;
-    uint32 max_item_source;
-    uint32 max_item_load_status;
-    uint32 max_item_is_readonly;
-    uint32 max_item_latch_stat;
 } rbp_assemble_diag_t;
 
-static date_t g_rbp_backlog_last_log[OG_RBP_SESSION_COUNT] = { 0 };
-static date_t g_rbp_queue_diag_last_log[OG_RBP_SESSION_COUNT] = { 0 };
-#if RBP_PAGE_WRITE_HOT_DIAG
-static date_t g_rbp_assemble_diag_last_log[OG_RBP_SESSION_COUNT] = { 0 };
-#endif
+static date_t g_rbp_heartbeat_fail_last_log[OG_RBP_SESSION_COUNT] = { 0 };
+static date_t g_rbp_page_write_fail_last_log[OG_RBP_SESSION_COUNT] = { 0 };
 
 static inline bool32 rbp_rate_loggable(date_t *last_log_time, date_t now, date_t interval_us)
 {
@@ -162,58 +138,9 @@ static inline bool32 rbp_rate_loggable(date_t *last_log_time, date_t now, date_t
     return OG_FALSE;
 }
 
-static inline void rbp_assemble_diag_update_max_detail(rbp_assemble_diag_t *diag, uint64 item_us, page_id_t page_id,
-                                                       uint32 source, uint32 load_status, uint32 is_readonly,
-                                                       uint32 latch_stat)
-{
-    if (diag == NULL || item_us <= diag->max_item_us) {
-        return;
-    }
-
-    diag->max_item_us = item_us;
-    diag->max_item_page = page_id;
-    diag->max_item_source = source;
-    diag->max_item_load_status = load_status;
-    diag->max_item_is_readonly = is_readonly;
-    diag->max_item_latch_stat = latch_stat;
-}
-
 static inline bool32 rbp_snapshot_low_watermark_loggable(uint32 free_count)
 {
     return (bool32)(free_count == 0 || (free_count & (free_count - 1)) == 0);
-}
-
-static inline bool32 rbp_queue_backlog_loggable(uint32 queue_id, uint32 count)
-{
-#ifdef RBP_VERBOSE_TRACE
-    return (bool32)(count >= RBP_PAGE_WRITE_BACKLOG_WARN_COUNT &&
-                    (count % RBP_PAGE_WRITE_BACKLOG_WARN_COUNT) == 0);
-#else
-    if (count < RBP_PAGE_WRITE_BACKLOG_WARN_COUNT) {
-        return OG_FALSE;
-    }
-    return rbp_rate_loggable(&g_rbp_backlog_last_log[queue_id % OG_RBP_SESSION_COUNT], g_timer()->now,
-                            RBP_PAGE_WRITE_LOG_INTERVAL_US);
-#endif
-}
-
-static inline bool32 rbp_page_write_diag_loggable(uint32 queue_id, bool32 took_gap_reset, bool32 took_ckpt_reset,
-                                                  uint32 queue_count_before, uint32 queue_count_after,
-                                                  uint64 assemble_us, uint64 wait_redo_us, uint64 send_us)
-{
-    if (took_gap_reset) {
-        return OG_TRUE;
-    }
-    if (assemble_us >= RBP_PAGE_WRITE_ASSEMBLE_DIAG_US || wait_redo_us >= RBP_PAGE_WRITE_REDO_DIAG_US ||
-        send_us >= RBP_PAGE_WRITE_SEND_DIAG_US) {
-        return OG_TRUE;
-    }
-    if (took_ckpt_reset || queue_count_before >= RBP_PAGE_WRITE_BACKLOG_WARN_COUNT ||
-        queue_count_after >= RBP_PAGE_WRITE_BACKLOG_WARN_COUNT) {
-        return rbp_rate_loggable(&g_rbp_queue_diag_last_log[queue_id % OG_RBP_SESSION_COUNT], g_timer()->now,
-                                RBP_PAGE_WRITE_LOG_INTERVAL_US);
-    }
-    return OG_FALSE;
 }
 
 static inline uint32 rbp_get_assemble_max_scan(knl_session_t *session)
@@ -343,6 +270,8 @@ static status_t rbp_snapshot_pool_init(knl_session_t *session)
         snapshot[i].next = &snapshot[i + 1];
     }
     snapshot[RBP_SNAPSHOT_POOL_SIZE - 1].next = NULL;
+    OG_LOG_RUN_INF("[RBP] snapshot pool initialized: count=%u batches=%u bytes=%lld",
+                   (uint32)RBP_SNAPSHOT_POOL_SIZE, (uint32)RBP_SNAPSHOT_POOL_BATCHES, (long long)buf_size);
     return OG_SUCCESS;
 }
 
@@ -398,41 +327,17 @@ static void rbp_drain_send_queues(knl_session_t *session)
     }
 }
 
-static inline bool32 rbp_clear_pending_loggable(const char *reason)
-{
-#ifdef RBP_VERBOSE_TRACE
-    return OG_TRUE;
-#else
-    if (reason == NULL) {
-        return OG_TRUE;
-    }
-    if (strcmp(reason, "sent") == 0 || strcmp(reason, "ckpt_reset") == 0 ||
-        strcmp(reason, "gap_reset") == 0 || strcmp(reason, "snapshot_detach") == 0 ||
-        strcmp(reason, "queue_clear") == 0) {
-        return OG_FALSE;
-    }
-    return OG_TRUE;
-#endif
-}
-
 static void rbp_clear_ctrl_pending(buf_ctrl_t *ctrl, rbp_queue_item_t *item, const char *reason, uint64 reset_lfn,
                                    uint64 gap_end_lfn)
 {
+    (void)reason;
+    (void)reset_lfn;
+    (void)gap_end_lfn;
     if (ctrl == NULL || ctrl->rbp_ctrl == NULL) {
         return;
     }
 
     if (ctrl->rbp_ctrl->pending_item == item) {
-        if (rbp_clear_pending_loggable(reason)) {
-            OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] CLEAR_PENDING reason=%s queue=%u page=%u-%u ctrl=%p item=%p "
-                            "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu reset_lfn=%llu "
-                            "gap_end_lfn=%llu page_status=%u",
-                            reason, item == NULL ? OG_INVALID_ID32 : item->queue_id, ctrl->page_id.file,
-                            ctrl->page_id.page, (void *)ctrl, (void *)item, (uint64)ctrl->page->lsn,
-                            (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                            (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)reset_lfn, (uint64)gap_end_lfn,
-                            (uint32)ctrl->rbp_ctrl->page_status);
-        }
         ctrl->rbp_ctrl->pending_item = NULL;
         ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
     }
@@ -464,12 +369,6 @@ static void rbp_drop_pending_item(knl_session_t *session, buf_ctrl_t *ctrl, cons
         item->source = RBP_QUEUE_ITEM_DROPPED;
         item->ctrl = NULL;
     }
-    OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] DROP_PENDING reason=%s queue=%u page=%u-%u ctrl=%p item=%p "
-                    "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu reset_lfn=%llu "
-                    "gap_end_lfn=%llu page_status=%u",
-                    reason, queue_id, page_id.file, page_id.page, (void *)ctrl, (void *)item,
-                    (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn, (uint64)lastest_lfn, (uint64)trunc_lfn,
-                    (uint64)0, (uint64)0, (uint32)ctrl->rbp_ctrl->page_status);
     ctrl->rbp_ctrl->pending_item = NULL;
     ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
     queue->has_gap = OG_TRUE;
@@ -502,33 +401,18 @@ static bool32 rbp_wait_snapshot_detach_ready(knl_session_t *session, buf_ctrl_t 
 bool32 rbp_ctrl_may_enqueue(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     if (!KNL_RBP_ENABLE(session->kernel)) {
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_RUN_INF("[RBP] skip enqueue page %u-%u: RBP disabled", ctrl->page_id.file, ctrl->page_id.page);
-#endif
         return OG_FALSE;
     }
     if (DB_IS_CLUSTER(session)) {
         if (OGRAC_REPLAY_NODE(session)) {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_RUN_INF("[RBP] skip enqueue page %u-%u: replay node session type=%u",
-                           ctrl->page_id.file, ctrl->page_id.page, (uint32)session->dtc_session_type);
-#endif
             return OG_FALSE;
         }
         if (ctrl->lock_mode != DRC_LOCK_EXCLUSIVE) {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_RUN_INF("[RBP] skip enqueue page %u-%u: lock_mode=%u is not DRC_LOCK_EXCLUSIVE",
-                           ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->lock_mode);
-#endif
             return OG_FALSE;
         }
         return OG_TRUE;
     }
     if (!DB_IS_PRIMARY(&session->kernel->db)) {
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_RUN_INF("[RBP] skip enqueue page %u-%u: non-primary database role",
-                       ctrl->page_id.file, ctrl->page_id.page);
-#endif
         return OG_FALSE;
     }
     return OG_TRUE;
@@ -681,14 +565,6 @@ bool32 rbp_try_detach_pending_page(knl_session_t *session, buf_ctrl_t *ctrl)
     cm_spin_lock(&queue->lock, &session->stat->spin_stat.stat_rbp_queue);
     item = ctrl->rbp_ctrl->pending_item;
     if (item == NULL || item->source != RBP_QUEUE_ITEM_LIVE || item->ctrl != ctrl) {
-        OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] DROP_PENDING reason=pending_lost queue=%u page=%u-%u ctrl=%p item=%p "
-                        "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu reset_lfn=%llu "
-                        "gap_end_lfn=%llu page_status=%u",
-                        queue_id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl, (void *)item,
-                        (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                        (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                        (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint64)0,
-                        (uint32)ctrl->rbp_ctrl->page_status);
         ctrl->rbp_ctrl->pending_item = NULL;
         ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
         queue->has_gap = OG_TRUE;
@@ -706,14 +582,6 @@ bool32 rbp_try_detach_pending_page(knl_session_t *session, buf_ctrl_t *ctrl)
         already_gap = queue->has_gap;
         item->source = RBP_QUEUE_ITEM_DROPPED;
         item->ctrl = NULL;
-        OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] DROP_PENDING reason=snapshot_detach_failed queue=%u page=%u-%u "
-                        "ctrl=%p item=%p page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu "
-                        "reset_lfn=%llu gap_end_lfn=%llu page_status=%u",
-                        queue_id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl, (void *)item,
-                        (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                        (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                        (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint64)0,
-                        (uint32)ctrl->rbp_ctrl->page_status);
         ctrl->rbp_ctrl->pending_item = NULL;
         ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
         queue->has_gap = OG_TRUE;
@@ -754,26 +622,10 @@ bool32 rbp_try_detach_pending_page(knl_session_t *session, buf_ctrl_t *ctrl)
     item->ctrl = NULL;
     item->snapshot = snapshot;
     item->page_id = snapshot->page_id;
-#ifdef RBP_VERBOSE_TRACE
-    OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] CLEAR_PENDING reason=snapshot_detach queue=%u page=%u-%u ctrl=%p item=%p "
-                    "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu reset_lfn=%llu "
-                    "gap_end_lfn=%llu page_status=%u",
-                    queue_id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl, (void *)item,
-                    (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                    (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)0, (uint64)0,
-                    (uint32)ctrl->rbp_ctrl->page_status);
-#endif
     ctrl->rbp_ctrl->pending_item = NULL;
     ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
     cm_spin_unlock(&queue->lock);
 
-#ifdef RBP_VERBOSE_TRACE
-    OG_LOG_DEBUG_INF("[RBP] detached pending page snapshot: queue=%u page=%u-%u trunc_lfn=%llu lastest_lfn=%llu "
-                    "page_lsn=%llu",
-                    queue_id, snapshot->page_id.file, snapshot->page_id.page,
-                    (uint64)snapshot->rbp_trunc_point.lfn, (uint64)snapshot->lastest_lfn,
-                    (uint64)snapshot->writer_global_seq);
-#endif
     return OG_TRUE;
 }
 
@@ -918,6 +770,14 @@ static void rbp_reset_read_stat(rbp_context_t *rbp_context)
     (void)cm_atomic_set(&rbp_context->rbp_read_ahead_detail, 0);
     (void)cm_atomic_set(&rbp_context->rbp_read_partial_disk_fallback, 0);
     (void)cm_atomic_set(&rbp_context->rbp_read_multi_disk_fallback, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_page_read_hit, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_selected_hit, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_batch_hit, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_local_hit, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_local_ready, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_disk_load, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_disk_ok, 0);
+    (void)cm_atomic_set(&rbp_context->rbp_read_guard_disk_below, 0);
     rbp_context->rbp_read_workers_done_time = 0;
 #if RBP_READ_HOT_DIAG
     ret = memset_sp(rbp_context->read_diag, sizeof(rbp_context->read_diag), 0, sizeof(rbp_context->read_diag));
@@ -949,6 +809,26 @@ static void rbp_log_read_anomaly_summary(rbp_context_t *rbp_context)
                    "multi_disk_fallback=%llu sample_limit=%u",
                    selected_mismatch, pull_miss_trace, partial_ahead, ahead, partial_fallback, multi_fallback,
                    RBP_READ_SAMPLE_LIMIT);
+}
+
+static void rbp_log_read_guard_summary(rbp_context_t *rbp_context)
+{
+    uint64 page_read_hit = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_page_read_hit);
+    uint64 selected_hit = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_selected_hit);
+    uint64 batch_hit = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_batch_hit);
+    uint64 local_hit = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_local_hit);
+    uint64 local_ready = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_local_ready);
+    uint64 disk_load = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_disk_load);
+    uint64 disk_ok = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_disk_ok);
+    uint64 disk_below = (uint64)cm_atomic_get(&rbp_context->rbp_read_guard_disk_below);
+    uint64 rbp_lt_guard = page_read_hit + selected_hit + batch_hit;
+    uint64 guard_hit_total = rbp_lt_guard + local_hit;
+
+    OG_LOG_RUN_INF("[RBP] read guard summary: guard_hit_total=%llu rbp_lt_guard=%llu page_read=%llu "
+                   "selected_batch=%llu batch=%llu local_below_guard=%llu local_ready=%llu "
+                   "disk_load=%llu disk_ok=%llu disk_below_guard=%llu",
+                   guard_hit_total, rbp_lt_guard, page_read_hit, selected_hit, batch_hit, local_hit, local_ready,
+                   disk_load, disk_ok, disk_below);
 }
 
 static void rbp_record_read_skip_partial_no_expect(rbp_context_t *rbp_context, rbp_partial_item_t *partial_item)
@@ -1846,7 +1726,16 @@ static status_t rbp_notify_msg(knl_session_t *session, rbp_notify_msg_e msg, uin
 
     /* Demo / real RBP always sends rbp_msg_ack_t for NOTIFY; must drain or the next PAGE_READ wait sees 8-byte body. */
     rbp_msg_ack_t discard;
-    return rbp_knl_wait_response(pipe, (char *)(ack != NULL ? ack : &discard), sizeof(rbp_msg_ack_t));
+    rbp_msg_ack_t *response = (ack != NULL) ? ack : &discard;
+    if (rbp_knl_wait_response(pipe, (char *)response, sizeof(rbp_msg_ack_t)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (msg == MSG_RBP_READ_BEGIN && response->ack_type != ACK_RBP_READ_BEGIN) {
+        OG_LOG_RUN_WAR("[RBP] READ_BEGIN rejected by RBPS, ack_type=%u ack_data=%u",
+                       response->ack_type, response->ack_data);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
 }
 
 /* primary or statndy send heart beat to RBP */
@@ -1866,7 +1755,15 @@ static void rbp_timed_heart_beat(knl_session_t *session)
 
     cm_spin_lock(&rbp_buf_manager->fisrt_pipe_lock, NULL);
     if (rbp_notify_msg(session, MSG_RBP_HEART_BEAT, rbp_proc_id, NULL) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[RBP] heart beat with rbp failed");
+        rbp_buf_manager->is_connected = OG_FALSE;
+        rbp_context->queue[rbp_proc_id].has_gap = OG_TRUE;
+        cs_disconnect(&rbp_buf_manager->pipe_const);
+        if (rbp_rate_loggable(&g_rbp_heartbeat_fail_last_log[rbp_proc_id % OG_RBP_SESSION_COUNT], g_timer()->now,
+                              RBP_PAGE_WRITE_LOG_INTERVAL_US)) {
+            OG_LOG_RUN_ERR("[RBP] heart beat with rbp failed, disconnect and require PAGE_WRITE reset: queue=%u",
+                           rbp_proc_id);
+        }
+        cm_reset_error();
     }
     cm_spin_unlock(&rbp_buf_manager->fisrt_pipe_lock);
     rbp_buf_manager->last_hb_time = g_timer()->now;
@@ -1940,6 +1837,7 @@ static void rbp_replace_local_page(knl_session_t *session, buf_ctrl_t *ctrl, pag
         step_begin = cm_now();
     }
     ctrl->rbp_ctrl->is_from_rbp = OG_TRUE;
+    ctrl->rbp_ctrl->guard_lsn = 0;
     if (!ctrl->is_dirty) {
         ctrl->is_dirty = OG_TRUE;
         if (diag != NULL) {
@@ -1961,31 +1859,247 @@ static void rbp_replace_local_page(knl_session_t *session, buf_ctrl_t *ctrl, pag
   * process response for database read one page from RBP
   * if rbp page can be used, replace local page as rbp page
   */
+static inline bool32 rbp_page_block_stale_by_guard(uint64 rbp_page_lsn, uint64 guard_lsn)
+{
+    return (bool32)(guard_lsn != 0 && rbp_page_lsn < guard_lsn);
+}
+
+bool32 rbp_knl_recovery_local_guard_active(knl_session_t *session)
+{
+    return (bool32)(session != NULL && DB_IS_CLUSTER(session) && KNL_RBP_ENABLE(session->kernel) &&
+                    session->kernel->rbp_context.recovery_local_guard_active);
+}
+
+void rbp_knl_record_ckpt_local_guard(knl_session_t *session, page_id_t page_id, uint64 page_lsn)
+{
+    rbp_partial_item_t *item;
+
+    if (!rbp_knl_recovery_local_guard_active(session) || page_lsn == 0) {
+        return;
+    }
+    item = dtc_rcy_rbp_partial_get_item(page_id);
+    dtc_rcy_rbp_partial_update_local_guard(item, page_lsn);
+}
+
+static inline uint64 rbp_partial_effective_guard_lsn(rbp_partial_item_t *item, uint64 server_guard_lsn)
+{
+    uint64 local_guard_lsn = dtc_rcy_rbp_partial_get_local_guard_lsn(item);
+    return MAX(server_guard_lsn, local_guard_lsn);
+}
+
+static inline void rbp_record_guard_lsn(buf_ctrl_t *ctrl, uint64 guard_lsn)
+{
+    if (guard_lsn > ctrl->rbp_ctrl->guard_lsn) {
+        ctrl->rbp_ctrl->guard_lsn = guard_lsn;
+    }
+}
+
+typedef struct st_rbp_guarded_disk_read {
+    knl_session_t *session;
+    buf_ctrl_t *ctrl;
+    page_id_t page_id;
+    uint64 guard_lsn;
+    uint32 *disk_pcn;
+    const char *reason;
+} rbp_guarded_disk_read_t;
+
+typedef struct st_rbp_guarded_disk_check {
+    knl_session_t *session;
+    buf_ctrl_t *ctrl;
+    uint64 disk_lsn;
+    uint64 guard_lsn;
+    uint32 disk_pcn;
+    const char *reason;
+} rbp_guarded_disk_check_t;
+
+static uint64 rbp_read_guarded_disk_page(const rbp_guarded_disk_read_t *read)
+{
+    char *disk_buf;
+    buf_ctrl_t disk_ctrl;
+    uint64 disk_lsn;
+    errno_t ret;
+
+    ret = memset_sp(&disk_ctrl, sizeof(disk_ctrl), 0, sizeof(disk_ctrl));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+    disk_buf = (char *)cm_push(read->session->stack,
+                               DEFAULT_PAGE_SIZE(read->session) + OG_MAX_ALIGN_SIZE_4K);
+    if (disk_buf == NULL) {
+        CM_ABORT(0, "[RBP] ABORT INFO: failed to allocate temporary guarded page %u-%u, reason=%s",
+                 read->page_id.file, read->page_id.page, read->reason);
+    }
+    disk_ctrl.page_id = read->page_id;
+    disk_ctrl.page = (page_head_t *)cm_aligned_buf(disk_buf);
+    ret = memset_sp(disk_ctrl.page, DEFAULT_PAGE_SIZE(read->session), 0,
+                    DEFAULT_PAGE_SIZE(read->session));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+    if (buf_load_page_from_disk(read->session, &disk_ctrl, read->page_id) != OG_SUCCESS) {
+        CM_ABORT(0, "[RBP] ABORT INFO: failed to load guarded page %u-%u from disk, reason=%s",
+                 read->page_id.file, read->page_id.page, read->reason);
+    }
+    disk_lsn = PAGE_GET_LSN(disk_ctrl.page);
+    *read->disk_pcn = disk_ctrl.page->pcn;
+    if (disk_lsn >= read->guard_lsn) {
+        ret = memcpy_sp(read->ctrl->page, DEFAULT_PAGE_SIZE(read->session), disk_ctrl.page,
+                        DEFAULT_PAGE_SIZE(read->session));
+        if (ret != EOK) {
+            knl_securec_check(ret);
+        }
+    }
+    cm_pop(read->session->stack);
+    return disk_lsn;
+}
+
+static bool32 rbp_guarded_disk_page_valid(const rbp_guarded_disk_check_t *check)
+{
+    if (check->disk_lsn >= check->guard_lsn) {
+        return OG_TRUE;
+    }
+    check->ctrl->rbp_ctrl->page_status = RBP_PAGE_GUARDED;
+    check->ctrl->rbp_ctrl->rbp_read_version = 0;
+    rbp_set_unsafe(check->session, RD_TYPE_END);
+    rbp_knl_mark_dtc_fallback(check->session, OG_INVALID_ID32, RBP_READ_RESULT_ERROR,
+                              RBP_DTC_FALLBACK_PAGE_READ);
+    (void)cm_atomic_inc(&check->session->kernel->rbp_context.rbp_read_guard_disk_below);
+    OG_LOG_RUN_WAR("[RBP] guarded disk page is below guard: page=%u-%u reason=%s disk_lsn=%llu "
+                   "guard_lsn=%llu memory_lsn=%llu memory_pcn=%u disk_pcn=%u",
+                   check->ctrl->page_id.file, check->ctrl->page_id.page, check->reason,
+                   (uint64)check->disk_lsn, (uint64)check->guard_lsn,
+                   (uint64)PAGE_GET_LSN(check->ctrl->page), (uint32)check->ctrl->page->pcn,
+                   check->disk_pcn);
+    return OG_FALSE;
+}
+
+static bool32 rbp_load_guarded_disk_page_ready(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id,
+    uint64 guard_lsn, const char *reason)
+{
+    uint64 curr_lsn;
+    uint64 disk_lsn;
+    uint32 disk_pcn = 0;
+    bool32 loaded_disk = OG_FALSE;
+    if (guard_lsn == 0) {
+        ctrl->rbp_ctrl->guard_lsn = 0;
+        return OG_TRUE;
+    }
+
+    rbp_record_guard_lsn(ctrl, guard_lsn);
+    curr_lsn = PAGE_GET_LSN(ctrl->page);
+    if (curr_lsn != OG_INVALID_LSN && curr_lsn >= guard_lsn) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_local_ready);
+    }
+    if (curr_lsn == OG_INVALID_LSN || curr_lsn < guard_lsn) {
+        ctrl->rbp_ctrl->is_from_rbp = OG_FALSE;
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_load);
+        loaded_disk = OG_TRUE;
+
+        /*
+         * Read into a temporary page first. A guard is the minimum durable version expected from
+         * disk; if disk is still below it, do not discard a newer in-memory baseline before falling
+         * back to ordinary recovery.
+         */
+        rbp_guarded_disk_read_t read = { session, ctrl, page_id, guard_lsn, &disk_pcn, reason };
+        disk_lsn = rbp_read_guarded_disk_page(&read);
+        curr_lsn = disk_lsn;
+    }
+
+    rbp_guarded_disk_check_t check = { session, ctrl, curr_lsn, guard_lsn, disk_pcn, reason };
+    if (!rbp_guarded_disk_page_valid(&check)) {
+        return OG_FALSE;
+    }
+
+    if (loaded_disk) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_ok);
+    }
+    ctrl->rbp_ctrl->guard_lsn = 0;
+    return OG_TRUE;
+}
+
+static rbp_page_status_e rbp_partial_load_guarded_disk_page(knl_session_t *session, buf_ctrl_t *ctrl,
+    rbp_partial_item_t *item, uint64 expect_lsn, uint64 guard_lsn)
+{
+    uint64 curr_lsn = PAGE_GET_LSN(ctrl->page);
+    rbp_page_status_e page_status;
+
+    if (!rbp_load_guarded_disk_page_ready(session, ctrl, ctrl->page_id, guard_lsn, "partial guarded fallback")) {
+        return RBP_PAGE_GUARDED;
+    }
+    curr_lsn = PAGE_GET_LSN(ctrl->page);
+    if (curr_lsn == OG_INVALID_LSN) {
+        page_status = RBP_PAGE_MISS;
+    } else if (curr_lsn >= expect_lsn) {
+        page_status = RBP_PAGE_HIT;
+    } else {
+        page_status = RBP_PAGE_USABLE;
+    }
+
+    ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
+    ctrl->rbp_ctrl->page_status = page_status;
+    if (curr_lsn != OG_INVALID_LSN) {
+        dtc_rcy_rbp_partial_mark_selected_pulled(item, curr_lsn);
+    }
+    if (page_status == RBP_PAGE_HIT) {
+        dtc_rcy_rbp_partial_mark_item_verified(item);
+    }
+    return page_status;
+}
+
+rbp_page_status_e rbp_knl_resolve_partial_guarded_page(knl_session_t *session, buf_ctrl_t *ctrl,
+    uint64 expect_lsn)
+{
+    rbp_partial_item_t *item;
+    uint64 guard_lsn;
+
+    knl_panic_log(ctrl != NULL, "partial guarded page ctrl is NULL");
+    item = dtc_rcy_rbp_partial_get_item(ctrl->page_id);
+    guard_lsn = rbp_partial_effective_guard_lsn(item, ctrl->rbp_ctrl->guard_lsn);
+    if (item == NULL || expect_lsn == 0 || guard_lsn == 0) {
+        OG_LOG_RUN_ERR("[RBP] invalid partial guarded fallback context: page=%u-%u has_item=%u "
+                       "expect_lsn=%llu guard_lsn=%llu",
+                       ctrl->page_id.file, ctrl->page_id.page, (uint32)(item != NULL),
+                       (uint64)expect_lsn, (uint64)guard_lsn);
+        /* A guarded response without its side-table context cannot prove the skipped redo is covered. */
+        rbp_knl_mark_dtc_fallback(session, OG_INVALID_ID32, RBP_READ_RESULT_ERROR,
+                                  RBP_DTC_FALLBACK_PAGE_READ);
+        return RBP_PAGE_GUARDED;
+    }
+
+    /*
+     * guard_lsn is the survivor-disk lower bound, while expect_lsn is the version tail redo must
+     * eventually reach.  Resolve the physical baseline against guard_lsn first; only then classify
+     * that baseline as HIT or USABLE against expect_lsn.  In particular, a valid USABLE in-memory
+     * page must not be replaced merely because it is below the final redo target.
+     */
+    return rbp_partial_load_guarded_disk_page(session, ctrl, item, expect_lsn, guard_lsn);
+}
+
 static rbp_page_status_e rbp_process_read_resp(knl_session_t *session, rbp_read_resp_t *response, buf_ctrl_t *ctrl)
 {
     uint64 rbp_page_lsn;
     uint64 curr_page_lsn;
+    uint64 guard_lsn = response->guard_lsn;
     rbp_page_status_e page_status = RBP_PAGE_MISS;
     char *rbp_page = response->block;
 
+    if (rbp_is_dtc_partial_read(session)) {
+        guard_lsn = rbp_partial_effective_guard_lsn(dtc_rcy_rbp_partial_get_item(ctrl->page_id), guard_lsn);
+    }
+
     if (response->result == RBP_READ_RESULT_OK) {
         rbp_page_lsn = PAGE_GET_LSN(rbp_page);
-        curr_page_lsn = PAGE_GET_LSN(ctrl->page);
-#ifdef RBP_VERBOSE_TRACE
-        {
-            uint32 psz = DEFAULT_PAGE_SIZE(session);
-            page_head_t *gh = (page_head_t *)rbp_page;
-            uint16 cks = PAGE_CHECKSUM(rbp_page, psz);
-            /* Avoid stale TCP/peer errors leaking from cm_get_error into INFO logs. */
-            cm_reset_error();
-            OG_LOG_RUN_INF(
-                "[RBP] PAGE_READ recv from RBP: page %u-%u trunc_lfn %llu rbp_lsn %llu local_lsn %llu pcn %u checksum "
-                "0x%04x | RBP-CORR fid=%u pn=%u seq=%llu lfn=%llu inst=0",
-                ctrl->page_id.file, ctrl->page_id.page, (uint64)response->rbp_trunc_point.lfn, rbp_page_lsn,
-                curr_page_lsn, gh->pcn, (uint32)cks, ctrl->page_id.file, ctrl->page_id.page, rbp_page_lsn,
-                (uint64)response->rbp_trunc_point.lfn);
+        if (rbp_page_block_stale_by_guard(rbp_page_lsn, guard_lsn)) {
+            (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_page_read_hit);
+            OG_LOG_DEBUG_INF("[RBP] PAGE_READ stale by disk guard: page=%u-%u rbp_lsn=%llu guard_lsn=%llu "
+                            "guard_pcn=%u",
+                            ctrl->page_id.file, ctrl->page_id.page, (uint64)rbp_page_lsn,
+                            (uint64)guard_lsn, (uint32)response->guard_pcn);
+            rbp_record_guard_lsn(ctrl, guard_lsn);
+            return RBP_PAGE_GUARDED;
         }
-#endif
+        ctrl->rbp_ctrl->guard_lsn = 0;
+        curr_page_lsn = PAGE_GET_LSN(ctrl->page);
         page_status = rbp_page_verify(session, response->pageid, rbp_page_lsn, curr_page_lsn);
         if (rbp_page_lsn > curr_page_lsn && (page_status == RBP_PAGE_HIT || page_status == RBP_PAGE_USABLE)) {
             rbp_replace_local_page(session, ctrl, (page_head_t *)rbp_page, NULL);
@@ -2041,7 +2155,7 @@ static bool32 rbp_need_skip(knl_session_t *session, rbp_page_item_t *page_item)
     return OG_FALSE;
 }
 
-static uint64 rbp_get_local_verify_lsn(knl_session_t *session, page_id_t page_id)
+static uint64 rbp_get_local_verify_lsn(knl_session_t *session, page_id_t page_id, uint64 expect_lsn)
 {
     buf_ctrl_t *ctrl = NULL;
     uint64 local_lsn = 0;
@@ -2056,7 +2170,8 @@ static uint64 rbp_get_local_verify_lsn(knl_session_t *session, page_id_t page_id
     session->rbp_queue_index = saved_queue_index;
 
     ctrl = session->curr_page_ctrl;
-    if (ctrl != NULL && ctrl->page->lsn == OG_INVALID_LSN) {
+    if (ctrl != NULL && (ctrl->page->lsn == OG_INVALID_LSN ||
+                         (expect_lsn != 0 && PAGE_GET_LSN(ctrl->page) < expect_lsn))) {
         ctrl->rbp_ctrl->is_from_rbp = OG_FALSE;
         if (buf_load_page_from_disk(session, ctrl, page_id) != OG_SUCCESS) {
             OG_LOG_RUN_WAR("[RBP] verify failed to load local page %u-%u from disk", page_id.file, page_id.page);
@@ -2073,18 +2188,21 @@ static uint64 rbp_get_partial_verify_lsn(knl_session_t *session, rbp_partial_ite
 {
     buf_ctrl_t *ctrl = NULL;
     uint64 local_lsn = 0;
+    uint64 verify_lsn;
     uint8 saved_queue_index = session->rbp_queue_index;
 
     if (item == NULL || expect_lsn == 0) {
         return 0;
     }
+    verify_lsn = MAX(expect_lsn, dtc_rcy_rbp_partial_get_local_guard_lsn(item));
 
     session->rbp_queue_index = 1;
     buf_enter_page(session, item->page_id, LATCH_MODE_X, ENTER_PAGE_NO_READ);
     session->rbp_queue_index = saved_queue_index;
 
     ctrl = session->curr_page_ctrl;
-    if (ctrl != NULL && ctrl->page->lsn == OG_INVALID_LSN) {
+    if (ctrl != NULL && (ctrl->page->lsn == OG_INVALID_LSN ||
+                         PAGE_GET_LSN(ctrl->page) < verify_lsn)) {
         ctrl->rbp_ctrl->is_from_rbp = OG_FALSE;
         if (buf_load_page_from_disk(session, ctrl, item->page_id) != OG_SUCCESS) {
             OG_LOG_RUN_WAR("[RBP] partial verify failed to load local page %u-%u from disk",
@@ -2122,6 +2240,7 @@ static void rbp_verify_partial_skiped_redo_pages(knl_session_t *session, uint32 
         rbp_partial_item_t *item = dtc_rcy_rbp_partial_required_item(i);
         uint32 verify_node_id = OG_INVALID_ID32;
         uint64 expect_lsn;
+        uint64 local_guard_lsn;
         uint64 local_lsn = 0;
         bool32 verified;
 
@@ -2144,9 +2263,10 @@ static void rbp_verify_partial_skiped_redo_pages(knl_session_t *session, uint32 
             continue;
         }
         verified = item->verified;
-        if (!verified) {
+        local_guard_lsn = dtc_rcy_rbp_partial_get_local_guard_lsn(item);
+        if (!verified || local_guard_lsn != 0) {
             local_lsn = rbp_get_partial_verify_lsn(session, item, expect_lsn);
-            verified = (bool32)(local_lsn >= expect_lsn);
+            verified = (bool32)(local_lsn >= expect_lsn && local_lsn >= local_guard_lsn);
         }
         if (verified) {
             dtc_rcy_rbp_partial_mark_item_verified(item);
@@ -2276,6 +2396,9 @@ static void rbp_count_partial_page_status(rbp_read_apply_diag_t *diag, rbp_page_
         case RBP_PAGE_MISS:
             diag->miss++;
             break;
+        case RBP_PAGE_GUARDED:
+            diag->miss++;
+            break;
         default:
             diag->other_status++;
             break;
@@ -2294,6 +2417,12 @@ typedef struct st_rbp_partial_selected_baseline_decision {
     bool32 mark_verified;
     rbp_page_status_e status;
 } rbp_partial_selected_baseline_decision_t;
+
+static inline uint64 rbp_partial_selected_pulled_lsn(bool32 installed_from_rbp, uint64 rbp_page_lsn,
+    uint64 curr_page_lsn)
+{
+    return installed_from_rbp ? rbp_page_lsn : MAX(rbp_page_lsn, curr_page_lsn);
+}
 
 /*
 * Partial selected baseline: rbp_lsn <= expect_lsn is a RBP baseline for skipped redo, not an OLD/USABLE
@@ -2384,6 +2513,9 @@ static rbp_page_status_e rbp_partial_selected_baseline_apply(knl_session_t *sess
 
     if (decision.skip) {
         ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
+        if (decision.status == RBP_PAGE_HIT || decision.status == RBP_PAGE_USABLE) {
+            ctrl->rbp_ctrl->guard_lsn = 0;
+        }
         if (!decision.ahead && decision.mark_verified) {
             dtc_rcy_rbp_partial_mark_item_verified(item);
             if (verified_out != NULL) {
@@ -2414,8 +2546,12 @@ static rbp_page_status_e rbp_partial_selected_baseline_apply(knl_session_t *sess
     }
     ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
     ctrl->rbp_ctrl->page_status = decision.status;
+    if (decision.status == RBP_PAGE_HIT || decision.status == RBP_PAGE_USABLE) {
+        ctrl->rbp_ctrl->guard_lsn = 0;
+    }
     if (decision.mark_selected_pulled) {
-        dtc_rcy_rbp_partial_mark_selected_pulled(item, rbp_page_lsn);
+        uint64 pulled_lsn = rbp_partial_selected_pulled_lsn(replaced, rbp_page_lsn, curr_page_lsn);
+        dtc_rcy_rbp_partial_mark_selected_pulled(item, pulled_lsn);
     }
     if (decision.mark_verified) {
         dtc_rcy_rbp_partial_mark_item_verified(item);
@@ -2432,7 +2568,7 @@ static rbp_page_status_e rbp_partial_selected_baseline_apply(knl_session_t *sess
 }
 
 /*
-* Selected direct batch install: baseline decision only (no rbp_eval, no disk fallback on INVALID).
+* Selected direct batch install: baseline decision only; guarded RBP pages fall back to disk.
 */
 static rbp_page_status_e rbp_partial_selected_batch_install_page(knl_session_t *session, page_id_t page_id,
     rbp_page_item_t *rbp_page, rbp_partial_item_t *item, uint64 expect_lsn, uint64 rbp_page_lsn, uint32 *installed,
@@ -2442,21 +2578,41 @@ static rbp_page_status_e rbp_partial_selected_batch_install_page(knl_session_t *
     rbp_page_status_e page_status;
     dtc_session_type_e old_type;
     bool32 patched = OG_FALSE;
+    bool32 guarded;
     date_t step_begin;
+    uint64 guard_lsn = rbp_partial_effective_guard_lsn(item, rbp_page->guard_lsn);
+    guarded = rbp_page_block_stale_by_guard(rbp_page_lsn, guard_lsn);
+    if (guarded) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_selected_hit);
+        if (not_newer != NULL) {
+            *not_newer = OG_FALSE;
+        }
+        OG_LOG_DEBUG_INF("[RBP] selected batch page guarded: page=%u-%u rbp_lsn=%llu guard_lsn=%llu guard_pcn=%u",
+                         page_id.file, page_id.page, (uint64)rbp_page_lsn, (uint64)guard_lsn,
+                         (uint32)rbp_page->guard_pcn);
+    }
 
     rbp_partial_bg_identity_begin(session, &old_type, &patched);
 
     if (diag != NULL) {
         step_begin = cm_now();
     }
+    /* The response provides the page body, so avoid adding a disk read to every selected candidate. */
     buf_enter_page(session, page_id, LATCH_MODE_X, ENTER_PAGE_NO_READ);
     if (diag != NULL) {
         diag->enter_page_us += (uint64)(cm_now() - step_begin);
     }
 
     ctrl = session->curr_page_ctrl;
-    page_status = rbp_partial_selected_baseline_apply(session, ctrl, item, (page_head_t *)rbp_page->block, rbp_page_lsn,
-        expect_lsn, diag, installed, verified_out, not_newer);
+    if (guarded) {
+        page_status = rbp_partial_load_guarded_disk_page(session, ctrl, item, expect_lsn, guard_lsn);
+        if (page_status == RBP_PAGE_HIT && verified_out != NULL) {
+            (*verified_out)++;
+        }
+    } else {
+        page_status = rbp_partial_selected_baseline_apply(session, ctrl, item, (page_head_t *)rbp_page->block,
+            rbp_page_lsn, expect_lsn, diag, installed, verified_out, not_newer);
+    }
 
     if (diag != NULL) {
         step_begin = cm_now();
@@ -2486,13 +2642,26 @@ static rbp_page_status_e rbp_partial_batch_read_install_page(knl_session_t *sess
     dtc_session_type_e old_type;
     bool32 patched = OG_FALSE;
     bool32 installed_from_rbp = OG_FALSE;
+    bool32 guarded;
     date_t step_begin;
+    uint64 guard_lsn = rbp_partial_effective_guard_lsn(item, rbp_page->guard_lsn);
+    guarded = rbp_page_block_stale_by_guard(rbp_page_lsn, guard_lsn);
+    if (guarded) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_batch_hit);
+        if (not_newer != NULL) {
+            *not_newer = OG_FALSE;
+        }
+        OG_LOG_DEBUG_INF("[RBP] partial batch page guarded: page=%u-%u rbp_lsn=%llu guard_lsn=%llu guard_pcn=%u",
+                         page_id.file, page_id.page, (uint64)rbp_page_lsn, (uint64)guard_lsn,
+                         (uint32)rbp_page->guard_pcn);
+    }
 
     rbp_partial_bg_identity_begin(session, &old_type, &patched);
 
     if (diag != NULL) {
         step_begin = cm_now();
     }
+    /* The response provides the page body, so avoid adding a disk read to every batch candidate. */
     buf_enter_page(session, page_id, LATCH_MODE_X, ENTER_PAGE_NO_READ);
     if (diag != NULL) {
         diag->enter_page_us += (uint64)(cm_now() - step_begin);
@@ -2500,6 +2669,26 @@ static rbp_page_status_e rbp_partial_batch_read_install_page(knl_session_t *sess
 
     ctrl = session->curr_page_ctrl;
     curr_page_lsn = PAGE_GET_LSN(ctrl->page);
+    if (guarded) {
+        if (diag != NULL) {
+            step_begin = cm_now();
+        }
+        page_status = rbp_partial_load_guarded_disk_page(session, ctrl, item, expect_lsn, guard_lsn);
+        if (page_status == RBP_PAGE_HIT && verified_out != NULL) {
+            (*verified_out)++;
+        }
+        if (diag != NULL) {
+            diag->mark_us += (uint64)(cm_now() - step_begin);
+            step_begin = cm_now();
+        }
+        buf_leave_page(session, OG_FALSE);
+        if (diag != NULL) {
+            diag->leave_page_us += (uint64)(cm_now() - step_begin);
+        }
+
+        rbp_partial_bg_identity_end(session, old_type, patched);
+        return page_status;
+    }
     if (diag != NULL) {
         step_begin = cm_now();
     }
@@ -2545,7 +2734,8 @@ static rbp_page_status_e rbp_partial_batch_read_install_page(knl_session_t *sess
     }
     ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
     ctrl->rbp_ctrl->page_status = page_status;
-    dtc_rcy_rbp_partial_mark_selected_pulled(item, rbp_page_lsn);
+    dtc_rcy_rbp_partial_mark_selected_pulled(item,
+        rbp_partial_selected_pulled_lsn(installed_from_rbp, rbp_page_lsn, PAGE_GET_LSN(ctrl->page)));
     if (page_status == RBP_PAGE_HIT) {
         dtc_rcy_rbp_partial_mark_item_verified(item);
         if (verified_out != NULL) {
@@ -2687,20 +2877,7 @@ static void rbp_process_batch_read_resp(knl_session_t *session, rbp_batch_read_r
                        "same, panic info: rbp_page %u-%u, rbp_page block %u-%u", rbp_page->page_id.file,
                        rbp_page->page_id.page, page_id.file, page_id.page);
 
-#ifdef RBP_VERBOSE_TRACE
-        {
-            uint32 psz = DEFAULT_PAGE_SIZE(session);
-            page_head_t *bh = (page_head_t *)rbp_page->block;
-            uint16 cks = PAGE_CHECKSUM(rbp_page->block, psz);
-            cm_reset_error();
-            OG_LOG_RUN_INF("[RBP] BATCH_READ recv from RBP: page %u-%u item_lfn %llu rbp_lsn %llu pcn %u checksum "
-                            "0x%04x writer_inst %u | RBP-CORR fid=%u pn=%u seq=%llu lfn=%llu inst=%u",
-                            rbp_page->page_id.file, rbp_page->page_id.page, (uint64)rbp_page->rbp_lrp_point.lfn,
-                            bh->lsn, bh->pcn, (uint32)cks, rbp_page->writer_inst_id, rbp_page->page_id.file,
-                            rbp_page->page_id.page, bh->lsn, (uint64)rbp_page->rbp_lrp_point.lfn,
-                            rbp_page->writer_inst_id);
-        }
-#endif
+        bool32 guarded = rbp_page_block_stale_by_guard(PAGE_GET_LSN(rbp_page->block), rbp_page->guard_lsn);
 
         /* use ENTER_PAGE_NO_READ to indicate it will not load page from local disk */
         buf_enter_page(session, rbp_page->page_id, LATCH_MODE_X, ENTER_PAGE_NO_READ);
@@ -2708,7 +2885,22 @@ static void rbp_process_batch_read_resp(knl_session_t *session, rbp_batch_read_r
         rbp_page_lsn = PAGE_GET_LSN(rbp_page->block);
         curr_page_lsn = ctrl->page->lsn;
 
+        if (guarded) {
+            (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_batch_hit);
+            ctrl->rbp_ctrl->page_status = RBP_PAGE_GUARDED;
+            if (rbp_load_guarded_disk_page_ready(session, ctrl, page_id, rbp_page->guard_lsn,
+                "batch guarded fallback")) {
+                fallback_disk_cnt++;
+                ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
+            }
+            buf_leave_page(session, OG_FALSE);
+            continue;
+        }
+
         ctrl->rbp_ctrl->page_status = rbp_page_verify(session, page_id, rbp_page_lsn, curr_page_lsn);
+        if (ctrl->rbp_ctrl->page_status == RBP_PAGE_HIT || ctrl->rbp_ctrl->page_status == RBP_PAGE_USABLE) {
+            ctrl->rbp_ctrl->guard_lsn = 0;
+        }
 
         if ((rbp_page_lsn > curr_page_lsn) &&
             (ctrl->rbp_ctrl->page_status == RBP_PAGE_HIT || ctrl->rbp_ctrl->page_status == RBP_PAGE_USABLE)) {
@@ -2742,6 +2934,29 @@ static void rbp_process_batch_read_resp(knl_session_t *session, rbp_batch_read_r
         OG_LOG_RUN_INF("[RBP] BATCH_READ apply summary: resp_count=%u skipped=%u replaced=%u fallback_disk=%u "
                        "verify_before=%u verify_after=%u",
                        resp->count, skipped_cnt, replace_cnt, fallback_disk_cnt, verify_before, verify_after);
+    }
+}
+
+static void rbp_log_multi_guarded_fallback(knl_session_t *session, page_id_t page_id, uint64 rbp_lsn,
+                                           uint64 guard_lsn, uint64 disk_lsn)
+{
+    rbp_context_t *rbp_context = &session->kernel->rbp_context;
+    uint64 sample = (uint64)cm_atomic_inc(&rbp_context->rbp_read_multi_disk_fallback);
+    if (sample <= RBP_READ_SAMPLE_LIMIT) {
+        OG_LOG_RUN_INF("[RBP] multi guarded disk fallback sample[%llu/%u]: page=%u-%u rbp_lsn=%llu "
+                       "guard_lsn=%llu disk_lsn=%llu",
+                       sample, RBP_READ_SAMPLE_LIMIT, page_id.file, page_id.page, (uint64)rbp_lsn,
+                       (uint64)guard_lsn, (uint64)disk_lsn);
+    }
+}
+
+static void rbp_log_multi_disk_fallback(knl_session_t *session, page_id_t page_id)
+{
+    rbp_context_t *rbp_context = &session->kernel->rbp_context;
+    uint64 sample = (uint64)cm_atomic_inc(&rbp_context->rbp_read_multi_disk_fallback);
+    if (sample <= RBP_READ_SAMPLE_LIMIT) {
+        OG_LOG_RUN_INF("[RBP] multi disk fallback sample[%llu/%u]: page=%u-%u when RBP page is not installed",
+                       sample, RBP_READ_SAMPLE_LIMIT, page_id.file, page_id.page);
     }
 }
 
@@ -2785,12 +3000,30 @@ static void rbp_process_batch_read_resp_multi(knl_session_t *session, rbp_batch_
                       "same, panic info: rbp_page %u-%u, rbp_page block %u-%u", rbp_page->page_id.file,
                       rbp_page->page_id.page, page_id.file, page_id.page);
 
+        bool32 guarded = rbp_page_block_stale_by_guard(PAGE_GET_LSN(rbp_page->block), rbp_page->guard_lsn);
+        expect_lsn = rbp_get_item_expect_lsn(session, item);
+
         buf_enter_page(session, rbp_page->page_id, LATCH_MODE_X, ENTER_PAGE_NO_READ);
         ctrl = session->curr_page_ctrl;
         rbp_page_lsn = PAGE_GET_LSN(rbp_page->block);
         curr_page_lsn = ctrl->page->lsn;
-        expect_lsn = rbp_get_item_expect_lsn(session, item);
+        if (guarded) {
+            (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_batch_hit);
+            page_status = RBP_PAGE_GUARDED;
+            if (rbp_load_guarded_disk_page_ready(session, ctrl, page_id, rbp_page->guard_lsn,
+                "multi batch guarded fallback")) {
+                rbp_log_multi_guarded_fallback(session, page_id, rbp_page_lsn, rbp_page->guard_lsn,
+                                               PAGE_GET_LSN(ctrl->page));
+                ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
+            }
+            ctrl->rbp_ctrl->page_status = page_status;
+            buf_leave_page(session, OG_FALSE);
+            continue;
+        }
         page_status = rbp_eval_page_candidate(session, page_id, rbp_page_lsn, curr_page_lsn, expect_lsn, OG_TRUE);
+        if (page_status == RBP_PAGE_HIT || page_status == RBP_PAGE_USABLE) {
+            ctrl->rbp_ctrl->guard_lsn = 0;
+        }
         if (rbp_page_lsn > expect_lsn) {
             rbp_log_ahead_detail(session, page_id, source_node, rbp_page_lsn, item, expect_lsn);
         }
@@ -2811,19 +3044,12 @@ static void rbp_process_batch_read_resp_multi(knl_session_t *session, rbp_batch_
         }
 
         if (ctrl->page->lsn == OG_INVALID_LSN) {
-            rbp_context_t *rbp_context = &session->kernel->rbp_context;
-            uint64 sample;
-
             ctrl->rbp_ctrl->is_from_rbp = OG_FALSE;
             if (buf_load_page_from_disk(session, ctrl, page_id) != OG_SUCCESS) {
                 CM_ABORT(0, "[RBP] ABORT INFO: multi RBP background thread failed to load %u-%u from disk",
                         page_id.file, page_id.page);
             }
-            sample = (uint64)cm_atomic_inc(&rbp_context->rbp_read_multi_disk_fallback);
-            if (sample <= RBP_READ_SAMPLE_LIMIT) {
-                OG_LOG_RUN_INF("[RBP] multi disk fallback sample[%llu/%u]: page=%u-%u when RBP page is not installed",
-                               sample, RBP_READ_SAMPLE_LIMIT, page_id.file, page_id.page);
-            }
+            rbp_log_multi_disk_fallback(session, page_id);
         }
 
         ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
@@ -3052,22 +3278,12 @@ static rbp_latch_result_t rbp_buf_latch_timed_s(knl_session_t *session, buf_ctrl
 }
 
 static rbp_latch_result_t rbp_try_buf_latch_ctrl_bounded(knl_session_t *session, thread_t *thread, buf_ctrl_t *ctrl,
-                                                        bool32 wait_readonly, rbp_assemble_diag_t *diag)
+                                                        bool32 wait_readonly)
 {
-    uint64 step_begin;
-    uint64 step_us;
     uint32 wait_ticks = 0;
-    bool32 wait_by_readonly;
-    bool32 wait_by_need_load;
     rbp_latch_result_t result;
 
-    if (diag != NULL) {
-        step_begin = g_timer()->now;
-    }
     result = rbp_buf_latch_timed_s(session, ctrl);
-    if (diag != NULL) {
-        diag->first_latch_us += (uint64)(g_timer()->now - step_begin);
-    }
     if (result != RBP_LATCH_OK) {
         return result;
     }
@@ -3078,41 +3294,18 @@ static rbp_latch_result_t rbp_try_buf_latch_ctrl_bounded(knl_session_t *session,
     * queue frontier is still pinned by this item until it is sent or reset.
     */
     while ((wait_readonly && ctrl->is_readonly) || ctrl->load_status == BUF_NEED_LOAD) {
-        wait_by_readonly = (bool32)(wait_readonly && ctrl->is_readonly);
-        wait_by_need_load = (bool32)(ctrl->load_status == BUF_NEED_LOAD);
         buf_unlatch(session, ctrl, OG_FALSE);
         if (wait_ticks >= RBP_SEND_LATCH_WAIT) {
             return RBP_LATCH_BUSY;
         }
 
-        if (diag != NULL) {
-            step_begin = g_timer()->now;
-        }
         cm_spin_sleep();
-        if (diag != NULL) {
-            step_us = (uint64)(g_timer()->now - step_begin);
-            if (wait_by_readonly) {
-                diag->readonly_wait_us += step_us;
-                diag->readonly_wait_count++;
-            }
-            if (wait_by_need_load) {
-                diag->need_load_wait_us += step_us;
-                diag->need_load_wait_count++;
-            }
-        }
         wait_ticks++;
         if (session->killed || thread->closed) {
             return RBP_LATCH_ERROR;
         }
 
-        if (diag != NULL) {
-            step_begin = g_timer()->now;
-        }
         result = rbp_buf_latch_timed_s(session, ctrl);
-        if (diag != NULL) {
-            diag->retry_latch_us += (uint64)(g_timer()->now - step_begin);
-            diag->retry_latch_count++;
-        }
         if (result != RBP_LATCH_OK) {
             return result;
         }
@@ -3184,12 +3377,6 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
     while (item != NULL && !session->killed && !thread->closed) {
         scan_num++;
         if (item->source == RBP_QUEUE_ITEM_DROPPED) {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_WAR("[RBP_ENQ_TRACE] drop queued item before PAGE_WRITE: reason=dropped_marker "
-                           "queue=%u page=%u-%u gap_end_lfn=%llu scanned=%u remaining=%u",
-                           rbp_queue->id, item->page_id.file, item->page_id.page,
-                           (uint64)gap_end_point.lfn, scan_num, rbp_queue->count);
-#endif
             item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
             rbp_free_queue_item(session, item);
             item = item_next;
@@ -3199,15 +3386,6 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
 
         if (item->source == RBP_QUEUE_ITEM_SNAPSHOT) {
             if (item->snapshot->lastest_lfn < gap_end_point.lfn) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_DEBUG_WAR("[RBP_ENQ_TRACE] drop snapshot before PAGE_WRITE: reason=gap_reset "
-                               "queue=%u page=%u-%u gap_end_lfn=%llu item_trunc_lfn=%llu "
-                               "lastest_lfn=%llu page_lsn=%llu scanned=%u remaining=%u",
-                               rbp_queue->id, item->snapshot->page_id.file, item->snapshot->page_id.page,
-                               (uint64)gap_end_point.lfn, (uint64)item->snapshot->rbp_trunc_point.lfn,
-                               (uint64)item->snapshot->lastest_lfn, (uint64)item->snapshot->writer_global_seq,
-                               scan_num, rbp_queue->count);
-#endif
                 item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
                 rbp_free_queue_item(session, item);
                 item = item_next;
@@ -3215,14 +3393,6 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
                 continue;
             }
             if (LOG_LFN_LT(item->snapshot->rbp_trunc_point, gap_end_point)) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_WAR("[RBP] trim snapshot gap item interval: queue=%u page=%u-%u "
-                               "old_trunc_lfn=%llu new_trunc_lfn=%llu lastest_lfn=%llu page_lsn=%llu",
-                               rbp_queue->id, item->snapshot->page_id.file, item->snapshot->page_id.page,
-                               (uint64)item->snapshot->rbp_trunc_point.lfn,
-                               (uint64)gap_end_point.lfn, (uint64)item->snapshot->lastest_lfn,
-                               (uint64)item->snapshot->writer_global_seq);
-#endif
                 item->snapshot->rbp_trunc_point = gap_end_point;
                 trim_num++;
             }
@@ -3240,7 +3410,7 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
             remove_num++;
             continue;
         }
-        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE, NULL);
+        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE);
         if (latch_result != RBP_LATCH_OK) {
             latch_fail_num++;
             keep_num++;
@@ -3249,15 +3419,6 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
         }
 
         if (ctrl->lastest_lfn < gap_end_point.lfn) {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_WAR("[RBP_ENQ_TRACE] drop live item before PAGE_WRITE: reason=gap_reset "
-                           "queue=%u page=%u-%u gap_end_lfn=%llu item_trunc_lfn=%llu lastest_lfn=%llu "
-                           "page_lsn=%llu page_pcn=%u page_status=%u scanned=%u remaining=%u",
-                           rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page, (uint64)gap_end_point.lfn,
-                           (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)ctrl->lastest_lfn,
-                           (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn,
-                           (uint32)ctrl->rbp_ctrl->page_status, scan_num, rbp_queue->count);
-#endif
             item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
             rbp_clear_ctrl_pending(ctrl, item, "gap_reset", 0, gap_end_point.lfn);
             buf_unlatch(session, ctrl, OG_FALSE);
@@ -3266,14 +3427,6 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
             remove_num++;
         } else {
             if (LOG_LFN_LT(ctrl->rbp_ctrl->rbp_trunc_point, gap_end_point)) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_WAR("[RBP] trim live gap item interval: queue=%u page=%u-%u "
-                               "old_trunc_lfn=%llu new_trunc_lfn=%llu lastest_lfn=%llu page_lsn=%llu page_status=%u",
-                               rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page,
-                               (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                               (uint64)gap_end_point.lfn, (uint64)ctrl->lastest_lfn,
-                               (uint64)ctrl->page->lsn, (uint32)ctrl->rbp_ctrl->page_status);
-#endif
                 ctrl->rbp_ctrl->rbp_trunc_point = gap_end_point;
                 trim_num++;
             }
@@ -3293,9 +3446,9 @@ static uint32 rbp_queue_remove_gap_pages(knl_session_t *session, thread_t *threa
                        latch_fail_num, (uint32)*deferred, rbp_queue->count);
     } else if (latch_fail_num > 0) {
         OG_LOG_DEBUG_INF("[RBP] gap cleanup deferred: queue=%u gap_end_lfn=%llu scanned=%u kept=%u "
-                        "latch_fail=%u remaining=%u",
-                        rbp_queue->id, (uint64)gap_end_point.lfn, scan_num, keep_num, latch_fail_num,
-                        rbp_queue->count);
+                         "latch_fail=%u remaining=%u",
+                         rbp_queue->id, (uint64)gap_end_point.lfn, scan_num, keep_num, latch_fail_num,
+                         rbp_queue->count);
     }
     return remove_num;
 }
@@ -3328,12 +3481,6 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
     while (item != NULL && !session->killed && !thread->closed) {
         scan_num++;
         if (item->source == RBP_QUEUE_ITEM_DROPPED) {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_WAR("[RBP_ENQ_TRACE] drop queued item before PAGE_WRITE: reason=ckpt_reset_dropped_marker "
-                           "queue=%u page=%u-%u reset_lfn=%llu scanned=%u remaining=%u",
-                           rbp_queue->id, item->page_id.file, item->page_id.page,
-                           (uint64)reset_point.lfn, scan_num, rbp_queue->count);
-#endif
             item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
             rbp_free_queue_item(session, item);
             item = item_next;
@@ -3343,15 +3490,6 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
 
         if (item->source == RBP_QUEUE_ITEM_SNAPSHOT) {
             if (item->snapshot->lastest_lfn < reset_point.lfn) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_DEBUG_INF("[RBP_ENQ_TRACE] drop snapshot before PAGE_WRITE: reason=ckpt_reset "
-                               "queue=%u page=%u-%u reset_lfn=%llu item_trunc_lfn=%llu "
-                               "lastest_lfn=%llu page_lsn=%llu scanned=%u remaining=%u",
-                               rbp_queue->id, item->snapshot->page_id.file, item->snapshot->page_id.page,
-                               (uint64)reset_point.lfn, (uint64)item->snapshot->rbp_trunc_point.lfn,
-                               (uint64)item->snapshot->lastest_lfn, (uint64)item->snapshot->writer_global_seq,
-                               scan_num, rbp_queue->count);
-#endif
                 item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
                 rbp_free_queue_item(session, item);
                 item = item_next;
@@ -3359,14 +3497,6 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
                 continue;
             }
             if (LOG_LFN_LT(item->snapshot->rbp_trunc_point, reset_point)) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[RBP] trim snapshot ckpt item interval: queue=%u page=%u-%u "
-                               "old_trunc_lfn=%llu new_trunc_lfn=%llu lastest_lfn=%llu page_lsn=%llu",
-                               rbp_queue->id, item->snapshot->page_id.file, item->snapshot->page_id.page,
-                               (uint64)item->snapshot->rbp_trunc_point.lfn,
-                               (uint64)reset_point.lfn, (uint64)item->snapshot->lastest_lfn,
-                               (uint64)item->snapshot->writer_global_seq);
-#endif
                 item->snapshot->rbp_trunc_point = reset_point;
                 trim_num++;
             }
@@ -3384,7 +3514,7 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
             remove_num++;
             continue;
         }
-        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE, NULL);
+        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE);
         if (latch_result != RBP_LATCH_OK) {
             latch_fail_num++;
             keep_num++;
@@ -3393,15 +3523,6 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
         }
 
         if (ctrl->lastest_lfn < reset_point.lfn) {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_INF("[RBP_ENQ_TRACE] drop live item before PAGE_WRITE: reason=ckpt_reset "
-                           "queue=%u page=%u-%u reset_lfn=%llu item_trunc_lfn=%llu lastest_lfn=%llu "
-                           "page_lsn=%llu page_pcn=%u page_status=%u scanned=%u remaining=%u",
-                           rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page, (uint64)reset_point.lfn,
-                           (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)ctrl->lastest_lfn,
-                           (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn,
-                           (uint32)ctrl->rbp_ctrl->page_status, scan_num, rbp_queue->count);
-#endif
             item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
             rbp_clear_ctrl_pending(ctrl, item, "ckpt_reset", reset_point.lfn, 0);
             buf_unlatch(session, ctrl, OG_FALSE);
@@ -3410,14 +3531,6 @@ static uint32 rbp_queue_remove_ckpt_covered_pages(knl_session_t *session, thread
             remove_num++;
         } else {
             if (LOG_LFN_LT(ctrl->rbp_ctrl->rbp_trunc_point, reset_point)) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[RBP] trim live ckpt item interval: queue=%u page=%u-%u "
-                               "old_trunc_lfn=%llu new_trunc_lfn=%llu lastest_lfn=%llu page_lsn=%llu page_status=%u",
-                               rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page,
-                               (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                               (uint64)reset_point.lfn, (uint64)ctrl->lastest_lfn,
-                               (uint64)ctrl->page->lsn, (uint32)ctrl->rbp_ctrl->page_status);
-#endif
                 ctrl->rbp_ctrl->rbp_trunc_point = reset_point;
                 trim_num++;
             }
@@ -3486,9 +3599,22 @@ static log_point_t rbp_queue_get_frontier(knl_session_t *session, rbp_queue_t *r
     return frontier;
 }
 
+static log_point_t rbp_queue_get_write_frontier(knl_session_t *session, rbp_queue_t *rbp_queue,
+                                                log_point_t gap_fallback)
+{
+    log_point_t frontier;
+
+    cm_spin_lock(&rbp_queue->lock, &session->stat->spin_stat.stat_rbp_queue);
+    frontier = (rbp_queue->first == NULL) ? rbp_queue->trunc_point :
+               rbp_queue_item_trunc_point(rbp_queue->first, gap_fallback);
+    cm_spin_unlock(&rbp_queue->lock);
+    return frontier;
+}
+
 /* copy 100 dirty pages to write request, record pages max lsn and max lastest lfn */
 static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread, rbp_write_req_t *request,
-                                        rbp_queue_t *rbp_queue, uint64 *max_lsn, uint64 *max_lfn,
+                                        rbp_queue_t *rbp_queue, log_point_t *request_frontier,
+                                        uint64 *max_lsn, uint64 *max_lfn,
                                         rbp_assemble_diag_t *diag)
 {
     rbp_queue_item_t *item = rbp_queue->first;
@@ -3502,22 +3628,14 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
     uint32 dropped_num = 0;
     uint32 busy_num = 0;
     uint32 scanned = 0;
-#if RBP_PAGE_WRITE_HOT_DIAG
-    uint64 item_begin;
-    uint64 step_begin;
-    uint64 item_us;
-    page_id_t diag_page;
-    uint32 diag_source;
-    uint32 diag_load_status;
-    uint32 diag_is_readonly;
-    uint32 diag_latch_stat;
-#endif
+    log_point_t last_safe_frontier = rbp_queue->trunc_point;
     errno_t ret;
     rbp_latch_result_t latch_result;
     uint32 max_scan = rbp_get_assemble_max_scan(session);
     if (diag != NULL) {
         diag->max_scan = max_scan;
     }
+    *request_frontier = last_safe_frontier;
 
     while (item != NULL && pop_num < RBP_BATCH_PAGE_NUM && !session->killed && !thread->closed) {
         scanned++;
@@ -3527,55 +3645,14 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
         if (diag != NULL) {
             diag->scanned = scanned;
         }
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            item_begin = g_timer()->now;
-        }
-#endif
-#if RBP_PAGE_WRITE_HOT_DIAG
-        diag_page = item->page_id;
-        diag_source = (uint32)item->source;
-        diag_load_status = 0;
-        diag_is_readonly = 0;
-        diag_latch_stat = 0;
-#endif
         if (item->source == RBP_QUEUE_ITEM_DROPPED) {
             rbp_queue->has_gap = OG_TRUE;
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_WAR("[RBP_ENQ_TRACE] drop queued item before PAGE_WRITE: reason=assemble_dropped_marker "
-                           "queue=%u page=%u-%u queued_pages=%u popped=%u",
-                           rbp_queue->id, item->page_id.file, item->page_id.page, rbp_queue->count, pop_num);
-#endif
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                step_begin = g_timer()->now;
-            }
-#endif
-            item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->pop_us += (uint64)(g_timer()->now - step_begin);
-                step_begin = g_timer()->now;
-            }
-#endif
-            rbp_free_queue_item(session, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->free_us += (uint64)(g_timer()->now - step_begin);
-                item_us = (uint64)(g_timer()->now - item_begin);
-                rbp_assemble_diag_update_max_detail(diag, item_us, diag_page, diag_source, diag_load_status,
-                                                    diag_is_readonly, diag_latch_stat);
-            }
-#endif
-            item = item_next;
             dropped_num++;
-            continue;
+            /* Leave the marker for GAP cleanup; it is the local continuity barrier. */
+            break;
         }
 
         if (item->source == RBP_QUEUE_ITEM_SNAPSHOT) {
-#if RBP_PAGE_WRITE_HOT_DIAG
-            diag_page = item->snapshot->page_id;
-#endif
             page_item = &request->pages[pop_num];
             page_item->page_id = item->snapshot->page_id;
             page_item->session_id = 0;
@@ -3584,53 +3661,21 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
             page_item->rbp_trunc_point = item->snapshot->rbp_trunc_point;
             page_item->rbp_lrp_point = (log_point_t){ 0 };
             page_item->rbp_lrp_point.lfn = item->snapshot->lastest_lfn;
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                step_begin = g_timer()->now;
-            }
-#endif
+            page_item->guard_lsn = 0;
+            page_item->guard_pcn = 0;
+            page_item->reserved = 0;
             ret = memcpy_sp(page_item->block, DEFAULT_PAGE_SIZE(session), item->snapshot->block,
                             DEFAULT_PAGE_SIZE(session));
             knl_securec_check(ret);
             PAGE_CHECKSUM(page_item->block, DEFAULT_PAGE_SIZE(session)) = OG_INVALID_CHECKSUM;
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->copy_us += (uint64)(g_timer()->now - step_begin);
-            }
-#endif
 
-            /* Batch frontier is filled after assemble from the current queue.first. */
+            last_safe_frontier = item->snapshot->rbp_trunc_point;
             *max_lsn = MAX(*max_lsn, item->snapshot->writer_global_seq);
             *max_lfn = MAX(*max_lfn, item->snapshot->lastest_lfn);
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_INF("[RBP] PAGE_WRITE snapshot payload: queue=%u page=%u-%u lfn=%llu lsn=%llu",
-                            rbp_queue->id, page_item->page_id.file, page_item->page_id.page,
-                            (uint64)item->snapshot->lastest_lfn, (uint64)item->snapshot->writer_global_seq);
-#endif
-
             pop_num++;
             snapshot_num++;
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                step_begin = g_timer()->now;
-            }
-#endif
             item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->pop_us += (uint64)(g_timer()->now - step_begin);
-                step_begin = g_timer()->now;
-            }
-#endif
             rbp_free_queue_item(session, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->free_us += (uint64)(g_timer()->now - step_begin);
-                item_us = (uint64)(g_timer()->now - item_begin);
-                rbp_assemble_diag_update_max_detail(diag, item_us, diag_page, diag_source, diag_load_status,
-                                                    diag_is_readonly, diag_latch_stat);
-            }
-#endif
             item = item_next;
             continue;
         }
@@ -3638,58 +3683,12 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
         ctrl = item->ctrl;
         if (ctrl == NULL || ctrl->rbp_ctrl == NULL) {
             rbp_queue->has_gap = OG_TRUE;
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                step_begin = g_timer()->now;
-            }
-#endif
-            item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->pop_us += (uint64)(g_timer()->now - step_begin);
-                step_begin = g_timer()->now;
-            }
-#endif
-            rbp_free_queue_item(session, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                diag->free_us += (uint64)(g_timer()->now - step_begin);
-                item_us = (uint64)(g_timer()->now - item_begin);
-                rbp_assemble_diag_update_max_detail(diag, item_us, diag_page, diag_source, diag_load_status,
-                                                    diag_is_readonly, diag_latch_stat);
-            }
-#endif
-            item = item_next;
             dropped_num++;
-            continue;
+            /* Invalid live items are removed only by GAP cleanup together with the remote RESET. */
+            break;
         }
-#if RBP_PAGE_WRITE_HOT_DIAG
-        diag_page = ctrl->page_id;
-        if (diag != NULL) {
-            step_begin = g_timer()->now;
-        }
-        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE, diag);
-#else
-        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE, NULL);
-#endif
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            diag->latch_us += (uint64)(g_timer()->now - step_begin);
-        }
-#endif
-#if RBP_PAGE_WRITE_HOT_DIAG
-        diag_load_status = (uint32)ctrl->load_status;
-        diag_is_readonly = (uint32)ctrl->is_readonly;
-        diag_latch_stat = (uint32)ctrl->latch.stat;
-#endif
+        latch_result = rbp_try_buf_latch_ctrl_bounded(session, thread, ctrl, OG_TRUE);
         if (latch_result == RBP_LATCH_BUSY) {
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (diag != NULL) {
-                item_us = (uint64)(g_timer()->now - item_begin);
-                rbp_assemble_diag_update_max_detail(diag, item_us, diag_page, diag_source, diag_load_status,
-                                                    diag_is_readonly, diag_latch_stat);
-            }
-#endif
             busy_num++;
             prev = item;
             item = item->next;
@@ -3697,26 +3696,18 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
         }
         if (latch_result != RBP_LATCH_OK) {
             rbp_queue->has_gap = OG_TRUE;
-            OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] SEND_PICK_LIVE_FAIL reason=latch_failed queue=%u page=%u-%u "
-                            "ctrl=%p item=%p lastest_lfn=%llu item_trunc_lfn=%llu queued_pages=%u popped=%u "
-                            "gap_end_lfn=%llu",
-                            rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl, (void *)item,
-                            (uint64)ctrl->lastest_lfn, (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                            rbp_queue->count, pop_num, (uint64)session->kernel->redo_ctx.curr_point.lfn);
             OG_LOG_DEBUG_INF("[RBP] set gap while assembling PAGE_WRITE: queue=%u page=%u-%u "
                             "reason=try_buf_latch_failed queued_pages=%u popped=%u trunc_lfn=%llu lastest_lfn=%llu",
                             rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page, rbp_queue->count, pop_num,
                             (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)ctrl->lastest_lfn);
             if (diag != NULL) {
-#if RBP_PAGE_WRITE_HOT_DIAG
-                item_us = (uint64)(g_timer()->now - item_begin);
-                rbp_assemble_diag_update_max_detail(diag, item_us, diag_page, diag_source, diag_load_status,
-                                                    diag_is_readonly, diag_latch_stat);
-#endif
                 diag->live_num = live_num;
                 diag->snapshot_num = snapshot_num;
                 diag->dropped_num = dropped_num;
                 diag->busy_num = busy_num;
+            }
+            if (pop_num > 0) {
+                *request_frontier = rbp_queue_get_write_frontier(session, rbp_queue, last_safe_frontier);
             }
             request->page_num = pop_num;
             request->page_num_tail = pop_num;
@@ -3742,72 +3733,33 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
         /* Keep latest_lfn until rbp_wait_redo_visible; wire lrp is overwritten by batch_lrp_point. */
         page_item->rbp_lrp_point = (log_point_t){ 0 };
         page_item->rbp_lrp_point.lfn = ctrl->lastest_lfn;
-        OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] SEND_PICK_LIVE queue=%u page=%u-%u ctrl=%p item=%p "
-                        "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu queue_count=%u "
-                        "popped=%u page_status=%u",
-                        rbp_queue->id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl, (void *)item,
-                        (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                        (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, rbp_queue->count, pop_num,
-                        (uint32)ctrl->rbp_ctrl->page_status);
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            step_begin = g_timer()->now;
-        }
-#endif
+        page_item->guard_lsn = 0;
+        page_item->guard_pcn = 0;
+        page_item->reserved = 0;
         ret = memcpy_sp(page_item->block, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
         knl_securec_check(ret);
-#ifdef RBP_VERBOSE_TRACE
-        {
-            uint32 psz = DEFAULT_PAGE_SIZE(session);
-            uint16 pre_wire_cks = PAGE_CHECKSUM(page_item->block, psz);
-            cm_reset_error();
-            OG_LOG_RUN_INF("[RBP] PAGE_WRITE payload (pre-wire): page %u-%u lfn %llu lsn %llu pcn %u checksum 0x%04x "
-                           "inst %u | RBP-CORR fid=%u pn=%u seq=%llu lfn=%llu inst=%u",
-                           ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->lastest_lfn, (uint64)ctrl->page->lsn,
-                           ctrl->page->pcn, (uint32)pre_wire_cks, (uint32)session->kernel->id, ctrl->page_id.file,
-                           ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
-                           (uint32)session->kernel->id);
-        }
-#endif
         PAGE_CHECKSUM(page_item->block, DEFAULT_PAGE_SIZE(session)) = OG_INVALID_CHECKSUM; // set checksum to 0
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            diag->copy_us += (uint64)(g_timer()->now - step_begin);
-        }
-#endif
         pop_num++;
 
-        /* Batch frontier is filled after assemble from the current queue.first. */
+        last_safe_frontier = ctrl->rbp_ctrl->rbp_trunc_point;
         *max_lsn = MAX(*max_lsn, ctrl->page->lsn);
         *max_lfn = MAX(*max_lfn, ctrl->lastest_lfn);
 
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            step_begin = g_timer()->now;
-        }
-#endif
         item_next = rbp_remove_queue_item(session, rbp_queue, prev, item);
         rbp_clear_ctrl_pending(ctrl, item, "sent", 0, 0);
         buf_unlatch(session, ctrl, OG_FALSE);
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            diag->pop_us += (uint64)(g_timer()->now - step_begin);
-            step_begin = g_timer()->now;
-        }
-#endif
         rbp_free_queue_item(session, item);
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (diag != NULL) {
-            diag->free_us += (uint64)(g_timer()->now - step_begin);
-            item_us = (uint64)(g_timer()->now - item_begin);
-            rbp_assemble_diag_update_max_detail(diag, item_us, diag_page, diag_source, diag_load_status,
-                                                diag_is_readonly, diag_latch_stat);
-        }
-#endif
         item = item_next;
         live_num++;
     }
 
+    /*
+    * The next queue item may be a gap marker that has no trunc point and was not scanned because the batch was full.
+    * Keep the normal queue.first frontier; only a marker/invalid item falls back to the last assembled page.
+    */
+    if (pop_num > 0) {
+        *request_frontier = rbp_queue_get_write_frontier(session, rbp_queue, last_safe_frontier);
+    }
     request->page_num = pop_num;
     request->page_num_tail = pop_num;
     if (diag != NULL) {
@@ -3833,12 +3785,8 @@ static void rbp_assemble_write_request(knl_session_t *session, thread_t *thread,
         snapshot_fail_total = rbp_ctx->snapshot_alloc_fail_total;
         cm_spin_unlock(&rbp_ctx->snapshot_lock);
 
-#ifdef RBP_VERBOSE_TRACE
-        log_snapshot_summary = OG_TRUE;
-#else
         log_snapshot_summary = (bool32)(dropped_num > 0 || snapshot_free_count == 0 ||
                                         snapshot_free_count < RBP_BATCH_PAGE_NUM || snapshot_fail_total > 0);
-#endif
         if (log_snapshot_summary) {
             OG_LOG_RUN_INF("[RBP] PAGE_WRITE assemble snapshot summary: queue=%u live=%u snapshot=%u dropped=%u "
                            "request_pages=%u queue_remaining=%u has_gap=%u snapshot_free=%u low_watermark=%u "
@@ -3949,54 +3897,81 @@ status_t rbp_wait_redo_visible(knl_session_t *session, thread_t *thread, uint64 
     return OG_SUCCESS;
 }
 
+static uint32 rbp_remove_gap_pages(knl_session_t *session, thread_t *thread, rbp_queue_t *rbp_queue,
+                                   log_point_t *gap_end_point, bool32 *cleanup_deferred)
+{
+    log_context_t *redo_ctx = &session->kernel->redo_ctx;
+    uint32 removed = 0;
+    bool32 has_gap = OG_TRUE;
+
+    *cleanup_deferred = OG_FALSE;
+    while (has_gap) {
+        cm_spin_lock(&rbp_queue->lock, &session->stat->spin_stat.stat_rbp_queue);
+        if (!rbp_queue->has_gap) {
+            cm_spin_unlock(&rbp_queue->lock);
+            has_gap = OG_FALSE;
+            continue;
+        }
+        rbp_queue->has_gap = OG_FALSE;
+        cm_spin_unlock(&rbp_queue->lock);
+
+        *gap_end_point = redo_ctx->curr_point;
+        removed += rbp_queue_remove_gap_pages(session, thread, rbp_queue, *gap_end_point, cleanup_deferred);
+        if (*cleanup_deferred) {
+            cm_spin_lock(&rbp_queue->lock, &session->stat->spin_stat.stat_rbp_queue);
+            rbp_queue->has_gap = OG_TRUE;
+            cm_spin_unlock(&rbp_queue->lock);
+            OG_LOG_DEBUG_INF("[RBP] defer PAGE_WRITE gap reset for unstable page: queue=%u gap_end_lfn=%llu "
+                             "remaining=%u",
+                             rbp_queue->id, (uint64)gap_end_point->lfn, rbp_queue->count);
+            return removed;
+        }
+    }
+    return removed;
+}
+
 /* if has gap, remove pages and just update begin_point, lrp_point */
 static bool32 rbp_knl_reset_queue(knl_session_t *session, thread_t *thread, rbp_write_req_t *request,
                                   rbp_queue_t *rbp_queue)
 {
-    log_context_t *redo_ctx = &session->kernel->redo_ctx;
     uint32 throw_num = request->page_num;
     log_point_t frontier_point;
+    log_point_t gap_end_point = { 0, 0, 0, 0 };
     bool32 cleanup_deferred = OG_FALSE;
 
-    while (rbp_queue->has_gap) {
-        rbp_queue->has_gap = OG_FALSE;
-        throw_num += rbp_queue_remove_gap_pages(session, thread, rbp_queue, redo_ctx->curr_point, &cleanup_deferred);
-        if (cleanup_deferred) {
-            rbp_queue->has_gap = OG_TRUE;
-            OG_LOG_DEBUG_INF("[RBP] defer PAGE_WRITE gap reset for unstable readonly page: queue=%u "
-                            "gap_end_lfn=%llu remaining=%u",
-                            rbp_queue->id, (uint64)redo_ctx->curr_point.lfn, rbp_queue->count);
-            return OG_FALSE;
-        }
+    throw_num += rbp_remove_gap_pages(session, thread, rbp_queue, &gap_end_point, &cleanup_deferred);
+    if (cleanup_deferred) {
+        return OG_FALSE;
     }
 
     request->page_num = 0;
     request->page_num_tail = 0;
 
-    /* we read curr_point without lock */
-    request->batch_begin_point = redo_ctx->curr_point;
+    request->batch_begin_point = gap_end_point;
+    /* GAP contracts an LFN window; it is not a disk-safe guard cleanup point. */
+    request->batch_begin_point.lsn = 0;
     request->batch_lrp_point = request->batch_begin_point;
     frontier_point = rbp_queue_get_frontier(session, rbp_queue);
     request->batch_trunc_point = rbp_max_log_point(request->batch_begin_point, frontier_point);
-    OG_LOG_RUN_WAR("[RBP] queue id %u, throw %u gap pages and send PAGE_WRITE reset: "
-                   "reset_point=[%u-%u/%u/%llu/%llu] frontier=[%u-%u/%u/%llu/%llu] remaining_queue_pages=%u",
-                   rbp_queue->id, throw_num, request->batch_begin_point.rst_id, request->batch_begin_point.asn,
-                   request->batch_begin_point.block_id, (uint64)request->batch_begin_point.lfn,
-                   (uint64)request->batch_begin_point.lsn, request->batch_trunc_point.rst_id,
-                   request->batch_trunc_point.asn, request->batch_trunc_point.block_id,
-                   (uint64)request->batch_trunc_point.lfn, (uint64)request->batch_trunc_point.lsn,
-                   rbp_queue->count);
-    return OG_TRUE;
-}
-
-static void rbp_restore_ckpt_reset(rbp_queue_t *rbp_queue, log_point_t *reset_point)
-{
-    cm_spin_lock(&rbp_queue->lock, NULL);
-    if (!rbp_queue->has_ckpt_reset || log_cmp_point(&rbp_queue->ckpt_reset_point, reset_point) < 0) {
-        rbp_queue->ckpt_reset_point = *reset_point;
+    if (throw_num > 0 || rbp_queue->count > 0) {
+        OG_LOG_RUN_WAR("[RBP] queue id %u, throw %u gap pages and send PAGE_WRITE reset: "
+                       "reset_point=[%u-%u/%u/%llu/%llu] frontier=[%u-%u/%u/%llu/%llu] remaining_queue_pages=%u",
+                       rbp_queue->id, throw_num, request->batch_begin_point.rst_id, request->batch_begin_point.asn,
+                       request->batch_begin_point.block_id, (uint64)request->batch_begin_point.lfn,
+                       (uint64)request->batch_begin_point.lsn, request->batch_trunc_point.rst_id,
+                       request->batch_trunc_point.asn, request->batch_trunc_point.block_id,
+                       (uint64)request->batch_trunc_point.lfn, (uint64)request->batch_trunc_point.lsn,
+                       rbp_queue->count);
+    } else {
+        OG_LOG_DEBUG_INF("[RBP] queue id %u, send empty PAGE_WRITE reset: "
+                         "reset_point=[%u-%u/%u/%llu/%llu] frontier=[%u-%u/%u/%llu/%llu]",
+                         rbp_queue->id, request->batch_begin_point.rst_id, request->batch_begin_point.asn,
+                         request->batch_begin_point.block_id, (uint64)request->batch_begin_point.lfn,
+                         (uint64)request->batch_begin_point.lsn, request->batch_trunc_point.rst_id,
+                         request->batch_trunc_point.asn, request->batch_trunc_point.block_id,
+                         (uint64)request->batch_trunc_point.lfn, (uint64)request->batch_trunc_point.lsn);
     }
-    rbp_queue->has_ckpt_reset = OG_TRUE;
-    cm_spin_unlock(&rbp_queue->lock);
+    return OG_TRUE;
 }
 
 static bool32 rbp_take_ckpt_reset(rbp_queue_t *rbp_queue, log_point_t *reset_point)
@@ -4015,6 +3990,16 @@ static bool32 rbp_take_ckpt_reset(rbp_queue_t *rbp_queue, log_point_t *reset_poi
     rbp_queue->has_ckpt_reset = OG_FALSE;
     cm_spin_unlock(&rbp_queue->lock);
     return OG_TRUE;
+}
+
+static void rbp_restore_ckpt_reset(knl_session_t *session, rbp_queue_t *rbp_queue, log_point_t *reset_point)
+{
+    cm_spin_lock(&rbp_queue->lock, &session->stat->spin_stat.stat_rbp_queue);
+    if (!rbp_queue->has_ckpt_reset || log_cmp_point(&rbp_queue->ckpt_reset_point, reset_point) < 0) {
+        rbp_queue->ckpt_reset_point = *reset_point;
+    }
+    rbp_queue->has_ckpt_reset = OG_TRUE;
+    cm_spin_unlock(&rbp_queue->lock);
 }
 
 static void rbp_prepare_ckpt_reset_request(knl_session_t *session, rbp_write_req_t *request, rbp_queue_t *rbp_queue,
@@ -4105,13 +4090,15 @@ static status_t rbp_send_ckpt_purge_if_due(knl_session_t *session, thread_t *thr
     date_t now = g_timer()->now;
     date_t interval_us = rbp_ckpt_purge_interval_us(session);
     log_point_t latest_point = dtc_my_ctrl(session)->rcy_point;
+    log_point_t request_reset_point;
     log_point_t last_sent_point = rbp_queue->last_sent_ckpt_purge_point;
     rbp_ckpt_cleanup_diag_t cleanup_diag = { 0 };
     date_t cleanup_begin;
     uint64 cleanup_us;
     uint32 covered_pages;
-    bool32 cleanup_deferred = OG_FALSE;
     uint64 send_us = 0;
+    uint64 rbp_reset_lsn = 0;
+    bool32 cleanup_deferred = OG_FALSE;
 
     if (rbp_queue->last_ckpt_purge_check_time != 0 &&
         now - rbp_queue->last_ckpt_purge_check_time < interval_us) {
@@ -4149,23 +4136,30 @@ static status_t rbp_send_ckpt_purge_if_due(knl_session_t *session, thread_t *thr
     cleanup_us = (uint64)(g_timer()->now - cleanup_begin);
     if (cleanup_deferred) {
         rbp_queue->last_ckpt_purge_check_time = now - interval_us + RBP_CKPT_PURGE_RETRY_US;
-        OG_LOG_DEBUG_INF("[RBP] defer periodic ckpt purge for unstable readonly page: queue=%u latest_lfn=%llu "
-                        "remaining=%u retry_us=%lld",
-                        rbp_queue->id, (uint64)latest_point.lfn, rbp_queue->count,
-                        (long long)RBP_CKPT_PURGE_RETRY_US);
+        OG_LOG_DEBUG_INF("[RBP] defer periodic ckpt purge for unstable page: queue=%u latest_lfn=%llu "
+                         "remaining=%u retry_us=%lld",
+                         rbp_queue->id, (uint64)latest_point.lfn, rbp_queue->count,
+                         (long long)RBP_CKPT_PURGE_RETRY_US);
         return OG_SUCCESS;
     }
+    if (rbp_queue->has_gap) {
+        return OG_SUCCESS;
+    }
+
+    request_reset_point = latest_point;
+    (void)ckpt_get_rbp_reset_lsn(session, &latest_point, &rbp_reset_lsn);
+    request_reset_point.lsn = rbp_reset_lsn;
     rbp_init_page_write_request(request, pipe);
-    rbp_prepare_ckpt_reset_request(session, request, rbp_queue, &latest_point);
+    rbp_prepare_ckpt_reset_request(session, request, rbp_queue, &request_reset_point);
     if (rbp_send_page_write_request(pipe, rbp_mgr, request, &send_us, NULL, NULL) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
     rbp_queue->last_sent_ckpt_purge_point = latest_point;
-    OG_LOG_DEBUG_INF("[RBP] send periodic ckpt purge: queue=%u latest_lfn=%llu last_sent_lfn=%llu "
+    OG_LOG_DEBUG_INF("[RBP] send periodic ckpt purge: queue=%u latest_lfn=%llu reset_lsn=%llu last_sent_lfn=%llu "
                     "interval_us=%lld covered=%u remaining=%u cleanup_us=%llu scanned=%u removed=%u "
                     "trimmed=%u kept=%u latch_fail=%u send_us=%llu",
-                    rbp_queue->id, (uint64)latest_point.lfn, (uint64)last_sent_point.lfn,
+                    rbp_queue->id, (uint64)latest_point.lfn, rbp_reset_lsn, (uint64)last_sent_point.lfn,
                     (long long)interval_us, covered_pages, rbp_queue->count, cleanup_us, cleanup_diag.scanned,
                     cleanup_diag.removed, cleanup_diag.trimmed, cleanup_diag.kept, cleanup_diag.latch_fail, send_us);
     return OG_SUCCESS;
@@ -4184,6 +4178,7 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
     uint64 max_page_lsn = OG_INVALID_LSN;
     uint64 max_page_lfn = OG_INVALID_LSN;
     log_point_t ckpt_reset_point = { 0, 0, 0, 0 };
+    log_point_t request_frontier = { 0, 0, 0, 0 };
     date_t iter_begin;
     date_t step_begin;
     uint64 assemble_us;
@@ -4254,55 +4249,26 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
         max_page_lsn = OG_INVALID_LSN;
         max_page_lfn = OG_INVALID_LSN;
 
-        if (rbp_queue->count > 0) {
+        if (rbp_queue->has_gap) {
+            took_gap_reset = OG_TRUE;
+            step_begin = g_timer()->now;
+            if (!rbp_knl_reset_queue(session, thread, request, rbp_queue)) {
+                gap_reset_us = (uint64)(g_timer()->now - step_begin);
+                cm_spin_sleep();
+                break;
+            }
+            gap_reset_us = (uint64)(g_timer()->now - step_begin);
+        } else if (rbp_queue->count > 0) {
             /* set msg body */
             step_begin = g_timer()->now;
-            rbp_assemble_write_request(session, thread, request, rbp_queue, &max_page_lsn, &max_page_lfn,
-                                        assemble_diag_ptr);
+            rbp_assemble_write_request(session, thread, request, rbp_queue, &request_frontier,
+                                       &max_page_lsn, &max_page_lfn, assemble_diag_ptr);
             assemble_us = (uint64)(g_timer()->now - step_begin);
             queue_count_after_assemble = rbp_queue->count;
             enqueue_delta = (int64)queue_count_after_assemble + (int64)request->page_num -
                             (int64)queue_count_before;
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if ((assemble_us >= RBP_PAGE_WRITE_ASSEMBLE_DIAG_US ||
-                assemble_diag.max_item_us >= RBP_PAGE_WRITE_ITEM_DIAG_US) &&
-                rbp_rate_loggable(&g_rbp_assemble_diag_last_log[rbp_proc_id % OG_RBP_SESSION_COUNT],
-                                  g_timer()->now, RBP_ASSEMBLE_DIAG_INTERVAL_US)) {
-                OG_LOG_RUN_INF("[RBP] PAGE_WRITE assemble diag: queue=%u before=%u after_assemble=%u "
-                                "pages=%u enqueue_delta=%lld scanned=%u scan_limit=%u live=%u snapshot=%u "
-                                "dropped=%u busy=%u "
-                                "latch_us=%llu first_latch_us=%llu retry_latch_us=%llu retry_latch_count=%u "
-                                "readonly_wait_us=%llu readonly_wait_count=%u need_load_wait_us=%llu "
-                                "need_load_wait_count=%u copy_us=%llu pop_us=%llu free_us=%llu max_item_us=%llu "
-                                "max_item_page=%u-%u max_item_source=%u load_status=%u is_readonly=%u "
-                                "latch_stat=%u",
-                                rbp_proc_id, queue_count_before, queue_count_after_assemble, request->page_num,
-                                (long long)enqueue_delta, assemble_diag.scanned, assemble_diag.max_scan,
-                                assemble_diag.live_num, assemble_diag.snapshot_num, assemble_diag.dropped_num,
-                                assemble_diag.busy_num, assemble_diag.latch_us,
-                                assemble_diag.first_latch_us, assemble_diag.retry_latch_us,
-                                assemble_diag.retry_latch_count, assemble_diag.readonly_wait_us,
-                                assemble_diag.readonly_wait_count,
-                                assemble_diag.need_load_wait_us, assemble_diag.need_load_wait_count,
-                                assemble_diag.copy_us, assemble_diag.pop_us, assemble_diag.free_us,
-                                assemble_diag.max_item_us,
-                                assemble_diag.max_item_page.file, assemble_diag.max_item_page.page,
-                                assemble_diag.max_item_source, assemble_diag.max_item_load_status,
-                                assemble_diag.max_item_is_readonly, assemble_diag.max_item_latch_stat);
-            }
-            if (request->page_num == 0 && queue_count_before > 0) {
-                OG_LOG_RUN_INF("[RBP] PAGE_WRITE assemble empty batch: queue=%u before=%u after_assemble=%u "
-                                "busy=%u dropped=%u snapshot=%u live=%u assemble_us=%llu latch_us=%llu "
-                                "has_gap=%u",
-                                rbp_proc_id, queue_count_before, queue_count_after_assemble,
-                                assemble_diag.busy_num, assemble_diag.dropped_num, assemble_diag.snapshot_num,
-                                assemble_diag.live_num, assemble_us, assemble_diag.latch_us,
-                                (uint32)rbp_queue->has_gap);
-            }
-#endif
-
             if (request->page_num > 0) {
-                request->batch_trunc_point = rbp_queue_get_frontier(session, rbp_queue);
+                request->batch_trunc_point = request_frontier;
                 step_begin = g_timer()->now;
                 if (rbp_wait_redo_visible(session, thread, max_page_lsn, max_page_lfn, &request->batch_lrp_point) !=
                     OG_SUCCESS) {
@@ -4316,10 +4282,11 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
             covered_pages = rbp_queue_remove_ckpt_covered_pages(session, thread, rbp_queue, ckpt_reset_point, NULL,
                                                                 &ckpt_cleanup_deferred);
             if (ckpt_cleanup_deferred) {
-                rbp_restore_ckpt_reset(rbp_queue, &ckpt_reset_point);
+                rbp_restore_ckpt_reset(session, rbp_queue, &ckpt_reset_point);
                 cm_spin_sleep();
                 break;
             }
+            ckpt_reset_point.lsn = 0;
             rbp_prepare_ckpt_reset_request(session, request, rbp_queue, &ckpt_reset_point);
             if (covered_pages > 0) {
                 OG_LOG_RUN_INF("[RBP] queue id %u drop %u local queued pages covered by reset lfn=%llu",
@@ -4364,30 +4331,6 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
         }
 
         if (request->page_num == 0 && log_point_is_invalid(&request->batch_lrp_point)) {
-#if RBP_PAGE_WRITE_HOT_DIAG
-            if (queue_count_before > 0 || queue_count_after_assemble > 0) {
-                OG_LOG_RUN_INF("[RBP] PAGE_WRITE skip send (no pages in batch): queue=%u before=%u "
-                                  "after_assemble=%u after=%u busy=%u dropped=%u ckpt_reset=%u gap_reset=%u "
-                                  "assemble_us=%llu",
-                                  rbp_proc_id, queue_count_before, queue_count_after_assemble,
-                                  rbp_queue->count, assemble_diag.busy_num, assemble_diag.dropped_num,
-                                  (uint32)took_ckpt_reset, (uint32)took_gap_reset, assemble_us);
-            }
-#else
-            if (rbp_page_write_diag_loggable(rbp_proc_id, took_gap_reset, took_ckpt_reset, queue_count_before,
-                                               rbp_queue->count, assemble_us, wait_redo_us, send_us)) {
-                OG_LOG_RUN_INF("[RBP] PAGE_WRITE empty batch: queue=%u before=%u after_assemble=%u after=%u "
-                                "pages=%u enqueue_delta=%lld scanned=%u "
-                                "scan_limit=%u live=%u snapshot=%u dropped=%u busy=%u ckpt_reset=%u "
-                                "gap_reset=%u gap_before=%u gap_after=%u assemble_us=%llu connected=%u",
-                                rbp_proc_id, queue_count_before, queue_count_after_assemble, rbp_queue->count,
-                                request->page_num, (long long)enqueue_delta, assemble_diag.scanned,
-                                assemble_diag.max_scan, assemble_diag.live_num, assemble_diag.snapshot_num,
-                                assemble_diag.dropped_num, assemble_diag.busy_num, (uint32)took_ckpt_reset,
-                                (uint32)took_gap_reset, (uint32)has_gap_before, (uint32)rbp_queue->has_gap, assemble_us,
-                                (uint32)rbp_mgr->is_connected);
-            }
-#endif
             break;
         }
 
@@ -4396,61 +4339,11 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
             return OG_ERROR;
         }
 
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (request->page_num > 0) {
-            OG_LOG_RUN_INF("[RBP] PAGE_WRITE sent to remote RBP: queue=%u pages=%u "
-                            "frontier=[%u-%u/%u/%llu/%llu] first_page_lrp_lfn=%llu first_page_lsn=%llu "
-                            "batch_lrp=[%u-%u/%u/%llu/%llu] max_latest_lfn=%llu "
-                            "(wire checksum cleared per page)",
-                            rbp_proc_id, request->page_num, (uint32)request->batch_trunc_point.rst_id,
-                            request->batch_trunc_point.asn, request->batch_trunc_point.block_id,
-                            (uint64)request->batch_trunc_point.lfn, request->batch_trunc_point.lsn,
-                            (uint64)request->pages[0].rbp_lrp_point.lfn,
-                            (uint64)request->pages[0].writer_global_seq,
-                            (uint32)request->batch_lrp_point.rst_id, request->batch_lrp_point.asn,
-                            request->batch_lrp_point.block_id, (uint64)request->batch_lrp_point.lfn,
-                            request->batch_lrp_point.lsn, max_page_lfn);
-        } else {
-            OG_LOG_RUN_INF("[RBP] PAGE_WRITE sent to remote RBP: queue=%u pages=%u "
-                            "begin=[%u-%u/%u/%llu/%llu] frontier=[%u-%u/%u/%llu/%llu] "
-                            "batch_lrp=[%u-%u/%u/%llu/%llu] (wire checksum cleared per page)",
-                            rbp_proc_id, request->page_num, request->batch_begin_point.rst_id,
-                            request->batch_begin_point.asn, request->batch_begin_point.block_id,
-                            (uint64)request->batch_begin_point.lfn, request->batch_begin_point.lsn,
-                            request->batch_trunc_point.rst_id, request->batch_trunc_point.asn,
-                            request->batch_trunc_point.block_id, (uint64)request->batch_trunc_point.lfn,
-                            request->batch_trunc_point.lsn, request->batch_lrp_point.rst_id,
-                            request->batch_lrp_point.asn, request->batch_lrp_point.block_id,
-                            (uint64)request->batch_lrp_point.lfn, request->batch_lrp_point.lsn);
-        }
-#endif
-
         session->stat->rbp_page_write_time += (g_timer()->now - begin_time) / MICROSECS_PER_MILLISEC;
         session->stat->rbp_page_write += request->page_num;
 
         queue_count_after = rbp_queue->count;
         total_us = (uint64)(g_timer()->now - iter_begin);
-#if RBP_PAGE_WRITE_HOT_DIAG
-        if (rbp_page_write_diag_loggable(rbp_proc_id, took_gap_reset, took_ckpt_reset, queue_count_before,
-                                        queue_count_after, assemble_us, wait_redo_us, send_us)) {
-            OG_LOG_RUN_INF("[RBP] PAGE_WRITE queue diag: queue=%u before=%u after_assemble=%u after=%u "
-                            "pages=%u ckpt_reset=%u covered=%u gap_reset=%u gap_before=%u gap_after=%u "
-                            "scanned=%u scan_limit=%u live=%u snapshot=%u dropped=%u busy=%u "
-                            "max_lfn=%llu max_lsn=%llu assemble_us=%llu wait_redo_us=%llu send_us=%llu "
-                            "send_lock_us=%llu send_stream_us=%llu wire_bytes=%u gap_reset_us=%llu "
-                            "assemble_copy_us=%llu assemble_latch_us=%llu assemble_busy=%u "
-                            "total_us=%llu connected=%u dtc_read_active=%u",
-                            rbp_proc_id, queue_count_before, queue_count_after_assemble, queue_count_after,
-                            request->page_num, (uint32)took_ckpt_reset, covered_pages, (uint32)took_gap_reset,
-                            (uint32)has_gap_before, (uint32)rbp_queue->has_gap, assemble_diag.scanned,
-                            assemble_diag.max_scan, assemble_diag.live_num, assemble_diag.snapshot_num,
-                            assemble_diag.dropped_num, assemble_diag.busy_num, max_page_lfn, max_page_lsn,
-                            assemble_us, wait_redo_us, send_us, send_lock_us, send_stream_us,
-                            (uint32)request->header.msg_length, gap_reset_us, assemble_diag.copy_us,
-                            assemble_diag.latch_us, assemble_diag.busy_num, total_us,
-                            (uint32)rbp_mgr->is_connected, (uint32)rbp_context->dtc_read_active);
-        }
-#else
         if (total_us >= RBP_PAGE_WRITE_ASSEMBLE_DIAG_US) {
             OG_LOG_RUN_WAR("[RBP] PAGE_WRITE slow batch: queue=%u before=%u after_assemble=%u after=%u "
                            "pages=%u enqueue_delta=%lld ckpt_reset=%u covered=%u gap_reset=%u gap_before=%u "
@@ -4466,24 +4359,7 @@ static status_t rbp_knl_write_to_rbp(knl_session_t *session, thread_t *thread)
                            max_page_lfn, max_page_lsn, assemble_us, wait_redo_us, send_us, send_lock_us,
                            send_stream_us, (uint32)request->header.msg_length, gap_reset_us, total_us,
                            (uint32)rbp_mgr->is_connected, (uint32)rbp_context->dtc_read_active);
-        } else if (rbp_page_write_diag_loggable(rbp_proc_id, took_gap_reset, took_ckpt_reset, queue_count_before,
-                                                queue_count_after, assemble_us, wait_redo_us, send_us)) {
-            OG_LOG_RUN_INF("[RBP] PAGE_WRITE queue diag: queue=%u before=%u after_assemble=%u after=%u "
-                           "pages=%u enqueue_delta=%lld ckpt_reset=%u covered=%u gap_reset=%u gap_before=%u "
-                           "gap_after=%u scanned=%u scan_limit=%u live=%u snapshot=%u dropped=%u busy=%u "
-                           "max_lfn=%llu max_lsn=%llu assemble_us=%llu wait_redo_us=%llu send_us=%llu "
-                           "send_lock_us=%llu send_stream_us=%llu wire_bytes=%u gap_reset_us=%llu total_us=%llu "
-                           "connected=%u dtc_read_active=%u",
-                           rbp_proc_id, queue_count_before, queue_count_after_assemble, queue_count_after,
-                           request->page_num, (long long)enqueue_delta, (uint32)took_ckpt_reset, covered_pages,
-                           (uint32)took_gap_reset, (uint32)has_gap_before, (uint32)rbp_queue->has_gap,
-                           assemble_diag.scanned, assemble_diag.max_scan, assemble_diag.live_num,
-                           assemble_diag.snapshot_num, assemble_diag.dropped_num, assemble_diag.busy_num,
-                           max_page_lfn, max_page_lsn, assemble_us, wait_redo_us, send_us, send_lock_us,
-                           send_stream_us, (uint32)request->header.msg_length, gap_reset_us, total_us,
-                           (uint32)rbp_mgr->is_connected, (uint32)rbp_context->dtc_read_active);
         }
-#endif
         if (request->page_num > 0 &&
             rbp_send_ckpt_purge_if_due(session, thread, request, rbp_queue, rbp_mgr, pipe) != OG_SUCCESS) {
             return OG_ERROR;
@@ -4615,6 +4491,21 @@ void rbp_release_bg_session(knl_session_t *session)
     g_knl_callback.release_knl_session(session);
 }
 
+static void rbp_handle_page_write_failure(knl_session_t *session, uint32 rbp_proc_id)
+{
+    rbp_context_t *rbp_context = &session->kernel->rbp_context;
+    rbp_buf_manager_t *rbp_buf_manager = &rbp_context->rbp_buf_manager[rbp_proc_id];
+    rbp_queue_t *queue = &rbp_context->queue[rbp_proc_id];
+
+    queue->has_gap = OG_TRUE;
+    if (rbp_rate_loggable(&g_rbp_page_write_fail_last_log[rbp_proc_id % OG_RBP_SESSION_COUNT],
+                          g_timer()->now, RBP_PAGE_WRITE_LOG_INTERVAL_US)) {
+        OG_LOG_RUN_WAR("[RBP] set gap after PAGE_WRITE failure: queue=%u connected=%u queued_pages=%u",
+                       rbp_proc_id, (uint32)rbp_buf_manager->is_connected, queue->count);
+    }
+    cm_reset_error();
+}
+
 /*
   * rbp_bg loop after connecting to the peer RBP:
   * 1. Writers send queued dirty page batches to the peer RBP and heartbeat periodically.
@@ -4671,10 +4562,7 @@ static void rbp_bg_proc(thread_t *thread)
         if (rbp_instance_may_write_to_remote(session)) {
             if (rbp_knl_write_to_rbp(session, thread) != OG_SUCCESS) {
                 /* write page to rbp failed, set has gap, the RBP pages will be cleared */
-                rbp_context->queue[rbp_proc_id].has_gap = OG_TRUE;
-                OG_LOG_RUN_WAR("[RBP] set gap after PAGE_WRITE failure: queue=%u connected=%u queued_pages=%u",
-                               rbp_proc_id, (uint32)rbp_buf_manager[rbp_proc_id].is_connected,
-                               rbp_context->queue[rbp_proc_id].count);
+                rbp_handle_page_write_failure(session, rbp_proc_id);
             }
         } else {
             /* No remote PAGE_WRITE permission, so do not push local dirty pages to RBP. */
@@ -4769,21 +4657,25 @@ void rbp_agent_stop_client(knl_session_t *session)
     }
 }
 
-static status_t rbp_send_shake_hand(cs_pipe_t *pipe, uint32 queue_id, bool32 is_temp, bool32 is_standby)
+static status_t rbp_send_shake_hand(cs_pipe_t *pipe, uint32 queue_id, bool32 is_temp, bool32 is_standby,
+                                    bool32 guard_required)
 {
     rbp_shake_hand_req_t req;
     rbp_shake_hand_resp_t resp;
     int32 recv_size;
     errno_t err;
 
+    err = memset_sp(&req, sizeof(req), 0, sizeof(req));
+    knl_securec_check(err);
     err = memset_sp(&resp, sizeof(resp), 0, sizeof(resp));
     knl_securec_check(err);
 
-    req.header.msg_type = RBP_REQ_SHAKE_HAND;
-
+    RBP_SET_MSG_HEADER(&req, RBP_REQ_SHAKE_HAND, sizeof(req), cs_get_socket_fd(pipe));
+    req.header.queue_id = queue_id;
     req.is_standby = is_standby;
     req.is_temp = is_temp;
     req.queue_id = queue_id;
+    req.unused = RBP_WIRE_VERSION | (guard_required ? RBP_HANDSHAKE_FLAG_DISK_GUARD : 0);
 
     if (cs_write_stream_timeout(pipe, (char *)&req, sizeof(req), 0, RBP_MAX_READ_WAIT_TIME) != OG_SUCCESS) {
         return OG_ERROR;
@@ -4794,15 +4686,344 @@ static status_t rbp_send_shake_hand(cs_pipe_t *pipe, uint32 queue_id, bool32 is_
 
     if (recv_size != sizeof(resp) ||
         RBP_MSG_TYPE(&resp.header) != RBP_REQ_SHAKE_HAND ||
-        req.queue_id != resp.queue_id) {
+        req.queue_id != resp.queue_id || resp.wire_version != RBP_WIRE_VERSION) {
         OG_LOG_RUN_ERR("[RBP] invalid shake hand response, fd %d type %u receive size %u expect size %u req_qid %u "
-                       "resp_qid %u temp %u standby %u",
+                       "resp_qid %u temp %u standby %u wire_version=%u expected_version=%u",
                        cs_get_socket_fd(pipe), RBP_MSG_TYPE(&resp.header), recv_size, (uint32)sizeof(resp),
-                       req.queue_id, resp.queue_id, (uint32)is_temp, (uint32)is_standby);
+                       req.queue_id, resp.queue_id, (uint32)is_temp, (uint32)is_standby, resp.wire_version,
+                       (uint32)RBP_WIRE_VERSION);
         return OG_ERROR;
     }
 
     return OG_SUCCESS;
+}
+
+#define RBP_DISK_GUARD_RETRY_TIMES 3
+#define RBP_DISK_GUARD_RECONNECT_INTERVAL_US MICROSECS_PER_SECOND
+#define RBP_DISK_GUARD_FAIL_LOG_INTERVAL_US (10 * MICROSECS_PER_SECOND)
+#define RBP_DISK_GUARD_URL "UDS"
+#define RBP_DISK_GUARD_DEFAULT_FILE "rbps_guard.sock"
+
+static spinlock_t g_rbp_disk_guard_lock = 0;
+static cs_pipe_t g_rbp_disk_guard_pipe;
+static bool32 g_rbp_disk_guard_connected = OG_FALSE;
+static char g_rbp_disk_guard_path[OG_FILE_NAME_BUFFER_SIZE] = { 0 };
+static date_t g_rbp_disk_guard_retry_after = 0;
+static date_t g_rbp_disk_guard_last_lease_time = 0;
+static date_t g_rbp_disk_guard_last_fail_log = 0;
+static date_t g_rbp_disk_guard_last_dirty_fail_log = 0;
+static atomic_t g_rbp_disk_guard_available = 0;
+
+static const char *rbp_get_disk_guard_path(const char *home, char *default_path, uint32 default_path_size)
+{
+    int32 ret;
+
+    if (home == NULL || home[0] == '\0') {
+        return NULL;
+    }
+    ret = snprintf_s(default_path, default_path_size, default_path_size - 1, "%s/run/%s", home,
+                     RBP_DISK_GUARD_DEFAULT_FILE);
+    if (ret == -1 || (uint32)ret >= default_path_size) {
+        OG_LOG_RUN_WAR("[RBP] default disk guard uds path is too long");
+        return NULL;
+    }
+    return default_path;
+}
+
+static void rbp_disconnect_disk_guard_pipe(void)
+{
+    (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+    if (g_rbp_disk_guard_connected) {
+        cs_disconnect(&g_rbp_disk_guard_pipe);
+    }
+    g_rbp_disk_guard_connected = OG_FALSE;
+    g_rbp_disk_guard_path[0] = '\0';
+}
+
+static status_t rbp_connect_disk_guard_pipe_locked(const char *path)
+{
+    errno_t ret;
+    bool8 old_ignore_log;
+    status_t connect_status;
+
+    if (strlen(path) >= OG_FILE_NAME_BUFFER_SIZE) {
+        OG_LOG_RUN_WAR("[RBP] disk guard uds path is too long");
+        return OG_ERROR;
+    }
+
+    if (g_rbp_disk_guard_connected && strcmp(g_rbp_disk_guard_path, path) == 0) {
+        return OG_SUCCESS;
+    }
+
+    rbp_disconnect_disk_guard_pipe();
+    ret = memset_sp(&g_rbp_disk_guard_pipe, sizeof(g_rbp_disk_guard_pipe), 0, sizeof(g_rbp_disk_guard_pipe));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+    g_rbp_disk_guard_pipe.connect_timeout = RBP_CONNEOG_TIMEOUT;
+    old_ignore_log = cm_error_info()->is_ignore_log;
+    cm_set_ignore_log(OG_TRUE);
+    connect_status = cs_connect(RBP_DISK_GUARD_URL, &g_rbp_disk_guard_pipe, NULL, path, NULL);
+    cm_set_ignore_log(old_ignore_log);
+    if (connect_status != OG_SUCCESS) {
+        OG_LOG_DEBUG_WAR("[RBP] failed to connect disk guard uds %s", path);
+        return OG_ERROR;
+    }
+
+    if (rbp_send_shake_hand(&g_rbp_disk_guard_pipe, 0, OG_TRUE, OG_TRUE, OG_TRUE) != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("[RBP] failed to shake hand with disk guard uds %s", path);
+        cs_disconnect(&g_rbp_disk_guard_pipe);
+        return OG_ERROR;
+    }
+
+    ret = strcpy_s(g_rbp_disk_guard_path, sizeof(g_rbp_disk_guard_path), path);
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+    g_rbp_disk_guard_connected = OG_TRUE;
+    cm_reset_error();
+    OG_LOG_RUN_INF("[RBP] disk guard uds connected: %s", path);
+    return OG_SUCCESS;
+}
+
+static status_t rbp_send_disk_guard_req_locked(rbp_disk_guard_req_t *request)
+{
+    rbp_msg_ack_t ack;
+    errno_t ret = memset_sp(&ack, sizeof(ack), 0, sizeof(ack));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+
+    RBP_SET_MSG_HEADER(request, RBP_REQ_DISK_GUARD, sizeof(rbp_disk_guard_req_t),
+                       cs_get_socket_fd(&g_rbp_disk_guard_pipe));
+    if (rbp_knl_send_request_timeout(&g_rbp_disk_guard_pipe, (char *)request, NULL,
+                                     RBP_MAX_READ_WAIT_TIME) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (rbp_knl_wait_response(&g_rbp_disk_guard_pipe, (char *)&ack, sizeof(ack)) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (ack.ack_type != ACK_RBP_READ_BEGIN) {
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t rbp_send_disk_guard_items_locked(const rbp_disk_guard_item_t *items, uint32 count)
+{
+    rbp_disk_guard_req_t request;
+    errno_t ret = memset_sp(&request, sizeof(request), 0, sizeof(request));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+
+    if (count > RBP_GUARD_BATCH_NUM) {
+        return OG_ERROR;
+    }
+    request.count = count;
+    if (count != 0) {
+        ret = memcpy_sp(request.items, sizeof(request.items), items, count * sizeof(rbp_disk_guard_item_t));
+        if (ret != EOK) {
+            knl_securec_check(ret);
+        }
+    }
+    return rbp_send_disk_guard_req_locked(&request);
+}
+
+static status_t rbp_try_notify_disk_guard(knl_session_t *session, ckpt_group_t *group, const char *path)
+{
+    rbp_disk_guard_item_t items[RBP_GUARD_BATCH_NUM];
+    uint32 count = 0;
+    bool32 sent = OG_FALSE;
+    errno_t ret;
+
+    ret = memset_sp(items, sizeof(items), 0, sizeof(items));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+    for (uint32 i = 0; group != NULL && i < group->count; i++) {
+        page_head_t *page = (page_head_t *)(group->buf + DEFAULT_PAGE_SIZE(session) * group->items[i].buf_id);
+        rbp_disk_guard_item_t *item = &items[count];
+
+        if (PAGE_GET_LSN(page) == 0) {
+            continue;
+        }
+        item->page_id = AS_PAGID(page->id);
+        item->disk_lsn = PAGE_GET_LSN(page);
+        item->disk_pcn = page->pcn;
+        count++;
+        if (count < RBP_GUARD_BATCH_NUM) {
+            continue;
+        }
+
+        if (rbp_connect_disk_guard_pipe_locked(path) != OG_SUCCESS ||
+            rbp_send_disk_guard_items_locked(items, count) != OG_SUCCESS) {
+            rbp_disconnect_disk_guard_pipe();
+            return OG_ERROR;
+        }
+        sent = OG_TRUE;
+        ret = memset_sp(items, sizeof(items), 0, sizeof(items));
+        if (ret != EOK) {
+            knl_securec_check(ret);
+        }
+        count = 0;
+    }
+
+    if (count == 0 && sent) {
+        return OG_SUCCESS;
+    }
+    if (rbp_connect_disk_guard_pipe_locked(path) != OG_SUCCESS ||
+        rbp_send_disk_guard_items_locked(items, count) != OG_SUCCESS) {
+        rbp_disconnect_disk_guard_pipe();
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+static bool32 rbp_send_disk_guard_pages_locked(const rbp_disk_guard_item_t *items, uint32 count, const char *path)
+{
+    for (uint32 retry = 0; retry < RBP_DISK_GUARD_RETRY_TIMES; retry++) {
+        uint32 offset = 0;
+        while (offset < count) {
+            uint32 batch_count = MIN(RBP_GUARD_BATCH_NUM, count - offset);
+            if (rbp_connect_disk_guard_pipe_locked(path) != OG_SUCCESS ||
+                rbp_send_disk_guard_items_locked(items + offset, batch_count) != OG_SUCCESS) {
+                rbp_disconnect_disk_guard_pipe();
+                break;
+            }
+            offset += batch_count;
+        }
+        if (offset == count) {
+            (void)cm_atomic_set(&g_rbp_disk_guard_available, 1);
+            g_rbp_disk_guard_retry_after = 0;
+            g_rbp_disk_guard_last_lease_time = g_timer()->now;
+            g_rbp_disk_guard_last_fail_log = 0;
+            g_rbp_disk_guard_last_dirty_fail_log = 0;
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+static bool32 rbp_send_disk_guard_group_locked(knl_session_t *session, ckpt_group_t *group, const char *path)
+{
+    for (uint32 retry = 0; retry < RBP_DISK_GUARD_RETRY_TIMES; retry++) {
+        if (rbp_try_notify_disk_guard(session, group, path) == OG_SUCCESS) {
+            (void)cm_atomic_set(&g_rbp_disk_guard_available, 1);
+            g_rbp_disk_guard_retry_after = 0;
+            g_rbp_disk_guard_last_lease_time = g_timer()->now;
+            g_rbp_disk_guard_last_fail_log = 0;
+            g_rbp_disk_guard_last_dirty_fail_log = 0;
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
+status_t rbp_knl_notify_disk_guard_pages(knl_session_t *session, const rbp_disk_guard_item_t *items, uint32 count)
+{
+    char default_path[OG_FILE_NAME_BUFFER_SIZE] = { 0 };
+    const char *path;
+    date_t now;
+    bool32 should_log_failure;
+
+    if (session == NULL || !DB_IS_CLUSTER(session) || !KNL_RBP_ENABLE(session->kernel) || count == 0 ||
+        rbp_knl_recovery_local_guard_active(session)) {
+        return OG_SUCCESS;
+    }
+    if (items == NULL) {
+        return OG_ERROR;
+    }
+
+    now = g_timer()->now;
+    if (!g_rbp_disk_guard_connected && now < g_rbp_disk_guard_retry_after) {
+        (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+        return OG_ERROR;
+    }
+    path = rbp_get_disk_guard_path(session->kernel->home, default_path, sizeof(default_path));
+    if (path == NULL) {
+        (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+        g_rbp_disk_guard_retry_after = now + RBP_DISK_GUARD_RECONNECT_INTERVAL_US;
+        return OG_ERROR;
+    }
+
+    cm_spin_lock(&g_rbp_disk_guard_lock, NULL);
+    if (rbp_send_disk_guard_pages_locked(items, count, path)) {
+        cm_spin_unlock(&g_rbp_disk_guard_lock);
+        return OG_SUCCESS;
+    }
+
+    now = g_timer()->now;
+    should_log_failure = rbp_rate_loggable(&g_rbp_disk_guard_last_dirty_fail_log, now,
+                                           RBP_DISK_GUARD_FAIL_LOG_INTERVAL_US);
+    (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+    g_rbp_disk_guard_retry_after = now + RBP_DISK_GUARD_RECONNECT_INTERVAL_US;
+    cm_spin_unlock(&g_rbp_disk_guard_lock);
+
+    if (should_log_failure) {
+        OG_LOG_RUN_WAR("[RBP] remote EDP disk guard notify failed after %u retries, current RBP window is unavailable: "
+                       "path=%s pages=%u",
+                       (uint32)RBP_DISK_GUARD_RETRY_TIMES, path, count);
+    }
+    cm_reset_error();
+    return OG_ERROR;
+}
+
+void rbp_knl_notify_disk_guard_before_ckpt(knl_session_t *session, ckpt_group_t *group)
+{
+    char default_path[OG_FILE_NAME_BUFFER_SIZE] = { 0 };
+    const char *path;
+    date_t now;
+    uint32 page_count = (group == NULL) ? 0 : group->count;
+    bool32 should_log_failure = OG_TRUE;
+
+    if (session == NULL || !DB_IS_CLUSTER(session) || !KNL_RBP_ENABLE(session->kernel)) {
+        return;
+    }
+    if (rbp_knl_recovery_local_guard_active(session)) {
+        return;
+    }
+    now = g_timer()->now;
+    if (page_count == 0 && g_rbp_disk_guard_connected && cm_atomic_get(&g_rbp_disk_guard_available) != 0 &&
+        now - g_rbp_disk_guard_last_lease_time < RBP_DISK_GUARD_RECONNECT_INTERVAL_US) {
+        return;
+    }
+    if (!g_rbp_disk_guard_connected && now < g_rbp_disk_guard_retry_after) {
+        (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+        return;
+    }
+    path = rbp_get_disk_guard_path(session->kernel->home, default_path, sizeof(default_path));
+    if (path == NULL) {
+        (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+        g_rbp_disk_guard_retry_after = g_timer()->now + RBP_DISK_GUARD_RECONNECT_INTERVAL_US;
+        OG_LOG_RUN_WAR("[RBP] disk guard uds path is unavailable, current RBP window is unavailable");
+        cm_reset_error();
+        return;
+    }
+
+    cm_spin_lock(&g_rbp_disk_guard_lock, NULL);
+    if (rbp_send_disk_guard_group_locked(session, group, path)) {
+        cm_spin_unlock(&g_rbp_disk_guard_lock);
+        return;
+    }
+    now = g_timer()->now;
+    if (page_count == 0) {
+        should_log_failure = rbp_rate_loggable(&g_rbp_disk_guard_last_fail_log, now,
+                                               RBP_DISK_GUARD_FAIL_LOG_INTERVAL_US);
+    } else {
+        should_log_failure = rbp_rate_loggable(&g_rbp_disk_guard_last_dirty_fail_log, now,
+                                               RBP_DISK_GUARD_FAIL_LOG_INTERVAL_US);
+    }
+    (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
+    g_rbp_disk_guard_retry_after = now + RBP_DISK_GUARD_RECONNECT_INTERVAL_US;
+    cm_spin_unlock(&g_rbp_disk_guard_lock);
+
+    if (should_log_failure) {
+        OG_LOG_RUN_WAR("[RBP] disk guard notify failed after %u retries, current RBP window is unavailable: "
+                       "path=%s pages=%u",
+                       (uint32)RBP_DISK_GUARD_RETRY_TIMES, path, page_count);
+    }
+    cm_reset_error();
 }
 
 static status_t rbp_init_pipe_connection(knl_session_t *session, rbp_buf_manager_t *rbp_buf_manager, cs_pipe_t *pipe,
@@ -4813,6 +5034,8 @@ static status_t rbp_init_pipe_connection(knl_session_t *session, rbp_buf_manager
     /* Nodes that may PAGE_WRITE shake as non-standby; pull/heartbeat-only nodes shake as standby. */
     bool32 is_standby = rbp_instance_may_write_to_remote(session) ? OG_FALSE : OG_TRUE;
     errno_t ret;
+    bool8 old_ignore_log;
+    status_t connect_status;
 
     ret = memset_sp(pipe, sizeof(cs_pipe_t), 0, sizeof(cs_pipe_t));
     knl_securec_check(ret);
@@ -4823,12 +5046,16 @@ static status_t rbp_init_pipe_connection(knl_session_t *session, rbp_buf_manager
     }
 
     pipe->connect_timeout = RBP_CONNEOG_TIMEOUT;
-    if (cs_connect((const char *)url, pipe, NULL, NULL, NULL) != OG_SUCCESS) {
+    old_ignore_log = cm_error_info()->is_ignore_log;
+    cm_set_ignore_log(OG_TRUE);
+    connect_status = cs_connect((const char *)url, pipe, NULL, NULL, NULL);
+    cm_set_ignore_log(old_ignore_log);
+    if (connect_status != OG_SUCCESS) {
         OG_LOG_DEBUG_ERR("[RBP] failed to connect %s", url);
         return OG_ERROR;
     }
 
-    if (rbp_send_shake_hand(pipe, queue_id, is_temp, is_standby) != OG_SUCCESS) {
+    if (rbp_send_shake_hand(pipe, queue_id, is_temp, is_standby, DB_IS_CLUSTER(session)) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[RBP] failed to send shake hand to %s", url);
         cs_disconnect(pipe);
         return OG_ERROR;
@@ -5143,10 +5370,10 @@ static void rbp_agent_proc(thread_t *thread)
                 }
 
                 if (rbp_init_connection(session, &managers[id], host, port, OG_FALSE) == OG_SUCCESS) {
+                    /* A new stream may point at a restarted/new RBPS generation; its first write must be RESET. */
+                    rbp_context->queue[id].has_gap = OG_TRUE;
                     managers[id].is_connected = OG_TRUE;
                     managers[id].connected_id = target_id;
-                    OG_LOG_RUN_INF("[RBP] PAGE_WRITE route connected: queue=%u inst=%u target_node=%u host=%s",
-                                   id, (uint32)session->kernel->id, target_id, host);
                     err_conn_num = 0;
                     connected = OG_TRUE;
                     break;
@@ -5165,6 +5392,7 @@ static void rbp_agent_proc(thread_t *thread)
                 break;
             }
         }
+        rbp_knl_notify_disk_guard_before_ckpt(session, NULL);
         cm_sleep(RBP_SHUTDOWN_WAIT_MS);
     }
 
@@ -5259,6 +5487,7 @@ static void rbp_stat_page_result(knl_session_t *session, rbp_page_status_e page_
             session->stat->rbp_old++;
             break;
         case RBP_PAGE_MISS:
+        case RBP_PAGE_GUARDED:
             session->stat->rbp_miss++;
             break;
         default:
@@ -5342,6 +5571,56 @@ rbp_page_status_e rbp_page_verify(knl_session_t *session, page_id_t page_id, uin
     return page_status;
 }
 
+static bool32 rbp_mark_pull_page_guarded(knl_session_t *session, uint64 rbp_lsn, uint64 guard_lsn,
+                                          bool32 *saw_guarded, uint64 *max_guard_lsn)
+{
+    if (!rbp_page_block_stale_by_guard(rbp_lsn, guard_lsn)) {
+        return OG_FALSE;
+    }
+    (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_page_read_hit);
+    *saw_guarded = OG_TRUE;
+    if (guard_lsn > *max_guard_lsn) {
+        *max_guard_lsn = guard_lsn;
+    }
+    return OG_TRUE;
+}
+
+static bool32 rbp_try_use_selected_local_page(knl_session_t *session, buf_ctrl_t *ctrl,
+                                              rbp_partial_item_t *partial_item, uint64 expect_lsn)
+{
+    uint64 local_guard_lsn;
+    uint64 curr_lsn;
+
+    if (!partial_item->selected_pulled && !partial_item->verified) {
+        return OG_FALSE;
+    }
+    local_guard_lsn = dtc_rcy_rbp_partial_get_local_guard_lsn(partial_item);
+    curr_lsn = PAGE_GET_LSN(ctrl->page);
+    ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
+    if (rbp_page_block_stale_by_guard(curr_lsn, local_guard_lsn)) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_local_hit);
+        ctrl->rbp_ctrl->page_status = RBP_PAGE_GUARDED;
+        rbp_stat_page_result(session, RBP_PAGE_GUARDED);
+        return OG_TRUE;
+    }
+    if (curr_lsn == OG_INVALID_LSN) {
+        ctrl->rbp_ctrl->page_status = RBP_PAGE_MISS;
+        rbp_stat_page_result(session, RBP_PAGE_MISS);
+        return OG_TRUE;
+    }
+    if (curr_lsn >= expect_lsn) {
+        if (!partial_item->verified) {
+            dtc_rcy_rbp_partial_mark_item_verified(partial_item);
+        }
+        ctrl->rbp_ctrl->page_status = RBP_PAGE_HIT;
+        rbp_stat_page_result(session, RBP_PAGE_HIT);
+        return OG_TRUE;
+    }
+    ctrl->rbp_ctrl->page_status = RBP_PAGE_USABLE;
+    rbp_stat_page_result(session, RBP_PAGE_USABLE);
+    return OG_TRUE;
+}
+
 /* in recover or failover lrpl, if this page has not been pulled by rbp background thread, we pull it immediately */
 static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_t *ctrl)
 {
@@ -5361,15 +5640,14 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
         uint64 best_lsn = 0;
         uint64 expect_lsn = partial_read ? dtc_rcy_rbp_partial_get_expect_lsn(partial_item) :
             rbp_get_item_expect_lsn(session, item);
-        uint64 expect_lfn = partial_read ? (partial_item == NULL ? 0 : partial_item->expect_lfn) :
-            (item == NULL ? 0 : item->lfn);
-        uint64 old_lsn = PAGE_GET_LSN(ctrl->page);
-        uint32 old_pcn = ctrl->page->pcn;
         uint32 best_node = OG_INVALID_ID32;
         rbp_page_status_e best_status = RBP_PAGE_MISS;
         char *best_page_buf = NULL;
         uint32 verify_node_id = OG_INVALID_ID32;
         bool32 in_jumped_window = OG_FALSE;
+        bool32 saw_guarded = OG_FALSE;
+        uint64 local_guard_lsn = partial_read ? dtc_rcy_rbp_partial_get_local_guard_lsn(partial_item) : 0;
+        uint64 max_guard_lsn = local_guard_lsn;
 
         if (expect_lsn == 0 || (!partial_read && item == NULL) ||
             (partial_read && (partial_item == NULL || partial_item->rcy_item == NULL ||
@@ -5379,32 +5657,15 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
 
         if (partial_read) {
             in_jumped_window = dtc_rcy_rbp_partial_item_in_jumped_window(session, partial_item, &verify_node_id);
+            rbp_record_guard_lsn(ctrl, local_guard_lsn);
         }
 
         if (partial_read && partial_item->selected_valid && partial_item->selected_node != OG_INVALID_ID32) {
             node_ids[0] = partial_item->selected_node;
             node_count = 1;
 
-            if (partial_item->selected_pulled || partial_item->verified) {
-                uint64 curr_lsn = PAGE_GET_LSN(ctrl->page);
-
-                ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
-                if (curr_lsn == OG_INVALID_LSN) {
-                    ctrl->rbp_ctrl->page_status = RBP_PAGE_MISS;
-                    rbp_stat_page_result(session, RBP_PAGE_MISS);
-                    return RBP_PAGE_MISS;
-                }
-                if (curr_lsn >= expect_lsn) {
-                    if (!partial_item->verified) {
-                        dtc_rcy_rbp_partial_mark_item_verified(partial_item);
-                    }
-                    ctrl->rbp_ctrl->page_status = RBP_PAGE_HIT;
-                    rbp_stat_page_result(session, RBP_PAGE_HIT);
-                    return RBP_PAGE_HIT;
-                }
-                ctrl->rbp_ctrl->page_status = RBP_PAGE_USABLE;
-                rbp_stat_page_result(session, RBP_PAGE_USABLE);
-                return RBP_PAGE_USABLE;
+            if (rbp_try_use_selected_local_page(session, ctrl, partial_item, expect_lsn)) {
+                return (rbp_page_status_e)ctrl->rbp_ctrl->page_status;
             }
         }
 
@@ -5417,6 +5678,14 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
         if (partial_read && !rbp_context->dtc_use_selected_batch &&
             dtc_rcy_rbp_partial_copy_candidate(session, partial_item, best_page_buf, DEFAULT_PAGE_SIZE(session),
                                                &best_lsn, &best_node)) {
+            if (rbp_page_block_stale_by_guard(best_lsn, local_guard_lsn)) {
+                (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_selected_hit);
+                saw_guarded = OG_TRUE;
+                best_lsn = 0;
+                best_node = OG_INVALID_ID32;
+            }
+        }
+        if (best_lsn > 0) {
             best_status = rbp_eval_page_candidate(session, ctrl->page_id, best_lsn, PAGE_GET_LSN(ctrl->page),
                                                   expect_lsn, OG_TRUE);
             if (best_status == RBP_PAGE_HIT) {
@@ -5427,15 +5696,6 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
                 ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
                 ctrl->rbp_ctrl->page_status = best_status;
                 rbp_stat_page_result(session, best_status);
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_DEBUG_INF("[RBP_READ_TRACE] PULL_RESULT page=%u-%u partial=%u status=%u expect_lsn=%llu "
-                               "expect_lfn=%llu old_lsn=%llu old_pcn=%u returned_lsn=%llu returned_pcn=%u "
-                               "read_node=%u best_lsn=%llu",
-                               ctrl->page_id.file, ctrl->page_id.page, (uint32)partial_read, (uint32)best_status,
-                               (uint64)expect_lsn, (uint64)expect_lfn, (uint64)old_lsn, old_pcn,
-                               (uint64)PAGE_GET_LSN(ctrl->page), (uint32)ctrl->page->pcn, best_node,
-                               (uint64)best_lsn);
-#endif
                 CM_RESTORE_STACK(session->stack);
                 return best_status;
             }
@@ -5488,21 +5748,6 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
             cm_spin_unlock(&mgr->fisrt_pipe_lock);
 
             if (response->result == RBP_READ_RESULT_NOPAGE) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_DEBUG_INF("[RBP_READ_TRACE] PULL_CANDIDATE page=%u-%u partial=%u node=%u result=%u "
-                               "expect_lsn=%llu expect_lfn=%llu old_lsn=%llu old_pcn=%u required=%u "
-                               "selected_valid=%u selected_pulled=%u verified=%u in_jumped_window=%u "
-                               "verify_node=%u selected_node=%u load_status=%u",
-                               ctrl->page_id.file, ctrl->page_id.page, (uint32)partial_read, node_id,
-                               (uint32)response->result, (uint64)expect_lsn, (uint64)expect_lfn, (uint64)old_lsn,
-                               old_pcn, (uint32)(partial_read && partial_item->required),
-                               (uint32)(partial_read && partial_item->selected_valid),
-                               (uint32)(partial_read && partial_item->selected_pulled),
-                               (uint32)(partial_read && partial_item->verified), (uint32)in_jumped_window,
-                               verify_node_id,
-                               (uint32)(partial_read ? partial_item->selected_node : OG_INVALID_ID32),
-                               (uint32)ctrl->load_status);
-#endif
                 continue;
             }
             if (response->result != RBP_READ_RESULT_OK) {
@@ -5516,6 +5761,11 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
 
             if (partial_read && partial_item->selected_valid) {
                 uint64 rbp_lsn = PAGE_GET_LSN(response->block);
+
+                uint64 guard_lsn = rbp_partial_effective_guard_lsn(partial_item, response->guard_lsn);
+                if (rbp_mark_pull_page_guarded(session, rbp_lsn, guard_lsn, &saw_guarded, &max_guard_lsn)) {
+                    continue;
+                }
 
                 partial_item->seen_node_bitmap |= ((uint64)1 << (node_id % RBP_NODE_BITMAP_BITS));
                 if (rbp_lsn != partial_item->selected_lsn) {
@@ -5545,25 +5795,14 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
                 return page_status;
             }
 
+            uint64 guard_lsn = partial_read ?
+                rbp_partial_effective_guard_lsn(partial_item, response->guard_lsn) : response->guard_lsn;
+            if (rbp_mark_pull_page_guarded(session, PAGE_GET_LSN(response->block), guard_lsn,
+                                           &saw_guarded, &max_guard_lsn)) {
+                continue;
+            }
             page_status = rbp_eval_page_candidate(session, ctrl->page_id, PAGE_GET_LSN(response->block),
                                                   PAGE_GET_LSN(ctrl->page), expect_lsn, OG_TRUE);
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_INF("[RBP_READ_TRACE] PULL_CANDIDATE page=%u-%u partial=%u node=%u result=%u status=%u "
-                           "expect_lsn=%llu expect_lfn=%llu old_lsn=%llu old_pcn=%u candidate_lsn=%llu "
-                           "candidate_pcn=%u curr_lsn=%llu curr_pcn=%u required=%u selected_valid=%u "
-                           "selected_pulled=%u verified=%u in_jumped_window=%u verify_node=%u selected_node=%u "
-                           "load_status=%u",
-                           ctrl->page_id.file, ctrl->page_id.page, (uint32)partial_read, node_id,
-                           (uint32)response->result, (uint32)page_status, (uint64)expect_lsn, (uint64)expect_lfn,
-                           (uint64)old_lsn, old_pcn, (uint64)PAGE_GET_LSN(response->block),
-                           (uint32)((page_head_t *)response->block)->pcn, (uint64)PAGE_GET_LSN(ctrl->page),
-                           (uint32)ctrl->page->pcn, (uint32)(partial_read && partial_item->required),
-                           (uint32)(partial_read && partial_item->selected_valid),
-                           (uint32)(partial_read && partial_item->selected_pulled),
-                           (uint32)(partial_read && partial_item->verified), (uint32)in_jumped_window,
-                           verify_node_id, (uint32)(partial_read ? partial_item->selected_node : OG_INVALID_ID32),
-                           (uint32)ctrl->load_status);
-#endif
             if (partial_read) {
                 partial_item->seen_node_bitmap |= ((uint64)1 << (node_id % RBP_NODE_BITMAP_BITS));
                 if (partial_item->selected_valid && PAGE_GET_LSN(response->block) != partial_item->selected_lsn) {
@@ -5603,6 +5842,14 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
             }
         }
 
+        if (best_lsn > 0 && max_guard_lsn != 0 && best_lsn < max_guard_lsn) {
+            rbp_record_guard_lsn(ctrl, max_guard_lsn);
+            best_lsn = 0;
+            best_node = OG_INVALID_ID32;
+            best_status = RBP_PAGE_GUARDED;
+            page_status = RBP_PAGE_GUARDED;
+        }
+
         if (best_lsn > 0) {
             if (best_lsn > PAGE_GET_LSN(ctrl->page)) {
                 rbp_replace_local_page(session, ctrl, (page_head_t *)best_page_buf, NULL);
@@ -5617,49 +5864,24 @@ static rbp_page_status_e rbp_knl_pull_one_page(knl_session_t *session, buf_ctrl_
                 item->best_lsn = best_lsn;
                 item->best_source_node = best_node;
             }
+            ctrl->rbp_ctrl->guard_lsn = 0;
             ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
             ctrl->rbp_ctrl->page_status = best_status;
             rbp_stat_page_result(session, best_status);
             page_status = best_status;
         }
 
-        if (page_status == RBP_PAGE_MISS || page_status == RBP_PAGE_ERROR || best_lsn == 0) {
+        if (best_lsn == 0 && saw_guarded && page_status != RBP_PAGE_ERROR) {
+            rbp_record_guard_lsn(ctrl, max_guard_lsn);
+            page_status = RBP_PAGE_GUARDED;
+        }
+
+        if (page_status == RBP_PAGE_MISS || page_status == RBP_PAGE_ERROR || page_status == RBP_PAGE_GUARDED ||
+            best_lsn == 0) {
             uint64 sample = (uint64)cm_atomic_inc(&rbp_context->rbp_read_pull_miss_trace);
             if (sample <= RBP_READ_SAMPLE_LIMIT) {
-                OG_LOG_DEBUG_INF("[RBP_READ_TRACE] PULL_RESULT sample[%llu/%u] page=%u-%u partial=%u status=%u "
-                               "expect_lsn=%llu expect_lfn=%llu old_lsn=%llu old_pcn=%u returned_lsn=%llu "
-                               "returned_pcn=%u read_node=%u best_lsn=%llu required=%u selected_valid=%u "
-                               "selected_pulled=%u verified=%u in_jumped_window=%u verify_node=%u selected_node=%u "
-                               "load_status=%u",
-                               sample, RBP_READ_SAMPLE_LIMIT, ctrl->page_id.file, ctrl->page_id.page,
-                               (uint32)partial_read, (uint32)page_status, (uint64)expect_lsn, (uint64)expect_lfn,
-                               (uint64)old_lsn, old_pcn, (uint64)PAGE_GET_LSN(ctrl->page),
-                               (uint32)ctrl->page->pcn, best_node, (uint64)best_lsn,
-                               (uint32)(partial_read && partial_item->required),
-                               (uint32)(partial_read && partial_item->selected_valid),
-                               (uint32)(partial_read && partial_item->selected_pulled),
-                               (uint32)(partial_read && partial_item->verified), (uint32)in_jumped_window,
-                               verify_node_id,
-                               (uint32)(partial_read ? partial_item->selected_node : OG_INVALID_ID32),
-                               (uint32)ctrl->load_status);
             }
         } else {
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_DEBUG_INF("[RBP_READ_TRACE] PULL_RESULT page=%u-%u partial=%u status=%u expect_lsn=%llu "
-                           "expect_lfn=%llu old_lsn=%llu old_pcn=%u returned_lsn=%llu returned_pcn=%u "
-                           "read_node=%u best_lsn=%llu required=%u selected_valid=%u selected_pulled=%u "
-                           "verified=%u in_jumped_window=%u verify_node=%u selected_node=%u load_status=%u",
-                           ctrl->page_id.file, ctrl->page_id.page, (uint32)partial_read, (uint32)page_status,
-                           (uint64)expect_lsn, (uint64)expect_lfn, (uint64)old_lsn, old_pcn,
-                           (uint64)PAGE_GET_LSN(ctrl->page),
-                           (uint32)ctrl->page->pcn, best_node, (uint64)best_lsn,
-                           (uint32)(partial_read && partial_item->required),
-                           (uint32)(partial_read && partial_item->selected_valid),
-                           (uint32)(partial_read && partial_item->selected_pulled),
-                           (uint32)(partial_read && partial_item->verified), (uint32)in_jumped_window,
-                           verify_node_id, (uint32)(partial_read ? partial_item->selected_node : OG_INVALID_ID32),
-                           (uint32)ctrl->load_status);
-#endif
         }
         CM_RESTORE_STACK(session->stack);
         return page_status;
@@ -6351,10 +6573,10 @@ static uint32 rbp_knl_read_selected_pages(knl_session_t *session)
     rbp_finish_read_batch_stat(session, rbp_proc_id, RBP_READ_RESULT_OK, stat.returned, begin_time,
                                pipe_lock_us, ensure_conn_us, send_us, wait_resp_us, process_us, apply_diag_ptr);
     if (stat.missing > 0) {
-        OG_LOG_RUN_WAR("[RBP] selected pull worker batch: worker=%u node=%u requested=%u returned=%u installed=%u "
-                       "verified=%u missing=%u elapsed_us=%llu",
-                       rbp_proc_id, node_id, stat.requested, stat.returned, stat.installed, stat.verified,
-                       stat.missing, (uint64)(cm_now() - begin_time));
+        OG_LOG_DEBUG_WAR("[RBP] selected pull worker batch: worker=%u node=%u requested=%u returned=%u installed=%u "
+                        "verified=%u missing=%u elapsed_us=%llu",
+                        rbp_proc_id, node_id, stat.requested, stat.returned, stat.installed, stat.verified,
+                        stat.missing, (uint64)(cm_now() - begin_time));
     }
     return RBP_READ_RESULT_OK;
 }
@@ -6365,48 +6587,14 @@ void rbp_enque_one_page(knl_session_t *session, buf_ctrl_t *ctrl)
     uint32 queue_id = ctrl->page_id.page % OG_RBP_SESSION_COUNT;
     rbp_queue_t *queue = &rbp_ctx->queue[queue_id];
     rbp_queue_item_t *item = NULL;
-    uint32 queue_count;
-    bool32 queue_has_gap;
-    uint64 queue_trunc_lfn;
-    uint64 lastest_lfn;
-    uint64 page_lsn;
-    uint64 item_trunc_lfn;
-    uint32 page_pcn;
-    rbp_queue_item_t *pending_item = NULL;
-#ifdef RBP_VERBOSE_TRACE
-    uint32 pending_source = 0;
-#endif
-    uint64 curr_lfn;
 
     if (!ctrl->rbp_ctrl->is_rbpdirty) {
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_DEBUG_INF("[RBP_ENQ_TRACE] skip stale dirty-list entry: queue=%u page=%u-%u sid=%u dtc_type=%u "
-                       "ctrl=%p pending=%p lastest_lfn=%llu page_lsn=%llu page_pcn=%u rbp_trunc_lfn=%llu "
-                       "is_from_rbp=%u page_status=%u",
-                       queue_id, ctrl->page_id.file, ctrl->page_id.page, session->id,
-                       (uint32)session->dtc_session_type, (void *)ctrl, (void *)ctrl->rbp_ctrl->pending_item,
-                       (uint64)ctrl->lastest_lfn, (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn,
-                       (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint32)ctrl->rbp_ctrl->is_from_rbp,
-                       (uint32)ctrl->rbp_ctrl->page_status);
-#endif
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_DEBUG_INF("[RBP] skip stale dirty-list entry: queue=%u page=%u-%u",
-                        queue_id, ctrl->page_id.file, ctrl->page_id.page);
-#endif
         return;
     }
 
     item = rbp_alloc_queue_item();
     if (item == NULL) {
         cm_spin_lock(&queue->lock, &session->stat->spin_stat.stat_rbp_queue);
-        OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] DROP_PENDING reason=alloc_failed queue=%u page=%u-%u ctrl=%p item=%p "
-                        "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu reset_lfn=%llu "
-                        "gap_end_lfn=%llu page_status=%u",
-                        queue_id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl,
-                        (void *)ctrl->rbp_ctrl->pending_item, (uint64)ctrl->page->lsn,
-                        (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                        (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)0,
-                        (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint32)ctrl->rbp_ctrl->page_status);
         ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
         ctrl->rbp_ctrl->pending_item = NULL;
         queue->has_gap = OG_TRUE;
@@ -6418,36 +6606,8 @@ void rbp_enque_one_page(knl_session_t *session, buf_ctrl_t *ctrl)
 
     cm_spin_lock(&queue->lock, &session->stat->spin_stat.stat_rbp_queue);
     if (ctrl->rbp_ctrl->pending_item != NULL) {
-#ifdef RBP_VERBOSE_TRACE
-        pending_item = ctrl->rbp_ctrl->pending_item;
-        pending_source = (uint32)pending_item->source;
-        queue_count = queue->count;
-        queue_has_gap = queue->has_gap;
-        queue_trunc_lfn = queue->trunc_point.lfn;
-        item_trunc_lfn = ctrl->rbp_ctrl->rbp_trunc_point.lfn;
-        lastest_lfn = ctrl->lastest_lfn;
-        page_lsn = ctrl->page->lsn;
-        page_pcn = ctrl->page->pcn;
-        curr_lfn = session->kernel->redo_ctx.curr_point.lfn;
-#endif
         cm_spin_unlock(&queue->lock);
         rbp_free_queue_item(session, item);
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_DEBUG_INF("[RBP_ENQ_TRACE] merge duplicate pending live item: queue=%u page=%u-%u sid=%u dtc_type=%u "
-                       "ctrl=%p pending=%p pending_source=%u count=%u queue_trunc_lfn=%llu item_trunc_lfn=%llu "
-                       "lastest_lfn=%llu page_lsn=%llu page_pcn=%u has_gap=%u curr_lfn=%llu connected=%u "
-                       "dtc_read_active=%u",
-                       queue_id, ctrl->page_id.file, ctrl->page_id.page, session->id,
-                       (uint32)session->dtc_session_type, (void *)ctrl, (void *)pending_item, pending_source,
-                       queue_count,
-                       (uint64)queue_trunc_lfn, (uint64)item_trunc_lfn, (uint64)lastest_lfn, (uint64)page_lsn,
-                       page_pcn, (uint32)queue_has_gap, (uint64)curr_lfn,
-                       (uint32)rbp_ctx->rbp_buf_manager[queue_id].is_connected, (uint32)rbp_ctx->dtc_read_active);
-#endif
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_DEBUG_INF("[RBP] skip duplicate live queue item: queue=%u page=%u-%u lastest_lfn=%llu",
-                        queue_id, ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->lastest_lfn);
-#endif
         return;
     }
 
@@ -6467,38 +6627,8 @@ void rbp_enque_one_page(knl_session_t *session, buf_ctrl_t *ctrl)
         queue->last = item;
     }
     queue->count++;
-    queue_count = queue->count;
-    queue_has_gap = queue->has_gap;
-    queue_trunc_lfn = queue->trunc_point.lfn;
-    lastest_lfn = ctrl->lastest_lfn;
-    page_lsn = ctrl->page->lsn;
-    item_trunc_lfn = ctrl->rbp_ctrl->rbp_trunc_point.lfn;
-    page_pcn = ctrl->page->pcn;
-    curr_lfn = session->kernel->redo_ctx.curr_point.lfn;
-    pending_item = ctrl->rbp_ctrl->pending_item;
 
     cm_spin_unlock(&queue->lock);
-
-    OG_LOG_DEBUG_INF("[RBP_ENQ_TRACE] enqueue live item: queue=%u page=%u-%u sid=%u dtc_type=%u ctrl=%p item=%p "
-                    "pending=%p count=%u queue_trunc_lfn=%llu item_trunc_lfn=%llu lastest_lfn=%llu page_lsn=%llu "
-                    "page_pcn=%u has_gap=%u curr_lfn=%llu connected=%u dtc_read_active=%u",
-                    queue_id, ctrl->page_id.file, ctrl->page_id.page, session->id,
-                    (uint32)session->dtc_session_type, (void *)ctrl, (void *)item,
-                    (void *)pending_item, queue_count, (uint64)queue_trunc_lfn,
-                    (uint64)item_trunc_lfn, (uint64)lastest_lfn, (uint64)page_lsn, page_pcn,
-                    (uint32)queue_has_gap, (uint64)curr_lfn,
-                    (uint32)rbp_ctx->rbp_buf_manager[queue_id].is_connected, (uint32)rbp_ctx->dtc_read_active);
-
-#if RBP_PAGE_WRITE_HOT_DIAG
-    if (rbp_queue_backlog_loggable(queue_id, queue_count)) {
-        OG_LOG_DEBUG_INF("[RBP] PAGE_WRITE queue backlog on enqueue: queue=%u count=%u page=%u-%u "
-                        "queue_trunc_lfn=%llu item_latest_lfn=%llu page_lsn=%llu has_gap=%u connected=%u "
-                        "dtc_read_active=%u",
-                       queue_id, queue_count, ctrl->page_id.file, ctrl->page_id.page, (uint64)queue_trunc_lfn,
-                       (uint64)lastest_lfn, (uint64)page_lsn, (uint32)queue_has_gap,
-                       (uint32)rbp_ctx->rbp_buf_manager[queue_id].is_connected, (uint32)rbp_ctx->dtc_read_active);
-    }
-#endif
 }
 
 void rbp_enque_pages(knl_session_t *session)
@@ -6526,16 +6656,6 @@ void rbp_queue_set_gap(knl_session_t *session, buf_ctrl_t *ctrl)
         item->source = RBP_QUEUE_ITEM_DROPPED;
         item->ctrl = NULL;
     }
-#ifdef RBP_VERBOSE_TRACE
-    OG_LOG_DEBUG_INF("[RBP_CTRL_TRACE] DROP_PENDING reason=queue_set_gap queue=%u page=%u-%u ctrl=%p item=%p "
-                    "page_lsn=%llu page_pcn=%u lastest_lfn=%llu item_trunc_lfn=%llu reset_lfn=%llu "
-                    "gap_end_lfn=%llu page_status=%u already_gap=%u",
-                    queue_id, ctrl->page_id.file, ctrl->page_id.page, (void *)ctrl, (void *)item,
-                    (uint64)ctrl->page->lsn, (uint32)ctrl->page->pcn, (uint64)ctrl->lastest_lfn,
-                    (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn, (uint64)0,
-                    (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint32)ctrl->rbp_ctrl->page_status,
-                    (uint32)already_gap);
-#endif
     ctrl->rbp_ctrl->pending_item = NULL;
     ctrl->rbp_ctrl->is_rbpdirty = OG_FALSE;
     cm_spin_unlock(&queue->lock);
@@ -6734,6 +6854,11 @@ bool32 rbp_pre_check(knl_session_t *session, log_point_t aly_end_point)
         return OG_FALSE;
     }
 
+    if (DB_IS_CLUSTER(session) && cm_atomic_get(&g_rbp_disk_guard_available) == 0) {
+        OG_LOG_RUN_WAR("[RBP] rbp is unavailable because disk guard lease has no acknowledged checkpoint");
+        return OG_FALSE;
+    }
+
     redo_ctx->rbp_begin_point = init_point;
     redo_ctx->rbp_rcy_point = init_point;
     redo_ctx->rbp_lrp_point = init_point;
@@ -6840,12 +6965,6 @@ rbp_page_status_e knl_read_page_from_rbp(knl_session_t *session, buf_ctrl_t *ctr
     rbp_analyse_item_t *aly_item = NULL;
     uint64 expect_lsn = 0;
     uint64 expect_lfn = 0;
-#ifdef RBP_VERBOSE_TRACE
-    uint32 rbp_proc_id = ctrl->page_id.page % OG_RBP_SESSION_COUNT;
-    uint64 disk_lsn = PAGE_GET_LSN(ctrl->page);
-    uint32 disk_pcn = ctrl->page->pcn;
-    uint32 read_node = session->kernel->rbp_context.rbp_buf_manager[rbp_proc_id].temp_connected_node;
-#endif
     uint32 verify_node_id = OG_INVALID_ID32;
     bool32 in_jumped_window = OG_FALSE;
 
@@ -6890,9 +7009,7 @@ rbp_page_status_e knl_read_page_from_rbp(knl_session_t *session, buf_ctrl_t *ctr
             expect_lfn = aly_item->lfn;
         }
     }
-#ifndef RBP_VERBOSE_TRACE
     (void)expect_lfn;
-#endif
     if (SPACE_IS_NOLOGGING(space)) {
         rbp_record_read_skip_nolog_space(&session->kernel->rbp_context);
         RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] knl_read_page_from_rbp MISS nolog_space page %u-%u", ctrl->page_id.file,
@@ -6918,50 +7035,13 @@ rbp_page_status_e knl_read_page_from_rbp(knl_session_t *session, buf_ctrl_t *ctr
         CM_ABORT(0, "[RBP] ABORT INFO: instance must exit beacause of failed to read page from RBP");
     }
 
-    if (page_status == RBP_PAGE_MISS) {
-#ifdef RBP_VERBOSE_TRACE
-        OG_LOG_DEBUG_INF("[RBP_READ_TRACE] READ_RESULT page=%u-%u status=%u partial=%u expect_lsn=%llu "
-                       "expect_lfn=%llu disk_lsn=%llu disk_pcn=%u returned_lsn=%llu returned_pcn=%u "
-                       "read_node=%u is_from_rbp=%u page_status=%u required=%u selected_valid=%u "
-                       "selected_pulled=%u verified=%u in_jumped_window=%u verify_node=%u selected_node=%u "
-                       "load_status=%u",
-                       ctrl->page_id.file, ctrl->page_id.page, (uint32)page_status, (uint32)partial_read,
-                       (uint64)expect_lsn, (uint64)expect_lfn, (uint64)disk_lsn, disk_pcn,
-                       (uint64)PAGE_GET_LSN(ctrl->page), (uint32)ctrl->page->pcn, read_node,
-                       (uint32)ctrl->rbp_ctrl->is_from_rbp, (uint32)ctrl->rbp_ctrl->page_status,
-                       (uint32)(partial_read && partial_item != NULL && partial_item->required),
-                       (uint32)(partial_read && partial_item != NULL && partial_item->selected_valid),
-                       (uint32)(partial_read && partial_item != NULL && partial_item->selected_pulled),
-                       (uint32)(partial_read && partial_item != NULL && partial_item->verified),
-                       (uint32)in_jumped_window, verify_node_id,
-                       (uint32)(partial_read && partial_item != NULL ? partial_item->selected_node :
-                           OG_INVALID_ID32),
-                       (uint32)ctrl->load_status);
-#endif
-        OG_LOG_DEBUG_INF("[RBP] kernel read page from RBP: page: %u-%u not found on RBP",
-                        ctrl->page_id.file, ctrl->page_id.page);
+    if (page_status == RBP_PAGE_MISS || page_status == RBP_PAGE_GUARDED) {
+        OG_LOG_DEBUG_INF("[RBP] kernel read page from RBP: page: %u-%u fallback to disk status=%u",
+                        ctrl->page_id.file, ctrl->page_id.page, (uint32)page_status);
         session->stat->rbp_miss++;
-        return RBP_PAGE_MISS;
+        return page_status;
     }
 
-#ifdef RBP_VERBOSE_TRACE
-    OG_LOG_DEBUG_INF("[RBP_READ_TRACE] READ_RESULT page=%u-%u status=%u partial=%u expect_lsn=%llu "
-                   "expect_lfn=%llu disk_lsn=%llu disk_pcn=%u returned_lsn=%llu returned_pcn=%u "
-                   "read_node=%u is_from_rbp=%u page_status=%u required=%u selected_valid=%u "
-                   "selected_pulled=%u verified=%u in_jumped_window=%u verify_node=%u selected_node=%u "
-                   "load_status=%u",
-                   ctrl->page_id.file, ctrl->page_id.page, (uint32)page_status, (uint32)partial_read,
-                   (uint64)expect_lsn, (uint64)expect_lfn, (uint64)disk_lsn, disk_pcn,
-                   (uint64)PAGE_GET_LSN(ctrl->page), (uint32)ctrl->page->pcn, read_node,
-                   (uint32)ctrl->rbp_ctrl->is_from_rbp, (uint32)ctrl->rbp_ctrl->page_status,
-                   (uint32)(partial_read && partial_item != NULL && partial_item->required),
-                   (uint32)(partial_read && partial_item != NULL && partial_item->selected_valid),
-                   (uint32)(partial_read && partial_item != NULL && partial_item->selected_pulled),
-                   (uint32)(partial_read && partial_item != NULL && partial_item->verified),
-                   (uint32)in_jumped_window, verify_node_id,
-                   (uint32)(partial_read && partial_item != NULL ? partial_item->selected_node : OG_INVALID_ID32),
-                   (uint32)ctrl->load_status);
-#endif
     RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] knl_read_page_from_rbp done page %u-%u status=%u page_lsn=%llu page_pcn=%u "
                       "is_from_rbp=%u",
                       ctrl->page_id.file, ctrl->page_id.page, (uint32)page_status, (uint64)ctrl->page->lsn,
@@ -6974,6 +7054,19 @@ rbp_page_status_e knl_read_page_from_rbp(knl_session_t *session, buf_ctrl_t *ctr
 * so begin_dtc_read only starts RBP background pulling and flips the shared recovery state.
 * There is intentionally no single curr_point = rbp_rcy_point jump here.
 */
+static void rbp_stop_recovery_local_guard(knl_session_t *session)
+{
+    rbp_context_t *rbp_context = &session->kernel->rbp_context;
+
+    if (!rbp_context->recovery_local_guard_active) {
+        return;
+    }
+    ckpt_disable(session);
+    rbp_context->recovery_local_guard_active = OG_FALSE;
+    CM_MFENCE;
+    ckpt_enable(session);
+}
+
 status_t rbp_knl_begin_dtc_read(knl_session_t *session)
 {
     rbp_context_t *rbp_context = &session->kernel->rbp_context;
@@ -6993,6 +7086,10 @@ status_t rbp_knl_begin_dtc_read(knl_session_t *session)
         OG_LOG_RUN_INF("[RBP] skip DTC RBP read: only partial recovery uses RBP acceleration");
         return OG_ERROR;
     }
+    if (cm_atomic_get(&g_rbp_disk_guard_available) == 0) {
+        OG_LOG_RUN_WAR("[RBP] skip DTC RBP read: disk guard lease is unavailable");
+        return OG_ERROR;
+    }
 
     OG_LOG_DEBUG_INF("[RBP] begin multi-node RBP read start: current_version=%u rcy_with_rbp=%u",
                     rbp_context->rbp_read_version, (uint32)redo->rcy_with_rbp);
@@ -7004,23 +7101,37 @@ status_t rbp_knl_begin_dtc_read(knl_session_t *session)
     save_epoch_us = (uint64)(cm_now() - stage_begin);
     rbp_reset_read_stat(rbp_context);
     stage_begin = cm_now();
+    if (rbp_build_dtc_planned_required_items(session) != OG_SUCCESS) {
+        rbp_clear_dtc_read_epoch(rbp_context);
+        rbp_stop_temp_connection(session, rbp_context);
+        OG_LOG_RUN_WAR("[RBP] failed to build DTC planned required item cache, keep redo recovery");
+        return OG_ERROR;
+    }
+    if (cm_atomic_get(&g_rbp_disk_guard_available) == 0) {
+        rbp_clear_dtc_read_epoch(rbp_context);
+        rbp_stop_temp_connection(session, rbp_context);
+        OG_LOG_RUN_WAR("[RBP] skip DTC RBP read: disk guard lease is unavailable");
+        return OG_ERROR;
+    }
+    build_required_us = (uint64)(cm_now() - stage_begin);
+
+    /* Drain runtime checkpoint guards before frozen reads switch to the recovery-local guard. */
+    ckpt_disable(session);
+    rbp_context->recovery_local_guard_active = OG_TRUE;
+    CM_MFENCE;
+    stage_begin = cm_now();
     if (rbp_notify_dtc_read_begin_planned(session) != OG_SUCCESS) {
+        rbp_context->recovery_local_guard_active = OG_FALSE;
+        CM_MFENCE;
+        ckpt_enable(session);
         rbp_clear_dtc_read_epoch(rbp_context);
         rbp_stop_temp_connection(session, rbp_context);
         OG_LOG_RUN_WAR("[RBP] can not notify any DTC RBP READ_BEGIN node, keep redo recovery");
         return OG_ERROR;
     }
     notify_begin_us = (uint64)(cm_now() - stage_begin);
-    stage_begin = cm_now();
-    if (rbp_build_dtc_planned_required_items(session) != OG_SUCCESS) {
-        (void)rbp_notify_dtc_read_phase(session, MSG_RBP_READ_END);
-        rbp_disable_dtc_planned_nodes(session);
-        rbp_clear_dtc_read_epoch(rbp_context);
-        rbp_stop_temp_connection(session, rbp_context);
-        OG_LOG_RUN_WAR("[RBP] failed to build DTC planned required item cache, keep redo recovery");
-        return OG_ERROR;
-    }
-    build_required_us = (uint64)(cm_now() - stage_begin);
+    ckpt_enable(session);
+
     rbp_choose_dtc_selected_mode(session, &use_selected_batch, &need_selected_meta, &sync_selected_pull_at_begin);
     for (uint32 id = 0; id < OG_MAX_INSTANCES; id++) {
         rbp_context->dtc_selected_cursor[id] = 0;
@@ -7028,6 +7139,7 @@ status_t rbp_knl_begin_dtc_read(knl_session_t *session)
     if (need_selected_meta) {
         stage_begin = cm_now();
         if (rbp_pull_selected_metadata(session) != OG_SUCCESS) {
+            rbp_stop_recovery_local_guard(session);
             (void)rbp_notify_dtc_read_phase(session, MSG_RBP_READ_END);
             rbp_disable_dtc_planned_nodes(session);
             rbp_clear_dtc_read_epoch(rbp_context);
@@ -7039,6 +7151,7 @@ status_t rbp_knl_begin_dtc_read(knl_session_t *session)
     } else if (use_selected_batch) {
         stage_begin = cm_now();
         if (rbp_prepare_single_node_direct_selected(session) != OG_SUCCESS) {
+            rbp_stop_recovery_local_guard(session);
             (void)rbp_notify_dtc_read_phase(session, MSG_RBP_READ_END);
             rbp_disable_dtc_planned_nodes(session);
             rbp_clear_dtc_read_epoch(rbp_context);
@@ -7177,7 +7290,7 @@ static void rbp_verify_skiped_redo_pages(knl_session_t *session)
         already_verified = (bool32)(!dtc_read && aly_item->is_verified > 0);
         verified = already_verified;
         if (!verified) {
-            local_lsn = rbp_get_local_verify_lsn(session, aly_item->page_id);
+            local_lsn = rbp_get_local_verify_lsn(session, aly_item->page_id, expect_lsn);
             verified = (bool32)(aly_item->best_lsn >= expect_lsn || local_lsn >= expect_lsn);
             if (verified) {
                 aly_item->is_verified = OG_TRUE;
@@ -7284,7 +7397,9 @@ static void rbp_knl_end_read_internal(knl_session_t *session, bool32 verify_page
     stage_begin = cm_now();
 
     /* concurrency with buf_load_page_from_RBP */
+    rbp_context->recovery_local_guard_active = OG_FALSE;
     redo->rcy_with_rbp = OG_FALSE;
+    CM_MFENCE;
 
     if (verify_pages && !read_failed) {
         rbp_verify_skiped_redo_pages(session);
@@ -7307,6 +7422,7 @@ static void rbp_knl_end_read_internal(knl_session_t *session, bool32 verify_page
     rbp_log_read_skip_summary(rbp_context);
     rbp_log_read_diag_summary(rbp_context);
     rbp_log_read_anomaly_summary(rbp_context);
+    rbp_log_read_guard_summary(rbp_context);
     OG_LOG_RUN_INF("[RBP] read phase summary: pages=%llu errors=%llu worker_active_ms=%llu owner_gap_ms=%llu "
                    "skipped_lfn_total=%llu lock_us=%llu verify_us=%llu verify_pages=%u read_end_notify_us=%llu "
                    "cleanup_us=%llu total_us=%llu reason=%s",

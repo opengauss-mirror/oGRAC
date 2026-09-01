@@ -1049,7 +1049,8 @@ static status_t buf_load_page_from_RBP(knl_session_t *session, buf_ctrl_t *ctrl,
         RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP error page %u-%u status=%u",
                           page_id.file, page_id.page, (uint32)status);
         return OG_ERROR;
-    } else if (status == RBP_PAGE_MISS || status == RBP_PAGE_OLD || status == RBP_PAGE_AHEAD) {
+    } else if (status == RBP_PAGE_MISS || status == RBP_PAGE_OLD || status == RBP_PAGE_AHEAD ||
+               status == RBP_PAGE_GUARDED) {
         RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page_from_RBP fail page %u-%u status=%u -> load_disk", page_id.file,
                           page_id.page, (uint32)status);
         /* page not exists on rbp */
@@ -1079,12 +1080,39 @@ static inline bool32 session_need_read_rbp(knl_session_t *session)
     }
 }
 
+static status_t buf_check_guarded_disk_page(knl_session_t *session, buf_ctrl_t *ctrl, bool32 loaded_guard_disk)
+{
+    uint64 guard_lsn = ctrl->rbp_ctrl->guard_lsn;
+    uint64 disk_lsn = PAGE_GET_LSN(ctrl->page);
+    if (disk_lsn < guard_lsn) {
+        ctrl->rbp_ctrl->page_status = RBP_PAGE_GUARDED;
+        ctrl->rbp_ctrl->rbp_read_version = 0;
+        rbp_set_unsafe(session, RD_TYPE_END);
+        rbp_knl_mark_dtc_fallback(session, OG_INVALID_ID32, RBP_READ_RESULT_ERROR,
+                                  RBP_DTC_FALLBACK_PAGE_READ);
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_below);
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page disk fallback below guard page %u-%u "
+                          "disk_lsn=%llu guard_lsn=%llu disk_pcn=%u",
+                          ctrl->page_id.file, ctrl->page_id.page, (uint64)disk_lsn, (uint64)guard_lsn,
+                          (uint32)ctrl->page->pcn);
+        return OG_ERROR;
+    }
+
+    if (loaded_guard_disk) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_ok);
+    } else {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_local_ready);
+    }
+    ctrl->rbp_ctrl->guard_lsn = 0;
+    return OG_SUCCESS;
+}
+
 /* If failover with RBP, try load page from RBP. If page is not exists on RBP, load page from disk */
 status_t buf_load_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id)
 {
     status_t status = OG_ERROR;
     bool32 rbp_read_failed = OG_FALSE;
-
+    bool32 loaded_guard_disk = OG_FALSE;
     knl_panic(!(ctrl->is_edp || ctrl->is_dirty) && (!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl)));
     if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) && session_need_read_rbp(session)) {
         ctrl->page->lsn = OG_INVALID_LSN; // reset page lsn to 0 here, because it is not loaded from disk
@@ -1099,8 +1127,17 @@ status_t buf_load_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_
         if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel)) && session_need_read_rbp(session)) {
             RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] buf_load_page fallback_disk page %u-%u after RBP path failed",
                               page_id.file, page_id.page);
+            if (ctrl->rbp_ctrl->guard_lsn != 0) {
+                (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_load);
+                loaded_guard_disk = OG_TRUE;
+            }
         }
         status = buf_load_page_from_disk(session, ctrl, page_id);
+    }
+
+    if (SECUREC_UNLIKELY(status == OG_SUCCESS && KNL_RECOVERY_WITH_RBP(session->kernel) &&
+        ctrl->rbp_ctrl->guard_lsn != 0)) {
+        status = buf_check_guarded_disk_page(session, ctrl, loaded_guard_disk);
     }
 
     if (status != OG_SUCCESS) {
@@ -1558,6 +1595,7 @@ static inline status_t buf_try_read_rbp_page(knl_session_t *session, buf_ctrl_t 
     if (ctrl->rbp_ctrl->page_status == RBP_PAGE_NOREAD) {
         ctrl->page->lsn = OG_INVALID_LSN; // page is not loaded, set lsn to 0
         ctrl->rbp_ctrl->page_status = RBP_PAGE_NONE;
+        ctrl->rbp_ctrl->guard_lsn = 0;
     }
 
     if (session_need_read_rbp(session)) {
@@ -1582,6 +1620,7 @@ static inline void buf_read_compress_update_no_read(knl_session_t *session, buf_
         head_ctrl->compress_group[i]->load_status = BUF_IS_LOADED;
         if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel))) {
             head_ctrl->compress_group[i]->rbp_ctrl->page_status = RBP_PAGE_NOREAD;
+            head_ctrl->compress_group[i]->rbp_ctrl->guard_lsn = 0;
         }
     }
 }
@@ -1617,6 +1656,7 @@ static status_t buf_read_normal(knl_session_t *session, buf_ctrl_t *ctrl, page_i
             ctrl->load_status = (uint8)BUF_IS_LOADED;
             if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel))) {
                 ctrl->rbp_ctrl->page_status = RBP_PAGE_NOREAD;
+                ctrl->rbp_ctrl->guard_lsn = 0;
             }
             return OG_SUCCESS;
         }
@@ -1939,9 +1979,6 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
 #endif
 
     if (changed && !PAGE_IS_HARD_DAMAGE_ZERO(ctrl->page)) {
-#ifdef RBP_VERBOSE_TRACE
-        uint32 old_pcn = ctrl->page->pcn;
-#endif
         knl_panic_log(PAGE_SIZE(*ctrl->page) != 0, "the page size is abnormal, panic info: page %u-%u type %u size %u",
                       ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, PAGE_SIZE(*ctrl->page));
 
@@ -1977,58 +2014,14 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
             bool32 enqueue_allowed = was_rbpdirty ? OG_FALSE : rbp_ctrl_may_enqueue(session, ctrl);
             bool32 will_enqueue = (bool32)(!was_rbpdirty && enqueue_allowed);
 
-#ifdef RBP_VERBOSE_TRACE
-            OG_LOG_RUN_INF("[RBP_CTRL_TRACE] DIRTY_CHANGE page=%u-%u sid=%u dtc_type=%u old_pcn=%u new_pcn=%u "
-                           "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu is_dirty=%u is_edp=%u is_rbpdirty=%u "
-                           "pending_item=%p page_status=%u rbp_trunc_lfn=%llu will_enqueue=%u enqueue_allowed=%u",
-                           ctrl->page_id.file, ctrl->page_id.page, session->id, (uint32)session->dtc_session_type,
-                           old_pcn, (uint32)ctrl->page->pcn, (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
-                           (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint32)ctrl->is_dirty,
-                           (uint32)ctrl->is_edp, (uint32)was_rbpdirty, (void *)ctrl->rbp_ctrl->pending_item,
-                           (uint32)ctrl->rbp_ctrl->page_status, (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                           (uint32)will_enqueue, (uint32)enqueue_allowed);
-#endif
             ctrl->rbp_ctrl->page_status = RBP_PAGE_NONE;
+            ctrl->rbp_ctrl->guard_lsn = 0;
             if (will_enqueue) {
                 ctrl->rbp_ctrl->is_rbpdirty = OG_TRUE;
                 session->rbp_dirty_pages[session->rbp_dirty_count++] = ctrl;
                 knl_panic_log(session->rbp_dirty_count <= KNL_MAX_ATOMIC_PAGES,
                               "rbp_dirty_count is abnormal, panic info: page %u-%u type %u rbp_dirty_count %u",
                               ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, session->rbp_dirty_count);
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[RBP_CTRL_TRACE] RBP_DIRTY_MARK page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
-                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu rbp_dirty_count=%u pending_item=%p",
-                               ctrl->page_id.file, ctrl->page_id.page, session->id,
-                               (uint32)session->dtc_session_type, (uint32)ctrl->page->pcn,
-                               (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
-                               (uint64)session->kernel->redo_ctx.curr_point.lfn, session->rbp_dirty_count,
-                               (void *)ctrl->rbp_ctrl->pending_item);
-#endif
-            } else if (was_rbpdirty) {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[RBP_CTRL_TRACE] RBP_PENDING_UPDATE page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
-                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu pending_item=%p rbp_trunc_lfn=%llu "
-                               "page_status=%u",
-                               ctrl->page_id.file, ctrl->page_id.page, session->id,
-                               (uint32)session->dtc_session_type, (uint32)ctrl->page->pcn,
-                               (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
-                               (uint64)session->kernel->redo_ctx.curr_point.lfn,
-                               (void *)ctrl->rbp_ctrl->pending_item,
-                               (uint64)ctrl->rbp_ctrl->rbp_trunc_point.lfn,
-                               (uint32)ctrl->rbp_ctrl->page_status);
-#endif
-            } else {
-#ifdef RBP_VERBOSE_TRACE
-                OG_LOG_RUN_INF("[RBP_CTRL_TRACE] RBP_ENQUEUE_SKIP page=%u-%u sid=%u dtc_type=%u page_pcn=%u "
-                               "page_lsn=%llu lastest_lfn=%llu curr_lfn=%llu enqueue_allowed=%u pending_item=%p "
-                               "page_status=%u lock_mode=%u clustered=%u",
-                               ctrl->page_id.file, ctrl->page_id.page, session->id,
-                               (uint32)session->dtc_session_type, (uint32)ctrl->page->pcn,
-                               (uint64)ctrl->page->lsn, (uint64)ctrl->lastest_lfn,
-                               (uint64)session->kernel->redo_ctx.curr_point.lfn, (uint32)enqueue_allowed,
-                               (void *)ctrl->rbp_ctrl->pending_item, (uint32)ctrl->rbp_ctrl->page_status,
-                               (uint32)ctrl->lock_mode, (uint32)DB_IS_CLUSTER(session));
-#endif
             }
         }
 

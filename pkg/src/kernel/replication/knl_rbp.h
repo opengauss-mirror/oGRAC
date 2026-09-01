@@ -37,6 +37,8 @@
 extern "C"{
 #endif
 
+struct st_ckpt_group;
+
 #define RBP_ALY_MAX_FILE            10
 
 #ifdef WIN32
@@ -55,17 +57,6 @@ extern "C"{
   */
 #define RBP_READ_HOT_DIAG               0
 
-/*
-  * PAGE_WRITE assemble/queue/send detailed timing and DEBUG trace. Production keep 0.
-  */
-#define RBP_PAGE_WRITE_HOT_DIAG         0
-
-#if RBP_PAGE_WRITE_HOT_DIAG
-#define RBP_PAGE_WRITE_NOW()            (g_timer()->now)
-#else
-#define RBP_PAGE_WRITE_NOW()            0
-#endif
-
 #if RBP_READ_HOT_DIAG
 #define RBP_BUF_TRACE_LOG(...)          OG_LOG_DEBUG_INF(__VA_ARGS__)
 #else
@@ -82,7 +73,8 @@ extern "C"{
 #define RBP_MAX_RESP_BUF_SIZE       (sizeof(rbp_batch_read_resp_t))
 #define RBP_HEARTBEAT_INTERVAL      (2000 * MICROSECS_PER_MILLISEC) // 2s
 #define RBP_MAX_READ_WAIT_TIME      3000 // 3s
-#define RBP_SNAPSHOT_POOL_SIZE      (OG_RBP_SESSION_COUNT * RBP_BATCH_PAGE_NUM * 4)
+#define RBP_SNAPSHOT_POOL_BATCHES   32
+#define RBP_SNAPSHOT_POOL_SIZE      (OG_RBP_SESSION_COUNT * RBP_BATCH_PAGE_NUM * RBP_SNAPSHOT_POOL_BATCHES)
 #define RBP_ASSEMBLE_MAX_SCAN_DEFAULT 300
 #define RBP_ASSEMBLE_MAX_SCAN_MIN     100
 #define RBP_ASSEMBLE_MAX_SCAN_MAX     1000000
@@ -277,6 +269,7 @@ typedef struct st_rbp_context {
     uint64 snapshot_alloc_fail_total;
     volatile bool32 page_write_suspended;
     volatile bool32 clear_after_partial_recovery;
+    volatile bool32 recovery_local_guard_active;
     /* rbp agnet on kernel */
     thread_t rbp_agent_thread;
 
@@ -302,6 +295,14 @@ typedef struct st_rbp_context {
     atomic_t rbp_read_ahead_detail;
     atomic_t rbp_read_partial_disk_fallback;
     atomic_t rbp_read_multi_disk_fallback;
+    atomic_t rbp_read_guard_page_read_hit;
+    atomic_t rbp_read_guard_selected_hit;
+    atomic_t rbp_read_guard_batch_hit;
+    atomic_t rbp_read_guard_local_hit;
+    atomic_t rbp_read_guard_local_ready;
+    atomic_t rbp_read_guard_disk_load;
+    atomic_t rbp_read_guard_disk_ok;
+    atomic_t rbp_read_guard_disk_below;
     rbp_read_worker_diag_t read_diag[OG_RBP_SESSION_COUNT];
     rbp_read_skip_diag_t read_skip_diag;
     uint64 rbp_window_start;
@@ -388,6 +389,7 @@ typedef enum en_rbp_page_status {
     RBP_PAGE_OLD = 5,               /* RBP page->LSN < local page->LSN */
     RBP_PAGE_AHEAD = 6,             /* RBP page->LSN > expected LSN  */
     RBP_PAGE_NOREAD = 7,            /* page is not loaded to buffer and enter by ENTER_PAGE_NO_READ */
+    RBP_PAGE_GUARDED = 8,           /* disk guard says the RBP page is older than flushed disk page */
 } rbp_page_status_e;
 
 typedef enum en_rbp_dtc_fallback_reason {
@@ -426,6 +428,10 @@ void rbp_queue_set_trunc_point(knl_session_t *session, log_point_t *point);
 void rbp_queue_notify_ckpt_point(knl_session_t *session, log_point_t *point);
 log_point_t rbp_queue_get_trunc_point(knl_session_t *session);
 uint64 rbp_queue_get_page_count(knl_session_t *session);
+void rbp_knl_notify_disk_guard_before_ckpt(knl_session_t *session, struct st_ckpt_group *group);
+status_t rbp_knl_notify_disk_guard_pages(knl_session_t *session, const rbp_disk_guard_item_t *items, uint32 count);
+bool32 rbp_knl_recovery_local_guard_active(knl_session_t *session);
+void rbp_knl_record_ckpt_local_guard(knl_session_t *session, page_id_t page_id, uint64 page_lsn);
 
 /* WAL / quorum visibility before sending PAGE_WRITE (multi-node DSS; replaces single-standby-only barrier). */
 status_t rbp_wait_redo_visible(knl_session_t *session, thread_t *thread, uint64 max_page_lsn, uint64 max_page_lfn,
@@ -450,6 +456,8 @@ status_t rbp_knl_query_rbp_point_by_node(knl_session_t *session, uint32 node_id,
                                           bool32 check_end_point);
 void rbp_knl_check_end_point(knl_session_t *session);
 rbp_page_status_e knl_read_page_from_rbp(knl_session_t *session, buf_ctrl_t *ctrl);
+rbp_page_status_e rbp_knl_resolve_partial_guarded_page(knl_session_t *session, buf_ctrl_t *ctrl,
+                                                       uint64 expect_lsn);
 status_t rbp_alloc_bg_session(uint8 queue_index, knl_session_t **session);
 void rbp_release_bg_session(knl_session_t *session);
 
