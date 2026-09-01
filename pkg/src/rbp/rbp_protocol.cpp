@@ -31,6 +31,7 @@
 #include <cstring>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 namespace rbp {
 
@@ -47,7 +48,6 @@ constexpr size_t RBP_META_REQUEST_SIZE = RBP_META_MAX_COUNT_OFFSET + sizeof(uint
 constexpr size_t RBP_SELECTED_COUNT_OFFSET = 0;
 constexpr size_t RBP_SELECTED_ENTRIES_OFFSET = sizeof(uint64_t);
 constexpr size_t RBP_SELECTED_ENTRY_SIZE = sizeof(page_id_t) + sizeof(uint64_t);
-
 rbp_batch_read_resp_t& tls_batch_read_resp()
 {
     thread_local rbp_batch_read_resp_t resp;
@@ -87,7 +87,6 @@ struct PreparedPageWrite {
     uint32_t writer_inst = 0;
     uint64_t writer_seq = 0;
     bool rejected = false;
-    const char* reject_reason = "none";
 };
 
 enum class PageWriteOp { Reject, Covered, Install };
@@ -102,122 +101,21 @@ struct PageWritePlan {
     log_point_t coverage_lrp{};
     uint32_t writer_inst = 0;
     uint64_t writer_seq = 0;
-    bool had_prev = false;
-    uint32_t prev_writer_inst = 0;
-    uint64_t prev_writer_seq = 0;
-    uint64_t prev_page_lsn = 0;
-    uint32_t prev_page_pcn = 0;
-    bool counted_reject = false;
-    const char* reason = "none";
     std::shared_ptr<PagePayload> payload;
 };
-
-const char* page_write_op_name(PageWriteOp op)
-{
-    switch (op) {
-        case PageWriteOp::Reject:
-            return "reject";
-        case PageWriteOp::Covered:
-            return "covered";
-        case PageWriteOp::Install:
-            return "install";
-        default:
-            return "unknown";
-    }
-}
 
 bool commit_page_install(PageWritePlan& plan, RbpServerState& state, RbpShard& shard, PageRecord rec,
                          const PageMeta& meta, bool legacy_pending, int& rejected, int& accepted,
                          int& capacity_rejected)
 {
-    if (!install_page(state, shard, plan.pid_key, std::move(rec), meta, legacy_pending)) {
+    if (!install_page(state, shard, std::move(rec), meta, legacy_pending)) {
         ++rejected;
         ++capacity_rejected;
         plan.op = PageWriteOp::Reject;
-        plan.counted_reject = true;
-        plan.reason = "capacity_full";
         return false;
     }
     ++accepted;
     return true;
-}
-
-void fill_prev_page_diag(PageWritePlan& plan, const PageRecord& prev)
-{
-    uint16_t cks = 0;
-
-    plan.had_prev = true;
-    plan.prev_writer_inst = prev.writer_inst;
-    plan.prev_writer_seq = prev.writer_seq;
-    page_diag_from_block(page_block_cstr(prev), plan.prev_page_lsn, plan.prev_page_pcn, cks);
-}
-
-std::string format_hex_u16(uint16_t value)
-{
-    std::ostringstream os;
-    os << std::hex << value;
-    return os.str();
-}
-
-void log_verbose_page_write_result(const std::string& peer, uint32_t qid, uint32_t index,
-                                   const PageWritePlan& plan, bool applied, int accepted_delta,
-                                   int rejected_delta, const log_point_t& batch_begin,
-                                   const log_point_t& batch_trunc, const log_point_t& batch_lrp,
-                                   const RbpShard& shard)
-{
-    page_id_t pid{};
-    uint64_t incoming_lsn = 0;
-    uint32_t incoming_pcn = 0;
-    uint16_t incoming_cks = 0;
-    bool has_after = false;
-    uint32_t after_writer_inst = 0;
-    uint64_t after_writer_seq = 0;
-    uint64_t after_page_lsn = 0;
-    uint32_t after_page_pcn = 0;
-    uint16_t after_cks = 0;
-
-    std::memcpy(&pid, &plan.pid_key, sizeof(pid));
-    page_diag_from_block(reinterpret_cast<const char*>(plan.block_ptr), incoming_lsn, incoming_pcn, incoming_cks);
-
-    auto after = shard.page_cache.find(plan.pid_key);
-    if (after != shard.page_cache.end()) {
-        has_after = true;
-        after_writer_inst = after->second.writer_inst;
-        after_writer_seq = after->second.writer_seq;
-        page_diag_from_block(page_block_cstr(after->second), after_page_lsn, after_page_pcn, after_cks);
-    }
-
-    rbp_run_log("PAGE_WRITE page peer=" + peer + " qid=" + std::to_string(qid) +
-                " idx=" + std::to_string(index) + " op=" + page_write_op_name(plan.op) +
-                " applied=" + std::to_string(static_cast<int>(applied)) +
-                " reason=" + std::string(plan.reason ? plan.reason : "none") +
-                " counted_reject=" + std::to_string(static_cast<int>(plan.counted_reject)) +
-                " accepted_delta=" + std::to_string(accepted_delta) +
-                " rejected_delta=" + std::to_string(rejected_delta) + " " +
-                format_page_id(pid.file, pid.page, pid.aligned) +
-                " incoming_inst=" + std::to_string(plan.writer_inst) +
-                " incoming_seq=" + std::to_string(plan.writer_seq) +
-                " incoming_lsn=" + std::to_string(incoming_lsn) +
-                " incoming_pcn=" + std::to_string(incoming_pcn) +
-                " incoming_cks=0x" + format_hex_u16(incoming_cks) +
-                " prev_present=" + std::to_string(static_cast<int>(plan.had_prev)) +
-                " prev_inst=" + std::to_string(plan.prev_writer_inst) +
-                " prev_seq=" + std::to_string(plan.prev_writer_seq) +
-                " prev_lsn=" + std::to_string(plan.prev_page_lsn) +
-                " prev_pcn=" + std::to_string(plan.prev_page_pcn) +
-                " after_present=" + std::to_string(static_cast<int>(has_after)) +
-                " after_inst=" + std::to_string(after_writer_inst) +
-                " after_seq=" + std::to_string(after_writer_seq) +
-                " after_lsn=" + std::to_string(after_page_lsn) +
-                " after_pcn=" + std::to_string(after_page_pcn) +
-                " after_cks=0x" + format_hex_u16(after_cks) +
-                " trunc[" + format_log_point_short(plan.trunc) + "]" +
-                " lrp[" + format_log_point_short(plan.lrp) + "]" +
-                " coverage_begin[" + format_log_point_short(plan.coverage_begin) + "]" +
-                " coverage_lrp[" + format_log_point_short(plan.coverage_lrp) + "]" +
-                " batch_begin[" + format_log_point_short(batch_begin) + "]" +
-                " batch_trunc[" + format_log_point_short(batch_trunc) + "]" +
-                " batch_lrp[" + format_log_point_short(batch_lrp) + "]");
 }
 
 bool page_write_passes_reset(const RbpShard& shard, const log_point_t& lrp, bool lsn_only)
@@ -238,24 +136,17 @@ PageWritePlan plan_page_write(const PreparedPageWrite& pw, RbpShard& shard, bool
     if (pw.rejected || !page_write_passes_reset(shard, pw.lrp, lsn_only)) {
         if (!pw.rejected) {
             ++rejected;
-            plan.counted_reject = true;
-            plan.reason = "reset_barrier";
-        } else {
-            plan.counted_reject = true;
-            plan.reason = pw.reject_reason;
         }
         return plan;
     }
 
     if (!strict) {
         plan.op = PageWriteOp::Install;
-        plan.reason = "non_strict";
         auto prev = shard.page_cache.find(pw.pid_key);
         if (prev == shard.page_cache.end()) {
             plan.coverage_begin = pw.trunc;
             plan.coverage_lrp = pw.lrp;
         } else {
-            fill_prev_page_diag(plan, prev->second);
             plan.coverage_begin = log_point_min(prev->second.coverage_begin, pw.trunc, lsn_only);
             plan.coverage_lrp = log_point_max(prev->second.coverage_lrp, pw.lrp, lsn_only);
         }
@@ -265,27 +156,21 @@ PageWritePlan plan_page_write(const PreparedPageWrite& pw, RbpShard& shard, bool
     auto prev_it = shard.page_cache.find(pw.pid_key);
     if (prev_it == shard.page_cache.end()) {
         plan.op = PageWriteOp::Install;
-        plan.reason = "new_page";
         plan.coverage_begin = pw.trunc;
         plan.coverage_lrp = pw.lrp;
         return plan;
     }
     PageRecord& prev = prev_it->second;
-    fill_prev_page_diag(plan, prev);
     plan.coverage_begin = log_point_min(prev.coverage_begin, pw.trunc, lsn_only);
     plan.coverage_lrp = log_point_max(prev.coverage_lrp, pw.lrp, lsn_only);
     const SmbDecision d = smb_should_replace(prev.writer_inst, prev.writer_seq, pw.writer_inst, pw.writer_seq);
     if (d.replace && std::strcmp(d.reason, "idem_same_writer") != 0) {
         plan.op = PageWriteOp::Install;
-        plan.reason = d.reason;
     } else if (prev.writer_seq > pw.writer_seq ||
                (prev.writer_seq == pw.writer_seq && prev.writer_inst == pw.writer_inst)) {
         plan.op = PageWriteOp::Covered;
-        plan.reason = d.reason;
     } else {
         ++rejected;
-        plan.counted_reject = true;
-        plan.reason = d.reason;
     }
     return plan;
 }
@@ -299,8 +184,6 @@ bool apply_page_write_plan(PageWritePlan& plan, RbpServerState& state, RbpShard&
 
     if (!page_write_passes_reset(shard, plan.lrp, lsn_only)) {
         ++rejected;
-        plan.counted_reject = true;
-        plan.reason = "reset_barrier_apply";
         return false;
     }
 
@@ -308,16 +191,12 @@ bool apply_page_write_plan(PageWritePlan& plan, RbpServerState& state, RbpShard&
         auto prev_it = shard.page_cache.find(plan.pid_key);
         if (prev_it == shard.page_cache.end()) {
             ++rejected;
-            plan.counted_reject = true;
-            plan.reason = "covered_missing_cache";
             return false;
         }
         PageRecord& prev = prev_it->second;
         if (!(prev.writer_seq > plan.writer_seq ||
               (prev.writer_seq == plan.writer_seq && prev.writer_inst == plan.writer_inst))) {
             ++rejected;
-            plan.counted_reject = true;
-            plan.reason = "covered_race_stale_check_failed";
             return false;
         }
         prev.coverage_begin = plan.coverage_begin;
@@ -329,8 +208,6 @@ bool apply_page_write_plan(PageWritePlan& plan, RbpServerState& state, RbpShard&
 
     if (plan.op != PageWriteOp::Install || !plan.payload) {
         ++rejected;
-        plan.counted_reject = true;
-        plan.reason = (plan.op == PageWriteOp::Install) ? "install_missing_payload" : "unexpected_op";
         return false;
     }
 
@@ -382,8 +259,6 @@ bool apply_page_write_plan(PageWritePlan& plan, RbpServerState& state, RbpShard&
     }
 
     ++rejected;
-    plan.counted_reject = true;
-    plan.reason = "strict_race_reject";
     return false;
 }
 
@@ -413,12 +288,14 @@ void send_ack(socket_t fd, const rbp_msg_hdr_t& req, uint32_t ack_type, uint32_t
     send_full_or_disconnect(fd, &ack, sizeof(ack), "ACK");
 }
 
-void send_shake_resp(socket_t fd, const rbp_msg_hdr_t& req, uint32_t queue_id, uint32_t is_temp)
+void send_shake_resp(socket_t fd, const rbp_msg_hdr_t& req, uint32_t queue_id, uint32_t is_temp,
+                     uint32_t wire_version)
 {
     struct {
         rbp_msg_hdr_t header;
         uint32_t queue_id;
         uint32_t is_temp;
+        uint32_t wire_version;
     } resp{};
     resp.header.msg_type = req.msg_type;
     resp.header.msg_length = sizeof(resp);
@@ -426,6 +303,7 @@ void send_shake_resp(socket_t fd, const rbp_msg_hdr_t& req, uint32_t queue_id, u
     resp.header.msg_fd = req.msg_fd;
     resp.queue_id = queue_id;
     resp.is_temp = is_temp;
+    resp.wire_version = wire_version;
     send_full_or_disconnect(fd, &resp, sizeof(resp), "SHAKE_RESP");
 }
 
@@ -448,19 +326,25 @@ void send_read_ckpt_resp(socket_t fd, const rbp_msg_hdr_t& req, const uint8_t* b
     resp.header.msg_length = static_cast<uint32_t>(CKPT_READ_RESP_SIZE);
     resp.header.queue_id = req.queue_id;
     resp.header.msg_fd = req.msg_fd;
-    resp.rbp_unsafe = 0;
+    resp.rbp_unsafe = ckpt.guard_ready ? 0 : 1;
     resp.begin_point = ckpt.begin;
     resp.rcy_point = ckpt.rcy;
     resp.lrp_point = ckpt.lrp;
     resp.max_lsn = ckpt.max_lsn;
     std::memset(resp.unsafe_reason, 0, RBP_MSG_LEN);
+    if (!ckpt.guard_ready) {
+        const char* reason = "disk guard lease unavailable";
+        std::strncpy(resp.unsafe_reason, reason, RBP_MSG_LEN - 1);
+    }
     send_full_or_disconnect(fd, &resp, sizeof(resp), "READ_CKPT");
     const std::string reset_diag = queue_resets_diag(ckpt.queue_resets.data(), lsn_only);
     const std::string frontier_diag = queue_frontiers_diag(ckpt.queue_frontiers.data(), lsn_only);
     std::string extra_diag = reset_diag + frontier_diag +
                              " | evict_in_progress=" + std::to_string(ckpt.diag.evict_in_progress) +
                              " purge_stable=" + std::to_string(ckpt.diag.purge_stable) +
-                             " wait_timeout=" + std::to_string(ckpt.diag.wait_timeout);
+                             " wait_timeout=" + std::to_string(ckpt.diag.wait_timeout) +
+                             " guard_generation=" + std::to_string(ckpt.guard_generation) +
+                             " page_write_reset_mask=" + std::to_string(ckpt.page_write_reset_mask);
     if (!ckpt.diag.empty_reason.empty()) {
         extra_diag += " empty_reason=" + ckpt.diag.empty_reason;
     }
@@ -473,7 +357,7 @@ void send_read_ckpt_resp(socket_t fd, const rbp_msg_hdr_t& req, const uint8_t* b
 }
 
 void send_page_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const page_id_t& page_id, bool hit,
-                         const log_point_t& trunc, const char* block)
+                         const log_point_t& trunc, const char* block, uint64_t guard_lsn, uint32_t guard_pcn)
 {
     rbp_read_resp_t resp{};
     resp.header = req;
@@ -482,6 +366,9 @@ void send_page_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const page_id_t&
     resp.unused = 0;
     resp.pageid = page_id;
     resp.rbp_trunc_point = hit ? trunc : zero_log_point();
+    resp.guard_lsn = guard_lsn;
+    resp.guard_pcn = guard_pcn;
+    resp.reserved = 0;
     if (hit && block) {
         std::memcpy(resp.block, block, RBP_PAGE_SIZE);
     }
@@ -491,13 +378,12 @@ void send_page_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const page_id_t&
 void send_batch_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const log_point_t& skip_point, uint32_t conn_qid,
                           RbpServerState& state, bool verbose, const std::string& peer, bool read_phase_active)
 {
+    (void)verbose;
+    (void)peer;
     const bool timing_diag = state.config().timing_diag;
     const bool lsn_only = state.config().log_cmp_lsn_only;
     const uint32_t qid = conn_qid % OG_RBP_SESSION_COUNT;
-    if (auto seeded = state.ensure_batch_pending_seeded(read_phase_active, conn_qid)) {
-        rbp_run_log("BATCH_READ lazy pending seed peer=" + peer + " qid=" + std::to_string(conn_qid) +
-                    " pending_total=" + std::to_string(*seeded));
-    }
+    (void)state.ensure_batch_pending_seeded(read_phase_active, conn_qid);
     RbpShard& shard = state.shard(qid);
     int64_t lock_wait_us = 0;
     int64_t scan_us = 0;
@@ -529,8 +415,9 @@ void send_batch_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const log_point
             continue;
         }
         const PageRecord& rec = it->second;
-        handles.push_back({pid_key, rec.coverage_begin, rec.coverage_lrp, rec.writer_inst, rec.writer_seq,
-                           rec.payload});
+        BatchPageHandle handle{pid_key, rec.coverage_begin, rec.coverage_lrp, rec.writer_inst, rec.writer_seq,
+                               rec.guard_lsn, rec.guard_pcn, rec.payload};
+        handles.push_back(std::move(handle));
     }
     lock.unlock();
 
@@ -586,18 +473,6 @@ void send_batch_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const log_point
     } else {
         state.read_diag().record_counts(qid, batch_result, static_cast<int>(handles.size()));
     }
-    if (verbose && timing_diag) {
-        rbp_run_log("BATCH_PAGE_READ peer=" + peer + " conn_qid=" + std::to_string(conn_qid) +
-                    " result=" + std::to_string(batch_result) + " sent=" + std::to_string(handles.size()) +
-                    " lock_wait_us=" + std::to_string(lock_wait_us) + " scan_us=" + std::to_string(scan_us) +
-                    " pack_us=" + std::to_string(pack_us) + " send_us=" + std::to_string(send_us) +
-                    " pending_lock_us=" + std::to_string(pending_lock_us) +
-                    " pending_remove_us=" + std::to_string(pending_remove_us) +
-                    " queue_scanned=" + std::to_string(pick.scanned) +
-                    " skip_stale=" + std::to_string(pick.skip_stale) +
-                    " skip_missing=" + std::to_string(pick.skip_missing) +
-                    " skip_lrp=" + std::to_string(pick.skip_lrp));
-    }
 }
 
 PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, RbpServerState& state,
@@ -637,6 +512,7 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Rbp
         out.lock_wait_us = us_since(lock_begin);
         const auto hold_begin = std::chrono::steady_clock::now();
         apply_queue_reset(state, shard, qid, reset_point, batch_trunc, lsn_only, verbose, peer);
+        out.reset_applied = true;
         out.lock_hold_us = us_since(hold_begin);
         out.apply_hold_us = out.lock_hold_us;
         return out;
@@ -665,14 +541,12 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Rbp
         pw.writer_seq = item.writer_global_seq;
         if (page_queue_id(item.page_id.page) != qid) {
             pw.rejected = true;
-            pw.reject_reason = "wrong_qid";
             prepared.push_back(std::move(pw));
             out.rejected++;
             continue;
         }
         if (log_point_is_zero(item.rbp_lrp_point)) {
             pw.rejected = true;
-            pw.reject_reason = "zero_lrp_point";
             prepared.push_back(std::move(pw));
             out.rejected++;
             continue;
@@ -709,23 +583,12 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Rbp
         std::lock_guard<std::mutex> g(shard.mtx);
         out.lock_wait_us += us_since(lock_begin);
         const auto hold_begin = std::chrono::steady_clock::now();
-        for (uint32_t i = 0; i < plans.size(); ++i) {
-            PageWritePlan& plan = plans[i];
-            const int accepted_before = out.accepted;
-            const int rejected_before = out.rejected;
-            const bool applied = apply_page_write_plan(plan, state, shard, strict, lsn_only, legacy_pending,
-                                                       out.rejected, out.accepted, out.capacity_rejected);
-            if (verbose) {
-                log_verbose_page_write_result(peer, qid, i, plan, applied, out.accepted - accepted_before,
-                                              out.rejected - rejected_before, batch_begin, batch_trunc, batch_lrp,
-                                              shard);
-            }
+        for (PageWritePlan& plan : plans) {
+            (void)apply_page_write_plan(plan, state, shard, strict, lsn_only, legacy_pending,
+                                        out.rejected, out.accepted, out.capacity_rejected);
         }
         if (out.rejected == 0) {
             shard.frontier_point = update_point_monotonic(shard.frontier_point, batch_trunc, lsn_only);
-        } else if (verbose && !log_point_is_zero(batch_trunc)) {
-            rbp_run_log("PAGE_WRITE frontier not advanced peer=" + peer + " qid=" + std::to_string(qid) +
-                        " rejected=" + std::to_string(out.rejected));
         }
         out.apply_hold_us = us_since(hold_begin);
         out.lock_hold_us += out.apply_hold_us;
@@ -739,6 +602,8 @@ PageWriteResult cache_pages_from_write(const uint8_t* body, size_t body_len, Rbp
 void send_meta_chunk_resp(socket_t fd, const rbp_msg_hdr_t& req, const uint8_t* body, size_t body_len,
                           RbpServerState& state, ConnMeta& conn_meta, bool verbose, const std::string& peer)
 {
+    (void)verbose;
+    (void)peer;
     uint64_t epoch = 0;
     uint64_t cursor = 0;
     uint32_t max_count = RBP_META_CHUNK_NUM;
@@ -791,19 +656,42 @@ void send_meta_chunk_resp(socket_t fd, const rbp_msg_hdr_t& req, const uint8_t* 
         resp.items[i].page_pcn = row.page_pcn;
         resp.items[i].source_node = row.writer_inst;
         resp.items[i].queue_id = row.qid;
+        resp.items[i].reserved = 0;
     }
     send_full_or_disconnect(fd, &resp, sizeof(resp), "READ_META_CHUNK");
-    if (verbose || done) {
-        rbp_run_log("READ_META_CHUNK peer=" + peer + " cursor=" + std::to_string(start) +
-                    " next=" + std::to_string(next_cursor) + " count=" + std::to_string(picked_n) +
-                    " done=" + std::to_string(done) + " total=" + std::to_string(total));
+}
+
+void handle_disk_guard_req(const DiskGuardRequest& request)
+{
+    uint32_t count = 0;
+    if (request.body_len >= sizeof(count)) {
+        std::memcpy(&count, request.body, sizeof(count));
     }
+    count = std::min(count, RBP_GUARD_BATCH_NUM);
+    const size_t need = sizeof(uint64_t) + static_cast<size_t>(count) * sizeof(rbp_disk_guard_item_t);
+    if (request.body_len < need) {
+        send_ack(request.fd, request.req, ACK_RBP_INVALID, 0);
+        rbp_run_log("DISK_GUARD invalid body peer=" + request.peer + " body_len=" +
+                    std::to_string(request.body_len) +
+                    " count=" + std::to_string(count));
+        return;
+    }
+
+    std::vector<rbp_disk_guard_item_t> items(count);
+    if (count > 0) {
+        std::memcpy(items.data(), request.body + sizeof(uint64_t),
+                    static_cast<size_t>(count) * sizeof(rbp_disk_guard_item_t));
+    }
+    const int applied = request.state.apply_disk_guard(items.data(), count, request.owner_id, request.generation);
+    send_ack(request.fd, request.req, applied < 0 ? ACK_RBP_INVALID : ACK_RBP_READ_BEGIN,
+             applied < 0 ? 0 : static_cast<uint32_t>(applied));
 }
 
 void send_batch_selected_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const uint8_t* body, size_t body_len,
                                    RbpServerState& state, bool verbose, const std::string& peer,
                                    uint32_t conn_qid)
 {
+    (void)verbose;
     const bool timing_diag = state.config().timing_diag;
     std::chrono::steady_clock::time_point batch_begin{};
     if (timing_diag) {
@@ -860,7 +748,8 @@ void send_batch_selected_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const 
                 continue;
             }
             const PageRecord& rec = cit->second;
-            handle = {pid_key, rec.coverage_begin, rec.coverage_lrp, rec.writer_inst, rec.writer_seq, rec.payload};
+            handle = {pid_key, rec.coverage_begin, rec.coverage_lrp, rec.writer_inst, rec.writer_seq,
+                      rec.guard_lsn, rec.guard_pcn, rec.payload};
             found = true;
             auto mit = shard.page_meta.find(pid_key);
             if (mit != shard.page_meta.end()) {
@@ -963,12 +852,6 @@ void send_batch_selected_read_resp(socket_t fd, const rbp_msg_hdr_t& req, const 
         state.selected_read_diag().record_counts(qid, resp.result, static_cast<int>(req_count), count,
                                                static_cast<int>(misses.size()), selected_mismatch_count,
                                                meta_mismatch_count);
-    }
-    if (verbose && timing_diag) {
-        rbp_run_log("BATCH_PAGE_READ_SELECTED peer=" + peer + " requested=" + std::to_string(req_count) +
-                    " sent=" + std::to_string(count) + " lock_wait_us=" + std::to_string(lock_wait_us) +
-                    " lookup_us=" + std::to_string(lookup_us) + " pack_us=" + std::to_string(pack_us) +
-                    " send_us=" + std::to_string(send_us));
     }
 }
 

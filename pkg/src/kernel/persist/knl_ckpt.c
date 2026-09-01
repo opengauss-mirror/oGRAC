@@ -347,6 +347,87 @@ static bool32 ckpt_get_valid_trunc_point(knl_session_t *session, ckpt_group_t *g
     return OG_FALSE;
 }
 
+static inline bool32 ckpt_rbp_private_lsn_enabled(knl_session_t *session)
+{
+    return (bool32)(KNL_RBP_ENABLE(session->kernel) && !cm_dbs_is_enable_dbs());
+}
+
+static inline bool32 ckpt_same_log_point(log_point_t *left, log_point_t *right)
+{
+    return (bool32)(left->rst_id == right->rst_id && left->asn == right->asn &&
+                    left->block_id == right->block_id && left->lfn == right->lfn);
+}
+
+static inline void ckpt_strip_rbp_private_lsn(knl_session_t *session, log_point_t *point)
+{
+    if (ckpt_rbp_private_lsn_enabled(session)) {
+        point->lsn = 0;
+    }
+}
+
+static void ckpt_get_queue_trunc_point(knl_session_t *session, log_point_t *point, bool32 keep_rbp_lsn)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+
+    cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
+    *point = ogx->queue.trunc_point;
+    cm_spin_unlock(&ogx->queue.lock);
+    if (!keep_rbp_lsn) {
+        ckpt_strip_rbp_private_lsn(session, point);
+    }
+}
+
+static void ckpt_set_rbp_lrp_point(knl_session_t *session, log_point_t *point, uint64 rbp_lsn)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    log_point_t rbp_point;
+
+    if (!ckpt_rbp_private_lsn_enabled(session)) {
+        return;
+    }
+
+    rbp_point = *point;
+    rbp_point.lsn = rbp_lsn;
+    cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
+    ogx->rbp_lrp_point = rbp_point;
+    cm_spin_unlock(&ogx->queue.lock);
+}
+
+static void ckpt_set_rbp_reset_point(knl_session_t *session, log_point_t *point, uint64 rbp_lsn)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    log_point_t rbp_point;
+
+    if (!ckpt_rbp_private_lsn_enabled(session)) {
+        return;
+    }
+
+    rbp_point = *point;
+    rbp_point.lsn = rbp_lsn;
+    cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
+    ogx->rbp_ckpt_reset_point = rbp_point;
+    cm_spin_unlock(&ogx->queue.lock);
+}
+
+static void ckpt_set_rbp_reset_from_lrp(knl_session_t *session, log_point_t *lrp_point)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    log_point_t reset_point;
+
+    if (!ckpt_rbp_private_lsn_enabled(session)) {
+        return;
+    }
+
+    cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
+    reset_point = *lrp_point;
+    reset_point.lsn = 0;
+    if (ckpt_same_log_point(&ogx->rbp_lrp_point, lrp_point)) {
+        reset_point.lsn = ogx->rbp_lrp_point.lsn;
+    }
+    ogx->rbp_ckpt_reset_point = reset_point;
+    cm_spin_unlock(&ogx->queue.lock);
+}
+
 static void ckpt_update_log_point(knl_session_t *session)
 {
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
@@ -354,6 +435,7 @@ static void ckpt_update_log_point(knl_session_t *session)
     log_point_t last_point = session->kernel->redo_ctx.curr_point;
     ckpt_group_t *group = &ogx->group[ogx->fid];
     log_point_t trunc_point;
+    log_point_t ctrl_point;
 
     /*
      * when recovering file in mount status, ckpt can't update log point because there are only dirty pages
@@ -365,10 +447,14 @@ static void ckpt_update_log_point(knl_session_t *session)
 
     if (ckpt_get_valid_trunc_point(session, group, &trunc_point)) {
         dtc_node_ctrl_t *ctrl = dtc_my_ctrl(session);
-        ctrl->rcy_point = trunc_point;
+        ckpt_set_rbp_reset_point(session, &trunc_point, trunc_point.lsn);
+        ctrl_point = trunc_point;
+        ckpt_strip_rbp_private_lsn(session, &ctrl_point);
+        ctrl->rcy_point = ctrl_point;
         if (DB_IS_CLUSTER(session) && log_cmp_point(&ogx->lrp_point, &ctrl->rcy_point) < 0) {
             ogx->lrp_point = ctrl->rcy_point;
             ctrl->lrp_point = ctrl->rcy_point;
+            ckpt_set_rbp_lrp_point(session, &trunc_point, trunc_point.lsn);
         }
         return;
     }
@@ -381,6 +467,7 @@ static void ckpt_update_log_point(knl_session_t *session)
      */
     if (!DB_NOT_READY(session) || session->kernel->db.recover_for_restore) {
         if (RCY_IGNORE_CORRUPTED_LOG(rcy) && last_point.lfn < ogx->lrp_point.lfn) {
+            ckpt_set_rbp_reset_point(session, &last_point, 0);
             dtc_my_ctrl(session)->rcy_point = last_point;
             return;
         }
@@ -390,11 +477,15 @@ static void ckpt_update_log_point(knl_session_t *session)
          * probablely. In this scenario, we should set rcy_point to lrp_point still.
          */
         if (DB_IS_READONLY(session) && group->trunc_point_snapshot.lfn < ogx->lrp_point.lfn) {
-            dtc_my_ctrl(session)->rcy_point = group->trunc_point_snapshot;
+            ckpt_set_rbp_reset_point(session, &group->trunc_point_snapshot, group->trunc_point_snapshot.lsn);
+            ctrl_point = group->trunc_point_snapshot;
+            ckpt_strip_rbp_private_lsn(session, &ctrl_point);
+            dtc_my_ctrl(session)->rcy_point = ctrl_point;
             return;
         }
 
         if (log_cmp_point(&(dtc_my_ctrl(session)->rcy_point), &(ogx->lrp_point)) <= 0) {
+            ckpt_set_rbp_reset_from_lrp(session, &ogx->lrp_point);
             dtc_my_ctrl(session)->rcy_point = ogx->lrp_point;
             dtc_my_ctrl(session)->consistent_lfn = ogx->lrp_point.lfn;
         }
@@ -455,6 +546,8 @@ void ckpt_reset_point(knl_session_t *session, log_point_t *point)
     dtc_my_ctrl(session)->lrp_point = *point;
 
     dtc_my_ctrl(session)->consistent_lfn = point->lfn;
+    ckpt_set_rbp_lrp_point(session, point, 0);
+    ckpt_set_rbp_reset_point(session, point, 0);
 }
 
 static void ckpt_move_cleaned_pages(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
@@ -1241,10 +1334,11 @@ static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t 
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
     ckpt_group_t *group = &ogx->group[ogx->wid];
     uint32 rbp_lock_id = OG_INVALID_ID32;
+    bool32 local_guard_active = rbp_knl_recovery_local_guard_active(session);
     errno_t ret;
 
     /* concurrent with knl_read_page_from_rbp when buf_enter_page with LATCH_S lock */
-    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel))) {
+    if (SECUREC_UNLIKELY(KNL_RECOVERY_WITH_RBP(session->kernel) || local_guard_active)) {
         rbp_lock_id = ctrl->page_id.page % OG_RBP_RD_LOCK_COUNT;
         cm_spin_lock(&rbp_ctx->buf_read_lock[rbp_lock_id], NULL);
     }
@@ -1270,6 +1364,10 @@ static void ckpt_copy_item(knl_session_t *session, buf_ctrl_t *ctrl, buf_ctrl_t 
     ret = memcpy_sp(group->buf + DEFAULT_PAGE_SIZE(session) * group->count, DEFAULT_PAGE_SIZE(session),
         to_flush_ctrl->page, DEFAULT_PAGE_SIZE(session));
     knl_securec_check(ret);
+
+    if (SECUREC_UNLIKELY(local_guard_active)) {
+        rbp_knl_record_ckpt_local_guard(session, to_flush_ctrl->page_id, PAGE_GET_LSN(to_flush_ctrl->page));
+    }
 
     if (SECUREC_UNLIKELY(rbp_lock_id != OG_INVALID_ID32)) {
         cm_spin_unlock(&rbp_ctx->buf_read_lock[rbp_lock_id]);
@@ -2334,29 +2432,9 @@ static status_t ckpt_flush_pages(knl_session_t *session)
  * 2.double write pages to be flushed if need.
  * 3.back up log info in core ctrl to log file.
  */
-static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
+static status_t ckpt_flush_save_ctrl_info(knl_session_t *session, ckpt_context_t *ogx, ckpt_group_t *group)
 {
     core_ctrl_t *core = &session->kernel->db.ctrl.core;
-    ckpt_group_t *group = &ogx->group[ogx->fid];
-
-    if (log_flush(session, &ogx->lrp_point, &ogx->lrp_scn, NULL, NULL) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
-
-    if (!DB_NOT_READY(session) && !DB_IS_READONLY(session)) {
-        if (DB_IS_RAFT_ENABLED(session->kernel)) {
-            raft_wait_for_log_flush(session, (uint64)ogx->lrp_point.lfn);
-        } else if (session->kernel->lsnd_ctx.standby_num > 0) {
-            lsnd_wait(session, (uint64)ogx->lrp_point.lfn, NULL);
-        }
-    }
-
-    if ((group->count != 0) && ogx->double_write) {
-        if (ckpt_double_write(session, ogx) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
-    }
-
     if (DB_IS_PRIMARY(&session->kernel->db)) {
         dtc_node_ctrl_t *ctrl = dtc_my_ctrl(session);
         ctrl->lrp_point = ogx->lrp_point;
@@ -2396,6 +2474,41 @@ static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
     return OG_SUCCESS;
 }
 
+static status_t ckpt_flush_prepare(knl_session_t *session, ckpt_context_t *ogx)
+{
+    ckpt_group_t *group = &ogx->group[ogx->fid];
+    uint64 rbp_lrp_lsn = 0;
+    uint64 *flush_lsn = ckpt_rbp_private_lsn_enabled(session) ? &rbp_lrp_lsn : NULL;
+
+    if (log_flush(session, &ogx->lrp_point, &ogx->lrp_scn, flush_lsn, NULL) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (flush_lsn != NULL) {
+        ckpt_set_rbp_lrp_point(session, &ogx->lrp_point, rbp_lrp_lsn);
+    }
+
+    if (!DB_NOT_READY(session) && !DB_IS_READONLY(session)) {
+        if (DB_IS_RAFT_ENABLED(session->kernel)) {
+            raft_wait_for_log_flush(session, (uint64)ogx->lrp_point.lfn);
+        } else if (session->kernel->lsnd_ctx.standby_num > 0) {
+            lsnd_wait(session, (uint64)ogx->lrp_point.lfn, NULL);
+        }
+    }
+
+    if (DB_IS_CLUSTER(session) && KNL_RBP_ENABLE(session->kernel)) {
+        /* Peer RBPS must learn this disk version before the page can overwrite the shared datafile. */
+        rbp_knl_notify_disk_guard_before_ckpt(session, group);
+    }
+
+    if ((group->count != 0) && ogx->double_write) {
+        if (ckpt_double_write(session, ogx) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    return ckpt_flush_save_ctrl_info(session, ogx, group);
+}
+
 static void ckpt_switch_group(knl_session_t *session, ckpt_context_t *ogx)
 {
     ogx->group[ogx->wid].status = CKPT_STATUS_PENDING;
@@ -2425,12 +2538,15 @@ static status_t ckpt_flush_group(knl_session_t *session)
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
     ckpt_group_t *group = &ogx->group[ogx->fid];
     if (DB_IS_PRIMARY(&session->kernel->db)) {
-        ckpt_get_trunc_point(session, &group->trunc_point_snapshot);
+        ckpt_get_queue_trunc_point(session, &group->trunc_point_snapshot, OG_TRUE);
     } else {
         ckpt_get_trunc_point_slave_role(session, &group->trunc_point_snapshot, &ogx->curr_node_idx);
     }
 
     if ((group->count == 0) && !dtc_need_empty_ckpt(session)) {
+        if (DB_IS_CLUSTER(session) && KNL_RBP_ENABLE(session->kernel)) {
+            rbp_knl_notify_disk_guard_before_ckpt(session, group);
+        }
         dcs_clean_edp(session, ogx);
         return OG_SUCCESS;
     }
@@ -2587,14 +2703,23 @@ bool32 ckpt_check(knl_session_t *session)
 
 void ckpt_set_trunc_point(knl_session_t *session, log_point_t *point)
 {
+    ckpt_set_trunc_point_with_rbp_lsn(session, point, 0);
+}
+
+void ckpt_set_trunc_point_with_rbp_lsn(knl_session_t *session, log_point_t *point, uint64 rbp_lsn)
+{
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    log_point_t trunc_point = *point;
 
     /* do not move forward trunc point if RBP_RECOVERY is not completed */
     if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         return;
     }
+    if (ckpt_rbp_private_lsn_enabled(session)) {
+        trunc_point.lsn = rbp_lsn;
+    }
     cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
-    ogx->queue.trunc_point = *point;
+    ogx->queue.trunc_point = trunc_point;
     cm_spin_unlock(&ogx->queue.lock);
 }
 
@@ -2622,11 +2747,31 @@ void ckpt_set_trunc_point_slave_role(knl_session_t *session, log_point_t *point,
 
 void ckpt_get_trunc_point(knl_session_t *session, log_point_t *point)
 {
+    ckpt_get_queue_trunc_point(session, point, OG_FALSE);
+}
+
+bool32 ckpt_get_rbp_reset_lsn(knl_session_t *session, log_point_t *point, uint64 *rbp_lsn)
+{
     ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    bool32 matched = OG_FALSE;
+
+    *rbp_lsn = 0;
+    if (!KNL_RBP_ENABLE(session->kernel)) {
+        return OG_FALSE;
+    }
+    if (cm_dbs_is_enable_dbs()) {
+        /* DBStor points already carry their authoritative LSN; keep the existing wire semantics unchanged. */
+        *rbp_lsn = point->lsn;
+        return (bool32)(*rbp_lsn != 0);
+    }
 
     cm_spin_lock(&ogx->queue.lock, &session->stat->spin_stat.stat_ckpt_queue);
-    *point = ogx->queue.trunc_point;
+    if (ckpt_same_log_point(&ogx->rbp_ckpt_reset_point, point) && ogx->rbp_ckpt_reset_point.lsn != 0) {
+        *rbp_lsn = ogx->rbp_ckpt_reset_point.lsn;
+        matched = OG_TRUE;
+    }
     cm_spin_unlock(&ogx->queue.lock);
+    return matched;
 }
 
 void ckpt_get_trunc_point_slave_role(knl_session_t *session, log_point_t *point, uint32 *curr_node_idx)

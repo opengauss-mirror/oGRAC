@@ -261,6 +261,7 @@ struct st_rbp_partial_item {
     rbp_partial_candidate_t *candidate;
     uint64 expect_lsn;
     uint64 expect_lfn;
+    atomic_t local_guard_lsn;
     uint64 best_lsn;
     uint64 selected_lsn;
     uint32 best_source_node;
@@ -489,6 +490,8 @@ void dtc_rcy_rbp_partial_mark_verified(knl_session_t *session, page_id_t page_id
 bool32 dtc_rcy_rbp_partial_enabled(knl_session_t *session);
 rbp_partial_item_t *dtc_rcy_rbp_partial_get_item(page_id_t page_id);
 uint64 dtc_rcy_rbp_partial_get_expect_lsn(rbp_partial_item_t *item);
+uint64 dtc_rcy_rbp_partial_get_local_guard_lsn(rbp_partial_item_t *item);
+void dtc_rcy_rbp_partial_update_local_guard(rbp_partial_item_t *item, uint64 guard_lsn);
 status_t dtc_rcy_rbp_partial_build_required(knl_session_t *session);
 uint32 dtc_rcy_rbp_partial_required_count(void);
 rbp_partial_item_t *dtc_rcy_rbp_partial_required_item(uint32 index);

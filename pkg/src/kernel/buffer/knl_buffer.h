@@ -212,6 +212,7 @@ typedef struct st_buf_rbp_ctrl {
     volatile uint8 is_from_rbp;      // page is read from rbp
     volatile uint8 rbp_read_version; // curren version of rbp page, if version is expected, it is newest page
     volatile uint8 page_status;      // page status
+    uint64 guard_lsn;                // disk guard lsn returned by RBPS for a stale RBP page
     log_point_t rbp_lrp_point;       // rbp page lrp point
     log_point_t rbp_trunc_point;     // rbp dirty page trunc point
     buf_ctrl_t *rbp_next;            // legacy field; RBP send queue now uses pending_item

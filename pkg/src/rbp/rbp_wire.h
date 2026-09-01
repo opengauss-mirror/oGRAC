@@ -82,6 +82,7 @@ constexpr uint32_t RBP_REQ_PAGE_WRITE = 20100;
 constexpr uint32_t RBP_REQ_BATCH_PAGE_READ = 21000;
 constexpr uint32_t RBP_REQ_READ_META_CHUNK = 22000;
 constexpr uint32_t RBP_REQ_BATCH_PAGE_READ_SELECTED = 23000;
+constexpr uint32_t RBP_REQ_DISK_GUARD = 24000;
 constexpr uint32_t RBP_REQ_READ_CKPT = 31000;
 constexpr uint32_t RBP_REQ_NOTIFY_MSG = 41000;
 constexpr uint32_t RBP_REQ_SHAKE_HAND = 51000;
@@ -90,12 +91,19 @@ constexpr uint32_t RBP_REQ_CLOSE_CONN = 61000;
 constexpr uint32_t MSG_RBP_INVALID = 0;
 constexpr uint32_t MSG_RBP_READ_BEGIN = 1;
 constexpr uint32_t MSG_RBP_READ_END = 2;
+constexpr uint32_t MSG_RBP_HEART_BEAT = 3;
 constexpr uint32_t ACK_RBP_INVALID = 0;
 constexpr uint32_t ACK_RBP_READ_BEGIN = 1;
 
 constexpr uint32_t RBP_READ_RESULT_OK = 0;
 constexpr uint32_t RBP_READ_RESULT_NOPAGE = 1;
 constexpr uint32_t RBP_READ_RESULT_ERROR = 2;
+
+constexpr uint32_t RBP_GUARD_BATCH_NUM = 256;
+
+constexpr uint32_t RBP_WIRE_VERSION = 2;
+constexpr uint32_t RBP_HANDSHAKE_VERSION_MASK = 0x0000FFFFU;
+constexpr uint32_t RBP_HANDSHAKE_FLAG_DISK_GUARD = 0x00010000U;
 
 constexpr uint32_t OG_PROTO_CODE = 0x98BADCFE;
 constexpr uint32_t CS_HANDSHAKE_VERSION = 23;
@@ -137,6 +145,9 @@ struct rbp_page_item_t {
     uint64_t writer_global_seq;
     log_point_t rbp_trunc_point;
     log_point_t rbp_lrp_point;
+    uint64_t guard_lsn;
+    uint32_t guard_pcn;
+    uint32_t reserved;
     char block[RBP_PAGE_SIZE];
 };
 
@@ -194,6 +205,20 @@ struct rbp_batch_selected_read_req_t {
     rbp_selected_page_req_t pages[RBP_BATCH_PAGE_NUM];
 };
 
+struct rbp_disk_guard_item_t {
+    page_id_t page_id;
+    uint64_t disk_lsn;
+    uint32_t disk_pcn;
+    uint32_t reserved;
+};
+
+struct rbp_disk_guard_req_t {
+    rbp_msg_hdr_t header;
+    uint32_t count;
+    uint32_t reserved;
+    rbp_disk_guard_item_t items[RBP_GUARD_BATCH_NUM];
+};
+
 struct rbp_write_req_t {
     rbp_msg_hdr_t header;
     uint32_t page_num;
@@ -217,6 +242,9 @@ struct rbp_read_resp_t {
     uint32_t unused;
     page_id_t pageid;
     log_point_t rbp_trunc_point;
+    uint64_t guard_lsn;
+    uint32_t guard_pcn;
+    uint32_t reserved;
     char block[RBP_PAGE_SIZE];
 };
 
@@ -246,6 +274,7 @@ constexpr size_t BATCH_READ_RESP_SIZE = sizeof(rbp_batch_read_resp_t);
 constexpr size_t READ_META_RESP_SIZE = sizeof(rbp_read_meta_resp_t);
 constexpr size_t CKPT_READ_RESP_SIZE = sizeof(rbp_read_ckpt_resp_t);
 constexpr size_t RBP_META_ITEM_SIZE = sizeof(rbp_meta_item_t);
+constexpr size_t RBP_DISK_GUARD_REQ_SIZE = sizeof(rbp_disk_guard_req_t);
 constexpr size_t SHAKE_BODY_SIZE = 16;
 constexpr size_t RBP_UINT32_WIRE_SIZE = sizeof(uint32_t);
 constexpr size_t RBP_BATCH_READ_RESP_COUNT_FIELDS = 2;
@@ -388,16 +417,17 @@ inline void parse_write_batch_points(const uint8_t* body, size_t body_len, int p
 
 static_assert(sizeof(page_id_t) == 8, "page_id_t size");
 static_assert(sizeof(log_point_t) == 24, "log_point_t size");
-static_assert(sizeof(rbp_page_item_t) == 8264, "rbp_page_item_t size");
-static_assert(sizeof(rbp_read_resp_t) == 8248, "rbp_read_resp_t size");
+static_assert(sizeof(rbp_page_item_t) == 8280, "rbp_page_item_t size");
+static_assert(sizeof(rbp_read_resp_t) == 8264, "rbp_read_resp_t size");
 static_assert(sizeof(rbp_batch_read_resp_t) ==
                   sizeof(rbp_msg_hdr_t) + sizeof(uint32_t) * RBP_BATCH_READ_RESP_COUNT_FIELDS + RBP_MSG_LEN +
                       RBP_BATCH_PAGE_NUM * sizeof(rbp_page_item_t),
               "rbp_batch_read_resp_t size");
 static_assert(sizeof(rbp_read_meta_resp_t) == 32832, "rbp_read_meta_resp_t size");
 static_assert(sizeof(rbp_read_ckpt_resp_t) == 168, "rbp_read_ckpt_resp_t size");
+static_assert(sizeof(rbp_disk_guard_req_t) == 6168, "rbp_disk_guard_req_t size");
 static_assert(offsetof(rbp_read_ckpt_resp_t, begin_point) == 24, "ckpt begin offset");
-static_assert(offsetof(rbp_page_item_t, block) == 72, "page_item block offset");
+static_assert(offsetof(rbp_page_item_t, block) == 88, "page_item block offset");
 
 inline uint64_t page_id_key(uint32_t page, uint16_t file)
 {

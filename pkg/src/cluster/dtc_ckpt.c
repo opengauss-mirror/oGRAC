@@ -29,6 +29,7 @@
 #include "dtc_buffer.h"
 #include "dtc_trace.h"
 #include "knl_ckpt.h"
+#include "knl_rbp.h"
 #include "cm_device.h"
 
 static int32 cmp_page_id(const void *pa, const void *pb)
@@ -670,14 +671,37 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
     return OG_SUCCESS;
 }
 
-status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx, ckpt_stat_items_t *stat)
+/* The caller holds group->lock; remove only the snapshot item, never a newer request for the same page. */
+static bool32 dcs_ckpt_remove_local_edp_item(ckpt_clean_edp_group_t *group, edp_page_info_t page)
+{
+    for (uint32 i = 0; i < group->count; i++) {
+        if (!IS_SAME_PAGID(group->pages[i].page, page.page) || group->pages[i].lsn != page.lsn) {
+            continue;
+        }
+
+        group->count--;
+        if (i < group->count) {
+            errno_t ret = memmove_s((char *)group->pages + i * sizeof(edp_page_info_t),
+                                    group->count * sizeof(edp_page_info_t),
+                                    (char *)group->pages + (i + 1) * sizeof(edp_page_info_t),
+                                    (group->count - i) * sizeof(edp_page_info_t));
+            if (ret != EOK) {
+                knl_securec_check(ret);
+            }
+        }
+        return OG_TRUE;
+    }
+    return OG_FALSE;
+}
+
+static status_t dcs_ckpt_clean_local_edp_without_guard(knl_session_t *session, ckpt_context_t *ogx,
+                                                       ckpt_stat_items_t *stat)
 {
     uint32 i = 0;
     edp_page_info_t page;
     bool32 succeed;
     uint32 count;
     errno_t ret;
-
     ckpt_clean_edp_group_t *group = &ogx->local_edp_clean_group;
     cm_spin_lock(&group->lock, NULL);
     if (group->count == 0) {
@@ -686,10 +710,8 @@ status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx, c
     }
 
     count = group->count;
-
     OG_LOG_DEBUG_INF("[CKPT] ckpt clean local (%d) edp pages", count);
     knl_panic(count <= OG_CLEAN_EDP_GROUP_SIZE);
-
     while (i < count) {
         page = group->pages[i];
         succeed = buf_clean_edp(session, page);
@@ -704,11 +726,93 @@ status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx, c
     group->count -= count;
     if (group->count > 0) {
         ret = memmove_s((char*)group->pages, group->count * sizeof(edp_page_info_t),
-                        (char*)group->pages + count * sizeof(edp_page_info_t), group->count * sizeof(edp_page_info_t));
-        knl_securec_check(ret);
+                        (char*)group->pages + count * sizeof(edp_page_info_t),
+                        group->count * sizeof(edp_page_info_t));
+        if (ret != EOK) {
+            knl_securec_check(ret);
+        }
     }
     cm_spin_unlock(&group->lock);
     return OG_SUCCESS;
+}
+
+static status_t dcs_ckpt_clean_local_edp_with_guard(knl_session_t *session, ckpt_context_t *ogx,
+                                                    ckpt_stat_items_t *stat)
+{
+    uint32 i;
+    uint32 count;
+    uint32 cleaned_count = 0;
+    uint32 guard_count = 0;
+    bool32 succeed;
+    ckpt_clean_edp_group_t *group = &ogx->local_edp_clean_group;
+    errno_t ret;
+
+    CM_SAVE_STACK(session->stack);
+    cm_spin_lock(&group->lock, NULL);
+    if (group->count == 0) {
+        cm_spin_unlock(&group->lock);
+        CM_RESTORE_STACK(session->stack);
+        return OG_SUCCESS;
+    }
+
+    count = group->count;
+    OG_LOG_DEBUG_INF("[CKPT] ckpt clean local (%d) edp pages", count);
+    knl_panic(count <= OG_CLEAN_EDP_GROUP_SIZE);
+
+    edp_page_info_t *snapshot = (edp_page_info_t *)cm_push(session->stack, count * sizeof(edp_page_info_t));
+    rbp_disk_guard_item_t *guard_items =
+        (rbp_disk_guard_item_t *)cm_push(session->stack, count * sizeof(rbp_disk_guard_item_t));
+    if (snapshot == NULL || guard_items == NULL) {
+        cm_spin_unlock(&group->lock);
+        CM_RESTORE_STACK(session->stack);
+        OG_LOG_RUN_ERR("[CKPT] failed to allocate RBP EDP guard snapshot, count=%u", count);
+        return OG_ERROR;
+    }
+    ret = memcpy_sp(snapshot, count * sizeof(edp_page_info_t), group->pages, count * sizeof(edp_page_info_t));
+    if (ret != EOK) {
+        knl_securec_check(ret);
+    }
+    cm_spin_unlock(&group->lock);
+
+    /* Guard the remote durable versions without holding the local group spinlock over UDS I/O. */
+    for (uint32 j = 0; j < count; j++) {
+        /* No valid LSN means no guard can be constructed; preserve the original CKPT fallback below. */
+        if (snapshot[j].lsn == 0 || snapshot[j].lsn == OG_INVALID_ID64) {
+            continue;
+        }
+        guard_items[guard_count].page_id = snapshot[j].page;
+        guard_items[guard_count].disk_lsn = snapshot[j].lsn;
+        guard_items[guard_count].disk_pcn = 0;
+        guard_count++;
+    }
+    if (guard_count != 0 && rbp_knl_notify_disk_guard_pages(session, guard_items, guard_count) != OG_SUCCESS) {
+        /* Keep all requests queued; the next checkpoint retries after the guard channel recovers. */
+        CM_RESTORE_STACK(session->stack);
+        return OG_ERROR;
+    }
+
+    cm_spin_lock(&group->lock, NULL);
+    for (i = 0; i < count; i++) {
+        succeed = buf_clean_edp(session, snapshot[i]);
+        if (!succeed) {
+            continue;
+        }
+        if (dcs_ckpt_remove_local_edp_item(group, snapshot[i])) {
+            cleaned_count++;
+        }
+    }
+    stat->clean_edp_count += cleaned_count;
+    cm_spin_unlock(&group->lock);
+    CM_RESTORE_STACK(session->stack);
+    return OG_SUCCESS;
+}
+
+status_t dcs_ckpt_clean_local_edp(knl_session_t *session, ckpt_context_t *ogx, ckpt_stat_items_t *stat)
+{
+    if (!(KNL_RBP_ENABLE(session->kernel) && !rbp_knl_recovery_local_guard_active(session))) {
+        return dcs_ckpt_clean_local_edp_without_guard(session, ogx, stat);
+    }
+    return dcs_ckpt_clean_local_edp_with_guard(session, ogx, stat);
 }
 
 

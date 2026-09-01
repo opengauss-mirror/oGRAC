@@ -860,7 +860,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
         ogx->curr_point.lsn = batch->lsn;
     }
     ogx->curr_replay_point = ogx->curr_point;
-    ckpt_set_trunc_point(session, &ogx->curr_point);
+    ckpt_set_trunc_point_with_rbp_lsn(session, &ogx->curr_point, batch->lsn);
     rbp_queue_set_trunc_point(session, &ogx->curr_point);
     if (point != NULL && log_cmp_point(point, &ogx->curr_point) < 0) {
         *point = ogx->curr_point;
@@ -1001,7 +1001,7 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
 #endif
         log_reset_readonly(ctrl);
 
-        if (dtc_rcy_rbp_partial_enabled(session)) {
+        if (OGRAC_PARTIAL_RECOVER_SESSION(session) && dtc_rcy_rbp_partial_enabled(session)) {
             rbp_partial_item_t *partial_item = dtc_rcy_rbp_partial_get_item(ctrl->page_id);
             uint64 expect_lsn;
 

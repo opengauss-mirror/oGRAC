@@ -64,6 +64,7 @@ typedef struct st_rbp_msg_ack {
 #define RBP_REQ_BATCH_PAGE_READ     21000   /* background worker read batch page from RBP */
 #define RBP_REQ_READ_META_CHUNK     22000   /* read page_id/page_lsn metadata snapshot from RBP */
 #define RBP_REQ_BATCH_PAGE_READ_SELECTED 23000 /* batch read selected page ids from RBP */
+#define RBP_REQ_DISK_GUARD          24000   /* notify RBPS that local disk has a newer flushed page */
 #define RBP_REQ_READ_CKPT           31000   /* get rbp recover point */
 #define RBP_REQ_NOTIFY_MSG          41000
 #define RBP_REQ_SHAKE_HAND          51000
@@ -74,6 +75,11 @@ typedef struct st_rbp_msg_ack {
 #define RBP_READ_RESULT_NOPAGE      1
 #define RBP_READ_RESULT_ERROR       2
 
+#define RBP_GUARD_BATCH_NUM         256
+#define RBP_WIRE_VERSION            2
+#define RBP_HANDSHAKE_VERSION_MASK  0x0000FFFFU
+#define RBP_HANDSHAKE_FLAG_DISK_GUARD 0x00010000U
+
 /* writer_inst_id / writer_global_seq identify multi-writer page versions for peer RBPS. */
 typedef struct st_rbp_page_item {
     page_id_t page_id;
@@ -82,6 +88,9 @@ typedef struct st_rbp_page_item {
     uint64 writer_global_seq;
     log_point_t rbp_trunc_point;
     log_point_t rbp_lrp_point;
+    uint64 guard_lsn;
+    uint32 guard_pcn;
+    uint32 reserved;
     char block[RBP_PAGE_SIZE];  /* page content */
 } rbp_page_item_t;
 
@@ -143,6 +152,20 @@ typedef struct st_rbp_batch_selected_read_req {
     rbp_selected_page_req_t pages[RBP_BATCH_PAGE_NUM];
 } rbp_batch_selected_read_req_t;
 
+typedef struct st_rbp_disk_guard_item {
+    page_id_t page_id;
+    uint64 disk_lsn;
+    uint32 disk_pcn;
+    uint32 reserved;
+} rbp_disk_guard_item_t;
+
+typedef struct st_rbp_disk_guard_req {
+    rbp_msg_hdr_t header;
+    uint32 count;
+    uint32 reserved;
+    rbp_disk_guard_item_t items[RBP_GUARD_BATCH_NUM];
+} rbp_disk_guard_req_t;
+
 /* Kernel write page to RBP */
 typedef struct st_rbp_write_req {
     rbp_msg_hdr_t header;
@@ -167,6 +190,9 @@ typedef struct st_rbp_read_resp {
     uint32 unused;
     page_id_t pageid;
     log_point_t rbp_trunc_point;
+    uint64 guard_lsn;
+    uint32 guard_pcn;
+    uint32 reserved;
     char block[RBP_PAGE_SIZE];  /* used for RBP to send page */
 } rbp_read_resp_t;
 
@@ -224,6 +250,7 @@ typedef struct st_rbp_shake_hand_resp {
     rbp_msg_hdr_t header;
     uint32 queue_id;
     bool32 is_temp;
+    uint32 wire_version;
 } rbp_shake_hand_resp_t;
 
 #endif

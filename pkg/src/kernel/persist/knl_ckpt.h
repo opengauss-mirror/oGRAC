@@ -238,6 +238,8 @@ typedef struct st_ckpt_ctx {
     log_point_t trunc_point_snapshot; // used only for (cascaded) standby node
     log_point_t lrp_point;  // least recovery point
     knl_scn_t lrp_scn;
+    log_point_t rbp_lrp_point;         // RBP-only LSN pair for lrp_point, never persisted to node ctrl
+    log_point_t rbp_ckpt_reset_point;  // completed CKPT point used by periodic RBP reset
     uint64 trunc_lsn;
     uint64 consistent_lfn;
 
@@ -288,6 +290,8 @@ void ckpt_enque_one_page(knl_session_t *session, buf_ctrl_t *ctrl);
 void ckpt_get_trunc_point(knl_session_t *session, log_point_t *point);
 void ckpt_get_trunc_point_slave_role(knl_session_t *session, log_point_t *point, uint32 *curr_node_idx);
 void ckpt_set_trunc_point(knl_session_t *session, log_point_t *point);
+void ckpt_set_trunc_point_with_rbp_lsn(knl_session_t *session, log_point_t *point, uint64 rbp_lsn);
+bool32 ckpt_get_rbp_reset_lsn(knl_session_t *session, log_point_t *point, uint64 *rbp_lsn);
 void ckpt_set_trunc_point_slave_role(knl_session_t *session, log_point_t *point, uint32 curr_node_idx);
 status_t ckpt_recover_partial_write(knl_session_t *session);
 bool32 ckpt_check(knl_session_t *session);

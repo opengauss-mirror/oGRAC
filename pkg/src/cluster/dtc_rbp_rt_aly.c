@@ -755,6 +755,7 @@ static void dtc_rbp_rt_prune_metadata(knl_session_t *session, dtc_rbp_rt_aly_ctx
     log_point_t prune_point;
     log_point_t old_prune_point;
     log_point_t safe_point;
+    uint32 queue_depth;
 
     if (dtc_read_node_ctrl(session, (uint8)ctx->peer_node) != OG_SUCCESS) {
         dtc_rbp_rt_mark_unsafe(ctx, DTC_RBP_RT_UNSAFE_READ_PEER_CTRL_PRUNE, "read peer ctrl for prune failed");
@@ -768,11 +769,20 @@ static void dtc_rbp_rt_prune_metadata(knl_session_t *session, dtc_rbp_rt_aly_ctx
     if (prune_point.lfn > safe_point.lfn) {
         ctx->reset_requested = OG_TRUE;
         ctx->reset_point = prune_point;
+        queue_depth = dtc_rbp_rt_queue_depth(ctx);
         cm_spin_unlock(&ctx->state_lock);
-        OG_LOG_RUN_WAR("[DTC RBP RT] checkpoint passed safe point, schedule runtime reset, peer=%u "
-                       "prune_lfn=%llu safe_lfn=%llu curr_lfn=%llu queue_depth=%u",
-                       ctx->peer_node, (uint64)prune_point.lfn, (uint64)safe_point.lfn,
-                       (uint64)ctx->curr_point.lfn, dtc_rbp_rt_queue_depth(ctx));
+        if (queue_depth > 0) {
+            OG_LOG_RUN_WAR("[DTC RBP RT] checkpoint passed safe point, schedule runtime reset, peer=%u "
+                           "prune_lfn=%llu safe_lfn=%llu curr_lfn=%llu queue_depth=%u",
+                           ctx->peer_node, (uint64)prune_point.lfn, (uint64)safe_point.lfn,
+                           (uint64)ctx->curr_point.lfn, queue_depth);
+        } else {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                                   "[DTC RBP RT] checkpoint passed safe point, schedule runtime reset, peer=%u "
+                                   "prune_lfn=%llu safe_lfn=%llu curr_lfn=%llu queue_depth=%u",
+                                   ctx->peer_node, (uint64)prune_point.lfn, (uint64)safe_point.lfn,
+                                   (uint64)ctx->curr_point.lfn, queue_depth);
+        }
         return;
     }
     dtc_rbp_rt_prune_lfn_points(ctx, prune_point.lfn);
@@ -1452,9 +1462,16 @@ static status_t dtc_rbp_rt_reset_runtime_window(knl_session_t *session, dtc_rbp_
     dtc_rbp_rt_reset_batch_queue(ctx);
     dtc_rbp_rt_end_local_reset(ctx);
 
-    OG_LOG_RUN_WAR("[DTC RBP RT] runtime window reset, peer=%u restart_lfn=%llu restart_lsn=%llu "
-                   "wait_ms=%u",
-                   ctx->peer_node, (uint64)reset_point.lfn, reset_point.lsn, wait_ms);
+    if (wait_ms > 0) {
+        OG_LOG_RUN_WAR("[DTC RBP RT] runtime window reset, peer=%u restart_lfn=%llu restart_lsn=%llu "
+                       "wait_ms=%u",
+                       ctx->peer_node, (uint64)reset_point.lfn, reset_point.lsn, wait_ms);
+    } else {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                               "[DTC RBP RT] runtime window reset, peer=%u restart_lfn=%llu restart_lsn=%llu "
+                               "wait_ms=%u",
+                               ctx->peer_node, (uint64)reset_point.lfn, reset_point.lsn, wait_ms);
+    }
     (void)session;
     return OG_SUCCESS;
 }

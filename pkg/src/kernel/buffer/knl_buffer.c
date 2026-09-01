@@ -455,6 +455,7 @@ static void buf_init_ctrl(knl_session_t *session, buf_set_t *set, buf_ctrl_t *it
         item->rbp_ctrl->is_from_rbp = OG_FALSE;
         item->rbp_ctrl->rbp_read_version = 0;
         item->rbp_ctrl->page_status = RBP_PAGE_NONE;
+        item->rbp_ctrl->guard_lsn = 0;
         cm_spin_unlock(&item->rbp_ctrl->init_lock);
     } else {
         *item = g_init_buf_ctrl;
@@ -1690,18 +1691,63 @@ void buf_balance_set_list(buf_set_t *set)
  * check current page lsn, if curr_lsn is not expect lsn, try pull this page from RBP, and replace as rbp page
  * then update this ctrl's rbp_read_version, make sure same page pull from RBP at most once.
  */
-static void buf_try_load_zero_page_from_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id)
+static inline bool32 buf_rbp_status_needs_disk(rbp_page_status_e status)
 {
-    if (ctrl->page->lsn != OG_INVALID_LSN) {
-        return;
+    return (bool32)(status == RBP_PAGE_MISS || status == RBP_PAGE_OLD ||
+                    status == RBP_PAGE_AHEAD || status == RBP_PAGE_GUARDED);
+}
+
+static status_t buf_try_load_rbp_fallback_page_from_disk(knl_session_t *session, buf_ctrl_t *ctrl,
+                                                         page_id_t page_id, uint64 min_lsn,
+                                                         const char *reason)
+{
+    uint64 before_lsn = PAGE_GET_LSN(ctrl->page);
+    uint64 guard_lsn = ctrl->rbp_ctrl->guard_lsn;
+
+    if (before_lsn != OG_INVALID_LSN && (min_lsn == 0 || before_lsn >= min_lsn) &&
+        (guard_lsn == 0 || before_lsn >= guard_lsn)) {
+        if (guard_lsn != 0) {
+            (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_local_ready);
+        }
+        ctrl->rbp_ctrl->guard_lsn = 0;
+        return OG_SUCCESS;
     }
 
+    if (guard_lsn != 0) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_load);
+    }
     ctrl->rbp_ctrl->is_from_rbp = OG_FALSE;
     if (buf_load_page_from_disk(session, ctrl, page_id) != OG_SUCCESS) {
-        CM_ABORT(0, "[RBP] ABORT INFO: failed to load %u-%u from disk after RBP pull left zero page",
-                 page_id.file, page_id.page);
+        CM_ABORT(0, "[RBP] ABORT INFO: failed to load %u-%u from disk after RBP fallback, reason=%s",
+                 page_id.file, page_id.page, reason);
     }
-    OG_LOG_RUN_INF("[RBP] load page from disk %u-%u when RBP pull leaves zero page", page_id.file, page_id.page);
+
+    RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] rbp disk fallback page %u-%u reason=%s before_lsn=%llu "
+                      "min_lsn=%llu guard_lsn=%llu disk_lsn=%llu disk_pcn=%u",
+                      page_id.file, page_id.page, reason, (uint64)before_lsn, (uint64)min_lsn,
+                      (uint64)guard_lsn, (uint64)PAGE_GET_LSN(ctrl->page), (uint32)ctrl->page->pcn);
+    if (guard_lsn != 0 && PAGE_GET_LSN(ctrl->page) < guard_lsn) {
+        ctrl->rbp_ctrl->page_status = RBP_PAGE_GUARDED;
+        ctrl->rbp_ctrl->rbp_read_version = 0;
+        rbp_set_unsafe(session, RD_TYPE_END);
+        rbp_knl_mark_dtc_fallback(session, OG_INVALID_ID32, RBP_READ_RESULT_ERROR, RBP_DTC_FALLBACK_PAGE_READ);
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_below);
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] rbp disk fallback page %u-%u is below guard, reason=%s "
+                          "disk_lsn=%llu guard_lsn=%llu",
+                          page_id.file, page_id.page, reason, (uint64)PAGE_GET_LSN(ctrl->page),
+                          (uint64)guard_lsn);
+        return OG_ERROR;
+    }
+    if (guard_lsn != 0) {
+        (void)cm_atomic_inc(&session->kernel->rbp_context.rbp_read_guard_disk_ok);
+    }
+    ctrl->rbp_ctrl->guard_lsn = 0;
+    if (min_lsn != 0 && PAGE_GET_LSN(ctrl->page) < min_lsn) {
+        RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] rbp disk fallback page %u-%u is still below target, reason=%s "
+                          "disk_lsn=%llu target_lsn=%llu",
+                          page_id.file, page_id.page, reason, (uint64)PAGE_GET_LSN(ctrl->page), (uint64)min_lsn);
+    }
+    return OG_SUCCESS;
 }
 
 status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
@@ -1712,6 +1758,10 @@ status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
     rbp_analyse_item_t *item = NULL;
     bool32 update_rbp_read_version = OG_TRUE;
     bool32 need_disk_reload = OG_FALSE;
+    bool32 need_partial_guard_resolve = OG_FALSE;
+    uint64 partial_guard_expect_lsn = 0;
+    uint64 disk_reload_min_lsn = 0;
+    const char *disk_reload_reason = "rbp fallback";
     status_t status = OG_SUCCESS;
 
     /* read latest page versioin */
@@ -1735,17 +1785,34 @@ status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
         if (dtc_rcy_rbp_partial_enabled(session)) {
             rbp_partial_item_t *partial_item = dtc_rcy_rbp_partial_get_item(page_id);
             uint64 expect_lsn = dtc_rcy_rbp_partial_get_expect_lsn(partial_item);
+            uint64 local_guard_lsn = dtc_rcy_rbp_partial_get_local_guard_lsn(partial_item);
             bool32 partial_need_replay = (bool32)(partial_item != NULL && partial_item->rcy_item != NULL &&
                 partial_item->rcy_item->need_replay && expect_lsn != 0);
             uint32 verify_node_id = 0;
             bool32 partial_need_rbp = (bool32)(partial_need_replay && partial_item->required &&
                 dtc_rcy_rbp_partial_item_in_jumped_window(session, partial_item, &verify_node_id));
+            bool32 below_local_guard = (bool32)(local_guard_lsn != 0 &&
+                (ctrl->page->lsn == OG_INVALID_LSN || ctrl->page->lsn < local_guard_lsn));
+
+            if (local_guard_lsn > ctrl->rbp_ctrl->guard_lsn) {
+                ctrl->rbp_ctrl->guard_lsn = local_guard_lsn;
+            }
             if (partial_need_replay && partial_item->required && !partial_need_rbp && ctrl->page->lsn < expect_lsn) {
                 update_rbp_read_version = OG_FALSE;
             }
 
-            if (partial_need_rbp && partial_item->selected_pulled && ctrl->page->lsn < expect_lsn) {
+            if (partial_need_rbp && below_local_guard) {
+                need_partial_guard_resolve = OG_TRUE;
+                partial_guard_expect_lsn = expect_lsn;
+                update_rbp_read_version = OG_FALSE;
+                RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] partial local guard fallback page %u-%u "
+                                  "page_lsn=%llu guard_lsn=%llu expect_lsn=%llu",
+                                  page_id.file, page_id.page, (uint64)ctrl->page->lsn,
+                                  (uint64)local_guard_lsn, (uint64)expect_lsn);
+            } else if (partial_need_rbp && partial_item->selected_pulled && ctrl->page->lsn < expect_lsn) {
                 ctrl->rbp_ctrl->rbp_read_version = KNL_RBP_READ_VER(session->kernel);
+                need_disk_reload = (bool32)(ctrl->page->lsn == OG_INVALID_LSN);
+                disk_reload_reason = need_disk_reload ? "partial selected_pulled zero page" : disk_reload_reason;
                 RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] partial skip_on_demand_pull selected_pulled page %u-%u "
                                  "page_lsn=%llu expect_lsn=%llu expect_lfn=%llu page_pcn=%u required=%u "
                                  "verify_node=%u verified=%u",
@@ -1770,8 +1837,31 @@ status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
                     } else if (ctrl->page->lsn == OG_INVALID_LSN) {
                         need_disk_reload = OG_TRUE;
                     }
+                } else if (ctrl->rbp_ctrl->page_status == RBP_PAGE_GUARDED) {
+                    /*
+                     * Do not use expect_lsn as a disk-load threshold here.  It is the final tail-redo
+                     * target, not proof that disk is newer than the current in-memory baseline.
+                     * Resolve this page after releasing buf_read_lock, using guard_lsn as the only
+                     * physical baseline lower bound, exactly as selected/batch pull does.
+                     */
+                    need_partial_guard_resolve = OG_TRUE;
+                    partial_guard_expect_lsn = expect_lsn;
+                    update_rbp_read_version = OG_FALSE;
+                } else if (buf_rbp_status_needs_disk((rbp_page_status_e)ctrl->rbp_ctrl->page_status)) {
+                    /*
+                     * Match selected/batch install semantics: MISS/OLD/AHEAD does not prove disk is
+                     * newer than a valid in-memory baseline.  Only an invalid ctrl needs disk as the
+                     * last physical baseline; expect_lsn remains the tail-redo target, not a disk bound.
+                     */
+                    if (ctrl->page->lsn == OG_INVALID_LSN) {
+                        need_disk_reload = OG_TRUE;
+                        disk_reload_min_lsn = 0;
+                        disk_reload_reason = "partial on-demand invalid local page";
+                    }
                 } else if (ctrl->page->lsn == OG_INVALID_LSN) {
                     need_disk_reload = OG_TRUE;
+                    disk_reload_min_lsn = 0;
+                    disk_reload_reason = "partial on-demand zero page";
                 }
                 RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] partial on_demand_pull END page %u-%u page_status=%u "
                                  "page_lsn=%llu page_pcn=%u is_from_rbp=%u",
@@ -1822,8 +1912,14 @@ status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
                     } else if (ctrl->page->lsn == OG_INVALID_LSN) {
                         need_disk_reload = OG_TRUE;
                     }
+                } else if (buf_rbp_status_needs_disk((rbp_page_status_e)ctrl->rbp_ctrl->page_status)) {
+                    need_disk_reload = OG_TRUE;
+                    disk_reload_min_lsn = item->lsn;
+                    disk_reload_reason = "on-demand no usable RBP page";
                 } else if (ctrl->page->lsn == OG_INVALID_LSN) {
                     need_disk_reload = OG_TRUE;
+                    disk_reload_min_lsn = 0;
+                    disk_reload_reason = "on-demand zero page";
                 }
                 RBP_BUF_TRACE_LOG("[RBP_BUF_TRACE] on_demand_pull END page %u-%u page_status=%u page_lsn=%llu "
                                  "page_pcn=%u is_from_rbp=%u",
@@ -1861,8 +1957,19 @@ status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
         if (status != OG_SUCCESS) {
             return status;
         }
+        if (need_partial_guard_resolve) {
+            rbp_page_status_e page_status =
+                rbp_knl_resolve_partial_guarded_page(session, ctrl, partial_guard_expect_lsn);
+            if (page_status != RBP_PAGE_HIT && page_status != RBP_PAGE_USABLE) {
+                return OG_ERROR;
+            }
+        }
         if (need_disk_reload) {
-            buf_try_load_zero_page_from_disk(session, ctrl, page_id);
+            status = buf_try_load_rbp_fallback_page_from_disk(session, ctrl, page_id, disk_reload_min_lsn,
+                                                              disk_reload_reason);
+            if (status != OG_SUCCESS) {
+                return status;
+            }
         }
     }
 

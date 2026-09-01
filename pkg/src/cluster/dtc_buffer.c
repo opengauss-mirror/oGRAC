@@ -64,6 +64,25 @@ static inline bool32 dtc_buf_try_edp(knl_session_t *session, buf_read_assist_t *
     return OG_FALSE;
 }
 
+/*
+ * ENTER_PAGE_NO_READ is used by RBP recovery because the response already carries a page body.
+ * Preserve a local body only when its identity and page metadata are still valid; is_edp alone is
+ * not sufficient because an EDP can be stale, cleaned, or already invalidated.
+ */
+static inline bool32 dtc_rbp_local_page_valid_for_no_read(knl_session_t *session, buf_read_assist_t *ra,
+    buf_ctrl_t *ctrl)
+{
+    if (!KNL_RECOVERY_WITH_RBP(session->kernel) || !SESSION_IS_RBP_BG(session) ||
+        !(ra->options & ENTER_PAGE_NO_READ) || ctrl == NULL || ctrl->page == NULL ||
+        !IS_SAME_PAGID(ctrl->page_id, ra->page_id) ||
+        !IS_SAME_PAGID(AS_PAGID(ctrl->page->id), ra->page_id) ||
+        (ctrl->load_status != (uint8)BUF_IS_LOADED && ctrl->load_status != (uint8)BUF_LOAD_FAILED) ||
+        PAGE_GET_LSN(ctrl->page) == OG_INVALID_LSN || !CHECK_PAGE_PCN(ctrl->page)) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
 static inline bool32 dtc_buf_give_up_try(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl)
 {
     if ((ra->options & ENTER_PAGE_TRY) && !ctrl->force_request) {
@@ -144,7 +163,8 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         if (ra->options & ENTER_PAGE_NO_READ) {
             ctrl->load_status = (uint8)BUF_IS_LOADED;
             if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel))) {
-                ctrl->rbp_ctrl->page_status = RBP_PAGE_NOREAD;
+                ctrl->rbp_ctrl->page_status = ra->rbp_keep_local ? RBP_PAGE_NONE : RBP_PAGE_NOREAD;
+                ctrl->rbp_ctrl->guard_lsn = 0;
             }
         }
     } else {
@@ -166,8 +186,11 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
      */
     if (SECUREC_UNLIKELY(KNL_RBP_ENABLE(session->kernel))) {
         if (ctrl->rbp_ctrl->page_status == RBP_PAGE_NOREAD) {
-            ctrl->page->lsn = OG_INVALID_LSN;
+            if (!ra->rbp_keep_local) {
+                ctrl->page->lsn = OG_INVALID_LSN;
+            }
             ctrl->rbp_ctrl->page_status = RBP_PAGE_NONE;
+            ctrl->rbp_ctrl->guard_lsn = 0;
         }
         if (KNL_RECOVERY_WITH_RBP(session->kernel) &&
             !SESSION_IS_LOG_ANALYZE(session) && !SESSION_IS_RBP_BG(session)) {
@@ -245,6 +268,9 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         }
         cm_sleep(DCS_RESEND_MSG_INTERVAL);
     }
+
+    /* Evaluate after local/DCS resolution, not before it, so the checked page is the final ctrl body. */
+    ra->rbp_keep_local = dtc_rbp_local_page_valid_for_no_read(session, ra, ctrl);
 
     return dtc_buf_finish(session, ra, ctrl, &temp_stat);
 }

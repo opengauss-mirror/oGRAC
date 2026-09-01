@@ -161,27 +161,6 @@ void rcy_page_set_damage(knl_session_t *session, pcn_verify_t *log_pcns, log_typ
     return;
 }
 
-static void rcy_log_rbp_expect_page(knl_session_t *session, uint32 log_pcn)
-{
-    buf_ctrl_t *cp = session->curr_page_ctrl;
-    dtc_rcy_context_t *dtc_rcy = DB_IS_CLUSTER(session) ? DTC_RCY_CONTEXT : NULL;
-    uint32 curr_node = (dtc_rcy == NULL) ? OG_INVALID_ID32 : dtc_rcy->curr_node;
-    uint64 rbp_skip_lfn = (curr_node < OG_MAX_INSTANCES) ? dtc_rcy->rbp_skip_points[curr_node].lfn : 0;
-    uint64 rbp_rcy_lfn = (curr_node < OG_MAX_INSTANCES) ? dtc_rcy->rbp_rcy_points[curr_node].lfn : 0;
-
-    if (cp == NULL || cp->page == NULL || cp->rbp_ctrl == NULL) {
-        return;
-    }
-
-    OG_LOG_RUN_WAR("[RBP_RCY_TRACE] EXPECT_PAGE page=%u-%u replay_lsn=%llu log_pcn=%u page_pcn=%u "
-                   "page_lsn=%llu is_from_rbp=%u page_status=%u rbp_read_version=%u curr_node=%u "
-                   "rbp_skip_lfn=%llu rbp_rcy_lfn=%llu",
-                   cp->page_id.file, cp->page_id.page, (uint64)session->curr_lsn, log_pcn,
-                   (uint32)cp->page->pcn, (uint64)cp->page->lsn, (uint32)cp->rbp_ctrl->is_from_rbp,
-                   (uint32)cp->rbp_ctrl->page_status, (uint32)cp->rbp_ctrl->rbp_read_version, curr_node,
-                   (uint64)rbp_skip_lfn, (uint64)rbp_rcy_lfn);
-}
-
 void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_t *log_pcns, uint32 log_pcns_size)
 {
     log_context_t *ogx = &session->kernel->redo_ctx;
@@ -213,7 +192,6 @@ void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_
 
         changed = *(bool32 *)log->data;
         if (changed && (!DB_IS_MAXFIX(session))) {
-            rcy_log_rbp_expect_page(session, log_pcns[session->page_stack.depth - 1].pcn);
             dtc_rcy_log_pcn_mismatch_diag(session, "pcn_leave_page_panic", log_pcns[session->page_stack.depth - 1].pcn,
                 session->curr_page_ctrl->page->pcn, log->type);
             knl_panic_log(OG_FALSE, "log entry pcn %u not equal page pcn %u.page_id: %u-%u, lsn: %llu, curr_file: %s",
@@ -236,17 +214,6 @@ void rcy_replay_pcn_verify(knl_session_t *session, log_entry_t *log, pcn_verify_
         }
 
         if (log_pcns[session->page_stack.depth - 1].pcn != session->curr_page_ctrl->page->pcn) {
-            buf_ctrl_t *cp = session->curr_page_ctrl;
-            rcy_log_rbp_expect_page(session, log_pcns[session->page_stack.depth - 1].pcn);
-            OG_LOG_RUN_WAR(
-                "[RBP_BUF_TRACE] PCN_MISMATCH before_damage log_type=%u log_pcn=%u page_pcn=%u page %u-%u "
-                "page_lsn=%llu rcy_with_rbp=%u knl_rbp_read_ver=%u ctrl_rbp_read_ver=%u is_from_rbp=%u page_status=%u "
-                "load_status=%u replay_lsn=%llu sid=%u",
-                (uint32)log->type, log_pcns[session->page_stack.depth - 1].pcn, cp->page->pcn, cp->page_id.file,
-                cp->page_id.page, (uint64)cp->page->lsn, (uint32)KNL_RECOVERY_WITH_RBP(session->kernel),
-                (uint32)KNL_RBP_READ_VER(session->kernel), (uint32)cp->rbp_ctrl->rbp_read_version,
-                (uint32)cp->rbp_ctrl->is_from_rbp, (uint32)cp->rbp_ctrl->page_status, (uint32)cp->load_status,
-                (uint64)session->curr_lsn, session->id);
             log_pcns[session->page_stack.depth - 1].failed = OG_TRUE;
             rcy_page_set_damage(session, log_pcns, log->type);
         }

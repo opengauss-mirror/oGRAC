@@ -41,6 +41,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -58,6 +59,7 @@ inline constexpr int RBP_EVICT_WAIT_SLICE_MS = 50;
 inline constexpr int RBP_EVICT_IDLE_WAIT_MS = 500;
 inline constexpr size_t RBP_GLOBAL_MIN_LRP_TUPLE_QID_INDEX = 1;
 inline constexpr size_t RBP_GLOBAL_MIN_LRP_TUPLE_PID_INDEX = 2;
+inline constexpr uint32_t RBP_ALL_PAGE_WRITE_RESET_MASK = (1U << OG_RBP_SESSION_COUNT) - 1U;
 
 // Use system_clock timed waits so builds do not depend on pthread_cond_clockwait availability.
 inline void cond_wait_for_compatible(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
@@ -77,6 +79,8 @@ struct PageMeta {
     uint32_t writer_inst = 0;
     uint64_t writer_seq = 0;
     uint32_t qid = 0;
+    uint64_t guard_lsn = 0;
+    uint32_t guard_pcn = 0;
 };
 
 struct PagePayload {
@@ -90,6 +94,13 @@ struct PageRecord {
     uint32_t writer_inst = 0;
     uint64_t writer_seq = 0;
     uint64_t install_gen = 0;
+    uint64_t guard_lsn = 0;
+    uint32_t guard_pcn = 0;
+};
+
+struct DiskGuard {
+    uint64_t guard_lsn = 0;
+    uint32_t guard_pcn = 0;
 };
 
 inline const char* page_block_cstr(const PageRecord& rec)
@@ -103,6 +114,8 @@ struct BatchPageHandle {
     log_point_t coverage_lrp{};
     uint32_t writer_inst = 0;
     uint64_t writer_seq = 0;
+    uint64_t guard_lsn = 0;
+    uint32_t guard_pcn = 0;
     std::shared_ptr<const PagePayload> payload;
 };
 
@@ -433,6 +446,7 @@ private:
 struct RetiredShardData {
     std::unordered_map<uint64_t, PageRecord> page_cache;
     std::unordered_map<uint64_t, PageMeta> page_meta;
+    std::unordered_map<uint64_t, DiskGuard> disk_guard;
     MetaIndexMap meta_index_;
     PendingQueue batch_pending;
     std::optional<LfnBucketIndex> lrp_index;
@@ -495,7 +509,9 @@ public:
     PendingQueue batch_pending;
     log_point_t reset_point{};
     log_point_t frontier_point{};
+    uint64_t guard_cleanup_lsn = 0;
     std::unordered_map<uint64_t, PageMeta> page_meta;
+    std::unordered_map<uint64_t, DiskGuard> disk_guard;
     LfnBucketIndex lrp_index_;
     LfnBucketIndex trunc_index_;
     LfnBucketIndex writer_index_;
@@ -517,10 +533,15 @@ struct CkptResult {
     log_point_t lrp{};
     uint64_t max_lsn = 0;
     int cache_pages = 0;
+    bool guard_ready = false;
+    uint32_t page_write_reset_mask = 0;
+    uint64_t guard_generation = 0;
     std::array<log_point_t, OG_RBP_SESSION_COUNT> queue_resets{};
     std::array<log_point_t, OG_RBP_SESSION_COUNT> queue_frontiers{};
     CkptDiag diag;
 };
+
+constexpr int RBP_GUARD_APPLY_INVALID = -1;
 
 class RbpServerState {
 public:
@@ -552,6 +573,23 @@ public:
     bool try_note_page_installed(bool replaced);
     void note_page_removed();
     void note_pending_delta(int delta);
+    void require_disk_guard();
+    uint64_t guard_generation() const { return guard_generation_.load(std::memory_order_acquire); }
+    uint64_t ensure_guard_session(uint64_t owner_id, uint64_t known_generation);
+    void end_guard_session(uint64_t owner_id);
+    void finish_frozen_read();
+    bool writer_generation_active(uint64_t generation, uint32_t qid, uint64_t connection_id,
+                                  bool reset_seen) const;
+    bool acquire_guard_window(uint64_t generation, uint32_t qid, uint64_t connection_id,
+                              bool reset_seen, bool is_reset);
+    std::string guard_window_reject_reason(uint64_t generation, uint32_t qid, uint64_t connection_id,
+                                           bool reset_seen, bool is_reset) const;
+    bool mark_page_write_reset(uint64_t generation, uint32_t qid, uint64_t connection_id);
+    void release_guard_window(bool is_reset);
+    bool acquire_guard_freeze();
+    void release_guard_freeze();
+    int apply_disk_guard(const rbp_disk_guard_item_t* items, uint32_t count, uint64_t owner_id,
+                         uint64_t generation);
     BatchReadDiag& read_diag()
     {
         return read_diag_;
@@ -574,7 +612,19 @@ public:
 private:
     friend void evict_worker_loop(RbpServerState* state);
 
+    uint64_t next_guard_generation();
+    bool ckpt_snapshot_guard_ready(CkptResult& out) const;
+    bool ckpt_snapshot_wait_for_evict(CkptResult& out);
+
     Config cfg_;
+    mutable std::shared_mutex guard_state_mtx_;
+    std::atomic<bool> guard_enforced_{false};
+    std::atomic<bool> guard_ready_{false};
+    std::atomic<bool> guard_read_frozen_{false};
+    std::atomic<uint64_t> guard_generation_{0};
+    std::atomic<uint64_t> guard_owner_id_{0};
+    std::atomic<uint32_t> page_write_reset_mask_{0};
+    std::array<std::atomic<uint64_t>, OG_RBP_SESSION_COUNT> page_write_owner_ids_{};
     std::atomic<bool> read_end_detaching_{false};
     std::array<std::unique_ptr<RbpShard>, OG_RBP_SESSION_COUNT> shards_{};
     std::thread evict_thread_;
@@ -595,8 +645,7 @@ rbp_page_item_t wire_item_for_response(const PageRecord& rec, uint64_t pid_key);
 
 void refresh_shard_snap(RbpShard& shard);
 PageMeta build_page_meta(uint64_t pid_key, const PageRecord& rec);
-bool install_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, PageRecord rec, const PageMeta& meta,
-                  bool legacy_pending);
+bool install_page(RbpServerState& state, RbpShard& shard, PageRecord rec, PageMeta meta, bool legacy_pending);
 void remove_page(RbpServerState& state, RbpShard& shard, uint64_t pid_key, bool record_hole,
                  const char* reason, bool log_hole);
 int purge_shard_through_lfn(RbpServerState& state, RbpShard& shard, uint64_t through_lfn, int budget,

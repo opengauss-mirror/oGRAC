@@ -48,6 +48,7 @@ struct ReadPhase {
     int dropped_page_writes = 0;
     bool timeout_warned = false;
     bool ending = false;
+    bool owner_connected = false;
 };
 
 struct ReadPhaseSnapshot {
@@ -58,6 +59,7 @@ struct ReadPhaseSnapshot {
     int inflight_reads = 0;
     int dropped_page_writes = 0;
     bool timeout_warned = false;
+    bool owner_connected = false;
 };
 
 struct ReadPhaseEndResult {
