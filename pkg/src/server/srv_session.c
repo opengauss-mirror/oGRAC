@@ -56,6 +56,76 @@ void srv_stack_mem_free(void *ptr)
     // nothing to do, memory allocated from stack
 }
 
+void srv_free_session_memory(session_t *session)
+{
+    if (session == NULL) {
+        return;
+    }
+
+    if (session->mem_size != 0) {
+        numa_free(session, session->mem_size);
+        return;
+    }
+
+    CM_FREE_PTR(session);
+}
+
+static void srv_release_session_sql_curs(session_t *session)
+{
+    if (session == NULL || session->sql_cur_pool.free_objects.count == 0) {
+        return;
+    }
+
+    cm_spin_lock(&g_instance->sql_cur_pool.lock, NULL);
+    opool_free_list(&g_instance->sql_cur_pool.pool, &session->sql_cur_pool.free_objects);
+    cm_spin_unlock(&g_instance->sql_cur_pool.lock);
+    olist_init(&session->sql_cur_pool.free_objects);
+}
+
+static void srv_unpublish_session(session_t *session)
+{
+    session_pool_t *pool = &g_instance->session_pool;
+    uint32 sid;
+
+    if (session == NULL || session->knl_session.id == OG_INVALID_ID32) {
+        return;
+    }
+
+    sid = session->knl_session.id;
+    cm_spin_lock(&pool->lock, NULL);
+    if (sid < pool->hwm && pool->sessions[sid] == session) {
+        pool->sessions[sid] = NULL;
+        g_instance->kernel.sessions[sid] = NULL;
+        if (g_instance->kernel.assigned_sessions > 0) {
+            g_instance->kernel.assigned_sessions--;
+        }
+        while (pool->hwm > 0 && pool->sessions[pool->hwm - 1] == NULL) {
+            pool->hwm--;
+        }
+    }
+    cm_spin_unlock(&pool->lock);
+    session->knl_session.id = OG_INVALID_ID32;
+}
+
+static void srv_destroy_new_session(session_t *session)
+{
+    if (session == NULL) {
+        return;
+    }
+
+    srv_unpublish_session(session);
+    vmp_destory(&session->vmp);
+    vmp_destory(&session->vms);
+    srv_release_session_sql_curs(session);
+    if (session->knl_session.rmid != OG_INVALID_ID16) {
+        srv_release_rm(session->knl_session.rmid);
+    }
+    if (session->knl_session.stat_id != OG_INVALID_ID16) {
+        srv_release_stat(&session->knl_session.stat_id);
+    }
+    srv_free_session_memory(session);
+}
+
 static status_t srv_attach_reactor(session_t *session)
 {
     CM_POINTER(session);
@@ -331,26 +401,30 @@ static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t
 
     rc_memzero = memset_s(buf, mem_size, 0, mem_size);
     if (rc_memzero != EOK) {
-        CM_FREE_PTR(buf);
+        numa_free(buf, mem_size);
         OG_THROW_ERROR(ERR_SYSTEM_CALL, rc_memzero);
         return OG_ERROR;
     }
     session = (session_t *)buf;
+    session->mem_size = mem_size;
     buf_size = sizeof(session_t);
 
     if (srv_init_session_sql_curs(session) != OG_SUCCESS) {
-        CM_FREE_PTR(buf);
+        srv_release_session_sql_curs(session);
+        srv_free_session_memory(session);
         return OG_ERROR;
     }
 
     if (srv_alloc_rm(&rmid) != OG_SUCCESS) {
-        CM_FREE_PTR(buf);
+        srv_release_session_sql_curs(session);
+        srv_free_session_memory(session);
         return OG_ERROR;
     }
 
     if (srv_alloc_stat(&stat_id) != OG_SUCCESS) {
         srv_release_rm(rmid);
-        CM_FREE_PTR(buf);
+        srv_release_session_sql_curs(session);
+        srv_free_session_memory(session);
         return OG_ERROR;
     }
 
@@ -391,7 +465,7 @@ static bool8 is_srv_session_priv_resv(session_pool_t *pool, session_t *session)
     return OG_FALSE;
 }
 
-static void srv_init_new_session(cs_pipe_t *pipe, session_t *session)
+static status_t srv_init_new_session(cs_pipe_t *pipe, session_t *session)
 {
     session_pool_t *pool = &g_instance->session_pool;
     uint32 sid;
@@ -414,13 +488,18 @@ static void srv_init_new_session(cs_pipe_t *pipe, session_t *session)
 
     OG_INIT_SPIN_LOCK(session->dbg_ctl_lock);
 
-    MEMS_RETVOID_IFERR(memset_sp(session->knl_session.datafiles, OG_MAX_DATA_FILES * sizeof(int32), 0xFF,
+    MEMS_RETURN_IFERR(memset_sp(session->knl_session.datafiles, OG_MAX_DATA_FILES * sizeof(int32), 0xFF,
         OG_MAX_DATA_FILES * sizeof(int32)));
 
     cm_create_list2(&session->stmts, SESSION_STMT_EXT_STEP, SESSION_STMT_EXT_MAX, sizeof(sql_stmt_t));
 
-    OG_RETVOID_IFERR(vmp_create(&g_instance->sga.vma, 0, &session->vmp));
-    OG_RETVOID_IFERR(vmp_create(&g_instance->sga.vma, 0, &session->vms));
+    if (vmp_create(&g_instance->sga.vma, 0, &session->vmp) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (vmp_create(&g_instance->sga.vma, 0, &session->vms) != OG_SUCCESS) {
+        vmp_destory(&session->vmp);
+        return OG_ERROR;
+    }
     knl_init_session(&g_instance->kernel, &session->knl_session, session->knl_session.uid, NULL, NULL);
 
     session->stat = g_stat_info_4_init;
@@ -458,6 +537,7 @@ static void srv_init_new_session(cs_pipe_t *pipe, session_t *session)
     session->dbcompatibility = session->knl_session.kernel->db.ctrl.core.dbcompatibility;
 
     OG_LOG_DEBUG_INF("init new session %u [private [%u]]", session->knl_session.id, session->priv);
+    return OG_SUCCESS;
 }
 
 static bool8 is_srv_session_over_max_limit(session_pool_t *pool, cs_pipe_t *pipe)
@@ -490,7 +570,11 @@ status_t srv_new_session(cs_pipe_t *pipe, session_t **session)
     OG_RETURN_IFERR(srv_alloc_session_memory(session, pool, numa_id));
 
 
-    srv_init_new_session(pipe, *session);
+    if (srv_init_new_session(pipe, *session) != OG_SUCCESS) {
+        srv_destroy_new_session(*session);
+        *session = NULL;
+        return OG_ERROR;
+    }
     return OG_SUCCESS;
 }
 
@@ -1850,7 +1934,7 @@ void srv_destory_session()
             if (session->type == SESSION_TYPE_EMERG) {
                 CM_FREE_PTR(session->stack);
             }
-            CM_FREE_PTR(session);
+            srv_free_session_memory(session);
             g_instance->session_pool.sessions[i] = NULL;
         }
     }
@@ -1949,31 +2033,43 @@ status_t srv_alloc_reserved_session(uint32 *sid)
 {
     session_t *session = NULL;
     char *buf = NULL;
+    status_t ret;
 
     sess_buff_assist_t assist;
     OG_RETURN_IFERR(srv_new_session(NULL, &session));
 
-    *sid = session->knl_session.id;
-
     if (srv_get_sess_buff_len(&assist) != OG_SUCCESS) {
+        srv_destroy_new_session(session);
         OG_THROW_ERROR(ERR_NUM_OVERFLOW);
         return OG_ERROR;
     }
 
     buf = (char *)malloc(assist.buf_size);
     if (buf == NULL) {
+        srv_destroy_new_session(session);
         OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)assist.buf_size, "reserved sessions");
         return OG_ERROR;
     }
 
-    errno_t ret = memset_s(buf, assist.buf_size, 0, assist.buf_size);
-    if (ret != EOK) {
+    errno_t errcode = memset_s(buf, assist.buf_size, 0, assist.buf_size);
+    if (errcode != EOK) {
         CM_FREE_PTR(buf);
-        OG_THROW_ERROR(ERR_SYSTEM_CALL, ret);
+        srv_destroy_new_session(session);
+        OG_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
         return OG_ERROR;
     }
 
-    return srv_alloc_resv_sess_core(session, buf, &assist);
+    ret = srv_alloc_resv_sess_core(session, buf, &assist);
+    if (ret != OG_SUCCESS) {
+        session->stack = NULL;
+        session->knl_session.stack = NULL;
+        CM_FREE_PTR(buf);
+        srv_destroy_new_session(session);
+        return ret;
+    }
+
+    *sid = session->knl_session.id;
+    return OG_SUCCESS;
 }
 
 #ifdef __cplusplus
