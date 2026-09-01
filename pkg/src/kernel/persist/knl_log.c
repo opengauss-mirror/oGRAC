@@ -964,6 +964,27 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
 {
     for (uint32 i = 0; i < session->changed_count; i++) {
         buf_ctrl_t *ctrl = session->changed_pages[i];
+        if (ctrl == NULL) {
+            OG_LOG_RUN_ERR("[LOG][SET_PAGE_LSN] null ctrl: sid=%u spid=%u inst=%u index=%u changed_count=%u "
+                           "lsn=%llu lfn=%llu",
+                           session->id, session->spid, session->kernel->id, i, session->changed_count, lsn, lfn);
+            knl_panic(ctrl != NULL);
+        }
+        if (!DB_CLUSTER_NO_CMS) {
+            bool32 is_owner = !DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl);
+            if (!is_owner) {
+                OG_LOG_RUN_ERR("[LOG][SET_PAGE_LSN] owner mismatch: sid=%u spid=%u inst=%u index=%u/%u "
+                               "ctrl=%p page=%p ctrl_page=%u-%u page_id=%u-%u "
+                               "lock=%u edp=%u dirty=%u remote_dirty=%u readonly=%u lsn=%llu page_lsn=%llu",
+                               session->id, session->spid, session->kernel->id, i, session->changed_count, (void *)ctrl,
+                               (void *)ctrl->page, ctrl->page_id.file, ctrl->page_id.page,
+                               ctrl->page == NULL ? 0 : AS_PAGID(ctrl->page->id).file,
+                               ctrl->page == NULL ? 0 : AS_PAGID(ctrl->page->id).page, ctrl->lock_mode, ctrl->is_edp,
+                               ctrl->is_dirty, ctrl->is_remote_dirty, ctrl->is_readonly, lsn,
+                               ctrl->page == NULL ? 0 : ctrl->page->lsn);
+            }
+            knl_panic(is_owner);
+        }
         ctrl->lastest_lfn = lfn;
 
         DB_SET_LSN(ctrl->page->lsn, lsn);
@@ -978,9 +999,6 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
 #if defined(__arm__) || defined(__aarch64__)
         CM_MFENCE;
 #endif
-        if (!DB_CLUSTER_NO_CMS) {
-            knl_panic(!DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl));
-        }
         log_reset_readonly(ctrl);
 
         if (dtc_rcy_rbp_partial_enabled(session)) {
