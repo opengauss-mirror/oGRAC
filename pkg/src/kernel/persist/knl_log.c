@@ -2415,6 +2415,11 @@ static status_t log_get_first_batch_lfn(knl_session_t *session, log_file_t *logf
     }
     int64 size = logfile->ctrl->size - log_head_size;
     size = (size > OG_MAX_BATCH_SIZE) ? OG_MAX_BATCH_SIZE : size;
+    if (size < (int64)sizeof(log_batch_t) + (int64)sizeof(log_batch_tail_t)) {
+        OG_LOG_RUN_INF("[LOG] %s has no room for a log batch, body size %lld", logfile->ctrl->name, size);
+        cm_aligned_free(&log_buf);
+        return OG_ERROR;
+    }
     if (cm_read_device(logfile->ctrl->type, logfile->handle, log_head_size,
         log_buf.aligned_buf, (int32)size) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[LOG] failed to read %s ", logfile->ctrl->name);
@@ -2423,6 +2428,12 @@ static status_t log_get_first_batch_lfn(knl_session_t *session, log_file_t *logf
     }
 
     log_batch_t *batch = (log_batch_t *)log_buf.aligned_buf;
+    if (batch->size < sizeof(log_batch_t) + sizeof(log_batch_tail_t) || batch->size > (uint32)size) {
+        OG_LOG_RUN_INF("[LOG] %s first batch size %u is outside read window %lld",
+            logfile->ctrl->name, batch->size, size);
+        cm_aligned_free(&log_buf);
+        return OG_ERROR;
+    }
     log_batch_tail_t *tail = (log_batch_tail_t *)((char *)batch + batch->size - sizeof(log_batch_tail_t));
     if (!rcy_validate_batch(batch, tail)) {
         OG_LOG_RUN_INF("[LOG] %s may be new or corrupted, first batch size %u head [%llu/%llu/%llu] tail [%llu/%llu]",

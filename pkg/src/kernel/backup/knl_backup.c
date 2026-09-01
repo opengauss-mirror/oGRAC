@@ -2474,6 +2474,7 @@ status_t bak_read_logfile(knl_session_t *session, bak_context_t *ogx, bak_proces
         bak_file->name, *arch_compressed ? "compressed" : "non-compressed", file_size);
 
     if (to_disk) {
+        bak->files[assign_ctrl->bak_index].reserved |= BAK_FILE_FLAG_PLAIN_LOG_HEAD;
         if (bak_local_write(bak_file, backup_buf, read_size, bak, bak_file->size) != OG_SUCCESS) {  // do not compress
                                                                                                     // log head
             return OG_ERROR;
@@ -2570,6 +2571,8 @@ static status_t bak_send_logfile_head(knl_session_t *session, bak_process_t *pro
     bool32 arch_compressed = (head->cmp_algorithm != COMPRESS_NONE);
     *file_size = arch_compressed ? (uint64)cm_device_size(ctrl->type, ctrl->handle) : head->write_pos;
     OG_LOG_RUN_INF("[BACKUP] prepare log, size %lluKB", *file_size / SIZE_K(1));
+
+    bak->files[bak->curr_file_index].reserved |= BAK_FILE_FLAG_PLAIN_LOG_HEAD;
 
     if (bak_agent_write(bak, backup_buf, read_size) != OG_SUCCESS) {
         return OG_ERROR;

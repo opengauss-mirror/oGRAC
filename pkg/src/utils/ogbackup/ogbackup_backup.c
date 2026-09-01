@@ -45,6 +45,7 @@ const struct option ogbak_backup_options[] = {
     {OGBAK_LONG_OPTION_BACKUP, no_argument, NULL, OGBAK_PARSE_OPTION_COMMON},
     {OGBAK_LONG_OPTION_USER, required_argument, NULL, OGBAK_SHORT_OPTION_USER},
     {OGBAK_LONG_OPTION_PASSWORD, required_argument, NULL, OGBAK_SHORT_OPTION_PASSWORD},
+    {OGBAK_LONG_OPTION_PASSWORD_FILE, required_argument, NULL, OGBAK_PARSE_OPTION_PASSWORD_FILE},
     {OGBAK_LONG_OPTION_HOST, required_argument, NULL, OGBAK_SHORT_OPTION_HOST},
     {OGBAK_LONG_OPTION_PORT, required_argument, NULL, OGBAK_SHORT_OPTION_PORT},
     {OGBAK_LONG_OPTION_TARGET_DIR, required_argument, NULL, OGBAK_SHORT_OPTION_TARGET_DIR},
@@ -83,6 +84,40 @@ static status_t ogbak_append_statement(char *statement, uint64_t len, const char
     }
 
     return OG_SUCCESS;
+}
+
+static status_t ogbak_append_backup_password(char *statement, uint64_t len, const char *password)
+{
+    if (password == NULL || password[0] == '\0') {
+        return OG_ERROR;
+    }
+    size_t password_len = strlen(password);
+    if (password_len >= OG_PASSWORD_BUFFER_SIZE) {
+        return OG_ERROR;
+    }
+    char *escaped = (char *)malloc(password_len * 2 + 1);
+    if (escaped == NULL) {
+        return OG_ERROR;
+    }
+    size_t used = 0;
+    status_t status = OG_SUCCESS;
+    for (size_t i = 0; i < password_len; i++) {
+        if (password[i] == '\n' || password[i] == '\r') {
+            status = OG_ERROR;
+            break;
+        }
+        if (password[i] == '\'') {
+            escaped[used++] = '\'';
+        }
+        escaped[used++] = password[i];
+    }
+    escaped[used] = '\0';
+    if (status == OG_SUCCESS) {
+        status = ogbak_append_statement(statement, len, " PASSWORD '%s'", escaped);
+    }
+    (void)memset_s(escaped, password_len * 2 + 1, 0, password_len * 2 + 1);
+    CM_FREE_PTR(escaped);
+    return status;
 }
 
 status_t convert_database_string_to_ograc(char *database, char *og_database)
@@ -181,6 +216,11 @@ status_t get_statement_for_ograc(ogbak_param_t* ogbak_param, uint64_t len, char 
             return OG_ERROR;
         }
     }
+    if (ogbak_param->password_file.str != NULL &&
+        ogbak_append_backup_password(statement, len, ogbak_param->password.str) != OG_SUCCESS) {
+        printf("[ogbackup]backup encryption password is invalid\n");
+        return OG_ERROR;
+    }
     if (ogbak_append_statement(statement, len, "%s", OGSQL_STATEMENT_END_CHARACTER) != OG_SUCCESS) {
         OG_THROW_ERROR(ERR_SYSTEM_CALL, -1);
         return OG_ERROR;
@@ -216,6 +256,12 @@ status_t fill_params_for_ograc_backup(ogbak_param_t* ogbak_param, char *og_param
                                         ogbak_param->compress_algo.len + strlen(OGSQL_COMPRESS_OPTION_SUFFIX) : 0;
     len += ogbak_param->buffer_size.str != NULL ? strlen(OGSQL_BUFFER_OPTION) + ogbak_param->buffer_size.len : 0;
     len += ogbak_param->skip_badblock == OG_TRUE ? strlen(OGSQL_SKIP_BADBLOCK) : 0;
+    if (ogbak_param->password_file.str != NULL) {
+        if (ogbak_param->password.len > (UINT64_MAX - len - strlen(" PASSWORD ''")) / 2) {
+            return OG_ERROR;
+        }
+        len += strlen(" PASSWORD ''") + (uint64_t)ogbak_param->password.len * 2;
+    }
     if (ogbak_param->databases_exclude.str != NULL) {
         if (convert_database_string_to_ograc(ogbak_param->databases_exclude.str,
             (char *)databases) != OG_SUCCESS) {
@@ -246,11 +292,37 @@ void ogbak_check_backup_output(char *output, bool32 *need_retry)
     }
     return;
 }
-status_t ogbak_do_ogsql_backup(char *path, char *params[], bool32 *retry)
+static status_t ogbak_write_sensitive_statement(int32 fd, const char *statement)
+{
+    size_t total = strlen(statement);
+    size_t written = 0;
+    while (written < total) {
+        ssize_t current = write(fd, statement + written, total - written);
+        if (current < 0 && errno == EINTR) {
+            continue;
+        }
+        if (current <= 0) {
+            return OG_ERROR;
+        }
+        written += (size_t)current;
+    }
+    return write(fd, "\n", 1) == 1 ? OG_SUCCESS : OG_ERROR;
+}
+
+status_t ogbak_do_ogsql_backup(char *path, char *params[], bool32 *retry, bool32 sensitive_statement)
 {
     errno_t status = 0;
+    int32 pipe_stdin[2] = {-1, -1};
     int32 pipe_stdout[2] = { 0 };
+    if (sensitive_statement == OG_TRUE && pipe(pipe_stdin) != EOK) {
+        printf("[ogbackup]create protected stdin pipe failed!\n");
+        return OG_ERROR;
+    }
     if (pipe(pipe_stdout) != EOK) {
+        if (pipe_stdin[0] >= 0) {
+            close(pipe_stdin[0]);
+            close(pipe_stdin[1]);
+        }
         printf("[ogbackup]create stdout pipe failed!\n");
         return OG_ERROR;
     }
@@ -258,6 +330,16 @@ status_t ogbak_do_ogsql_backup(char *path, char *params[], bool32 *retry)
     pid_t child_pid = fork();
     if (child_pid == 0) {
         prctl(PR_SET_PDEATHSIG, SIGKILL);
+        if (sensitive_statement == OG_TRUE) {
+            close(pipe_stdin[CHILD_ID]);
+            dup2(pipe_stdin[PARENT_ID], STD_IN_ID);
+            close(pipe_stdin[PARENT_ID]);
+            if (params[OGSQL_STATEMENT_INDEX] != NULL) {
+                (void)memset_s(params[OGSQL_STATEMENT_INDEX], strlen(params[OGSQL_STATEMENT_INDEX]), 0,
+                    strlen(params[OGSQL_STATEMENT_INDEX]));
+            }
+            params[OGSQL_STATEMENT_INDEX - 1] = NULL;
+        }
         close(pipe_stdout[PARENT_ID]);
         dup2(pipe_stdout[CHILD_ID], STD_OUT_ID);
         status = execv(path, params);
@@ -267,8 +349,25 @@ status_t ogbak_do_ogsql_backup(char *path, char *params[], bool32 *retry)
             exit(OG_ERROR);
         }
     } else if (child_pid < 0) {
+        if (pipe_stdin[0] >= 0) {
+            close(pipe_stdin[0]);
+            close(pipe_stdin[1]);
+        }
+        close(pipe_stdout[PARENT_ID]);
+        close(pipe_stdout[CHILD_ID]);
         printf("[ogbackup]failed to fork child process with result %d:%s\n", errno, strerror(errno));
         return OG_ERROR;
+    }
+    if (sensitive_statement == OG_TRUE) {
+        close(pipe_stdin[PARENT_ID]);
+        status_t write_status = ogbak_write_sensitive_statement(pipe_stdin[CHILD_ID],
+            params[OGSQL_STATEMENT_INDEX]);
+        close(pipe_stdin[CHILD_ID]);
+        if (write_status != OG_SUCCESS) {
+            printf("[ogbackup]send protected backup statement to ogsql failed\n");
+        }
+        (void)memset_s(params[OGSQL_STATEMENT_INDEX], strlen(params[OGSQL_STATEMENT_INDEX]), 0,
+            strlen(params[OGSQL_STATEMENT_INDEX]));
     }
     close(pipe_stdout[CHILD_ID]);
     char output[MAX_STATEMENT_LENGTH];
@@ -308,7 +407,8 @@ status_t ogbak_do_backup_ograc(ogbak_param_t* ogbak_param, bool32 *retry)
         printf("[ogbackup]get_ogsql_binary_path failed!\n");
         return OG_ERROR;
     }
-    status = ogbak_do_ogsql_backup(ogsql_binary_path, og_params, retry);
+    status = ogbak_do_ogsql_backup(ogsql_binary_path, og_params, retry,
+        ogbak_param->password_file.str != NULL ? OG_TRUE : OG_FALSE);
     // free space of heap
     CM_FREE_PTR(og_params[OGSQL_STATEMENT_INDEX]);
     CM_FREE_PTR(ogsql_binary_path);
@@ -328,6 +428,16 @@ static inline void ogbak_hide_password(char* password)
 
 status_t ogbak_do_backup(ogbak_param_t* ogbak_param)
 {
+    if (ogbak_param->password.str != NULL && ogbak_param->password_file.str != NULL) {
+        printf("[ogbackup]online backup encryption accepts --password-file only; do not combine it with --password\n");
+        free_input_params(ogbak_param);
+        return OG_ERROR;
+    }
+    if (ogbak_param->password_file.len >= OG_MAX_FILE_PATH_LENGH ||
+        ogbak_load_password_file(ogbak_param) != OG_SUCCESS) {
+        free_input_params(ogbak_param);
+        return OG_ERROR;
+    }
     if (check_common_params(ogbak_param) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -383,6 +493,9 @@ status_t ogbak_parse_backup_args(int32 argc, char** argv, ogbak_param_t* ogbak_p
             case OGBAK_SHORT_OPTION_PASSWORD:
                 OG_RETURN_IFERR(ogbak_parse_single_arg(optarg, &ogbak_param->password));
                 ogbak_hide_password(optarg);
+                break;
+            case OGBAK_PARSE_OPTION_PASSWORD_FILE:
+                OG_RETURN_IFERR(ogbak_parse_single_arg(optarg, &ogbak_param->password_file));
                 break;
             case OGBAK_SHORT_OPTION_HOST:
                 OG_RETURN_IFERR(ogbak_parse_single_arg(optarg, &ogbak_param->host));

@@ -51,7 +51,7 @@ function buildDssPackage() {
   if [[ ${ENV_TYPE} == "aarch64" ]];then
     wget --no-check-certificate https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/binarylibs/gcc10.3/openGauss-third_party_binarylibs_openEuler_2203_arm.tar.gz
     tar -zxf openGauss-third_party_binarylibs_openEuler_2203_arm.tar.gz
-  else 
+  else
     wget --no-check-certificate https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/binarylibs/gcc10.3/openGauss-third_party_binarylibs_Centos7.6_x86_64.tar.gz
     tar -zxf openGauss-third_party_binarylibs_Centos7.6_x86_64.tar.gz
   fi

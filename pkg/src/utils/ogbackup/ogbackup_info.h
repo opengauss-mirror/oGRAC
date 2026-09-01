@@ -40,6 +40,7 @@ extern "C" {
 #define OGBAK_ARG_ARCHIVELOG "--archivelog"
 #define OGBAK_ARG_QUERY_INCREMENTAL_MODE "--query-incremental-mode"
 #define OGBAK_ARG_PURGE_LOGS "--purge-logs"
+#define OGBAK_ARG_OFFLINE_RESTORE "--offline-restore"
 
 #define OGBAK_PARSE_OPTION_COMMON 0
 #define OGBAK_PARSE_OPTION_ERR (-1)
@@ -50,6 +51,12 @@ extern "C" {
 #define OGBAK_LONG_OPTION_ARCHIVELOG "archivelog"
 #define OGBAK_LONG_OPTION_QUERY "query-incremental-mode"
 #define OGBAK_LONG_OPTION_PURGE_LOGS "purge-logs"
+#define OGBAK_LONG_OPTION_OFFLINE_RESTORE "offline-restore"
+#define OGBAK_LONG_OPTION_BACKUP_DIR "backup-dir"
+#define OGBAK_LONG_OPTION_BACKUP_ID "backup-id"
+#define OGBAK_LONG_OPTION_TARGET_TIME "target-time"
+#define OGBAK_LONG_OPTION_DRY_RUN "dry-run"
+#define OGBAK_LONG_OPTION_IN_PLACE "in-place"
 #define OGBAK_LONG_OPTION_TARGET_DIR "target-dir"
 #define OGBAK_LONG_OPTION_DEFAULTS_FILE "defaults-file"
 #define OGBAK_LONG_OPTION_SOCKET "socket"
@@ -74,6 +81,7 @@ extern "C" {
 // long options
 #define OGBAK_LONG_OPTION_USER "user"
 #define OGBAK_LONG_OPTION_PASSWORD "password"
+#define OGBAK_LONG_OPTION_PASSWORD_FILE "password-file"
 #define OGBAK_LONG_OPTION_HOST "host"
 #define OGBAK_LONG_OPTION_PORT "port"
 #define OGBAK_LONG_OPTION_EXEC "execute"
@@ -107,6 +115,13 @@ extern "C" {
 #define OGBAK_SHORT_OPTION_FORCE_DDL 'F'
 #define OGBAK_SHORT_OPTION_SKIP_BADBLOCK 'k'
 #define OGBAK_SHORT_OPTION_REPAIR_TYPE 'a'
+#define OGBAK_SHORT_OPTION_OFFLINE 'O'
+#define OGBAK_SHORT_OPTION_BACKUP_DIR 'B'
+#define OGBAK_SHORT_OPTION_BACKUP_ID 'I'
+#define OGBAK_SHORT_OPTION_TARGET_TIME 'm'
+#define OGBAK_SHORT_OPTION_DRY_RUN 'n'
+#define OGBAK_PARSE_OPTION_IN_PLACE 1001
+#define OGBAK_PARSE_OPTION_PASSWORD_FILE 1002
 
 typedef enum en_ogbak_topic {
     OGBAK_INVALID,
@@ -117,12 +132,14 @@ typedef enum en_ogbak_topic {
     OGBAK_ARCHIVE_LOG,
     OGBAK_QUERY_INCREMENTAL_MODE,
     OGBAK_PURGE_LOGS,
+    OGBAK_RESTORE,
 } ogbak_topic_t;
 
 typedef struct ogbak_param {
     text_t host;
     text_t user;
     SENSI_INFO text_t password;
+    text_t password_file;
     text_t port;
     text_t target_dir;
     text_t defaults_file;
@@ -136,15 +153,33 @@ typedef struct ogbak_param {
     text_t buffer_size;
     text_t repair_type;
     text_t databases_exclude;
+    text_t backup_dir;
+    text_t backup_id;
+    text_t target_time;
+    text_t path_map;
+    text_t storage;
+    text_t dss_scheme_d_evidence;
+    text_t dss_target_manifest_out;
+    text_t dss_write_plan_out;
+    text_t dss_write_plan;
     uint8  is_decompress;
     uint8  is_pitr_cancel;
     uint8  is_restore;
     uint8  is_recover;
+    uint8  is_offline;
+    uint8  is_dry_run;
+    uint8  is_force;
+    uint8  is_in_place;
     uint8  is_incremental;
     uint8  is_incremental_cumulative;
     uint8  is_get_lrp;
     uint8  is_force_archive;
     uint8  is_force_ddl;
+    uint8  allow_inplace_dss_restore;
+    uint8  dss_scheme_d;
+    uint8  dss_scheme_d_preflight_only;
+    uint8  dss_scheme_d_disposable_waiver;
+    uint8  dss_scheme_d_target_manifest_only;
     uint8  skip_badblock;
 } ogbak_param_t;
 

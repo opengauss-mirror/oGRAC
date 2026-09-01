@@ -147,4 +147,3 @@ fi
 if [[ -z "${OS_DISTRO_NAME}" ]]; then
     OS_DISTRO_NAME=$(echo "${OS_SUFFIX}" | tr '[:upper:]' '[:lower:]')
 fi
-

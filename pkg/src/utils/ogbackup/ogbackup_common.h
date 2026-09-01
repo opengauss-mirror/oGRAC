@@ -161,6 +161,7 @@ status_t ogbak_do_shell_background(text_t* command, int* child_pid, int exec_mod
 void free_system_call_params(char *params[], int start_index, int end_index);
 
 void free_input_params(ogbak_param_t* ogbak_param);
+status_t ogbak_load_password_file(ogbak_param_t *param);
 
 status_t fill_params_for_ogsql_login(char *og_params[], int* param_index, ogbak_ogsql_exec_mode_t ogsql_exec_mode);
 

@@ -1,5 +1,8 @@
 message(STATUS "build ogbackup_ut...")
 
+include_directories(${CMAKE_SOURCE_DIR}/pkg/src/cluster)
+include_directories(${CMAKE_SOURCE_DIR}/pkg/src/rc)
+
 aux_source_directory(${CMAKE_SOURCE_DIR}/pkg/src/utils/ogbackup ogbackup_SRC)
 set(OGBAKUP_UT_SOURCE ${CMAKE_SOURCE_DIR}/pkg/test/unit_test/ut/ogbackup/ogbackup_test_main.cpp
                 ${CMAKE_SOURCE_DIR}/pkg/test/unit_test/ut/ogbackup/ogbackup_example_test.cpp)
@@ -22,3 +25,4 @@ target_link_libraries(ogbackup_test
                      -Wl,--end-group)
 target_compile_definitions(ogbackup_test PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})
 target_compile_definitions(ogbackup_test PRIVATE -DGETDBVERSION=${DD_GETDBVERSION})
+target_compile_definitions(ogbackup_test PRIVATE CMS_UT_TEST)

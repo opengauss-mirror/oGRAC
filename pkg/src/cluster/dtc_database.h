@@ -37,6 +37,11 @@ extern "C" {
 #define DTC_BAK_SUCCESS (uint32)1
 #define DTC_BAK_ERROR   (uint32)0
 
+/*
+ * Persistent control-page layout.  The standalone offline backup reader has
+ * a prefix view of this structure; keep field order and types synchronized
+ * whenever this structure changes.
+ */
 typedef struct st_dtc_node_ctrl {
     atomic_t    scn;
     log_point_t rcy_point;

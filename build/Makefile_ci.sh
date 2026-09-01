@@ -637,7 +637,6 @@ func_make_raft()
 {
     ## download dependency:
     func_prepare_dependency
-
     echo "make raft"
 
     raft_build_mode=$1
