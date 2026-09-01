@@ -30,4 +30,3 @@ SELECT c.customer_id, c.customer_name, o.order_id, o.amount, RANK() OVER (PARTIT
 WITH high_value_orders AS (SELECT * FROM small_orders WHERE amount > 250) SELECT c.customer_name, h.order_id FROM small_customers c JOIN high_value_orders h ON c.customer_id = h.customer_id;
 
 alter system set ENABLE_NESTLOOP_JOIN=true;
-alter system set ENABLE_HASH_JOIN=false;

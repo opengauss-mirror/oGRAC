@@ -41,14 +41,14 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name                         | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |                              | 545  | 3359 | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |                              | 545  | 3359 | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |                              | 545  | 28   | 19        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |                              | 545  | 28   | 19        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_LEFTJOIN1_0010 | 351  | 6    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_LEFTJOIN2_0010 | 311  | 5    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: NAME = SNAME                                    
+    1 - access: NAME = SNAME                                    
 
 11 rows fetched.
 

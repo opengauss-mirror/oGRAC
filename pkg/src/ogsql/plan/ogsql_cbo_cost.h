@@ -217,7 +217,7 @@ bool32 if_table_in_outer_rels_list(cols_used_t *used_cols, int idx, galist_t *ou
 void sql_final_cost_hashjoin(join_assist_t *ja, sql_join_node_t* path, cbo_cost_t* cost_info,
     galist_t *restricts, int16* ids, uint64 num_nbuckets, special_join_info_t *sjoininfo);
 status_t sql_initial_cost_hashjoin(join_assist_t *ja, sql_join_node_t* path,
-    cbo_cost_t* cost_info, uint64* num_nbuckets);
+    cbo_cost_t* cost_info, uint64* num_nbuckets, uint32 hash_clause_count);
 status_t sql_jtable_estimate_size(join_assist_t *ja, sql_join_table_t *jtable, sql_join_table_t *jtbl1,
     sql_join_table_t *jtbl2, special_join_info_t *sjoininfo, galist_t* restricts);
 bool32 check_can_index_only(plan_assist_t *pa, sql_table_t *table, knl_index_desc_t *index);

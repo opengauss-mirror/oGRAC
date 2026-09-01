@@ -214,19 +214,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                 | 1    | 16   | 12        |       |        |
-| 1  |   QUERY LIMIT             |       |                 | 1    | 16   | 12        |       |        |
-| 2  |     MERGE JOIN            |       |                 | 12   | 62   | 12        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 49   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 147  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                 | 1    | 11   | 11        |       |        |
+| 1  |   QUERY LIMIT             |       |                 | 1    | 11   | 11        |       |        |
+| 2  |     HASH JOIN(R)          |       |                 | 12   | 15   | 11        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 147  | 3    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 49   | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: T0.ID = T1.ID                                   
-    3 - filter: T0.INT_F0 < 200                                 
+    2 - access: T1.ID = T0.ID                                   
     4 - filter: T0.INT_F0 < 200                                 
 
-14 rows fetched.
+13 rows fetched.
 
 SQL> select table_name, num_rows, blocks, empty_blocks, avg_row_len, sample_size FROM my_tables  WHERE table_name = 'DATA_DS_TEST';
 
@@ -248,24 +247,21 @@ SQL> EXPLAIN SELECT * FROM DATA_DS_TEST t0, DATA_DS_TEST t1 WHERE t0.int_f0 < 20
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
 | Id | Operation                            | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
-------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |                 | 1    | 10   | 8         |       |        |
-| 1  |   QUERY LIMIT                        |       |                 | 1    | 10   | 8         |       |        |
-| 2  |     MERGE JOIN                       |       |                 | 21   | 65   | 8         |       |        |
-| 3  |         TABLE ACCESS BY INDEX ROWID  | SYS   | DATA_DS_TEST T0 | 65   | 4    | 4         |       |        |
-| 4  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_73    | 65   | 4    | 4         |       |        |
-| 5  |         TABLE ACCESS BY INDEX ROWID  | SYS   | DATA_DS_TEST T1 | 128  | 4    | 4         |       |        |
-| 6  |           INDEX FULL SCAN            | SYS   | _PK_SYS_1_73    | 128  | 4    | 4         |       |        |
-------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT          |       |                 | 1    | 11   | 11        |       |        |
+| 1  |   QUERY LIMIT             |       |                 | 1    | 11   | 11        |       |        |
+| 2  |     HASH JOIN(R)          |       |                 | 21   | 15   | 11        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 128  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 65   | 2    | 0         |       |        |
+-------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: T0.ID = T1.ID                                   
-    3 - filter: T0.INT_F0 < 200                                 
-    5 - filter: T0.INT_F0 < 200                                 
+    2 - access: T1.ID = T0.ID                                   
+    4 - filter: T0.INT_F0 < 200                                 
 
-16 rows fetched.
+13 rows fetched.
 
 SQL> select table_name, sample_size, CASE WHEN abs(sample_size/num_rows - 10/(CASE WHEN blocks > 10 THEN blocks ELSE 10 END)) < 0.1 THEN true ELSE false END FROM my_tables  WHERE table_name = 'DATA_DS_TEST';
 

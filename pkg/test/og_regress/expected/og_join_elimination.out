@@ -48,18 +48,17 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 22   | 105  | 13        |       |        |
-| 1  |   MERGE JOIN            |       |      | 22   | 105  | 13        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 22   | 16   | 12        |       |        |
+| 1  |   HASH JOIN(R)          |       |      | 22   | 16   | 12        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: T2.T1_ID = T1.ID                                
-    2 - filter: T2.ID IS NOT NULL                               
+    1 - access: T1.ID = T2.T1_ID                                
     3 - filter: T2.ID IS NOT NULL                               
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t2.id IS NOT NULL;
 
@@ -107,14 +106,14 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 16   | 12        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: T1.ID = T2.T1_ID                                
+    1 - access: T1.ID = T2.T1_ID                                
 
 11 rows fetched.
 
@@ -136,19 +135,19 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 4    | 129  | 112       |       |        |
-| 1  |   MERGE JOIN              |       |      | 4    | 129  | 112       |       |        |
-| 2  |     MERGE JOIN            |       |      | 22   | 105  | 13        |       |        |
+| 0  | SELECT STATEMENT          |       |      | 4    | 26   | 23        |       |        |
+| 1  |   MERGE JOIN              |       |      | 4    | 26   | 23        |       |        |
+| 2  |     HASH JOIN(R)          |       |      | 6    | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
-| 5  |       TABLE ACCESS FULL   | SYS   | T3   | 112  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T3   | 112  | 2    | 0         |       |        |
+| 5  |       TABLE ACCESS FULL   | SYS   | T1   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: T2.ID = T3.T2_ID                                
-    2 - access: T2.T1_ID = T1.ID                                
+    1 - access: T2.T1_ID = T1.ID                                
+    2 - access: T2.ID = T3.T2_ID                                
     3 - filter: T2.ID IS NOT NULL                               
-    4 - filter: T2.ID IS NOT NULL                               
+    4 - filter: T3.ID IS NOT NULL                               
     5 - filter: T3.ID IS NOT NULL                               
 
 17 rows fetched.
@@ -171,14 +170,14 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 16   | 12        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: T1.ID = T2.T1_ID                                
+    1 - access: T1.ID = T2.T1_ID                                
 
 11 rows fetched.
 
@@ -200,14 +199,14 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 16   | 12        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: T1.ID = T2.T1_ID                                
+    1 - access: T1.ID = T2.T1_ID                                
 
 11 rows fetched.
 
@@ -229,18 +228,17 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 22   | 105  | 13        |       |        |
-| 1  |   MERGE JOIN            |       |      | 22   | 105  | 13        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 22   | 16   | 12        |       |        |
+| 1  |   HASH JOIN(R)          |       |      | 22   | 16   | 12        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: T2.T1_ID = T1.ID                                
-    2 - filter: T2.VALUE IS NOT NULL                            
+    1 - access: T1.ID = T2.T1_ID                                
     3 - filter: T2.VALUE IS NOT NULL                            
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> SELECT t1.* FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t2.value IS NOT NULL;
 
@@ -285,15 +283,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 11   | 1023 | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |      | 11   | 1023 | 8         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 11   | 49   | 20        |       |        |
+| 1  |   HASH GROUP BY           |       |      | 11   | 49   | 20        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 
@@ -315,15 +313,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 11   | 1023 | 8         |       |        |
-| 1  |   HASH GROUP BY           |       |      | 11   | 1023 | 8         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 11   | 49   | 20        |       |        |
+| 1  |   HASH GROUP BY           |       |      | 11   | 49   | 20        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 
@@ -345,15 +343,15 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 112  | 511  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 112  | 511  | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 112  | 16   | 12        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |      | 112  | 16   | 12        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T1   | 112  | 2    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
+    1 - access: T1.ID = T2.T1_ID                                
     2 - filter: T1.ID IS NOT NULL                               
-    3 - filter: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 
@@ -375,15 +373,15 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 112  | 511  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 112  | 511  | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 112  | 16   | 12        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |      | 112  | 16   | 12        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T2   | 112  | 2    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
+    1 - access: T2.T1_ID = T1.ID                                
     2 - filter: T2.ID IS NOT NULL                               
-    3 - filter: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 
@@ -405,16 +403,16 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
-| 1  |   FILTER                  |       |      | 118  | 503  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 16   | 12        |       |        |
+| 1  |   FILTER                  |       |      | 118  | 16   | 12        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     1 - filter: T2.ID IS NOT NULL  OR T1.AGE > 30               
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 13 rows fetched.
 
@@ -497,16 +495,16 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
-| 1  |   FILTER                  |       |      | 118  | 503  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 16   | 12        |       |        |
+| 1  |   FILTER                  |       |      | 118  | 16   | 12        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     1 - filter: T2.ID IS NULL                                   
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 13 rows fetched.
 
@@ -525,18 +523,17 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 7    | 42   | 9         |       |        |
-| 1  |   MERGE JOIN            |       |      | 7    | 42   | 9         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 39   | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 7    | 14   | 10        |       |        |
+| 1  |   HASH JOIN(R)          |       |      | 7    | 14   | 10        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 39   | 1    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: T2.T1_ID = T1.ID                                
-    2 - filter: T2.ID > 0                                       
+    1 - access: T1.ID = T2.T1_ID                                
     3 - filter: T2.ID > 0                                       
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t2.id > 0;
 
@@ -556,16 +553,16 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
-| 1  |   FILTER                  |       |      | 118  | 503  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 16   | 12        |       |        |
+| 1  |   FILTER                  |       |      | 118  | 16   | 12        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     1 - filter: T2.ID + T1.AGE > 50                             
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 13 rows fetched.
 
@@ -614,18 +611,17 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 2    | 18   | 8         |       |        |
-| 1  |   MERGE JOIN            |       |      | 2    | 18   | 8         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | T2   | 12   | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 2    | 13   | 9         |       |        |
+| 1  |   HASH JOIN(R)          |       |      | 2    | 13   | 9         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T2   | 12   | 1    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: T2.T1_ID = T1.ID                                
-    2 - filter: T2.ID BETWEEN 1 AND 10                          
+    1 - access: T1.ID = T2.T1_ID                                
     3 - filter: T2.ID BETWEEN 1 AND 10                          
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t2.id BETWEEN 1 AND 10;
 
@@ -645,14 +641,14 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |      | 118  | 503  | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |      | 118  | 16   | 12        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 2  |       TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: T1.ID = T2.T1_ID                                
+    1 - access: T1.ID = T2.T1_ID                                
 
 11 rows fetched.
 
@@ -674,15 +670,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 118  | 546  | 1         |       |        |
-| 1  |   QUERY SORT ORDER BY     |       |      | 118  | 546  | 1         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 59   | 14        |       |        |
+| 1  |   QUERY SORT ORDER BY     |       |      | 118  | 59   | 14        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 
@@ -704,15 +700,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 10   | 42   | 0         |       |        |
-| 1  |   QUERY LIMIT             |       |      | 10   | 42   | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 10   | 13   | 12        |       |        |
+| 1  |   QUERY LIMIT             |       |      | 10   | 13   | 12        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 
@@ -734,15 +730,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |      | 118  | 503  | 0         |       |        |
-| 1  |   FOR UPDATE              |       |      | 118  | 503  | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |      | 118  | 503  | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |      | 118  | 16   | 12        |       |        |
+| 1  |   FOR UPDATE              |       |      | 118  | 16   | 12        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |      | 118  | 16   | 12        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T1   | 118  | 2    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T2   | 118  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: T1.ID = T2.T1_ID                                
+    2 - access: T1.ID = T2.T1_ID                                
 
 12 rows fetched.
 

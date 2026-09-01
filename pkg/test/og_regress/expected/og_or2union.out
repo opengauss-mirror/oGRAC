@@ -567,32 +567,32 @@ COUNT(*)
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
---------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
 | Id | Operation                                 | Owner | Name             | Rows  | Cost  | StartCost | Bytes | Remark |
---------------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                          |       |                  | 1     | 27527 | 19        |       |        |
-| 1  |   AGGR                                    |       |                  | 1     | 27527 | 19        |       |        |
-| 2  |       SUBSELECT                           |       | $FROM_ORE_0      | 700   | 27506 | 16        |       |        |
-| 3  |         HASH UNION                        |       |                  | 700   | 27506 | 16        |       |        |
-| 4  |           NESTED LOOPS                    |       |                  | 350   | 13752 | 8         |       |        |
-| 5  |               SUBSELECT                   |       | $FROM_SQ_0       | 1470  | 66    | 0         |       |        |
-| 6  |                 HASH DISTINCT             |       |                  | 1470  | 104   | 0         |       |        |
-| 7  |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T2  | 1470  | 66    | 0         |       |        |
-| 8  |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 8     | 8         |       |        |
-| 9  |                 INDEX RANGE SCAN          | SYS   | IND_OR_EXPAND_11 | 10000 | 8     | 8         |       |        |
-| 10 |           NESTED LOOPS                    |       |                  | 350   | 13752 | 8         |       |        |
-| 11 |               SUBSELECT                   |       | $FROM_SQ_1       | 1470  | 66    | 0         |       |        |
-| 12 |                 HASH DISTINCT             |       |                  | 1470  | 104   | 0         |       |        |
-| 13 |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T3  | 1470  | 66    | 0         |       |        |
-| 14 |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 8     | 8         |       |        |
-| 15 |                 INDEX RANGE SCAN          | SYS   | IND_OR_EXPAND_11 | 10000 | 8     | 8         |       |        |
---------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                          |       |                  | 1     | 877  | 220       |       |        |
+| 1  |   AGGR                                    |       |                  | 1     | 877  | 220       |       |        |
+| 2  |       SUBSELECT                           |       | $FROM_ORE_0      | 700   | 655  | 216       |       |        |
+| 3  |         HASH UNION                        |       |                  | 700   | 655  | 216       |       |        |
+| 4  |           HASH JOIN(R)                    |       |                  | 350   | 326  | 108       |       |        |
+| 5  |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 89   | 8         |       |        |
+| 6  |                 INDEX FAST FULL SCAN      | SYS   | IND_OR_EXPAND_11 | 10000 | 89   | 8         |       |        |
+| 7  |               SUBSELECT                   |       | $FROM_SQ_0       | 1470  | 66   | 0         |       |        |
+| 8  |                 HASH DISTINCT             |       |                  | 1470  | 104  | 0         |       |        |
+| 9  |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T2  | 1470  | 66   | 0         |       |        |
+| 10 |           HASH JOIN(R)                    |       |                  | 350   | 326  | 108       |       |        |
+| 11 |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 89   | 8         |       |        |
+| 12 |                 INDEX FAST FULL SCAN      | SYS   | IND_OR_EXPAND_11 | 10000 | 89   | 8         |       |        |
+| 13 |               SUBSELECT                   |       | $FROM_SQ_1       | 1470  | 66   | 0         |       |        |
+| 14 |                 HASH DISTINCT             |       |                  | 1470  | 104  | 0         |       |        |
+| 15 |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T3  | 1470  | 66   | 0         |       |        |
+-------------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    7 - filter: T2.F3 >= 1000                                   
-    9 - access: T1.F1 = T2.F1                                   
-    13 - filter: T3.F2 <= 5                                     
-    15 - access: T1.F1 = T3.F1                                  
+    4 - access: T1.F1 = T2.F1                                   
+    9 - filter: T2.F3 >= 1000                                   
+    10 - access: T1.F1 = T3.F1                                  
+    15 - filter: T3.F2 <= 5                                     
 
 26 rows fetched.
 
@@ -610,22 +610,22 @@ COUNT(*)
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
---------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------
 | Id | Operation                           | Owner | Name            | Rows | Cost        | StartCost   | Bytes | Remark |
---------------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                    |       |                 | 1    | 40000000006 | 20000000002 |       |        |
-| 1  |   AGGR                              |       |                 | 1    | 40000000006 | 20000000002 |       |        |
-| 2  |       SUBSELECT                     |       | $FROM_ORE_0     | 2    | 20000000004 | 20000000002 |       |        |
-| 3  |         HASH UNION                  |       |                 | 2    | 20000000004 | 20000000002 |       |        |
-| 4  |           HASH JOIN SEMI(R)         |       |                 | 1    | 10000000002 | 10000000001 |       |        |
+-----------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                    |       |                 | 1    | 38   | 18        |       |        |
+| 1  |   AGGR                              |       |                 | 1    | 38   | 18        |       |        |
+| 2  |       SUBSELECT                     |       | $FROM_ORE_0     | 2    | 20   | 18        |       |        |
+| 3  |         HASH UNION                  |       |                 | 2    | 20   | 18        |       |        |
+| 4  |           HASH JOIN SEMI(R)         |       |                 | 1    | 10   | 9         |       |        |
 | 5  |               TABLE ACCESS FULL     | SYS   | OR_2_UNION_T T1 | 2    | 1           | 0           |       |        |
 | 6  |               SUBSELECT             |       | $FROM_SQ_0      | 2    | 1           | 0           |       |        |
 | 7  |                   TABLE ACCESS FULL | SYS   | OR_2_UNION_T T2 | 2    | 1           | 0           |       |        |
-| 8  |           HASH JOIN SEMI(R)         |       |                 | 1    | 10000000002 | 10000000001 |       |        |
+| 8  |           HASH JOIN SEMI(R)         |       |                 | 1    | 10   | 9         |       |        |
 | 9  |               TABLE ACCESS FULL     | SYS   | OR_2_UNION_T T1 | 2    | 1           | 0           |       |        |
 | 10 |               SUBSELECT             |       | $FROM_SQ_1      | 2    | 1           | 0           |       |        |
 | 11 |                   TABLE ACCESS FULL | SYS   | OR_2_UNION_T T3 | 2    | 1           | 0           |       |        |
---------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     4 - access: NA = NA                                         
@@ -695,24 +695,25 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                       | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |                 | 1    | 38   | 0         |       |        |
-| 1  |   AGGR                          |       |                 | 1    | 38   | 0         |       |        |
-| 2  |       SUBSELECT                 |       | $FROM_ORE_0     | 4    | 38   | 0         |       |        |
-| 3  |         UNION ALL               |       |                 | 4    | 38   | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |                 | 1    | 40   | 9         |       |        |
+| 1  |   AGGR                          |       |                 | 1    | 40   | 9         |       |        |
+| 2  |       SUBSELECT                 |       | $FROM_ORE_0     | 4    | 30   | 9         |       |        |
+| 3  |         UNION ALL               |       |                 | 4    | 30   | 9         |       |        |
 | 4  |           NESTED LOOPS          |       |                 | 1    | 13   | 0         |       |        |
 | 5  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 1    | 1     | 0         |       |        |
 | 6  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
-| 7  |           NESTED LOOPS          |       |                 | 3    | 25   | 0         |       |        |
-| 8  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 2    | 1    | 0         |       |        |
-| 9  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
+| 7  |           HASH JOIN(R)          |       |                 | 3    | 17   | 9         |       |        |
+| 8  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
+| 9  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 2    | 1    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     5 - filter: T1.A > 10                                       
     6 - filter: T1.B = T2.B                                     
-    9 - filter: T1.C = T2.C AND (FALSE != LNNVL(T1.B = T2.B) OR FALSE != LNNVL(T1.A > 10))
+    7 - access: T2.C = T1.C                                     
+    9 - filter: FALSE != LNNVL(T1.B = T2.B) OR FALSE != LNNVL(T1.A > 10)
 
-19 rows fetched.
+20 rows fetched.
 
 SQL> 
 SQL> select count(*) from  t_or2union_1 t1,  t_or2union_1 t2

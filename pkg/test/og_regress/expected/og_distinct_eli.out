@@ -416,16 +416,16 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 | Id | Operation                     | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |      | 823  | 798  | 50        |       |        |
-| 1  |   SORT DISTINCT               |       |      | 823  | 798  | 50        |       |        |
-| 2  |       SUBSELECT               | SYS   | S    | 823  | 773  | 50        |       |        |
-| 3  |         MERGE JOIN            |       |      | 823  | 773  | 50        |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | T1   | 367  | 6    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | T2   | 449  | 7    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |      | 823  | 56   | 20        |       |        |
+| 1  |   SORT DISTINCT               |       |      | 823  | 56   | 20        |       |        |
+| 2  |       SUBSELECT               | SYS   | S    | 823  | 32   | 20        |       |        |
+| 3  |         HASH JOIN(R)          |       |      | 823  | 32   | 20        |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | T2   | 449  | 7    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | T1   | 367  | 6    | 0         |       |        |
 ------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - access: T1.A = T2.A                                     
+    3 - access: T2.A = T1.A                                     
 
 13 rows fetched.
 

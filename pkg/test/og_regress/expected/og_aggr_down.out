@@ -656,15 +656,15 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
-| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 50   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 50   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: E.DEPT_ID = D.DEPT_ID                           
 
 12 rows fetched.
 
@@ -688,15 +688,15 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 53   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 53   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: O.CUST_ID = C.CUST_ID                           
 
 12 rows fetched.
 
@@ -719,15 +719,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
-| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 54   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 54   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |            | 149  | 19   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.PROD_ID = P.PROD_ID                           
 
 12 rows fetched.
 
@@ -748,15 +748,15 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
-| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 50   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 50   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: E.DEPT_ID = D.DEPT_ID                           
 
 12 rows fetched.
 
@@ -779,15 +779,15 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 53   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 53   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: O.CUST_ID = C.CUST_ID                           
 
 12 rows fetched.
 
@@ -811,15 +811,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
-| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 54   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 54   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |            | 149  | 19   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.PROD_ID = P.PROD_ID                           
 
 12 rows fetched.
 
@@ -844,15 +844,15 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
-| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 50   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 50   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: E.DEPT_ID = D.DEPT_ID                           
 
 12 rows fetched.
 
@@ -876,15 +876,15 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 53   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 53   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: O.CUST_ID = C.CUST_ID                           
 
 12 rows fetched.
 
@@ -907,15 +907,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
-| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 54   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 54   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |            | 149  | 19   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.PROD_ID = P.PROD_ID                           
 
 12 rows fetched.
 
@@ -936,19 +936,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 1    | 114  | 18        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 1    | 114  | 18        |       |        |
-| 2  |     MERGE JOIN            |       |               | 9    | 49   | 10        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 44   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 1    | 45   | 18        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 1    | 45   | 18        |       |        |
+| 2  |     HASH JOIN(R)          |       |               | 9    | 14   | 10        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 44   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.DEPT_ID = D.DEPT_ID                           
-    3 - filter: E.SALARY > 6000                                 
+    2 - access: D.DEPT_ID = E.DEPT_ID                           
     4 - filter: E.SALARY > 6000                                 
 
-14 rows fetched.
+13 rows fetched.
 
 SQL> SELECT d.location, MAX(e.salary) FROM employees e, departments d WHERE e.dept_id = d.dept_id AND e.salary > 6000 GROUP BY d.location;
 
@@ -968,19 +967,18 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 1    | 157  | 20        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 1    | 157  | 20        |       |        |
-| 2  |     MERGE JOIN            |       |             | 14   | 70   | 12        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 67   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 1    | 47   | 19        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 1    | 47   | 19        |       |        |
+| 2  |     HASH JOIN(R)          |       |             | 14   | 15   | 11        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 67   | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.CUST_ID = C.CUST_ID                           
-    3 - filter: O.AMOUNT > 1000                                 
+    2 - access: C.CUST_ID = O.CUST_ID                           
     4 - filter: O.AMOUNT > 1000                                 
 
-14 rows fetched.
+13 rows fetched.
 
 SQL> SELECT c.city, MIN(o.amount) FROM orders o, customers c WHERE o.cust_id = c.cust_id AND o.amount > 1000 GROUP BY c.city;
 
@@ -1001,19 +999,18 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 1    | 180  | 20        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 1    | 180  | 20        |       |        |
-| 2  |     MERGE JOIN            |       |            | 16   | 82   | 12        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 79   | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 1    | 48   | 20        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 1    | 48   | 20        |       |        |
+| 2  |     HASH JOIN(R)          |       |            | 16   | 16   | 12        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 79   | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: S.PROD_ID = P.PROD_ID                           
-    3 - filter: S.QUANTITY > 5                                  
+    2 - access: P.PROD_ID = S.PROD_ID                           
     4 - filter: S.QUANTITY > 5                                  
 
-14 rows fetched.
+13 rows fetched.
 
 SQL> SELECT p.category, MAX(s.quantity) FROM sales s, products p WHERE s.prod_id = p.prod_id AND s.quantity > 5 GROUP BY p.category;
 
@@ -1123,15 +1120,15 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
-| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 50   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 50   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: E.DEPT_ID = D.DEPT_ID                           
 
 12 rows fetched.
 
@@ -1155,15 +1152,15 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 53   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 53   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: O.CUST_ID = C.CUST_ID                           
 
 12 rows fetched.
 
@@ -1186,15 +1183,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name       | Rows | Cost  | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |            | 14   | 323  | 29        |       |        |
-| 1  |   HASH GROUP BY           |       |            | 14   | 323  | 29        |       |        |
-| 2  |     MERGE JOIN            |       |            | 149  | 153  | 21        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |            | 14   | 54   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |            | 14   | 54   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |            | 149  | 19   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | SALES S    | 237  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | PRODUCTS P | 126  | 2    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.PROD_ID = P.PROD_ID                           
 
 12 rows fetched.
 
@@ -1215,15 +1212,15 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |               | 8    | 193  | 23        |       |        |
-| 1  |   HASH GROUP BY           |       |               | 8    | 193  | 23        |       |        |
-| 2  |     MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |               | 8    | 50   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |               | 8    | 50   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: E.DEPT_ID = D.DEPT_ID                           
 
 12 rows fetched.
 
@@ -1247,15 +1244,15 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |             | 12   | 279  | 27        |       |        |
-| 1  |   HASH GROUP BY           |       |             | 12   | 279  | 27        |       |        |
-| 2  |     MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |             | 12   | 53   | 21        |       |        |
+| 1  |   HASH GROUP BY           |       |             | 12   | 53   | 21        |       |        |
+| 2  |     HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: O.CUST_ID = C.CUST_ID                           
 
 12 rows fetched.
 
@@ -1278,18 +1275,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
-| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 79   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 79   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 83   | 31   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = O.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: O.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
@@ -1313,18 +1310,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
-| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
-| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 81   | 36        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 81   | 36        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 83   | 32   | 28        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.EMP_ID = E.EMP_ID                             
-    3 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: E.EMP_ID = O.EMP_ID                             
+    4 - access: O.CUST_ID = C.CUST_ID                           
 
 15 rows fetched.
 
@@ -1347,18 +1344,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
-| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 83   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 83   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 98   | 33   | 26        |       |        |
+| 3  |       HASH JOIN(R)          |       |             | 149  | 19   | 13        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    4 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    3 - access: S.PROD_ID = P.PROD_ID                           
 
 15 rows fetched.
 
@@ -1379,18 +1376,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 9    | 401  | 113       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 9    | 401  | 113       |       |        |
-| 2  |     MERGE JOIN              |       |               | 98   | 192  | 105       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 9    | 81   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 9    | 81   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 98   | 32   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
@@ -1413,18 +1410,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 8    | 445  | 151       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 8    | 445  | 151       |       |        |
-| 2  |     MERGE JOIN              |       |             | 80   | 214  | 143       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 80   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 80   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 80   | 32   | 26        |       |        |
+| 3  |       HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: P.PROD_ID = O.ORDER_ID                          
-    4 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: O.ORDER_ID = P.PROD_ID                          
+    3 - access: O.CUST_ID = C.CUST_ID                           
 
 15 rows fetched.
 
@@ -1443,18 +1440,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
-| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 83   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 83   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 98   | 33   | 26        |       |        |
+| 3  |       HASH JOIN(R)          |       |             | 149  | 19   | 13        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    4 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    3 - access: S.PROD_ID = P.PROD_ID                           
 
 15 rows fetched.
 
@@ -1479,18 +1476,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
-| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 79   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 79   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 83   | 31   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = O.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: O.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
@@ -1514,18 +1511,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
-| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
-| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 81   | 36        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 81   | 36        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 83   | 32   | 28        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.EMP_ID = E.EMP_ID                             
-    3 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: E.EMP_ID = O.EMP_ID                             
+    4 - access: O.CUST_ID = C.CUST_ID                           
 
 15 rows fetched.
 
@@ -1548,18 +1545,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
-| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 83   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 83   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 98   | 33   | 26        |       |        |
+| 3  |       HASH JOIN(R)          |       |             | 149  | 19   | 13        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    4 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    3 - access: S.PROD_ID = P.PROD_ID                           
 
 15 rows fetched.
 
@@ -1580,23 +1577,21 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 1    | 163  | 71        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 1    | 163  | 71        |       |        |
-| 2  |     MERGE JOIN              |       |               | 10   | 73   | 63        |       |        |
-| 3  |       MERGE JOIN            |       |               | 9    | 49   | 10        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 44   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 1    | 73   | 30        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 1    | 73   | 30        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 10   | 28   | 22        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 9    | 14   | 10        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 44   | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    3 - access: E.DEPT_ID = D.DEPT_ID                           
-    4 - filter: E.SALARY > 6000                                 
-    5 - filter: E.SALARY > 6000                                 
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    4 - access: D.DEPT_ID = E.DEPT_ID                           
     6 - filter: E.SALARY > 6000                                 
 
-18 rows fetched.
+16 rows fetched.
 
 SQL> SELECT d.location, MAX(e.salary) FROM employees e, departments d, sales s WHERE e.dept_id = d.dept_id AND e.emp_id = s.emp_id AND e.salary > 6000 GROUP BY d.location;
 
@@ -1616,23 +1611,21 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 1    | 190  | 86        |       |        |
-| 1  |   HASH GROUP BY             |       |             | 1    | 190  | 86        |       |        |
-| 2  |     MERGE JOIN              |       |             | 9    | 87   | 78        |       |        |
-| 3  |       MERGE JOIN            |       |             | 14   | 70   | 12        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 67   | 2    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 1    | 71   | 31        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 1    | 71   | 31        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 9    | 27   | 23        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |             | 14   | 15   | 11        |       |        |
+| 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 67   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.EMP_ID = E.EMP_ID                             
-    3 - access: O.CUST_ID = C.CUST_ID                           
-    4 - filter: O.AMOUNT > 1000                                 
-    5 - filter: O.AMOUNT > 1000                                 
+    2 - access: C.CUST_ID = O.CUST_ID                           
+    4 - access: E.EMP_ID = O.EMP_ID                             
     6 - filter: O.AMOUNT > 1000                                 
 
-18 rows fetched.
+16 rows fetched.
 
 SQL> SELECT c.city, MIN(o.amount) FROM orders o, customers c, employees e WHERE o.cust_id = c.cust_id AND o.emp_id = e.emp_id AND o.amount > 1000 GROUP BY c.city;
 
@@ -1653,23 +1646,21 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 1    | 214  | 97        |       |        |
-| 1  |   HASH GROUP BY             |       |               | 1    | 214  | 97        |       |        |
-| 2  |     MERGE JOIN              |       |               | 10   | 99   | 89        |       |        |
-| 3  |       MERGE JOIN            |       |               | 16   | 82   | 12        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | SALES S       | 79   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 1    | 72   | 32        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 1    | 72   | 32        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 10   | 27   | 24        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 16   | 16   | 12        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 126  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | SALES S       | 79   | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: S.EMP_ID = D.DEPT_ID                            
-    3 - access: S.PROD_ID = P.PROD_ID                           
-    4 - filter: S.QUANTITY > 5                                  
-    5 - filter: S.QUANTITY > 5                                  
+    2 - access: D.DEPT_ID = S.EMP_ID                            
+    4 - access: P.PROD_ID = S.PROD_ID                           
     6 - filter: S.QUANTITY > 5                                  
 
-18 rows fetched.
+16 rows fetched.
 
 SQL> SELECT p.category, MAX(s.quantity) FROM sales s, products p, departments d WHERE s.prod_id = p.prod_id AND s.emp_id = d.dept_id AND s.quantity > 5 GROUP BY p.category;
 
@@ -1781,18 +1772,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
-| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 79   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 79   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 83   | 31   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = O.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: O.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
@@ -1816,18 +1807,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
-| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
-| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 81   | 36        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 81   | 36        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 83   | 32   | 28        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.EMP_ID = E.EMP_ID                             
-    3 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: E.EMP_ID = O.EMP_ID                             
+    4 - access: O.CUST_ID = C.CUST_ID                           
 
 15 rows fetched.
 
@@ -1850,18 +1841,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 9    | 514  | 174       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 9    | 514  | 174       |       |        |
-| 2  |     MERGE JOIN              |       |               | 93   | 249  | 166       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |               | 149  | 153  | 21        |       |        |
+| 0  | SELECT STATEMENT            |       |               | 9    | 82   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 9    | 82   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 93   | 33   | 26        |       |        |
+| 3  |       HASH JOIN(R)          |       |               | 149  | 19   | 13        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | SALES S       | 237  | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P    | 126  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: D.DEPT_ID = S.EMP_ID                            
-    4 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.EMP_ID = D.DEPT_ID                            
+    3 - access: S.PROD_ID = P.PROD_ID                           
 
 15 rows fetched.
 
@@ -1880,18 +1871,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 9    | 401  | 113       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 9    | 401  | 113       |       |        |
-| 2  |     MERGE JOIN              |       |               | 98   | 192  | 105       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 9    | 81   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 9    | 81   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 98   | 32   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | SALES S       | 237  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
@@ -1915,18 +1906,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
-| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
-| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 81   | 36        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 81   | 36        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 83   | 32   | 28        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.EMP_ID = E.EMP_ID                             
-    3 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: E.EMP_ID = O.EMP_ID                             
+    4 - access: O.CUST_ID = C.CUST_ID                           
 
 15 rows fetched.
 
@@ -1949,18 +1940,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
-| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 79   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 79   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 83   | 31   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = O.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: O.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
@@ -1983,18 +1974,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 9    | 523  | 174       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 9    | 523  | 174       |       |        |
-| 2  |     MERGE JOIN              |       |             | 98   | 253  | 166       |       |        |
-| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
-| 4  |       MERGE JOIN            |       |             | 149  | 153  | 21        |       |        |
+| 0  | SELECT STATEMENT            |       |             | 9    | 83   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 9    | 83   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 98   | 33   | 26        |       |        |
+| 3  |       HASH JOIN(R)          |       |             | 149  | 19   | 13        |       |        |
+| 4  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | PRODUCTS P  | 126  | 2    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SALES S     | 237  | 4    | 0         |       |        |
+| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = S.EMP_ID                             
-    4 - access: P.PROD_ID = S.PROD_ID                           
+    2 - access: S.EMP_ID = E.EMP_ID                             
+    3 - access: S.PROD_ID = P.PROD_ID                           
 
 15 rows fetched.
 
@@ -2015,18 +2006,18 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |             | 8    | 452  | 151       |       |        |
-| 1  |   HASH GROUP BY             |       |             | 8    | 452  | 151       |       |        |
-| 2  |     MERGE JOIN              |       |             | 83   | 218  | 143       |       |        |
-| 3  |       MERGE JOIN            |       |             | 127  | 131  | 19        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |             | 8    | 81   | 36        |       |        |
+| 1  |   HASH GROUP BY             |       |             | 8    | 81   | 36        |       |        |
+| 2  |     HASH JOIN(R)            |       |             | 83   | 32   | 28        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |             | 127  | 18   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | ORDERS O    | 202  | 4    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | EMPLOYEES E | 132  | 2    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | CUSTOMERS C | 126  | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: O.EMP_ID = E.EMP_ID                             
-    3 - access: C.CUST_ID = O.CUST_ID                           
+    2 - access: E.EMP_ID = O.EMP_ID                             
+    4 - access: O.CUST_ID = C.CUST_ID                           
 
 15 rows fetched.
 
@@ -2050,18 +2041,18 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 8    | 371  | 111       |       |        |
-| 1  |   HASH GROUP BY             |       |               | 8    | 371  | 111       |       |        |
-| 2  |     MERGE JOIN              |       |               | 83   | 177  | 103       |       |        |
-| 3  |       MERGE JOIN            |       |               | 83   | 88   | 15        |       |        |
-| 4  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 8    | 79   | 34        |       |        |
+| 1  |   HASH GROUP BY             |       |               | 8    | 79   | 34        |       |        |
+| 2  |     HASH JOIN(R)            |       |               | 83   | 31   | 26        |       |        |
+| 3  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 4  |       HASH JOIN(R)          |       |               | 83   | 16   | 13        |       |        |
 | 5  |           TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 132  | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL   | SYS   | ORDERS O      | 202  | 4    | 0         |       |        |
+| 6  |           TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 126  | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - access: E.EMP_ID = O.EMP_ID                             
-    3 - access: D.DEPT_ID = E.DEPT_ID                           
+    2 - access: O.EMP_ID = E.EMP_ID                             
+    4 - access: E.DEPT_ID = D.DEPT_ID                           
 
 15 rows fetched.
 
