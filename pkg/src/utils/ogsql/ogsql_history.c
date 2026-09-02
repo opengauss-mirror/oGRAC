@@ -156,9 +156,55 @@ static bool32 OgsqlHistoryReadExact(int32 file, void *buf, int32 size)
     return (readSize == size) ? OG_TRUE : OG_FALSE;
 }
 
+static uint32 OgsqlHistoryNextPhysicalIndex(uint32 physicalIndex, uint32 historySize)
+{
+    return (physicalIndex >= historySize) ? 1 : (physicalIndex + 1);
+}
+
+static uint32 OgsqlHistoryPreviousPhysicalIndex(uint32 physicalIndex, uint32 historySize)
+{
+    return (physicalIndex <= 1) ? historySize : (physicalIndex - 1);
+}
+
+static uint32 OgsqlHistoryFindDuplicate(const char *text, uint32 nbytes, uint32 historySize)
+{
+    uint32 physicalIndex;
+
+    if (text == NULL || nbytes == 0 || g_histCount == 0 || g_histHead == 0) {
+        return 0;
+    }
+    physicalIndex = g_histHead;
+    for (uint32 i = 0; i < g_histCount; i++) {
+        const ogsql_cmd_history_list_t *entry = &g_histList[physicalIndex];
+
+        if (entry->nbytes == nbytes && memcmp(entry->hist_buf, text, nbytes) == 0) {
+            return physicalIndex;
+        }
+        physicalIndex = OgsqlHistoryPreviousPhysicalIndex(physicalIndex, historySize);
+    }
+    return 0;
+}
+
+static void OgsqlHistoryRemoveEntry(uint32 physicalIndex, uint32 historySize)
+{
+    uint32 currentIndex = physicalIndex;
+
+    while (currentIndex != g_histHead) {
+        uint32 nextIndex = OgsqlHistoryNextPhysicalIndex(currentIndex, historySize);
+
+        g_histList[currentIndex] = g_histList[nextIndex];
+        currentIndex = nextIndex;
+    }
+    OGSQL_CHECK_MEMS_SECURE(
+        memset_s(&g_histList[g_histHead], sizeof(g_histList[g_histHead]), 0, sizeof(g_histList[g_histHead])));
+    g_histCount--;
+    g_histHead = (g_histCount == 0) ? 0 : OgsqlHistoryPreviousPhysicalIndex(g_histHead, historySize);
+}
+
 static bool32 OgsqlHistoryStoreRaw(const char *text, uint32 nbytes, uint32 nwidths)
 {
     uint32 historySize = g_local_config.history_size;
+    uint32 duplicateIndex;
     uint32 nextHead;
     ogsql_cmd_history_list_t *entry;
     errno_t rc;
@@ -166,6 +212,14 @@ static bool32 OgsqlHistoryStoreRaw(const char *text, uint32 nbytes, uint32 nwidt
     if (text == NULL || nbytes == 0 || nbytes > ogsql_history_text_limit() ||
         historySize < OGSQL_MIN_HISTORY_SIZE || historySize > OGSQL_MAX_HISTORY_SIZE) {
         return OG_FALSE;
+    }
+    duplicateIndex = OgsqlHistoryFindDuplicate(text, nbytes, historySize);
+    if (duplicateIndex != 0) {
+        if (duplicateIndex == g_histHead) {
+            g_histList[duplicateIndex].nwidths = nwidths;
+            return OG_TRUE;
+        }
+        OgsqlHistoryRemoveEntry(duplicateIndex, historySize);
     }
     nextHead = (g_histHead >= historySize) ? 1 : (g_histHead + 1);
     entry = &g_histList[nextHead];
