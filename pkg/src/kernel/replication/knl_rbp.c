@@ -4714,8 +4714,10 @@ static date_t g_rbp_disk_guard_last_fail_log = 0;
 static date_t g_rbp_disk_guard_last_dirty_fail_log = 0;
 static atomic_t g_rbp_disk_guard_available = 0;
 
-static const char *rbp_get_disk_guard_path(const char *home, char *default_path, uint32 default_path_size)
+static const char *rbp_get_disk_guard_path(char *default_path, uint32 default_path_size)
 {
+    /* The guard UDS is owned by RBPS under OGDB_HOME, not the database data directory. */
+    const char *home = getenv("OGDB_HOME");
     int32 ret;
 
     if (home == NULL || home[0] == '\0') {
@@ -4940,7 +4942,7 @@ status_t rbp_knl_notify_disk_guard_pages(knl_session_t *session, const rbp_disk_
         (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
         return OG_ERROR;
     }
-    path = rbp_get_disk_guard_path(session->kernel->home, default_path, sizeof(default_path));
+    path = rbp_get_disk_guard_path(default_path, sizeof(default_path));
     if (path == NULL) {
         (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
         g_rbp_disk_guard_retry_after = now + RBP_DISK_GUARD_RECONNECT_INTERVAL_US;
@@ -4992,7 +4994,7 @@ void rbp_knl_notify_disk_guard_before_ckpt(knl_session_t *session, ckpt_group_t 
         (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
         return;
     }
-    path = rbp_get_disk_guard_path(session->kernel->home, default_path, sizeof(default_path));
+    path = rbp_get_disk_guard_path(default_path, sizeof(default_path));
     if (path == NULL) {
         (void)cm_atomic_set(&g_rbp_disk_guard_available, 0);
         g_rbp_disk_guard_retry_after = g_timer()->now + RBP_DISK_GUARD_RECONNECT_INTERVAL_US;
