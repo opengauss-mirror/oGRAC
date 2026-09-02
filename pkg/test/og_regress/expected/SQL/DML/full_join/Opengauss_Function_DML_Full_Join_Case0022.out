@@ -64,8 +64,8 @@ PERSONCODE   PERSONNAME           ADDRESSCODE  ADDRESSCODE  ADDRESSNAME
 2            小钱               2            2            上海              
 3            赵四               3            3            广州              
 4            孙晔               4            4            深圳              
-5            周瑜               6                                             
                                                5            上海              
+5            周瑜               6                                             
 
 6 rows fetched.
 
@@ -77,8 +77,8 @@ PERSONCODE   PERSONNAME           ADDRESSCODE  ADDRESSCODE  ADDRESSNAME
 2            小钱               2            2            上海              
 3            赵四               3            3            广州              
 4            孙晔               4            4            深圳              
-5            周瑜               6                                             
                                                5            上海              
+5            周瑜               6                                             
 
 6 rows fetched.
 

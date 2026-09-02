@@ -45,12 +45,12 @@ SQL> SELECT c.customer_id, c.customer_name, o.order_id, o.amount FROM small_cust
 
 CUSTOMER_ID  CUSTOMER_NAME                                      ORDER_ID     AMOUNT                                  
 ------------ -------------------------------------------------- ------------ ----------------------------------------
-1            Alice                                              101          100                                     
-2            Bob                                                103          150                                     
-3            Charlie                                            104          300                                     
-3            Charlie                                            106          400                                     
 5            Eve                                                107          500                                     
 5            Eve                                                108          350                                     
+2            Bob                                                103          150                                     
+1            Alice                                              101          100                                     
+3            Charlie                                            104          300                                     
+3            Charlie                                            106          400                                     
 
 6 rows fetched.
 
@@ -249,11 +249,3 @@ SQL>
 SQL> alter system set ENABLE_NESTLOOP_JOIN=true;
 
 Succeed.
-
-SQL> alter system set ENABLE_HASH_JOIN=false;
-
-Succeed.
-
-
-
-

@@ -4252,18 +4252,18 @@ status_t sql_jtable_estimate_size(join_assist_t *ja, sql_join_table_t *jtable, s
             }
             break;
         case JOIN_TYPE_SEMI:
-            nrows = jtbl2->rows * selectivity;
+            nrows = jtbl1->rows * selectivity;
             break;
         case JOIN_TYPE_ANTI:
         case JOIN_TYPE_ANTI_NA:
-            nrows = jtbl2->rows * (1 - selectivity);
+            nrows = jtbl1->rows * (1 - selectivity);
             break;
         case JOIN_TYPE_RIGHT_SEMI:
-            nrows = jtbl1->rows * selectivity;
+            nrows = jtbl2->rows * selectivity;
             break;
         case JOIN_TYPE_RIGHT_ANTI:
         case JOIN_TYPE_RIGHT_ANTI_NA:
-            nrows = jtbl1->rows * (1 - selectivity);
+            nrows = jtbl2->rows * (1 - selectivity);
             break;
         default:
             return OG_ERROR;
@@ -4351,7 +4351,7 @@ static status_t sql_calc_hash_nbuckets(int64 inner_rows, uint64* num_nbuckets)
 }
 
 status_t sql_initial_cost_hashjoin(join_assist_t *ja, sql_join_node_t* path,
-    cbo_cost_t* cost_info, uint64* num_nbuckets)
+    cbo_cost_t* cost_info, uint64* num_nbuckets, uint32 hash_clause_count)
 {
     double startup_cost = 0;
     double run_cost = 0;
@@ -4371,8 +4371,15 @@ status_t sql_initial_cost_hashjoin(join_assist_t *ja, sql_join_node_t* path,
 
     double inner_rows = sql_adjust_est_row(inner_path->cost.card);
     double outer_rows = sql_adjust_est_row(outer_path->cost.card);
-    startup_cost += (CBO_DEFAULT_CPU_OPERATOR_COST  + CBO_DEFAULT_CPU_SCAN_TUPLE_COST) * inner_rows;
-    run_cost += CBO_DEFAULT_CPU_OPERATOR_COST * outer_rows * (double)(outer_rows / CBO_BHT_ROWS(1));
+    double hash_calc_cost = hash_clause_count * CBO_DEFAULT_CPU_HASH_CALC_COST;
+    double build_rate = inner_rows / (double)CBO_BHT_ROWS(1);
+    build_rate = MAX(CBO_BHT_MIN_RATE, MIN(CBO_BHT_MAX_RATE, build_rate));
+
+    /* Building the inner hash table is completed before the first joined row can be returned. */
+    startup_cost += CBO_DEFAULT_HASH_INIT_COST;
+    startup_cost += inner_rows * (hash_calc_cost + build_rate * CBO_DEFAULT_CPU_HASH_BUILD_COST);
+    /* Initial run cost is a lower bound; bucket candidate comparisons are added by final costing. */
+    run_cost += outer_rows * (hash_calc_cost + CBO_DEFAULT_CPU_OPERATOR_COST);
 
     OG_RETURN_IFERR(sql_calc_hash_nbuckets(inner_rows, num_nbuckets));
 
@@ -4436,7 +4443,7 @@ void sql_final_cost_hashjoin(join_assist_t *ja, sql_join_node_t* path, cbo_cost_
             sql_adjust_est_row(est_bucket_size * inner_rows * inner_scan_frac) * 0.5;
         cost_info->cost += hash_clause_cost * sql_adjust_est_row(outer_rows - outer_matched_rows) *
             sql_adjust_est_row(inner_rows / num_nbuckets) * 0.05;
-    } else if (path->type >= JOIN_TYPE_RIGHT_SEMI || path->type <= JOIN_TYPE_RIGHT_ANTI_NA) {
+    } else if (path->type >= JOIN_TYPE_RIGHT_SEMI && path->type <= JOIN_TYPE_RIGHT_ANTI_NA) {
         double outer_matched_rows = rint(outer_rows * sjoininfo->semi_anti_factor.outer_match_frac);
         outer_matched_rows = MIN(outer_matched_rows, outer_rows);
         double inner_matched_rows = rint(inner_rows * sjoininfo->semi_anti_factor.r_semi_match_count);

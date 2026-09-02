@@ -1823,10 +1823,10 @@ static bool sql_has_legal_joinclause(join_assist_t *ja, sql_join_table_t *jtbl1)
         if (sql_jtable_check_cond_restrict(jtbl1, jtbl2)) {
             join_tbl_bitmap_t table_ids;
             sql_bitmap_init(&table_ids);
-            sql_bitmap_union(&jtbl2->table_ids, &jtbl2->table_ids, &table_ids);
+            sql_bitmap_union(&jtbl1->table_ids, &jtbl2->table_ids, &table_ids);
             special_join_info_t* sjoininfo = NULL;
             bool reversed = false;
-            if (!sql_jtable_join_is_legal(ja, jtbl1, jtbl2, &table_ids, &reversed, &sjoininfo)) {
+            if (sql_jtable_join_is_legal(ja, jtbl1, jtbl2, &table_ids, &reversed, &sjoininfo)) {
                 return true;
             }
         }
@@ -2501,7 +2501,8 @@ static status_t sql_build_hashjoin_path(join_assist_t *ja, sql_join_table_t *jta
     temp_path_p->right = inner_path;
     cbo_cost_t cost_info = { 0 };
     uint64 num_nbuckets = 0;
-    OG_RETURN_IFERR(sql_initial_cost_hashjoin(ja, temp_path_p, &cost_info, &num_nbuckets));
+    OG_RETURN_IFERR(sql_initial_cost_hashjoin(ja, temp_path_p, &cost_info, &num_nbuckets,
+        clause_counts));
     if (!sql_add_path_precheck(jtable, cost_info.startup_cost, cost_info.cost)) {
         return OG_SUCCESS;
     }

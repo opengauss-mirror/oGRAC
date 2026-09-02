@@ -74,21 +74,19 @@ SQL> explain select * from t_startcost as a1 join t_startcost as a2 on (a1.b=a2.
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-----------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
 | Id | Operation                          | Owner | Name           | Rows  | Cost | StartCost | Bytes | Remark |
-----------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                   |       |                | 10000 | 4397 | 16        |       |        |
-| 1  |   MERGE JOIN                       |       |                | 10000 | 4397 | 16        |       |        |
-| 2  |       TABLE ACCESS BY INDEX ROWID  | SYS   | T_STARTCOST A1 | 1000  | 10   | 8         |       |        |
-| 3  |         INDEX FULL SCAN            | SYS   | IDX_B          | 1000  | 10   | 8         |       |        |
-| 4  |       TABLE ACCESS BY INDEX ROWID  | SYS   | T_STARTCOST A2 | 1000  | 10   | 8         |       |        |
-| 5  |         INDEX FULL SCAN            | SYS   | IDX_B          | 1000  | 10   | 8         |       |        |
-----------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT        |       |                | 10000 | 81   | 44        |       |        |
+| 1  |   HASH JOIN(R)          |       |                | 10000 | 81   | 44        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | T_STARTCOST A1 | 1000  | 19   | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | T_STARTCOST A2 | 1000  | 19   | 0         |       |        |
+-----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     1 - access: A1.B = A2.B                                     
 
-13 rows fetched.
+11 rows fetched.
 
 SQL> 
 SQL> explain select * from t_startcost limit 100;

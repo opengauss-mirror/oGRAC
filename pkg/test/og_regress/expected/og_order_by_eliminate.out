@@ -223,18 +223,17 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name             | Rows | Cost  | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |                  | 25   | 122  | 17        |       |        |
-| 1  |   MERGE JOIN            |       |                  | 25   | 122  | 17        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1    | 71   | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T2 T2 | 212  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |                  | 25   | 17   | 12        |       |        |
+| 1  |   HASH JOIN(R)          |       |                  | 25   | 17   | 12        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T2 T2 | 212  | 4    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1    | 71   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: TEST_ORDER_T1.ID = T2.ID                        
-    2 - filter: PRICE > 100                                     
+    1 - access: T2.ID = TEST_ORDER_T1.ID                        
     3 - filter: PRICE > 100                                     
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> SELECT t1.id, t1.quantity, t1.price, t2.discount FROM (SELECT * FROM test_order_t1 WHERE price > 100 ORDER BY id) t1 JOIN test_order_t2 t2 ON t1.id = t2.id;
 

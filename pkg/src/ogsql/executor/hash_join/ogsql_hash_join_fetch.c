@@ -519,6 +519,7 @@ static status_t og_fetch_hash_full_outer(sql_stmt_t *statement, sql_cursor_t *sq
                 OG_LOG_RUN_ERR("Failed to fetch null rows");
                 return OG_ERROR;
             }
+            break;
         }
     }
     return OG_SUCCESS;

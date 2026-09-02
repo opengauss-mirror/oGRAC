@@ -184,7 +184,7 @@ static status_t og_append_hash_key_cb(char *row_buf, uint32 *row_size, mtrl_rowi
     char *dst = row_buf + row_hdr->size;
     uint32 free_space = OG_MAX_ROW_SIZE - row_hdr->size;
     *row_size = mtrl_rowids_size + row_hdr->size;
-    if (*row_size > free_space) {
+    if (*row_size > OG_MAX_ROW_SIZE) {
         OG_LOG_RUN_ERR("Buffer overflow: required %u, max %u", *row_size, OG_MAX_ROW_SIZE);
         return OG_ERROR;
     }
@@ -210,13 +210,13 @@ static status_t og_append_hash_key_for_full_join_cb(char *row_buf, uint32 *row_s
     row_head_t *row_hdr = (row_head_t *)row_buf;
     uint32 mtrl_rowids_size = sizeof(mtrl_rowid_t) * count;
     *row_size = (uint32)row_hdr->size;
-    *(bool8*)(row_buf + (*row_size)) = OG_FALSE; // match_flag is initialized to false for full join
     *row_size += sizeof(bool8);
-    
+
     if (*row_size + mtrl_rowids_size > OG_MAX_ROW_SIZE) {
         OG_LOG_RUN_ERR("Buffer overflow: required %u, max %u", *row_size, OG_MAX_ROW_SIZE);
         return OG_ERROR;
     }
+    *(bool8*)(row_buf + row_hdr->size) = OG_FALSE; // match_flag is initialized to false for full join
     MEMS_RETURN_IFERR(memcpy_s(row_buf + (*row_size), OG_MAX_ROW_SIZE - (*row_size), mtrl_rowids, mtrl_rowids_size));
     *row_size += mtrl_rowids_size;
     return OG_SUCCESS;

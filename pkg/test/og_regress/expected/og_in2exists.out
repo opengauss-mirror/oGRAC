@@ -387,9 +387,9 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 787  | 4693 | 0         |       |        |
-| 1  |   FILTER                  |       |                   | 787  | 4693 | 0         |       |        |
-| 2  |     NESTED LOOPS OUTER    |       |                   | 787  | 4691 | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 787  | 34   | 23        |       |        |
+| 1  |   FILTER                  |       |                   | 787  | 34   | 23        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |                   | 787  | 32   | 23        |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T1 | 351  | 6    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
 | 5  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T2 T3 | 351  | 5    | 0         |       |        |
@@ -397,7 +397,7 @@ EXPLAIN PLAN OUTPUT
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     1 - filter: T1.C1 NOT IN ((SELECT NULL FROM NOT_IN_NULL_T2 T3))
-    4 - filter: T1.C2 = T2.C2                                   
+    2 - access: T1.C2 = T2.C2                                   
 
 14 rows fetched.
 
@@ -423,14 +423,14 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
 | 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
 | 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
-| 3  |     NESTED LOOPS OUTER    |       |                   | 787  | 4790 | 0         |       |        |
+| 3  |     HASH JOIN OUTER(R)    |       |                   | 787  | 31   | 20        |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
 | 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: T1.C1 NOT IN ((SELECT C1 FROM NOT_IN_NULL_T1 T2 LEFT JOIN  NOT_IN_NULL_T2 T3 ON T2.C2 = T3.C2))
-    5 - filter: T2.C2 = T3.C2                                   
+    2 - filter: T1.C1 NOT IN ((SELECT C1 FROM NOT_IN_NULL_T1 T2 LEFT JOIN  NOT_IN_NULL_T2 T3))
+    3 - access: T2.C2 = T3.C2                                   
 
 14 rows fetched.
 
@@ -459,17 +459,16 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
 | 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
 | 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
-| 3  |     NESTED LOOPS OUTER    |       |                   | 787  | 4790 | 0         |       |        |
+| 3  |     HASH JOIN OUTER(R)    |       |                   | 787  | 31   | 20        |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
 | 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: T1.C1 NOT IN ((SELECT NULLIF(T2.C1, 1) FROM NOT_IN_NULL_T1 T2 LEFT JOIN  NOT_IN_NULL_T2 T3 ON T2.C2 =
-                T3.C2))                                         
-    5 - filter: T2.C2 = T3.C2                                   
+    2 - filter: T1.C1 NOT IN ((SELECT NULLIF(T2.C1, 1) FROM NOT_IN_NULL_T1 T2 LEFT JOIN  NOT_IN_NULL_T2 T3))
+    3 - access: T2.C2 = T3.C2                                   
 
-15 rows fetched.
+14 rows fetched.
 
 SQL> select * from not_in_null_t1 t1 
   2 where t1.c1 not in (
@@ -496,14 +495,14 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
 | 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
 | 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
-| 3  |     NESTED LOOPS OUTER    |       |                   | 787  | 4790 | 0         |       |        |
+| 3  |     HASH JOIN OUTER(R)    |       |                   | 787  | 31   | 20        |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
 | 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: T1.C1 NOT IN ((SELECT SLEEP(1) FROM NOT_IN_NULL_T1 T2 LEFT JOIN  NOT_IN_NULL_T2 T3 ON T2.C2 = T3.C2))
-    5 - filter: T2.C2 = T3.C2                                   
+    2 - filter: T1.C1 NOT IN ((SELECT SLEEP(1) FROM NOT_IN_NULL_T1 T2 LEFT JOIN  NOT_IN_NULL_T2 T3))
+    3 - access: T2.C2 = T3.C2                                   
 
 14 rows fetched.
 
