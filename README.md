@@ -80,8 +80,8 @@ oGRAC主要由五个主要部分组成：
 4. 安装系统依赖
 
     ```shell
-    yum install -y wget git python3 python3-devel iputils iproute \
-    unixODBC-devel unixODBC lz4 lz4-devel patch xz flex unzip patch --skip-broken
+    yum install -y wget git python3 python3-devel iputils iproute unixODBC-devel unixODBC \
+    lz4 lz4-devel patch xz flex unzip numactl-devel --skip-broken
     ```
 
     > * `python3 / python3-devel`：用于执行安装脚本和管理工具
@@ -141,6 +141,8 @@ oGRAC主要由五个主要部分组成：
     * 创建数据目录和日志目录
 
     当执行完成后，可以登录到 `-u` 指定的用户下，使用 `ogsql / as sysdba` 命令连接数据库，进行使用。
+
+    > * 注意：`local_install.sh install` 安装的实例未执行回归初始化 SQL，不含 `SYS.DUAL` 等基线对象，`select ... from dual` 会报 OG-00843；快速验证可用无 FROM 的 SELECT（如 `select 1 as v1;`）
 
     当需要重启时，可以使用如下命令启动数据库：
 
@@ -228,6 +230,15 @@ bash pkg/test/og_regress/do_all_test.sh need_compile
 | `need_compile` | 触发完整编译。如果已经编译过，可省略此参数直接运行 |
 | （不传参） | 跳过编译，使用 `output/bin` 下已有的二进制 |
 
+> **注意**：`local_install.sh compile`（release/debug 打包流程）不会生成回归工具 `og_regress`。若已通过 `local_install.sh compile` 编译过、想省略 `need_compile` 直接运行测试，需先按 CI 相同步骤手动编译该工具：
+>
+> ```shell
+> cd /home/regress/ogracKernel/build && source ./common.sh
+> cd pkg/test/og_regress
+> strip -N main /home/regress/ogracKernel/output/lib/libogserver.a
+> make -sj 8
+> ```
+
 ### 5. 查看结果
 
 脚本执行完成后，最终会在控制台输出：
@@ -247,6 +258,32 @@ Test Result: ERROR     # 存在失败用例
 | `pkg/test/og_regress/results/**/*.diff` | 失败用例的 diff 文件 |
 | `/home/regress/og_regress/logs/regress_log` | 回归运行日志 |
 | `/home/regress/og_regress/logs/compile_log` | 编译日志 |
+
+### 6. 测试后清理（重装数据库或再次测试前必做）
+
+`do_all_test.sh` 存在失败用例时会以非 0 码直接退出，**不会执行收尾清理**，cms/ogracd 进程与测试数据会残留；且回归流程会修改代码目录属主并往用户 `~/.bashrc` 写入环境变量，直接重装会失败。继续安装或测试前，请依次执行：
+
+```shell
+# 1. 停止残留的 cms/ogracd 进程
+kill -9 $(pidof ogracd) $(pidof cms) 2>/dev/null || true
+
+# 2. 清理回归数据目录
+rm -rf /home/regress/og_regress
+rm -rf /home/regress/ograc_data/*
+
+# 3. 恢复 install.py 属主（回归流程曾 chown 给 ogracdba，
+#    root 重装会触发 "The owner of install.py" 安全检查而失败）
+chown root:root pkg/install/install.py
+
+# 4. 清理 .bashrc 中回归写入的 OGDB/GCC_HOME 等环境变量
+#    （残留会导致 install.py 误判 "Database has been installed already"）
+sed -i '/OGDB/d; /og_regress/d; /ograc_data/d' /home/ogracdba/.bashrc
+
+# 5. 卸载单机实例
+sh build/local_install.sh clean -u ogracdba
+```
+
+> **注意**：若重装时报 `/home/ogracdba/logs` Permission denied，先执行 `chown -R ogracdba:ogracdba /home/ogracdba/logs` 再重试。
 
 ## 文档
 
