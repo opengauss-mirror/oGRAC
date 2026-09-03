@@ -640,20 +640,32 @@ func_download_3rdparty()
     rm -rf open_source/*
     cd open_source
 
-    # openGauss third_party repo (contains zstd / openssl / huawei_secure_c, etc.)
+    # openGauss third_party repo (still required for huawei_secure_c)
     git clone https://gitcode.com/opengauss/openGauss-third_party.git -b 7.0.0-RC3 --depth 1
 
-    # pcre2: use src-openeuler repo
-    git clone https://gitcode.com/src-openeuler/pcre2.git -b openEuler-24.03-LTS-SP3
-
-    # zlib: use src-openeuler repo
-    git clone https://gitcode.com/src-openeuler/zlib.git -b openEuler-24.03-LTS-SP3
-
-    # protobuf-all: use src-openeuler repo
-    git clone https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
-
-    # protobuf-c: use src-openeuler repo
-    git clone https://gitcode.com/src-openeuler/protobuf-c.git -b openEuler-24.03-LTS-SP1
+    # On openEuler 24.03 install pcre2/zlib/protobuf/protobuf-c/zstd/openssl from OS repos.
+    # On other OS versions keep cloning the source repositories for source build.
+    local os_id=""
+    local os_version_id=""
+    if [[ -f /etc/os-release ]]; then
+        os_id=$(grep -w ^ID /etc/os-release | cut -d '"' -f 2)
+        os_version_id=$(grep -w VERSION_ID /etc/os-release | cut -d '"' -f 2)
+    fi
+    if [[ "${os_id}" == "openEuler" && "${os_version_id}" == "24.03" ]]; then
+        echo "openEuler 24.03 detected: pcre2/zlib/protobuf-c/zstd/openssl from OS repos, protobuf-all from source 3.14.0"
+        # protobuf-all: still clone 22.03 SP4 source to build fixed 3.14.0 on 24.03
+        git clone https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
+    else
+        echo "Non-openEuler-24.03 OS detected: clone source repositories for pcre2/zlib/protobuf/protobuf-c"
+        # pcre2: use src-openeuler repo
+        git clone https://gitcode.com/src-openeuler/pcre2.git -b openEuler-24.03-LTS-SP3
+        # zlib: use src-openeuler repo
+        git clone https://gitcode.com/src-openeuler/zlib.git -b openEuler-24.03-LTS-SP3
+        # protobuf-all: use src-openeuler repo
+        git clone https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
+        # protobuf-c: use src-openeuler repo
+        git clone https://gitcode.com/src-openeuler/protobuf-c.git -b openEuler-24.03-LTS-SP1
+    fi
 
     cd ${DOWNLOAD_PATH}/build
 

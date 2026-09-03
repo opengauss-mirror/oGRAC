@@ -37,9 +37,9 @@ set_target_properties(ogcommon_static PROPERTIES OUTPUT_NAME ogcommon
         ARCHIVE_OUTPUT_DIRECTORY ${OGRACDB_LIB}
         )
 if (USE_FUZZASAN)
-    target_link_libraries(ogcommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 Secodefuzz)
+    target_link_libraries(ogcommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 z Secodefuzz)
 else ()
-    target_link_libraries(ogcommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8)
+    target_link_libraries(ogcommon PRIVATE -Wl,--whole-archive ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} ${hw_kmc_lib} ${hw_sdp_lib} -Wl,--no-whole-archive pthread dl m rt pcre2-8 z)
 endif(USE_FUZZASAN)
 target_link_libraries(ogcommon PUBLIC
     ${vpp_libsecurec})

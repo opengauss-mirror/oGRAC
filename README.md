@@ -80,8 +80,8 @@ oGRAC主要由五个主要部分组成：
 4. 安装系统依赖
 
     ```shell
-    yum install -y wget git python3 python3-devel iputils iproute \
-    unixODBC-devel unixODBC lz4 lz4-devel patch xz flex unzip patch --skip-broken
+    yum install -y wget git python3 python3-devel iputils iproute unixODBC-devel unixODBC \
+    lz4 lz4-devel patch xz flex unzip numactl-devel --skip-broken
     ```
 
     > * `python3 / python3-devel`：用于执行安装脚本和管理工具

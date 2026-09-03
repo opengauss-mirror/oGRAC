@@ -44,7 +44,7 @@ set_target_properties(ogodbc PROPERTIES OUTPUT_NAME ogodbc CLEAN_DIRECT_OUTPUT 1
 
 option(USE_FUZZASAN OFF)
 if(USE_FUZZASAN)
-    target_link_libraries(ogodbc PRIVATE pthread dl m rt pcre2-8 -Wl,--version-script=${source_dir} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} -Wl,--no-whole-archive Secodefuzz)
+    target_link_libraries(ogodbc PRIVATE pthread dl m rt pcre2-8 z -Wl,--version-script=${source_dir} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} -Wl,--no-whole-archive Secodefuzz)
 else()
-    target_link_libraries(ogodbc PRIVATE pthread dl m rt pcre2-8 -Wl,--version-script=${source_dir} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} -Wl,--no-whole-archive)
+    target_link_libraries(ogodbc PRIVATE pthread dl m rt pcre2-8 z -Wl,--version-script=${source_dir} -Wl,--whole-archive ${vpp_libsecurec} ${vpp_libipsi_crypto} ${vpp_libipsi_ssl} -Wl,--no-whole-archive)
 endif(USE_FUZZASAN)
