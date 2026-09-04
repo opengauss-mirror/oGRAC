@@ -38,6 +38,12 @@
 #include "knl_cluster_module.h"
 #include "cm_io_record.h"
 #include "oGRAC_fdsa.h"
+#ifndef WIN32
+#include <errno.h>
+#include <numa.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 extern bool32 g_enable_fdsa;
 drc_res_ctx_t g_drc_res_ctx;  // need to put it to global DTC instance structure later
 // buf_lock_mode string
@@ -124,6 +130,55 @@ typedef struct st_drc_clean_owner_param {
     buf_context_t *buf_ctx;
     knl_session_t *session;
 } drc_clean_owner_param_t;
+
+#define DRC_REMASTER_RESOURCE_NUMA_SAMPLE_NUM 4
+
+#ifndef WIN32
+static int32 drc_get_remaster_resource_numa(void)
+{
+#ifdef SYS_move_pages
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    void *pages[DRC_REMASTER_RESOURCE_NUMA_SAMPLE_NUM] = {
+        (void *)ogx->global_buf_res.res_map.res_pool.addr,
+        (void *)ogx->global_buf_res.res_map.buckets,
+        (void *)ogx->global_lock_res.res_map.res_pool.addr,
+        (void *)ogx->global_lock_res.res_map.buckets
+    };
+    int32 status[DRC_REMASTER_RESOURCE_NUMA_SAMPLE_NUM] = { -1, -1, -1, -1 };
+    uint32 group_num = (uint32)get_cpu_group_num();
+    uint32 max_count = 0;
+    int32 target_numa = -1;
+
+    if (group_num == 0) {
+        return target_numa;
+    }
+    errno = 0;
+    if (syscall(SYS_move_pages, 0, DRC_REMASTER_RESOURCE_NUMA_SAMPLE_NUM, pages, NULL, status, 0) < 0) {
+        return target_numa;
+    }
+    for (uint32 i = 0; i < DRC_REMASTER_RESOURCE_NUMA_SAMPLE_NUM; i++) {
+        if (status[i] < 0 || (uint32)status[i] >= group_num) {
+            continue;
+        }
+        uint32 count = 0;
+        for (uint32 j = 0; j < DRC_REMASTER_RESOURCE_NUMA_SAMPLE_NUM; j++) {
+            count += (status[j] == status[i]);
+        }
+        if (count > max_count) {
+            max_count = count;
+            target_numa = status[i];
+        }
+    }
+    return target_numa;
+#endif
+    return -1;
+}
+#else
+static inline int32 drc_get_remaster_resource_numa(void)
+{
+    return -1;
+}
+#endif
 
 void drc_clean_page_owner_internal(drc_global_res_t *g_buf_res, drc_buf_res_t *buf_res, drc_res_bucket_t *bucket);
 
@@ -6785,12 +6840,22 @@ void drc_remaster_proc(thread_t *thread)
     reform_info_t *reform_info = &remaster_mngr->reform_info;
     uint8 self_id = DRC_SELF_INST_ID;
     status_t ret = OG_SUCCESS;
+    int32 resource_numa = drc_get_remaster_resource_numa();
+    uint8 target_numa = resource_numa >= 0 ? (uint8)resource_numa : session->ass_numa;
     cm_set_thread_name("remaster");
+    cpu_set_t cpuset = GET_RSRC_MGR->cpuset;
+    knl_get_cpu_set_from_conf(&cpuset, target_numa);
+    (void)rsrc_thread_bind_cpu(thread, &cpuset);
+#ifndef WIN32
+    numa_set_localalloc();
+#endif
     KNL_SESSION_SET_CURR_THREADID(session, cm_get_current_thread_id());
     remaster_mngr->stopped = OG_FALSE;
 
     OG_LOG_RUN_INF("[DRC]remaster start, remaster stauts[%u], my inst id[%u], master id[%u], remaster stopped[%u]",
                    part_mngr->remaster_status, self_id, reform_info->master_id, remaster_mngr->stopped);
+    OG_LOG_RUN_INF("[DRC][NUMA] remaster bind target numa(%u), resource numa(%d), session numa(%u)", target_numa,
+                   resource_numa, session->ass_numa);
 
     remaster_mngr->is_master = (self_id == reform_info->master_id) ? OG_TRUE : OG_FALSE;
     cm_atomic_set(&remaster_mngr->complete_num, 0);
