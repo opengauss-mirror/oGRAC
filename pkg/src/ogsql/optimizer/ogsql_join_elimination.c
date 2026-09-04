@@ -676,6 +676,8 @@ static bool32 winsort_has_dedup(sql_stmt_t *statement, sql_query_t *qry)
     uint32 winsort_idx = 0;
     while (winsort_idx < qry->winsort_list->count) {
         exprn = (expr_node_t *)cm_galist_get(qry->winsort_list, winsort_idx++);
+        // Ordered or framed windows are sensitive to the number of input rows.
+        OG_RETVALUE_IFTRUE(exprn->win_args->sort_items != NULL || exprn->win_args->windowing != NULL, OG_FALSE);
         func_exprn = exprn->argument->root;
         w_func = sql_get_winsort_func(&func_exprn->value.v_func);
         OG_CONTINUE_IFTRUE(func_exprn->dis_info.need_distinct);
@@ -686,9 +688,36 @@ static bool32 winsort_has_dedup(sql_stmt_t *statement, sql_query_t *qry)
     return OG_TRUE;
 }
 
+static status_t check_volatile_expr_node(visit_assist_t *v_ast, expr_node_t **exprn)
+{
+    expr_node_t *origin_exprn = sql_get_origin_ref(*exprn);
+    if (origin_exprn != *exprn) {
+        return visit_expr_node(v_ast, &origin_exprn, check_volatile_expr_node);
+    }
+
+    if (origin_exprn->type == EXPR_NODE_FUNC) {
+        sql_func_t *sql_func = sql_get_func(&origin_exprn->value.v_func);
+        // Only ordinary built-ins are repeatable from their arguments; RAND is evaluated per row.
+        if (origin_exprn->value.v_func.pack_id == OG_INVALID_ID32 && sql_func->options == FO_NORMAL &&
+            sql_func->builtin_func_id != ID_FUNC_ITEM_RAND) {
+            return visit_func_node(v_ast, origin_exprn, check_volatile_expr_node);
+        }
+    } else if (origin_exprn->type == EXPR_NODE_CONST || origin_exprn->type == EXPR_NODE_PARAM ||
+               origin_exprn->type == EXPR_NODE_COLUMN || origin_exprn->type == EXPR_NODE_TRANS_COLUMN ||
+               origin_exprn->type == EXPR_NODE_DIRECT_COLUMN || origin_exprn->type == EXPR_NODE_RESERVED) {
+        return OG_SUCCESS;
+    }
+
+    v_ast->result0 = OG_TRUE;
+    return OG_SUCCESS;
+}
+
 static bool32 check_distinct_volatile_args(sql_stmt_t *statement, sql_query_t *qry)
 {
     CM_POINTER2(statement, qry);
+    visit_assist_t v_ast;
+    sql_init_visit_assist(&v_ast, statement, qry);
+    v_ast.excl_flags = VA_EXCL_FUNC | VA_EXCL_PROC | VA_EXCL_PRIOR | VA_EXCL_ARRAY;
     rs_column_t *col = NULL;
     galist_t *col_lst = qry->rs_columns;
     if (qry->has_distinct) {
@@ -697,7 +726,10 @@ static bool32 check_distinct_volatile_args(sql_stmt_t *statement, sql_query_t *q
     uint32 col_idx = 0;
     while (col_idx < col_lst->count) {
         col = (rs_column_t *)cm_galist_get(col_lst, col_idx++);
-        OG_RETVALUE_IFTRUE(col->type == RS_COL_CALC, OG_TRUE);
+        OG_CONTINUE_IFTRUE(col->type != RS_COL_CALC);
+        v_ast.result0 = OG_FALSE;
+        OG_RETVALUE_IFTRUE(visit_expr_tree(&v_ast, col->expr, check_volatile_expr_node) != OG_SUCCESS ||
+            v_ast.result0, OG_TRUE);
     }
     return OG_FALSE;
 }

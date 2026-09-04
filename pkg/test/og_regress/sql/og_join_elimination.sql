@@ -80,3 +80,42 @@ SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id LIMIT 10;
 
 EXPLAIN SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id FOR UPDATE;
 SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id FOR UPDATE;
+
+DROP TABLE IF EXISTS je_win_avg_left;
+DROP TABLE IF EXISTS je_win_avg_right;
+
+CREATE TABLE je_win_avg_left (k INT);
+CREATE TABLE je_win_avg_right (k INT);
+
+INSERT INTO je_win_avg_left
+SELECT CASE WHEN a.n <= 50 THEN 1 ELSE (a.n - 51) * 200 + b.n END
+FROM (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 100) a,
+     (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 200) b;
+
+INSERT INTO je_win_avg_right
+SELECT (a.n - 1) * 200 + b.n + 1000
+FROM (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 100) a,
+     (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 200) b;
+
+ANALYZE TABLE je_win_avg_left COMPUTE STATISTICS;
+ANALYZE TABLE je_win_avg_right COMPUTE STATISTICS;
+
+EXPLAIN
+SELECT DISTINCT
+    AVG(DISTINCT l.k) OVER () AS avg_key,
+    SUM(DISTINCT l.k) OVER () AS sum_key,
+    COUNT(DISTINCT l.k) OVER () AS cnt_key
+FROM je_win_avg_left l
+LEFT JOIN je_win_avg_right r
+  ON l.k = r.k OR r.k > 5;
+
+SELECT DISTINCT
+    AVG(DISTINCT l.k) OVER () AS avg_key,
+    SUM(DISTINCT l.k) OVER () AS sum_key,
+    COUNT(DISTINCT l.k) OVER () AS cnt_key
+FROM je_win_avg_left l
+LEFT JOIN je_win_avg_right r
+  ON l.k = r.k OR r.k > 5;
+
+DROP TABLE je_win_avg_left;
+DROP TABLE je_win_avg_right;

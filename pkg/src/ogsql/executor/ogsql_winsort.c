@@ -129,37 +129,48 @@ static status_t sql_win_aggr_min_or_max(sql_stmt_t *stmt, sql_aggr_type_t type, 
     return OG_SUCCESS;
 }
 
-static status_t sql_win_aggr_count(sql_stmt_t *stmt, aggr_var_t *aggr_var, variant_t *var)
+static status_t sql_win_aggr_distinct_value(sql_stmt_t *stmt, aggr_var_t *aggr_var, variant_t *var,
+    bool32 *var_exist)
 {
     char *buf = NULL;
     row_assist_t ra;
-    bool32 var_exist = OG_FALSE;
-    variant_t *result = &aggr_var->var;
-    aggr_count_t *data = GET_AGGR_VAR_COUNT(aggr_var);
-    OG_RETVALUE_IFTRUE(data == NULL, OG_ERROR);
+    aggr_distinct_t *data = get_aggr_var_distinct(aggr_var);
 
-    if (data->has_distinct) {
-        OGSQL_SAVE_STACK(stmt);
-        sql_keep_stack_variant(stmt, var);
-        if (sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&buf) != OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(stmt);
-            return OG_ERROR;
-        }
-        row_init(&ra, buf, OG_MAX_ROW_SIZE, 1);
-        if (sql_put_row_value(stmt, NULL, &ra, var->type, var) != OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(stmt);
-            return OG_ERROR;
-        }
-        if (vm_hash_table_insert2(&var_exist, &data->ex_hash_segment, &data->ex_table_entry, buf, ra.head->size) !=
-            OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(stmt);
-            return OG_ERROR;
-        }
+    *var_exist = OG_FALSE;
+    if (data == NULL || !data->has_distinct) {
+        return OG_SUCCESS;
+    }
 
+    OGSQL_SAVE_STACK(stmt);
+    sql_keep_stack_variant(stmt, var);
+    if (sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&buf) != OG_SUCCESS) {
         OGSQL_RESTORE_STACK(stmt);
-        if (var_exist) {
-            return OG_SUCCESS;
-        }
+        return OG_ERROR;
+    }
+    row_init(&ra, buf, OG_MAX_ROW_SIZE, 1);
+    if (sql_put_row_value(stmt, NULL, &ra, var->type, var) != OG_SUCCESS) {
+        OGSQL_RESTORE_STACK(stmt);
+        return OG_ERROR;
+    }
+    if (vm_hash_table_insert2(var_exist, &data->ex_hash_segment, &data->ex_table_entry, buf, ra.head->size) !=
+        OG_SUCCESS) {
+        OGSQL_RESTORE_STACK(stmt);
+        return OG_ERROR;
+    }
+
+    OGSQL_RESTORE_STACK(stmt);
+    return OG_SUCCESS;
+}
+
+static status_t sql_win_aggr_count(sql_stmt_t *stmt, aggr_var_t *aggr_var, variant_t *var)
+{
+    bool32 var_exist;
+    variant_t *result = &aggr_var->var;
+    OG_RETVALUE_IFTRUE(GET_AGGR_VAR_COUNT(aggr_var) == NULL, OG_ERROR);
+
+    OG_RETURN_IFERR(sql_win_aggr_distinct_value(stmt, aggr_var, var, &var_exist));
+    if (var_exist) {
+        return OG_SUCCESS;
     }
     result->is_null = OG_FALSE;
     result->v_bigint++;
@@ -253,35 +264,27 @@ static inline void sql_winsort_value_set_notnull(variant_t *result)
 static status_t og_aggr_sum_value_basic(sql_stmt_t *statement, aggr_var_t *aggr_var,
     variant_t *v_aggr, variant_t *v_add)
 {
-    char *buf = NULL;
-    row_assist_t ra;
     bool32 var_exist;
-    aggr_sum_t *data = get_aggr_var_sum(aggr_var);
 
-    if (data != NULL && data->has_distinct) {
-        OGSQL_SAVE_STACK(statement);
-        sql_keep_stack_variant(statement, v_add);
-        if (sql_push(statement, OG_MAX_ROW_SIZE, (void **)&buf) != OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(statement);
-            return OG_ERROR;
-        }
-        row_init(&ra, buf, OG_MAX_ROW_SIZE, 1);
-        if (sql_put_row_value(statement, NULL, &ra, v_add->type, v_add) != OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(statement);
-            return OG_ERROR;
-        }
-        if (vm_hash_table_insert2(&var_exist, &data->ex_hash_segment, &data->ex_table_entry, buf, ra.head->size) !=
-            OG_SUCCESS) {
-            OGSQL_RESTORE_STACK(statement);
-            return OG_ERROR;
-        }
-
-        OGSQL_RESTORE_STACK(statement);
-        if (var_exist) {
-            return OG_SUCCESS;
-        }
+    OG_RETURN_IFERR(sql_win_aggr_distinct_value(statement, aggr_var, v_add, &var_exist));
+    if (var_exist) {
+        return OG_SUCCESS;
     }
+    return sql_aggr_sum_value(statement, v_aggr, v_add);
+}
 
+static status_t og_aggr_avg_value_basic(sql_stmt_t *statement, aggr_var_t *aggr_var,
+    variant_t *v_aggr, variant_t *v_add)
+{
+    bool32 var_exist;
+    aggr_win_avg_t *data = get_aggr_var_win_avg(aggr_var);
+    OG_RETVALUE_IFTRUE(data == NULL, OG_ERROR);
+
+    OG_RETURN_IFERR(sql_win_aggr_distinct_value(statement, aggr_var, v_add, &var_exist));
+    if (var_exist) {
+        return OG_SUCCESS;
+    }
+    data->avg.ex_avg_count++;
     return sql_aggr_sum_value(statement, v_aggr, v_add);
 }
 
@@ -307,8 +310,9 @@ status_t sql_get_winsort_aggr_value(aggr_assist_t *aggr_ass, aggr_var_t *aggr_va
                 return sql_aggr_invoke(aggr_ass, aggr_var, vars);
             }
         case AGGR_TYPE_AVG:
-            GET_AGGR_VAR_AVG(aggr_var)->ex_avg_count++;
-            /* fall-through */
+            sql_winsort_value_set_notnull(result);
+            return og_aggr_avg_value_basic(aggr_ass->stmt, aggr_var, result, vars);
+
         case AGGR_TYPE_SUM:
             sql_winsort_value_set_notnull(result);
             return og_aggr_sum_value_basic(aggr_ass->stmt, aggr_var, result, vars);
@@ -612,7 +616,7 @@ static inline status_t sql_winsort_calc_avg(sql_stmt_t *stmt, aggr_var_t *aggr_r
     }
     v_rows.type = OG_TYPE_BIGINT;
     v_rows.is_null = OG_FALSE;
-    v_rows.v_bigint = (int64)GET_AGGR_VAR_AVG(aggr_result)->ex_avg_count;
+    v_rows.v_bigint = (int64)get_aggr_var_win_avg(aggr_result)->avg.ex_avg_count;
     if (v_rows.v_bigint <= 0) {
         OG_THROW_ERROR_EX(ERR_ASSERT_ERROR, "v_rows.v_bigint(%lld) > 0", v_rows.v_bigint);
         return OG_ERROR;
@@ -620,9 +624,9 @@ static inline status_t sql_winsort_calc_avg(sql_stmt_t *stmt, aggr_var_t *aggr_r
     return opr_exec(OPER_TYPE_DIV, SESSION_NLS(stmt), &aggr_result->var, &v_rows, &aggr_result->var);
 }
 
-static inline status_t og_winsort_sum_end(sql_stmt_t *statement, aggr_var_t *aggr_result)
+static inline status_t og_winsort_distinct_end(aggr_var_t *aggr_result)
 {
-    aggr_sum_t *data = get_aggr_var_sum(aggr_result);
+    aggr_distinct_t *data = get_aggr_var_distinct(aggr_result);
     OG_RETVALUE_IFTRUE(data == NULL, OG_ERROR);
     if (data->has_distinct) {
         vm_hash_segment_deinit(&data->ex_hash_segment);
@@ -630,13 +634,14 @@ static inline status_t og_winsort_sum_end(sql_stmt_t *statement, aggr_var_t *agg
     return OG_SUCCESS;
 }
 
+static inline status_t og_winsort_sum_end(sql_stmt_t *statement, aggr_var_t *aggr_result)
+{
+    return og_winsort_distinct_end(aggr_result);
+}
+
 static inline status_t sql_winsort_count_end(sql_stmt_t *stmt, aggr_var_t *aggr_result)
 {
-    aggr_count_t *data = GET_AGGR_VAR_COUNT(aggr_result);
-    OG_RETVALUE_IFTRUE(data == NULL, OG_ERROR);
-    if (data->has_distinct) {
-        vm_hash_segment_deinit(&data->ex_hash_segment);
-    }
+    OG_RETURN_IFERR(og_winsort_distinct_end(aggr_result));
 
     if (aggr_result->var.is_null) {
         aggr_result->var.is_null = OG_FALSE;
@@ -661,6 +666,7 @@ status_t sql_winsort_aggr_value_end(sql_stmt_t *stmt, sql_aggr_type_t aggr_type,
             return sql_winsort_calc_aggr(stmt, aggr_type, aggr_result);
 
         case AGGR_TYPE_AVG:
+            OG_RETURN_IFERR(og_winsort_sum_end(stmt, aggr_result));
             return sql_winsort_calc_avg(stmt, aggr_result);
 
         case AGGR_TYPE_COUNT:
@@ -873,8 +879,9 @@ status_t sql_win_aggr_var_alloc(sql_stmt_t *stmt, sql_aggr_type_t aggr_type, sql
 {
     if (aggr_type == AGGR_TYPE_COUNT) {
         OG_RETURN_IFERR(sql_win_aggr_count_alloc(stmt, aggr_type, func_expr, cursor, aggr_var, rid));
-    } else if (aggr_type == AGGR_TYPE_SUM) {
-        OG_RETURN_IFERR(sql_win_aggr_page_alloc(stmt, aggr_type, cursor, aggr_var, sizeof(aggr_sum_t), rid));
+    } else if (aggr_type == AGGR_TYPE_SUM || aggr_type == AGGR_TYPE_AVG) {
+        uint32 extra_size = aggr_type == AGGR_TYPE_SUM ? sizeof(aggr_sum_t) : sizeof(aggr_win_avg_t);
+        OG_RETURN_IFERR(sql_win_aggr_page_alloc(stmt, aggr_type, cursor, aggr_var, extra_size, rid));
         OG_RETURN_IFERR(og_win_aggr_sum_alloc(stmt, func_expr, aggr_var));
     } else {
         OG_RETURN_IFERR(sql_win_aggr_alloc(stmt, aggr_type, cursor, aggr_var, rid));
