@@ -414,7 +414,7 @@ alter system set DRC_IN_REFORMER_MODE = FALSE scope = pfile;
 alter system set RES_RECYCLE_RATIO = '50' scope = pfile;
 alter system set CREATE_INDEX_PARALLELISM = '0' scope = pfile;
 alter system set ENABLE_DSS = FALSE scope = pfile;
-alter system set USE_BISON_PARSER = TRUE scope = pfile;
+alter system set USE_BISON_PARSER = FALSE scope = pfile;
 alter system set RBP_IP = '127.0.0.1' scope = pfile;
 alter system set RBP_PORT = '2611' scope = pfile;
 alter system set LOCAL_RBP_HOST = '127.0.0.1' scope = pfile;
@@ -1128,3 +1128,5 @@ alter session set tenant = ROOT.ROOT; --error
 alter session set tenant = ''; --error
 alter session set nls_date_format = ' YYYY-MM-DD ';
 alter session set nls_date_format = "YYYY-MM-DD"; --error
+
+alter system set use_bison_parser = false;

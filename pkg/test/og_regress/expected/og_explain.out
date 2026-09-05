@@ -17,10 +17,10 @@ SQL> explain plan for select * from t_expl_0;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name     | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name     | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |          | 449  | 6    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | T_EXPL_0 | 449  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |          | 413  | 6    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | T_EXPL_0 | 413  | 6    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 
 6 rows fetched.
@@ -81,10 +81,10 @@ SQL> explain select * from like_optm_t where a like 'mysql';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -97,10 +97,10 @@ SQL> explain select * from like_optm_t where b like 'cc_'; -- no convert
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -113,10 +113,10 @@ SQL> explain select * from like_optm_t where c not like '11111';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -129,10 +129,10 @@ SQL> explain select * from like_optm_t where d like '20250715';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -155,10 +155,10 @@ SQL> explain select * from like_optm_t where 'ograc' like a;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -171,10 +171,10 @@ SQL> explain select * from like_optm_t where '19980804' like d;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -187,10 +187,10 @@ SQL> explain select * from like_optm_t where '44444' like c;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -205,10 +205,10 @@ SQL> explain select * from like_optm_t where a like '';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -221,10 +221,10 @@ SQL> explain select * from like_optm_t where b not like '';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -239,10 +239,10 @@ SQL> explain select * from like_optm_t where c not like null; -- reversed type ä
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -255,10 +255,10 @@ SQL> explain select * from like_optm_t where d like null;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -273,10 +273,10 @@ SQL> explain select * from like_optm_t where c like ?;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -289,10 +289,10 @@ SQL> explain select * from like_optm_t where d not like :val;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 48   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 48   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 44   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 44   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -305,10 +305,10 @@ SQL> explain select * from like_optm_t where ? like a;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -321,10 +321,10 @@ SQL> explain select * from like_optm_t where ? like b;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -339,10 +339,10 @@ SQL> explain select * from like_optm_t where e like '12345';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -355,10 +355,10 @@ SQL> explain select * from like_optm_t where e like 'AAA';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -379,10 +379,10 @@ SQL> explain select * from like_optm_t where e like upper('abcde');
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -395,10 +395,10 @@ SQL> explain select * from like_optm_t where e like to_char('A    ');
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -419,10 +419,10 @@ SQL> explain select * from like_optm_t where e like cast('A' as char(5));
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -445,10 +445,10 @@ SQL> explain select * from like_optm_t where c like bin2hex('0x26');
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -461,10 +461,10 @@ SQL> explain select * from like_optm_t where id like char_length('mysql');
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -485,10 +485,10 @@ SQL> explain select * from like_optm_t where d like hextoraw('19980804');
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -509,10 +509,10 @@ SQL> explain select * from like_optm_t where lower(a) like 'ograc';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -533,10 +533,10 @@ SQL> explain select * from like_optm_t where b like to_date('2025-07-15', 'yyyy-
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 74   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 74   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 68   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 68   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -557,10 +557,10 @@ SQL> explain select * from like_optm_t where a like cast('openGauss' as char(9))
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -581,10 +581,10 @@ SQL> explain select * from like_optm_t where a like concat('Inn','odb'); -- righ
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -607,10 +607,10 @@ SQL> explain select * from like_optm_t where a like 'mysql\%' escape '\';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -640,10 +640,10 @@ SQL> explain select * from like_optm_t where b like 'b\_bb' escape '\';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -673,10 +673,10 @@ SQL> explain select * from like_optm_t where c like '22\_22\%2' escape '\';
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name        | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |             | 22   | 1    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 22   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |             | 20   | 1    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | LIKE_OPTM_T | 20   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -728,7 +728,7 @@ SQL> explain select t2.id, sum(revenue) from t1, t2 where t2.id = t1.id group by
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                   | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT            |       |      | 1    | 16   | 8         |       |        |
 | 1  |   HAVING                    |       |      | 1    | 16   | 8         |       |        |
@@ -763,7 +763,7 @@ SQL> explain select * from t1 where c1 in (lpad('1',4090,'0'));
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT      |       |      | 0    | 0    | 0         |       |        |
 | 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 0    | 0         |       |        |
@@ -779,7 +779,7 @@ SQL> explain select * from t1 where c1 in (lpad('1',101,'0'));
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT      |       |      | 0    | 0    | 0         |       |        |
 | 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 0    | 0         |       |        |
@@ -795,7 +795,7 @@ SQL> explain select * from t1 where c1 in (lpad('1',100,'0'));
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT      |       |      | 0    | 0    | 0         |       |        |
 | 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 0    | 0         |       |        |
@@ -811,7 +811,7 @@ SQL> explain select * from t1 where c1 in (lpad('1',99,'0'));
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT      |       |      | 0    | 0    | 0         |       |        |
 | 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 0    | 0         |       |        |
@@ -827,7 +827,7 @@ SQL> explain select * from t1 where c1 in (lpad('1',0,'0'));
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT      |       |      | 0    | 0    | 0         |       |        |
 | 1  |     TABLE ACCESS FULL | SYS   | T1   | 0    | 0    | 0         |       |        |
@@ -849,7 +849,7 @@ SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS sq
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |           | 3511 | 9066 | 0         |       |        |
 | 1  |   START WITH            |       |           | 3511 | 9066 | 0         |       |        |
@@ -869,7 +869,7 @@ SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS sq
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                   | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT            |       |           | 3511 | 9066 | 0         |       |        |
 | 1  |   START WITH                |       |           | 3511 | 9066 | 0         |       |        |
@@ -889,3 +889,5 @@ Predicate Information (identified by id):
 
 SQL> 
 SQL> 
+
+

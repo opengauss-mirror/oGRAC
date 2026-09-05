@@ -1,9 +1,5 @@
 
 
-SQL> alter system set use_bison_parser = true;
-
-Succeed.
-
 SQL> create table table1(a int, b int, c varchar(100));
 
 Succeed.

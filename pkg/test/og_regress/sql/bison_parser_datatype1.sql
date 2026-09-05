@@ -240,3 +240,5 @@ create table nclob_table(id number, nclob_col nclob);
 insert into nclob_table(id, nclob_col) values (1, N'测试用的NCLOB数据'); -- NCLOB value in Chinese characters
 select nclob_col from nclob_table WHERE id = 1;
 drop table nclob_table;
+
+alter system set use_bison_parser = false;

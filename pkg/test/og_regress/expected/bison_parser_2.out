@@ -1282,7 +1282,7 @@ SQL> DECLARE
 OG-00944, [12:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
 [6:1] PLC-00601 Sql syntax error: ; expected
 
-SQL>
+SQL> 
 SQL> DROP TRIGGER IF EXISTS insert_readonly_view;
 
 Succeed.
@@ -1394,6 +1394,11 @@ SQL> create index native_desc_idx2 on native_desc_idx_t(a desc); --error
 
 OG-00726, The column has been indexed by NATIVE_DESC_IDX1.
 SQL> drop table if exists native_desc_idx_t;
+
+Succeed.
+
+SQL> 
+SQL> alter system set use_bison_parser = false;
 
 Succeed.
 

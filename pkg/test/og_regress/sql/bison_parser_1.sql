@@ -1563,3 +1563,5 @@ select cast('9999-12-31 23:59:59.999999' as timestamp) from sys_dummy;
 select cast('2024-02-29 23:59:59.999999 +08:00' as timestamp with time zone) from sys_dummy;
 select extract(year from '99991231235959') from sys_dummy;
 select 1 as database_alive from sys_dummy;
+
+alter system set use_bison_parser = false;

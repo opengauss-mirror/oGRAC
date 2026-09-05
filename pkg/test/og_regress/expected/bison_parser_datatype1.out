@@ -944,5 +944,10 @@ SQL> drop table nclob_table;
 Succeed.
 
 SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
 
 

@@ -194,3 +194,5 @@ alter session enable triggers;
 alter session enable interactive timeout;
 alter session enable nologging;
 alter session enable optinfo_log;
+
+alter system set use_bison_parser = false;

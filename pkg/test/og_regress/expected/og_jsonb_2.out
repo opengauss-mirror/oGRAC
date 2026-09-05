@@ -28,7 +28,7 @@ Succeed.
 
 SQL> truncate table tbl_jsonb_base_test; ---table does not exist
 
-OG-00843, [1:35]The table or view SYS.TBL_JSONB_BASE_TEST does not exist.
+OG-00843, The table or view SYS.TBL_JSONB_BASE_TEST does not exist.
 SQL> create table tbl_jsonb_base_test(a jsonb, b int primary key);---Succeed.
 
 Succeed.
@@ -3141,10 +3141,10 @@ JSONB_SET(A,'$.ADDR','"CHANGBANPO"')
 
 SQL> select jsonb_set(to_blob(a),'$.ho',[1,3,4,5]) from tbl_jsonb_ft3_test where b=4;
 
-OG-00601, [1:36]Sql syntax error: syntax error
+OG-00601, [1:36]Sql syntax error: text is incorrect
 SQL> select jsonb_set(a,'$.ho',[1,3,4,5]) from tbl_jsonb_ft3_test where b=4;
 
-OG-00601, [1:27]Sql syntax error: syntax error
+OG-00601, [1:27]Sql syntax error: text is incorrect
 SQL> select jsonb_set(to_blob(a),'$.ho[3].o','"LING"') from tbl_jsonb_ft3_test where b=4;
 
 JSONB_SET(TO_BLOB(A),'$.HO[3].O','"LING"')                      
@@ -3391,7 +3391,7 @@ SQL> insert into tbl_jb_eror_test_xy values('[123,]');---OG-02504, JSON syntax e
 OG-02504, JSON syntax error, unexpected ] found
 SQL> insert into tbl_jb_base_test_xy values('{"kex_1":2738937798.925638525,"kex_2":"string","kex_3":false,"kex_4":[1,2,3,4],"kex_5":{"k_1":1,"k_2":'string'}}');     --OG-00601, [1:144]Sql syntax error: , expected but string found
 
-OG-00601, [1:144]Sql syntax error: syntax error
+OG-00601, [1:144]Sql syntax error: , expected but string found
 SQL> 
 SQL> 
 SQL> insert into tbl_jb_eror_test_xy values('{"kex_1":2738937798.925638525,"kex_2":"string","kex_3":false,"kex_4":[1,2,3,4],"kex_5":{"k_1":1,"k_2":"string"}}');     --1 rows affected.
@@ -3409,7 +3409,7 @@ SQL> select jsonb_value(a, '$[0].kex_4' error on error) as jb_res from tbl_jb_er
 OG-02506, JSONB_VALUE evaluated to non-scalar value
 SQL> select jsonb_query(a, '$' ,returning varchar2(512) with wrapper ) as jbq_res from tbl_jb_eror_test_xy ; ---OG-02501, Invalid RETURNING/ON clause
 
-OG-00601, [1:27]Sql syntax error: syntax error
+OG-02501, Invalid RETURNING/ON clause, 
 SQL> select jsonb_query(a, '$.kex_1' returning varchar2(512) error on error) as jbq_res from tbl_jb_eror_test_xy ; ---OG-02506, JSONB_VALUE evaluated to scalar value
 
 OG-02506, JSONB_VALUE evaluated to scalar value

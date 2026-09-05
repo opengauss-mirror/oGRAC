@@ -44,13 +44,13 @@ SQL> explain select group_concat(col1 separator '|') from (select * from test_or
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name                     | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name                     | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |                          | 1    | 171  | 8         |       |        |
-| 1  |   AGGR                        |       |                          | 1    | 171  | 8         |       |        |
-| 2  |       SUBSELECT               | SYS   |                          | 425  | 161  | 6         |       |        |
-| 3  |         QUERY SORT ORDER BY   |       |                          | 425  | 161  | 6         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | TEST_ORDER_TEST_ORDER_T1 | 425  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |                          | 1    | 157  | 7         |       |        |
+| 1  |   AGGR                        |       |                          | 1    | 157  | 7         |       |        |
+| 2  |       SUBSELECT               | SYS   |                          | 391  | 148  | 5         |       |        |
+| 3  |         QUERY SORT ORDER BY   |       |                          | 391  | 148  | 5         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | TEST_ORDER_TEST_ORDER_T1 | 391  | 5    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------------------
 
 9 rows fetched.
@@ -221,12 +221,12 @@ SQL> EXPLAIN SELECT t1.id, t1.quantity, t1.price, t2.discount FROM (SELECT * FRO
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name             | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |                  | 25   | 17   | 12        |       |        |
-| 1  |   HASH JOIN(R)          |       |                  | 25   | 17   | 12        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T2 T2 | 212  | 4    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1    | 71   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |                  | 21   | 16   | 11        |       |        |
+| 1  |   HASH JOIN(R)          |       |                  | 21   | 16   | 11        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T2 T2 | 195  | 3    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1    | 65   | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -251,11 +251,11 @@ SQL> EXPLAIN SELECT SUM(quantity) total_qty, AVG(price) avg_price FROM (SELECT *
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |               | 1    | 3    | 0         |       |        |
 | 1  |   AGGR                  |       |               | 1    | 3    | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 71   | 2    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 65   | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -277,11 +277,11 @@ SQL> EXPLAIN SELECT discount, COUNT(*) cnt, SUM(quantity) total_qty FROM (SELECT
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |               | 7    | 21   | 8         |       |        |
-| 1  |   HASH GROUP BY         |       |               | 7    | 21   | 8         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 71   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |               | 6    | 21   | 8         |       |        |
+| 1  |   HASH GROUP BY         |       |               | 6    | 21   | 8         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 65   | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -306,12 +306,12 @@ SQL> EXPLAIN SELECT DISTINCT id FROM (SELECT DISTINCT id FROM test_order_t1 orde
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                   | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |               | 212  | 15   | 0         |       |        |
-| 1  |   HASH DISTINCT             |       |               | 212  | 15   | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   | T             | 212  | 3    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 212  | 3    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |               | 195  | 15   | 0         |       |        |
+| 1  |   HASH DISTINCT             |       |               | 195  | 15   | 0         |       |        |
+| 2  |       SUBSELECT             | SYS   | T             | 195  | 3    | 0         |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 195  | 3    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 
 8 rows fetched.
@@ -333,11 +333,11 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM test_order_t1 WHERE price > 100 ORDER 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |               | 71   | 28   | 0         |       |        |
-| 1  |   QUERY SORT ORDER BY   |       |               | 71   | 28   | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 71   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |               | 65   | 26   | 0         |       |        |
+| 1  |   QUERY SORT ORDER BY   |       |               | 65   | 26   | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 65   | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -361,11 +361,11 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM test_order_t1 WHERE price > 100 ORDER 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |               | 71   | 28   | 0         |       |        |
-| 1  |   QUERY SORT ORDER BY   |       |               | 71   | 28   | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 71   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |               | 65   | 26   | 0         |       |        |
+| 1  |   QUERY SORT ORDER BY   |       |               | 65   | 26   | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 65   | 2    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -389,11 +389,11 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM test_order_t1 WHERE quantity IS NOT NU
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |               | 201  | 77   | 2         |       |        |
-| 1  |   QUERY SORT ORDER BY   |       |               | 201  | 77   | 2         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 201  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |               | 185  | 70   | 2         |       |        |
+| 1  |   QUERY SORT ORDER BY   |       |               | 185  | 70   | 2         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | TEST_ORDER_T1 | 185  | 3    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

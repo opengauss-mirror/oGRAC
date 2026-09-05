@@ -568,24 +568,24 @@ COUNT(*)
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------------------
-| Id | Operation                                 | Owner | Name             | Rows  | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                                 | Owner | Name             | Rows  | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                          |       |                  | 1     | 877  | 220       |       |        |
-| 1  |   AGGR                                    |       |                  | 1     | 877  | 220       |       |        |
-| 2  |       SUBSELECT                           |       | $FROM_ORE_0      | 700   | 655  | 216       |       |        |
-| 3  |         HASH UNION                        |       |                  | 700   | 655  | 216       |       |        |
-| 4  |           HASH JOIN(R)                    |       |                  | 350   | 326  | 108       |       |        |
+| 0  | SELECT STATEMENT                          |       |                  | 1     | 857  | 210       |       |        |
+| 1  |   AGGR                                    |       |                  | 1     | 857  | 210       |       |        |
+| 2  |       SUBSELECT                           |       | $FROM_ORE_0      | 700   | 645  | 206       |       |        |
+| 3  |         HASH UNION                        |       |                  | 700   | 645  | 206       |       |        |
+| 4  |           HASH JOIN(R)                    |       |                  | 350   | 321  | 103       |       |        |
 | 5  |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 89   | 8         |       |        |
 | 6  |                 INDEX FAST FULL SCAN      | SYS   | IND_OR_EXPAND_11 | 10000 | 89   | 8         |       |        |
-| 7  |               SUBSELECT                   |       | $FROM_SQ_0       | 1470  | 66   | 0         |       |        |
-| 8  |                 HASH DISTINCT             |       |                  | 1470  | 104  | 0         |       |        |
-| 9  |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T2  | 1470  | 66   | 0         |       |        |
-| 10 |           HASH JOIN(R)                    |       |                  | 350   | 326  | 108       |       |        |
+| 7  |               SUBSELECT                   |       | $FROM_SQ_0       | 1353  | 63   | 0         |       |        |
+| 8  |                 HASH DISTINCT             |       |                  | 1353  | 98   | 0         |       |        |
+| 9  |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T2  | 1353  | 63   | 0         |       |        |
+| 10 |           HASH JOIN(R)                    |       |                  | 350   | 321  | 103       |       |        |
 | 11 |               TABLE ACCESS BY INDEX ONLY  | SYS   | T_OR_INDEX_1 T1  | 10000 | 89   | 8         |       |        |
 | 12 |                 INDEX FAST FULL SCAN      | SYS   | IND_OR_EXPAND_11 | 10000 | 89   | 8         |       |        |
-| 13 |               SUBSELECT                   |       | $FROM_SQ_1       | 1470  | 66   | 0         |       |        |
-| 14 |                 HASH DISTINCT             |       |                  | 1470  | 104  | 0         |       |        |
-| 15 |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T3  | 1470  | 66   | 0         |       |        |
+| 13 |               SUBSELECT                   |       | $FROM_SQ_1       | 1353  | 63   | 0         |       |        |
+| 14 |                 HASH DISTINCT             |       |                  | 1353  | 98   | 0         |       |        |
+| 15 |                     TABLE ACCESS FULL     | SYS   | T_OR_INDEX_2 T3  | 1353  | 63   | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -611,20 +611,20 @@ COUNT(*)
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------------------------
-| Id | Operation                           | Owner | Name            | Rows | Cost        | StartCost   | Bytes | Remark |
+| Id | Operation                           | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT                    |       |                 | 1    | 38   | 18        |       |        |
 | 1  |   AGGR                              |       |                 | 1    | 38   | 18        |       |        |
 | 2  |       SUBSELECT                     |       | $FROM_ORE_0     | 2    | 20   | 18        |       |        |
 | 3  |         HASH UNION                  |       |                 | 2    | 20   | 18        |       |        |
 | 4  |           HASH JOIN SEMI(R)         |       |                 | 1    | 10   | 9         |       |        |
-| 5  |               TABLE ACCESS FULL     | SYS   | OR_2_UNION_T T1 | 2    | 1           | 0           |       |        |
-| 6  |               SUBSELECT             |       | $FROM_SQ_0      | 2    | 1           | 0           |       |        |
-| 7  |                   TABLE ACCESS FULL | SYS   | OR_2_UNION_T T2 | 2    | 1           | 0           |       |        |
+| 5  |               TABLE ACCESS FULL     | SYS   | OR_2_UNION_T T1 | 2    | 1    | 0         |       |        |
+| 6  |               SUBSELECT             |       | $FROM_SQ_0      | 2    | 1    | 0         |       |        |
+| 7  |                   TABLE ACCESS FULL | SYS   | OR_2_UNION_T T2 | 2    | 1    | 0         |       |        |
 | 8  |           HASH JOIN SEMI(R)         |       |                 | 1    | 10   | 9         |       |        |
-| 9  |               TABLE ACCESS FULL     | SYS   | OR_2_UNION_T T1 | 2    | 1           | 0           |       |        |
-| 10 |               SUBSELECT             |       | $FROM_SQ_1      | 2    | 1           | 0           |       |        |
-| 11 |                   TABLE ACCESS FULL | SYS   | OR_2_UNION_T T3 | 2    | 1           | 0           |       |        |
+| 9  |               TABLE ACCESS FULL     | SYS   | OR_2_UNION_T T1 | 2    | 1    | 0         |       |        |
+| 10 |               SUBSELECT             |       | $FROM_SQ_1      | 2    | 1    | 0         |       |        |
+| 11 |                   TABLE ACCESS FULL | SYS   | OR_2_UNION_T T3 | 2    | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -693,17 +693,17 @@ COUNT(*)
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------
-| Id | Operation                       | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                       | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |                 | 1    | 40   | 9         |       |        |
-| 1  |   AGGR                          |       |                 | 1    | 40   | 9         |       |        |
-| 2  |       SUBSELECT                 |       | $FROM_ORE_0     | 4    | 30   | 9         |       |        |
-| 3  |         UNION ALL               |       |                 | 4    | 30   | 9         |       |        |
-| 4  |           NESTED LOOPS          |       |                 | 1    | 13   | 0         |       |        |
-| 5  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 1    | 1     | 0         |       |        |
-| 6  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT                |       |                 | 1    | 38   | 9         |       |        |
+| 1  |   AGGR                          |       |                 | 1    | 38   | 9         |       |        |
+| 2  |       SUBSELECT                 |       | $FROM_ORE_0     | 4    | 29   | 9         |       |        |
+| 3  |         UNION ALL               |       |                 | 4    | 29   | 9         |       |        |
+| 4  |           NESTED LOOPS          |       |                 | 1    | 12   | 0         |       |        |
+| 5  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 1    | 1    | 0         |       |        |
+| 6  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 338  | 6    | 0         |       |        |
 | 7  |           HASH JOIN(R)          |       |                 | 3    | 17   | 9         |       |        |
-| 8  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 367  | 6    | 0         |       |        |
+| 8  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_2 T2 | 338  | 6    | 0         |       |        |
 | 9  |               TABLE ACCESS FULL | SYS   | T_OR2UNION_1 T1 | 2    | 1    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
@@ -793,14 +793,14 @@ COUNT(*)
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------------
-| Id | Operation                            | Owner | Name             | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                            | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                     |       |                  | 1    | 123  | 60        |       |        |
-| 1  |   AGGR                               |       |                  | 1    | 123  | 60        |       |        |
-| 2  |     MERGE JOIN                       |       |                  | 1    | 62   | 60        |       |        |
+| 0  | SELECT STATEMENT                     |       |                  | 1    | 119  | 59        |       |        |
+| 1  |   AGGR                               |       |                  | 1    | 119  | 59        |       |        |
+| 2  |     MERGE JOIN                       |       |                  | 1    | 60   | 59        |       |        |
 | 3  |         TABLE ACCESS BY INDEX ONLY   | SYS   | T_OR_INDEX_1 T1  | 4    | 8    | 8         |       |        |
 | 4  |           OPTIMIZED INDEX RANGE SCAN | SYS   | IND_OR_EXPAND_11 | 4    | 8    | 8         |       |        |
-| 5  |         TABLE ACCESS FULL            | SYS   | T_OR_INDEX_2 T2  | 22   | 52   | 0         |       |        |
+| 5  |         TABLE ACCESS FULL            | SYS   | T_OR_INDEX_2 T2  | 20   | 50   | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -887,13 +887,13 @@ F1           F2           F3                                       F4           
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------
-| Id | Operation                        | Owner | Name             | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                        | Owner | Name             | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                 |       |                  | 4    | 8     | 8         |       |        |
-| 1  |   KERNEL FILTER                  |       |                  | 4    | 8     | 8         |       |        |
-| 2  |     TABLE ACCESS BY INDEX ROWID  | SYS   | T_OR_INDEX_1     | 4    | 8     | 8         |       |        |
-| 3  |       INDEX RANGE SCAN           | SYS   | IND_OR_EXPAND_11 | 4    | 8     | 8         |       |        |
-| 4  |       TABLE ACCESS FULL          | SYS   | T_OR_INDEX_2     | 1470 | 66   | 0         |       |        |
+| 0  | SELECT STATEMENT                 |       |                  | 4    | 8    | 8         |       |        |
+| 1  |   KERNEL FILTER                  |       |                  | 4    | 8    | 8         |       |        |
+| 2  |     TABLE ACCESS BY INDEX ROWID  | SYS   | T_OR_INDEX_1     | 4    | 8    | 8         |       |        |
+| 3  |       INDEX RANGE SCAN           | SYS   | IND_OR_EXPAND_11 | 4    | 8    | 8         |       |        |
+| 4  |       TABLE ACCESS FULL          | SYS   | T_OR_INDEX_2     | 1353 | 63   | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

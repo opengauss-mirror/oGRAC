@@ -1,4 +1,3 @@
-alter system set use_bison_parser = true;
 
 create table hint_test1(a int, b int, c int);
 create table hint_test2(a int, b int, c int);

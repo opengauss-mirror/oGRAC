@@ -30,7 +30,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE nullable IN (SELECT nullable FROM 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -49,7 +49,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE not_nullable IN (SELECT not_nullab
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -68,7 +68,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE nullable NOT IN (SELECT nullable F
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -87,7 +87,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE not_nullable NOT IN (SELECT not_nu
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -107,7 +107,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE nullable*10 + 1  IN (SELECT nullab
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -126,7 +126,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE nullable*10 + 1  NOT IN (SELECT nu
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -147,7 +147,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE (nullable, not_nullable) IN (SELEC
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -167,7 +167,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE (nullable, not_nullable) NOT IN (S
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -187,7 +187,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE IN2EXISTS_T1.ROWID IN (SELECT IN2E
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -206,7 +206,7 @@ SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE IN2EXISTS_T1.ROWID IN (SELECT IN2E
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |              | 0    | 0    | 0         |       |        |
@@ -260,7 +260,7 @@ SQL> EXPLAIN SELECT * FROM EXISTS_OPT_T1 WHERE EXISTS (SELECT * from EXISTS_OPT_
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |               | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |               | 0    | 0    | 0         |       |        |
@@ -279,7 +279,7 @@ SQL> EXPLAIN SELECT * FROM EXISTS_OPT_T1 WHERE EXISTS (SELECT AVG(nullable) from
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------
-| Id | Operation             | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation             | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT      |       |               | 0    | 0    | 0         |       |        |
 | 1  |     TABLE ACCESS FULL | SYS   | EXISTS_OPT_T1 | 0    | 0    | 0         |       |        |
@@ -293,7 +293,7 @@ SQL> EXPLAIN SELECT * FROM EXISTS_OPT_T1 WHERE EXISTS (SELECT DISTINCT nullable 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |               | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |               | 0    | 0    | 0         |       |        |
@@ -316,7 +316,7 @@ SQL> EXPLAIN SELECT * FROM EXISTS_OPT_T1 WHERE EXISTS (SELECT nullable, ROW_NUMB
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name          | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT        |       |               | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |               | 0    | 0    | 0         |       |        |
@@ -385,14 +385,14 @@ SQL> explain plan for
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                 | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 787  | 34   | 23        |       |        |
-| 1  |   FILTER                  |       |                   | 787  | 34   | 23        |       |        |
-| 2  |     HASH JOIN OUTER(R)    |       |                   | 787  | 32   | 23        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T1 | 351  | 6    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
-| 5  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T2 T3 | 351  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 666  | 32   | 22        |       |        |
+| 1  |   FILTER                  |       |                   | 666  | 32   | 22        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |                   | 666  | 30   | 22        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T1 | 323  | 5    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
+| 5  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -418,14 +418,14 @@ SQL> explain plan for
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                 | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
-| 3  |     HASH JOIN OUTER(R)    |       |                   | 787  | 31   | 20        |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 390  | 6    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 390  | 6    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 390  | 6    | 0         |       |        |
+| 3  |     HASH JOIN OUTER(R)    |       |                   | 666  | 29   | 19        |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -454,14 +454,14 @@ SQL> explain plan for
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                 | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
-| 3  |     HASH JOIN OUTER(R)    |       |                   | 787  | 31   | 20        |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 390  | 6    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 390  | 6    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 390  | 6    | 0         |       |        |
+| 3  |     HASH JOIN OUTER(R)    |       |                   | 666  | 29   | 19        |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -490,14 +490,14 @@ SQL> explain plan for
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name              | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                 | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                   | 424  | 7    | 0         |       |        |
-| 1  |   KERNEL FILTER           |       |                   | 424  | 7    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 424  | 7    | 0         |       |        |
-| 3  |     HASH JOIN OUTER(R)    |       |                   | 787  | 31   | 20        |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 449  | 7    | 0         |       |        |
-| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 351  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                   | 390  | 6    | 0         |       |        |
+| 1  |   KERNEL FILTER           |       |                   | 390  | 6    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL     | SYS   | NOT_IN_NULL_T1 T1 | 390  | 6    | 0         |       |        |
+| 3  |     HASH JOIN OUTER(R)    |       |                   | 666  | 29   | 19        |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T1 T2 | 413  | 7    | 0         |       |        |
+| 5  |         TABLE ACCESS FULL | SYS   | NOT_IN_NULL_T2 T3 | 323  | 5    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

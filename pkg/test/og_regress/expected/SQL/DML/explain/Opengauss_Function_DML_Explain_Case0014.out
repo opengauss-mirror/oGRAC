@@ -39,9 +39,9 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name                   | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |                        | 351  | 6    | 0         |       |        |
-| 1  |   KERNEL FILTER         |       |                        | 351  | 6    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_TABLE_IN1_0014 | 351  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |                        | 323  | 5    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                        | 323  | 5    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_TABLE_IN1_0014 | 323  | 5    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_IN2_0014 | 1    | 2    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       

@@ -212,13 +212,13 @@ SQL> EXPLAIN SELECT * FROM DATA_DS_TEST t0, DATA_DS_TEST t1 WHERE t0.int_f0 < 20
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------
-| Id | Operation                 | Owner | Name            | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                 | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                 | 1    | 11   | 11        |       |        |
-| 1  |   QUERY LIMIT             |       |                 | 1    | 11   | 11        |       |        |
-| 2  |     HASH JOIN(R)          |       |                 | 12   | 15   | 11        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 147  | 3    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 49   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                 | 1    | 11   | 10        |       |        |
+| 1  |   QUERY LIMIT             |       |                 | 1    | 11   | 10        |       |        |
+| 2  |     HASH JOIN(R)          |       |                 | 10   | 14   | 10        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T1 | 135  | 3    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | DATA_DS_TEST T0 | 45   | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -248,7 +248,7 @@ SQL> EXPLAIN SELECT * FROM DATA_DS_TEST t0, DATA_DS_TEST t1 WHERE t0.int_f0 < 20
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------
-| Id | Operation                            | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
+| Id | Operation                 | Owner | Name            | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT          |       |                 | 1    | 11   | 11        |       |        |
 | 1  |   QUERY LIMIT             |       |                 | 1    | 11   | 11        |       |        |
@@ -274,13 +274,13 @@ DATA_DS_TEST                                                     128          TR
 SQL> 
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = 10;
 
-OG-00636, [1:49]Invalid number, range is [0,9]
+OG-00210, The value of parameter "_OPT_CBO_STAT_SAMPLING_LEVEL" is too large, at most 9
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = -1;
 
-OG-00636, [1:49]Invalid number, range is [0,9]
+OG-00601, Sql syntax error: Convert uint32 failed, text = -
 SQL> ALTER SYSTEM SET _opt_cbo_stat_sampling_level = 5.5;
 
-OG-00636, [1:49]Invalid number, range is [0,9]
+OG-00601, Sql syntax error: Convert uint32 failed, text = 5.5
 SQL> 
 SQL> ANALYZE TABLE DATA_DS_TEST COMPUTE STATISTICS;
 
