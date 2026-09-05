@@ -1538,3 +1538,28 @@ select count(*) from bison_delete_alias_t2;
 rollback;
 drop table bison_delete_alias_t2;
 drop table bison_delete_alias_t1;
+
+-- Validate time fields before date encoding.
+alter session set NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS';
+alter session set NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6';
+alter session set NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM';
+
+select next_day('9999-12-31 24:59:59', 1) from sys_dummy; --error
+select next_day('2024-02-29 24:00:00', 1) from sys_dummy; --error
+select next_day('2024-02-29 99:00:00', 1) from sys_dummy; --error
+select next_day('2024-02-29 838:00:00', 1) from sys_dummy; --error
+select next_day('2024-02-29 23:60:00', 1) from sys_dummy; --error
+select next_day('2024-02-29 23:59:60', 1) from sys_dummy; --error
+select cast('9999-12-31 24:59:59.000000' as timestamp) from sys_dummy; --error
+select cast('9999-12-31 24:59:59.000000 +08:00' as timestamp with time zone) from sys_dummy; --error
+select extract(year from '99991231245959') from sys_dummy; --error
+select next_day('9999-12-31 23:59:59', 1) from sys_dummy; --error
+
+select next_day('2024-02-29 23:59:59', 1) from sys_dummy;
+select next_day('2024-02-29', 1) from sys_dummy;
+select cast('0001-01-01 00:00:00' as date) from sys_dummy;
+select cast('9999-12-31 23:59:59' as date) from sys_dummy;
+select cast('9999-12-31 23:59:59.999999' as timestamp) from sys_dummy;
+select cast('2024-02-29 23:59:59.999999 +08:00' as timestamp with time zone) from sys_dummy;
+select extract(year from '99991231235959') from sys_dummy;
+select 1 as database_alive from sys_dummy;

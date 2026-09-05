@@ -5148,3 +5148,115 @@ Succeed.
 
 SQL>
 
+
+
+SQL> -- Validate time fields before date encoding.
+SQL> alter session set NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS';
+
+Succeed.
+
+SQL> alter session set NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6';
+
+Succeed.
+
+SQL> alter session set NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM';
+
+Succeed.
+
+SQL>
+SQL> select next_day('9999-12-31 24:59:59', 1) from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select next_day('2024-02-29 24:00:00', 1) from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select next_day('2024-02-29 99:00:00', 1) from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select next_day('2024-02-29 838:00:00', 1) from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select next_day('2024-02-29 23:60:00', 1) from sys_dummy; --error
+
+OG-00146, [1:8]MINUTE should be from 0 to 59
+SQL> select next_day('2024-02-29 23:59:60', 1) from sys_dummy; --error
+
+OG-00146, [1:8]SECOND should be from 0 to 59
+SQL> select cast('9999-12-31 24:59:59.000000' as timestamp) from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select cast('9999-12-31 24:59:59.000000 +08:00' as timestamp with time zone) from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select extract(year from '99991231245959') from sys_dummy; --error
+
+OG-00146, [1:8]HOUR should be from 0 to 23
+SQL> select next_day('9999-12-31 23:59:59', 1) from sys_dummy; --error
+
+OG-00694, [1:8]DATETIME out of range, it must be between 0001-01-01 00:00:00 and 9999-12-31 23:59:59
+SQL>
+SQL> select next_day('2024-02-29 23:59:59', 1) from sys_dummy;
+
+NEXT_DAY('2024-02-29 23:59:59', 1)
+----------------------------------
+2024-03-03 23:59:59
+
+1 rows fetched.
+
+SQL> select next_day('2024-02-29', 1) from sys_dummy;
+
+NEXT_DAY('2024-02-29', 1)
+-------------------------
+2024-03-03 00:00:00
+
+1 rows fetched.
+
+SQL> select cast('0001-01-01 00:00:00' as date) from sys_dummy;
+
+CAST('0001-01-01 00:00:00' AS DATE)
+-----------------------------------
+0001-01-01 00:00:00
+
+1 rows fetched.
+
+SQL> select cast('9999-12-31 23:59:59' as date) from sys_dummy;
+
+CAST('9999-12-31 23:59:59' AS DATE)
+-----------------------------------
+9999-12-31 23:59:59
+
+1 rows fetched.
+
+SQL> select cast('9999-12-31 23:59:59.999999' as timestamp) from sys_dummy;
+
+CAST('9999-12-31 23:59:59.999999' AS TIMESTAMP)
+-----------------------------------------------
+9999-12-31 23:59:59.999999
+
+1 rows fetched.
+
+SQL> select cast('2024-02-29 23:59:59.999999 +08:00' as timestamp with time zone) from sys_dummy;
+
+CAST('2024-02-29 23:59:59.999999 +08:00' AS TIMESTAMP WITH TIME
+----------------------------------------------------------------
+2024-02-29 23:59:59.999999 +08:00
+
+1 rows fetched.
+
+SQL> select extract(year from '99991231235959') from sys_dummy;
+
+EXTRACT(YEAR FROM '99991231235959')
+-----------------------------------
+9999
+
+1 rows fetched.
+
+SQL> select 1 as database_alive from sys_dummy;
+
+DATABASE_ALIVE
+--------------
+1
+
+1 rows fetched.
+
+SQL>
