@@ -28,6 +28,8 @@
 #include "cm_nls.h"
 #include "cm_timer.h"
 
+static status_t cm_is_time_valid(date_detail_t *detail);
+
 uint16 g_month_days[2][12] = {
     { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 },
     { 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
@@ -2439,6 +2441,8 @@ status_t cm_text2timestamp_tz(const text_t *text, const text_t *fmt, timezone_in
         return OG_ERROR;
     }
 
+    OG_RETURN_IFERR(cm_is_time_valid(&detail));
+
     cm_encode_timestamp_tz(&detail, tstz);
 
     // check again
@@ -2471,6 +2475,8 @@ status_t cm_text2date(const text_t *text, const text_t *fmt, date_t *date)
     if (!cm_check_valid_zero_time(&detail)) {
         return OG_ERROR;
     }
+
+    OG_RETURN_IFERR(cm_is_time_valid(&detail));
 
     *date = cm_encode_date(&detail);
 
@@ -2796,6 +2802,8 @@ static status_t cm_numtext2date(const text_t *text, date_t *date)
     if (!cm_check_valid_zero_time(&detail)) {
         return OG_ERROR;
     }
+
+    OG_RETURN_IFERR(cm_is_time_valid(&detail));
 
     (*date) = cm_encode_date(&detail);
     return OG_SUCCESS;
