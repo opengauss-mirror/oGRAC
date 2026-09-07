@@ -321,6 +321,11 @@ static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u* ptr, uint12
 
 #else
 
+static inline uint64 cm_atomic_barrier_read(volatile uint64 *ptr)
+{
+    return __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
+}
+
 static inline int64 cm_atomic_get(atomic_t *val)
 {
     return *val;
