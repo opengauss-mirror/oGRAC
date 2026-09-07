@@ -3270,6 +3270,9 @@ class Installer:
 
     def start_cms(self):
         log("Starting cms...", True)
+        # gcc_file (dd) / cms 日志均以业务用户写入，此处需确保目录属主正确
+        if os.getuid() == 0:
+            self.chownDataDir()
         cmd = "sh %s -P cms >> %s 2>&1" % (INSTALL_SCRIPT, g_opts.log_file)
         if os.getuid() == 0:
             cmd = "su - %s -c '" % self.user + cmd + "'"

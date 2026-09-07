@@ -158,7 +158,7 @@ func_all()
 
     cd ${OG_SRC_BUILD_DIR}
     set +e
-    make all -sj 8
+    make all -sj $(nproc 2>/dev/null || echo 8)
     if [ $? -ne 0 ]; then
         ls -al ${OGRACDB_LIB}
         ls -al /home/regress
@@ -368,7 +368,7 @@ func_test()
     func_all Debug
     strip -N main ${OGRACDB_LIB}/libogserver.a
     cd ${OG_TEST_BUILD_DIR}
-    make -sj 8
+    make -sj $(nproc 2>/dev/null || echo 8)
 
     if [[ -e "${OGRACDB_BIN}"/ogracd ]]; then
         cd ${OGRACDB_BIN}
@@ -755,7 +755,7 @@ func_make_raft()
         func_prepare_release
     fi
 
-    cd ${OG_SRC_BUILD_DIR}/raft && make -sj 8
+    cd ${OG_SRC_BUILD_DIR}/raft && make -sj $(nproc 2>/dev/null || echo 8)
 }
 
 func_regress_test()
@@ -766,7 +766,7 @@ func_regress_test()
     func_prepare_debug
     cd ${OG_SRC_BUILD_DIR}
     set +e
-    make all -sj 8
+    make all -sj $(nproc 2>/dev/null || echo 8)
     if [ $? -ne 0 ]; then
         ls -al ${OGRACDB_LIB}
         ls -al /home/regress
@@ -792,7 +792,7 @@ func_make_test_debug()
     func_prepare_debug
     cd ${OG_SRC_BUILD_DIR}
     set +e
-    make all -sj 8
+    make all -sj $(nproc 2>/dev/null || echo 8)
     if [ $? -ne 0 ]; then
         ls -al ${OGRACDB_LIB}
         ls -al /home/regress
