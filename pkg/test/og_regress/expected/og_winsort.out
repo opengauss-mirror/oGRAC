@@ -95,6 +95,60 @@ B            SUM(DISTINCT A) OVER(PARTITION BY B)
 SQL> DROP TABLE IF EXISTS winsort_sum_t1;
 Succeed.
 
+SQL>
+SQL> DROP TABLE IF EXISTS winsort_distinct_t1;
+
+Succeed.
+
+SQL> CREATE TABLE winsort_distinct_t1 (p INT, v INT);
+
+Succeed.
+
+SQL> INSERT INTO winsort_distinct_t1 VALUES
+  2     (1, 5), (1, 5), (1, NULL),
+  3     (2, 1), (2, 1), (2, 3), (2, NULL),
+  4     (3, NULL), (3, NULL);
+
+9 rows affected.
+
+SQL>
+SQL> SELECT DISTINCT p,
+  2     COUNT(DISTINCT v) OVER (PARTITION BY p) AS cnt_key,
+  3     SUM(DISTINCT v) OVER (PARTITION BY p) AS sum_key,
+  4     AVG(DISTINCT v) OVER (PARTITION BY p) AS avg_key
+  5 FROM winsort_distinct_t1
+  6 ORDER BY p;
+
+P            CNT_KEY              SUM_KEY              AVG_KEY
+------------ -------------------- -------------------- ----------------------------------------
+1            1                    5                    5
+2            2                    4                    2
+3            0
+
+3 rows fetched.
+
+SQL>
+SQL> SELECT p, v,
+  2     COUNT(v) OVER (PARTITION BY p ORDER BY v) AS cnt_key,
+  3     SUM(v) OVER (PARTITION BY p ORDER BY v) AS sum_key,
+  4     AVG(v) OVER (PARTITION BY p ORDER BY v) AS avg_key
+  5 FROM (SELECT DISTINCT p, v FROM winsort_distinct_t1 WHERE v IS NOT NULL) d
+  6 ORDER BY p, v;
+
+P            V            CNT_KEY              SUM_KEY              AVG_KEY
+------------ ------------ -------------------- -------------------- ----------------------------------------
+1            5            1                    5                    5
+2            1            1                    1                    1
+2            3            2                    4                    2
+
+3 rows fetched.
+
+SQL>
+SQL> DROP TABLE winsort_distinct_t1;
+
+Succeed.
+
+SQL>
 
 
 

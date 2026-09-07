@@ -751,6 +751,96 @@ ID           NAME                                                             AG
 
 3 rows fetched.
 
+SQL>
+SQL> DROP TABLE IF EXISTS je_win_avg_left;
 
+Succeed.
 
+SQL> DROP TABLE IF EXISTS je_win_avg_right;
 
+Succeed.
+
+SQL>
+SQL> CREATE TABLE je_win_avg_left (k INT);
+
+Succeed.
+
+SQL> CREATE TABLE je_win_avg_right (k INT);
+
+Succeed.
+
+SQL>
+SQL> INSERT INTO je_win_avg_left
+  2 SELECT CASE WHEN a.n <= 50 THEN 1 ELSE (a.n - 51) * 200 + b.n END
+  3 FROM (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 100) a,
+  4      (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 200) b;
+
+20000 rows affected.
+
+SQL>
+SQL> INSERT INTO je_win_avg_right
+  2 SELECT (a.n - 1) * 200 + b.n + 1000
+  3 FROM (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 100) a,
+  4      (SELECT LEVEL n FROM sys_dummy CONNECT BY LEVEL <= 200) b;
+
+20000 rows affected.
+
+SQL>
+SQL> ANALYZE TABLE je_win_avg_left COMPUTE STATISTICS;
+
+Succeed.
+
+SQL> ANALYZE TABLE je_win_avg_right COMPUTE STATISTICS;
+
+Succeed.
+
+SQL>
+SQL> EXPLAIN
+  2 SELECT DISTINCT
+  3     AVG(DISTINCT l.k) OVER () AS avg_key,
+  4     SUM(DISTINCT l.k) OVER () AS sum_key,
+  5     COUNT(DISTINCT l.k) OVER () AS cnt_key
+  6 FROM je_win_avg_left l
+  7 LEFT JOIN je_win_avg_right r
+  8   ON l.k = r.k OR r.k > 5;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+| Id | Operation                     | Owner | Name              | Rows  | Cost | StartCost | Bytes | Remark |
+--------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT              |       |                   | 20000 | 704  | 0         |       |        |
+| 1  |   HASH DISTINCT               |       |                   | 20000 | 704  | 0         |       |        |
+| 2  |     WINDOW SORT               |       |                   | 20000 | 296  | 0         |       |        |
+| 3  |       WINDOW SORT             |       |                   | 20000 | 296  | 0         |       |        |
+| 4  |         WINDOW SORT           |       |                   | 20000 | 296  | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | JE_WIN_AVG_LEFT L | 20000 | 296  | 0         |       |        |
+--------------------------------------------------------------------------------------------------------------
+
+10 rows fetched.
+
+SQL>
+SQL> SELECT DISTINCT
+  2     AVG(DISTINCT l.k) OVER () AS avg_key,
+  3     SUM(DISTINCT l.k) OVER () AS sum_key,
+  4     COUNT(DISTINCT l.k) OVER () AS cnt_key
+  5 FROM je_win_avg_left l
+  6 LEFT JOIN je_win_avg_right r
+  7   ON l.k = r.k OR r.k > 5;
+
+AVG_KEY                                  SUM_KEY              CNT_KEY
+---------------------------------------- -------------------- --------------------
+5000.5                                   50005000             10000
+
+1 rows fetched.
+
+SQL>
+SQL> DROP TABLE je_win_avg_left;
+
+Succeed.
+
+SQL> DROP TABLE je_win_avg_right;
+
+Succeed.
+
+SQL>
