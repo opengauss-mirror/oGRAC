@@ -30,7 +30,7 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: T.B = CASE  WHEN EXISTS(SELECT F1 FROM EXPLAIN_T011_BAK WHERE F1 = 1) THEN 1 END
+    2 - filter: T.B = CASE  WHEN EXISTS(SELECT 1 FROM EXPLAIN_T011_BAK WHERE F1 = 1) THEN 1 END
     3 - filter: F1 = 1                                          
 
 12 rows fetched.

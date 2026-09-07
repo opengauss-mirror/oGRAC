@@ -34,11 +34,11 @@ SQL> explain update
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 -----------------------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name                      | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name                      | Rows   | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------------------------
-| 0  | UPDATE STATEMENT              |       |                           | 111352 | 9642 | 0         |       |        |
-| 1  |   NESTED LOOPS OUTER          |       |                           | 111352 | 9642 | 0         |       |        |
-| 2  |       TABLE ACCESS FULL       | SYS   | UPDATE_PUSH_DOWN_T1 TAB_0 | 449    | 6    | 0         |       |        |
+| 0  | UPDATE STATEMENT              |       |                           | 102424 | 8869 | 0         |       |        |
+| 1  |   NESTED LOOPS OUTER          |       |                           | 102424 | 8869 | 0         |       |        |
+| 2  |       TABLE ACCESS FULL       | SYS   | UPDATE_PUSH_DOWN_T1 TAB_0 | 413    | 6    | 0         |       |        |
 | 3  |       SUBSELECT               | SYS   | SUBQRY_0                  | 744    | 12   | 0         |       |        |
 | 4  |         KERNEL FILTER         |       |                           | 744    | 12   | 0         |       |        |
 | 5  |           TABLE ACCESS FULL   | SYS   | SYS_DUMMY TAB_1           | 744    | 12   | 0         |       |        |
@@ -145,7 +145,7 @@ Succeed.
 
 SQL> select * from (select div1/div2 avg from push_down_table_t1 where div1 > 0 and div2 > 0) where avg < 3;
 
-OG-00637, [1:23]The divisor was zero
+OG-00637, [1:27]The divisor was zero
 SQL> alter system set _OPTIM_SUBQUERY_ELIMINATION=true;
 
 Succeed.
@@ -193,11 +193,11 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1 WHERE c2 > 20) ORDER BY c
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |              | 150  | 59   | 1         |       |        |
-| 1  |   QUERY SORT ORDER BY   |       |              | 150  | 59   | 1         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 150  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |              | 138  | 54   | 1         |       |        |
+| 1  |   QUERY SORT ORDER BY   |       |              | 138  | 54   | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 138  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -218,11 +218,11 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1) ORDER BY c1 ASC;
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |              | 449  | 170  | 6         |       |        |
-| 1  |   QUERY SORT ORDER BY   |       |              | 449  | 170  | 6         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 449  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |              | 413  | 156  | 6         |       |        |
+| 1  |   QUERY SORT ORDER BY   |       |              | 413  | 156  | 6         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 413  | 6    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 
 7 rows fetched.
@@ -242,11 +242,11 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1 WHERE c2 > 20 ORDER BY c1
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation               | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |              | 150  | 59   | 1         |       |        |
-| 1  |   QUERY SORT ORDER BY   |       |              | 150  | 59   | 1         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 150  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |              | 138  | 54   | 1         |       |        |
+| 1  |   QUERY SORT ORDER BY   |       |              | 138  | 54   | 1         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 138  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -267,14 +267,14 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1 WHERE c1 > 2 UNION ALL SE
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |              | 300  | 119  | 4         |       |        |
-| 1  |   QUERY SORT ORDER BY         |       |              | 300  | 119  | 4         |       |        |
-| 2  |       SUBSELECT               | SYS   | T            | 300  | 10   | 0         |       |        |
-| 3  |         UNION ALL             |       |              | 300  | 10   | 0         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 150  | 4    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 150  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |              | 276  | 110  | 3         |       |        |
+| 1  |   QUERY SORT ORDER BY         |       |              | 276  | 110  | 3         |       |        |
+| 2  |       SUBSELECT               | SYS   | T            | 276  | 9    | 0         |       |        |
+| 3  |         UNION ALL             |       |              | 276  | 9    | 0         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 138  | 4    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 138  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -298,14 +298,14 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1 WHERE c1 > 2 UNION SELECT
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |              | 300  | 119  | 4         |       |        |
-| 1  |   QUERY SORT ORDER BY         |       |              | 300  | 119  | 4         |       |        |
-| 2  |       SUBSELECT               | SYS   | T            | 300  | 10   | 0         |       |        |
-| 3  |         HASH UNION            |       |              | 300  | 10   | 0         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 150  | 4    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 150  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |              | 276  | 110  | 3         |       |        |
+| 1  |   QUERY SORT ORDER BY         |       |              | 276  | 110  | 3         |       |        |
+| 2  |       SUBSELECT               | SYS   | T            | 276  | 9    | 0         |       |        |
+| 3  |         HASH UNION            |       |              | 276  | 9    | 0         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 138  | 4    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 138  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -329,14 +329,14 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1 WHERE c1 > 2 EXCEPT SELEC
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |              | 300  | 118  | 4         |       |        |
-| 1  |   QUERY SORT ORDER BY         |       |              | 300  | 118  | 4         |       |        |
-| 2  |       SUBSELECT               | SYS   | T            | 300  | 9    | 0         |       |        |
-| 3  |         MINUS(L)              |       |              | 300  | 9    | 0         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 150  | 4    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 150  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |              | 276  | 109  | 3         |       |        |
+| 1  |   QUERY SORT ORDER BY         |       |              | 276  | 109  | 3         |       |        |
+| 2  |       SUBSELECT               | SYS   | T            | 276  | 8    | 0         |       |        |
+| 3  |         MINUS(L)              |       |              | 276  | 8    | 0         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 138  | 4    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 138  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -358,14 +358,14 @@ SQL> EXPLAIN SELECT * FROM (SELECT * FROM push_down_t1 WHERE c1 > 2 INTERSECT SE
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |              | 300  | 118  | 4         |       |        |
-| 1  |   QUERY SORT ORDER BY         |       |              | 300  | 118  | 4         |       |        |
-| 2  |       SUBSELECT               | SYS   | T            | 300  | 9    | 0         |       |        |
-| 3  |         INTERSECT(L)          |       |              | 300  | 9    | 0         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 150  | 4    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 150  | 4    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |              | 276  | 109  | 3         |       |        |
+| 1  |   QUERY SORT ORDER BY         |       |              | 276  | 109  | 3         |       |        |
+| 2  |       SUBSELECT               | SYS   | T            | 276  | 8    | 0         |       |        |
+| 3  |         INTERSECT(L)          |       |              | 276  | 8    | 0         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 138  | 4    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T2 | 138  | 4    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -387,13 +387,13 @@ SQL> EXPLAIN SELECT * FROM (SELECT c1, COUNT(*) cnt FROM push_down_t1 GROUP BY c
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 --------------------------------------------------------------------------------------------------------
-| Id | Operation                     | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                     | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |              | 44   | 47   | 8         |       |        |
-| 1  |   QUERY SORT ORDER BY         |       |              | 44   | 47   | 8         |       |        |
-| 2  |       SUBSELECT               | SYS   |              | 44   | 31   | 8         |       |        |
-| 3  |         HASH GROUP BY         |       |              | 44   | 31   | 8         |       |        |
-| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 449  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |              | 41   | 44   | 8         |       |        |
+| 1  |   QUERY SORT ORDER BY         |       |              | 41   | 44   | 8         |       |        |
+| 2  |       SUBSELECT               | SYS   |              | 41   | 30   | 8         |       |        |
+| 3  |         HASH GROUP BY         |       |              | 41   | 30   | 8         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 413  | 6    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 
 9 rows fetched.
@@ -413,14 +413,14 @@ SQL> EXPLAIN SELECT * FROM (SELECT c1, COUNT(*) cnt FROM push_down_t1 GROUP BY c
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------------------------
-| Id | Operation                       | Owner | Name         | Rows | Cost  | StartCost | Bytes | Remark |
+| Id | Operation                       | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark |
 ----------------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT                |       |              | 2    | 9    | 8         |       |        |
 | 1  |   QUERY SORT ORDER BY           |       |              | 2    | 9    | 8         |       |        |
 | 2  |       SUBSELECT                 | SYS   |              | 2    | 9    | 8         |       |        |
 | 3  |         QUERY LIMIT             |       |              | 2    | 9    | 8         |       |        |
-| 4  |           HASH GROUP BY         |       |              | 44   | 31   | 8         |       |        |
-| 5  |               TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 449  | 6    | 0         |       |        |
+| 4  |           HASH GROUP BY         |       |              | 41   | 30   | 8         |       |        |
+| 5  |               TABLE ACCESS FULL | SYS   | PUSH_DOWN_T1 | 413  | 6    | 0         |       |        |
 ----------------------------------------------------------------------------------------------------------
 
 10 rows fetched.

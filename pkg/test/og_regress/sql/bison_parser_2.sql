@@ -545,3 +545,5 @@ create table native_desc_idx_t(a int primary key, b int);
 create index native_desc_idx1 on native_desc_idx_t(a desc);
 create index native_desc_idx2 on native_desc_idx_t(a desc); --error
 drop table if exists native_desc_idx_t;
+
+alter system set use_bison_parser = false;

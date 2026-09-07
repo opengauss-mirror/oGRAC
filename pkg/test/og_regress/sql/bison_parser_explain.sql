@@ -64,3 +64,5 @@ drop table if exists bison_explain_plain;
 drop table if exists bison_explain_ctas;
 drop table if exists bison_explain_dst;
 drop table if exists bison_explain_src;
+
+alter system set use_bison_parser = false;

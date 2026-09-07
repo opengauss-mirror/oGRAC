@@ -44,7 +44,7 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT        |       |                              | 0    | 0    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |                              | 0    | 0    | 0         |       |        |
 | 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_TAB_NOT_EXISTS1_0071 | 0    | 0    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TAB_NOT_EXISTS2_0071 | 104  | 3    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TAB_NOT_EXISTS2_0071 | 95   | 3    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

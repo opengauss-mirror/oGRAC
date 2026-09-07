@@ -1500,7 +1500,7 @@ SQL> drop table if exists bison_pl_char_concat;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_sql_found_t;
 
 Succeed.
@@ -1521,7 +1521,7 @@ SQL> insert into bison_pl_sql_found_t values(1);
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_sql_isopen_proc(p_id int) is
   2 begin
   3     delete from bison_pl_sql_found_t where id = p_id;
@@ -1535,7 +1535,7 @@ SQL> create or replace procedure bison_pl_sql_isopen_proc(p_id int) is
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_sql_found_proc(p_id int) is
   2 begin
   3     delete from bison_pl_sql_found_t where id = p_id;
@@ -1549,7 +1549,7 @@ SQL> create or replace procedure bison_pl_sql_found_proc(p_id int) is
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2 begin
   3     bison_pl_sql_isopen_proc(99);
@@ -1559,17 +1559,17 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> select stage, val from bison_pl_sql_found_log order by stage;
 
-STAGE                          VAL
+STAGE                          VAL         
 ------------------------------ ------------
-sql_found                      1
-sql_isopen                     0
+sql_found                      1           
+sql_isopen                     0           
 
 2 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop procedure bison_pl_sql_found_proc;
 
 Succeed.
@@ -1586,7 +1586,7 @@ SQL> drop table if exists bison_pl_sql_found_t;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_cursor_attr_t;
 
 Succeed.
@@ -1611,7 +1611,7 @@ SQL> insert into bison_pl_cursor_attr_t values(2, 'two');
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_sql_notfound_proc(p_id int) is
   2 begin
   3     update bison_pl_cursor_attr_t set note = note where id = p_id;
@@ -1625,7 +1625,7 @@ SQL> create or replace procedure bison_pl_sql_notfound_proc(p_id int) is
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2 begin
   3     bison_pl_sql_notfound_proc(9);
@@ -1634,7 +1634,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> declare
   2     v_count int;
   3 begin
@@ -1646,7 +1646,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> declare
   2     cursor c1 is select id from bison_pl_cursor_attr_t order by id;
   3     v_id int;
@@ -1673,7 +1673,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> declare
   2     rc sys_refcursor;
   3     v_id int;
@@ -1690,7 +1690,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_auto_proc is
   2     pragma autonomous_transaction;
   3 begin
@@ -1701,7 +1701,7 @@ SQL> create or replace procedure bison_pl_auto_proc is
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2 begin
   3     bison_pl_auto_proc;
@@ -1710,7 +1710,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_exception_init_proc is
   2     snapshot_too_old exception;
   3     v_part varchar(130);
@@ -1723,7 +1723,7 @@ SQL> create or replace procedure bison_pl_exception_init_proc is
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> begin
   2     bison_pl_exception_init_proc;
   3 end;
@@ -1731,7 +1731,7 @@ SQL> begin
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_cursor_loop_t;
 
 Succeed.
@@ -1744,7 +1744,7 @@ SQL> insert into bison_pl_cursor_loop_t values('USR', 'TAB', 'P1');
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_cursor_assign_proc is
   2     v_table varchar(130);
   3     v_part varchar(130);
@@ -1763,7 +1763,7 @@ SQL> create or replace procedure bison_pl_cursor_assign_proc is
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> begin
   2     bison_pl_cursor_assign_proc;
   3 end;
@@ -1771,25 +1771,25 @@ SQL> begin
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> select stage, val from bison_pl_cursor_attr_log order by stage;
 
-STAGE                          VAL
+STAGE                          VAL         
 ------------------------------ ------------
-cursor_for_assign              1
-cursor_found                   1
-cursor_isopen                  1
-cursor_notfound                1
-cursor_rowcount                1
-pragma_auto                    1
-pragma_exception_init          1
-refcursor_notfound             1
-sql_notfound                   1
-sql_rowcount                   1
+cursor_for_assign              1           
+cursor_found                   1           
+cursor_isopen                  1           
+cursor_notfound                1           
+cursor_rowcount                1           
+pragma_auto                    1           
+pragma_exception_init          1           
+refcursor_notfound             1           
+sql_notfound                   1           
+sql_rowcount                   1           
 
 10 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop procedure bison_pl_cursor_assign_proc;
 
 Succeed.
@@ -1818,7 +1818,7 @@ SQL> drop table if exists bison_pl_cursor_attr_t;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_trig_event_log;
 
 Succeed.
@@ -1839,7 +1839,7 @@ SQL> insert into bison_pl_trig_event_t values(1, 'old');
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> create or replace trigger bison_pl_trig_event_trg
   2 after insert or update or delete on bison_pl_trig_event_t
   3 for each row
@@ -1874,23 +1874,23 @@ SQL> delete from bison_pl_trig_event_t where id = 2;
 
 SQL> select event_name, count(*) as cnt from bison_pl_trig_event_log group by event_name order by event_name;
 
-EVENT_NAME CNT
+EVENT_NAME CNT                 
 ---------- --------------------
-delete     1
-insert     1
-update     1
+delete     1                   
+insert     1                   
+update     1                   
 
 3 rows fetched.
 
 SQL> select count(*) as updated_rows from bison_pl_trig_event_t where status = 'new';
 
-UPDATED_ROWS
+UPDATED_ROWS        
 --------------------
-1
+1                   
 
 1 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop trigger bison_pl_trig_event_trg;
 
 Succeed.
@@ -1915,7 +1915,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> declare
   2     res varchar2(100);
   3 begin
@@ -1928,7 +1928,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_issue245_log;
 
 Succeed.
@@ -1937,7 +1937,7 @@ SQL> create table bison_pl_issue245_log(name varchar(40), val int);
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2     n PLS_INTEGER := 1;
   3 begin
@@ -1947,7 +1947,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pls_integer_name_t;
 
 Succeed.
@@ -1968,7 +1968,7 @@ SQL> drop table bison_pls_integer_name_t;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2     first integer := 1;
   3     last integer := 3;
@@ -1988,7 +1988,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> declare
   2     type bison_arr is varray(4) of varchar2(10);
   3     team bison_arr := bison_arr();
@@ -2001,7 +2001,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> declare
   2     type roster is table of varchar2(15);
   3     names roster := roster('A', 'B');
@@ -2016,7 +2016,7 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> drop function if exists bison_pl_issue245_return_type;
 
 Succeed.
@@ -2037,7 +2037,7 @@ SQL> insert into bison_pl_issue245_type_t values(1, 'one');
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> create or replace function bison_pl_issue245_return_type(p_id int)
   2 return bison_pl_issue245_type_t.id%TYPE
   3 is
@@ -2052,11 +2052,11 @@ SQL> select bison_pl_issue245_return_type(1) as return_type_result from sys_dumm
 
 RETURN_TYPE_RESULT
 ------------------
-1
+1                 
 
 1 rows fetched.
 
-SQL>
+SQL> 
 SQL> create or replace function bison_pl_issue245_body_type(p_id int)
   2 return int
   3 is
@@ -2075,11 +2075,11 @@ SQL> select bison_pl_issue245_body_type(1) as body_type_result from sys_dummy;
 
 BODY_TYPE_RESULT
 ----------------
-1
+1               
 
 1 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop function bison_pl_issue245_return_type;
 
 Succeed.
@@ -2092,24 +2092,24 @@ SQL> drop table bison_pl_issue245_type_t;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> select name, val from bison_pl_issue245_log order by name;
 
-NAME                                     VAL
+NAME                                     VAL         
 ---------------------------------------- ------------
-collection_bounds                        2
-empty_constructor                        0
-keyword_bounds                           3
-pls_integer                              1
+collection_bounds                        2           
+empty_constructor                        0           
+keyword_bounds                           3           
+pls_integer                              1           
 
 4 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_issue245_log;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_scope_log;
 
 Succeed.
@@ -2134,12 +2134,12 @@ SQL> insert into bison_pl_scope_src values(2, 'two');
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> alter system set use_bison_parser = true;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2     v_scope int := 100;
   3     rc sys_refcursor;
@@ -2156,7 +2156,7 @@ SQL> declare
  14         v_scope.note := v_row.note;
  15         insert into bison_pl_scope_log values('bison', 'first', v_scope.id, v_scope.note);
  16     end;
- 17
+ 17 
  18     declare
  19         type local_row_t is record(code int, label varchar2(20));
  20         v_scope local_row_t;
@@ -2167,7 +2167,7 @@ SQL> declare
  25         v_scope.label := v_row.note;
  26         insert into bison_pl_scope_log values('bison', 'second', v_scope.code, v_scope.label);
  27     end;
- 28
+ 28 
  29     open rc for select id from bison_pl_scope_src where id = v_filter;
  30     fetch rc into v_id;
  31     close rc;
@@ -2178,12 +2178,12 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2     v_scope int := 100;
   3     rc sys_refcursor;
@@ -2200,7 +2200,7 @@ SQL> declare
  14         v_scope.note := v_row.note;
  15         insert into bison_pl_scope_log values('native', 'first', v_scope.id, v_scope.note);
  16     end;
- 17
+ 17 
  18     declare
  19         type local_row_t is record(code int, label varchar2(20));
  20         v_scope local_row_t;
@@ -2211,7 +2211,7 @@ SQL> declare
  25         v_scope.label := v_row.note;
  26         insert into bison_pl_scope_log values('native', 'second', v_scope.code, v_scope.label);
  27     end;
- 28
+ 28 
  29     open rc for select id from bison_pl_scope_src where id = v_filter;
  30     fetch rc into v_id;
  31     close rc;
@@ -2222,28 +2222,28 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> alter system set use_bison_parser = true;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> select parser_name, stage, val, note from bison_pl_scope_log order by parser_name, stage;
 
-PARSER_NAME STAGE                VAL          NOTE
+PARSER_NAME STAGE                VAL          NOTE                
 ----------- -------------------- ------------ --------------------
-bison       first                1            one
-bison       outer                100          unchanged
-bison       refcursor            2            mapped
-bison       second               2            two
-native      first                1            one
-native      outer                100          unchanged
-native      refcursor            2            mapped
-native      second               2            two
+bison       first                1            one                 
+bison       outer                100          unchanged           
+bison       refcursor            2            mapped              
+bison       second               2            two                 
+native      first                1            one                 
+native      outer                100          unchanged           
+native      refcursor            2            mapped              
+native      second               2            two                 
 
 8 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop table bison_pl_scope_log;
 
 Succeed.
@@ -2252,7 +2252,7 @@ SQL> drop table bison_pl_scope_src;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop function if exists sys.bison_pl_issue259_func_end3;
 
 Succeed.
@@ -2267,9 +2267,9 @@ Succeed.
 
 SQL> select sys.bison_pl_issue259_func_end3() as issue259_func_end from sys_dummy;
 
-ISSUE259_FUNC_END
+ISSUE259_FUNC_END                       
 ----------------------------------------
-1
+1                                       
 
 1 rows fetched.
 
@@ -2277,7 +2277,7 @@ SQL> drop function sys.bison_pl_issue259_func_end3;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop procedure if exists sys.bison_pl_issue261_proc_end3;
 
 Succeed.
@@ -2294,7 +2294,7 @@ SQL> drop procedure sys.bison_pl_issue261_proc_end3;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop trigger if exists bison_pl_issue262_trg;
 
 Succeed.
@@ -2347,9 +2347,9 @@ SQL> insert into bison_pl_issue262_log values(null, 'INSERT');
 
 SQL> select id, action from bison_pl_issue262_log;
 
-ID                                       ACTION
+ID                                       ACTION                                            
 ---------------------------------------- --------------------------------------------------
-2                                        p\2|:new.id|:old.id|e':old.id
+2                                        p\2|:new.id|:old.id|e':old.id                     
 
 1 rows fetched.
 
@@ -2361,7 +2361,7 @@ SQL> drop table bison_pl_issue262_log;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop trigger if exists bison_pl_issue263_trg;
 
 Succeed.
@@ -2403,10 +2403,10 @@ SQL> update bison_pl_issue263_basic set name = 'new' where id = 1;
 
 SQL> select id, action from bison_pl_issue263_log order by action;
 
-ID                                       ACTION
+ID                                       ACTION                                            
 ---------------------------------------- --------------------------------------------------
-1                                        :new.id
-1                                        UPDATED
+1                                        :new.id                                           
+1                                        UPDATED                                           
 
 2 rows fetched.
 
@@ -2422,7 +2422,7 @@ SQL> drop table bison_pl_issue263_basic;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop trigger if exists bison_pl_issue266_trg;
 
 Succeed.
@@ -2459,9 +2459,9 @@ SQL> insert into bison_pl_issue266_view values(10, 'alice');
 
 SQL> select id, name from bison_pl_issue266_basic;
 
-ID                                       NAME
+ID                                       NAME                                              
 ---------------------------------------- --------------------------------------------------
-10                                       alice
+10                                       alice                                             
 
 1 rows fetched.
 
@@ -2477,7 +2477,7 @@ SQL> drop table bison_pl_issue266_basic;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_pushback_log;
 
 Succeed.
@@ -2498,7 +2498,7 @@ SQL> insert into bison_pl_pushback_src values(7, 'PB');
 
 1 rows affected.
 
-SQL>
+SQL> 
 SQL> declare
   2     type pushback_rec_t is record(id int, name varchar2(20));
   3     type id_tab_t is table of int index by binary_integer;
@@ -2511,16 +2511,16 @@ SQL> declare
  10 begin
  11     v_ids(1) := 11;
  12     bison_pl_proc(v_ids(1));
- 13
+ 13 
  14     open c_arg(p_min => 7, p_name => 'PB');
  15     fetch c_arg into v_id, v_name;
  16     close c_arg;
  17     v_rec.id := v_id;
  18     v_rec.name := v_name;
- 19
+ 19 
  20     execute immediate 'select id, name from bison_pl_pushback_src where id = :1'
  21         into v_id, v_name using in v_rec.id;
- 22
+ 22 
  23     insert into bison_pl_pushback_log values('assoc_type_lookahead', v_ids(1), 'ok');
  24     insert into bison_pl_pushback_log values('cursor_named_arg', v_rec.id, v_rec.name);
  25     insert into bison_pl_pushback_log values('execute_using', v_id, v_name);
@@ -2529,18 +2529,18 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> select * from bison_pl_pushback_log order by stage;
 
-STAGE                                    VAL          INFO
+STAGE                                    VAL          INFO                                                        
 ---------------------------------------- ------------ ------------------------------------------------------------
-assoc_type_lookahead                     11           ok
-cursor_named_arg                         7            PB
-execute_using                            7            PB
+assoc_type_lookahead                     11           ok                                                          
+cursor_named_arg                         7            PB                                                          
+execute_using                            7            PB                                                          
 
 3 rows fetched.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_pl_pushback_log;
 
 Succeed.
@@ -2549,7 +2549,7 @@ SQL> drop table if exists bison_pl_pushback_src;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop procedure if exists bison_pl_null_concat_proc;
 
 Succeed.
@@ -2564,7 +2564,7 @@ SQL> create or replace procedure bison_pl_null_concat_proc(p_out out varchar2) a
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> declare
   2     result_value varchar2(20);
   3 begin
@@ -2577,12 +2577,12 @@ SQL> declare
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> drop procedure if exists bison_pl_null_concat_proc;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop procedure if exists bison_pl_standard_error_probe;
 
 Succeed.
@@ -2599,7 +2599,7 @@ SQL> create or replace procedure bison_pl_standard_error_sink(p_msg varchar2) as
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> create or replace procedure bison_pl_standard_error_probe as
   2 begin
   3     bison_pl_standard_error_sink(substrb(sql_err_msg, 1, 2000));
@@ -2608,12 +2608,12 @@ SQL> create or replace procedure bison_pl_standard_error_probe as
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> call bison_pl_standard_error_probe;
 
 PL/SQL procedure successfully completed.
 
-SQL>
+SQL> 
 SQL> drop procedure bison_pl_standard_error_probe;
 
 Succeed.
@@ -2622,7 +2622,7 @@ SQL> drop procedure bison_pl_standard_error_sink;
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.
@@ -2672,6 +2672,11 @@ SQL> drop table if exists bison_pl_type_t;
 Succeed.
 
 SQL> drop table if exists bison_pl_t;
+
+Succeed.
+
+SQL> 
+SQL> alter system set use_bison_parser = false;
 
 Succeed.
 

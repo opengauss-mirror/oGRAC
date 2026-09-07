@@ -41,10 +41,10 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name                          | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |                               | 545  | 28   | 20        |       |        |
-| 1  |   HASH JOIN OUTER(R)    |       |                               | 545  | 28   | 20        |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_RIGHTJOIN2_0011 | 311  | 5    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_RIGHTJOIN1_0011 | 351  | 6    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |                               | 461  | 26   | 19        |       |        |
+| 1  |   HASH JOIN OUTER(R)    |       |                               | 461  | 26   | 19        |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_RIGHTJOIN2_0011 | 286  | 5    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_RIGHTJOIN1_0011 | 323  | 5    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       

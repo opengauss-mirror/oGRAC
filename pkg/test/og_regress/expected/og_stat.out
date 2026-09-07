@@ -1,4 +1,5 @@
 
+
 SQL> -- check system-auto tablespace, include 'SYSTEM','TEMP','UNDO','USERS','TEMP2','TEMP2_UNDO','SYSAUX'
 SQL> -- if system-auto tablespaces changed, you must modify this UseCase and export-tool's function "exp_get_all_tbspace".
 SQL> select count(*),'Can not be changed!!!!!!!!!!!!!!!' from dv_tablespaces;
@@ -95,7 +96,7 @@ SQL> select count(*) from v$sgastat where value like '0x%';
 
 COUNT(*)            
 --------------------
-0                  
+0                   
 
 1 rows fetched.
 
@@ -277,7 +278,7 @@ NUM_DISTINCT LOW_VALUE                                                        HI
 4 rows fetched.
 
 SQL> 
-SQL> SELECT A.NUM_DISTINCT,A.LOW_VALUE,A.HIGH_VALUE,A.HISTOGRAM
+SQL> SELECT A.NUM_DISTINCT,A.LOW_VALUE,A.HIGH_VALUE,A.HISTOGRAM 
   2 FROM SYS_COLUMNS A,SYS_TABLES b,SYS_USERS 
   3 where A.TABLE#=b.ID AND b.NAME='CUSTOMER_TEST0417' and SYS_USERS.id=b.USER# and SYS_USERS.name='SYS' 
   4 order by a.id;
@@ -299,26 +300,28 @@ Succeed.
 SQL> --2019092413327
 SQL> select if(VALUE>0,1,0) "judge" from v$sysstat where NAME='user logons current';
 
-judge
+judge       
 ------------
-1
+1           
 
 1 rows fetched.
 
 SQL> select if(VALUE<1000000,1,0) "judge" from v$sysstat where NAME='user logons current';
 
-judge
+judge       
 ------------
-1
+1           
 
 1 rows fetched.
 
 SQL> select 1 "judge"  from dual where((select VALUE from v$sysstat where NAME='user logons cumulation')>=(select VALUE from v$sysstat where NAME='user logons current'));
 
-judge
+judge       
 ------------
-1
+1           
 
 1 rows fetched.
 
-SQL>
+SQL> 
+
+

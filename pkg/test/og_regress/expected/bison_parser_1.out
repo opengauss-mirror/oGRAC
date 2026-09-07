@@ -92,23 +92,23 @@ SQL> insert ignore into bison_t2 values (1,1);
 
 SQL> insert into bison_t2 values (1,1); --error
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
 SQL> 
 SQL> insert /*+parallel(10)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
 SQL> insert /*+parallel(10)*/ into bison_t2(a, b) values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
 SQL> insert /*+opt_param(abc=true)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
 SQL> insert /*+db_version(=abc)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
 SQL> insert /*+db_version(==abc)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_60, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
 SQL> 
 SQL> drop table bison_t1;
 
@@ -194,7 +194,7 @@ OG-00601, [1:71]Sql syntax error: syntax error
 SQL> 
 SQL> insert into bison_t1 values (1, 1, 1) returning a; --error
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_62, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_51, duplicate key 1
 SQL> insert into bison_t1 values (1, 1) returning a; --error
 
 OG-00601, Sql syntax error: too less value expressions
@@ -451,9 +451,9 @@ SQL>
 SQL> -- Tuple IN row lists must retain every row and verify scalar subqueries in every row.
 SQL> select count(*) as bison_in_middle_row from sys_dummy where (2, 2) in ((1, 1), (2, 2), (3, 3));
 
-BISON_IN_MIDDLE_ROW
+BISON_IN_MIDDLE_ROW 
 --------------------
-1
+1                   
 
 1 rows fetched.
 
@@ -461,7 +461,7 @@ SQL> select count(*) as bison_not_in_middle_row from sys_dummy where (2, 2) not 
 
 BISON_NOT_IN_MIDDLE_ROW
 -----------------------
-0
+0                      
 
 1 rows fetched.
 
@@ -494,7 +494,7 @@ SQL> select count(*) as bison_tuple_unary_in from sys_dummy where (1, 2) in ((+(
 
 BISON_TUPLE_UNARY_IN
 --------------------
-1
+1                   
 
 1 rows fetched.
 
@@ -502,7 +502,7 @@ SQL> select count(*) as bison_tuple_unary_not_in from sys_dummy where (9, 9) not
 
 BISON_TUPLE_UNARY_NOT_IN
 ------------------------
-1
+1                       
 
 1 rows fetched.
 
@@ -513,7 +513,7 @@ SQL> select count(*) as bison_connect_root_tuple from sys_dummy where (1, 2) in 
 
 BISON_CONNECT_ROOT_TUPLE
 ------------------------
-1
+1                       
 
 1 rows fetched.
 
@@ -528,7 +528,7 @@ SQL> select count(*) as bison_tuple_direct_in from sys_dummy where (1, 2) in ((s
 
 BISON_TUPLE_DIRECT_IN
 ---------------------
-1
+1                    
 
 1 rows fetched.
 
@@ -701,7 +701,7 @@ SQL> delete from bison_t1, bison_t2 using bison_t1, bison_t2 where a = 2;
 
 3 rows affected.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_delete_alias_t;
 
 Succeed.
@@ -728,9 +728,9 @@ SQL> delete from bison_delete_alias_t t where t.name = 'a';
 
 SQL> select count(*) as alias_delete_count from bison_delete_alias_t;
 
-ALIAS_DELETE_COUNT
+ALIAS_DELETE_COUNT  
 --------------------
-0
+0                   
 
 1 rows fetched.
 
@@ -2581,7 +2581,7 @@ SQL> MERGE INTO employees e
 
 0 rows affected.
 
-SQL>
+SQL> 
 SQL> drop table if exists bison_merge_issue243_t1;
 
 Succeed.
@@ -2617,10 +2617,10 @@ SQL> merge into bison_merge_issue243_t1 t1 using bison_merge_issue243_t2 t2
 
 SQL> select product_name, category_id from bison_merge_issue243_t1 order by product_name;
 
-PRODUCT_NAME                                                 CATEGORY_ID
+PRODUCT_NAME                                                 CATEGORY_ID                                                 
 ------------------------------------------------------------ ------------------------------------------------------------
-new                                                          newcat
-old                                                          oldcat
+new                                                          newcat                                                      
+old                                                          oldcat                                                      
 
 2 rows fetched.
 
@@ -5035,25 +5035,25 @@ Succeed.
 
 SQL> select regexp_count('123123123123', '123', 3, 'i') count;
 
-COUNT
+COUNT       
 ------------
-3
+3           
 
 1 rows fetched.
 
 SQL> select 1 clob;
 
-CLOB
+CLOB        
 ------------
-1
+1           
 
 1 rows fetched.
 
 SQL> select 1 jsonb;
 
-JSONB
+JSONB       
 ------------
-1
+1           
 
 1 rows fetched.
 
@@ -5063,7 +5063,7 @@ Succeed.
 
 SQL> select to_blob(ad_composite) blob from bison_alias_print_media;
 
-BLOB
+BLOB                                                            
 ----------------------------------------------------------------
 
 0 rows fetched.
@@ -5078,7 +5078,7 @@ Succeed.
 
 SQL> select deptno, ename, sal, dense_rank() over (partition by deptno order by sal) dense_rank from bison_alias_emp where deptno = 30 order by dense_rank, ename;
 
-DEPTNO                                   ENAME      SAL                                      DENSE_RANK
+DEPTNO                                   ENAME      SAL                                      DENSE_RANK  
 ---------------------------------------- ---------- ---------------------------------------- ------------
 
 0 rows fetched.
@@ -5146,10 +5146,7 @@ SQL> drop table bison_delete_alias_t1;
 
 Succeed.
 
-SQL>
-
-
-
+SQL> 
 SQL> -- Validate time fields before date encoding.
 SQL> alter session set NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS';
 
@@ -5163,7 +5160,7 @@ SQL> alter session set NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:
 
 Succeed.
 
-SQL>
+SQL> 
 SQL> select next_day('9999-12-31 24:59:59', 1) from sys_dummy; --error
 
 OG-00146, [1:8]HOUR should be from 0 to 23
@@ -5194,12 +5191,12 @@ OG-00146, [1:8]HOUR should be from 0 to 23
 SQL> select next_day('9999-12-31 23:59:59', 1) from sys_dummy; --error
 
 OG-00694, [1:8]DATETIME out of range, it must be between 0001-01-01 00:00:00 and 9999-12-31 23:59:59
-SQL>
+SQL> 
 SQL> select next_day('2024-02-29 23:59:59', 1) from sys_dummy;
 
 NEXT_DAY('2024-02-29 23:59:59', 1)
 ----------------------------------
-2024-03-03 23:59:59
+2024-03-03 23:59:59               
 
 1 rows fetched.
 
@@ -5207,7 +5204,7 @@ SQL> select next_day('2024-02-29', 1) from sys_dummy;
 
 NEXT_DAY('2024-02-29', 1)
 -------------------------
-2024-03-03 00:00:00
+2024-03-03 00:00:00      
 
 1 rows fetched.
 
@@ -5215,7 +5212,7 @@ SQL> select cast('0001-01-01 00:00:00' as date) from sys_dummy;
 
 CAST('0001-01-01 00:00:00' AS DATE)
 -----------------------------------
-0001-01-01 00:00:00
+0001-01-01 00:00:00                
 
 1 rows fetched.
 
@@ -5223,7 +5220,7 @@ SQL> select cast('9999-12-31 23:59:59' as date) from sys_dummy;
 
 CAST('9999-12-31 23:59:59' AS DATE)
 -----------------------------------
-9999-12-31 23:59:59
+9999-12-31 23:59:59                
 
 1 rows fetched.
 
@@ -5231,15 +5228,15 @@ SQL> select cast('9999-12-31 23:59:59.999999' as timestamp) from sys_dummy;
 
 CAST('9999-12-31 23:59:59.999999' AS TIMESTAMP)
 -----------------------------------------------
-9999-12-31 23:59:59.999999
+9999-12-31 23:59:59.999999                     
 
 1 rows fetched.
 
 SQL> select cast('2024-02-29 23:59:59.999999 +08:00' as timestamp with time zone) from sys_dummy;
 
-CAST('2024-02-29 23:59:59.999999 +08:00' AS TIMESTAMP WITH TIME
+CAST('2024-02-29 23:59:59.999999 +08:00' AS TIMESTAMP WITH TIME 
 ----------------------------------------------------------------
-2024-02-29 23:59:59.999999 +08:00
+2024-02-29 23:59:59.999999 +08:00                               
 
 1 rows fetched.
 
@@ -5247,7 +5244,7 @@ SQL> select extract(year from '99991231235959') from sys_dummy;
 
 EXTRACT(YEAR FROM '99991231235959')
 -----------------------------------
-9999
+9999                               
 
 1 rows fetched.
 
@@ -5255,8 +5252,15 @@ SQL> select 1 as database_alive from sys_dummy;
 
 DATABASE_ALIVE
 --------------
-1
+1             
 
 1 rows fetched.
 
-SQL>
+SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
+
+

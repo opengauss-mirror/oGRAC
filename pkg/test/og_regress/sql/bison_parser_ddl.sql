@@ -622,3 +622,5 @@ drop table if exists bison_ddl_part_tab;
 drop table if exists bison_ddl_tab_renamed;
 drop table if exists "BisonDdl252QuotedTab";
 drop table if exists bison_ddl_tab;
+
+alter system set use_bison_parser = false;

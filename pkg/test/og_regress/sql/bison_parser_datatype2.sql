@@ -1,5 +1,5 @@
-show parameter use_bison_parser;
 alter system set use_bison_parser = true;
+show parameter use_bison_parser;
 
 create table test_table(v binary_double);
 insert into test_table values(1.17549E-38F);
@@ -141,3 +141,5 @@ drop table test1;
 drop table if exists bison_rowid_datatype_t;
 create table bison_rowid_datatype_t(a rowid);
 drop table if exists bison_rowid_datatype_t;
+
+alter system set use_bison_parser = false;

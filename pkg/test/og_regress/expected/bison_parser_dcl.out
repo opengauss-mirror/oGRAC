@@ -419,5 +419,10 @@ SQL> alter session enable optinfo_log;
 Succeed.
 
 SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
 
 

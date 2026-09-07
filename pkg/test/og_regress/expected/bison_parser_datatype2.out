@@ -1,15 +1,15 @@
 
 
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
 SQL> show parameter use_bison_parser;
 
 NAME                                                             DATATYPE             VALUE                                                            RUNTIME_VALUE                                                    EFFECTIVE           
 ---------------------------------------------------------------- -------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- --------------------
 USE_BISON_PARSER                                                 OG_TYPE_BOOLEAN      TRUE                                                             TRUE                                                             immediately         
 
-
-SQL> alter system set use_bison_parser = true;
-
-Succeed.
 
 SQL> 
 SQL> create table test_table(v binary_double);
@@ -709,3 +709,10 @@ SQL> drop table if exists bison_rowid_datatype_t;
 Succeed.
 
 SQL> 
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
+
+

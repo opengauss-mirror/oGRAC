@@ -1769,3 +1769,5 @@ drop procedure if exists bison_pl_proc;
 drop table if exists bison_pl_src;
 drop table if exists bison_pl_type_t;
 drop table if exists bison_pl_t;
+
+alter system set use_bison_parser = false;
