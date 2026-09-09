@@ -97,7 +97,7 @@ EXPLAIN PLAN OUTPUT
 | 2  |       VIEW                                                 | SYS   | DB_TAB_PARTITIONS X       | 0    | 0    | 0         |       |        |
 | 3  |           TABLE ACCESS BY INDEX ROWID                      | SYS   | SYS_COMPRESS_OBJECTS CO   | 1    | 0    | 0         |       |        |
 | 4  |             INDEX UNIQUE SCAN                              | SYS   | IX_COMPRESS_001           | 1    | 0    | 0         |       |        |
-| 5  |         WINDOW SORT                                        |       |                           | 0    | 11   | 0         |       |        |
+| 5  |         WINDOW SORT                                        |       |                           | 0    | 11   | 11        |       |        |
 | 6  |           NESTED LOOPS                                     |       |                           | 0    | 11   | 0         |       |        |
 | 7  |             NESTED LOOPS                                   |       |                           | 0    | 11   | 0         |       |        |
 | 8  |               NESTED LOOPS                                 |       |                           | 0    | 3    | 0         |       |        |
@@ -111,7 +111,7 @@ EXPLAIN PLAN OUTPUT
 | 16 |             SUBSELECT                                      | SYS   | Y                         | 0    | 0    | 0         |       |        |
 | 17 |               NESTED LOOPS                                 |       |                           | 0    | 0    | 0         |       |        |
 | 18 |                   VIEW                                     | SYS   | DB_TAB_SUBPARTITIONS O    | 0    | 0    | 0         |       |        |
-| 19 |                     WINDOW SORT                            |       |                           | 0    | 11   | 0         |       |        |
+| 19 |                     WINDOW SORT                            |       |                           | 0    | 11   | 11        |       |        |
 | 20 |                       NESTED LOOPS                         |       |                           | 0    | 11   | 0         |       |        |
 | 21 |                         NESTED LOOPS                       |       |                           | 0    | 11   | 0         |       |        |
 | 22 |                           NESTED LOOPS                     |       |                           | 0    | 7    | 0         |       |        |

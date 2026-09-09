@@ -388,6 +388,7 @@ static void sql_free_connect_hash(sql_stmt_t *stmt, sql_cursor_t *sql_cursor)
 
     mtrl_close_cursor(&stmt->mtrl, &sql_cursor->mtrl.cursor);
     OGSQL_RELEASE_SEGMENT(stmt, sql_cursor->cb_mtrl_ctx->hash_table_rs);
+    // The segment owns the input table, PRIOR group keys and cached child rows.
     vm_hash_segment_deinit(&sql_cursor->cb_mtrl_ctx->hash_segment);
     vm_free(KNL_SESSION(stmt), KNL_SESSION(stmt)->temp_pool, sql_cursor->cb_mtrl_ctx->vmid);
     sql_cursor->cb_mtrl_ctx = NULL;

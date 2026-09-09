@@ -236,6 +236,11 @@ static status_t sql_try_add_connect_mtrl_cmp(sql_stmt_t *stmt, cmp_node_t *cmp, 
     // Only scalar aggregate ANY subqueries can be used as a single materialized hash key.
     OG_RETSUC_IFTRUE(cmp->type == CMP_TYPE_EQUAL_ANY && !sql_is_scalar_aggr_subquery(cmp->right));
 
+    // A raw hash key must not discard values that are equal under SQL comparison.
+    og_type_t key_type = get_cmp_datatype(cmp->left->root->datatype, cmp->right->root->datatype);
+    OG_RETSUC_IFTRUE(key_type == INVALID_CMP_DATATYPE || key_type == OG_TYPE_REAL ||
+        key_type == OG_TYPE_TIMESTAMP_TZ);
+
     init_cols_used(&left_cols_used);
     init_cols_used(&right_cols_used);
     sql_collect_cols_in_expr_tree(cmp->left, &left_cols_used);
@@ -274,6 +279,49 @@ static status_t sql_collect_connect_mtrl_keys(sql_stmt_t *stmt, cond_node_t *con
     }
 }
 
+static status_t sql_check_connect_cache_expr(visit_assist_t *visit_ass, expr_node_t **node)
+{
+    switch ((*node)->type) {
+        case EXPR_NODE_PRIOR:
+            // Grouping evaluates PRIOR operands for every input row, including unreachable rows.
+            // Restrict them to columns so this cannot introduce expression errors during materialization.
+            if ((*node)->right->type != EXPR_NODE_COLUMN) {
+                visit_ass->result0 = OG_FALSE;
+                return OG_SUCCESS;
+            }
+            return visit_expr_node(visit_ass, &(*node)->right, sql_check_connect_cache_expr);
+        case EXPR_NODE_COLUMN:
+            if (NODE_ANCESTOR(*node) != 0 || OG_IS_LOB_TYPE((*node)->datatype)) {
+                visit_ass->result0 = OG_FALSE;
+            }
+            return OG_SUCCESS;
+        case EXPR_NODE_CONST:
+        case EXPR_NODE_PARAM:
+        case EXPR_NODE_NEGATIVE:
+            return OG_SUCCESS;
+        default:
+            if (!IS_OPER_NODE(*node)) {
+                visit_ass->result0 = OG_FALSE;
+            }
+            return OG_SUCCESS;
+    }
+}
+
+static status_t sql_connect_cond_cacheable(sql_stmt_t *stmt, cond_tree_t *cond, bool32 *cacheable)
+{
+    *cacheable = OG_TRUE;
+    if (cond == NULL) {
+        return OG_SUCCESS;
+    }
+    visit_assist_t visit_ass;
+    sql_init_visit_assist(&visit_ass, stmt, NULL);
+    visit_ass.excl_flags = VA_EXCL_PRIOR | VA_EXCL_FUNC | VA_EXCL_PROC | VA_EXCL_ARRAY | VA_EXCL_WIN_SORT;
+    visit_ass.result0 = OG_TRUE;
+    OG_RETURN_IFERR(visit_cond_node(&visit_ass, cond->root, sql_check_connect_cache_expr));
+    *cacheable = (bool32)visit_ass.result0;
+    return OG_SUCCESS;
+}
+
 static status_t sql_try_transform_connect_mtrl(sql_stmt_t *statement, sql_query_t *qry)
 {
     cb_mtrl_info_t *info = NULL;
@@ -285,6 +333,11 @@ static status_t sql_try_transform_connect_mtrl(sql_stmt_t *statement, sql_query_
 
     OG_RETURN_IFERR(sql_alloc_connect_mtrl_info(statement, &info));
     OG_RETURN_IFERR(sql_collect_connect_mtrl_keys(statement, qry->connect_by_cond->root, info, &matched));
+    if (!matched && qry->connect_by_prior && !qry->for_update) {
+        // Match lists can be reused only when they depend on the two rows, not the traversal path or a function call.
+        OG_RETURN_IFERR(sql_connect_cond_cacheable(statement, qry->connect_by_cond, &info->cache_children));
+        matched = info->cache_children;
+    }
     if (matched) {
         qry->cb_mtrl_info = info;
     }
@@ -296,12 +349,20 @@ status_t og_transf_connect_by_cond(sql_stmt_t *statement, sql_query_t *qry)
     CM_POINTER(qry);
     OG_RETSUC_IFTRUE(qry->connect_by_cond == NULL);
     OG_RETSUC_IFTRUE(qry->cb_mtrl_info != NULL);
+    cond_tree_t *input_cond = NULL;
+    bool32 cacheable = OG_FALSE;
+    OG_RETURN_IFERR(sql_connect_cond_cacheable(statement, qry->cond, &cacheable));
+    if (cacheable && qry->cond != NULL) {
+        // Preserve ordinary input predicates for join enumeration after the hierarchy takes its own copy.
+        OG_RETURN_IFERR(sql_clone_cond_tree(statement->context, qry->cond, &input_cond, sql_alloc_mem));
+    }
     // must let start_with_cond and connect_by_cond has query->cond
     if (og_push_cond_2_connect_by(statement, qry) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
     OG_RETURN_IFERR(sql_try_transform_connect_mtrl(statement, qry));
+    qry->cond = input_cond;
 
     if (is_query_tables_all_normal(qry)) {
         OG_RETURN_IFERR(og_handle_subslect_in_start_with(statement, qry));

@@ -387,6 +387,8 @@ typedef struct st_connect_by_mtrl_plan {
     sql_array_t *rs_tables;
     cond_tree_t *start_with_cond;
     cond_tree_t *connect_by_cond;
+    bool32 cache_children;
+    galist_t *cycle_exprs;
 } cb_mtrl_plan_t;
 
 typedef struct st_plan_node {

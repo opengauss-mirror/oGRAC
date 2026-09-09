@@ -235,6 +235,7 @@ typedef struct st_connect_by_data {
     bool32 connect_by_iscycle;
     uint32 level;
     uint32 first_level_rownum;
+    uint32 mtrl_group; // prior-value group of the current materialized row
     galist_t *path_func_nodes;
     galist_t *prior_exprs;  // used to determine if the records are the same
     cm_stack_t *path_stack; /* only save the path in the first level cursor, stack content : text_t + data */
@@ -448,7 +449,15 @@ typedef struct st_connect_by_mtrl_data {
     hash_entry_t level_entry; // It can be used to find the hash node of the current layer output data.
     hash_table_iter_t iter;
     mtrl_rowid_t prior_row; // for cycle checking
+    uint32 prior_group;
 } cb_mtrl_data_t;
+
+typedef struct st_connect_by_mtrl_group {
+    uint32 active_count;
+    bool32 children_ready;
+    bool32 only_self_children;
+    bool32 has_children;
+} cb_mtrl_group_t;
 
 typedef struct st_connect_by_mtrl_ctx {
     cb_mtrl_plan_t *cb_mtrl_p;
@@ -458,6 +467,12 @@ typedef struct st_connect_by_mtrl_ctx {
     uint32 hash_table_rs; // segment id for hashmap rs rows
     hash_segment_t hash_segment;
     hash_table_entry_t hash_table;
+    hash_table_entry_t group_table;
+    hash_table_entry_t children;
+    hash_table_t *children_head;
+    galist_t *groups;
+    uint32 matched_group;
+    mtrl_rowid_t *cached_row;
     hash_table_iter_t iter;
     galist_t *cb_data; // each layer has a cb_mtrl_data_t to manage the current layer traversal.
     sql_cursor_t *last_cursor;
