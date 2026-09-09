@@ -117,7 +117,8 @@ status_t srv_reset_session(session_t *session, cs_pipe_t *pipe)
     session->knl_session.user_locked_ddl = OG_FALSE;
     session->knl_session.user_locked_lst = NULL;
     session->knl_session.is_loading = OG_FALSE;
-    MEMS_RETURN_IFERR(memset_s(session->challenge, 2 * OG_MAX_CHALLENGE_LEN, 0, 2 * OG_MAX_CHALLENGE_LEN));
+    MEMS_RETURN_IFERR(memset_s(session->challenge, OG_CHALLENGE_PART_NUM * OG_MAX_CHALLENGE_LEN, 0,
+        OG_CHALLENGE_PART_NUM * OG_MAX_CHALLENGE_LEN));
 
     OG_INIT_SPIN_LOCK(session->dbg_ctl_lock);
 

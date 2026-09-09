@@ -60,6 +60,7 @@ typedef enum e_cipheralg {
 #define OG_KDF2MAXSTRSIZE               64 // ((KDF2SALTSIZE+KDF2KEYSIZE )/3*4
 #define OG_MAX_SHA1_BINLEN              20
 #define OG_MAX_CHALLENGE_LEN            32
+#define OG_CHALLENGE_PART_NUM           2 // client nonce + server nonce for mutual authentication
 #define OG_ENCRYPTION_SIZE              512
 #define OG_SCRAM256KEYSIZE              64  // stored_key+server_key
 #define OG_SCRAM256HEADSIZE             8   // rand(4)+alg(2)+iter(2)
