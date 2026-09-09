@@ -1439,6 +1439,7 @@ static void dls_latch_ix2x(knl_session_t *session, drid_t *lock_id, drc_local_la
                 latch_stat->sid = sid;
                 latch_stat->stat = LATCH_STATUS_X;
                 latch_stat->lock_mode = DRC_LOCK_EXCLUSIVE;
+                session->is_btree_splitting = OG_FALSE;
                 drc_set_local_lock_statx(lock_res, OG_TRUE, OG_TRUE);
                 drc_unlock_local_resx(lock_res);
                 break;
@@ -1484,6 +1485,7 @@ static bool32 dls_latch_timed_ix2x(knl_session_t *session, drid_t *lock_id, drc_
                 latch_stat->sid = sid;
                 latch_stat->stat = LATCH_STATUS_X;
                 latch_stat->lock_mode = DRC_LOCK_EXCLUSIVE;
+                session->is_btree_splitting = OG_FALSE;
                 drc_set_local_lock_statx(lock_res, OG_TRUE, OG_TRUE);
                 drc_unlock_local_resx(lock_res);
                 return OG_TRUE;
@@ -1529,6 +1531,8 @@ void dls_latch_x(knl_session_t *session, drlatch_t *dlatch, uint32 sid, latch_st
                 }
                 latch_stat->sid = sid;
                 latch_stat->stat = LATCH_STATUS_X;
+                /* skip-MES X acquire must drop stale flag left by a prior S/X request failure */
+                session->is_btree_splitting = OG_FALSE;
                 drc_set_local_lock_statx(lock_res, OG_TRUE, OG_TRUE);
                 drc_unlock_local_resx(lock_res);
                 cm_latch_stat_inc(stat, count);
@@ -1784,6 +1788,7 @@ bool32 dls_latch_timed_x(knl_session_t *session, drlatch_t *dlatch, uint32 ticks
                 }
                 latch_stat->sid = session->id;
                 latch_stat->stat = LATCH_STATUS_X;
+                session->is_btree_splitting = OG_FALSE;
                 drc_set_local_lock_statx(lock_res, OG_TRUE, OG_TRUE);
                 drc_unlock_local_resx(lock_res);
                 cm_latch_stat_inc(stat, count);
