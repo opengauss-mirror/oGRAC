@@ -258,7 +258,7 @@ function download_source() {
         repo_url="https://gitcode.com/opengauss/${repo_name}.git"
         if [[ ! -e "${repo_path}" ]] ||
            { [[ -d "${repo_path}" ]] && [[ -z "$(find "${repo_path}" -mindepth 1 -print -quit 2>/dev/null)" ]]; }; then
-            git clone "${repo_url}" "${repo_path}"
+            git clone -b 7.0.0 "${repo_url}" "${repo_path}"
         elif is_git_repository "${repo_path}"; then
             echo "Reuse existing ${repo_name} source: ${repo_path}"
         else
