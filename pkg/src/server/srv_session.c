@@ -142,9 +142,15 @@ static inline void srv_set_session_pipe(session_t *session, cs_pipe_t *pipe)
     }
 }
 
-void srv_reset_session(session_t *session, cs_pipe_t *pipe)
+status_t srv_reset_session(session_t *session, cs_pipe_t *pipe)
 {
     srv_set_session_pipe(session, pipe);
+
+    /* the vmp/vms pools were destroyed by srv_deinit_session when the session was released,
+       so they must be recreated before the session returns to service.
+       pools are always empty here (init_pages is 0), thus vmp_create only re-initializes fields */
+    OG_RETURN_IFERR(vmp_create(&g_instance->sga.vma, 0, &session->vmp));
+    OG_RETURN_IFERR(vmp_create(&g_instance->sga.vma, 0, &session->vms));
 
     session->logon_time = g_timer()->now;
     session->interval_time = cm_monotonic_now();
@@ -181,7 +187,8 @@ void srv_reset_session(session_t *session, cs_pipe_t *pipe)
     session->knl_session.user_locked_ddl = OG_FALSE;
     session->knl_session.user_locked_lst = NULL;
     session->knl_session.is_loading = OG_FALSE;
-    MEMS_RETVOID_IFERR(memset_s(session->challenge, 2 * OG_MAX_CHALLENGE_LEN, 0, 2 * OG_MAX_CHALLENGE_LEN));
+    MEMS_RETURN_IFERR(memset_s(session->challenge, OG_CHALLENGE_PART_NUM * OG_MAX_CHALLENGE_LEN, 0,
+        OG_CHALLENGE_PART_NUM * OG_MAX_CHALLENGE_LEN));
 
     OG_INIT_SPIN_LOCK(session->dbg_ctl_lock);
 
@@ -193,6 +200,7 @@ void srv_reset_session(session_t *session, cs_pipe_t *pipe)
     OG_LOG_DEBUG_INF("reset session %u [private [%u]]", session->knl_session.id, session->priv);
 
     CM_ASSERT(session->knl_session.page_stack.depth == 0);
+    return OG_SUCCESS;
 }
 
 static status_t srv_try_reuse_session(session_t **session, cs_pipe_t *pipe, bool32 *reused)
@@ -225,7 +233,21 @@ static status_t srv_try_reuse_session(session_t **session, cs_pipe_t *pipe, bool
     (*session)->knl_session.stat = g_instance->stat_pool.stats[stat_id];
     cm_spin_unlock(&pool->lock);
 
-    srv_reset_session(*session, pipe);
+    if (srv_reset_session(*session, pipe) != OG_SUCCESS) {
+        /* reset failed: do not reuse the session this time, put it back to the idle queue
+           (pools are recreated on the next reuse attempt) and drop this allocation */
+        cm_spin_lock(&pool->lock, NULL);
+        (*session)->is_free = OG_TRUE;
+        if ((*session)->priv && (IS_COORDINATOR || IS_DATANODE)) {
+            biqueue_add_tail(&(pool->priv_idle_sessions), QUEUE_NODE_OF(*session));
+        } else {
+            biqueue_add_tail(&(pool->idle_sessions), QUEUE_NODE_OF(*session));
+        }
+        cm_spin_unlock(&pool->lock);
+        srv_release_stat(&stat_id);
+        *session = NULL;
+        return OG_ERROR;
+    }
     *reused = OG_TRUE;
     return OG_SUCCESS;
 }
@@ -262,7 +284,17 @@ static status_t srv_try_reuse_priv_session(session_t **session, cs_pipe_t *pipe,
             (*session)->knl_session.stat = g_instance->stat_pool.stats[stat_id];
             cm_spin_unlock(&pool->lock);
 
-            srv_reset_session(*session, pipe);
+            if (srv_reset_session(*session, pipe) != OG_SUCCESS) {
+                /* reset failed: do not reuse the session this time, put it back to the idle queue
+                   (pools are recreated on the next reuse attempt) and drop this allocation */
+                cm_spin_lock(&pool->lock, NULL);
+                (*session)->is_free = OG_TRUE;
+                biqueue_add_tail(&(pool->priv_idle_sessions), QUEUE_NODE_OF(*session));
+                cm_spin_unlock(&pool->lock);
+                srv_release_stat(&stat_id);
+                *session = NULL;
+                return OG_ERROR;
+            }
             *reused = OG_TRUE;
             return OG_SUCCESS;
         }
@@ -641,6 +673,8 @@ status_t srv_alloc_knl_session(bool32 knl_reserved, knl_handle_t *knl_session)
     }
 
     if (srv_alloc_agent_res(agent) != OG_SUCCESS) {
+        /* roll back the already allocated session, otherwise it leaks from the session pool */
+        srv_release_session(session);
         CM_FREE_PTR(agent);
         return OG_ERROR;
     }

@@ -208,7 +208,12 @@ status_t srv_create_emerg_session(cs_pipe_t *pipe)
     session->knl_session.stat = g_instance->stat_pool.stats[stat_id];
 
     (void)cm_atomic_inc(&g_instance->sql_emerg_pool.service_count);
-    srv_reset_session(session, pipe);
+    if (srv_reset_session(session, pipe) != OG_SUCCESS) {
+        /* reset failed: return the session to the emerg pool and drop this attempt */
+        srv_release_stat(&stat_id);
+        srv_return_emerg_pool(session);
+        return OG_ERROR;
+    }
 
     knl_securec_check(
         strncpy_s(session->os_host, OG_HOST_NAME_BUFFER_SIZE, LOOPBACK_ADDRESS, strlen(LOOPBACK_ADDRESS)));

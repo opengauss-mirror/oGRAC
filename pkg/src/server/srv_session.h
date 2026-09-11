@@ -486,7 +486,7 @@ void srv_release_session(session_t *session);
 void srv_deinit_session(session_t *session);
 void srv_return_session(session_t *session);
 status_t srv_new_session(cs_pipe_t *pipe, session_t **session);
-void srv_reset_session(session_t *session, cs_pipe_t *pipe);
+status_t srv_reset_session(session_t *session, cs_pipe_t *pipe);
 EXTER_ATTACK status_t srv_process_command(session_t *session);
 status_t srv_return_success(session_t *session);
 status_t srv_return_error(session_t *session);
