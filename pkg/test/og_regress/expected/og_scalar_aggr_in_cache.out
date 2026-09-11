@@ -1,0 +1,30 @@
+
+
+SQL> DROP TABLE IF EXISTS MICA;
+
+Succeed.
+
+SQL> CREATE TABLE MICA AS
+  2 SELECT (A.N - 1) * 100 + B.N AS K
+  3   FROM (SELECT LEVEL N FROM SYS_DUMMY CONNECT BY LEVEL <= 100) A,
+  4        (SELECT LEVEL N FROM SYS_DUMMY CONNECT BY LEVEL <= 100) B;
+
+Succeed.
+
+SQL>
+SQL> -- Expected result: 1; execution time should be less than 1 second in the gate environment.
+SQL> SELECT COUNT(*) FROM MICA
+  2  WHERE K IN (SELECT COUNT(DISTINCT K) FROM MICA);
+
+COUNT(*)
+--------------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> DROP TABLE IF EXISTS MICA;
+
+Succeed.
+
+SQL>
