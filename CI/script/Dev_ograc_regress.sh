@@ -319,6 +319,10 @@ main() {
         echo "Start compile, source code root path: ${ROOT_PATH}" > ${COMPILE_LOG}
         echo "ROOT_PATH: ${ROOT_PATH}"
         compile_code # local debug, if only change sql test file can annotate this step
+        # init_container 会 chown ogracdba -R /home/regress，导致 output/bin 下 install.py 属主变为 ogracdba，
+        # root 运行 install.py 时报 "The owner of install.py can't run it by root"。
+        # 这里与 else 分支保持一致，编译完成后将 output/bin 属主恢复为 root。
+        chown root:root -R /home/regress/ogracKernel/output/bin
     else
         chown root:root -R /home/regress/ogracKernel/output/bin
         echo "BUILD passed!"

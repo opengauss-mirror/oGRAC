@@ -88,8 +88,19 @@ For details about the oGRAC architecture, see [Architecture](https://docs.openga
     sh local_install.sh prepare
     sh local_install.sh compile -b debug
     ```
-    
+
     - `-b, --build_type=<type>` specifies the compilation type: release (default) or debug.
+    - The package step does not build the SQL regression runner `og_regress`. After compile, stay in the `build` directory and run:
+
+    ```shell
+    source ./common.sh
+    strip -N main "${OGRACDB_OUTPUT}/lib/libogserver.a"
+    cd pkg/test/og_regress
+    make -sj 8
+    cd "${CODE_HOME_PATH}"
+    ```
+
+    Then run `bash pkg/test/og_regress/do_all_test.sh` without `need_compile` (full regression, 280 cases; it automatically installs the database, runs the SQL cases, and uninstalls, covering sample validation as well). See the Chinese README unit-test section.
 
 7. Output directory.
 
@@ -108,12 +119,14 @@ For details about the oGRAC architecture, see [Architecture](https://docs.openga
 2. Start Docker.
 
     ```shell
-    docker run --name mirror_name -itd -v /home/uer_name/docker/data:/home --privileged=true --network=host --shm-size=128g IMAGE_ID
+    docker run --name mirror_name -itd -v /home/uer_name/docker/data:/home --privileged=true --network=host --shm-size=16g IMAGE_ID
     ```
     
-    - -`v`: Mounts a host directory to the container. In this example, `/home/uer_name/docker/data` is mounted to `/home` inside the container.
-    - --`shm-size`: Sets the shared memory size. It is advised to set this to 128 GB or higher.
+    - `-v`: Mounts a host directory to the container. In this example, `/home/uer_name/docker/data` is mounted to `/home` inside the container.
+    - `--shm-size`: Shared memory size. Use at least 16g, and do not exceed host physical memory. The older 128g example cannot be set on machines with less RAM.
     - `IMAGE_ID`: ID of the Docker image, which can be found by running `docker images`.
+
+    Prefer the in-tree flow in [docker/readme.md](docker/readme.md): build `docker/Dockerfile_ARM64` and run with `--shm-size=16g`, mounting the repo to `/home/regress/ogracKernel` and a host `ograc_data` directory to `/home/regress/ograc_data`.
 
 3. Configuration in the Docker image.
 
@@ -158,7 +171,7 @@ For details about the oGRAC architecture, see [Architecture](https://docs.openga
     Modify `Makefile.sh`:
     
     ```shell
-    sed -i 's+USE_PROTECT_VM=ON+USE_PROTECT_VM=OFF+' Makefile.sh
+    sed -i 's/DUSE_PROTECT_VM=ON/DUSE_PROTECT_VM=OFF/g' Makefile.sh
     ```
 
 7. Compile and install oGRAC.

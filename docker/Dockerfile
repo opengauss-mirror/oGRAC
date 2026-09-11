@@ -18,7 +18,7 @@ RUN yum install -y \
     ndctl ndctl-libs ndctl-devel ncurses ncurses-devel libtirpc-devel \
     jq libpmem libpmem-devel daxio nc libaio-devel openssl openssl-devel \
     libibverbs librdmacm libibumad libibmad rdma-core-devel \
-    openssh-server dnf-plugins-core dnf-utils ant maven bison
+    openssh-server dnf-plugins-core dnf-utils ant maven bison lcov
 
 RUN touch /root/.wgetrc && sed -i "$a check_certificate = off" /root/.wgetrc
 

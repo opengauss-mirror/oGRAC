@@ -486,6 +486,8 @@ func_pkg_all()
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}.tar.gz
     mkdir -p ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
+    # 安装包可能被非构建用户（如 ogracdba）遍历执行，显式放开目录权限，避免受 umask 影响
+    chmod 755 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
     cp ${OGRACDB_HOME}/install/install.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/funclib.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/installdb.sh ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
@@ -494,10 +496,11 @@ func_pkg_all()
     mkdir -p ${OGRACDB_LIBRARY}/shared_lib/lib/
     cp -f ${OGRACDB_HOME}/../platform/HuaweiSecureC/lib/* ${OGRACDB_LIBRARY}/shared_lib/lib/
 
-    chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/install.py
-    chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/funclib.py
-    chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/installdb.sh
-    chmod 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/ogbackup
+    # 505 而非 500：安装脚本会被非属主用户（如 ogracdba）通过 su 执行，500 将导致 Permission denied
+    chmod -R 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/install.py
+    chmod -R 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/funclib.py
+    chmod -R 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/installdb.sh
+    chmod 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/ogbackup
     mv ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}.tar.gz ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     sha256sum ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256
     chmod 400 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256
@@ -844,6 +847,11 @@ func_make_test_debug()
     #chmod 400 ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/admin/scripts/upgrade/*
     cd ${OGRACDB_BIN} && tar --owner=root --group=root -zcf ${RUN_PACK_DIR_NAME}.tar.gz ${RUN_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}/bin/script
+
+    # 同步构建回归工具 og_regress，一体化产出 do_all_test.sh 所需二进制
+    cd ${OG_TEST_BUILD_DIR}/og_regress
+    strip -N main ${OGRACDB_LIB}/libogserver.a
+    make -sj $(nproc 2>/dev/null || echo 8) og_regress
 }
 
 func_making_package_test()
@@ -859,16 +867,19 @@ func_making_package_test()
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
     rm -rf ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}.tar.gz
     mkdir -p ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
+    # 安装包可能被非构建用户（如 ogracdba）遍历执行，显式放开目录权限，避免受 umask 影响
+    chmod 755 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}
     cp ${OGRACDB_HOME}/install/install.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/funclib.py ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     cp ${OGRACDB_HOME}/install/installdb.sh ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     mkdir -p ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin
     cp ${OGRACDB_BIN}/ogbackup ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/
 
-    chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/install.py
-    chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/funclib.py
-    chmod -R 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/installdb.sh
-    chmod 500 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/ogbackup
+    # 505 而非 500：安装脚本会被非属主用户（如 ogracdba）通过 su 执行，500 将导致 Permission denied
+    chmod -R 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/install.py
+    chmod -R 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/funclib.py
+    chmod -R 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/installdb.sh
+    chmod 505 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/bin/ogbackup
     mv ${OGRACDB_BIN}/${RUN_PACK_DIR_NAME}.tar.gz ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/
     sha256sum ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.tar.gz | cut -c1-64 > ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256
     chmod 400 ${OGRACDB_BIN}/${ALL_PACK_DIR_NAME}/${RUN_PACK_DIR_NAME}.sha256

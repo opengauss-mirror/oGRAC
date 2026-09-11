@@ -34,10 +34,10 @@ oGRAC主要由五个主要部分组成：
 
 ## 单节点编译部署指南
 
-请注意，单节点模式仅用于个人开发验证，不适用于生产环境。单节点不包含 DMS/DSS 等分布式组件能力，不支持多写，也无法平滑扩展为多节点集群。
+请注意，单节点模式仅用于个人开发验证，不适用于生产环境。单节点不包含 DMS/DSS 等双节点组件能力，不支持多写，也无法平滑扩展为双节点集群。
 
 > * 单节点模式仅支持单实例运行
-> * 不包含 `DMS`、`DSS` 等分布式组件能力
+> * 不包含 `DMS`、`DSS` 等双节点组件能力
 > * 不支持多写场景，也无法在当前环境基础上平滑扩展为多节点集群
 > * 仅建议用于开发、调试和问题定位
 
@@ -98,6 +98,9 @@ oGRAC主要由五个主要部分组成：
     git clone https://gitcode.com/opengauss/oGRAC.git
     ```
 
+    > * **子模块初始化**：仓库使用 `open_source` 子模块提供构建依赖（googletest/protobuf/lz4/openssl/pcre 等），克隆后需执行 `git submodule update --init --depth 1 open_source`。
+    > * **DSS 子模块说明**：仓库 `DSS` 目录为 gitlink，但 `.gitmodules` 中无 DSS 条目，直接 `git submodule update --init`（不带路径）会因 "No url found for submodule path DSS" 中断。**单节点构建默认 `DSSENABLED=FALSE`，不依赖 DSS 目录内容，只需单独初始化 `open_source` 即可**，无需处理 DSS。仅双节点构建才需要 DSS。
+
     （2）执行 prepare 阶段准备环境依赖：
 
     ```shell
@@ -119,15 +122,30 @@ oGRAC主要由五个主要部分组成：
     ```
 
     > * `[release | debug]`：指定编译模式，`release` 为默认值，`debug` 为调试模式
+    > * 打包流程不生成回归工具 `og_regress`。要跑单元测试时，compile 成功后仍在 `build` 目录执行：
+
+    ```shell
+    source ./common.sh
+    strip -N main "${OGRACDB_OUTPUT}/lib/libogserver.a"
+    cd pkg/test/og_regress
+    make -sj 8
+    cd "${CODE_HOME_PATH}"
+    ```
+
+    然后按「单元测试」章节执行 `do_all_test.sh`（不要加 `need_compile`）。
+
+    > * **一体化验证（编译+单元测试+样例部署共用一次构建，推荐）**：若同时需要构建验证、单元测试与样例部署，可直接在 `build` 目录执行 `sh Makefile.sh make_ograc_pkg_test`（Debug+test 变体）。该命令一次性产出主程序 `ogracd/cms/ogsql`、安装包 `oGRAC-DATABASE-LINUX-64bit`（供 `local_install.sh install` 使用）以及回归工具 `og_regress`（供 `do_all_test.sh` 使用），无需再单独 `make -sj 8`，也无需为单元测试额外编译一次 release。执行后在仓库根目录先 `chmod -R 777 .`（构建会重置产物权限，必须在构建后执行），再运行 `bash pkg/test/og_regress/do_all_test.sh`——它自动完成安装、SQL 用例验证与卸载，构建验证、单元测试、样例验证一次跑完，无需先执行「安装流程」。
 
 6. 安装流程
+
+    > **本节面向人工部署使用，不属于自动化验证流程。** 自动化验证**不要执行本节**：数据库安装、SQL 功能验证、卸载清理的完整闭环已由「单元测试」章节的 `do_all_test.sh` 完成（其内部自动执行 安装 -> 回归用例 -> 卸载），执行结束后环境已还原。若在此基础上重复执行本节安装，会因残留数据/环境变量导致失败，需先按「测试后清理」章节清理。
 
     （1）执行安装脚本
 
     * 在 root 用户下，进入 `oGRAC/build` 目录
     * 使用安装脚本进行部署，并指定安装用户或者兼容性
 
-    ```bash
+    ```shell
     sh local_install.sh install -u [user_name]
 
     # sh local_install.sh install -u [user_name] -c A  # 新建兼容性为A的数据库
@@ -143,6 +161,10 @@ oGRAC主要由五个主要部分组成：
     当执行完成后，可以登录到 `-u` 指定的用户下，使用 `ogsql / as sysdba` 命令连接数据库，进行使用。
 
     > * 注意：`local_install.sh install` 安装的实例未执行回归初始化 SQL，不含 `SYS.DUAL` 等基线对象，`select ... from dual` 会报 OG-00843；快速验证可用无 FROM 的 SELECT（如 `select 1 as v1;`）
+    > * **SSL 证书交互确认**：`ogsql` 首次连接启用了 SSL 的实例时会提示证书确认（`y/n`），在无 TTY 的自动化环境（CI、脚本、SSH 非交互）中会因等待输入而超时挂起。自动化场景请设置环境变量 `export OGSQL_SSL_QUIET=TRUE` 跳过该交互确认（与单元测试脚本 `CI/script/Dev_ograc_regress.sh` 用法一致），例如：
+    ```shell
+    su - [user_name] -c 'OGSQL_SSL_QUIET=TRUE ogsql sys/huawei@1234@127.0.0.1:1611 -c "select 1 as v1;"'
+    ```
 
     当需要重启时，可以使用如下命令启动数据库：
 
@@ -163,6 +185,20 @@ oGRAC主要由五个主要部分组成：
     > * 上述配置仅建议在调试环境中使用
     > * 调试完成后可恢复默认配置，避免影响系统行为
 
+* 容器内编译测试请先看仓库 [docker/readme.md](docker/readme.md)。推荐命令：
+
+    ```shell
+    docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
+    mkdir -p "$(dirname "$(pwd)")/ograc_data"
+    docker run -d --privileged --network=host --shm-size=16g \
+      --name ograc-dev \
+      -v "$(pwd)":/home/regress/ogracKernel \
+      -v "$(dirname "$(pwd)")/ograc_data":/home/regress/ograc_data \
+      ograc-dev
+    ```
+
+    `--shm-size` 建议至少 16g，且不超过宿主机物理内存（内存不足时不要按外链文档设置 128g）。完整步骤见 [docker/readme.md](docker/readme.md)。`sh docker/container.sh rundev` 是另一套入口（默认容器名 `cantian_dev-dev`，`--shm-size 10240M`），不要和上面的 `ograc-dev` 混用。
+
 * 更多其他详情请参考[官方单节点安装指南](https://docs.opengauss.org/zh/docs/latest/ograc/installation_guide/single_node_guide/local_installation_on_a_single_node.html)。
 
 * 容器部署单节点详情请参考[官方容器化单节点安装指南](https://docs.opengauss.org/zh/docs/latest/ograc/installation_guide/single_node_guide/containerized_single_node_installation.html)
@@ -182,14 +218,28 @@ oGRAC 使用 SQL 回归测试验证基础功能，测试用例位于 `pkg/test/o
 - 内存 ≥ 16 GB，磁盘可用空间 ≥ 50 GB
 - 系统语言环境为英文（否则可能影响数据库启动）
 
-### 2. 清理环境（必须）
+### 2. 已编译时直接跑测试（推荐）
 
-`do_all_test.sh need_compile` 会触发完整编译，要求环境处于**未编译、未安装的干净状态**。如果之前编译过或安装过数据库，旧编译产物和数据库实例会导致第二次编译安装失败。
+若已执行过 `sh local_install.sh compile`，并已按「单节点编译部署指南」在 `build` 目录编好 `og_regress`，回到仓库根目录直接跑测试，**不要**再带 `need_compile`，否则会清理产物并整仓重编。
 
-依次执行以下命令彻底清理：
+建议在**构建完成后**给代码仓赋 777 权限，以免运行用户写不了测试目录（注意必须在构建之后执行——构建会重新生成 `output/` 产物并覆盖之前手动设置的权限；安装包内脚本已放开他人读执行权限，此步是写测试目录的保险，不再用于绕过权限错误）：
 
 ```shell
-# 进入代码目录
+# 仓库根目录。容器内为 /home/regress/ogracKernel
+chmod -R 777 .
+bash pkg/test/og_regress/do_all_test.sh
+```
+
+> * `do_all_test.sh` 是单元测试入口，跑 `og_schedule_part1 + og_schedule_part2`（280 个用例）。脚本内部自动完成 **数据库安装 -> SQL 回归用例 -> 卸载清理** 全流程，因此单元测试步骤即同时覆盖样例/SQL 功能验证，执行结束后数据库已卸载、环境已还原，**验证流程到此结束，无需再执行任何独立的样例或安装步骤**。
+
+### 3. 从未编译过才清理并用 need_compile
+
+`do_all_test.sh need_compile` 会触发完整编译，要求环境处于**未编译、未安装的干净状态**。如果之前编译过或安装过数据库，应改走上一节，而不是再编一次。
+
+仅在从未编译过时，依次执行：
+
+```shell
+# 进入仓库根目录（容器内为 /home/regress/ogracKernel；非容器为 [compile_path]/oGRAC）
 cd /home/regress/ogracKernel
 
 # 停止并卸载已安装的数据库
@@ -202,11 +252,22 @@ rm -rf /home/regress/ograc_data/*
 # 删除旧用户（如果存在）
 id ogracdba >/dev/null 2>&1 && userdel -r ogracdba
 id ogracdba >/dev/null 2>&1 || groupdel ogracdba 2>/dev/null || true
+
+bash pkg/test/og_regress/do_all_test.sh need_compile
 ```
 
 > **注意**：`rm -rf /home/regress/*` 会删除该目录下所有内容，请确认目录内无重要数据后再执行。如果当前环境本身就是干净的（首次运行），可跳过此步骤。
 
-### 3. 关闭保护虚拟内存（debug 编译建议执行）
+`do_all_test.sh` 参数：
+
+| 参数 | 含义 |
+|---|---|
+| （不传参） | 跳过编译，使用 `output/bin` 下已有的二进制（已 compile 并编过 `og_regress` 后的推荐用法） |
+| `need_compile` | 触发完整编译。仅在从未编译过时使用 |
+
+compile 之后必须先按「单节点编译部署指南」里的 `make -sj 8` 生成 `og_regress`，再执行 `do_all_test.sh`。
+
+### 4. 关闭保护虚拟内存（debug 编译建议执行）
 
 编译 debug 版本时，建议先关闭保护虚拟内存选项：
 
@@ -215,37 +276,13 @@ cd /home/regress/ogracKernel
 sed -i 's+USE_PROTECT_VM=ON+USE_PROTECT_VM=OFF+' build/Makefile.sh
 ```
 
-### 4. 执行测试
-
-> **注意**：之前前最好检查一下权限，建议给clone的代码仓赋予777权限，以免出现权限问题报错
-
-```shell
-bash pkg/test/og_regress/do_all_test.sh need_compile
-```
-
-参数说明：
-
-| 参数 | 含义 |
-|---|---|
-| `need_compile` | 触发完整编译。如果已经编译过，可省略此参数直接运行 |
-| （不传参） | 跳过编译，使用 `output/bin` 下已有的二进制 |
-
-> **注意**：`local_install.sh compile`（release/debug 打包流程）不会生成回归工具 `og_regress`。若已通过 `local_install.sh compile` 编译过、想省略 `need_compile` 直接运行测试，需先按 CI 相同步骤手动编译该工具：
->
-> ```shell
-> cd /home/regress/ogracKernel/build && source ./common.sh
-> cd pkg/test/og_regress
-> strip -N main /home/regress/ogracKernel/output/lib/libogserver.a
-> make -sj 8
-> ```
-
 ### 5. 查看结果
 
 脚本执行完成后，最终会在控制台输出：
 
 ```
-Test Result: Success   # 全部通过
 Test Result: ERROR     # 存在失败用例
+Test Result: Success   # 全部通过
 ```
 
 详细结果和日志位置：
@@ -253,8 +290,8 @@ Test Result: ERROR     # 存在失败用例
 | 文件/目录 | 说明 |
 |---|---|
 | `regress_output/test_result.txt` | 最终测试结果 |
-| `regress_output/LLT_log_part_all.txt` | 完整运行日志 |
-| `regress_output/LLT_result_part_all.txt` | 截取的回归结果汇总 |
+| `regress_output/LLT_log_<分组>.txt` | 完整运行日志（快速验证为 `LLT_log_part1.txt`，全量为 `LLT_log_part_all.txt`） |
+| `regress_output/LLT_result_<分组>.txt` | 截取的回归结果汇总（快速验证为 `LLT_result_part1.txt`） |
 | `pkg/test/og_regress/results/**/*.diff` | 失败用例的 diff 文件 |
 | `/home/regress/og_regress/logs/regress_log` | 回归运行日志 |
 | `/home/regress/og_regress/logs/compile_log` | 编译日志 |

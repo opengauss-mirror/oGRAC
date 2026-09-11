@@ -117,6 +117,8 @@ function install() {
     chown -R ${USER}:${USER} "${WORK_DIR}"/ograc_data
     cd ${CODE_PATH}/oGRAC-DATABASE-*-64bit || exit 1
     mkdir -p /home/${USER}/logs
+    # logs 由 root 创建，若不 chown，随后 su - ${USER} 启动 cms 会报 Permission denied。
+    chown -R ${USER}:${USER} /home/${USER}
     run_mode=ogracd_in_cluster
     python3 install.py -U ${USER}:${USER} -R /home/${USER}/install \
     -D /home/${USER}/data -l /home/${USER}/logs/install.log \
