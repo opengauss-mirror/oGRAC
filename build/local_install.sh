@@ -19,6 +19,27 @@ function prepare() {
   libtirpc-devel make gcc gcc-c++ gdb gdb-gdbserver\
   python3 python3-devel git net-tools cmake automake\
   byacc libtool --skip-broken
+
+  # On openEuler 24.03 install third-party libraries directly from OS repositories.
+  # On other OS versions they are built from source by compile_opensource_new.sh.
+  local os_id=""
+  local os_version_id=""
+  if [[ -f /etc/os-release ]]; then
+      os_id=$(grep -w ^ID /etc/os-release | cut -d '"' -f 2)
+      os_version_id=$(grep -w VERSION_ID /etc/os-release | cut -d '"' -f 2)
+  fi
+  if [[ "${os_id}" == "openEuler" && "${os_version_id}" == "24.03" ]]; then
+      echo "openEuler 24.03 detected: install third-party libraries from OS repos (protobuf-all from source)"
+      # These packages are required by compile_opensource_new.sh on 2403.
+      # They should be installed once during env preparation (root needed);
+      # the compile step itself no longer runs yum.
+      yum install -y protobuf-c protobuf-c-devel \
+                     zlib zlib-devel \
+                     pcre2 pcre2-devel \
+                     libzstd libzstd-devel zstd \
+                     openssl openssl-devel openssl-libs || true
+  fi
+
   echo "Prepare env success."
 }
 

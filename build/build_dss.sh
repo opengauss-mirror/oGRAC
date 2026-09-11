@@ -284,8 +284,18 @@ function build_package() {
     export CC=${THIRD_PATH}/buildtools/gcc10.3/gcc/bin/gcc
     export cc=${THIRD_PATH}/buildtools/gcc10.3/gcc/bin/gcc
     export GCCFOLDER=${THIRD_PATH}/buildtools/gcc10.3
-    export LD_LIBRARY_PATH=${THIRD_PATH}/buildtools/gcc10.3/gcc/lib64:$LD_LIBRARY_PATH
     export LD_LIBRARY_PATH=$GCCFOLDER/gcc/lib64:$GCCFOLDER/isl/lib:$GCCFOLDER/mpc/lib/:$GCCFOLDER/mpfr/lib/:$GCCFOLDER/gmp/lib/:$LD_LIBRARY_PATH
+    local os_version=$(get_open_euler_version 2>/dev/null || true)
+    if [[ "${os_version}" == 24.03* ]]; then
+        # openEuler 24.03 ships cmake linked against system libstdc++ (gcc12).
+        # Put /usr/lib64 first so system libstdc++ wins over bundled gcc10.3 libs.
+        export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+        # CBB/DSS build scripts reset LD_LIBRARY_PATH internally; use LD_PRELOAD
+        # as a safety net to force the system libstdc++ for all child processes.
+        if [[ -f /usr/lib64/libstdc++.so.6 ]]; then
+            export LD_PRELOAD=/usr/lib64/libstdc++.so.6${LD_PRELOAD:+:$LD_PRELOAD}
+        fi
+    fi
     export PATH=${THIRD_PATH}/buildtools/gcc10.3/gcc/bin:${PATH}
     echo "Start to compile CBB."
     local cbb_cmake_file="${OGDB_CODE_PATH}/CBB/CMakeLists.txt"

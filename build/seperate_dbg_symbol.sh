@@ -25,7 +25,13 @@ function seperate_dbg_symbol()
    fi
 
    objcopy --only-keep-debug ${tmp_bin_file} ${tmp_bin_dbgfile}
-   objcopy --strip-all ${tmp_bin_file}
+   # Use strip-unneeded for shared libraries to keep the dynamic symbol table;
+   # otherwise runtime linking can break. Executables can be stripped fully.
+   if [[ "${tmp_bin_file}" == *.so* ]]; then
+       objcopy --strip-unneeded ${tmp_bin_file}
+   else
+       objcopy --strip-all ${tmp_bin_file}
+   fi
    objcopy --add-gnu-debuglink=${tmp_bin_dbgfile} ${tmp_bin_file}
  
    printf '\E[33m'"\033[1mSeperate debug symbol from ${tmp_bin_file} to ${tmp_bin_dbgfile} ..... \033[0m"
