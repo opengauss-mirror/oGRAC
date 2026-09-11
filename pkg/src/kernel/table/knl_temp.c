@@ -1551,7 +1551,7 @@ static void temp_heap_insert_into_page_migr(knl_session_t *session, temp_heap_pa
     ROW_SET_ITL_ID(row, OG_INVALID_ID8);
 
     row_addr = (char *)page + dir->offset;
-    ret = memcpy_sp(row_addr, page->free_size, row, row->size);
+    ret = memcpy_sp(row_addr, page->free_end - dir->offset, row, row->size);
     knl_securec_check(ret);
     page->rows++;
     knl_panic_log(page->free_begin <= page->free_end,
