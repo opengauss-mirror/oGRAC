@@ -34,6 +34,7 @@
 #include "og_tbox.h"
 #include "cm_file_iofence.h"
 #include "cm_dss_iofence.h"
+#include "srv_instance.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -225,11 +226,26 @@ status_t dbc_build_logfiles(knl_session_t *session, galist_t *logfiles, uint8 no
     database_t *db = &kernel->db;
     int64 temp_size = 0;
     dtc_node_ctrl_t *ctrl = dtc_get_ctrl(session, node_id);
+    uint32 para_groups = 0;
 
     ctrl->log_count = logfiles->count;
     ctrl->log_hwm = logfiles->count;
-    ctrl->rcy_point.asn = OG_FIRST_ASN;
-    ctrl->lrp_point.asn = OG_FIRST_ASN;
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 g;
+
+        para_groups = SYS_NUMA_GROUP_COUNT;
+        ctrl->rcy_point.asn = 0;
+        ctrl->rcy_point.block_id = 0;
+        ctrl->lrp_point.asn = 0;
+        ctrl->lrp_point.block_id = 0;
+        for (g = 0; g < para_groups; g++) {
+            ctrl->para_log_first[g] = 0;
+            ctrl->para_log_last[g] = 0;
+        }
+    } else {
+        ctrl->rcy_point.asn = OG_FIRST_ASN;
+        ctrl->lrp_point.asn = OG_FIRST_ASN;
+    }
 
     min_size = (int64)LOG_MIN_SIZE(session, kernel);
 
@@ -256,6 +272,12 @@ status_t dbc_build_logfiles(knl_session_t *session, galist_t *logfiles, uint8 no
                                                                db->ctrl.log_segment, node_id);
         logfile.ctrl->file_id = (int32)i;
         logfile.ctrl->node_id = node_id;
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            logfile.ctrl->group_id = i % para_groups;
+        } else {
+            logfile.ctrl->group_id = 0;
+        }
+
         logfile.ctrl->size = dev_def->size;
         (void)cm_text2str(&dev_def->name, logfile.ctrl->name, OG_FILE_NAME_BUFFER_SIZE);
         logfile.ctrl->type = cm_device_type(logfile.ctrl->name);
@@ -288,16 +310,20 @@ status_t dbc_build_logfiles(knl_session_t *session, galist_t *logfiles, uint8 no
         logfile.head.rst_id = db->ctrl.core.resetlogs.rst_id;
         logfile.head.cmp_algorithm = COMPRESS_NONE;
 
-        if (i == 0) {
+        if (ENABLE_PARA_LOG_FLUSH(session) ? (i < para_groups) : (i == 0)) {
             logfile.ctrl->status = LOG_FILE_CURRENT;
             logfile.head.asn = OG_FIRST_ASN;
-            ctrl->rcy_point.block_id = 1;
-            ctrl->lrp_point.block_id = 1;
+            if (!ENABLE_PARA_LOG_FLUSH(session)) {
+                ctrl->rcy_point.block_id = 1;
+                ctrl->lrp_point.block_id = 1;
+            }
         } else {
             logfile.head.asn = OG_INVALID_ASN;
             logfile.ctrl->status = LOG_FILE_INACTIVE;
         }
+
         logfile.head.dbid = db->ctrl.core.dbid;
+        logfile.head.rcy_off = 0;
         status_t ret = memset_sp(logfile.head.unused, OG_LOG_HEAD_RESERVED_BYTES, 0, OG_LOG_HEAD_RESERVED_BYTES);
         knl_securec_check(ret);
 
@@ -317,6 +343,11 @@ status_t dbc_build_logfiles(knl_session_t *session, galist_t *logfiles, uint8 no
         if (cm_dbs_is_enable_dbs() == OG_TRUE) {
             return OG_SUCCESS;
         }
+    }
+
+    if (ENABLE_PARA_LOG_FLUSH(session) && dtc_save_ctrl(session, node_id) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DB] failed to save node ctrl after create logfiles for node %u", node_id);
+        return OG_ERROR;
     }
 
     return OG_SUCCESS;
@@ -676,6 +707,12 @@ status_t dbc_create_database(knl_handle_t session, knl_database_def_t *def, bool
     kernel->db.status = DB_STATUS_CREATING;
     DB_CORE_CTRL(knl_session)->resetlogs.rst_id = 0;
     dbc_init_scn(knl_session);
+
+    if (ENABLE_PARA_LOG_FLUSH(knl_session) && def->arch_mode == ARCHIVE_LOG_ON) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "archivelog with parallel log flush");
+        return OG_ERROR;
+    }
+
     dbc_init_archivelog(knl_session, def);
     dbc_init_dbid(knl_session, def);
     dbc_init_dbcompatibility(knl_session, def);

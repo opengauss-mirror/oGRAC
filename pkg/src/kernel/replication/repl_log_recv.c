@@ -183,7 +183,7 @@ static status_t lrcv_flush_log(lrcv_context_t *lrcv, log_point_t *log_point, voi
         log_flush_head(lrcv->session, file);
     }
     log_point->block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
-    log_ctx->free_size -= space_size;
+    cm_atomic_sub(&log_ctx->free_size, (int64)space_size);
 
     return OG_SUCCESS;
 }
@@ -343,8 +343,9 @@ static void lrcv_reset_switch_wait(lrcv_context_t *lrcv)
         uint64 start_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
         cm_latch_x(&file->latch, lrcv->session->id, NULL);
         file->head.asn = OG_INVALID_ASN;
-        log->free_size += file->head.write_pos - start_pos;
+        cm_atomic_add(&log->free_size, (int64)(file->head.write_pos - start_pos));
         file->head.write_pos = start_pos;
+        file->head.rcy_off = 0;
         file->ctrl->status = LOG_FILE_INACTIVE;
         file->ctrl->archived = OG_FALSE;
         log_flush_head(lrcv->session, file);
@@ -363,6 +364,7 @@ static void lrcv_reset_switch_wait(lrcv_context_t *lrcv)
     file->head.asn = wait_point->asn;
     file->head.rst_id = (uint32)wait_point->rst_id;
     file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+    file->head.rcy_off = 0;
     file->ctrl->status = LOG_FILE_CURRENT;
     file->ctrl->archived = OG_FALSE;
     log_flush_head(lrcv->session, file);
@@ -504,8 +506,9 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
             cm_latch_x(&file->latch, lrcv->session->id, NULL);
             file->head.asn = OG_INVALID_ASN;
             file->head.rst_id = (uint32)req->log_point.rst_id;
-            log->free_size += file->head.write_pos - start_pos;
+            cm_atomic_add(&log->free_size, (int64)(file->head.write_pos - start_pos));
             file->head.write_pos = start_pos;
+            file->head.rcy_off = 0;
             file->ctrl->status = LOG_FILE_INACTIVE;
             file->ctrl->archived = OG_FALSE;
             log_flush_head(lrcv->session, file);
@@ -521,7 +524,7 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
                 file = log->files + file_id;
                 if (file->ctrl->status == LOG_FILE_ACTIVE) {
                     start_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
-                    log->free_size += (uint64)file->ctrl->size - start_pos;
+                    cm_atomic_add(&log->free_size, (int64)((uint64)file->ctrl->size - start_pos));
                     file->ctrl->status = LOG_FILE_UNUSED;
                 }
                 log_get_next_file(lrcv->session, &file_id, OG_FALSE);
@@ -535,6 +538,7 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
             file->head.asn = req->log_point.asn;
             file->head.rst_id = (uint32)req->log_point.rst_id;
             file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+            file->head.rcy_off = 0;
             file->ctrl->status = LOG_FILE_CURRENT;
             file->ctrl->archived = OG_FALSE;
             log_flush_head(lrcv->session, file);
@@ -777,7 +781,7 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
                            log_ctx->curr_file, file->ctrl->status, file->head.rst_id, file->head.asn,
                            file->head.write_pos, curr_lfn, write_pos_ori);
             if (lrcv->reconnected) {
-                log_ctx->free_size -= file->head.write_pos - write_pos_ori;
+                cm_atomic_sub(&log_ctx->free_size, (int64)(file->head.write_pos - write_pos_ori));
             }
             lrcv->flush_point.lfn = curr_lfn;
             lrcv->flush_point.block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
@@ -821,7 +825,7 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
     }
 
     if (!lrcv->reconnected) {
-        log_ctx->free_size += log_file_freesize(file);
+        cm_atomic_add(&log_ctx->free_size, (int64)log_file_freesize(file));
     }
 
     OG_LOG_RUN_INF("[Log Receiver] Set flush point to [%u-%u/%u/%llu], log free size is %llu",

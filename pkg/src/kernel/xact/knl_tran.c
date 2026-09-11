@@ -272,7 +272,6 @@ static inline undo_t *tx_bind_undo(knl_session_t *session, knl_rm_t *rm)
     rm->noredo_undo_page_info.undo_log_encrypt = OG_FALSE;
 
     global_segid = (uint64)cm_atomic_inc(&session->kernel->undo_segid);
-
     if (rm->prev == OG_INVALID_ID16) {
         tx_bind_segid(session, rm, global_segid);
     } else {
@@ -1804,6 +1803,7 @@ void tx_rollback_proc(thread_t *thread)
             undo_set->active_workers, ogx->active_workers);
         if (!rb_ctx->deposit_rollback && undo_set->active_workers > 0) {
             (void)cm_atomic_dec(&ogx->active_workers);
+            (void)cm_atomic_dec(&undo_set->active_workers);
             OG_LOG_RUN_INF("[tx_rollback_proc] dec active_workers in undo ogx, undo_set->active_workers=%lld, "
                 "undo_ctx->active_workers=%lld", undo_set->active_workers, ogx->active_workers);
         }
@@ -1860,7 +1860,12 @@ void tx_rollback_close(knl_session_t *session)
         cm_close_thread(&ogx->rollback_proc[i]);
     }
 
-    knl_panic(undo_set->active_workers == 0);
+    /* Consistent with dtc_rollback_close: leftover set count must not block shutdown */
+    if (undo_set->active_workers != 0) {
+        OG_LOG_RUN_WAR("[TX] shutdown leftover undo_set active_workers=%lld, clear after joining rollback threads",
+                       undo_set->active_workers);
+        undo_set->active_workers = 0;
+    }
 }
 
 status_t txn_dump_page(knl_session_t *session, page_head_t *page_head, cm_dump_t *dump)

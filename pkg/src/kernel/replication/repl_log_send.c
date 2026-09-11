@@ -1889,6 +1889,12 @@ static status_t lsnd_init_each_proc(knl_session_t *session, uint32 idx)
         return OG_SUCCESS;
     }
 
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "physical standby (lsnd) with parallel log flush");
+        OG_LOG_RUN_ERR("[Log Sender] parallel log flush does not support lsnd");
+        return OG_ERROR;
+    }
+
     free_slot = lsnd_get_free_slot(ogx);
     if (free_slot >= OG_MAX_PHYSICAL_STANDBY) {
         OG_LOG_RUN_ERR("standby number larger than %u", OG_MAX_PHYSICAL_STANDBY);
@@ -1944,6 +1950,10 @@ status_t lsnd_init(knl_session_t *session)
     if (DB_IS_RAFT_ENABLED(session->kernel)) {
         OG_LOG_RUN_WAR("RAFT: skip init log sender thread when raft is enabled.");
         return OG_SUCCESS;
+    }
+
+    if (ENABLE_PARA_LOG_FLUSH(session) && para_log_check_unsupported(session) != OG_SUCCESS) {
+        return OG_ERROR;
     }
 
     // For physical standby, waits for primary's connection in switchover
@@ -2252,9 +2262,19 @@ static inline bool32 lsnd_flush_need_exit(knl_session_t *session)
         return OG_TRUE;
     }
 
-    if (session->kernel->redo_ctx.thread.closed) {
-        OG_LOG_RUN_WAR("log thread will exit");
-        return OG_TRUE;
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 cluster_count = SYS_NUMA_GROUP_COUNT;
+        for (int i = 0; i < cluster_count; i++) {
+            if (session->kernel->para_log_ctx[i]->thread.closed) {
+                OG_LOG_RUN_WAR("log thread will exit");
+                return OG_TRUE;
+            }
+        }
+    } else {
+        if (session->kernel->redo_ctx.thread.closed) {
+            OG_LOG_RUN_WAR("log thread will exit");
+            return OG_TRUE;
+        }
     }
 
     if (session->kernel->stats_ctx.thread.closed) {

@@ -221,7 +221,7 @@ static status_t srv_try_reuse_session(session_t **session, cs_pipe_t *pipe, bool
     }
 
     cm_spin_lock(&pool->lock, NULL);
-    node = biqueue_del_head(&pool->idle_sessions);
+    node = biqueue_del_head(&(pool->idle_sessions));
     if (node == NULL) {
         cm_spin_unlock(&pool->lock);
         srv_release_stat(&stat_id);
@@ -272,7 +272,7 @@ static status_t srv_try_reuse_priv_session(session_t **session, cs_pipe_t *pipe,
             }
 
             cm_spin_lock(&pool->lock, NULL);
-            node = biqueue_del_head(&pool->priv_idle_sessions);
+            node = biqueue_del_head(&(pool->priv_idle_sessions));
             if (node == NULL) {
                 cm_spin_unlock(&pool->lock);
                 srv_release_stat(&stat_id);
@@ -366,7 +366,7 @@ static status_t srv_init_session_sql_curs(session_t *session)
     return OG_SUCCESS;
 }
 
-static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t *pool, int numa_id)
+static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t *pool, int numa_id, int cpu_id)
 {
     uint32 mem_size;
     uint32 buf_size;
@@ -485,7 +485,11 @@ static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t
 
     session->knl_session.stat_id = stat_id;
     session->knl_session.stat = g_instance->stat_pool.stats[stat_id];
-    session->knl_session.ass_numa = numa_id;
+    session->knl_session.ass_cpu = cpu_id;
+    session->knl_session.ass_numa = cpu_id / SYS_CPUS_PER_GROUP;
+    if (SYS_NUMA_GROUP_COUNT > 0 && session->knl_session.ass_numa >= SYS_NUMA_GROUP_COUNT) {
+        session->knl_session.ass_numa %= SYS_NUMA_GROUP_COUNT;
+    }
 
     *session_out = session;
 
@@ -595,11 +599,12 @@ status_t srv_new_session(cs_pipe_t *pipe, session_t **session)
     }
 
     int numa_id = -1;
+    int cpuid = 0;
     if (pipe && pipe->type == CS_TYPE_TCP) {
-        numa_id = cs_get_numaid(pipe->link.tcp.sock);
+        numa_id = cs_get_numaid(pipe->link.tcp.sock, &cpuid);
     }
 
-    OG_RETURN_IFERR(srv_alloc_session_memory(session, pool, numa_id));
+    OG_RETURN_IFERR(srv_alloc_session_memory(session, pool, numa_id, cpuid));
 
 
     if (srv_init_new_session(pipe, *session) != OG_SUCCESS) {
@@ -617,7 +622,6 @@ status_t srv_alloc_session(session_t **session, cs_pipe_t *pipe, session_type_e 
     if (srv_try_reuse_session(session, pipe, &reused) != OG_SUCCESS) {
         return OG_ERROR;
     }
-
     if (!reused) {
         if (srv_try_reuse_priv_session(session, pipe, &reused) != OG_SUCCESS) {
             return OG_ERROR;
@@ -630,6 +634,15 @@ status_t srv_alloc_session(session_t **session, cs_pipe_t *pipe, session_type_e 
 
             (*session)->logon_time = g_timer()->now;
             (*session)->interval_time = cm_monotonic_now();
+        }
+    }
+    if (pipe && pipe->type == CS_TYPE_TCP && reused) {
+        int cpuid = 0;
+        (void)cs_get_numaid(pipe->link.tcp.sock, &cpuid);
+        (*session)->knl_session.ass_cpu = cpuid;
+        (*session)->knl_session.ass_numa = cpuid / SYS_CPUS_PER_GROUP;
+        if (SYS_NUMA_GROUP_COUNT > 0 && (*session)->knl_session.ass_numa >= SYS_NUMA_GROUP_COUNT) {
+            (*session)->knl_session.ass_numa %= SYS_NUMA_GROUP_COUNT;
         }
     }
 

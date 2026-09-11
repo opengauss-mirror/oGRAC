@@ -3,6 +3,7 @@
 
 import getpass
 import grp
+import json
 import os
 import pwd
 import shlex
@@ -26,6 +27,10 @@ from utils import (
 from config_validation_runner import validate_config_params_or_raise
 
 LOG = get_logger("deploy")
+
+HW_TOPO_MAX_GROUPS = 64
+_VG_USABLE_RATIO = 0.9
+_SECTOR_BYTES = 512
 
 PRE_INSTALL_ORDER = ["ograc", "cms", "dss"]
 INSTALL_ORDER = ["cms", "dss", "ograc", "og_om", "ograc_exporter"]
@@ -85,6 +90,153 @@ class OgracDeploy:
             LOG.info("%s %s success", module, action)
         return ret
 
+    @staticmethod
+    def _para_log_flush_enabled(params):
+        val = params.get("ENABLE_PARA_LOG_FLUSH", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().upper() in ("TRUE", "1", "YES", "ON")
+
+    @staticmethod
+    def _hw_group_count():
+        """Same grouping as C SYS_NUMA_GROUP_COUNT (hw_topo_get_info)."""
+        cluster0 = "/sys/devices/system/cpu/cpu0/topology/cluster_cpus_list"
+        seen = set()
+        if os.path.exists(cluster0):
+            cpu = 0
+            while os.path.isdir("/sys/devices/system/cpu/cpu%d" % cpu):
+                clist = "/sys/devices/system/cpu/cpu%d/topology/cluster_cpus_list" % cpu
+                if os.path.isfile(clist):
+                    try:
+                        with open(clist, "r", encoding="utf-8") as fp:
+                            seen.add(fp.read().strip())
+                    except OSError:
+                        pass
+                cpu += 1
+            if seen:
+                return max(1, min(HW_TOPO_MAX_GROUPS, len(seen)))
+
+        node = 0
+        while node < HW_TOPO_MAX_GROUPS and os.path.isdir("/sys/devices/system/node/node%d" % node):
+            node += 1
+        if node > 0:
+            return min(HW_TOPO_MAX_GROUPS, node)
+        return 1
+
+    @staticmethod
+    def _parse_size_to_bytes(size_str):
+        text = str(size_str).strip().upper().replace(" ", "")
+        if not text:
+            raise ValueError("empty size")
+        units = (
+            ("TB", 1024 ** 4),
+            ("GB", 1024 ** 3),
+            ("MB", 1024 ** 2),
+            ("KB", 1024),
+            ("T", 1024 ** 4),
+            ("G", 1024 ** 3),
+            ("M", 1024 ** 2),
+            ("K", 1024),
+        )
+        for suffix, mul in units:
+            if text.endswith(suffix):
+                return int(float(text[: -len(suffix)]) * mul)
+        return int(text)
+
+    @staticmethod
+    def _block_device_size_bytes(device_path):
+        real_path = os.path.realpath(device_path)
+        device_name = os.path.basename(real_path)
+        size_path = "/sys/block/%s/size" % device_name
+        if not os.path.isfile(size_path):
+            size_path = "/sys/class/block/%s/size" % device_name
+        if not os.path.isfile(size_path):
+            raise ValueError(
+                "cannot read block size for %s (realpath=%s, sysfs=%s missing)"
+                % (device_path, real_path, size_path)
+            )
+        with open(size_path, "r", encoding="utf-8") as fp:
+            sectors = int(fp.read().strip())
+        return sectors * _SECTOR_BYTES, real_path, device_name
+
+    def _check_para_log_redo_vg(self, config_file):
+        """pre_install: fail if parallel flush is on but redo VG is too small."""
+        try:
+            with open(config_file, "r", encoding="utf-8") as fp:
+                params = json.load(fp)
+        except Exception as error:
+            LOG.error("load %s error: %s", config_file, error)
+            return 1
+
+        if not isinstance(params, dict):
+            LOG.error("%s must be a JSON object", config_file)
+            return 1
+
+        if not self._para_log_flush_enabled(params):
+            return 0
+
+        try:
+            redo_num = int(params.get("redo_num", 0))
+        except (TypeError, ValueError):
+            LOG.error("ENABLE_PARA_LOG_FLUSH is on but redo_num is invalid: %s", params.get("redo_num"))
+            return 1
+
+        if redo_num < 3:
+            LOG.error("ENABLE_PARA_LOG_FLUSH is on but redo_num=%s is less than 3", redo_num)
+            return 1
+
+        try:
+            redo_size = self._parse_size_to_bytes(params.get("redo_size", ""))
+        except (TypeError, ValueError) as error:
+            LOG.error("ENABLE_PARA_LOG_FLUSH is on but redo_size is invalid: %s (%s)",
+                      params.get("redo_size"), error)
+            return 1
+
+        vg_list = params.get("dss_vg_list", {})
+        vg2 = ""
+        vg4 = ""
+        if isinstance(vg_list, dict):
+            vg2 = str(vg_list.get("vg2") or "").strip()
+            vg4 = str(vg_list.get("vg4") or "").strip()
+        if not vg2:
+            LOG.error("ENABLE_PARA_LOG_FLUSH is on but dss_vg_list.vg2 is not configured")
+            return 1
+
+        group_count = self._hw_group_count()
+        node_id = str(params.get("node_id", "0")).strip()
+        per_node_bytes = group_count * redo_num * redo_size
+
+        if vg4:
+            if node_id == "1":
+                check_path, need_bytes, label = vg4, per_node_bytes, "vg4 (node1 redo)"
+            else:
+                check_path, need_bytes, label = vg2, per_node_bytes, "vg2 (node0 redo)"
+        else:
+            check_path, need_bytes, label = vg2, per_node_bytes * 2, "vg2 (node0+node1 redo)"
+
+        try:
+            actual_bytes, real_path, device_name = self._block_device_size_bytes(check_path)
+        except (TypeError, ValueError, OSError) as error:
+            LOG.error("failed to get %s size for %s: %s", label, check_path, error)
+            return 1
+
+        usable = actual_bytes * _VG_USABLE_RATIO
+        LOG.info(
+            "para log redo VG check: %s path=%s realpath=%s sysfs=%s size=%d "
+            "usable(0.9)=%d need=%d (groups=%d redo_num=%d redo_size=%s node_id=%s)",
+            label, check_path, real_path, device_name, actual_bytes, int(usable),
+            need_bytes, group_count, redo_num, params.get("redo_size"), node_id)
+
+        if usable <= need_bytes:
+            LOG.error(
+                "%s capacity not enough: usable %d bytes (device %d * 0.9) "
+                "<= required %d bytes (groups %d * redo_num %d * redo_size %s%s)",
+                label, int(usable), actual_bytes, need_bytes, group_count, redo_num,
+                params.get("redo_size"), "" if vg4 else " * 2")
+            return 1
+
+        return 0
+
     def _prompt_sys_password_and_write_file(self):
         if not sys.stdin.isatty():
             LOG.error("password set error, please run sh appctl.sh install config_params_lun.json")
@@ -132,6 +284,9 @@ class OgracDeploy:
             config_file = validate_config_params_or_raise(CUR_DIR, config_file, logger=LOG)
         except RuntimeError as error:
             LOG.error(str(error))
+            return 1
+
+        if self._check_para_log_redo_vg(config_file):
             return 1
 
         if self.ograc_in_container not in ("1", "2"):

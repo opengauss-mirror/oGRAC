@@ -2878,6 +2878,7 @@ status_t bak_flush_archfile_head(knl_session_t *session, arch_file_info_t *file_
     head->cmp_algorithm = COMPRESS_NONE;
     head->block_size = head_size;
     head->dbid = session->kernel->db.ctrl.core.dbid;
+    head->rcy_off = 0;
     status_t ret = memset_sp(head->unused, OG_LOG_HEAD_RESERVED_BYTES, 0, OG_LOG_HEAD_RESERVED_BYTES);
     knl_securec_check(ret);
 

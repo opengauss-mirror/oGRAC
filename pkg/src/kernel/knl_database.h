@@ -283,7 +283,7 @@ knl_scn_t db_time_scn(knl_session_t *session, uint32 second, uint32 msecond);
 #else
 #define DB_GET_LFN(p_lfn) (uint64)(*(p_lfn))
 #endif
-#define DB_CURR_LFN(session) DB_GET_LFN(&(session)->kernel->redo_ctx.flushed_lfn)
+#define DB_CURR_LFN(session) cm_atomic_barrier_read(&(session)->kernel->redo_ctx.flushed_lfn)
 #define DB_INC_LFN(lfn) (++(lfn))
 #define DB_SET_LFN(p_lfn, lfn) (*(p_lfn) = (lfn))
 

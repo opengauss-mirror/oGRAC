@@ -43,6 +43,7 @@
 #include "knl_punch_space.h"
 #include "cm_io_record.h"
 #include "dtc_backup.h"
+#include "knl_parallel_log.h"
 
 dtc_rcy_analyze_paral_node_t g_analyze_paral_mgr;
 dtc_rcy_replay_paral_node_t g_replay_paral_mgr = { 0 };
@@ -4264,6 +4265,10 @@ void dtc_recovery_close(knl_session_t *session)
             CM_FREE_PTR(dtc_rcy->rcy_nodes[i].write_pos);
             CM_FREE_PTR(dtc_rcy->rcy_nodes[i].read_size);
             CM_FREE_PTR(dtc_rcy->rcy_nodes[i].not_finished);
+            if (dtc_rcy->rcy_nodes[i].para_stream != NULL) {
+                para_log_rcy_stream_close((para_log_rcy_stream_t *)dtc_rcy->rcy_nodes[i].para_stream);
+                dtc_rcy->rcy_nodes[i].para_stream = NULL;
+            }
         }
     }
     // [reformer] release memroy malloced in dtc_rcy_init_context
@@ -4309,12 +4314,14 @@ static inline void dtc_init_not_used_log_file(log_file_t *file, database_t *db)
     file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
     file->head.block_size = file->ctrl->block_size;
     file->head.asn = OG_INVALID_ASN;
+    file->head.rcy_off = 0;
 }
 
 static inline void dtc_init_dbs_log_file(log_file_t *file, database_t *db)
 {
     file->head.rst_id = db->ctrl.core.resetlogs.rst_id;
     file->head.write_pos = 0;
+    file->head.rcy_off = 0;
 }
 
 static status_t dtc_init_node_logset(knl_session_t *session, uint8 idx)
@@ -4342,7 +4349,8 @@ static status_t dtc_init_node_logset(knl_session_t *session, uint8 idx)
             continue;
         }
 
-        if (dtc_log_file_not_used(ctrl, i)) {
+        /* Parallel writers keep independent files; log_first/log_last is the serial window and must not skip them. */
+        if (!ENABLE_PARA_LOG_FLUSH(session) && dtc_log_file_not_used(ctrl, i)) {
             dtc_init_not_used_log_file(file, db);
             continue;
         }
@@ -5061,6 +5069,35 @@ static status_t dtc_read_all_logs(knl_session_t *session)
         }
     }
 
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        if (session->kernel->rcy_ctx.max_scn != OG_INVALID_ID64) {
+            OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "PITR until time with parallel log flush");
+            OG_LOG_RUN_ERR("[DTC RCY] parallel log flush does not support time-based PITR");
+            return OG_ERROR;
+        }
+
+        for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
+            dtc_rcy_node_t *rcy_node = &dtc_rcy->rcy_nodes[i];
+            para_log_rcy_stream_t *stream = NULL;
+            uint64 rcy_lsn = dtc_rcy->rcy_log_points[i].rcy_point.lsn;
+            if (rcy_node->para_stream != NULL) {
+                para_log_rcy_stream_close((para_log_rcy_stream_t *)rcy_node->para_stream);
+                rcy_node->para_stream = NULL;
+            }
+
+            if (para_log_rcy_stream_create(session, rcy_node->node_id, rcy_lsn, rcy_node->handle, &stream) !=
+                OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC RCY] failed to open para rcy stream for node=%u", rcy_node->node_id);
+                return OG_ERROR;
+            }
+
+            rcy_node->para_stream = stream;
+            rcy_node->para_peek_ready = OG_FALSE;
+            rcy_node->recover_done = OG_FALSE;
+            OG_LOG_RUN_INF("[DTC RCY] para stream node=%u rcy_lsn=%llu", rcy_node->node_id, rcy_lsn);
+        }
+    }
+
     return OG_SUCCESS;
 }
 
@@ -5430,6 +5467,121 @@ bool32 dtc_log_need_reload(knl_session_t *session, uint32 node_id, bool32 batch_
     return OG_TRUE;
 }
 
+static status_t dtc_rcy_para_wrap_group(dtc_rcy_node_t *rcy_node, log_group_t *group, knl_session_t *session,
+                                        log_batch_t **batch_out)
+{
+    char *buf = rcy_node->read_buf[0].aligned_buf;
+    int64 buf_size = rcy_node->read_buf[0].buf_size;
+    uint32 gsize = LOG_GROUP_ACTUAL_SIZE(group);
+    uint32 space = (uint32)(sizeof(log_batch_t) + sizeof(log_part_t) + gsize);
+    log_batch_t *batch;
+    log_part_t *part;
+    errno_t ret;
+
+    if (buf == NULL || (int64)space > buf_size) {
+        OG_LOG_RUN_ERR("[DTC RCY] para wrap group failed size=%u buf=%lld", gsize, buf_size);
+        return OG_ERROR;
+    }
+
+    ret = memset_sp(buf, (size_t)space, 0, (size_t)space);
+    knl_securec_check(ret);
+    batch = (log_batch_t *)buf;
+    part = (log_part_t *)(buf + sizeof(log_batch_t));
+    ret = memcpy_sp(buf + sizeof(log_batch_t) + sizeof(log_part_t), (size_t)gsize, group, (size_t)gsize);
+    knl_securec_check(ret);
+    part->size = gsize;
+    batch->head.magic_num = LOG_MAGIC_NUMBER;
+    batch->head.point.rst_id = session->kernel->db.ctrl.core.resetlogs.rst_id;
+    batch->head.point.asn = 0;
+    batch->head.point.block_id = 0;
+    batch->head.point.lfn = group->commit_lsn;
+    batch->head.point.lsn = group->commit_lsn;
+    batch->lsn = group->lsn;
+    batch->scn = 0; /* no batch SCN in parallel mode; time-based PITR is rejected on read path */
+    batch->size = space;
+    batch->space_size = space;
+    batch->part_count = 1;
+    *batch_out = batch;
+    return OG_SUCCESS;
+}
+
+static status_t dtc_rcy_fetch_para_group(knl_session_t *session, log_batch_t **batch_out, uint32 *curr_node_idx)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    uint64 curr_batch_lsn = OG_INVALID_ID64;
+    int32 winner = -1;
+    log_group_t *winner_group = NULL;
+    uint32 i;
+
+    *batch_out = NULL;
+    for (i = 0; i < dtc_rcy->node_count; i++) {
+        dtc_rcy_node_t *rcy_node = &dtc_rcy->rcy_nodes[i];
+        para_log_rcy_stream_t *stream = (para_log_rcy_stream_t *)rcy_node->para_stream;
+        log_group_t *group = NULL;
+
+        if (rcy_node->recover_done) {
+            continue;
+        }
+
+        if (stream == NULL) {
+            rcy_node->recover_done = OG_TRUE;
+            continue;
+        }
+
+        if (para_log_rcy_stream_peek(stream, &group) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        if (group == NULL) {
+            rcy_node->recover_done = OG_TRUE;
+            if (dtc_rcy->phase == PHASE_ANALYSIS) {
+                rcy_node->analysis_read_end_point = dtc_rcy->rcy_log_points[i].rcy_point;
+            } else {
+                rcy_node->recovery_read_end_point = dtc_rcy->rcy_log_points[i].rcy_point;
+            }
+
+            continue;
+        }
+
+        if (winner < 0 || group->lsn < curr_batch_lsn) {
+            winner = (int32)i;
+            curr_batch_lsn = group->lsn;
+            winner_group = group;
+        }
+    }
+
+    if (winner < 0 || winner_group == NULL) {
+        return OG_SUCCESS;
+    }
+
+    uint64 win_curr_lsn = winner_group->lsn;
+    uint64 win_commit_lsn = winner_group->commit_lsn;
+    if (dtc_rcy_para_wrap_group(&dtc_rcy->rcy_nodes[winner], winner_group, session, batch_out) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    para_log_rcy_stream_consume((para_log_rcy_stream_t *)dtc_rcy->rcy_nodes[winner].para_stream);
+
+    *curr_node_idx = (uint32)winner;
+    dtc_rcy->curr_node_idx = (uint8)winner;
+    dtc_rcy->curr_node = dtc_rcy->rcy_nodes[winner].node_id;
+    dtc_rcy->curr_batch_lsn = win_curr_lsn;
+    dtc_rcy->rcy_log_points[winner].lsn = win_curr_lsn;
+    dtc_rcy->rcy_log_points[winner].rcy_point.lfn = win_commit_lsn;
+    dtc_rcy->rcy_log_points[winner].rcy_point.lsn = win_commit_lsn;
+    if (dtc_rcy->phase == PHASE_ANALYSIS) {
+        dtc_rcy->rcy_nodes[winner].analysis_read_end_point = (*batch_out)->head.point;
+    } else {
+        dtc_rcy->rcy_nodes[winner].recovery_read_end_point = (*batch_out)->head.point;
+    }
+
+    dtc_print_batch(*batch_out, dtc_rcy->curr_node);
+    OG_LOG_RUN_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
+                         "[PARA RCY] dtc fetch winner_node=%u curr_lsn=%llu commit_lsn=%llu phase=%u",
+                         dtc_rcy->curr_node, win_curr_lsn, win_commit_lsn, (uint32)dtc_rcy->phase);
+    return OG_SUCCESS;
+}
+
 static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **batch_out, uint32 *curr_node_idx)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
@@ -5448,6 +5600,10 @@ static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **ba
     bool32 retry_rbp_tail = OG_FALSE;
     bool32 retry_fetch = OG_TRUE;
     *batch_out = NULL;
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        return dtc_rcy_fetch_para_group(session, batch_out, curr_node_idx);
+    }
 
     if (g_dtc_rcy_fetch_diag_active != NULL) {
         g_dtc_rcy_fetch_diag_active->fetch_calls++;
@@ -5907,18 +6063,20 @@ status_t dtc_rcy_process_batch(knl_session_t *session, log_batch_t *batch)
                                group->rmid);
                 return OG_ERROR;
             }
+
             if (dtc_rcy_check_is_end_restore_recovery()) {
                 OG_LOG_RUN_INF("[DTC RCY] pcn is invalide, lsn=%llu, rmid=%u, batch_start_lsn=%llu, batch scn=%llu",
                                group->lsn, group->rmid, batch_start_lsn, batch->scn);
                 dtc_rcy->end_lsn_restore_recovery = batch_start_lsn;
                 uint64 pitr_scn = session->kernel->rcy_ctx.max_scn;
-                if (pitr_scn != OG_INVALID_ID64 && batch->scn < pitr_scn) {
+                if (!ENABLE_PARA_LOG_FLUSH(session) && pitr_scn != OG_INVALID_ID64 && batch->scn < pitr_scn) {
                     char time_str[OG_MAX_TIME_STRLEN] = { 0 };
                     dtc_convert_scn_to_time(session, batch->scn, time_str);
                     OG_LOG_RUN_WAR("[DTC RCY] the end replay batch scn %llu is smaller than pitr scn %llu, "
                                    "replay batch end time: %s",
                                    batch->scn, pitr_scn, time_str);
                 }
+
                 break;
             }
         }
@@ -5929,6 +6087,34 @@ status_t dtc_rcy_process_batch(knl_session_t *session, log_batch_t *batch)
     OG_LOG_DEBUG_INF("[DTC RCY] Log batch lfn=%llu, lsn=%llu, point [%u-%u/%u] has been processed for instance=%u",
                      (uint64)batch->head.point.lfn, batch->lsn, batch->head.point.rst_id, batch->head.point.asn,
                      batch->head.point.block_id, dtc_rcy->curr_node);
+    return OG_SUCCESS;
+}
+
+static status_t dtc_rcy_para_sync_and_reset(knl_session_t *session)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    uint32 i;
+
+    if (!ENABLE_PARA_LOG_FLUSH(session)) {
+        return OG_SUCCESS;
+    }
+
+    for (i = 0; i < dtc_rcy->node_count; i++) {
+        para_log_rcy_stream_t *stream = (para_log_rcy_stream_t *)dtc_rcy->rcy_nodes[i].para_stream;
+        uint64 end = para_log_rcy_stream_recovered_end(stream);
+        uint64 last_curr_lsn = dtc_rcy->rcy_log_points[i].lsn;
+        dtc_rcy->rcy_log_points[i].rcy_point.asn = 0;
+        dtc_rcy->rcy_log_points[i].rcy_point.block_id = 0;
+        dtc_rcy->rcy_log_points[i].rcy_point.lfn = end;
+        dtc_rcy->rcy_log_points[i].rcy_point.lsn = end;
+        OG_LOG_RUN_INF("[DTC RCY] para recovered_end node=%u commit_lsn=%llu curr_lsn=%llu",
+                       dtc_rcy->rcy_nodes[i].node_id, end, last_curr_lsn);
+        if (para_log_rcy_apply_reset(session, dtc_rcy->rcy_nodes[i].node_id, end, last_curr_lsn,
+                                    dtc_rcy->rcy_nodes[i].handle) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
     return OG_SUCCESS;
 }
 
@@ -6087,21 +6273,30 @@ static void dtc_rcy_wait_paral_replay_end(knl_session_t *session, bool32 close_w
     }
 }
 
-static bool32 dtc_rcy_pitr_replay_end(rcy_context_t *rcy, log_batch_t *batch)
+static bool32 dtc_rcy_pitr_replay_end(knl_session_t *session, rcy_context_t *rcy, log_batch_t *batch)
 {
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        return OG_FALSE;
+    }
+
     if (batch->scn <= rcy->max_scn) {
         return OG_FALSE;
     }
+
     OG_LOG_RUN_INF("[DTC RCY] until time recover done");
     return OG_TRUE;
 }
 
-static bool32 dtc_rcy_full_recovery_replay_end(rcy_context_t *rcy, log_batch_t *batch)
+static bool32 dtc_rcy_full_recovery_replay_end(knl_session_t *session, rcy_context_t *rcy, log_batch_t *batch)
 {
-    if (batch->lsn <= rcy->max_lrp_lsn) {
+    /* parallel wrap: batch->lsn is curr_lsn; lrp uses commit_lsn via head.point.lsn */
+    uint64 batch_lsn = ENABLE_PARA_LOG_FLUSH(session) ? batch->head.point.lsn : batch->lsn;
+
+    if (batch_lsn <= rcy->max_lrp_lsn) {
         return OG_FALSE;
     }
-    OG_LOG_RUN_INF("[DTC RCY] until lrp[%llu] full_recover done", batch->lsn);
+
+    OG_LOG_RUN_INF("[DTC RCY] until lrp[%llu] full_recover done", batch_lsn);
     return OG_TRUE;
 }
 
@@ -6134,13 +6329,19 @@ static status_t dtc_rcy_process_batches(knl_session_t *session)
     OG_LOG_RUN_INF("[DTC RCY] dtc_read_all_logs used %llu", used_time);
 
     knl_session_t *ss = NULL;
-    if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&ss) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC RCY] dtc rcy proc init failed as alloc session failed");
-        return OG_ERROR;
-    }
-    if (OG_SUCCESS != cm_create_thread(dtc_rcy_read_node_log_proc, 0, ss, &dtc_rcy->read_log_thread)) {
-        OG_LOG_RUN_ERR("[DTC RCY] failed to create thread read node log proc");
-        return OG_ERROR;
+    bool32 started_read = OG_FALSE;
+    if (!ENABLE_PARA_LOG_FLUSH(session)) {
+        if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&ss) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] dtc rcy proc init failed as alloc session failed");
+            return OG_ERROR;
+        }
+
+        if (OG_SUCCESS != cm_create_thread(dtc_rcy_read_node_log_proc, 0, ss, &dtc_rcy->read_log_thread)) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to create thread read node log proc");
+            return OG_ERROR;
+        }
+
+        started_read = OG_TRUE;
     }
 
     ELAPSED_BEGIN(elapsed_begin);
@@ -6179,11 +6380,11 @@ static status_t dtc_rcy_process_batches(knl_session_t *session)
             break;
         }
 
-        if (dtc_rcy_pitr_replay_end(rcy, batch)) {
+        if (dtc_rcy_pitr_replay_end(session, rcy, batch)) {
             break;
         }
 
-        if (dtc_rcy_full_recovery_replay_end(rcy, batch)) {
+        if (dtc_rcy_full_recovery_replay_end(session, rcy, batch)) {
             break;
         }
 
@@ -6215,9 +6416,11 @@ static status_t dtc_rcy_process_batches(knl_session_t *session)
                    (uint64)session->kernel->redo_ctx.redo_end_point.lfn,
                    session->kernel->redo_ctx.rbp_aly_lsn,
                    (uint32)KNL_RECOVERY_WITH_RBP(session->kernel));
-    if (close_read_log_proc(&dtc_rcy->read_log_thread, ss) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC RCY] close read log proc time out");
-        return OG_ERROR;
+    if (started_read) {
+        if (close_read_log_proc(&dtc_rcy->read_log_thread, ss) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] close read log proc time out");
+            return OG_ERROR;
+        }
     }
     OG_LOG_RUN_INF("[DTC RCY] dtc_rcy_fetch_log_batch used=%llu", fetch_log_time);
     OG_LOG_RUN_INF("[DTC RCY] dtc_rcy_process_batch used=%llu", replay_log_time);
@@ -7145,17 +7348,23 @@ static status_t dtc_rcy_analyze_batches_paral(knl_session_t *session)
     }
 
     knl_session_t *ss = NULL;
-    if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&ss) != OG_SUCCESS) {
-        dtc_rcy_free_list_in_analyze_paral(g_analyze_paral_mgr.buf_list, prarl_buf_list_size);
-        dtc_rcy_analyze_abort_local_sets();
-        OG_LOG_RUN_ERR("[DTC RCY] dtc rcy proc init failed as alloc session failed");
-        return OG_ERROR;
-    }
-    if (OG_SUCCESS != cm_create_thread(dtc_rcy_read_node_log_proc, 0, ss, &dtc_rcy->read_log_thread)) {
-        dtc_rcy_free_list_in_analyze_paral(g_analyze_paral_mgr.buf_list, prarl_buf_list_size);
-        dtc_rcy_analyze_abort_local_sets();
-        OG_LOG_RUN_ERR("[DTC RCY] failed to create thread read node log proc");
-        return OG_ERROR;
+    bool32 started_read = OG_FALSE;
+    if (!ENABLE_PARA_LOG_FLUSH(session)) {
+        if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&ss) != OG_SUCCESS) {
+            dtc_rcy_free_list_in_analyze_paral(g_analyze_paral_mgr.buf_list, prarl_buf_list_size);
+            dtc_rcy_analyze_abort_local_sets();
+            OG_LOG_RUN_ERR("[DTC RCY] dtc rcy proc init failed as alloc session failed");
+            return OG_ERROR;
+        }
+
+        if (OG_SUCCESS != cm_create_thread(dtc_rcy_read_node_log_proc, 0, ss, &dtc_rcy->read_log_thread)) {
+            dtc_rcy_free_list_in_analyze_paral(g_analyze_paral_mgr.buf_list, prarl_buf_list_size);
+            dtc_rcy_analyze_abort_local_sets();
+            OG_LOG_RUN_ERR("[DTC RCY] failed to create thread read node log proc");
+            return OG_ERROR;
+        }
+
+        started_read = OG_TRUE;
     }
 
     g_dtc_rcy_fetch_diag_active = &main_stat.fetch_diag;
@@ -7235,11 +7444,13 @@ static status_t dtc_rcy_analyze_batches_paral(knl_session_t *session)
             g_analyze_paral_mgr.killed_flag = OG_TRUE;
             break;
         }
-        if (batch->scn > rcy->max_scn) {
+
+        if (!ENABLE_PARA_LOG_FLUSH(session) && batch->scn > rcy->max_scn) {
             OG_LOG_RUN_INF("[DTC RCY] log batch->scn=%llu is larger than rcy->max_scn=%llu, recovery done", batch->scn,
                            rcy->max_scn);
             break;
         }
+
         idx = dtc_rcy_atomic_list_pop(&g_analyze_paral_mgr.free_list);
         if (idx == OG_INVALID_INT32) {  // free list is empty
             free_empty_count++;
@@ -7360,10 +7571,14 @@ static status_t dtc_rcy_analyze_batches_paral(knl_session_t *session)
     dtc_rcy_log_fetch_diag_summary(&main_stat.fetch_diag, main_stat.fetch_us);
     g_dtc_rcy_fetch_diag_active = NULL;
     dtc_rcy_log_read_buffer_diag(dtc_rcy, "analyze-main-leave");
-    if (close_read_log_proc(&dtc_rcy->read_log_thread, ss) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC RCY] close read log proc time out");
-        status = OG_ERROR;
-        g_analyze_paral_mgr.killed_flag = OG_TRUE;
+    if (started_read) {
+        if (close_read_log_proc(&dtc_rcy->read_log_thread, ss) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] close read log proc time out");
+            status = OG_ERROR;
+            g_analyze_paral_mgr.killed_flag = OG_TRUE;
+        } else if (g_analyze_paral_mgr.killed_flag == OG_FALSE) {
+            g_analyze_paral_mgr.read_log_end_flag = OG_TRUE;
+        }
     } else if (g_analyze_paral_mgr.killed_flag == OG_FALSE) {
         g_analyze_paral_mgr.read_log_end_flag = OG_TRUE;
     }
@@ -7662,13 +7877,19 @@ static status_t dtc_rcy_replay_batches_paral(knl_session_t *session)
     OG_LOG_RUN_INF("[DTC RCY] read redo logs in paral replay used=%llu", used_time);
 
     knl_session_t *ss = NULL;
-    if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&ss) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC RCY] dtc rcy proc init failed as alloc session failed");
-        return OG_ERROR;
-    }
-    if (OG_SUCCESS != cm_create_thread(dtc_rcy_read_node_log_proc, 0, ss, &dtc_rcy->read_log_thread)) {
-        OG_LOG_RUN_ERR("[DTC RCY] failed to create thread read node log proc");
-        return OG_ERROR;
+    bool32 started_read = OG_FALSE;
+    if (!ENABLE_PARA_LOG_FLUSH(session)) {
+        if (g_knl_callback.alloc_knl_session(OG_TRUE, (knl_handle_t *)&ss) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] dtc rcy proc init failed as alloc session failed");
+            return OG_ERROR;
+        }
+
+        if (OG_SUCCESS != cm_create_thread(dtc_rcy_read_node_log_proc, 0, ss, &dtc_rcy->read_log_thread)) {
+            OG_LOG_RUN_ERR("[DTC RCY] failed to create thread read node log proc");
+            return OG_ERROR;
+        }
+
+        started_read = OG_TRUE;
     }
 
     ELAPSED_BEGIN(elapsed_begin);
@@ -7709,11 +7930,11 @@ static status_t dtc_rcy_replay_batches_paral(knl_session_t *session)
             break;
         }
 
-        if (dtc_rcy_pitr_replay_end(rcy, batch)) {
+        if (dtc_rcy_pitr_replay_end(session, rcy, batch)) {
             break;
         }
 
-        if (DB_IS_PRIMARY(&session->kernel->db) && dtc_rcy_full_recovery_replay_end(rcy, batch)) {
+        if (DB_IS_PRIMARY(&session->kernel->db) && dtc_rcy_full_recovery_replay_end(session, rcy, batch)) {
             break;
         }
 
@@ -7809,9 +8030,11 @@ static status_t dtc_rcy_replay_batches_paral(knl_session_t *session)
         replay_submit_loop_us = (uint64)(cm_now() - replay_submit_begin);
     }
     stage_begin = cm_now();
-    if (close_read_log_proc(&dtc_rcy->read_log_thread, ss) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC RCY] close read log proc time out");
-        return OG_ERROR;
+    if (started_read) {
+        if (close_read_log_proc(&dtc_rcy->read_log_thread, ss) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DTC RCY] close read log proc time out");
+            return OG_ERROR;
+        }
     }
     close_read_log_us = (uint64)(cm_now() - stage_begin);
     stage_begin = cm_now();
@@ -8028,6 +8251,7 @@ static inline void dtc_rcy_next_phase(knl_session_t *session)
         }
         dtc_rcy->rcy_nodes[i].latest_lsn = 0;
         dtc_rcy->rcy_nodes[i].latest_rcy_end_lsn = 0;
+        dtc_rcy->rcy_nodes[i].para_peek_ready = OG_FALSE;
         if (cm_dbs_is_enable_dbs() && session->kernel->db.recover_for_restore) {
             dtc_rcy->rcy_log_points[i].rcy_point.asn = 0;
             dtc_rcy->rcy_log_points[i].rcy_point.block_id = OG_INFINITE32;
@@ -9193,7 +9417,7 @@ static status_t dtc_rcy_rbp_prepare(knl_session_t *session)
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
     uint64 global_local_lrp_lsn = 0;
 
-    if (dtc_rcy->full_recovery) {
+    if (dtc_rcy->full_recovery || ENABLE_PARA_LOG_FLUSH(session)) {
         dtc_rcy_pcn_diag_finish_rbp_prepare(session, DTC_PCND_RBP_PREP_SKIP_NO_RBP);
         return OG_SUCCESS;
     }
@@ -9292,6 +9516,10 @@ static status_t dtc_rcy_full_recovery(knl_session_t *session)
                    stat->last_rcy_analyze_elapsed, stat->last_rcy_replay_elapsed, total_elapsed);
 
     // wait for all dirty pages to be flushed to disk
+    if (dtc_rcy_para_sync_and_reset(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     ckpt_trigger(session, OG_TRUE, CKPT_TRIGGER_FULL);
 
     return dtc_rcy_update_ckpt_log_point(session);
@@ -9496,6 +9724,10 @@ static status_t dtc_rcy_partial_recovery(knl_session_t *session)
     OG_LOG_RUN_INF("[DTC RCY] recovery set record page=%llu, recovery redo log size(M)=%llu", rcy_record_page,
                    stat->last_rcy_log_size / SIZE_M(1));
 
+    if (dtc_rcy_para_sync_and_reset(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_INC);
     OG_LOG_RUN_INF("[DTC RCY][partial recovery] trigger inc ckpt");
 
@@ -9648,6 +9880,10 @@ static void dtc_init_node(dtc_rcy_node_t *rcy_node, reform_rcy_node_t *rcy_log_p
     rcy_node->curr_file_length = 0;
     rcy_node->latest_lsn = 0;
     rcy_node->latest_rcy_end_lsn = 0;
+    rcy_node->para_stream = NULL;
+    rcy_node->para_peek_ready = OG_FALSE;
+    rcy_node->analysis_read_end_point = ctrl->rcy_point;
+    rcy_node->recovery_read_end_point = ctrl->rcy_point;
 
     rcy_log_point->node_id = node_id;
     rcy_log_point->lsn = ctrl->lsn;

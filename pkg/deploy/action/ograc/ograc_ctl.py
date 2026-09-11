@@ -30,6 +30,41 @@ from common.cgroup import list_ogracd_pids
 LOG = get_logger()
 _cfg = get_config()
 
+HW_TOPO_MAX_GROUPS = 64
+
+
+def _para_log_flush_enabled(params):
+    val = params.get("ENABLE_PARA_LOG_FLUSH", False)
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().upper() in ("TRUE", "1", "YES", "ON")
+
+
+def _hw_group_count():
+    """Same grouping as C SYS_NUMA_GROUP_COUNT (hw_topo_get_info)."""
+    cluster0 = "/sys/devices/system/cpu/cpu0/topology/cluster_cpus_list"
+    seen = set()
+    if os.path.exists(cluster0):
+        cpu = 0
+        while os.path.isdir("/sys/devices/system/cpu/cpu%d" % cpu):
+            clist = "/sys/devices/system/cpu/cpu%d/topology/cluster_cpus_list" % cpu
+            if os.path.isfile(clist):
+                try:
+                    with open(clist, "r", encoding="utf-8") as fp:
+                        seen.add(fp.read().strip())
+                except OSError:
+                    pass
+            cpu += 1
+        if seen:
+            return max(1, min(HW_TOPO_MAX_GROUPS, len(seen)))
+
+    node = 0
+    while node < HW_TOPO_MAX_GROUPS and os.path.isdir("/sys/devices/system/node/node%d" % node):
+        node += 1
+    if node > 0:
+        return min(HW_TOPO_MAX_GROUPS, node)
+    return 1
+
 
 
 def _read_json(path):
@@ -666,6 +701,9 @@ def _build_ogracd_configs(dp):
 
     c.update(dp.kernel_params)
 
+    para_flush = _para_log_flush_enabled(_cfg.deploy.raw_params)
+    c["ENABLE_PARA_LOG_FLUSH"] = "TRUE" if para_flush else "FALSE"
+
     cpu_group = _detect_cpu_group_info(dp.use_gss)
     if cpu_group:
         c["CPU_GROUP_INFO"] = cpu_group
@@ -939,8 +977,26 @@ def _patch_create_sql(sql_file, dp):
     """Patch create-db SQL file paths per deploy mode."""
     redo_num = _cfg.deploy.get("redo_num", "")
     redo_size = _cfg.deploy.get("redo_size", "")
+    para_flush = _para_log_flush_enabled(_cfg.deploy.raw_params)
     if redo_num and redo_size:
-        _patch_redo_config(sql_file, int(redo_num), redo_size)
+        n = int(redo_num)
+        if para_flush:
+            groups = _hw_group_count()
+            n = n * groups
+            LOG.info("ENABLE_PARA_LOG_FLUSH=TRUE, hw_groups=%s, redo files per node=%s",
+                     groups, n)
+        _patch_redo_config(sql_file, n, redo_size)
+
+    if para_flush:
+        with open(sql_file, "r", encoding="utf-8") as f:
+            sql_content = f.read()
+        patched = re.sub(r"\barchivelog\b", "noarchivelog", sql_content, count=1, flags=re.IGNORECASE)
+        if patched != sql_content:
+            flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
+            modes = stat.S_IWUSR | stat.S_IRUSR
+            with os.fdopen(os.open(sql_file, flags, modes), "w", encoding="utf-8") as f:
+                f.write(patched)
+            LOG.info("ENABLE_PARA_LOG_FLUSH=TRUE, create database with noarchivelog")
 
     if dp.use_gss:
         _sed_replace(sql_file, "dbfiles1", "+vg1")

@@ -109,6 +109,12 @@ class ConfigChecker:
         return isinstance(value, bool)
 
     @staticmethod
+    def ENABLE_PARA_LOG_FLUSH(value):
+        if isinstance(value, bool):
+            return True
+        return str(value).strip().upper() in ("TRUE", "FALSE", "0", "1")
+
+    @staticmethod
     def redo_num(value):
         try:
             v = int(value)
@@ -241,9 +247,12 @@ class CheckInstallConfig(CheckBase):
             'storage_share_fs', 'storage_archive_fs', 'storage_metadata_fs',
             'share_logic_ip', 'archive_logic_ip', 'metadata_logic_ip',
             'SYS_PASSWORD', 'kernel_parameters',
+            'ENABLE_PARA_LOG_FLUSH',
         }
+        self.optional_template_keys = {'ENABLE_PARA_LOG_FLUSH'}
+        self.required_keys = self.required_keys - self.optional_template_keys
         self.mes_type_key = {'ca_path', 'crt_path', 'key_path'}
-        self.allowed_keys = set(self.required_keys) | self.lifecycle_keys | self.compatibility_keys
+        self.allowed_keys = set(self.required_keys) | self.lifecycle_keys | self.compatibility_keys | self.optional_template_keys
 
         self.module_config_required_keys = {'ograc_home', 'data_root', 'user'}
         self.module_config_allowed_keys = {

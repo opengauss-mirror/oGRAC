@@ -225,6 +225,15 @@ class ConfigChecker:
             return False
         return True
 
+    @staticmethod
+    def ENABLE_PARA_LOG_FLUSH(value):
+        if isinstance(value, bool):
+            return True
+        if str(value).strip().upper() in ("TRUE", "FALSE", "0", "1"):
+            return True
+        LOG.error('ENABLE_PARA_LOG_FLUSH must be boolean or TRUE/FALSE')
+        return False
+
 
 class CheckBase(metaclass=abc.ABCMeta):
     def __init__(self, check_name, suggestion):
@@ -336,6 +345,7 @@ class CheckInstallConfig(CheckBase):
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
                 'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'SYS_PASSWORD', 'auto_tune',
+                'ENABLE_PARA_LOG_FLUSH',
                 'dss_vg_list', 'gcc_home',
                 'cms_port', 'dss_port', 'ograc_port', 'interconnect_port',
                 '_SHM_KEY', 'module_config',
@@ -345,6 +355,7 @@ class CheckInstallConfig(CheckBase):
                 'deploy_user', 'node_id', 'cms_ip',  'db_type', 'ograc_in_container',
                 'MAX_ARCH_FILES_SIZE',
                 'deploy_mode', 'mes_ssl_switch', "redo_num", "redo_size", 'auto_tune',
+                'ENABLE_PARA_LOG_FLUSH',
                 'dss_vg_list', 'gcc_home',
                 'cms_port', 'dss_port', 'ograc_port', 'interconnect_port',
                 '_SHM_KEY', 'module_config',
@@ -374,6 +385,7 @@ class CheckInstallConfig(CheckBase):
             'cluster_name', 'cluster_id', 'mes_type', 'install_type',
             'ograc_vlan_ip', 'storage_vlan_ip', 'storage_dbstor_page_fs',
             'kerberos_key', 'vstore_id', 'dbstor_fs_vstore_id',
+            'ENABLE_PARA_LOG_FLUSH',
         }
 
         self.config_params = {}

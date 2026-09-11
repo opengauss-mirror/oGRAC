@@ -355,6 +355,8 @@ typedef struct st_dtc_rcy_node {
     uint64 latest_lsn;
     uint64 latest_rcy_end_lsn;
     dtc_rcy_lsn_records_t lsn_records; // lsn records for reduce redundant log
+    void *para_stream;
+    bool32 para_peek_ready;
 } dtc_rcy_node_t;
 
 typedef struct st_rcy_node_stat {

@@ -73,7 +73,6 @@ static inline void log_buf_init(knl_session_t *session)
     ogx->wid = 0;
     ogx->fid = 1;
     ogx->flushed_lfn = 0;
-
     ogx->logwr_head_buf = kernel->attr.lgwr_head_buf;
     ogx->logwr_buf = kernel->attr.lgwr_buf;
     ogx->logwr_buf_size = (uint32)kernel->attr.lgwr_buf_size;
@@ -90,6 +89,27 @@ static inline bool32 log_file_not_used(log_context_t *ogx, uint32 file)
     } else {
         return (bool32)(file < ogx->active_file && file > ogx->curr_file);
     }
+}
+
+static inline bool32 para_log_file_not_used(const para_log_context_t *para_ogx, uint32 file)
+{
+    if (para_ogx->active_file <= para_ogx->curr_file) {
+        return (bool32)(file < para_ogx->active_file || file > para_ogx->curr_file);
+    }
+
+    return (bool32)(file < para_ogx->active_file && file > para_ogx->curr_file);
+}
+
+static void log_file_reset_unused_head(log_file_t *file, database_t *db)
+{
+    file->head.rst_id = db->ctrl.core.resetlogs.rst_id;
+    file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+    file->head.block_size = file->ctrl->block_size;
+    file->head.asn = OG_INVALID_ASN;
+    file->head.first = OG_INVALID_ID64;
+    file->head.last = OG_INVALID_ID64;
+    file->head.cmp_algorithm = COMPRESS_NONE;
+    file->head.rcy_off = 0;
 }
 
 inline uint64 log_file_freesize(log_file_t *file)
@@ -172,53 +192,136 @@ static status_t log_file_init(knl_session_t *session)
     database_t *db = &session->kernel->db;
     logfile_set_t *logfile_set = MY_LOGFILE_SET(session);
     log_file_t *file = NULL;
+    char *head_buf = ogx->logwr_buf;
+
+    if (head_buf == NULL) {
+        head_buf = kernel->attr.lgwr_head_buf;
+    }
 
     ogx->logfile_hwm = logfile_set->logfile_hwm;
     ogx->files = logfile_set->items;
-    ogx->free_size = 0;
+    cm_atomic_set(&ogx->free_size, 0);
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 group_count = SYS_NUMA_GROUP_COUNT;
+        for (uint32 g = 0; g < group_count; g++) {
+            para_log_context_t *para_ogx = kernel->para_log_ctx[g];
+            if (para_ogx == NULL) {
+                continue;
+            }
+
+            para_ogx->log_file_idx = 0;
+            cm_atomic_set(&para_ogx->free_size, 0);
+        }
+
+        if (para_log_check_unsupported(session) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
 
     if (cm_dbs_is_enable_dbs() == OG_TRUE) {
         file = &ogx->files[0];
         file->head.rst_id = db->ctrl.core.resetlogs.rst_id;
         file->head.write_pos = 0;
-        ogx->free_size += log_file_freesize(file);
+        file->head.rcy_off = 0;
+        cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
         return OG_SUCCESS;
     }
 
     for (uint32 i = 0; i < ogx->logfile_hwm; i++) {
+        para_log_context_t *para_ogx = NULL;
+
         file = &ogx->files[i];
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            uint32 group_id;
+
+            if (file->ctrl == NULL) {
+                OG_LOG_RUN_ERR("[LOG] logfile %u has null ctrl during para log init", i);
+                return OG_ERROR;
+            }
+
+            group_id = file->ctrl->group_id;
+            if (group_id >= SYS_NUMA_GROUP_COUNT) {
+                OG_LOG_RUN_ERR("[LOG] invalid para log group_id %u for file %s", group_id, file->ctrl->name);
+                return OG_ERROR;
+            }
+
+            para_ogx = kernel->para_log_ctx[group_id];
+            if (para_ogx == NULL) {
+                OG_LOG_RUN_ERR("[LOG] para log context is not initialized for group %u, file %s",
+                               group_id, file->ctrl->name);
+                return OG_ERROR;
+            }
+
+            if (para_ogx->log_file_idx >= CPU_SEG_MAX_NUM) {
+                OG_LOG_RUN_ERR("[LOG] too many log files for para log group %u", group_id);
+                return OG_ERROR;
+            }
+
+            para_ogx->files[para_ogx->log_file_idx] = file;
+            para_ogx->log_file_idx++;
+        }
 
         if (LOG_IS_DROPPED(file->ctrl->flg)) {
             continue;
         }
 
-        if (cm_read_device(file->ctrl->type, file->handle, 0, ogx->logwr_buf,
+        if (head_buf == NULL) {
+            OG_LOG_RUN_ERR("[LOG] log head buffer is not initialized, file %s", file->ctrl->name);
+            cm_close_device(file->ctrl->type, &file->handle);
+            return OG_ERROR;
+        }
+
+        if (cm_read_device(file->ctrl->type, file->handle, 0, head_buf,
                            CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size)) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[LOG] failed to read %s ", file->ctrl->name);
             cm_close_device(file->ctrl->type, &file->handle);
             return OG_ERROR;
         }
 
-        if (log_verify_head_checksum(session, (log_file_head_t *)ogx->logwr_buf, file->ctrl->name) != OG_SUCCESS) {
+        if (log_verify_head_checksum(session, (log_file_head_t *)head_buf, file->ctrl->name) != OG_SUCCESS) {
             cm_close_device(file->ctrl->type, &file->handle);
             return OG_ERROR;
         }
 
-        if (log_file_not_used(ogx, i)) {
-            file->head.rst_id = db->ctrl.core.resetlogs.rst_id;
-            file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
-            file->head.block_size = file->ctrl->block_size;
-            file->head.asn = OG_INVALID_ASN;
-            file->head.first = OG_INVALID_ID64;
-            file->head.last = OG_INVALID_ID64;
-            file->head.cmp_algorithm = COMPRESS_NONE;
-            ogx->free_size += log_file_freesize(&logfile_set->items[i]);
+        if (!ENABLE_PARA_LOG_FLUSH(session) && log_file_not_used(ogx, i)) {
+            log_file_reset_unused_head(file, db);
+            cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(&logfile_set->items[i]));
             continue;
         }
 
         uint32 log_head_size = sizeof(log_file_head_t);
-        errno_t ret = memcpy_sp(&file->head, log_head_size, ogx->logwr_buf, log_head_size);
+        errno_t ret = memcpy_sp(&file->head, log_head_size, head_buf, log_head_size);
         knl_securec_check(ret);
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            uint32 slot;
+
+            if (para_ogx == NULL || para_ogx->log_file_idx == 0) {
+                OG_LOG_RUN_ERR("[LOG] para log context is not initialized for group %u",
+                               file->ctrl->group_id);
+                return OG_ERROR;
+            }
+
+            slot = para_ogx->log_file_idx - 1;
+
+            /*
+             * Spare files of this writer: only wipe heads that are already unused (INVALID_ASN).
+             * A file outside the active window may still hold a valid ASN; resetting it would
+             * make recovery skip the file and create a false commit_lsn hole.
+             * Do not accumulate free_size here: INACTIVE write_pos often stays at EOF,
+             * and curr may be changed by para_log_fix_curr_by_asn. free_size is rebuilt
+             * only in para_log_file_load / switch / apply_reset.
+             */
+            if (para_log_file_not_used(para_ogx, slot) && file->head.asn == OG_INVALID_ASN) {
+                log_file_reset_unused_head(file, db);
+            }
+        }
+    }
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        if (para_log_file_load(session) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
     }
 
     return OG_SUCCESS;
@@ -228,11 +331,29 @@ status_t log_init(knl_session_t *session)
 {
     errno_t ret = memset_sp(&session->kernel->redo_ctx, sizeof(log_context_t), 0, sizeof(log_context_t));
     knl_securec_check(ret);
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_LOG_RUN_INF("[PARA LOG] log_init enable_para_log_flush=1 wal_groups=%u numa=%u",
+                       SYS_NUMA_GROUP_COUNT, SYS_NUMA_NODE_COUNT);
+        if (para_log_init(session) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
 
-    log_buf_init(session);
+        if (para_log_check_unsupported(session) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
+        /*
+         * para_log_init does not fill redo_ctx.logwr_buf. Mount/open still reads file heads
+         * through redo_ctx; leave those pointing at the SGA lgwr buffers.
+         */
+        session->kernel->redo_ctx.logwr_head_buf = session->kernel->attr.lgwr_head_buf;
+        session->kernel->redo_ctx.logwr_buf = session->kernel->attr.lgwr_buf;
+        session->kernel->redo_ctx.logwr_buf_size = (uint32)session->kernel->attr.lgwr_buf_size;
+    } else {
+        log_buf_init(session);
+    }
 
     raft_async_log_buf_init(session);
-
     return OG_SUCCESS;
 }
 
@@ -242,18 +363,56 @@ status_t log_load(knl_session_t *session)
 
     ogx->active_file = dtc_my_ctrl(session)->log_first;
     ogx->curr_file = dtc_my_ctrl(session)->log_last;
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 group_count = SYS_NUMA_GROUP_COUNT;
+        for (uint32 i = 0; i < group_count; i++) {
+            if (session->kernel->para_log_ctx[i] == NULL) {
+                OG_LOG_RUN_ERR("[LOG] para log context is not initialized for group %u", i);
+                return OG_ERROR;
+            }
+
+            session->kernel->para_log_ctx[i]->active_file = dtc_my_ctrl(session)->para_log_first[i];
+            session->kernel->para_log_ctx[i]->curr_file = dtc_my_ctrl(session)->para_log_last[i];
+        }
+    }
 
     return log_file_init(session);
 }
 
 void log_close(knl_session_t *session)
 {
-    cm_close_thread(&session->kernel->redo_ctx.thread);
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        para_log_close(session);
+    } else {
+        cm_close_thread(&session->kernel->redo_ctx.thread);
+    }
 }
 
 void log_flush_head(knl_session_t *session, log_file_t *file)
 {
-    log_context_t *ogx = &session->kernel->redo_ctx;
+    char *log_head_buf = session->kernel->attr.lgwr_head_buf;
+
+    if (ENABLE_PARA_LOG_FLUSH(session) && file->ctrl != NULL) {
+        uint32 gid = file->ctrl->group_id;
+        para_log_context_t *para_ogx = NULL;
+
+        if (gid < SYS_NUMA_GROUP_COUNT) {
+            para_ogx = session->kernel->para_log_ctx[gid];
+        }
+
+        if (para_ogx != NULL && para_ogx->logwr_head_buf != NULL) {
+            log_head_buf = para_ogx->logwr_head_buf;
+        }
+    } else if (session->kernel->redo_ctx.logwr_head_buf != NULL) {
+        log_head_buf = session->kernel->redo_ctx.logwr_head_buf;
+    }
+
+    if (log_head_buf == NULL) {
+        OG_LOG_RUN_ERR("[LOG] log head buffer is not initialized, file %s",
+                       (file->ctrl != NULL) ? file->ctrl->name : "unknown");
+        CM_ABORT(0, "[LOG] ABORT INFO: log head buffer is null when flush redo head.");
+        return;
+    }
 
     if (file->ctrl->type == DEV_TYPE_ULOG) {
         OG_LOG_RUN_INF("NO need flush head for ulog %s.", file->ctrl->name);
@@ -269,20 +428,28 @@ void log_flush_head(knl_session_t *session, log_file_t *file)
     /* since rebuild ctrlfiles was supported, the log file ctrl info was backup in the first block of log file. in
      * order not to overwrite it, we need to read it before write in flush log file head */
     int32 size = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
-    if (cm_read_device(file->ctrl->type, file->handle, 0, ogx->logwr_head_buf, size) != OG_SUCCESS) {
+    if (cm_read_device(file->ctrl->type, file->handle, 0, log_head_buf, size) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[LOG] failed to read %s ", file->ctrl->name);
         CM_ABORT(0, "[LOG] ABORT INFO: read redo head:%s, offset:%u, size:%lu failed.", file->ctrl->name, 0,
                  sizeof(log_file_head_t));
     }
 
-    *(log_file_head_t *)ogx->logwr_head_buf = file->head;
+    *(log_file_head_t *)log_head_buf = file->head;
 
     size = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
-    if (cm_write_device(file->ctrl->type, file->handle, 0, ogx->logwr_head_buf, size) != OG_SUCCESS) {
+    if (cm_write_device(file->ctrl->type, file->handle, 0, log_head_buf, size) != OG_SUCCESS) {
         OG_LOG_ALARM(WARN_FLUSHREDO, "'file-name':'%s'}", file->ctrl->name);
         CM_ABORT(0, "[LOG] ABORT INFO: flush redo file:%s, offset:%u, size:%lu failed.", file->ctrl->name, 0,
                  sizeof(log_file_head_t));
     }
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        if (para_log_fredosync(file->ctrl->type, file->handle) != OG_SUCCESS) {
+            OG_LOG_ALARM(WARN_FLUSHREDO, "'file-name':'%s'}", file->ctrl->name);
+            CM_ABORT(0, "[LOG] ABORT INFO: fdatasync redo file head %s failed.", file->ctrl->name);
+        }
+    }
+
     OG_LOG_DEBUG_INF("Flush log[%u] head with asn %u status %d", file->ctrl->file_id, file->head.asn,
                      file->ctrl->status);
 }
@@ -290,26 +457,35 @@ void log_flush_head(knl_session_t *session, log_file_t *file)
 status_t log_switch_file(knl_session_t *session)
 {
     log_context_t *ogx = &session->kernel->redo_ctx;
-    reset_log_t resetlog = session->kernel->db.ctrl.core.resetlogs;
     uint32 next;
     log_file_t *curr_file = NULL;
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "switch logfile with parallel log flush");
+        OG_LOG_RUN_ERR("[LOG] serial log_switch_file is not supported with parallel log flush");
+        return OG_ERROR;
+    }
+
+    reset_log_t resetlog = session->kernel->db.ctrl.core.resetlogs;
 
     if (cm_dbs_is_enable_dbs() == OG_TRUE) {
         curr_file = &ogx->files[ogx->curr_file];
         curr_file->head.write_pos = 0;
+        curr_file->head.rcy_off = 0;
         OG_LOG_RUN_INF("Succeed to switch logfile active %u current %u.", ogx->active_file, ogx->curr_file);
         return OG_SUCCESS;
     }
 
     log_get_next_file(session, &next, OG_TRUE);
     knl_panic_log((next != ogx->active_file), "failed to switch log file, current file is %d, "
-                  "active file is %d, log free size is %llu", ogx->curr_file, ogx->active_file, ogx->free_size);
+                  "active file is %d, log free size is %llu", ogx->curr_file, ogx->active_file,
+                  cm_atomic_get(&ogx->free_size));
 
     curr_file = &ogx->files[ogx->curr_file];
     curr_file->ctrl->status = LOG_FILE_ACTIVE;
     uint32 asn = curr_file->head.asn;
     uint32 rst_id = (curr_file->head.asn == resetlog.last_asn) ? (resetlog.rst_id) : curr_file->head.rst_id;
-    ogx->free_size -= log_file_freesize(curr_file);
+    cm_atomic_sub(&ogx->free_size, (int64)log_file_freesize(curr_file));
     ogx->curr_file = next;
 
     log_file_t *next_file = &ogx->files[next];
@@ -320,6 +496,7 @@ status_t log_switch_file(knl_session_t *session)
     next_file->head.asn = asn + 1;
     next_file->head.first = OG_INVALID_ID64;
     next_file->head.cmp_algorithm = COMPRESS_NONE;
+    next_file->head.rcy_off = 0;
     next_file->ctrl->status = LOG_FILE_CURRENT;
     next_file->ctrl->archived = OG_FALSE;
     log_flush_head(session, next_file);
@@ -402,9 +579,9 @@ status_t log_flush_to_disk(knl_session_t *session, log_context_t *ogx, log_batch
         ogx->stat.space_requests++;
     }
     if (file->ctrl->type == DEV_TYPE_ULOG) {
-        ogx->free_size = free_size;
+        cm_atomic_set(&ogx->free_size, (int64)free_size);
     } else {
-        ogx->free_size -= space_size;
+        cm_atomic_sub(&ogx->free_size, (int64)space_size);
     }
     
     file->head.last = batch->scn;
@@ -613,7 +790,6 @@ static log_batch_t *log_assemble_batch(knl_session_t *session, log_context_t *og
     batch->encrypted = OG_FALSE;
     ogx->log_encrypt = OG_FALSE;
     ogx->logwr_buf_pos = sizeof(log_batch_t);
-
     for (;;) {
         uint32 skip_count = 0;
         for (uint32 i = 0; i < ogx->buf_count; i++) {
@@ -679,13 +855,16 @@ static log_batch_t *log_assemble_batch(knl_session_t *session, log_context_t *og
     return batch;
 }
 
-bool32 log_need_flush(log_context_t *ogx)
+bool32 log_need_flush(knl_session_t *session)
 {
-    uint32 wid = ogx->wid;
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        return para_log_need_flush(session);
+    }
 
+    log_context_t *ogx = &session->kernel->redo_ctx;
+    uint32 wid = ogx->wid;
     for (uint32 i = 0; i < ogx->buf_count; i++) {
         log_buffer_t *buf = &ogx->bufs[i].members[wid];
-
         if (buf->slot_bitmap != 0) {
             return OG_TRUE;
         }
@@ -722,6 +901,10 @@ static void log_switch_buffer(knl_session_t *session, log_context_t *ogx)
 
 status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, uint64 *lsn, uint64* queue_max_lfn)
 {
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        return para_log_self_flush(session, point, scn, lsn);
+    }
+
     log_context_t *ogx = &session->kernel->redo_ctx;
     raft_context_t *raft_ctx = &session->kernel->raft_ctx;
     log_batch_t *new_batch = NULL;
@@ -760,7 +943,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
         return OG_SUCCESS;
     }
 
-    if (!log_need_flush(ogx)) {
+    if (!log_need_flush(session)) {
         if (point != NULL && log_cmp_point(point, &ogx->curr_point) < 0) {
             *point = ogx->curr_point;
         }
@@ -837,7 +1020,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
         }
 
         file->head.write_pos += batch->space_size;
-        ogx->free_size -= batch->space_size;
+        cm_atomic_sub(&ogx->free_size, (int64)batch->space_size);
         file->head.last = batch->scn;
         if (file->head.first == OG_INVALID_ID64) {
             file->head.first = batch->scn;
@@ -1037,7 +1220,7 @@ static bool32 log_commit_try_lock(knl_session_t *session, log_context_t *ogx)
     }
 }
 
-static void log_set_commit_progress(knl_session_t *begin, knl_session_t *end, log_progress_t log_progress)
+HOT_FUNCTION static void log_set_commit_progress(knl_session_t *begin, knl_session_t *end, log_progress_t log_progress)
 {
     knl_session_t *next = NULL;
     knl_session_t *curr = begin;
@@ -1262,6 +1445,13 @@ void log_commit(knl_session_t *session)
         return;
     }
 
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        if (para_log_commit_flush(session) != OG_SUCCESS) {
+            CM_ABORT(0, "[LOG] ABORT INFO: para log commit flush redo log failed");
+        }
+        return;
+    }
+
     if (session->curr_lfn <= session->kernel->redo_ctx.flushed_lfn) {
         if (DB_IS_RAFT_ENABLED(session->kernel)) {
             knl_panic_log(session->kernel->raft_ctx.status == RAFT_STATUS_INITED, "the raft_ctx status is abnormal.");
@@ -1277,16 +1467,19 @@ void log_commit(knl_session_t *session)
     }
 
     log_commit_enque(session);
+
     if (SECUREC_UNLIKELY(session->commit_batch)) {
         cm_sleep(OG_WAIT_FLUSH_TIME);
         if (session->log_progress == LOG_COMPLETED) {
             return;
         }
     }
+
     knl_begin_session_wait(session, LOG_FILE_SYNC, OG_TRUE);
     if (log_commit_flush(session) != OG_SUCCESS) {
         CM_ABORT(0, "[LOG] ABORT INFO: commit flush redo log failed");
     }
+
     knl_end_session_wait(session, LOG_FILE_SYNC);
 }
 
@@ -1350,8 +1543,9 @@ static void log_write(knl_session_t *session)
     knl_panic_log((!DB_IS_READONLY(session) || DB_IS_MAXFIX(session) || !DB_IS_PRIMARY(&session->kernel->db)), "current DB is readonly.");
 
     log_group_t *group = (log_group_t *)session->log_buf;
-    uint32 log_size = (!session->rm->need_copy_logic_log) ?
-        LOG_GROUP_ACTUAL_SIZE(group) : (LOG_GROUP_ACTUAL_SIZE(group) + session->rm->logic_log_size);
+    knl_rm_t *rm = session->rm;
+    uint32 ori_group_size = LOG_GROUP_ACTUAL_SIZE(group);
+    uint32 log_size = (!rm->need_copy_logic_log) ? ori_group_size : (ori_group_size + rm->logic_log_size);
 
     if (log_size <= sizeof(log_group_t)) {
         if (session->changed_count > 0) {
@@ -1366,13 +1560,19 @@ static void log_write(knl_session_t *session)
 
     group->rmid = session->rmid;
     group->opr_uid = (uint16)session->uid;
-    uint32 total_size = (!session->rm->need_copy_logic_log) ?
-                 LOG_GROUP_ACTUAL_SIZE(group) : (LOG_GROUP_ACTUAL_SIZE(group) + session->rm->logic_log_size);
+    uint32 total_size = (!rm->need_copy_logic_log) ? ori_group_size : (ori_group_size + rm->logic_log_size);
     session->stat->atomic_opers++;
-    session->stat->redo_bytes += LOG_GROUP_ACTUAL_SIZE(group);
+    session->stat->redo_bytes += ori_group_size;
 
     if (SECUREC_UNLIKELY(session->kernel->switch_ctrl.request == SWITCH_REQ_DEMOTE)) {
         knl_panic(DB_IS_PRIMARY(&session->kernel->db) && session->kernel->switch_ctrl.state < SWITCH_WAIT_LOG_SYNC);
+    }
+
+    knl_begin_session_wait(session, LOG_WRITE, OG_TRUE);
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        para_log_write(session, total_size, group, ori_group_size);
+        knl_end_session_wait(session, LOG_WRITE);
+        return;
     }
 
     for (;;) {
@@ -1403,6 +1603,7 @@ static void log_write(knl_session_t *session)
     log_claim_slot(&buf->slot_bitmap, cur_slot);
 
     group->lsn = session->curr_lsn;
+    group->commit_lsn = group->lsn;
     if (group->lsn > buf->lsn) {
         buf->lsn = group->lsn;
     }
@@ -1412,6 +1613,7 @@ static void log_write(knl_session_t *session)
     log_copy(session, buf, start_pos);
     CM_MFENCE;
     log_release_slot(&buf->slot_bitmap, cur_slot);
+    knl_end_session_wait(session, LOG_WRITE);
 }
 
 static bool32 log_can_recycle(knl_session_t *session, log_file_t *file, arch_log_id_t *last_arch_log)
@@ -1455,7 +1657,7 @@ static void log_recycle_ulog_space(knl_session_t *session, log_point_t *point)
     oGRAC_record_io_stat_begin(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
     free_size = cm_dbs_ulog_recycle(file->handle, point->lsn);
     if (free_size != 0) {
-        ogx->free_size = free_size;
+        cm_atomic_set(&ogx->free_size, (int64)free_size);
     }
     ogx->alerted = OG_FALSE;
     oGRAC_record_io_stat_end(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
@@ -1513,7 +1715,7 @@ static void log_recycle_ulog_space_standby(knl_session_t *session)
         oGRAC_record_io_stat_begin(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
         uint64 free_size = cm_dbs_ulog_recycle(logfile_handle, recycle_lsn);
         if (free_size != 0) {
-            ogx->free_size = free_size;
+            cm_atomic_set(&ogx->free_size, (int64)free_size);
         }
         ogx->alerted = OG_FALSE;
         oGRAC_record_io_stat_end(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
@@ -1544,6 +1746,16 @@ void log_recycle_file(knl_session_t *session, log_point_t *point)
         OG_LOG_RUN_INF("no cms log recycle file dont need log recycle file");
         return;
     }
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 cluster_count = SYS_NUMA_GROUP_COUNT;
+        for (uint32 i = 0; i < cluster_count; i++) {
+            para_log_recycle_file(session, i, point);
+        }
+
+        return;
+    }
+
     log_context_t *ogx = &session->kernel->redo_ctx;
     lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
     arch_log_id_t last_arch_log;
@@ -1580,10 +1792,11 @@ void log_recycle_file(knl_session_t *session, log_point_t *point)
         cm_latch_x(&file->latch, session->id, NULL);
         file->head.asn = OG_INVALID_ASN;
         file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+        file->head.rcy_off = 0;
         file->arch_pos = 0;
         cm_unlatch(&file->latch, NULL);
 
-        ogx->free_size += log_file_freesize(file);
+        cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
         log_get_next_file(session, &file_id, OG_FALSE);
 
         ogx->active_file = file_id;
@@ -1686,13 +1899,14 @@ void log_reset_file(knl_session_t *session, log_point_t *point)
     log_file_t *file = &ogx->files[file_id];
 
     file->head.write_pos = (uint64)point->block_id * file->ctrl->block_size;
-    ogx->free_size += log_file_freesize(file);
+    cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
     log_unlatch_file(session, file_id);
 }
 
 // try to alerting for check point not completed
-static void log_try_alert(log_context_t *ogx)
+static void log_try_alert(knl_session_t *session)
 {
+    log_context_t *ogx = &session->kernel->redo_ctx;
     if (ogx->alerted) {
         return;
     }
@@ -1707,7 +1921,17 @@ static void log_try_alert(log_context_t *ogx)
     ogx->alerted = OG_TRUE;
     cm_spin_unlock(&ogx->alert_lock);
 
-    OG_LOG_RUN_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,"checkpoint not completed, freesize of rlog is %llu.", ogx->free_size);
+    uint64 current_free_size;
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        para_log_context_t *para_ogx = para_log_ctx_of(session);
+        knl_panic_log(para_ogx != NULL, "para log context is not initialized");
+        current_free_size = (uint64)cm_atomic_get(&para_ogx->free_size);
+    } else {
+        current_free_size = (uint64)cm_atomic_get(&ogx->free_size);
+    }
+
+    OG_LOG_RUN_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+        "checkpoint not completed, freesize of rlog is %llu.", current_free_size);
 }
 
 static wait_event_t log_get_switch_wait_event(knl_session_t *session)
@@ -1732,6 +1956,7 @@ void log_atomic_op_begin(knl_session_t *session)
     knl_panic_log(!session->atomic_op, "the atomic_op of session is true.");
     session->atomic_op = OG_TRUE;
     group->lsn = OG_INVALID_ID64;
+    group->commit_lsn = OG_INVALID_ID64;
     group->rmid = session->rmid;
     group->opr_uid = (uint16)session->uid;
     group->size = sizeof(log_group_t);
@@ -1747,14 +1972,31 @@ void log_atomic_op_begin(knl_session_t *session)
 
     wait_event_t wait_event = log_get_switch_wait_event(session);
     for (;;) {
-        if (ogx->free_size > LOG_KEEP_SIZE(session, session->kernel)) {
+        uint64 current_free_size;
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            para_log_context_t *para_ogx = para_log_ctx_of(session);
+            knl_panic_log(para_ogx != NULL, "para log context is not initialized");
+            if (para_log_has_keep_space(session, para_ogx)) {
+                break;
+            }
+
+            knl_begin_session_wait(session, wait_event, OG_TRUE);
+            log_try_alert(session);
+            para_log_wait_keep_space(session, para_ogx);
+            continue;
+        }
+
+        current_free_size = (uint64)cm_atomic_get(&ogx->free_size);
+        if (current_free_size > LOG_KEEP_SIZE(session, session->kernel)) {
             break;
         }
+
         knl_begin_session_wait(session, wait_event, OG_TRUE);
-        log_try_alert(ogx);
+        log_try_alert(session);
         ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_INC);
         cm_sleep(200);
     }
+
     knl_end_session_wait(session, wait_event);
 
     knl_panic_log(session->page_stack.depth == 0, "page_stack's depth is abnormal, panic info: page_stack depth %u",
@@ -2141,10 +2383,11 @@ uint32 log_get_free_count(knl_session_t *session)
     uint32 next;
     uint32 count = 0;
 
+    log_context_t *ogx = &session->kernel->redo_ctx;
     log_get_next_file(session, &next, OG_TRUE);
-    while (next != session->kernel->redo_ctx.active_file) {
+    while (next != ogx->active_file) {
         ++count;
-        log_get_next_file(session, &next, OG_FALSE);
+        log_get_next_file(session,  &next, OG_FALSE);
     }
     return count;
 }
@@ -2152,7 +2395,6 @@ uint32 log_get_free_count(knl_session_t *session)
 void log_get_next_file(knl_session_t *session, uint32 *next, bool32 use_curr)
 {
     log_context_t *ogx = &session->kernel->redo_ctx;
-
     if (use_curr) {
         *next = ogx->curr_file;
     }
@@ -2213,16 +2455,16 @@ static inline bool32 log_fileid_asn_mismatch(log_context_t *ogx, uint16 spec_fil
 
 bool32 log_switch_need_wait(knl_session_t *session, uint16 spec_file_id, uint32 spec_asn)
 {
-    log_context_t *log = &session->kernel->redo_ctx;
+    log_context_t *ogx = &session->kernel->redo_ctx;
     uint32 curr_asn;
 
     log_lock_logfile(session);
-    uint32 next_asn = log->files[log->curr_file].head.asn;
-    uint32 next_file = log->curr_file;
+    uint32 next_asn = ogx->files[ogx->curr_file].head.asn;
+    uint32 next_file = ogx->curr_file;
 
     for (;;) {
         curr_asn = next_asn;
-        log_get_next_file(session, &next_file, OG_FALSE);
+        log_get_next_file(session,  &next_file, OG_FALSE);
         next_asn = curr_asn + 1;
 
         if (spec_asn == next_asn && next_file != spec_file_id) {
@@ -2249,6 +2491,12 @@ status_t log_switch_logfile(knl_session_t *session, uint16 spec_file_id, uint32 
     log_context_t *log = &session->kernel->redo_ctx;
     time_t last_send_time = cm_current_time();
     bool32 need_skip = OG_FALSE;
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, "switch logfile with parallel log flush");
+        OG_LOG_RUN_ERR("[LOG] serial log_switch_logfile is not supported with parallel log flush");
+        return OG_ERROR;
+    }
 
     log_lock_logfile(session);
 
@@ -2327,6 +2575,7 @@ status_t log_switch_logfile(knl_session_t *session, uint16 spec_file_id, uint32 
         if (need_skip) {
             file = &log->files[pre_fileid];
             file->head.asn = OG_INVALID_ASN;
+            file->head.rcy_off = 0;
             file->ctrl->status = LOG_FILE_INACTIVE;
             file->ctrl->archived = OG_FALSE;
             log_flush_head(session, file);
@@ -2356,13 +2605,13 @@ void log_add_freesize(knl_session_t *session, uint32 inx)
 
     if (log_file_not_used(ogx, inx)) {
         log_file_t *logfile = &ogx->files[inx];
-        ogx->free_size += log_file_freesize(logfile);
+        cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(logfile));
     }
 }
 
 void log_decrease_freesize(log_context_t *ogx, log_file_t *logfile)
 {
-    ogx->free_size -= log_file_freesize(logfile);
+    cm_atomic_sub(&ogx->free_size, (int64)log_file_freesize(logfile));
 }
 
 bool32 log_file_can_drop(log_context_t *ogx, uint32 file)
@@ -2475,7 +2724,7 @@ static bool32 rcy_point_belong_previous_log(log_file_t *logfile, log_point_t rcy
     return (bool32)(logfile->head.asn == rcy_point.asn + 1);
 }
 
-static bool32 log_current_asn_is_correct(knl_session_t *session, log_file_t *logfile, uint64 *first_batch_lfn)
+bool32 log_current_asn_is_correct(knl_session_t *session, log_file_t *logfile, uint64 *first_batch_lfn)
 {
     log_point_t rcy_point = dtc_my_ctrl(session)->rcy_point;
     bool32 real_empty = log_is_empty(&logfile->head) && !log_lfn_is_effective(session, logfile);
@@ -2507,7 +2756,7 @@ static bool32 log_current_asn_is_correct(knl_session_t *session, log_file_t *log
     return (bool32)(logfile->head.asn == rcy_point.asn);
 }
 
-static status_t log_check_active_log_asn(knl_session_t *session, uint32 *pre_asn)
+status_t log_check_active_log_asn(knl_session_t *session, uint32 *pre_asn)
 {
     log_context_t *ogx = &session->kernel->redo_ctx;
     *pre_asn = ogx->files[ogx->active_file].head.asn;
@@ -2551,6 +2800,10 @@ status_t log_check_asn(knl_session_t *session, bool32 force_ignorlog)
 
     if (LOG_SKIP_CHECK_ASN(session->kernel, force_ignorlog)) {
         return OG_SUCCESS;
+    }
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        return para_log_check_asn(session);
     }
 
     if (ogx->active_file == ogx->curr_file) {
@@ -2678,6 +2931,12 @@ status_t log_set_file_asn(knl_session_t *session, uint32 asn, uint32 log_first)
                         CM_CALC_ALIGN(sizeof(log_file_head_t), log_file->block_size)) != OG_SUCCESS) {
         cm_close_device(log_file->type, &handle);
         OG_LOG_RUN_ERR("[BACKUP] failed to write %s", log_file->name);
+        return OG_ERROR;
+    }
+
+    if (ENABLE_PARA_LOG_FLUSH(session) && para_log_fredosync(log_file->type, handle) != OG_SUCCESS) {
+        cm_close_device(log_file->type, &handle);
+        OG_LOG_RUN_ERR("[BACKUP] failed to fdatasync %s", log_file->name);
         return OG_ERROR;
     }
 

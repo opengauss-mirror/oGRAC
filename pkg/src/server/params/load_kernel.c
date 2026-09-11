@@ -288,6 +288,9 @@ static status_t srv_get_log_buffer_param(knl_attr_t *attr)
         return OG_ERROR;
     }
 
+    OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_PARA_LOG_FLUSH", &attr->enable_para_log_flush));
+    OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_PARA_LOG_DFX", &attr->enable_para_log_dfx));
+
     return OG_SUCCESS;
 }
 

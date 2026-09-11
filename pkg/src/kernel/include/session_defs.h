@@ -67,6 +67,7 @@ typedef enum en_sys_session {
     SESSION_ID_DRC_REMASTER = 30,
     SESSION_ID_RES_PROCESS = 31,
     SESSION_ID_CKPT_PREPARE = 32,
+    SESSION_ID_PARA_LOG_FLUSH = 33, /* shared knl session for all para lgwr threads */
     SESSION_ID_START = OG_SYS_SESSIONS,
 } sys_session_t;
 

@@ -300,6 +300,36 @@ void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint8 target_numa)
     return;
 }
 
+void knl_get_cpu_set_from_session(cpu_set_t *cpuset, uint32 session_id, uint8 target_numa, uint32 cpu_id)
+{
+    int cpu_group_num = get_cpu_group_num();
+    cpu_set_t *cpu_masks = get_cpu_masks();
+    const int *cpu_info_counts = get_cpu_info_count_ptr();
+    int *cpu_info = get_cpu_info();
+    cpu_set_t mask;
+
+    CPU_ZERO(&mask);
+    if (cpu_group_num <= 0) {
+        OG_LOG_RUN_ERR("Invalid cpu_group_num is %d!", cpu_group_num);
+        return;
+    }
+
+    if (target_numa >= (uint8)cpu_group_num) {
+        target_numa %= (uint8)cpu_group_num;
+    }
+
+    if (cpu_masks != NULL) {
+        CPU_ZERO(cpuset);
+        *cpuset = cpu_masks[target_numa];
+        return;
+    }
+
+    CPU_SET(cpu_info[target_numa * SMALL_RECORD_SIZE + session_id % cpu_info_counts[target_numa]], &mask);
+    OG_LOG_RUN_INF("[agent]sessid %u cpu core:%u.", session_id,
+                   cpu_info[target_numa * SMALL_RECORD_SIZE + session_id % cpu_info_counts[target_numa]]);
+    *cpuset = mask;
+}
+
 void knl_set_curr_sess2tls(void *sess)
 {
     tls_curr_sess = sess;
@@ -881,6 +911,10 @@ void knl_init_session(knl_handle_t kernel, knl_handle_t knl_session, uint32 uid,
     session->index_root = NULL;
     KNL_SESSION_CLEAR_THREADID(session);
     cm_init_cond(&session->commit_cond);
+    session->futex = 0;
+    session->log_next = NULL;
+    session->log_progress = LOG_COMPLETED;
+    session->commit_lsn = 0;
     session->dist_ddl_id = NULL;
     session->is_loading = OG_FALSE;
     session->is_btree_splitting = OG_FALSE;

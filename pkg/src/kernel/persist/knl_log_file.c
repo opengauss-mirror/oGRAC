@@ -209,6 +209,7 @@ status_t db_alter_add_logfile(knl_session_t *session, knl_alterdb_def_t *def)
         logfile->head.rst_id = 0;
         logfile->head.cmp_algorithm = COMPRESS_NONE;
         logfile->head.dbid = db->ctrl.core.dbid;
+        logfile->head.rcy_off = 0;
         status_t ret = memset_sp(logfile->head.unused, OG_LOG_HEAD_RESERVED_BYTES, 0, OG_LOG_HEAD_RESERVED_BYTES);
         knl_securec_check(ret);
 
@@ -405,6 +406,7 @@ void rd_alter_add_logfile(knl_session_t *session, log_entry_t *log)
     logfile->head.asn = OG_INVALID_ASN;
     logfile->head.block_size = (int32)logfile->ctrl->block_size;
     logfile->head.rst_id = 0;
+    logfile->head.rcy_off = 0;
 
     if (cm_open_device(logfile->ctrl->name, logfile->ctrl->type, knl_redo_io_flag(session),
         &logfile->handle) != OG_SUCCESS) {

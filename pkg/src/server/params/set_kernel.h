@@ -212,6 +212,8 @@ status_t sql_notify_enable_broadcast_on_commit(void *se, void *item, char *value
 status_t sql_notify_enable_enable_check_security_log(void *se, void *item, char *value);
 status_t sql_notify_enable_crc_check(void *se, void *item, char *value);
 status_t sql_notify_als_enable_quick_ckpt(void *se, void *item, char *value);
+status_t sql_notify_als_enable_para_log_flush(void *se, void *item, char *value);
+status_t sql_notify_als_enable_para_log_dfx(void *se, void *item, char *value);
 #ifdef __cplusplus
 }
 #endif

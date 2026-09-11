@@ -1052,6 +1052,7 @@ status_t arch_flush_head(device_type_t arch_file_type, const char *dst_name, arc
     head->cmp_algorithm = COMPRESS_NONE;
     head->block_size = head_size;
     head->dbid = session->kernel->db.ctrl.core.dbid;
+    head->rcy_off = 0;
     ret = memset_sp(head->unused, OG_LOG_HEAD_RESERVED_BYTES, 0, OG_LOG_HEAD_RESERVED_BYTES);
     knl_securec_check(ret);
 
@@ -1666,6 +1667,7 @@ status_t arch_flush_head_by_arch_ctrl(knl_session_t *session, arch_ctrl_t *arch_
     head->dest_id = arch_ctrl->dest_id;
     head->arch_ctrl_stamp = arch_ctrl->stamp;
     head->real_size = arch_ctrl->real_size;
+    head->rcy_off = 0;
 
     ret = memset_sp(head->unused, OG_LOG_HEAD_RESERVED_BYTES, 0, OG_LOG_HEAD_RESERVED_BYTES);
     knl_securec_check(ret);
@@ -3554,11 +3556,19 @@ status_t arch_init(knl_session_t *session)
             arch_ctx->is_archive = OG_TRUE;
         }
 
+        if (para_log_check_unsupported(session) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+
         OG_LOG_RUN_INF("[ARCH] Already initialized");
         return OG_SUCCESS;
     }
 
     arch_ctx->is_archive = (ctrl->core.log_mode == ARCHIVE_LOG_ON);
+    if (para_log_check_unsupported(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     dtc_node_ctrl_t *node_ctrl = dtc_my_ctrl(session);
     arch_ctx->rcy_point = &node_ctrl->rcy_point;
     arch_ctx->archived_recid = 0;

@@ -68,10 +68,10 @@ extern "C" {
 #define ARCH_CTRL_T_SIZE  (uint32)352
 #define BAK_HEAD_T_SIZE  (uint32)8192
 #define LOG_BATCH_T_SIZE  (uint32)72
-#define LOG_GROUP_T_SIZE  (uint32)16
+#define LOG_GROUP_T_SIZE  (uint32)24
 #define SPACE_CTRL_BK_T_SIZE  (uint32)120
 #define DATAFILE_CTRL_BK_T_SIZE  (uint32)344
-#define DTC_NODE_CTRL_T_SIZE  (uint32)176
+#define DTC_NODE_CTRL_T_SIZE  (uint32)2224
 
 
 CM_STATIC_ASSERT(sizeof(datafile_header_t) == DATAFILE_HEADER_T_SIZE);

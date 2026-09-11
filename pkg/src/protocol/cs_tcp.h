@@ -93,7 +93,7 @@ void cs_set_io_mode(socket_t sock, bool32 nonblock, bool32 nodelay);
 void cs_set_buffer_size(socket_t sock, uint32 send_size, uint32 recv_size);
 void cs_set_keep_alive(socket_t sock, uint32 idle, uint32 interval, uint32 count);
 void cs_set_linger(socket_t sock, int32 l_onoff, int32 l_linger);
-int cs_get_numaid(socket_t sock);
+int cs_get_numaid(socket_t sock, int *cpuid);
 
 status_t cs_create_socket(int ai_family, socket_t *sock);
 status_t cs_tcp_connect(const char *host, uint16 port, tcp_link_t *link, const char *bind_host, socket_attr_t

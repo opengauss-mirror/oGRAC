@@ -77,6 +77,8 @@ extern "C" {
 #define LOG_UNSET_ALARMED(flag) CM_CLEAN_FLAG((flag), LOG_FLAG_ALARMED)
 #define LOG_DDL_NAMESPACE_LENGTH (14)
 #define LOG_INVALIDATE_MAGIC_NUMBER (uint64)0xfedcba12345689fe
+#define ENABLE_PARA_LOG_FLUSH(session) (((knl_session_t *)(session))->kernel->attr.enable_para_log_flush)
+#define ENABLE_PARA_LOG_DFX(session) (((knl_session_t *)(session))->kernel->attr.enable_para_log_dfx)
 
 typedef struct st_lsn_offset {
     uint64 lsn;
@@ -84,7 +86,8 @@ typedef struct st_lsn_offset {
 } lsn_offset;
 
 #define MAX_LSN_OFFSET_MAP 16
-#define OG_LOG_HEAD_RESERVED_BYTES 424
+#define OG_LOG_HEAD_RESERVED_BYTES 416
+#define OG_LOG_FILE_HEAD_SIZE 512
 // log_file_ctrl_bk_t is behind it.
 typedef struct st_log_file_head {
     knl_scn_t first;
@@ -104,6 +107,13 @@ typedef struct st_log_file_head {
     int64 real_size;
     uint32 dest_id;
     uint8 pad[4];
+    /*
+     * ckpt-flushed prefix watermark (write_pos at ckpt time). Used as START for
+     * CURRENT replay, not as LIMIT: the normal write_pos on the header is not
+     * flushed on the hot path and lags behind the real write area.
+     * 0 means unknown, scan from file head. Old files have unused=0, same behavior.
+     */
+    uint64 rcy_off;
     uint8 unused[OG_LOG_HEAD_RESERVED_BYTES];  // padded log_file_head_t to 512 bytes
 } log_file_head_t;
 
@@ -124,7 +134,8 @@ typedef struct st_log_queue {
 } log_queue_t;
 
 typedef struct st_log_group {
-    uint64 lsn;
+    uint64 lsn;         // curr_lsn, page visibility / cross-node Lamport
+    uint64 commit_lsn;  // node-local dense seq; serial path sets equal to lsn
     uint16 rmid;
     uint16 size;        // ! not acture size when extend != 0, the acturre size is LOG_GROUP_ACTUAL_SIZE
     uint16 opr_uid;     // operator user id
@@ -155,6 +166,7 @@ static inline void log_reduce_group_size(log_group_t *group, uint32 size)
         group->size = temp_size;
     }
 }
+
 static inline void log_add_group_size(log_group_t *group, uint32 size)
 {
     if (size + LOG_GROUP_ACTUAL_SIZE(group) > OG_MAX_LOG_GROUP_SIZE) {
@@ -376,16 +388,20 @@ typedef struct st_rbp_analyse_result {
     uint64 unsafe_max_lsn;
 } rbp_analyse_result_t;
 
-typedef struct st_log_context {
-    spinlock_t commit_lock;
+typedef struct __attribute__((aligned(128))) st_log_context {
+    spinlock_t commit_lock;       // lock for commit
     uint32 lock_align1[15];
-    spinlock_t flush_lock;
+    spinlock_t flush_lock;        // buf lock for flush
     uint32 lock_align2[15];
-    spinlock_t alert_lock;
+    spinlock_t alert_lock;        // for checkpoint not completed
     uint32 lock_align3[15];
     volatile uint64 flushed_lfn;  // latest global flushed batch lfn
+    uint8 cache_align1[64];
     volatile uint64 flushed_lsn;  // latest global flushed batch lsn
+    uint8 cache_align2[64];
     volatile uint64 quorum_lfn;   // latest lfn which meets quorum agreement
+    uint8 cache_align3[64];
+
     uint32 buf_size;
     uint32 buf_count;
     volatile uint16 wid;
@@ -405,7 +421,6 @@ typedef struct st_log_context {
     uint32 logwr_buf_size;
     uint32 logwr_cipher_buf_size;
     bool32 log_encrypt;
-
     log_point_t curr_point;
     log_point_t curr_analysis_point;
     log_point_t curr_replay_point;
@@ -416,11 +431,11 @@ typedef struct st_log_context {
     log_replay_proc replay_procs[RD_TYPE_END];
     uint8 cache_align[CACHE_LINESIZE];
 
-    uint16 curr_file;
-    uint16 active_file;
-    uint32 logfile_hwm;
-    log_file_t *files;
-    uint64 free_size;
+    uint16 curr_file;    // current used file
+    uint16 active_file;  // first active file
+    uint32 logfile_hwm;  // max logfile placeholder, may be some holes included(logfile has been dropped)
+    log_file_t *files;   // point to db logfiles
+    atomic_t free_size;
 
     thread_t thread;
     thread_t async_thread;
@@ -539,6 +554,8 @@ status_t log_init(knl_session_t *session);
 status_t log_load(knl_session_t *session);
 void log_close(knl_session_t *session);
 void log_proc(thread_t *thread);
+status_t log_check_active_log_asn(knl_session_t *session, uint32 *pre_asn);
+bool32 log_current_asn_is_correct(knl_session_t *session, log_file_t *logfile, uint64 *first_batch_lfn);
 
 // atomic operation
 void log_atomic_op_begin(knl_session_t *session);
@@ -548,7 +565,7 @@ void log_append_data(knl_session_t *session, const void *data, uint32 size);
 void log_copy_logic_data(knl_session_t *session, log_buffer_t *buf, uint32 start_pos);
 void log_commit(knl_session_t *session);
 
-bool32 log_need_flush(log_context_t *ogx);
+bool32 log_need_flush(knl_session_t *session);
 status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, uint64 *lsn, uint64* queue_max_lfn);
 void log_recycle_file(knl_session_t *session, log_point_t *point);
 

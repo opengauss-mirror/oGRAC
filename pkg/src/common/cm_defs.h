@@ -410,7 +410,8 @@ typedef enum en_cs_distribute_type {
 #define OG_MALICIOUS_LOGIN_COUNT (uint32)9
 #define OG_MALICIOUS_LOGIN_ALARM (uint32)15
 #define OG_MAX_MALICIOUS_IP_COUNT (uint32)64000
-#define OG_SYS_SESSIONS (uint32)33
+#define OG_SYS_SESSIONS (uint32)34  /* 0..32 original sys sessions, 33 = shared para lgwr */
+
 #define OG_MAX_AUTON_SESSIONS (uint32)256
 #define OG_MAX_UNDO_SEGMENTS (uint32)4096
 #define OG_MAX_SESSIONS (uint32)19380
@@ -565,7 +566,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_TEMP_BUFFER_SIZE \
     (int64) SIZE_T(4) /* 4T < (OG_VMEM_PAGE_SIZE[128K] + VM_PAGE_CTRL_SIZE[12]) * VM_MAX_CTRLS[32K*3276] */
 #define OG_MIN_LOG_BUFFER_SIZE (int64) SIZE_M(1) /* 1M */
-#define OG_MAX_LOG_BUFFER_SIZE (int64) SIZE_M(110)
+#define OG_MAX_LOG_BUFFER_SIZE (int64) SIZE_M(1024)
 #define OG_MAX_BATCH_SIZE (int64)(OG_MAX_LOG_BUFFER_SIZE / 2)
 #define OG_SHARED_PAGE_SIZE SIZE_K(32) /* 16K */
 #define OG_VMA_LW_FACTOR 0.1
