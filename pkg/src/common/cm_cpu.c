@@ -32,6 +32,7 @@
 static char g_cpu_info_str[CPU_INFO_STR_SIZE];
 static int g_cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE];
 static int g_cpu_info_count[CPU_SEG_MAX_NUM];
+static int g_cpu_session_idx[CPU_SEG_MAX_NUM];
 static int g_cpu_group_num = 0;
 static cpu_set_t g_masks[CPU_SEG_MAX_NUM];
 
@@ -60,8 +61,13 @@ int* get_cpu_info_count_ptr(void)
     return g_cpu_info_count;
 }
 
+int* get_cpu_session_use_idx(void)
+{
+    return g_cpu_session_idx;
+}
+
 static int init_cpu_mask(char *cpu_info_str, int *cpu_group_num, int cpu_info[CPU_SEG_MAX_NUM][SMALL_RECORD_SIZE],
-    int cpu_info_count[CPU_SEG_MAX_NUM])
+    int cpu_info_count[CPU_SEG_MAX_NUM], int cpu_session_idx[CPU_SEG_MAX_NUM])
 {
     errno_t errcode;
     if (cpu_info_str[0] == '0' && strlen(cpu_info_str) == 1) {
@@ -100,6 +106,7 @@ static int init_cpu_mask(char *cpu_info_str, int *cpu_group_num, int cpu_info[CP
         }
         cpu_info[i][count] = -1;
         cpu_info_count[i] = count;
+        cpu_session_idx[i] = 0;
     }
     return OG_SUCCESS;
 }
@@ -122,7 +129,8 @@ static void set_cpu_mask(void)
 
 status_t init_cpu_info(void)
 {
-    if (init_cpu_mask(g_cpu_info_str, &g_cpu_group_num, g_cpu_info, g_cpu_info_count) != 0 || g_cpu_group_num == 0) {
+    if (init_cpu_mask(g_cpu_info_str, &g_cpu_group_num, g_cpu_info, g_cpu_info_count, g_cpu_session_idx) != 0
+        || g_cpu_group_num == 0) {
         OG_LOG_RUN_ERR("g_cpu_group_num init error, g_cpu_group_num is %d", g_cpu_group_num);
         return OG_ERROR;
     }
@@ -201,14 +209,6 @@ status_t hw_topo_get_info(hw_topo_info_t *info)
         return OG_ERROR;
     }
 
-    if (has_cluster && seen_num > 0) {
-        info->has_cluster = OG_TRUE;
-        info->group_count = seen_num;
-        info->cpu_of_each_g = cpu / seen_num;
-        OG_LOG_RUN_INF("hw_topo: cluster=%u cpu=%u", seen_num, cpu);
-        return OG_SUCCESS;
-    }
-
     uint32 node = 0;
     while (node < HW_TOPO_MAX_GROUPS) {
         int32 iret = snprintf_s(path, HW_TOPO_PATH_LEN, HW_TOPO_PATH_LEN - 1, HW_TOPO_NODE_DIR, node);
@@ -217,10 +217,18 @@ status_t hw_topo_get_info(hw_topo_info_t *info)
         }
         node++;
     }
+    info->numa_count = (node == 0) ? 1 : node;
 
-    info->group_count = (node == 0) ? 1 : node;
+    if (has_cluster && seen_num > 0) {
+        info->has_cluster = OG_TRUE;
+        info->group_count = seen_num;
+        info->cpu_of_each_g = cpu / seen_num;
+        OG_LOG_RUN_INF("hw_topo: cluster=%u numa=%u cpu=%u", seen_num, info->numa_count, cpu);
+        return OG_SUCCESS;
+    }
+
+    info->group_count = info->numa_count;
     info->cpu_of_each_g = cpu / info->group_count;
-    info->numa_count = info->group_count;
-    OG_LOG_RUN_INF("hw_topo: numa=%u cpu=%u", info->group_count, cpu);
+    OG_LOG_RUN_INF("hw_topo: numa=%u cpu=%u", info->numa_count, cpu);
     return OG_SUCCESS;
 }

@@ -415,16 +415,21 @@ static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t
     }
     mem_size += len;
 
+    char *buf = NULL;
     if (numa_id == -1) {
         cm_spin_lock(&pool->lock, NULL);
         numa_id = pool->numa_node;
-        pool->numa_node = (numa_id + 1) % 4;
+        pool->numa_node = (numa_id + 1) % SYS_NUMA_GROUP_COUNT;
         cm_spin_unlock(&pool->lock);
+        cpu_id = numa_id * SYS_CPUS_PER_GROUP;
+        uint32 groups_per_numa = (SYS_NUMA_NODE_COUNT > 0 && SYS_NUMA_GROUP_COUNT >= SYS_NUMA_NODE_COUNT)
+                                ? (SYS_NUMA_GROUP_COUNT / SYS_NUMA_NODE_COUNT) : 1;
+        buf = (char *)numa_alloc_onnode(mem_size, numa_id / groups_per_numa);
         OG_LOG_RUN_INF("alloc session bind numa %u from session pool's numa", numa_id);
     } else {
+        buf = (char *)numa_alloc_onnode(mem_size, numa_id);
         OG_LOG_RUN_INF("alloc session bind numa %u from TCP socket's numa", numa_id);
     }
-    char *buf = (char *)numa_alloc_onnode(mem_size, numa_id);
 
     if (buf == NULL) {
         OG_THROW_ERROR(ERR_ALLOC_MEMORY, (uint64)mem_size, "creating session");
@@ -490,6 +495,7 @@ static status_t srv_alloc_session_memory(session_t **session_out, session_pool_t
     if (SYS_NUMA_GROUP_COUNT > 0 && session->knl_session.ass_numa >= SYS_NUMA_GROUP_COUNT) {
         session->knl_session.ass_numa %= SYS_NUMA_GROUP_COUNT;
     }
+    session->knl_session.cpu_bound = OG_FALSE;
 
     *session_out = session;
 
@@ -644,6 +650,7 @@ status_t srv_alloc_session(session_t **session, cs_pipe_t *pipe, session_type_e 
         if (SYS_NUMA_GROUP_COUNT > 0 && (*session)->knl_session.ass_numa >= SYS_NUMA_GROUP_COUNT) {
             (*session)->knl_session.ass_numa %= SYS_NUMA_GROUP_COUNT;
         }
+        (*session)->knl_session.cpu_bound = OG_FALSE;
     }
 
     if (g_instance->session_pool.is_log == OG_TRUE) {
