@@ -1,4 +1,7 @@
 FROM openeuler/openeuler:22.03-lts-sp1
+# 注：若 Docker Hub 不可达且本机已有等价基础镜像（如 openeuler-22.03-lts-sp1），
+# 可执行 `docker tag openeuler-22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1` 复用，
+# 或将本行 FROM 改为内网可达的镜像仓库地址。详见 docker/readme.md。
 
 # oGRAC requires English locale, otherwise database startup may fail.
 ENV LANG=en_US.UTF-8
@@ -23,12 +26,21 @@ RUN yum install -y \
     ncurses ncurses-devel libtirpc-devel expect ant bison iputils \
     iproute wget make gcc gcc-c++ gdb gdb-gdbserver python3 python3-devel \
     git net-tools cmake automake byacc libtool unzip vim lz4 lz4-devel patch \
-    xz flex unixODBC-devel unixODBC libasan rpcgen numactl numactl-devel --skip-broken
+    xz flex unixODBC-devel unixODBC libasan rpcgen numactl numactl-devel \
+    sudo --skip-broken
+
+# lcov 在部分 openEuler 22.03 软件源中不可用，与大包一起装会被 --skip-broken 静默跳过。
+# 单独安装并允许失败；覆盖率报告需要 lcov，缺失时自动跳过，不影响构建与测试。
+RUN yum install -y lcov || echo "[WARN] lcov unavailable, coverage report will be skipped"
 
 # Requirements: cmake >= 3.12, lz4 >= 1.8.3.
 
 # Create directories used by oGRAC regression / single-node installs.
-RUN mkdir -p /cores /home/regress
+# /home/regress must be traversable (755) so the runtime user can reach ograc_data/gcc_home.
+# gcc_home is where CMS dd's gcc_file in container mode (DOCKER_SHARE_DIR).
+RUN mkdir -p /cores /home/regress /home/regress/ograc_data/gcc_home /home/regress/ograc_data/data \
+    && chmod 755 /home/regress \
+    && chmod -R 777 /home/regress/ograc_data
 
 WORKDIR /home/regress
 

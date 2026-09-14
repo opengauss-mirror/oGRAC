@@ -1,18 +1,48 @@
 ## Problems Solved
+
 1. openGauss_ograc ensures that the code submitted through the one-click compilation, deployment, and running example of the gatekeeper will not affect the basic functions.
 2. Developers can ensure code quality by executing mtr.
+
 ## Usage
-Run the test script:
-```bash
-bash xxx/pkg/test/og_regress/do_all_test.sh need_compile
+
+`local_install.sh compile` does not produce `og_regress`. Run the following in the `build` directory (from the repository root, `cd build` first):
+
+```shell
+source ./common.sh
+strip -N main "${OGRACDB_OUTPUT}/lib/libogserver.a"
+cd pkg/test/og_regress
+make -sj 8
+cd "${CODE_HOME_PATH}"
 ```
-Note: need_compile is used to trigger the compilation process. If the code has already been compiled, this parameter can be omitted.
+
+Then run the full regression from the repository root **without** `need_compile`:
+
+```shell
+bash pkg/test/og_regress/do_all_test.sh
+```
+
+Use `need_compile` only when the tree has never been compiled (it triggers a full rebuild):
+
+```shell
+bash pkg/test/og_regress/do_all_test.sh need_compile
+```
+
 Output:
-Test Result: ERROR    -- Test case execution failed. You can see which test cases failed at the top of the console.
-Test Result: SUCCESS  -- Test case execution succeeded.
+
+```
+Test Result: ERROR     # some cases failed; see the console above for names
+Test Result: Success   # all cases passed
+```
+
 ## Adding or Removing Test Cases
-Developers can add or remove test cases in the directory "xxx/pkg/test/og_regress/og_schedule_part1". For example:
-To run multiple test cases in parallel: test: og_union_all og_union og_datatype
-To run a single test case: test: og_having
+
+Developers can add or remove test cases in `pkg/test/og_regress/og_schedule_part1`. For example:
+
+```
+test: og_union_all og_union og_datatype   # run multiple cases in parallel
+test: og_having                          # run a single case
+```
+
 ## Results
-The test results are saved in the directory "xxx/pkg/test/og_regress/results", while the expected results are stored in the directory "xxx/pkg/test/og_regress/expected".
+
+The test results are saved in `pkg/test/og_regress/results`. Expected results are in `pkg/test/og_regress/expected`.
