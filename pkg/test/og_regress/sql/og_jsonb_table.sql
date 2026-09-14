@@ -33,3 +33,6 @@ commit;
 select a.f1,b.* from test_jsonb_table a, jsonb_table(a.f2,'$[*].Phone[*]' error on error COLUMNS (type VARChAR2(100) PATH '$.type' )) b where a.f1(+) = b.type;
 select a.f1,b.* from test_jsonb_table a, jsonb_table(a.f2,'$[*].Phone[*]' error on error COLUMNS (type VARChAR2(100) PATH '$.type' )) b;
 drop table if exists test_jsonb_table;
+
+-- JSON builtin columns (path / format json path / exists path) in json_table must resolve.
+select * from json_table('[{"a":"a1","b":{"bb":"ds"},"c":"c3"},{"a":"a2","b":{"bb":"ds"},"c":"c6"}]', '$[*]' error on error columns (f1 varchar2(100) path '$.a', f2 varchar2(100) format json path '$.b', f3 varchar2(100) exists path '$.c', f4 for ordinality)) order by 1;
