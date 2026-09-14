@@ -128,3 +128,13 @@ WHERE t1.c1 NOT IN (
 
 drop table if exists not_in_null_t1;
 drop table if exists not_in_null_t2;
+
+-- Nested quantified membership on an unindexed table.
+DROP TABLE IF EXISTS urn;
+CREATE TABLE urn (n NUMBER);
+BEGIN FOR p IN 1..1000 LOOP INSERT INTO urn VALUES (p); END LOOP; END;
+/
+COMMIT;
+SELECT COUNT(*) FROM urn
+WHERE n <> ALL (SELECT n FROM urn WHERE n IN (SELECT n FROM urn));
+DROP TABLE urn;

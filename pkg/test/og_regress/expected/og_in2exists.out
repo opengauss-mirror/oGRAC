@@ -39,8 +39,8 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: EXISTS(SELECT 1 FROM IN2EXISTS_T2 WHERE NULLABLE > 1 AND NULLABLE = IN2EXISTS_T2.NULLABLE)
-    3 - filter: NULLABLE > 1 AND NULLABLE = IN2EXISTS_T2.NULLABLE
+    2 - filter: NULLABLE IN ((SELECT NULLABLE FROM IN2EXISTS_T2 WHERE NULLABLE > 1))
+    3 - filter: NULLABLE > 1
 
 12 rows fetched.
 
@@ -58,8 +58,8 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: EXISTS(SELECT 1 FROM IN2EXISTS_T2 WHERE NOT_NULLABLE > 1 AND NOT_NULLABLE = IN2EXISTS_T2.NOT_NULLABLE)
-    3 - filter: NOT_NULLABLE > 1 AND NOT_NULLABLE = IN2EXISTS_T2.NOT_NULLABLE
+    2 - filter: NOT_NULLABLE IN ((SELECT NOT_NULLABLE FROM IN2EXISTS_T2 WHERE NOT_NULLABLE > 1))
+    3 - filter: NOT_NULLABLE > 1
 
 12 rows fetched.
 
@@ -77,8 +77,8 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: NOT EXISTS(SELECT 1 FROM IN2EXISTS_T2 WHERE NULLABLE > 1 AND NULLABLE = IN2EXISTS_T2.NULLABLE)
-    3 - filter: NULLABLE > 1 AND NULLABLE = IN2EXISTS_T2.NULLABLE
+    2 - filter: NULLABLE NOT IN ((SELECT NULLABLE FROM IN2EXISTS_T2 WHERE NULLABLE > 1))
+    3 - filter: NULLABLE > 1
 
 12 rows fetched.
 
@@ -156,11 +156,10 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: EXISTS(SELECT 1 FROM IN2EXISTS_T2 WHERE NULLABLE > 1 AND NOT_NULLABLE = IN2EXISTS_T2.NOT_NULLABLE AND
-                NULLABLE = IN2EXISTS_T2.NULLABLE)               
-    3 - filter: NULLABLE > 1 AND NULLABLE = IN2EXISTS_T2.NULLABLE AND NOT_NULLABLE = IN2EXISTS_T2.NOT_NULLABLE
+    2 - filter: (NULLABLE,NOT_NULLABLE) IN ((SELECT NULLABLE, NOT_NULLABLE FROM IN2EXISTS_T2 WHERE NULLABLE > 1))
+    3 - filter: NULLABLE > 1
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> EXPLAIN SELECT * FROM IN2EXISTS_T1 WHERE (nullable, not_nullable) NOT IN (SELECT nullable, not_nullable FROM IN2EXISTS_T2 WHERE nullable > 1);
 
@@ -568,6 +567,36 @@ Succeed.
 SQL> drop table if exists not_in_null_t2;
 Succeed.
 
+SQL>
+SQL> -- Nested quantified membership on an unindexed table.
+SQL> DROP TABLE IF EXISTS urn;
 
+Succeed.
 
+SQL> CREATE TABLE urn (n NUMBER);
 
+Succeed.
+
+SQL> BEGIN FOR p IN 1..1000 LOOP INSERT INTO urn VALUES (p); END LOOP; END;
+  2 /
+
+PL/SQL procedure successfully completed.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL> SELECT COUNT(*) FROM urn
+  2 WHERE n <> ALL (SELECT n FROM urn WHERE n IN (SELECT n FROM urn));
+
+COUNT(*)
+--------------------
+0
+
+1 rows fetched.
+
+SQL> DROP TABLE urn;
+
+Succeed.
+
+SQL>

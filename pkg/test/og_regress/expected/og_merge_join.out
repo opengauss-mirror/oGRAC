@@ -513,16 +513,15 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT          |       |      | 1    | 1    | 0         |       |        |
 | 1  |   AGGR                    |       |      | 1    | 1    | 0         |       |        |
-| 2  |     KERNEL FILTER         |       |      | 4    | 1    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL   | SYS   | T1   | 4    | 1    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | T2   | 1    | 1    | 0         |       |        |
+| 2  |     KERNEL FILTER         |       |      | 1    | 1    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL   | SYS   | T1   | 1    | 1    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | T2   | 4    | 1    | 0         |       |        |
 --------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: EXISTS(SELECT 1 FROM T2 WHERE T1.C1 = T2.C1)    
-    4 - filter: T1.C1 = T2.C1                                   
+    3 - filter: T1.C1 IN ((SELECT C1 FROM T2))
 
-13 rows fetched.
+12 rows fetched.
 
 SQL> select  /*+ use_merge(t1 t2) */ count(*) from t1 where t1.c1 in (select c1 from t2);
 

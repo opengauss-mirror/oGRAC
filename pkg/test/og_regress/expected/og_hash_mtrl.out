@@ -403,26 +403,25 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |                   | 10   | 1    | 0         |       |        |
-| 1  |   KERNEL FILTER             |       |                   | 10   | 1    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL       | SYS   | TEST_MTRL_EMP E   | 10   | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT            |       |                   | 1    | 1    | 0         |       |        |
+| 1  |   KERNEL FILTER             |       |                   | 1    | 1    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL       | SYS   | TEST_MTRL_EMP E   | 1    | 1    | 0         |       |        |
 | 3  |     HASH MATERIALIZE        |       |                   | 10   | 1    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL   | SYS   | TEST_MTRL_EMP E2  | 10   | 1    | 0         |       |        |
-| 5  |     KERNEL FILTER           |       |                   | 1    | 1    | 0         |       |        |
-| 6  |       TABLE ACCESS FULL     | SYS   | TEST_MTRL_PROJ P  | 1    | 1    | 0         |       |        |
+| 5  |     KERNEL FILTER           |       |                   | 10   | 1    | 0         |       |        |
+| 6  |       TABLE ACCESS FULL     | SYS   | TEST_MTRL_PROJ P  | 10   | 1    | 0         |       |        |
 | 7  |       HASH MATERIALIZE      |       |                   | 10   | 1    | 0         |       |        |
 | 8  |           TABLE ACCESS FULL | SYS   | TEST_MTRL_PROJ P2 | 10   | 1    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: E.SALARY > (SELECT AVG(SALARY) FROM TEST_MTRL_EMP E2 GROUP BY E2.DEPT_ID) AND EXISTS(SELECT 1 FROM
-                TEST_MTRL_PROJ P WHERE E.EMP_ID = P.EMP_ID AND P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP
-                BY P2.DEPT_ID))                                 
+    2 - filter: E.SALARY > (SELECT AVG(SALARY) FROM TEST_MTRL_EMP E2 GROUP BY E2.DEPT_ID) AND E.EMP_ID IN ((SELECT
+                EMP_ID FROM TEST_MTRL_PROJ P WHERE P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID)))
     3 - access: E2.DEPT_ID = E.DEPT_ID                          
-    6 - filter: E.EMP_ID = P.EMP_ID AND P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID)
+    6 - filter: P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID)
     7 - access: P2.DEPT_ID = P.DEPT_ID                          
 
-21 rows fetched.
+20 rows fetched.
 
 SQL> SELECT e.emp_name FROM test_mtrl_emp e WHERE e.salary > (SELECT AVG(salary) FROM test_mtrl_emp e2 WHERE e2.dept_id = e.dept_id) 
   2 AND e.emp_id IN (SELECT p.emp_id FROM test_mtrl_proj p WHERE p.cost > (SELECT AVG(cost) FROM test_mtrl_proj p2 WHERE p2.dept_id = p.dept_id));
@@ -713,19 +712,19 @@ EXPLAIN PLAN OUTPUT
 | 3  |     AGGR                        |       |                   | 1    | 1    | 0         |       |        |
 | 4  |       KERNEL FILTER             |       |                   | 1    | 1    | 0         |       |        |
 | 5  |         TABLE ACCESS FULL       | SYS   | TEST_MTRL_EMP E2  | 1    | 1    | 0         |       |        |
-| 6  |         KERNEL FILTER           |       |                   | 1    | 1    | 0         |       |        |
-| 7  |           TABLE ACCESS FULL     | SYS   | TEST_MTRL_PROJ P  | 1    | 1    | 0         |       |        |
+| 6  |         KERNEL FILTER           |       |                   | 10   | 1    | 0         |       |        |
+| 7  |           TABLE ACCESS FULL     | SYS   | TEST_MTRL_PROJ P  | 10   | 1    | 0         |       |        |
 | 8  |           HASH MATERIALIZE      |       |                   | 10   | 1    | 0         |       |        |
 | 9  |               TABLE ACCESS FULL | SYS   | TEST_MTRL_PROJ P2 | 10   | 1    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: E.SALARY < (SELECT MIN(SALARY) FROM TEST_MTRL_EMP E2 WHERE E2.DEPT_ID = E.DEPT_ID AND EXISTS(SELECT 1
-                FROM TEST_MTRL_PROJ P WHERE E2.EMP_ID = P.EMP_ID AND P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ
-                P2 GROUP BY P2.DEPT_ID)))                       
-    5 - filter: E2.DEPT_ID = E.DEPT_ID AND EXISTS(SELECT 1 FROM TEST_MTRL_PROJ P WHERE E2.EMP_ID = P.EMP_ID AND P.COST
-                > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID))
-    7 - filter: E2.EMP_ID = P.EMP_ID AND P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID)
+    2 - filter: E.SALARY < (SELECT MIN(SALARY) FROM TEST_MTRL_EMP E2 WHERE E2.DEPT_ID = E.DEPT_ID AND E2.EMP_ID IN
+                ((SELECT EMP_ID FROM TEST_MTRL_PROJ P WHERE P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP
+                BY P2.DEPT_ID))))
+    5 - filter: E2.DEPT_ID = E.DEPT_ID AND E2.EMP_ID IN ((SELECT EMP_ID FROM TEST_MTRL_PROJ P WHERE P.COST > (SELECT
+                AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID)))
+    7 - filter: P.COST > (SELECT AVG(COST) FROM TEST_MTRL_PROJ P2 GROUP BY P2.DEPT_ID)
     8 - access: P2.DEPT_ID = P.DEPT_ID                          
 
 23 rows fetched.

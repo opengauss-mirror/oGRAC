@@ -32,24 +32,22 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                     | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |             | 6    | 2    | 0         |       |        |
-| 1  |     SUBSELECT                 |       | $FROM_ORE_0 | 6    | 2    | 0         |       |        |
-| 2  |       HASH UNION              |       |             | 6    | 2    | 0         |       |        |
-| 3  |         KERNEL FILTER         |       |             | 3    | 1    | 0         |       |        |
-| 4  |           TABLE ACCESS FULL   | SYS   | T1          | 3    | 1    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | T1          | 1    | 1    | 0         |       |        |
-| 6  |         KERNEL FILTER         |       |             | 3    | 1    | 0         |       |        |
-| 7  |           TABLE ACCESS FULL   | SYS   | T1          | 3    | 1    | 0         |       |        |
-| 8  |             TABLE ACCESS FULL | SYS   | T1          | 1    | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |             | 2    | 2    | 0         |       |        |
+| 1  |     SUBSELECT                 |       | $FROM_ORE_0 | 2    | 2    | 0         |       |        |
+| 2  |       HASH UNION              |       |             | 2    | 2    | 0         |       |        |
+| 3  |         KERNEL FILTER         |       |             | 1    | 1    | 0         |       |        |
+| 4  |           TABLE ACCESS FULL   | SYS   | T1          | 1    | 1    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | T1          | 3    | 1    | 0         |       |        |
+| 6  |         KERNEL FILTER         |       |             | 1    | 1    | 0         |       |        |
+| 7  |           TABLE ACCESS FULL   | SYS   | T1          | 1    | 1    | 0         |       |        |
+| 8  |             TABLE ACCESS FULL | SYS   | T1          | 3    | 1    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: EXISTS(SELECT 1 FROM T1 WHERE C1 = T1.C1)       
-    5 - filter: C1 = T1.C1                                      
-    7 - filter: EXISTS(SELECT 1 FROM T1 WHERE C2 = T1.C2)       
-    8 - filter: C2 = T1.C2                                      
+    4 - filter: C1 IN ((SELECT C1 FROM T1))
+    7 - filter: C2 IN ((SELECT C2 FROM T1))
 
-19 rows fetched.
+17 rows fetched.
 
 SQL> select c3 from t1 where c1 in (select c1 from t1) or c2 in (select c2 from t1);
 
@@ -139,24 +137,22 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation                     | Owner | Name        | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT              |       |             | 6    | 2    | 0         |       |        |
-| 1  |     SUBSELECT                 |       | $FROM_ORE_0 | 6    | 2    | 0         |       |        |
-| 2  |       HASH UNION              |       |             | 6    | 2    | 0         |       |        |
-| 3  |         KERNEL FILTER         |       |             | 3    | 1    | 0         |       |        |
-| 4  |           TABLE ACCESS FULL   | SYS   | T1          | 3    | 1    | 0         |       |        |
-| 5  |             TABLE ACCESS FULL | SYS   | T1          | 1    | 1    | 0         |       |        |
-| 6  |         KERNEL FILTER         |       |             | 3    | 1    | 0         |       |        |
-| 7  |           TABLE ACCESS FULL   | SYS   | T1          | 3    | 1    | 0         |       |        |
-| 8  |             TABLE ACCESS FULL | SYS   | T1          | 1    | 1    | 0         |       |        |
+| 0  | SELECT STATEMENT              |       |             | 2    | 2    | 0         |       |        |
+| 1  |     SUBSELECT                 |       | $FROM_ORE_0 | 2    | 2    | 0         |       |        |
+| 2  |       HASH UNION              |       |             | 2    | 2    | 0         |       |        |
+| 3  |         KERNEL FILTER         |       |             | 1    | 1    | 0         |       |        |
+| 4  |           TABLE ACCESS FULL   | SYS   | T1          | 1    | 1    | 0         |       |        |
+| 5  |             TABLE ACCESS FULL | SYS   | T1          | 3    | 1    | 0         |       |        |
+| 6  |         KERNEL FILTER         |       |             | 1    | 1    | 0         |       |        |
+| 7  |           TABLE ACCESS FULL   | SYS   | T1          | 1    | 1    | 0         |       |        |
+| 8  |             TABLE ACCESS FULL | SYS   | T1          | 3    | 1    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: EXISTS(SELECT 1 FROM T1 WHERE C1 = T1.C1)       
-    5 - filter: C1 = T1.C1                                      
-    7 - filter: EXISTS(SELECT 1 FROM T1 WHERE C2 = T1.C2)       
-    8 - filter: C2 = T1.C2                                      
+    4 - filter: C1 IN ((SELECT C1 FROM T1))
+    7 - filter: C2 IN ((SELECT C2 FROM T1))
 
-19 rows fetched.
+17 rows fetched.
 
 SQL> select c3 from t1 where c1 in (select c1 from t1) or c2 in (select c2 from t1);
 

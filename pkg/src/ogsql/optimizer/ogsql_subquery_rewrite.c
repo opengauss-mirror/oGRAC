@@ -28,6 +28,128 @@
 #include "ogsql_expr_def.h"
 #include "ogsql_predicate_pushdown.h"
 #include "ogsql_cond_rewrite.h"
+#include "ogsql_func.h"
+
+static bool32 optim_any_range_type(cmp_type_t type, cmp_type_t *scalar_type, uint32 *func_id)
+{
+    switch (type) {
+        case CMP_TYPE_GREAT_ANY:
+            *scalar_type = CMP_TYPE_GREAT;
+            *func_id = ID_FUNC_ITEM_MIN;
+            return OG_TRUE;
+        case CMP_TYPE_GREAT_EQUAL_ANY:
+            *scalar_type = CMP_TYPE_GREAT_EQUAL;
+            *func_id = ID_FUNC_ITEM_MIN;
+            return OG_TRUE;
+        case CMP_TYPE_LESS_ANY:
+            *scalar_type = CMP_TYPE_LESS;
+            *func_id = ID_FUNC_ITEM_MAX;
+            return OG_TRUE;
+        case CMP_TYPE_LESS_EQUAL_ANY:
+            *scalar_type = CMP_TYPE_LESS_EQUAL;
+            *func_id = ID_FUNC_ITEM_MAX;
+            return OG_TRUE;
+        default:
+            return OG_FALSE;
+    }
+}
+
+static bool32 optim_any_range_can_aggregate(sql_select_t *select_ctx, cmp_node_t *cmp)
+{
+    if (select_ctx->has_ancestor || select_ctx->root->type != SELECT_NODE_QUERY || select_ctx->for_update ||
+        select_ctx->calc_found_rows || select_ctx->limit.count != NULL || select_ctx->limit.offset != NULL ||
+        (select_ctx->ref_nodes != NULL && select_ctx->ref_nodes->count > 1)) {
+        return OG_FALSE;
+    }
+
+    sql_query_t *query = select_ctx->first_query;
+    if (query->rs_columns->count != 1 || query->aggrs->count != 0 || query->group_sets->count != 0 ||
+        query->winsort_list->count != 0 || query->has_distinct || query->connect_by_cond != NULL ||
+        query->having_cond != NULL || query->limit.count != NULL || query->limit.offset != NULL ||
+        query->sort_items->count != 0 || select_ctx->sort_items->count != 0 ||
+        select_ctx->select_sort_items->count != 0 ||
+        (query->cond != NULL && (query->cond->incl_flags & SQL_INCL_ROWNUM))) {
+        return OG_FALSE;
+    }
+
+    rs_column_t *rs_col = (rs_column_t *)cm_galist_get(query->rs_columns, 0);
+    /* Keep MIN/MAX ordering identical to the comparison, without implicit type conversion. */
+    return rs_col->type == RS_COL_COLUMN && rs_col->v_col.ancestor == 0 && !rs_col->typmod.is_array &&
+        OG_IS_NUMERIC_TYPE(rs_col->datatype) && rs_col->datatype != OG_TYPE_REAL &&
+        TREE_DATATYPE(cmp->left) == rs_col->datatype;
+}
+
+static status_t optim_aggregate_any_range(sql_stmt_t *stmt, cmp_node_t *cmp)
+{
+    cmp_type_t scalar_type;
+    uint32 func_id;
+    if (!optim_any_range_type(cmp->type, &scalar_type, &func_id) || cmp->left->next != NULL ||
+        cmp->right->next != NULL || cmp->right->root->type != EXPR_NODE_SELECT || IS_COORDINATOR) {
+        return OG_SUCCESS;
+    }
+
+    sql_select_t *select_ctx = (sql_select_t *)cmp->right->root->value.v_obj.ptr;
+    if (!optim_any_range_can_aggregate(select_ctx, cmp)) {
+        return OG_SUCCESS;
+    }
+
+    sql_query_t *query = select_ctx->first_query;
+    rs_column_t *rs_col = (rs_column_t *)cm_galist_get(query->rs_columns, 0);
+    expr_tree_t *argument = NULL;
+    expr_tree_t *result = NULL;
+    expr_node_t *aggr = NULL;
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_tree_t), (void **)&argument));
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&argument->root));
+    argument->owner = stmt->context;
+    argument->root->owner = argument;
+    argument->root->type = EXPR_NODE_COLUMN;
+    argument->root->typmod = rs_col->typmod;
+    argument->root->value.type = OG_TYPE_COLUMN;
+    argument->root->value.v_col = rs_col->v_col;
+
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_tree_t), (void **)&result));
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&result->root));
+    result->owner = stmt->context;
+    result->root->owner = result;
+    result->root->type = EXPR_NODE_AGGR;
+    result->root->typmod = rs_col->typmod;
+    result->root->value.type = OG_TYPE_INTEGER;
+    result->root->value.v_int = 0;
+
+    OG_RETURN_IFERR(cm_galist_new(query->aggrs, sizeof(expr_node_t), (void **)&aggr));
+    aggr->owner = result;
+    aggr->type = EXPR_NODE_FUNC;
+    aggr->typmod = rs_col->typmod;
+    aggr->argument = argument;
+    sql_init_aggr_node(aggr, func_id, func_id);
+    rs_col->type = RS_COL_CALC;
+    rs_col->expr = result;
+    select_ctx->type = SELECT_AS_VARIANT;
+    cmp->type = scalar_type;
+
+    sql_verifier_t verif = { 0 };
+    verif.context = stmt->context;
+    verif.do_expr_optmz = OG_TRUE;
+    sql_add_first_exec_node(&verif, cmp->right->root);
+    return OG_SUCCESS;
+}
+
+static status_t optim_aggregate_any_filters(sql_stmt_t *stmt, cond_node_t *cond)
+{
+    OG_RETURN_IFERR(sql_stack_safe(stmt));
+    if (cond == NULL) {
+        return OG_SUCCESS;
+    }
+    /* Only positive WHERE filters: FALSE and UNKNOWN both reject a row. Do not enter CASE or LNNVL. */
+    if (cond->type == COND_NODE_AND || cond->type == COND_NODE_OR) {
+        OG_RETURN_IFERR(optim_aggregate_any_filters(stmt, cond->left));
+        return optim_aggregate_any_filters(stmt, cond->right);
+    }
+    if (cond->type == COND_NODE_COMPARE) {
+        return optim_aggregate_any_range(stmt, cond->cmp);
+    }
+    return OG_SUCCESS;
+}
 
 static void optim_subqry_rewrite_support(rewrite_helper_t *helper)
 {
@@ -2293,6 +2415,9 @@ static void optim_init_rewrite_helper(rewrite_helper_t *helper, sql_stmt_t *stat
 
 status_t og_transf_subquery_rewrite(sql_stmt_t *statement, sql_query_t *qry)
 {
+    if (qry->cond != NULL) {
+        OG_RETURN_IFERR(optim_aggregate_any_filters(statement, qry->cond->root));
+    }
     rewrite_helper_t helper;
     optim_init_rewrite_helper(&helper, statement, qry);
 

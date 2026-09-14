@@ -30,10 +30,9 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: EXISTS(SELECT 1 FROM EXPLAIN_T2 WHERE A = EXPLAIN_T2.F1)
-    3 - filter: A = EXPLAIN_T2.F1                               
+    2 - filter: A IN ((SELECT F1 FROM EXPLAIN_T2))
 
-12 rows fetched.
+11 rows fetched.
 
 SQL> drop table explain_t1;
 
