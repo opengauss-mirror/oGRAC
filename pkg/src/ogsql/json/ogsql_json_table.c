@@ -253,7 +253,13 @@ static status_t sql_create_json_func_column(sql_stmt_t *stmt, word_t *word, sql_
         }
         temp.str = g_json_column_parse_attr[i].func_name;
         temp.len = g_json_column_parse_attr[i].func_len;
-        OG_RETURN_IFERR(sql_copy_text(stmt->context, &temp, &func_node->word.func.name.value));
+        /*
+         * JSON_TABLE reuses a column node as the JSON function node. Initialize the
+         * shared word union the same way the bison parser does, otherwise word.func.count
+         * keeps the stale column subscript value and the function lookup fails with
+         * "function .JSON_VALUE does not exist".
+         */
+        OG_RETURN_IFERR(sql_init_json_table_func_node_bison(stmt, func_node, &temp));
         OG_RETURN_IFERR(g_json_column_parse_attr[i].json_column_parse_func(stmt, word, new_col));
         OG_RETURN_IFERR(sql_set_json_func_attr(stmt, &lex->curr_text->value, &func_node->json_func_attr,
             json_func_att_match_on_error));

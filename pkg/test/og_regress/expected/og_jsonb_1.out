@@ -3979,7 +3979,15 @@ JSONB_MERGEPATCH(T1.C_JSONB,'[]' RETURNING JSONB ERROR ON ERROR)
 
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_mergepatch(t1.c_jsonb,'[{"k1":"lili","k2":[10,{"k3":20}],"k3":{"k4":"语文","k5":"数学"}},{"k1":"luna","k2":[100,{"k3":200}],"k3":{"k4":"物理","k5":"化学"}},{"k1":"joyh","k2":[1000,{"k3":2000}],"k3":{"k4":"高数","k5":"生物"}},{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"数学"}}]' returning jsonb error on error),'$[*]' error on error columns(c1 varchar2(10) path '$.k1',c4 varchar2(10) path '$.k3.k4',c6 for ordinality)) t2;
 
-OG-00828, [1:431]function .JSON_VALUE does not exist
+C1                                                           C4                                                           C6                  
+------------------------------------------------------------ ------------------------------------------------------------ --------------------
+lili                                                         语文                                                       1                   
+luna                                                         物理                                                       2                   
+joyh                                                         高数                                                       3                   
+esmen                                                        english                                                      4                   
+
+4 rows fetched.
+
 SQL> drop table if exists tbl_jsonb_025;
 
 Succeed.
@@ -4121,16 +4129,50 @@ JSONB_SET(T1.C_JSONB,'$[4]','{"K1":"ESMEN","K2":[10000,{"K3":200
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]' columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:207]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+
+4 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_set(jsonb_query(jsonb_query(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]' columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:399]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+
+4 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_set(jsonb_query(jsonb_query(jsonb_query(jsonb_query(jsonb_set(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[5]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[6]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]' columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:651]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+esmen                                                        english                                                          5                   
+esmen                                                        english                                                          6                   
+
+6 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(json_set(t1.c_json,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning varchar2(1000) error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:207]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+
+4 rows fetched.
+
 SQL> select jsonb_query(t1.c_jsonb,'$' returning varchar2(1000) error on error) from tbl_jsonb_025 t1;
 
 JSONB_QUERY(T1.C_JSONB,'$' RETURNING VARCHAR2(1000) ERROR ON ERR
@@ -4141,41 +4183,128 @@ JSONB_QUERY(T1.C_JSONB,'$' RETURNING VARCHAR2(1000) ERROR ON ERR
 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_query(t1.c_jsonb,'$' returning varchar2(1000) error on error),'$[*]'   columns(c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:131]function .JSON_VALUE does not exist
+C4                                                               C6                  
+---------------------------------------------------------------- --------------------
+Chinese                                                          1                   
+PYH                                                              2                   
+High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_query(t1.c_jsonb,'$' returning varchar2(1000) error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:131]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> 
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(jsonb_query(t1.c_jsonb,'$' returning clob error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:121]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(json_query(t1.c_json,'$' returning varchar2(1000) error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:129]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,json_table(t1.c_json,'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:73]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:123]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:171]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:219]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_query(jsonb_query(jsonb_query(jsonb_query(jsonb_query(t1.c_jsonb,'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:315]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(c_jsonb,'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:72]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+
+3 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:201]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+
+4 rows fetched.
+
 SQL> select t2.* from tbl_jsonb_025 t1,jsonb_table(jsonb_set(jsonb_set(t1.c_jsonb,'$[4]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[5]','{"k1":"esmen","k2":[10000,{"k3":20000}],"k3":{"k4":"english","k5":"math"}}' returning jsonb error on error),'$[*]'   columns(c1 varchar2(10) path '$.k1',c4 varchar2(100) path '$.k3.k4',c6 for ordinality)) t2 order by c6;
 
-OG-00828, [1:327]function .JSON_VALUE does not exist
+C1                                                           C4                                                               C6                  
+------------------------------------------------------------ ---------------------------------------------------------------- --------------------
+lili                                                         Chinese                                                          1                   
+luna                                                         PYH                                                              2                   
+joyh                                                         High                         QQ                         Math     3                   
+esmen                                                        english                                                          4                   
+esmen                                                        english                                                          5                   
+
+5 rows fetched.
+
 SQL> 
 SQL> select json_query(t1.c_json,'$' returning varchar2(1000) error on error) from tbl_jsonb_025 t1;
 
