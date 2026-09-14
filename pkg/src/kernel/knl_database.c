@@ -2759,8 +2759,8 @@ void db_get_ogracd_version(ctrl_version_t *oGRACd_version)
     uint32 revision_n;
     char *version = (char *)oGRACd_get_dbversion();
     cm_str2text(version, &db_version);
-    // for release package the dbversion is like "oGRAC Release 7.0.0-RC3 c11fdca072 build 2026-06-13 15:42:10"
-    // for debug package the dbversion is like "oGRAC Debug 7.0.0-RC3 c11fdca072 build 2026-06-13 15:42:10"
+    // for release package the dbversion is like "oGRAC Release 7.0.0 c11fdca072 build 2026-06-13 15:42:10"
+    // for debug package the dbversion is like "oGRAC Debug 7.0.0 c11fdca072 build 2026-06-13 15:42:10"
     (void)cm_split_text(&db_version, ' ', 0, &left, &right);
     (void)cm_split_text(&right, ' ', 0, &left, &right2);
     (void)cm_split_text(&right2, ' ', 0, &left, &right);
