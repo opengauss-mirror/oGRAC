@@ -131,6 +131,11 @@ static inline uint32 buf_lru_get_list_len(buf_ctrl_t *list_start, buf_ctrl_t *li
     return len;
 }
 
+static inline bool32 buf_lru_list_has_old(buf_lru_list_t *list)
+{
+    return (bool32)(list->type == LRU_LIST_MAIN || list->type == LRU_LIST_SCAN);
+}
+
 static inline void buf_lru_add_head(buf_lru_list_t *list, buf_ctrl_t *ctrl)
 {
     ctrl->prev = NULL;
@@ -192,6 +197,9 @@ static void buf_lru_adjust_old_len(buf_lru_list_t *list)
     if (list->old_count + BUF_LRU_OLD_TOLERANCE < new_len) {
         while (list->old_count < new_len) {
             knl_panic_log(list->lru_old->in_old == 1, "the lru_old is not in_old.");
+            knl_panic_log(list->lru_old->prev != NULL,
+                          "the old list walks off the LRU head, panic info: count %u old_count %u new_len %u",
+                          list->count, list->old_count, new_len);
             ++list->old_count;
             list->lru_old = list->lru_old->prev;
             knl_panic_log(list->lru_old->in_old == 0, "the lru_old is in_old.");
@@ -206,6 +214,9 @@ static void buf_lru_adjust_old_len(buf_lru_list_t *list)
     if (list->old_count > BUF_LRU_OLD_TOLERANCE + new_len) {
         while (list->old_count > new_len) {
             knl_panic_log(list->lru_old->in_old == 1, "the lru_old is not in_old.");
+            knl_panic_log(list->lru_old->next != NULL,
+                          "the old list walks off the LRU tail, panic info: count %u old_count %u new_len %u",
+                          list->count, list->old_count, new_len);
             list->lru_old->in_old = 0;
             list->lru_old = list->lru_old->next;
             knl_panic_log(list->lru_old->in_old == 1, "the lru_old is not in_old.");
@@ -261,7 +272,7 @@ void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos)
         buf_lru_add_old(list, ctrl);
     }
 
-    if (list->count == BUF_LRU_OLD_MIN_LEN) {
+    if (buf_lru_list_has_old(list) && list->count == BUF_LRU_OLD_MIN_LEN) {
         knl_panic_log(list->lru_old == NULL, "the lru_old is not NULL, panic info: page %u-%u type %u, "
                       "lru_old_page %u-%u type %u", ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type,
                       list->lru_old->page_id.file, list->lru_old->page_id.page, list->lru_old->page->type);
@@ -307,7 +318,7 @@ void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
     knl_panic_log(list->count > 0, "the buffer count of lru_list is abnormal, panic info: page %u-%u type %u count %u",
                   ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, list->count);
     buf_remove_ctrl(list, ctrl);
-    if (list->type != LRU_LIST_MAIN && list->type != LRU_LIST_SCAN) {
+    if (!buf_lru_list_has_old(list)) {
         ctrl->prev = NULL;
         ctrl->next = NULL;
         return;
@@ -324,12 +335,11 @@ void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl)
         } else {
             list->lru_old = ctrl->next;
             list->old_count--;
+            knl_panic_log(list->lru_old != NULL, "the lru_old is NULL, panic info: page %u-%u type %u",
+                          ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
             knl_panic_log(list->lru_old->in_old == 1, "the lru_old page is not in_old, panic info: page %u-%u type %u",
                           ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
         }
-
-        knl_panic_log(list->lru_old != NULL, "the lru_old is NULL, panic info: page %u-%u type %u",
-                      ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
     } else {
         if (list->lru_old != NULL && ctrl->in_old) {
             list->old_count--;
@@ -801,6 +811,11 @@ void buf_expire_page(knl_session_t *session, page_id_t page_id)
      * To lock the list, the bucket must be released first. We can re-lock it after locking the list
      */
     list_id = ctrl->list_id; // snap the list id before unlocking bucket.
+    if (SECUREC_UNLIKELY(list_id >= LRU_LIST_TYPE_COUNT)) {
+        cm_spin_unlock_bucket(&bucket->lock);
+        return;
+    }
+
     list = &set->list[list_id];
     cm_spin_unlock_bucket(&bucket->lock);
 
@@ -882,14 +897,17 @@ static bool32 buf_can_evict_general(knl_session_t *session, buf_ctrl_t *head)
 static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
 {
     buf_ctrl_t *shift = NULL;
+    uint32 moved = 0;
+
     cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
     buf_ctrl_t *item = list->lru_last;
-    while (item != NULL) {
+    while (item != NULL && moved < BUF_MOVE_CLEAN_BATCH) {
         shift = item;
         item = shift->prev;
         buf_lru_remove_ctrl(list, shift);
         buf_add_pos_t pos = shift->is_resident ? BUF_ADD_HOT : BUF_ADD_COLD;
         buf_lru_add_ctrl(&set->scan_list, shift, pos);
+        moved++;
     }
     cm_spin_unlock(&list->lock);
     cm_release_cond(&set->set_cond);
@@ -1436,6 +1454,13 @@ static inline void buf_alloc_link_head(knl_session_t *session, buf_ctrl_t *head_
      * There is case that the head has been on list. We only link it when it is not on.
      */
     uint8 list_id = head_ctrl->list_id;
+    /* The head is stashed on a thread local list (LRU_LIST_TEMP), which is out of set->list. Its owner
+     * will link it back, so there is nothing to do here.
+     */
+    if (SECUREC_UNLIKELY(list_id >= LRU_LIST_TYPE_COUNT)) {
+        return;
+    }
+
     cm_spin_lock(&set->list[list_id].lock, &session->stat->spin_stat.stat_buffer);
     if (SECUREC_LIKELY(!BUF_ON_LIST(head_ctrl))) {
         buf_lru_add_ctrl(&set->list[list_id], head_ctrl, add_pos);
@@ -1608,68 +1633,19 @@ void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctr
     buf_lru_add_tail(list, ctrl);
 }
 
-/*
- * move page that has been flushed from temporary list to aux list
- */
-void buf_reset_cleaned_pages(buf_set_t *set, buf_lru_list_t *list)
-{
-    buf_ctrl_t *ctrl = list->lru_last;
-    buf_ctrl_t *shift = NULL;
-
-    cm_spin_lock(&set->scan_list.lock, NULL);
-    while (ctrl != NULL) {
-        shift = ctrl;
-        ctrl = ctrl->prev;
-        buf_add_pos_t pos = shift->is_resident ? BUF_ADD_HOT : BUF_ADD_COLD;
-        buf_lru_add_ctrl(&set->scan_list, shift, pos);
-    }
-    cm_spin_unlock(&set->scan_list.lock);
-    cm_release_cond(&set->set_cond);
-}
-
-/*
- * move page that has been flushed from temporary list to scan list for all buf set
- */
-void buf_reset_cleaned_pages_all_bufset(buf_context_t *buf_ctx, buf_lru_list_t *list)
-{
-    buf_ctrl_t *ctrl = list->lru_last;
-    buf_ctrl_t *shift = NULL;
- 
-    uint32 pool_id = 0;
-    buf_lru_list_t temp_list[OG_MAX_BUF_POOL_NUM] = {0};
-    while (ctrl != NULL) {
-        pool_id = ctrl->buf_pool_id;
-        shift = ctrl;
-        ctrl = ctrl->prev;
-        buf_lru_add_ctrl(&temp_list[pool_id], shift, BUF_ADD_COLD);
-    }
-    // Hold lock here, because buf_recycle has more concurrency to get the scan_list lock.
-    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
-        cm_spin_lock(&buf_ctx->buf_set[i].scan_list.lock, NULL);
-        ctrl = temp_list[i].lru_last;
-        while (ctrl != NULL) {
-            shift = ctrl;
-            ctrl = ctrl->prev;
-            buf_add_pos_t pos = shift->is_resident ? BUF_ADD_HOT : BUF_ADD_COLD;
-            buf_lru_add_ctrl(&buf_ctx->buf_set[i].scan_list, shift, pos);
-        }
-        cm_spin_unlock(&buf_ctx->buf_set[i].scan_list.lock);
-        cm_release_cond(&buf_ctx->buf_set[i].set_cond);
-    }
-}
-
-/* move ctrls in old list of main list to old point of aux list */
 void buf_balance_set_list(buf_set_t *set)
 {
     buf_ctrl_t *shift = NULL;
     buf_lru_list_t *list = &set->main_list;
+    uint32 visited = 0;
     cm_spin_lock(&list->lock, NULL);
     buf_ctrl_t *item = list->lru_last;
 
-    for (;;) {
+    while (visited < BUF_BALANCE_BATCH) {
         if (item == NULL || item == list->lru_old) {
             break;
         }
+        visited++;
 
         if (!BUF_CAN_EXPIRE_CACHE(item)) {
             item = item->prev;

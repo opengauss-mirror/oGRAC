@@ -83,6 +83,7 @@ extern "C" {
 #define BUF_LRU_OLD_TOLERANCE 256   // adjust LRU old list pointer if the distance from OLD RATION > BUF_LRU_OLD_TOLERANCE
 #define BUF_LRU_OLD_MIN_LEN   65536 // use LRU old list if >= BUF_LRU_OLD_MIN_LEN buffer pages in memory
 #define BUF_LRU_STATS_LEN     1024  // full scan LRU list len
+#define BUF_MOVE_CLEAN_BATCH  (uint32)1024
 #define BUF_POOL_SIZE_THRESHOLD (((uint64)SIZE_M(256)) * 1) // if total/buf_pool_num < 256MB, then use one buffer pool
 #define BUCKET_TIMES          3     // the times of buckets against buffer ctrl
 #define BUF_IOCBS_MAX_NUM     1024
@@ -92,6 +93,7 @@ extern "C" {
 #define BUF_AGE_DECREASE_FACTOR 2
 #define BUF_BALANCE_RATIO 0.5
 #define BUF_NEED_BALANCE(set) ((set)->scan_list.count < (uint32)((set)->main_list.count * BUF_BALANCE_RATIO))
+#define BUF_BALANCE_BATCH (uint32)1024
 #define BUF_OPTIMIZE_MIN_PAGES 131072   // use scan list only when buffer set size less than 1G
 
 #define PAGE_GROUP_COUNT 8
@@ -402,8 +404,6 @@ buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page
                                    buf_add_pos_t add_pos);
 void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos);
 void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl);
-void buf_reset_cleaned_pages(buf_set_t *set, buf_lru_list_t *list);
-void buf_reset_cleaned_pages_all_bufset(buf_context_t *buf_ctx, buf_lru_list_t *list);
 void buf_balance_set_list(buf_set_t *set);
 status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl);
 bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id);
