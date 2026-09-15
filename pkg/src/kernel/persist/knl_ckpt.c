@@ -593,8 +593,14 @@ static void ckpt_move_cleaned_pages_all_bufset(knl_session_t *session, buf_lru_l
     buf_ctrl_t *ctrl = list->lru_last;
     buf_ctrl_t *shift = NULL;
     uint32 pool_id = 0;
-    buf_lru_list_t temp_list[OG_MAX_BUF_POOL_NUM] = {0};
+    buf_lru_list_t temp_list[OG_MAX_BUF_POOL_NUM];
 
+    for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
+        temp_list[i] = g_init_list_t;
+        temp_list[i].type = LRU_LIST_TEMP;
+    }
+
+    /* group the cleaned pages by buffer pool, so that each clean list is spliced only once */
     while (ctrl != NULL) {
         pool_id = ctrl->buf_pool_id;
         shift = ctrl;
@@ -603,14 +609,10 @@ static void ckpt_move_cleaned_pages_all_bufset(knl_session_t *session, buf_lru_l
     }
 
     for (uint32 i = 0; i < buf_ctx->buf_set_count; i++) {
-        cm_spin_lock(&buf_ctx->buf_set[i].clean_list.lock, NULL);
-        ctrl = temp_list[i].lru_last;
-        while (ctrl != NULL) {
-            shift = ctrl;
-            ctrl = ctrl->prev;
-            buf_lru_add_ctrl(&buf_ctx->buf_set[i].clean_list, shift, BUF_ADD_COLD);
+        if (temp_list[i].count == 0) {
+            continue;
         }
-        cm_spin_unlock(&buf_ctx->buf_set[i].clean_list.lock);
+        buf_lru_append_list(&buf_ctx->buf_set[i].clean_list, &temp_list[i]);
         cm_release_cond(&buf_ctx->buf_set[i].set_cond);
     }
 }
