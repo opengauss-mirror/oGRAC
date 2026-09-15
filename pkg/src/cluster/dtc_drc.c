@@ -6844,7 +6844,9 @@ void drc_remaster_proc(thread_t *thread)
     uint8 target_numa = resource_numa >= 0 ? (uint8)resource_numa : session->ass_numa;
     cm_set_thread_name("remaster");
     cpu_set_t cpuset = GET_RSRC_MGR->cpuset;
-    knl_get_cpu_set_from_conf(&cpuset, target_numa);
+    int* sess_idx = get_cpu_session_use_idx();
+    uint32 sessid = (uint32)cm_atomic32_fetch_inc((atomic32_t *)&sess_idx[target_numa]);
+    knl_get_cpu_set_from_conf(&cpuset, sessid, target_numa);
     (void)rsrc_thread_bind_cpu(thread, &cpuset);
 #ifndef WIN32
     numa_set_localalloc();

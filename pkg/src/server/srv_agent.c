@@ -183,68 +183,36 @@ inline status_t srv_process_single_session_cs_wait(session_t *session, bool32 *r
     return OG_SUCCESS;
 }
 
-static void srv_refresh_tcp_numa(session_t *session)
-{
-    cs_pipe_t *pipe;
-    int cpuid = -1;
-    socket_t sock;
-
-    pipe = (session->pipe != NULL) ? session->pipe : &session->pipe_entity;
-    if (pipe->type != CS_TYPE_TCP && pipe->type != CS_TYPE_SSL) {
-        return;
-    }
-
-    sock = (pipe->type == CS_TYPE_SSL) ? pipe->link.ssl.tcp.sock : pipe->link.tcp.sock;
-    (void)cs_get_numaid(sock, &cpuid);
-    if (cpuid < 0) {
-        return;
-    }
-
-    session->knl_session.ass_cpu = (uint32)cpuid;
-    session->knl_session.ass_numa = (uint32)cpuid / SYS_CPUS_PER_GROUP;
-    if (SYS_NUMA_GROUP_COUNT > 0 && session->knl_session.ass_numa >= SYS_NUMA_GROUP_COUNT) {
-        session->knl_session.ass_numa %= SYS_NUMA_GROUP_COUNT;
-    }
-}
-
 static inline void srv_session_bind_cpu(session_t *session)
 {
     agent_t *agent = session->agent;
-
-    /* SO_INCOMING_CPU is often 0 at accept(); re-read after the first client packet. */
-    srv_refresh_tcp_numa(session);
+    cpu_set_t cpuset;
+    uint8 target_numa;
 
     if (session->rsrc_group != NULL) {
         if (!rsrc_cpuset_is_equal(&agent->cpuset, &session->rsrc_group->cpuset)) {
             (void)rsrc_thread_bind_cpu(&agent->thread, &session->rsrc_group->cpuset);
             agent->cpuset = session->rsrc_group->cpuset;
         }
-    } else {
-        if (!rsrc_cpuset_is_equal(&agent->cpuset, &GET_RSRC_MGR->cpuset)) {
-            cpu_set_t cpuset = GET_RSRC_MGR->cpuset;
-            uint8 target_numa = session->knl_session.ass_numa;
-            uint32 sessid = 0;
-            para_log_context_t *para_ogx = NULL;
-            if (SYS_NUMA_GROUP_COUNT > 0 && target_numa >= SYS_NUMA_GROUP_COUNT) {
-                target_numa %= (uint8)SYS_NUMA_GROUP_COUNT;
-            }
-
-            if (session->knl_session.kernel != NULL) {
-                para_ogx = session->knl_session.kernel->para_log_ctx[target_numa];
-            }
-
-            if (para_ogx != NULL) {
-                sessid = cm_atomic32_fetch_inc(&para_ogx->session_bind_cpu);
-            }
-
-            knl_get_cpu_set_from_session(&cpuset, sessid, target_numa, session->knl_session.ass_cpu);
-            OG_LOG_RUN_INF("[agent]session %u sessid %u [private [%u]] thread:%lu, numa:%u.",
-                      session->knl_session.id, sessid, (uint32)session->priv, agent->thread.id, target_numa);
-            (void)rsrc_thread_bind_cpu(&agent->thread, &cpuset);
-            numa_set_localalloc();
-            agent->cpuset = GET_RSRC_MGR->cpuset;
-        }
+        return;
     }
+
+    target_numa = (uint8)session->knl_session.ass_numa;
+    if (SYS_NUMA_GROUP_COUNT > 0 && target_numa >= SYS_NUMA_GROUP_COUNT) {
+        target_numa %= (uint8)SYS_NUMA_GROUP_COUNT;
+    }
+    if (session->knl_session.cpu_bound) {
+        return;
+    }
+
+    int* sess_idx = get_cpu_session_use_idx();
+    uint32 sessid = (uint32)cm_atomic32_get((atomic32_t *)&sess_idx[target_numa]);
+    knl_get_cpu_set_from_conf(&cpuset, sessid, target_numa);
+    (void)cm_atomic32_fetch_inc((atomic32_t *)&sess_idx[target_numa]);
+    (void)rsrc_thread_bind_cpu(&agent->thread, &cpuset);
+    numa_set_localalloc();
+    agent->cpuset = cpuset;
+    session->knl_session.cpu_bound = OG_TRUE;
 }
 
 status_t srv_process_single_session(session_t *session)

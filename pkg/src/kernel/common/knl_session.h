@@ -365,6 +365,7 @@ typedef struct st_knl_session {
     uint8 reverse;
     uint32 ass_numa;
     uint32 ass_cpu;
+    bool8 cpu_bound;
     bool8 has_migr;
     bool8 bootstrap;  // if this session is doing database bootstrap
     bool8 autotrace;

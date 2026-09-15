@@ -60,6 +60,7 @@ int* get_cpu_info(void);
 char *get_g_cpu_info(void);
 status_t init_cpu_info(void);
 int* get_cpu_info_count_ptr(void);
+int* get_cpu_session_use_idx(void);
 
 #ifdef __cplusplus
 }

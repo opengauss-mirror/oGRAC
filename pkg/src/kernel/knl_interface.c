@@ -283,19 +283,28 @@ void knl_attach_cpu_core(void)
     }
 }
 
-void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint8 target_numa)
+void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint32 round_id, uint8 target_numa)
 {
     int cpu_group_num = get_cpu_group_num();
     cpu_set_t *cpu_masks = get_cpu_masks();
+    const int* cpu_info_counts = get_cpu_info_count_ptr();
+    int *cpu_info = get_cpu_info();
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
     if (cpu_group_num <= 0) {
         OG_LOG_RUN_ERR("Invalid cpu_group_num is %d!", cpu_group_num);
         return;
-     } else if (cpu_masks == NULL) {
-        OG_LOG_RUN_ERR("cpu_masks is NULL");
-        return;
-    }  else {
+     } else if (cpu_masks != NULL) {
         CPU_ZERO(cpuset);
         *cpuset = cpu_masks[target_numa];
+        return;
+    }  else {
+        if (cpu_info_counts[target_numa] <= 0) {
+            OG_LOG_RUN_ERR("cpu_info_counts[%u] is 0, target_numa out of range or empty group", target_numa);
+            return;
+        }
+        CPU_SET(cpu_info[target_numa * SMALL_RECORD_SIZE + round_id % cpu_info_counts[target_numa]], &mask);
+        *cpuset = mask;
     }
     return;
 }
