@@ -30,3 +30,31 @@ SELECT c.customer_id, c.customer_name, o.order_id, o.amount, RANK() OVER (PARTIT
 WITH high_value_orders AS (SELECT * FROM small_orders WHERE amount > 250) SELECT c.customer_name, h.order_id FROM small_customers c JOIN high_value_orders h ON c.customer_id = h.customer_id;
 
 alter system set ENABLE_NESTLOOP_JOIN=true;
+
+-- Nested-loop predicates must filter rows before hash build materialization.
+-- Expected COUNT(*): 2. SELECT should finish within 1 second on the debug test node.
+DROP TABLE IF EXISTS hj_nl_subset PURGE;
+DROP TABLE IF EXISTS hj_nl_domain PURGE;
+CREATE TABLE hj_nl_domain (item_no NUMBER);
+CREATE TABLE hj_nl_subset (item_no NUMBER);
+BEGIN
+    FOR p IN 1..65536 LOOP
+        INSERT INTO hj_nl_domain VALUES (p);
+    END LOOP;
+    FOR p IN 1..128 LOOP
+        INSERT INTO hj_nl_subset VALUES (p);
+    END LOOP;
+END;
+/
+COMMIT;
+ANALYZE TABLE hj_nl_domain COMPUTE STATISTICS;
+ANALYZE TABLE hj_nl_subset COMPUTE STATISTICS;
+
+SELECT COUNT(*)
+  FROM hj_nl_domain a
+  JOIN hj_nl_subset b ON a.item_no = b.item_no
+  JOIN hj_nl_domain c ON c.item_no = b.item_no + 1
+ WHERE a.item_no <= 2;
+
+DROP TABLE hj_nl_subset PURGE;
+DROP TABLE hj_nl_domain PURGE;
