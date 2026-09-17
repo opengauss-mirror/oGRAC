@@ -727,6 +727,8 @@ status_t spc_shrink_space(knl_session_t *session, space_t *space, knl_shrink_def
 {
     if (!DB_ATTR_ENABLE_HWM_CHANGE(session)) {
         OG_LOG_RUN_ERR("shrink space is closed");
+        OG_THROW_ERROR(ERR_OPERATIONS_NOT_ALLOW,
+            "shrink space when ENABLE_HWN_CHANGE is FALSE");
         return OG_ERROR;
     }
     if (spc_is_punching(session, space, "shrink space")) {
