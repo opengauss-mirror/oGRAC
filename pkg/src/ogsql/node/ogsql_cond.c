@@ -1341,6 +1341,35 @@ static status_t sql_matched_with_rs(sql_stmt_t *stmt, cmp_node_t *node, cmp_type
     return OG_SUCCESS;
 }
 
+static status_t sql_match_cached_in_subselect(sql_stmt_t *stmt, cmp_node_t *node, cmp_type_t type,
+    variant_t *left_var, cond_result_t *result)
+{
+    int32 cmp_result;
+    variant_t right_var;
+
+    var_copy(F_EXEC_VALUE(stmt, node->right->root), &right_var);
+
+    // OG_TYPE_LOGIC_TRUE marks an empty cached subquery result.
+    if (right_var.type == OG_TYPE_LOGIC_TRUE) {
+        *result = COND_FALSE;
+        return OG_SUCCESS;
+    }
+
+    if (left_var->is_null) {
+        *result = COND_UNKNOWN;
+        return OG_SUCCESS;
+    }
+
+    if (right_var.is_null) {
+        *result = (node->type == CMP_TYPE_NOT_IN && !stmt->is_check) ? COND_TRUE : COND_UNKNOWN;
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_compare_variant(stmt, left_var, &right_var, &cmp_result));
+    sql_convert_match_result(type, cmp_result, (bool32 *)result);
+    return OG_SUCCESS;
+}
+
 static status_t sql_match_in_subselect(sql_stmt_t *stmt, cmp_node_t *node, cmp_type_t type, bool32 *pending,
     cond_result_t *result)
 {
@@ -1352,9 +1381,14 @@ static status_t sql_match_in_subselect(sql_stmt_t *stmt, cmp_node_t *node, cmp_t
     status_t status;
     sql_select_t *select_ctx = (sql_select_t *)v_obj->ptr;
     bool32 exist_unknown = OG_FALSE;
+    bool32 has_row = OG_FALSE;
+    bool32 can_cache;
+    variant_t right_var;
 
     *result = COND_FALSE;
     count = sql_expr_list_len(node->left);
+    can_cache = (bool32)(count == 1 && select_ctx->type == SELECT_AS_VARIANT &&
+        NODE_IS_FIRST_EXECUTABLE(node->right->root) && F_EXEC_VARS(stmt) != NULL);
 
     OG_RETURN_IFERR(sql_push(stmt, count * sizeof(variant_t), (void **)&left_vars));
 
@@ -1374,6 +1408,10 @@ static status_t sql_match_in_subselect(sql_stmt_t *stmt, cmp_node_t *node, cmp_t
         if (node->type != CMP_TYPE_NOT_IN) {
             return OG_SUCCESS;
         }
+    }
+
+    if (can_cache && F_EXEC_VALUE(stmt, node->right->root)->type != OG_TYPE_UNINITIALIZED) {
+        return sql_match_cached_in_subselect(stmt, node, type, &left_vars[0], result);
     }
 
     parent_cur = OGSQL_CURR_CURSOR(stmt);
@@ -1405,6 +1443,16 @@ static status_t sql_match_in_subselect(sql_stmt_t *stmt, cmp_node_t *node, cmp_t
             OGSQL_RESTORE_STACK(stmt);
             break;
         }
+        has_row = OG_TRUE;
+
+        if (can_cache) {
+            if (sql_get_rs_value(stmt, cursor, 0, &right_var) != OG_SUCCESS) {
+                OGSQL_RESTORE_STACK(stmt);
+                status = OG_ERROR;
+                break;
+            }
+            sql_copy_first_exec_var(stmt, &right_var, F_EXEC_VALUE(stmt, node->right->root));
+        }
 
         /* not in or != all cond, if the ssa cursor eof is FALSE, the result is COND_UNKNOWN */
         if (*result == COND_UNKNOWN && node->type == CMP_TYPE_NOT_IN) {
@@ -1432,6 +1480,12 @@ static status_t sql_match_in_subselect(sql_stmt_t *stmt, cmp_node_t *node, cmp_t
         }
     }
     SQL_CURSOR_POP(stmt);
+
+    if (status == OG_SUCCESS && can_cache && !has_row) {
+        right_var.is_null = OG_FALSE;
+        right_var.type = OG_TYPE_LOGIC_TRUE;
+        sql_copy_first_exec_var(stmt, &right_var, F_EXEC_VALUE(stmt, node->right->root));
+    }
 
     sql_close_cursor(stmt, cursor);
 
