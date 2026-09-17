@@ -239,6 +239,13 @@ static status_t sql_verify_any_all(sql_verifier_t *verif, cmp_node_t *node)
     uint32 left_expr_count;
     sql_select_t *select_ctx = NULL;
 
+    /* Scalar membership quantifiers use the same NULL/empty-set semantics as IN and NOT IN. */
+    if ((node->type == CMP_TYPE_EQUAL_ANY || node->type == CMP_TYPE_NOT_EQUAL_ALL) &&
+        node->left->next == NULL && node->right->next == NULL && node->right->root->type == EXPR_NODE_SELECT) {
+        node->type = (node->type == CMP_TYPE_EQUAL_ANY) ? CMP_TYPE_IN : CMP_TYPE_NOT_IN;
+        return sql_verify_in(verif, node);
+    }
+
     OG_RETURN_IFERR(sql_verify_expr(verif, node->left));
     OG_RETURN_IFERR(sql_verify_expr(verif, node->right));
 

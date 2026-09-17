@@ -158,17 +158,16 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | UPDATE STATEMENT        |       |                   | 288  | 5    | 0         |       |        |
-| 1  |   KERNEL FILTER         |       |                   | 288  | 5    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 288  | 5    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 1    | 2    | 0         |       |        |
+| 0  | UPDATE STATEMENT        |       |                   | 1    | 2    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                   | 1    | 2    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 1    | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 288  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: EXISTS(SELECT 1 FROM BISON_EXPLAIN_SRC WHERE ID = BISON_EXPLAIN_SRC.ID)
-    3 - filter: ID = BISON_EXPLAIN_SRC.ID                       
+    2 - filter: ID IN ((SELECT ID FROM BISON_EXPLAIN_SRC))
 
-12 rows fetched.
+11 rows fetched.
 
 SQL> explain update bison_explain_dst set val = val + 2 where id = 1;
 

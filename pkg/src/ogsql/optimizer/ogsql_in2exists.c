@@ -150,6 +150,41 @@ static bool32 og_verify_computed_columns(sql_query_t *subq, rs_column_t *calc_co
     return OG_TRUE;
 }
 
+static bool32 has_indexed_subquery_key(sql_query_t *query, sql_table_t *table)
+{
+    uint32 count = knl_get_index_count(table->entry->dc.handle);
+    for (uint32 i = 0; i < count; ++i) {
+        knl_index_desc_t *index = knl_get_index(table->entry->dc.handle, i);
+        if (index->is_invalid || index->is_disabled || index->column_count == 0) {
+            continue;
+        }
+        for (uint32 j = 0; j < query->rs_columns->count; ++j) {
+            rs_column_t *rs_col = (rs_column_t *)cm_galist_get(query->rs_columns, j);
+            /* Leave expression and function-index matching to the existing planner. */
+            if (rs_col->type != RS_COL_COLUMN || index->is_func) {
+                return OG_TRUE;
+            }
+            if (rs_col->v_col.ancestor == 0 && rs_col->v_col.tab == table->id &&
+                rs_col->v_col.col == index->columns[0]) {
+                return OG_TRUE;
+            }
+        }
+    }
+    return OG_FALSE;
+}
+
+static bool32 keep_hash_subquery(cmp_node_t *cmp, sql_select_t *sub_slct)
+{
+    if (NODE_OPTIMIZE_MODE(cmp->left->root) != OPTMZ_AS_HASH_TABLE || sub_slct->has_ancestor ||
+        sub_slct->first_query->tables.count != 1) {
+        return OG_FALSE;
+    }
+
+    sql_table_t *table = (sql_table_t *)sql_array_get(&sub_slct->first_query->tables, 0);
+    return table->type == NORMAL_TABLE && table->entry != NULL &&
+        !has_indexed_subquery_key(sub_slct->first_query, table);
+}
+
 static bool32 check_cmp_trans2exists(sql_stmt_t *statement, sql_query_t *qry, cmp_node_t *cmp)
 {
     expr_tree_t *l_exprtr = cmp->left;
@@ -167,6 +202,11 @@ static bool32 check_cmp_trans2exists(sql_stmt_t *statement, sql_query_t *qry, cm
 
     sub_slct = (sql_select_t *)r_exprtr->root->value.v_obj.ptr;
     if (!check_subslct_4_in2exists(sub_slct) || !validate_in_expr_candidate(l_exprtr)) {
+        return OG_FALSE;
+    }
+
+    /* An unindexed correlated scan would discard the reusable membership hash table. */
+    if (keep_hash_subquery(cmp, sub_slct)) {
         return OG_FALSE;
     }
 

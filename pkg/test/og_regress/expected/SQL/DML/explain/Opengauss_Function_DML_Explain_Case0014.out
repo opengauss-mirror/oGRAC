@@ -39,15 +39,15 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name                   | Rows | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |                        | 323  | 5    | 0         |       |        |
-| 1  |   KERNEL FILTER         |       |                        | 323  | 5    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_TABLE_IN1_0014 | 323  | 5    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_IN2_0014 | 1    | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT        |       |                        | 2    | 2    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                        | 2    | 2    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | EXPLAIN_TABLE_IN1_0014 | 2    | 2    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | EXPLAIN_TABLE_IN2_0014 | 95   | 3    | 0         |       |        |
 ------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    2 - filter: EXISTS(SELECT 1 FROM EXPLAIN_TABLE_IN2_0014 WHERE NUM >= 50 AND NAME = EXPLAIN_TABLE_IN2_0014.SNAME)
-    3 - filter: NUM >= 50 AND NAME = EXPLAIN_TABLE_IN2_0014.SNAME
+    2 - filter: NAME IN ((SELECT SNAME FROM EXPLAIN_TABLE_IN2_0014 WHERE NUM >= 50))
+    3 - filter: NUM >= 50
 
 12 rows fetched.
 
