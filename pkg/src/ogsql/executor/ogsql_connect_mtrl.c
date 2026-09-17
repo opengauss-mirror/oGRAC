@@ -32,6 +32,7 @@
 #define CB_MTRL_PLAN (CB_MTRL_CONTEXT(cursor)->cb_mtrl_p)
 #define CB_MTRL_SEGMENT (&CB_MTRL_CONTEXT(cursor)->hash_segment)
 #define CB_MTRL_TABLE_ENTRY (&CB_MTRL_CONTEXT(cursor)->hash_table)
+#define CB_MTRL_CHILD_TABLE (CB_MTRL_PLAN->cache_children ? &CB_MTRL_CONTEXT(cursor)->children : CB_MTRL_TABLE_ENTRY)
 
 #define CB_MTRL_LAST_CURSOR (CB_MTRL_CONTEXT(cursor)->last_cursor)
 #define CB_MTRL_CURR_CURSOR (CB_MTRL_CONTEXT(cursor)->curr_cursor)
@@ -40,6 +41,13 @@
 #define CB_MTRL_SECOND_LEVEL 2
 
 static status_t sql_connect_mtrl_get_first_entry(sql_stmt_t *stmt, sql_cursor_t *cursor, hash_table_iter_t *iter);
+static status_t sql_connect_mtrl_make_prior_row(sql_stmt_t *stmt, sql_cursor_t *dst_cursor, char *buf, row_assist_t *ra);
+static status_t sql_connect_mtrl_set_iscycle(sql_stmt_t *stmt, sql_cursor_t *cursor, uint32 level);
+
+static inline cb_mtrl_group_t *sql_connect_mtrl_group(sql_cursor_t *cursor, uint32 group)
+{
+    return (cb_mtrl_group_t *)cm_galist_get(CB_MTRL_CONTEXT(cursor)->groups, group);
+}
 
 static inline uint32 sql_connect_mtrl_get_level(sql_cursor_t *cursor)
 {
@@ -78,6 +86,13 @@ static inline void sql_connect_mtrl_add_level(sql_cursor_t *cursor)
 
 static inline status_t sql_connect_mtrl_delete_level(sql_stmt_t *stmt, sql_cursor_t *cursor, uint32 level)
 {
+    if (CB_MTRL_PLAN->cache_children) {
+        cb_mtrl_data_t *data = sql_connect_mtrl_get_cb_data(cursor, level);
+        if (data->prior_group != OG_INVALID_ID32) {
+            sql_connect_mtrl_group(cursor, data->prior_group)->active_count--;
+            data->prior_group = OG_INVALID_ID32;
+        }
+    }
     mtrl_rowid_t *rowid = sql_connect_mtrl_get_prior_row(cursor, level);
     if (IS_VALID_MTRL_ROWID(*rowid)) {
         OG_RETURN_IFERR(vmctx_free(GET_VM_CTX(stmt), rowid));
@@ -122,15 +137,40 @@ static status_t sql_get_one_row(void *callback_ctx, const char *new_buf, uint32 
 
     row_head = (row_head_t *)old_buf;
     vmids = (mtrl_rowid_t *)(old_buf + row_head->size);
+    cb_mtrl_ctx_t *mtrl_ctx = CB_MTRL_CONTEXT(hash_cursor);
+    if (mtrl_ctx->cb_mtrl_p->cache_children) {
+        uint32 size = mtrl_ctx->cb_mtrl_p->rs_tables->count * sizeof(mtrl_rowid_t);
+        MEMS_RETURN_IFERR(memcpy_sp(mtrl_ctx->cached_row, size, vmids, size));
+        MEMS_RETURN_IFERR(memcpy_sp(&hash_cursor->connect_data.mtrl_group, sizeof(uint32),
+            old_buf + row_head->size + size, sizeof(uint32)));
+    }
     return sql_fetch_vm_row(stmt, hash_cursor, vmids);
+}
+
+static status_t sql_connect_mtrl_get_group(void *callback_ctx, const char *new_buf, uint32 new_size,
+    const char *old_buf, uint32 old_size, bool32 found)
+{
+    cb_mtrl_ctx_t *ctx = (cb_mtrl_ctx_t *)callback_ctx;
+    const row_head_t *head = (const row_head_t *)old_buf;
+    MEMS_RETURN_IFERR(memcpy_sp(&ctx->matched_group, sizeof(uint32), old_buf + head->size, sizeof(uint32)));
+    return OG_SUCCESS;
 }
 
 static inline status_t sql_connect_mtrl_init_table(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan,
     cb_mtrl_ctx_t *ogx)
 {
-    uint32 bucket_num = sql_get_plan_hash_rows(stmt, plan);
+    // Hash storage contains input rows and parent groups, not repeated hierarchy paths.
+    uint32 bucket_num = sql_get_plan_hash_rows(stmt, plan->cb_mtrl.next);
     OG_RETURN_IFERR(vm_hash_table_alloc(&ogx->hash_table, &ogx->hash_segment, bucket_num));
-    return vm_hash_table_init(&ogx->hash_segment, &ogx->hash_table, NULL, sql_get_one_row, cursor);
+    OG_RETURN_IFERR(vm_hash_table_init(&ogx->hash_segment, &ogx->hash_table, NULL, sql_get_one_row, cursor));
+    if (plan->cb_mtrl.cache_children) {
+        OG_RETURN_IFERR(vm_hash_table_alloc(&ogx->group_table, &ogx->hash_segment, bucket_num));
+        OG_RETURN_IFERR(vm_hash_table_init(&ogx->hash_segment, &ogx->group_table,
+            sql_connect_mtrl_get_group, NULL, ogx));
+        OG_RETURN_IFERR(vm_hash_table_alloc(&ogx->children, &ogx->hash_segment, bucket_num));
+        OG_RETURN_IFERR(vm_hash_table_init(&ogx->hash_segment, &ogx->children, NULL, sql_get_one_row, cursor));
+    }
+    return OG_SUCCESS;
 }
 
 static status_t sql_alloc_connect_mtrl_ctx(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan)
@@ -154,12 +194,24 @@ static status_t sql_alloc_connect_mtrl_ctx(sql_stmt_t *stmt, sql_cursor_t *curso
     mtrl_ctx->next_cursor = NULL;
     mtrl_ctx->key_types = NULL;
     mtrl_ctx->curr_level = 0;
+    mtrl_ctx->groups = NULL;
+    mtrl_ctx->cached_row = NULL;
+    mtrl_ctx->children_head = NULL;
 
     if (vmc_alloc(&cursor->vmc, sizeof(galist_t), (void **)&mtrl_ctx->cb_data) != OG_SUCCESS) {
         vm_free(KNL_SESSION(stmt), KNL_SESSION(stmt)->temp_pool, vmid);
         return OG_ERROR;
     }
     cm_galist_init(mtrl_ctx->cb_data, &cursor->vmc, vmc_alloc);
+    if (plan->cb_mtrl.cache_children) {
+        if (vmc_alloc(&cursor->vmc, sizeof(galist_t), (void **)&mtrl_ctx->groups) != OG_SUCCESS ||
+            vmc_alloc(&cursor->vmc, plan->cb_mtrl.rs_tables->count * sizeof(mtrl_rowid_t),
+                (void **)&mtrl_ctx->cached_row) != OG_SUCCESS) {
+            vm_free(KNL_SESSION(stmt), KNL_SESSION(stmt)->temp_pool, vmid);
+            return OG_ERROR;
+        }
+        cm_galist_init(mtrl_ctx->groups, &cursor->vmc, vmc_alloc);
+    }
 
     vm_hash_segment_init(KNL_SESSION(stmt), KNL_SESSION(stmt)->temp_pool, &mtrl_ctx->hash_segment, PMA_POOL,
         HASH_PAGES_HOLD,
@@ -218,6 +270,7 @@ static inline status_t sql_init_connect_mtrl_cursor(sql_stmt_t *stmt, sql_cursor
     query_cur->connect_data.last_level_cursor = cursor;
     status = sql_open_cursors(stmt, query_cur, cursor->query, CURSOR_ACTION_SELECT, OG_TRUE);
     query_cur->connect_data.last_level_cursor = NULL;
+    query_cur->connect_data.first_level_cursor = cursor->connect_data.first_level_cursor;
     query_cur->cond = cursor->query->cond;
     return status;
 }
@@ -229,6 +282,48 @@ static inline status_t sql_make_null_hash_key(char *buf, uint32 key_count)
     for (uint32 i = 0; i < key_count; ++i) {
         OG_RETURN_IFERR(row_put_null(&ra));
     }
+    return OG_SUCCESS;
+}
+
+static status_t sql_connect_mtrl_find_group(sql_stmt_t *stmt, sql_cursor_t *cursor, sql_cursor_t *query_cur,
+    char *buf, uint32 *group_id)
+{
+    row_assist_t ra;
+    OG_RETURN_IFERR(sql_connect_mtrl_make_prior_row(stmt, query_cur, buf, &ra));
+    galist_t *groups = CB_MTRL_CONTEXT(cursor)->groups;
+    uint32 size = ra.head->size + sizeof(uint32);
+    bool32 found = OG_FALSE;
+    // The caller reserves a trailer so a maximum-sized PRIOR key remains valid.
+    MEMS_RETURN_IFERR(memcpy_sp(buf + ra.head->size, sizeof(uint32), &groups->count, sizeof(uint32)));
+    OG_RETURN_IFERR(vm_hash_table_insert2(&found, CB_MTRL_SEGMENT,
+        &CB_MTRL_CONTEXT(cursor)->group_table, buf, size));
+    *group_id = CB_MTRL_CONTEXT(cursor)->matched_group;
+    if (found) {
+        return OG_SUCCESS;
+    }
+    cb_mtrl_group_t *group = NULL;
+    OG_RETURN_IFERR(cm_galist_new(groups, sizeof(cb_mtrl_group_t), (pointer_t *)&group));
+    group->active_count = 0;
+    group->children_ready = OG_FALSE;
+    group->only_self_children = OG_TRUE;
+    group->has_children = OG_FALSE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_make_connect_cached_row(sql_cursor_t *cursor, char *buf, uint32 parent_group,
+    mtrl_rowid_t *rids, uint32 child_group, uint32 *size)
+{
+    row_assist_t ra;
+    row_init(&ra, buf, OG_MAX_ROW_SIZE, 1);
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)parent_group));
+    OG_RETURN_IFERR(sql_mtrl_row_append_data(buf, size, (char *)rids,
+        CB_MTRL_PLAN->rs_tables->count * sizeof(mtrl_rowid_t)));
+    if (*size + sizeof(uint32) > OG_MAX_ROW_SIZE) {
+        OG_THROW_ERROR(ERR_EXCEED_MAX_ROW_SIZE, *size + (uint32)sizeof(uint32), OG_MAX_ROW_SIZE);
+        return OG_ERROR;
+    }
+    MEMS_RETURN_IFERR(memcpy_sp(buf + *size, OG_MAX_ROW_SIZE - *size, &child_group, sizeof(uint32)));
+    *size += sizeof(uint32);
     return OG_SUCCESS;
 }
 
@@ -255,12 +350,14 @@ static status_t sql_connect_mtrl_build(sql_stmt_t *stmt, sql_cursor_t *cursor, s
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(vmc_alloc(&cursor->vmc, sizeof(og_type_t) * cb_mtrl_p->key_exprs->count,
-        (void **)&CB_MTRL_CONTEXT(cursor)->key_types));
-    OG_RETURN_IFERR(sql_get_hash_key_types(stmt, query_cur->query, cb_mtrl_p->key_exprs, cb_mtrl_p->prior_exprs,
-        CB_MTRL_CONTEXT(cursor)->key_types));
+    if (!cb_mtrl_p->cache_children) {
+        OG_RETURN_IFERR(vmc_alloc(&cursor->vmc, sizeof(og_type_t) * cb_mtrl_p->key_exprs->count,
+            (void **)&CB_MTRL_CONTEXT(cursor)->key_types));
+        OG_RETURN_IFERR(sql_get_hash_key_types(stmt, query_cur->query, cb_mtrl_p->key_exprs, cb_mtrl_p->prior_exprs,
+            CB_MTRL_CONTEXT(cursor)->key_types));
+    }
 
-    if (sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&row_buf) != OG_SUCCESS) {
+    if (sql_push(stmt, OG_MAX_ROW_SIZE + sizeof(uint32), (void **)&row_buf) != OG_SUCCESS) {
         SQL_CURSOR_POP(stmt);
         return OG_ERROR;
     }
@@ -275,13 +372,19 @@ static status_t sql_connect_mtrl_build(sql_stmt_t *stmt, sql_cursor_t *cursor, s
 
         OG_BREAK_IF_ERROR(
             sql_make_connect_mtrl_rs_row(stmt, query_cur, CB_MTRL_CONTEXT(cursor), rids, OG_MAX_JOIN_TABLES));
-        OG_BREAK_IF_ERROR(
-            sql_make_hash_key(stmt, &ra, row_buf, cb_mtrl_p->key_exprs, CB_MTRL_CONTEXT(cursor)->key_types, &has_null));
-        if (has_null) {
-            OG_BREAK_IF_ERROR(sql_make_null_hash_key(row_buf, cb_mtrl_p->key_exprs->count));
+        if (cb_mtrl_p->cache_children) {
+            uint32 group_id;
+            OG_BREAK_IF_ERROR(sql_connect_mtrl_find_group(stmt, cursor, query_cur, row_buf, &group_id));
+            OG_BREAK_IF_ERROR(sql_make_connect_cached_row(cursor, row_buf, group_id, rids, group_id, &row_size));
+        } else {
+            OG_BREAK_IF_ERROR(
+                sql_make_hash_key(stmt, &ra, row_buf, cb_mtrl_p->key_exprs, CB_MTRL_CONTEXT(cursor)->key_types, &has_null));
+            if (has_null) {
+                OG_BREAK_IF_ERROR(sql_make_null_hash_key(row_buf, cb_mtrl_p->key_exprs->count));
+            }
+            OG_BREAK_IF_ERROR(sql_mtrl_row_append_data(row_buf, &row_size, (const char *)rids,
+                cb_mtrl_p->rs_tables->count * sizeof(mtrl_rowid_t)));
         }
-        OG_BREAK_IF_ERROR(sql_mtrl_row_append_data(row_buf, &row_size, (const char *)rids,
-            cb_mtrl_p->rs_tables->count * sizeof(mtrl_rowid_t)));
         OG_BREAK_IF_ERROR(vm_hash_table_insert(&found, CB_MTRL_SEGMENT, CB_MTRL_TABLE_ENTRY, row_buf, row_size));
         CB_MTRL_CONTEXT(cursor)->empty = OG_FALSE;
         OGSQL_RESTORE_STACK(stmt);
@@ -345,10 +448,12 @@ static inline void sql_connect_mtrl_init_next_data(sql_cursor_t *cursor, cb_mtrl
     cb_mtrl_data_t *first_level_data = sql_connect_mtrl_get_cb_data(cursor, 1);
 
     sql_init_hash_iter(&level_data->iter, CB_MTRL_NEXT_CURSOR);
-    level_data->iter.hash_table = first_level_data->iter.hash_table;
+    level_data->iter.hash_table = CB_MTRL_PLAN->cache_children ?
+        CB_MTRL_CONTEXT(cursor)->children_head : first_level_data->iter.hash_table;
     level_data->iter.scan_mode = HASH_KEY_SCAN;
     level_data->level_entry.vmid = OG_INVALID_ID32;
     level_data->prior_row = g_invalid_entry;
+    level_data->prior_group = OG_INVALID_ID32;
 }
 
 static inline status_t sql_connect_mtrl_build_cursor(sql_cursor_t *cursor, sql_cursor_t *dst_cursor,
@@ -357,14 +462,17 @@ static inline status_t sql_connect_mtrl_build_cursor(sql_cursor_t *cursor, sql_c
     bool32 level_eof = OG_FALSE;
     CB_MTRL_TEMP_ITER->callback_ctx = dst_cursor;
     CB_MTRL_TEMP_ITER->curr_match = *entry;
-    return vm_hash_table_fetch(&level_eof, CB_MTRL_SEGMENT, CB_MTRL_TABLE_ENTRY, CB_MTRL_TEMP_ITER);
+    if (CB_MTRL_PLAN->cache_children) {
+        CB_MTRL_TEMP_ITER->hash_table = CB_MTRL_CONTEXT(cursor)->children_head;
+    }
+    return vm_hash_table_fetch(&level_eof, CB_MTRL_SEGMENT, CB_MTRL_CHILD_TABLE, CB_MTRL_TEMP_ITER);
 }
 
 static status_t sql_connect_mtrl_make_prior_row(sql_stmt_t *stmt, sql_cursor_t *dst_cursor, char *buf, row_assist_t *ra)
 {
     galist_t *prior_exprs = dst_cursor->connect_data.first_level_cursor->connect_data.prior_exprs;
     expr_node_t *node = NULL;
-    status_t status;
+    status_t status = OG_SUCCESS;
     variant_t value;
 
     OG_RETURN_IFERR(SQL_CURSOR_PUSH(stmt, dst_cursor));
@@ -386,6 +494,15 @@ static status_t sql_connect_mtrl_make_prior_row(sql_stmt_t *stmt, sql_cursor_t *
 
 static status_t sql_connect_mtrl_insert_prior_row(sql_stmt_t *stmt, sql_cursor_t *dst_cursor, uint32 level)
 {
+    if (CB_MTRL_CONTEXT(dst_cursor)->cb_mtrl_p->cache_children) {
+        cb_mtrl_data_t *data = sql_connect_mtrl_get_cb_data(dst_cursor, level);
+        if (data->prior_group != OG_INVALID_ID32) {
+            sql_connect_mtrl_group(dst_cursor, data->prior_group)->active_count--;
+        }
+        data->prior_group = dst_cursor->connect_data.mtrl_group;
+        sql_connect_mtrl_group(dst_cursor, data->prior_group)->active_count++;
+        return OG_SUCCESS;
+    }
     mtrl_rowid_t *prior_row = sql_connect_mtrl_get_prior_row(dst_cursor, level);
     char *buf = NULL;
     row_assist_t ra;
@@ -418,6 +535,14 @@ static inline void sql_connect_mtrl_close_vmctx_page(sql_stmt_t *stmt, mtrl_rowi
 static status_t sql_connect_mtrl_check_iscycle(sql_stmt_t *stmt, sql_cursor_t *cursor, sql_cursor_t *dst_cursor,
     bool32 *is_cycle)
 {
+    if (CB_MTRL_PLAN->cache_children) {
+        *is_cycle = sql_connect_mtrl_group(cursor, dst_cursor->connect_data.mtrl_group)->active_count != 0;
+        if (*is_cycle && !cursor->query->connect_by_nocycle) {
+            OG_THROW_ERROR(ERR_CONNECT_BY_LOOP);
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
     char *lbuf = NULL;
     char *rbuf = NULL;
     uint32 level = sql_connect_mtrl_get_level(cursor);
@@ -465,8 +590,12 @@ static inline status_t sql_connect_mtrl_fetch_data(sql_stmt_t *stmt, sql_cursor_
 {
     *result = OG_FALSE;
     *eof = OG_FALSE;
-    OG_RETURN_IFERR(vm_hash_table_fetch(eof, CB_MTRL_SEGMENT, CB_MTRL_TABLE_ENTRY, iter));
+    OG_RETURN_IFERR(vm_hash_table_fetch(eof, CB_MTRL_SEGMENT, CB_MTRL_CHILD_TABLE, iter));
 
+    if (CB_MTRL_PLAN->cache_children) {
+        *result = !*eof;
+        return OG_SUCCESS;
+    }
     if (*eof || CB_MTRL_PLAN->connect_by_cond == NULL) {
         return OG_SUCCESS;
     }
@@ -521,9 +650,10 @@ static status_t sql_connect_mtrl_execute_next_level(sql_stmt_t *stmt, sql_cursor
     OG_RETURN_IFERR(sql_connect_mtrl_get_cursor(stmt, cursor, &CB_MTRL_NEXT_CURSOR));
     sql_connect_mtrl_init_next_cursor(cursor, curr_cursor, level);
 
-    sql_connect_mtrl_add_level(cursor);
     OG_RETURN_IFERR(sql_connect_mtrl_alloc_cb_data(cursor, level, &cb_mtrl_data));
     sql_connect_mtrl_init_next_data(cursor, cb_mtrl_data);
+    // Publish the level only after its cleanup state exists, including allocation failures.
+    sql_connect_mtrl_add_level(cursor);
     iter_next = &(cb_mtrl_data->iter);
     iter_next->callback_ctx = CB_MTRL_NEXT_CURSOR;
 
@@ -559,10 +689,11 @@ static status_t sql_connect_mtrl_open_first_cursor(sql_stmt_t *stmt, sql_cursor_
     hash_table_iter_t *iter = NULL;
 
     OG_RETURN_IFERR(sql_connect_mtrl_init_cursor(stmt, cursor));
-    sql_connect_mtrl_add_level(cursor);
     OG_RETURN_IFERR(sql_connect_mtrl_alloc_cb_data(cursor, 1, &cb_mtrl_data));
     cb_mtrl_data->level_entry.vmid = OG_INVALID_ID32;
     cb_mtrl_data->prior_row = g_invalid_entry;
+    cb_mtrl_data->prior_group = OG_INVALID_ID32;
+    sql_connect_mtrl_add_level(cursor);
 
     iter = &(cb_mtrl_data->iter);
     sql_init_hash_iter(iter, cursor);
@@ -577,7 +708,12 @@ static inline status_t sql_connect_mtrl_open_cursor(sql_stmt_t *stmt, sql_cursor
     if (cursor->connect_data.cur_level_cursor == NULL) {
         return sql_connect_mtrl_open_first_cursor(stmt, cursor);
     }
-    return sql_connect_mtrl_execute_next_level(stmt, cursor, CB_MTRL_SECOND_LEVEL);
+    cursor->connect_data.cur_level_cursor->connect_data.connect_by_iscycle = OG_FALSE;
+    OG_RETURN_IFERR(sql_connect_mtrl_execute_next_level(stmt, cursor, CB_MTRL_SECOND_LEVEL));
+    if (cursor->query->connect_by_iscycle && cursor->query->connect_by_prior) {
+        return sql_connect_mtrl_set_iscycle(stmt, cursor, CB_MTRL_SECOND_LEVEL);
+    }
+    return OG_SUCCESS;
 }
 
 status_t sql_execute_connect_mtrl(sql_stmt_t *stmt, sql_cursor_t *cursor, plan_node_t *plan)
@@ -701,7 +837,7 @@ static status_t sql_connect_mtrl_set_iscycle(sql_stmt_t *stmt, sql_cursor_t *cur
 
     OG_RETURN_IFERR(sql_connect_mtrl_push_cursor(stmt, CB_MTRL_NEXT_CURSOR));
     // the first iter data has been checked in sql_connect_mtrl_execute_next_level.
-    if (vm_hash_table_fetch(&level_eof, CB_MTRL_SEGMENT, CB_MTRL_TABLE_ENTRY, iter_next) != OG_SUCCESS) {
+    if (vm_hash_table_fetch(&level_eof, CB_MTRL_SEGMENT, CB_MTRL_CHILD_TABLE, iter_next) != OG_SUCCESS) {
         sql_connect_mtrl_pop_cursor(stmt, CB_MTRL_NEXT_CURSOR);
         return OG_ERROR;
     }
@@ -750,6 +886,14 @@ static inline void sql_connect_mtrl_init_curr_cursor(sql_stmt_t *stmt, sql_curso
 
 static status_t sql_connect_mtrl_get_curr_data(sql_stmt_t *stmt, sql_cursor_t *cursor, uint32 level, bool32 *level_eof)
 {
+    if (CB_MTRL_PLAN->cache_children) {
+        cb_mtrl_data_t *data = sql_connect_mtrl_get_cb_data(cursor, level);
+        if (data->prior_group != OG_INVALID_ID32) {
+            // The previous sibling at this level is no longer an ancestor of the next candidate.
+            sql_connect_mtrl_group(cursor, data->prior_group)->active_count--;
+            data->prior_group = OG_INVALID_ID32;
+        }
+    }
     if (sql_connect_mtrl_get_iter(cursor, level)->curr_match.vmid == OG_INVALID_ID32) {
         *level_eof = OG_TRUE;
         return OG_SUCCESS;
@@ -808,6 +952,79 @@ static status_t sql_connect_mtrl_fetch_next_level(sql_stmt_t *stmt, sql_cursor_t
     return OG_SUCCESS;
 }
 
+static status_t sql_connect_mtrl_build_children(sql_stmt_t *stmt, sql_cursor_t *cursor, sql_cursor_t *child,
+    uint32 parent_group, char *buf)
+{
+    hash_table_iter_t scan;
+    hash_scan_assist_t assist = { HASH_FULL_SCAN, NULL, 0 };
+    bool32 found = OG_FALSE;
+    bool32 eof = OG_FALSE;
+    bool32 result = OG_FALSE;
+    uint32 size;
+    sql_init_hash_iter(&scan, child);
+    scan.hash_table = sql_connect_mtrl_get_iter(cursor, 1)->hash_table;
+    OG_RETURN_IFERR(vm_hash_table_open(CB_MTRL_SEGMENT, CB_MTRL_TABLE_ENTRY, &assist, &found, &scan));
+    OGSQL_SAVE_STACK(stmt);
+    for (;;) {
+        SQL_CHECK_SESSION_VALID_FOR_RETURN(stmt);
+        OG_RETURN_IFERR(vm_hash_table_fetch(&eof, CB_MTRL_SEGMENT, CB_MTRL_TABLE_ENTRY, &scan));
+        if (eof) {
+            break;
+        }
+        OG_RETURN_IFERR(sql_match_cond_node(stmt, CB_MTRL_PLAN->connect_by_cond->root, &result));
+        if (!result) {
+            OGSQL_RESTORE_STACK(stmt);
+            continue;
+        }
+        // Cache matching rows, including cycles; ancestor membership is checked separately for each path.
+        cb_mtrl_group_t *group = sql_connect_mtrl_group(cursor, parent_group);
+        group->has_children = OG_TRUE;
+        if (child->connect_data.mtrl_group != parent_group) {
+            group->only_self_children = OG_FALSE;
+        }
+        OG_RETURN_IFERR(sql_make_connect_cached_row(cursor, buf, parent_group, CB_MTRL_CONTEXT(cursor)->cached_row,
+            child->connect_data.mtrl_group, &size));
+        OG_RETURN_IFERR(vm_hash_table_insert(&found, CB_MTRL_SEGMENT, &CB_MTRL_CONTEXT(cursor)->children, buf, size));
+        OGSQL_RESTORE_STACK(stmt);
+    }
+    OGSQL_RESTORE_STACK(stmt);
+    sql_connect_mtrl_group(cursor, parent_group)->children_ready = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static status_t sql_connect_mtrl_open_children(sql_stmt_t *stmt, sql_cursor_t *cursor, hash_table_iter_t *iter,
+    char *buf)
+{
+    sql_cursor_t *child = (sql_cursor_t *)iter->callback_ctx;
+    uint32 parent_group = child->connect_data.last_level_cursor->connect_data.mtrl_group;
+    if (!sql_connect_mtrl_group(cursor, parent_group)->children_ready) {
+        OG_RETURN_IFERR(sql_connect_mtrl_build_children(stmt, cursor, child, parent_group, buf));
+    }
+    cb_mtrl_group_t *group = sql_connect_mtrl_group(cursor, parent_group);
+    if (group->has_children && group->only_self_children) {
+        // Every candidate has the parent's cycle key. Repeated roots need not read the whole bucket again.
+        if (!cursor->query->connect_by_nocycle) {
+            OG_THROW_ERROR(ERR_CONNECT_BY_LOOP);
+            return OG_ERROR;
+        }
+        child->connect_data.last_level_cursor->connect_data.connect_by_iscycle = OG_TRUE;
+        iter->curr_match.vmid = OG_INVALID_ID32;
+        return OG_SUCCESS;
+    }
+    row_assist_t ra;
+    row_init(&ra, buf, OG_MAX_ROW_SIZE, 1);
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)parent_group));
+    hash_scan_assist_t assist = { HASH_KEY_SCAN, buf, ra.head->size };
+    bool32 found = OG_FALSE;
+    iter->hash_table = CB_MTRL_CONTEXT(cursor)->children_head;
+    OG_RETURN_IFERR(vm_hash_table_open(CB_MTRL_SEGMENT, CB_MTRL_CHILD_TABLE, &assist, &found, iter));
+    CB_MTRL_CONTEXT(cursor)->children_head = iter->hash_table;
+    if (!found) {
+        iter->curr_match.vmid = OG_INVALID_ID32;
+    }
+    return OG_SUCCESS;
+}
+
 static status_t sql_connect_mtrl_get_first_entry(sql_stmt_t *stmt, sql_cursor_t *cursor, hash_table_iter_t *iter)
 {
     char *key_buf = NULL;
@@ -817,6 +1034,11 @@ static status_t sql_connect_mtrl_get_first_entry(sql_stmt_t *stmt, sql_cursor_t 
 
     OGSQL_SAVE_STACK(stmt);
     OG_RETURN_IFERR(sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&key_buf));
+    if (CB_MTRL_PLAN->cache_children) {
+        status_t status = sql_connect_mtrl_open_children(stmt, cursor, iter, key_buf);
+        OGSQL_RESTORE_STACK(stmt);
+        return status;
+    }
     if (sql_make_connect_mtrl_scan_key(stmt, cursor, CB_MTRL_PLAN, key_buf, &has_null) != OG_SUCCESS) {
         OGSQL_RESTORE_STACK(stmt);
         return OG_ERROR;

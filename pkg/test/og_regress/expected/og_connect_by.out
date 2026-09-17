@@ -48,9 +48,9 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name   | Rows   | Cost | StartCost | Bytes | Remark |
 ------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |        | 104329 | 5030 | 4509      |       |        |
-| 1  |   CONNECT BY MATERIALIZE  |       |        | 104329 | 5030 | 4509      |       |        |
-| 2  |     NESTED LOOPS          |       |        | 104329 | 2675 | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |        | 103807 | 5541 | 5022      |       |        |
+| 1  |   CONNECT BY MATERIALIZE  |       |        | 103807 | 5541 | 5022      |       |        |
+| 2  |     NESTED LOOPS          |       |        | 103807 | 3197 | 0         |       |        |
 | 3  |         TABLE ACCESS FULL | SYS   | T_CB_1 | 323    | 5    | 0         |       |        |
 | 4  |         TABLE ACCESS FULL | SYS   | T_CB_2 | 323    | 5    | 0         |       |        |
 ------------------------------------------------------------------------------------------------
@@ -58,8 +58,9 @@ Predicate Information (identified by id):
 -----------------------------------------                       
     1 - access: PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND T_CB_1.ENAME != T_CB_2.ENAME
     1 - filter: T_CB_1.ENAME != T_CB_2.ENAME                    
+    4 - filter: T_CB_1.ENAME != T_CB_2.ENAME                    
 
-13 rows fetched.
+14 rows fetched.
 
 SQL> select t_cb_1.empno, t_cb_2.mgr from t_cb_1 join t_cb_2 
   2 on t_cb_1.ename != t_cb_2.ename start with  2 > 1 connect by nocycle prior t_cb_1.empno = t_cb_2.mgr order by 1,2;
@@ -94,6 +95,253 @@ SQL> drop table if exists t_cb_2;
 Succeed.
 
 SQL> drop table if exists t_cb_3;
+
+Succeed.
+
+SQL> 
+SQL> -- Cache non-equality CONNECT BY matches over a joined NUMBER2 input.
+SQL> drop table if exists t_hier_match_test;
+
+Succeed.
+
+SQL> create table t_hier_match_test(node_no number2);
+
+Succeed.
+
+SQL> begin
+  2   for k in 1..200 loop
+  3     insert into t_hier_match_test values(k);
+  4   end loop;
+  5   commit;
+  6 end;
+  7 /
+
+PL/SQL procedure successfully completed.
+
+SQL> analyze table t_hier_match_test compute statistics;
+
+Succeed.
+
+SQL> explain select count(*) hierarchy_rows
+  2 from t_hier_match_test a join t_hier_match_test b on a.node_no=b.node_no
+  3 connect by nocycle prior a.node_no between b.node_no and b.node_no+1 or prior b.node_no like a.node_no;
+
+EXPLAIN PLAN OUTPUT                                             
+----------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name                | Rows | Cost | StartCost | Bytes | Remark            |
+------------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |                     | 1    | 1038 | 63        |       |                   |
+| 1  |   AGGR                      |       |                     | 1    | 1038 | 63        |       |                   |
+| 2  |     CONNECT BY MATERIALIZE  |       |                     | 400  | 974  | 61        |       | CHILD MATCH CACHE |
+| 3  |       HASH JOIN(R)          |       |                     | 200  | 20   | 15        |       |                   |
+| 4  |           TABLE ACCESS FULL | SYS   | T_HIER_MATCH_TEST A | 200  | 4    | 0         |       |                   |
+| 5  |           TABLE ACCESS FULL | SYS   | T_HIER_MATCH_TEST B | 200  | 4    | 0         |       |                   |
+------------------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):                       
+-----------------------------------------                       
+    2 - access: (PRIOR A.NODE_NO BETWEEN B.NODE_NO AND B.NODE_NO + 1 OR PRIOR B.NODE_NO LIKE A.NODE_NO) AND A.NODE_NO
+                = B.NODE_NO                                     
+    2 - filter: A.NODE_NO = B.NODE_NO                           
+    3 - access: A.NODE_NO = B.NODE_NO                           
+
+16 rows fetched.
+
+SQL> select count(*) hierarchy_rows
+  2 from t_hier_match_test a join t_hier_match_test b on a.node_no=b.node_no
+  3 connect by nocycle prior a.node_no between b.node_no and b.node_no+1 or prior b.node_no like a.node_no;
+
+HIERARCHY_ROWS      
+--------------------
+20100               
+
+1 rows fetched.
+
+SQL> drop table t_hier_match_test;
+
+Succeed.
+
+SQL> 
+SQL> -- Equal instants stored with different offsets retain both two-level paths.
+SQL> create table t_cb_tz_cycle(id integer, ts timestamp with time zone);
+
+Succeed.
+
+SQL> insert into t_cb_tz_cycle values(1, from_tz(to_timestamp('2026-01-01 08:00:00','YYYY-MM-DD HH24:MI:SS'), '+08:00'));
+
+1 rows affected.
+
+SQL> insert into t_cb_tz_cycle values(2, from_tz(to_timestamp('2026-01-01 00:00:00','YYYY-MM-DD HH24:MI:SS'), '+00:00'));
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> select a.id, b.id from t_cb_tz_cycle a, t_cb_tz_cycle b where a.id=1 and b.id=2 and a.ts=b.ts;
+
+ID           ID          
+------------ ------------
+1            2           
+
+1 rows fetched.
+
+SQL> select id, level as lv from t_cb_tz_cycle connect by nocycle prior ts<=ts order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> select count(*) hierarchy_rows from t_cb_tz_cycle connect by nocycle prior ts<=ts;
+
+HIERARCHY_ROWS      
+--------------------
+4                   
+
+1 rows fetched.
+
+SQL> select id, level as lv from t_cb_tz_cycle t_eq_on connect by nocycle prior ts=ts order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> select id, level as lv, connect_by_iscycle as cyc from t_cb_tz_cycle t_root_on
+  2 start with id=1 connect by nocycle prior ts<=ts order by id,lv;
+
+ID           LV           CYC         
+------------ ------------ ------------
+1            1            1           
+2            2            1           
+
+2 rows fetched.
+
+SQL> alter system set _connect_by_materialize=false scope=memory;
+
+Succeed.
+
+SQL> select id, level as lv from t_cb_tz_cycle t_off connect by nocycle prior ts<=ts order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> select id, level as lv from t_cb_tz_cycle t_eq_off connect by nocycle prior ts=ts order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> select id, level as lv, connect_by_iscycle as cyc from t_cb_tz_cycle t_root_off
+  2 start with id=1 connect by nocycle prior ts<=ts order by id,lv;
+
+ID           LV           CYC         
+------------ ------------ ------------
+1            1            1           
+2            2            1           
+
+2 rows fetched.
+
+SQL> alter system set _connect_by_materialize=true scope=memory;
+
+Succeed.
+
+SQL> drop table t_cb_tz_cycle;
+
+Succeed.
+
+SQL> 
+SQL> -- Close DOUBLE values have distinct PRIOR representations in both execution paths.
+SQL> create table t_cb_real_cycle(id integer, val double);
+
+Succeed.
+
+SQL> insert into t_cb_real_cycle values(1, 1.0);
+
+1 rows affected.
+
+SQL> insert into t_cb_real_cycle values(2, 1.0000000000000004);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> select id, level as lv from t_cb_real_cycle t_on connect by nocycle prior val<=val order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> select id, level as lv from t_cb_real_cycle t_eq_on connect by nocycle prior val=val order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> alter system set _connect_by_materialize=false scope=memory;
+
+Succeed.
+
+SQL> select id, level as lv from t_cb_real_cycle t_off connect by nocycle prior val<=val order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> select id, level as lv from t_cb_real_cycle t_eq_off connect by nocycle prior val=val order by id,lv;
+
+ID           LV          
+------------ ------------
+1            1           
+1            2           
+2            1           
+2            2           
+
+4 rows fetched.
+
+SQL> alter system set _connect_by_materialize=true scope=memory;
+
+Succeed.
+
+SQL> drop table t_cb_real_cycle;
 
 Succeed.
 

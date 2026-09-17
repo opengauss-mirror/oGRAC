@@ -58,7 +58,7 @@ typedef struct st_row_helper {
     double cost;
     double start_cost;
     int64 bytes;
-    int64 remark;
+    const char *remark;
 } row_helper_t;
 
 typedef enum {

@@ -3710,8 +3710,14 @@ static status_t sql_estimate_sort_distinct_cost(sql_stmt_t *stmt, plan_node_t *p
     plan->rows = plan->distinct.next->rows;
     double distinct_cost = CBO_DEFAULT_CPU_OPERATOR_COST * plan->rows + CBO_DEFAULT_HASH_INIT_COST
                            + plan->rows * (CBO_DEFAULT_CPU_HASH_BUILD_COST + CBO_DEFAULT_CPU_HASH_CALC_COST);
-    plan->cost = plan->distinct.next->cost + distinct_cost;
     plan->start_cost = plan->distinct.next->start_cost;
+    if (plan->type == PLAN_NODE_SORT_DISTINCT) {
+        distinct_cost = CBO_DEFAULT_CPU_OPERATOR_COST * plan->rows *
+            (1 + MAX(plan->distinct.columns->count, 1) * log2(MAX((double)plan->rows, 2.0)));
+        // Sort distinct consumes its input before returning the first row.
+        plan->start_cost = CBO_COST_SAFETY_RET(plan->distinct.next->cost + distinct_cost);
+    }
+    plan->cost = CBO_COST_SAFETY_RET(plan->distinct.next->cost + distinct_cost);
     return OG_SUCCESS;
 }
 
@@ -3868,6 +3874,13 @@ static status_t sql_estimate_select_limit_cost(sql_stmt_t *stmt, plan_node_t *pl
     return OG_SUCCESS;
 }
 
+static double sql_estimate_connect_rows(double roots, double children)
+{
+    // Retain the existing bounded hierarchy heuristic; this is not a count of graph paths.
+    return MIN((double)CBO_JOIN_MAX_CARD, roots +
+        MIN(roots * children * CBO_DEFAULT_EQ_FF, roots * DEFAULT_NUM_DISTINCT));
+}
+
 static status_t sql_estimate_connect_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
     if (plan == NULL || plan->connect.next_start_with == NULL || plan->connect.next_connect_by == NULL) {
@@ -3885,18 +3898,11 @@ static status_t sql_estimate_connect_cost(sql_stmt_t *stmt, plan_node_t *plan)
     plan_node_t *connect_plan = plan->connect.next_connect_by;
     double start_rows = MAX((double)start_plan->rows, 1.0);
     double connect_rows = MAX((double)connect_plan->rows, 1.0);
-    double probe_rows = start_rows * connect_rows;
-    double matched_rows = probe_rows * CBO_DEFAULT_EQ_FF;
-
-    /*
-     * The non-materialized executor reopens the CONNECT BY child cursor for each parent row.
-     * Cost it as repeated child scans plus predicate/cycle checks so upper FILTER/AGGR nodes do
-     * not inherit a zero cost and prefer a plan that is cheap only on paper.
-     */
-    plan->rows = (int64)MAX(start_rows, start_rows + MIN(matched_rows, start_rows * DEFAULT_NUM_DISTINCT));
+    plan->rows = (int64)sql_estimate_connect_rows(start_rows, connect_rows);
     plan->start_cost = start_plan->start_cost;
-    plan->cost = start_plan->cost + start_rows * connect_plan->cost +
-        probe_rows * CBO_DEFAULT_CPU_OPERATOR_COST + plan->rows * CBO_DEFAULT_CPU_OPERATOR_COST;
+    // Reopen the child for every output parent, including paths revisited from another root.
+    plan->cost = CBO_COST_SAFETY_RET(start_plan->cost + plan->rows * connect_plan->cost +
+        plan->rows * (connect_rows + 1) * CBO_DEFAULT_CPU_OPERATOR_COST);
     return OG_SUCCESS;
 }
 
@@ -3926,8 +3932,13 @@ static status_t sql_estimate_window_sort_cost(sql_stmt_t *stmt, plan_node_t *pla
     }
 
     plan->rows = plan->winsort_p.next->rows;
-    plan->cost = plan->winsort_p.next->cost;
-    plan->start_cost = plan->winsort_p.next->start_cost;
+    winsort_args_t *args = plan->winsort_p.winsort->win_args;
+    double keys = (args->group_exprs == NULL ? 0 : args->group_exprs->count) +
+        (args->sort_items == NULL ? 0 : args->sort_items->count);
+    double work = plan->rows * CBO_DEFAULT_CPU_OPERATOR_COST *
+        (1 + keys * log2(MAX((double)plan->rows, 2.0)));
+    plan->start_cost = CBO_COST_SAFETY_RET(plan->winsort_p.next->cost + work);
+    plan->cost = CBO_COST_SAFETY_RET(plan->start_cost + plan->rows * CBO_DEFAULT_CPU_OPERATOR_COST);
     return OG_SUCCESS;
 }
 
@@ -4114,6 +4125,27 @@ static status_t sql_estimate_withas_cost(sql_stmt_t *stmt, plan_node_t *plan)
     return OG_SUCCESS;
 }
 
+static double sql_estimate_connect_groups(cb_mtrl_plan_t *plan, double input_rows)
+{
+    double groups = 1;
+    for (uint32 i = 0; i < plan->cycle_exprs->count; i++) {
+        expr_node_t *column = (expr_node_t *)cm_galist_get(plan->cycle_exprs, i);
+        double ndv = DEFAULT_NUM_DISTINCT;
+        if (column->type == EXPR_NODE_COLUMN && NODE_ANCESTOR(column) == 0 &&
+            NODE_TAB(column) < plan->rs_tables->count) {
+            sql_table_t *table = (sql_table_t *)sql_array_get(plan->rs_tables, NODE_TAB(column));
+            dc_entity_t *entity = table->entry == NULL ? NULL : DC_ENTITY(&table->entry->dc);
+            cbo_stats_column_t *stats = entity == NULL || entity->cbo_table_stats == NULL ? NULL :
+                cbo_get_column_stats(entity->cbo_table_stats, NODE_COL(column));
+            if (stats != NULL && (stats->num_distinct > 0 || stats->num_null > 0)) {
+                ndv = (double)stats->num_distinct + (stats->num_null > 0 ? 1 : 0);
+            }
+        }
+        groups = MIN(input_rows, groups * ndv);
+    }
+    return groups;
+}
+
 static status_t sql_estimate_connect_mtrl_cost(sql_stmt_t *stmt, plan_node_t *plan)
 {
     if (plan == NULL || plan->cb_mtrl.next == NULL)
@@ -4130,8 +4162,28 @@ static status_t sql_estimate_connect_mtrl_cost(sql_stmt_t *stmt, plan_node_t *pl
 
     /* CONNECT BY MATERIALIZE scans the child once to build a hash table, then probes it by PRIOR keys. */
     plan->rows = plan->cb_mtrl.next->rows;
-    plan->cost = plan->cb_mtrl.next->cost + build_cost + probe_cost;
-    plan->start_cost = plan->cb_mtrl.next->cost + build_cost;
+    double cache_cost = 0;
+    double first_cache_cost = 0;
+    if (plan->cb_mtrl.cache_children) {
+        double groups = sql_estimate_connect_groups(&plan->cb_mtrl, input_rows);
+        double matches = input_rows * CBO_DEFAULT_EQ_FF;
+        double scan_cost = MAX(plan->cb_mtrl.rs_tables->count, 1) * CBO_DEFAULT_CPU_SCAN_TUPLE_COST +
+            CBO_DEFAULT_CPU_OPERATOR_COST;
+        build_cost += 2 * CBO_DEFAULT_HASH_INIT_COST + input_rows *
+            (scan_cost + plan->cb_mtrl.cycle_exprs->count * CBO_DEFAULT_CPU_HASH_CALC_COST) +
+            groups * CBO_DEFAULT_CPU_HASH_BUILD_COST;
+        // Scan once per distinct PRIOR group; reuse the cached matches on subsequent paths.
+        first_cache_cost = input_rows * scan_cost + matches * CBO_DEFAULT_CPU_HASH_BUILD_COST;
+        cache_cost = groups * first_cache_cost;
+        plan->rows = (int64)(groups <= 1 ? input_rows : sql_estimate_connect_rows(input_rows, input_rows));
+        probe_cost = input_rows * scan_cost + plan->rows * CBO_DEFAULT_CPU_HASH_CALC_COST;
+        // A single cycle-key group has no non-cyclic children; the executor skips that bucket.
+        if (groups > 1) {
+            probe_cost += plan->rows * MAX(matches, 1.0) * scan_cost;
+        }
+    }
+    plan->cost = CBO_COST_SAFETY_RET(plan->cb_mtrl.next->cost + build_cost + cache_cost + probe_cost);
+    plan->start_cost = CBO_COST_SAFETY_RET(plan->cb_mtrl.next->cost + build_cost + first_cache_cost);
     return OG_SUCCESS;
 }
 

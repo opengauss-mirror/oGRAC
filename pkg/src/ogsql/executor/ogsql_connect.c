@@ -140,7 +140,15 @@ static status_t sql_compare_prior_exprs(sql_stmt_t *stmt, sql_cursor_t *cursor, 
         if (prev_value.is_null && curr_value.is_null) {
             continue;
         }
-        if (sql_compare_variant(stmt, &curr_value, &prev_value, &cmp_result) != OG_SUCCESS) {
+        /* Match the PRIOR row representation used by materialized cycle detection. */
+        if (!curr_value.is_null && !prev_value.is_null &&
+            curr_value.type == OG_TYPE_REAL && prev_value.type == OG_TYPE_REAL) {
+            cmp_result = memcmp(&curr_value.v_real, &prev_value.v_real, sizeof(double));
+        } else if (!curr_value.is_null && !prev_value.is_null &&
+            curr_value.type == OG_TYPE_TIMESTAMP_TZ && prev_value.type == OG_TYPE_TIMESTAMP_TZ) {
+            cmp_result = (curr_value.v_tstamp_tz.tstamp == prev_value.v_tstamp_tz.tstamp &&
+                curr_value.v_tstamp_tz.tz_offset == prev_value.v_tstamp_tz.tz_offset) ? 0 : 1;
+        } else if (sql_compare_variant(stmt, &curr_value, &prev_value, &cmp_result) != OG_SUCCESS) {
             return OG_ERROR;
         }
         OGSQL_RESTORE_STACK(stmt);

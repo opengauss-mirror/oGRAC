@@ -673,6 +673,7 @@ typedef struct st_connect_by_mtrl_info {
     galist_t *prior_exprs;
     galist_t *key_exprs;
     bool32 combine_sw; // start with plan share cb mtrl data
+    bool32 cache_children; // cache deterministic non-equality parent/child matches
 } cb_mtrl_info_t;
 
 typedef struct st_query_block_info {

@@ -1354,6 +1354,8 @@ static status_t sql_create_connect_mtrl_plan(sql_stmt_t *stmt, sql_query_t *quer
     plan->cb_mtrl.rs_tables = &query->tables;
     plan->cb_mtrl.prior_exprs = query->cb_mtrl_info->prior_exprs;
     plan->cb_mtrl.key_exprs = query->cb_mtrl_info->key_exprs;
+    plan->cb_mtrl.cache_children = query->cb_mtrl_info->cache_children;
+    plan->cb_mtrl.cycle_exprs = conn_plan->prior_exprs;
 
     visit_assist_t visit_ass;
     sql_init_visit_assist(&visit_ass, stmt, NULL);

@@ -251,7 +251,11 @@ static status_t expl_format_plan_bytes(expl_helper_t *helper)
 
 static status_t expl_format_plan_remarks(expl_helper_t *helper)
 {
-    return row_put_null(&helper->ra);
+    if (helper->row_helper.remark == NULL) {
+        return row_put_null(&helper->ra);
+    }
+    text_t remark = {(char *)helper->row_helper.remark, (uint32)strlen(helper->row_helper.remark)};
+    return expl_row_put_text_data(helper, EXPL_COL_TYPE_REMARK, &remark);
 }
 
 expl_column_t g_expl_columns[] = {{EXPL_COL_TYPE_ID, {"Id", 2}, expl_format_plan_id},
@@ -271,11 +275,15 @@ void expl_row_helper_init(row_helper_t *helper, plan_node_t *plan_node, text_t *
     helper->owner = owner;
     helper->name = name;
     helper->alias = alias;
+    helper->remark = NULL;
 
     if (plan_node != NULL) {
         helper->rows = plan_node->rows;
         helper->cost = plan_node->cost;
         helper->start_cost = plan_node->start_cost;
+        if (plan_node->type == PLAN_NODE_CONNECT_MTRL && plan_node->cb_mtrl.cache_children) {
+            helper->remark = "CHILD MATCH CACHE";
+        }
     }
 }
 
@@ -1421,7 +1429,11 @@ static status_t expl_format_connect_plan(sql_stmt_t *statement, expl_helper_t *h
                            (is_next_cb_type_mtrl ? NULL : connect_by_plan->start_with_cond);
     if (connect_by_plan->s_query || (!is_next_cb_type_mtrl && connect_by_plan->start_with_cond)) {
         helper->pred_helper.is_start_with = OG_TRUE;
-        OG_RETURN_IFERR(expl_format_next_plan(statement, helper, plan_node, connect_by_plan->next_start_with, depth,
+        plan_node_t start_display = *plan_node;
+        start_display.rows = connect_by_plan->next_start_with->rows;
+        start_display.cost = connect_by_plan->next_start_with->cost;
+        start_display.start_cost = connect_by_plan->next_start_with->start_cost;
+        OG_RETURN_IFERR(expl_format_next_plan(statement, helper, &start_display, connect_by_plan->next_start_with, depth,
             "START WITH"));
         if (start_with_cond) {
             OG_RETURN_IFERR(expl_format_cond_node_plan(statement, helper, start_with_cond->root, depth, NULL));
