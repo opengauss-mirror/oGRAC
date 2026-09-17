@@ -221,7 +221,11 @@ status_t sql_intersect_rowid_set(sql_stmt_t *stmt, plan_rowid_set_t *l_set, plan
 
 status_t sql_init_plan_rowid_set(sql_stmt_t *stmt, plan_rowid_set_t **rowid_set, bool32 is_temp)
 {
-    OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(plan_rowid_set_t), (void **)rowid_set));
+    if (is_temp) {
+        OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(plan_rowid_set_t), (void **)rowid_set));
+    } else {
+        OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(plan_rowid_set_t), (void **)rowid_set));
+    }
     return alloc_rowid_array(stmt, &((*rowid_set)->array), is_temp, "ROWID set");
 }
 
