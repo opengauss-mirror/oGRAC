@@ -1594,6 +1594,20 @@ static status_t sql_plan_extract_join_filter(sql_stmt_t *stmt, join_plan_t *join
         cond_node);
 }
 
+static status_t sql_plan_extract_nl_filters(sql_stmt_t *stmt, join_plan_t *join_plan, sql_join_node_t *join_node)
+{
+    /* Hash and merge children have already assigned their own predicates. */
+    if (join_node->oper != JOIN_OPER_NL) {
+        return OG_SUCCESS;
+    }
+    OG_RETURN_IFERR(sql_stack_safe(stmt));
+    if (join_node->filter != NULL) {
+        OG_RETURN_IFERR(sql_plan_extract_join_filter(stmt, join_plan, join_node->filter->root));
+    }
+    OG_RETURN_IFERR(sql_plan_extract_nl_filters(stmt, join_plan, join_node->left));
+    return sql_plan_extract_nl_filters(stmt, join_plan, join_node->right);
+}
+
 status_t sql_plan_extract_cond(sql_stmt_t *stmt, join_plan_t *join_plan, sql_join_node_t *join_node)
 {
     if (join_node->oper == JOIN_OPER_HASH_LEFT || join_node->oper == JOIN_OPER_HASH_FULL) {
@@ -1831,6 +1845,12 @@ static status_t sql_create_hash_join_plan(sql_stmt_t *stmt, plan_assist_t *plan_
             join_node->join_cond->root));
     }
     OG_RETURN_IFERR(sql_plan_extract_cond(stmt, jplan, join_node));
+
+    if (plan_ass->join_assist->outer_node_count == 0) {
+        /* Nested-loop children also need their predicates in the materialized cursor. */
+        OG_RETURN_IFERR(sql_plan_extract_nl_filters(stmt, jplan, join_node->left));
+        OG_RETURN_IFERR(sql_plan_extract_nl_filters(stmt, jplan, join_node->right));
+    }
 
     sql_plan_fill_card(plan_ass, join_node, plan);
     return check_hash_keys_count_valid(jplan);

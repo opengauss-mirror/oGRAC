@@ -249,3 +249,70 @@ SQL>
 SQL> alter system set ENABLE_NESTLOOP_JOIN=true;
 
 Succeed.
+
+SQL>
+SQL> -- Nested-loop predicates must filter rows before hash build materialization.
+SQL> -- Expected COUNT(*): 2. SELECT should finish within 1 second on the debug test node.
+SQL> DROP TABLE IF EXISTS hj_nl_subset PURGE;
+
+Succeed.
+
+SQL> DROP TABLE IF EXISTS hj_nl_domain PURGE;
+
+Succeed.
+
+SQL> CREATE TABLE hj_nl_domain (item_no NUMBER);
+
+Succeed.
+
+SQL> CREATE TABLE hj_nl_subset (item_no NUMBER);
+
+Succeed.
+
+SQL> BEGIN
+  2     FOR p IN 1..65536 LOOP
+  3         INSERT INTO hj_nl_domain VALUES (p);
+  4     END LOOP;
+  5     FOR p IN 1..128 LOOP
+  6         INSERT INTO hj_nl_subset VALUES (p);
+  7     END LOOP;
+  8 END;
+  9 /
+
+PL/SQL procedure successfully completed.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL> ANALYZE TABLE hj_nl_domain COMPUTE STATISTICS;
+
+Succeed.
+
+SQL> ANALYZE TABLE hj_nl_subset COMPUTE STATISTICS;
+
+Succeed.
+
+SQL>
+SQL> SELECT COUNT(*)
+  2   FROM hj_nl_domain a
+  3   JOIN hj_nl_subset b ON a.item_no = b.item_no
+  4   JOIN hj_nl_domain c ON c.item_no = b.item_no + 1
+  5  WHERE a.item_no <= 2;
+
+COUNT(*)
+--------------------
+2
+
+1 rows fetched.
+
+SQL>
+SQL> DROP TABLE hj_nl_subset PURGE;
+
+Succeed.
+
+SQL> DROP TABLE hj_nl_domain PURGE;
+
+Succeed.
+
+SQL>
