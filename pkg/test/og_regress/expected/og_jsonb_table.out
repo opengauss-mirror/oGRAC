@@ -223,5 +223,130 @@ a2                                                               {"bb":"ds"}    
 2 rows fetched.
 
 SQL> 
+SQL> -- issue #362: a json_table that depends on a column of its join partner must not be planned as
+SQL> -- the build(inner) side of a hash/merge join. grow the table so the plan flips to hash join.
+SQL> drop table if exists t_jt362;
+
+Succeed.
+
+SQL> create table t_jt362(id int, c_int int, c_date datetime, c_json varchar(8000) check(c_json is json));
+
+Succeed.
+
+SQL> insert into t_jt362 values(1, 1, to_date('2009-10-11','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+
+1 rows affected.
+
+SQL> insert into t_jt362 values(2, 2, to_date('2009-10-12','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+
+1 rows affected.
+
+SQL> insert into t_jt362 values(3, 3, to_date('2009-10-13','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+
+1 rows affected.
+
+SQL> insert into t_jt362 values(4, 4, to_date('2009-10-14','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+
+1 rows affected.
+
+SQL> insert into t_jt362 values(5, 5, to_date('2009-10-15','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+
+1 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+5 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+10 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+20 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+40 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+80 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+160 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+320 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+640 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+1280 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+2560 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+5120 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+10240 rows affected.
+
+SQL> insert into t_jt362 select * from t_jt362;
+
+20480 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> analyze table t_jt362 compute statistics;
+
+Succeed.
+
+SQL> select count(*) as cnt_date from t_jt362 t2,
+  2   json_table(t2.c_json, '$' error on error columns(c14 varchar2(20) path '$.s2.k3.k4.k6.k7.k20')) t3
+  3   where t2.c_date = t3.c14;
+
+CNT_DATE            
+--------------------
+8192                
+
+1 rows fetched.
+
+SQL> select count(*) as cnt_int from t_jt362 t2,
+  2   json_table(t2.c_json, '$' error on error columns(c14 varchar2(20) path '$.n')) t3
+  3   where t2.c_int = t3.c14;
+
+CNT_INT             
+--------------------
+8192                
+
+1 rows fetched.
+
+SQL> select count(*) as cnt_control from t_jt362 t2,
+  2   json_table('[{"a":3}]', '$[*]' columns(a varchar2(20) path '$.a')) t3
+  3   where t2.c_int = t3.a;
+
+CNT_CONTROL         
+--------------------
+8192                
+
+1 rows fetched.
+
+SQL> drop table if exists t_jt362;
+
+Succeed.
+
+SQL> 
 
 
