@@ -2719,6 +2719,13 @@ static status_t sql_jtable_create_paths(join_assist_t *ja, sql_join_type_t joint
 
     sql_gen_unsorted_outer_nestloop_paths(ja, jointype, jtable, jtbl1, jtbl2, sjoininfo, restricts,
         &param_source_rels);
+    /* hash/merge join scans both sides independently, a json_table in the inner side whose depend
+       tables are in the outer side has no valid driving row during the inner scan, only nestloop
+       can evaluate it row by row, so skip merge/hash paths for this case. */
+    if (check_json_table_conflict_with_normal(ja, jtbl2, jtbl1)) {
+        OG_LOG_RUN_WAR("Json table in inner side depends on table in outer side, skip merge/hash paths.");
+        return OG_SUCCESS;
+    }
     og_gen_sort_inner_and_outer_merge_paths(&input);
     og_gen_unsorted_merge_paths(&input);
     sql_hashjoin_inner_outer(ja, jointype, jtable, jtbl1, jtbl2, sjoininfo, restricts, &param_source_rels);

@@ -92,23 +92,23 @@ SQL> insert ignore into bison_t2 values (1,1);
 
 SQL> insert into bison_t2 values (1,1); --error
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
 SQL> 
 SQL> insert /*+parallel(10)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
 SQL> insert /*+parallel(10)*/ into bison_t2(a, b) values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
 SQL> insert /*+opt_param(abc=true)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
 SQL> insert /*+db_version(=abc)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
 SQL> insert /*+db_version(==abc)*/ into bison_t2 values (1,1);
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_49, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_50, duplicate key 1
 SQL> 
 SQL> drop table bison_t1;
 
@@ -194,7 +194,7 @@ OG-00601, [1:71]Sql syntax error: syntax error
 SQL> 
 SQL> insert into bison_t1 values (1, 1, 1) returning a; --error
 
-OG-00729, Unique constraint violated, index _PK_SYS_1_51, duplicate key 1
+OG-00729, Unique constraint violated, index _PK_SYS_1_52, duplicate key 1
 SQL> insert into bison_t1 values (1, 1) returning a; --error
 
 OG-00601, Sql syntax error: too less value expressions
