@@ -1,3 +1,5 @@
+English | [简体中文](./README.md)
+
 ## What Is oGRAC?
 
 oGRAC is the culmination of years of technical expertise and exploration within the openGauss community. Built with the spirit of creating a highly innovative open-source foundation, oGRAC was designed from the ground up to be a high-performance, high-security, high-availability, and highly intelligent database. It is the industry's first open-source multi-primary relational database, featuring independent innovation across its architecture, transaction processing, optimizer, and storage engine.
