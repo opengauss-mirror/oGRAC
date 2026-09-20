@@ -100,7 +100,7 @@ EXPLAIN PLAN OUTPUT
 | 0  | SELECT STATEMENT                 |       |                 | 10   | 10   | 4         |       |        |
 | 1  |   KERNEL FILTER                  |       |                 | 10   | 10   | 4         |       |        |
 | 2  |     TABLE ACCESS BY INDEX ROWID  | SYS   | TEST_MTRL_EMP E | 10   | 10   | 4         |       |        |
-| 3  |       INDEX FULL SCAN            | SYS   | _PK_SYS_1_67    | 10   | 10   | 4         |       |        |
+| 3  |       INDEX FULL SCAN            | SYS   | _PK_SYS_1_66    | 10   | 10   | 4         |       |        |
 | 4  |     HASH MATERIALIZE             |       |                 | 10   | 1    | 0         |       |        |
 | 5  |         TABLE ACCESS FULL        | SYS   | TEST_MTRL_EMP   | 10   | 1    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------------
