@@ -32,42 +32,29 @@ insert into test_jsonb_table values(4, '[{"Phone" : [{"type" : "4", "number" : "
 commit;
 select a.f1,b.* from test_jsonb_table a, jsonb_table(a.f2,'$[*].Phone[*]' error on error COLUMNS (type VARChAR2(100) PATH '$.type' )) b where a.f1(+) = b.type;
 select a.f1,b.* from test_jsonb_table a, jsonb_table(a.f2,'$[*].Phone[*]' error on error COLUMNS (type VARChAR2(100) PATH '$.type' )) b;
+-- issue #362: a json_table that depends on a column of its join partner must not be planned as
+-- the build(inner) side of a hash/merge join. force the join method choice via enable_nestloop_join.
+alter table test_jsonb_table add column f3 varchar(8000);
+delete from test_jsonb_table;
+insert into test_jsonb_table(f1, f3) values('2009-10-11 00:00:00', '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+insert into test_jsonb_table(f1, f3) values('2009-10-12 00:00:00', '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+insert into test_jsonb_table(f1, f3) values('1', '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+insert into test_jsonb_table(f1, f3) values('2', '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+insert into test_jsonb_table(f1, f3) values('3', '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
+commit;
+alter system set enable_nestloop_join = false;
+select count(*) as cnt_date from test_jsonb_table t2,
+  json_table(t2.f3, '$' error on error columns(c14 varchar2(20) path '$.s2.k3.k4.k6.k7.k20')) t3
+  where t2.f1 = t3.c14;
+select count(*) as cnt_num from test_jsonb_table t2,
+  json_table(t2.f3, '$' error on error columns(c14 varchar2(20) path '$.n')) t3
+  where t2.f1 = t3.c14;
+select count(*) as cnt_control from test_jsonb_table t2,
+  json_table('[{"a":1}]', '$[*]' columns(a varchar2(20) path '$.a')) t3
+  where t2.f1 = t3.a;
+alter system set enable_nestloop_join = true;
+
 drop table if exists test_jsonb_table;
 
 -- JSON builtin columns (path / format json path / exists path) in json_table must resolve.
 select * from json_table('[{"a":"a1","b":{"bb":"ds"},"c":"c3"},{"a":"a2","b":{"bb":"ds"},"c":"c6"}]', '$[*]' error on error columns (f1 varchar2(100) path '$.a', f2 varchar2(100) format json path '$.b', f3 varchar2(100) exists path '$.c', f4 for ordinality)) order by 1;
-
--- issue #362: a json_table that depends on a column of its join partner must not be planned as
--- the build(inner) side of a hash/merge join. grow the table so the plan flips to hash join.
-drop table if exists t_jt362;
-create table t_jt362(id int, c_int int, c_date datetime, c_json varchar(8000) check(c_json is json));
-insert into t_jt362 values(1, 1, to_date('2009-10-11','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
-insert into t_jt362 values(2, 2, to_date('2009-10-12','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
-insert into t_jt362 values(3, 3, to_date('2009-10-13','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
-insert into t_jt362 values(4, 4, to_date('2009-10-14','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
-insert into t_jt362 values(5, 5, to_date('2009-10-15','YYYY-MM-DD'), '{"s1":"lili","n":"3","s2":{"k3":{"k4":[{"k5":"d1"},{"k6":{"k7":[{"k8":"d2"},{"k10":{"k11":{"k12":[{"k13":"d4"},{"k17":"d7"},2000,3000,{"k19":"d9"}]}}},20000,{"k20":"2009-10-11 00:00:00"}]}}]}}}');
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-insert into t_jt362 select * from t_jt362;
-commit;
-analyze table t_jt362 compute statistics;
-select count(*) as cnt_date from t_jt362 t2,
-  json_table(t2.c_json, '$' error on error columns(c14 varchar2(20) path '$.s2.k3.k4.k6.k7.k20')) t3
-  where t2.c_date = t3.c14;
-select count(*) as cnt_int from t_jt362 t2,
-  json_table(t2.c_json, '$' error on error columns(c14 varchar2(20) path '$.n')) t3
-  where t2.c_int = t3.c14;
-select count(*) as cnt_control from t_jt362 t2,
-  json_table('[{"a":3}]', '$[*]' columns(a varchar2(20) path '$.a')) t3
-  where t2.c_int = t3.a;
-drop table if exists t_jt362;
