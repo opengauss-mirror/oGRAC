@@ -22,9 +22,21 @@
  */
 #include "init_exec.h"
 #include "cm_charset.h"
+#include "cm_date.h"
 #include "cm_file.h"
+#include "cm_spinlock.h"
 #include "cm_timer.h"
+#include "cm_utils.h"
 
+roundrobin_counter_map counter_map[MAX_HOST_SIZE];
+int host_counter = 0;
+int max_connect_num = 1 << 30;
+connection_list_map connection_list[MAX_HOST_SIZE];
+uint32 connection_counter = 0;
+static spinlock_t g_load_balance_lock = 0;
+static uint32 g_lb_env_refcount = 0;
+static uint32 g_lb_inflight = 0;
+static bool32 g_lb_pending_free = OG_FALSE;
 static void *dl_open;
 static SQLGetPrivateProfileStringFunc sqlGetPrivateProfileString;
 
@@ -46,21 +58,132 @@ void load_odbc_config()
     dl_open = dl_inst;
 }
 
+static void write_odbc_log(connection_class *conn, const char *log_buf)
+{
+    char log_path[OG_MAX_FILE_PATH_LENGH];
+    FILE *fp = NULL;
+    int ret;
+
+    if (conn == NULL || log_buf == NULL || conn->connInfo.logdir[0] == '\0') {
+        return;
+    }
+
+    if (!cm_dir_exist(conn->connInfo.logdir)) {
+        if (cm_create_dir_ex(conn->connInfo.logdir) != OG_SUCCESS) {
+            return;
+        }
+    }
+
+    ret = snprintf_s(log_path, sizeof(log_path), sizeof(log_path) - 1, "%s/%s",
+                     conn->connInfo.logdir, ODBC_LOG_FILE);
+    if (ret == -1) {
+        return;
+    }
+
+    fp = fopen(log_path, "a+");
+    if (fp == NULL) {
+        return;
+    }
+
+    (void)fwrite(log_buf, 1, strlen(log_buf), fp);
+    (void)fflush(fp);
+    (void)fclose(fp);
+}
+
+void write_odbc_error_log(connection_class *conn)
+{
+    char time_str[OG_MAX_TIME_STRLEN];
+    char log_buf[OG_MESSAGE_BUFFER_SIZE];
+    int ret;
+
+    if (conn == NULL || conn->error_msg == NULL) {
+        return;
+    }
+
+    if (cm_timestamp2str(cm_now(), "YYYY-MM-DD HH24:MI:SS.FF3", time_str, sizeof(time_str)) != OG_SUCCESS) {
+        time_str[0] = '\0';
+    }
+
+    ret = snprintf_s(log_buf, sizeof(log_buf), sizeof(log_buf) - 1,
+                     "[%s] [ERROR] %s\n", time_str, conn->error_msg);
+    if (ret == -1) {
+        return;
+    }
+
+    write_odbc_log(conn, log_buf);
+}
+
+void write_odbc_info_log(connection_class *conn, const char *msg)
+{
+    char time_str[OG_MAX_TIME_STRLEN];
+    char log_buf[OG_MESSAGE_BUFFER_SIZE];
+    int ret;
+
+    if (conn == NULL || msg == NULL) {
+        return;
+    }
+
+    if (cm_timestamp2str(cm_now(), "YYYY-MM-DD HH24:MI:SS.FF3", time_str, sizeof(time_str)) != OG_SUCCESS) {
+        time_str[0] = '\0';
+    }
+
+    ret = snprintf_s(log_buf, sizeof(log_buf), sizeof(log_buf) - 1,
+                     "[%s] [INFO] %s\n", time_str, msg);
+    if (ret == -1) {
+        return;
+    }
+
+    write_odbc_log(conn, log_buf);
+}
+
+void set_conn_error(connection_class *conn, char *msg)
+{
+    if (conn == NULL) {
+        return;
+    }
+    conn->err_sign = 1;
+    conn->error_msg = msg;
+    write_odbc_error_log(conn);
+}
+
+/* Format ogconn_connect failure with host and log via set_conn_error.
+ * buf must remain valid while conn->error_msg still points to it. */
+static void set_ogconn_connect_error(connection_class *conn, char *buf, size_t buf_len, const char *host)
+{
+    int error_code = 0;
+    const char *error_msg = NULL;
+    int ret;
+
+    if (conn == NULL || buf == NULL || buf_len == 0 || host == NULL || host[0] == '\0') {
+        return;
+    }
+
+    ogconn_get_error(conn->ogconn, &error_code, &error_msg);
+    if (error_msg == NULL || error_msg[0] == '\0') {
+        error_msg = "unknown error";
+    }
+
+    ret = snprintf_s(buf, buf_len, buf_len - 1,
+                     "Failed to connect to %s, msg: %s.", host, error_msg);
+    if (ret == -1) {
+        set_conn_error(conn, "Failed to connect.");
+        return;
+    }
+    set_conn_error(conn, buf);
+}
+
 static SQLRETURN verify_conn_info(connection_class *conn, ConnInfo *ci)
 {
     if (ci->username[0] == '\0' || ci->password[0] == '\0') {
-        conn->err_sign = 1;
-        conn->error_msg = "Username or Password is invalid.";
+        set_conn_error(conn, "Username or Password is invalid.");
         return SQL_ERROR;
     }
     if (ci->server[0] == '\0') {
-        conn->err_sign = 1;
-        conn->error_msg = "Servername is invalid.";
+        set_conn_error(conn, "Servername is invalid.");
         return SQL_ERROR;
     }
     if (ci->port[0] == '\0') {
-        conn->err_sign = 1;
-        conn->error_msg = "Port is invalid.";
+        set_conn_error(conn, "Port is invalid.");
         return SQL_ERROR;
     }
     return SQL_SUCCESS;
@@ -116,6 +239,24 @@ static status_t set_ssl_param(connection_class *conn, ConnInfo *info)
     return OG_SUCCESS;
 }
 
+/* clt_disconnect frees server_path; restore it before the next failover attempt. */
+static status_t restore_uds_path(connection_class *conn, ConnInfo *info)
+{
+    status_t status;
+
+    if (info->uds_path[0] == '\0') {
+        return OG_SUCCESS;
+    }
+
+    status = ogconn_set_conn_attr(conn->ogconn, OGCONN_ATTR_UDS_SERVER_PATH,
+                                  info->uds_path, (uint32)strlen(info->uds_path));
+    if (status != OGCONN_SUCCESS) {
+        get_err(conn);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
 static status_t init_ssl_info(connection_class *conn, ConnInfo *info)
 {
     status_t status;
@@ -137,16 +278,18 @@ static status_t init_ssl_info(connection_class *conn, ConnInfo *info)
         status = cm_open_file_ex(info->ssl_factory, O_SYNC | O_RDONLY | O_BINARY, S_IRUSR, &file);
         if (status != OG_SUCCESS || !is_file_exist) {
             if (conn->error_msg == NULL) {
-                conn->error_msg = "failed to open ssl file";
-                conn->err_sign = 1;
+                set_conn_error(conn, "failed to open ssl file");
+            } else {
+                write_odbc_error_log(conn);
             }
             return OG_ERROR;
         }
 
         if (cm_read_file(file, read_buf, AES_READ_LEN, &read_size) != OG_SUCCESS) {
             if (conn->error_msg == NULL) {
-                conn->error_msg = "failed to read ssl file";
-                conn->err_sign = 1;
+                set_conn_error(conn, "failed to read ssl file");
+            } else {
+                write_odbc_error_log(conn);
             }
             cm_close_file(file);
             return OG_ERROR;
@@ -156,8 +299,9 @@ static status_t init_ssl_info(connection_class *conn, ConnInfo *info)
         status = cm_base64_encode((unsigned char *)read_buf, AES_READ_LEN, ssl_encryption, &ssl_encryption_len);
         if (status != OG_SUCCESS) {
             if (conn->error_msg == NULL) {
-                conn->error_msg = "failed to encode ssl encryption key";
-                conn->err_sign = 1;
+                set_conn_error(conn, "failed to encode ssl encryption key");
+            } else {
+                write_odbc_error_log(conn);
             }
             return OG_ERROR;
         }
@@ -166,8 +310,9 @@ static status_t init_ssl_info(connection_class *conn, ConnInfo *info)
                                    str_buf, &str_buf_len, info->ssl_key_native, ssl_encryption);
         if (status != OG_SUCCESS) {
             if (conn->error_msg == NULL) {
-                conn->error_msg = "failed to decrypt ssl password";
-                conn->err_sign = 1;
+                set_conn_error(conn, "failed to decrypt ssl password");
+            } else {
+                write_odbc_error_log(conn);
             }
             return OG_ERROR;
         }
@@ -190,16 +335,973 @@ static status_t init_ssl_info(connection_class *conn, ConnInfo *info)
     return OG_SUCCESS;
 }
 
-SQLRETURN og_db_connect(connection_class *conn, ConnInfo *info)
+static void free_load_balance_info_locked(void)
+{
+    for (uint32 i = 0; i < MAX_HOST_SIZE; i++) {
+        CM_FREE_PTR(counter_map[i].multi_host);
+    }
+
+    for (uint32 i = 0; i < MAX_HOST_SIZE; i++) {
+        CM_FREE_PTR(connection_list[i].host);
+    }
+    host_counter = 0;
+    connection_counter = 0;
+}
+
+void free_load_balance_info(void)
+{
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    free_load_balance_info_locked();
+    g_lb_pending_free = OG_FALSE;
+    cm_spin_unlock(&g_load_balance_lock);
+}
+
+void retain_load_balance_env(void)
+{
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    g_lb_env_refcount++;
+    /* A new environment keeps process-global tables alive. */
+    g_lb_pending_free = OG_FALSE;
+    cm_spin_unlock(&g_load_balance_lock);
+}
+
+void release_load_balance_env(void)
+{
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    if (g_lb_env_refcount > 0) {
+        g_lb_env_refcount--;
+    }
+    if (g_lb_env_refcount == 0) {
+        if (g_lb_inflight == 0) {
+            free_load_balance_info_locked();
+            g_lb_pending_free = OG_FALSE;
+        } else {
+            /* Defer free until in-flight SQLConnect finishes. */
+            g_lb_pending_free = OG_TRUE;
+        }
+    }
+    cm_spin_unlock(&g_load_balance_lock);
+}
+
+/* Mark create_connection as using global LB tables; pairs with end_load_balance_use. */
+static void begin_load_balance_use(void)
+{
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    g_lb_inflight++;
+    cm_spin_unlock(&g_load_balance_lock);
+}
+
+static void end_load_balance_use(void)
+{
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    if (g_lb_inflight > 0) {
+        g_lb_inflight--;
+    }
+    if (g_lb_inflight == 0 && g_lb_pending_free && g_lb_env_refcount == 0) {
+        free_load_balance_info_locked();
+        g_lb_pending_free = OG_FALSE;
+    }
+    cm_spin_unlock(&g_load_balance_lock);
+}
+
+static int compare_strings(const void *url1, const void *url2)
+{
+    return strcmp(*(const char **)url1, *(const char **)url2);
+}
+
+static status_t roundrobin_balance(connection_class *conn, char *url_identifier[],
+                                   char *load_balance_url[], int valid_count)
 {
     errno_t err;
+    uint32 total_url_len = 0;
+    uint32 total_url_index = 0;
+    bool32 is_new_url = 0;
+    uint32 value = 0;
+    uint32 host_index = 0;
+    char *sort_url[MAX_HOST_SIZE] = {0};
+    char *total_url = NULL;
+
+    for (int i = 0; i < valid_count; i++) {
+        sort_url[i] = (char *)malloc(strlen(url_identifier[i]) + 1);
+        if (!sort_url[i]) {
+            set_conn_error(conn, "Couldn't allocate memory for roundrobin url.");
+            for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                CM_FREE_PTR(sort_url[j]);
+            }
+            return OG_ERROR;
+        }
+
+        err = memcpy_s(sort_url[i], strlen(url_identifier[i]) + 1, url_identifier[i], strlen(url_identifier[i]) + 1);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                CM_FREE_PTR(sort_url[j]);
+            }
+            return OG_ERROR;
+        }
+        total_url_len = total_url_len + strlen(url_identifier[i]) + 1;
+    }
+
+    qsort(sort_url, valid_count, sizeof(char *), compare_strings);
+
+    if (total_url_len == 0 || total_url_len > MAX_URL_LEN) {
+        set_conn_error(conn, "Roundrobin host set key is too long.");
+        for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+            CM_FREE_PTR(sort_url[j]);
+        }
+        return OG_ERROR;
+    }
+
+    total_url = (char *)malloc(total_url_len);
+    if (!total_url) {
+        set_conn_error(conn, "Couldn't allocate memory for roundrobin host total url.");
+        for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+            CM_FREE_PTR(sort_url[j]);
+        }
+        return OG_ERROR;
+    }
+
+    for (uint32 i = 0; i < valid_count; i++) {
+        uint32 url_len = (uint32)strlen(sort_url[i]);
+        uint32 remain = total_url_len - total_url_index;
+        if (url_len >= remain) {
+            set_conn_error(conn, "Roundrobin host is too long.");
+            CM_FREE_PTR(total_url);
+            for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                CM_FREE_PTR(sort_url[j]);
+            }
+            return OG_ERROR;
+        }
+
+        err = memcpy_s(total_url + total_url_index, remain, sort_url[i], url_len);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            CM_FREE_PTR(total_url);
+            for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                CM_FREE_PTR(sort_url[j]);
+            }
+            return OG_ERROR;
+        }
+        total_url_index = total_url_index + url_len;
+        if (i == valid_count - 1) {
+            total_url[total_url_index] = '\0';
+        } else {
+            if (total_url_index + 1 >= total_url_len) {
+                set_conn_error(conn, "Roundrobin host is too long.");
+                CM_FREE_PTR(total_url);
+                for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                    CM_FREE_PTR(sort_url[j]);
+                }
+                return OG_ERROR;
+            }
+            total_url[total_url_index] = ',';
+            total_url_index = total_url_index + 1;
+        }
+    }
+
+    for (uint32 i = 0; i < MAX_HOST_SIZE; i++) {
+        CM_FREE_PTR(sort_url[i]);
+    }
+
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    if (host_counter >= MAX_HOST_SIZE) {
+        cm_spin_unlock(&g_load_balance_lock);
+        CM_FREE_PTR(total_url);
+        return OG_ERROR;
+    }
+
+    for (uint32 i = 0; i < host_counter; i++) {
+        if (strcmp(counter_map[i].multi_host, total_url) == 0) {
+            value = counter_map[i].count;
+            host_index = i;
+            is_new_url = 1;
+            break;
+        }
+    }
+
+    value = (value + 1) % max_connect_num;
+    if (is_new_url == 0) {
+        counter_map[host_counter].count = value;
+        counter_map[host_counter].multi_host = (char *)malloc(strlen(total_url) + 1);
+        if (!counter_map[host_counter].multi_host) {
+            cm_spin_unlock(&g_load_balance_lock);
+            CM_FREE_PTR(total_url);
+            set_conn_error(conn, "Couldn't allocate memory for host map.");
+            return OG_ERROR;
+        }
+
+        err = memcpy_s(counter_map[host_counter].multi_host, strlen(total_url) + 1, total_url, strlen(total_url) + 1);
+        if (err != 0) {
+            CM_FREE_PTR(counter_map[host_counter].multi_host);
+            cm_spin_unlock(&g_load_balance_lock);
+            CM_FREE_PTR(total_url);
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+        host_counter = host_counter + 1;
+    } else {
+        counter_map[host_index].count = value;
+    }
+    cm_spin_unlock(&g_load_balance_lock);
+    CM_FREE_PTR(total_url);
+
+    int index = value % valid_count;
+    for (uint32 i = 0; i < valid_count; i++) {
+        uint32 primitive_index = (index + i) % valid_count;
+        load_balance_url[i] = (char *)malloc(strlen(url_identifier[primitive_index]) + 1);
+        if (!load_balance_url[i]) {
+            set_conn_error(conn, "Couldn't allocate memory for balance url.");
+            return OG_ERROR;
+        }
+
+        err = memcpy_s(load_balance_url[i], strlen(url_identifier[primitive_index]) + 1,
+                       url_identifier[primitive_index], strlen(url_identifier[primitive_index]) + 1);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t shuffle_balance(connection_class *conn, char *url_identifier[],
+                                char *load_balance_url[], int valid_count)
+{
+    errno_t err;
+    uint32 rand_number = 0;
+    char *temp = NULL;
+
+    for (uint32 i = valid_count - 1; i > 0; i--) {
+        /* cm_random uses OS/OpenSSL entropy; no process-global srand needed. */
+        rand_number = cm_random(i + 1);
+        temp = url_identifier[rand_number];
+        url_identifier[rand_number] = url_identifier[i];
+        url_identifier[i] = temp;
+    }
+
+    for (uint32 i = 0; i < valid_count; i++) {
+        load_balance_url[i] = (char *)malloc(strlen(url_identifier[i]) + 1);
+        if (!load_balance_url[i]) {
+            set_conn_error(conn, "Couldn't allocate memory for balance url.");
+            return OG_ERROR;
+        }
+
+        err = memcpy_s(load_balance_url[i], strlen(url_identifier[i]) + 1,
+                       url_identifier[i], strlen(url_identifier[i]) + 1);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t leastconn_balance(connection_class *conn, char *url_identifier[],
+                                  char *load_balance_url[], int valid_count)
+{
+    errno_t err;
+    bool32 is_existed = 0;
+    uint32 index_1 = 0;
+    uint32 index_2 = 0;
+    uint32 connection_number_1 = 0;
+    uint32 connection_number_2 = 0;
+    char *temp = NULL;
+
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    for (uint32 i = 0; i < valid_count; i++) {
+        is_existed = 0;
+        for (uint32 j = 0; j < connection_counter; j++) {
+            if (strcmp(connection_list[j].host, url_identifier[i]) == 0) {
+                is_existed = 1;
+                break;
+            }
+        }
+        if (is_existed == 0) {
+            if (connection_counter >= MAX_HOST_SIZE) {
+                cm_spin_unlock(&g_load_balance_lock);
+                set_conn_error(conn, "Leastconn host map is full.");
+                return OG_ERROR;
+            }
+            connection_list[connection_counter].connection_count = 0;
+            connection_list[connection_counter].cached_connection = 0;
+            connection_list[connection_counter].host = (char *)malloc(strlen(url_identifier[i]) + 1);
+            if (!connection_list[connection_counter].host) {
+                cm_spin_unlock(&g_load_balance_lock);
+                set_conn_error(conn, "Couldn't allocate memory for host map.");
+                return OG_ERROR;
+            }
+
+            err = memcpy_s(connection_list[connection_counter].host, strlen(url_identifier[i]) + 1,
+                           url_identifier[i], strlen(url_identifier[i]) + 1);
+            if (err != 0) {
+                CM_FREE_PTR(connection_list[connection_counter].host);
+                cm_spin_unlock(&g_load_balance_lock);
+                set_conn_error(conn, "Secure C lib has throw an error.");
+                return OG_ERROR;
+            }
+            connection_counter = connection_counter + 1;
+        }
+    }
+
+    for (uint32 i = 0; i < valid_count - 1; i++) {
+        for (uint32 j = 0; j < valid_count - 1 - i; j++) {
+            index_1 = 0;
+            index_2 = 0;
+            for (uint32 k = 0; k < connection_counter; k++) {
+                if (strcmp(connection_list[k].host, url_identifier[j]) == 0) {
+                    index_1 = k;
+                }
+                if (strcmp(connection_list[k].host, url_identifier[j + 1]) == 0) {
+                    index_2 = k;
+                }
+            }
+            connection_number_1 = connection_list[index_1].connection_count
+                                  + connection_list[index_1].cached_connection;
+            connection_number_2 = connection_list[index_2].connection_count
+                                  + connection_list[index_2].cached_connection;
+            if (connection_number_1 > connection_number_2) {
+                temp = url_identifier[j];
+                url_identifier[j] = url_identifier[j + 1];
+                url_identifier[j + 1] = temp;
+            }
+        }
+    }
+    cm_spin_unlock(&g_load_balance_lock);
+
+    for (uint32 i = 0; i < valid_count; i++) {
+        load_balance_url[i] = (char *)malloc(strlen(url_identifier[i]) + 1);
+        if (!load_balance_url[i]) {
+            set_conn_error(conn, "Couldn't allocate memory for balance url.");
+            return OG_ERROR;
+        }
+        err = memcpy_s(load_balance_url[i], strlen(url_identifier[i]) + 1,
+                       url_identifier[i], strlen(url_identifier[i]) + 1);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t priority_balance(connection_class *conn, ConnInfo *info, char *url_identifier[],
+                                 char *load_balance_url[], int valid_count)
+{
+    char *end_number;
+    errno_t err;
     status_t status;
-    uint32 asc_len = AES256_SIZE / 2;
-    char asc_key[AES256_SIZE / 2 + 4];
+    uint32 priority_number_len = strlen(info->auto_balance) - strlen(PRIORITY);
+    char priority_suffix[MAX_SUFFIX_LEN];
+    char *no_priority_host[MAX_HOST_SIZE] = {0};
+    char *no_priority_roundrobin_host[MAX_HOST_SIZE] = {0};
+
+    if (priority_number_len <= 0) {
+        return roundrobin_balance(conn, url_identifier, load_balance_url, valid_count);
+    }
+
+    if (priority_number_len >= MAX_SUFFIX_LEN) {
+        set_conn_error(conn, "Priority number conversion failed.");
+        return OG_ERROR;
+    }
+
+    err = memcpy_s(priority_suffix, sizeof(priority_suffix), info->auto_balance + strlen(PRIORITY),
+                   priority_number_len);
+    if (err != 0) {
+        set_conn_error(conn, "Secure C lib has throw an error.");
+        return OG_ERROR;
+    }
+    priority_suffix[priority_number_len] = '\0';
+
+    long priority_number_val = strtol(priority_suffix, &end_number, 10);
+    /* Require a full numeric suffix: reject empty, trailing garbage (priority2abc), and negatives. */
+    if (end_number == priority_suffix || *end_number != '\0' || priority_number_val < 0) {
+        set_conn_error(conn, "Priority number conversion failed.");
+        return OG_ERROR;
+    }
+    uint32 priority_number = (uint32)priority_number_val;
+
+    if (priority_number > (uint32)valid_count) {
+        set_conn_error(conn, "Priority number exceeds the total number of hosts.");
+        return OG_ERROR;
+    }
+
+    if (priority_number > 0) {
+        status = roundrobin_balance(conn, url_identifier, load_balance_url, priority_number);
+        if (status != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        uint32 no_priority_size = valid_count - priority_number;
+        /* All hosts are in the priority group; nothing left for the backup roundrobin. */
+        if (no_priority_size == 0) {
+            return OG_SUCCESS;
+        }
+
+        for (uint32 i = 0; i < no_priority_size; i++) {
+            uint32 url_len = strlen(url_identifier[i + priority_number]) + 1;
+            no_priority_host[i] = (char *)malloc(url_len);
+            if (!no_priority_host[i]) {
+                set_conn_error(conn, "Couldn't allocate memory for priority host.");
+                for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                    CM_FREE_PTR(no_priority_host[j]);
+                }
+                return OG_ERROR;
+            }
+
+            err = memcpy_s(no_priority_host[i], url_len, url_identifier[i + priority_number], url_len);
+            if (err != 0) {
+                set_conn_error(conn, "Secure C lib has throw an error.");
+                for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                    CM_FREE_PTR(no_priority_host[j]);
+                }
+                return OG_ERROR;
+            }
+        }
+
+        status = roundrobin_balance(conn, no_priority_host, no_priority_roundrobin_host, no_priority_size);
+        if (status != OG_SUCCESS) {
+            for (uint32 i = 0; i < MAX_HOST_SIZE; i++) {
+                CM_FREE_PTR(no_priority_host[i]);
+                CM_FREE_PTR(no_priority_roundrobin_host[i]);
+            }
+            return OG_ERROR;
+        }
+
+        for (uint32 i = 0; i < no_priority_size; i++) {
+            uint32 host_len = strlen(no_priority_roundrobin_host[i]) + 1;
+            load_balance_url[i + priority_number] = (char *)malloc(host_len);
+            if (!load_balance_url[i + priority_number]) {
+                set_conn_error(conn, "Couldn't allocate memory for balance url.");
+                for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                    CM_FREE_PTR(no_priority_host[j]);
+                    CM_FREE_PTR(no_priority_roundrobin_host[j]);
+                }
+                return OG_ERROR;
+            }
+
+            err = memcpy_s(load_balance_url[i + priority_number], host_len, no_priority_roundrobin_host[i], host_len);
+            if (err != 0) {
+                set_conn_error(conn, "Secure C lib has throw an error.");
+                for (uint32 j = 0; j < MAX_HOST_SIZE; j++) {
+                    CM_FREE_PTR(no_priority_host[j]);
+                    CM_FREE_PTR(no_priority_roundrobin_host[j]);
+                }
+                return OG_ERROR;
+            }
+        }
+    } else {
+        status = roundrobin_balance(conn, url_identifier, load_balance_url, valid_count);
+        if (status != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
+
+    for (uint32 i = 0; i < MAX_HOST_SIZE; i++) {
+        CM_FREE_PTR(no_priority_host[i]);
+        CM_FREE_PTR(no_priority_roundrobin_host[i]);
+    }
+
+    return OG_SUCCESS;
+}
+
+static status_t set_balance_url(connection_class *conn, char *url_identifier[],
+                                char *load_balance_url[], int valid_count)
+{
+    errno_t err;
+
+    for (uint32 i = 0; i < valid_count; i++) {
+        uint32 url_len = strlen(url_identifier[i]) + 1;
+        load_balance_url[i] = (char *)malloc(url_len);
+        if (!load_balance_url[i]) {
+            set_conn_error(conn, "Couldn't allocate memory for load balance url.");
+            return OG_ERROR;
+        }
+        err = memcpy_s(load_balance_url[i], url_len, url_identifier[i], url_len);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+    }
+        
+    return OG_SUCCESS;
+}
+
+static void log_load_balance_result(connection_class *conn, ConnInfo *info,
+                                    char *load_balance_url[], int valid_count)
+{
+    char log_buf[MAX_VALUE_BUFF_LEN];
+    char url_list[MAX_VALUE_BUFF_LEN];
+    const char *mode = "default";
+    uint32 offset = 0;
+    int ret;
+
+    if (conn == NULL || info == NULL || valid_count <= 0) {
+        return;
+    }
+
+    if (info->auto_balance[0] != '\0') {
+        mode = info->auto_balance;
+    }
+
+    url_list[0] = '\0';
+    for (int i = 0; i < valid_count; i++) {
+        if (load_balance_url[i] == NULL) {
+            continue;
+        }
+        if (offset > 0) {
+            ret = snprintf_s(url_list + offset, sizeof(url_list) - offset,
+                             sizeof(url_list) - offset - 1, ", ");
+            if (ret == -1) {
+                break;
+            }
+            offset += (uint32)ret;
+        }
+        ret = snprintf_s(url_list + offset, sizeof(url_list) - offset,
+                         sizeof(url_list) - offset - 1, "%s", load_balance_url[i]);
+        if (ret == -1) {
+            break;
+        }
+        offset += (uint32)ret;
+    }
+
+    ret = snprintf_s(log_buf, sizeof(log_buf), sizeof(log_buf) - 1,
+                     "Autobalance mode: %s, load balance result: %s", mode, url_list);
+    if (ret != -1) {
+        write_odbc_info_log(conn, log_buf);
+    }
+}
+
+static status_t multi_host_choose(connection_class *conn, ConnInfo *info, char *url_identifier[],
+                                  char *load_balance_url[], int valid_count)
+{
+    status_t status;
+
+    if (valid_count <= 1 || info->auto_balance[0] == '\0') {
+        status = set_balance_url(conn, url_identifier, load_balance_url, valid_count);
+    } else if (strcmp(info->auto_balance, ROUNDROBIN) == 0) {
+        status = roundrobin_balance(conn, url_identifier, load_balance_url, valid_count);
+    } else if (strcmp(info->auto_balance, SHUFFLE) == 0) {
+        status = shuffle_balance(conn, url_identifier, load_balance_url, valid_count);
+    } else if (strcmp(info->auto_balance, LEASTCONN) == 0) {
+        status = leastconn_balance(conn, url_identifier, load_balance_url, valid_count);
+    } else if (strncmp(info->auto_balance, PRIORITY, strlen(PRIORITY)) == 0) {
+        status = priority_balance(conn, info, url_identifier, load_balance_url, valid_count);
+    } else {
+        status = set_balance_url(conn, url_identifier, load_balance_url, valid_count);
+    }
+
+    if (status == OG_SUCCESS) {
+        log_load_balance_result(conn, info, load_balance_url, valid_count);
+    }
+    return status;
+}
+
+static int parse_host_or_port(const char *str, char *address[])
+{
+    int count = 0;
+    const char *p = str;
+    const char *field_start = NULL;
+    size_t field_len = 0;
+
+    if (str == NULL) {
+        return 0;
+    }
+
+    while (*p != '\0') {
+        field_start = p;
+        while (*p != '\0' && *p != ',') {
+            p++;
+        }
+        field_len = (size_t)(p - field_start);
+
+        /* Reject empty fields from ",,", leading/trailing commas, and whitespace-only tokens. */
+        {
+            size_t begin = 0;
+            size_t end = field_len;
+            while (begin < end && (field_start[begin] == ' ' || field_start[begin] == '\t')) {
+                begin++;
+            }
+            while (end > begin && (field_start[end - 1] == ' ' || field_start[end - 1] == '\t')) {
+                end--;
+            }
+            if (begin >= end) {
+                for (int i = 0; i < count; i++) {
+                    CM_FREE_PTR(address[i]);
+                }
+                for (int i = 0; i < MAX_HOST_SIZE; i++) {
+                    address[i] = NULL;
+                }
+                return PARSE_HOST_PORT_ERR_EMPTY;
+            }
+            field_start += begin;
+            field_len = end - begin;
+        }
+
+        if (count >= MAX_HOST_SIZE) {
+            for (int i = 0; i < count; i++) {
+                CM_FREE_PTR(address[i]);
+            }
+            for (int i = 0; i < MAX_HOST_SIZE; i++) {
+                address[i] = NULL;
+            }
+            return PARSE_HOST_PORT_ERR_TOO_MANY;
+        }
+
+        /* Reject oversized fields before malloc(field_len + 1). */
+        if (field_len >= MAX_ADDRESS_LEN || field_len + 1 < field_len) {
+            for (int i = 0; i < count; i++) {
+                CM_FREE_PTR(address[i]);
+            }
+            for (int i = 0; i < MAX_HOST_SIZE; i++) {
+                address[i] = NULL;
+            }
+            return PARSE_HOST_PORT_ERR_TOO_LONG;
+        }
+
+        address[count] = (char *)malloc(field_len + 1);
+        if (!address[count]) {
+            for (int i = 0; i < count; i++) {
+                CM_FREE_PTR(address[i]);
+            }
+            for (int i = 0; i < MAX_HOST_SIZE; i++) {
+                address[i] = NULL;
+            }
+            return PARSE_HOST_PORT_ERR_NOMEM;
+        }
+        if (memcpy_s(address[count], field_len + 1, field_start, field_len) != 0) {
+            CM_FREE_PTR(address[count]);
+            for (int i = 0; i < count; i++) {
+                CM_FREE_PTR(address[i]);
+            }
+            for (int i = 0; i < MAX_HOST_SIZE; i++) {
+                address[i] = NULL;
+            }
+            return PARSE_HOST_PORT_ERR_NOMEM;
+        }
+        address[count][field_len] = '\0';
+        count++;
+
+        if (*p == ',') {
+            p++;
+            /* Trailing comma means an empty field after the last delimiter. */
+            if (*p == '\0') {
+                for (int i = 0; i < count; i++) {
+                    CM_FREE_PTR(address[i]);
+                }
+                for (int i = 0; i < MAX_HOST_SIZE; i++) {
+                    address[i] = NULL;
+                }
+                return PARSE_HOST_PORT_ERR_EMPTY;
+            }
+        }
+    }
+
+    for (int i = count; i < MAX_HOST_SIZE; i++) {
+        address[i] = NULL;
+    }
+    return count;
+}
+
+static status_t get_url_info(connection_class *conn, char *url_identifier[], int valid_count,
+                             const parsed_address_lists_t *addrs)
+{
     uint32 connHostlen = 0;
     uint32 serverLen = 0;
     uint32 portLen = 0;
-    char connHost[MAX_CONN_HOST_LEN];
+    errno_t err;
+
+    if (addrs == NULL) {
+        set_conn_error(conn, "Failed to parse host or port list.");
+        return OG_ERROR;
+    }
+
+    for (int i = 0; i < valid_count; i++) {
+        /* 1 host / N ports or N hosts / 1 port: reuse the single entry by index, no pointer aliasing. */
+        char *host = addrs->hosts[addrs->host_number == 1 ? 0 : i];
+        char *port = addrs->ports[addrs->port_number == 1 ? 0 : i];
+
+        serverLen = strlen(host);
+        portLen = strlen(port);
+        connHostlen = serverLen + portLen + 1 + 1;
+        if (connHostlen > MAX_ADDRESS_LEN) {
+            set_conn_error(conn, "Host and port combination exceeds the maximum address length.");
+            return OG_ERROR;
+        }
+        char address[MAX_ADDRESS_LEN];
+        err = memcpy_s(address, sizeof(address), host, serverLen);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+        address[serverLen] = ':';
+        err = memcpy_s(address + serverLen + 1, sizeof(address) - serverLen - 1, port, portLen);
+        if (err != 0) {
+            set_conn_error(conn, "Secure C lib has throw an error.");
+            return OG_ERROR;
+        }
+
+        address[connHostlen - 1] = '\0';
+        url_identifier[i] = strdup(address);
+        if (url_identifier[i] == NULL) {
+            set_conn_error(conn, "Couldn't allocate memory for url identifier.");
+            return OG_ERROR;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+/* Caller must hold g_load_balance_lock. Returns entry index, or -1 on failure. */
+static int find_or_add_leastconn_host(connection_class *conn, const char *balance_url)
+{
+    errno_t err;
+
+    for (uint32 k = 0; k < connection_counter; k++) {
+        if (strcmp(connection_list[k].host, balance_url) == 0) {
+            return (int)k;
+        }
+    }
+
+    if (connection_counter >= MAX_HOST_SIZE) {
+        set_conn_error(conn, "Leastconn host map is full.");
+        return -1;
+    }
+
+    connection_list[connection_counter].connection_count = 0;
+    connection_list[connection_counter].cached_connection = 0;
+    connection_list[connection_counter].host = (char *)malloc(strlen(balance_url) + 1);
+    if (!connection_list[connection_counter].host) {
+        set_conn_error(conn, "Couldn't allocate memory for host map.");
+        return -1;
+    }
+
+    err = memcpy_s(connection_list[connection_counter].host, strlen(balance_url) + 1,
+                   balance_url, strlen(balance_url) + 1);
+    if (err != 0) {
+        CM_FREE_PTR(connection_list[connection_counter].host);
+        set_conn_error(conn, "Secure C lib has throw an error.");
+        return -1;
+    }
+
+    connection_counter = connection_counter + 1;
+    return (int)(connection_counter - 1);
+}
+
+static status_t load_least_connect(connection_class *conn, ConnInfo *info, char *balance_url)
+{
+    status_t status;
+    int connection_index = -1;
+
+    /* Occupy a slot before connect so concurrent leastconn sorts see in-flight work.
+     * Insert the host if missing so counter updates never silently no-op. */
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    connection_index = find_or_add_leastconn_host(conn, balance_url);
+    if (connection_index < 0) {
+        cm_spin_unlock(&g_load_balance_lock);
+        return OG_ERROR;
+    }
+    connection_list[connection_index].cached_connection =
+        connection_list[connection_index].cached_connection + 1;
+    cm_spin_unlock(&g_load_balance_lock);
+
+    status = ogconn_connect(conn->ogconn, balance_url, info->username, info->password);
+
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    connection_index = -1;
+    for (uint32 k = 0; k < connection_counter; k++) {
+        if (strcmp(connection_list[k].host, balance_url) == 0) {
+            connection_index = (int)k;
+            break;
+        }
+    }
+
+    if (connection_index >= 0) {
+        if (connection_list[connection_index].cached_connection > 0) {
+            connection_list[connection_index].cached_connection =
+                connection_list[connection_index].cached_connection - 1;
+        }
+        if (status == OG_SUCCESS) {
+            connection_list[connection_index].connection_count =
+                connection_list[connection_index].connection_count + 1;
+        }
+    } else if (status == OG_SUCCESS) {
+        /* Table was cleared between occupy and connect; re-add so the live
+         * connection is still counted for leastconn. */
+        connection_index = find_or_add_leastconn_host(conn, balance_url);
+        if (connection_index >= 0) {
+            connection_list[connection_index].connection_count = 1;
+        }
+    }
+    cm_spin_unlock(&g_load_balance_lock);
+
+    return status;
+}
+
+void release_least_connect(connection_class *conn)
+{
+    if (conn == NULL || conn->flag != 0 || conn->connected_host[0] == '\0') {
+        return;
+    }
+
+    if (strcmp(conn->connInfo.auto_balance, LEASTCONN) != 0) {
+        conn->connected_host[0] = '\0';
+        return;
+    }
+
+    cm_spin_lock(&g_load_balance_lock, NULL);
+    for (uint32 k = 0; k < connection_counter; k++) {
+        if (strcmp(connection_list[k].host, conn->connected_host) != 0) {
+            continue;
+        }
+        if (connection_list[k].connection_count > 0) {
+            connection_list[k].connection_count--;
+        }
+        break;
+    }
+    cm_spin_unlock(&g_load_balance_lock);
+    conn->connected_host[0] = '\0';
+}
+
+static void free_parsed_address_lists(parsed_address_lists_t *addrs)
+{
+    if (addrs == NULL) {
+        return;
+    }
+    for (int i = 0; i < MAX_HOST_SIZE; i++) {
+        CM_FREE_PTR(addrs->hosts[i]);
+        CM_FREE_PTR(addrs->ports[i]);
+    }
+}
+
+static void free_create_connection_temps(char *url_identifier[], char *load_balance_url[],
+                                        parsed_address_lists_t *addrs)
+{
+    for (uint32 i = 0; i < MAX_HOST_SIZE; i++) {
+        CM_FREE_PTR(url_identifier[i]);
+        CM_FREE_PTR(load_balance_url[i]);
+    }
+    free_parsed_address_lists(addrs);
+}
+
+static status_t create_connection(connection_class *conn, ConnInfo *info)
+{
+    status_t status = OG_ERROR;
+    char *url_identifier[MAX_HOST_SIZE] = {0};
+    char *load_balance_url[MAX_HOST_SIZE] = {0};
+    parsed_address_lists_t addrs = {0};
+    char fail_msg[OG_MESSAGE_BUFFER_SIZE];
+    bool32 stop_failover = OG_FALSE;
+
+    addrs.host_number = parse_host_or_port(info->server, addrs.hosts);
+    addrs.port_number = parse_host_or_port(info->port, addrs.ports);
+    if (addrs.host_number == PARSE_HOST_PORT_ERR_TOO_MANY ||
+        addrs.port_number == PARSE_HOST_PORT_ERR_TOO_MANY) {
+        free_parsed_address_lists(&addrs);
+        set_conn_error(conn, "Host or port list exceeds maximum of 100.");
+        return OG_ERROR;
+    }
+
+    if (addrs.host_number == PARSE_HOST_PORT_ERR_EMPTY ||
+        addrs.port_number == PARSE_HOST_PORT_ERR_EMPTY) {
+        free_parsed_address_lists(&addrs);
+        set_conn_error(conn, "Host or port list contains an empty entry.");
+        return OG_ERROR;
+    }
+
+    if (addrs.host_number == PARSE_HOST_PORT_ERR_TOO_LONG ||
+        addrs.port_number == PARSE_HOST_PORT_ERR_TOO_LONG) {
+        free_parsed_address_lists(&addrs);
+        set_conn_error(conn, "Host or port entry exceeds the maximum address length.");
+        return OG_ERROR;
+    }
+
+    if (addrs.host_number < 0 || addrs.port_number < 0) {
+        free_parsed_address_lists(&addrs);
+        set_conn_error(conn, "Couldn't allocate memory while parsing host or port list.");
+        return OG_ERROR;
+    }
+
+    if (addrs.host_number == 0 || addrs.port_number == 0) {
+        free_parsed_address_lists(&addrs);
+        set_conn_error(conn, "Failed to parse host or port list.");
+        return OG_ERROR;
+    }
+
+    if (addrs.host_number != addrs.port_number && addrs.host_number != 1 && addrs.port_number != 1) {
+        free_parsed_address_lists(&addrs);
+        set_conn_error(conn, "host and port list counts are incompatible. "
+                             "Use N hosts with N ports, 1 host with N ports, or N hosts with 1 port.");
+        return OG_ERROR;
+    }
+
+    int valid_count = addrs.host_number > addrs.port_number ? addrs.host_number : addrs.port_number;
+
+    begin_load_balance_use();
+
+    if (get_url_info(conn, url_identifier, valid_count, &addrs) == OG_SUCCESS) {
+        status = multi_host_choose(conn, info, url_identifier, load_balance_url, valid_count);
+        if (status != OG_SUCCESS) {
+            if (conn->error_msg == NULL) {
+                set_conn_error(conn, "Failed to choose host for load balance.");
+            }
+        } else {
+            for (int i = 0; i < valid_count; i++) {
+                if (strcmp(info->auto_balance, LEASTCONN) == 0) {
+                    status = load_least_connect(conn, info, load_balance_url[i]);
+                } else {
+                    status = ogconn_connect(conn->ogconn, load_balance_url[i], info->username, info->password);
+                }
+
+                if (status == OG_SUCCESS) {
+                    conn->flag = 0;
+                    /* Clear residual error from earlier failed hosts in this attempt. */
+                    conn->err_sign = 0;
+                    conn->error_msg = NULL;
+                    /* Keep the connection even if connected_host copy fails.
+                     * Do not decrease leastconn connection_count here; disconnect
+                     * simply cannot match the host when connected_host is empty. */
+                    if (memcpy_s(conn->connected_host, sizeof(conn->connected_host),
+                                 load_balance_url[i], strlen(load_balance_url[i]) + 1) != 0) {
+                        conn->connected_host[0] = '\0';
+                    }
+                    if (snprintf_s(fail_msg, sizeof(fail_msg), sizeof(fail_msg) - 1,
+                                   "Successfully connected to %s.", load_balance_url[i]) != -1) {
+                        write_odbc_info_log(conn, fail_msg);
+                    }
+                    free_create_connection_temps(url_identifier, load_balance_url, &addrs);
+                    end_load_balance_use();
+                    return OG_SUCCESS;
+                }
+
+                /* Log failed node and underlying error before trying the next host. */
+                set_ogconn_connect_error(conn, fail_msg, sizeof(fail_msg), load_balance_url[i]);
+
+                /* Reset residual pipe/options state before trying the next host.
+                 * ogconn_disconnect does not clear error_code/message, so get_err
+                 * after the loop still reports the last connect failure.
+                 * It does free UDS server_path — restore from ConnInfo for the next try. */
+                ogconn_disconnect(conn->ogconn);
+                if (restore_uds_path(conn, info) != OG_SUCCESS) {
+                    stop_failover = OG_TRUE;
+                    break;
+                }
+            }
+
+            if (!stop_failover) {
+                get_err(conn);
+            }
+        }
+    }
+
+    free_create_connection_temps(url_identifier, load_balance_url, &addrs);
+    end_load_balance_use();
+    return OG_ERROR;
+}
+
+SQLRETURN og_db_connect(connection_class *conn, ConnInfo *info)
+{
+    uint32 asc_len = AES256_SIZE / 2;
+    char asc_key[AES256_SIZE / 2 + 4];
     char *ssl_encryption = info->ssl_encryption;
     char *ssl_factory = info->ssl_factory;
     uint32 ssl_factory_len = (uint32)strlen(ssl_factory);
@@ -211,30 +1313,11 @@ SQLRETURN og_db_connect(connection_class *conn, ConnInfo *info)
         return SQL_ERROR;
     }
 
-    serverLen = strlen(info->server);
-    portLen = strlen(info->port);
-    connHostlen = serverLen + portLen + 1;
-    err = memcpy_s(connHost, sizeof(connHost), info->server, serverLen);
-    if (err != 0) {
-        conn->err_sign = 1;
-        conn->error_msg = "secure C lib has throw an error.";
-        return SQL_ERROR;
-    }
-    connHost[serverLen] = ':';
-    err = memcpy_s(connHost + serverLen + 1, portLen, info->port, portLen);
-    if (err != 0) {
-        conn->err_sign = 1;
-        conn->error_msg = "secure C lib has throw an error.";
-        return SQL_ERROR;
-    }
-
-    connHost[connHostlen] = '\0';
     if (info->charset[0] != '\0') {
         int ret = ogconn_set_conn_attr(conn->ogconn, OGCONN_ATTR_CHARSET_TYPE,
                                        info->charset, strlen(info->charset));
         if (ret != 0) {
-            conn->err_sign = 1;
-            conn->error_msg = "set charset type failed.";
+            set_conn_error(conn, "set charset type failed.");
             return SQL_ERROR;
         }
     }
@@ -243,12 +1326,7 @@ SQLRETURN og_db_connect(connection_class *conn, ConnInfo *info)
         return SQL_ERROR;
     }
 
-    status = ogconn_connect(conn->ogconn, connHost, info->username, info->password);
-    if (status == 0) {
-        conn->flag = 0;
-    }
-    if (status != OG_SUCCESS) {
-        get_err(conn);
+    if (create_connection(conn, info) != OG_SUCCESS) {
         return SQL_ERROR;
     }
 
@@ -275,6 +1353,8 @@ void get_err(HDBC conn)
     pConn->err_sign = (pConn->error_msg) ? 1 : 0;
     if (pConn->error_code == 0) {
         pConn->error_msg = NULL;
+    } else if (pConn->error_msg != NULL) {
+        write_odbc_error_log(pConn);
     }
 }
 
@@ -289,8 +1369,7 @@ SQLRETURN init_odbc_dsn(connection_class *conn, ConnInfo *info)
 
     ssl_mode[0] = '\0';
     if (sqlGetPrivateProfileString == NULL) {
-        conn->err_sign = 1;
-        conn->error_msg = "failed to load symbol from dynamic library file";
+        set_conn_error(conn, "failed to load symbol from dynamic library file");
         return SQL_ERROR;
     }
 
@@ -300,6 +1379,8 @@ SQLRETURN init_odbc_dsn(connection_class *conn, ConnInfo *info)
     sqlGetPrivateProfileString(INIT_DSN, USERNAME, "", info->username, sizeof(info->username), ODBC_INI);
     sqlGetPrivateProfileString(INIT_DSN, PASSWORD, "", info->password, sizeof(info->password), ODBC_INI);
     sqlGetPrivateProfileString(INIT_DSN, PORT, "", info->port, sizeof(info->port), ODBC_INI);
+    sqlGetPrivateProfileString(INIT_DSN, AUTO_BALANCE, "", info->auto_balance, sizeof(info->auto_balance), ODBC_INI);
+    sqlGetPrivateProfileString(INIT_DSN, LOGDIR, "", info->logdir, sizeof(info->logdir), ODBC_INI);
     sqlGetPrivateProfileString(INIT_DSN, CHARSET, "", info->charset, sizeof(info->charset), ODBC_INI);
     sqlGetPrivateProfileString(INIT_DSN, SSL_CA, "", info->ssl_ca, sizeof(info->ssl_ca), ODBC_INI);
     sqlGetPrivateProfileString(INIT_DSN, SSL_CERT, "", info->ssl_cert, sizeof(info->ssl_cert), ODBC_INI);
@@ -347,8 +1428,7 @@ static status_t bind_data_to_pos(statement *stmt, sql_input_data *input_data)
         return SQL_ERROR;
     }
     if (memset_s(input_data->param_stream, MAX_VALUE_BUFF_LEN, 0, MAX_VALUE_BUFF_LEN) != 0) {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "secure C lib has throw an error.";
+        set_conn_error(stmt->conn, "secure C lib has throw an error.");
         return SQL_ERROR;
     }
 

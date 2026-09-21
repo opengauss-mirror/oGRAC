@@ -33,15 +33,13 @@ static SQLRETURN handle_fetch_param(og_generate_result *generate_result, bind_in
 
 static SQLRETURN handle_fetch_err(statement *stmt)
 {
-    stmt->conn->err_sign = 1;
-    stmt->conn->error_msg = "Invalid string or buffer length";
+    set_conn_error(stmt->conn, "Invalid string or buffer length");
     return SQL_ERROR;
 }
 
 static SQLRETURN handle_convert_err(statement *stmt)
 {
-    stmt->conn->err_sign = 1;
-    stmt->conn->error_msg = "Failed to convert datatype";
+    set_conn_error(stmt->conn, "Failed to convert datatype");
     return SQL_ERROR;
 }
 
@@ -113,8 +111,7 @@ static SQLRETURN get_db_lob_param(statement *stmt,
             param_buf = nchars;
             break;
         default:
-            stmt->conn->err_sign = 1;
-            stmt->conn->error_msg = "db data type decoding failed";
+            set_conn_error(stmt->conn, "db data type decoding failed");
             return SQL_ERROR;
     }
 
@@ -164,8 +161,7 @@ static SQLRETURN get_str_param(statement *stmt,
     if (actual_len > 0) {
         if (memcpy_s(input_param->param_value, input_param->param_len,
                     data_result->value + generate_result->result_size, actual_len) != 0) {
-            stmt->conn->err_sign = 1;
-            stmt->conn->error_msg = "secure C lib has throw an error.";
+            set_conn_error(stmt->conn, "secure C lib has throw an error.");
             return SQL_ERROR;
         }
     }
@@ -228,8 +224,7 @@ static SQLRETURN get_c_wchar_type_param(statement *stmt,
 
     generate_result->result_size = param_size;
     if (memcpy_s(input_param->param_value, value_len, value, param_size) != 0) {
-        stmt->conn->err_sign = 1;
-        stmt->conn->error_msg = "secure C lib has throw an error.";
+        set_conn_error(stmt->conn, "secure C lib has throw an error.");
         return SQL_ERROR;
     }
 
@@ -481,8 +476,7 @@ static SQLRETURN get_db_int_value(statement *stmt,
             generate_result->result_size = (uint32)sizeof(float);
             return handle_fetch_param(generate_result, input_param);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from int is not supported.";
+            set_conn_error(conn, "conversion type from int is not supported.");
             return SQL_ERROR;
     }
 }
@@ -531,8 +525,7 @@ static SQLRETURN get_db_uint_value(statement *stmt,
             generate_result->result_size = (uint32)sizeof(float);
             return handle_fetch_param(generate_result, input_param);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from uint is not supported.";
+            set_conn_error(conn, "conversion type from uint is not supported.");
             return SQL_ERROR;
     }
 }
@@ -568,8 +561,7 @@ static SQLRETURN get_db_bool_value(statement *stmt,
             generate_result->result_size = (uint32)sizeof(short);
             return handle_fetch_param(generate_result, input_param);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from bool is not supported.";
+            set_conn_error(conn, "conversion type from bool is not supported.");
             return SQL_ERROR;
     }
 }
@@ -616,8 +608,7 @@ static SQLRETURN get_db_bigint_value(statement *stmt,
             generate_result->result_size = (uint32)sizeof(float);
             return handle_fetch_param(generate_result, input_param);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from bigint is not supported.";
+            set_conn_error(conn, "conversion type from bigint is not supported.");
             return SQL_ERROR;
     }
 }
@@ -644,8 +635,7 @@ static SQLRETURN get_db_real_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_c_wchar_type_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from real is not supported.";
+            set_conn_error(conn, "conversion type from real is not supported.");
             return SQL_ERROR;
     }
 }
@@ -684,8 +674,7 @@ static SQLRETURN get_db_number2_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_c_wchar_type_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from number2 is not supported.";
+            set_conn_error(conn, "conversion type from number2 is not supported.");
             return SQL_ERROR;
     }
 }
@@ -722,8 +711,7 @@ static SQLRETURN get_db_number_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_c_wchar_type_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from number is not supported.";
+            set_conn_error(conn, "conversion type from number is not supported.");
             return SQL_ERROR;
     }
 }
@@ -748,8 +736,7 @@ static SQLRETURN get_db_date_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_c_wchar_type_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from date is not supported.";
+            set_conn_error(conn, "conversion type from date is not supported.");
             return SQL_ERROR;
     }
 }
@@ -767,8 +754,7 @@ static SQLRETURN get_db_raw_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_c_wchar_type_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from raw is not supported.";
+            set_conn_error(conn, "conversion type from raw is not supported.");
             return SQL_ERROR;
     }
 }
@@ -793,8 +779,7 @@ static SQLRETURN get_db_timestamp_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_c_wchar_type_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from timestamp is not supported.";
+            set_conn_error(conn, "conversion type from timestamp is not supported.");
             return SQL_ERROR;
     }
 }
@@ -814,8 +799,7 @@ static SQLRETURN get_db_clob_value(statement *stmt,
         case SQL_C_BINARY:
             return get_db_lob_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from clob is not supported.";
+            set_conn_error(conn, "conversion type from clob is not supported.");
             return SQL_ERROR;
     }
 }
@@ -832,8 +816,7 @@ static SQLRETURN get_db_default_value(statement *stmt,
         case SQL_C_WCHAR:
             return get_str_param(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type is not supported.";
+            set_conn_error(conn, "conversion type is not supported.");
             return SQL_ERROR;
     }
 }
@@ -865,8 +848,7 @@ static SQLRETURN get_db_string_value(statement *stmt,
         case SQL_C_FLOAT:
             return get_c_float_by_db_str(stmt, generate_result, input_param, data_result);
         default:
-            conn->err_sign = 1;
-            conn->error_msg = "conversion type from char is not supported.";
+            set_conn_error(conn, "conversion type from char is not supported.");
             return SQL_ERROR;
     }
 }
@@ -1269,8 +1251,7 @@ static status_t write_data(statement *stmt, sql_input_data *input_data, SQLPOINT
                 return OG_SUCCESS;
             }
             if (memcpy_s(input_data->param_stream + input_data->param_offset, remain_len, data, remain_len) != 0) {
-                stmt->conn->err_sign = 1;
-                stmt->conn->error_msg = "secure C lib has throw an error.";
+                set_conn_error(stmt->conn, "secure C lib has throw an error.");
                 return SQL_ERROR;
             }
             os_len = remain_len;

@@ -39,6 +39,7 @@ static SQLRETURN handle_conn_error(HDBC *phdbc,
 static void init_conn_info(connection_class *conn, environment_class *environment)
 {
     conn->error_msg = NULL;
+    conn->connected_host[0] = '\0';
     conn->environment = environment;
     conn->err_sign = 0;
     conn->error_code = 0;
@@ -98,15 +99,13 @@ static SQLRETURN set_conn_info(connection_class *conn, const SQLCHAR *name,
     if (name != NULL && name[0] != '\0') {
         len = (nameLength == SQL_NTS) ? (uint32)strlen((const char *)name) : nameLength;
         if (len >= size) {
-            conn->err_sign = 1;
-            conn->error_msg = "value is too long, create connection failed.";
+            set_conn_error(conn, "value is too long, create connection failed.");
             return SQL_ERROR;
         }
 
         code = memcpy_s(buf, len, name, len);
         if (code != 0) {
-            conn->err_sign = 1;
-            conn->error_msg = "secure C lib has throw an error.";
+            set_conn_error(conn, "secure C lib has throw an error.");
             return SQL_ERROR;
         }
         buf[len] = '\0';
@@ -124,15 +123,13 @@ SQLRETURN ograc_connect(SQLHDBC ConnectionHandle,
     SQLRETURN retcode;
 
     if (ServerName == NULL) {
-        conn->err_sign = 1;
-        conn->error_msg = "The ServerName is NULL";
+        set_conn_error(conn, "The ServerName is NULL");
         return SQL_ERROR;
     }
 
     info = &conn->connInfo;
     if (memset_s(info, sizeof(ConnInfo), 0, sizeof(ConnInfo)) != 0) {
-        conn->err_sign = 1;
-        conn->error_msg = "secure C lib has throw an error.";
+        set_conn_error(conn, "secure C lib has throw an error.");
         return SQL_ERROR;
     }
 
@@ -169,8 +166,7 @@ SQLRETURN ograc_connect(SQLHDBC ConnectionHandle,
 static SQLRETURN clean_up_info(connection_class *conn, size_t len)
 {
     if (memset_s(&conn->connInfo, len, 0, len) != 0) {
-        conn->err_sign = 1;
-        conn->error_msg = "secure C lib has throw an error.";
+        set_conn_error(conn, "secure C lib has throw an error.");
         return SQL_ERROR;
     }
     return SQL_SUCCESS;
@@ -181,10 +177,10 @@ SQLRETURN ograc_disconnect(connection_class *conn)
     ogconn_conn_t pconn;
 
     if (!conn) {
-        conn->err_sign = 1;
-        conn->error_msg = "Connection handle is invalid";
+        set_conn_error(conn, "Connection handle is invalid");
         return SQL_INVALID_HANDLE;
     }
+    release_least_connect(conn);
     pconn = conn->ogconn;
     ogconn_disconnect(pconn);
     conn->flag = 1;
