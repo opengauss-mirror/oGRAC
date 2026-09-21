@@ -80,7 +80,6 @@ typedef struct st_tcp_link {
     bool32 closed; // need to be second!
     sock_addr_t remote;
     sock_addr_t local;
-    uint32 numa_id;
 } tcp_link_t;
 
 typedef struct st_socket_attr_t {

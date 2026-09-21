@@ -232,6 +232,7 @@ status_t srv_process_single_session(session_t *session)
     }
     knl_end_session_wait(&session->knl_session, MESSAGE_FROM_CLIENT);
 
+    /* bind session thread to cpu */
     srv_session_bind_cpu(session);
     init_tls_error();
     /* process request command */
@@ -405,7 +406,7 @@ static void srv_try_process_multi_sessions(agent_t *agent)
             return;
         } else if (srv_session_in_priv_resv(session)) {
             continue;
-        } else if (srv_session_dedicate_agent(session)) {
+        } else if (reactor_in_dedicated_mode(agent->reactor) && srv_session_dedicate_agent(session)) {
             continue;
         } else if (!srv_session_in_trans(session) && !knl_alck_have_se_lock(session)) {
             srv_detach_agent_and_set_oneshot(session, agent);

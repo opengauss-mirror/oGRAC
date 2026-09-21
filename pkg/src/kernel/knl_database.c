@@ -39,7 +39,6 @@
 #include "cm_file_iofence.h"
 #include "cm_dss_iofence.h"
 #include "srv_view.h"
-#include "knl_undo.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1382,13 +1381,6 @@ status_t db_open(knl_session_t *session, db_open_opt_t *options)
         CM_ABORT(0, "[DB] ABORT INFO: The database cannot be opened because of the nolog object.");
     }
     OG_LOG_RUN_INF("[DB OPEN] db_open_check_nolog finished");
-
-    if (undo_perf_preload(session) != OG_SUCCESS) {
-        cm_spin_unlock(&kernel->lock);
-        OG_LOG_RUN_ERR("[DB OPEN] undo_perf_preload failed");
-        return OG_ERROR;
-    }
-    OG_LOG_RUN_INF("[DB OPEN] undo_perf_preload finished");
 
     cm_spin_unlock(&kernel->lock);
     db->status = DB_STATUS_OPEN;

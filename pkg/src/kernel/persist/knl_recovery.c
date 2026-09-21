@@ -2061,7 +2061,7 @@ static status_t rcy_reset_file(knl_session_t *session, log_point_t *point)
     file = &ogx->files[dtc_my_ctrl(session)->log_first];
     /* file->head.write_pos / file->head.block_size < max int32, cannot overflow */
     point->block_id = (uint32)(file->head.write_pos / (uint32)file->head.block_size);
-    cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
+    ogx->free_size += log_file_freesize(file);
     return OG_SUCCESS;
 }
 

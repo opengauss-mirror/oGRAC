@@ -28,7 +28,6 @@
 #include "cm_file.h"
 #include "cm_kmc.h"
 #include "cm_device.h"
-#include "cm_cpu.h"
 #include "cm_io_record.h"
 #include "cm_file_iofence.h"
 #include "cm_dss_iofence.h"
@@ -246,15 +245,7 @@ const wait_event_desc_t g_wait_event_desc[] = {
     { "broadcast btree split", "", "Cluster" },
     { "broadcast btree root page", "", "Cluster" },
     { "ckpt disable wait", "", "Commit" },
-    { "log sleep before commit", "", "Commit" },
-    { "log follower wait", "", "Commit" },
-    { "log leader self wait", "", "Commit" },
-    { "log leader compute max lfn", "", "Commit" },
-    { "log leader worker wait", "", "Commit" },
-    { "log leader wakeup", "", "Commit" },
-    { "log futex wait", "", "Commit" },
-    { "log write reserve space", "", "Commit" },    
-    { "log write", "", "Commit" },
+    { "log write reserve space", "", "Commit" },
 };
 
 #ifdef WIN32
@@ -276,7 +267,7 @@ void knl_attach_cpu_core(void)
         OG_LOG_RUN_ERR("cpu_masks is NULL");
         return;
     } else {
-        mask = cpu_masks[(cm_get_current_thread_id()) % cpu_group_num];
+        mask = cpu_masks[(cm_get_current_thread_id() % CPU_SEG_MAX_NUM) % cpu_group_num];
     }
     if (pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask) != 0) {
         OG_LOG_RUN_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_60, "the thread attach cpu failed!");
@@ -306,7 +297,7 @@ void knl_get_cpu_set_from_conf(cpu_set_t *cpuset, uint32 round_id, uint8 target_
         CPU_SET(cpu_info[target_numa * SMALL_RECORD_SIZE + round_id % cpu_info_counts[target_numa]], &mask);
         *cpuset = mask;
     }
-    return;
+    *cpuset = mask;
 }
 
 void knl_get_cpu_set_from_session(cpu_set_t *cpuset, uint32 session_id, uint8 target_numa, uint32 cpu_id)
@@ -7136,7 +7127,7 @@ status_t knl_alter_index(knl_handle_t session, knl_handle_t stmt, knl_alindex_de
         timeout = def->rebuild.lock_timeout;
         dc_entry_t *entry = DC_ENTRY(&dc);
 
-        if (entry != NULL && entry->sch_lock && cm_atomic32_get(&entry->sch_lock->mode) == LOCK_MODE_IX) {
+        if (entry != NULL && entry->sch_lock && entry->sch_lock->mode == LOCK_MODE_IX) {
             dc_close(&dc);
             dls_unlatch(session, ddl_latch, NULL);
             OG_THROW_ERROR(ERR_RESOURCE_BUSY);

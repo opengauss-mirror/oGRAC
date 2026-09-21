@@ -1170,6 +1170,7 @@ EXTER_ATTACK status_t srv_process_command(session_t *session)
     clock_gettime(CLOCK_MONOTONIC, &tv_begin);
     cm_reset_error();
     OG_RETURN_IFERR(srv_process_init_session(session));
+
     OG_RETURN_IFERR(srv_read_packet(session));
 
     /* process request command */
