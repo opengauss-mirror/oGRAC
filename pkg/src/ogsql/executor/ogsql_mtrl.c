@@ -29,6 +29,7 @@
 #include "ogsql_func.h"
 #include "ogsql_scan.h"
 #include "var_defs.h"
+#include "ogsql_expr.h"
 #include "ogsql_expr_datatype.h"
 
 static char g_null_row[OG_MAX_ROW_SIZE];
@@ -809,11 +810,14 @@ static inline status_t og_put_select_sort_row(sql_stmt_t *statement, char *row_b
     return sql_put_row_value(statement, row_buf, row_ast, temp_type, var);
 }
 
-status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, row_assist_t *ra)
+static status_t sql_make_mtrl_sort_row_inner(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items,
+    row_assist_t *ra, bool32 use_origin_ref)
 {
     sort_item_t *item = NULL;
     variant_t value;
     expr_tree_t *expr = NULL;
+    expr_tree_t origin_expr;
+    expr_tree_t *exec_expr = NULL;
     char *buf = NULL;
     OG_RETURN_IFERR(sql_push(stmt, OG_CONVERT_BUFFER_SIZE, (void **)&buf));
     text_buf_t buffer;
@@ -823,7 +827,14 @@ status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *s
         item = (sort_item_t *)cm_galist_get(sort_items, i);
         expr = item->expr;
 
-        OG_RETURN_IFERR(sql_exec_expr(stmt, expr, &value));
+        exec_expr = expr;
+        if (use_origin_ref && expr->root->type == EXPR_NODE_GROUP) {
+            /* Multi-part index merging runs before the GROUP row is materialized. */
+            origin_expr = *expr;
+            origin_expr.root = sql_get_origin_ref(expr->root);
+            exec_expr = &origin_expr;
+        }
+        OG_RETURN_IFERR(sql_exec_expr(stmt, exec_expr, &value));
 
         og_type_t col_type = expr->root->datatype;
         // customize the sorting comparison method by decorating sort keys
@@ -843,6 +854,16 @@ status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *s
         OGSQL_RESTORE_STACK(stmt);
     }
     return OG_SUCCESS;
+}
+
+status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, row_assist_t *ra)
+{
+    return sql_make_mtrl_sort_row_inner(stmt, pending_buf, sort_items, ra, OG_FALSE);
+}
+
+status_t sql_make_mtrl_scan_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, row_assist_t *ra)
+{
+    return sql_make_mtrl_sort_row_inner(stmt, pending_buf, sort_items, ra, OG_TRUE);
 }
 
 status_t sql_make_mtrl_query_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, mtrl_rowid_t *rid,

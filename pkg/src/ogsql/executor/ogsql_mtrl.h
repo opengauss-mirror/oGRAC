@@ -122,6 +122,7 @@ status_t init_null_row(void);
 status_t sql_fetch_null_row(sql_stmt_t *stmt, sql_cursor_t *cursor);
 void sql_free_null_row(void);
 status_t sql_make_mtrl_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, row_assist_t *ra);
+status_t sql_make_mtrl_scan_sort_row(sql_stmt_t *stmt, char *pending_buf, galist_t *sort_items, row_assist_t *ra);
 status_t sql_set_segment_pages_hold(mtrl_context_t *ogx, uint32 seg_id, uint32 pages_hold);
 status_t sql_inherit_pending_buf(sql_cursor_t *cursor, sql_cursor_t *sub_cursor);
 status_t sql_revert_pending_buf(sql_cursor_t *cursor, sql_cursor_t *sub_cursor);
