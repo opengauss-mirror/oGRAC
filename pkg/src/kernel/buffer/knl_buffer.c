@@ -559,9 +559,7 @@ static inline bool32 buf_can_expire(buf_ctrl_t *ctrl, buf_expire_type_t expire_t
     return OG_FALSE;
 }
 
-/* Expiry decision for a global buffer pool (shmem) ctrl: refresh the local counters from the
- * shared metadata first. Taken from the UB branch's follow-up commit (dad68af), which this
- * cherry-pick depends on. */
+
 static bool32 buf_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_type)
 {
     // TOODO: This should be an atomic load from shmem with UB API

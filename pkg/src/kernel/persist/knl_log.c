@@ -1211,7 +1211,9 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
             knl_panic(ctrl != NULL);
         }
         if (!DB_CLUSTER_NO_CMS) {
-            bool32 is_owner = !DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl);
+            /* UB/GBP pages may keep lock_mode NULL while dirty; align with UB_dev0905 and skip owner check. */
+            bool32 ub_page = session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL;
+            bool32 is_owner = !DB_IS_CLUSTER(session) || DCS_BUF_CTRL_IS_OWNER(session, ctrl) || ub_page;
             if (!is_owner) {
                 OG_LOG_RUN_ERR("[LOG][SET_PAGE_LSN] owner mismatch: sid=%u spid=%u inst=%u index=%u/%u "
                                "ctrl=%p page=%p ctrl_page=%u-%u page_id=%u-%u "
