@@ -644,7 +644,7 @@ func_download_3rdparty()
     cd open_source
 
     # openGauss third_party repo (still required for huawei_secure_c)
-    git clone https://gitcode.com/opengauss/openGauss-third_party.git -b 7.0.0-RC3 --depth 1
+    git clone https://gitcode.com/opengauss/openGauss-third_party.git -b 7.0.0 --depth 1
 
     # On openEuler 24.03 install pcre2/zlib/protobuf/protobuf-c/zstd/openssl from OS repos.
     # On other OS versions keep cloning the source repositories for source build.
