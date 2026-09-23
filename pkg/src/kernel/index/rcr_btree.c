@@ -2222,10 +2222,10 @@ static void btree_notify_recycle(knl_session_t *session, btree_t *btree, knl_par
     bt_put_garbage_size(session, &index->btree);
 
     if (IS_PART_INDEX(index)) {
-        OG_LOG_DEBUG_INF("prepare to recycle pages of index %s, partition (%d, %d), %d indexes are waiting "
+        OG_LOG_RUN_INF("prepare to recycle pages of index %s, partition (%d, %d), %d indexes are waiting "
             "for recycling", index->desc.name, part_loc.part_no, part_loc.subpart_no, ogx->idx_list.count);
     } else {
-        OG_LOG_DEBUG_INF("prepare to recycle pages of index %s, %d indexes are waiting for recycling", index->desc.name,
+        OG_LOG_RUN_INF("prepare to recycle pages of index %s, %d indexes are waiting for recycling", index->desc.name,
             ogx->idx_list.count);
     }
 }
@@ -3531,7 +3531,7 @@ status_t btree_coalesce(knl_session_t *session, btree_t *btree, idx_recycle_stat
     bt_put_garbage_size(session, btree);
     (void)cm_gettimeofday(&tv_end);
 
-    OG_LOG_DEBUG_INF("%s index %s %s, %s,part(%d, %d),level %u, total pages %u, total leafs %u,"
+    OG_LOG_RUN_INF("%s index %s %s, %s,part(%d, %d),level %u, total pages %u, total leafs %u,"
         "normal leafs %u, unrecycled empty leafs %u[active tx leafs %u,unexpire leafs %u,parent first leafs %u],"
         "sparse leafs %u, recycled leafs %u[force recycled leafs %u], free pages %u, time used %llu ms, "
         "sleep %llu ms, ow_del_scn %llu",
