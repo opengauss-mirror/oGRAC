@@ -1530,7 +1530,7 @@ status_t spc_alter_datafile_autoextend(knl_session_t *session, knl_alterdb_dataf
         redo->auto_extend_size = df->ctrl->auto_extend_size;
         redo->auto_extend_maxsize = df->ctrl->auto_extend_maxsize;
 
-        log_put(session, RD_LOGIC_OPERATION, redo, sizeof(rd_set_df_autoextend_t), LOG_ENTRY_FLAG_NONE);
+        log_put(session, RD_SPC_CHANGE_AUTOEXTEND, redo, sizeof(rd_set_df_autoextend_t), LOG_ENTRY_FLAG_NONE);
 
         if (DB_IS_CLUSTER(session)) {
             log_put(session, RD_LOGIC_OPERATION, &oGRAC_redo, sizeof(rd_set_df_autoextend_ograc_t),
@@ -1919,4 +1919,3 @@ status_t df_verify_pageid_by_size(knl_session_t *session, page_id_t page_id)
 #ifdef __cplusplus
 }
 #endif
-
