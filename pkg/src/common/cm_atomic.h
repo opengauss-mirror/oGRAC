@@ -27,11 +27,6 @@
 
 #include <stdlib.h>
 #include "cm_defs.h"
-#include <stdatomic.h>
-#include <stdbool.h>
-#ifndef WIN32
-#include <sched.h>
-#endif // !WIN32
 
 #ifdef __cplusplus
 extern "C" {
@@ -310,18 +305,6 @@ static inline bool32 cm_atomic32_cas(atomic32_t *val, int32 oldval, int32 newval
     return __atomic_compare_exchange(val, &oldval, &newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-static inline uint64 cm_atomic_exchange_uint64(atomic_t *val, uint64 newval)
-{
-    uint64 oldval;
-    while (true) {
-        oldval = cm_atomic_get_u64(val);
-        if (cm_atomic_compare_exchange_u64(val, &oldval, newval)) {
-            break;
-        }
-    }
-    return oldval;
-}
-
 /*
  * Exclusive load/store 2 uint64_t variables to fullfil 128bit atomic compare and swap
  */
@@ -343,20 +326,19 @@ static inline uint128_u __excl_compare_and_swap_u128(volatile uint128_u *ptr, ui
                  "       cbnz    %w2, 1b\n"
                  "3:"
                  "       dmb ish\n"
-                 : "=&r"(old.u64[0]), "=&r"(old.u64[1]), "=&r"(ret), "=&r"(tmp), 
+                 : "=&r"(old.u64[0]), "=&r"(old.u64[1]), "=&r"(ret), "=&r"(tmp),
                    "+Q"(ptr->u128)
                  : "r"(oldval.u64[0]), "r"(oldval.u64[1]), "r"(newval.u64[0]), "r"(newval.u64[1])
                  : "memory");
     return old;
 }
 
-static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u* ptr, uint128_u oldval, uint128_u newval)
+static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u *ptr, uint128_u oldval, uint128_u newval)
 {
     return __excl_compare_and_swap_u128(ptr, oldval, newval);
 }
 
 #else
-
 static inline int64 cm_atomic_get(atomic_t *val)
 {
     return *val;
@@ -433,12 +415,13 @@ static inline bool32 cm_atomic32_cas(atomic32_t *val, int32 oldval, int32 newval
     return __sync_bool_compare_and_swap(val, oldval, newval);
 }
 
-static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u* ptr, uint128_u oldval, uint128_u newval)
+static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u *ptr, uint128_u oldval, uint128_u newval)
 {
     uint128_u ret;
     ret.u128 = __sync_val_compare_and_swap(&ptr->u128, oldval.u128, newval.u128);
     return ret;
 }
+
 #endif
 
 /*

@@ -622,14 +622,6 @@ SQL> alter system set UNDO_PREFETCH_PAGE_NUM = '1' scope = pfile;
 
 Succeed.
 
-SQL> alter system set _UNDO_PERF_PREALLOC = FALSE scope = pfile;
-
-Succeed.
-
-SQL> alter system set _UNDO_PREALLOC_PAGES = '4096' scope = pfile;
-
-Succeed.
-
 SQL> alter system set _TX_ROLLBACK_PROC_NUM = '2' scope = pfile;
 
 Succeed.
@@ -1742,7 +1734,7 @@ SQL> alter system set LOG_BUFFER_SIZE = 'BISON_INVALID' scope = pfile; --error
 OG-00601, [1:36]Sql syntax error: size must be a positive long integer
 SQL> alter system set LOG_BUFFER_COUNT = 'BISON_INVALID' scope = pfile; --error
 
-OG-00636, [1:37]Invalid number, range is [1,128]
+OG-00636, [1:37]Invalid number, range is [1,16]
 SQL> alter system set TEMP_BUFFER_SIZE = 'BISON_INVALID' scope = pfile; --error
 
 OG-00601, [1:37]Sql syntax error: size must be a positive long integer
@@ -2123,7 +2115,7 @@ SQL> alter system set INDEX_DEFER_RECYCLE_TIME = 'BISON_INVALID' scope = pfile; 
 OG-00636, [1:45]Invalid number, range is [0,4294967295]
 SQL> alter system set _UNDO_SEGMENTS = 'BISON_INVALID' scope = pfile; --error
 
-OG-00636, [1:35]Invalid number, range is [2,4096]
+OG-00636, [1:35]Invalid number, range is [2,1024]
 SQL> alter system set _UNDO_ACTIVE_SEGMENTS = 'BISON_INVALID' scope = pfile; --error
 
 OG-00601, [1:42]Sql syntax error: Convert uint32 failed, text = BISON_INVALID
@@ -2142,12 +2134,6 @@ OG-00601, [1:47]Sql syntax error: invalid parameter value
 SQL> alter system set UNDO_PREFETCH_PAGE_NUM = 'BISON_INVALID' scope = pfile; --error
 
 OG-00636, [1:43]Invalid number, range is [1,128]
-SQL> alter system set _UNDO_PERF_PREALLOC = 'BISON_INVALID' scope = pfile; --error
-
-OG-00601, [1:40]Sql syntax error: invalid parameter value
-SQL> alter system set _UNDO_PREALLOC_PAGES = 'BISON_INVALID' scope = pfile; --error
-
-OG-00636, [1:41]Invalid number, range is [0,65536]
 SQL> alter system set _TX_ROLLBACK_PROC_NUM = 'BISON_INVALID' scope = pfile; --error
 
 OG-00636, [1:42]Invalid number, range is [1,2]
@@ -2300,7 +2286,7 @@ SQL> alter system set LOCAL_KEY = 'BISON_INVALID' scope = both; --error
 OG-00202, The parameter value "LOCAL_KEY" was invalid
 SQL> alter system set BUF_POOL_NUM = 'BISON_INVALID' scope = pfile; --error
 
-OG-00636, [1:33]Invalid number, range is [1,4096]
+OG-00636, [1:33]Invalid number, range is [1,128]
 SQL> alter system set DEFAULT_EXTENTS = 'BISON_INVALID' scope = pfile; --error
 
 OG-00601, [1:36]Sql syntax error: Convert uint32 failed, text = BISON_INVALID

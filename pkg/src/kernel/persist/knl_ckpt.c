@@ -1142,7 +1142,7 @@ bool32 ckpt_try_latch_ctrl(knl_session_t *session, buf_ctrl_t *ctrl)
         }
 
         // in checkpoint, we don't increase the ref_num.
-        if (!buf_latch_timed_s(session, ctrl, CKPT_LATCH_TIMEOUT, OG_FALSE)) {
+        if (!buf_latch_timed_s(session, ctrl, CKPT_LATCH_TIMEOUT, OG_FALSE, OG_TRUE)) {
             return OG_FALSE;
         }
 

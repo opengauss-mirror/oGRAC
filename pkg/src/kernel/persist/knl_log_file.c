@@ -303,8 +303,29 @@ status_t db_alter_drop_logfile(knl_session_t *session, knl_alterdb_def_t *def)
     }
 
     log_lock_logfile(session);
-    if (!log_file_can_drop(ogx, inx) ||
-        (ogx->free_size - log_file_freesize(logfile) < LOG_KEEP_SIZE(session, session->kernel))) {
+    if (!log_file_can_drop(ogx, inx)) {
+        OG_THROW_ERROR(ERR_LOG_IN_USE);
+        log_unlock_logfile(session);
+        return OG_ERROR;
+    }
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 group_id = logfile->ctrl->group_id;
+        para_log_context_t *para_ogx = NULL;
+        uint64 free_size = 0;
+
+        if (group_id < CPU_SEG_MAX_NUM) {
+            para_ogx = kernel->para_log_ctx[group_id];
+        }
+        if (para_ogx != NULL) {
+            free_size = (uint64)cm_atomic_get(&para_ogx->free_size);
+        }
+        if (free_size - log_file_freesize(logfile) < LOG_KEEP_SIZE(session, session->kernel)) {
+            OG_THROW_ERROR(ERR_LOG_IN_USE);
+            log_unlock_logfile(session);
+            return OG_ERROR;
+        }
+    } else if (ogx->free_size - log_file_freesize(logfile) < LOG_KEEP_SIZE(session, session->kernel)) {
         OG_THROW_ERROR(ERR_LOG_IN_USE);
         log_unlock_logfile(session);
         return OG_ERROR;
@@ -328,7 +349,7 @@ status_t db_alter_drop_logfile(knl_session_t *session, knl_alterdb_def_t *def)
     err = strcpy_sp(rd.name, OG_FILE_NAME_BUFFER_SIZE, logfile->ctrl->name);
     knl_securec_check(err);
 
-    log_decrease_freesize(ogx, logfile);
+    log_decrease_freesize(session, logfile);
     LOG_SET_DROPPED(logfile->ctrl->flg);
     err = memset_sp(logfile->ctrl->name, OG_FILE_NAME_BUFFER_SIZE, 0, OG_FILE_NAME_BUFFER_SIZE);
     knl_securec_check(err);
@@ -546,7 +567,7 @@ void rd_alter_drop_logfile(knl_session_t *session, log_entry_t *log)
         return;
     }
 
-    log_decrease_freesize(ogx, logfile);
+    log_decrease_freesize(session, logfile);
     LOG_SET_DROPPED(logfile->ctrl->flg);
     err = memset_sp(logfile->ctrl->name, OG_FILE_NAME_BUFFER_SIZE, 0, OG_FILE_NAME_BUFFER_SIZE);
     knl_securec_check(err);

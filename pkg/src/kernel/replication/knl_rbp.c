@@ -3269,7 +3269,7 @@ static rbp_latch_result_t rbp_buf_latch_timed_s(knl_session_t *session, buf_ctrl
         cm_spin_lock(&rbp_ctrl->init_lock, NULL);
     }
 
-    if (!buf_latch_timed_s(session, ctrl, RBP_SEND_LATCH_TIMEOUT, OG_FALSE)) {
+    if (!buf_latch_timed_s(session, ctrl, RBP_SEND_LATCH_TIMEOUT, OG_FALSE, OG_TRUE)) {
         cm_spin_unlock(&rbp_ctrl->init_lock);
         return RBP_LATCH_BUSY;
     }

@@ -195,7 +195,7 @@ status_t dtc_sync_ddl(knl_handle_t knl_session)
 {
     knl_session_t *session = (knl_session_t *)knl_session;
 
-    knl_panic(session->logic_log_size > 0 || session->rm->logic_log_size > 0);
+    knl_panic(session->logic_log_size > 0);
 
     knl_rm_t *rm = session->rm;
     char *logic_log_buf = NULL;
@@ -1019,6 +1019,7 @@ void dtc_process_check_ddl_enabled(void *sess, mes_message_t *msg)
 
     mes_init_ack_head(msg->head, &ack_head, MES_CMD_CHECK_DDL_ENABLED_ACK, (sizeof(mes_message_head_t) +
         sizeof(status_t)), session->id);
+    ack_head.status = ddl_status;
 
     mes_release_message_buf(msg->buffer);
     if (mes_send_data2(&ack_head, &ddl_status) != OG_SUCCESS) {

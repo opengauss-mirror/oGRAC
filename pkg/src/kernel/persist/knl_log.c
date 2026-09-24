@@ -200,7 +200,7 @@ static status_t log_file_init(knl_session_t *session)
 
     ogx->logfile_hwm = logfile_set->logfile_hwm;
     ogx->files = logfile_set->items;
-    cm_atomic_set(&ogx->free_size, 0);
+    ogx->free_size = 0;
 
     if (ENABLE_PARA_LOG_FLUSH(session)) {
         uint32 group_count = SYS_NUMA_GROUP_COUNT;
@@ -224,7 +224,7 @@ static status_t log_file_init(knl_session_t *session)
         file->head.rst_id = db->ctrl.core.resetlogs.rst_id;
         file->head.write_pos = 0;
         file->head.rcy_off = 0;
-        cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
+        ogx->free_size += log_file_freesize(file);
         return OG_SUCCESS;
     }
 
@@ -286,7 +286,7 @@ static status_t log_file_init(knl_session_t *session)
 
         if (!ENABLE_PARA_LOG_FLUSH(session) && log_file_not_used(ogx, i)) {
             log_file_reset_unused_head(file, db);
-            cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(&logfile_set->items[i]));
+            ogx->free_size += log_file_freesize(&logfile_set->items[i]);
             continue;
         }
 
@@ -479,13 +479,13 @@ status_t log_switch_file(knl_session_t *session)
     log_get_next_file(session, &next, OG_TRUE);
     knl_panic_log((next != ogx->active_file), "failed to switch log file, current file is %d, "
                   "active file is %d, log free size is %llu", ogx->curr_file, ogx->active_file,
-                  cm_atomic_get(&ogx->free_size));
+                  ogx->free_size);
 
     curr_file = &ogx->files[ogx->curr_file];
     curr_file->ctrl->status = LOG_FILE_ACTIVE;
     uint32 asn = curr_file->head.asn;
     uint32 rst_id = (curr_file->head.asn == resetlog.last_asn) ? (resetlog.rst_id) : curr_file->head.rst_id;
-    cm_atomic_sub(&ogx->free_size, (int64)log_file_freesize(curr_file));
+    ogx->free_size -= log_file_freesize(curr_file);
     ogx->curr_file = next;
 
     log_file_t *next_file = &ogx->files[next];
@@ -579,9 +579,9 @@ status_t log_flush_to_disk(knl_session_t *session, log_context_t *ogx, log_batch
         ogx->stat.space_requests++;
     }
     if (file->ctrl->type == DEV_TYPE_ULOG) {
-        cm_atomic_set(&ogx->free_size, (int64)free_size);
+        ogx->free_size = free_size;
     } else {
-        cm_atomic_sub(&ogx->free_size, (int64)space_size);
+        ogx->free_size -= space_size;
     }
     
     file->head.last = batch->scn;
@@ -799,13 +799,13 @@ static log_batch_t *log_assemble_batch(knl_session_t *session, log_context_t *og
                 continue;
             }
 
-            if (buf->slot_bitmap != 0) {
+            if (buf->value != 0) {
                 skip_count++;
                 continue;
             }
 
             cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
-            if (buf->slot_bitmap != 0) {
+            if (buf->value != 0) {
                 cm_spin_unlock(&buf->lock);
                 skip_count++;
                 continue;
@@ -865,7 +865,8 @@ bool32 log_need_flush(knl_session_t *session)
     uint32 wid = ogx->wid;
     for (uint32 i = 0; i < ogx->buf_count; i++) {
         log_buffer_t *buf = &ogx->bufs[i].members[wid];
-        if (buf->slot_bitmap != 0) {
+
+        if (buf->value != 0) {
             return OG_TRUE;
         }
 
@@ -881,7 +882,7 @@ static void log_switch_buffer(knl_session_t *session, log_context_t *ogx)
 {
     uint32 wid = ogx->wid;
     bool32 dbs_enabled = cm_dbs_is_enable_dbs();
-    if (SECUREC_UNLIKELY(dbs_enabled)) {
+    if (dbs_enabled) {
         for (uint32 i = 0; i < ogx->buf_count; i++) {
             log_buffer_t *buf = &ogx->bufs[i].members[wid];
             cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
@@ -891,7 +892,7 @@ static void log_switch_buffer(knl_session_t *session, log_context_t *ogx)
     ogx->wid = !ogx->wid;
     ogx->fid = !ogx->fid;
 
-    if (SECUREC_UNLIKELY(dbs_enabled)) {
+    if (dbs_enabled) {
         for (uint32 i = 0; i < ogx->buf_count; i++) {
             log_buffer_t *buf = &ogx->bufs[i].members[wid];
             cm_spin_unlock(&buf->lock);
@@ -1020,7 +1021,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
         }
 
         file->head.write_pos += batch->space_size;
-        cm_atomic_sub(&ogx->free_size, (int64)batch->space_size);
+        ogx->free_size -= batch->space_size;
         file->head.last = batch->scn;
         if (file->head.first == OG_INVALID_ID64) {
             file->head.first = batch->scn;
@@ -1091,6 +1092,7 @@ void log_proc(thread_t *thread)
         }
 
         uint32 wid = ogx->wid;
+
         for (uint32 i = 0; i < ogx->buf_count; i++) {
             if (ogx->bufs[i].members[wid].write_pos >= LOG_FLUSH_THRESHOLD) {
                 flush_needed = OG_TRUE;
@@ -1377,36 +1379,34 @@ static status_t log_commit_flush(knl_session_t *session)
     cm_spin_lock(&ogx->tx_queue.lock, &session->stat->spin_stat.stat_commit_queue);
     knl_session_t *begin = ogx->tx_queue.first;
     knl_session_t *end = ogx->tx_queue.last;
-    uint64 queue_max_lfn = ogx->tx_queue.max_lfn;
     ogx->tx_queue.first = NULL;
-    CM_MFENCE;
-    ogx->tx_queue.max_lfn = 0;
     cm_spin_unlock(&ogx->tx_queue.lock);
 
     log_set_commit_progress(begin, end, LOG_WAITING);
 
-    cm_spin_unlock(&ogx->commit_lock);
-    log_wake_up_waiter(session, ogx);
-
-    if (log_flush(session, NULL, NULL, NULL, &queue_max_lfn) != OG_SUCCESS) {
+    if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
+        cm_spin_unlock(&ogx->commit_lock);
+        log_wake_up_waiter(session, ogx);
         return OG_ERROR;
     }
     uint64 flushed_lfn = ogx->flushed_lfn;
-        if (session->kernel->attr.enable_boc) {
-            tx_scn_broadcast(session);
-        }
+    cm_spin_unlock(&ogx->commit_lock);
+    if (session->kernel->attr.enable_boc) {
+        tx_scn_broadcast(session);
+    }
+    log_wake_up_waiter(session, ogx);
 
-        if (DB_IS_RAFT_ENABLED(session->kernel)) {
+    if (DB_IS_RAFT_ENABLED(session->kernel)) {
         knl_panic_log(session->kernel->raft_ctx.status == RAFT_STATUS_INITED, "the raft_ctx's status is abnormal.");
-            raft_wait_for_batch_commit_in_raft(session, flushed_lfn);
-        } else if (session->kernel->lsnd_ctx.standby_num > 0) {
-            lsnd_wait(session, flushed_lfn, &quorum_lfn);
+        raft_wait_for_batch_commit_in_raft(session, flushed_lfn);
+    } else if (session->kernel->lsnd_ctx.standby_num > 0) {
+        lsnd_wait(session, flushed_lfn, &quorum_lfn);
 
-            if (quorum_lfn > 0) {
+        if (quorum_lfn > 0) {
             cm_atomic_set((atomic_t *)&session->kernel->redo_ctx.quorum_lfn, (int64)quorum_lfn);
-            }
         }
-        log_set_commit_progress(begin, end, LOG_COMPLETED);
+    }
+    log_set_commit_progress(begin, end, LOG_COMPLETED);
     return OG_SUCCESS;
 }
 
@@ -1421,11 +1421,9 @@ static void log_commit_enque(knl_session_t *session)
     if (ogx->tx_queue.first == NULL) {
         ogx->tx_queue.first = session;
         ogx->tx_queue.last = session;
-        ogx->tx_queue.max_lfn = session->curr_lfn;
     } else {
         ogx->tx_queue.last->log_next = session;
         ogx->tx_queue.last = session;
-        ogx->tx_queue.max_lfn = session->curr_lfn > ogx->tx_queue.max_lfn ? session->curr_lfn : ogx->tx_queue.max_lfn;
     }
     cm_spin_unlock(&ogx->tx_queue.lock);
 }
@@ -1512,13 +1510,13 @@ static log_buffer_t *log_write_try_lock(knl_session_t *session, log_context_t *o
         uint32 wid = ogx->wid;
         log_buffer_t *buf = &ogx->bufs[buf_id].members[wid];
 
-        if (log_all_slots_occupied(&buf->slot_bitmap)) {
+        if (buf->value == LOG_BUF_SLOT_FULL) {
             cm_spin_sleep();
             continue;
         }
 
         cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
-        if (log_all_slots_occupied(&buf->slot_bitmap)) {
+        if (buf->value == LOG_BUF_SLOT_FULL) {
             cm_spin_unlock(&buf->lock);
             cm_spin_sleep();
             continue;
@@ -1568,10 +1566,8 @@ static void log_write(knl_session_t *session)
         knl_panic(DB_IS_PRIMARY(&session->kernel->db) && session->kernel->switch_ctrl.state < SWITCH_WAIT_LOG_SYNC);
     }
 
-    knl_begin_session_wait(session, LOG_WRITE, OG_TRUE);
     if (ENABLE_PARA_LOG_FLUSH(session)) {
         para_log_write(session, total_size, group, ori_group_size);
-        knl_end_session_wait(session, LOG_WRITE);
         return;
     }
 
@@ -1598,9 +1594,13 @@ static void log_write(knl_session_t *session)
     if (SECUREC_UNLIKELY(session->log_encrypt)) {
         buf->log_encrypt = OG_TRUE;
     }
-    cur_slot = log_find_first_free_slot(&buf->slot_bitmap);
-    knl_panic_log(cur_slot != OG_INVALID_ID8, "no free log buffer slot available");
-    log_claim_slot(&buf->slot_bitmap, cur_slot);
+    for (uint8 i = 0; i < LOG_BUF_SLOT_COUNT; i++) {
+        if (buf->slots[i] == 0) {
+            buf->slots[i] = 1;
+            cur_slot = i;
+            break;
+        }
+    }
 
     group->lsn = session->curr_lsn;
     group->commit_lsn = group->lsn;
@@ -1612,8 +1612,7 @@ static void log_write(knl_session_t *session)
 
     log_copy(session, buf, start_pos);
     CM_MFENCE;
-    log_release_slot(&buf->slot_bitmap, cur_slot);
-    knl_end_session_wait(session, LOG_WRITE);
+    buf->slots[cur_slot] = 0;
 }
 
 static bool32 log_can_recycle(knl_session_t *session, log_file_t *file, arch_log_id_t *last_arch_log)
@@ -1657,7 +1656,7 @@ static void log_recycle_ulog_space(knl_session_t *session, log_point_t *point)
     oGRAC_record_io_stat_begin(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
     free_size = cm_dbs_ulog_recycle(file->handle, point->lsn);
     if (free_size != 0) {
-        cm_atomic_set(&ogx->free_size, (int64)free_size);
+        ogx->free_size = free_size;
     }
     ogx->alerted = OG_FALSE;
     oGRAC_record_io_stat_end(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
@@ -1715,7 +1714,7 @@ static void log_recycle_ulog_space_standby(knl_session_t *session)
         oGRAC_record_io_stat_begin(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
         uint64 free_size = cm_dbs_ulog_recycle(logfile_handle, recycle_lsn);
         if (free_size != 0) {
-            cm_atomic_set(&ogx->free_size, (int64)free_size);
+            ogx->free_size = free_size;
         }
         ogx->alerted = OG_FALSE;
         oGRAC_record_io_stat_end(IO_RECORD_EVENT_NS_TRUNCATE_ULOG, &tv_begin);
@@ -1796,7 +1795,7 @@ void log_recycle_file(knl_session_t *session, log_point_t *point)
         file->arch_pos = 0;
         cm_unlatch(&file->latch, NULL);
 
-        cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
+        ogx->free_size += log_file_freesize(file);
         log_get_next_file(session, &file_id, OG_FALSE);
 
         ogx->active_file = file_id;
@@ -1899,7 +1898,7 @@ void log_reset_file(knl_session_t *session, log_point_t *point)
     log_file_t *file = &ogx->files[file_id];
 
     file->head.write_pos = (uint64)point->block_id * file->ctrl->block_size;
-    cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(file));
+    ogx->free_size += log_file_freesize(file);
     log_unlatch_file(session, file_id);
 }
 
@@ -1927,7 +1926,7 @@ static void log_try_alert(knl_session_t *session)
         knl_panic_log(para_ogx != NULL, "para log context is not initialized");
         current_free_size = (uint64)cm_atomic_get(&para_ogx->free_size);
     } else {
-        current_free_size = (uint64)cm_atomic_get(&ogx->free_size);
+        current_free_size = ogx->free_size;
     }
 
     OG_LOG_RUN_WAR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
@@ -1986,7 +1985,7 @@ void log_atomic_op_begin(knl_session_t *session)
             continue;
         }
 
-        current_free_size = (uint64)cm_atomic_get(&ogx->free_size);
+        current_free_size = ogx->free_size;
         if (current_free_size > LOG_KEEP_SIZE(session, session->kernel)) {
             break;
         }
@@ -2603,15 +2602,47 @@ void log_add_freesize(knl_session_t *session, uint32 inx)
 {
     log_context_t *ogx = &session->kernel->redo_ctx;
 
-    if (log_file_not_used(ogx, inx)) {
-        log_file_t *logfile = &ogx->files[inx];
-        cm_atomic_add(&ogx->free_size, (int64)log_file_freesize(logfile));
+    if (!log_file_not_used(ogx, inx)) {
+        return;
     }
+
+    log_file_t *logfile = &ogx->files[inx];
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 group_id = logfile->ctrl->group_id;
+        para_log_context_t *para_ogx;
+
+        if (group_id >= CPU_SEG_MAX_NUM) {
+            return;
+        }
+
+        para_ogx = session->kernel->para_log_ctx[group_id];
+        if (para_ogx != NULL) {
+            cm_atomic_add(&para_ogx->free_size, (int64)log_file_freesize(logfile));
+        }
+        return;
+    }
+
+    ogx->free_size += log_file_freesize(logfile);
 }
 
-void log_decrease_freesize(log_context_t *ogx, log_file_t *logfile)
+void log_decrease_freesize(knl_session_t *session, log_file_t *logfile)
 {
-    cm_atomic_sub(&ogx->free_size, (int64)log_file_freesize(logfile));
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        uint32 group_id = logfile->ctrl->group_id;
+        para_log_context_t *para_ogx;
+
+        if (group_id >= CPU_SEG_MAX_NUM) {
+            return;
+        }
+
+        para_ogx = session->kernel->para_log_ctx[group_id];
+        if (para_ogx != NULL) {
+            cm_atomic_sub(&para_ogx->free_size, (int64)log_file_freesize(logfile));
+        }
+        return;
+    }
+
+    session->kernel->redo_ctx.free_size -= log_file_freesize(logfile);
 }
 
 bool32 log_file_can_drop(log_context_t *ogx, uint32 file)

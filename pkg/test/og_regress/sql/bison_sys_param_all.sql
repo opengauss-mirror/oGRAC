@@ -158,8 +158,6 @@ alter system set _UNDO_AUTON_BIND_OWN_SEGMENT = FALSE scope = pfile;
 alter system set _UNDO_AUTO_SHRINK = TRUE scope = pfile;
 alter system set _UNDO_AUTO_SHRINK_INACTIVE = FALSE scope = pfile;
 alter system set UNDO_PREFETCH_PAGE_NUM = '1' scope = pfile;
-alter system set _UNDO_PERF_PREALLOC = FALSE scope = pfile;
-alter system set _UNDO_PREALLOC_PAGES = '4096' scope = pfile;
 alter system set _TX_ROLLBACK_PROC_NUM = '2' scope = pfile;
 alter system set REPL_WAIT_TIMEOUT = '10' scope = pfile;
 alter system set COMMIT_ON_DISCONNECT = FALSE scope = pfile;
@@ -581,8 +579,6 @@ alter system set _UNDO_AUTON_BIND_OWN_SEGMENT = 'BISON_INVALID' scope = pfile; -
 alter system set _UNDO_AUTO_SHRINK = 'BISON_INVALID' scope = pfile; --error
 alter system set _UNDO_AUTO_SHRINK_INACTIVE = 'BISON_INVALID' scope = pfile; --error
 alter system set UNDO_PREFETCH_PAGE_NUM = 'BISON_INVALID' scope = pfile; --error
-alter system set _UNDO_PERF_PREALLOC = 'BISON_INVALID' scope = pfile; --error
-alter system set _UNDO_PREALLOC_PAGES = 'BISON_INVALID' scope = pfile; --error
 alter system set _TX_ROLLBACK_PROC_NUM = 'BISON_INVALID' scope = pfile; --error
 alter system set REPL_WAIT_TIMEOUT = 'BISON_INVALID' scope = pfile; --error
 alter system set COMMIT_ON_DISCONNECT = 'BISON_INVALID' scope = pfile; --error

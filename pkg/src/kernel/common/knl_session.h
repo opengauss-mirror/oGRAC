@@ -95,7 +95,6 @@ typedef struct st_knl_spin_stat_t {
     spin_statis_t stat_ckpt_queue;
     spin_statis_t stat_buffer;
     spin_statis_t stat_bucket;
-    spin_statis_t stat_buf_latch;
     spin_statis_t stat_space;
     spin_statis_t stat_dc_entry;
     spin_statis_t stat_log_flush;

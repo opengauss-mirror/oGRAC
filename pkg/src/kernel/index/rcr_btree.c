@@ -3317,7 +3317,7 @@ static inline bool32 btree_coalesce_need_suspend(knl_session_t *session, dc_entr
 
     /* backstage coalesce should not block user's DDL */
     if (session->id == SESSION_ID_IDX_RECYCLE && scan_pages % BTREE_COALESCE_CHECK_INTERVAL == 0) {
-        if (cm_atomic32_get(&lock->mode) == LOCK_MODE_IX) {
+        if (lock->mode == LOCK_MODE_IX) {
             return OG_TRUE;
         }
     }

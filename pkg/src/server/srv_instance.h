@@ -44,7 +44,6 @@
 #include "ogsql_resource.h"
 #include "srv_sess_security.h"
 #include "cm_io_record.h"
-#include "cm_cpu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -304,6 +303,10 @@ typedef struct st_promote_record {
 #define SYS_CPUS_PER_GROUP    (g_instance->attr.hw_topo_info.cpu_of_each_g)
 #define SYS_NUMA_NODE_COUNT    (g_instance->attr.hw_topo_info.numa_count)
 
+
+#define CPU_INFO_STR_SIZE 10240  // 配置的CPU绑核信息
+#define CPU_SEG_MAX_NUM 64
+#define SMALL_RECORD_SIZE 128
 
 extern instance_t *g_instance;
 extern char *g_database_home;

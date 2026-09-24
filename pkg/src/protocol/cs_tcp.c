@@ -25,7 +25,9 @@
 #include "cs_tcp.h"
 #include "cs_pipe.h"
 #include "cm_signal.h"
+#ifndef WIN32
 #include <numa.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
