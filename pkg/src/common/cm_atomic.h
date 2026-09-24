@@ -181,10 +181,15 @@ union Union128 {
     struct Combined128 struct128;
 };
 
+#if defined(__aarch64__)
+#include "cm_atomic_lse.h"
+#endif
+
 /*
  * Shared atomic helpers built on portable GCC builtins (__atomic_* / __sync_*).
  * Used by both ARM and x86 to avoid per-arch duplication. Defined here (before
  * the arch split) so they are visible to both the ARM and x86 branches below.
+ * On aarch64 with LSE (CM_ATOMIC_HAS_LSE) CAS goes through casal.
  */
 static inline uint64 cm_atomic_get_u64(atomic_t *val)
 {
@@ -204,30 +209,39 @@ static inline uint64 cm_atomic_barrier_read(volatile uint64 *ptr)
 
 static inline bool32 cm_atomic_compare_exchange_64(atomic_t *ptr, int64 *expected, int64 newval)
 {
-    bool32 ret = false;
     int64 current;
+#ifdef CM_ATOMIC_HAS_LSE
+    current = (int64)cm_lse_cas_u64((volatile uint64 *)(void *)ptr, (uint64)(*expected), (uint64)newval);
+#else
     current = __sync_val_compare_and_swap(ptr, *expected, newval);
-    ret = current == *expected;
+#endif
+    bool32 ret = (current == *expected) ? OG_TRUE : OG_FALSE;
     *expected = current;
     return ret;
 }
 
 static inline bool32 cm_atomic_compare_exchange_u64(atomic_t *ptr, uint64 *expected, uint64 newval)
 {
-    bool32 ret = false;
     uint64 current;
+#ifdef CM_ATOMIC_HAS_LSE
+    current = cm_lse_cas_u64((volatile uint64 *)(void *)ptr, *expected, newval);
+#else
     current = __sync_val_compare_and_swap(ptr, *expected, newval);
-    ret = current == *expected;
+#endif
+    bool32 ret = (current == *expected) ? OG_TRUE : OG_FALSE;
     *expected = current;
     return ret;
 }
 
 static inline bool32 cm_atomic32_compare_exchange(atomic32_t *ptr, int32 *expected, int32 newval)
 {
-    bool32 ret = false;
     int32 current;
+#ifdef CM_ATOMIC_HAS_LSE
+    current = (int32)cm_lse_cas_u32((volatile uint32 *)(void *)ptr, (uint32)(*expected), (uint32)newval);
+#else
     current = __sync_val_compare_and_swap(ptr, *expected, newval);
-    ret = current == *expected;
+#endif
+    bool32 ret = (current == *expected) ? OG_TRUE : OG_FALSE;
     *expected = current;
     return ret;
 }
@@ -244,6 +258,96 @@ static inline int64 cm_atomic_set(atomic_t *val, int64 value)
     return value;
 }
 
+#ifdef CM_ATOMIC_HAS_LSE
+/*
+ * LSE ldaddal is fetch_add (returns old). cm_atomic_inc/add/sub match the
+ * existing GCC add_fetch / sub_and_fetch contract and return the new value.
+ */
+static inline int64 cm_atomic_inc(atomic_t *val)
+{
+    uint64 old = cm_lse_fetch_add_u64((volatile uint64 *)(void *)val, 1ULL);
+    return (int64)(old + 1ULL);
+}
+
+static inline int64 cm_atomic_dec(atomic_t *val)
+{
+    uint64 old = cm_lse_fetch_sub_u64((volatile uint64 *)(void *)val, 1ULL);
+    return (int64)(old - 1ULL);
+}
+
+static inline int32 cm_atomic32_inc(atomic32_t *val)
+{
+    uint32 old = cm_lse_fetch_add_u32((volatile uint32 *)(void *)val, 1U);
+    return (int32)(old + 1U);
+}
+
+static inline int32 cm_atomic32_fetch_inc(atomic32_t *val)
+{
+    return (int32)cm_lse_fetch_add_u32((volatile uint32 *)(void *)val, 1U);
+}
+
+static inline int32 cm_atomic32_fetch_add(atomic32_t *val, int32 count)
+{
+    return (int32)cm_lse_fetch_add_u32((volatile uint32 *)(void *)val, (uint32)count);
+}
+
+static inline int32 cm_atomic32_dec(atomic32_t *val)
+{
+    uint32 old = cm_lse_fetch_sub_u32((volatile uint32 *)(void *)val, 1U);
+    return (int32)(old - 1U);
+}
+
+static inline int32 cm_atomic32_add(atomic32_t *val, int32 count)
+{
+    uint32 old = cm_lse_fetch_add_u32((volatile uint32 *)(void *)val, (uint32)count);
+    return (int32)(old + (uint32)count);
+}
+
+static inline int32 cm_atomic32_get(atomic32_t *val)
+{
+    return __atomic_load_n(val, __ATOMIC_SEQ_CST);
+}
+
+static inline int32 cm_atomic32_set(atomic32_t *val, int32 value)
+{
+    __atomic_store_n(val, value, __ATOMIC_SEQ_CST);
+    return value;
+}
+
+static inline int64 cm_atomic_add(atomic_t *val, int64 count)
+{
+    uint64 old = cm_lse_fetch_add_u64((volatile uint64 *)(void *)val, (uint64)count);
+    return (int64)(old + (uint64)count);
+}
+
+static inline int64 cm_atomic_sub(atomic_t *val, int64 count)
+{
+    uint64 old = cm_lse_fetch_sub_u64((volatile uint64 *)(void *)val, (uint64)count);
+    return (int64)(old - (uint64)count);
+}
+
+static inline bool32 cm_atomic_cas(atomic_t *val, int64 oldval, int64 newval)
+{
+    uint64 current = cm_lse_cas_u64((volatile uint64 *)(void *)val, (uint64)oldval, (uint64)newval);
+    return ((int64)current == oldval) ? OG_TRUE : OG_FALSE;
+}
+
+static inline bool32 cm_atomic32_cas(atomic32_t *val, int32 oldval, int32 newval)
+{
+    uint32 current = cm_lse_cas_u32((volatile uint32 *)(void *)val, (uint32)oldval, (uint32)newval);
+    return ((int32)current == oldval) ? OG_TRUE : OG_FALSE;
+}
+
+static inline uint64 cm_atomic_exchange_uint64(atomic_t *val, uint64 newval)
+{
+    return cm_lse_swap_u64((volatile uint64 *)(void *)val, newval);
+}
+
+static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u *ptr, uint128_u oldval, uint128_u newval)
+{
+    return cm_lse_cas_u128(ptr, oldval, newval);
+}
+#else
 static inline int64 cm_atomic_inc(atomic_t *val)
 {
     return __atomic_add_fetch(val, 1, __ATOMIC_SEQ_CST);
@@ -323,7 +427,9 @@ static inline uint64 cm_atomic_exchange_uint64(atomic_t *val, uint64 newval)
 }
 
 /*
- * Exclusive load/store 2 uint64_t variables to fullfil 128bit atomic compare and swap
+ * Exclusive load/store pair for 128-bit CAS. Used when LSE (CASP) is not
+ * available. ldxp/stlxp can livelock under contention; the extra dmb ish
+ * approximates seq_cst.
  */
 static inline uint128_u __excl_compare_and_swap_u128(volatile uint128_u *ptr, uint128_u oldval, uint128_u newval)
 {
@@ -350,10 +456,11 @@ static inline uint128_u __excl_compare_and_swap_u128(volatile uint128_u *ptr, ui
     return old;
 }
 
-static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u* ptr, uint128_u oldval, uint128_u newval)
+static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u *ptr, uint128_u oldval, uint128_u newval)
 {
     return __excl_compare_and_swap_u128(ptr, oldval, newval);
 }
+#endif
 
 #else
 
@@ -442,12 +549,14 @@ static inline uint128_u cm_compare_and_swap_u128(volatile uint128_u* ptr, uint12
 #endif
 
 /*
- * Shared exchange helpers: depend on the arch-specific cm_atomic_get /
- * cm_atomic32_get defined in the ARM/x86 branches above, so they are placed
- * after the arch split. Portable GCC builtins, valid for both ARM and x86.
+ * Shared exchange helpers. With LSE these are a single swpal; otherwise they
+ * loop on the arch-specific get + compare_exchange pair.
  */
 static inline int64 cm_atomic_exchange(atomic_t *val, int64 newval)
 {
+#ifdef CM_ATOMIC_HAS_LSE
+    return (int64)cm_lse_swap_u64((volatile uint64 *)(void *)val, (uint64)newval);
+#else
     int64 oldval;
     while (true) {
         oldval = cm_atomic_get(val);
@@ -456,10 +565,14 @@ static inline int64 cm_atomic_exchange(atomic_t *val, int64 newval)
         }
     }
     return oldval;
+#endif
 }
 
 static inline int32 cm_atomic32_exchange(atomic32_t *val, int32 newval)
 {
+#ifdef CM_ATOMIC_HAS_LSE
+    return (int32)cm_lse_swap_u32((volatile uint32 *)(void *)val, (uint32)newval);
+#else
     int32 oldval;
     while (true) {
         oldval = cm_atomic32_get(val);
@@ -468,6 +581,7 @@ static inline int32 cm_atomic32_exchange(atomic32_t *val, int32 newval)
         }
     }
     return oldval;
+#endif
 }
 
 #endif

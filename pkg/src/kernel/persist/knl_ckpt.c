@@ -35,6 +35,9 @@
 #include "cm_log.h"
 #include "cm_file.h"
 #include "knl_buflatch.h"
+#include "knl_page.h"
+#include "knl_log.h"
+#include "knl_parallel_log.h"
 #include "knl_ctrl_restore.h"
 #include "knl_session.h"
 #include "securec.h"
@@ -327,6 +330,19 @@ void ckpt_close(knl_session_t *session)
 #endif
 }
 
+static inline void ckpt_assign_page_trunc_point(knl_session_t *session, buf_ctrl_t *ctrl,
+                                                  const log_point_t *queue_trunc)
+{
+    /*
+     * Parallel must not use page->lsn as trunc. That LSN is stamped in para_log_write when
+     * redo is only copied to the WAL buffer; using it as rcy skips groups that still apply
+     * to unflushed sibling pages (typically undo). Same as serial: pin the page to the
+     * already-durable queue trunc (lgwr advances it via ckpt_set_trunc_point).
+     */
+    ctrl->trunc_point = *queue_trunc;
+    (void)session;
+}
+
 // Parallel: safe point is global commit prefix (compare by lsn); serial: compare by original log_point.
 static inline int32 ckpt_cmp_point(knl_session_t *session, log_point_t *l, log_point_t *r)
 {
@@ -470,8 +486,10 @@ static void ckpt_update_log_point(knl_session_t *session)
     /*
      * We can not directly set rcy_point to lrp_point when ckpt queue is empty.
      * Because it doesn't mean all dirty pages have been flushed to disk.
-     * Only after database has finished recovery job can we set rcy_point to lrp_point,
-     * which means database status is ready or recover_for_restore has been set to true.
+     * Serial mode may promote rcy to lrp after recovery is finished (DB ready or
+     * recover_for_restore). Parallel LSN is not a dense prefix: empty-queue must
+     * not copy lrp (recovered_end) into rcy. rcy advances from trunc_point of
+     * pages this ckpt wrote, or from ckpt_publish_rcy_to_lrp() after a waited FULL.
      */
     if (!DB_NOT_READY(session) || session->kernel->db.recover_for_restore) {
         if (ENABLE_PARA_LOG_FLUSH(session)) {
@@ -493,6 +511,7 @@ static void ckpt_update_log_point(knl_session_t *session)
                 dtc_my_ctrl(session)->rcy_point = group->trunc_point_snapshot;
                 return;
             }
+            return;
         } else {
             rcy_context_t *rcy = &session->kernel->rcy_ctx;
             log_point_t last_point = session->kernel->redo_ctx.curr_point;
@@ -580,6 +599,21 @@ void ckpt_reset_point(knl_session_t *session, log_point_t *point)
     dtc_my_ctrl(session)->consistent_lfn = point->lfn;
     ckpt_set_rbp_lrp_point(session, point, 0);
     ckpt_set_rbp_reset_point(session, point, 0);
+}
+
+void ckpt_publish_rcy_to_lrp(knl_session_t *session)
+{
+    ckpt_context_t *ogx = &session->kernel->ckpt_ctx;
+    dtc_node_ctrl_t *ctrl = dtc_my_ctrl(session);
+
+    if (ckpt_cmp_point(session, &ctrl->rcy_point, &ogx->lrp_point) > 0) {
+        return;
+    }
+
+    ckpt_set_rbp_reset_from_lrp(session, &ogx->lrp_point);
+    ctrl->rcy_point = ogx->lrp_point;
+    ctrl->consistent_lfn = ogx->lrp_point.lfn;
+    para_log_ckpt_flush_rcy_off(session);
 }
 
 static void ckpt_move_cleaned_pages(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
@@ -2679,7 +2713,7 @@ void ckpt_enque_page(knl_session_t *session)
         if (!DB_IS_PRIMARY(&session->kernel->db)) {
             session->dirty_pages[i]->curr_node_idx = queue->curr_node_idx;
         }
-        session->dirty_pages[i]->trunc_point = queue->trunc_point;
+        ckpt_assign_page_trunc_point(session, session->dirty_pages[i], &queue->trunc_point);
         session->dirty_pages[i]->ckpt_enque_time = enque_time;
         session->dirty_pages[i]->in_ckpt = OG_TRUE;
     }
@@ -2719,7 +2753,7 @@ void ckpt_enque_one_page(knl_session_t *session, buf_ctrl_t *ctrl)
     if (!DB_IS_PRIMARY(&session->kernel->db)) {
         ctrl->curr_node_idx = queue->curr_node_idx;
     }
-    ctrl->trunc_point = queue->trunc_point;
+    ckpt_assign_page_trunc_point(session, ctrl, &queue->trunc_point);
     ctrl->in_ckpt = OG_TRUE;
     cm_spin_unlock(&queue->lock);
 }

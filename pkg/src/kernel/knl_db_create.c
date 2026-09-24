@@ -68,6 +68,24 @@ static void dbc_init_dbcompatibility(knl_session_t *session, knl_database_def_t 
     db->ctrl.core.dbcompatibility = def->dbcompatibility;
 }
 
+/*
+ * Freeze the redo layout into the control file. logfile ctrl->group_id is assigned only in
+ * dbc_create_logfiles() below, so the mode cannot be changed later without invalidating it.
+ */
+static void dbc_init_para_log_mode(knl_session_t *session)
+{
+    knl_instance_t *kernel = (knl_instance_t *)session->kernel;
+    database_t *db = &kernel->db;
+
+    if (ENABLE_PARA_LOG_FLUSH(session)) {
+        db->ctrl.core.para_log_mode = PARA_LOG_DB_MODE_PARA;
+        db->ctrl.core.para_log_groups = (uint8)SYS_NUMA_GROUP_COUNT;
+    } else {
+        db->ctrl.core.para_log_mode = PARA_LOG_DB_MODE_SERIAL;
+        db->ctrl.core.para_log_groups = 0;
+    }
+}
+
 static void dbc_init_scn(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
@@ -716,6 +734,7 @@ status_t dbc_create_database(knl_handle_t session, knl_database_def_t *def, bool
     dbc_init_archivelog(knl_session, def);
     dbc_init_dbid(knl_session, def);
     dbc_init_dbcompatibility(knl_session, def);
+    dbc_init_para_log_mode(knl_session);
     if (DB_ATTR_CLUSTER(knl_session)) {
         db_init_max_instance(session, def->max_instance);
     } else {

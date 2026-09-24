@@ -198,6 +198,10 @@ static status_t log_file_init(knl_session_t *session)
         head_buf = kernel->attr.lgwr_head_buf;
     }
 
+    if (para_log_check_db_mode(session) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     ogx->logfile_hwm = logfile_set->logfile_hwm;
     ogx->files = logfile_set->items;
     cm_atomic_set(&ogx->free_size, 0);
@@ -1603,7 +1607,16 @@ static void log_write(knl_session_t *session)
     log_claim_slot(&buf->slot_bitmap, cur_slot);
 
     group->lsn = session->curr_lsn;
-    group->commit_lsn = group->lsn;
+    {
+        log_context_t *ogx = &session->kernel->redo_ctx;
+        if (ogx->files != NULL && ogx->curr_file < ogx->logfile_hwm) {
+            group->asn = ogx->files[ogx->curr_file].head.asn;
+            group->rst_id = ogx->files[ogx->curr_file].head.rst_id;
+        } else {
+            group->asn = 0;
+            group->rst_id = 0;
+        }
+    }
     if (group->lsn > buf->lsn) {
         buf->lsn = group->lsn;
     }
@@ -1956,12 +1969,13 @@ void log_atomic_op_begin(knl_session_t *session)
     knl_panic_log(!session->atomic_op, "the atomic_op of session is true.");
     session->atomic_op = OG_TRUE;
     group->lsn = OG_INVALID_ID64;
-    group->commit_lsn = OG_INVALID_ID64;
     group->rmid = session->rmid;
     group->opr_uid = (uint16)session->uid;
     group->size = sizeof(log_group_t);
     group->extend = 0;
     group->nologging_insert = OG_FALSE;
+    group->asn = 0;
+    group->rst_id = 0;
 
     if (DB_NOT_READY(session)) {
         knl_panic_log(!session->kernel->db.ctrl.core.build_completed, "the core table is build_completed.");

@@ -80,6 +80,11 @@ extern "C" {
 #define ENABLE_PARA_LOG_FLUSH(session) (((knl_session_t *)(session))->kernel->attr.enable_para_log_flush)
 #define ENABLE_PARA_LOG_DFX(session) (((knl_session_t *)(session))->kernel->attr.enable_para_log_dfx)
 
+/* core_ctrl_t.para_log_mode: which redo layout the database was created with. */
+#define PARA_LOG_DB_MODE_UNKNOWN ((uint8)0)
+#define PARA_LOG_DB_MODE_SERIAL ((uint8)1)
+#define PARA_LOG_DB_MODE_PARA ((uint8)2)
+
 typedef struct st_lsn_offset {
     uint64 lsn;
     uint32 offset;
@@ -135,13 +140,14 @@ typedef struct st_log_queue {
 
 typedef struct st_log_group {
     uint64 lsn;         // curr_lsn, page visibility / cross-node Lamport
-    uint64 commit_lsn;  // node-local dense seq; serial path sets equal to lsn
     uint16 rmid;
     uint16 size;        // ! not acture size when extend != 0, the acturre size is LOG_GROUP_ACTUAL_SIZE
     uint16 opr_uid;     // operator user id
     uint16 nologging_insert : 1;
     uint16 extend : 4;  // used for group_size > 64k
     uint16 reserved : 11;
+    uint32 asn;         // file->head.asn at flush; leftover CURRENT scan stop key
+    uint32 rst_id;      // file->head.rst_id at flush; diagnostic cross-check
 } log_group_t;
 
 #define OG_MAX_LOG_GROUP_SIZE (uint32)((uint32)OG_MAX_UINT16 * (uint32)0xF + (uint32)OG_MAX_UINT16)
