@@ -2813,6 +2813,7 @@ static status_t pcrb_try_split_page(knl_session_t *session, knl_cursor_t *cursor
     if (session->is_btree_splitting == OG_TRUE) {
         OG_LOG_DEBUG_WAR("[BTREE] the remote node is doing btree splitting!");
         session->is_btree_splitting = OG_FALSE;
+        cm_spin_sleep();
         return OG_SUCCESS;
     }
 
@@ -2836,10 +2837,19 @@ static status_t pcrb_try_split_page(knl_session_t *session, knl_cursor_t *cursor
     part_loc.part_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->parentpart : lock_id->part;
     part_loc.subpart_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->part : lock_id->parentpart;
 
-    bool8 other_node_splitting = false;
-    if (dtc_get_btree_split_status(session, btree, part_loc, &other_node_splitting) == OG_SUCCESS) {
-        if (other_node_splitting) {
+    bool8 other_node_splitting = OG_FALSE;
+    if (DB_IS_CLUSTER(session)) {
+        status_t remote_status = dtc_get_btree_split_status(session, btree, part_loc, &other_node_splitting);
+        /*
+         * A failed query does not mean the other node is idle. Continuing the split from here
+         * allocates the same ufp page the owner just consumed.
+         */
+        if (remote_status != OG_SUCCESS || other_node_splitting) {
             dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
+            if (remote_status != OG_SUCCESS) {
+                cm_reset_error();
+            }
+            cm_spin_sleep();
             return OG_SUCCESS;
         }
     }
@@ -2864,13 +2874,28 @@ static status_t pcrb_try_split_page(knl_session_t *session, knl_cursor_t *cursor
             dls_latch_x(session, &btree->struct_latch, session->id, &session->stat_btree);
             btree->is_splitting = OG_FALSE;
             btree->wait_ticks = 0;
-            dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
+            if (session->is_btree_splitting == OG_TRUE) {
+                session->is_btree_splitting = OG_FALSE;
+            } else {
+                dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
+            }
             return OG_ERROR;
         }
 
         btree_concat_extent(session, btree, extent, extent_size, is_degrade);
         log_atomic_op_end(session);
         dls_latch_x(session, &btree->struct_latch, session->id, &session->stat_btree);
+        /*
+         * struct latch was dropped for the extent allocation. dls_latch_x returns without the latch
+         * when the owner is splitting, and a reform can grant the latch under a new version.
+         */
+        if (session->is_btree_splitting == OG_TRUE) {
+            session->is_btree_splitting = OG_FALSE;
+            btree->is_splitting = OG_FALSE;
+            btree->wait_ticks = 0;
+            cm_spin_sleep();
+            return OG_SUCCESS;
+        }
     }
 
     old_root_copy = btree->root_copy;
@@ -3606,6 +3631,7 @@ void pcrb_recycle_leaf(knl_session_t *session, btree_t *btree, knl_part_locate_t
         if (session->is_btree_splitting == OG_TRUE) {
             OG_LOG_DEBUG_WAR("[BTREE] the remote node is doing btree splitting while recycle leaf!");
             session->is_btree_splitting = OG_FALSE;
+            cm_spin_sleep();
             continue;
         }
 
@@ -3615,11 +3641,12 @@ void pcrb_recycle_leaf(knl_session_t *session, btree_t *btree, knl_part_locate_t
             part_loc.part_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->parentpart : lock_id->part;
             part_loc.subpart_no = (lock_id->parentpart != OG_INVALID_ID32) ? lock_id->part : lock_id->parentpart;
 
-            bool8 other_node_splitting = false;
-            if (dtc_get_btree_split_status(session, btree, part_loc, &other_node_splitting) == OG_SUCCESS) {
-                if (!other_node_splitting) {
-                    break;
-                }
+            bool8 other_node_splitting = OG_FALSE;
+            status_t remote_status = dtc_get_btree_split_status(session, btree, part_loc, &other_node_splitting);
+            if (remote_status != OG_SUCCESS) {
+                cm_reset_error();
+            } else if (!other_node_splitting) {
+                break;
             }
         }
         dls_unlatch(session, &btree->struct_latch, &session->stat_btree);
