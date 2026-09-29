@@ -1,0 +1,120 @@
+name: openGauss_oGRAC_PR
+
+on:
+  push:
+    branches:
+      - master
+  pull_request_target:
+    branches:
+      - master
+  pull_request_comment:
+    types:
+      - created
+    branches:
+      - master
+    comments:
+      - '/retest'
+  workflow_dispatch:
+
+permissions:
+  repository: read
+  pr: write
+  note: write
+
+env:
+  GITCODE_REPO: opengauss/oGRAC
+  OGRAC_REPO: https://gitcode.com/opengauss/oGRAC.git
+
+jobs:
+  prepare:
+    name: Mark running
+    runs-on: [self-hosted, ograc_node]
+    steps:
+      - name: Mark PR as running
+        if: ${{ atomgit.event.pull_request.number != '' }}
+        uses: cann/.gitcode/actions/pre-pipeline@master
+        with:
+          owner: opengauss
+          repo: oGRAC
+          pr_number: ${{ atomgit.event.pull_request.number }}
+          token: ${{ secrets.PR_LABEL_TOKEN }}
+          apply_label: 'true'
+          run_url: https://gitcode.com/opengauss/oGRAC/actions/runs/${{ atomgit.workflow_run_id }}
+
+  compile_ograc:
+    name: openGauss_oGRAC_Compile
+    needs: prepare
+    runs-on: [self-hosted, ograc_node]
+    timeout-minutes: 120
+    steps:
+      - name: Manual checkout source code
+        run: |
+          set -e
+          workspace="$PWD"
+          repo="${ATOMGIT_REPOSITORY:-}"
+          if [ -z "${repo}" ]; then
+            repo="${GITCODE_REPOSITORY:-}"
+          fi
+          if [ -z "${repo}" ] || ! echo "${repo}" | grep -q '/'; then
+            repo="${GITCODE_REPO:-opengauss/oGRAC}"
+          fi
+          server="${ATOMGIT_SERVER_URL:-}"
+          if [ -z "${server}" ]; then
+            server="${GITCODE_SERVER_URL:-}"
+          fi
+          if [ -z "${server}" ]; then
+            server="https://gitcode.com"
+          fi
+          repo_url="${server%/}/${repo}.git"
+          ref="${ATOMGIT_REF:-}"
+          if [ -z "${ref}" ]; then
+            ref="${GITCODE_REF:-}"
+          fi
+          if [ -z "${ref}" ]; then
+            ref="refs/heads/master"
+          fi
+          sha="${ATOMGIT_SHA:-}"
+          if [ -z "${sha}" ]; then
+            sha="${GITCODE_SHA:-}"
+          fi
+          if [ -z "${sha}" ]; then
+            sha="FETCH_HEAD"
+          fi
+          echo "Manual checkout ${repo_url} ${ref} ${sha}"
+
+          mkdir -p "${workspace}"
+          cd "${workspace}"
+          if [ ! -d .git ]; then
+            git init
+          fi
+          if git remote | grep -qx origin; then
+            git remote set-url origin "${repo_url}"
+          else
+            git remote add origin "${repo_url}"
+          fi
+          git fetch --depth=1 origin "${ref}"
+          git checkout -f "${sha}" || git checkout -f FETCH_HEAD
+      - name: Run oGRAC compile on ograc_node
+        run: |
+          source .gitcode/scripts/resolve_gitcode_env.sh
+          bash .gitcode/scripts/compile_ograc.sh
+        env:
+          WORKSPACE_ROOT: /data/jenkins/workspace/oGRAC
+
+  report_result:
+    name: Query pipeline and label PR
+    if: ${{ always() }}
+    needs:
+      - compile_ograc
+    runs-on: [self-hosted, ograc_node]
+    steps:
+      - name: Query pipeline and update PR label
+        if: ${{ atomgit.event.pull_request.number != '' }}
+        uses: cann/.gitcode/actions/query-pipeline@master
+        with:
+          owner: opengauss
+          repo: oGRAC
+          run_id: ${{ atomgit.workflow_run_id }}
+          token: ${{ secrets.PR_LABEL_TOKEN }}
+          pr_number: ${{ atomgit.event.pull_request.number }}
+          apply_label: 'true'
