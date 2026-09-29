@@ -5523,6 +5523,7 @@ func_application: func_name '(' ')'
                         }
                         $$ = expr;
                     }
+/*$$include "gram-dialect-func-application.y"*/
                 | func_name '(' ALL func_arg_list ')'
                     {
                         expr_tree_t *expr = NULL;

@@ -23,7 +23,10 @@
  * -------------------------------------------------------------------------
  */
 #include "func_calculate.h"
+#include "func_convert.h"
+#include "func_datatype.h"
 #include "func_hex.h"
+#include "dml_executor.h"
 #include "srv_instance.h"
 
 status_t sql_func_abs(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
@@ -126,6 +129,428 @@ status_t sql_func_cos(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
     res->is_null = OG_FALSE;
     res->type = OG_TYPE_NUMBER;
 
+    return OG_SUCCESS;
+}
+
+typedef enum en_sql_hyperbolic_type {
+    SQL_HYPERBOLIC_COSH = 0,
+    SQL_HYPERBOLIC_SINH = 1,
+    SQL_HYPERBOLIC_MAX = 2,
+} sql_hyperbolic_type_t;
+
+#define SQL_HYPERBOLIC_SERIES_MAX_ITERATIONS 64
+#define SQL_HYPERBOLIC_EXP_DIVISOR 2
+#define SQL_REMAINDER_HALF_SCALE 2
+#define SQL_NANVL_REMAINDER_ARG_COUNT 2
+/* Oracle 26ai SQL NUMBER path overflows at the immediately tested values above these limits. */
+#define SQL_ORACLE_NUMBER_COSH_MAX_INPUT "282.57858863455690819872393985054486897"
+#define SQL_ORACLE_NUMBER_SINH_MAX_INPUT "282.58006617333443970665056803202391465"
+
+/* Validate the COSH/SINH operation type. */
+static status_t sql_check_hyperbolic_type(sql_hyperbolic_type_t type)
+{
+    if ((uint32)type >= (uint32)SQL_HYPERBOLIC_MAX) {
+        OG_THROW_ERROR_EX(ERR_ASSERT_ERROR, "invalid hyperbolic type: %d", (int32)type);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+/* Compute COSH/SINH with a dec8 Taylor series for |x| <= 1. */
+static status_t sql_calc_hyperbolic_series(const dec8_t *value, sql_hyperbolic_type_t type, dec8_t *result)
+{
+    dec8_t square;
+    dec8_t term;
+    dec8_t sum;
+    dec8_t next_term;
+    dec8_t next_sum;
+    uint32 i;
+
+    OG_RETURN_IFERR(cm_dec_mul(value, value, &square));
+    if (type == SQL_HYPERBOLIC_COSH) {
+        cm_int32_to_dec(1, &term);
+    } else {
+        cm_dec_copy(&term, value);
+    }
+    cm_dec_copy(&sum, &term);
+
+    for (i = 1; i <= SQL_HYPERBOLIC_SERIES_MAX_ITERATIONS; i++) {
+        int64 left = (type == SQL_HYPERBOLIC_COSH) ? (int64)(2 * i - 1) : (int64)(2 * i);
+        int64 right = left + 1;
+
+        OG_RETURN_IFERR(cm_dec_mul(&term, &square, &next_term));
+        OG_RETURN_IFERR(cm_dec_div_int64(&next_term, left * right, &next_term));
+        if (DECIMAL8_IS_ZERO(&next_term)) {
+            break;
+        }
+
+        OG_RETURN_IFERR(cm_dec_add(&sum, &next_term, &next_sum));
+        if (cm_dec_cmp(&sum, &next_sum) == 0) {
+            break;
+        }
+        cm_dec_copy(&term, &next_term);
+        cm_dec_copy(&sum, &next_sum);
+    }
+
+    cm_dec_copy(result, &sum);
+    return OG_SUCCESS;
+}
+
+/* Check the NUMBER input against the Oracle-compatible COSH/SINH limits. */
+static status_t sql_check_hyperbolic_number_range(const dec8_t *value, sql_hyperbolic_type_t type)
+{
+    dec8_t abs_value;
+    dec8_t max_input;
+    const char *max_input_text = (type == SQL_HYPERBOLIC_COSH) ? SQL_ORACLE_NUMBER_COSH_MAX_INPUT :
+        SQL_ORACLE_NUMBER_SINH_MAX_INPUT;
+
+    cm_dec_copy(&abs_value, value);
+    cm_dec_abs(&abs_value);
+    OG_RETURN_IFERR(cm_str_to_dec8(max_input_text, &max_input));
+    if (cm_dec_cmp(&abs_value, &max_input) > 0) {
+        OG_THROW_ERROR(ERR_NUM_OVERFLOW);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+/* Compute NUMBER COSH/SINH using a Taylor series or exponential formula. */
+static status_t sql_calc_hyperbolic_number(variant_t *value, sql_hyperbolic_type_t type, variant_t *result)
+{
+    dec8_t abs_value;
+    dec8_t exp_value;
+    dec8_t inv_exp_value;
+    dec8_t combined;
+    dec8_t one;
+    bool32 negative;
+
+    OG_RETURN_IFERR(var_as_decimal(value));
+    OG_RETURN_IFERR(sql_check_hyperbolic_number_range(&value->v_dec, type));
+
+    cm_dec_copy(&abs_value, &value->v_dec);
+    negative = IS_DEC8_NEG(&abs_value);
+    cm_dec_abs(&abs_value);
+
+    cm_int32_to_dec(1, &one);
+    if (cm_dec_cmp(&abs_value, &one) <= 0) {
+        OG_RETURN_IFERR(sql_calc_hyperbolic_series(&value->v_dec, type, &result->v_dec));
+    } else {
+        OG_RETURN_IFERR(cm_dec_exp(&abs_value, &exp_value));
+        OG_RETURN_IFERR(cm_dec_divide(&one, &exp_value, &inv_exp_value));
+        if (type == SQL_HYPERBOLIC_COSH) {
+            OG_RETURN_IFERR(cm_dec_add(&exp_value, &inv_exp_value, &combined));
+        } else {
+            OG_RETURN_IFERR(cm_dec_subtract(&exp_value, &inv_exp_value, &combined));
+        }
+        OG_RETURN_IFERR(cm_dec_div_int64(&combined, SQL_HYPERBOLIC_EXP_DIVISOR, &result->v_dec));
+        if (type == SQL_HYPERBOLIC_SINH && negative) {
+            cm_dec_negate(&result->v_dec);
+        }
+    }
+
+    result->type = OG_TYPE_NUMBER;
+    result->is_null = OG_FALSE;
+    return OG_SUCCESS;
+}
+
+/* Dispatch COSH/SINH to REAL or NUMBER computation according to the runtime argument type. */
+static status_t sql_func_hyperbolic(sql_stmt_t *stmt, expr_node_t *func, variant_t *res,
+    sql_hyperbolic_type_t type)
+{
+    variant_t value;
+    expr_tree_t *arg = NULL;
+
+    CM_POINTER3(stmt, func, res);
+    LOC_RETURN_IFERR(sql_check_hyperbolic_type(type), func->loc);
+    arg = func->argument;
+    CM_POINTER(arg);
+
+    SQL_EXEC_FUNC_ARG_EX(arg, &value, res);
+    if (value.type == OG_TYPE_REAL) {
+        res->v_real = (type == SQL_HYPERBOLIC_COSH) ? cosh(value.v_real) : sinh(value.v_real);
+        res->type = OG_TYPE_REAL;
+        res->is_null = OG_FALSE;
+        return OG_SUCCESS;
+    }
+
+    LOC_RETURN_IFERR(sql_calc_hyperbolic_number(&value, type, res), arg->loc);
+    return OG_SUCCESS;
+}
+
+/* Compute the hyperbolic cosine of the input. */
+status_t sql_func_cosh(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    return sql_func_hyperbolic(stmt, func, res, SQL_HYPERBOLIC_COSH);
+}
+
+/* Compute the hyperbolic sine of the input. */
+status_t sql_func_sinh(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    return sql_func_hyperbolic(stmt, func, res, SQL_HYPERBOLIC_SINH);
+}
+
+/* Validate the COSH/SINH argument and infer its result type, preserving UNKNOWN. */
+status_t sql_verify_hyperbolic(sql_verifier_t *verifier, expr_node_t *func)
+{
+    og_type_t arg_type;
+
+    CM_POINTER2(verifier, func);
+    OG_RETURN_IFERR(sql_verify_func_node(verifier, func, 1, 1, OG_INVALID_ID32));
+
+    arg_type = TREE_DATATYPE(func->argument);
+    /* check if arg_type can change to numeric */
+    if (!sql_match_numeric_type(arg_type) && arg_type != OG_TYPE_BOOLEAN) {
+        OG_SRC_ERROR_REQUIRE_NUMERIC(func->argument->loc, arg_type);
+        return OG_ERROR;
+    }
+
+    if (arg_type == OG_TYPE_UNKNOWN) {
+        func->datatype = OG_TYPE_UNKNOWN;
+        func->size = OG_MAX_DEC_OUTPUT_ALL_PREC;
+    } else if (arg_type == OG_TYPE_REAL) {
+        func->datatype = OG_TYPE_REAL;
+        func->size = sizeof(double);
+    } else {
+        func->datatype = OG_TYPE_NUMBER;
+        func->size = OG_MAX_DEC_OUTPUT_ALL_PREC;
+    }
+    return OG_SUCCESS;
+}
+
+/* Convert the input value to the specified NUMBER or REAL type. */
+static status_t sql_convert_numeric_func_arg(variant_t *value, og_type_t result_type)
+{
+    double real_value;
+    og_type_t source_type = value->type;
+
+    if (result_type == OG_TYPE_NUMBER) {
+        return var_as_decimal(value);
+    }
+
+    OG_RETURN_IFERR(sql_variant_to_binary_double_value(value, &real_value));
+    // set -0.0 to 0.0.
+    if (source_type != OG_TYPE_REAL && real_value == 0.0) {
+        real_value = 0.0;
+    }
+    value->v_real = real_value;
+    value->type = OG_TYPE_REAL;
+    return OG_SUCCESS;
+}
+
+/* Determine the result type, inferring it at runtime when it is UNKNOWN. */
+static status_t sql_resolve_numeric_func_type(sql_stmt_t *stmt, expr_node_t *func, og_type_t *type)
+{
+    *type = func->datatype;
+    if (*type != OG_TYPE_UNKNOWN) {
+        return OG_SUCCESS;
+    }
+
+    sql_cursor_t *cursor = SQL_CURSOR_STACK_DEPTH(stmt) == 0 ? NULL : OGSQL_CURR_CURSOR(stmt);
+    return sql_infer_func_node_datatype(stmt, cursor == NULL ? NULL : cursor->query, func, type);
+}
+
+/* Return the input value, evaluating the replacement only when the input is NaN. */
+status_t sql_func_nanvl(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    expr_tree_t *value_arg = NULL;
+    expr_tree_t *replacement_arg = NULL;
+    variant_t value;
+    variant_t replacement;
+    og_type_t result_type;
+
+    CM_POINTER3(stmt, func, res);
+    value_arg = func->argument;
+    CM_POINTER(value_arg);
+
+    LOC_RETURN_IFERR(sql_resolve_numeric_func_type(stmt, func, &result_type), func->loc);
+    SQL_EXEC_FUNC_ARG(value_arg, &value, res, stmt);
+    if (value.is_null) {
+        VAR_SET_NULL(res, result_type);
+        return OG_SUCCESS;
+    }
+
+    LOC_RETURN_IFERR(sql_convert_numeric_func_arg(&value, result_type), value_arg->loc);
+    /* only REAL can be NAN and INF */
+    if (result_type != OG_TYPE_REAL || !isnan(value.v_real)) {
+        var_copy(&value, res);
+        return OG_SUCCESS;
+    }
+
+    replacement_arg = value_arg->next;
+    CM_POINTER(replacement_arg);
+    SQL_EXEC_FUNC_ARG(replacement_arg, &replacement, res, stmt);
+    if (replacement.is_null) {
+        VAR_SET_NULL(res, result_type);
+        return OG_SUCCESS;
+    }
+    LOC_RETURN_IFERR(sql_convert_numeric_func_arg(&replacement, result_type), replacement_arg->loc);
+    var_copy(&replacement, res);
+    return OG_SUCCESS;
+}
+
+/* Check whether a dec8 integer is odd. */
+static bool32 sql_dec_integer_is_odd(const dec8_t *integer)
+{
+    int32 expn;
+
+    if (DECIMAL8_IS_ZERO(integer)) {
+        return OG_FALSE;
+    }
+    expn = GET_DEC8_EXPN(integer);
+    if (expn < 0 || (uint32)expn >= GET_CELLS8_SIZE(integer)) {
+        return OG_FALSE;
+    }
+    return (bool32)(integer->cells[expn] & 1);
+}
+
+/* Compute NUMBER remainder using the nearest integer quotient, with ties rounded to even. */
+static status_t sql_calc_number_remainder(const dec8_t *dividend, const dec8_t *divisor, dec8_t *result)
+{
+    dec8_t quotient;
+    dec8_t nearest_integer;
+    dec8_t fraction;
+    dec8_t abs_fraction;
+    dec8_t twice_fraction;
+    dec8_t one;
+    dec8_t adjusted_integer;
+    dec8_t product;
+    bool32 adjust_result = OG_FALSE;
+    int32 cmp;
+    uint32 quotient_prec;
+
+    if (DECIMAL8_IS_ZERO(divisor)) {
+        OG_THROW_ERROR(ERR_ZERO_DIVIDE);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(cm_dec_divide(dividend, divisor, &quotient));
+    /* Oracle NUMBER uses base-100 cells, so an even scientific exponent has one fewer guard digit. */
+    quotient_prec = MAX_NUMERIC_BUFF - (cm_is_even(DEC8_GET_SEXP(&quotient)) ? 1 : 0);
+    OG_RETURN_IFERR(cm_dec8_finalise(&quotient, quotient_prec, OG_FALSE));
+    cm_dec_copy(&nearest_integer, &quotient);
+    OG_RETURN_IFERR(cm_dec_scale(&nearest_integer, 0, ROUND_TRUNC));
+    OG_RETURN_IFERR(cm_dec_subtract(&quotient, &nearest_integer, &fraction));
+
+    cm_dec_copy(&abs_fraction, &fraction);
+    cm_dec_abs(&abs_fraction);
+    OG_RETURN_IFERR(cm_int64_mul_dec(SQL_REMAINDER_HALF_SCALE, &abs_fraction, &twice_fraction));
+    cm_int32_to_dec(1, &one);
+    cmp = cm_dec_cmp(&twice_fraction, &one);
+    if (cmp > 0) {
+        adjust_result = OG_TRUE;
+    } else if (cmp == 0) {
+        adjust_result = sql_dec_integer_is_odd(&nearest_integer);
+    }
+
+    if (adjust_result) {
+        int64 adjustment = IS_DEC8_NEG(&quotient) ? -1 : 1;
+        OG_RETURN_IFERR(cm_dec_add_int64(&nearest_integer, adjustment, &adjusted_integer));
+        cm_dec_copy(&nearest_integer, &adjusted_integer);
+    }
+
+    OG_RETURN_IFERR(cm_dec_mul(divisor, &nearest_integer, &product));
+    return cm_dec_subtract(dividend, &product, result);
+}
+
+/* Evaluate REMAINDER using the selected REAL or NUMBER type, returning NULL for NULL inputs. */
+status_t sql_func_remainder(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    expr_tree_t *dividend_arg = NULL;
+    expr_tree_t *divisor_arg = NULL;
+    variant_t dividend;
+    variant_t divisor;
+    og_type_t result_type;
+
+    CM_POINTER3(stmt, func, res);
+    dividend_arg = func->argument;
+    CM_POINTER(dividend_arg);
+
+    LOC_RETURN_IFERR(sql_resolve_numeric_func_type(stmt, func, &result_type), func->loc);
+    SQL_EXEC_FUNC_ARG(dividend_arg, &dividend, res, stmt);
+    if (dividend.is_null) {
+        VAR_SET_NULL(res, result_type);
+        return OG_SUCCESS;
+    }
+
+    divisor_arg = dividend_arg->next;
+    CM_POINTER(divisor_arg);
+    /* Preserve temporary text while evaluating the divisor, as in MOD. */
+    sql_keep_stack_variant(stmt, &dividend);
+    SQL_EXEC_FUNC_ARG(divisor_arg, &divisor, res, stmt);
+    if (divisor.is_null) {
+        VAR_SET_NULL(res, result_type);
+        return OG_SUCCESS;
+    }
+    sql_keep_stack_variant(stmt, &divisor);
+
+    LOC_RETURN_IFERR(sql_convert_numeric_func_arg(&dividend, result_type), dividend_arg->loc);
+    LOC_RETURN_IFERR(sql_convert_numeric_func_arg(&divisor, result_type), divisor_arg->loc);
+
+    res->is_null = OG_FALSE;
+    res->type = result_type;
+    if (result_type == OG_TYPE_REAL) {
+        res->v_real = remainder(dividend.v_real, divisor.v_real);
+        if (res->v_real == 0.0) {
+            res->v_real = 0.0;
+        }
+        return OG_SUCCESS;
+    }
+
+    LOC_RETURN_IFERR(sql_calc_number_remainder(&dividend.v_dec, &divisor.v_dec, &res->v_dec), func->loc);
+    return OG_SUCCESS;
+}
+
+/* Validate both arguments and infer the result type while preserving runtime short-circuit evaluation. */
+status_t sql_verify_nanvl_remainder(sql_verifier_t *verifier, expr_node_t *func)
+{
+    expr_tree_t *arg = NULL;
+    bool32 has_real = OG_FALSE;
+    bool32 has_unknown = OG_FALSE;
+    uint32 saved_excl_flags;
+    status_t status;
+
+    CM_POINTER2(verifier, func);
+    arg = func->argument;
+
+    /* NANVL and REMAINDER both require exactly two arguments. */
+    if (arg == NULL || arg->next == NULL || arg->next->next != NULL) {
+        OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_FUNC_PARAM_COUNT, T2S(&func->word.func.name),
+            SQL_NANVL_REMAINDER_ARG_COUNT, SQL_NANVL_REMAINDER_ARG_COUNT);
+        return OG_ERROR;
+    }
+
+    /* Verify the first argument's expr node. */
+    OG_RETURN_IFERR(sql_verify_expr_node(verifier, arg->root));
+
+    /* Disable constant folding of the second argument; evaluate it at runtime only when needed. */
+    saved_excl_flags = verifier->excl_flags;
+    verifier->excl_flags |= SQL_EXCL_CONST_FOLD;
+    status = sql_verify_expr_node(verifier, arg->next->root);
+
+    verifier->excl_flags = saved_excl_flags;
+    OG_RETURN_IFERR(status);
+
+    /* Record the number of function arguments. */
+    func->value.v_func.arg_cnt = SQL_NANVL_REMAINDER_ARG_COUNT;
+
+    /* Validate numeric-compatible argument types and inspect their verified static types. */
+    for (arg = func->argument; arg != NULL; arg = arg->next) {
+        og_type_t arg_type = TREE_DATATYPE(arg);
+        if (!sql_match_numeric_type(arg_type) && arg_type != OG_TYPE_BOOLEAN) {
+            OG_SRC_ERROR_REQUIRE_NUMERIC(arg->loc, arg_type);
+            return OG_ERROR;
+        }
+
+        has_real = has_real || arg_type == OG_TYPE_REAL || arg_type == OG_TYPE_FLOAT;
+        has_unknown = has_unknown || arg_type == OG_TYPE_UNKNOWN;
+    }
+
+    /* Set the result datatype and size metadata. */
+    func->datatype = has_real ? OG_TYPE_REAL : (has_unknown ? OG_TYPE_UNKNOWN : OG_TYPE_NUMBER);
+    func->size = has_real ? sizeof(double) : OG_MAX_DEC_OUTPUT_ALL_PREC;
+
+    /* Prevent pre-evaluation of the entire function node; evaluate it at runtime. */
+    SQL_SET_OPTMZ_MODE(func, OPTIMIZE_NONE);
     return OG_SUCCESS;
 }
 
@@ -1111,4 +1536,3 @@ status_t sql_verify_random(sql_verifier_t *verf, expr_node_t *func)
     func->precision = OG_UNSPECIFIED_NUM_PREC;
     return OG_SUCCESS;
 }
-

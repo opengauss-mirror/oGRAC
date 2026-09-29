@@ -59,6 +59,7 @@
 #define SQL_EXCL_CONNECTBY_ATTR 0x02000000
 #define SQL_EXCL_LEVEL 0x04000000
 #define SQL_EXCL_PL_PROC 0x08000000
+#define SQL_EXCL_CONST_FOLD 0x10000000
 
 #define SQL_WHERE_EXCL                                                                                          \
     (SQL_EXCL_AGGR | SQL_EXCL_SEQUENCE | SQL_EXCL_STAR | SQL_EXCL_PRIOR | SQL_EXCL_WIN_SORT | SQL_EXCL_UNNEST | \

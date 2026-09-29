@@ -2822,6 +2822,10 @@ class Installer:
         LOGGER.info("Creating database succeed.")
     
     def create_3rd_pkg(self):
+        if g_opts.compatibility_mode != "A":
+            LOGGER.info("Skipping A-only third package for compatibility %s."
+                        % g_opts.compatibility_mode)
+            return
         LOGGER.info("Creating third package ...")
         sql_file_path = "%s/admin/scripts" % self.install_path
         file_name = "create_3rd_pkg.sql"

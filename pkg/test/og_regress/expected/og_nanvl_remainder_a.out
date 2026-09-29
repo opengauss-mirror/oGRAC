@@ -1,0 +1,677 @@
+
+
+SQL> -- NANVL/REMAINDER A-compatible function verification.
+SQL> -- Direct output is diagnostic; width-independent PASS assertions are used for
+SQL> -- Oracle comparison.
+SQL> alter system set use_bison_parser = true scope = memory;
+
+Succeed.
+
+SQL> set feedback on;
+
+ON
+SQL> set heading on;
+
+ON
+SQL> 
+SQL> prompt === NANVL basic and type behavior ===
+
+=== NANVL basic and type behavior ===
+SQL> select nanvl(12.5, 0) as n01_number from sys.sys_dummy;
+
+N01_NUMBER                              
+----------------------------------------
+12.5                                    
+
+1 rows fetched.
+
+SQL> select nanvl(to_binary_double('NaN'), 0) as n02_double_nan from sys.sys_dummy;
+
+N02_DOUBLE_NAN      
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select nanvl(to_binary_float('NaN'), 0) as n03_float_nan from sys.sys_dummy;
+
+N03_FLOAT_NAN       
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select nanvl(to_binary_double('1.25'), 0) as n04_double_value from sys.sys_dummy;
+
+N04_DOUBLE_VALUE    
+--------------------
+1.25                
+
+1 rows fetched.
+
+SQL> select nanvl(null, 0) as n05_null from sys.sys_dummy;
+
+N05_NULL                                
+----------------------------------------
+                                        
+
+1 rows fetched.
+
+SQL> select nanvl(to_binary_double('NaN'), null) as n06_nan_null from sys.sys_dummy;
+
+N06_NAN_NULL        
+--------------------
+                    
+
+1 rows fetched.
+
+SQL> select nanvl(10, null) as n07_value_null from sys.sys_dummy;
+
+N07_VALUE_NULL                          
+----------------------------------------
+10                                      
+
+1 rows fetched.
+
+SQL> select nanvl(to_binary_double('Inf'), 0) as n08_inf from sys.sys_dummy;
+
+N08_INF             
+--------------------
+inf                 
+
+1 rows fetched.
+
+SQL> select nanvl('12.5', 0) as n09_text from sys.sys_dummy;
+
+N09_TEXT                                
+----------------------------------------
+12.5                                    
+
+1 rows fetched.
+
+SQL> select nanvl(true, 0) as n10_boolean from sys.sys_dummy;
+
+N10_BOOLEAN                             
+----------------------------------------
+1                                       
+
+1 rows fetched.
+
+SQL> select nanvl('NaN', to_binary_double('2')) as n11_text_nan_real from sys.sys_dummy;
+
+N11_TEXT_NAN_REAL   
+--------------------
+2                   
+
+1 rows fetched.
+
+SQL> 
+SQL> desc -q select nanvl(12.5, 0) as n12_number_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+N12_NUMBER_TYPE                              NUMBER                              
+
+SQL> desc -q select nanvl(12.5, to_binary_double('0')) as n13_real_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+N13_REAL_TYPE                                BINARY_DOUBLE                       
+
+SQL> desc -q select nanvl(to_binary_float('NaN'), 0) as n14_float_real_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+N14_FLOAT_REAL_TYPE                          BINARY_DOUBLE                       
+
+SQL> 
+SQL> prompt === NANVL lazy replacement evaluation ===
+
+=== NANVL lazy replacement evaluation ===
+SQL> select nanvl(10, to_number('bad')) as n15_lazy_value from sys.sys_dummy;
+
+N15_LAZY_VALUE                          
+----------------------------------------
+10                                      
+
+1 rows fetched.
+
+SQL> select nanvl(cast(null as number), to_number('bad')) as n16_lazy_null from sys.sys_dummy;
+
+N16_LAZY_NULL                           
+----------------------------------------
+                                        
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === width-independent NANVL value checks ===
+
+=== width-independent NANVL value checks ===
+SQL> select case when nanvl(12.5,0)=12.5
+  2                   and nanvl(to_binary_double('NaN'),0)=0
+  3                   and nanvl(to_binary_double('1.25'),0)=to_binary_double('1.25')
+  4                   and nanvl('NaN',to_binary_double('2'))=to_binary_double('2')
+  5        then 'PASS' else 'FAIL' end as p01_nanvl_values from sys.sys_dummy;
+
+P01_NANVL_VALUES
+----------------
+PASS            
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === REMAINDER NUMBER and ties-to-even ===
+
+=== REMAINDER NUMBER and ties-to-even ===
+SQL> select remainder(11, 4) as r01_11_4 from sys.sys_dummy;
+
+R01_11_4                                
+----------------------------------------
+-1                                      
+
+1 rows fetched.
+
+SQL> select remainder(7, 2) as r02_7_2 from sys.sys_dummy;
+
+R02_7_2                                 
+----------------------------------------
+-1                                      
+
+1 rows fetched.
+
+SQL> select remainder(5, 2) as r03_5_2 from sys.sys_dummy;
+
+R03_5_2                                 
+----------------------------------------
+1                                       
+
+1 rows fetched.
+
+SQL> select remainder(-11, 4) as r04_n11_4 from sys.sys_dummy;
+
+R04_N11_4                               
+----------------------------------------
+1                                       
+
+1 rows fetched.
+
+SQL> select remainder(11, -4) as r05_11_n4 from sys.sys_dummy;
+
+R05_11_N4                               
+----------------------------------------
+-1                                      
+
+1 rows fetched.
+
+SQL> select remainder(6, 4) as r06_6_4 from sys.sys_dummy;
+
+R06_6_4                                 
+----------------------------------------
+-2                                      
+
+1 rows fetched.
+
+SQL> select remainder(2, 4) as r07_2_4 from sys.sys_dummy;
+
+R07_2_4                                 
+----------------------------------------
+2                                       
+
+1 rows fetched.
+
+SQL> select remainder(-6, 4) as r08_n6_4 from sys.sys_dummy;
+
+R08_N6_4                                
+----------------------------------------
+2                                       
+
+1 rows fetched.
+
+SQL> select remainder(-2, 4) as r09_n2_4 from sys.sys_dummy;
+
+R09_N2_4                                
+----------------------------------------
+-2                                      
+
+1 rows fetched.
+
+SQL> select remainder(0.75, 0.5) as r10_decimal_tie_odd from sys.sys_dummy;
+
+R10_DECIMAL_TIE_ODD                     
+----------------------------------------
+-.25                                    
+
+1 rows fetched.
+
+SQL> select remainder(1.25, 0.5) as r11_decimal_tie_even from sys.sys_dummy;
+
+R11_DECIMAL_TIE_EVEN                    
+----------------------------------------
+.25                                     
+
+1 rows fetched.
+
+SQL> select remainder(12345678901234567890123456789012345675, 10) as r12_large_tie from sys.sys_dummy;
+
+R12_LARGE_TIE                           
+----------------------------------------
+-5                                      
+
+1 rows fetched.
+
+SQL> select remainder('11', '4') as r13_text from sys.sys_dummy;
+
+R13_TEXT                                
+----------------------------------------
+-1                                      
+
+1 rows fetched.
+
+SQL> select remainder(true, 2) as r14_boolean from sys.sys_dummy;
+
+R14_BOOLEAN                             
+----------------------------------------
+1                                       
+
+1 rows fetched.
+
+SQL> select remainder(cast(null as number), to_number('bad')) as r15_lazy_null from sys.sys_dummy;
+
+R15_LAZY_NULL                           
+----------------------------------------
+                                        
+
+1 rows fetched.
+
+SQL> select remainder(1e125, 3) as r15a_maxexp_three from sys.sys_dummy;
+
+R15A_MAXEXP_THREE                       
+----------------------------------------
+1.0000000000000000000000000000000000E+86
+
+1 rows fetched.
+
+SQL> select remainder(1e125, 7) as r15b_maxexp_seven from sys.sys_dummy;
+
+R15B_MAXEXP_SEVEN                       
+----------------------------------------
+-1.000000000000000000000000000000000E+86
+
+1 rows fetched.
+
+SQL> 
+SQL> select case when remainder(11, 4) = -1 then 'PASS' else 'FAIL' end as p01_nearest
+  2 from sys.sys_dummy;
+
+P01_NEAREST
+-----------
+PASS       
+
+1 rows fetched.
+
+SQL> select case when remainder(7, 2) = -1 and remainder(5, 2) = 1 then 'PASS' else 'FAIL' end as p02_ties_even
+  2 from sys.sys_dummy;
+
+P02_TIES_EVEN
+-------------
+PASS         
+
+1 rows fetched.
+
+SQL> select case when remainder(-6, 4) = 2 and remainder(-2, 4) = -2 then 'PASS' else 'FAIL' end as p03_sign
+  2 from sys.sys_dummy;
+
+P03_SIGN
+--------
+PASS    
+
+1 rows fetched.
+
+SQL> select case when remainder(1e125, 3) = 1e86 and remainder(1e125, 7) = -1e86
+  2        then 'PASS' else 'FAIL' end as p04_number_guard_precision from sys.sys_dummy;
+
+P04_NUMBER_GUARD_PRECISION
+--------------------------
+PASS                      
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === REMAINDER dynamic text lifetime ===
+
+=== REMAINDER dynamic text lifetime ===
+SQL> select remainder(to_char(10 + rownum), to_char(4)) as r24_dynamic_text from sys.sys_dummy;
+
+R24_DYNAMIC_TEXT                        
+----------------------------------------
+-1                                      
+
+1 rows fetched.
+
+SQL> select case when remainder(concat('1', to_char(rownum)), concat('0', to_char(3 + rownum))) = -1
+  2        then 'PASS' else 'FAIL' end as p09_dynamic_concat from sys.sys_dummy;
+
+P09_DYNAMIC_CONCAT
+------------------
+PASS              
+
+1 rows fetched.
+
+SQL> select case when remainder(to_char(10 + rownum), to_binary_double(to_char(3 + rownum))) = to_binary_double('-1')
+  2        then 'PASS' else 'FAIL' end as p10_dynamic_real from sys.sys_dummy;
+
+P10_DYNAMIC_REAL
+----------------
+PASS            
+
+1 rows fetched.
+
+SQL> select case when count(*) = 5 then 'PASS' else 'FAIL' end as p11_dynamic_rows
+  2 from (select 1 as n from sys.sys_dummy union all select 2 from sys.sys_dummy
+  3       union all select 3 from sys.sys_dummy union all select 4 from sys.sys_dummy
+  4       union all select 5 from sys.sys_dummy) t
+  5 where remainder(to_char(10 + n), to_char(4)) = remainder(10 + n, 4);
+
+P11_DYNAMIC_ROWS
+----------------
+PASS            
+
+1 rows fetched.
+
+SQL> select case when remainder(concat('bad', to_char(rownum)), cast(null as number)) is null
+  2        then 'PASS' else 'FAIL' end as p12_null_divisor from sys.sys_dummy;
+
+P12_NULL_DIVISOR
+----------------
+PASS            
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === REMAINDER REAL and IEEE values ===
+
+=== REMAINDER REAL and IEEE values ===
+SQL> select remainder(to_binary_double('11'), to_binary_double('4')) as r16_real from sys.sys_dummy;
+
+R16_REAL            
+--------------------
+-1                  
+
+1 rows fetched.
+
+SQL> select remainder(to_binary_float('11'), 4) as r17_float_real from sys.sys_dummy;
+
+R17_FLOAT_REAL      
+--------------------
+-1                  
+
+1 rows fetched.
+
+SQL> select remainder(to_binary_double('5'), to_binary_double('0')) as r18_real_zero from sys.sys_dummy;
+
+R18_REAL_ZERO       
+--------------------
+nan                 
+
+1 rows fetched.
+
+SQL> select remainder(to_binary_double('Inf'), to_binary_double('2')) as r19_inf_dividend from sys.sys_dummy;
+
+R19_INF_DIVIDEND    
+--------------------
+nan                 
+
+1 rows fetched.
+
+SQL> select remainder(to_binary_double('5'), to_binary_double('Inf')) as r20_inf_divisor from sys.sys_dummy;
+
+R20_INF_DIVISOR     
+--------------------
+5                   
+
+1 rows fetched.
+
+SQL> select remainder(to_binary_double('NaN'), to_binary_double('2')) as r21_nan from sys.sys_dummy;
+
+R21_NAN             
+--------------------
+nan                 
+
+1 rows fetched.
+
+SQL> select remainder(to_binary_double('-4'), to_binary_double('2')) as r21a_zero_normalized from sys.sys_dummy;
+
+R21A_ZERO_NORMALIZED
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select case when remainder(to_binary_double('-4'), to_binary_double('2')) = to_binary_double('0')
+  2        then 'PASS' else 'FAIL' end as r21b_zero_normalized from sys.sys_dummy;
+
+R21B_ZERO_NORMALIZED
+--------------------
+PASS                
+
+1 rows fetched.
+
+SQL> 
+SQL> desc -q select remainder(11, 4) as r22_number_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+R22_NUMBER_TYPE                              NUMBER                              
+
+SQL> desc -q select remainder(11, to_binary_double('4')) as r23_real_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+R23_REAL_TYPE                                BINARY_DOUBLE                       
+
+SQL> 
+SQL> prompt === width-independent REMAINDER value checks ===
+
+=== width-independent REMAINDER value checks ===
+SQL> select case when remainder(11,4)=-1 and remainder(7,2)=-1 and remainder(5,2)=1
+  2                   and remainder(0.75,0.5)=-0.25 and remainder(1.25,0.5)=0.25
+  3        then 'PASS' else 'FAIL' end as p05_remainder_number from sys.sys_dummy;
+
+P05_REMAINDER_NUMBER
+--------------------
+PASS                
+
+1 rows fetched.
+
+SQL> select case when remainder(to_binary_double('11'),to_binary_double('4'))=to_binary_double('-1')
+  2                   and remainder(to_binary_double('5.3'),to_binary_double('2'))=
+  3                       to_binary_double('-0.7000000000000002')
+  4        then 'PASS' else 'FAIL' end as p07_remainder_real from sys.sys_dummy;
+
+P07_REMAINDER_REAL
+------------------
+PASS              
+
+1 rows fetched.
+
+SQL> select case when nanvl(remainder(to_binary_double('Inf'),to_binary_double('2')),999)=999
+  2                   and nanvl(remainder(to_binary_double('5'),to_binary_double('0')),999)=999
+  3        then 'PASS' else 'FAIL' end as p08_remainder_nan_category from sys.sys_dummy;
+
+P08_REMAINDER_NAN_CATEGORY
+--------------------------
+PASS                      
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === dynamic binding regression ===
+
+=== dynamic binding regression ===
+SQL> -- USING supplies real bind parameters; do not cast :1/:2 in the dynamic SQL.
+SQL> set serveroutput on;
+
+ON
+SQL> declare
+  2     v_real real;
+  3     v_real_null real := null;
+  4     v_number number := 5;
+  5     v_zero number := 0;
+  6     v_status varchar(4);
+  7     v_result real;
+  8 begin
+  9     v_real := to_binary_double('NaN');
+ 10     execute immediate 'select case when nanvl(:1, 7) = 7 then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 11         into v_status using in v_real;
+ 12     dbe_output.print_line('B01_NANVL_REAL_NAN: ' || v_status);
+ 13
+ 14     v_real := 1.25;
+ 15     execute immediate 'select case when nanvl(:1, 7) = 1.25 then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 16         into v_status using in v_real;
+ 17     dbe_output.print_line('B02_NANVL_REAL_FINITE: ' || v_status);
+ 18
+ 19     v_real := 5;
+ 20     execute immediate 'select case when nanvl(remainder(:1, 0), 999) = 999 ' ||
+ 21         'then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 22         into v_status using in v_real;
+ 23     dbe_output.print_line('B03_REMAINDER_REAL_ZERO: ' || v_status);
+ 24
+ 25     v_real := 11;
+ 26     execute immediate 'select case when remainder(:1, 4) = -1 then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 27         into v_status using in v_real;
+ 28     dbe_output.print_line('B04_REMAINDER_REAL_FINITE: ' || v_status);
+ 29
+ 30     v_real := to_binary_double('NaN');
+ 31     execute immediate 'select case when nanvl(remainder(:1, 4), 999) = 999 ' ||
+ 32         'then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 33         into v_status using in v_real;
+ 34     dbe_output.print_line('B05_REMAINDER_REAL_NAN: ' || v_status);
+ 35
+ 36     execute immediate 'select case when nanvl(:1, 7) is null then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 37         into v_status using in v_real_null;
+ 38     dbe_output.print_line('B06_NANVL_REAL_NULL: ' || v_status);
+ 39
+ 40     execute immediate 'select case when remainder(:1, 4) is null then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 41         into v_status using in v_real_null;
+ 42     dbe_output.print_line('B07_REMAINDER_REAL_NULL: ' || v_status);
+ 43
+ 44     execute immediate 'select case when nanvl(:1, :2) = 5 then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 45         into v_status using in v_number, in v_real_null;
+ 46     dbe_output.print_line('B08_NANVL_NULL_REPLACEMENT: ' || v_status);
+ 47
+ 48     execute immediate 'select case when remainder(11, :1) is null then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 49         into v_status using in v_real_null;
+ 50     dbe_output.print_line('B09_REMAINDER_NULL_DIVISOR: ' || v_status);
+ 51
+ 52     v_real := 1.25;
+ 53     execute immediate 'select case when nanvl(:1, 1 / :2) = 1.25 then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 54         into v_status using in v_real, in v_zero;
+ 55     dbe_output.print_line('B10_NANVL_LAZY_REPLACEMENT: ' || v_status);
+ 56
+ 57     execute immediate 'select case when nanvl(:1, 1 / :2) is null ' ||
+ 58         'then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 59         into v_status using in v_real_null, in v_zero;
+ 60     dbe_output.print_line('B11_NANVL_NULL_SHORT_CIRCUIT: ' || v_status);
+ 61
+ 62     execute immediate 'select case when remainder(:1, 1 / :2) is null ' ||
+ 63         'then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 64         into v_status using in v_real_null, in v_zero;
+ 65     dbe_output.print_line('B12_REMAINDER_NULL_SHORT_CIRCUIT: ' || v_status);
+ 66
+ 67     v_real := 0;
+ 68     execute immediate 'select case when nanvl(remainder(:1, :2), 999) = 999 ' ||
+ 69         'then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 70         into v_status using in v_number, in v_real;
+ 71     dbe_output.print_line('B13_REMAINDER_SECOND_REAL: ' || v_status);
+ 72
+ 73     v_real := to_binary_double('NaN');
+ 74     execute immediate 'select case when v = 7 then ''PASS'' else ''FAIL'' end ' ||
+ 75         'from (select nanvl(:1, 7) v from sys.sys_dummy) t'
+ 76         into v_status using in v_real;
+ 77     dbe_output.print_line('B14_NANVL_BOUND_SUBQUERY: ' || v_status);
+ 78
+ 79     begin
+ 80         execute immediate 'select remainder(:1, 0) from sys.sys_dummy'
+ 81             into v_result using in v_number;
+ 82         dbe_output.print_line('B15_REMAINDER_NUMBER_ZERO: FAIL');
+ 83     exception
+ 84         when zero_divide then
+ 85             dbe_output.print_line('B15_REMAINDER_NUMBER_ZERO: PASS');
+ 86     end;
+ 87
+ 88     begin
+ 89         execute immediate 'select nanvl(:1, 1 / :2) from sys.sys_dummy'
+ 90             into v_result using in v_real, in v_zero;
+ 91         dbe_output.print_line('B16_NANVL_USED_REPLACEMENT: FAIL');
+ 92     exception
+ 93         when zero_divide then
+ 94             dbe_output.print_line('B16_NANVL_USED_REPLACEMENT: PASS');
+ 95     end;
+ 96
+ 97     execute immediate 'select case when nanvl(:1, :2) is null then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+ 98         into v_status using in v_real, in v_real_null;
+ 99     dbe_output.print_line('B17_NANVL_NAN_NULL_REPLACEMENT: ' || v_status);
+100
+101     execute immediate 'select case when (select nanvl(:1, 7) from sys.sys_dummy where 1 = 0) is null ' ||
+102         'then ''PASS'' else ''FAIL'' end from sys.sys_dummy'
+103         into v_status using in v_real;
+104     dbe_output.print_line('B18_NANVL_EMPTY_SCALAR: ' || v_status);
+105 end;
+106 /
+
+B01_NANVL_REAL_NAN: PASS
+B02_NANVL_REAL_FINITE: PASS
+B03_REMAINDER_REAL_ZERO: PASS
+B04_REMAINDER_REAL_FINITE: PASS
+B05_REMAINDER_REAL_NAN: PASS
+B06_NANVL_REAL_NULL: PASS
+B07_REMAINDER_REAL_NULL: PASS
+B08_NANVL_NULL_REPLACEMENT: PASS
+B09_REMAINDER_NULL_DIVISOR: PASS
+B10_NANVL_LAZY_REPLACEMENT: PASS
+B11_NANVL_NULL_SHORT_CIRCUIT: PASS
+B12_REMAINDER_NULL_SHORT_CIRCUIT: PASS
+B13_REMAINDER_SECOND_REAL: PASS
+B14_NANVL_BOUND_SUBQUERY: PASS
+B15_REMAINDER_NUMBER_ZERO: PASS
+B16_NANVL_USED_REPLACEMENT: PASS
+B17_NANVL_NAN_NULL_REPLACEMENT: PASS
+B18_NANVL_EMPTY_SCALAR: PASS
+
+PL/SQL procedure successfully completed.
+
+SQL> set serveroutput off;
+
+OFF
+SQL>
+SQL> prompt === expected errors ===
+
+=== expected errors ===
+SQL> select nanvl(to_binary_double('NaN'), to_number('bad')) as e01_nanvl_used_bad_replacement from sys.sys_dummy;
+
+OG-00636, Invalid number -- unexpected character
+SQL> select nanvl(date '2026-08-31', 0) as e02_nanvl_date from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: illegal function argument: NUMERIC argument expected - got DATE
+SQL> select nanvl(1) as e03_nanvl_arg_count from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for NANVL, min=2, max=2
+SQL> select remainder(5, 0) as e04_number_zero from sys.sys_dummy;
+
+OG-00637, [1:8]The divisor was zero
+SQL> select remainder(11, to_number('bad')) as e05_remainder_bad_divisor from sys.sys_dummy;
+
+OG-00636, Invalid number -- unexpected character
+SQL> select remainder(date '2026-08-31', 2) as e06_remainder_date from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: illegal function argument: NUMERIC argument expected - got DATE
+SQL> select remainder(1) as e07_remainder_arg_count from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for REMAINDER, min=2, max=2
+SQL> 
+SQL> alter system set use_bison_parser = false scope = memory;
+
+Succeed.
+
+SQL>

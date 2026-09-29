@@ -711,6 +711,19 @@ status_t cm_str2real(const char *str, double *value)
     return OG_SUCCESS;
 }
 
+status_t cm_str2float(const char *str, float *value)
+{
+    char *err = NULL;
+
+    *value = strtof(str, &err);
+    if (err == str || cm_is_err(err)) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "Convert float failed, text = %s", str);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 /**
  * try to convert any c-string into double. If the conversion is success,
  * the return value is OG_TRUE and val is the converted value; else OG_FALSE

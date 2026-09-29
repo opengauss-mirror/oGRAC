@@ -1114,6 +1114,11 @@ def _wait_cluster_ddl_ready(timeout=300):
 
 
 def _create_3rd_pkg(retry_timeout=60):
+    if dp.compatibility_mode != "A":
+        LOG.info("Skipping A-only third package for compatibility %s.",
+                 dp.compatibility_mode)
+        _update_start_status({"third_pkg_status": "done"})
+        return
     sql_file = os.path.join(install_path, "admin", "scripts", "create_3rd_pkg.sql")
     if not os.path.isfile(sql_file):
         LOG.warning("create_3rd_pkg.sql not found, skipping")

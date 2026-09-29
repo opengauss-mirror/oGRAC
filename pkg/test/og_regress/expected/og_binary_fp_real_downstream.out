@@ -1,0 +1,273 @@
+
+
+SQL> -- A-compatible downstream contract after TO_BINARY_FLOAT/DOUBLE return OG_TYPE_REAL.
+SQL> -- Differences from Oracle independent BINARY_FLOAT/BINARY_DOUBLE types are intentional.
+SQL> -- The F-suffixed literal requires Bison; preceding schedule cases may disable it.
+SQL> alter system set use_bison_parser = true scope = memory;
+
+Succeed.
+
+SQL> set pagesize 200
+
+
+SQL> set linesize 240
+
+
+SQL>
+SQL> prompt === result descriptor and physical width ===
+
+=== result descriptor and physical width ===
+SQL> desc -q select to_binary_float('1.25') as bf_result;
+
+Name                                Null?    Type
+----------------------------------- -------- ------------------------------------
+BF_RESULT                                    BINARY_DOUBLE
+
+SQL> desc -q select to_binary_double('1.25') as bd_result;
+
+Name                                Null?    Type
+----------------------------------- -------- ------------------------------------
+BD_RESULT                                    BINARY_DOUBLE
+
+SQL> select vsize(to_binary_float('1.25')) as bf_expr_size,
+  2        vsize(to_binary_double('1.25')) as bd_expr_size
+  3 from sys.sys_dummy;
+
+BF_EXPR_SIZE         BD_EXPR_SIZE
+-------------------- --------------------
+8                    8
+
+1 rows fetched.
+
+SQL>
+SQL> prompt === downstream arithmetic uses existing REAL ===
+
+=== downstream arithmetic uses existing REAL ===
+SQL> -- Oracle BINARY_FLOAT re-quantizes this addition to 16777216; oGRAC REAL returns 16777217.
+SQL> select to_binary_float('16777216') + 1 as bf_add_one from sys.sys_dummy;
+
+BF_ADD_ONE
+--------------------
+16777217
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('16777216') + 1 = 16777217
+  2        then 'PASS' else 'FAIL' end as bf_add_real_check from sys.sys_dummy;
+
+BF_ADD_REAL_CHECK
+-----------------
+PASS
+
+1 rows fetched.
+
+SQL> -- Both use binary64 here; 2^53 + 1 rounds back to 2^53.
+SQL> select to_binary_double('9007199254740992') + 1 as bd_add_one from sys.sys_dummy;
+
+BD_ADD_ONE
+--------------------
+9.00719925474099e+15
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('9007199254740992') + 1 =
+  2                       to_binary_double('9007199254740992')
+  3        then 'PASS' else 'FAIL' end as bd_add_binary64_check from sys.sys_dummy;
+
+BD_ADD_BINARY64_CHECK
+---------------------
+PASS
+
+1 rows fetched.
+
+SQL> -- oGRAC REAL division raises OG-00637; Oracle binary floating-point division returns Inf.
+SQL> select to_binary_float('1') / 0 as bf_div_zero from sys.sys_dummy;
+
+OG-00637, [1:8]The divisor was zero
+SQL> select to_binary_double('1') / 0 as bd_div_zero from sys.sys_dummy;
+
+OG-00637, [1:8]The divisor was zero
+SQL>
+SQL> prompt === downstream comparisons use existing REAL comparator ===
+
+=== downstream comparisons use existing REAL comparator ===
+SQL> select case when to_binary_float('1') < to_binary_float('Inf')
+  2        then 'TRUE' else 'FALSE' end as bf_finite_lt_inf from sys.sys_dummy;
+
+BF_FINITE_LT_INF
+----------------
+FALSE
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('Inf') = to_binary_float('Inf')
+  2        then 'TRUE' else 'FALSE' end as bf_inf_equal from sys.sys_dummy;
+
+BF_INF_EQUAL
+------------
+FALSE
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('NaN') = to_binary_float('NaN')
+  2        then 'TRUE' else 'FALSE' end as bf_nan_equal from sys.sys_dummy;
+
+BF_NAN_EQUAL
+------------
+FALSE
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('NaN') > to_binary_float('Inf')
+  2        then 'TRUE' else 'FALSE' end as bf_nan_gt_inf from sys.sys_dummy;
+
+BF_NAN_GT_INF
+-------------
+FALSE
+
+1 rows fetched.
+
+SQL>
+SQL> select case when to_binary_double('1') < to_binary_double('Inf')
+  2        then 'TRUE' else 'FALSE' end as bd_finite_lt_inf from sys.sys_dummy;
+
+BD_FINITE_LT_INF
+----------------
+FALSE
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('Inf') = to_binary_double('Inf')
+  2        then 'TRUE' else 'FALSE' end as bd_inf_equal from sys.sys_dummy;
+
+BD_INF_EQUAL
+------------
+FALSE
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('NaN') = to_binary_double('NaN')
+  2        then 'TRUE' else 'FALSE' end as bd_nan_equal from sys.sys_dummy;
+
+BD_NAN_EQUAL
+------------
+FALSE
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('NaN') > to_binary_double('Inf')
+  2        then 'TRUE' else 'FALSE' end as bd_nan_gt_inf from sys.sys_dummy;
+
+BD_NAN_GT_INF
+-------------
+FALSE
+
+1 rows fetched.
+
+SQL>
+SQL> prompt === existing BINARY_* DDL keywords still map to REAL storage ===
+
+=== existing BINARY_* DDL keywords still map to REAL storage ===
+SQL> create table t_binary_fp_real_contract (
+  2     id integer,
+  3     bf_value binary_float,
+  4     bd_value binary_double
+  5 );
+
+Succeed.
+
+SQL> desc t_binary_fp_real_contract;
+
+Name                                Null?    Type
+----------------------------------- -------- ------------------------------------
+ID                                           BINARY_INTEGER
+BF_VALUE                                     BINARY_DOUBLE
+BD_VALUE                                     BINARY_DOUBLE
+
+SQL> insert into t_binary_fp_real_contract values (
+  2     1, to_binary_float('1.25'), to_binary_double('1.25')
+  3 );
+
+1 rows affected.
+
+SQL> select vsize(bf_value) as bf_stored_size,
+  2        vsize(bd_value) as bd_stored_size
+  3 from t_binary_fp_real_contract;
+
+BF_STORED_SIZE       BD_STORED_SIZE
+-------------------- --------------------
+8                    8
+
+1 rows fetched.
+
+SQL>
+SQL> prompt === indexes are ordinary REAL indexes ===
+
+=== indexes are ordinary REAL indexes ===
+SQL> create index idx_binary_fp_real_bf on t_binary_fp_real_contract(bf_value);
+
+Succeed.
+
+SQL> create index idx_binary_fp_real_bd on t_binary_fp_real_contract(bd_value);
+
+Succeed.
+
+SQL> select count(*) as bf_index_match
+  2 from t_binary_fp_real_contract
+  3 where bf_value = to_binary_float('1.25');
+
+BF_INDEX_MATCH
+--------------------
+1
+
+1 rows fetched.
+
+SQL> select count(*) as bd_index_match
+  2 from t_binary_fp_real_contract
+  3 where bd_value = to_binary_double('1.25');
+
+BD_INDEX_MATCH
+--------------------
+1
+
+1 rows fetched.
+
+SQL> drop table t_binary_fp_real_contract;
+
+Succeed.
+
+SQL>
+SQL> prompt === existing cast and literal behavior is not changed by the functions ===
+
+=== existing cast and literal behavior is not changed by the functions ===
+SQL> select cast(16777217 as binary_float) as cast_bf_baseline from sys.sys_dummy;
+
+CAST_BF_BASELINE
+--------------------
+16777217
+
+1 rows fetched.
+
+SQL> select 16777217F as f_literal_baseline from sys.sys_dummy;
+
+F_LITERAL_BASELINE
+--------------------
+16777217
+
+1 rows fetched.
+
+SQL> select cast(9007199254740993 as binary_double) as cast_bd_baseline from sys.sys_dummy;
+
+CAST_BD_BASELINE
+--------------------
+9.00719925474099e+15
+
+1 rows fetched.
+
+SQL>
+SQL> -- Restore the regression suite's native parser default without changing the config file.
+SQL> alter system set use_bison_parser = false scope = memory;
+
+Succeed.
+
+SQL>

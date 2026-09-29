@@ -24,6 +24,7 @@
  */
 
 #include "func_datatype.h"
+#include "func_calculate.h"
 #include "func_convert.h"
 #include "ogsql_expr_datatype.h"
 
@@ -46,6 +47,55 @@ static status_t sql_infer_round_trunc_datatype(sql_stmt_t *stmt, sql_query_t *qu
     }
 
     return OG_SUCCESS;
+}
+
+/* Infer the COSH/SINH result type from the argument type. */
+static status_t sql_infer_hyperbolic_datatype(sql_stmt_t *stmt, sql_query_t *query, expr_node_t *func_node,
+    og_type_t *type)
+{
+    og_type_t arg_type;
+
+    OG_RETURN_IFERR(sql_infer_expr_node_datatype(stmt, query, func_node->argument->root, &arg_type));
+    if (arg_type == OG_TYPE_REAL) {
+        *type = OG_TYPE_REAL;
+        return OG_SUCCESS;
+    }
+    if (sql_match_numeric_type(arg_type) || arg_type == OG_TYPE_BOOLEAN) {
+        *type = OG_TYPE_NUMBER;
+        return OG_SUCCESS;
+    }
+
+    OG_THROW_ERROR(ERR_TYPE_MISMATCH, "NUMERIC", get_datatype_name_str(arg_type));
+    return OG_ERROR;
+}
+
+/* Infer the common NUMBER or REAL result type while preserving typed NULL bind information. */
+static status_t sql_infer_nanvl_remainder_datatype(sql_stmt_t *stmt, sql_query_t *query, expr_node_t *func_node,
+    og_type_t *type)
+{
+    og_type_t arg_type;
+    status_t status = OG_SUCCESS;
+    bool32 saved_preserve_null_type = stmt->preserve_bind_null_type;
+
+    *type = OG_TYPE_NUMBER;
+    /* Inspect types only: NANVL must not evaluate its unused replacement. */
+    stmt->preserve_bind_null_type = OG_TRUE;
+    for (expr_tree_t *arg = func_node->argument; arg != NULL; arg = arg->next) {
+        status = sql_infer_expr_node_datatype(stmt, query, arg->root, &arg_type);
+        if (status != OG_SUCCESS) {
+            break;
+        }
+        if (!sql_match_numeric_type(arg_type) && arg_type != OG_TYPE_BOOLEAN) {
+            OG_SRC_ERROR_REQUIRE_NUMERIC(arg->loc, arg_type);
+            status = OG_ERROR;
+            break;
+        }
+        if (arg_type == OG_TYPE_REAL || arg_type == OG_TYPE_FLOAT) {
+            *type = OG_TYPE_REAL;
+        }
+    }
+    stmt->preserve_bind_null_type = saved_preserve_null_type;
+    return status;
 }
 
 static status_t sql_infer_coalesce_datatype(sql_stmt_t *stmt, sql_query_t *query, expr_node_t *func_node,
@@ -240,9 +290,96 @@ static status_t og_infer_avg_median_datatype(sql_stmt_t *statement, sql_query_t 
     return OG_SUCCESS;
 }
 
+/* Follow result-column references to infer the NANVL/REMAINDER result type. */
+status_t sql_infer_pending_numeric_datatype(sql_stmt_t *stmt, sql_query_t *query, rs_column_t *rs_col,
+    og_type_t *type)
+{
+    expr_node_t *node = NULL;
+    var_column_t *v_col = NULL;
+    sql_table_t *table = NULL;
+
+    /* Only follow result-column wrappers; do not change empty-result inference for unrelated functions. */
+    while (rs_col != NULL || node != NULL || v_col != NULL) {
+        if (rs_col != NULL) {
+            node = (rs_col->type == RS_COL_CALC) ? rs_col->expr->root : NULL;
+            v_col = (rs_col->type == RS_COL_COLUMN) ? &rs_col->v_col : NULL;
+            rs_col = NULL;
+        }
+        if (node != NULL) {
+            switch (node->type) {
+                case EXPR_NODE_FUNC:
+                    if (sql_get_func(&node->value.v_func)->verify == sql_verify_nanvl_remainder) {
+                        return sql_infer_expr_node_datatype(stmt, query, node, type);
+                    }
+                    return OG_SUCCESS;
+                case EXPR_NODE_GROUP:
+                    node = (expr_node_t *)node->value.v_vm_col.origin_ref;
+                    continue;
+                case EXPR_NODE_SELECT:
+                    query = ((sql_select_t *)node->value.v_obj.ptr)->first_query;
+                    rs_col = (rs_column_t *)cm_galist_get(query->rs_columns, 0);
+                    continue;
+                case EXPR_NODE_COLUMN:
+                case EXPR_NODE_TRANS_COLUMN:
+                    v_col = &node->value.v_col;
+                    break;
+                default:
+                    return OG_SUCCESS;
+            }
+        }
+        if (v_col == NULL || query == NULL) {
+            return OG_SUCCESS;
+        }
+        for (uint32 ancestor = v_col->ancestor; ancestor > 0 && query != NULL; ancestor--) {
+            query = query->owner->parent;
+        }
+        if (query == NULL) {
+            return OG_SUCCESS;
+        }
+        table = (sql_table_t *)sql_array_get(&query->tables, v_col->tab);
+        if (table->type != SUBSELECT_AS_TABLE && table->type != WITH_AS_TABLE) {
+            return OG_SUCCESS;
+        }
+        query = table->select_ctx->first_query;
+        rs_col = (rs_column_t *)cm_galist_get(query->rs_columns, v_col->col);
+    }
+    return OG_SUCCESS;
+}
+
+/* Infer the result type of an A-compatible function and report whether its ID is handled. */
+static status_t sql_infer_func_node_datatype_compatibility_a(sql_stmt_t *stmt, sql_query_t *query,
+    expr_node_t *func_node, og_type_t *og_type, bool32 *matched)
+{
+    *matched = OG_FALSE;
+    if (func_node->value.v_func.pack_id != OG_INVALID_ID32) {
+        return OG_SUCCESS;
+    }
+
+    switch (func_node->value.v_func.func_id) {
+        case ID_FUNC_ITEM_A_COSH:
+        case ID_FUNC_ITEM_A_SINH:
+            *matched = OG_TRUE;
+            return sql_infer_hyperbolic_datatype(stmt, query, func_node, og_type);
+        case ID_FUNC_ITEM_A_NANVL:
+        case ID_FUNC_ITEM_A_REMAINDER:
+            *matched = OG_TRUE;
+            return sql_infer_nanvl_remainder_datatype(stmt, query, func_node, og_type);
+        default:
+            return OG_SUCCESS;
+    }
+}
+
 status_t sql_infer_func_node_datatype(sql_stmt_t *stmt, sql_query_t *query, expr_node_t *func_node, og_type_t *og_type)
 {
     sql_func_t *func = sql_get_func(&func_node->value.v_func);
+
+    if (stmt->session->dbcompatibility == 'A') {
+        bool32 matched = OG_FALSE;
+        OG_RETURN_IFERR(sql_infer_func_node_datatype_compatibility_a(stmt, query, func_node, og_type, &matched));
+        if (matched) {
+            return OG_SUCCESS;
+        }
+    }
     switch (func->builtin_func_id) {
         case ID_FUNC_ITEM_GREATEST:
         case ID_FUNC_ITEM_LEAST:

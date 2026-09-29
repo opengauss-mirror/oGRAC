@@ -71,8 +71,10 @@ static inline status_t sql_infer_group_expr_datatype(sql_stmt_t *stmt, sql_query
 static status_t sql_infer_bind_param_datatype(sql_stmt_t *stmt, expr_node_t *node, og_type_t *type)
 {
     variant_t var;
+    VAR_SET_NULL(&var, OG_DATATYPE_OF_NULL);
     OG_RETURN_IFERR(sql_get_expr_node_value(stmt, node, &var));
-    if (var.is_null) {
+    if (var.is_null && !(stmt->preserve_bind_null_type &&
+        (var.type == OG_TYPE_REAL || var.type == OG_TYPE_FLOAT))) {
         *type = OG_DATATYPE_OF_NULL;
     } else {
         *type = var.type;
@@ -95,12 +97,17 @@ static status_t sql_infer_case_node_datatype(sql_stmt_t *stmt, sql_query_t *quer
     case_expr_t *case_expr = (case_expr_t *)node->value.v_pointer;
     case_pair_t *case_pair = NULL;
     og_type_t temp_type;
+    bool32 first = OG_TRUE;
 
     for (uint32 i = 0; i < case_expr->pairs.count; i++) {
         case_pair = (case_pair_t *)cm_galist_get(&case_expr->pairs, i);
+        if (stmt->preserve_bind_null_type && TREE_IS_RES_NULL(case_pair->value)) {
+            continue;
+        }
         OG_RETURN_IFERR(sql_infer_expr_node_datatype(stmt, query, case_pair->value->root, &temp_type));
-        if (i == 0) {
+        if (first) {
             *type = temp_type;
+            first = OG_FALSE;
             continue;
         }
         if (*type == temp_type) {
@@ -109,9 +116,12 @@ static status_t sql_infer_case_node_datatype(sql_stmt_t *stmt, sql_query_t *quer
         *type = sql_get_case_expr_compatible_datatype(*type, temp_type);
     }
 
-    if (case_expr->default_expr != NULL) {
+    if (case_expr->default_expr != NULL &&
+        !(stmt->preserve_bind_null_type && TREE_IS_RES_NULL(case_expr->default_expr))) {
         OG_RETURN_IFERR(sql_infer_expr_node_datatype(stmt, query, case_expr->default_expr->root, &temp_type));
-        if (*type != temp_type) {
+        if (first) {
+            *type = temp_type;
+        } else if (*type != temp_type) {
             *type = sql_get_case_expr_compatible_datatype(*type, temp_type);
         }
     }
