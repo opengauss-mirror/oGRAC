@@ -1,0 +1,106 @@
+
+
+SQL> /* standalone single-line comment */
+SQL> 
+SQL> select 1 as c01 from sys.sys_dummy;
+
+C01         
+------------
+1           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* multi-line comment opens here
+  2    and closes with a statement on the same line */ select 2 as c02 from sys.sys_dummy;
+
+C02         
+------------
+2           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* bare close: nothing follows the closing mark
+  2    note */
+SQL> select 3 as c03 from sys.sys_dummy;
+
+C03         
+------------
+3           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* header comment
+  2    ahead of a procedure block */
+SQL> create or replace procedure p_comment_close as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> drop procedure p_comment_close;
+
+Succeed.
+
+SQL> 
+SQL> /* header on the same line as the block start */ create or replace procedure p_comment_close2 as
+  2 begin
+  3     null;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> 
+SQL> drop procedure p_comment_close2;
+
+Succeed.
+
+SQL> 
+SQL> /* a quote in the comment body: don't */
+SQL> select 4 as c04 from sys.sys_dummy;
+
+C04         
+------------
+4           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* command words in the comment tail: set up data */
+SQL> select 5 as c05 from sys.sys_dummy;
+
+C05         
+------------
+5           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* hint style close */ select
+  2 6 as c06 from sys.sys_dummy;
+
+C06         
+------------
+6           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* exit word in the comment tail
+  2 exit */ select 7 as c07 from sys.sys_dummy;
+
+C07         
+------------
+7           
+
+1 rows fetched.
+
+SQL> 
+
+

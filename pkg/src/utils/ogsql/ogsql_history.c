@@ -465,6 +465,42 @@ const ogsql_cmd_history_list_t *ogsql_history_get(int histCount, uint32 logicalI
     return (physicalIndex == 0) ? NULL : &g_histList[physicalIndex];
 }
 
+status_t ogsql_history_update_entry(int histCount, uint32 logicalIndex, const char *text, uint32 nbytes, uint32 nwidths)
+{
+    uint32 physicalIndex;
+    ogsql_cmd_history_list_t *entry;
+    errno_t rc;
+
+    /* Intentionally aligned with GNU readline: only NON-EMPTY edits are written back. Clearing a
+       browsed entry with Ctrl+U/Backspace and navigating away must not overwrite the slot (an
+       empty edit is not an edit), so navigating back shows the original text again. Oversized or
+       sensitive content is likewise never written back (the next commit's save writes slots 1..N
+       to disk). */
+    if (text == NULL || nbytes == 0 || nbytes > ogsql_history_text_limit() || histCount <= 0 || logicalIndex == 0 ||
+        logicalIndex > (uint32)histCount) {
+        return OG_ERROR;
+    }
+    if (ogsql_is_sensitive_history_cmd((char *)text, nbytes) == OG_TRUE) {
+        return OG_ERROR;
+    }
+    physicalIndex = OgsqlHistoryPhysicalIndex(logicalIndex);
+    if (physicalIndex == 0) {
+        return OG_ERROR;
+    }
+    entry = &g_histList[physicalIndex];
+    if (entry->nbytes == nbytes && memcmp(entry->hist_buf, text, nbytes) == 0) {
+        return OG_SUCCESS;
+    }
+    rc = memcpy_s(entry->hist_buf, OGSQL_HISTORY_BUF_SIZE, text, nbytes);
+    if (rc != EOK) {
+        return OG_ERROR;
+    }
+    entry->hist_buf[nbytes] = '\0';
+    entry->nbytes = nbytes;
+    entry->nwidths = nwidths;
+    return OG_SUCCESS;
+}
+
 static bool32 OgsqlHistoryCanPush(const OgsqlHistoryInputT *state, int *histCount)
 {
     if (state == NULL || histCount == NULL || state->cmdBuf == NULL) {

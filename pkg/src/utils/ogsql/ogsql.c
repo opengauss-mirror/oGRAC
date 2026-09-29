@@ -4408,19 +4408,6 @@ static void ogsql_if_block_end(text_t *line, uint32 *flag)
     }
 }
 
-static void ogsql_if_comment_end(text_t *line, uint32 *flag)
-{
-    uint32 pos;
-
-    for (pos = 0; pos < line->len - 1; pos++) {
-        if (line->str[pos] == '*' && line->str[pos + 1] == '/' &&
-            (pos == 0 || line->str[pos - 1] != '/')) {
-            *flag = OGSQL_COMMENT_END_TAG;
-            return;
-        }
-    }
-}
-
 static bool32 ogsql_welcome_visible(void)
 {
     if (g_is_print == OG_TRUE &&
@@ -5239,6 +5226,9 @@ static bool32 OgsqlRunHandleAbortIfNeeded(OgsqlRunCtxT *ctx)
         OgsqlMultilineHistorySnapshotReset(&ctx->historySnapshot);
         ctx->historyBrowsing = OG_FALSE;
         ctx->historySelected = OG_FALSE;
+        /* The aborted line falls back to the draft; drop the history selection so a later
+           Up/Down cannot write the restored draft into the previously browsed slot. */
+        ctx->listNum = 0;
         return OG_TRUE;
     }
 #else
@@ -5307,32 +5297,24 @@ static bool32 OgsqlRunDetectCommandMode(OgsqlRunCtxT *ctx)
     return OG_FALSE;
 }
 
-static void OgsqlRunProcessComment(OgsqlRunCtxT *ctx)
+/* offset of the '/' in the first closing mark (a '*' immediately followed by '/', its '*'
+   not preceded by '/') on this line, or -1 when the comment does not close here */
+static int32 OgsqlCommentEndPos(const text_t *line)
 {
-    ogsql_if_comment_end(&ctx->line, &ctx->flag);
-    (void)ogsql_concat(&ctx->line);
-    if (ctx->flag == OGSQL_COMMENT_END_TAG) {
-        ctx->flag = OGSQL_SINGLE_TAG;
-    } else {
-        ctx->lineNo++;
+    /* length of the closing mark via sizeof, no bare literal (G.CNS.02) */
+    const uint32 markLen = (uint32)(sizeof("*/") - 1);
+    uint32 pos;
+    for (pos = 1; pos < line->len; pos++) {
+        if (line->str[pos] == '/' && line->str[pos - 1] == '*' && (pos < markLen || line->str[pos - markLen] != '/')) {
+            return (int32)pos;
+        }
     }
+    return -1;
 }
 
-static void OgsqlRunProcessBlock(OgsqlRunCtxT *ctx)
-{
-    ogsql_if_block_end(&ctx->line, &ctx->flag);
-    (void)ogsql_concat(&ctx->line);
-    if (ctx->flag == OGSQL_BLOCK_END_TAG) {
-        print_sql_command(g_sql_text.str, g_sql_text.len);
-        ogsql_reset_in_enclosed_char();
-        (void)ogsql_execute(NULL);
-        OGSQL_RESET_CMD_TYPE(&g_cmd_type);
-        CM_TEXT_CLEAR(&g_sql_text);
-        ctx->flag = OGSQL_SINGLE_TAG;
-    } else {
-        ctx->lineNo++;
-    }
-}
+/* Per-line dispatcher by current input mode. The comment handler calls back into it for the
+   remainder of a line that closes a multi-line comment (mutual recursion, hence declared first). */
+static void OgsqlRunProcessLine(OgsqlRunCtxT *ctx);
 
 static void OgsqlRunProcessMulti(OgsqlRunCtxT *ctx)
 {
@@ -5353,9 +5335,63 @@ static void OgsqlRunProcessMulti(OgsqlRunCtxT *ctx)
     }
 }
 
+static void OgsqlRunProcessComment(OgsqlRunCtxT *ctx)
+{
+    /* One scan decides both whether the comment closes on this line and where to split: endPos is
+       the offset of the '/' in the closing mark, or -1 when it does not close here. The line up to
+       the mark is comment text and is appended untouched; only the remainder is parsed. A bare
+       close (nothing after the mark) keeps single-line handling so the next statement's
+       block/command detection is unaffected. */
+    int32 endPos = OgsqlCommentEndPos(&ctx->line);
+    if (endPos < 0) {
+        (void)ogsql_concat(&ctx->line);
+        ctx->lineNo++;
+        return;
+    }
+    uint32 afterMark = (uint32)endPos + 1; /* first byte past the closing mark */
+    text_t rest = { ctx->line.str + afterMark, ctx->line.len > afterMark ? ctx->line.len - afterMark : 0 };
+    text_t restTrimmed = rest;
+    cm_trim_text(&restTrimmed);
+    if (restTrimmed.len == 0) {
+        /* bare close: only whitespace follows the mark; append the whole line as before and keep
+           single-line handling so the next line's block/command detection is unaffected */
+        (void)ogsql_concat(&ctx->line);
+        ctx->flag = OGSQL_SINGLE_TAG;
+        return;
+    }
+    /* The remainder is a fresh virtual line: run the same mode detection a freshly read line
+       gets, then dispatch it through the normal per-line handling. The physical line counter must
+       stay continuous across the split, so undo the fresh-line line-number reset from the
+       detection before dispatching. */
+    uint32 savedLineNo = ctx->lineNo;
+    text_t commentTail = { ctx->line.str, afterMark };
+    (void)ogsql_concat(&commentTail);
+    ctx->line = rest;
+    ctx->flag = OGSQL_SINGLE_TAG;
+    if (!OgsqlRunDetectCommandMode(ctx)) {
+        ctx->lineNo = savedLineNo;
+        OgsqlRunProcessLine(ctx);
+    }
+}
+
+static void OgsqlRunProcessBlock(OgsqlRunCtxT *ctx)
+{
+    ogsql_if_block_end(&ctx->line, &ctx->flag);
+    (void)ogsql_concat(&ctx->line);
+    if (ctx->flag == OGSQL_BLOCK_END_TAG) {
+        print_sql_command(g_sql_text.str, g_sql_text.len);
+        ogsql_reset_in_enclosed_char();
+        (void)ogsql_execute(NULL);
+        OGSQL_RESET_CMD_TYPE(&g_cmd_type);
+        CM_TEXT_CLEAR(&g_sql_text);
+        ctx->flag = OGSQL_SINGLE_TAG;
+    } else {
+        ctx->lineNo++;
+    }
+}
+
 static void OgsqlRunProcessLine(OgsqlRunCtxT *ctx)
 {
-    ogsql_try_spool_directly_put(ctx->cmdBuf);
     if (ctx->flag == OGSQL_SINGLE_TAG) {
         (void)ogsql_process_cmd(&ctx->line);
     } else if (ctx->flag == OGSQL_COMMENT_TAG) {
@@ -5423,6 +5459,7 @@ EXTER_ATTACK void ogsql_run(FILE *in, bool32 is_file, char *cmdBuf, uint32 max_l
             continue;
         }
 
+        ogsql_try_spool_directly_put(ctx.cmdBuf);
         OgsqlRunProcessLine(&ctx);
         OgsqlRunFinishIteration(&ctx);
     }
