@@ -159,8 +159,23 @@ typedef struct st_buf_ctrl
 typedef struct __attribute__((aligned(128))) st_buf_ctrl
 #endif
 {
+    /*
+     * First 128 bytes are the hash-walk line. page_id and hash_next stay here so a lookup
+     * does not reload the line that latch, ref_num and dirty flags write on every hit.
+     * lookup_pad keeps that split; shrink it if a stable field is added above latch.
+     */
+    page_id_t page_id;
+    struct st_buf_ctrl *hash_next;  // next cache id in the same bucket
+    uint32 bucket_id;               // the cache id of the bucket
+    uint32 curr_node_idx;
+    page_head_t *page;
+    struct st_buf_ctrl *compress_group[PAGE_GROUP_COUNT];
+    struct st_buf_rbp_ctrl *rbp_ctrl;
+    uint8 lookup_pad[24];
+
     buf_latch_t latch;  // for page operations
-    uint32 bucket_id;   // the cache id of the bucket
+    volatile uint16 ref_num;
+    volatile uint16 touch_number;  // touch number for LRU
 
     volatile uint8 is_resident;  // resident buffer not in LRU queue
     volatile uint8 is_pinned;    // pinned buffer in LRU queue
@@ -219,14 +234,9 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
 
     struct st_buf_ctrl *ckpt_prev;
     struct st_buf_ctrl *ckpt_next;
-    struct st_buf_ctrl *prev;       // for LRU queue or free control list
-    struct st_buf_ctrl *next;       // for LRU queue or free control list
-    struct st_buf_ctrl *hash_next;  // next cache id in the same bucket
-
-    page_head_t *page;
-    struct st_buf_ctrl *compress_group[PAGE_GROUP_COUNT];
-    struct st_buf_rbp_ctrl *rbp_ctrl;
-    knl_scn_t edp_scn;   // set when become edp
+    struct st_buf_ctrl *prev;  // for LRU queue or free control list
+    struct st_buf_ctrl *next;  // for LRU queue or free control list
+    knl_scn_t edp_scn;         // set when become edp
 } buf_ctrl_t;
 
 typedef struct st_buf_rbp_ctrl {
