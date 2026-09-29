@@ -830,6 +830,24 @@ static inline uint64 ub_atomic_exchange_u64(volatile uint64* ptr, uint64 newval)
     return old;
 }
 
+static inline void ub_atomic_raise_u64(volatile uint64 *ptr, uint64 candidate)
+{
+#if defined(__aarch64__) && defined(__ARM_FEATURE_ATOMICS)
+    __asm__ __volatile__("stumaxl %x[val], %[mem]"
+                         : [mem] "+Q"(*ptr)
+                         : [val] "r"(candidate)
+                         : "memory");
+#else
+    uint64 expected = ub_atomic_read_u64(ptr);
+
+    while (candidate > expected) {
+        if (ub_atomic_compare_exchange_u64(ptr, &expected, candidate)) {
+            return;
+        }
+    }
+#endif
+}
+
 /*
 * Interface of set scn of UB (same !WIN32 block as ub_atomic_*)
 * static inline: header is included by many TUs in ogcommon — non-static would duplicate symbols at link.

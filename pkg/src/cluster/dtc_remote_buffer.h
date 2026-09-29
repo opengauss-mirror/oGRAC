@@ -51,7 +51,9 @@ extern "C" {
 #define DRC_REMOTE_BUF_OFFSET (uint64)0
 
 #define DRC_NODE_FLUSH_LSN_SIZE align_to_128m(sizeof(atomic_t))
+#ifndef SHMEM_SCN_SIZE
 #define SHMEM_SCN_SIZE (64)
+#endif
 
 typedef struct st_remote_buf_context {
     buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];

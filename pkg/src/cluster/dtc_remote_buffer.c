@@ -203,9 +203,6 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
     remote_sga->map_success[node_id] = OG_TRUE;
     OG_LOG_RUN_INF("[DRC-GBP-BUFFER] Successfully mapped data buffer %s on node_id %u, addr: %p", data_buf_name,
                    node_id, remote_sga->remote_buf_addr[node_id]);
-    if (g_instance->kernel.attr.enable_ubsmem && node_id == shmem_scn_get_owner_id()) {
-        shmem_scn_bind();
-    }
     return OG_SUCCESS;
 }
 
@@ -562,8 +559,7 @@ status_t drc_init_remote_buffer()
         drc_set_node_timeline_id(&ogx->remote_sga, my_timeline_id);
     }
 
-    // init scn shmem
-    shmem_scn_init();
+    // SCN lives in dedicated ubsmem region (see shmem_scn_init), not GBP.
     if (g_instance->kernel.attr.enable_ubsmem) {
         ret = dtc_txn_hot_region_init(&ogx->remote_sga);
         if (ret != OG_SUCCESS) {
@@ -592,7 +588,8 @@ status_t drc_init_remote_buffer()
         OG_LOG_RUN_INF("[UB-SGA-LAYOUT] dist_lock: count=%u, slot_size=%u, total_size=%llu",
             total_pages, (uint32)UB_RW_LOCK_SIZE, sga->remote_lock_alloc_size);
         OG_LOG_RUN_INF("[UB-SGA-LAYOUT] flush_lsn: total_size=%llu", (uint64)DRC_NODE_FLUSH_LSN_SIZE);
-        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] shmem_scn: total_size=%llu", (uint64)SHMEM_SCN_SIZE);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] shmem_scn_reserve(unused, SCN is dedicated region): total_size=%llu",
+            (uint64)SHMEM_SCN_SIZE);
         if (g_instance->kernel.attr.enable_ubsmem && sga->txn_hot_region_size > 0) {
             uint32 hot_cap = (uint32)(sga->txn_hot_region_size > sizeof(dtc_txn_hot_hdr_t) ?
                 (sga->txn_hot_region_size - sizeof(dtc_txn_hot_hdr_t)) / sizeof(dtc_txn_hot_t) : 0);
