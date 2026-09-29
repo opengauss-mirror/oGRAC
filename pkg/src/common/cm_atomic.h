@@ -52,6 +52,11 @@ static inline uint64 cm_atomic_barrier_read(volatile uint64* ptr)
     return InterlockedAdd64((volatile LONGLONG*)ptr, 0);
 }
 
+static inline void cm_atomic_store_release_u8(volatile uint8 *ptr, uint8 value)
+{
+    (void)InterlockedExchange8((volatile char *)ptr, (char)value);
+}
+
 static inline atomic_t cm_atomic_sub(atomic_t *val, int64 count)
 {
     return InterlockedAdd64(val, (-1) * count);
@@ -205,6 +210,11 @@ static inline uint64 cm_atomic_set_u64(volatile uint64 *val, uint64 value)
 static inline uint64 cm_atomic_barrier_read(volatile uint64 *ptr)
 {
     return __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
+}
+
+static inline void cm_atomic_store_release_u8(volatile uint8 *ptr, uint8 value)
+{
+    __atomic_store_n(ptr, value, __ATOMIC_RELEASE);
 }
 
 static inline bool32 cm_atomic_compare_exchange_64(atomic_t *ptr, int64 *expected, int64 newval)
