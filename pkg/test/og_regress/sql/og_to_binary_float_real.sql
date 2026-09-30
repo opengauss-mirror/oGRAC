@@ -113,6 +113,15 @@ select case when to_binary_float('1.25', null) is null
     then 'PASS' else 'FAIL' end as f09_null_fmt;
 select case when to_binary_float('1.25', '9D99', null) is null
     then 'PASS' else 'FAIL' end as f10_null_nls;
+-- Numeric format arguments are converted to text before format parsing.
+select case when to_binary_float('123', 999) = to_binary_float('123', '999')
+    then 'PASS' else 'FAIL' end as f11_numeric_fmt;
+select case when to_binary_float('123' default null on conversion error, 999) = 123
+    then 'PASS' else 'FAIL' end as f12_numeric_default;
+select case when to_binary_float('123', 998 + rownum) = 123
+    then 'PASS' else 'FAIL' end as f13_dynamic_fmt from sys.sys_dummy;
+select case when to_binary_float('123', cast(null as integer)) is null
+    then 'PASS' else 'FAIL' end as f14_numeric_null_fmt;
 
 -- DEFAULT ON CONVERSION ERROR.
 select to_binary_float('bad' default 0 on conversion error) as d01_default_number;
@@ -156,6 +165,10 @@ select to_binary_float(1 / 0 default 0 on conversion error) as e11_expr_error;
 select to_binary_float('bad' default (1 + 1) on conversion error) as e12_complex_default;
 select to_binary_float(date '2026-08-27') as e13_date;
 select to_number('bad' default 0 on conversion error) as e14_other_function_default_syntax;
+-- DEFAULT catches value conversion failures, not malformed formats or NLS type errors.
+select to_binary_float('123', 0) as e15_numeric_fmt_mismatch;
+select to_binary_float('123' default null on conversion error, 123) as e16_bad_numeric_fmt;
+select to_binary_float('123', 999, 0) as e17_numeric_nls;
 
 -- TO_CHAR limitations are expected differences, not conversion failures.
 select to_char(to_binary_float('123.456'), 'FM9.99999999EEEE') as u20_to_char_eeee;

@@ -1566,7 +1566,7 @@ static status_t sql_verify_to_binary_fp(sql_verifier_t *verif, expr_node_t *func
         return OG_ERROR;
     }
 
-    /* A format model requires string-compatible input, default and format arguments. */
+    /* A format model requires string-compatible input and default arguments. */
     if (args.fmt != NULL) {
         /* Reject a non-string-compatible input when a format model is supplied. */
         if (!sql_match_string_type(TREE_DATATYPE(args.value))) {
@@ -1578,9 +1578,9 @@ static status_t sql_verify_to_binary_fp(sql_verifier_t *verif, expr_node_t *func
             OG_SRC_ERROR_REQUIRE_STRING(TREE_LOC(args.default_value), TREE_DATATYPE(args.default_value));
             return OG_ERROR;
         }
-        /* Reject a format model argument that is not string-compatible. */
-        if (!sql_match_string_type(TREE_DATATYPE(args.fmt))) {
-            OG_SRC_ERROR_REQUIRE_STRING(TREE_LOC(args.fmt), TREE_DATATYPE(args.fmt));
+        /* Accept numeric format models through implicit string conversion. */
+        if (!sql_match_num_and_str_type(TREE_DATATYPE(args.fmt))) {
+            OG_SRC_ERROR_REQUIRE_NUM_OR_STR(TREE_LOC(args.fmt), TREE_DATATYPE(args.fmt));
             return OG_ERROR;
         }
     }
@@ -2001,16 +2001,23 @@ status_t sql_variant_to_binary_double_value(const variant_t *src, double *value)
     return sql_change_to_binary_fp_value(src, &fmt, BINARY_FP_DOUBLE, value);
 }
 
-/* Evaluate a nullable string argument and preserve its temporary storage. */
+/* Evaluate a nullable string option with optional numeric conversion and preserve its storage. */
 static status_t sql_exec_num_conversion_option(sql_stmt_t *stmt, expr_tree_t *arg, variant_t *var,
-    variant_t *res)
+    variant_t *res, bool32 allow_numeric)
 {
     SQL_EXEC_FUNC_ARG(arg, var, res, stmt);
     if (var->is_null) {
         return OG_SUCCESS;
     }
+    if (allow_numeric && OG_IS_NUMERIC_TYPE(var->type)) {
+        LOC_RETURN_IFERR(sql_var_as_string(stmt, var), arg->loc);
+    }
     if (!OG_IS_STRING_TYPE(var->type)) {
-        OG_SRC_ERROR_REQUIRE_STRING(arg->loc, var->type);
+        if (allow_numeric) {
+            OG_SRC_ERROR_REQUIRE_NUM_OR_STR(arg->loc, var->type);
+        } else {
+            OG_SRC_ERROR_REQUIRE_STRING(arg->loc, var->type);
+        }
         return OG_ERROR;
     }
     sql_keep_stack_variant(stmt, var);
@@ -2044,14 +2051,14 @@ static status_t sql_func_to_binary_fp(sql_stmt_t *stmt, expr_node_t *func, varia
 
     sql_init_num_input_fmt(&fmt);
     if (args.fmt != NULL) {
-        OG_RETURN_IFERR(sql_exec_num_conversion_option(stmt, args.fmt, &fmt_var, res));
+        OG_RETURN_IFERR(sql_exec_num_conversion_option(stmt, args.fmt, &fmt_var, res, OG_TRUE));
         if (fmt_var.is_null) {
             SQL_SET_NULL_VAR(res);
             return OG_SUCCESS;
         }
     }
     if (args.nls != NULL) {
-        OG_RETURN_IFERR(sql_exec_num_conversion_option(stmt, args.nls, &nls_var, res));
+        OG_RETURN_IFERR(sql_exec_num_conversion_option(stmt, args.nls, &nls_var, res, OG_FALSE));
         if (nls_var.is_null) {
             SQL_SET_NULL_VAR(res);
             return OG_SUCCESS;

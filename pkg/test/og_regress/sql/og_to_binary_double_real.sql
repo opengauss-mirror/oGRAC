@@ -54,6 +54,15 @@ select to_binary_double('1,234,567.8', '9G999G999D9',
        'NLS_NUMERIC_CHARACTERS=''.,''') as f03_nls from sys.sys_dummy;
 select to_binary_double('1.25E+2', '9D99EEEE',
        'NLS_NUMERIC_CHARACTERS=''.,''') as f04_scientific from sys.sys_dummy;
+-- Numeric format arguments are converted to text before format parsing.
+select case when to_binary_double('123', 999) = to_binary_double('123', '999')
+       then 'PASS' else 'FAIL' end as f05_numeric_fmt from sys.sys_dummy;
+select case when to_binary_double('123' default null on conversion error, 0) is null
+       then 'PASS' else 'FAIL' end as f06_numeric_default from sys.sys_dummy;
+select case when to_binary_double('123', 998 + rownum) = 123
+       then 'PASS' else 'FAIL' end as f07_dynamic_fmt from sys.sys_dummy;
+select case when to_binary_double('123', cast(null as integer)) is null
+       then 'PASS' else 'FAIL' end as f08_numeric_null_fmt from sys.sys_dummy;
 select to_binary_double('bad' default 0 on conversion error) as d01_default_number from sys.sys_dummy;
 select to_binary_double('bad' default '2.5' on conversion error) as d02_default_text from sys.sys_dummy;
 select to_binary_double('1.25' default 0 on conversion error) as d03_no_default from sys.sys_dummy;
@@ -72,6 +81,10 @@ select to_binary_double('bad' default 'still_bad' on conversion error) as e06_ba
 select to_binary_double(1 / 0 default 0 on conversion error) as e07_expr_error from sys.sys_dummy;
 select to_binary_double('bad' default (1 + 1) on conversion error) as e08_complex_default from sys.sys_dummy;
 select to_binary_double(date '2026-08-28') as e09_date from sys.sys_dummy;
+-- DEFAULT catches value conversion failures, not malformed formats or NLS type errors.
+select to_binary_double('123', 0) as e10_numeric_fmt_mismatch from sys.sys_dummy;
+select to_binary_double('123' default null on conversion error, 123) as e11_bad_numeric_fmt from sys.sys_dummy;
+select to_binary_double('123', 999, 0) as e12_numeric_nls from sys.sys_dummy;
 select to_binary_double('123-', '999S') as u01_trailing_sign from sys.sys_dummy;
 select to_binary_double('$123', '$999') as u02_currency from sys.sys_dummy;
 select to_binary_double('00FF', 'XXXX') as u03_hex from sys.sys_dummy;
