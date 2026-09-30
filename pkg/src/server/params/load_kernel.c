@@ -1333,6 +1333,12 @@ status_t srv_load_kernel_params(void)
 
     OG_RETURN_IFERR(srv_get_param_bool32("_UNDO_AUTO_SHRINK", &attr->undo_auto_shrink));
     OG_RETURN_IFERR(srv_get_param_bool32("_UNDO_AUTO_SHRINK_INACTIVE", &attr->undo_auto_shrink_inactive));
+    OG_RETURN_IFERR(srv_get_param_bool32("_UNDO_PERF_PREALLOC", &attr->undo_perf_prealloc));
+    OG_RETURN_IFERR(srv_get_param_uint32("_UNDO_PREALLOC_PAGES", &attr->undo_prealloc_pages));
+    if (attr->undo_prealloc_pages > 65536) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_UNDO_PREALLOC_PAGES", (int64)0, (int64)65536);
+        return OG_ERROR;
+    }
     OG_RETURN_IFERR(srv_get_param_uint32("_TX_ROLLBACK_PROC_NUM", &attr->tx_rollback_proc_num));
     if (attr->tx_rollback_proc_num < OG_MIN_ROLLBACK_PROC) {
         OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "TX_ROLLBACK_PROC_NUM", (int64)OG_MIN_ROLLBACK_PROC);

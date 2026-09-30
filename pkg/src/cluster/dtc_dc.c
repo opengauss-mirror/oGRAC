@@ -25,6 +25,7 @@
 #include "knl_cluster_module.h"
 #include "dtc_dc.h"
 #include "dtc_dcs.h"
+#include "dtc_dls.h"
 #include "dtc_context.h"
 #include "knl_datafile.h"
 #include "knl_buflatch.h"
@@ -404,18 +405,21 @@ status_t dtc_get_btree_split_status(knl_session_t *session, btree_t *btree, knl_
 
     uint16 msg_size = sizeof(msg_broadcast_data_t) + sizeof(msg_broadcast_btree_data_t);
     uint8 dst_id = (session->kernel->id == 0) ? 1 : 0;
+    /* A downed peer cannot be inside pcrb_split_page. An alive peer that does not answer can. */
+    if (session->kernel->attr.clustered && dtc_is_inst_fault(dst_id) == OG_SUCCESS) {
+        *is_splitting = OG_FALSE;
+        return OG_SUCCESS;
+    }
     mes_init_send_head(&bcast.head, MES_CMD_BROADCAST_DATA, msg_size, OG_INVALID_ID32, session->kernel->id,
                        dst_id, session->id, OG_INVALID_ID16);
     bcast.type = BTREE_SPLIT_STATUS;
 
     mes_message_t msg;
     if (mes_send_data3(&bcast.head, sizeof(msg_broadcast_data_t), (void *)&btree_data) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC] dtc_get_btree_split_status send message failed");
         return OG_ERROR;
     }
 
     if (mes_recv(session->id, &msg, OG_FALSE, OG_INVALID_ID32, DTC_GET_BTREE_SPLIT_STATUS_TIMEOUT) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC] dtc_get_btree_split_status get result timeout");
         return OG_ERROR;
     }
 
@@ -440,42 +444,49 @@ void dtc_process_btree_split_status(knl_session_t *session, mes_message_t *req_m
     msg_broadcast_btree_data_t *bcast = (msg_broadcast_btree_data_t *)data;
     msg_btree_split_status_t msg;
     knl_dictionary_t dc;
+    bool32 dc_opened = OG_FALSE;
+
+    /*
+     * Unknown status is reported as splitting. Dropping the ack makes the requester time out and
+     * used to continue its own split on the same btree.
+     */
+    msg.split_owner = OG_INVALID_ID8;
+    msg.is_splitting = OG_TRUE;
+
     if (knl_try_open_dc_by_id(session, bcast->uid, bcast->table_id, &dc) != OG_SUCCESS) {
         cm_reset_error();
         OG_LOG_RUN_ERR("[DTC] failed to open dc user id %u, table id %u, index id %u", bcast->uid, bcast->table_id,
                        bcast->index_id);
-        CM_ASSERT(0);
-        mes_release_message_buf(req_msg->buffer);
-        return;
+    } else {
+        dc_entity_t *entity = DC_ENTITY(&dc);
+        if (entity == NULL) {
+            cm_reset_error();
+            OG_LOG_RUN_WAR("[DTC] broadcast btree entity is null, uid/table_id/index_id/part/subpart:[%d-%d-%d-%u-%u]",
+                           bcast->uid, bcast->table_id, bcast->index_id, bcast->part_loc.part_no,
+                           bcast->part_loc.subpart_no);
+            msg.is_splitting = OG_FALSE;
+        } else {
+            btree_t *btree = dc_get_btree_by_id(session, entity, bcast->index_id, bcast->part_loc, bcast->is_shadow);
+            dc_opened = OG_TRUE;
+            if (btree == NULL) {
+                OG_LOG_RUN_ERR("[DTC] failed to get btree by id, part_no %u is_shadow %u, index id %u",
+                               bcast->part_loc.part_no, bcast->is_shadow, bcast->index_id);
+            } else {
+                msg.split_owner = btree->split_owner;
+                msg.is_splitting = btree->is_splitting;
+            }
+        }
     }
 
-    dc_entity_t *entity = DC_ENTITY(&dc);
-    if (entity == NULL) {
-        cm_reset_error();
-        OG_LOG_RUN_WAR("[DTC] broadcast btree entity is null, uid/table_id/index_id/part/subpart:[%d-%d-%d-%u-%u]",
-                       bcast->uid, bcast->table_id, bcast->index_id, bcast->part_loc.part_no,
-                       bcast->part_loc.subpart_no);
-        msg.split_owner = OG_INVALID_ID8;
-        msg.is_splitting = OG_FALSE;
-    } else {
-        btree_t *btree = dc_get_btree_by_id(session, entity, bcast->index_id, bcast->part_loc, bcast->is_shadow);
-        if (btree == NULL) {
-            OG_LOG_RUN_ERR("[DTC] failed to get btree by id, part_no %u is_shadow %u, index id %u",
-                           bcast->part_loc.part_no, bcast->is_shadow, bcast->index_id);
-            dc_close(&dc);
-            mes_release_message_buf(req_msg->buffer);
-            return;
-        }
-        msg.split_owner = btree->split_owner;
-        msg.is_splitting = btree->is_splitting;
+    if (dc_opened) {
         dc_close(&dc);
     }
+
     mes_init_ack_head(req_msg->head, &msg.head, MES_CMD_BROADCAST_DATA_ACK,
                       sizeof(msg_btree_split_status_t), session->id);
     mes_release_message_buf(req_msg->buffer);
     if (mes_send_data(&msg) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DTC DC] failed to send split btree status,");
-        return;
+        OG_LOG_RUN_ERR("[DTC DC] failed to send split btree status");
     }
 }
 

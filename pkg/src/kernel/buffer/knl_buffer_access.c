@@ -293,6 +293,31 @@ status_t buf_load_page_from_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_
     g_knl_callback.accumate_io(session, IO_TYPE_READ);
 
     if (!buf_check_load_page(session, ctrl->page, page_id, OG_FALSE)) {
+        /*
+         * One aligned read can observe a torn 8K write. Read the same page
+         * again before treating it as durable corruption.
+         */
+        OG_LOG_RUN_WAR("[BUFFER] page %u-%u load check failed, retry read", page_id.file, page_id.page);
+        knl_begin_session_wait(session, DB_FILE_SEQUENTIAL_READ, OG_TRUE);
+        if (spc_read_datafile(session, df, handle, offset, ctrl->page, DEFAULT_PAGE_SIZE(session)) == OG_SUCCESS) {
+            knl_end_session_wait(session, DB_FILE_SEQUENTIAL_READ);
+            session->stat->disk_read_time += session->wait_pool[DB_FILE_SEQUENTIAL_READ].usecs;
+            session->stat->disk_reads++;
+            cm_atomic_inc(&session->kernel->total_io_read);
+            g_knl_callback.accumate_io(session, IO_TYPE_READ);
+            if (buf_check_load_page(session, ctrl->page, page_id, OG_FALSE)) {
+                OG_LOG_RUN_WAR("[BUFFER] page %u-%u passed load check on retry", page_id.file, page_id.page);
+                knl_panic_log(lsn <= ctrl->page->lsn || OGRAC_SESSION_IN_RECOVERY(session),
+                              "buf load page from disk lsn [%llu-%llu]", (uint64)lsn, (uint64)ctrl->page->lsn);
+                return OG_SUCCESS;
+            }
+        } else {
+            knl_end_session_wait(session, DB_FILE_SEQUENTIAL_READ);
+            OG_LOG_RUN_ERR("[BUFFER] failed to reread datafile %s, offset %lld, size %u, error code %d",
+                           df->ctrl->name, offset, DEFAULT_PAGE_SIZE(session), errno);
+            spc_close_datafile(df, handle);
+        }
+
         /* record alarm log if repair failed */
         OG_LOG_ALARM(WARN_PAGECORRUPTED, "{'page-type':'%s','space-name':'%s','file-name':'%s'}",
                      page_type(ctrl->page->type), space->ctrl->name, df->ctrl->name);

@@ -37,45 +37,38 @@
 extern "C" {
 #endif
 
-/*
- * Per-lane independent redo file: file_id = lane / OG_REDO_LANE_FILE_STUB_COUNT fallback
- */
-#define OG_LOG_FLUSH_WORD_CACHE_SIZE 128
+#define RD_NOT_COPIED 0  // Not yet copied to WAL buffer (slot allocatable / flushed-recycled)
+#define RD_COPIED 1      // Copied to WAL buffer, not yet flushed
 
-#ifndef OG_RD_PERF_STUB
-#define OG_RD_PERF_STUB 0
-#endif
-
-// WAL insertion status definitions
-#define RD_NOT_COPIED 0
-#define RD_COPIED 1
+// Number of status slots per NUMA is 2^WAL_STATUS_ENTRIES_POWER (enlarging ring reduces reuse frequency)
 #define RD_STATUS_ENTRIES_POWER 17
+
+// Flush entry status array size
 #define LOG_FLUSH_ENTRY_COUNT 65536
-#define LOG_FLUSH_BITMAP_WINDOW_SIZE (1U << 23)
-#define LOG_FLUSH_BITMAP_WORDS (LOG_FLUSH_BITMAP_WINDOW_SIZE / 64)
-#define LOG_FLUSH_BITMAP_WORD_SHIFT 6
-#define LOG_FLUSH_BITMAP_WORD_MASK 63
-#define LOG_FLUSH_BITMAP_SLIDE_SIZE (LOG_FLUSH_BITMAP_WINDOW_SIZE >> 1)
-#define LOG_FLUSH_BITMAP_BACKPRESSURE_SIZE \
-    (LOG_FLUSH_BITMAP_WINDOW_SIZE - (LOG_FLUSH_BITMAP_WINDOW_SIZE >> 2))
 
 /* Parallel recovery: read cache size per writer cursor */
 #define PARA_LOG_RCY_CACHE_SIZE SIZE_M(2)
 
-/* 4-byte CRC at group disk tail, does not change log_group_t persistent layout */
+/* group tail 4-byte CRC on disk */
 #define PARA_LOG_GROUP_CKS_SIZE ((uint32)sizeof(uint32))
 #define PARA_LOG_GROUP_DISK_SIZE(group) (LOG_GROUP_ACTUAL_SIZE(group) + PARA_LOG_GROUP_CKS_SIZE)
 
-/* WAL reservation/flush wait timeout. Timeout means lgwr/bitmap stuck, abort to avoid session spinning forever. */
+/* WAL reserve/flush wait timeout. Timeout means lgwr is stuck; abort to avoid sessions spinning forever. */
 #define PARA_LOG_WRITE_WAIT_TIMEOUT ((date_t)(60 * MICROSECS_PER_SECOND))
 
 #define PARA_LOG_SWITCH_WAIT_TIMEOUT ((date_t)(600 * MICROSECS_PER_SECOND))
 #define PARA_LOG_SPACE_WAIT_SLICE_MS ((uint32)200)
 #define PARA_LOG_CKPT_KICK_INTERVAL ((date_t)MICROSECS_PER_SECOND)
 #define PARA_LOG_SPACE_WAKE_COUNT ((uint32)1024)
-/* LRC token: next one spins (yield), later ones futex-sleep; slice is only a lost-wakeup fallback */
-#define PARA_LOG_LRC_WAIT_SLICE_MS ((uint32)5)
-#define PARA_LOG_LRC_WAKE_COUNT ((uint32)1024)
+
+#define PARA_LOG_FLUSH_BATCH_SIZE SIZE_K(512)
+#define PARA_LOG_COMMIT_WAIT_SLICE_MS ((uint32)50)
+/*
+ * Recovery may see curr_lsn retreat vs file offset inside this generation (reserve then
+ * INC_LSN, late copy). That invert is bounded by in-flight status slots. Previous-ASN
+ * leftover on the same file is millions of LSN earlier — not this slack.
+ */
+#define PARA_LOG_RCY_GEN_INVERT_SLACK ((uint64)(1U << RD_STATUS_ENTRIES_POWER))
 
 static inline bool32 para_log_wait_timed_out(date_t begin)
 {
@@ -96,11 +89,13 @@ typedef enum en_para_log_flush_status {
 
 typedef struct __attribute__((aligned(128))) st_para_log_ins_status_ent {
     volatile uint64 end_log_pos;
-    volatile uint64 lsn;
-    volatile int32 lrc;
-    volatile uint8 status;
+    volatile uint64 curr_lsn; /* group->lsn, ckpt/recycle/rcy_off */
+    volatile int32 lrc;       // logical record count inside NUMA
+    volatile uint8 status;    // COPY / NOT COPIED
     uint8 pad[CACHE_LINESIZE - 8 - 8 - 4 - 1];
 } para_log_ins_status_ent_t;
+
+typedef char para_log_status_ent_size_assert[(sizeof(para_log_ins_status_ent_t) == CACHE_LINESIZE) ? 1 : -1];
 
 /* ARM weak ordering: status must use acquire/release, not just volatile. */
 static inline uint8 para_log_status_load_acquire(const volatile para_log_ins_status_ent_t *entry)
@@ -113,6 +108,27 @@ static inline void para_log_status_store_release(volatile para_log_ins_status_en
     __atomic_store_n((volatile uint8 *)&entry->status, val, __ATOMIC_RELEASE);
 }
 
+static inline int32 para_log_lrc_load_acquire(const atomic32_t *val)
+{
+    return __atomic_load_n(val, __ATOMIC_ACQUIRE);
+}
+
+static inline void para_log_lrc_store_release(atomic32_t *val, int32 value)
+{
+    __atomic_store_n(val, value, __ATOMIC_RELEASE);
+}
+
+static inline bool32 para_log_lrc_reached(int32 flushed, int32 target)
+{
+    if (target < 0) {
+        return OG_TRUE;
+    }
+    if (flushed < 0) {
+        return OG_FALSE;
+    }
+    return (bool32)(((flushed - target) & 0x7FFFFFFF) < 0x40000000);
+}
+
 typedef union un_para_log_buf_ctl {
     struct {
         uint64 curr_byte_pos;
@@ -121,14 +137,6 @@ typedef union un_para_log_buf_ctl {
     } struct128;
     uint128_u value;
 } __attribute__((aligned(16))) para_log_buf_ctl_t;
-
-typedef union un_para_log_lsn_ctl {
-    struct {
-        uint64 lsn;
-        uint64 commit;
-    } s;
-    uint128_u value;
-} __attribute__((aligned(16))) para_log_lsn_ctl_t;
 
 typedef struct st_para_log_buf_ctx {
     char *buffer;
@@ -148,24 +156,9 @@ typedef struct st_para_log_flush_entry {
     uint8 pad[CACHE_LINESIZE - 1 - 8 - 8 - 4 - 2];
 } para_log_flush_entry_t;
 
-typedef struct st_para_log_flush_lsn_bitmap {
-    spinlock_t lock;
-    uint32 lock_align[15];
-    volatile uint64 seq;
-    volatile uint64 base_lsn;
-    volatile uint64 flushed_lsn;
-    volatile uint64 max_marked_lsn;
-    volatile uint64 bitmap[LOG_FLUSH_BITMAP_WORDS];
-} para_log_flush_lsn_bitmap_t;
-
 static inline uint64 para_log_u64_load(volatile uint64 *ptr)
 {
     return cm_atomic_barrier_read(ptr);
-}
-
-static inline void para_log_u64_store(volatile uint64 *ptr, uint64 value)
-{
-    (void)cm_atomic_set_u64(ptr, value);
 }
 
 static inline void para_log_u64_store_release(volatile uint64 *ptr, uint64 value)
@@ -176,11 +169,6 @@ static inline void para_log_u64_store_release(volatile uint64 *ptr, uint64 value
 static inline bool32 para_log_u64_cas(volatile uint64 *ptr, uint64 *expected, uint64 newval)
 {
     return cm_atomic_compare_exchange_u64((atomic_t *)(void *)ptr, expected, newval);
-}
-
-static inline uint64 para_log_u64_add(volatile uint64 *ptr, int64 count)
-{
-    return (uint64)cm_atomic_add((atomic_t *)(void *)ptr, count);
 }
 
 typedef struct st_para_log_bg_lock {
@@ -218,39 +206,45 @@ typedef struct st_para_log_dfx {
     uint64 flush_bytes;
     uint64 flush_entries;
     uint64 empty_poll;
+    uint64 flush_hold;
     uint64 commit_wait_loop;
     uint64 switch_cnt;
     uint64 recycle_cnt;
-    uint64 bitmap_block;
     date_t last_dump;
 } para_log_dfx_t;
 
 typedef struct __attribute__((aligned(128))) st_para_log_context {
     thread_t thread;
     knl_session_t *session;
-    uint32 thread_idx;
-    para_log_bg_flush_lock_t b_flush_lock;
+    uint32 thread_idx;   /* cluster / WAL group id */
+    uint32 file_numa_id; /* 1:1 with thread_idx; reserved field to avoid changing layout call sites */
+    para_log_bg_flush_lock_t b_flush_lock;  // lock for background flush
     para_log_write_lock_t write_log_lock;
-    volatile int32 next_assign_lrc;
-    uint8 next_assign_lrc_pad[CACHE_LINESIZE - sizeof(int32)];
+    atomic32_t lrc_wake_seq; /* +1 after this lane flushed; seq for commit-wait of the stuck lane */
+    uint8 lrc_wake_seq_pad[CACHE_LINESIZE - sizeof(atomic32_t)];
     para_log_commit_queue_t tx_queue;
     para_log_leader_cond_t leader_wait_cond;
 
-    atomic_t flush_req;
-    atomic_t flush_ack;
-    atomic32_t kick_futex;
-    atomic32_t ack_futex;
-    atomic32_t space_futex;
-    atomic32_t switch_blocked;
-    date_t last_ckpt_kick;
-    date_t switch_wait_begin;
+    atomic_t flush_req;        /* incremented by self_flush, asks writer to do a flush */
+    atomic_t flush_ack;        /* writer catches up to flush_req after completing this flush round */
+    atomic32_t kick_futex;     /* wake writer (especially DB_NOT_READY waiters) */
+    atomic32_t ack_futex;      /* wake self_flush waiters */
+    atomic32_t space_futex;    /* wake KEEP / switch-file waiters after recycle success */
+    atomic32_t switch_blocked; /* no INACTIVE, lgwr skips flush this round, waits for recycle outside lock */
+    date_t last_ckpt_kick;     /* lgwr high watermark kicks ckpt to limit frequency */
+    date_t switch_wait_begin;  /* timestamp of first switch-file wait for recycle */
     para_log_buf_ctx_t log_buf_ctx;
 
     para_log_flush_entry_t *flush_entry_status;
     int32 last_flushed_entry;
+    uint8 last_flushed_entry_pad[CACHE_LINESIZE - sizeof(int32)];
+    atomic32_t last_flushed_lrc; /* LRC of flushed continuous prefix of this lane; -1 means not flushed yet */
+    uint8 last_flushed_lrc_pad[CACHE_LINESIZE - sizeof(atomic32_t)];
+    atomic32_t reserved_lrc; /* next lrc after CAS success; snapshot reads this, does not touch 128-bit ctl */
+    uint8 reserved_lrc_pad[CACHE_LINESIZE - sizeof(atomic32_t)];
     volatile uint64 last_flushed_pos;
     char *logwr_head_buf;
-    char* flush_buf;
+    char *flush_buf;
     uint64 flush_buf_size;
     uint16 reserved;
     volatile uint64 file_write_pos;
@@ -261,21 +255,22 @@ typedef struct __attribute__((aligned(128))) st_para_log_context {
     uint32 log_file_idx;
     /* use for file control */
     uint16 curr_file;
-    uint16 active_file;
-    atomic32_t ctrl_dirty;
-    atomic_t free_size;
+    uint16 active_file;     // first active file
+    atomic32_t ctrl_dirty;  // switch has updated in-memory para_log_last, ctrl not yet persisted
+    atomic_t free_size;     // CURRENT remaining + INACTIVE whole-file capacity (ignoring stale write_pos)
     /* Embedded with files[]; both sized CPU_SEG_MAX_NUM, zeroed in para_log_init via context memset. */
-    uint64 file_max_lsn[CPU_SEG_MAX_NUM];
+    uint64 file_max_lsn[CPU_SEG_MAX_NUM];  // max flushed curr_lsn per file-slot (recycle criterion: <= rcy_point.lsn)
 
     log_point_t curr_point;
     log_stat_t stat;
     para_log_dfx_t dfx;
 } para_log_context_t;
 
-typedef char para_log_files_slot_assert[(sizeof(((para_log_context_t *)0)->files) / sizeof(log_file_t *) ==
-                                         CPU_SEG_MAX_NUM) ? 1 : -1];
-typedef char para_log_max_lsn_slot_assert[(sizeof(((para_log_context_t *)0)->file_max_lsn) / sizeof(uint64) ==
-                                           CPU_SEG_MAX_NUM) ? 1 : -1];
+typedef char para_log_files_slot_assert
+    [(sizeof(((para_log_context_t *)0)->files) / sizeof(log_file_t *) == CPU_SEG_MAX_NUM) ? 1 : -1];
+typedef char para_log_max_lsn_slot_assert
+    [(sizeof(((para_log_context_t *)0)->file_max_lsn) / sizeof(uint64) == CPU_SEG_MAX_NUM) ? 1 : -1];
+typedef char para_log_sess_group_max_assert[(KNL_PARA_LOG_MAX_GROUPS == CPU_SEG_MAX_NUM) ? 1 : -1];
 
 static inline uint32 para_log_file_slot_count(const para_log_context_t *ogx)
 {
@@ -316,6 +311,13 @@ static inline int32 get_log_buf_next_lrc(int32 lrc, uint32 power)
     return (lrc + get_log_buf_ring_size(power)) & 0x7FFFFFFF;
 }
 
+typedef struct st_para_log_rcy_idx_ent {
+    uint64 lsn; /* group->lsn (curr_lsn) */
+    int64 offset;
+    uint32 file_idx;
+    uint32 disk_size;
+} para_log_rcy_idx_ent_t;
+
 typedef struct st_para_log_rcy_cursor {
     uint32 group_id;
     uint32 compact_count;
@@ -330,10 +332,20 @@ typedef struct st_para_log_rcy_cursor {
     aligned_buf_t cache;
     int64 cache_off;
     uint32 cache_valid;
-    uint64 last_commit_lsn;
+    int32 cache_file_idx; /* which file slot the cache belongs to; -1 means cache invalid */
+    uint64 last_group_lsn;
     uint64 rcy_lsn;
+    uint64 file_first_lsn; /* this file's first_lsn; leftover previous ASN is below it */
+    uint32 file_asn;       /* this file's head.asn; group->asn mismatch means leftover */
+    int64 durable_wpos;    /* on-disk write_pos at open; CURRENT scan starts bounded here */
     bool32 has_group;
     bool32 eof;
+    bool32 garbage_skip;   /* just skipped padding/CRC misalignment; leftover fragments are not end-of-file */
+    bool32 seen_post_ckpt; /* this file has already accepted groups with lsn > rcy_lsn; later <= rcy means leftover */
+    para_log_rcy_idx_ent_t *idx; /* when non-NULL idx_cap is allocated count; when NULL cap/count must be 0 */
+    uint32 idx_count;
+    uint32 idx_cap;
+    uint32 idx_pos;
 } para_log_rcy_cursor_t;
 
 typedef struct st_para_log_rcy_stream {
@@ -349,12 +361,17 @@ typedef struct st_para_log_rcy_stream {
 } para_log_rcy_stream_t;
 
 uint32 para_log_bind_group(const knl_session_t *session);
+uint32 para_log_file_lgwr_count(void);
+uint32 para_log_group_to_numa(uint32 group_id);
+uint32 para_log_numa_home_group(uint32 numa_id);
+uint32 para_log_numa_group_end(uint32 numa_id);
 para_log_context_t *para_log_ctx_of(const knl_session_t *session);
+para_log_context_t *para_log_file_ogx_of(const knl_session_t *session, const para_log_context_t *ogx);
 bool32 para_log_has_keep_space(knl_session_t *session, para_log_context_t *ogx);
 void para_log_wait_keep_space(knl_session_t *session, para_log_context_t *ogx);
-para_log_flush_lsn_bitmap_t *para_log_bitmap_of(const knl_session_t *session);
 bool32 para_log_need_flush(knl_session_t *session);
 status_t para_log_init(knl_session_t *session);
+status_t para_log_check_db_mode(knl_session_t *session);
 status_t para_log_check_unsupported(knl_session_t *session);
 status_t para_log_file_load(knl_session_t *session);
 void para_log_close(knl_session_t *session);
@@ -363,6 +380,7 @@ status_t para_log_flush_by_numa(knl_session_t *session, uint32 numa_id);
 void para_log_proc(thread_t *thread);
 void para_log_write(knl_session_t *session, uint32 total_size, log_group_t *group, uint32 ori_group_size);
 status_t para_log_fredosync(device_type_t type, int32 handle);
+/* commit waits for this LRC flushed and all lanes' reserved COPIED prefix flushed; not the global flushed_lsn */
 status_t para_log_commit_flush(knl_session_t *session);
 status_t para_log_check_asn(knl_session_t *session);
 void para_log_recycle_file(knl_session_t *session, uint32 group_id, log_point_t *point);

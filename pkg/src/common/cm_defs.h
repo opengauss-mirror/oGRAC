@@ -263,7 +263,7 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_INDEX_REAL_PREC 16  // # of index decimal digits of precision
 #define OG_MAX_CM_DOUBLE_PREC 17
 
-#define CACHE_LINESIZE (uint32)64
+#define CACHE_LINESIZE (uint32)128
 #define OG_MAX_TIME_STRLEN (uint32)(48)
 #define OG_MAX_DATE_STRLEN (uint32)(22)
 #define OG_MAX_TIMESTAMP_STRLEN (uint32)(32)
@@ -605,7 +605,7 @@ typedef enum en_cs_distribute_type {
 #define OG_XPURPOSE_BUFFER_SIZE SIZE_M(2)
 #define OG_MAX_VMEM_MAP_PAGES SIZE_K(32) /* 32K, MAXIMUM vmem size is 1T */
 #define OG_VMEM_PAGE_SIZE SIZE_K(128)
-#define OG_MAX_LOG_BUFFERS (uint32)16
+#define OG_MAX_LOG_BUFFERS (uint32)128
 #define OG_MIN_LOG_BUFFERS (uint32)1
 #define OG_MAX_SSL_EXPIRE_THRESHOLD (uint32)180
 #define OG_MIN_SSL_EXPIRE_THRESHOLD (uint32)7

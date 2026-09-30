@@ -25,6 +25,7 @@
 #include "srv_module.h"
 #include "cm_file.h"
 #include "srv_instance.h"
+#include "cm_cpu.h"
 #include "load_others.h"
 #include "load_kernel.h"
 #include "load_server.h"

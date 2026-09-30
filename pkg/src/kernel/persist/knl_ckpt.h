@@ -296,6 +296,7 @@ void ckpt_set_trunc_point_slave_role(knl_session_t *session, log_point_t *point,
 status_t ckpt_recover_partial_write(knl_session_t *session);
 bool32 ckpt_check(knl_session_t *session);
 void ckpt_reset_point(knl_session_t *session, log_point_t *point);
+void ckpt_publish_rcy_to_lrp(knl_session_t *session);
 page_id_t page_first_group_id(knl_session_t *session, page_id_t page_id);
 void ckpt_disable(knl_session_t *session);
 void ckpt_block_new_tasks(knl_session_t *session);

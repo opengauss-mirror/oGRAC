@@ -201,14 +201,12 @@ static inline void srv_session_bind_cpu(session_t *session)
     if (SYS_NUMA_GROUP_COUNT > 0 && target_numa >= SYS_NUMA_GROUP_COUNT) {
         target_numa %= (uint8)SYS_NUMA_GROUP_COUNT;
     }
-    if (session->knl_session.cpu_bound) {
+
+    knl_get_cpu_set_from_conf(&cpuset, 0, target_numa);
+    if (rsrc_cpuset_is_equal(&agent->cpuset, &cpuset)) {
         return;
     }
 
-    int* sess_idx = get_cpu_session_use_idx();
-    uint32 sessid = (uint32)cm_atomic32_get((atomic32_t *)&sess_idx[target_numa]);
-    knl_get_cpu_set_from_conf(&cpuset, sessid, target_numa);
-    (void)cm_atomic32_fetch_inc((atomic32_t *)&sess_idx[target_numa]);
     (void)rsrc_thread_bind_cpu(&agent->thread, &cpuset);
     numa_set_localalloc();
     agent->cpuset = cpuset;

@@ -1816,7 +1816,7 @@ static context_ctrl_t *vw_ogsql_func_plan_find_next_ctrl(context_pool_t *pool, k
 
 static inline void vw_release_ctrl_res(context_pool_t *pool, context_ctrl_t *ctrl)
 {
-    ogx_dec_exec(ctrl);
+    (void)cm_atomic32_dec(&ctrl->exec_count);
     ogx_dec_ref(pool, ctrl);
 }
 
@@ -2014,7 +2014,7 @@ static status_t vw_fetch_sub_plan(knl_handle_t session, context_ctrl_t *parent, 
         vw_ogsql_func_plan_switch_next_ctx(cursor, OG_TRUE);
     }
 
-    ogx_dec_exec(ctrl);
+    (void)cm_atomic32_dec(&ctrl->exec_count);
     ogx_dec_ref(parent->subpool, ctrl);
     return status;
 }

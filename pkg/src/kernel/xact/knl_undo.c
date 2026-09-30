@@ -567,11 +567,171 @@ void undo_timed_task(knl_session_t *session)
     return;
 }
 
+#define UNDO_PREALLOC_ATOMIC_CHUNK (KNL_MAX_ATOMIC_PAGES - 4)
+
+static void undo_prealloc_cancel_atomic(knl_session_t *session)
+{
+    log_group_t *group = (log_group_t *)session->log_buf;
+
+    knl_panic(session->atomic_op);
+    knl_panic_log(session->page_stack.depth == 0, "page_stack depth %u", session->page_stack.depth);
+    knl_panic_log(session->dirty_count == 0, "dirty_count %u", session->dirty_count);
+    knl_panic_log(session->changed_count == 0, "changed_count %u", session->changed_count);
+
+    group->size = sizeof(log_group_t);
+    group->extend = 0;
+    session->atomic_op = OG_FALSE;
+}
+
+static uint32 undo_get_prealloc_target(knl_session_t *session, uint64 total_pages)
+{
+    if (session->kernel->attr.undo_perf_prealloc && session->kernel->attr.undo_prealloc_pages > 0) {
+        return session->kernel->attr.undo_prealloc_pages;
+    }
+
+    return UNDO_INIT_PAGES(session, total_pages);
+}
+
+static uint32 undo_get_prealloc_file_no(knl_session_t *session, space_t *space)
+{
+    datafile_t *df = NULL;
+    uint32 id;
+
+    for (id = 0; id < space->ctrl->file_hwm; id++) {
+        if (OG_INVALID_ID32 == space->ctrl->files[id]) {
+            continue;
+        }
+
+        df = DATAFILE_GET(session, space->ctrl->files[id]);
+        if (DATAFILE_IS_ONLINE(df)) {
+            return id;
+        }
+    }
+
+    return OG_INVALID_ID32;
+}
+
+static void undo_format_prealloc_pages(knl_session_t *session, undo_t *undo, space_t *space,
+    page_id_t start_page, uint32 page_count)
+{
+    rd_undo_fmt_page_t redo;
+    page_id_t page_id = start_page;
+    bool32 need_redo = SPACE_IS_LOGGING(space);
+    uint32 i;
+
+    buf_enter_page(session, PAGID_U2N(undo->entry), LATCH_MODE_X, ENTER_PAGE_RESIDENT);
+    for (i = 0; i < page_count; i++) {
+        buf_enter_page(session, page_id, LATCH_MODE_X, ENTER_PAGE_NO_READ);
+        undo_format_page(session, (undo_page_t *)CURR_PAGE(session), page_id, INVALID_UNDO_PAGID,
+            undo->segment->page_list.first);
+        if (need_redo) {
+            redo.page_id = PAGID_N2U(page_id);
+            redo.prev = g_invalid_undo_pagid;
+            redo.next = undo->segment->page_list.first;
+            log_put(session, RD_UNDO_FORMAT_PAGE, &redo, sizeof(rd_undo_fmt_page_t), LOG_ENTRY_FLAG_NONE);
+        }
+        buf_leave_page(session, OG_TRUE);
+
+        undo->segment->page_list.first = PAGID_N2U(page_id);
+        if (undo->segment->page_list.count == 0) {
+            undo->segment->page_list.last = undo->segment->page_list.first;
+        }
+        undo->segment->page_list.count++;
+        page_id.page++;
+    }
+
+    if (need_redo) {
+        log_put(session, RD_UNDO_CHANGE_SEGMENT, &undo->segment->page_list, sizeof(undo_page_list_t),
+            LOG_ENTRY_FLAG_NONE);
+    }
+    buf_leave_page(session, OG_TRUE);
+}
+
+/*
+ * Reserve and format one chunk. HWM redo and page-format redo commit together,
+ * so a crash cannot leave pages above HWM and off the undo list.
+ * Returns OG_TRUE when the segment page count increased.
+ */
+static bool32 undo_prealloc_segment_batch(knl_session_t *session, uint32 id, uint32 target_pages, uint32 file_no)
+{
+    undo_context_t *ogx = &session->kernel->undo_ctx;
+    undo_t *undo = &ogx->undos[id];
+    space_t *space = ogx->space;
+    page_id_t start_page;
+    uint32 pages_reserved = 0;
+    uint32 gap;
+    uint32 chunk;
+    uint32 current_count;
+
+    if (undo->segment == NULL) {
+        return OG_FALSE;
+    }
+
+    buf_enter_page(session, PAGID_U2N(undo->entry), LATCH_MODE_S, ENTER_PAGE_RESIDENT);
+    current_count = undo->segment->page_list.count;
+    buf_leave_page(session, OG_FALSE);
+
+    if (current_count >= target_pages) {
+        return OG_FALSE;
+    }
+
+    gap = target_pages - current_count;
+    chunk = gap;
+    if (chunk > UNDO_PREALLOC_ATOMIC_CHUNK) {
+        chunk = UNDO_PREALLOC_ATOMIC_CHUNK;
+    }
+
+    start_page = g_invalid_pagid;
+    log_atomic_op_begin(session);
+    cm_spin_lock(&space->lock.lock, &session->stat->spin_stat.stat_space);
+    if (!spc_reserve_undo_hwm_pages(session, space, chunk, file_no, &start_page, &pages_reserved)) {
+        cm_spin_unlock(&space->lock.lock);
+        undo_prealloc_cancel_atomic(session);
+        OG_LOG_RUN_WAR("[UNDO PREALLOC] segment %u reserve %u pages from file %u failed, current %u", id, chunk,
+            file_no, current_count);
+        return OG_FALSE;
+    }
+    cm_spin_unlock(&space->lock.lock);
+
+    if (pages_reserved == 0 || pages_reserved > chunk || IS_INVALID_PAGID(start_page)) {
+        if (session->dirty_count == 0 && session->changed_count == 0) {
+            undo_prealloc_cancel_atomic(session);
+        } else {
+            log_atomic_op_end(session);
+        }
+        OG_LOG_RUN_WAR("[UNDO PREALLOC] segment %u invalid reserve result, pages %u chunk %u", id, pages_reserved,
+            chunk);
+        return OG_FALSE;
+    }
+
+    undo_format_prealloc_pages(session, undo, space, start_page, pages_reserved);
+    log_atomic_op_end(session);
+    OG_LOG_RUN_INF("[UNDO PREALLOC] segment %u reserved %u pages, total %u", id, pages_reserved,
+        current_count + pages_reserved);
+    return OG_TRUE;
+}
+
+/*
+ * Write pages formatted for one segment before the next segment dirties more.
+ * Prealloc otherwise leaves every segment dirty at once; those pages are
+ * evicted after checkpoint copies them, and a later read can observe a torn
+ * 8K image whose checksum no longer matches.
+ */
+static void undo_prealloc_flush_pages(knl_session_t *session)
+{
+    ckpt_context_t *ckpt = &session->kernel->ckpt_ctx;
+
+    if (!DB_TO_RECOVERY(session) || ckpt->queue.count == 0) {
+        return;
+    }
+    ckpt_trigger(session, OG_TRUE, CKPT_TRIGGER_FULL);
+}
+
 /*
  * init undo pages for the specified undo segment during undo pre-load
  * @param kernel session, undo segment id, number of init pages
  */
-static void undo_init_segment(knl_session_t *session, uint32 id, uint32 init_pages)
+static void undo_init_segment(knl_session_t *session, uint32 id, uint32 init_pages, uint32 file_no)
 {
     undo_context_t *ogx = &session->kernel->undo_ctx;
     undo_t *undo = &ogx->undos[id];
@@ -580,6 +740,44 @@ static void undo_init_segment(knl_session_t *session, uint32 id, uint32 init_pag
     page_id_t page_id;
     uint32 extent_size;
     uint32 i;
+
+    if (session->kernel->attr.undo_perf_prealloc) {
+        uint32 current_count;
+        uint32 prev_count;
+        bool32 formatted = OG_FALSE;
+
+        buf_enter_page(session, PAGID_U2N(undo->entry), LATCH_MODE_S, ENTER_PAGE_RESIDENT);
+        current_count = undo->segment->page_list.count;
+        buf_leave_page(session, OG_FALSE);
+
+        if (file_no != OG_INVALID_ID32 && current_count < init_pages) {
+            (void)spc_extend_undo_datafile_for_pages(session, ogx->space, file_no, init_pages - current_count);
+        }
+
+        while (current_count < init_pages) {
+            prev_count = current_count;
+            if (!undo_prealloc_segment_batch(session, id, init_pages, file_no)) {
+                break;
+            }
+
+            buf_enter_page(session, PAGID_U2N(undo->entry), LATCH_MODE_S, ENTER_PAGE_RESIDENT);
+            current_count = undo->segment->page_list.count;
+            buf_leave_page(session, OG_FALSE);
+            formatted = OG_TRUE;
+
+            if (current_count <= prev_count) {
+                break;
+            }
+        }
+
+        if (formatted) {
+            undo_prealloc_flush_pages(session);
+        }
+
+        MEMS_RETVOID_IFERR(memset_sp(&undo->stat, sizeof(undo_seg_stat_t), 0, sizeof(undo_seg_stat_t)));
+        undo->stat.begin_time = cm_now();
+        return;
+    }
 
     for (;;) {
         log_atomic_op_begin(session);
@@ -629,28 +827,41 @@ static void undo_init_segment(knl_session_t *session, uint32 id, uint32 init_pag
     return;
 }
 
+static void undo_preload_work(knl_session_t *session)
+{
+    undo_context_t *ogx = &session->kernel->undo_ctx;
+    space_t *space = ogx->space;
+    uint64 total_pages;
+    uint32 init_pages;
+    uint32 file_no;
+    uint32 i;
+
+    total_pages = spc_count_pages(session, space, OG_FALSE);
+    init_pages = undo_get_prealloc_target(session, total_pages);
+    file_no = undo_get_prealloc_file_no(session, space);
+
+    OG_LOG_RUN_INF("[UNDO PREALLOC] start preload, target %u pages per segment on file %u, perf_mode %u",
+        init_pages, file_no, session->kernel->attr.undo_perf_prealloc);
+    for (i = 0; i < UNDO_SEGMENT_COUNT(session); i++) {
+        undo_init_segment(session, i, init_pages, file_no);
+    }
+
+    OG_LOG_RUN_INF("[UNDO PREALLOC] preload completed, target %u pages per segment on file %u", init_pages, file_no);
+}
+
 /*
  * warm up the undo space by init some undo pages for each undo segment
  */
 static void undo_preload_proc(thread_t *thread)
 {
     knl_session_t *session = (knl_session_t *)thread->argument;
-    undo_context_t *ogx = &session->kernel->undo_ctx;
-    uint64 total_pages;
-    uint32 init_pages;
-    uint32 i;
 
     cm_set_thread_name("undo preload");
     OG_LOG_RUN_INF("undo preload thread started");
     KNL_SESSION_SET_CURR_THREADID(session, cm_get_current_thread_id());
     knl_qos_begin(session);
 
-    total_pages = spc_count_pages(session, ogx->space, OG_FALSE);
-    init_pages = UNDO_INIT_PAGES(session, total_pages);
-
-    for (i = 0; i < UNDO_SEGMENT_COUNT(session); i++) {
-        undo_init_segment(session, i, init_pages);
-    }
+    undo_preload_work(session);
 
     knl_qos_end(session);
 
@@ -670,6 +881,39 @@ status_t undo_preload(knl_session_t *session)
     if (OG_SUCCESS != cm_create_thread(undo_preload_proc, 0, kernel->sessions[SESSION_ID_UNDO], &ogx->thread)) {
         return OG_ERROR;
     }
+
+    return OG_SUCCESS;
+}
+
+/*
+ * Synchronous undo pre-allocation on database open when performance mode is enabled.
+ * Runs before DB_STATUS_OPEN to avoid racing with user transactions.
+ */
+status_t undo_perf_preload(knl_session_t *session)
+{
+    knl_instance_t *kernel = session->kernel;
+    knl_session_t *undo_session = NULL;
+
+    if (!kernel->attr.undo_perf_prealloc) {
+        return OG_SUCCESS;
+    }
+
+    /*
+     * Shared storage gives each node its own undo space, so every node preallocates.
+     * Local storage shares one undo, and only the primary may write it.
+     */
+    if (!cm_dbs_is_enable_dbs() && !DB_IS_PRIMARY(&kernel->db)) {
+        return OG_SUCCESS;
+    }
+
+    undo_session = kernel->sessions[SESSION_ID_UNDO];
+    if (undo_session == NULL) {
+        OG_LOG_RUN_ERR("[UNDO PREALLOC] undo session is null");
+        return OG_ERROR;
+    }
+    knl_qos_begin(undo_session);
+    undo_preload_work(undo_session);
+    knl_qos_end(undo_session);
 
     return OG_SUCCESS;
 }

@@ -126,6 +126,9 @@ status_t sql_notify_als_undo_auton_bind_own_seg(void *se, void *item, char *valu
 status_t sql_notify_als_undo_auto_shrink(void *se, void *item, char *value);
 status_t sql_notify_als_undo_auto_shrink_inactive(void *se, void *item, char *value);
 status_t sql_notify_als_undo_prefetch_pages(void *se, void *item, char *value);
+status_t sql_verify_als_undo_prealloc_pages(void *se, void *lex, void *def);
+status_t sql_notify_als_undo_perf_prealloc(void *se, void *item, char *value);
+status_t sql_notify_als_undo_prealloc_pages(void *se, void *item, char *value);
 status_t sql_notify_als_page_clean_period(void *se, void *item, char *value);
 status_t sql_notify_als_page_clean_ratio(void *se, void *item, char *value);
 status_t sql_notify_als_lru_search_threshold(void *se, void *item, char *value);
@@ -209,7 +212,6 @@ status_t sql_notify_enable_broadcast_on_commit(void *se, void *item, char *value
 status_t sql_notify_enable_enable_check_security_log(void *se, void *item, char *value);
 status_t sql_notify_enable_crc_check(void *se, void *item, char *value);
 status_t sql_notify_als_enable_quick_ckpt(void *se, void *item, char *value);
-status_t sql_notify_als_enable_para_log_flush(void *se, void *item, char *value);
 status_t sql_notify_als_enable_para_log_dfx(void *se, void *item, char *value);
 #ifdef __cplusplus
 }

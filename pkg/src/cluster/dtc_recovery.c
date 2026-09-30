@@ -5494,10 +5494,10 @@ static status_t dtc_rcy_para_wrap_group(dtc_rcy_node_t *rcy_node, log_group_t *g
     batch->head.point.rst_id = session->kernel->db.ctrl.core.resetlogs.rst_id;
     batch->head.point.asn = 0;
     batch->head.point.block_id = 0;
-    batch->head.point.lfn = group->commit_lsn;
-    batch->head.point.lsn = group->commit_lsn;
+    batch->head.point.lfn = group->lsn;
+    batch->head.point.lsn = group->lsn;
     batch->lsn = group->lsn;
-    batch->scn = 0; /* no batch SCN in parallel mode; time-based PITR is rejected on read path */
+    batch->scn = 0;
     batch->size = space;
     batch->space_size = space;
     batch->part_count = 1;
@@ -5555,7 +5555,6 @@ static status_t dtc_rcy_fetch_para_group(knl_session_t *session, log_batch_t **b
     }
 
     uint64 win_curr_lsn = winner_group->lsn;
-    uint64 win_commit_lsn = winner_group->commit_lsn;
     if (dtc_rcy_para_wrap_group(&dtc_rcy->rcy_nodes[winner], winner_group, session, batch_out) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -5567,8 +5566,8 @@ static status_t dtc_rcy_fetch_para_group(knl_session_t *session, log_batch_t **b
     dtc_rcy->curr_node = dtc_rcy->rcy_nodes[winner].node_id;
     dtc_rcy->curr_batch_lsn = win_curr_lsn;
     dtc_rcy->rcy_log_points[winner].lsn = win_curr_lsn;
-    dtc_rcy->rcy_log_points[winner].rcy_point.lfn = win_commit_lsn;
-    dtc_rcy->rcy_log_points[winner].rcy_point.lsn = win_commit_lsn;
+    dtc_rcy->rcy_log_points[winner].rcy_point.lfn = win_curr_lsn;
+    dtc_rcy->rcy_log_points[winner].rcy_point.lsn = win_curr_lsn;
     if (dtc_rcy->phase == PHASE_ANALYSIS) {
         dtc_rcy->rcy_nodes[winner].analysis_read_end_point = (*batch_out)->head.point;
     } else {
@@ -5577,8 +5576,8 @@ static status_t dtc_rcy_fetch_para_group(knl_session_t *session, log_batch_t **b
 
     dtc_print_batch(*batch_out, dtc_rcy->curr_node);
     OG_LOG_RUN_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_10,
-                         "[PARA RCY] dtc fetch winner_node=%u curr_lsn=%llu commit_lsn=%llu phase=%u",
-                         dtc_rcy->curr_node, win_curr_lsn, win_commit_lsn, (uint32)dtc_rcy->phase);
+                         "[PARA RCY] dtc fetch winner_node=%u curr_lsn=%llu phase=%u",
+                         dtc_rcy->curr_node, win_curr_lsn, (uint32)dtc_rcy->phase);
     return OG_SUCCESS;
 }
 
@@ -6107,7 +6106,7 @@ static status_t dtc_rcy_para_sync_and_reset(knl_session_t *session)
         dtc_rcy->rcy_log_points[i].rcy_point.block_id = 0;
         dtc_rcy->rcy_log_points[i].rcy_point.lfn = end;
         dtc_rcy->rcy_log_points[i].rcy_point.lsn = end;
-        OG_LOG_RUN_INF("[DTC RCY] para recovered_end node=%u commit_lsn=%llu curr_lsn=%llu",
+        OG_LOG_RUN_INF("[DTC RCY] para recovered_end node=%u curr_lsn=%llu last_curr=%llu",
                        dtc_rcy->rcy_nodes[i].node_id, end, last_curr_lsn);
         if (para_log_rcy_apply_reset(session, dtc_rcy->rcy_nodes[i].node_id, end, last_curr_lsn,
                                     dtc_rcy->rcy_nodes[i].handle) != OG_SUCCESS) {
@@ -6137,6 +6136,14 @@ static status_t dtc_recover_check(knl_session_t *session)
                        (uint64)(uint64)ctrl->lrp_point.lfn);
 
         if (rcy_log_point->rcy_point.lfn >= ctrl->lrp_point.lfn) {
+            continue;
+        }
+
+        if (ENABLE_PARA_LOG_FLUSH(session)) {
+            OG_LOG_RUN_WAR("[DTC RCY] para log skip lrp check node:%u end_lfn=%llu rcy_lfn=%llu lrp_lfn=%llu "
+                           "(write-zone eof, not dense commit prefix)",
+                           rcy_log_point->node_id, (uint64)rcy_log_point->rcy_point.lfn,
+                           (uint64)ctrl->rcy_point.lfn, (uint64)ctrl->lrp_point.lfn);
             continue;
         }
 
@@ -6289,7 +6296,7 @@ static bool32 dtc_rcy_pitr_replay_end(knl_session_t *session, rcy_context_t *rcy
 
 static bool32 dtc_rcy_full_recovery_replay_end(knl_session_t *session, rcy_context_t *rcy, log_batch_t *batch)
 {
-    /* parallel wrap: batch->lsn is curr_lsn; lrp uses commit_lsn via head.point.lsn */
+    /* parallel wrap: batch->lsn and head.point.lsn both use curr_lsn */
     uint64 batch_lsn = ENABLE_PARA_LOG_FLUSH(session) ? batch->head.point.lsn : batch->lsn;
 
     if (batch_lsn <= rcy->max_lrp_lsn) {

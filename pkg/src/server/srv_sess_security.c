@@ -706,6 +706,7 @@ status_t srv_attach_ctrl_group(session_t *session)
             // rebind agent thread cpuset
             (void)rsrc_thread_bind_cpu(&session->agent->thread, &GET_RSRC_MGR->cpuset);
             session->agent->cpuset = GET_RSRC_MGR->cpuset;
+            session->knl_session.cpu_bound = OG_FALSE;
         }
     }
     if (rsrc_attach_group(session, GET_RSRC_MGR->plan) != OG_SUCCESS) {
