@@ -2107,7 +2107,8 @@ static status_t vw_rsrc_group_fetch(knl_handle_t session, knl_cursor_t *cursor)
     cm_spin_lock(&GET_RSRC_MGR->lock, NULL);
     plan = GET_RSRC_MGR->plan;
 
-    if (plan == NULL || !plan->is_valid || plan->group_count == group_id || se->curr_tenant_id != SYS_TENANTROOT_ID) {
+    if (plan == NULL || !plan->is_valid || plan->group_count == group_id ||
+        se->curr_tenant_id != SYS_TENANTROOT_ID) {
         cursor->eof = OG_TRUE;
         cm_spin_unlock(&GET_RSRC_MGR->lock);
         return OG_SUCCESS;

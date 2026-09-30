@@ -3543,6 +3543,10 @@ class Installer:
             raise Exception("Failed to execute sql %s, output:%s" % (sql, output))
 
     def create_3rd_pkg(self):
+        if self.compatibility_mode != "A":
+            log("Skipping A-only third package for compatibility %s."
+                % self.compatibility_mode, True)
+            return
         log("Creating third package ...", True)
         sql_file_path = "%s/admin/scripts" % self.installPath
         file_name = "create_3rd_pkg.sql"

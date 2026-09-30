@@ -47,6 +47,7 @@
 #include "ogsql_serial.h"
 #include "cm_array.h"
 #include "pl_memory.h"
+#include "func_datatype.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -3909,6 +3910,12 @@ void sql_send_exec_end(sql_stmt_t *stmt)
             type = OG_TYPE_UNKNOWN;
             if (rs_col->type == RS_COL_CALC && rs_col->expr->root->type == EXPR_NODE_PARAM) {
                 (void)sql_get_expr_datatype(stmt, rs_col->expr, &type);
+            } else if (sql_infer_pending_numeric_datatype(stmt, select_ctx->first_query, rs_col, &type) != OG_SUCCESS) {
+                /* Metadata inference must not evaluate an otherwise unused expression or fail an empty result. */
+                cm_reset_error();
+                type = OG_TYPE_UNKNOWN;
+            } else if (type == OG_TYPE_REAL || type == OG_TYPE_NUMBER) {
+                execute_ack->pending_col_defs[i].size = (type == OG_TYPE_REAL) ? sizeof(double) : MAX_DEC_BYTE_SZ;
             }
             execute_ack->pending_col_defs[i].datatype =
                 (type == OG_TYPE_UNKNOWN) ? (uint16)(OG_TYPE_VARCHAR - OG_TYPE_BASE) : (uint16)(type - OG_TYPE_BASE);

@@ -289,6 +289,18 @@ typedef enum en_function_item_id {
     ID_FUNC_ITEM_VSIZE,
 } function_item_id_t;
 
+/* A function IDs must follow the order of g_dialect_a_func_tab. */
+typedef enum en_function_item_a_id {
+    ID_FUNC_ITEM_A_COSH = SQL_DIALECT_A_FUNC_OFFSET,
+    ID_FUNC_ITEM_A_INITCAP,
+    ID_FUNC_ITEM_A_NANVL,
+    ID_FUNC_ITEM_A_NCHR,
+    ID_FUNC_ITEM_A_REMAINDER,
+    ID_FUNC_ITEM_A_SINH,
+    ID_FUNC_ITEM_A_TO_BINARY_DOUBLE,
+    ID_FUNC_ITEM_A_TO_BINARY_FLOAT,
+} function_item_a_id_t;
+
 #define IS_BUILDIN_FUNCTION(node, id) \
     ((node)->value.v_func.pack_id == OG_INVALID_ID32 && (node)->value.v_func.func_id == (id))
 

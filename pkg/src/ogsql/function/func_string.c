@@ -25,6 +25,25 @@
 #include "func_string.h"
 #include "srv_instance.h"
 #include "dml_executor.h"
+#ifndef WIN32
+#include <locale.h>
+#include <pthread.h>
+#include <wctype.h>
+#endif
+
+#ifndef WIN32
+static pthread_once_t g_initcap_locale_once = PTHREAD_ONCE_INIT;
+static locale_t g_initcap_locale = (locale_t)0;
+
+/* Initialize a fixed C.UTF-8 locale for character classification and case mapping. */
+static void sql_initcap_init_locale(void)
+{
+    g_initcap_locale = newlocale(LC_CTYPE_MASK, "C.UTF-8", (locale_t)0);
+    if (g_initcap_locale == (locale_t)0) {
+        g_initcap_locale = newlocale(LC_CTYPE_MASK, "C.utf8", (locale_t)0);
+    }
+}
+#endif
 
 status_t sql_func_concat_string(sql_stmt_t *stmt, text_t *result, text_t *sub, uint32 len)
 {
@@ -1169,6 +1188,170 @@ static status_t sql_func_lower_upper_core(sql_stmt_t *stmt, expr_node_t *func, v
 status_t sql_func_lower(sql_stmt_t *stmt, expr_node_t *func, variant_t *result)
 {
     return sql_func_lower_upper_core(stmt, func, result, OG_FALSE);
+}
+
+/* Uppercase the first character of each ASCII word and lowercase the remaining letters. */
+static void sql_initcap_ascii(text_t *text)
+{
+    bool32 word_start = OG_TRUE;
+
+    for (uint32 i = 0; i < text->len; i++) {
+        unsigned char ch = (unsigned char)text->str[i];
+        bool32 is_alpha = (bool32)((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'));
+        bool32 is_alnum = (bool32)(is_alpha || (ch >= '0' && ch <= '9'));
+
+        if (!is_alnum) {
+            word_start = OG_TRUE;
+            continue;
+        }
+
+        if (is_alpha) {
+            text->str[i] = word_start ? (char)UPPER(ch) : (char)LOWER(ch);
+        }
+        word_start = OG_FALSE;
+    }
+}
+
+#ifndef WIN32
+/* Apply initial-capital case mapping to multibyte text using the fixed C.UTF-8 locale. */
+static status_t sql_initcap_multibyte(sql_stmt_t *stmt, const text_t *src, text_t *dst, uint32 dst_size)
+{
+    wchar_t *wide_text = NULL;
+    size_t wide_buf_size = (src->len + 1) * sizeof(wchar_t);
+    size_t wide_len = 0;
+    size_t converted_len = 0;
+    bool32 word_start = OG_TRUE;
+
+    (void)pthread_once(&g_initcap_locale_once, sql_initcap_init_locale);
+    if (g_initcap_locale == (locale_t)0) {
+        OG_THROW_ERROR(ERR_NLS_INTERNAL_ERROR, "INITCAP fixed C.UTF-8 locale is unavailable");
+        return OG_ERROR;
+    }
+
+    OGSQL_SAVE_STACK(stmt);
+    if (sql_push(stmt, (uint32)wide_buf_size, (void **)&wide_text) != OG_SUCCESS) {
+        OGSQL_RESTORE_STACK(stmt);
+        return OG_ERROR;
+    }
+
+    if (cm_multibyte_to_widechar(stmt->session->agent->env[0], src->str, src->len, wide_text,
+        wide_buf_size, &wide_len) != OG_SUCCESS) {
+        OGSQL_RESTORE_STACK(stmt);
+        return OG_ERROR;
+    }
+
+    for (size_t i = 0; i < wide_len; i++) {
+        if (iswalnum_l(wide_text[i], g_initcap_locale) == 0) {
+            word_start = OG_TRUE;
+            continue;
+        }
+
+        wide_text[i] = word_start ? towupper_l(wide_text[i], g_initcap_locale) :
+            towlower_l(wide_text[i], g_initcap_locale);
+        word_start = OG_FALSE;
+    }
+
+    if (cm_widechar_to_multibyte(stmt->session->agent->env[1], wide_text, wide_len * sizeof(wchar_t),
+        dst->str, dst_size, &converted_len) != OG_SUCCESS) {
+        OGSQL_RESTORE_STACK(stmt);
+        return OG_ERROR;
+    }
+
+    dst->len = (uint32)converted_len;
+    OGSQL_RESTORE_STACK(stmt);
+    return OG_SUCCESS;
+}
+#endif
+
+/* Uppercase the first character of each word and lowercase the remaining letters. */
+status_t sql_func_initcap(sql_stmt_t *stmt, expr_node_t *func, variant_t *result)
+{
+    expr_tree_t *arg = func->argument;
+    variant_t value;
+    char *buf = NULL;
+    text_t src;
+    uint32 result_buf_size;
+    bool32 has_multibyte;
+
+    CM_POINTER3(stmt, func, result);
+    CM_POINTER(arg);
+    /* Evaluate the argument, return NULL early, and preserve temporary input storage. */
+    SQL_EXEC_FUNC_ARG_EX(arg, &value, result);
+    sql_keep_stack_variant(stmt, &value);
+
+    /* Convert non-string, non-binary values to text using implicit conversion rules. */
+    if (!OG_IS_STRING_TYPE(value.type) && !OG_IS_BINARY_TYPE(value.type)) {
+        if (sql_var_as_string(stmt, &value) != OG_SUCCESS) {
+            cm_set_error_loc(arg->loc);
+            return OG_ERROR;
+        }
+    }
+    src = value.v_text;
+    /* Detect multibyte characters in the database character set. */
+    has_multibyte = GET_DATABASE_CHARSET->has_multibyte(src.str, src.len);
+    /* Reserve space for case-conversion expansion, capped at the column size limit. */
+    if (has_multibyte) {
+        uint32 max_char_size = cm_get_max_size(GET_CHARSET_ID);
+        if (max_char_size == 0) {
+            OG_SRC_THROW_ERROR(arg->loc, ERR_NLS_INTERNAL_ERROR, "INITCAP character set maximum size is zero");
+            return OG_ERROR;
+        }
+        if (src.len > OG_MAX_COLUMN_SIZE / max_char_size) {
+            result_buf_size = OG_MAX_COLUMN_SIZE;
+        } else {
+            result_buf_size = src.len * max_char_size;
+        }
+    } else {
+        /* ASCII case conversion does not change the byte length. */
+        result_buf_size = src.len;
+    }
+    /* Allocate the result buffer on the statement stack. */
+    OG_RETURN_IFERR(sql_push(stmt, result_buf_size, (void **)&buf));
+    result->v_text.str = buf;
+    result->v_text.len = src.len;
+
+    if (has_multibyte) {
+        /* Convert multibyte text using the fixed C.UTF-8 case-mapping rules. */
+        if (sql_initcap_multibyte(stmt, &src, &result->v_text, result_buf_size) != OG_SUCCESS) {
+            cm_set_error_loc(arg->loc);
+            return OG_ERROR;
+        }
+    } else {
+        /* Copy the input and apply ASCII case mapping in the result buffer. */
+        if (src.len != 0) {
+            MEMS_RETURN_IFERR(memcpy_s(buf, result_buf_size, src.str, src.len));
+        }
+        sql_initcap_ascii(&result->v_text);
+    }
+
+    /* Set the result type and mark the converted value as non-NULL. */
+    result->type = func->datatype;
+    result->is_null = OG_FALSE;
+    OGSQL_POP(stmt);
+    return OG_SUCCESS;
+}
+
+/* Validate the argument and infer the result string type and length. */
+status_t sql_verify_initcap(sql_verifier_t *verf, expr_node_t *func)
+{
+    CM_POINTER2(verf, func);
+    OG_RETURN_IFERR(sql_verify_func_node(verf, func, 1, 1, OG_INVALID_ID32));
+
+    og_type_t arg_type = TREE_DATATYPE(func->argument);
+    func->datatype = (arg_type == OG_TYPE_CHAR) ? OG_TYPE_CHAR : OG_TYPE_STRING;
+    func->size = cm_get_datatype_strlen(arg_type, func->argument->root->size);
+    func->typmod.is_char = func->argument->root->typmod.is_char;
+    /* Allow multibyte case mapping to expand BYTE lengths; CHAR lengths count characters. */
+    if (!func->typmod.is_char && (OG_IS_STRING_TYPE(arg_type) || OG_IS_BINARY_TYPE(arg_type))) {
+        uint32 max_char_size = cm_get_max_size(GET_CHARSET_ID);
+        if (max_char_size == 0) {
+            OG_SRC_THROW_ERROR(func->loc, ERR_NLS_INTERNAL_ERROR, "INITCAP character set maximum size is zero");
+            return OG_ERROR;
+        }
+        func->size = (func->size > OG_MAX_COLUMN_SIZE / max_char_size) ? OG_MAX_COLUMN_SIZE :
+            func->size * max_char_size;
+    }
+    return OG_SUCCESS;
 }
 
 status_t sql_verify_lower(sql_verifier_t *verf, expr_node_t *func)

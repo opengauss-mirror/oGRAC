@@ -49,6 +49,8 @@ status_t sql_verify_insert_func(sql_verifier_t *verifier, expr_node_t *func);
 status_t sql_func_instr(sql_stmt_t *stmt, expr_node_t *func, variant_t *result);
 status_t sql_func_instrb(sql_stmt_t *stmt, expr_node_t *func, variant_t *result);
 status_t sql_verify_instr(sql_verifier_t *verf, expr_node_t *func);
+status_t sql_func_initcap(sql_stmt_t *stmt, expr_node_t *func, variant_t *result);
+status_t sql_verify_initcap(sql_verifier_t *verf, expr_node_t *func);
 status_t sql_func_inet_aton(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);
 status_t sql_verify_inet_aton(sql_verifier_t *verifier, expr_node_t *func);
 status_t sql_func_left(sql_stmt_t *stmt, expr_node_t *func, variant_t *res);

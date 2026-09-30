@@ -1,0 +1,772 @@
+
+
+SQL> -- TO_BINARY_FLOAT minimal A-compatibility design verification.
+SQL> -- The function performs one binary32 quantization and returns OG_TYPE_REAL.
+SQL> -- Direct value output is diagnostic only; PASS equality checks are used for
+SQL> -- Oracle comparison because ogsql and SQL*Plus use different default widths.
+SQL> alter system set use_bison_parser = true scope = memory;
+
+Succeed.
+
+SQL> 
+SQL> set pagesize 200
+
+
+SQL> set linesize 240
+
+
+SQL> 
+SQL> -- Basic input coverage.
+SQL> select to_binary_float('123.456') as p01_text;
+
+P01_TEXT            
+--------------------
+123.456001281738    
+
+1 rows fetched.
+
+SQL> select to_binary_float(123.456) as p02_number;
+
+P02_NUMBER          
+--------------------
+123.456001281738    
+
+1 rows fetched.
+
+SQL> select to_binary_float(true) as p03_true;
+
+P03_TRUE            
+--------------------
+1                   
+
+1 rows fetched.
+
+SQL> select to_binary_float(false) as p04_false;
+
+P04_FALSE           
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select to_binary_float(null) as p05_null;
+
+P05_NULL            
+--------------------
+                    
+
+1 rows fetched.
+
+SQL> select to_binary_float('') as p06_empty;
+
+P06_EMPTY           
+--------------------
+                    
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast(16777217 as bigint)) as p07_bigint_round;
+
+P07_BIGINT_ROUND    
+--------------------
+16777216            
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast(123.456 as number)) as p08_number_cast;
+
+P08_NUMBER_CAST     
+--------------------
+123.456001281738    
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast('1.25' as nchar(4))) as p09_nchar;
+
+P09_NCHAR           
+--------------------
+1.25                
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast(7 as tinyint)) as p10_tinyint;
+
+P10_TINYINT         
+--------------------
+7                   
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast(8 as smallint)) as p11_smallint;
+
+P11_SMALLINT        
+--------------------
+8                   
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast('9.25' as decimal)) as p12_decimal;
+
+P12_DECIMAL         
+--------------------
+9.25                
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast('10.5' as char(4))) as p13_char;
+
+P13_CHAR            
+--------------------
+10.5                
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast('11.5' as varchar(4))) as p14_varchar;
+
+P14_VARCHAR         
+--------------------
+11.5                
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast('12.5' as nvarchar(4))) as p15_nvarchar;
+
+P15_NVARCHAR        
+--------------------
+12.5                
+
+1 rows fetched.
+
+SQL> select to_binary_float(cast(13.5 as real)) as p16_real;
+
+P16_REAL            
+--------------------
+13.5                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- Return type and downstream REAL semantics.
+SQL> desc -q select to_binary_float('1.25') as u01_result_type;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+U01_RESULT_TYPE                              BINARY_DOUBLE                       
+
+SQL> select to_binary_float('16777216') + 1 as u06_real_add;
+
+U06_REAL_ADD        
+--------------------
+16777217            
+
+1 rows fetched.
+
+SQL> select to_binary_float('16777216') + cast(1 as number) as u05_mixed_add;
+
+U05_MIXED_ADD                           
+----------------------------------------
+16777217                                
+
+1 rows fetched.
+
+SQL> select to_binary_float('1') / 0 as u07_real_div_zero;
+
+OG-00637, [1:8]The divisor was zero
+SQL> 
+SQL> -- binary32 rounding and range.
+SQL> select to_binary_float('3.14159265') as r01_pi;
+
+R01_PI              
+--------------------
+3.14159274101257    
+
+1 rows fetched.
+
+SQL> select to_binary_float('16777216') as r02_exact_integer;
+
+R02_EXACT_INTEGER   
+--------------------
+16777216            
+
+1 rows fetched.
+
+SQL> select to_binary_float('16777217') as r03_round_even;
+
+R03_ROUND_EVEN      
+--------------------
+16777216            
+
+1 rows fetched.
+
+SQL> select to_binary_float('16777218') as r04_next_integer;
+
+R04_NEXT_INTEGER    
+--------------------
+16777218            
+
+1 rows fetched.
+
+SQL> select to_binary_float('3.4028234663852886E38') as r05_max_finite;
+
+R05_MAX_FINITE      
+--------------------
+3.40282346638529e+38
+
+1 rows fetched.
+
+SQL> select to_binary_float('3.4028235E38') as r06_round_to_max;
+
+R06_ROUND_TO_MAX    
+--------------------
+3.40282346638529e+38
+
+1 rows fetched.
+
+SQL> select to_binary_float('3.4028236E38') as r07_overflow;
+
+R07_OVERFLOW        
+--------------------
+inf                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('-1E100') as r08_negative_overflow;
+
+R08_NEGATIVE_OVERFLOW
+---------------------
+-inf                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('1.1754943508222875E-38') as r09_min_normal;
+
+R09_MIN_NORMAL      
+--------------------
+1.17549435082229e-38
+
+1 rows fetched.
+
+SQL> select to_binary_float('1.401298464324817E-45') as r10_min_subnormal;
+
+R10_MIN_SUBNORMAL   
+--------------------
+1.40129846432482e-45
+
+1 rows fetched.
+
+SQL> select to_binary_float('7.006493E-46') as r11_round_to_subnormal;
+
+R11_ROUND_TO_SUBNORMAL
+----------------------
+1.40129846432482e-45  
+
+1 rows fetched.
+
+SQL> select to_binary_float('7.006492321624085E-46') as r12_half_to_zero;
+
+R12_HALF_TO_ZERO    
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select to_binary_float('1E-50') as r13_underflow;
+
+R13_UNDERFLOW       
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('16777217') = to_binary_float('16777216')
+  2     then 'PASS' else 'FAIL' end as r14_rounding_equal;
+
+R14_ROUNDING_EQUAL
+------------------
+PASS              
+
+1 rows fetched.
+
+SQL> 
+SQL> -- BIGINT inputs must round directly to binary32, without an intermediate binary64 rounding.
+SQL> select case when to_binary_float(cast('18014399583223809' as bigint)) =
+  2                       to_binary_float('18014399583223809')
+  3     and to_binary_float(cast('18014399583223809' as bigint)) =
+  4         to_binary_float(cast('18014399583223809' as number))
+  5     then 'PASS' else 'FAIL' end as r15_bigint_direct;
+
+R15_BIGINT_DIRECT
+-----------------
+PASS             
+
+1 rows fetched.
+
+SQL> select case when to_binary_float(cast('-18014399583223809' as bigint)) =
+  2                       to_binary_float('-18014399583223809')
+  3     and to_binary_float(cast('-18014399583223809' as bigint)) =
+  4         to_binary_float(cast('-18014399583223809' as number))
+  5     then 'PASS' else 'FAIL' end as r16_negative_bigint;
+
+R16_NEGATIVE_BIGINT
+-------------------
+PASS               
+
+1 rows fetched.
+
+SQL> -- At halfway, choose the even binary32 neighbor; retain the side of nearby integers.
+SQL> select case when to_binary_float(cast('18014399583223807' as bigint)) =
+  2                       to_binary_double('18014398509481984')
+  3     and to_binary_float(cast('18014399583223808' as bigint)) =
+  4         to_binary_double('18014398509481984')
+  5     then 'PASS' else 'FAIL' end as r17_halfway_down;
+
+R17_HALFWAY_DOWN
+----------------
+PASS            
+
+1 rows fetched.
+
+SQL> select case when to_binary_float(cast('18014401730707455' as bigint)) =
+  2                       to_binary_double('18014400656965632')
+  3     and to_binary_float(cast('18014401730707456' as bigint)) =
+  4         to_binary_double('18014402804449280')
+  5     and to_binary_float(cast('18014401730707457' as bigint)) =
+  6         to_binary_double('18014402804449280')
+  7     then 'PASS' else 'FAIL' end as r18_halfway_up;
+
+R18_HALFWAY_UP
+--------------
+PASS          
+
+1 rows fetched.
+
+SQL> -- The binary64 conversion path keeps its existing rounding.
+SQL> select case when to_binary_double(cast('18014399583223809' as bigint)) =
+  2                       to_binary_double('18014399583223809')
+  3     and to_binary_double(cast('-18014399583223809' as bigint)) =
+  4         to_binary_double('-18014399583223809')
+  5     then 'PASS' else 'FAIL' end as r19_bigint_double;
+
+R19_BIGINT_DOUBLE
+-----------------
+PASS             
+
+1 rows fetched.
+
+SQL> 
+SQL> -- Special values. Comparison results intentionally follow existing REAL semantics.
+SQL> select to_binary_float('NaN') as s01_nan;
+
+S01_NAN             
+--------------------
+nan                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('Inf') as s02_inf;
+
+S02_INF             
+--------------------
+inf                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('-Infinity') as s03_negative_inf;
+
+S03_NEGATIVE_INF    
+--------------------
+-inf                
+
+1 rows fetched.
+
+SQL> select to_binary_float('-0') as s04_zero_normalized;
+
+S04_ZERO_NORMALIZED 
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('-0') = to_binary_float('0')
+  2     then 'PASS' else 'FAIL' end as s05_zero_normalized;
+
+S05_ZERO_NORMALIZED
+-------------------
+PASS               
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('123.456') =
+  2                       to_binary_double('123.45600128173828125')
+  3     then 'PASS' else 'FAIL' end as c01_binary32_exact;
+
+C01_BINARY32_EXACT
+------------------
+PASS              
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('3.4028234663852886E38') =
+  2                       to_binary_double('3.4028234663852886E38')
+  3     then 'PASS' else 'FAIL' end as c02_max_finite_exact;
+
+C02_MAX_FINITE_EXACT
+--------------------
+PASS                
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('NaN') = to_binary_float('NaN')
+  2     then 'TRUE' else 'FALSE' end as u08_nan_equal;
+
+U08_NAN_EQUAL
+-------------
+FALSE        
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('NaN') > to_binary_float('Inf')
+  2     then 'TRUE' else 'FALSE' end as u09_nan_greater;
+
+U09_NAN_GREATER
+---------------
+FALSE          
+
+1 rows fetched.
+
+SQL> 
+SQL> -- Supported common format subset and function-level NLS.
+SQL> select to_binary_float('0007', '0000') as f01_zero;
+
+F01_ZERO            
+--------------------
+7                   
+
+1 rows fetched.
+
+SQL> select to_binary_float('123', 'FM999') as f02_fm;
+
+F02_FM              
+--------------------
+123                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('1.25', '9.99') as f03_literal_decimal;
+
+F03_LITERAL_DECIMAL 
+--------------------
+1.25                
+
+1 rows fetched.
+
+SQL> select to_binary_float('1,234', '9,999') as f04_literal_group;
+
+F04_LITERAL_GROUP   
+--------------------
+1234                
+
+1 rows fetched.
+
+SQL> select to_binary_float('1,234,567.8', '9G999G999D9',
+  2     'NLS_NUMERIC_CHARACTERS=''.,''') as f05_multi_group;
+
+F05_MULTI_GROUP     
+--------------------
+1234567.75          
+
+1 rows fetched.
+
+SQL> select to_binary_float('1.234,5', '9G999D9',
+  2     'NLS_NUMERIC_CHARACTERS='',.''') as f06_nls_eu;
+
+F06_NLS_EU          
+--------------------
+1234.5              
+
+1 rows fetched.
+
+SQL> select to_binary_float('1.25E+2', '9D99EEEE',
+  2     'NLS_NUMERIC_CHARACTERS=''.,''') as f07_scientific;
+
+F07_SCIENTIFIC      
+--------------------
+125                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('-123', 'S999') as f08_leading_sign;
+
+F08_LEADING_SIGN    
+--------------------
+-123                
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('1.25', null) is null
+  2     then 'PASS' else 'FAIL' end as f09_null_fmt;
+
+F09_NULL_FMT
+------------
+PASS        
+
+1 rows fetched.
+
+SQL> select case when to_binary_float('1.25', '9D99', null) is null
+  2     then 'PASS' else 'FAIL' end as f10_null_nls;
+
+F10_NULL_NLS
+------------
+PASS        
+
+1 rows fetched.
+
+SQL> 
+SQL> -- DEFAULT ON CONVERSION ERROR.
+SQL> select to_binary_float('bad' default 0 on conversion error) as d01_default_number;
+
+D01_DEFAULT_NUMBER  
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> select to_binary_float('bad' default '2.5' on conversion error) as d02_default_text;
+
+D02_DEFAULT_TEXT    
+--------------------
+2.5                 
+
+1 rows fetched.
+
+SQL> select to_binary_float('1.25' default 0 on conversion error) as d03_no_default;
+
+D03_NO_DEFAULT      
+--------------------
+1.25                
+
+1 rows fetched.
+
+SQL> select to_binary_float('3.5E38' default 0 on conversion error) as d04_overflow_no_default;
+
+D04_OVERFLOW_NO_DEFAULT
+-----------------------
+inf                    
+
+1 rows fetched.
+
+SQL> select to_binary_float('1E-100' default 9 on conversion error) as d05_underflow_no_default;
+
+D05_UNDERFLOW_NO_DEFAULT
+------------------------
+0                       
+
+1 rows fetched.
+
+SQL> select to_binary_float(
+  2     'bad' default '1,234.5' on conversion error,
+  3     '9G999D9',
+  4     'NLS_NUMERIC_CHARACTERS=''.,'''
+  5 ) as d06_default_fmt;
+
+D06_DEFAULT_FMT     
+--------------------
+1234.5              
+
+1 rows fetched.
+
+SQL> 
+SQL> -- Existing baseline behavior outside the function.
+SQL> select cast(16777217 as binary_float) as u03_cast_binary_float;
+
+U03_CAST_BINARY_FLOAT
+---------------------
+16777217             
+
+1 rows fetched.
+
+SQL> select 16777217F as u04_f_literal;
+
+U04_F_LITERAL       
+--------------------
+16777217            
+
+1 rows fetched.
+
+SQL> select binary_float_infinity as u13_predefined_constant;
+
+OG-00601, [1:8]Sql syntax error: invalid column name 'BINARY_FLOAT_INFINITY'
+SQL> 
+SQL> -- Companion A-only conversion function; detailed coverage is in og_to_binary_double_real.sql.
+SQL> select to_binary_double('1.25') as u14_to_binary_double;
+
+U14_TO_BINARY_DOUBLE
+--------------------
+1.25                
+
+1 rows fetched.
+
+SQL> 
+SQL> -- Unsupported format elements: all must fail explicitly, not half-work.
+SQL> select to_binary_float('123-', '999S') as u15_trailing_sign;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float('123-', '999MI') as u16_mi;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float('<123>', '999PR') as u17_pr;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float('$123', '$999') as u18_currency;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float('00FF', 'XXXX') as u19_hex;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> 
+SQL> -- Expected conversion, type, NLS and parser errors.
+SQL> select to_binary_float('abc') as e01_invalid_text;
+
+OG-00636, [1:8]Invalid number 
+SQL> select to_binary_float('1.2.3') as e02_multiple_decimal;
+
+OG-00636, [1:8]Invalid number 
+SQL> select to_binary_float('1E+') as e03_incomplete_exponent;
+
+OG-00636, [1:8]Invalid number 
+SQL> select to_binary_float('--1') as e04_double_sign;
+
+OG-00636, [1:8]Invalid number 
+SQL> select to_binary_float('1.0F') as e05_suffix;
+
+OG-00636, [1:8]Invalid number 
+SQL> select to_binary_float('1', '9D9D9') as e06_invalid_fmt;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float('1', '9D9', 'NLS_NUMERIC_CHARACTERS=''..''') as e07_invalid_nls;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float('1', '9D9', 'NLS_DATE_LANGUAGE=''AMERICAN''') as e08_invalid_nls_key;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_float(1, '999') as e09_numeric_with_fmt;
+
+OG-00614, [1:24]Parameter error: illegal function argument: string argument expected - got BINARY_INTEGER
+SQL> select to_binary_float('bad' default 'still_bad' on conversion error) as e10_bad_default;
+
+OG-00636, [1:8]Invalid number 
+SQL> select to_binary_float(1 / 0 default 0 on conversion error) as e11_expr_error;
+
+OG-00637, [1:24]The divisor was zero
+SQL> select to_binary_float('bad' default (1 + 1) on conversion error) as e12_complex_default;
+
+OG-00601, [1:65]Sql syntax error: the DEFAULT ON CONVERSION ERROR value must be a literal or bind variable
+SQL> select to_binary_float(date '2026-08-27') as e13_date;
+
+OG-00614, [1:24]Parameter error: illegal function argument: NUMERIC or string argument expected - got DATE
+SQL> select to_number('bad' default 0 on conversion error) as e14_other_function_default_syntax;
+
+OG-00601, [1:53]Sql syntax error: DEFAULT ON CONVERSION ERROR is only supported by TO_BINARY_DOUBLE or TO_BINARY_FLOAT
+SQL> 
+SQL> -- TO_CHAR limitations are expected differences, not conversion failures.
+SQL> select to_char(to_binary_float('123.456'), 'FM9.99999999EEEE') as u20_to_char_eeee;
+
+OG-00105, Invalid format of number
+SQL> select to_char(to_binary_float('123.456'), 'FM9.99999999EEEE',
+  2     'NLS_NUMERIC_CHARACTERS=''.,''') as u21_to_char_three_args;
+
+OG-00615, [1:8]Invalid argument number for TO_CHAR, min=1, max=2
+SQL>
+SQL> -- Function indexes must distinguish DEFAULT values from format arguments.
+SQL> create table t_bf_default_idx (id integer, txt varchar(40));
+
+Succeed.
+
+SQL> insert into t_bf_default_idx values (1, 'bad');
+
+1 rows affected.
+
+SQL> insert into t_bf_default_idx values (2, '9');
+
+1 rows affected.
+
+SQL> insert into t_bf_default_idx values (3, '11');
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> create index ix_bf_default on t_bf_default_idx (
+  2     to_binary_float(txt default '9' on conversion error));
+
+Succeed.
+
+SQL> analyze table t_bf_default_idx compute statistics;
+
+Succeed.
+
+SQL> select /*+ INDEX(t ix_bf_default) */ case when count(*) = 2
+  2     then 'PASS' else 'FAIL' end as i01_default_index
+  3 from t_bf_default_idx t
+  4 where to_binary_float(txt default '9' on conversion error) = to_binary_float('9');
+
+I01_DEFAULT_INDEX
+-----------------
+PASS
+
+1 rows fetched.
+
+SQL> -- Both queries must raise a conversion error instead of reusing DEFAULT index keys.
+SQL> select /*+ INDEX(t ix_bf_default) */ id from t_bf_default_idx t
+  2 where to_binary_float(txt, '9') = to_binary_float('9') order by id;
+
+OG-00636, Invalid number
+SQL> select /*+ FULL(t) */ id from t_bf_default_idx t
+  2 where to_binary_float(txt, '9') = to_binary_float('9') order by id;
+
+OG-00636, Invalid number
+SQL>
+SQL> drop index ix_bf_default;
+
+Succeed.
+
+SQL> delete from t_bf_default_idx where id <> 2;
+
+2 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> -- Reversing the expressions must not make them duplicate index columns.
+SQL> create index ix_bf_format_default on t_bf_default_idx (
+  2     to_binary_float(txt, '9'), to_binary_float(txt default '9' on conversion error));
+
+Succeed.
+
+SQL> analyze table t_bf_default_idx compute statistics;
+
+Succeed.
+
+SQL> select /*+ INDEX(t ix_bf_format_default) */ case when count(*) = 1
+  2     then 'PASS' else 'FAIL' end as i02_format_index
+  3 from t_bf_default_idx t
+  4 where to_binary_float(txt, '9') = to_binary_float('9');
+
+I02_FORMAT_INDEX
+----------------
+PASS
+
+1 rows fetched.
+
+SQL> drop table t_bf_default_idx purge;
+
+Succeed.
+
+SQL> alter system set use_bison_parser = false scope = memory;
+
+Succeed.
+
+SQL>

@@ -66,3 +66,10 @@ test: bison_parser_explain
 test: bison_parser_pl
 test: og_cbo_partition_bounds
 test: og_xa_empty_interval
+test: og_to_binary_float_real
+test: og_to_binary_double_real
+test: og_binary_fp_real_downstream
+test: og_cosh_sinh_a
+test: og_nanvl_remainder_a
+test: og_initcap_nchr_a
+test: og_dialect_a_order_by

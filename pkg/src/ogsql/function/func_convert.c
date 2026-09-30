@@ -28,6 +28,52 @@
 
 #define NUM_IS_POSITIVE 0xac
 #define NUM_IS_NEGATIVE 0xbd
+#define NUM_INPUT_DEFAULT_DECIMAL '.'
+#define NUM_INPUT_DEFAULT_GROUP ','
+#define NUM_INPUT_MAX_GROUPS 16
+#define NUM_CONVERSION_MAX_ARGS 3
+#define NUM_CONVERSION_MAX_ARGS_WITH_DEFAULT 4
+#define NUM_INPUT_QUOTE_PAIR_LEN 2
+#define NUM_INPUT_NLS_CHAR_COUNT 2
+#define NUM_INPUT_FILL_MODE_LEN 2
+#define NUM_INPUT_SCIENTIFIC_LEN 4
+
+typedef struct st_num_input_fmt {
+    /* char of decimal point */
+    char decimal_point_char;
+    /* char of thousands separator */
+    char thousands_char;
+    /* if has fmt */
+    bool32 has_format;
+    /* if has decimal point */
+    bool32 has_decimal;
+    /* if has thousands separator */
+    bool32 has_thousands;
+    /* if has 'EEEE' scientific notation at the end of fmt */
+    bool32 scientific;
+    /* if has 'S' sign label at the start of fmt */
+    bool32 has_sign;
+    /* number of integer digits */
+    uint32 integer_digits;
+    /* number of fraction digits */
+    uint32 fraction_digits;
+    /* number of thousands separators */
+    uint32 thousands_count;
+    /* number of digits at the right of thousands separator */
+    uint32 thousands_offsets[NUM_INPUT_MAX_GROUPS];
+} num_input_fmt_t;
+
+typedef struct st_num_conversion_args {
+    expr_tree_t *value;
+    expr_tree_t *default_value;
+    expr_tree_t *fmt;
+    expr_tree_t *nls;
+} num_conversion_args_t;
+
+typedef enum en_binary_fp_precision {
+    BINARY_FP_SINGLE,
+    BINARY_FP_DOUBLE
+} binary_fp_precision_t;
 
 status_t sql_func_ascii(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
 {
@@ -385,6 +431,78 @@ status_t sql_verify_chr(sql_verifier_t *verf, expr_node_t *func)
     func->datatype = OG_TYPE_STRING;
     func->size = 1;
 
+    return OG_SUCCESS;
+}
+
+/* Convert the truncated input's low 16 bits to a character in the database character set. */
+status_t sql_func_nchr(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    expr_tree_t *arg = func->argument;
+    variant_t value;
+    uint16 code_unit;
+    uint32 src_len = sizeof(code_unit);
+    uint32 dst_size = cm_get_max_size(GET_CHARSET_ID);
+    bool32 eof = OG_FALSE;
+    char *buf = NULL;
+    int32 converted_len;
+    transcode_func_t converter;
+
+    CM_POINTER3(stmt, func, res);
+    CM_POINTER(arg);
+    SQL_EXEC_FUNC_ARG_EX(arg, &value, res);
+
+    if (var_as_floor_bigint(&value) != OG_SUCCESS) {
+        cm_set_error_loc(arg->loc);
+        return OG_ERROR;
+    }
+    if (value.v_bigint < 0 || (uint64)value.v_bigint > UINT32_MAX) {
+        OG_SRC_THROW_ERROR(arg->loc, ERR_INVALID_FUNC_PARAMS,
+            "argument value of NCHR must be between 0 and 4294967295");
+        return OG_ERROR;
+    }
+
+    code_unit = (uint16)((uint64)value.v_bigint & 0xFFFF);
+    if (code_unit >= 0xD800 && code_unit <= 0xDFFF) {
+        OG_SRC_THROW_ERROR(arg->loc, ERR_INVALID_FUNC_PARAMS,
+            "NCHR does not support a standalone UTF-16 surrogate code unit");
+        return OG_ERROR;
+    }
+
+    /* Allocate the output buffer on the statement stack. */
+    OG_RETURN_IFERR(sql_push(stmt, dst_size, (void **)&buf));
+    /* Select the converter from UCS2 to the database character set. */
+    converter = cm_from_transcode_func_ucs2(GET_CHARSET_ID);
+    /* Convert the code unit into the output buffer. */
+    converted_len = converter(&code_unit, &src_len, buf, dst_size, &eof);
+    if (converted_len < 0 || src_len != 0 || !eof) {
+        cm_set_error_loc(arg->loc);
+        return OG_ERROR;
+    }
+
+    res->v_text.str = buf;
+    res->v_text.len = (uint32)converted_len;
+    res->type = OG_TYPE_VARCHAR;
+    res->is_null = OG_FALSE;
+    return OG_SUCCESS;
+}
+
+/* Validate a numeric-compatible argument and set the result type to VARCHAR(1 CHAR). */
+status_t sql_verify_nchr(sql_verifier_t *verf, expr_node_t *func)
+{
+    og_type_t arg_type;
+
+    CM_POINTER2(verf, func);
+    OG_RETURN_IFERR(sql_verify_func_node(verf, func, 1, 1, OG_INVALID_ID32));
+
+    arg_type = TREE_DATATYPE(func->argument);
+    if (!sql_match_numeric_type(arg_type) && arg_type != OG_TYPE_BOOLEAN) {
+        OG_SRC_ERROR_MISMATCH(TREE_LOC(func->argument), OG_TYPE_NUMBER, arg_type);
+        return OG_ERROR;
+    }
+
+    func->datatype = OG_TYPE_VARCHAR;
+    func->size = 1;
+    func->typmod.is_char = OG_TRUE;
     return OG_SUCCESS;
 }
 
@@ -1383,6 +1501,610 @@ status_t sql_verify_to_bigint(sql_verifier_t *verif, expr_node_t *func)
     func->size = OG_BIGINT_SIZE;
     return OG_SUCCESS;
 }
+
+/* Extract the value, conversion-error default, format and NLS arguments. */
+static void sql_get_num_conversion_args(expr_node_t *func, num_conversion_args_t *args)
+{
+    args->value = func->argument;
+    args->default_value = NULL;
+    args->fmt = NULL;
+    args->nls = NULL;
+
+    if (args->value->next != NULL && args->value->next->root->exec_default) {
+        /* Example: TO_BINARY_FLOAT('bad' DEFAULT '1.25' ON CONVERSION ERROR, '9D99').
+         * The argument chain is value -> default_value -> fmt. */
+        args->default_value = args->value->next;
+        args->fmt = args->default_value->next;
+    } else {
+        /* Example: TO_BINARY_FLOAT('1.25', '9D99').
+         * The argument chain is value -> fmt. */
+        args->fmt = args->value->next;
+    }
+    /* Example: TO_BINARY_FLOAT('1,234.5', '9G999D9',
+     *     'NLS_NUMERIC_CHARACTERS=''.,''').
+     * The argument chain is value -> fmt -> nls, so nls is fmt->next. */
+    args->nls = (args->fmt == NULL) ? NULL : args->fmt->next;
+}
+
+/* Check whether a datatype is accepted for binary floating-point conversion. */
+static bool32 sql_match_to_binary_fp_type(og_type_t type)
+{
+    return sql_match_num_and_str_type(type) || type == OG_TYPE_BOOLEAN;
+}
+
+/* Validate binary floating-point conversion arguments and set the result type to REAL. */
+static status_t sql_verify_to_binary_fp(sql_verifier_t *verif, expr_node_t *func, const char *func_name)
+{
+    num_conversion_args_t args;
+
+    CM_POINTER2(verif, func);
+    /* Reject calls outside A compatibility mode. */
+    if (verif->stmt->session->dbcompatibility != 'A') {
+        OG_SRC_THROW_ERROR(func->loc, ERR_CAPABILITY_NOT_SUPPORT, func_name);
+        return OG_ERROR;
+    }
+
+    OG_RETURN_IFERR(sql_verify_func_node(verif, func, 1, NUM_CONVERSION_MAX_ARGS_WITH_DEFAULT, OG_INVALID_ID32));
+    sql_get_num_conversion_args(func, &args);
+
+    /* Reject more than three arguments when no conversion-error default is supplied. */
+    if (args.default_value == NULL && args.nls != NULL && args.nls->next != NULL) {
+        OG_SRC_THROW_ERROR(func->loc, ERR_INVALID_FUNC_PARAM_COUNT, T2S(&func->word.func.name),
+            1, NUM_CONVERSION_MAX_ARGS);
+        return OG_ERROR;
+    }
+
+    /* Reject an input type that is not supported for binary floating-point conversion. */
+    if (!sql_match_to_binary_fp_type(TREE_DATATYPE(args.value))) {
+        OG_SRC_ERROR_REQUIRE_NUM_OR_STR(TREE_LOC(args.value), TREE_DATATYPE(args.value));
+        return OG_ERROR;
+    }
+
+    /* Reject a default value type that is not supported for binary floating-point conversion. */
+    if (args.default_value != NULL && !sql_match_to_binary_fp_type(TREE_DATATYPE(args.default_value))) {
+        OG_SRC_ERROR_REQUIRE_NUM_OR_STR(TREE_LOC(args.default_value), TREE_DATATYPE(args.default_value));
+        return OG_ERROR;
+    }
+
+    /* A format model requires string-compatible input, default and format arguments. */
+    if (args.fmt != NULL) {
+        /* Reject a non-string-compatible input when a format model is supplied. */
+        if (!sql_match_string_type(TREE_DATATYPE(args.value))) {
+            OG_SRC_ERROR_REQUIRE_STRING(TREE_LOC(args.value), TREE_DATATYPE(args.value));
+            return OG_ERROR;
+        }
+        /* Reject a non-string-compatible default when a format model is supplied. */
+        if (args.default_value != NULL && !sql_match_string_type(TREE_DATATYPE(args.default_value))) {
+            OG_SRC_ERROR_REQUIRE_STRING(TREE_LOC(args.default_value), TREE_DATATYPE(args.default_value));
+            return OG_ERROR;
+        }
+        /* Reject a format model argument that is not string-compatible. */
+        if (!sql_match_string_type(TREE_DATATYPE(args.fmt))) {
+            OG_SRC_ERROR_REQUIRE_STRING(TREE_LOC(args.fmt), TREE_DATATYPE(args.fmt));
+            return OG_ERROR;
+        }
+    }
+
+    /* Reject an NLS argument that is not string-compatible. */
+    if (args.nls != NULL && !sql_match_string_type(TREE_DATATYPE(args.nls))) {
+        OG_SRC_ERROR_REQUIRE_STRING(TREE_LOC(args.nls), TREE_DATATYPE(args.nls));
+        return OG_ERROR;
+    }
+
+    func->datatype = OG_TYPE_REAL;
+    func->size = sizeof(double);
+    return OG_SUCCESS;
+}
+
+/* Validate TO_BINARY_DOUBLE arguments and result metadata. */
+status_t sql_verify_to_binary_double(sql_verifier_t *verif, expr_node_t *func)
+{
+    return sql_verify_to_binary_fp(verif, func, "TO_BINARY_DOUBLE");
+}
+
+/* Validate TO_BINARY_FLOAT arguments and result metadata. */
+status_t sql_verify_to_binary_float(sql_verifier_t *verif, expr_node_t *func)
+{
+    return sql_verify_to_binary_fp(verif, func, "TO_BINARY_FLOAT");
+}
+
+/* Initialize numeric input format settings to their defaults. */
+static void sql_init_num_input_fmt(num_input_fmt_t *fmt)
+{
+    fmt->decimal_point_char = NUM_INPUT_DEFAULT_DECIMAL;
+    fmt->thousands_char = NUM_INPUT_DEFAULT_GROUP;
+    fmt->has_format = OG_FALSE;
+    fmt->has_decimal = OG_FALSE;
+    fmt->has_thousands = OG_FALSE;
+    fmt->scientific = OG_FALSE;
+    fmt->has_sign = OG_FALSE;
+    fmt->integer_digits = 0;
+    fmt->fraction_digits = 0;
+    fmt->thousands_count = 0;
+}
+
+/* Validate the NLS parameter and extract the grouping separator and decimal point. */
+static status_t sql_parse_num_input_nls(const text_t *nls_text, num_input_fmt_t *fmt)
+{
+    text_t text = *nls_text;
+    text_t key;
+    text_t value;
+    uint32 equal_pos;
+
+    cm_trim_text(&text);
+    if (cm_text_find_char(&text, '=', &equal_pos) != OG_SUCCESS) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+        return OG_ERROR;
+    }
+
+    key.str = text.str;
+    key.len = equal_pos;
+    cm_trim_text(&key);
+    if (!cm_text_equal_ins(&key, &g_nlsparam_items[NLS_NUMERIC_CHARACTERS].key)) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+        return OG_ERROR;
+    }
+
+    value.str = text.str + equal_pos + 1;
+    value.len = text.len - equal_pos - 1;
+    cm_trim_text(&value);
+    if (value.len >= NUM_INPUT_QUOTE_PAIR_LEN && value.str[0] == '\'' && value.str[value.len - 1] == '\'') {
+        value.str++;
+        value.len -= NUM_INPUT_QUOTE_PAIR_LEN;
+    }
+    if (value.len != NUM_INPUT_NLS_CHAR_COUNT || value.str[0] == value.str[1]) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+        return OG_ERROR;
+    }
+
+    fmt->decimal_point_char = value.str[0];
+    fmt->thousands_char = value.str[1];
+    return OG_SUCCESS;
+}
+
+/* Convert an ASCII lowercase letter to uppercase. */
+static char sql_num_fmt_upper(char ch)
+{
+    return (ch >= 'a' && ch <= 'z') ? (char)(ch - ('a' - 'A')) : ch;
+}
+
+/* Parse the numeric format model into digit limits, separators and format flags. */
+static status_t sql_parse_num_input_fmt(const text_t *fmt_text, num_input_fmt_t *fmt)
+{
+    text_t text = *fmt_text;
+    bool32 has_digit = OG_FALSE;
+    uint32 i = 0;
+
+    cm_trim_text(&text);
+    if (text.len == 0) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+        return OG_ERROR;
+    }
+
+    fmt->has_format = OG_TRUE;
+    if (text.len >= NUM_INPUT_FILL_MODE_LEN && sql_num_fmt_upper(text.str[0]) == 'F' &&
+        sql_num_fmt_upper(text.str[1]) == 'M') {
+        i = NUM_INPUT_FILL_MODE_LEN;
+    }
+    if (i < text.len && sql_num_fmt_upper(text.str[i]) == 'S') {
+        fmt->has_sign = OG_TRUE;
+        i++;
+    }
+
+    for (; i < text.len; i++) {
+        char ch = text.str[i];
+        char upper = sql_num_fmt_upper(ch);
+        if (upper == '9' || upper == '0') {
+            has_digit = OG_TRUE;
+            if (fmt->has_decimal) {
+                fmt->fraction_digits++;
+            } else {
+                fmt->integer_digits++;
+            }
+            continue;
+        }
+        if (upper == 'D' || ch == '.') {
+            if (fmt->has_decimal) {
+                OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+                return OG_ERROR;
+            }
+            fmt->has_decimal = OG_TRUE;
+            fmt->decimal_point_char = (upper == 'D') ? fmt->decimal_point_char : '.';
+            continue;
+        }
+        if (upper == 'G' || ch == ',') {
+            if (fmt->has_decimal || fmt->thousands_count >= NUM_INPUT_MAX_GROUPS) {
+                OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+                return OG_ERROR;
+            }
+            fmt->has_thousands = OG_TRUE;
+            fmt->thousands_char = (upper == 'G') ? fmt->thousands_char : ',';
+            fmt->thousands_offsets[fmt->thousands_count++] = fmt->integer_digits;
+            continue;
+        }
+        if (upper == 'E' && text.len - i == NUM_INPUT_SCIENTIFIC_LEN) {
+            for (uint32 exp_index = 1; exp_index < NUM_INPUT_SCIENTIFIC_LEN; exp_index++) {
+                if (sql_num_fmt_upper(text.str[i + exp_index]) != 'E') {
+                    OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+                    return OG_ERROR;
+                }
+            }
+            fmt->scientific = OG_TRUE;
+            i += NUM_INPUT_SCIENTIFIC_LEN - 1;
+            continue;
+        }
+
+        OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+        return OG_ERROR;
+    }
+
+    if (!has_digit) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER_FORAMT);
+        return OG_ERROR;
+    }
+    for (i = 0; i < fmt->thousands_count; i++) {
+        fmt->thousands_offsets[i] = fmt->integer_digits - fmt->thousands_offsets[i];
+    }
+    return OG_SUCCESS;
+}
+
+/* Check whether the text represents NaN or infinity, with an optional sign. */
+static bool32 sql_is_binary_fp_special(const text_t *text)
+{
+    text_t value = *text;
+
+    if (value.len > 0 && (value.str[0] == '+' || value.str[0] == '-')) {
+        value.str++;
+        value.len--;
+    }
+    return cm_text_str_equal_ins(&value, "inf") || cm_text_str_equal_ins(&value, "infinity") ||
+        cm_text_str_equal_ins(&value, "nan");
+}
+
+/* Validate digit counts and separator positions against the numeric format. */
+static status_t sql_validate_num_input_grouping(const text_t *text, const num_input_fmt_t *fmt)
+{
+    uint32 input_group_left[NUM_INPUT_MAX_GROUPS];
+    uint32 input_group_count = 0;
+    uint32 integer_digits = 0;
+    uint32 fraction_digits = 0;
+    uint32 first_segment_width;
+    bool32 after_decimal = OG_FALSE;
+    bool32 after_exponent = OG_FALSE;
+    uint32 i;
+
+    if (!fmt->has_format) {
+        return OG_SUCCESS;
+    }
+
+    for (i = 0; i < text->len; i++) {
+        char ch = text->str[i];
+
+        if (fmt->scientific && (ch == 'E' || ch == 'e')) {
+            after_exponent = OG_TRUE;
+            continue;
+        }
+        if (!after_exponent && fmt->has_decimal && ch == fmt->decimal_point_char) {
+            after_decimal = OG_TRUE;
+            continue;
+        }
+        if (fmt->has_thousands && ch == fmt->thousands_char) {
+            if (after_decimal || after_exponent || input_group_count >= NUM_INPUT_MAX_GROUPS) {
+                OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+                return OG_ERROR;
+            }
+            input_group_left[input_group_count++] = integer_digits;
+            continue;
+        }
+        if (ch >= '0' && ch <= '9' && !after_exponent) {
+            if (after_decimal) {
+                fraction_digits++;
+            } else {
+                integer_digits++;
+            }
+        }
+    }
+
+    if (integer_digits > fmt->integer_digits || fraction_digits > fmt->fraction_digits ||
+        input_group_count > fmt->thousands_count) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+        return OG_ERROR;
+    }
+
+    if (input_group_count == 0) {
+        first_segment_width = (fmt->thousands_count == 0) ? fmt->integer_digits :
+            fmt->thousands_offsets[fmt->thousands_count - 1];
+        if (integer_digits > first_segment_width) {
+            OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
+
+    for (i = 0; i < input_group_count; i++) {
+        uint32 input_group_offset = integer_digits - input_group_left[i];
+        if (input_group_offset != fmt->thousands_offsets[fmt->thousands_count - input_group_count + i]) {
+            OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+            return OG_ERROR;
+        }
+    }
+
+    i = fmt->thousands_count - input_group_count;
+    first_segment_width = (i == 0) ? fmt->integer_digits - fmt->thousands_offsets[0] :
+        fmt->thousands_offsets[i - 1] - fmt->thousands_offsets[i];
+    if (input_group_left[0] == 0 || input_group_left[0] > first_segment_width) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+/* Normalize numeric text by validating its format and standardizing separators. */
+static status_t sql_normalize_num_input_text(const text_t *input, const num_input_fmt_t *fmt,
+    char *buffer, uint32 buffer_size, text_t *normalized)
+{
+    text_t text = *input;
+    uint32 out_pos = 0;
+    uint32 i;
+
+    cm_trim_text(&text);
+    if (text.len == 0) {
+        normalized->str = buffer;
+        normalized->len = 0;
+        return OG_SUCCESS;
+    }
+    if (text.len >= buffer_size) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+        return OG_ERROR;
+    }
+
+    if (!fmt->has_format && sql_is_binary_fp_special(&text)) {
+        OG_RETURN_IFERR(cm_text2str(&text, buffer, buffer_size));
+        normalized->str = buffer;
+        normalized->len = text.len;
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(sql_validate_num_input_grouping(&text, fmt));
+
+    /* Example: with grouping '.' and decimal ',', text = "1.234,5" becomes buffer = "1234.5". */
+    for (i = 0; i < text.len; i++) {
+        char ch = text.str[i];
+
+        if (fmt->has_thousands && ch == fmt->thousands_char) {
+            continue;
+        }
+        if (fmt->has_decimal && ch == fmt->decimal_point_char) {
+            buffer[out_pos++] = '.';
+            continue;
+        }
+        if ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' ||
+            (fmt->scientific && (ch == 'E' || ch == 'e'))) {
+            buffer[out_pos++] = ch;
+            continue;
+        }
+        if (!fmt->has_format && (ch == '.' || ch == 'E' || ch == 'e')) {
+            buffer[out_pos++] = ch;
+            continue;
+        }
+
+        OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+        return OG_ERROR;
+    }
+
+    buffer[out_pos] = '\0';
+    normalized->str = buffer;
+    normalized->len = out_pos;
+    return OG_SUCCESS;
+}
+
+/* Convert formatted numeric text to a binary32 or binary64 value stored as double. */
+static status_t sql_text_to_binary_fp_value(const text_t *text, const num_input_fmt_t *fmt,
+    binary_fp_precision_t precision, double *value)
+{
+    char buffer[OG_MAX_REAL_INPUT_STRLEN + 1] = {0};
+    text_t normalized;
+    float float_value;
+
+    OG_RETURN_IFERR(sql_normalize_num_input_text(text, fmt, buffer, sizeof(buffer), &normalized));
+    if (normalized.len == 0) {
+        OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+        return OG_ERROR;
+    }
+
+    /* convert normalized string to binary fp value */
+    status_t status = (precision == BINARY_FP_SINGLE) ? cm_str2float(buffer, &float_value) :
+        cm_str2real(buffer, value);
+    if (status != OG_SUCCESS) {
+        cm_reset_error();
+        OG_THROW_ERROR(ERR_INVALID_NUMBER, "");
+        return OG_ERROR;
+    }
+    if (precision == BINARY_FP_SINGLE) {
+        *value = (double)float_value;
+    }
+    return OG_SUCCESS;
+}
+
+/* Convert a decimal value to the requested binary floating-point precision. */
+static status_t sql_decimal_to_binary_fp_value(const variant_t *src, binary_fp_precision_t precision, double *value)
+{
+    char number_buffer[OG_MAX_NUMBER_LEN] = {0};
+    float float_value;
+
+    /* Convert to decimal text without precision loss; the buffer preserves all dec8 significant digits. */
+    OG_RETURN_IFERR(cm_dec8_to_str(&src->v_dec, sizeof(number_buffer), number_buffer));
+    if (precision == BINARY_FP_SINGLE) {
+        OG_RETURN_IFERR(cm_str2float(number_buffer, &float_value));
+        *value = (double)float_value;
+        return OG_SUCCESS;
+    }
+    return cm_str2real(number_buffer, value);
+}
+
+/* Return the value at the requested binary32 or binary64 precision. */
+static double sql_quantize_binary_fp(double value, binary_fp_precision_t precision)
+{
+    return (precision == BINARY_FP_SINGLE) ? (double)(float)value : value;
+}
+
+/* Convert a supported input value to the requested binary floating-point precision. */
+static status_t sql_change_to_binary_fp_value(const variant_t *src, const num_input_fmt_t *fmt,
+    binary_fp_precision_t precision, double *value)
+{
+    if (OG_IS_STRING_TYPE(src->type)) {
+        return sql_text_to_binary_fp_value(&src->v_text, fmt, precision, value);
+    }
+
+    switch (src->type) {
+        case OG_TYPE_BOOLEAN:
+            *value = src->v_bool ? 1.0 : 0.0;
+            return OG_SUCCESS;
+        case OG_TYPE_INTEGER:
+        case OG_TYPE_SMALLINT:
+        case OG_TYPE_TINYINT:
+            *value = sql_quantize_binary_fp((double)src->v_int, precision);
+            return OG_SUCCESS;
+        case OG_TYPE_UINT32:
+        case OG_TYPE_USMALLINT:
+        case OG_TYPE_UTINYINT:
+            *value = sql_quantize_binary_fp((double)src->v_uint32, precision);
+            return OG_SUCCESS;
+        case OG_TYPE_BIGINT:
+            /* Round directly to binary32 before widening to REAL storage to avoid double rounding. */
+            *value = (precision == BINARY_FP_SINGLE) ? (double)(float)src->v_bigint : (double)src->v_bigint;
+            return OG_SUCCESS;
+        case OG_TYPE_UINT64:
+            *value = (precision == BINARY_FP_SINGLE) ? (double)(float)src->v_ubigint : (double)src->v_ubigint;
+            return OG_SUCCESS;
+        case OG_TYPE_FLOAT:
+        case OG_TYPE_REAL:
+            *value = sql_quantize_binary_fp(src->v_real, precision);
+            return OG_SUCCESS;
+        case OG_TYPE_NUMBER:
+        case OG_TYPE_DECIMAL:
+        case OG_TYPE_NUMBER2:
+        case OG_TYPE_NUMBER3:
+            return sql_decimal_to_binary_fp_value(src, precision, value);
+        default:
+            OG_SET_ERROR_MISMATCH(OG_TYPE_REAL, src->type);
+            return OG_ERROR;
+    }
+}
+
+/* Convert a supported input value to a binary64 double. */
+status_t sql_variant_to_binary_double_value(const variant_t *src, double *value)
+{
+    num_input_fmt_t fmt;
+
+    sql_init_num_input_fmt(&fmt);
+    return sql_change_to_binary_fp_value(src, &fmt, BINARY_FP_DOUBLE, value);
+}
+
+/* Evaluate a nullable string argument and preserve its temporary storage. */
+static status_t sql_exec_num_conversion_option(sql_stmt_t *stmt, expr_tree_t *arg, variant_t *var,
+    variant_t *res)
+{
+    SQL_EXEC_FUNC_ARG(arg, var, res, stmt);
+    if (var->is_null) {
+        return OG_SUCCESS;
+    }
+    if (!OG_IS_STRING_TYPE(var->type)) {
+        OG_SRC_ERROR_REQUIRE_STRING(arg->loc, var->type);
+        return OG_ERROR;
+    }
+    sql_keep_stack_variant(stmt, var);
+    return OG_SUCCESS;
+}
+
+/* Convert the input to the requested floating-point precision with an optional conversion-error default. */
+static status_t sql_func_to_binary_fp(sql_stmt_t *stmt, expr_node_t *func, variant_t *res,
+    binary_fp_precision_t precision, const char *func_name)
+{
+    variant_t value;
+    variant_t fmt_var;
+    variant_t nls_var;
+    num_conversion_args_t args;
+    num_input_fmt_t fmt;
+    double real_value;
+    status_t status;
+
+    CM_POINTER3(stmt, func, res);
+    CM_POINTER(func->argument);
+    if (stmt->session->dbcompatibility != 'A') {
+        OG_THROW_ERROR(ERR_CAPABILITY_NOT_SUPPORT, func_name);
+        return OG_ERROR;
+    }
+    sql_get_num_conversion_args(func, &args);
+
+    SQL_EXEC_FUNC_ARG_EX(args.value, &value, res);
+    if (OG_IS_STRING_TYPE(value.type)) {
+        sql_keep_stack_variant(stmt, &value);
+    }
+
+    sql_init_num_input_fmt(&fmt);
+    if (args.fmt != NULL) {
+        OG_RETURN_IFERR(sql_exec_num_conversion_option(stmt, args.fmt, &fmt_var, res));
+        if (fmt_var.is_null) {
+            SQL_SET_NULL_VAR(res);
+            return OG_SUCCESS;
+        }
+    }
+    if (args.nls != NULL) {
+        OG_RETURN_IFERR(sql_exec_num_conversion_option(stmt, args.nls, &nls_var, res));
+        if (nls_var.is_null) {
+            SQL_SET_NULL_VAR(res);
+            return OG_SUCCESS;
+        }
+        /* Parse the grouping separator and decimal point from the NLS parameter. */
+        OG_RETURN_IFERR(sql_parse_num_input_nls(&nls_var.v_text, &fmt));
+    }
+    if (args.fmt != NULL) {
+        /* Parse the format model into numeric input rules. */
+        OG_RETURN_IFERR(sql_parse_num_input_fmt(&fmt_var.v_text, &fmt));
+    }
+
+    /* Convert the input to binary floating point, applying the parsed rules to text input. */
+    status = sql_change_to_binary_fp_value(&value, &fmt, precision, &real_value);
+    if (status != OG_SUCCESS && args.default_value != NULL) {
+        cm_reset_error();
+        SQL_EXEC_FUNC_ARG_EX(args.default_value, &value, res);
+        if (OG_IS_STRING_TYPE(value.type)) {
+            sql_keep_stack_variant(stmt, &value);
+        }
+        status = sql_change_to_binary_fp_value(&value, &fmt, precision, &real_value);
+        if (status != OG_SUCCESS) {
+            cm_set_error_loc(args.default_value->loc);
+            /* return res = NULL if error */
+            return OG_ERROR;
+        }
+    } else if (status != OG_SUCCESS) {
+        cm_set_error_loc(args.value->loc);
+        return OG_ERROR;
+    }
+
+    /* Oracle SQL conversion normalizes textual negative zero to positive zero. */
+    if (real_value == 0.0) {
+        real_value = 0.0;
+    }
+    res->v_real = real_value;
+    res->type = OG_TYPE_REAL;
+    res->is_null = OG_FALSE;
+    return OG_SUCCESS;
+}
+
+/* Convert the input to binary64 precision and return the value as REAL. */
+status_t sql_func_to_binary_double(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    return sql_func_to_binary_fp(stmt, func, res, BINARY_FP_DOUBLE, "TO_BINARY_DOUBLE");
+}
+
+/* Convert the input to binary32 precision and return the value as REAL. */
+status_t sql_func_to_binary_float(sql_stmt_t *stmt, expr_node_t *func, variant_t *res)
+{
+    return sql_func_to_binary_fp(stmt, func, res, BINARY_FP_SINGLE, "TO_BINARY_FLOAT");
+}
+
 /**
  * Syntax: TO_NUMBER(num, 'fmt')
  */

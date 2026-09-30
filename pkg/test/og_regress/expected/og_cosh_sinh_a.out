@@ -1,0 +1,498 @@
+
+
+SQL> -- COSH/SINH A-compatible function verification.
+SQL> -- Functions support both parsers; this regression uses Bison for stable diagnostics.
+SQL> -- Direct output is diagnostic; canonical TO_CHAR and error assertions are the
+SQL> -- Oracle comparison result.
+SQL> alter system set use_bison_parser = true scope = memory;
+
+Succeed.
+
+SQL> set feedback on;
+
+ON
+SQL> set heading on;
+
+ON
+SQL> 
+SQL> prompt === basic NUMBER inputs ===
+
+=== basic NUMBER inputs ===
+SQL> select cosh(0) as c01_zero from sys.sys_dummy;
+
+C01_ZERO                                
+----------------------------------------
+1                                       
+
+1 rows fetched.
+
+SQL> select sinh(0) as s01_zero from sys.sys_dummy;
+
+S01_ZERO                                
+----------------------------------------
+0                                       
+
+1 rows fetched.
+
+SQL> select cosh(1) as c02_one from sys.sys_dummy;
+
+C02_ONE                                 
+----------------------------------------
+1.5430806348152437784779056207570616826 
+
+1 rows fetched.
+
+SQL> select sinh(1) as s02_one from sys.sys_dummy;
+
+S02_ONE                                 
+----------------------------------------
+1.17520119364380145688238185059560081516
+
+1 rows fetched.
+
+SQL> select cosh(-1) as c03_minus_one from sys.sys_dummy;
+
+C03_MINUS_ONE                           
+----------------------------------------
+1.5430806348152437784779056207570616826 
+
+1 rows fetched.
+
+SQL> select sinh(-1) as s03_minus_one from sys.sys_dummy;
+
+S03_MINUS_ONE                           
+----------------------------------------
+-1.1752011936438014568823818505956008152
+
+1 rows fetched.
+
+SQL> select cosh('1') as c04_text from sys.sys_dummy;
+
+C04_TEXT                                
+----------------------------------------
+1.5430806348152437784779056207570616826 
+
+1 rows fetched.
+
+SQL> select sinh('1') as s04_text from sys.sys_dummy;
+
+S04_TEXT                                
+----------------------------------------
+1.17520119364380145688238185059560081516
+
+1 rows fetched.
+
+SQL> select cosh(true) as c05_true from sys.sys_dummy;
+
+C05_TRUE                                
+----------------------------------------
+1.5430806348152437784779056207570616826 
+
+1 rows fetched.
+
+SQL> select sinh(false) as s05_false from sys.sys_dummy;
+
+S05_FALSE                               
+----------------------------------------
+0                                       
+
+1 rows fetched.
+
+SQL> select cosh(null) as c06_null from sys.sys_dummy;
+
+C06_NULL                                
+----------------------------------------
+                                        
+
+1 rows fetched.
+
+SQL> select sinh('') as s06_empty from sys.sys_dummy;
+
+S06_EMPTY                               
+----------------------------------------
+                                        
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === width-independent canonical NUMBER text ===
+
+=== width-independent canonical NUMBER text ===
+SQL> select to_char(cosh(1), 'FM9.99999999999999999999999999999999999999') as c09_canonical
+  2 from sys.sys_dummy;
+
+C09_CANONICAL                                                   
+----------------------------------------------------------------
+1.5430806348152437784779056207570616826                         
+
+1 rows fetched.
+
+SQL> select to_char(sinh(1), 'FM9.99999999999999999999999999999999999999') as s09_canonical
+  2 from sys.sys_dummy;
+
+S09_CANONICAL                                                   
+----------------------------------------------------------------
+1.17520119364380145688238185059560081516                        
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === return type contract ===
+
+=== return type contract ===
+SQL> desc -q select cosh(1) as c07_number_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+C07_NUMBER_TYPE                              NUMBER                              
+
+SQL> desc -q select sinh('1') as s07_number_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+S07_NUMBER_TYPE                              NUMBER                              
+
+SQL> desc -q select cosh(to_binary_double('1')) as c08_real_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+C08_REAL_TYPE                                BINARY_DOUBLE                       
+
+SQL> desc -q select sinh(to_binary_float('1')) as s08_real_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+S08_REAL_TYPE                                BINARY_DOUBLE                       
+
+SQL> 
+SQL> prompt === identities and precision checks ===
+
+=== identities and precision checks ===
+SQL> select case when cosh(-1) = cosh(1) then 'PASS' else 'FAIL' end as p01_cosh_even
+  2 from sys.sys_dummy;
+
+P01_COSH_EVEN
+-------------
+PASS         
+
+1 rows fetched.
+
+SQL> select case when sinh(-1) = -sinh(1) then 'PASS' else 'FAIL' end as p02_sinh_odd
+  2 from sys.sys_dummy;
+
+P02_SINH_ODD
+------------
+PASS        
+
+1 rows fetched.
+
+SQL> select case when abs(cosh(1) - 1.5430806348152437784779056207570616826) < 1e-37
+  2        then 'PASS' else 'FAIL' end as p03_cosh_number from sys.sys_dummy;
+
+P03_COSH_NUMBER
+---------------
+PASS           
+
+1 rows fetched.
+
+SQL> select case when abs(sinh(1) - 1.17520119364380145688238185059560081516) < 1e-37
+  2        then 'PASS' else 'FAIL' end as p04_sinh_number from sys.sys_dummy;
+
+P04_SINH_NUMBER
+---------------
+PASS           
+
+1 rows fetched.
+
+SQL> select case when sinh(1e-100) = 1e-100 then 'PASS' else 'FAIL' end as p05_small_sinh
+  2 from sys.sys_dummy;
+
+P05_SMALL_SINH
+--------------
+PASS          
+
+1 rows fetched.
+
+SQL> select case when cosh(1e-30) = 1 then 'PASS' else 'FAIL' end as p06_small_cosh
+  2 from sys.sys_dummy;
+
+P06_SMALL_COSH
+--------------
+PASS          
+
+1 rows fetched.
+
+SQL> select case when abs(cosh(2) - 3.76219569108363145956221347777374610831) < 1e-37
+  2        then 'PASS' else 'FAIL' end as p07_cosh_exp_path from sys.sys_dummy;
+
+P07_COSH_EXP_PATH
+-----------------
+PASS             
+
+1 rows fetched.
+
+SQL> select case when abs(sinh(2) - 3.62686040784701876766821398280126170488) < 1e-37
+  2        then 'PASS' else 'FAIL' end as p08_sinh_exp_path from sys.sys_dummy;
+
+P08_SINH_EXP_PATH
+-----------------
+PASS             
+
+1 rows fetched.
+
+SQL> select case when abs(cosh(10) * cosh(10) - sinh(10) * sinh(10) - 1) < 1e-28
+  2        then 'PASS' else 'FAIL' end as p09_identity from sys.sys_dummy;
+
+P09_IDENTITY
+------------
+PASS        
+
+1 rows fetched.
+
+SQL> select case when cosh(-10) >= 1 and cosh(0) = 1 and cosh(10) >= 1
+  2        then 'PASS' else 'FAIL' end as p10_cosh_value_range from sys.sys_dummy;
+
+P10_COSH_VALUE_RANGE
+--------------------
+PASS                
+
+1 rows fetched.
+
+SQL> select case when sinh(-10) < 0 and sinh(0) = 0 and sinh(10) > 0
+  2        then 'PASS' else 'FAIL' end as p11_sinh_value_range from sys.sys_dummy;
+
+P11_SINH_VALUE_RANGE
+--------------------
+PASS                
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === Oracle NUMBER range boundary ===
+
+=== Oracle NUMBER range boundary ===
+SQL> select cosh(282.57858863455690819872393985054486897) as r01_cosh_number_max from sys.sys_dummy;
+
+R01_COSH_NUMBER_MAX                     
+----------------------------------------
+2.638103027593596032978844717971785E+122
+
+1 rows fetched.
+
+SQL> select cosh(-282.57858863455690819872393985054486897) as r02_cosh_number_min from sys.sys_dummy;
+
+R02_COSH_NUMBER_MIN                     
+----------------------------------------
+2.638103027593596032978844717971785E+122
+
+1 rows fetched.
+
+SQL> select sinh(282.58006617333443970665056803202391465) as r03_sinh_number_max from sys.sys_dummy;
+
+R03_SINH_NUMBER_MAX                     
+----------------------------------------
+2.642003808183624792562705856715354E+122
+
+1 rows fetched.
+
+SQL> select sinh(-282.58006617333443970665056803202391465) as r04_sinh_number_min from sys.sys_dummy;
+
+R04_SINH_NUMBER_MIN                     
+----------------------------------------
+-2.64200380818362479256270585671535E+122
+
+1 rows fetched.
+
+SQL> select cosh(282.57858863455690819872393985054486898) as r05_cosh_positive_overflow from sys.sys_dummy;
+
+OG-01319, [1:8]High-Precision numeric overflow
+SQL> select cosh(-282.57858863455690819872393985054486898) as r06_cosh_negative_overflow from sys.sys_dummy;
+
+OG-01319, [1:8]High-Precision numeric overflow
+SQL> select sinh(282.58006617333443970665056803202391466) as r07_sinh_positive_overflow from sys.sys_dummy;
+
+OG-01319, [1:8]High-Precision numeric overflow
+SQL> select sinh(-282.58006617333443970665056803202391466) as r08_sinh_negative_overflow from sys.sys_dummy;
+
+OG-01319, [1:8]High-Precision numeric overflow
+SQL> 
+SQL> prompt === REAL path and IEEE special values ===
+
+=== REAL path and IEEE special values ===
+SQL> select cosh(to_binary_double('1')) as f01_cosh_double from sys.sys_dummy;
+
+F01_COSH_DOUBLE     
+--------------------
+1.54308063481524    
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_double('1')) as f02_sinh_double from sys.sys_dummy;
+
+F02_SINH_DOUBLE     
+--------------------
+1.1752011936438     
+
+1 rows fetched.
+
+SQL> select cosh(to_binary_float('1')) as f03_cosh_float_promoted from sys.sys_dummy;
+
+F03_COSH_FLOAT_PROMOTED
+-----------------------
+1.54308063481524       
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_float('1')) as f04_sinh_float_promoted from sys.sys_dummy;
+
+F04_SINH_FLOAT_PROMOTED
+-----------------------
+1.1752011936438        
+
+1 rows fetched.
+
+SQL> select cosh(to_binary_double('711')) as f05_cosh_overflow_inf from sys.sys_dummy;
+
+F05_COSH_OVERFLOW_INF
+---------------------
+inf                  
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_double('-711')) as f06_sinh_overflow_ninf from sys.sys_dummy;
+
+F06_SINH_OVERFLOW_NINF
+----------------------
+-inf                  
+
+1 rows fetched.
+
+SQL> select cosh(to_binary_double('NaN')) as f07_cosh_nan from sys.sys_dummy;
+
+F07_COSH_NAN        
+--------------------
+nan                 
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_double('NaN')) as f08_sinh_nan from sys.sys_dummy;
+
+F08_SINH_NAN        
+--------------------
+nan                 
+
+1 rows fetched.
+
+SQL> select cosh(to_binary_double('Inf')) as f09_cosh_inf from sys.sys_dummy;
+
+F09_COSH_INF        
+--------------------
+inf                 
+
+1 rows fetched.
+
+SQL> select cosh(to_binary_double('-Inf')) as f10_cosh_ninf from sys.sys_dummy;
+
+F10_COSH_NINF       
+--------------------
+inf                 
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_double('Inf')) as f11_sinh_inf from sys.sys_dummy;
+
+F11_SINH_INF        
+--------------------
+inf                 
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_double('-Inf')) as f12_sinh_ninf from sys.sys_dummy;
+
+F12_SINH_NINF       
+--------------------
+-inf                
+
+1 rows fetched.
+
+SQL> select sinh(to_binary_double('-0')) as f13_sinh_zero_normalized from sys.sys_dummy;
+
+F13_SINH_ZERO_NORMALIZED
+------------------------
+0                       
+
+1 rows fetched.
+
+SQL> select case when sinh(to_binary_double('-0')) = to_binary_double('0')
+  2        then 'PASS' else 'FAIL' end as f13a_sinh_zero_normalized from sys.sys_dummy;
+
+F13A_SINH_ZERO_NORMALIZED
+-------------------------
+PASS                     
+
+1 rows fetched.
+
+SQL> select case when abs(cosh(to_binary_double('1')) - to_binary_double('1.5430806348152437')) <
+  2                       to_binary_double('1E-15')
+  3        then 'PASS' else 'FAIL' end as f14_cosh_real_precision from sys.sys_dummy;
+
+F14_COSH_REAL_PRECISION
+-----------------------
+PASS                   
+
+1 rows fetched.
+
+SQL> select case when abs(sinh(to_binary_double('1')) - to_binary_double('1.1752011936438014')) <
+  2                       to_binary_double('1E-15')
+  3        then 'PASS' else 'FAIL' end as f15_sinh_real_precision from sys.sys_dummy;
+
+F15_SINH_REAL_PRECISION
+-----------------------
+PASS                   
+
+1 rows fetched.
+
+SQL> select case when abs(cosh(to_binary_double('710')) /
+  2                           to_binary_double('1.1169973830808557E+308') - to_binary_double('1')) <
+  3                       to_binary_double('1E-14')
+  4        then 'PASS' else 'FAIL' end as f16_cosh_710_finite from sys.sys_dummy;
+
+F16_COSH_710_FINITE
+-------------------
+PASS               
+
+1 rows fetched.
+
+SQL> select case when abs(sinh(to_binary_double('710')) /
+  2                           to_binary_double('1.1169973830808557E+308') - to_binary_double('1')) <
+  3                       to_binary_double('1E-14')
+  4        then 'PASS' else 'FAIL' end as f17_sinh_710_finite from sys.sys_dummy;
+
+F17_SINH_710_FINITE
+-------------------
+PASS               
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === expected errors ===
+
+=== expected errors ===
+SQL> select cosh('abc') as e01_invalid_text from sys.sys_dummy;
+
+OG-00636, [1:8]Invalid number -- unexpected character
+SQL> select sinh(date '2026-08-29') as e02_date from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: illegal function argument: NUMERIC argument expected - got DATE
+SQL> select cosh() as e03_no_argument from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for COSH, min=1, max=1
+SQL> select sinh(1, 2) as e04_too_many_arguments from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for SINH, min=1, max=1
+SQL> 
+SQL> alter system set use_bison_parser = false scope = memory;
+
+Succeed.
+
+SQL>

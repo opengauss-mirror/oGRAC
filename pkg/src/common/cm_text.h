@@ -1108,6 +1108,7 @@ status_t cm_str2uint32(const char *str, uint32 *value);
 status_t cm_str2uint64(const char *str, uint64 *value);
 status_t cm_str2int(const char *str, int32 *value);
 status_t cm_str2bigint(const char *str, int64 *value);
+status_t cm_str2float(const char *str, float *value);
 status_t cm_str2real(const char *str, double *value);
 bool32 cm_str2real_ex(const char *str, double *val);
 uint32 cm_bool2str(bool32 value, char *str);

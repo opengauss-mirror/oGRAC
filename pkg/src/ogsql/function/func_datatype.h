@@ -32,6 +32,8 @@ extern "C" {
 #endif
 
 status_t sql_infer_func_node_datatype(sql_stmt_t *stmt, sql_query_t *query, expr_node_t *func_node, og_type_t *og_type);
+status_t sql_infer_pending_numeric_datatype(sql_stmt_t *stmt, sql_query_t *query, rs_column_t *rs_col,
+    og_type_t *type);
 
 #ifdef __cplusplus
 }

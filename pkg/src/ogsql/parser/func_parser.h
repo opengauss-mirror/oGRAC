@@ -60,6 +60,8 @@ status_t sql_build_cast_expr(sql_stmt_t *stmt, source_location_t loc, expr_tree_
                              expr_tree_t **res);
 status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t *func_name,
     expr_tree_t *arg_list, source_location_t loc);
+status_t sql_create_to_binary_fp_default_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t *func_name,
+    expr_tree_t *value, expr_tree_t *default_value, expr_tree_t *format_args, source_location_t loc);
 status_t sql_build_winsort_node_bison(sql_stmt_t *stmt, winsort_args_t **winsort_args, galist_t* group_exprs,
     galist_t *sort_items, windowing_args_t *windowing, source_location_t loc);
 status_t sql_create_winsort_node_bison(sql_stmt_t *stmt, expr_tree_t *func_expr, expr_node_t *func_node,

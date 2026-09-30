@@ -367,7 +367,12 @@ static inline status_t sql_search_func_expr_in_rs_col_alias(sql_verifier_t *veri
     uint32 func_id = sql_get_func_id_with_dialect((text_t *)&(*node)->word.func.name,
         verif->stmt->session->dbcompatibility);
     bool32 tmp_aggr = *is_aggr;
-    if (func_id != OG_INVALID_ID32 && g_func_tab[func_id].aggr_type != AGGR_TYPE_NONE) {
+    var_func_t v_func = {0};
+
+    /* Resolve metadata by ID because the function node has not been verified yet. */
+    v_func.pack_id = OG_INVALID_ID32;
+    v_func.func_id = func_id;
+    if (func_id != OG_INVALID_ID32 && sql_get_func(&v_func)->aggr_type != AGGR_TYPE_NONE) {
         *is_aggr = OG_TRUE;
     } else if ((func_id == ID_FUNC_ITEM_IF || func_id == ID_FUNC_ITEM_LNNVL) && (*node)->cond_arg != NULL) {
         OG_RETURN_IFERR(

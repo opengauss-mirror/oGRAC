@@ -1,0 +1,310 @@
+
+
+SQL> -- INITCAP/NCHR A-compatible function verification.
+SQL> -- Text assertions and RAWTOHEX are used so client locale/display does not
+SQL> -- affect the Oracle/oGRAC comparison.
+SQL> alter system set use_bison_parser = true scope = memory;
+
+Succeed.
+
+SQL> set feedback on;
+
+ON
+SQL> set heading on;
+
+ON
+SQL> 
+SQL> prompt === INITCAP basic and word boundaries ===
+
+=== INITCAP basic and word boundaries ===
+SQL> select initcap('the soap') as i01_basic from sys.sys_dummy;
+
+I01_BASIC
+---------
+The Soap 
+
+1 rows fetched.
+
+SQL> select initcap('hello-world_sql') as i02_punctuation from sys.sys_dummy;
+
+I02_PUNCTUATION
+---------------
+Hello-World_Sql
+
+1 rows fetched.
+
+SQL> select initcap('oracle''s') as i03_apostrophe from sys.sys_dummy;
+
+I03_APOSTROPHE
+--------------
+Oracle'S      
+
+1 rows fetched.
+
+SQL> select initcap('abc123DEF 99BOTTLES x9-y2') as i04_alnum from sys.sys_dummy;
+
+I04_ALNUM                
+-------------------------
+Abc123def 99bottles X9-Y2
+
+1 rows fetched.
+
+SQL> select initcap('  MIXED  case') as i05_spaces from sys.sys_dummy;
+
+I05_SPACES   
+-------------
+  Mixed  Case
+
+1 rows fetched.
+
+SQL> select initcap(123.45) as i06_numeric from sys.sys_dummy;
+
+I06_NUMERIC
+-----------
+123.45     
+
+1 rows fetched.
+
+SQL> select case when initcap('') is null and initcap(null) is null
+  2        then 'PASS' else 'FAIL' end as i07_nulls from sys.sys_dummy;
+
+I07_NULLS
+---------
+PASS     
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === INITCAP deterministic multibyte mapping ===
+
+=== INITCAP deterministic multibyte mapping ===
+SQL> select case when initcap('élÈVE') = 'Élève' then 'PASS' else 'FAIL' end as i08_accent
+  2 from sys.sys_dummy;
+
+I08_ACCENT
+----------
+PASS      
+
+1 rows fetched.
+
+SQL> select case when initcap('straße') = 'Straße' then 'PASS' else 'FAIL' end as i09_sharp_s
+  2 from sys.sys_dummy;
+
+I09_SHARP_S
+-----------
+PASS       
+
+1 rows fetched.
+
+SQL> select case when initcap('你hELLO 世WORLD') = '你hello 世world' then 'PASS' else 'FAIL' end as i10_cjk
+  2 from sys.sys_dummy;
+
+I10_CJK
+-------
+PASS   
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === INITCAP return type contract ===
+
+=== INITCAP return type contract ===
+SQL> desc -q select initcap(cast('a' as char(5))) as i11_char, initcap(cast('a' as varchar(5))) as i12_varchar from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+I11_CHAR                                     CHAR(5 BYTE)                        
+I12_VARCHAR                                  VARCHAR(1 BYTE)                     
+
+SQL> select '[' || initcap(cast('a' as char(5))) || ']' as i13_char_padding from sys.sys_dummy;
+
+I13_CHAR_PADDING
+----------------
+[A    ]         
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === INITCAP multibyte CTAS length inference ===
+
+=== INITCAP multibyte CTAS length inference ===
+SQL> -- Use table columns so constant folding cannot hide an undersized result type.
+SQL> create table t_initcap_length_src (id integer, b varchar(2 byte), c varchar(1 char));
+
+Succeed.
+
+SQL> insert into t_initcap_length_src values (1, 'ȿ', 'ȿ');
+
+1 rows affected.
+
+SQL> insert into t_initcap_length_src values (2, 'a', 'a');
+
+1 rows affected.
+
+SQL> insert into t_initcap_length_src values (3, null, null);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> create table t_initcap_length_dst as
+  2 select id, initcap(b) as b, initcap(c) as c from t_initcap_length_src;
+
+Succeed.
+
+SQL> select case when rawtohex(b) = 'E2B1BE' and lengthb(b) = 3
+  2        then 'PASS' else 'FAIL' end as i14_byte_ctas
+  3 from t_initcap_length_dst where id = 1;
+
+I14_BYTE_CTAS
+-------------
+PASS         
+
+1 rows fetched.
+
+SQL> select case when rawtohex(c) = 'E2B1BE' and length(c) = 1 and lengthb(c) = 3
+  2        then 'PASS' else 'FAIL' end as i15_char_ctas
+  3 from t_initcap_length_dst where id = 1;
+
+I15_CHAR_CTAS
+-------------
+PASS         
+
+1 rows fetched.
+
+SQL> select case when b = 'A' and c = 'A' and lengthb(b) = 1 and lengthb(c) = 1
+  2        then 'PASS' else 'FAIL' end as i16_ascii_ctas
+  3 from t_initcap_length_dst where id = 2;
+
+I16_ASCII_CTAS
+--------------
+PASS          
+
+1 rows fetched.
+
+SQL> select case when b is null and c is null then 'PASS' else 'FAIL' end as i17_null_ctas
+  2 from t_initcap_length_dst where id = 3;
+
+I17_NULL_CTAS
+-------------
+PASS         
+
+1 rows fetched.
+
+SQL> drop table t_initcap_length_dst purge;
+
+Succeed.
+
+SQL> drop table t_initcap_length_src purge;
+
+Succeed.
+
+SQL> 
+SQL> prompt === NCHR valid code units and conversion ===
+
+=== NCHR valid code units and conversion ===
+SQL> select rawtohex(nchr(65)) as n01_ascii,
+  2        rawtohex(nchr(233)) as n02_accent,
+  3        rawtohex(nchr(20320)) as n03_cjk,
+  4        rawtohex(nchr(8364)) as n04_euro
+  5 from sys.sys_dummy;
+
+N01_ASCII N02_ACCENT N03_CJK N04_EURO
+--------- ---------- ------- --------
+41        C3A9       E4BDA0  E282AC  
+
+1 rows fetched.
+
+SQL> select rawtohex(nchr(65.1)) as n05_trunc_low,
+  2        rawtohex(nchr(65.9)) as n06_trunc_high,
+  3        rawtohex(nchr('65')) as n07_text,
+  4        rawtohex(nchr(true)) as n08_boolean
+  5 from sys.sys_dummy;
+
+N05_TRUNC_LOW N06_TRUNC_HIGH N07_TEXT N08_BOOLEAN
+------------- -------------- -------- -----------
+41            41             41       01         
+
+1 rows fetched.
+
+SQL> select rawtohex(nchr(65535)) as n09_ffff,
+  2        rawtohex(nchr(65536)) as n10_wrap_zero,
+  3        rawtohex(nchr(65537)) as n11_wrap_one,
+  4        rawtohex(nchr(4294967295)) as n12_max_u32
+  5 from sys.sys_dummy;
+
+N09_FFFF N10_WRAP_ZERO N11_WRAP_ONE N12_MAX_U32
+-------- ------------- ------------ -----------
+EFBFBF   00            01           EFBFBF     
+
+1 rows fetched.
+
+SQL> select length(nchr(0)) as n13_nul_chars,
+  2        lengthb(nchr(0)) as n14_nul_bytes,
+  3        rawtohex(nchr(0)) as n15_nul_hex
+  4 from sys.sys_dummy;
+
+N13_NUL_CHARS        N14_NUL_BYTES        N15_NUL_HEX
+-------------------- -------------------- -----------
+1                    1                    00         
+
+1 rows fetched.
+
+SQL> select case when nchr(null) is null then 'PASS' else 'FAIL' end as n16_null
+  2 from sys.sys_dummy;
+
+N16_NULL
+--------
+PASS    
+
+1 rows fetched.
+
+SQL> 
+SQL> prompt === NCHR return type contract ===
+
+=== NCHR return type contract ===
+SQL> desc -q select nchr(65) as n17_type from sys.sys_dummy;
+
+Name                                Null?    Type                                
+----------------------------------- -------- ------------------------------------
+N17_TYPE                                     VARCHAR(1 CHAR)                     
+
+SQL> 
+SQL> prompt === expected errors and explicit contractions ===
+
+=== expected errors and explicit contractions ===
+SQL> select initcap() as e01_initcap_no_arg from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for INITCAP, min=1, max=1
+SQL> select initcap('a', 'b') as e02_initcap_many_args from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for INITCAP, min=1, max=1
+SQL> select nchr() as e03_nchr_no_arg from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for NCHR, min=1, max=1
+SQL> select nchr(1, 2) as e04_nchr_many_args from sys.sys_dummy;
+
+OG-00615, [1:8]Invalid argument number for NCHR, min=1, max=1
+SQL> select nchr(-1) as e05_nchr_negative from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: argument value of NCHR must be between 0 and 4294967295
+SQL> select nchr(4294967296) as e06_nchr_too_large from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: argument value of NCHR must be between 0 and 4294967295
+SQL> select nchr(55296) as e07_high_surrogate from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: NCHR does not support a standalone UTF-16 surrogate code unit
+SQL> select nchr(57343) as e08_low_surrogate from sys.sys_dummy;
+
+OG-00614, [1:8]Parameter error: NCHR does not support a standalone UTF-16 surrogate code unit
+SQL> select nchr(date '2026-08-31') as e09_nchr_date from sys.sys_dummy;
+
+OG-00606, [1:13]Inconsistent datatypes, expected NUMBER - got DATE
+SQL> 
+SQL> alter system set use_bison_parser = false scope = memory;
+
+Succeed.
+
+SQL>

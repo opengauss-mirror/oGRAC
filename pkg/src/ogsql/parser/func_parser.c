@@ -1665,6 +1665,51 @@ status_t sql_create_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t
     return OG_SUCCESS;
 }
 
+static bool32 sql_is_to_binary_fp_default_literal(expr_tree_t *expr)
+{
+    expr_node_t *node = expr->root;
+
+    if (NODE_IS_CONST(node) || NODE_IS_PARAM(node) || NODE_IS_CSR_PARAM(node) || NODE_IS_RES_NULL(node) ||
+        NODE_IS_RES_TRUE(node) || NODE_IS_RES_FALSE(node)) {
+        return OG_TRUE;
+    }
+
+    return node->type == EXPR_NODE_NEGATIVE && node->right != NULL && NODE_IS_CONST(node->right);
+}
+
+status_t sql_create_to_binary_fp_default_expr(sql_stmt_t *stmt, expr_tree_t **expr, galist_t *func_name,
+    expr_tree_t *value, expr_tree_t *default_value, expr_tree_t *format_args, source_location_t loc)
+{
+    expr_tree_t *name_expr = NULL;
+    text_t *func_text = NULL;
+
+    if (stmt->session->dbcompatibility != 'A' || func_name->count != 1) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR,
+            "DEFAULT ON CONVERSION ERROR for binary floating-point conversion is only supported in compatibility A");
+        return OG_ERROR;
+    }
+
+    name_expr = (expr_tree_t *)cm_galist_get(func_name, 0);
+    func_text = &name_expr->root->value.v_text;
+    if (!cm_text_str_equal_ins(func_text, "to_binary_double") &&
+        !cm_text_str_equal_ins(func_text, "to_binary_float")) {
+        OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR,
+            "DEFAULT ON CONVERSION ERROR is only supported by TO_BINARY_DOUBLE or TO_BINARY_FLOAT");
+        return OG_ERROR;
+    }
+
+    if (!sql_is_to_binary_fp_default_literal(default_value)) {
+        OG_SRC_THROW_ERROR(default_value->loc, ERR_SQL_SYNTAX_ERROR,
+            "the DEFAULT ON CONVERSION ERROR value must be a literal or bind variable");
+        return OG_ERROR;
+    }
+
+    value->next = default_value;
+    default_value->root->exec_default = OG_TRUE;
+    default_value->next = format_args;
+    return sql_create_funccall_expr(stmt, expr, func_name, value, loc);
+}
+
 status_t sql_build_winsort_node_bison(sql_stmt_t *stmt, winsort_args_t **winsort_args, galist_t* group_exprs,
     galist_t *sort_items, windowing_args_t *windowing, source_location_t loc)
 {

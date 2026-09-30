@@ -354,6 +354,9 @@ static status_t sql_verify_case_expr(sql_verifier_t *verif, expr_node_t *node)
         node->datatype = OG_TYPE_NUMBER;
     }
     sql_infer_case_when_optmz_mode(verif, node);
+    if (verif->excl_flags & SQL_EXCL_CONST_FOLD) {
+        return OG_SUCCESS;
+    }
     return sql_try_optimize_const_expr(verif->stmt, node);
 }
 
@@ -1693,6 +1696,9 @@ static status_t sql_verify_expr_node_core(sql_verifier_t *verif, expr_node_t *no
         return OG_ERROR;
     }
 
+    if (verif->excl_flags & SQL_EXCL_CONST_FOLD) {
+        return OG_SUCCESS;
+    }
     return sql_try_optimize_const_expr(verif->stmt, node);
 }
 

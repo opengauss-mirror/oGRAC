@@ -275,6 +275,22 @@ sql_func_t g_func_tab[] = {
 };
 
 sql_func_t g_dialect_a_func_tab[] = {
+    { { (char *)"cosh", 4 }, sql_func_cosh, sql_verify_hyperbolic, AGGR_TYPE_NONE,
+        FO_NORMAL, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"initcap", 7 }, sql_func_initcap, sql_verify_initcap, AGGR_TYPE_NONE,
+        FO_NORMAL, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"nanvl", 5 }, sql_func_nanvl, sql_verify_nanvl_remainder, AGGR_TYPE_NONE,
+        FO_NONE, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"nchr", 4 }, sql_func_nchr, sql_verify_nchr, AGGR_TYPE_NONE,
+        FO_NORMAL, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"remainder", 9 }, sql_func_remainder, sql_verify_nanvl_remainder, AGGR_TYPE_NONE,
+        FO_NONE, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"sinh", 4 }, sql_func_sinh, sql_verify_hyperbolic, AGGR_TYPE_NONE,
+        FO_NORMAL, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"to_binary_double", 16 }, sql_func_to_binary_double, sql_verify_to_binary_double, AGGR_TYPE_NONE,
+        FO_NORMAL, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
+    { { (char *)"to_binary_float", 15 }, sql_func_to_binary_float, sql_verify_to_binary_float, AGGR_TYPE_NONE,
+        FO_NORMAL, OG_INVALID_ID32, FO_USUAL, OG_TRUE },
 };
 
 sql_func_t g_dialect_b_func_tab[] = {
@@ -485,12 +501,14 @@ static uint32 sql_get_func_id_with_func_tab(const text_t *func_name, sql_func_t*
 uint32 sql_get_func_id_with_dialect(const text_t *func_name, char dialect)
 {
     uint32 func_pos = OG_INVALID_ID32;
-    if (dialect == 'B') {
+    if (dialect == 'A') {
+        func_pos = sql_get_func_id_with_func_tab(func_name, g_dialect_a_func_tab, SQL_DIALECT_A_FUNC_COUNT);
+    } else if (dialect == 'B') {
         func_pos = sql_get_func_id_with_func_tab(func_name, g_dialect_b_func_tab, SQL_DIALECT_B_FUNC_COUNT);
     } else if (dialect == 'C') {
         func_pos = sql_get_func_id_with_func_tab(func_name, g_dialect_c_func_tab, SQL_DIALECT_C_FUNC_COUNT);
     } else {
-        func_pos = sql_get_func_id_with_func_tab(func_name, g_dialect_a_func_tab, SQL_DIALECT_A_FUNC_COUNT);
+        return sql_get_func_id(func_name);
     }
     if (func_pos != OG_INVALID_ID32) {
         return sql_mask_function_id(func_pos, dialect);

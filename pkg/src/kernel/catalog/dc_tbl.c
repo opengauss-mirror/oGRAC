@@ -1825,7 +1825,8 @@ status_t dc_prepare_load_columns(knl_session_t *session, dc_entity_t *entity)
     knl_securec_check(ret);
 
     for (i = 0; i < group_count; i++) {
-        group_size = (i == group_count - 1) ? (entity->column_count - i * DC_COLUMN_GROUP_SIZE) : DC_COLUMN_GROUP_SIZE;
+        group_size = (i == group_count - 1) ?
+            (entity->column_count - i * DC_COLUMN_GROUP_SIZE) : DC_COLUMN_GROUP_SIZE;
         if (dc_alloc_mem(ogx, entity->memory, sizeof(pointer_t) * group_size,
             (void **)&entity->column_groups[i].columns) != OG_SUCCESS) {
             return OG_ERROR;

@@ -27,6 +27,7 @@
 #include "cm_binary.h"
 #include "expr_parser.h"
 #include "ogsql_func.h"
+#include "func_datatype.h"
 #include "ogsql_parser.h"
 #include "ogsql_select.h"
 #include "ogsql_aggr.h"
@@ -653,7 +654,16 @@ static status_t sql_get_select_value(sql_stmt_t *stmt, expr_node_t *node, varian
         if (cursor->eof) {
             if (row_count == 0) {
                 for (uint32 i = 0; i < n_rs; i++) {
-                    VAR_SET_NULL(result, ((rs_column_t *)cm_galist_get(cursor->columns, i))->datatype);
+                    rs_column_t *rs_col = (rs_column_t *)cm_galist_get(rs_columns, i);
+                    og_type_t type = ((rs_column_t *)cm_galist_get(cursor->columns, i))->datatype;
+                    /* Infer the empty subquery's NULL type; keep UNKNOWN if inference fails. */
+                    if (type == OG_TYPE_UNKNOWN &&
+                        sql_infer_pending_numeric_datatype(stmt, select_ctx->first_query, rs_col,
+                            &type) != OG_SUCCESS) {
+                        cm_reset_error();
+                        type = OG_TYPE_UNKNOWN;
+                    }
+                    VAR_SET_NULL(result, type);
                     result++;
                 }
             }
@@ -2814,6 +2824,21 @@ static bool32 sql_func_is_equal(sql_stmt_t *stmt, expr_node_t *node1, expr_node_
     if (node1->type == EXPR_NODE_FUNC && node2->type == EXPR_NODE_FUNC) {
         sql_func_t *func1 = sql_get_func(&node1->value.v_func);
         sql_func_t *func2 = sql_get_func(&node2->value.v_func);
+
+        if (IS_BUILDIN_FUNCTION(node1, ID_FUNC_ITEM_A_TO_BINARY_FLOAT) ||
+            IS_BUILDIN_FUNCTION(node1, ID_FUNC_ITEM_A_TO_BINARY_DOUBLE) ||
+            IS_BUILDIN_FUNCTION(node2, ID_FUNC_ITEM_A_TO_BINARY_FLOAT) ||
+            IS_BUILDIN_FUNCTION(node2, ID_FUNC_ITEM_A_TO_BINARY_DOUBLE)) {
+            expr_tree_t *option1 = (node1->argument == NULL) ? NULL : node1->argument->next;
+            expr_tree_t *option2 = (node2->argument == NULL) ? NULL : node2->argument->next;
+            bool32 has_default1 = (option1 != NULL && option1->root->exec_default);
+            bool32 has_default2 = (option2 != NULL && option2->root->exec_default);
+
+            /* Distinguish conversion defaults from format arguments. */
+            if (has_default1 != has_default2) {
+                return OG_FALSE;
+            }
+        }
 
         if ((func1->builtin_func_id == ID_FUNC_ITEM_IF && func2->builtin_func_id == ID_FUNC_ITEM_IF) ||
             (func1->builtin_func_id == ID_FUNC_ITEM_LNNVL && func2->builtin_func_id == ID_FUNC_ITEM_LNNVL)) {
