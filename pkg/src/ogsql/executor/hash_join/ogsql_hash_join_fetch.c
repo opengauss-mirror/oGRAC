@@ -45,11 +45,17 @@ static status_t og_fetch_mtrl_rows(sql_stmt_t *statement, sql_cursor_t *hash_sql
     return OG_SUCCESS;
 }
 
+/*
+ * NOTE: the fetch callbacks below are registered as hash table q_oper and are only invoked from
+ * vm_hash_table_full_fetch / vm_hash_table_key_fetch, which pass next_row_buf (new_buf) as NULL by
+ * design and the callbacks never read it. Check only the pointers actually dereferenced here.
+ */
+
 /* Callback function to fetch a single row from hash table */
 status_t og_fetch_next_row_cb(void *sql_cur, const char *next_row_buf, uint32 next_row_size,
     const char *curr_row_buf, uint32 curr_row_size, bool32 match_found)
 {
-    CM_POINTER3(sql_cur, next_row_buf, curr_row_buf);
+    CM_POINTER2(sql_cur, curr_row_buf);
     sql_cursor_t *hash_sql_cur = (sql_cursor_t *)sql_cur;
     row_head_t *row_head = (row_head_t *)curr_row_buf;
     mtrl_rowid_t *mtrl_ids = (mtrl_rowid_t *)(curr_row_buf + row_head->size);
@@ -59,7 +65,7 @@ status_t og_fetch_next_row_cb(void *sql_cur, const char *next_row_buf, uint32 ne
 static status_t og_fetch_and_delete_row(void *sql_cur, const char *next_row_buf, uint32 next_row_size,
     const char *curr_row_buf, uint32 curr_row_size, bool32 match_found)
 {
-    CM_POINTER3(sql_cur, next_row_buf, curr_row_buf);
+    CM_POINTER2(sql_cur, curr_row_buf);
     sql_cursor_t *hash_sql_cur = (sql_cursor_t *)sql_cur;
     if (og_fetch_next_row_cb(sql_cur, next_row_buf, next_row_size,
         curr_row_buf, curr_row_size, match_found) != OG_SUCCESS) {
@@ -73,7 +79,7 @@ static status_t og_fetch_and_delete_row(void *sql_cur, const char *next_row_buf,
 status_t og_fetch_right_left_row_cb(void *sql_cur, const char *next_row_buf, uint32 next_row_size,
     const char *curr_row_buf, uint32 curr_row_size, bool32 match_found)
 {
-    CM_POINTER3(sql_cur, next_row_buf, curr_row_buf);
+    CM_POINTER2(sql_cur, curr_row_buf);
     return og_fetch_and_delete_row(sql_cur, next_row_buf, next_row_size, curr_row_buf, curr_row_size, match_found);
 }
 
@@ -92,7 +98,7 @@ static inline void og_count_deleted_rows(sql_cursor_t *hash_sql_cur)
 status_t og_fetch_right_semi_row_cb(void *sql_cur, const char *next_row_buf, uint32 next_row_size,
     const char *curr_row_buf, uint32 curr_row_size, bool32 match_found)
 {
-    CM_POINTER3(sql_cur, next_row_buf, curr_row_buf);
+    CM_POINTER2(sql_cur, curr_row_buf);
     og_count_deleted_rows(sql_cur);   // count the processed rows
     return og_fetch_and_delete_row(sql_cur, next_row_buf, next_row_size, curr_row_buf, curr_row_size, match_found);
 }
@@ -301,7 +307,7 @@ static inline bool32 og_need_match_outer_join_cond(sql_cursor_t *sql_cur)
 status_t og_fetch_full_join_row_cb(void *sql_cur, const char *next_row_buf, uint32 next_row_size,
     const char *curr_row_buf, uint32 curr_row_size, bool32 match_found)
 {
-    CM_POINTER3(sql_cur, next_row_buf, curr_row_buf);
+    CM_POINTER2(sql_cur, curr_row_buf);
     row_head_t *row_head = (row_head_t *)curr_row_buf;
     bool8 *match_flag = (bool8 *)(curr_row_buf + row_head->size);
     sql_cursor_t *hash_sql_cur = (sql_cursor_t *)sql_cur;
