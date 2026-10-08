@@ -81,6 +81,7 @@ extern "C" {
 #define BUF_LRU_OLD_TOLERANCE 256   // adjust LRU old list pointer if the distance from OLD RATION > BUF_LRU_OLD_TOLERANCE
 #define BUF_LRU_OLD_MIN_LEN   65536 // use LRU old list if >= BUF_LRU_OLD_MIN_LEN buffer pages in memory
 #define BUF_LRU_STATS_LEN     1024  // full scan LRU list len
+#define BUF_MOVE_CLEAN_BATCH  (uint32)1024
 #define BUF_POOL_SIZE_THRESHOLD (((uint64)SIZE_M(1024)) * 1) // if total/buf_pool_num < 1G, then use one buffer pool
 #define BUCKET_TIMES          3     // the times of buckets against buffer ctrl
 #define BUF_IOCBS_MAX_NUM     1024

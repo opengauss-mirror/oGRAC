@@ -894,6 +894,25 @@ static bool32 buf_can_evict_general(knl_session_t *session, buf_ctrl_t *head)
     return OG_TRUE;
 }
 
+static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
+{
+    buf_ctrl_t *shift = NULL;
+    uint32 moved = 0;
+
+    cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
+    buf_ctrl_t *item = list->lru_last;
+    while (item != NULL && moved < BUF_MOVE_CLEAN_BATCH) {
+        shift = item;
+        item = shift->prev;
+        buf_lru_remove_ctrl(list, shift);
+        buf_add_pos_t pos = shift->is_resident ? BUF_ADD_HOT : BUF_ADD_COLD;
+        buf_lru_add_ctrl(&set->scan_list, shift, pos);
+        moved++;
+    }
+    cm_spin_unlock(&list->lock);
+    cm_release_cond(&set->set_cond);
+}
+
 /*
  * search a single LRU to reclaim a ctrl for use. strategy:
  * 1.if exceed searching threshold, waiting for cleaning up dirty page.
@@ -959,6 +978,10 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
         buf_lru_remove_ctrl(list, item);
         item->list_id = list->type;
         session->stat->buffer_recycle_step += step;
+    }
+
+    if (list->type == LRU_LIST_SCAN && set->clean_list.count > 0) {
+        buf_move_clean_list(session, set, &set->clean_list);
     }
 
     buf_lru_adjust_old_len(list);
