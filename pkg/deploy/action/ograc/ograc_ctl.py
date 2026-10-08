@@ -1113,7 +1113,7 @@ def _wait_cluster_ddl_ready(timeout=300):
         f"Cluster DDL not available after {timeout}s: reform not done")
 
 
-def _create_3rd_pkg(retry_timeout=60):
+def _create_3rd_pkg(dp, retry_timeout=60):
     if dp.compatibility_mode != "A":
         LOG.info("Skipping A-only third package for compatibility %s.",
                  dp.compatibility_mode)
@@ -1350,7 +1350,7 @@ def action_start():
             # failed between DB creation and package creation, this retries
             # the package instead of leaving the DB without UTL_RAW.
             if _read_start_status().get("third_pkg_status", "default") != "done":
-                _create_3rd_pkg()
+                _create_3rd_pkg(dp)
 
         _check_db_open(timeout=600)
 
