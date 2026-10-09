@@ -291,6 +291,43 @@ F04_SCIENTIFIC
 
 1 rows fetched.
 
+SQL> -- Numeric format arguments are converted to text before format parsing.
+SQL> select case when to_binary_double('123', 999) = to_binary_double('123', '999')
+  2        then 'PASS' else 'FAIL' end as f05_numeric_fmt from sys.sys_dummy;
+
+F05_NUMERIC_FMT
+---------------
+PASS
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('123' default null on conversion error, 0) is null
+  2        then 'PASS' else 'FAIL' end as f06_numeric_default from sys.sys_dummy;
+
+F06_NUMERIC_DEFAULT
+-------------------
+PASS
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('123', 998 + rownum) = 123
+  2        then 'PASS' else 'FAIL' end as f07_dynamic_fmt from sys.sys_dummy;
+
+F07_DYNAMIC_FMT
+---------------
+PASS
+
+1 rows fetched.
+
+SQL> select case when to_binary_double('123', cast(null as integer)) is null
+  2        then 'PASS' else 'FAIL' end as f08_numeric_null_fmt from sys.sys_dummy;
+
+F08_NUMERIC_NULL_FMT
+--------------------
+PASS
+
+1 rows fetched.
+
 SQL> select to_binary_double('bad' default 0 on conversion error) as d01_default_number from sys.sys_dummy;
 
 D01_DEFAULT_NUMBER  
@@ -364,6 +401,16 @@ OG-00601, [1:66]Sql syntax error: the DEFAULT ON CONVERSION ERROR value must be 
 SQL> select to_binary_double(date '2026-08-28') as e09_date from sys.sys_dummy;
 
 OG-00614, [1:25]Parameter error: illegal function argument: NUMERIC or string argument expected - got DATE
+SQL> -- DEFAULT catches value conversion failures, not malformed formats or NLS type errors.
+SQL> select to_binary_double('123', 0) as e10_numeric_fmt_mismatch from sys.sys_dummy;
+
+OG-00636, [1:8]Invalid number
+SQL> select to_binary_double('123' default null on conversion error, 123) as e11_bad_numeric_fmt from sys.sys_dummy;
+
+OG-01350, [1:8]The input was not of the NUMBER type.
+SQL> select to_binary_double('123', 999, 0) as e12_numeric_nls from sys.sys_dummy;
+
+OG-00614, [1:37]Parameter error: illegal function argument: string argument expected - got BINARY_INTEGER
 SQL> select to_binary_double('123-', '999S') as u01_trailing_sign from sys.sys_dummy;
 
 OG-01350, [1:8]The input was not of the NUMBER type.
