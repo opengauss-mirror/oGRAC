@@ -3,17 +3,21 @@ name: openGauss_oGRAC_PR
 on:
   push:
     branches:
-      - master
+      - '**'
   pull_request_target:
     branches:
-      - master
+      - '**'
   pull_request_comment:
     types:
       - created
     branches:
-      - master
+      - '**'
     comments:
-      - '/retest'
+      - '^/retest$'
+  pr_comment:
+    types:
+      - created
+    keyword: '^/retest$'
   workflow_dispatch:
 
 permissions:
@@ -100,6 +104,8 @@ jobs:
           bash .gitcode/scripts/compile_ograc.sh
         env:
           WORKSPACE_ROOT: /data/jenkins/workspace/oGRAC
+          GITCODE_PR_IID: ${{ atomgit.event.pull_request.number }}
+
 
   report_result:
     name: Query pipeline and label PR
