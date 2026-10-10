@@ -85,7 +85,7 @@ function start_ogracd() {
   set +e
   numactl --hardware
   if [ $? -eq 0 ]; then
-    OS_ARCH=$(uname -i)
+    OS_ARCH=$(uname -m)
     if [[ ${OS_ARCH} =~ "aarch64" ]] && [[ ${deploy_mode} != "dss" ]]; then
       result_str=`python3 ${CURRENT_PATH}/get_config_info.py "OGRAC_NUMA_CPU_INFO"`
       if [ -z "$result_str" ]; then

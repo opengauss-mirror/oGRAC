@@ -1055,7 +1055,7 @@ class CmsCtl(object):
             LOGGER.info("mlnx version 5.5")
             return True
 
-        ret_code, os_arch, stderr = _exec_popen("uname -i")
+        ret_code, os_arch, stderr = _exec_popen("uname -m")
         if ret_code:
             LOGGER.error("failed to get linux release version."
                      "ret_code : %s, os_arch : %s, stderr : %s" % (ret_code, os_arch, stderr))

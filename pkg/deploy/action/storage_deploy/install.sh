@@ -315,7 +315,7 @@ function uninstall() {
 }
 
 function install_dbstor() {
-    local arrch=$(uname -p)
+    local arrch=$(uname -m)
     local dbstor_path="${CURRENT_PATH}"/../repo
     local dbstor_package_file=$(ls "${dbstor_path}"/DBStor_Client*_"${arrch}"*.tgz)
     if [ ! -f "${dbstor_package_file}" ];then

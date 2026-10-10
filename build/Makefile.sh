@@ -43,8 +43,6 @@ OGRAC_LIB_DIR_TMP=${OGRACDB_HOME}/../oGRAC_lib/tmp/
 ENABLE_LLT_GCOV="NO"
 ENABLE_LLT_ASAN="NO"
 FEATURE_FOR_EVERSQL=${FEATURE_FOR_EVERSQL:-"0"}
-OS_ARCH=$(uname -i)
-
 if [[ ${OS_ARCH} =~ "x86_64" ]]; then
     export CPU_CORES_NUM=`cat /proc/cpuinfo |grep "cores" |wc -l`
     LIB_OS_ARCH="lib_x86"
@@ -70,18 +68,14 @@ func_prepare_pkg_name()
     PACK_PREFIX=$(cat ${CONFIG_IN_FILE} | grep 'PACK_PREFIX' | awk '{print $3}')
     PROJECT_VERSION=$(cat ${CONFIG_IN_FILE} | grep 'PROJECT_VERSION' | awk '{print $3}')
 
-    # arm_euler临时规避
-    if [[ ${OS_ARCH} =~ "aarch64" ]]; then
-        OS_SUFFIX=LINUX
-    fi
-
-    RUN_PACK_DIR_NAME=${PACK_PREFIX}-RUN-${OS_SUFFIX}-${ARCH}bit
-    ALL_PACK_DIR_NAME=${PACK_PREFIX}-DATABASE-${OS_SUFFIX}-${ARCH}bit
-    SYMBOL_PACK_DIR_NAME=${PACK_PREFIX}-DATABASE-${OS_SUFFIX}-${ARCH}bit-SYMBOL
+    # Component packages use canonical Linux names; the outer package carries the OS name.
+    RUN_PACK_DIR_NAME=$(func_get_package_dir_name "RUN" "${PACK_PREFIX}")
+    ALL_PACK_DIR_NAME=$(func_get_package_dir_name "DATABASE" "${PACK_PREFIX}")
+    SYMBOL_PACK_DIR_NAME=${ALL_PACK_DIR_NAME}-SYMBOL
     OGBOX_DIR_NAME=${PACK_PREFIX}-OGBOX
     TOOLS_PACK_DIR_NAME=${PACK_PREFIX}-TOOLS
     JDRIVER_PACK_DIR_NAME=${PACK_PREFIX}-CLIENT-JDBC
-    OGSQL_PACK_DIR_NAME=${PACK_PREFIX}-OGSQL-${OS_SUFFIX}-${ARCH}bit
+    OGSQL_PACK_DIR_NAME=$(func_get_package_dir_name "OGSQL" "${PACK_PREFIX}")
 
     if [[ ! -d "${OGRACDB_BIN}" ]]; then
         echo "bin dir not exist"

@@ -52,7 +52,8 @@ if [[ "${OS_NAME}" != "Linux" ]]; then
     echo "Not on Linux OS"
     exit 1
 else
-    OS_ARCH=$(uname -i)
+    # Use the machine type; uname -i/-p may report "unknown" on Linux.
+    OS_ARCH=$(uname -m)
 fi
 
 OPENSSL_LIB_PATH=${OGRACDB_LIBRARY}/openssl/lib

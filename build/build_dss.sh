@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-ENV_TYPE=$(uname -p)
+ENV_TYPE=$(uname -m)
 CURRENT_PATH=$(dirname $(readlink -f $0))
 OGDB_CODE_PATH=$(readlink -f "${CURRENT_PATH}/..")
 BUILD_TYPE=$1
