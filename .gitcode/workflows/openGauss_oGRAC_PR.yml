@@ -106,7 +106,6 @@ jobs:
           WORKSPACE_ROOT: /data/jenkins/workspace/oGRAC
           GITCODE_PR_IID: ${{ atomgit.event.pull_request.number }}
 
-
   report_result:
     name: Query pipeline and label PR
     if: ${{ always() }}
