@@ -98,7 +98,7 @@ include_directories(
 
 if (UNIX)
     execute_process(
-            COMMAND uname -p
+            COMMAND uname -m
             OUTPUT_VARIABLE OS_ARCH
             OUTPUT_STRIP_TRAILING_WHITESPACE
     )
@@ -123,7 +123,7 @@ if (UNIX)
     add_link_options(-pie)
 
     execute_process(
-            COMMAND uname -p
+            COMMAND uname -m
             OUTPUT_VARIABLE OS_ARCH
             OUTPUT_STRIP_TRAILING_WHITESPACE
     )

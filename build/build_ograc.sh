@@ -4,11 +4,12 @@ set -e
 
 CURRENT_PATH=$(dirname $(readlink -f $0))
 source "${CURRENT_PATH}"/common.sh
+source "${CURRENT_PATH}"/function.sh
 
 OGDB_CODE_PATH=$(readlink -f "${CURRENT_PATH}/..")
 BUILD_TARGET_NAME="ograc_connector"
 BUILD_PACK_NAME="openGauss-oGRAC"
-ENV_TYPE=$(uname -p)
+ENV_TYPE=${OS_ARCH}
 TMP_PKG_PATH=${OGDB_CODE_PATH}/package
 OGDB_TARGET_PATH=${OGRACDB_BIN}/${BUILD_TARGET_NAME}/ogracKernel
 DSSENABLED="FALSE"
@@ -172,7 +173,9 @@ function prepare() {
   rm -rf "${OGDB_TARGET_PATH}"
   mkdir -p "${OGDB_TARGET_PATH}"
   chmod 700 "${OGDB_TARGET_PATH}"
-  cp -arf "${OGRACDB_BIN}"/oGRAC-DATABASE-LINUX-64bit "${OGDB_TARGET_PATH}"/
+  local database_pack_dir_name
+  database_pack_dir_name=$(func_get_package_dir_name "DATABASE")
+  cp -arf "${OGRACDB_BIN}/${database_pack_dir_name}" "${OGDB_TARGET_PATH}/"
 }
 
 BUILD_TYPE=${1,,}

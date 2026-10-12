@@ -376,7 +376,7 @@ def is_mlnx():
         LOGGER.info("Is mlnx 5.5")
         return True
 
-    ret_code, os_arch, stderr = _exec_popen("uname -i")
+    ret_code, os_arch, stderr = _exec_popen("uname -m")
     aarch_mlnx_version_list = ['OFED-internal-5.8-2.0.3', 'MLNX_OFED_LINUX-5.8', 'MLNX_OFED_LINUX-5.9']
     aarch_version_check_result = any(mlnx_version if mlnx_version in stdout else False
                                      for mlnx_version in aarch_mlnx_version_list)

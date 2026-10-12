@@ -4,7 +4,7 @@ CURRENT_PATH=$(dirname $(readlink -f $0))
 source "${CURRENT_PATH}"/common.sh
 OGDB_CODE_PATH="${CURRENT_PATH}"/..
 BUILD_PACK_NAME="openGauss-oGRAC"
-ENV_TYPE=$(uname -p)
+ENV_TYPE=${OS_ARCH}
 BUILD_TYPE="release"
 
 function buildDssPackage() {

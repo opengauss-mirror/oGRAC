@@ -95,7 +95,7 @@ function start_ograc() {
 	set +e
 	numactl --hardware > /dev/null 2>&1
 	if [ $? -eq 0 ]; then
-		OS_ARCH=$(uname -i)
+		OS_ARCH=$(uname -m)
 		deploy_mode=$(python3 ${GET_CONFIG} "deploy_mode")
 		if [[ ${OS_ARCH} =~ "aarch64" ]] && [[ x"${deploy_mode}" != x"dss" ]]; then
             CPU_CORES_NUM=`cat /proc/cpuinfo |grep "architecture" |wc -l`

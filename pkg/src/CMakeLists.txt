@@ -4,7 +4,7 @@ add_compile_options(-Wno-stringop-overflow)
 add_compile_options(-Wno-array-bounds)
 
 execute_process(
-        COMMAND uname -p
+        COMMAND uname -m
         OUTPUT_VARIABLE OS_ARCH
         OUTPUT_STRIP_TRAILING_WHITESPACE
 )

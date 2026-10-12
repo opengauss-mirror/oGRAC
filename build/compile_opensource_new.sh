@@ -8,7 +8,7 @@ export WORKSPACE=$(dirname $(dirname $(pwd)))
 export OPEN_SOURCE=${WORKSPACE}/ogracKernel/open_source
 export LIBRARY=${WORKSPACE}/ogracKernel/library
 export PLATFORM=${WORKSPACE}/ogracKernel/platform
-export OS_ARCH=$(uname -i)
+export OS_ARCH=$(uname -m)
 DFT_WORKSPACE="/home/regress"
 export TP_PREFIX="${OPEN_SOURCE}/local"
 mkdir -p "${TP_PREFIX}"
