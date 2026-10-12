@@ -16,6 +16,7 @@
  *
  * dtc_shmem_scn.h
  *
+ * SCN slot in global remote SGA (st_remote_sga). Each slot is 64-byte aligned.
  *
  * IDENTIFICATION
  * src/cluster/dtc_shmem_scn.h
@@ -35,8 +36,8 @@ extern "C" {
 #ifndef SHMEM_SCN_SIZE
 #define SHMEM_SCN_SIZE (64)
 #endif
-#define SHMEM_SCN_NAME_LEN 48
 
+/* 64B slot: value + owner + pad, placed in remote SGA after node_flush_lsn. */
 typedef struct st_shmem_scn_slot {
     volatile uint64 value;
     volatile uint32 owner_node;
@@ -44,14 +45,10 @@ typedef struct st_shmem_scn_slot {
 } shmem_scn_slot_t;
 
 typedef struct st_shmem_scn_mgr {
-    shmem_scn_slot_t *global_scn_slot;  /* local node SCN slot; GET reads this only */
-    uint32 owner_id;                    /* self node id after local bind */
-    char *map_addr[OG_MAX_INSTANCES];   /* per-node SCN shm maps for fan-out raise */
+    shmem_scn_slot_t *global_scn_slot; /* local node SCN slot; GET reads this only */
+    uint32 owner_id;                   /* self node id after local bind */
+    char *map_addr[OG_MAX_INSTANCES];  /* per-node SCN slot addrs (inside remote SGA) */
     bool32 map_success[OG_MAX_INSTANCES];
-    uint64 shm_size;
-    bool32 local_created;
-    char local_region_name[SHMEM_SCN_NAME_LEN];
-    char local_shm_name[SHMEM_SCN_NAME_LEN];
 } shmem_scn_mgr_t;
 
 uint32 shmem_scn_get_owner_id(void);

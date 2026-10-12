@@ -51,9 +51,12 @@ extern "C" {
 #define DRC_REMOTE_BUF_OFFSET (uint64)0
 
 #define DRC_NODE_FLUSH_LSN_SIZE align_to_128m(sizeof(atomic_t))
+/* SCN slot in remote SGA: fixed 64B, and region start/size both 64B-aligned. */
 #ifndef SHMEM_SCN_SIZE
 #define SHMEM_SCN_SIZE (64)
 #endif
+#define SHMEM_SCN_SLOT_ALIGN (64)
+#define DRC_SHMEM_SCN_SIZE CM_CALC_ALIGN((uint64)(SHMEM_SCN_SIZE), SHMEM_SCN_SLOT_ALIGN)
 
 typedef struct st_remote_buf_context {
     buf_set_t buf_set[OG_MAX_BUF_POOL_NUM];
@@ -76,6 +79,7 @@ typedef struct st_remote_sga {
     char *data_buf; /* each remote data buf is managed by master node. */
     char *lock_buf;
     char *node_flush_lsn;
+    char *shmem_scn; /* local node SCN slot (64B aligned) inside remote SGA */
     uint64 txn_hot_offset;
     uint64 txn_hot_region_size;
 } remote_sga_t;
@@ -95,10 +99,22 @@ static inline uint64 drc_get_node_flush_lsn_offset(const remote_sga_t *remote_sg
     return drc_get_dist_lck_offset(remote_sga) + remote_sga->remote_lock_alloc_size;
 }
 
-/* layout: data | dist_que | dist_lck | node_flush_lsn | shmem_scn */
+/*
+ * remote SGA layout:
+ *   data | dist_que | dist_lck | node_flush_lsn | shmem_scn(64B-aligned) | txn_hot...
+ */
 static inline uint64 drc_get_shmem_scn_offset(const remote_sga_t *remote_sga)
 {
-    return drc_get_node_flush_lsn_offset(remote_sga) + DRC_NODE_FLUSH_LSN_SIZE;
+    uint64 base = drc_get_node_flush_lsn_offset(remote_sga) + DRC_NODE_FLUSH_LSN_SIZE;
+    return CM_CALC_ALIGN(base, SHMEM_SCN_SLOT_ALIGN);
+}
+
+static inline char *drc_get_shmem_scn_addr(remote_sga_t *remote_sga, uint32 node_id)
+{
+    if (remote_sga == NULL || node_id >= OG_MAX_INSTANCES || remote_sga->remote_buf_addr[node_id] == NULL) {
+        return NULL;
+    }
+    return remote_sga->remote_buf_addr[node_id] + drc_get_shmem_scn_offset(remote_sga);
 }
 
 #pragma pack(push, 1)

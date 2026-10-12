@@ -9,6 +9,10 @@
 
 #define DTC_TXN_HOT_WAIT_FLUSH_INTERVAL 1  /* unit: ms */
 
+/* txn_hot_offset is 64B aligned; header and slot must each be exactly one cache line */
+CM_STATIC_ASSERT(sizeof(dtc_txn_hot_t) == 64);
+CM_STATIC_ASSERT(sizeof(dtc_txn_hot_hdr_t) == 64);
+
 typedef struct st_dtc_txn_hot_stat_internal {
     atomic_t info_hot;
     atomic_t info_remote;
@@ -195,7 +199,7 @@ static uint64 hot_region_size_bytes(uint32 undo_segments, uint64 tran_buf_size)
 
 uint64 dtc_txn_hot_pool_layout_end(const remote_sga_t *sga, uint32 undo_segments, uint64 tran_buf_size)
 {
-    uint64 layout_end = drc_get_shmem_scn_offset(sga) + SHMEM_SCN_SIZE;
+    uint64 layout_end = drc_get_shmem_scn_offset(sga) + DRC_SHMEM_SCN_SIZE;
     uint64 hot_size = hot_region_size_bytes(undo_segments, tran_buf_size);
 
     if (hot_size == 0) {
@@ -322,7 +326,7 @@ status_t dtc_txn_hot_region_init(remote_sga_t *sga)
     uint64 size = hot_region_size_bytes(segs, g_instance->kernel.attr.tran_buf_size);
     dtc_txn_hot_hdr_t *h;
     if (sga == NULL || sga->remote_buf_addr[self] == NULL || segs == 0 || cap == 0 || cap * segs != total_cap) return OG_ERROR;
-    sga->txn_hot_offset = CM_CALC_ALIGN(drc_get_shmem_scn_offset(sga) + SHMEM_SCN_SIZE, 64);
+    sga->txn_hot_offset = CM_CALC_ALIGN(drc_get_shmem_scn_offset(sga) + DRC_SHMEM_SCN_SIZE, 64);
     if (sga->txn_hot_offset + size > sga->remote_total_pool_size) return OG_ERROR;
     h = hot_hdr(sga, self);
     knl_reset_large_memory((char *)h, size);

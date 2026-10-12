@@ -147,20 +147,27 @@ static status_t drc_check_remote_lock_capacity(remote_sga_t *remote_sga, remote_
 
 static status_t drc_check_remote_pool_layout(remote_sga_t *remote_sga)
 {
-    uint64 layout_end = drc_get_shmem_scn_offset(remote_sga) + SHMEM_SCN_SIZE;
+    uint64 scn_offset = drc_get_shmem_scn_offset(remote_sga);
+    uint64 layout_end = scn_offset + DRC_SHMEM_SCN_SIZE;
 
     if (g_instance->kernel.attr.enable_ubsmem) {
         layout_end = dtc_txn_hot_pool_layout_end(remote_sga, g_instance->kernel.attr.undo_segments,
             g_instance->kernel.attr.tran_buf_size);
     }
 
+    if ((scn_offset % SHMEM_SCN_SLOT_ALIGN) != 0) {
+        OG_LOG_RUN_ERR("[DRC-GBP] shmem_scn offset %llu is not %u-byte aligned", scn_offset,
+            (uint32)SHMEM_SCN_SLOT_ALIGN);
+        return OG_ERROR;
+    }
+
     if (layout_end > remote_sga->remote_total_pool_size) {
         OG_LOG_RUN_ERR("[DRC-GBP] remote pool layout %llu exceeds total pool size %llu, "
                        "data_region %llu, que_size %llu, lock_alloc_size %llu, node_flush_lsn_size %llu, "
-                       "shmem_scn_size %llu, enable_ubsmem %u, txn_hot_layout_end %llu",
+                       "shmem_scn_offset %llu, shmem_scn_size %llu, enable_ubsmem %u, txn_hot_layout_end %llu",
                        layout_end, remote_sga->remote_total_pool_size, remote_sga->remote_buf_alloc_size,
                        (uint64)DRC_DIST_QUE_SIZE, remote_sga->remote_lock_alloc_size,
-                       (uint64)DRC_NODE_FLUSH_LSN_SIZE, (uint64)SHMEM_SCN_SIZE,
+                       (uint64)DRC_NODE_FLUSH_LSN_SIZE, scn_offset, (uint64)DRC_SHMEM_SCN_SIZE,
                        (uint32)g_instance->kernel.attr.enable_ubsmem, layout_end);
         OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "DTC_REMOTE_DATA_BUF_SIZE", (int64)remote_sga->remote_total_pool_size);
         return OG_ERROR;
@@ -549,8 +556,17 @@ status_t drc_init_remote_buffer()
 
     uint32 node_id = g_instance->kernel.id;
     uint64 node_flush_lsn_offset = drc_get_node_flush_lsn_offset(&ogx->remote_sga);
+    uint64 shmem_scn_offset = drc_get_shmem_scn_offset(&ogx->remote_sga);
+
     ogx->remote_sga.node_flush_lsn = ogx->remote_sga.remote_buf_addr[node_id] + node_flush_lsn_offset;
-    ogx->remote_sga.remote_pool_reserve_offset = drc_get_shmem_scn_offset(&ogx->remote_sga) + SHMEM_SCN_SIZE;
+    ogx->remote_sga.shmem_scn = ogx->remote_sga.remote_buf_addr[node_id] + shmem_scn_offset;
+    ogx->remote_sga.remote_pool_reserve_offset = shmem_scn_offset + DRC_SHMEM_SCN_SIZE;
+
+    if (((uint64)ogx->remote_sga.shmem_scn % SHMEM_SCN_SLOT_ALIGN) != 0) {
+        OG_LOG_RUN_ERR("[DRC] shmem_scn addr %p is not %u-byte aligned", ogx->remote_sga.shmem_scn,
+            (uint32)SHMEM_SCN_SLOT_ALIGN);
+        return OG_ERROR;
+    }
 
     if (ogx->remote_sga.node_flush_lsn != NULL) {
         knl_reset_large_memory(ogx->remote_sga.node_flush_lsn, sizeof(atomic_t) * 2);
@@ -559,7 +575,11 @@ status_t drc_init_remote_buffer()
         drc_set_node_timeline_id(&ogx->remote_sga, my_timeline_id);
     }
 
-    // SCN lives in dedicated ubsmem region (see shmem_scn_init), not GBP.
+    /* SCN slot lives in remote SGA; zero local slot before shmem_scn_init binds it. */
+    if (ogx->remote_sga.shmem_scn != NULL) {
+        knl_reset_large_memory(ogx->remote_sga.shmem_scn, DRC_SHMEM_SCN_SIZE);
+    }
+
     if (g_instance->kernel.attr.enable_ubsmem) {
         ret = dtc_txn_hot_region_init(&ogx->remote_sga);
         if (ret != OG_SUCCESS) {
@@ -587,9 +607,10 @@ status_t drc_init_remote_buffer()
         OG_LOG_RUN_INF("[UB-SGA-LAYOUT] dist_que: count=1, total_size=%llu", (uint64)DRC_DIST_QUE_SIZE);
         OG_LOG_RUN_INF("[UB-SGA-LAYOUT] dist_lock: count=%u, slot_size=%u, total_size=%llu",
             total_pages, (uint32)UB_RW_LOCK_SIZE, sga->remote_lock_alloc_size);
-        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] flush_lsn: total_size=%llu", (uint64)DRC_NODE_FLUSH_LSN_SIZE);
-        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] shmem_scn_reserve(unused, SCN is dedicated region): total_size=%llu",
-            (uint64)SHMEM_SCN_SIZE);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] flush_lsn: total_size=%llu, offset=%llu",
+            (uint64)DRC_NODE_FLUSH_LSN_SIZE, node_flush_lsn_offset);
+        OG_LOG_RUN_INF("[UB-SGA-LAYOUT] shmem_scn: slot_size=%llu, region_size=%llu, offset=%llu, addr=%p",
+            (uint64)SHMEM_SCN_SIZE, (uint64)DRC_SHMEM_SCN_SIZE, shmem_scn_offset, sga->shmem_scn);
         if (g_instance->kernel.attr.enable_ubsmem && sga->txn_hot_region_size > 0) {
             uint32 hot_cap = (uint32)(sga->txn_hot_region_size > sizeof(dtc_txn_hot_hdr_t) ?
                 (sga->txn_hot_region_size - sizeof(dtc_txn_hot_hdr_t)) / sizeof(dtc_txn_hot_t) : 0);
