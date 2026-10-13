@@ -30,6 +30,8 @@
 #include "srv_instance.h"
 #include "cm_futex.h"
 #include "dtc_database.h"
+#include "dtc_drc.h"
+#include "dtc_remote_buffer.h"
 #include "knl_ctrl_restore.h"
 #include "knl_ckpt.h"
 #include "cm_memory.h"
@@ -1984,6 +1986,18 @@ static void para_log_note_flushed_curr(knl_session_t *session, uint64 batch_max_
     para_log_atomic_max_u64((volatile uint64 *)&session->kernel->redo_ctx.flushed_lfn, batch_max_curr);
     prefix_scn = db_next_scn(session);
     para_log_atomic_max_u64((volatile uint64 *)&session->kernel->redo_ctx.curr_scn, (uint64)prefix_scn);
+
+    /*
+     * ENABLE_PARA_LOG_FLUSH path: publish node_flush_lsn for peer HOT CR wait.
+     * Serial log_flush() never runs when para flush is on, so this must live here.
+     * Use monotonic max: multiple lgwr threads may advance concurrently.
+     */
+    if (!DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
+        remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+        if (rsga->node_flush_lsn != NULL) {
+            para_log_atomic_max_u64((volatile uint64 *)rsga->node_flush_lsn, batch_max_curr);
+        }
+    }
 }
 
 static bool32 para_log_file_status_idle(const log_file_t *file)
@@ -4404,6 +4418,11 @@ status_t para_log_rcy_apply_reset(knl_session_t *session, uint8 node_id, uint64 
 
         cm_atomic_set((atomic_t *)&ogx->flushed_lsn, (int64)recovered_end);
         cm_atomic_set((atomic_t *)&ogx->flushed_lfn, (int64)recovered_end);
+        /* keep peer HOT wait baseline in sync after para recovery reset */
+        if (!DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
+            remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+            drc_set_node_flush_lsn(rsga, recovered_end);
+        }
 
         ogx->curr_point.asn = 0;
         ogx->curr_point.block_id = 0;

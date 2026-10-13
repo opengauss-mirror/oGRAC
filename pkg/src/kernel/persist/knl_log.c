@@ -1070,7 +1070,11 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     ogx->curr_scn = batch->scn;
     log_stat(ogx, batch->space_size);
 
-    /* node_flush_lsn is not maintained in no-CMS mode, skip updating */
+    /*
+     * Serial flush (!ENABLE_PARA_LOG_FLUSH): publish node_flush_lsn for peer HOT wait.
+     * Parallel path publishes in para_log_note_flushed_curr when ENABLE_PARA_LOG_FLUSH is on.
+     * Not maintained in no-CMS mode.
+     */
     if (session->kernel->attr.enable_ubsmem && !DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
         remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
         drc_set_node_flush_lsn(rsga, ogx->flushed_lsn);
