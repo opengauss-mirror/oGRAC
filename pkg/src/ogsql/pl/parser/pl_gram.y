@@ -132,6 +132,7 @@ static bool32 pl_token_text_equal(core_yyscan_t yyscanner, int token, union YYST
     int token_len, const char *expected);
 static status_t pl_read_interval_datatype(core_yyscan_t yyscanner, sql_stmt_t *stmt, char **typename,
     galist_t **typemode, galist_t **second_typemode, int *tok);
+static status_t pl_read_array_datatype(core_yyscan_t yyscanner, bool32 *is_array, int *tok);
 static bool32 pl_bison_is_ident_char(char c);
 static bool32 pl_bison_is_ident_text(const char *str, uint32 len);
 static text_t *current_label_name(pl_compiler_t *compiler);
@@ -231,6 +232,7 @@ typedef struct st_pl_bison_end_name {
     core_YYSTYPE core_yystype;
     /* Keep scalar token fields layout-compatible with core_YYSTYPE. */
     int ival;
+    int64 ival64;
     const char *keyword;
     PLword word;
     expr_tree_t *expr;
@@ -264,6 +266,7 @@ typedef struct st_pl_bison_end_name {
 %token <str>    IDENT FCONST SCONST XCONST Op CmpOp COMMENTSTRING SET_USER_IDENT SET_IDENT UNDERSCORE_CHARSET FCONST_F FCONST_D
                 OPER_CAT OPER_LSHIFT OPER_RSHIFT
 %token <ival>   ICONST PARAM
+%token <ival64> I64CONST
 
 %token            LEX_ERROR_TOKEN
 %token            TYPECAST ORA_JOINOP DOT_DOT COLON_EQUALS PARA_EQUALS SET_IDENT_SESSION SET_IDENT_GLOBAL NULLS_FIRST NULLS_LAST
@@ -1951,6 +1954,7 @@ decl_datatype:
                     bool32 is_interval = OG_FALSE;
                     bool32 is_name_typemode = OG_FALSE;
                     bool32 is_char = OG_FALSE;
+                    bool32 is_array = OG_FALSE;
                     galist_t *typemode = NULL;
                     galist_t *second_typemode = NULL;
                     text_t *text = NULL;
@@ -2044,7 +2048,11 @@ decl_datatype:
                             tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
                         }
                     }
+                    BISON_ABORT_IFERR(pl_read_array_datatype(yyscanner, &is_array, &tok));
                     if (tok == '%') {
+                        if (is_array) {
+                            parser_yyerror("array suffix is not supported before TYPE or ROWTYPE");
+                        }
                         tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
                         if (tok_is_keyword(tok, &tok_lval, K_TYPE, "type")) {
                             pl_type = OG_TRUE;
@@ -2062,6 +2070,15 @@ decl_datatype:
                         parser_yyerror("make type failed");
                     }
                     type->is_char = is_char;
+                    type->is_array = (bool8)is_array;
+                    if (is_array) {
+                        word_t typword = { 0 };
+                        typword.text.str = typename;
+                        typword.text.len = (uint32)strlen(typename);
+                        if (is_name_typemode || lex_try_match_datatype_bison(&typword) != OG_SUCCESS) {
+                            parser_yyerror("array element must be a built-in datatype");
+                        }
+                    }
 
                     if (is_interval) {
                         type->second_typemde = second_typemode;
@@ -2407,6 +2424,52 @@ static int pl_read_type_token(core_yyscan_t yyscanner, union YYSTYPE *lval, YYLT
     *lloc = *PLSQL_YYLLOC(yyscanner);
     *leng = PLSQL_YYLENG(yyscanner);
     return token;
+}
+
+static status_t pl_read_array_datatype(core_yyscan_t yyscanner, bool32 *is_array, int *tok)
+{
+    union YYSTYPE tok_lval;
+    YYLTYPE tok_lloc;
+    int tok_len;
+
+    *is_array = OG_FALSE;
+    if (*tok != '[') {
+        return OG_SUCCESS;
+    }
+
+    *tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
+    if (*tok != ']') {
+        int start_offset = tok_lloc.offset;
+        if (*tok == '+') {
+            *tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
+        }
+        if (*tok != ICONST && *tok != I64CONST && *tok != FCONST) {
+            OG_SRC_THROW_ERROR(tok_lloc.loc, ERR_SQL_SYNTAX_ERROR, "unsigned integer expected");
+            return OG_ERROR;
+        }
+
+        text_t size_text = {
+            .str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + start_offset,
+            .len = (uint32)(tok_lloc.offset + tok_len - start_offset)
+        };
+        num_part_t np = { 0 };
+        uint32 array_size;
+        np.excl_flag = NF_DOT | NF_EXPN | NF_SZ_INDICATOR | NF_NEGATIVE_SIGN;
+        if (cm_split_num_text(&size_text, &np) != NERR_SUCCESS ||
+            cm_numpart2uint32(&np, &array_size) != NERR_SUCCESS) {
+            OG_SRC_THROW_ERROR(tok_lloc.loc, ERR_SQL_SYNTAX_ERROR, "unsigned integer expected");
+            return OG_ERROR;
+        }
+        *tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
+        if (*tok != ']') {
+            OG_SRC_THROW_ERROR(tok_lloc.loc, ERR_SQL_SYNTAX_ERROR, "']' expected");
+            return OG_ERROR;
+        }
+    }
+
+    *is_array = OG_TRUE;
+    *tok = pl_read_type_token(yyscanner, &tok_lval, &tok_lloc, &tok_len);
+    return OG_SUCCESS;
 }
 
 static char *pl_type_token_text(core_yyscan_t yyscanner, int token, union YYSTYPE *lval, YYLTYPE *lloc,
@@ -4721,7 +4784,7 @@ static status_t try_create_pl_var_node_from_name(sql_stmt_t *stmt, const char *n
     (*node)->value.type = OG_TYPE_COLUMN;
     (*node)->value.v_col.ss_start = OG_INVALID_ID32;
     (*node)->value.v_col.ss_end = OG_INVALID_ID32;
-    return plc_build_var_address(stmt, decl, *node, UDT_STACK_ADDR);
+    return plc_bison_build_var_address(stmt, decl, *node, OG_INVALID_ID32, OG_INVALID_ID32);
 }
 
 static status_t try_create_pl_var_expr_from_text(sql_stmt_t *stmt, text_t *src, source_location_t loc,

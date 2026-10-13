@@ -26,6 +26,7 @@
 #include "ogsql_expr_def.h"
 #include "cm_text.h"
 #include "expr_parser.h"
+#include "ast_cl.h"
 #include "base_compiler.h"
 #include "decl_cl.h"
 #include "pl_udt.h"
@@ -193,18 +194,48 @@ static int internal_yylex(TokenAuxData* auxdata, core_yyscan_t yyscanner)
     return token;
 }
 
+status_t plc_bison_build_var_address(sql_stmt_t *stmt, plv_decl_t *decl, expr_node_t *node,
+    int32 ss_start, int32 ss_end)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    galist_t *pairs = NULL;
+    var_address_pair_t *addr_pair = NULL;
+    bool32 has_subscript = (ss_start != OG_INVALID_ID32 || ss_end != OG_INVALID_ID32);
+
+    if (has_subscript && (decl->type != PLV_ARRAY || ss_start <= 0 ||
+        (ss_end != OG_INVALID_ID32 && ss_end <= 0))) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "invalid array subscript");
+        return OG_ERROR;
+    }
+
+    /* Bison owns the input tokens; address construction must not consume the native lexer. */
+    OG_RETURN_IFERR(plc_init_galist(compiler, &pairs));
+    OG_RETURN_IFERR(plc_add_udt_pair(stmt, pairs, UDT_STACK_ADDR, &addr_pair));
+    addr_pair->stack->decl = decl;
+    if (has_subscript) {
+        OG_RETURN_IFERR(plc_add_udt_pair(stmt, pairs, UDT_ARRAY_ADDR, &addr_pair));
+        addr_pair->arr_addr->ss_start = ss_start;
+        addr_pair->arr_addr->ss_end = ss_end;
+    }
+
+    node->type = EXPR_NODE_V_ADDR;
+    node->value.v_address.pairs = pairs;
+    return OG_SUCCESS;
+}
+
 static status_t alloc_var_addr_expr(sql_stmt_t *stmt, plv_decl_t *decl, expr_node_t **out_expr)
 {
     expr_node_t *expr = NULL;
     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
 
     OG_RETURN_IFERR(sql_alloc_mem(compiler->stmt->context, sizeof(expr_node_t), (void **)&expr));
+    MEMS_RETURN_IFERR(memset_s(expr, sizeof(expr_node_t), 0, sizeof(expr_node_t)));
     expr->owner = NULL;
     expr->type = EXPR_NODE_PROC;
     expr->unary = UNARY_OPER_NONE;
     expr->word.func.user_func_first = OG_FALSE;
 
-    OG_RETURN_IFERR(plc_build_var_address(stmt, decl, expr, UDT_STACK_ADDR));
+    OG_RETURN_IFERR(plc_bison_build_var_address(stmt, decl, expr, OG_INVALID_ID32, OG_INVALID_ID32));
     *out_expr = expr;
     return OG_SUCCESS;
 }

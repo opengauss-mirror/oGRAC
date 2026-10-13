@@ -33,7 +33,9 @@
 #include "param_decl_cl.h"
 #include "ogsql_select_parser.h"
 #include "base_compiler.h"
+#include "pl_compiler.h"
 #include "pl_udt.h"
+#include "ogsql_package.h"
 
 #define MIN_TYPEMODE_COUNT 1
 #define MAX_TYPEMODE_COUNT 2
@@ -3585,16 +3587,16 @@ static status_t sql_set_columnref_indirection(expr_tree_t *expr, expr_node_t *no
     return OG_SUCCESS;
 }
 
-static bool32 sql_try_append_columnref_word(galist_t *list, word_t *word)
+static bool32 sql_try_append_columnref_word(galist_t *list, uint32 name_count, word_t *word)
 {
     if (list == NULL) {
         return OG_TRUE;
     }
-    if (list->count > MAX_EXTRA_TEXTS) {
+    if (name_count > MAX_EXTRA_TEXTS) {
         return OG_FALSE;
     }
 
-    for (uint32 i = 0; i < list->count; i++) {
+    for (uint32 i = 0; i < name_count; i++) {
         expr_tree_t *item = (expr_tree_t *)cm_galist_get(list, i);
         if (item == NULL || item->root == NULL || item->root->type != EXPR_NODE_CONST ||
             item->root->value.type != OG_TYPE_CHAR) {
@@ -3664,18 +3666,50 @@ static bool32 sql_is_nameable_reserved_columnref(pl_columnref_expr_arg_t *arg)
     return lex_match_reserved_keyword_bison(&word) && word.namable;
 }
 
+static bool32 sql_is_builtin_pl_columnref(word_t *word)
+{
+    text_t *package = NULL;
+    text_t *name = NULL;
+    var_func_t func;
+
+    if (word->ex_count == 1) {
+        package = &word->text.value;
+        name = &word->ex_words[0].text.value;
+    } else if (word->ex_count == 2 && cm_text_str_equal_ins(&word->text.value, SYS_USER_NAME)) {
+        package = &word->ex_words[0].text.value;
+        name = &word->ex_words[1].text.value;
+    } else {
+        return OG_FALSE;
+    }
+
+    sql_convert_pack_func(package, name, &func);
+    return func.pack_id != OG_INVALID_ID32 && func.func_id != OG_INVALID_ID32;
+}
+
 static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr,
     pl_columnref_expr_arg_t *arg, bool32 *converted)
 {
     expr_node_t *node = NULL;
+    expr_node_t *indices = NULL;
     word_t word = { 0 };
+    plv_decl_t *decl = NULL;
+    plc_var_type_t var_type;
+    uint32 name_count = (arg->list == NULL) ? 0 : arg->list->count;
 
     *converted = OG_FALSE;
-    if (arg->type != EXPR_NODE_COLUMN || !sql_is_bison_pl_compile_context(stmt)) {
+    if (arg->type != EXPR_NODE_COLUMN || !sql_is_bison_pl_compile_context(stmt) || stmt->pl_compiler == NULL) {
         return OG_SUCCESS;
     }
     if (sql_is_nameable_reserved_columnref(arg)) {
         return OG_SUCCESS;
+    }
+
+    if (name_count > 0) {
+        expr_tree_t *last = (expr_tree_t *)cm_galist_get(arg->list, name_count - 1);
+        if (last != NULL && last->root != NULL && last->root->type == EXPR_NODE_ARRAY_INDICES) {
+            indices = last->root;
+            name_count--;
+        }
     }
 
     word.id = OG_INVALID_ID32;
@@ -3685,12 +3719,30 @@ static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t *
     word.text.value.str = (char *)arg->val;
     word.text.value.len = (uint32)strlen(arg->val);
     word.text.loc = arg->loc;
-    if (!sql_try_append_columnref_word(arg->list, &word)) {
+    if (!sql_try_append_columnref_word(arg->list, name_count, &word)) {
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(plc_verify_word_as_var(stmt->pl_compiler, &word));
+    if (!sql_is_builtin_pl_columnref(&word)) {
+        plc_find_decl_ex(stmt->pl_compiler, &word, PLV_VARIANT_AND_CUR, &var_type, &decl);
+    }
+    if (indices != NULL && (decl == NULL || decl->type != PLV_ARRAY)) {
         return OG_SUCCESS;
     }
 
     OG_RETURN_IFERR(sql_init_expr_node(stmt, expr, &node, OG_TYPE_COLUMN, EXPR_NODE_COLUMN, arg->loc));
-    OG_RETURN_IFERR(plc_word2var(stmt, &word, node));
+    if (decl != NULL && (var_type == PLC_NORMAL_VAR || decl->type == PLV_ARRAY)) {
+        if (var_type != PLC_NORMAL_VAR && var_type != PLC_BLOCK_VAR) {
+            OG_SRC_THROW_ERROR(arg->loc, ERR_SQL_SYNTAX_ERROR, "invalid array variable reference");
+            return OG_ERROR;
+        }
+        int32 ss_start = (indices == NULL) ? (int32)OG_INVALID_ID32 : indices->word.column.ss_start;
+        int32 ss_end = (indices == NULL) ? (int32)OG_INVALID_ID32 : indices->word.column.ss_end;
+        OG_RETURN_IFERR(plc_bison_build_var_address(stmt, decl, node, ss_start, ss_end));
+    } else {
+        OG_RETURN_IFERR(plc_word2var(stmt, &word, node));
+    }
     OG_RETURN_IFERR(sql_try_convert_static_pl_var_to_param(stmt, node));
     APPEND_CHAIN(&((*expr)->chain), node);
     sql_generate_expr(*expr);
@@ -3739,7 +3791,7 @@ status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const c
         var->column.ss_start = OG_INVALID_ID32;
         var->column.ss_end = OG_INVALID_ID32;
 
-        if (sql_is_bison_pl_compile_context(stmt)) {
+        if (sql_is_bison_pl_compile_context(stmt) && stmt->pl_compiler != NULL) {
             pl_compiler_t *compiler = stmt->pl_compiler;
             uint32 types = PLV_TYPE | PLV_VARIANT_AND_CUR;
             plv_decl_t *decl = NULL;
@@ -3759,7 +3811,8 @@ status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const c
             }
 
             if (decl != NULL) {
-                OG_RETURN_IFERR(plc_build_var_address(stmt, decl, node, UDT_STACK_ADDR));
+                OG_RETURN_IFERR(plc_bison_build_var_address(stmt, decl, node,
+                    (int32)OG_INVALID_ID32, (int32)OG_INVALID_ID32));
             }
         }
     } else {

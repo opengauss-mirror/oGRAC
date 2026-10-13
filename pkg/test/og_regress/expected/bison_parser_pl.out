@@ -2623,6 +2623,574 @@ SQL> drop procedure bison_pl_standard_error_sink;
 Succeed.
 
 SQL> 
+SQL> drop function if exists bison_pl_array_whole;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_whole(p int[]) return int[] as
+  2 begin
+  3     return p;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select bison_pl_array_whole(array[13, 21, 34]) as whole_value from sys_dummy;
+
+WHOLE_VALUE
+----------------------------------------------------------------
+{13,21,34}
+
+1 rows fetched.
+
+SQL> select bison_pl_array_whole(array[5, 8]) as repeat_value from sys_dummy;
+
+REPEAT_VALUE
+----------------------------------------------------------------
+{5,8}
+
+1 rows fetched.
+
+SQL> select case when bison_pl_array_whole(null) is null then 1 else 0 end as null_value from sys_dummy;
+
+NULL_VALUE
+------------
+1
+
+1 rows fetched.
+
+SQL> drop function bison_pl_array_whole;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_element;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_element(p int[]) return int as
+  2 begin
+  3     return p[1];
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select bison_pl_array_element(array[13, 21, 34]) as element_value from sys_dummy;
+
+ELEMENT_VALUE
+-------------
+13
+
+1 rows fetched.
+
+SQL> drop function bison_pl_array_element;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_slice;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_slice(p int[]) return int[] as
+  2 begin
+  3     return p[1:2];
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select bison_pl_array_slice(array[13, 21, 34]) as slice_value from sys_dummy;
+
+SLICE_VALUE
+----------------------------------------------------------------
+{13,21}
+
+1 rows fetched.
+
+SQL> drop function bison_pl_array_slice;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_expression;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_expression(p int[]) return int as
+  2 begin
+  3     return p[1] + p[2];
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select bison_pl_array_expression(array[13, 21, 34]) as expression_value from sys_dummy;
+
+EXPRESSION_VALUE
+----------------
+34
+
+1 rows fetched.
+
+SQL> drop function bison_pl_array_expression;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_invalid;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_invalid(p int[]) return int as --error
+  2 begin
+  3     return p[0];
+  4 end;
+  5 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_ARRAY_INVALID) terminated with compiling errors
+[1:9] PLC-00601 Sql syntax error: invalid array subscript
+[1:13] PLC-00601 Sql syntax error: init columnref expr failed
+[2:16] PLC-00601 Sql syntax error: compile return expr failed
+
+
+SQL> drop function if exists bison_pl_array_invalid;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_invalid_slice;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_invalid_slice(p int[]) return int[] as --error
+  2 begin
+  3     return p[1:0];
+  4 end;
+  5 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_ARRAY_INVALID_SLICE) terminated with compiling errors
+[1:9] PLC-00601 Sql syntax error: invalid array subscript
+[1:15] PLC-00601 Sql syntax error: init columnref expr failed
+[2:18] PLC-00601 Sql syntax error: compile return expr failed
+
+
+SQL> drop function if exists bison_pl_array_invalid_slice;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_method;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_method(p int[]) return int as --error
+  2 begin
+  3     return p.count();
+  4 end;
+  5 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_ARRAY_METHOD) terminated with compiling errors
+[1:9] PLC-00916 PL/SQL:syntax error(array variables do not support collection methods)
+[1:17] PLC-00601 Sql syntax error: init function call expr failed
+[2:21] PLC-00601 Sql syntax error: compile return expr failed
+
+
+SQL> drop function if exists bison_pl_array_method;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_array_builtin;
+
+Succeed.
+
+SQL> create or replace function bison_pl_array_builtin(DBE_STATS int[]) return number as
+  2 begin
+  3     return DBE_STATS.AUTO_SAMPLE_SIZE;
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select bison_pl_array_builtin(array[13, 21, 34]) as builtin_value from sys_dummy;
+
+BUILTIN_VALUE
+----------------------------------------
+0
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_array_builtin;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_minimal;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_minimal(p int[]) return int[] as
+  2     v int[];
+  3 begin
+  4     return p;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> select bison_local_array_minimal(array[13, 21, 34]) as array_value from sys_dummy;
+
+ARRAY_VALUE
+----------------------------------------------------------------
+{13,21,34}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_minimal;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_whole;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_whole(p int[]) return int[] as
+  2     v int[];
+  3 begin
+  4     v := p;
+  5     return v;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> select bison_local_array_whole(array[13, 21, 34]) as whole_value from sys_dummy;
+
+WHOLE_VALUE
+----------------------------------------------------------------
+{13,21,34}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_whole;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_element;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_element(p int[]) return int as
+  2     v int[];
+  3 begin
+  4     v := p;
+  5     return v[2];
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> select bison_local_array_element(array[13, 21, 34]) as element_value from sys_dummy;
+
+ELEMENT_VALUE
+-------------
+21
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_element;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_slice;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_slice(p int[]) return int[] as
+  2     v int[];
+  3 begin
+  4     v := p;
+  5     return v[1:2];
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> select bison_local_array_slice(array[13, 21, 34]) as slice_value from sys_dummy;
+
+SLICE_VALUE
+----------------------------------------------------------------
+{13,21}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_slice;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_numeric;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_numeric return number[] as
+  2     v number(8, 2)[] default array[1.25, 2.75];
+  3 begin
+  4     return v;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> select bison_local_array_numeric() as numeric_value from sys_dummy;
+
+NUMERIC_VALUE
+----------------------------------------------------------------
+{1.25,2.75}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_numeric;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_default;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_default return int[] as
+  2     v int[] default array[5, 8, 13];
+  3 begin
+  4     return v;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> select bison_local_array_default() as default_value from sys_dummy;
+
+DEFAULT_VALUE
+----------------------------------------------------------------
+{5,8,13}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_default;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_init;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_init return int[] as
+  2     v int[] := array[5, 8, 13];
+  3 begin
+  4     return v;
+  5 end;
+  6 /
+
+Succeed.
+
+SQL> select bison_local_array_init() as init_value from sys_dummy;
+
+INIT_VALUE
+----------------------------------------------------------------
+{5,8,13}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_init;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_multiple;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_multiple(p int[]) return int[] as
+  2     first_value int[];
+  3     second_value int[];
+  4 begin
+  5     first_value := p;
+  6     second_value := first_value;
+  7     return second_value;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_local_array_multiple(array[13, 21, 34]) as multiple_value from sys_dummy;
+
+MULTIPLE_VALUE
+----------------------------------------------------------------
+{13,21,34}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_multiple;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_scalar_control;
+
+Succeed.
+
+SQL> create or replace function bison_local_scalar_control return number as
+  2     v int default 9;
+  3     amount number(8, 2) := 2.50;
+  4 begin
+  5     return v + amount;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> select bison_local_scalar_control() as scalar_value from sys_dummy;
+
+SCALAR_VALUE
+----------------------------------------
+11.5
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_scalar_control;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_sizes;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_sizes(p int[]) return int[] as
+  2     zero_value int[0];
+  3     fixed_value int[2];
+  4     max_value int[4294967295];
+  5     signed_value int[+2];
+  6 begin
+  7     return p;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_local_array_sizes(array[13, 21, 34]) as sized_value from sys_dummy;
+
+SIZED_VALUE
+----------------------------------------------------------------
+{13,21,34}
+
+1 rows fetched.
+
+SQL> drop function if exists bison_local_array_sizes;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_overflow;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_overflow(p int[]) return int[] as --error
+  2     v int[4294967296];
+  3 begin
+  4     return p;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOCAL_ARRAY_OVERFLOW) terminated with compiling errors
+[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+
+
+SQL> drop function if exists bison_local_array_overflow;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_negative;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_negative(p int[]) return int[] as --error
+  2     v int[-1];
+  3 begin
+  4     return p;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOCAL_ARRAY_NEGATIVE) terminated with compiling errors
+[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+
+
+SQL> drop function if exists bison_local_array_negative;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_decimal;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_decimal(p int[]) return int[] as --error
+  2     v int[1.0];
+  3 begin
+  4     return p;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOCAL_ARRAY_DECIMAL) terminated with compiling errors
+[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+
+
+SQL> drop function if exists bison_local_array_decimal;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_local_array_exponent;
+
+Succeed.
+
+SQL> create or replace function bison_local_array_exponent(p int[]) return int[] as --error
+  2     v int[1e0];
+  3 begin
+  4     return p;
+  5 end;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOCAL_ARRAY_EXPONENT) terminated with compiling errors
+[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+
+
+SQL> drop function if exists bison_local_array_exponent;
+
+Succeed.
+
+SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.
