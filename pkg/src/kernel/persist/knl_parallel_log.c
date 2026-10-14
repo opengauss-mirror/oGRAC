@@ -2300,19 +2300,23 @@ static void para_log_snap_copied_lrc(knl_session_t *session)
         groups = KNL_PARA_LOG_MAX_GROUPS;
     }
 
+    /*
+     * Relaxed loads so the per-lane misses overlap. reserved_lrc is only a flush watermark;
+     * durability is the acquire of last_flushed_lrc in para_log_commit_lrc_ready. The release
+     * stores in para_log_write are sequenced-before this snapshot on the same thread.
+     */
     for (g = 0; g < groups; g++) {
         para_log_context_t *peer = session->kernel->para_log_ctx[g];
         int32 next_lrc;
-        int32 flushed_lrc;
 
         if (peer == NULL || g == own) {
             session->commit_copied_lrc[g] = -1;
             continue;
         }
 
-        flushed_lrc = para_log_lrc_load_acquire(&peer->last_flushed_lrc);
-        next_lrc = para_log_lrc_load_acquire(&peer->reserved_lrc);
+        next_lrc = para_log_lrc_load_relaxed(&peer->reserved_lrc);
         if (next_lrc == 0) {
+            int32 flushed_lrc = para_log_lrc_load_relaxed(&peer->last_flushed_lrc);
             session->commit_copied_lrc[g] = (flushed_lrc < 0) ? -1 : 0x7FFFFFFF;
             continue;
         }
@@ -2633,6 +2637,12 @@ status_t para_log_commit_flush(knl_session_t *session)
     knl_panic_log(wal_group < CPU_SEG_MAX_NUM, "para log commit group is invalid, group=%u", wal_group);
     ogx = session->kernel->para_log_ctx[wal_group];
     knl_panic_log(ogx != NULL, "para log context is not initialized");
+
+    /* Once per para_log_write. Refreshing inside the wait would chase new reservations. */
+    if (!session->commit_copied_lrc_valid) {
+        para_log_snap_copied_lrc(session);
+        session->commit_copied_lrc_valid = OG_TRUE;
+    }
 
     knl_begin_session_wait(session, LOG_FILE_SYNC, OG_TRUE);
     wait_begin = cm_now();
@@ -2964,6 +2974,7 @@ void para_log_write(knl_session_t *session, uint32 total_size, log_group_t *grou
     session->curr_lrc = curr_lrc;
     session->commit_wal_group = ogx->thread_idx;
     group->lsn = session->curr_lsn;
+    session->commit_copied_lrc_valid = OG_FALSE;
     para_log_stamp_group_file(group, para_log_checked_file(ogx, ogx->curr_file));
 
     if (session->rm->need_copy_logic_log) {
@@ -2996,7 +3007,6 @@ void para_log_write(knl_session_t *session, uint32 total_size, log_group_t *grou
     para_log_u64_store_release(&status_entry_ptr->curr_lsn, session->curr_lsn);
     /* release: WAL copy and end_log_pos/lsn precede COPIED. Does not rely on volatile for ordering of plain writes. */
     para_log_status_store_release(status_entry_ptr, RD_COPIED);
-    para_log_snap_copied_lrc(session);
     ogx->dfx.write_cnt++;
     ogx->dfx.write_bytes += disk_size;
     OG_LOG_DEBUG_INF("[PARA LOG] write group=%u sid=%u lrc=%d curr_lsn=%llu size=%u pos=%llu..%llu",
