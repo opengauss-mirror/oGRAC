@@ -73,6 +73,8 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
 status_t plc_bison_compile_anonymous(sql_stmt_t *stmt, plc_desc_t *desc, text_t *body);
 status_t pl_parser(sql_stmt_t *stmt, text_t *src);
 status_t plc_bison_compile_type(pl_compiler_t *compiler, pmode_t pmod, typmode_t *typmod, type_word_t *type);
+status_t plc_bison_build_var_address(sql_stmt_t *stmt, plv_decl_t *decl, expr_node_t *node,
+    int32 ss_start, int32 ss_end);
 
 #define IS_DML_INTO_PL_VAR(type) \
     ((type) == OGSQL_TYPE_SELECT || (type) == OGSQL_TYPE_UPDATE || (type) == OGSQL_TYPE_INSERT || (type) == OGSQL_TYPE_DELETE)

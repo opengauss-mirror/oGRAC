@@ -1756,6 +1756,223 @@ call bison_pl_standard_error_probe;
 drop procedure bison_pl_standard_error_probe;
 drop procedure bison_pl_standard_error_sink;
 
+drop function if exists bison_pl_array_whole;
+create or replace function bison_pl_array_whole(p int[]) return int[] as
+begin
+    return p;
+end;
+/
+select bison_pl_array_whole(array[13, 21, 34]) as whole_value from sys_dummy;
+select bison_pl_array_whole(array[5, 8]) as repeat_value from sys_dummy;
+select case when bison_pl_array_whole(null) is null then 1 else 0 end as null_value from sys_dummy;
+drop function bison_pl_array_whole;
+
+drop function if exists bison_pl_array_element;
+create or replace function bison_pl_array_element(p int[]) return int as
+begin
+    return p[1];
+end;
+/
+select bison_pl_array_element(array[13, 21, 34]) as element_value from sys_dummy;
+drop function bison_pl_array_element;
+
+drop function if exists bison_pl_array_slice;
+create or replace function bison_pl_array_slice(p int[]) return int[] as
+begin
+    return p[1:2];
+end;
+/
+select bison_pl_array_slice(array[13, 21, 34]) as slice_value from sys_dummy;
+drop function bison_pl_array_slice;
+
+drop function if exists bison_pl_array_expression;
+create or replace function bison_pl_array_expression(p int[]) return int as
+begin
+    return p[1] + p[2];
+end;
+/
+select bison_pl_array_expression(array[13, 21, 34]) as expression_value from sys_dummy;
+drop function bison_pl_array_expression;
+
+drop function if exists bison_pl_array_invalid;
+create or replace function bison_pl_array_invalid(p int[]) return int as --error
+begin
+    return p[0];
+end;
+/
+drop function if exists bison_pl_array_invalid;
+
+drop function if exists bison_pl_array_invalid_slice;
+create or replace function bison_pl_array_invalid_slice(p int[]) return int[] as --error
+begin
+    return p[1:0];
+end;
+/
+drop function if exists bison_pl_array_invalid_slice;
+
+drop function if exists bison_pl_array_method;
+create or replace function bison_pl_array_method(p int[]) return int as --error
+begin
+    return p.count();
+end;
+/
+drop function if exists bison_pl_array_method;
+
+drop function if exists bison_pl_array_builtin;
+create or replace function bison_pl_array_builtin(DBE_STATS int[]) return number as
+begin
+    return DBE_STATS.AUTO_SAMPLE_SIZE;
+end;
+/
+select bison_pl_array_builtin(array[13, 21, 34]) as builtin_value from sys_dummy;
+drop function if exists bison_pl_array_builtin;
+
+drop function if exists bison_local_array_minimal;
+create or replace function bison_local_array_minimal(p int[]) return int[] as
+    v int[];
+begin
+    return p;
+end;
+/
+select bison_local_array_minimal(array[13, 21, 34]) as array_value from sys_dummy;
+drop function if exists bison_local_array_minimal;
+
+drop function if exists bison_local_array_whole;
+create or replace function bison_local_array_whole(p int[]) return int[] as
+    v int[];
+begin
+    v := p;
+    return v;
+end;
+/
+select bison_local_array_whole(array[13, 21, 34]) as whole_value from sys_dummy;
+drop function if exists bison_local_array_whole;
+
+drop function if exists bison_local_array_element;
+create or replace function bison_local_array_element(p int[]) return int as
+    v int[];
+begin
+    v := p;
+    return v[2];
+end;
+/
+select bison_local_array_element(array[13, 21, 34]) as element_value from sys_dummy;
+drop function if exists bison_local_array_element;
+
+drop function if exists bison_local_array_slice;
+create or replace function bison_local_array_slice(p int[]) return int[] as
+    v int[];
+begin
+    v := p;
+    return v[1:2];
+end;
+/
+select bison_local_array_slice(array[13, 21, 34]) as slice_value from sys_dummy;
+drop function if exists bison_local_array_slice;
+
+drop function if exists bison_local_array_numeric;
+create or replace function bison_local_array_numeric return number[] as
+    v number(8, 2)[] default array[1.25, 2.75];
+begin
+    return v;
+end;
+/
+select bison_local_array_numeric() as numeric_value from sys_dummy;
+drop function if exists bison_local_array_numeric;
+
+drop function if exists bison_local_array_default;
+create or replace function bison_local_array_default return int[] as
+    v int[] default array[5, 8, 13];
+begin
+    return v;
+end;
+/
+select bison_local_array_default() as default_value from sys_dummy;
+drop function if exists bison_local_array_default;
+
+drop function if exists bison_local_array_init;
+create or replace function bison_local_array_init return int[] as
+    v int[] := array[5, 8, 13];
+begin
+    return v;
+end;
+/
+select bison_local_array_init() as init_value from sys_dummy;
+drop function if exists bison_local_array_init;
+
+drop function if exists bison_local_array_multiple;
+create or replace function bison_local_array_multiple(p int[]) return int[] as
+    first_value int[];
+    second_value int[];
+begin
+    first_value := p;
+    second_value := first_value;
+    return second_value;
+end;
+/
+select bison_local_array_multiple(array[13, 21, 34]) as multiple_value from sys_dummy;
+drop function if exists bison_local_array_multiple;
+
+drop function if exists bison_local_scalar_control;
+create or replace function bison_local_scalar_control return number as
+    v int default 9;
+    amount number(8, 2) := 2.50;
+begin
+    return v + amount;
+end;
+/
+select bison_local_scalar_control() as scalar_value from sys_dummy;
+drop function if exists bison_local_scalar_control;
+
+drop function if exists bison_local_array_sizes;
+create or replace function bison_local_array_sizes(p int[]) return int[] as
+    zero_value int[0];
+    fixed_value int[2];
+    max_value int[4294967295];
+    signed_value int[+2];
+begin
+    return p;
+end;
+/
+select bison_local_array_sizes(array[13, 21, 34]) as sized_value from sys_dummy;
+drop function if exists bison_local_array_sizes;
+
+drop function if exists bison_local_array_overflow;
+create or replace function bison_local_array_overflow(p int[]) return int[] as --error
+    v int[4294967296];
+begin
+    return p;
+end;
+/
+drop function if exists bison_local_array_overflow;
+
+drop function if exists bison_local_array_negative;
+create or replace function bison_local_array_negative(p int[]) return int[] as --error
+    v int[-1];
+begin
+    return p;
+end;
+/
+drop function if exists bison_local_array_negative;
+
+drop function if exists bison_local_array_decimal;
+create or replace function bison_local_array_decimal(p int[]) return int[] as --error
+    v int[1.0];
+begin
+    return p;
+end;
+/
+drop function if exists bison_local_array_decimal;
+
+drop function if exists bison_local_array_exponent;
+create or replace function bison_local_array_exponent(p int[]) return int[] as --error
+    v int[1e0];
+begin
+    return p;
+end;
+/
+drop function if exists bison_local_array_exponent;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;

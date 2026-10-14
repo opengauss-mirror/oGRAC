@@ -1566,6 +1566,7 @@ static status_t sql_try_create_pl_collection_method_expr(sql_stmt_t *stmt, pl_co
     const uint32 min_func_name_count = 2;
     word_t word = { 0 };
     expr_node_t saved_node;
+    plv_decl_t *decl = NULL;
 
     *converted = OG_FALSE;
     if (!sql_func_is_pl_compile_context(stmt) || stmt->pl_compiler == NULL ||
@@ -1574,6 +1575,12 @@ static status_t sql_try_create_pl_collection_method_expr(sql_stmt_t *stmt, pl_co
     }
 
     OG_RETURN_IFERR(sql_bison_func_name_as_word(arg->func_name, &word, arg->loc));
+    OG_RETURN_IFERR(plc_verify_word_as_var(stmt->pl_compiler, &word));
+    plc_find_decl_ex(stmt->pl_compiler, &word, PLV_VARIANT_AND_CUR, NULL, &decl);
+    if (decl != NULL && decl->type == PLV_ARRAY) {
+        OG_SRC_THROW_ERROR(arg->loc, ERR_PL_SYNTAX_ERROR_FMT, "array variables do not support collection methods");
+        return OG_ERROR;
+    }
     saved_node = *arg->node;
     OG_RETURN_IFERR(plc_try_obj_access_single(stmt, &word, arg->node));
     if (arg->node->type != EXPR_NODE_V_METHOD) {
