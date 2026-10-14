@@ -1788,7 +1788,7 @@ static status_t sql_get_sorted_row_and_cmp(sql_stmt_t *stmt, plan_node_t *plan, 
     mps_knlcur_t *knlcur_info = (mps_knlcur_t *)cm_galist_get(knlcur_list, sort_info->sort_array[pos]);
     tab_cursor->knl_cur = knlcur_info->knl_cursor;
     row_init(&temp_ra, buf, OG_MAX_ROW_SIZE, plan->scan_p.sort_items->count);
-    OG_RETURN_IFERR(sql_make_mtrl_sort_row(stmt, NULL, plan->scan_p.sort_items, &temp_ra));
+    OG_RETURN_IFERR(sql_make_mtrl_scan_sort_row(stmt, NULL, plan->scan_p.sort_items, &temp_ra));
     OG_RETURN_IFERR(sql_mtrl_sort_cmp(&segment, insert_ra.buf, temp_ra.buf, result));
 
     return OG_SUCCESS;
@@ -1810,7 +1810,7 @@ static status_t sql_sort_4_multi_parts_scan(sql_stmt_t *stmt, plan_node_t *plan,
     OGSQL_SAVE_STACK(stmt);
     OG_RETURN_IFERR(sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&buf));
     row_init(&insert_ra, buf, OG_MAX_ROW_SIZE, plan->scan_p.sort_items->count);
-    OG_RETURN_IFERR(sql_make_mtrl_sort_row(stmt, NULL, plan->scan_p.sort_items, &insert_ra));
+    OG_RETURN_IFERR(sql_make_mtrl_scan_sort_row(stmt, NULL, plan->scan_p.sort_items, &insert_ra));
     OG_RETURN_IFERR(sql_push(stmt, OG_MAX_ROW_SIZE, (void **)&buf));
 
     uint32 left = 0;
