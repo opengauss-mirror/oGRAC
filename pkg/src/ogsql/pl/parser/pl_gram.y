@@ -124,7 +124,14 @@ static status_t pl_bison_make_parse_text(sql_stmt_t *stmt, const char *prefix, t
     sql_text_t *sql_text);
 static status_t pl_bison_column_to_proc_node(sql_stmt_t *stmt, expr_node_t *proc);
 static bool tok_is_keyword(int token, union YYSTYPE *lval, int kw_token, const char *kw_str);
-static char *pl_token_text(int token, union YYSTYPE *lval);
+static char *pl_token_text(core_yyscan_t yyscanner, int token, union YYSTYPE *lval,
+    YYLTYPE *lloc, int token_len);
+static char *pl_last_token_text(core_yyscan_t yyscanner, int token);
+static char *pl_copy_text_token(sql_stmt_t *stmt, text_t *text);
+static status_t pl_expected_token_error_at(core_yyscan_t yyscanner, source_location_t loc, const char *expected,
+    int token, union YYSTYPE *lval, YYLTYPE *lloc, int token_len);
+static status_t pl_expected_token_error(core_yyscan_t yyscanner, source_location_t loc,
+    const char *expected, int token);
 static int pl_read_type_token(core_yyscan_t yyscanner, union YYSTYPE *lval, YYLTYPE *lloc, int *leng);
 static char *pl_type_token_text(core_yyscan_t yyscanner, int token, union YYSTYPE *lval, YYLTYPE *lloc,
     int token_len);
@@ -2369,8 +2376,12 @@ static bool tok_is_keyword(int token, union YYSTYPE *lval, int kw_token, const c
     return false;				/* not the keyword */
 }
 
-static char *pl_token_text(int token, union YYSTYPE *lval)
+static char *pl_token_text(core_yyscan_t yyscanner, int token, union YYSTYPE *lval,
+    YYLTYPE *lloc, int token_len)
 {
+    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    sql_stmt_t *stmt = extra->stmt;
+
     if (token == YYEOF) {
         return "EOF";
     }
@@ -2386,16 +2397,54 @@ static char *pl_token_text(int token, union YYSTYPE *lval)
     if (token == ')') {
         return "')'";
     }
-    if (token == T_WORD) {
+    if (token == T_WORD && lval->word.ident != NULL) {
         return lval->word.ident;
     }
-    if (token == IDENT) {
+    if ((token == IDENT || token == FCONST || token == SCONST || token == XCONST ||
+        token == Op || token == CmpOp || token == COMMENTSTRING || token == SET_USER_IDENT ||
+        token == SET_IDENT || token == UNDERSCORE_CHARSET || token == FCONST_F || token == FCONST_D) &&
+        lval->str != NULL) {
         return lval->str;
     }
-    if (lval->keyword != NULL) {
+    if (token >= K_ABSOLUTE && token <= K_WITH && lval->keyword != NULL) {
         return (char *)lval->keyword;
     }
-    return NULL;
+
+    /* Numeric, parameter and datum tokens do not carry a string in YYSTYPE. */
+    if (lloc == NULL || lloc->offset < 0 || token_len <= 0 ||
+        (size_t)lloc->offset > extra->scanbuflen ||
+        (size_t)token_len > extra->scanbuflen - (size_t)lloc->offset) {
+        return "token";
+    }
+    text_t text = {
+        .str = extra->scanbuf + lloc->offset,
+        .len = (uint32)token_len
+    };
+    return pl_copy_text_token(stmt, &text);
+}
+
+static char *pl_last_token_text(core_yyscan_t yyscanner, int token)
+{
+    return pl_token_text(yyscanner, token, PLSQL_YYLVAL(yyscanner), PLSQL_YYLLOC(yyscanner),
+        PLSQL_YYLENG(yyscanner));
+}
+
+static status_t pl_expected_token_error_at(core_yyscan_t yyscanner, source_location_t loc, const char *expected,
+    int token, union YYSTYPE *lval, YYLTYPE *lloc, int token_len)
+{
+    char *actual = pl_token_text(yyscanner, token, lval, lloc, token_len);
+    if (actual == NULL) {
+        return OG_ERROR;
+    }
+    OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, expected, actual);
+    return OG_ERROR;
+}
+
+static status_t pl_expected_token_error(core_yyscan_t yyscanner, source_location_t loc,
+    const char *expected, int token)
+{
+    return pl_expected_token_error_at(yyscanner, loc, expected, token, PLSQL_YYLVAL(yyscanner),
+        PLSQL_YYLLOC(yyscanner), PLSQL_YYLENG(yyscanner));
 }
 
 static char *pl_copy_text_token(sql_stmt_t *stmt, text_t *text)
@@ -2476,10 +2525,6 @@ static char *pl_type_token_text(core_yyscan_t yyscanner, int token, union YYSTYP
     int token_len)
 {
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-    char *text = NULL;
-    char *src = NULL;
-    char *buf = NULL;
-    errno_t rc;
 
     if (token == T_DATUM && lval->node != NULL) {
         var_address_pair_t *pair = sql_get_last_addr_pair(lval->node);
@@ -2488,35 +2533,7 @@ static char *pl_type_token_text(core_yyscan_t yyscanner, int token, union YYSTYP
         }
     }
 
-    text = pl_token_text(token, lval);
-    if (text != NULL) {
-        return text;
-    }
-
-    /*
-     * Declaration datatypes are read by the PL bison parser, while datatype
-     * keywords are tokenized by the shared SQL scanner. For SQL keywords that
-     * are not PL tokens, copy the original lexeme instead of depending on the
-     * core grammar token enum being visible from this generated parser.
-     */
-    if (token_len <= 0) {
-        return NULL;
-    }
-
-    src = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + lloc->offset;
-    if (!pl_bison_is_ident_text(src, (uint32)token_len)) {
-        return NULL;
-    }
-
-    if (sql_alloc_mem(stmt->context, (uint32)token_len + 1, (void **)&buf) != OG_SUCCESS) {
-        return NULL;
-    }
-    rc = memcpy_s(buf, (uint32)token_len + 1, src, (uint32)token_len);
-    if (rc != EOK) {
-        return NULL;
-    }
-    buf[token_len] = '\0';
-    return buf;
+    return pl_token_text(yyscanner, token, lval, lloc, token_len);
 }
 
 static bool32 pl_token_text_equal(core_yyscan_t yyscanner, int token, union YYSTYPE *lval, YYLTYPE *lloc,
@@ -2559,10 +2576,8 @@ static status_t pl_read_optional_type_modifier(core_yyscan_t yyscanner, sql_stmt
     for (;;) {
         *tok = pl_read_type_token(yyscanner, tok_lval, tok_lloc, tok_len);
         if (*tok != ICONST) {
-            char *actual = pl_token_text(*tok, tok_lval);
-            OG_SRC_THROW_ERROR(tok_lloc->loc, ERR_PL_EXPECTED_FAIL_FMT, "type modifier",
-                (actual == NULL) ? "token" : actual);
-            return OG_ERROR;
+            return pl_expected_token_error_at(yyscanner, tok_lloc->loc, "type modifier", *tok,
+                tok_lval, tok_lloc, *tok_len);
         }
         OG_RETURN_IFERR(pl_append_type_modifier(stmt, typemode, tok_lval->ival, tok_lloc->loc));
 
@@ -2571,10 +2586,8 @@ static status_t pl_read_optional_type_modifier(core_yyscan_t yyscanner, sql_stmt
             break;
         }
         if (*tok != ',') {
-            char *actual = pl_token_text(*tok, tok_lval);
-            OG_SRC_THROW_ERROR(tok_lloc->loc, ERR_PL_EXPECTED_FAIL_FMT, "',' or ')'",
-                (actual == NULL) ? "token" : actual);
-            return OG_ERROR;
+            return pl_expected_token_error_at(yyscanner, tok_lloc->loc, "',' or ')'", *tok,
+                tok_lval, tok_lloc, *tok_len);
         }
     }
 
@@ -4055,8 +4068,7 @@ static status_t compile_execute_into_clause(core_yyscan_t yyscanner, pl_compiler
     for (;;) {
         tok = PLSQL_YYLEX(yyscanner);
         if (tok != T_DATUM) {
-            OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "identifier", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "identifier", tok);
         }
 
         node = PLSQL_YYLVAL(yyscanner)->node;
@@ -4095,13 +4107,11 @@ static status_t compile_execute_bulk_into_clause(core_yyscan_t yyscanner, pl_com
 
     tok = PLSQL_YYLEX(yyscanner);
     if (tok != K_COLLECT) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "COLLECT", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "COLLECT", tok);
     }
     tok = PLSQL_YYLEX(yyscanner);
     if (tok != K_INTO) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "INTO", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "INTO", tok);
     }
 
     into->is_bulk = OG_TRUE;
@@ -4111,8 +4121,7 @@ static status_t compile_execute_bulk_into_clause(core_yyscan_t yyscanner, pl_com
     for (;;) {
         tok = PLSQL_YYLEX(yyscanner);
         if (tok != T_DATUM) {
-            OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "identifier", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "identifier", tok);
         }
 
         node = PLSQL_YYLVAL(yyscanner)->node;
@@ -4203,8 +4212,7 @@ static status_t compile_execute_using_item(core_yyscan_t yyscanner, pl_compiler_
     }
 
     if (tok == ';' || tok == ',' || tok == YYEOF) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "expression", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "expression", tok);
     }
 
     OG_RETURN_IFERR(read_execute_using_expr(yyscanner, tok, &expr_src, endtoken));
@@ -4260,8 +4268,7 @@ static status_t compile_execute_immediate_stmt(core_yyscan_t yyscanner, source_l
     }
 
     if (endtoken != ';') {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "';'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
     }
 
     return OG_SUCCESS;
@@ -4387,7 +4394,7 @@ static char *token_name_text(core_yyscan_t yyscanner, int token)
     if (token == T_WORD) {
         return PLSQL_YYLVAL(yyscanner)->word.ident;
     }
-    return pl_token_text(token, PLSQL_YYLVAL(yyscanner));
+    return pl_last_token_text(yyscanner, token);
 }
 
 static status_t make_text_from_offsets(core_yyscan_t yyscanner, int start_offset, int end_offset, text_t **src)
@@ -4482,8 +4489,7 @@ static status_t compile_open_arg_list(core_yyscan_t yyscanner, pl_compiler_t *co
                 arg_name = first_name;
                 tok = PLSQL_YYLEX(yyscanner);
                 if (tok == ',' || tok == ')' || tok == YYEOF) {
-                    OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "expression", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-                    return OG_ERROR;
+                    return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "expression", tok);
                 }
                 expr_start = PLSQL_YYLLOC(yyscanner)->offset;
                 plsql_push_back_token(tok, yyscanner);
@@ -4506,13 +4512,11 @@ static status_t compile_open_arg_list(core_yyscan_t yyscanner, pl_compiler_t *co
             return OG_SUCCESS;
         }
         if (*endtoken != ',') {
-            OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "',' or ')'", pl_token_text(*endtoken, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "',' or ')'", *endtoken);
         }
         tok = PLSQL_YYLEX(yyscanner);
         if (tok == ')' || tok == YYEOF) {
-            OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "expression", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "expression", tok);
         }
     }
 }
@@ -4537,8 +4541,7 @@ static status_t compile_open_cursor_args_stmt(core_yyscan_t yyscanner, expr_node
     OG_RETURN_IFERR(plc_init_galist(compiler, &line->exprs));
     OG_RETURN_IFERR(compile_open_arg_list(yyscanner, compiler, line->exprs, &endtoken));
     if (endtoken != ')') {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "')'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "')'", endtoken);
     }
     if (line->exprs->count == 0) {
         line->exprs = NULL;
@@ -4563,8 +4566,7 @@ static status_t compile_refcur_using_item(core_yyscan_t yyscanner, pl_compiler_t
         return OG_ERROR;
     }
     if (tok == ',' || tok == ';' || tok == YYEOF) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "expression", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "expression", tok);
     }
 
     expr_src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ',', ';', 0, 0, 0, 0, yyscanner, endtoken);
@@ -4610,8 +4612,7 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
     if (tok == K_SELECT) {
         src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ';', 0, 0, 0, 0, 0, yyscanner, &endtoken);
         if (endtoken != ';') {
-            OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "';'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
         }
         line->is_dynamic_sql = OG_FALSE;
         OG_RETURN_IFERR(plc_init_galist(compiler, &line->input));
@@ -4640,8 +4641,7 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
         OG_RETURN_IFERR(compile_refcur_using_clause(yyscanner, compiler, line, &endtoken));
     }
     if (endtoken != ';') {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "';'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
     }
     return OG_SUCCESS;
 }
@@ -4667,8 +4667,7 @@ static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cu
         endtoken = ';';
     }
     if (endtoken != ';') {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "';'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
     }
     if (decl->cursor.ogx->is_sysref == OG_FALSE && decl->cursor.ogx->context != NULL) {
         return plc_verify_into_clause(decl->cursor.ogx->context, &line->into, loc);
@@ -4888,26 +4887,13 @@ static status_t finish_numeric_for_start(core_yyscan_t yyscanner, const char *in
     return OG_SUCCESS;
 }
 
-static status_t finish_implicit_cursor_for_start(core_yyscan_t yyscanner, const char *index_name,
-    source_location_t loc, pl_line_for_t **for_line)
+static status_t finish_implicit_cursor_for_query(core_yyscan_t yyscanner, const char *index_name,
+    source_location_t loc, text_t *query, pl_line_for_t **for_line)
 {
-    int tok = PLSQL_YYLEX(yyscanner);
-    int endtoken = 0;
-    text_t *query = NULL;
     plv_decl_t *imp_cur = NULL;
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     pl_entity_t *entity = (pl_entity_t *)compiler->entity;
-
-    if (tok != K_SELECT) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "SELECT", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
-    }
-    query = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ')', 0, 0, 0, 0, 0, yyscanner, &endtoken);
-    if (endtoken != ')' || PLSQL_YYLEX(yyscanner) != K_LOOP) {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "LOOP", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
-    }
 
     OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_TRUE));
     OG_RETURN_IFERR(init_for_cursor_record(compiler, *for_line));
@@ -4933,6 +4919,47 @@ static status_t finish_implicit_cursor_for_start(core_yyscan_t yyscanner, const 
     return OG_SUCCESS;
 }
 
+static status_t finish_parenthesized_for_start(core_yyscan_t yyscanner, const char *index_name, bool32 reverse,
+    source_location_t loc, pl_line_for_t **for_line)
+{
+    YYLTYPE opening_loc = *PLSQL_YYLLOC(yyscanner);
+    int first_token = PLSQL_YYLEX(yyscanner);
+    union YYSTYPE first_lval = *PLSQL_YYLVAL(yyscanner);
+    YYLTYPE first_loc = *PLSQL_YYLLOC(yyscanner);
+    int first_len = PLSQL_YYLENG(yyscanner);
+    int endtoken = 0;
+    text_t *bracket_src = NULL;
+
+    OG_RETURN_IFERR(read_sql_construct_core(opening_loc.offset, first_token, ')', 0, 0, 0, 0, 0,
+        yyscanner, &bracket_src, &endtoken, NULL));
+    if (endtoken != ')') {
+        return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "')'", endtoken);
+    }
+
+    int closing_end = PLSQL_YYLLOC(yyscanner)->offset + PLSQL_YYLENG(yyscanner);
+    int next_token = PLSQL_YYLEX(yyscanner);
+    /* Like the native parser, classify the complete parenthesized text by what follows it. */
+    if (next_token == DOT_DOT) {
+        bracket_src->len = (uint32)(closing_end - opening_loc.offset);
+        return finish_numeric_for_start(yyscanner, index_name, reverse, bracket_src, NULL, opening_loc.loc,
+            loc, for_line);
+    }
+
+    if (first_token != K_SELECT) {
+        return pl_expected_token_error_at(yyscanner, first_loc.loc, "SELECT", first_token,
+            &first_lval, &first_loc, first_len);
+    }
+    if (next_token != K_LOOP) {
+        return pl_expected_token_error(yyscanner, loc, "LOOP", next_token);
+    }
+
+    text_t query = {
+        .str = bracket_src->str + 1,
+        .len = bracket_src->len - 1
+    };
+    return finish_implicit_cursor_for_query(yyscanner, index_name, loc, &query, for_line);
+}
+
 static status_t finish_explicit_cursor_for_start(core_yyscan_t yyscanner, const char *index_name,
     expr_node_t *cursor_node, source_location_t loc, pl_line_for_t **for_line)
 {
@@ -4956,8 +4983,7 @@ static status_t finish_explicit_cursor_for_start(core_yyscan_t yyscanner, const 
         OG_RETURN_IFERR(plc_init_galist(compiler, &(*for_line)->exprs));
         OG_RETURN_IFERR(compile_open_arg_list(yyscanner, compiler, (*for_line)->exprs, &endtoken));
         if (endtoken != ')') {
-            OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "')'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, loc, "')'", endtoken);
         }
         if ((*for_line)->exprs->count == 0) {
             (*for_line)->exprs = NULL;
@@ -4969,8 +4995,7 @@ static status_t finish_explicit_cursor_for_start(core_yyscan_t yyscanner, const 
         (*for_line)->exprs = NULL;
     }
     if (tok != K_LOOP) {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "LOOP", pl_token_text(tok, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "LOOP", tok);
     }
     OG_RETURN_IFERR(copy_context_rscols_to_record(compiler, decl->cursor.ogx->context, (*for_line)->id->record, loc));
     OG_RETURN_IFERR(plc_init_galist(compiler, &(*for_line)->into.output));
@@ -4995,7 +5020,7 @@ static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *inde
         tok = PLSQL_YYLEX(yyscanner);
     }
     if (tok == '(') {
-        return finish_implicit_cursor_for_start(yyscanner, index_name, loc, for_line);
+        return finish_parenthesized_for_start(yyscanner, index_name, reverse, loc, for_line);
     }
     if (!reverse && tok == T_DATUM) {
         var_address_pair_t *pair = sql_get_last_addr_pair(PLSQL_YYLVAL(yyscanner)->node);
@@ -5046,16 +5071,14 @@ static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_n
     if (endtoken == K_SAVE) {
         endtoken = PLSQL_YYLEX(yyscanner);
         if (endtoken != K_EXCEPTIONS) {
-            OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_EXPECTED_FAIL_FMT, "EXCEPTIONS", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-            return OG_ERROR;
+            return pl_expected_token_error(yyscanner, PLSQL_YYLLOC(yyscanner)->loc, "EXCEPTIONS", endtoken);
         }
         OG_SRC_THROW_ERROR(loc, ERR_PL_UNSUPPORT);
         return OG_ERROR;
     }
     key_wid = dml_key_from_token(endtoken);
     if (key_wid == KEY_WORD_0_UNKNOWN) {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "DML statement", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "DML statement", endtoken);
     }
 
     OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_for_t), LINE_FOR, (pl_line_ctrl_t **)&line));
@@ -5090,8 +5113,7 @@ static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_n
     dml_loc = PLSQL_YYLLOC(yyscanner)->loc;
     dml_src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ';', 0, 0, 0, 0, 0, yyscanner, &endtoken);
     if (endtoken != ';') {
-        OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "';'", pl_token_text(endtoken, PLSQL_YYLVAL(yyscanner)));
-        return OG_ERROR;
+        return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
     }
     OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, (pl_line_ctrl_t **)&sql_line));
     OG_RETURN_IFERR(plc_init_galist(compiler, &sql_line->input));

@@ -3191,6 +3191,320 @@ SQL> drop function if exists bison_local_array_exponent;
 Succeed.
 
 SQL>
+SQL> drop function if exists bison_pl_for_nested_range;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_nested_range(st int, et int) return number as
+  2     total number := 0;
+  3 begin
+  4     for i in st..et loop
+  5         for j in (3*(i-1)+1)..(3*i) loop
+  6             total := total + j;
+  7         end loop;
+  8     end loop;
+  9     return total;
+ 10 end;
+ 11 /
+
+Succeed.
+
+SQL> select bison_pl_for_nested_range(1, 2) as nested_result from sys_dummy;
+
+NESTED_RESULT
+----------------------------------------
+21
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_nested_range;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_literal_lower;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_literal_lower return number as
+  2     total number := 0;
+  3 begin
+  4     for j in (50)..51 loop
+  5         total := total + j;
+  6     end loop;
+  7     return total;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_literal_lower() as lower_result from sys_dummy;
+
+LOWER_RESULT
+----------------------------------------
+101
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_literal_lower;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_expression_lower;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_expression_lower return number as
+  2     total number := 0;
+  3 begin
+  4     for j in (50+1)..52 loop
+  5         total := total + j;
+  6     end loop;
+  7     return total;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_expression_lower() as expression_result from sys_dummy;
+
+EXPRESSION_RESULT
+----------------------------------------
+103
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_expression_lower;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_parenthesized_upper;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_parenthesized_upper return number as
+  2     total number := 0;
+  3 begin
+  4     for j in 50..(51) loop
+  5         total := total + j;
+  6     end loop;
+  7     return total;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_parenthesized_upper() as upper_result from sys_dummy;
+
+UPPER_RESULT
+----------------------------------------
+101
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_parenthesized_upper;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_cursor_control;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_cursor_control return number as
+  2     result_value number := 0;
+  3 begin
+  4     for j in (select 1 as id from sys_dummy) loop
+  5         result_value := j.id;
+  6     end loop;
+  7     return result_value;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_cursor_control() as cursor_result from sys_dummy;
+
+CURSOR_RESULT
+----------------------------------------
+1
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_cursor_control;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_range_control;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_range_control return number as
+  2     result_value number := 0;
+  3 begin
+  4     for j in 1..2 loop
+  5         result_value := result_value + j;
+  6     end loop;
+  7     return result_value;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_range_control() as range_result from sys_dummy;
+
+RANGE_RESULT
+----------------------------------------
+3
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_range_control;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_invalid_literal;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_invalid_literal return number as --error
+  2 begin
+  3     for j in (50) loop
+  4         null;
+  5     end loop;
+  6     return 1;
+  7 end;
+  8 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_FOR_INVALID_LITERAL) terminated with compiling errors
+[2:15] PLC-00954 SELECT expected but 50 found
+[2:19] PLC-00601 Sql syntax error: compile for loop failed
+
+
+SQL> drop function if exists bison_pl_for_invalid_literal;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_reverse_lower;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_reverse_lower return number as
+  2     total number := 0;
+  3 begin
+  4     for j in reverse (50)..51 loop
+  5         total := total + j;
+  6     end loop;
+  7     return total;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_reverse_lower() as reverse_result from sys_dummy;
+
+REVERSE_RESULT
+----------------------------------------
+101
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_reverse_lower;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_nested_parentheses;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_nested_parentheses return number as
+  2     total number := 0;
+  3 begin
+  4     for j in ((50+1))..((52)) loop
+  5         total := total + j;
+  6     end loop;
+  7     return total;
+  8 end;
+  9 /
+
+Succeed.
+
+SQL> select bison_pl_for_nested_parentheses() as parentheses_result from sys_dummy;
+
+PARENTHESES_RESULT
+----------------------------------------
+103
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_nested_parentheses;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_variable_lower;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_variable_lower return number as
+  2     lower_bound number := 50;
+  3     total number := 0;
+  4 begin
+  5     for j in (lower_bound)..51 loop
+  6         total := total + j;
+  7     end loop;
+  8     return total;
+  9 end;
+ 10 /
+
+Succeed.
+
+SQL> select bison_pl_for_variable_lower() as variable_result from sys_dummy;
+
+VARIABLE_RESULT
+----------------------------------------
+101
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_for_variable_lower;
+
+Succeed.
+
+SQL>
+SQL> drop function if exists bison_pl_for_missing_loop;
+
+Succeed.
+
+SQL> create or replace function bison_pl_for_missing_loop return number as --error
+  2 begin
+  3     for j in (select 1 as id from sys_dummy) 50
+  4         null;
+  5     end loop;
+  6     return 1;
+  7 end;
+  8 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_PL_FOR_MISSING_LOOP) terminated with compiling errors
+[2:5] PLC-00954 LOOP expected but 50 found
+[2:46] PLC-00601 Sql syntax error: compile for loop failed
+
+
+SQL> drop function if exists bison_pl_for_missing_loop;
+
+Succeed.
+
+SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.

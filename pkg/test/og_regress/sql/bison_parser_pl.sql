@@ -1973,6 +1973,148 @@ end;
 /
 drop function if exists bison_local_array_exponent;
 
+drop function if exists bison_pl_for_nested_range;
+create or replace function bison_pl_for_nested_range(st int, et int) return number as
+    total number := 0;
+begin
+    for i in st..et loop
+        for j in (3*(i-1)+1)..(3*i) loop
+            total := total + j;
+        end loop;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_nested_range(1, 2) as nested_result from sys_dummy;
+drop function if exists bison_pl_for_nested_range;
+
+drop function if exists bison_pl_for_literal_lower;
+create or replace function bison_pl_for_literal_lower return number as
+    total number := 0;
+begin
+    for j in (50)..51 loop
+        total := total + j;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_literal_lower() as lower_result from sys_dummy;
+drop function if exists bison_pl_for_literal_lower;
+
+drop function if exists bison_pl_for_expression_lower;
+create or replace function bison_pl_for_expression_lower return number as
+    total number := 0;
+begin
+    for j in (50+1)..52 loop
+        total := total + j;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_expression_lower() as expression_result from sys_dummy;
+drop function if exists bison_pl_for_expression_lower;
+
+drop function if exists bison_pl_for_parenthesized_upper;
+create or replace function bison_pl_for_parenthesized_upper return number as
+    total number := 0;
+begin
+    for j in 50..(51) loop
+        total := total + j;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_parenthesized_upper() as upper_result from sys_dummy;
+drop function if exists bison_pl_for_parenthesized_upper;
+
+drop function if exists bison_pl_for_cursor_control;
+create or replace function bison_pl_for_cursor_control return number as
+    result_value number := 0;
+begin
+    for j in (select 1 as id from sys_dummy) loop
+        result_value := j.id;
+    end loop;
+    return result_value;
+end;
+/
+select bison_pl_for_cursor_control() as cursor_result from sys_dummy;
+drop function if exists bison_pl_for_cursor_control;
+
+drop function if exists bison_pl_for_range_control;
+create or replace function bison_pl_for_range_control return number as
+    result_value number := 0;
+begin
+    for j in 1..2 loop
+        result_value := result_value + j;
+    end loop;
+    return result_value;
+end;
+/
+select bison_pl_for_range_control() as range_result from sys_dummy;
+drop function if exists bison_pl_for_range_control;
+
+drop function if exists bison_pl_for_invalid_literal;
+create or replace function bison_pl_for_invalid_literal return number as --error
+begin
+    for j in (50) loop
+        null;
+    end loop;
+    return 1;
+end;
+/
+drop function if exists bison_pl_for_invalid_literal;
+
+drop function if exists bison_pl_for_reverse_lower;
+create or replace function bison_pl_for_reverse_lower return number as
+    total number := 0;
+begin
+    for j in reverse (50)..51 loop
+        total := total + j;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_reverse_lower() as reverse_result from sys_dummy;
+drop function if exists bison_pl_for_reverse_lower;
+
+drop function if exists bison_pl_for_nested_parentheses;
+create or replace function bison_pl_for_nested_parentheses return number as
+    total number := 0;
+begin
+    for j in ((50+1))..((52)) loop
+        total := total + j;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_nested_parentheses() as parentheses_result from sys_dummy;
+drop function if exists bison_pl_for_nested_parentheses;
+
+drop function if exists bison_pl_for_variable_lower;
+create or replace function bison_pl_for_variable_lower return number as
+    lower_bound number := 50;
+    total number := 0;
+begin
+    for j in (lower_bound)..51 loop
+        total := total + j;
+    end loop;
+    return total;
+end;
+/
+select bison_pl_for_variable_lower() as variable_result from sys_dummy;
+drop function if exists bison_pl_for_variable_lower;
+
+drop function if exists bison_pl_for_missing_loop;
+create or replace function bison_pl_for_missing_loop return number as --error
+begin
+    for j in (select 1 as id from sys_dummy) 50
+        null;
+    end loop;
+    return 1;
+end;
+/
+drop function if exists bison_pl_for_missing_loop;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;
