@@ -42,6 +42,7 @@ typedef struct st_pl_bison_static_sql_arg {
     source_location_t *loc;
     galist_t *sql_list;
     galist_t *input;
+    text_t *source_sql;
 } pl_bison_static_sql_arg_t;
 
 status_t pl_compile_parse_sql(sql_stmt_t *stmt, sql_context_t **ogx, text_t *sql, source_location_t *loc,

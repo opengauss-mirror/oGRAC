@@ -26,6 +26,7 @@
 #include "pl_dc_util.h"
 #include "pl_udt.h"
 #include "pl_memory.h"
+#include "pl_compiler.h"
 
 static void plc_find_param_decl(pl_compiler_t *compiler, uint32 p_nid, plv_decl_t **decl)
 {
@@ -142,14 +143,22 @@ status_t plc_convert_param_node_bison(sql_stmt_t *stmt, expr_node_t *node, bool3
 {
     plv_decl_t *decl = NULL;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    pl_line_begin_t *begin_line = (pl_line_begin_t *)CURR_BLOCK_BASE(compiler);
+
+    if (begin_line == NULL || begin_line->ctrl.type != LINE_BEGIN) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_PL_PARAM_USE);
+        return OG_ERROR;
+    }
 
     if (is_repeated) {
-        plc_find_param_decl(compiler, p_nid, &decl);
-    } else {
-        if ((pl_line_begin_t *)compiler->stack.items[0].entry == NULL) {
-            OG_SRC_THROW_ERROR(node->loc, ERR_PL_PARAM_USE);
-            return OG_ERROR;
+        for (uint32 i = 0; begin_line->decls != NULL && i < begin_line->decls->count; i++) {
+            plv_decl_t *item = (plv_decl_t *)cm_galist_get(begin_line->decls, i);
+            if (item->type == PLV_PARAM && item->pnid == p_nid) {
+                decl = item;
+                break;
+            }
         }
+    } else {
         OG_RETURN_IFERR(plc_add_param_decl(compiler, p_nid, (uint32)node->value.v_int, &decl));
     }
 
@@ -160,7 +169,7 @@ status_t plc_convert_param_node_bison(sql_stmt_t *stmt, expr_node_t *node, bool3
     node->typmod = decl->variant.type;
     node->value.type = OG_TYPE_INTEGER;
     node->value.is_null = OG_FALSE;
-    return plc_build_var_address(stmt, decl, node, UDT_STACK_ADDR);
+    return plc_bison_build_var_address(stmt, decl, node, OG_INVALID_ID32, OG_INVALID_ID32);
 }
 
 status_t plc_find_param_as_expr_left(pl_compiler_t *compiler, word_t *word, plv_decl_t **decl)

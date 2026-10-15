@@ -750,6 +750,45 @@ static bool32 pl_bison_line_uses_input(pl_compiler_t *compiler, pl_line_ctrl_t *
     return line_input == input;
 }
 
+static status_t pl_bison_set_static_sql_source(sql_stmt_t *stmt, sql_stmt_t *sub_stmt,
+    pl_bison_static_sql_arg_t *arg, sql_text_t *sql_text)
+{
+    uint64 source_addr = (uint64)(uintptr_t)arg->source_sql->str;
+    uint64 parser_addr = (uint64)(uintptr_t)stmt->parser_text.str;
+    uint64 source_offset;
+    int64 text_shift;
+
+    if (!stmt->parser_text_valid || stmt->parser_text.str == NULL || source_addr < parser_addr ||
+        source_addr - parser_addr > stmt->parser_text.len ||
+        arg->source_sql->len > stmt->parser_text.len - (source_addr - parser_addr)) {
+        OG_SRC_THROW_ERROR(*arg->loc, ERR_SQL_SYNTAX_ERROR, "invalid static SQL source offset");
+        return OG_ERROR;
+    }
+    source_offset = source_addr - parser_addr;
+    text_shift = (int64)stmt->text_shift + (int64)source_offset;
+    if (text_shift < OG_MIN_INT32 || text_shift > OG_MAX_INT32) {
+        OG_SRC_THROW_ERROR(*arg->loc, ERR_SQL_SYNTAX_ERROR, "invalid static SQL source offset");
+        return OG_ERROR;
+    }
+    sub_stmt->text_shift = (int32)text_shift;
+    sql_text->loc = stmt->parser_text.loc;
+    if (sql_text->loc.line == 0) {
+        sql_text->loc.line = 1;
+    }
+    if (sql_text->loc.column == 0) {
+        sql_text->loc.column = 1;
+    }
+    for (uint32 i = 0; i < source_offset; i++) {
+        if (stmt->parser_text.str[i] == '\n') {
+            sql_text->loc.line++;
+            sql_text->loc.column = 1;
+        } else {
+            sql_text->loc.column++;
+        }
+    }
+    return OG_SUCCESS;
+}
+
 status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *arg)
 {
     sql_stmt_t *sub_stmt = NULL;
@@ -788,6 +827,10 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     }
 
     do {
+        if (compiler != NULL && stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK &&
+            pl_bison_set_static_sql_source(stmt, sub_stmt, arg, &sql_text) != OG_SUCCESS) {
+            break;
+        }
         if (plc_rewrite_trigger_variants(compiler, arg->sql, &parsed_sql, *arg->loc,
             PLC_TRIGGER_REWRITE_AS_PARAM) != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);

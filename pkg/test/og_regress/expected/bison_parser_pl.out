@@ -3573,6 +3573,38 @@ SQL> drop function if exists bison_pl_clob_piece;
 Succeed.
 
 SQL>
+SQL> set serveroutput on;
+
+ON
+SQL> begin
+  2     execute immediate 'declare a int; begin
+  3         select :x into a from sys_dummy;
+  4         a := :x + 1;
+  5     end;' using 17;
+  6     execute immediate 'declare a int; begin
+  7         select :x into a from sys_dummy;
+  8         dbe_output.print_line(a);
+  9         select :x into a from sys_dummy where :x = 17;
+ 10         dbe_output.print_line(a);
+ 11         a := :x + :y;
+ 12         dbe_output.print_line(a);
+ 13         select :x + :y into a from sys_dummy where :x = 17 and :y = 23;
+ 14         dbe_output.print_line(a);
+ 15     end;' using 17, 23;
+ 16 end;
+ 17 /
+
+17
+17
+40
+40
+
+PL/SQL procedure successfully completed.
+
+SQL> set serveroutput off;
+
+OFF
+SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.
