@@ -2104,6 +2104,13 @@ end;
 select bison_pl_for_variable_lower() as variable_result from sys_dummy;
 drop function if exists bison_pl_for_variable_lower;
 
+call bison_pl_proc(if(2 > 1, 931, 932));
+call bison_pl_proc(if(2 < 1, 933, 934));
+call bison_pl_proc(if(lnnvl(2 > 1),935,936));
+call bison_pl_proc(if(lnnvl(2 < 1),937,938));
+call bison_pl_proc(if(lnnvl(cast(null as int) = 1),939,940));
+select id from bison_pl_t where id between 931 and 940 order by id;
+
 drop function if exists bison_pl_for_missing_loop;
 create or replace function bison_pl_for_missing_loop return number as --error
 begin
