@@ -5,6 +5,12 @@ insert into bison_comment_escape_t select /* This is \/* a nested \*\/ comment *
 insert into bison_comment_escape_t select /* This is \*/ a nested \*\/ comment */ 2;
 insert into bison_comment_escape_t select /* outer \\/* nested */ still outer */ 3;
 drop table bison_comment_escape_t;
+-- Reject standalone parameter lists without a PL compilation context.
+(x int); --error
+(x in int); --error
+((x int)); --error
+( /* gap */ x int); --error
+(select 1 as probe_result from sys_dummy);
 
 drop table if exists bison_t1;
 create table bison_t1 (a int, b char(10));

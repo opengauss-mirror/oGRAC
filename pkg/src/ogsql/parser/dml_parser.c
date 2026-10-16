@@ -296,6 +296,13 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
     YYLTYPE cur_yylloc_3 = {{0, 0}, 0};
 
     core_yylex_func yylex_func = yylex_func_hook == NULL ? core_yylex : yylex_func_hook;
+
+    if (state->pending_pl_source) {
+        state->pending_pl_source = OG_FALSE;
+        llocp->loc = yyextra->core_yy_extra.stmt->parser_text.loc;
+        llocp->offset = 0;
+        return BISON_PL_SOURCE;
+    }
         
     /* Get next token --- we might already have it */
     if (yyextra->lookahead_len != 0) {
@@ -1002,19 +1009,20 @@ int c_base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
     return base_yylex_common(lvalp, llocp, yyscanner, c_core_yylex);
 }
 
-static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_text_t *sql)
+static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_text_t *sql, bool32 pl_source)
 {
     base_yy_raw_parse_state_t *state = &yyextra->raw_parse;
 
     state->sourcebuf = sql->str;
     state->sourcebuflen = sql->len;
+    state->pending_pl_source = pl_source;
     state->pl_object_name_end = -1;
     state->pl_object_name_mode = OG_FALSE;
     state->pl_object_name_sensitive = OG_FALSE;
     state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
 }
 
-static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context, bool32 pl_source)
 {
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
@@ -1023,7 +1031,7 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
-    raw_parser_init_extra(&yyextra, sql);
+    raw_parser_init_extra(&yyextra, sql, pl_source);
 
     /* initialize the flex scanner */
     yyscanner = a_scanner_init(sql, &yyextra.core_yy_extra, &dialect_a_ScanKeywords, a_format_ScanKeywordTokens, stmt);
@@ -1058,7 +1066,7 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     return OG_SUCCESS;
 }
 
-static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context, bool32 pl_source)
 {
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
@@ -1067,7 +1075,7 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
-    raw_parser_init_extra(&yyextra, sql);
+    raw_parser_init_extra(&yyextra, sql, pl_source);
 
     /* initialize the flex scanner */
     yyscanner = b_scanner_init(sql, &yyextra.core_yy_extra, &dialect_b_ScanKeywords, b_format_ScanKeywordTokens, stmt);
@@ -1102,7 +1110,7 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     return OG_SUCCESS;
 }
 
-static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context, bool32 pl_source)
 {
     core_yyscan_t yyscanner;
     base_yy_extra_type yyextra;
@@ -1111,7 +1119,7 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
 
     CM_SAVE_STACK(stmt->session->stack);
-    raw_parser_init_extra(&yyextra, sql);
+    raw_parser_init_extra(&yyextra, sql, pl_source);
 
     /* initialize the flex scanner */
     yyscanner = c_scanner_init(sql, &yyextra.core_yy_extra, &dialect_c_ScanKeywords, c_format_ScanKeywordTokens, stmt);
@@ -1146,7 +1154,7 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     return OG_SUCCESS;
 }
 
-status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+static status_t raw_parser_internal(sql_stmt_t *stmt, sql_text_t *sql, void **context, bool32 pl_source)
 {
     sql_text_t parser_text_bak = stmt->parser_text;
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
@@ -1156,18 +1164,32 @@ status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
     stmt->parser_text_valid = OG_TRUE;
 
     if (stmt->session->dbcompatibility == 'A') {
-        status = a_format_raw_parser(stmt, sql, context);
+        status = a_format_raw_parser(stmt, sql, context, pl_source);
     } else if (stmt->session->dbcompatibility == 'B') {
-        status = b_format_raw_parser(stmt, sql, context);
+        status = b_format_raw_parser(stmt, sql, context, pl_source);
     } else if (stmt->session->dbcompatibility == 'C') {
-        status = c_format_raw_parser(stmt, sql, context);
+        status = c_format_raw_parser(stmt, sql, context, pl_source);
     } else {
-        status = a_format_raw_parser(stmt, sql, context);
+        status = a_format_raw_parser(stmt, sql, context, pl_source);
     }
 
     stmt->parser_text = parser_text_bak;
     stmt->parser_text_valid = parser_text_valid_bak;
     return status;
+}
+
+status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+{
+    return raw_parser_internal(stmt, sql, context, OG_FALSE);
+}
+
+status_t raw_parser_pl_source(sql_stmt_t *stmt, sql_text_t *sql, void **context)
+{
+    if (stmt->pl_context == NULL) {
+        OG_SRC_THROW_ERROR(sql->loc, ERR_SQL_SYNTAX_ERROR, "PL compilation context expected");
+        return OG_ERROR;
+    }
+    return raw_parser_internal(stmt, sql, context, OG_TRUE);
 }
 
 static status_t sql_create_dml_context(sql_stmt_t *stmt, sql_text_t *sql, key_wid_t key_wid)

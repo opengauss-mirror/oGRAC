@@ -497,7 +497,7 @@ status_t pl_load_entity(sql_stmt_t *stmt, pl_entry_t *entry, pl_entity_t **entit
     } else {
         sql_text_t bison_source = load_ass.source_text;
         pl_trim_bison_stored_source_name(entry, entity, &bison_source);
-        status = raw_parser(load_ass.sub_stmt, &bison_source, &load_ass.sub_stmt->context->entry);
+        status = raw_parser_pl_source(load_ass.sub_stmt, &bison_source, &load_ass.sub_stmt->context->entry);
     }
     CONVERT_OBJ_STATUS(obj_status, status);
     status = pl_proc_compile_result(KNL_SESSION(stmt), entity, obj_status);
