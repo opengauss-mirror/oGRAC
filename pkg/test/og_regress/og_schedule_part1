@@ -73,3 +73,4 @@ test: og_cosh_sinh_a
 test: og_nanvl_remainder_a
 test: og_initcap_nchr_a
 test: og_dialect_a_order_by
+test: bison_parser_toggle
