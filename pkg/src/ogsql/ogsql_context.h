@@ -370,7 +370,8 @@ typedef struct st_sql_context {
     bool32 has_func_index : 1;
     bool32 has_dblink : 1;
     bool32 in_spm : 1; // means this context was created by spm
-    bool32 unused : 13;
+    bool32 bison_parsed : 1; // this context was parsed with the bison parser (use_bison_parser)
+    bool32 unused : 12;
     uint32 sub_map_id;
     atomic32_t vpeek_count;
     atomic32_t readonly;
