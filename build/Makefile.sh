@@ -618,6 +618,26 @@ func_making_package_incrementally()
     func_pkg_all
 }
 
+# git clone with retry to tolerate transient DNS/network failures
+clone_with_retry()
+{
+    local retry_times=5
+    local interval=10
+    local i
+    for ((i = 1; i <= retry_times; i++)); do
+        if git clone "$@"; then
+            return 0
+        fi
+        echo "git clone failed (attempt ${i}/${retry_times}): git clone $*"
+        if [[ ${i} -lt ${retry_times} ]]; then
+            echo "retry in ${interval}s..."
+            sleep ${interval}
+        fi
+    done
+    echo "git clone failed after ${retry_times} attempts: git clone $*"
+    return 1
+}
+
 func_download_3rdparty()
 {
     if [[ "${WORKSPACE}" == *"regress"* ]]; then
@@ -638,7 +658,7 @@ func_download_3rdparty()
     cd open_source
 
     # openGauss third_party repo (still required for huawei_secure_c)
-    git clone https://gitcode.com/opengauss/openGauss-third_party.git -b 7.0.0-RC3 --depth 1
+    clone_with_retry https://gitcode.com/opengauss/openGauss-third_party.git -b 7.0.0-RC3 --depth 1
 
     # On openEuler 24.03 install pcre2/zlib/protobuf/protobuf-c/zstd/openssl from OS repos.
     # On other OS versions keep cloning the source repositories for source build.
@@ -651,17 +671,17 @@ func_download_3rdparty()
     if [[ "${os_id}" == "openEuler" && "${os_version_id}" == "24.03" ]]; then
         echo "openEuler 24.03 detected: pcre2/zlib/protobuf-c/zstd/openssl from OS repos, protobuf-all from source 3.14.0"
         # protobuf-all: still clone 22.03 SP4 source to build fixed 3.14.0 on 24.03
-        git clone https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
+        clone_with_retry https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
     else
         echo "Non-openEuler-24.03 OS detected: clone source repositories for pcre2/zlib/protobuf/protobuf-c"
         # pcre2: use src-openeuler repo
-        git clone https://gitcode.com/src-openeuler/pcre2.git -b openEuler-24.03-LTS-SP3
+        clone_with_retry https://gitcode.com/src-openeuler/pcre2.git -b openEuler-24.03-LTS-SP3
         # zlib: use src-openeuler repo
-        git clone https://gitcode.com/src-openeuler/zlib.git -b openEuler-24.03-LTS-SP3
+        clone_with_retry https://gitcode.com/src-openeuler/zlib.git -b openEuler-24.03-LTS-SP3
         # protobuf-all: use src-openeuler repo
-        git clone https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
+        clone_with_retry https://gitcode.com/src-openeuler/protobuf.git -b openEuler-22.03-LTS-SP4
         # protobuf-c: use src-openeuler repo
-        git clone https://gitcode.com/src-openeuler/protobuf-c.git -b openEuler-24.03-LTS-SP1
+        clone_with_retry https://gitcode.com/src-openeuler/protobuf-c.git -b openEuler-24.03-LTS-SP1
     fi
 
     cd ${DOWNLOAD_PATH}/build

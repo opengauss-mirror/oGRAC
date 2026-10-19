@@ -65,6 +65,7 @@ function run_test() {
     part[0-9]*)       script_path="${CURRENT_CODE_PATH}/CI/script/Dev_euler_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "og_schedule_${pram}") || exit 1   ;;
     og_schedule*)     script_path="${CURRENT_CODE_PATH}/CI/script/Dev_euler_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "${pram}") || exit 1   ;;
     og_regress)       script_path="${CURRENT_CODE_PATH}/CI/script/Dev_euler_ograc_regress.sh"; og_schedule_list="og_schedule"   ;;
+    smoke)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_euler_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "og_schedule_smoke") || exit 1   ;;
      *)
        echo "invalid pram ${pram}"
        exit 1

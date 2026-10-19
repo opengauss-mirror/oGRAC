@@ -13,12 +13,19 @@
 docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
 ```
 
-> * **基础镜像拉取失败的处理**：`Dockerfile_ARM64` 的 `FROM openeuler/openeuler:22.03-lts-sp1` 默认从 Docker Hub 拉取。若所在网络 Docker Hub 不可达（报 `net/http request canceled` 等超时），且本机已有等价基础镜像（例如本地 `openeuler-22.03-lts-sp1`），可将其打标签为 Dockerfile 所需名称后直接复用缓存层构建：
-> ```shell
-> docker tag openeuler-22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1
-> docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
-> ```
-> 也可将 `Dockerfile_ARM64` 的 `FROM` 改为内网可达的镜像仓库地址后再构建。
+> * **基础镜像拉取失败的处理**：`Dockerfile_ARM64` 的 `FROM openeuler/openeuler:22.03-lts-sp1` 默认从 Docker Hub 拉取。若 Docker Hub 不可达（报 `net/http request canceled` 等超时），按以下优先级处理：
+>     1. 本机已有等价基础镜像：打标签后直接复用（构建会命中本地缓存层）：
+>        ```shell
+>        docker tag openeuler-22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1
+>        docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
+>        ```
+>     2. 本机无等价镜像：从国内镜像源拉取后打标签（实测可达）：
+>        ```shell
+>        docker pull hub.oepkgs.net/openeuler/openeuler:22.03-lts-sp1
+>        docker tag hub.oepkgs.net/openeuler/openeuler:22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1
+>        docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
+>        ```
+>     3. 也可将 `Dockerfile_ARM64` 的 `FROM` 改为内网可达的镜像仓库地址后再构建。
 
 ## 启动容器（推荐）
 

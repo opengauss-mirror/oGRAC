@@ -1,0 +1,24 @@
+test: og_json_1
+test: og_alter_session
+test: og_expression og_rownum
+test: og_decimal og_number
+test: og_withas
+test: og_having
+test: og_parser
+test: og_subqry_rewrite
+test: og_union_all og_union og_datatype
+test: og_index_cluster
+test: og_function
+test: og_alter_add_date_default
+test: og_index_unique
+test: og_sequence_restart
+test: og_colsep_long
+test: og_foreign_key
+test: bison_sys_param_all
+test: bison_parser_ddl
+test: og_create_view_with_read_only
+test: og_pl
+test: SQL/DML/insert/Opengauss_Function_DML_Insert_Case0004
+test: SQL/DML/update/Opengauss_Function_DML_Update_Case0002
+test: SQL/DML/delete/Opengauss_Function_DML_Delete_Case0003
+test: SQL/DML/transaction/Opengauss_Function_DML_Transaction_Case0012

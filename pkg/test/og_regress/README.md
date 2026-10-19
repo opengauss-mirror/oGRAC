@@ -36,12 +36,29 @@ Test Result: Success   # 样例执行成功
 
 ## 增减样例
 
-开发者通过往 `pkg/test/og_regress/og_schedule_part1` 中增减样例，例如：
+开发者通过往 `pkg/test/og_regress/og_schedule_part1` 中增减样例。一行多个用例表示并行执行，单个用例独占一行：
 
 ```
-test: og_union_all og_union og_datatype   # 多个样例并行执行
-test: og_having                          # 单次执行单个用例
+test: og_union_all og_union og_datatype
+test: og_having
 ```
+
+注意：schedule 文件**不支持任何注释**——`#` 开头或行尾的注释都会被解析器当作用例名导致回归失败，说明文字请写在这个 README 里，不要写进 og_schedule_* 文件。
+
+## Smoke 用例集
+
+冒烟用例集定义在 `og_schedule_smoke`，从全量回归（og_schedule_part1/part2）中精简而来，
+用于构建/部署后快速验证核心功能（类型、DDL/DML、查询、索引、约束、视图、PL/SQL、事务）。
+
+运行方式：
+
+```shell
+bash CI/build/script/run_ograc_test.sh smoke
+# 或在已部署环境上直接指定用例清单：
+bash CI/script/Dev_ograc_regress.sh --og_schedule_list og_schedule_smoke
+```
+
+新增冒烟用例时，只能从 og_schedule_part1/part2 中已有用例中挑选，保证预期结果（expected）齐备。
 
 ## 结果
 

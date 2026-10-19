@@ -64,6 +64,7 @@ function run_test() {
     part_all)         script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(discover_part_schedules) || exit 1   ;;
     part[0-9]*)       script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "og_schedule_${pram}") || exit 1   ;;
     og_schedule*)     script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "${pram}") || exit 1   ;;
+    smoke)            script_path="${CURRENT_CODE_PATH}/CI/script/Dev_ograc_regress.sh"; og_schedule_list=$(check_schedule_file "og_schedule_smoke") || exit 1   ;;
     Dev_Basic)        script_path="${CURRENT_CODE_PATH}/CI/script/Dev_Basic_test.sh"; og_schedule_list="og_schedule"   ;;
     cms)              script_path="${CURRENT_CODE_PATH}/CI/script/Dev_cms_test.sh"; og_schedule_list="og_schedule"   ;;
     cms_ut)           script_path="${CURRENT_CODE_PATH}/CI/script/Dev_cms_unit_test.sh"; og_schedule_list="og_schedule"   ;;
