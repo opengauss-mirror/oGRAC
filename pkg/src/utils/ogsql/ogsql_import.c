@@ -226,6 +226,54 @@ static en_imp_sql_type imp_sql_type(text_t *sql)
     return IMP_SQL_OTHER;
 }
 
+static bool32 imp_need_schema_context(importer_t *importer)
+{
+    return importer->imp_type == IMP_SCHEMA && importer->obj_list.count > 1;
+}
+
+static status_t imp_is_schema_independent_sql(text_t *sql, bool32 *independent)
+{
+    word_t word;
+    lex_t lex;
+
+    *independent = OG_FALSE;
+    imp_init_lex(&lex, sql);
+    OG_RETURN_IFERR(lex_fetch(&lex, &word));
+    if (word.type != WORD_TYPE_KEYWORD) {
+        return OG_SUCCESS;
+    }
+
+    // Exported user definitions and global objects can precede CURRENT_SCHEMA.
+    if (word.id == KEY_WORD_CREATE) {
+        OG_RETURN_IFERR(lex_fetch(&lex, &word));
+        *independent = imp_sql_type(sql) == IMP_SQL_CREATE_PROFILE ||
+            (word.type == WORD_TYPE_KEYWORD && (word.id == KEY_WORD_USER || word.id == KEY_WORD_ROLE ||
+                word.id == KEY_WORD_PROFILE || word.id == KEY_WORD_TABLESPACE || word.id == KEY_WORD_TENANT));
+        return OG_SUCCESS;
+    }
+    if (word.id == KEY_WORD_ALTER) {
+        OG_RETURN_IFERR(lex_fetch(&lex, &word));
+        *independent = word.type == WORD_TYPE_KEYWORD && (word.id == KEY_WORD_USER || word.id == KEY_WORD_SESSION ||
+            word.id == KEY_WORD_PROFILE || word.id == KEY_WORD_TABLESPACE);
+        return OG_SUCCESS;
+    }
+    if (word.id != KEY_WORD_GRANT) {
+        return OG_SUCCESS;
+    }
+
+    // System and role grants do not resolve a table in the current schema.
+    for (;;) {
+        OG_RETURN_IFERR(lex_fetch(&lex, &word));
+        if (word.type == WORD_TYPE_EOF) {
+            *independent = OG_TRUE;
+            return OG_SUCCESS;
+        }
+        if (word.type == WORD_TYPE_KEYWORD && word.id == KEY_WORD_ON) {
+            return OG_SUCCESS;
+        }
+    }
+}
+
 static void ogsql_display_import_usage(void)
 {
     ogsql_printf("The syntax of logic import is: \n\n");
@@ -1869,6 +1917,10 @@ static status_t imp_sql(importer_t *importer, text_t *sql, uint32 orig_buf_size)
     ret = ogconn_query(CONN, sql->str);
     if (ret != OG_SUCCESS) {
         imp_tmlog_conn_error(g_conn_info.conn);
+        // A failed target-schema switch must not fall back to the login schema, even with IGNORE=Y.
+        if (importer->imp_type == IMP_SCHEMA && imp_sql_type(sql) == IMP_SQL_ALTER_SESSION_SET_SCHEMA) {
+            return ret;
+        }
         return imp_try_ignore(importer, sql, ret);
     }
 
@@ -4729,6 +4781,34 @@ static status_t imp_get_curr_schema(text_t *sql, text_t *schema_buf)
     return OG_SUCCESS;
 }
 
+static status_t imp_prepare_schema_target(importer_t *importer, bool32 is_file, text_t *sql)
+{
+    bool32 independent = OG_FALSE;
+
+    if (importer->schemaMatch != SCHEMA_NONE) {
+        return OG_SUCCESS;
+    }
+    if (is_file) {
+        OG_RETSUC_IFTRUE(!(importer->content & OG_DATA_ONLY));
+    } else {
+        OG_RETSUC_IFTRUE(!is_need_exec_sql(sql, importer));
+        OG_RETURN_IFERR(imp_is_schema_independent_sql(sql, &independent));
+        OG_RETSUC_IFTRUE(independent);
+    }
+
+    if (imp_need_schema_context(importer)) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "schema context is required when importing multiple schemas");
+        return OG_ERROR;
+    }
+
+    if (!is_file && !importer->show) {
+        // Defer the switch so CREATE_USER can create the target schema first.
+        OG_RETURN_IFERR(imp_change_curr_schema(&g_conn_info, importer->singleSchema));
+        importer->schemaMatch = SCHEMA_MATCH;
+    }
+    return OG_SUCCESS;
+}
+
 static status_t imp_schema(importer_t *importer, text_t *sql)
 {
     list_t *schema_list = &importer->obj_list;
@@ -4741,6 +4821,7 @@ static status_t imp_schema(importer_t *importer, text_t *sql)
     OG_RETURN_IFERR(imp_schema_verify_usrname(importer, sql, schema_list));
     OG_RETSUC_IFTRUE(importer->schemaMatch == SCHEMA_NOT_MATCH);
     OG_RETSUC_IFTRUE(importer->schemaNum > schema_list->count);
+    OG_RETURN_IFERR(imp_prepare_schema_target(importer, is_file, sql));
 
     OG_RETURN_IFERR(imp_get_curr_schema(sql, &schema));
 
@@ -4841,13 +4922,6 @@ static status_t ogsql_imp_read_filehead(importer_t *importer, import_bin_t *imp_
     // 1. alter session nls format, 2. create role
     OG_RETURN_IFERR(imp_get_uint32_from_buffer(imp_bin, param_size, importer->impfp));
     OG_RETURN_IFERR(imp_get_block_from_buffer(importer, imp_bin, *param_size, importer->impfp));
-    sql_txt.str = importer->rawBuf;
-    sql_txt.len = (uint32)importer->rawBufLen;
-
-    if (importer->content & OG_METADATA_ONLY) {
-        // set metadata, need to execute
-        return ogsql_bin_import_one_sql(importer, &sql_txt, OG_FALSE);
-    }
     return OG_SUCCESS;
 }
 
@@ -5756,8 +5830,14 @@ static int ogsql_import_init(importer_t *importer)
     MEMS_RETURN_IFERR(memset_s(importer->rawBuf, RAW_BUF_SIZE + 1, 0, RAW_BUF_SIZE + 1));
 
     /* init schema name */
-    MEMS_RETURN_IFERR(strncpy_s(importer->singleSchema, sizeof(importer->singleSchema), USER_NAME,
-        (uint32)strlen(USER_NAME)));
+    if (importer->imp_type == IMP_SCHEMA && importer->obj_list.count == 1) {
+        char *schema = (char *)cm_list_get(&importer->obj_list, 0);
+        MEMS_RETURN_IFERR(strncpy_s(importer->singleSchema, sizeof(importer->singleSchema), schema,
+            (uint32)strlen(schema)));
+    } else {
+        MEMS_RETURN_IFERR(strncpy_s(importer->singleSchema, sizeof(importer->singleSchema), USER_NAME,
+            (uint32)strlen(USER_NAME)));
+    }
 
     /* prepare bin object and bin buffer for BIN dump file. */
     if (importer->file_type == FT_BIN) {
@@ -6117,6 +6197,11 @@ static int ogsql_start_importing(importer_t *importer)
         status = OG_ERROR;
     }
 
+    if (status == OG_SUCCESS && imp_need_schema_context(importer) && importer->schemaMatch == SCHEMA_NONE) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "schema context is required when importing multiple schemas");
+        status = OG_ERROR;
+    }
+
     CM_FREE_PTR(file_block);
     return status;
 }
@@ -6130,11 +6215,27 @@ static int ogsql_start_bin_importing(importer_t *importer)
 
     // process schema
     OG_RETURN_IFERR(imp_get_uint32_from_buffer(imp_bin, &imp_bin->schemaNum, importer->impfp));
+    if (imp_bin->schemaNum == 0 && imp_need_schema_context(importer)) {
+        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "schema metadata is required when importing multiple schemas");
+        return OG_ERROR;
+    }
+
+    // Validate the target before executing the session/global-object SQL retained in rawBuf.
+    if (importer->content & OG_METADATA_ONLY) {
+        text_t sql_txt = { importer->rawBuf, (uint32)importer->rawBufLen };
+        OG_RETURN_IFERR(ogsql_bin_import_one_sql(importer, &sql_txt, OG_FALSE));
+    }
+
     if (imp_bin->schemaNum == 0) {
-        text_t schema_buf = { importer->singleSchema, OG_MAX_NAME_LEN + 1 };
-        if (ogsql_get_curr_schema(&schema_buf) != OG_SUCCESS) {
-            OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "failed to get current schema!");
-            return OG_ERROR;
+        if (importer->imp_type != IMP_SCHEMA || importer->obj_list.count != 1) {
+            text_t schema_buf = { importer->singleSchema, OG_MAX_NAME_LEN + 1 };
+            if (ogsql_get_curr_schema(&schema_buf) != OG_SUCCESS) {
+                OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "failed to get current schema!");
+                return OG_ERROR;
+            }
+        } else {
+            // Serial DDL blocks and DML workers must use the same target schema.
+            OG_RETURN_IFERR(imp_change_curr_schema(&g_conn_info, importer->singleSchema));
         }
         OG_RETURN_IFERR(imp_one_schema_bin(importer, imp_bin));
     } else {
