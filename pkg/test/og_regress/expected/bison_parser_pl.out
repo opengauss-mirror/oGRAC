@@ -3505,6 +3505,41 @@ SQL> drop function if exists bison_pl_for_missing_loop;
 Succeed.
 
 SQL>
+SQL> drop function if exists bison_pl_clob_piece;
+
+Succeed.
+
+SQL> create or replace function bison_pl_clob_piece return clob as
+  2 begin
+  3     return rpad('x', 8000, 'x') || rpad('x', 8000, 'x') || rpad('x', 4000, 'x');
+  4 end;
+  5 /
+
+Succeed.
+
+SQL> select case when data_type = 'CLOB' then 1 else 0 end as clob_type_ok
+  2 from db_arguments where owner = user and object_name = 'BISON_PL_CLOB_PIECE' and position = 0;
+
+CLOB_TYPE_OK
+------------
+1
+
+1 rows fetched.
+
+SQL> select case when length(payload) = 40004 and substr(payload, 40001, 4) = 'tail' then 1 else 0 end as clob_data_ok
+  2 from (select bison_pl_clob_piece() || bison_pl_clob_piece() || 'tail' as payload from sys_dummy);
+
+CLOB_DATA_OK
+------------
+1
+
+1 rows fetched.
+
+SQL> drop function if exists bison_pl_clob_piece;
+
+Succeed.
+
+SQL>
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.
