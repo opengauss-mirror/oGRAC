@@ -61,6 +61,20 @@ do {                                                                            
 
 #define parser_errposition(pos)  scanner_errposition(pos, yyscanner)
 
+#define BISON_JSON_COLUMN_PATH_CHECK(attr, path, column_start)                               \
+do {                                                                                       \
+    const char *error = (attr).func_name == NULL ? "json expected" : (path).error;             \
+    lex_location_t target = (attr).func_name == NULL ? (path).keyword_loc : (path).loc;       \
+    if ((attr).func_name == NULL && (attr).wrapper != JSON_FUNC_ATT_INVALID) {               \
+        error = "unsupported json table column type";                                      \
+        target = (attr).start;                                                              \
+    }                                                                                      \
+    if (error != NULL) {                                                                    \
+        lex_location_t begin = (column_start).offset < 0 ? (path).keyword_loc : (column_start); \
+        BISON_ABORT_IFERR(bison_json_column_error(yyscanner, begin, (attr).json_end, target, error)); \
+    }                                                                                      \
+} while (0)
+
 static digitext_t g_pos_bigint_ceil = { "9223372036854775807",  19 };
 
 typedef enum en_interval_unit_order {
@@ -97,6 +111,8 @@ static void fix_type_for_compare_expr_list(expr_tree_t *expr);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
+static status_t bison_json_column_error(core_yyscan_t yyscanner, lex_location_t start, int json_end,
+    lex_location_t target, const char *message);
 static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node);
 static expr_tree_t *bison_make_pl_cursor_attr_or_mod_expr(core_yyscan_t yyscanner, expr_tree_t *left,
     expr_tree_t *right, source_location_t loc);
@@ -232,6 +248,18 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
     rs_column_t         *rs_column;
     json_func_att_id_t  json_func_att_id;
     json_func_attr_t    json_func_attr;
+    struct {
+        char *func_name;
+        json_func_att_id_t wrapper;
+        lex_location_t start;
+        int json_end;
+    } json_table_column_attr;
+    struct {
+        char *text;
+        const char *error;
+        lex_location_t keyword_loc;
+        lex_location_t loc;
+    } json_table_column_path;
     interval_info_t     interval_info;
     json_array_returning_attr returning_attr;
     limit_item_t        *limit_item;
@@ -342,6 +370,9 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %type <rs_column> json_column
 %type <json_func_att_id> format_json_attr json_on_null json_array_wrapper json_on_error json_on_empty json_on_empty_null_or_error
 %type <json_func_attr> json_attr_all
+%type <json_table_column_attr> json_table_column_error
+%type <json_table_column_path> json_table_column_path
+%type <res> json_table_non_string_path
 %type <returning_attr> json_returning
 %type <withas_factor> common_table_expr cte_head
 %type <expr_alias> pivot_in_item_list pivot_in_item pivot_in_list_element
@@ -396,7 +427,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
 %type <str> ColId type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
-            opt_separator substr_func extract_arg alias_clause json_table_column_error ColLabel UserId database_name plain_database_name user_password
+            opt_separator substr_func extract_arg alias_clause ColLabel UserId database_name plain_database_name user_password
             altsession_set_key alter_system_param_name alter_session_extra_token
             case_invalid_word
 
@@ -4376,16 +4407,75 @@ format_json_attr:
 json_table_column_error:
             EXISTS
             {
-                $$ = "JSON_EXISTS";
+                $$.func_name = "JSON_EXISTS";
+                $$.wrapper = JSON_FUNC_ATT_INVALID;
+                $$.start = @1;
+                $$.json_end = -1;
             }
-            | format_json format_json_attr
+            | FORMAT JSON json_array_wrapper
             {
-                $$ = "JSON_QUERY";
+                $$.func_name = "JSON_QUERY";
+                $$.wrapper = $3;
+                $$.start = @1;
+                $$.json_end = @2.offset + sizeof("JSON") - 1;
+            }
+            | FORMAT
+            {
+                $$.func_name = NULL;
+                $$.wrapper = JSON_FUNC_ATT_INVALID;
+                $$.start = @1;
+                $$.json_end = -1;
+            }
+            | format_json_attr
+            {
+                /* A wrapper without FORMAT JSON is not a JSON_TABLE column type. */
+                $$.func_name = NULL;
+                $$.wrapper = $1;
+                $$.start = @1;
+                $$.json_end = -1;
             }
             | /* EMPTY */
             {
-                $$ = "JSON_VALUE";
+                $$.func_name = "JSON_VALUE";
+                $$.wrapper = JSON_FUNC_ATT_INVALID;
+                $$.start = @0;
+                $$.start.offset = -1;
+                $$.json_end = -1;
             }
+        ;
+
+json_table_column_path:
+            PATH SCONST
+            {
+                $$.text = $2;
+                $$.error = $2[0] == '\0' ? "json table column path cannot be empty" : NULL;
+                $$.keyword_loc = @1;
+                $$.loc = @2;
+            }
+            | PATH json_table_non_string_path
+            {
+                $$.text = NULL;
+                $$.error = "json path expression must be string";
+                $$.keyword_loc = @1;
+                $$.loc = @2;
+            }
+            | SCONST
+            {
+                $$.text = $1;
+                $$.error = "path expected";
+                $$.keyword_loc = @1;
+                $$.loc = @1;
+            }
+        ;
+
+json_table_non_string_path:
+            ICONST                                   { $$ = NULL; }
+            | I64CONST                               { $$ = NULL; }
+            | FCONST                                 { $$ = NULL; }
+            | NULL_P                                 { $$ = NULL; }
+            | TRUE_P                                 { $$ = NULL; }
+            | FALSE_P                                { $$ = NULL; }
+            | IDENT                                  { $$ = NULL; }
         ;
 
 json_column:
@@ -4428,8 +4518,9 @@ json_column:
 
                 $$ = new_col;
             }
-            | insert_column_item json_table_column_error PATH SCONST json_on_error
+            | insert_column_item json_table_column_error json_table_column_path json_on_error
             {
+                BISON_JSON_COLUMN_PATH_CHECK($2, $3, $2.start);
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
@@ -4461,10 +4552,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                text_t func_name = { $2, strlen($2) };
+                text_t func_name = { $2.func_name, strlen($2.func_name) };
                 if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
+                func_node->json_func_attr.ids |= $2.wrapper;
                 func_node->json_func_attr.return_size = JSON_FUNC_LEN_DEFAULT;
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
 
@@ -4489,21 +4581,20 @@ json_column:
                 path_node->type = EXPR_NODE_CONST;
                 path_node->value.type = OG_TYPE_STRING;
 
-                char *path = $4;
+                char *path = $3.text;
                 size_t len = strlen(path);
                 if (len > OG_SHARED_PAGE_SIZE) {
                     parser_yyerror("current json table column path is longer than the maximum 16K");
-                } else if (len == 0) {
-                    parser_yyerror("json table column path cannot be empty");
                 }
                 path_node->value.v_text.str = path;
                 path_node->value.v_text.len = len;
 
-                func_node->json_func_attr.ids |= $5;
+                func_node->json_func_attr.ids |= $4;
                 $$ = new_col;
             }
-            | insert_column_item CLOB json_table_column_error PATH SCONST json_on_error
+            | insert_column_item CLOB json_table_column_error json_table_column_path json_on_error
             {
+                BISON_JSON_COLUMN_PATH_CHECK($3, $4, @2);
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
@@ -4535,10 +4626,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                text_t func_name = { $3, strlen($3) };
+                text_t func_name = { $3.func_name, strlen($3.func_name) };
                 if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
+                func_node->json_func_attr.ids |= $3.wrapper;
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_CLOB;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
@@ -4561,21 +4653,20 @@ json_column:
                 path_node->type = EXPR_NODE_CONST;
                 path_node->value.type = OG_TYPE_STRING;
 
-                char *path = $5;
+                char *path = $4.text;
                 size_t len = strlen(path);
                 if (len > OG_SHARED_PAGE_SIZE) {
                     parser_yyerror("current json table column path is longer than the maximum 16K");
-                } else if (len == 0) {
-                    parser_yyerror("json table column path cannot be empty");
                 }
                 path_node->value.v_text.str = path;
                 path_node->value.v_text.len = len;
 
-                func_node->json_func_attr.ids |= $6;
+                func_node->json_func_attr.ids |= $5;
                 $$ = new_col;
             }
-            | insert_column_item JSONB json_table_column_error PATH SCONST json_on_error
+            | insert_column_item JSONB json_table_column_error json_table_column_path json_on_error
             {
+                BISON_JSON_COLUMN_PATH_CHECK($3, $4, @2);
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
@@ -4607,10 +4698,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                text_t func_name = { $3, strlen($3) };
+                text_t func_name = { $3.func_name, strlen($3.func_name) };
                 if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
+                func_node->json_func_attr.ids |= $3.wrapper;
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_JSONB;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
@@ -4633,21 +4725,20 @@ json_column:
                 path_node->type = EXPR_NODE_CONST;
                 path_node->value.type = OG_TYPE_STRING;
 
-                char *path = $5;
+                char *path = $4.text;
                 size_t len = strlen(path);
                 if (len > OG_SHARED_PAGE_SIZE) {
                     parser_yyerror("current json table column path is longer than the maximum 16K");
-                } else if (len == 0) {
-                    parser_yyerror("json table column path cannot be empty");
                 }
                 path_node->value.v_text.str = path;
                 path_node->value.v_text.len = len;
 
-                func_node->json_func_attr.ids |= $6;
+                func_node->json_func_attr.ids |= $5;
                 $$ = new_col;
             }
-            | insert_column_item VARCHAR2 json_table_column_error PATH SCONST json_on_error
+            | insert_column_item VARCHAR2 json_table_column_error json_table_column_path json_on_error
             {
+                BISON_JSON_COLUMN_PATH_CHECK($3, $4, @2);
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
@@ -4679,10 +4770,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                text_t func_name = { $3, strlen($3) };
+                text_t func_name = { $3.func_name, strlen($3.func_name) };
                 if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
+                func_node->json_func_attr.ids |= $3.wrapper;
                 func_node->json_func_attr.return_size = JSON_FUNC_LEN_DEFAULT;
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
 
@@ -4706,21 +4798,20 @@ json_column:
                 path_node->type = EXPR_NODE_CONST;
                 path_node->value.type = OG_TYPE_STRING;
 
-                char *path = $5;
+                char *path = $4.text;
                 size_t len = strlen(path);
                 if (len > OG_SHARED_PAGE_SIZE) {
                     parser_yyerror("current json table column path is longer than the maximum 16K");
-                } else if (len == 0) {
-                    parser_yyerror("json table column path cannot be empty");
                 }
                 path_node->value.v_text.str = path;
                 path_node->value.v_text.len = len;
 
-                func_node->json_func_attr.ids |= $6;
+                func_node->json_func_attr.ids |= $5;
                 $$ = new_col;
             }
-            | insert_column_item VARCHAR2 '(' ICONST ')' json_table_column_error PATH SCONST json_on_error
+            | insert_column_item VARCHAR2 '(' ICONST ')' json_table_column_error json_table_column_path json_on_error
             {
+                BISON_JSON_COLUMN_PATH_CHECK($6, $7, @2);
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
@@ -4752,10 +4843,11 @@ json_column:
                 new_col->expr->root->typmod.is_array = OG_FALSE;
 
                 expr_node_t *func_node = new_col->expr->root;
-                text_t func_name = { $6, strlen($6) };
+                text_t func_name = { $6.func_name, strlen($6.func_name) };
                 if (sql_init_json_table_func_node_bison(stmt, func_node, &func_name) != OG_SUCCESS) {
                     parser_abort_or_yyerror("init json table function failed");
                 }
+                func_node->json_func_attr.ids |= $6.wrapper;
                 if ($4 <= 0 || $4 > JSON_MAX_STRING_LEN) {
                     parser_yyerror("specified length invalid for its datatype");
                 }
@@ -4782,17 +4874,15 @@ json_column:
                 path_node->type = EXPR_NODE_CONST;
                 path_node->value.type = OG_TYPE_STRING;
 
-                char *path = $8;
+                char *path = $7.text;
                 size_t len = strlen(path);
                 if (len > OG_SHARED_PAGE_SIZE) {
                     parser_yyerror("current json table column path is longer than the maximum 16K");
-                } else if (len == 0) {
-                    parser_yyerror("json table column path cannot be empty");
                 }
                 path_node->value.v_text.str = path;
                 path_node->value.v_text.len = len;
 
-                func_node->json_func_attr.ids |= $9;
+                func_node->json_func_attr.ids |= $8;
                 $$ = new_col;
             }
         ;
@@ -17926,6 +18016,67 @@ static void
 base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner, const char *msg)
 {
     scanner_yyerror(msg, yyscanner);
+}
+
+static void bison_json_column_advance_loc(const char *begin, const char *end, source_location_t *loc)
+{
+    for (const char *cursor = begin; cursor < end; cursor++) {
+        if (*cursor == '\n') {
+            loc->line++;
+            loc->column = 1;
+        } else {
+            loc->column++;
+        }
+    }
+}
+
+static status_t bison_json_column_error(core_yyscan_t yyscanner, lex_location_t start, int json_end,
+    lex_location_t target, const char *message)
+{
+    core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    if (start.offset < 0 || target.offset < start.offset || (size_t)target.offset >= extra->scanbuflen) {
+        OG_SRC_THROW_ERROR(target.loc, ERR_SQL_SYNTAX_ERROR, message);
+        return OG_ERROR;
+    }
+
+    /*
+     * Native JSON column attributes consume text without advancing its location.
+     * Reproduce that location only on errors, using the same text-only matchers.
+     * Include the first byte of the failing token so trailing whitespace is retained.
+     */
+    text_t prefix;
+    prefix.len = (uint32)(target.offset - start.offset) + 1;
+    OG_RETURN_IFERR(sql_alloc_mem(extra->stmt->context, prefix.len, (void **)&prefix.str));
+    MEMS_RETURN_IFERR(memcpy_s(prefix.str, prefix.len, extra->scanbuf + start.offset, prefix.len));
+    cm_text_upper(&prefix);
+    text_t remaining = prefix;
+    json_func_attr_t attr;
+    json_func_att_init(&attr);
+    attr.ignore_returning = OG_TRUE;
+    cm_trim_text(&remaining);
+    OG_RETURN_IFERR(json_func_att_match_returning(&remaining, &attr));
+
+    source_location_t loc = start.loc;
+    if (json_end >= start.offset && json_end <= target.offset) {
+        char *json_end_ptr = prefix.str + (json_end - start.offset);
+        bison_json_column_advance_loc(remaining.str, json_end_ptr, &loc);
+        remaining.str = json_end_ptr;
+        remaining.len = prefix.len - (uint32)(json_end_ptr - prefix.str);
+        cm_trim_text(&remaining);
+        OG_RETURN_IFERR(json_func_att_match_wrapper(&remaining, &attr));
+        /*
+         * If the text matcher rejects a WITH/WITHOUT clause, native reports the
+         * missing PATH at that clause, before reaching the later string literal.
+         */
+        if (strcmp(message, "path expected") == 0 && !JSON_FUNC_ATT_HAS_WRAPPER(attr.ids) &&
+            remaining.len >= sizeof("WITH") - 1 && strncmp(remaining.str, "WITH", sizeof("WITH") - 1) == 0) {
+            OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, message);
+            return OG_ERROR;
+        }
+    }
+    bison_json_column_advance_loc(remaining.str, prefix.str + prefix.len - 1, &loc);
+    OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, message);
+    return OG_ERROR;
 }
 
 /*$$exclude in dialect begin*/

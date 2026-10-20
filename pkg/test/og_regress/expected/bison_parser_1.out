@@ -872,6 +872,122 @@ A                                                                NAME           
 1 rows fetched.
 
 SQL> 
+SQL> -- JSON_TABLE FORMAT JSON accepts omitted wrappers and preserves explicit wrappers.
+SQL> drop table if exists bison_jt_format_src purge;
+
+Succeed.
+
+SQL> create table bison_jt_format_src (document_text clob, document_bin jsonb);
+
+Succeed.
+
+SQL> insert into bison_jt_format_src values (
+  2     '{"object":{"n":1},"number":7}',
+  3     '{"object":{"n":1},"number":7}'
+  4 );
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL>
+SQL> select j.* from bison_jt_format_src s,
+  2     json_table(s.document_text, '$' columns(
+  3         implicit_doc format json path '$.object',
+  4         clob_doc clob format json path '$.object',
+  5         varchar_doc varchar2 format json path '$.object',
+  6         sized_doc varchar2(40) format json path '$.object'
+  7     )) j;
+
+IMPLICIT_DOC                                                     CLOB_DOC                                                         VARCHAR_DOC                                                      SIZED_DOC
+---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ----------------------------------------------------------------
+{"n":1}                                                          {"n":1}                                                          {"n":1}                                                          {"n":1}
+
+1 rows fetched.
+
+SQL>
+SQL> select j.* from bison_jt_format_src s,
+  2     jsonb_table(s.document_bin, '$' columns(
+  3         object_value varchar2(40) format json path '$.object'
+  4     )) j;
+
+OBJECT_VALUE
+----------------------------------------------------------------
+{"n":1}
+
+1 rows fetched.
+
+SQL>
+SQL> select j.* from bison_jt_format_src s,
+  2     json_table(s.document_text, '$' null on error columns(
+  3         number_value varchar2(10) path '$.number',
+  4         object_value varchar2(40) format json path '$.object',
+  5         exists_value varchar2(5) exists path '$.number',
+  6         row_position for ordinality
+  7     )) j;
+
+NUMBER_VALUE                                                 OBJECT_VALUE                                                     EXISTS_VALUE                   ROW_POSITION
+------------------------------------------------------------ ---------------------------------------------------------------- ------------------------------ --------------------
+7                                                            {"n":1}                                                          TRUE                           1
+
+1 rows fetched.
+
+SQL>
+SQL> select j.* from bison_jt_format_src s,
+  2     json_table(s.document_text, '$' columns(
+  3         object_without varchar2(40) format json without wrapper path '$.object',
+  4         object_with varchar2(40) format json with array wrapper path '$.object',
+  5         object_conditional varchar2(40) format json with conditional array wrapper path '$.object',
+  6         scalar_without varchar2(40) format json without wrapper path '$.number',
+  7         scalar_with varchar2(40) format json with array wrapper path '$.number',
+  8         scalar_conditional varchar2(40) format json with conditional array wrapper path '$.number'
+  9     )) j;
+
+OBJECT_WITHOUT                                                   OBJECT_WITH                                                      OBJECT_CONDITIONAL                                               SCALAR_WITHOUT                                                   SCALAR_WITH                                                      SCALAR_CONDITIONAL
+---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ---------------------------------------------------------------- ----------------------------------------------------------------
+{"n":1}                                                          [{"n":1}]                                                        {"n":1}                                                                                                                           [7]                                                              [7]
+
+1 rows fetched.
+
+SQL>
+SQL> -- JSON_TABLE wrapper clauses require FORMAT JSON.
+SQL> select * from json_table('{}', '$' columns(doc varchar2(20) with wrapper path '$')); --error
+
+OG-00601, [1:49]Sql syntax error: unsupported json table column type
+SQL> select * from json_table('{}', '$' columns(doc varchar2(20) without wrapper path '$')); --error
+
+OG-00601, [1:49]Sql syntax error: unsupported json table column type
+SQL> select * from json_table('{}', '$' columns(doc varchar2(20) without array wrapper path '$')); --error
+
+OG-00601, [1:49]Sql syntax error: unsupported json table column type
+SQL>
+SQL> -- Keep native diagnostic text and locations for malformed column clauses.
+SQL> SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT JSON PATH ''));
+
+OG-00601, [1:74]Sql syntax error: json table column path cannot be empty
+SQL> SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT JSON PATH 1));
+
+OG-00601, [1:74]Sql syntax error: json path expression must be string
+SQL> SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT PATH '$.o'));
+
+OG-00601, [1:65]Sql syntax error: json expected
+SQL> SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT JSON WITH WRAPPER '$.o'));
+
+OG-00601, [1:69]Sql syntax error: path expected
+SQL> SELECT * FROM JSON_TABLE('{"o":{}}', '$' COLUMNS(
+  2     "Quoted Name" VARCHAR2(40) FORMAT JSON
+  3     WITH CONDITIONAL ARRAY WRAPPER
+  4     '$.o'));
+
+OG-00601, [2:27]Sql syntax error: path expected
+SQL>
+SQL> drop table bison_jt_format_src purge;
+
+Succeed.
+
+SQL>
 SQL> drop table bison_t1;
 
 Succeed.

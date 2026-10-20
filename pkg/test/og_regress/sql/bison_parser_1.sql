@@ -268,6 +268,63 @@ create table clob_bison_t1 (a clob);
 insert into clob_bison_t1 values ('{"name":"Messi", "age": 10}');
 select * from clob_bison_t1, json_table (clob_bison_t1.a, '$' default '1' on error COLUMNS(name varchar2 PATH '$.name', age varchar2 PATH '$.age'));
 
+-- JSON_TABLE FORMAT JSON accepts omitted wrappers and preserves explicit wrappers.
+drop table if exists bison_jt_format_src purge;
+create table bison_jt_format_src (document_text clob, document_bin jsonb);
+insert into bison_jt_format_src values (
+    '{"object":{"n":1},"number":7}',
+    '{"object":{"n":1},"number":7}'
+);
+commit;
+
+select j.* from bison_jt_format_src s,
+    json_table(s.document_text, '$' columns(
+        implicit_doc format json path '$.object',
+        clob_doc clob format json path '$.object',
+        varchar_doc varchar2 format json path '$.object',
+        sized_doc varchar2(40) format json path '$.object'
+    )) j;
+
+select j.* from bison_jt_format_src s,
+    jsonb_table(s.document_bin, '$' columns(
+        object_value varchar2(40) format json path '$.object'
+    )) j;
+
+select j.* from bison_jt_format_src s,
+    json_table(s.document_text, '$' null on error columns(
+        number_value varchar2(10) path '$.number',
+        object_value varchar2(40) format json path '$.object',
+        exists_value varchar2(5) exists path '$.number',
+        row_position for ordinality
+    )) j;
+
+select j.* from bison_jt_format_src s,
+    json_table(s.document_text, '$' columns(
+        object_without varchar2(40) format json without wrapper path '$.object',
+        object_with varchar2(40) format json with array wrapper path '$.object',
+        object_conditional varchar2(40) format json with conditional array wrapper path '$.object',
+        scalar_without varchar2(40) format json without wrapper path '$.number',
+        scalar_with varchar2(40) format json with array wrapper path '$.number',
+        scalar_conditional varchar2(40) format json with conditional array wrapper path '$.number'
+    )) j;
+
+-- JSON_TABLE wrapper clauses require FORMAT JSON.
+select * from json_table('{}', '$' columns(doc varchar2(20) with wrapper path '$')); --error
+select * from json_table('{}', '$' columns(doc varchar2(20) without wrapper path '$')); --error
+select * from json_table('{}', '$' columns(doc varchar2(20) without array wrapper path '$')); --error
+
+-- Keep native diagnostic text and locations for malformed column clauses.
+SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT JSON PATH ''));
+SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT JSON PATH 1));
+SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT PATH '$.o'));
+SELECT * FROM JSON_TABLE('{"o":{"n":1}}', '$' COLUMNS(v VARCHAR2(40) FORMAT JSON WITH WRAPPER '$.o'));
+SELECT * FROM JSON_TABLE('{"o":{}}', '$' COLUMNS(
+    "Quoted Name" VARCHAR2(40) FORMAT JSON
+    WITH CONDITIONAL ARRAY WRAPPER
+    '$.o'));
+
+drop table bison_jt_format_src purge;
+
 drop table bison_t1;
 create table bison_t1 (a int, b int);
 insert into bison_t1 values (1,1), (2,2);
