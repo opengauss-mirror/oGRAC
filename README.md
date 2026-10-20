@@ -34,6 +34,25 @@ oGRAC主要由五个主要部分组成：
 |library | 编译oGRAC需要的一些三方库头文件。|
 |pkg | oGRAC源代码目录，子目录代表不同的功能模块。|
 
+## 自动化验证速览（AI/CI）
+
+本仓库从零到完成验证只需三条命令，预期总耗时 25 分钟以内：
+
+```shell
+# 1. 构建开发镜像（基础镜像不可达时见 docker/readme.md 的镜像源说明），约 2 分钟
+docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
+docker run -d --privileged --network=host --shm-size=16g --name ograc-dev \
+  -v "$(pwd)":/home/regress/ogracKernel -v "$(dirname "$(pwd)")/ograc_data":/home/regress/ograc_data ograc-dev
+
+# 2. 容器内一体化构建（主程序+安装包+og_regress），约 6-7 分钟
+docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel/build && sh Makefile.sh make_ograc_pkg_test'
+
+# 3. 仓库根目录跑 smoke 精简用例集（自动 安装→回归→卸载），约 2 分钟
+docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel && chmod -R 777 . && bash CI/build/script/run_ograc_test.sh smoke'
+```
+
+前置：`git submodule update --init --depth 1 open_source`（构建依赖）。详细步骤与失败清理见下文「单节点编译部署指南」和「单元测试」章节。
+
 ## 单节点编译部署指南
 
 请注意，单节点模式仅用于个人开发验证，不适用于生产环境。单节点不包含 DMS/DSS 等双节点组件能力，不支持多写，也无法平滑扩展为双节点集群。
@@ -134,13 +153,13 @@ oGRAC主要由五个主要部分组成：
     cd "${CODE_HOME_PATH}"
     ```
 
-    然后按「单元测试」章节执行 `do_all_test.sh`（不要加 `need_compile`）。
+    然后按「单元测试」章节执行 smoke 精简用例集完成验证（不要加 `need_compile`）。
 
-    > * **一体化验证（编译+单元测试+样例部署共用一次构建，推荐）**：若同时需要构建验证、单元测试与样例部署，可直接在 `build` 目录执行 `sh Makefile.sh make_ograc_pkg_test`（Debug+test 变体）。该命令一次性产出主程序 `ogracd/cms/ogsql`、安装包 `oGRAC-DATABASE-LINUX-64bit`（供 `local_install.sh install` 使用）以及回归工具 `og_regress`（供 `do_all_test.sh` 使用），无需再单独 `make -sj 8`，也无需为单元测试额外编译一次 release。执行后在仓库根目录先 `chmod -R 777 .`（构建会重置产物权限，必须在构建后执行），再运行 `bash pkg/test/og_regress/do_all_test.sh`——它自动完成安装、SQL 用例验证与卸载，构建验证、单元测试、样例验证一次跑完，无需先执行「安装流程」。
+    > * **一体化验证（编译+单元测试+样例部署共用一次构建，推荐）**：若同时需要构建验证、单元测试与样例部署，可直接在 `build` 目录执行 `sh Makefile.sh make_ograc_pkg_test`（Debug+test 变体）。该命令一次性产出主程序 `ogracd/cms/ogsql`、安装包 `oGRAC-DATABASE-LINUX-64bit`（供 `local_install.sh install` 使用）以及回归工具 `og_regress`（供 smoke 测试使用），无需再单独 `make -sj 8`，也无需为单元测试额外编译一次 release。执行后在仓库根目录先 `chmod -R 777 .`（构建会重置产物权限，必须在构建后执行），再运行 `bash CI/build/script/run_ograc_test.sh smoke`——它自动完成安装、SQL 用例验证与卸载，构建验证、单元测试、样例验证一次跑完，无需先执行「安装流程」。
 
 6. 安装流程
 
-    > **本节面向人工部署使用，不属于自动化验证流程。** 自动化验证**不要执行本节**：数据库安装、SQL 功能验证、卸载清理的完整闭环已由「单元测试」章节的 `do_all_test.sh` 完成（其内部自动执行 安装 -> 回归用例 -> 卸载），执行结束后环境已还原。若在此基础上重复执行本节安装，会因残留数据/环境变量导致失败，需先按「测试后清理」章节清理。
+    > **本节面向人工部署使用，不属于自动化验证流程。** 自动化验证**不要执行本节**：数据库安装、SQL 功能验证、卸载清理的完整闭环已由「单元测试」章节的 smoke 测试完成（其内部自动执行 安装 -> 回归用例 -> 卸载），执行结束后环境已还原。若在此基础上重复执行本节安装，会因残留数据/环境变量导致失败，需先按「测试后清理」章节清理。
 
     （1）执行安装脚本
 
@@ -209,7 +228,7 @@ oGRAC主要由五个主要部分组成：
 
 ## 单元测试
 
-oGRAC 使用 SQL 回归测试验证基础功能，测试用例位于 `pkg/test/og_regress/`，如下操作步骤以单节点进行测试为例。
+oGRAC 使用 SQL 回归测试验证基础功能，测试用例位于 `pkg/test/og_regress/`，如下操作步骤以单节点进行测试为例。**常规验证只跑 smoke 精简用例集**（28 个用例，分钟级完成，覆盖数据类型、DDL/DML、查询、索引、约束、视图、序列、PL/SQL、JSON、事务等核心功能）；全量回归（201 个用例，入口 `pkg/test/og_regress/do_all_test.sh`）耗时长，不属于常规验证流程，本章节不作说明，如需了解请见 `pkg/test/og_regress/README.md`。
 
 ### 1. 环境准备
 
@@ -220,54 +239,23 @@ oGRAC 使用 SQL 回归测试验证基础功能，测试用例位于 `pkg/test/o
 - 内存 ≥ 16 GB，磁盘可用空间 ≥ 50 GB
 - 系统语言环境为英文（否则可能影响数据库启动）
 
-### 2. 已编译时直接跑测试（推荐）
+### 2. 执行测试：smoke 精简用例集
 
-若已执行过 `sh local_install.sh compile`，并已按「单节点编译部署指南」在 `build` 目录编好 `og_regress`，回到仓库根目录直接跑测试，**不要**再带 `need_compile`，否则会清理产物并整仓重编。
-
-建议在**构建完成后**给代码仓赋 777 权限，以免运行用户写不了测试目录（注意必须在构建之后执行——构建会重新生成 `output/` 产物并覆盖之前手动设置的权限；安装包内脚本已放开他人读执行权限，此步是写测试目录的保险，不再用于绕过权限错误）：
+前置条件：已执行过 `sh local_install.sh compile`，并已按「单节点编译部署指南」在 `build` 目录编好 `og_regress`（`make -sj 8`），当前用户为 root。满足后回到仓库根目录执行：
 
 ```shell
 # 仓库根目录。容器内为 /home/regress/ogracKernel
 chmod -R 777 .
-bash pkg/test/og_regress/do_all_test.sh
+bash CI/build/script/run_ograc_test.sh smoke
 ```
 
-> * `do_all_test.sh` 是单元测试入口，跑 `og_schedule_part1 + og_schedule_part2`（280 个用例）。脚本内部自动完成 **数据库安装 -> SQL 回归用例 -> 卸载清理** 全流程，因此单元测试步骤即同时覆盖样例/SQL 功能验证，执行结束后数据库已卸载、环境已还原，**验证流程到此结束，无需再执行任何独立的样例或安装步骤**。
+> * `smoke` 用例集定义在 `pkg/test/og_regress/og_schedule_smoke`，共 28 个用例，全部取自全量回归，排除了慢速及环境依赖型用例。
+> * 脚本自动完成 **数据库安装 -> 回归用例 -> 卸载清理** 全流程，因此本步骤即同时覆盖样例/SQL 功能验证，执行结束后数据库已卸载、环境已还原，**验证流程到此结束，无需再执行任何独立的样例或安装步骤**。
+> * 结果写入 `regress_output/test_result.txt`（`Test Result: Success` 为全部通过），失败用例的 diff 在 `pkg/test/og_regress/results/**/*.diff`，完整日志在 `/home/regress/og_regress/logs/regress_log`。smoke 失败通常说明构建有基础性问题，按「测试后清理」章节清理后排查。
 
-### 3. 从未编译过才清理并用 need_compile
+### 3. 从未编译过时先编译再执行 smoke
 
-`do_all_test.sh need_compile` 会触发完整编译，要求环境处于**未编译、未安装的干净状态**。如果之前编译过或安装过数据库，应改走上一节，而不是再编一次。
-
-仅在从未编译过时，依次执行：
-
-```shell
-# 进入仓库根目录（容器内为 /home/regress/ogracKernel；非容器为 [compile_path]/oGRAC）
-cd /home/regress/ogracKernel
-
-# 停止并卸载已安装的数据库
-sh build/local_install.sh clean -u ogracdba
-
-# 清理测试编译产物和数据目录
-rm -rf /home/regress/og_regress/*
-rm -rf /home/regress/ograc_data/*
-
-# 删除旧用户（如果存在）
-id ogracdba >/dev/null 2>&1 && userdel -r ogracdba
-id ogracdba >/dev/null 2>&1 || groupdel ogracdba 2>/dev/null || true
-
-bash pkg/test/og_regress/do_all_test.sh need_compile
-```
-
-> **注意**：`rm -rf /home/regress/*` 会删除该目录下所有内容，请确认目录内无重要数据后再执行。如果当前环境本身就是干净的（首次运行），可跳过此步骤。
-
-`do_all_test.sh` 参数：
-
-| 参数 | 含义 |
-|---|---|
-| （不传参） | 跳过编译，使用 `output/bin` 下已有的二进制（已 compile 并编过 `og_regress` 后的推荐用法） |
-| `need_compile` | 触发完整编译。仅在从未编译过时使用 |
-
-compile 之后必须先按「单节点编译部署指南」里的 `make -sj 8` 生成 `og_regress`，再执行 `do_all_test.sh`。
+smoke 依赖已编译的二进制（`output/bin`）和回归工具 `og_regress`，未编译环境不能直接跑测试。请先按「单节点编译部署指南」完成编译（推荐一体化入口 `sh Makefile.sh make_ograc_pkg_test`，一次产出主程序、安装包和 `og_regress`），然后回到本节第 2 步执行 smoke。
 
 ### 4. 关闭保护虚拟内存（debug 编译建议执行）
 
@@ -292,15 +280,13 @@ Test Result: Success   # 全部通过
 | 文件/目录 | 说明 |
 |---|---|
 | `regress_output/test_result.txt` | 最终测试结果 |
-| `regress_output/LLT_log_<分组>.txt` | 完整运行日志（快速验证为 `LLT_log_part1.txt`，全量为 `LLT_log_part_all.txt`） |
-| `regress_output/LLT_result_<分组>.txt` | 截取的回归结果汇总（快速验证为 `LLT_result_part1.txt`） |
+| `pkg/test/og_regress/results/og_schedule_smoke.log` | 回归运行日志（含每个用例的 OK/FAILED 明细） |
 | `pkg/test/og_regress/results/**/*.diff` | 失败用例的 diff 文件 |
-| `/home/regress/og_regress/logs/regress_log` | 回归运行日志 |
-| `/home/regress/og_regress/logs/compile_log` | 编译日志 |
+| `/home/regress/og_regress/logs/regress_log` | 安装/卸载及回归完整日志 |
 
 ### 6. 测试后清理（重装数据库或再次测试前必做）
 
-`do_all_test.sh` 存在失败用例时会以非 0 码直接退出，**不会执行收尾清理**，cms/ogracd 进程与测试数据会残留；且回归流程会修改代码目录属主并往用户 `~/.bashrc` 写入环境变量，直接重装会失败。继续安装或测试前，请依次执行：
+smoke 脚本存在失败用例时会以非 0 码直接退出，**不会执行收尾清理**，cms/ogracd 进程与测试数据会残留；且回归流程会修改代码目录属主并往用户 `~/.bashrc` 写入环境变量，直接重装会失败。继续安装或测试前，请依次执行：
 
 ```shell
 # 1. 停止残留的 cms/ogracd 进程

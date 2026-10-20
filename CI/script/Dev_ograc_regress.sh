@@ -73,6 +73,7 @@ function run_og_regress() {
 	fi
 	echo "Regress Success"
     regress_result="Test Result: Success";
+    mkdir -p ${ROOT_PATH}/regress_output
     echo ${regress_result} > ${ROOT_PATH}/regress_output/test_result.txt
 	echo "LCOV_ENABLE is ${LCOV_ENABLE}"
 	if [ "${LCOV_ENABLE}" = TRUE ]; then
