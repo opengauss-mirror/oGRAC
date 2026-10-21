@@ -7542,6 +7542,12 @@ MergeStmt:
                             parser_yyerror("put table failed.");
                         }
                     }
+                    if (bison_current_pending_ssa(yyscanner)->count > 0) {
+                        if (attach_pending_subselects_to_query(merge_ctx->query,
+                            bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
+                            parser_yyerror("attach subselects failed");
+                        }
+                    }
                     if (sql_set_table_qb_name(stmt, merge_ctx->query) != OG_SUCCESS) {
                         parser_yyerror("sql_set_table_qb_name failed ");
                     }

@@ -42,7 +42,8 @@ explain merge into bison_explain_dst d
     using (select id, val, name from bison_explain_src where id = 1) s
     on (d.id = s.id)
     when matched then update set d.val = s.val, d.name = s.name
-    when not matched then insert (id, val, name) values (s.id, s.val, s.name);
+    when not matched then insert (id, val, name) values (s.id, s.val, s.name)
+    where (select 1 from sys_dummy) = 1;
 explain plan for replace into bison_explain_dst(id, val, name) values (4, 40, 'delta');
 explain replace into bison_explain_dst(id, val, name) values (5, 50, 'epsilon');
 

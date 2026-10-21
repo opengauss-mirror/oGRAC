@@ -253,7 +253,8 @@ SQL> explain merge into bison_explain_dst d
   2     using (select id, val, name from bison_explain_src where id = 1) s
   3     on (d.id = s.id)
   4     when matched then update set d.val = s.val, d.name = s.name
-  5     when not matched then insert (id, val, name) values (s.id, s.val, s.name);
+  5     when not matched then insert (id, val, name) values (s.id, s.val, s.name)
+  6     where (select 1 from sys_dummy) = 1;
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
@@ -267,15 +268,18 @@ EXPLAIN PLAN OUTPUT
 | 4  |   MERGE TABLE                 |       |                     | 288  | 5    | 0         |       |        |
 | 5  |       TABLE ACCESS FULL       | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
 | 6  |   ON CONDITION                |       |                     | 288  | 5    | 0         |       |        |
-| 7  |     INSERT STATEMENT          |       |                     | 288  | 5    | 0         |       |        |
-| 8  |     UPDATE STATEMENT          |       |                     | 288  | 5    | 0         |       |        |
+| 7  |     FILTER                    |       |                     | 288  | 5    | 0         |       |        |
+| 8  |       INSERT STATEMENT        |       |                     | 288  | 5    | 0         |       |        |
+| 9  |           TABLE ACCESS FULL   | SYS   | SYS_DUMMY           | 744  | 10   | 0         |       |        |
+| 10 |     UPDATE STATEMENT          |       |                     | 744  | 10   | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
     3 - filter: ID = 1                                          
     5 - filter: D.ID = S.ID                                     
+    7 - filter: (SELECT 1 FROM SYS_DUMMY) = 1
 
-17 rows fetched.
+20 rows fetched.
 
 SQL> explain plan for replace into bison_explain_dst(id, val, name) values (4, 40, 'delta');
 
