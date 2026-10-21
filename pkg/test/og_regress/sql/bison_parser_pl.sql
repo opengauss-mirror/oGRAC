@@ -2134,6 +2134,26 @@ select case when length(payload) = 40004 and substr(payload, 40001, 4) = 'tail' 
 from (select bison_pl_clob_piece() || bison_pl_clob_piece() || 'tail' as payload from sys_dummy);
 drop function if exists bison_pl_clob_piece;
 
+set serveroutput on;
+begin
+    execute immediate 'declare a int; begin
+        select :x into a from sys_dummy;
+        a := :x + 1;
+    end;' using 17;
+    execute immediate 'declare a int; begin
+        select :x into a from sys_dummy;
+        dbe_output.print_line(a);
+        select :x into a from sys_dummy where :x = 17;
+        dbe_output.print_line(a);
+        a := :x + :y;
+        dbe_output.print_line(a);
+        select :x + :y into a from sys_dummy where :x = 17 and :y = 23;
+        dbe_output.print_line(a);
+    end;' using 17, 23;
+end;
+/
+set serveroutput off;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;

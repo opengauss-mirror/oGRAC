@@ -2151,6 +2151,19 @@ status_t sql_add_param_mark(sql_stmt_t *stmt, word_t *word, bool32 *is_repeated,
     return OG_SUCCESS;
 }
 
+static sql_stmt_t *sql_bison_param_source_stmt(sql_stmt_t *stmt)
+{
+    sql_stmt_t *parent = (sql_stmt_t *)stmt->parent_stmt;
+
+    while (stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK && stmt->pl_compiler != NULL && parent != NULL &&
+        parent->context != NULL && parent->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK &&
+        parent->pl_compiler == stmt->pl_compiler && parent->context->params == stmt->context->params) {
+        stmt = parent;
+        parent = (sql_stmt_t *)stmt->parent_stmt;
+    }
+    return stmt;
+}
+
 static status_t sql_add_param_mark_bison(sql_stmt_t *stmt, const sql_text_t *source, word_t *word,
     int32 source_offset, bool32 *is_repeated, uint32 *pnid)
 {
@@ -2160,11 +2173,25 @@ static status_t sql_add_param_mark_bison(sql_stmt_t *stmt, const sql_text_t *sou
     int64 mark_offset;
     int64 parser_offset;
     uint32 num;
+    sql_stmt_t *source_stmt = sql_bison_param_source_stmt(stmt);
 
     if (source == NULL || source->str == NULL || source_offset < 0 ||
         (uint64)source_offset + word->text.len > source->len) {
         OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
         return OG_ERROR;
+    }
+
+    /* Keep the current fragment's counter, but use the enclosing PL source for parameter names. */
+    if (source_stmt != stmt) {
+        parser_offset = (int64)stmt->text_shift - source_stmt->text_shift + source_offset;
+        source = &source_stmt->parser_text;
+        if (!source_stmt->parser_text_valid || source->str == NULL || parser_offset < 0 ||
+            parser_offset > OG_MAX_INT32 || (uint64)parser_offset + word->text.len > source->len ||
+            memcmp(source->str + parser_offset, word->text.str, word->text.len) != 0) {
+            OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
+            return OG_ERROR;
+        }
+        source_offset = (int32)parser_offset;
     }
 
     *is_repeated = OG_FALSE;
@@ -2178,7 +2205,7 @@ static status_t sql_add_param_mark_bison(sql_stmt_t *stmt, const sql_text_t *sou
         *pnid = stmt->context->pname_count;
         for (uint32 i = 0; i < stmt->context->params->count; i++) {
             param_mark = (sql_param_mark_t *)cm_galist_get(stmt->context->params, i);
-            parser_offset = (int64)param_mark->offset - stmt->text_shift;
+            parser_offset = (int64)param_mark->offset - source_stmt->text_shift;
             if (parser_offset < 0 || (uint64)parser_offset + param_mark->len > source->len) {
                 continue;
             }
@@ -2200,7 +2227,7 @@ static status_t sql_add_param_mark_bison(sql_stmt_t *stmt, const sql_text_t *sou
         stmt->context->pname_count++;
     }
 
-    mark_offset = (int64)source_offset + stmt->text_shift;
+    mark_offset = (int64)source_offset + source_stmt->text_shift;
     if (mark_offset < 0 || mark_offset > UINT32_MAX) {
         OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
         return OG_ERROR;
@@ -2210,6 +2237,57 @@ static status_t sql_add_param_mark_bison(sql_stmt_t *stmt, const sql_text_t *sou
     param_mark->offset = (uint32)mark_offset;
     param_mark->len = word->text.len;
     param_mark->pnid = *pnid;
+    return OG_SUCCESS;
+}
+
+static status_t sql_convert_static_pl_param_bison(sql_stmt_t *stmt, expr_node_t *node, word_t *word,
+    int32 source_offset)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    sql_stmt_t *parent_stmt = compiler->stmt;
+    expr_node_t input_node = { 0 };
+    expr_node_t *stored_input = NULL;
+    sql_param_mark_t *param_mark = NULL;
+    bool32 is_repeated = OG_FALSE;
+    uint32 pnid;
+    uint32 input_id = compiler->current_input->count;
+    uint32 param_id = stmt->context->params->count;
+    int64 parent_offset = (int64)stmt->text_shift - parent_stmt->text_shift + source_offset;
+
+    word->loc.line += stmt->parser_text.loc.line - 1;
+    if (node->loc.line == 1) {
+        word->loc.column += stmt->parser_text.loc.column - 1;
+    }
+    node->loc = word->loc;
+    if (parent_stmt->context->type != OGSQL_TYPE_ANONYMOUS_BLOCK) {
+        OG_SRC_THROW_ERROR(word->loc, ERR_PL_PARAM_USE);
+        return OG_ERROR;
+    }
+    if (!parent_stmt->parser_text_valid || parent_stmt->parser_text.str == NULL || parent_offset < 0 ||
+        parent_offset > OG_MAX_INT32 || (uint64)parent_offset + word->text.len > parent_stmt->parser_text.len ||
+        memcmp(parent_stmt->parser_text.str + parent_offset, word->text.str, word->text.len) != 0) {
+        OG_SRC_THROW_ERROR(word->loc, ERR_SQL_SYNTAX_ERROR, "invalid parameter text offset");
+        return OG_ERROR;
+    }
+    if (input_id != param_id) {
+        OG_SRC_THROW_ERROR(word->loc, ERR_PLSQL_ILLEGAL_LINE_FMT, "inconsistent static SQL parameters");
+        return OG_ERROR;
+    }
+
+    input_node.loc = word->loc;
+    input_node.value.v_int = (int32)parent_stmt->context->params->count;
+    OG_RETURN_IFERR(sql_add_param_mark_bison(parent_stmt, &parent_stmt->parser_text, word, (int32)parent_offset,
+        &is_repeated, &pnid));
+    OG_RETURN_IFERR(plc_convert_param_node_bison(parent_stmt, &input_node, is_repeated, pnid));
+
+    OG_RETURN_IFERR(cm_galist_new(stmt->context->params, sizeof(sql_param_mark_t), (void **)&param_mark));
+    param_mark->offset = (uint32)source_offset;
+    param_mark->len = word->text.len;
+    param_mark->pnid = input_id;
+    stmt->context->pname_count++;
+    OG_RETURN_IFERR(cm_galist_new(compiler->current_input, sizeof(expr_node_t), (void **)&stored_input));
+    *stored_input = input_node;
+    VALUE(uint32, &node->value) = param_id;
     return OG_SUCCESS;
 }
 
@@ -3847,6 +3925,7 @@ status_t sql_create_paramref_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 t
     bool32 is_repeated = OG_FALSE;
     uint32 param_id;
     char *base = NULL;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
 
     if (sql_init_expr_node(stmt, expr, &node, OG_TYPE_INTEGER, EXPR_NODE_PARAM, lex_loc.loc) != OG_SUCCESS) {
         return OG_ERROR;
@@ -3881,11 +3960,15 @@ status_t sql_create_paramref_expr(sql_stmt_t *stmt, expr_tree_t **expr, uint32 t
     word.text.value.str = base + lex_loc.offset;
     word.text.value.len = token_len;
     word.text.loc = lex_loc.loc;
-    OG_RETURN_IFERR(sql_add_param_mark_bison(stmt, &stmt->parser_text, &word, lex_loc.offset,
-        &is_repeated, &param_id));
-
-    if (stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK) {
-        OG_RETURN_IFERR(plc_convert_param_node_bison(stmt, node, is_repeated, param_id));
+    if (compiler != NULL && compiler->current_input != NULL && compiler->stmt != stmt &&
+        compiler->stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK) {
+        OG_RETURN_IFERR(sql_convert_static_pl_param_bison(stmt, node, &word, lex_loc.offset));
+    } else {
+        OG_RETURN_IFERR(sql_add_param_mark_bison(stmt, &stmt->parser_text, &word, lex_loc.offset,
+            &is_repeated, &param_id));
+        if (stmt->context->type == OGSQL_TYPE_ANONYMOUS_BLOCK) {
+            OG_RETURN_IFERR(plc_convert_param_node_bison(stmt, node, is_repeated, param_id));
+        }
     }
 
     APPEND_CHAIN(&((*expr)->chain), node);

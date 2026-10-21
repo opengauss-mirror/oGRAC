@@ -2917,6 +2917,32 @@ static status_t pl_bison_clone_fragment_tree(pl_compiler_t *compiler, pl_bison_f
     }
 }
 
+static status_t pl_bison_set_fragment_source(sql_stmt_t *stmt, sql_stmt_t *sub_stmt, text_t *src, uint32 prefix_len)
+{
+    uint64 source_addr = (uint64)(uintptr_t)src->str;
+    uint64 parser_addr = (uint64)(uintptr_t)stmt->parser_text.str;
+    int64 text_shift;
+
+    if (stmt->context->type != OGSQL_TYPE_ANONYMOUS_BLOCK) {
+        return OG_SUCCESS;
+    }
+    if (!stmt->parser_text_valid || stmt->parser_text.str == NULL || source_addr < parser_addr ||
+        source_addr - parser_addr > stmt->parser_text.len ||
+        src->len > stmt->parser_text.len - (source_addr - parser_addr)) {
+        OG_SRC_THROW_ERROR(stmt->parser_text.loc, ERR_SQL_SYNTAX_ERROR, "invalid PL fragment source offset");
+        return OG_ERROR;
+    }
+    /* Internal grammar prefixes do not belong to the original PL source. */
+    text_shift = (int64)stmt->text_shift + (int64)(source_addr - parser_addr) - prefix_len;
+    if (text_shift < OG_MIN_INT32 || text_shift > OG_MAX_INT32) {
+        OG_SRC_THROW_ERROR(stmt->parser_text.loc, ERR_SQL_SYNTAX_ERROR, "invalid PL fragment source offset");
+        return OG_ERROR;
+    }
+    sub_stmt->text_shift = (int32)text_shift;
+    sub_stmt->parent_stmt = stmt;
+    return OG_SUCCESS;
+}
+
 static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefix, text_t *src, const char *suffix,
     pl_bison_fragment_type_t type, void **tree)
 {
@@ -2950,6 +2976,7 @@ static status_t pl_bison_parse_fragment_tree(sql_stmt_t *stmt, const char *prefi
         sub_stmt->context->type = stmt->context->type;
         sub_stmt->context->params = stmt->context->params;
         sub_stmt->context->pname_count = stmt->context->pname_count;
+        OG_BREAK_IF_ERROR(pl_bison_set_fragment_source(stmt, sub_stmt, src, (uint32)strlen(prefix)));
         compiler->stmt = sub_stmt;
         OG_BREAK_IF_ERROR(raw_parser(sub_stmt, &sql_text, &raw_tree));
         stmt->context->pname_count = sub_stmt->context->pname_count;
@@ -3836,7 +3863,6 @@ static status_t pl_bison_compile_into_targets(sql_stmt_t *stmt, text_t *src, pl_
 
 static status_t pl_bison_sql_without_range(sql_stmt_t *stmt, text_t *src, uint32 begin, uint32 end, text_t *sql)
 {
-    uint32 new_len;
     char *buf = NULL;
 
     if (begin >= end || end > src->len) {
@@ -3845,18 +3871,17 @@ static status_t pl_bison_sql_without_range(sql_stmt_t *stmt, text_t *src, uint32
         return OG_SUCCESS;
     }
 
-    new_len = src->len - (end - begin);
-    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, new_len + 1, (void **)&buf));
-    if (begin > 0) {
-        MEMS_RETURN_IFERR(memcpy_s(buf, new_len + 1, src->str, begin));
+    OG_RETURN_IFERR(sql_alloc_mem(stmt->context, src->len + 1, (void **)&buf));
+    MEMS_RETURN_IFERR(memcpy_s(buf, src->len + 1, src->str, src->len));
+    /* Keep source offsets and lines intact for external bind parameters. */
+    for (uint32 i = begin; i < end; i++) {
+        if (buf[i] != '\n' && buf[i] != '\r') {
+            buf[i] = ' ';
+        }
     }
-    if (end < src->len) {
-        MEMS_RETURN_IFERR(memcpy_s(buf + begin, new_len + 1 - begin, src->str + end, src->len - end));
-    }
-    buf[new_len] = '\0';
+    buf[src->len] = '\0';
     sql->str = buf;
-    sql->len = new_len;
-    cm_trim_text(sql);
+    sql->len = src->len;
     return OG_SUCCESS;
 }
 
@@ -3961,7 +3986,6 @@ static status_t pl_bison_prepare_static_sql(sql_stmt_t *stmt, text_t *src, key_w
     }
 
     *sql = *src;
-    cm_trim_text(sql);
     return OG_SUCCESS;
 }
 
@@ -3979,7 +4003,7 @@ static status_t compile_static_sql_context(sql_stmt_t *stmt, text_t *src, key_wi
 
     OGSQL_SAVE_STACK(stmt);
     key_wid = pl_bison_leading_sql_keyword(&sql, key_wid);
-    pl_bison_static_sql_arg_t arg = { context, &sql, key_wid, &loc, &entity->sqls, input };
+    pl_bison_static_sql_arg_t arg = { context, &sql, key_wid, &loc, &entity->sqls, input, src };
     if (pl_bison_parse_static_sql(stmt, &arg) != OG_SUCCESS) {
         OGSQL_RESTORE_STACK(stmt);
         return OG_ERROR;
@@ -4026,7 +4050,7 @@ static status_t compile_static_cursor_sql_context(pl_compiler_t *compiler, text_
      */
     set_cursor_args_visible(decl, OG_TRUE);
     pl_bison_static_sql_arg_t arg = {
-        &decl->cursor.ogx->context, &sql, key_wid, &loc, &entity->sqls, decl->cursor.input
+        &decl->cursor.ogx->context, &sql, key_wid, &loc, &entity->sqls, decl->cursor.input, src
     };
     status = pl_bison_parse_static_sql(stmt, &arg);
     set_cursor_args_visible(decl, OG_FALSE);
