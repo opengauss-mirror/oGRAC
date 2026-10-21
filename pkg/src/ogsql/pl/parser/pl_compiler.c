@@ -1580,7 +1580,7 @@ static status_t plc_bison_compile_sys_refcursor(pl_compiler_t *compiler, plv_dec
 }
 
 static status_t plc_bison_compile_decl_type(pl_compiler_t *compiler, plv_decl_t *decl, type_word_t *type,
-    bool32 is_arg)
+    bool32 is_arg, bool32 need_check)
 {
     bool32 result = OG_FALSE;
 
@@ -1609,7 +1609,9 @@ static status_t plc_bison_compile_decl_type(pl_compiler_t *compiler, plv_decl_t 
 
     decl->type = PLV_VAR;
     OG_RETURN_IFERR(plc_bison_compile_type(compiler, PLC_PMODE(decl->drct), &decl->variant.type, type));
-    OG_RETURN_IFERR(plc_check_datatype(compiler, &decl->variant.type, is_arg));
+    if (need_check) {
+        OG_RETURN_IFERR(plc_check_datatype(compiler, &decl->variant.type, is_arg));
+    }
     if (decl->variant.type.is_array) {
         decl->type = PLV_ARRAY;
     }
@@ -1646,7 +1648,7 @@ static status_t plc_bison_compile_args(pl_compiler_t *compiler, function_t *func
         decl->name = arg_name;
         decl->drct = func_param->drct;
 
-        OG_RETURN_IFERR(plc_bison_compile_decl_type(compiler, decl, func_param->type, OG_TRUE));
+        OG_RETURN_IFERR(plc_bison_compile_decl_type(compiler, decl, func_param->type, OG_TRUE, OG_TRUE));
 
         OG_RETURN_IFERR(plc_bison_compile_default_def(compiler, decl, func_param->def_expr));
         if (decl->drct == PLV_DIR_OUT || decl->drct == PLV_DIR_INOUT) {
@@ -1686,7 +1688,8 @@ static status_t pl_bison_compile_func_desc(pl_compiler_t *compiler, text_t *name
     // compile argument
     OG_RETURN_IFERR(plc_bison_compile_args(compiler, func, args));
     func->desc.arg_count = func->desc.params->count;
-    OG_RETURN_IFERR(plc_bison_compile_decl_type(compiler, ret, ret_type, OG_TRUE));
+    /* Native function returns retain their declared type, including LOB types. */
+    OG_RETURN_IFERR(plc_bison_compile_decl_type(compiler, ret, ret_type, OG_TRUE, OG_FALSE));
 
     return OG_SUCCESS;
 }

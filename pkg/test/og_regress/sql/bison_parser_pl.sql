@@ -2122,6 +2122,18 @@ end;
 /
 drop function if exists bison_pl_for_missing_loop;
 
+drop function if exists bison_pl_clob_piece;
+create or replace function bison_pl_clob_piece return clob as
+begin
+    return rpad('x', 8000, 'x') || rpad('x', 8000, 'x') || rpad('x', 4000, 'x');
+end;
+/
+select case when data_type = 'CLOB' then 1 else 0 end as clob_type_ok
+from db_arguments where owner = user and object_name = 'BISON_PL_CLOB_PIECE' and position = 0;
+select case when length(payload) = 40004 and substr(payload, 40001, 4) = 'tail' then 1 else 0 end as clob_data_ok
+from (select bison_pl_clob_piece() || bison_pl_clob_piece() || 'tail' as payload from sys_dummy);
+drop function if exists bison_pl_clob_piece;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;
