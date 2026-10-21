@@ -13,19 +13,13 @@
 docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
 ```
 
-> * **基础镜像拉取失败的处理**：`Dockerfile_ARM64` 的 `FROM openeuler/openeuler:22.03-lts-sp1` 默认从 Docker Hub 拉取。若 Docker Hub 不可达（报 `net/http request canceled` 等超时），按以下优先级处理：
->     1. 本机已有等价基础镜像：打标签后直接复用（构建会命中本地缓存层）：
->        ```shell
->        docker tag openeuler-22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1
->        docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
->        ```
->     2. 本机无等价镜像：从国内镜像源拉取后打标签（实测可达）：
->        ```shell
->        docker pull hub.oepkgs.net/openeuler/openeuler:22.03-lts-sp1
->        docker tag hub.oepkgs.net/openeuler/openeuler:22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1
->        docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
->        ```
->     3. 也可将 `Dockerfile_ARM64` 的 `FROM` 改为内网可达的镜像仓库地址后再构建。
+> * **基础镜像源**：`Dockerfile_ARM64` 默认从国内镜像源 `hub.oepkgs.net` 拉取基础镜像（Docker Hub 在多数构建环境不可达，`docker build` 会自动完成拉取，无需手动处理）。
+> * 若所在环境可直连 Docker Hub，或需要使用内网镜像仓，通过 `--build-arg BASE_IMAGE` 覆盖：
+>     ```shell
+>     docker build --build-arg BASE_IMAGE=openeuler/openeuler:22.03-lts-sp1 \
+>         -f docker/Dockerfile_ARM64 -t ograc-dev .
+>     ```
+> * 若基础镜像拉取仍失败（如镜像源临时不可达）且本机已有等价基础镜像，打标签为 `hub.oepkgs.net/openeuler/openeuler:22.03-lts-sp1` 后构建会命中本地缓存层。
 
 ## 启动容器（推荐）
 
@@ -50,6 +44,8 @@ docker exec -it ograc-dev bash
 ```
 
 镜像已将 `/home/regress` 设为 755，并预创建 `/home/regress/ograc_data/gcc_home`。
+
+> * **注意**：镜像内预创建的 `ograc_data/gcc_home` 在挂载宿主机 `DATA_DIR` 后会被遮蔽。`install.py` 要求 `ograc_data` 为干净目录（不能存在 `data/`、`gcc_home/` 等子目录，否则报 `File exists` 安装失败）——保持宿主机 `DATA_DIR` 为空即可，不要手动往里建子目录；`CI/script/Dev_ograc_regress.sh` 与 `do_all_test.sh` 运行前都会自动清空该目录内容。
 
 ## 容器内编译与测试
 
