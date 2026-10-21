@@ -201,7 +201,8 @@ typedef enum en_word_flag {
         HINT_KEY_WORD_NL_FULL_MTRL | HINT_KEY_WORD_NL_FULL_OPT))
 
 #define HINT_JOIN_ID_GET(hint_item) \
-    ((hint_item)->id & (ID_HINT_USE_NL | ID_HINT_USE_HASH | ID_HINT_USE_MERGE))
+    ((hint_item)->id == ID_HINT_USE_NL || (hint_item)->id == ID_HINT_USE_HASH || \
+        (hint_item)->id == ID_HINT_USE_MERGE)
 
 #define HAS_HINT(hint_info)                                                                                \
     ((hint_info) != NULL && ((hint_info)->mask[INDEX_HINT] != 0 || (hint_info)->mask[JOIN_HINT] != 0 ||    \

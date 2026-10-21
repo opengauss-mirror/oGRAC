@@ -33,3 +33,15 @@ create index t1_idx2 on hint_test1(a,b,c);
 explain select * from hint_test1 where a = 1000;
 explain select /*+index(hint_test1 t1_idx1)*/* from hint_test1 where a = 1000;
 explain select /*+full(hint_test1)*/* from hint_test1 where a = 1000;
+
+-- INDEX hints must not restrict outer join methods.
+alter system set use_bison_parser = true;
+drop table if exists hint_outer_probe purge;
+create table hint_outer_probe (val varchar2(8));
+create index hint_outer_probe_i on hint_outer_probe(val);
+insert into hint_outer_probe values ('a'), ('b');
+commit;
+select /*+ index(a hint_outer_probe_i) index(b hint_outer_probe_i) */ count(*)
+from hint_outer_probe a right join hint_outer_probe b on lower(a.val) > lower(b.val);
+drop table hint_outer_probe purge;
+alter system set use_bison_parser = false;

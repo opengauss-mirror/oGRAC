@@ -2268,11 +2268,10 @@ bool32 check_apply_join_hint(sql_join_node_t *innerpath, uint64 hint_key, bool *
 
     if (table->hint_info != NULL) {
         *join_hint_type = HINT_JOIN_METHOD_GET(table->hint_info);
-        if (hint_key == *join_hint_type) {
-            *match_hint = true;
-        } else {
-            *match_hint = false;
+        if (*join_hint_type == 0) {
+            return OG_FALSE;
         }
+        *match_hint = (hint_key == *join_hint_type);
         return OG_TRUE;
     }
 
