@@ -278,7 +278,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
     alterts_opt         *alts_opt;
 }
 
-%type <res>    stmtblock stmtmulti ExplainStmt explain_target_stmt explain_dml_stmt InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
+%type <res>    stmtblock stmtmulti stored_pl_source ExplainStmt explain_target_stmt explain_dml_stmt InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
                UpdateStmt select_clause MergeStmt DropStmt merge_insert merge_when_insert_clause ReplaceStmt TruncateStmt
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterUserStmt AlterTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
@@ -421,6 +421,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %token <ival64> I64CONST
 
 %token            LEX_ERROR_TOKEN
+%token            BISON_PL_SOURCE
 %token            TYPECAST ORA_JOINOP DOT_DOT COLON_EQUALS PARA_EQUALS SET_IDENT_SESSION SET_IDENT_GLOBAL NULLS_FIRST NULLS_LAST
 %token <sys_param_value> ALTER_SYSTEM_VALUE
 %token <str>      SIZE_B SIZE_KB SIZE_MB SIZE_GB SIZE_TB SIZE_PB SIZE_EB
@@ -667,6 +668,17 @@ stmtblock:    stmtmulti
             {
                 og_yyget_extra(yyscanner)->parsetree = $1;
             }
+        | BISON_PL_SOURCE stored_pl_source
+            {
+                og_yyget_extra(yyscanner)->parsetree = $2;
+            }
+        ;
+
+/* Only the stored-object loader can inject the PL source entry token. */
+stored_pl_source:
+        compileFunctionSource
+        | compileProcedureSource
+        | compileStoredBodySource
         ;
 
 stmtmulti:
@@ -708,9 +720,6 @@ stmtmulti:
         | CreateTypeStmt
         | CreateTriggerStmt
         | PlAnonymousStmt
-        | compileFunctionSource
-        | compileProcedureSource
-        | compileStoredBodySource
         | GrantStmt
         | RevokeStmt
         | PurgeStmt
@@ -14830,8 +14839,13 @@ func_type:
 func_arg:
             ColId func_type
                 {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     func_parameter *param = NULL;
-                    if (pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
+                    if (stmt->pl_context == NULL) {
+                        OG_SRC_THROW_ERROR(@1.loc, ERR_SQL_SYNTAX_ERROR, "syntax error");
+                        YYABORT;
+                    }
+                    if (pl_alloc_mem(stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     param->name = $1;
@@ -14841,8 +14855,13 @@ func_arg:
                 }
             | ColId arg_class func_type
                 {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     func_parameter *param = NULL;
-                    if (pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
+                    if (stmt->pl_context == NULL) {
+                        OG_SRC_THROW_ERROR(@1.loc, ERR_SQL_SYNTAX_ERROR, "syntax error");
+                        YYABORT;
+                    }
+                    if (pl_alloc_mem(stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
                     param->name = $1;

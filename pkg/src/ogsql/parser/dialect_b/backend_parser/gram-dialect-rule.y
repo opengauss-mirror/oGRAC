@@ -2,6 +2,10 @@ stmtblock: DIALECT_B_FORMAT_SQL b_stmtmulti
             {
                 og_yyget_extra(yyscanner)->parsetree = $2;
             }
+        | BISON_PL_SOURCE DIALECT_B_FORMAT_SQL compileFunctionSource
+            {
+                og_yyget_extra(yyscanner)->parsetree = $3;
+            }
         ;
 
 
@@ -56,7 +60,6 @@ b_stmtmulti:
         | CreateCtrlfileStmt
         | CreateTableStmt
         | CreateFunctionStmt
-        | compileFunctionSource
         | GrantStmt
         | RevokeStmt
         | /*EMPTY*/ { $$ = NULL; }

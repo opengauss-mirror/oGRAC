@@ -28,6 +28,27 @@ SQL> drop table bison_comment_escape_t;
 
 Succeed.
 
+SQL> -- Reject standalone parameter lists without a PL compilation context.
+SQL> (x int); --error
+
+OG-00601, [1:2]Sql syntax error: syntax error
+SQL> (x in int); --error
+
+OG-00601, [1:2]Sql syntax error: syntax error
+SQL> ((x int)); --error
+
+OG-00601, [1:3]Sql syntax error: syntax error
+SQL> ( /* gap */ x int); --error
+
+OG-00601, [1:13]Sql syntax error: syntax error
+SQL> (select 1 as probe_result from sys_dummy);
+
+PROBE_RESULT
+------------
+1
+
+1 rows fetched.
+
 SQL> 
 SQL> drop table if exists bison_t1;
 
