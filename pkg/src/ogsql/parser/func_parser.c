@@ -27,6 +27,7 @@
 #include "cond_parser.h"
 #include "ogsql_select_parser.h"
 #include "ogsql_self_func.h"
+#include "ogsql_func.h"
 #include "pl_udt.h"
 #include "decl_cl.h"
 #include "typedef_cl.h"
@@ -1836,6 +1837,19 @@ status_t sql_create_cast_convert_expr(sql_stmt_t *stmt, expr_tree_t **expr, expr
     return OG_SUCCESS;
 }
 
+/* PL fragments need the function identity before cloning their condition tree. */
+static status_t sql_bison_bind_cond_func(sql_stmt_t *stmt, expr_node_t *node)
+{
+    node->value.v_func.func_id = sql_get_func_id_with_dialect(
+        &node->word.func.name.value, stmt->session->dbcompatibility);
+    if (node->value.v_func.func_id == OG_INVALID_ID32) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_INVALID_FUNC, node->value.v_func.func_id);
+        return OG_ERROR;
+    }
+    node->value.v_func.pack_id = OG_INVALID_ID32;
+    return OG_SUCCESS;
+}
+
 status_t sql_create_if_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, cond_tree_t *cond_tree,
     expr_tree_t *first_arg, expr_tree_t *second_arg, source_location_t loc)
 {
@@ -1843,6 +1857,7 @@ status_t sql_create_if_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, cond_
     if (sql_create_special_funccall_expr(stmt, expr, &node, "if", loc) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    OG_RETURN_IFERR(sql_bison_bind_cond_func(stmt, node));
 
     node->cond_arg = cond_tree;
     node->argument = first_arg;
@@ -1859,6 +1874,7 @@ status_t sql_create_lnnvl_funccall_expr(sql_stmt_t *stmt, expr_tree_t **expr, co
     if (sql_create_special_funccall_expr(stmt, expr, &node, "lnnvl", loc) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    OG_RETURN_IFERR(sql_bison_bind_cond_func(stmt, node));
 
     node->cond_arg = cond_tree;
     APPEND_CHAIN(&((*expr)->chain), node);

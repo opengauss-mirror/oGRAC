@@ -3480,6 +3480,39 @@ SQL> drop function if exists bison_pl_for_variable_lower;
 Succeed.
 
 SQL>
+SQL> call bison_pl_proc(if(2 > 1, 931, 932));
+
+PL/SQL procedure successfully completed.
+
+SQL> call bison_pl_proc(if(2 < 1, 933, 934));
+
+PL/SQL procedure successfully completed.
+
+SQL> call bison_pl_proc(if(lnnvl(2 > 1),935,936));
+
+PL/SQL procedure successfully completed.
+
+SQL> call bison_pl_proc(if(lnnvl(2 < 1),937,938));
+
+PL/SQL procedure successfully completed.
+
+SQL> call bison_pl_proc(if(lnnvl(cast(null as int) = 1),939,940));
+
+PL/SQL procedure successfully completed.
+
+SQL> select id from bison_pl_t where id between 931 and 940 order by id;
+
+ID
+------------
+931
+934
+936
+937
+939
+
+5 rows fetched.
+
+SQL>
 SQL> drop function if exists bison_pl_for_missing_loop;
 
 Succeed.
