@@ -88,6 +88,10 @@ static status_t make_type_modifiers(core_yyscan_t yyscanner, galist_t **list, in
 static bool check_in_rows_match(galist_t *rows, uint32 cols, expr_tree_t **expr);
 static void bison_set_select_type(sql_select_t *select_ctx, select_type_t type);
 static status_t bison_apply_table_pivot(sql_stmt_t *stmt, sql_table_t *table, galist_t *pivot_list);
+static status_t bison_apply_table_snapshot(core_yyscan_t yyscanner, int next_token, sql_table_t *table,
+    sql_snapshot_type_t type, expr_tree_t *expr, source_location_t clause_loc, source_location_t end_loc);
+static void bison_report_invalid_table_alias(core_yyscan_t yyscanner, lex_location_t alias_loc,
+    lex_location_t next_loc);
 static status_t bison_create_delete_target_table(sql_stmt_t *stmt, char *name, galist_t *indirection,
     sql_table_t **table);
 static status_t bison_create_delete_object(sql_stmt_t *stmt, sql_table_t *table, bool32 only,
@@ -305,6 +309,10 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
                pl_call_expr
 %type <table>  insert_target qualified_name delete_target_name delete_target_base relation_expr table_func json_table
+%type <table>  snapshot_relation snapshot_table
+%type <str> opt_snapshot_alias
+%type <keyword> snapshot_alias_keyword
+%type <boolean> snapshot_partition_for
 %type <case_pair> when_expr_clause when_cond_clause
 %type <column> insert_column_item
 %type <table_attr> table_attr
@@ -544,6 +552,8 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %token <keyword> EMPTY_ON_EMPTY EMPTY_ON_ERROR_P
 %token <keyword> EMPTY_ARRAY_ON_EMPTY EMPTY_ARRAY_ON_ERROR_P
 %token <keyword> EMPTY_OBJECT_P_ON_EMPTY EMPTY_OBJECT_P_ON_ERROR_P
+/* OVER and WITHIN are names when the following tokens do not start a window clause. */
+%token <keyword> OVER_ALIAS WITHIN_ALIAS
 
 /*
  * The grammar thinks these are keywords, but they are not in the kwlist.h
@@ -622,11 +632,14 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %nonassoc    LANGUAGE
 %nonassoc    NAME_P LIBRARY ';'
 %nonassoc    UNBOUNDED NESTED /* ideally would have same precedence as IDENT */
+/* Continue a datatype suffix before considering the same keyword as an alias. */
+%precedence  TYPE_NAME_END
 %nonassoc    IDENT PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
              SET KEYS OBJECT_P SCALAR VALUE_P WITH WITHOUT PATH FORMAT REGEXP
              SEPARATOR_P AUTO_INCREMENT COMMENT APPENDONLY CACHE CHARSET COMPRESS
              ENABLE_P DISABLE_P INITRANS LOB LOGGING MAXTRANS NOCACHE NOCOMPRESS
              PCTFREE STORAGE SYSTEM_P TABLESPACE CHARACTER
+             DAY_P YEAR_P PRECISION SIGNED UNSIGNED VARYING
 
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-nonassoc-ident-tokens"*/
@@ -3971,7 +3984,66 @@ from_list:
  * table_ref is where an alias clause can be attached.
  */
 table_ref:
-            relation_expr           %prec UMINUS
+            snapshot_table
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, $1, NULL, NULL, NULL, &$$) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                }
+            | '(' snapshot_table ')'
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, $2, NULL, NULL, NULL, &$$) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                }
+            | '(' snapshot_table ')' alias_without_as
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if ($2->alias.value.len != 0) {
+                        /* Native alias parsing reports the token following the duplicate alias. */
+                        if (yychar == YYEMPTY) {
+                            yychar = YYLEX;
+                        }
+                        if (yychar != LEX_ERROR_TOKEN && cm_get_error_code() == 0) {
+                            bison_report_invalid_table_alias(yyscanner, @4, yylloc);
+                        }
+                        YYABORT;
+                    }
+                    $2->alias.value.str = $4;
+                    $2->alias.value.len = strlen($4);
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, $2, NULL, NULL, NULL, &$$) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                }
+            | '(' '(' snapshot_table ')' ')'
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, $3, NULL, NULL, NULL, &$$) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                }
+            | '(' '(' snapshot_table ')' ')' alias_without_as
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    if ($3->alias.value.len != 0) {
+                        /* Native alias parsing reports the token following the duplicate alias. */
+                        if (yychar == YYEMPTY) {
+                            yychar = YYLEX;
+                        }
+                        if (yychar != LEX_ERROR_TOKEN && cm_get_error_code() == 0) {
+                            bison_report_invalid_table_alias(yyscanner, @6, yylloc);
+                        }
+                        YYABORT;
+                    }
+                    $3->alias.value.str = $6;
+                    $3->alias.value.len = strlen($6);
+                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, $3, NULL, NULL, NULL, &$$) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                }
+            | relation_expr           %prec UMINUS
                 {
                     sql_table_t *table = $1;
                     sql_join_node_t *join_node = NULL;
@@ -5017,6 +5089,76 @@ relation_expr:
                     $$ = $1;
                 }
         ;
+
+snapshot_relation:
+            relation_expr AS OF_P SCN a_expr
+                {
+                    if (bison_apply_table_snapshot(yyscanner, yychar, $1, SCN_VERSION, $5,
+                        @2.loc, yylloc.loc) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                    $$ = $1;
+                }
+            | relation_expr AS OF_P TIMESTAMP a_expr
+                {
+                    if (bison_apply_table_snapshot(yyscanner, yychar, $1, TIMESTAMP_VERSION, $5,
+                        @2.loc, yylloc.loc) != OG_SUCCESS) {
+                        YYABORT;
+                    }
+                    $$ = $1;
+                }
+        ;
+
+snapshot_table:
+            snapshot_relation opt_snapshot_alias
+                {
+                    if ($2 != NULL) {
+                        $1->alias.value.str = $2;
+                        $1->alias.value.len = strlen($2);
+                    }
+                    $$ = $1;
+                }
+            | snapshot_relation partition_or_subpartition '(' ColId ')' opt_snapshot_alias
+                {
+                    $1->part_info.is_subpart = !$2;
+                    $1->part_info.type = SPECIFY_PART_NAME;
+                    $1->part_info.part_name.str = $4;
+                    $1->part_info.part_name.len = strlen($4);
+                    if ($6 != NULL) {
+                        $1->alias.value.str = $6;
+                        $1->alias.value.len = strlen($6);
+                    }
+                    $$ = $1;
+                }
+            | snapshot_relation snapshot_partition_for '(' expr_list_with_select ')' opt_snapshot_alias
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    $1->part_info.is_subpart = $2;
+                    $1->part_info.type = SPECIFY_PART_VALUE;
+                    BISON_ABORT_IFERR(convert_expr_tree_to_galist(stmt, $4, &$1->part_info.values));
+                    if ($6 != NULL) {
+                        $1->alias.value.str = $6;
+                        $1->alias.value.len = strlen($6);
+                    }
+                    $$ = $1;
+                }
+        ;
+
+snapshot_partition_for:
+            PARTITION_FOR                  { $$ = false; }
+            | SUBPARTITION_FOR              { $$ = true; }
+        ;
+
+opt_snapshot_alias:
+            IDENT                          { $$ = $1; }
+            | snapshot_alias_keyword
+                {
+                    BISON_MEM_STRDUP($$, $1);
+                    cm_str_upper($$);
+                }
+            | AS ColId                     { $$ = $2; }
+            | /*EMPTY*/ %prec UMINUS        { $$ = NULL; }
+        ;
 /*****************************************************************************
  *
  *     expression grammar
@@ -5358,7 +5500,11 @@ c_expr:     columnref       { $$ = $1; }
                     }
                     $$ = expr;
                 }
-            | '(' a_expr ')'    { $$ = $2; }
+            | '(' a_expr ')'
+                {
+                    og_yyget_extra(yyscanner)->raw_parse.last_grouped_expr_close_offset = @3.offset;
+                    $$ = $2;
+                }
             | case_expr         { $$ = $1; }
             | func_expr         { $$ = $1; }
             | select_with_parens    %prec UMINUS
@@ -6595,7 +6741,7 @@ Numeric:     NoSignedInteger
                 {
                     $$ = $1;
                 }
-            | BIGINT
+            | BIGINT %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "bigint", NULL, @1.loc) != OG_SUCCESS) {
@@ -6681,7 +6827,7 @@ Numeric:     NoSignedInteger
                 }
         ;
 
-NoSignedInteger:  INT_P
+NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "int", NULL, @1.loc) != OG_SUCCESS) {
@@ -6689,7 +6835,7 @@ NoSignedInteger:  INT_P
                     }
                     $$ = type;
                 }
-            | INTEGER
+            | INTEGER %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "int", NULL, @1.loc) != OG_SUCCESS) {
@@ -6697,7 +6843,7 @@ NoSignedInteger:  INT_P
                     }
                     $$ = type;
                 }
-            | SMALLINT
+            | SMALLINT %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "smallint", NULL, @1.loc) != OG_SUCCESS) {
@@ -6705,7 +6851,7 @@ NoSignedInteger:  INT_P
                     }
                     $$ = type;
                 }
-            | BINARY_INTEGER
+            | BINARY_INTEGER %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "binary_integer", NULL, @1.loc) != OG_SUCCESS) {
@@ -6713,7 +6859,7 @@ NoSignedInteger:  INT_P
                     }
                     $$ = type;
                 }
-            | TINYINT
+            | TINYINT %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "tinyint", NULL, @1.loc) != OG_SUCCESS) {
@@ -6721,7 +6867,7 @@ NoSignedInteger:  INT_P
                     }
                     $$ = type;
                 }
-            | BINARY_BIGINT
+            | BINARY_BIGINT %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "binary_bigint", NULL, @1.loc) != OG_SUCCESS) {
@@ -6888,7 +7034,7 @@ character_national: NCHAR opt_varying              { $$ = $2 ? "nvarchar" : "nch
 
 opt_varying:
             VARYING                                    { $$ = OG_TRUE; }
-            | /*EMPTY*/                                { $$ = OG_FALSE; }
+            | /*EMPTY*/ %prec TYPE_NAME_END             { $$ = OG_FALSE; }
         ;
 
 opt_charbyte: CHAR_P    { $$ = OG_TRUE; }
@@ -17046,7 +17192,22 @@ alter_value_start:
         ;
 
 unreserved_keyword:
-              ABORT_P
+              snapshot_alias_keyword
+            | OVER
+            | WITHIN
+        ;
+
+/* The lexer distinguishes window-clause prefixes from OVER/WITHIN used as names. */
+snapshot_alias_keyword:
+              DAY_P
+            | YEAR_P
+            | PRECISION
+            | SIGNED
+            | UNSIGNED
+            | VARYING
+            | OVER_ALIAS
+            | WITHIN_ALIAS
+            | ABORT_P
             | ABSENT
             | ABSOLUTE_P
             | ACCESS
@@ -17183,7 +17344,6 @@ unreserved_keyword:
             | DATE_FORMAT_P
             | DAY_HOUR_P
             | DAY_MINUTE_P
-            | DAY_P
             | DAY_SECOND_P
             | DBA_RECYCLEBIN
             | DEBUG
@@ -17211,7 +17371,7 @@ unreserved_keyword:
             | DISTRIBUTION
             | DOCUMENT_P
             | DOMAIN_P
-            | DOUBLE_P
+            | DOUBLE_P %prec TYPE_NAME_END
             | DROP
             | DUMP
             | DUMPFILE
@@ -17424,7 +17584,6 @@ unreserved_keyword:
             | OPTION
             | OPTIONALLY
             | OPTIONS
-            | OVER
             | ORDINALITY
             | ORGANIZATION
             | OUTFILE
@@ -17571,7 +17730,6 @@ unreserved_keyword:
             | SCOPE
             | SHUTDOWN
             | SIBLINGS
-            | SIGNED
             | SIMPLE
             | SIZE
             | SKIP
@@ -17661,7 +17819,6 @@ unreserved_keyword:
             | UNLOCK
             | UNLOGGED
             | UNPIVOT
-            | UNSIGNED
             | UNTIL
             | UNUSABLE
             | USE_P
@@ -17674,7 +17831,6 @@ unreserved_keyword:
             | VALUE_P
             | VARIABLES
             | VARRAY
-            | VARYING
             | VCGROUP
             | VERSION_P
             | VISIBLE
@@ -17684,7 +17840,6 @@ unreserved_keyword:
             | WEAK
             | WHILE_P
             | WHITESPACE_P
-            | WITHIN
             | WITHOUT
             | WORK
             | WORKLOAD
@@ -17692,7 +17847,6 @@ unreserved_keyword:
             | WRITE
             | XML_P
             | YEAR_MONTH_P
-            | YEAR_P
             | YES_P
             | ZLIB
             | ZSTD
@@ -17711,7 +17865,7 @@ unreserved_keyword:
             | GREATEST
             | GROUPING_P
             | INOUT_P
-            | INTERVAL
+            | INTERVAL %prec TYPE_NAME_END
             | LEAST
             | NATIONAL
             | NONE
@@ -17720,7 +17874,6 @@ unreserved_keyword:
             | NVL
             | OVERLAY
             | POSITION
-            | PRECISION
             | ROW
             | SETOF
             | SMALLDATETIME
@@ -18193,6 +18346,57 @@ static void bison_set_select_type(sql_select_t *select_ctx, select_type_t type)
 
     select_ctx->type = type;
     bison_set_select_node_type(select_ctx->root, type);
+}
+
+static void bison_report_invalid_table_alias(core_yyscan_t yyscanner, lex_location_t alias_loc,
+    lex_location_t next_loc)
+{
+    base_yy_raw_parse_state_t *state = &og_yyget_extra(yyscanner)->raw_parse;
+    source_location_t loc = next_loc.loc;
+
+    /* Use original source offsets, including quotes and newlines, also at EOF. */
+    if (state->sourcebuf != NULL && alias_loc.offset >= 0 && next_loc.offset >= alias_loc.offset &&
+        (size_t)next_loc.offset <= state->sourcebuflen) {
+        loc = alias_loc.loc;
+        for (int pos = alias_loc.offset; pos < next_loc.offset; pos++) {
+            if (state->sourcebuf[pos] == '\n') {
+                loc.line++;
+                loc.column = 1;
+            } else {
+                loc.column++;
+            }
+        }
+    }
+    OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, "invalid table alias");
+}
+
+static status_t bison_apply_table_snapshot(core_yyscan_t yyscanner, int next_token, sql_table_t *table,
+    sql_snapshot_type_t type, expr_tree_t *expr, source_location_t clause_loc, source_location_t end_loc)
+{
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+    base_yy_raw_parse_state_t *state = &og_yyget_extra(yyscanner)->raw_parse;
+
+    /* Oracle treats DAY/YEAR immediately after a grouped expression as an interval
+     * suffix, not a bare alias. Function, CAST and partition parentheses differ. */
+    if ((next_token == DAY_P || next_token == YEAR_P) && state->last_grouped_expr_close_offset >= 0 &&
+        state->last_grouped_expr_close_offset == state->prev_returned_token_offset) {
+        OG_SRC_THROW_ERROR(end_loc, ERR_SQL_SYNTAX_ERROR, "invalid interval expression");
+        return OG_ERROR;
+    }
+    if (table->version.type != CURR_VERSION) {
+        OG_SRC_THROW_ERROR(clause_loc, ERR_SQL_SYNTAX_ERROR, "duplicate AS OF clause");
+        return OG_ERROR;
+    }
+#ifdef OG_RAC_ING
+    if (IS_COORDINATOR && IS_APP_CONN(stmt->session)) {
+        OG_SRC_THROW_ERROR(clause_loc, ERR_CAPABILITY_NOT_SUPPORT, "AS OF");
+        return OG_ERROR;
+    }
+#endif
+    OG_RETURN_IFERR(sql_verify_table_version(stmt, type, expr, end_loc));
+    table->version.type = type;
+    table->version.expr = expr;
+    return OG_SUCCESS;
 }
 
 static status_t bison_apply_table_pivot(sql_stmt_t *stmt, sql_table_t *table, galist_t *pivot_list)

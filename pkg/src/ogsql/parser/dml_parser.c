@@ -106,6 +106,44 @@ static inline void get_next_token(int *lookahead_len, struct base_yy_lookahead *
                               scanbuf, yylex_func);
 }
 
+static int classify_window_keyword(base_yy_extra_type *yyextra, YYSTYPE *lvalp, YYLTYPE *llocp,
+    core_yyscan_t yyscanner, core_yylex_func yylex_func, int cur_token, int cur_yyleng)
+{
+    struct base_yy_lookahead pending[2];
+    core_YYSTYPE cur_yylval = lvalp->core_yystype;
+    YYLTYPE cur_yylloc = *llocp;
+    char *scanbuf = yyextra->core_yy_extra.scanbuf;
+    int prev_end = cur_yylloc.offset + cur_yyleng;
+    int count = 0;
+
+    do {
+        struct base_yy_lookahead *next = &pending[count];
+        get_next_token_without_yy(&yyextra->lookahead_len, yyextra->lookaheads, &next->token,
+            &next->yyleng, lvalp, llocp, yyscanner, scanbuf, yylex_func);
+        if (next->token == LEX_ERROR_TOKEN || cm_get_error_code() != 0) {
+            return LEX_ERROR_TOKEN;
+        }
+        next->yylval = lvalp->core_yystype;
+        next->yylloc = *llocp;
+        next->prev_hold_char_loc = prev_end;
+        next->prev_hold_char = scanbuf[prev_end];
+        prev_end = next->yylloc.offset + next->yyleng;
+        count++;
+    } while (cur_token == WITHIN && count == 1 && pending[0].token == GROUP_P);
+
+    bool32 is_clause = (cur_token == OVER && pending[0].token == '(') ||
+        (cur_token == WITHIN && count == 2 && pending[1].token == '(');
+
+    /* Push back in reverse order, retaining any tokens that were already queued. */
+    for (int i = count - 1; i >= 0; i--) {
+        yyextra->lookaheads[yyextra->lookahead_len++] = pending[i];
+    }
+    lvalp->core_yystype = cur_yylval;
+    *llocp = cur_yylloc;
+    scanbuf[cur_yylloc.offset + cur_yyleng] = '\0';
+    return is_clause ? cur_token : (cur_token == OVER ? OVER_ALIAS : WITHIN_ALIAS);
+}
+
 static inline void set_lookahead_token(int *lookahead_len, struct base_yy_lookahead *lookaheads, int *next_token,
     YYSTYPE *lvalp, YYLTYPE *llocp, int *next_yyleng, YYLTYPE *cur_yylloc, char *scanbuf, int cur_yyleng)
 {
@@ -267,7 +305,8 @@ static int capture_alter_system_value(base_yy_extra_type *yyextra, YYSTYPE *lval
     }
 }
 
-int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, core_yylex_func yylex_func_hook)
+static int base_yylex_filtered(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner,
+    core_yylex_func yylex_func_hook)
 {
     base_yy_extra_type* yyextra = og_yyget_extra(yyscanner);
     base_yy_raw_parse_state_t *state = &yyextra->raw_parse;
@@ -340,6 +379,9 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
 
     /* Do we need to look ahead for a possible multiword token? */
     switch (cur_token) {
+        case OVER:
+        case WITHIN:
+            return classify_window_keyword(yyextra, lvalp, llocp, yyscanner, yylex_func, cur_token, cur_yyleng);
         case ABSENT:
             /*
              * ABSENT ON must be reduced to one token
@@ -989,6 +1031,17 @@ int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, c
     return cur_token;
 }
 
+int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, core_yylex_func yylex_func_hook)
+{
+    int token = base_yylex_filtered(lvalp, llocp, yyscanner, yylex_func_hook);
+    if (token > 0 && token != LEX_ERROR_TOKEN) {
+        base_yy_raw_parse_state_t *state = &og_yyget_extra(yyscanner)->raw_parse;
+        state->prev_returned_token_offset = state->last_returned_token_offset;
+        state->last_returned_token_offset = llocp->offset;
+    }
+    return token;
+}
+
 int base_yylex(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner)
 {
     return base_yylex_common(lvalp, llocp, yyscanner, core_yylex);
@@ -1020,6 +1073,9 @@ static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_
     state->pl_object_name_mode = OG_FALSE;
     state->pl_object_name_sensitive = OG_FALSE;
     state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
+    state->last_grouped_expr_close_offset = -1;
+    state->last_returned_token_offset = -1;
+    state->prev_returned_token_offset = -1;
 }
 
 static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context, bool32 pl_source)
