@@ -2675,9 +2675,9 @@ status_t para_log_commit_flush(knl_session_t *session)
         (void)cm_futex_wait_value(&lag_ogx->lrc_wake_seq, seq, PARA_LOG_COMMIT_WAIT_SLICE_MS);
     }
 
-            if (session->kernel->attr.enable_boc) {
-                tx_scn_broadcast(session);
-            }
+    if (session->kernel->attr.enable_boc && shmem_scn_need_broadcast()) {
+        tx_scn_broadcast(session);
+    }
     knl_end_session_wait(session, LOG_FILE_SYNC);
     return OG_SUCCESS;
 }
