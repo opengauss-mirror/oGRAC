@@ -86,6 +86,9 @@ bool32 og_check_sql_ctx_valid(sql_stmt_t *statement, sql_context_t *ogx)
 {
     OG_LOG_DEBUG_INF("Validating SQL context, stmtid=%u", statement->id);
     
+    /* a context parsed under a different use_bison_parser setting is not
+     * reusable: the two parsers accept different grammars (issue #389) */
+    OG_RETVALUE_IFTRUE(ogx->bison_parsed != g_instance->sql.use_bison_parser, OG_FALSE);
     OG_RETVALUE_IFTRUE(ogx->policy_used, OG_FALSE);
     OG_RETVALUE_IFTRUE(!og_check_sequences(statement), OG_FALSE);
     
@@ -193,6 +196,10 @@ status_t og_cache_sql_context(sql_stmt_t *statement, context_bucket_t *ogx_bucke
     }
     ogx = statement->context;
     ogx->ctrl.ref_count = 1;
+    /* record which parser produced this context: a plan parsed by the native
+     * parser must not be served while use_bison_parser is on, and vice versa
+     * (issue #389) */
+    ogx->bison_parsed = g_instance->sql.use_bison_parser;
     ogx_bucket_insert(ogx_bucket, (context_ctrl_t *)ogx);
     cm_recursive_unlock(&ogx_bucket->parsing_lock);
 
