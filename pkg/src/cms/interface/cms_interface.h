@@ -82,7 +82,9 @@ status_t cms_res_inst_unregister(void);
 status_t cms_res_inst_unregister_inner(void);
 status_t cms_send_disconn_req(void);
 status_t cms_set_res_work_stat(uint8 stat);
+/* Query the registered resource type with a one-second client interval delay. */
 status_t cms_get_res_stat_list(cms_res_status_list_t* res_list);
+/* No interval delay; polling callers must control their own check and retry frequency. */
 status_t cms_get_res_stat_list1(const char* res_type, cms_res_status_list_t* res_list);
 status_t cms_get_dss_local_stat(cms_res_status_t *local_stat);
 const char* cms_stat_str(cms_stat_t stat);
