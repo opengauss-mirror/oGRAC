@@ -208,10 +208,11 @@ status_t og_hash_join_exec_right_semi(sql_stmt_t *statement, sql_cursor_t *sql_c
     return og_hash_join_exec_right_cursor(hash_sql_cur, ITER_FETCH_DEL);
 }
 
+/* next_row_buf is the hash table fetch direction's new_buf, which is NULL by design. */
 static status_t og_delete_matched_row_cb(void *sql_cur, const char *next_row_buf,
     uint32 next_row_size, const char *curr_row_buf, uint32 curr_row_size, bool32 match_found)
 {
-    CM_POINTER2(next_row_buf, curr_row_buf);
+    CM_POINTER(curr_row_buf);
     OG_RETVALUE_IFTRUE(sql_cur == NULL, OG_SUCCESS);
     sql_cursor_t *hash_sql_cur = (sql_cursor_t *)sql_cur;
     OG_RETVALUE_IFTRUE(hash_sql_cur->exec_data.right_semi == NULL, OG_SUCCESS);
