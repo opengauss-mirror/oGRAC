@@ -174,7 +174,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     uint8 lookup_pad[24];
 
     buf_latch_t latch;  // for page operations
-    volatile uint16 ref_num;
+    atomic32_t ref_num;
     volatile uint16 touch_number;  // touch number for LRU
 
     volatile uint8 is_resident;  // resident buffer not in LRU queue
@@ -208,14 +208,9 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 remote_access;    // remote access statistics
     volatile uint8 transfer_status;  // page transfer status, used only in TDC
 
-    atomic32_t ref_num;
-    volatile uint16 touch_number;   // touch number for LRU
-
-    page_id_t page_id;
     date_t access_time;  // last access time
     date_t ckpt_enque_time;
 
-    uint32 curr_node_idx;
     log_point_t trunc_point;
     uint64 lastest_lfn;
 
