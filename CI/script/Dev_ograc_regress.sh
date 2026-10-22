@@ -231,6 +231,10 @@ function init_test_environment() {
     rm -rf ${INSTALL_LOG_DIR}
     rm -rf ${TEMP_DIR}
     rm -rf ${CORE_DIR}/*
+    # install.py 要求 ograc_data 为干净目录（不能预建 data/、gcc_home/ 等子目录），
+    # 与 do_all_test.sh 的 cleanup_regress_install 保持一致，运行前自动清空
+    mkdir -p /home/regress/ograc_data
+    find /home/regress/ograc_data -mindepth 1 -delete 2>/dev/null || true
     mkdir -p ${TEST_DATA_DIR}
     mkdir -p ${INSTALL_LOG_DIR}
     mkdir -p ${TEMP_DIR}

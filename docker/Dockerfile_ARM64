@@ -1,7 +1,8 @@
-FROM openeuler/openeuler:22.03-lts-sp1
-# 注：若 Docker Hub 不可达且本机已有等价基础镜像（如 openeuler-22.03-lts-sp1），
-# 可执行 `docker tag openeuler-22.03-lts-sp1 openeuler/openeuler:22.03-lts-sp1` 复用，
-# 或将本行 FROM 改为内网可达的镜像仓库地址。详见 docker/readme.md。
+# 默认从国内镜像源拉取（Docker Hub 在多数构建环境不可达）。
+# 若环境可直连 Docker Hub，或需使用内网镜像仓，构建时用 --build-arg 覆盖：
+#   docker build --build-arg BASE_IMAGE=openeuler/openeuler:22.03-lts-sp1 -f docker/Dockerfile_ARM64 -t ograc-dev .
+ARG BASE_IMAGE=hub.oepkgs.net/openeuler/openeuler:22.03-lts-sp1
+FROM ${BASE_IMAGE}
 
 # oGRAC requires English locale, otherwise database startup may fail.
 ENV LANG=en_US.UTF-8

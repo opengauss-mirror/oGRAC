@@ -39,7 +39,7 @@ oGRAC主要由五个主要部分组成：
 本仓库从零到完成验证只需三条命令，预期总耗时 25 分钟以内：
 
 ```shell
-# 1. 构建开发镜像（基础镜像不可达时见 docker/readme.md 的镜像源说明），约 2 分钟
+# 1. 构建开发镜像（默认从国内镜像源拉取基础镜像，可用 --build-arg BASE_IMAGE 覆盖），约 2-6 分钟
 docker build -f docker/Dockerfile_ARM64 -t ograc-dev .
 docker run -d --privileged --network=host --shm-size=16g --name ograc-dev \
   -v "$(pwd)":/home/regress/ogracKernel -v "$(dirname "$(pwd)")/ograc_data":/home/regress/ograc_data ograc-dev
@@ -48,10 +48,12 @@ docker run -d --privileged --network=host --shm-size=16g --name ograc-dev \
 docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel/build && sh Makefile.sh make_ograc_pkg_test'
 
 # 3. 仓库根目录跑 smoke 精简用例集（自动 安装→回归→卸载），约 2 分钟
-docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel && chmod -R 777 . && bash CI/build/script/run_ograc_test.sh smoke'
+#    注意：不要对整个仓库 chmod -R 777（含构建产物和第三方源码，数万文件会超时）；
+#    只需放开回归要写的目录和脚本执行权限
+docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel && chmod -R 777 output pkg/test/og_regress && find CI -name "*.sh" -exec chmod +x {} + && bash CI/build/script/run_ograc_test.sh smoke'
 ```
 
-前置：`git submodule update --init --depth 1 open_source`（构建依赖）。详细步骤与失败清理见下文「单节点编译部署指南」和「单元测试」章节。
+前置：`git submodule update --init --depth 1 open_source`（构建依赖）。宿主机挂载的 `ograc_data` 目录保持为空即可（install.py 要求该目录干净，回归脚本运行前会自动清空其内容，不要在里面预建 `data/`、`gcc_home/` 等子目录，否则安装会报 `File exists` 失败）。详细步骤与失败清理见下文「单节点编译部署指南」和「单元测试」章节。
 
 ## 单节点编译部署指南
 
@@ -155,7 +157,7 @@ docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel && chmod -R 777 . && b
 
     然后按「单元测试」章节执行 smoke 精简用例集完成验证（不要加 `need_compile`）。
 
-    > * **一体化验证（编译+单元测试+样例部署共用一次构建，推荐）**：若同时需要构建验证、单元测试与样例部署，可直接在 `build` 目录执行 `sh Makefile.sh make_ograc_pkg_test`（Debug+test 变体）。该命令一次性产出主程序 `ogracd/cms/ogsql`、安装包 `oGRAC-DATABASE-LINUX-64bit`（供 `local_install.sh install` 使用）以及回归工具 `og_regress`（供 smoke 测试使用），无需再单独 `make -sj 8`，也无需为单元测试额外编译一次 release。执行后在仓库根目录先 `chmod -R 777 .`（构建会重置产物权限，必须在构建后执行），再运行 `bash CI/build/script/run_ograc_test.sh smoke`——它自动完成安装、SQL 用例验证与卸载，构建验证、单元测试、样例验证一次跑完，无需先执行「安装流程」。
+    > * **一体化验证（编译+单元测试+样例部署共用一次构建，推荐）**：若同时需要构建验证、单元测试与样例部署，可直接在 `build` 目录执行 `sh Makefile.sh make_ograc_pkg_test`（Debug+test 变体）。该命令一次性产出主程序 `ogracd/cms/ogsql`、安装包 `oGRAC-DATABASE-LINUX-64bit`（供 `local_install.sh install` 使用）以及回归工具 `og_regress`（供 smoke 测试使用），无需再单独 `make -sj 8`，也无需为单元测试额外编译一次 release。执行后在仓库根目录放开回归需要的目录权限（**不要对整个仓库 `chmod -R 777 .`**——此时仓库含构建产物和第三方源码，数万文件的递归 chmod 可能超时导致测试未执行），再运行 `bash CI/build/script/run_ograc_test.sh smoke`——它自动完成安装、SQL 用例验证与卸载，构建验证、单元测试、样例验证一次跑完，无需先执行「安装流程」。
 
 6. 安装流程
 
@@ -245,7 +247,10 @@ oGRAC 使用 SQL 回归测试验证基础功能，测试用例位于 `pkg/test/o
 
 ```shell
 # 仓库根目录。容器内为 /home/regress/ogracKernel
-chmod -R 777 .
+# 只放开回归需要的目录权限，不要对整个仓库 chmod -R 777
+# （含构建产物和第三方源码，数万文件的递归 chmod 会超时）
+chmod -R 777 output pkg/test/og_regress
+find CI -name "*.sh" -exec chmod +x {} +
 bash CI/build/script/run_ograc_test.sh smoke
 ```
 
