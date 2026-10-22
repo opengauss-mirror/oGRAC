@@ -27,6 +27,7 @@ test: og_slowsql
 test: og_hint
 test: og_startcost
 test: og_index_enhance
+test: og_comment_close
 test: og_explain_predicates_1
 test: og_explain_predicates_2
 test: og_union_datatype

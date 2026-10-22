@@ -2487,6 +2487,11 @@ static bool32 ogsql_readline_handle_history_key(const OgsqlReadlineLoopT *loop, 
                 } else if (ogsql_history_save_draft(loop->cmdBuf, *loop->nbytes, *loop->nwidths) != OG_SUCCESS) {
                     return OG_TRUE;
                 }
+            } else {
+                /* Browsing a committed entry: keep unsent edits on that entry when navigating away
+                   (GNU readline parity), so a later Down shows the edited text. */
+                (void)ogsql_history_update_entry(*loop->histCount, (uint32)*loop->listNum, loop->cmdBuf, *loop->nbytes,
+                                                 *loop->nwidths);
             }
             if (!multilineHistory && !historyRender) {
                 OgsqlReadlineMoveEnd(loop);
@@ -2530,6 +2535,9 @@ static bool32 ogsql_readline_handle_history_key(const OgsqlReadlineLoopT *loop, 
             return OG_TRUE;
         }
         if (*loop->listNum >= 1) {
+            /* Same GNU-readline write-back before leaving the current slot on the way down. */
+            (void)ogsql_history_update_entry(*loop->histCount, (uint32)*loop->listNum, loop->cmdBuf, *loop->nbytes,
+                                             *loop->nwidths);
             if (!multilineHistory && !historyRender) {
                 OgsqlReadlineMoveEnd(loop);
             }

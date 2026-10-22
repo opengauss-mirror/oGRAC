@@ -41,6 +41,10 @@ status_t ogsql_history_load(const char *username);
 status_t ogsql_history_save(void);
 status_t ogsql_history_save_draft(const char *text, uint32 nbytes, uint32 nwidths);
 const ogsql_cmd_history_list_t *ogsql_history_get_draft(void);
+/* In-session edit of a browsed history entry (GNU readline parity): overwrite the slot so a
+   later Down/Up shows the edited text. In-memory only; persisted on the next commit's save. */
+status_t ogsql_history_update_entry(int histCount, uint32 logicalIndex, const char *text, uint32 nbytes,
+                                    uint32 nwidths);
 const ogsql_cmd_history_list_t *ogsql_history_get(int histCount, uint32 logicalIndex);
 bool32 ogsql_history_find_ranked(int histCount, const char *query, uint32 queryLen, uint32 afterIndex,
     uint32 *matchIndex);
