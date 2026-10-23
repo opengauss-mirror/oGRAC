@@ -48,6 +48,9 @@
 #include "ogsql_concate.h"
 #include "dml_parser.h"
 #include "expl_executor.h"
+#include "ogsql_expr.h"
+#include "func_datatype.h"
+#include "var_opr.h"
 
 #ifdef __cplusplus
 
@@ -1048,6 +1051,91 @@ static status_t sql_fork_stmt(sql_stmt_t *ogsql_stmt, sql_stmt_t **ret)
 }
 
 // notice: only use in return result
+static og_type_t sql_resolve_pending_col_datatype(sql_stmt_t *stmt, expr_node_t *node)
+{
+    if (node == NULL) {
+        return OG_TYPE_UNKNOWN;
+    }
+    og_type_t dtype = NODE_DATATYPE(node);
+    if (dtype != OG_TYPE_UNKNOWN) {
+        return dtype;
+    }
+    if (node->type == EXPR_NODE_PARAM) {
+        /* a param converted from a PL variable carries no static datatype; read its kept
+         * value to obtain the type of the actual data */
+        variant_t var;
+        var.type = OG_TYPE_UNKNOWN;
+        var.is_null = OG_TRUE;
+        if (sql_get_expr_node_value(stmt, node, &var) == OG_SUCCESS && !var.is_null) {
+            return var.type;
+        }
+        cm_reset_error();
+        return OG_TYPE_UNKNOWN;
+    }
+    if (IS_OPER_NODE(node)) {
+        /* same typing rule as the verifier and the executor, so that the sent column
+         * definition matches the type of the values that row fetching sends */
+        og_type_t left = sql_resolve_pending_col_datatype(stmt, node->left);
+        og_type_t right = sql_resolve_pending_col_datatype(stmt, node->right);
+        og_type_t result = OG_TYPE_UNKNOWN;
+        if (left != OG_TYPE_UNKNOWN && right != OG_TYPE_UNKNOWN &&
+            opr_infer_type((operator_type_t)node->type, left, right, &result) == OG_SUCCESS) {
+            return result;
+        }
+    }
+    return OG_TYPE_UNKNOWN;
+}
+
+// notice: only use in return result
+static status_t sql_send_parsed_stmt_without_params(sql_stmt_t *ogsql_stmt)
+{
+    /* The returned result set must not expose PL-internal parameters (converted from PL
+     * variables) to the client: their marks do not point into the statement text, and the
+     * client only reads rows from a returned cursor anyway. */
+    galist_t *params = ogsql_stmt->context->params;
+    if (params == NULL) {
+        /* a statement without a parameter list has nothing to hide */
+        return my_sender(ogsql_stmt)->send_parsed_stmt(ogsql_stmt);
+    }
+    uint32 saved_count = params->count;
+    params->count = 0;
+    status_t status = my_sender(ogsql_stmt)->send_parsed_stmt(ogsql_stmt);
+    params->count = saved_count;
+    return status;
+}
+
+// notice: only use in return result
+static bool32 sql_try_resolve_pending_columns(sql_stmt_t *ogsql_stmt, sql_select_t *select_ctx, sql_cursor_t *cursor)
+{
+    for (uint32 i = 0; i < select_ctx->rs_columns->count; i++) {
+        rs_column_t *rs_col = (rs_column_t *)cm_galist_get(select_ctx->rs_columns, i);
+        if (rs_col->datatype != OG_TYPE_UNKNOWN) {
+            continue;
+        }
+        og_type_t type = OG_TYPE_UNKNOWN;
+        if (cursor->mtrl.rs.buf != NULL) {
+            /* the pending buffer only records types of sub-select/view columns; plain
+             * base-table columns keep OG_TYPE_UNKNOWN (-1) there */
+            type = sql_get_pending_type((char *)cursor->mtrl.rs.buf, i);
+        }
+        if (type == OG_TYPE_UNKNOWN && rs_col->type == RS_COL_CALC) {
+            /* the parsed node datatype may not match the type the executor computes (e.g.
+             * an arithmetic expression on a converted PL param is typed VARCHAR at parse
+             * time but BIGINT at execution) */
+            type = sql_resolve_pending_col_datatype(ogsql_stmt, rs_col->expr->root);
+        }
+        if (type == OG_TYPE_UNKNOWN) {
+            (void)sql_infer_pending_numeric_datatype(ogsql_stmt, select_ctx->first_query, rs_col, &type);
+        }
+        if (type == OG_TYPE_UNKNOWN) {
+            return OG_FALSE;
+        }
+        rs_col->datatype = type;
+    }
+    return OG_TRUE;
+}
+
+// notice: only use in return result
 status_t sql_execute_fetch_cursor_medatata(sql_stmt_t *ogsql_stmt)
 {
     if (ogsql_stmt->status < STMT_STATUS_PREPARED || (ogsql_stmt->cursor_info.has_fetched && ogsql_stmt->eof)) {
@@ -1057,7 +1145,23 @@ status_t sql_execute_fetch_cursor_medatata(sql_stmt_t *ogsql_stmt)
 
     sql_select_t *select_ctx = (sql_select_t *)ogsql_stmt->context->entry;
     if (select_ctx->pending_col_count == 0) {
-        return my_sender(ogsql_stmt)->send_parsed_stmt(ogsql_stmt);
+        return sql_send_parsed_stmt_without_params(ogsql_stmt);
+    }
+
+    sql_cursor_t *cursor = OGSQL_ROOT_CURSOR(ogsql_stmt);
+    if (cursor != NULL && cursor->select_ctx == select_ctx) {
+        /* Pending columns may sit at any position, so scan all rs_columns and resolve each
+         * unknown column by its own column index, either from the materialized buffer or by
+         * inference. Kept params are decoded first because resolving a converted PL parameter
+         * reads its kept value. If every unknown column is resolved, metadata can be sent
+         * directly instead of re-parsing the original text, which may contain PL variables
+         * that a fresh sub-statement cannot resolve. */
+        if (sql_read_kept_params(ogsql_stmt) != OG_SUCCESS) {
+            cm_reset_error();
+        }
+        if (sql_try_resolve_pending_columns(ogsql_stmt, select_ctx, cursor)) {
+            return sql_send_parsed_stmt_without_params(ogsql_stmt);
+        }
     }
 
     sql_text_t sql;
@@ -1093,6 +1197,33 @@ status_t sql_execute_fetch_cursor_medatata(sql_stmt_t *ogsql_stmt)
     }
     OGSQL_RESTORE_STACK(ogsql_stmt);
     vmc_free(&vmc);
+
+    if (status != OG_SUCCESS) {
+        cm_reset_error();
+        /* The original text may contain PL variables that a fresh sub-statement cannot resolve
+         * (the Bison parser does not rewrite PL variables into bind variables), so re-parsing
+         * can fail. Fall back to static inference for unknown columns, defaulting to VARCHAR
+         * like sql_send_exec_end, and send metadata from rs_columns directly. */
+        for (uint32 i = 0; i < select_ctx->rs_columns->count; i++) {
+            rs_column_t *rs_col = (rs_column_t *)cm_galist_get(select_ctx->rs_columns, i);
+            if (rs_col->datatype != OG_TYPE_UNKNOWN) {
+                continue;
+            }
+            og_type_t type = OG_TYPE_UNKNOWN;
+            if (rs_col->type == RS_COL_CALC) {
+                type = sql_resolve_pending_col_datatype(ogsql_stmt, rs_col->expr->root);
+            }
+            if (type == OG_TYPE_UNKNOWN) {
+                (void)sql_infer_pending_numeric_datatype(ogsql_stmt, select_ctx->first_query, rs_col, &type);
+            }
+            if (type == OG_TYPE_UNKNOWN) {
+                cm_reset_error();
+                type = OG_TYPE_VARCHAR;
+            }
+            rs_col->datatype = type;
+        }
+        return sql_send_parsed_stmt_without_params(ogsql_stmt);
+    }
     return status;
 }
 

@@ -2154,6 +2154,75 @@ end;
 /
 set serveroutput off;
 
+-- OPEN FOR static SQL referencing procedure parameters (issue #397).
+drop table if exists bison_pl_openfor_t;
+drop table if exists bison_pl_openfor_log;
+create table bison_pl_openfor_t(id int, sal int);
+create table bison_pl_openfor_log(id int, sal int, scaled int);
+insert into bison_pl_openfor_t values(1, 100);
+insert into bison_pl_openfor_t values(2, 200);
+commit;
+
+drop procedure if exists bison_pl_openfor_param;
+create or replace procedure bison_pl_openfor_param(f1 in int) as
+    v_refcur2 sys_refcursor;
+    v_id int;
+    v_sal int;
+    v_scaled int;
+begin
+    open v_refcur2 for select id, sal, f1 * sal as scaled from bison_pl_openfor_t where sal > f1;
+    loop
+        fetch v_refcur2 into v_id, v_sal, v_scaled;
+        exit when v_refcur2%notfound;
+        insert into bison_pl_openfor_log values(v_id, v_sal, v_scaled);
+    end loop;
+    close v_refcur2;
+end;
+/
+call bison_pl_openfor_param(150);
+select * from bison_pl_openfor_log order by id;
+drop procedure if exists bison_pl_openfor_param;
+
+-- procedure parameter in plain static DML (SELECT INTO / UPDATE WHERE).
+drop procedure if exists bison_pl_static_param;
+create or replace procedure bison_pl_static_param(p_id in int) as
+    v_sal int;
+begin
+    select sal into v_sal from bison_pl_openfor_t where id = p_id;
+    update bison_pl_openfor_t set sal = v_sal where id = p_id;
+end;
+/
+call bison_pl_static_param(1);
+select sal from bison_pl_openfor_t where id = 1;
+
+-- procedure parameter in OPEN FOR cursor consumed via dbe_sql.return_cursor (issue #397).
+drop procedure if exists bison_pl_retcur_param;
+create or replace procedure bison_pl_retcur_param(f1 in int) as
+    v_refcur sys_refcursor;
+begin
+    open v_refcur for select id, sal, f1 * sal as scaled
+        from bison_pl_openfor_t where sal > f1 order by id;
+    dbe_sql.return_cursor(v_refcur);
+end;
+/
+call bison_pl_retcur_param(150);
+drop procedure if exists bison_pl_retcur_param;
+
+-- procedure parameter only in WHERE clause of a cursor returned via dbe_sql.return_cursor (issue #397).
+drop procedure if exists bison_pl_retcur_where;
+create or replace procedure bison_pl_retcur_where(f1 in int) as
+    v_refcur sys_refcursor;
+begin
+    open v_refcur for select sal from bison_pl_openfor_t where sal > f1 order by id;
+    dbe_sql.return_cursor(v_refcur);
+end;
+/
+call bison_pl_retcur_where(150);
+drop procedure if exists bison_pl_retcur_where;
+
+drop table if exists bison_pl_openfor_log;
+drop table if exists bison_pl_openfor_t;
+
 drop trigger if exists bison_pl_stmt_trg;
 drop trigger if exists bison_pl_trg;
 drop package body if exists bison_pl_pkg;
