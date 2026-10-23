@@ -258,6 +258,8 @@ typedef struct st_trig_name_list {
 #define DB_CURR_SCN_PTR(session) (&(((knl_session_t *)(session))->kernel->scn))
 #define DB_CURR_SCN(session) KNL_GET_UB_SCN(DB_CURR_SCN_PTR(session))
 #define DB_SET_CURR_SCN(session, scn) KNL_SET_UB_SCN(DB_CURR_SCN_PTR(session), (scn))
+/* Raise local SCN only (no peer fan-out). Prefer for page-ack hot paths. */
+#define DB_RAISE_LOCAL_SCN(session, scn) KNL_RAISE_LOCAL_UB_SCN(DB_CURR_SCN_PTR(session), (scn))
 #define DB_INC_CURR_SCN(session) KNL_INC_UB_SCN(DB_CURR_SCN_PTR(session))
 #define DB_CURR_SCN_KERNEL(kernel) KNL_GET_UB_SCN(&((kernel)->scn))
 #define DB_NOW_TO_SCN(session) \

@@ -100,6 +100,20 @@ static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
     }
 }
 
+/* Raise local SCN only: UB slot without peer fan-out, or kernel->scn if UB not ready. */
+static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    volatile uint64 *ub_scn = g_ub_global_scn;
+
+    if (ub_scn != NULL) {
+        ub_atomic_raise_u64(ub_scn, (uint64)scn);
+        return;
+    }
+    if (scn > KNL_GET_SCN(p_scn)) {
+        KNL_SET_SCN(p_scn, scn);
+    }
+}
+
 static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
 {
     volatile uint64 *ub_scn = g_ub_global_scn;
@@ -125,6 +139,13 @@ static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
     }
 }
 
+static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    if (scn > KNL_GET_SCN(p_scn)) {
+        KNL_SET_SCN(p_scn, scn);
+    }
+}
+
 static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
 {
     return KNL_INC_SCN(p_scn);
@@ -133,6 +154,7 @@ static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
 
 #define KNL_GET_UB_SCN(p_scn) knl_get_ub_scn(p_scn)
 #define KNL_SET_UB_SCN(p_scn, scn) knl_set_ub_scn(p_scn, scn)
+#define KNL_RAISE_LOCAL_UB_SCN(p_scn, scn) knl_raise_local_ub_scn(p_scn, scn)
 #define KNL_INC_UB_SCN(p_scn) knl_inc_ub_scn(p_scn)
 
 // gen scn with given seq
