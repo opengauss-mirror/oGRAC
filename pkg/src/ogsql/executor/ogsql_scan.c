@@ -2038,6 +2038,32 @@ static inline status_t sql_get_lob_row_value(char *ptr, uint32 len, variant_t *v
     return OG_SUCCESS;
 }
 
+static status_t sql_get_element_from_knl_lob(sql_stmt_t *stmt, knl_handle_t locator, int32 start, int32 end, og_type_t type,
+    variant_t *value)
+{
+    vm_lob_t vlob;
+    array_assist_t aa;
+    status_t status;
+
+    cm_reset_vm_lob(&vlob);
+    ARRAY_INIT_ASSIST_INFO(&aa, stmt);
+    OGSQL_SAVE_STACK(stmt);
+
+    status = sql_get_array_from_knl_lob(stmt, locator, &vlob);
+    if (status == OG_SUCCESS) {
+        status = sql_get_element_to_value(stmt, &aa, &vlob, start, end, type, value);
+        if (status == OG_SUCCESS && !value->is_null && OG_IS_VARLEN_TYPE(value->type)) {
+            /* Element extraction pops its buffer; protect it while VM cleanup uses the stack. */
+            sql_keep_stack_variant(stmt, value);
+        }
+    }
+
+    /* A scalar result does not retain this private copy, including a partially copied array. */
+    sql_free_array_vm(stmt, vlob.entry_vmid, vlob.last_vmid);
+    OGSQL_RESTORE_STACK(stmt);
+    return status;
+}
+
 /* f1 int[], methods to get array value of f1 can be: f1 or f1[n] or f1[n:m] */
 static status_t sql_get_array_value(sql_stmt_t *stmt, var_column_t *v_col, bool8 is_array_elem, variant_t *value,
     char *ptr, uint32 len)
@@ -2047,6 +2073,10 @@ static status_t sql_get_array_value(sql_stmt_t *stmt, var_column_t *v_col, bool8
 
     /* get element or sub array value, like f1[n] or f1 or f1[n:m] */
     if (lob_type == OG_LOB_FROM_KERNEL) {
+        if (is_array_elem) {
+            return sql_get_element_from_knl_lob(stmt, (knl_handle_t)ptr, v_col->ss_start, v_col->ss_end,
+                v_col->datatype, value);
+        }
         OG_RETURN_IFERR(sql_get_array_from_knl_lob(stmt, (knl_handle_t)ptr, &vlob));
     } else if (lob_type == OG_LOB_FROM_VMPOOL) {
         vlob = *(vm_lob_t *)ptr;
@@ -2076,6 +2106,10 @@ status_t sql_get_subarray_by_col(sql_stmt_t *stmt, var_column_t *v_col, variant_
     }
 
     if (value->v_array.value.type == OG_LOB_FROM_KERNEL) {
+        if (VAR_COL_IS_ARRAY_ELEMENT(v_col)) {
+            return sql_get_element_from_knl_lob(stmt, (knl_handle_t)(value->v_array.value.knl_lob.bytes),
+                v_col->ss_start, v_col->ss_end, v_col->datatype, result);
+        }
         vm_lob_t temp_vlob;
         temp_vlob.node_id = 0;
         temp_vlob.unused = 0;
