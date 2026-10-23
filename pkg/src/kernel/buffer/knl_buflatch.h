@@ -84,12 +84,12 @@ static inline void buf_latch_x(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
         cm_spin_unlock(&bucket->lock);
         return;
     }
+
     if (lock_needed) {
         cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     }
 
     wait_event_t event = ctrl->transfer_status == BUF_TRANS_TRY_REMOTE ? GC_BUFFER_BUSY : BUFFER_BUSY_WAIT;
-
     do {
         if (latch->stat == LATCH_STATUS_IDLE) {
             latch->sid = session->id;
@@ -232,9 +232,10 @@ static inline void buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
     }
 
     if (release) {
-        knl_panic_log(ctrl->ref_num > 0, "ctrl's ref_num is invalid, panic info: page %u-%u type %u ref_num %u",
-                      ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, ctrl->ref_num);
-        ctrl->ref_num--;
+        knl_panic_log(cm_atomic32_get(&ctrl->ref_num) > 0,
+            "ctrl's ref_num is invalid, panic info: page %u-%u type %u ref_num %u", ctrl->page_id.file,
+            ctrl->page_id.page, ctrl->page->type, (uint32)cm_atomic32_get(&ctrl->ref_num));
+        (void)cm_atomic32_fetch_add(&ctrl->ref_num, -1);
     }
 
     if ((latch->stat == LATCH_STATUS_S || latch->stat == LATCH_STATUS_X) && (latch->shared_count == 0)) {

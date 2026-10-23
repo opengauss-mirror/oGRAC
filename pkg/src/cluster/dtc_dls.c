@@ -254,8 +254,9 @@ static status_t dls_broadcast_btree_split(knl_session_t *session, drid_t *lock_i
     }
     if (btree != NULL && btree->is_splitting == OG_FALSE) {
         if (btree->pre_struct_ver != btree->struct_ver) {
-            dtc_broadcast_btree_split(session, btree, part_loc, OG_TRUE);
-            btree->pre_struct_ver = btree->struct_ver;
+            if (dtc_broadcast_btree_split(session, btree, part_loc, OG_TRUE) == OG_SUCCESS) {
+                btree->pre_struct_ver = btree->struct_ver;
+            }
         }
     }
     dc_close(&dc);
