@@ -32,6 +32,7 @@
 #include "dtc_trace.h"
 #include "dtc_dcs.h"
 #include "dtc_dc.h"
+#include "dtc_txn_hot.h"
 #include "knl_table.h"
 
 #ifdef __cplusplus
@@ -2071,6 +2072,23 @@ bool32 dls_wait_txn(knl_session_t *session, uint16 rmid)
 
     inst_id = xid_get_inst_id(session, session->wxid);
     DTC_DLS_DEBUG_INF("[DLS] wait txn %llu from instance %u", session->wxid.value, inst_id);
+
+    /*
+     * UB txn_hot short-circuit: if the owner already published XACT_END, skip the
+     * WAIT_TXN + TXN_ACK MES round-trip. Still-active txns must go through MES so
+     * the owner can enqueue this waiter for AWAKE.
+     */
+    if (dtc_txn_hot_enabled(session)) {
+        txn_info_t txn_info;
+
+        if (dtc_get_txn_info_from_hot(session, OG_FALSE, session->wxid, inst_id, &txn_info) == OG_SUCCESS &&
+            txn_info.status == (uint8)XACT_END) {
+            dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_END);
+            DTC_DLS_DEBUG_INF("[DLS] wait txn %llu ended via txn_hot, skip MES WAIT_TXN", session->wxid.value);
+            return OG_TRUE;
+        }
+    }
+
     // send message to owner (check txn status and record in wait hash queue)
     ret = dls_request_txn_msg(session, (xid_t *)(&session->wxid), inst_id, MES_CMD_WAIT_TXN);
     if (ret == DLS_REMOTE_TXN_END) {

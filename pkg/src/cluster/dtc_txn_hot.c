@@ -19,6 +19,7 @@ typedef struct st_dtc_txn_hot_stat_internal {
     atomic_t snapshot_hot;
     atomic_t snapshot_remote;
     atomic_t info_resolve_fail;
+    atomic_t wait_end;
 } dtc_txn_hot_stat_internal_t;
 
 static dtc_txn_hot_stat_internal_t g_dtc_txn_hot_stat;
@@ -41,6 +42,9 @@ void dtc_txn_hot_stat_inc(dtc_txn_hot_stat_type_t type)
         case DTC_TXN_HOT_STAT_INFO_RESOLVE_FAIL:
             (void)cm_atomic_inc(&g_dtc_txn_hot_stat.info_resolve_fail);
             break;
+        case DTC_TXN_HOT_STAT_WAIT_END:
+            (void)cm_atomic_inc(&g_dtc_txn_hot_stat.wait_end);
+            break;
         default:
             break;
     }
@@ -56,6 +60,7 @@ void dtc_txn_hot_stat_get(dtc_txn_hot_stat_t *stat)
     stat->snapshot_hot = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.snapshot_hot);
     stat->snapshot_remote = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.snapshot_remote);
     stat->info_resolve_fail = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.info_resolve_fail);
+    stat->wait_end = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.wait_end);
 }
 
 static inline dtc_txn_hot_hdr_t *hot_hdr(remote_sga_t *sga, uint32 inst)

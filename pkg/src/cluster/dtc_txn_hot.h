@@ -55,6 +55,7 @@ typedef enum en_dtc_txn_hot_stat_type {
     DTC_TXN_HOT_STAT_SNAPSHOT_HOT,
     DTC_TXN_HOT_STAT_SNAPSHOT_REMOTE,
     DTC_TXN_HOT_STAT_INFO_RESOLVE_FAIL,
+    DTC_TXN_HOT_STAT_WAIT_END, /* dls_wait_txn skipped MES WAIT_TXN via hot END */
     DTC_TXN_HOT_STAT_CEIL
 } dtc_txn_hot_stat_type_t;
 
@@ -64,6 +65,7 @@ typedef struct st_dtc_txn_hot_stat {
     uint64 snapshot_hot;
     uint64 snapshot_remote;
     uint64 info_resolve_fail;
+    uint64 wait_end;
 } dtc_txn_hot_stat_t;
 
 status_t dtc_txn_hot_region_init(remote_sga_t *remote_sga);

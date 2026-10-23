@@ -252,6 +252,7 @@ knl_column_t g_txn_hot_stat_cols[] = {
     { 3, "SNAPSHOT_HOT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
     { 4, "SNAPSHOT_REMOTE", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
     { 5, "INFO_RESOLVE_FAIL", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 6, "WAIT_END", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
 };
 // COL_CNT of View
 #define CONVERTING_PAGE_CNT_COLS (ELEMENT_COUNT(g_converting_page_cnt_cols))
@@ -616,6 +617,7 @@ static void dtc_view_txn_hot_stat_fill(dtc_view_txn_hot_stat_t *item, uint8 inst
     item->snapshot_hot = stat.snapshot_hot;
     item->snapshot_remote = stat.snapshot_remote;
     item->info_resolve_fail = stat.info_resolve_fail;
+    item->wait_end = stat.wait_end;
     item->non_empty = OG_TRUE;
 }
 
@@ -1119,6 +1121,7 @@ static status_t dtc_view_txn_hot_stat_fetch(knl_handle_t se, knl_cursor_t *curso
     OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].snapshot_hot));
     OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].snapshot_remote));
     OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].info_resolve_fail));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].wait_end));
     cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
     id++;
     cursor->rowid.vmid = id;
