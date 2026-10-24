@@ -117,5 +117,48 @@ Predicate Information (identified by id):
 10 rows fetched.
 
 SQL> 
+SQL> -- INDEX hints must not restrict outer join methods.
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> drop table if exists hint_outer_probe purge;
+
+Succeed.
+
+SQL> create table hint_outer_probe (val varchar2(8));
+
+Succeed.
+
+SQL> create index hint_outer_probe_i on hint_outer_probe(val);
+
+Succeed.
+
+SQL> insert into hint_outer_probe values ('a'), ('b');
+
+2 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> select /*+ index(a hint_outer_probe_i) index(b hint_outer_probe_i) */ count(*)
+  2 from hint_outer_probe a right join hint_outer_probe b on lower(a.val) > lower(b.val);
+
+COUNT(*)            
+--------------------
+2                   
+
+1 rows fetched.
+
+SQL> drop table hint_outer_probe purge;
+
+Succeed.
+
+SQL> alter system set use_bison_parser = false;
+
+Succeed.
+
+SQL> 
 
 
