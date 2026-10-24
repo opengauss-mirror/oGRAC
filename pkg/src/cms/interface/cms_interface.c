@@ -1028,6 +1028,7 @@ status_t cms_set_res_work_stat(uint8 stat)
     return OG_SUCCESS;
 }
 
+/* Polling wrapper with a one-second client interval delay for the registered resource type. */
 status_t cms_get_res_stat_list(cms_res_status_list_t * res_list)
 {
     if (g_inst_id == -1) {
@@ -1035,11 +1036,6 @@ status_t cms_get_res_stat_list(cms_res_status_list_t * res_list)
         return OG_ERROR;
     }
 
-    return cms_get_res_stat_list1(g_res_type, res_list);
-}
-
-status_t cms_get_res_stat_list1(const char* res_type, cms_res_status_list_t* res_list)
-{
     static date_t last_call = 0;
     date_t now = cm_monotonic_now();
     if (now < last_call + MICROSECS_PER_SECOND) {
@@ -1047,6 +1043,12 @@ status_t cms_get_res_stat_list1(const char* res_type, cms_res_status_list_t* res
     }
     last_call = cm_monotonic_now();
 
+    return cms_get_res_stat_list1(g_res_type, res_list);
+}
+
+/* Query without an interval delay. RC/DSS callers control their own polling and retry frequency. */
+status_t cms_get_res_stat_list1(const char* res_type, cms_res_status_list_t* res_list)
+{
     cms_cli_msg_req_get_res_stat_t req;
     req.head.msg_size = sizeof(cms_cli_msg_req_get_res_stat_t);
     req.head.msg_type = CMS_CLI_MSG_REQ_GET_RES_STAT;

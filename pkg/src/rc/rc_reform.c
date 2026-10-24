@@ -27,6 +27,7 @@
 #include "rc_reform.h"
 #include "cm_log.h"
 #include "cm_atomic.h"
+#include "cm_date.h"
 #include "knl_database.h"
 #include "knl_context.h"
 
@@ -37,6 +38,8 @@ reform_callback_t g_rc_callback = { 0 };
 enum { RC_DSS_RUNNING = 0, RC_DSS_LOST = 1 };
 #define RC_DSS_STATUS_CHECK_INTERVAL_MS 1000
 #define RC_DSS_STATUS_CHECK_SLEEP_MS 10
+#define RC_CMS_RETRY_MIN_SLEEP_MS 50
+#define RC_CMS_REFORM_POLL_INTERVAL_MS 100
 static atomic32_t g_dss_fault_state = RC_DSS_RUNNING;
 static bool8 g_dss_seen_online = OG_FALSE;
 
@@ -183,6 +186,14 @@ static void RcCheckDssStatus(void)
         return;
     }
 
+    /* Both call sites run on the trigger thread. An early check must not delay RC. */
+    static date_t last_check = 0;
+    date_t now = cm_monotonic_now();
+    if (last_check != 0 && now - last_check < RC_DSS_STATUS_CHECK_INTERVAL_MS * MICROSECS_PER_MILLISEC) {
+        return;
+    }
+    last_check = now;
+
     cms_res_status_t local_stat;
     if (cms_get_dss_local_stat(&local_stat) != OG_SUCCESS) {
         return;
@@ -276,7 +287,7 @@ static void rc_check_abort_in_loop(void)
     // this instance kick-out from cluster
     cms_res_status_list_t tmp_current_stat;
 
-    if (cms_get_res_stat_list1(g_rc_ctx->res_type, &tmp_current_stat) == OG_SUCCESS) {
+    if (cms_get_res_stat_list(&tmp_current_stat) == OG_SUCCESS) {
         if (rc_cluster_stat_suspicious(&tmp_current_stat)) {
             return;
         }
@@ -369,7 +380,8 @@ static bool32 rc_master_stat_changed(void)
         return OG_FALSE;
     }
 
-    if (cms_get_res_stat_list(rc_get_target_stat()) != OG_SUCCESS) {
+    // RC 判定路径需及时读取状态，绕过 cms_get_res_stat_list 的 1 秒间隔。
+    if (cms_get_res_stat_list1(g_rc_ctx->res_type, rc_get_target_stat()) != OG_SUCCESS) {
         rc_sleep_random(RC_RETRY_SLEEP);
         return OG_FALSE;
     }
@@ -441,35 +453,29 @@ bool32 rc_cluster_stat_changed(void)
 static void rc_refresh_cluster_info(void)
 {
     cms_res_status_list_t tmp_current_stat;
+    uint32 retry_sleep_ms = RC_CMS_RETRY_MIN_SLEEP_MS;
 
     // refresh master info from cms, instead of master_node(which maybe gone)
     for (;;) {
-        if (cms_get_res_stat_list1(g_rc_ctx->res_type, &tmp_current_stat)) {
-            cm_sleep(10);
-            continue;
+        // Query immediately; back off only when the result cannot be used.
+        if (cms_get_res_stat_list1(g_rc_ctx->res_type, &tmp_current_stat) == OG_SUCCESS &&
+            !rc_cluster_stat_suspicious(&tmp_current_stat)) {
+            // got correct master
+            if (tmp_current_stat.master_inst_id != OG_INVALID_ID8) {
+                break;
+            }
+
+            // this instance kick-out from cluster, and no other suitable instance can be master
+            cms_res_status_t *self_stat = get_res_stat_by_inst_id(&tmp_current_stat, g_rc_ctx->self_id);
+            if (self_stat == NULL || self_stat->stat != CMS_RES_ONLINE) {
+                CM_ABORT_REASONABLE(0,
+                    "[RC] ABORT INFO: self abort, notified by CMS kick-out from cluster, version is %llu.",
+                    tmp_current_stat.version);
+            }
         }
 
-        if (rc_cluster_stat_suspicious(&tmp_current_stat)) {
-            cm_sleep(10);
-            continue;
-        }
-
-        // got correct master
-        if (tmp_current_stat.master_inst_id != OG_INVALID_ID8) {
-            break;
-        }
-
-        // this instance kick-out from cluster, and no other suitable instance can be master
-        cms_res_status_t *self_stat = get_res_stat_by_inst_id(&tmp_current_stat, g_rc_ctx->self_id);
-
-        if (self_stat == NULL || self_stat->stat != CMS_RES_ONLINE) {
-            CM_ABORT_REASONABLE(0,
-                "[RC] ABORT INFO: self abort, notified by CMS kick-out from cluster, version is %llu.",
-                tmp_current_stat.version);
-        }
-
-        // cluster voting one master now, loop wait
-        cm_sleep(10);
+        cm_sleep(retry_sleep_ms);
+        retry_sleep_ms = MIN(retry_sleep_ms * 2, RC_RETRY_SLEEP);
     }
 
     g_rc_ctx->info.master_changed = (g_rc_ctx->info.master_id == tmp_current_stat.master_inst_id) ?
@@ -599,7 +605,7 @@ static status_t rc_reset_cms_cluster_info(void)
     OG_RETURN_IFERR(cms_set_res_data(RC_CMS_ABORT_REF_MAP, (char *)&bitmap, sizeof(bitmap)));
 
     // get latest
-    OG_RETURN_IFERR(cms_get_res_stat_list1(g_rc_ctx->res_type, rc_get_current_stat()));
+    OG_RETURN_IFERR(cms_get_res_stat_list(rc_get_current_stat()));
 
     // reset remote_current/ remote_target area
     OG_RETURN_IFERR(
@@ -1084,7 +1090,7 @@ static void rc_check_finished(thread_t *thread)
 static void rc_wait_cms_notify(void)
 {
     if (RC_REFORM_IN_PROGRESS) {
-        // reduce RTO, no sleep
+        // Active reform polling is paced at the trigger loop entry.
         return;
     }
 
@@ -1097,18 +1103,13 @@ static void rc_wait_cms_notify(void)
     }
 
     int64 remain_wait_time = RC_WAIT_CMS_NOTIFY_TIME;
-    uint32 dss_check_elapsed = 0;
 
     while (SECUREC_LIKELY(g_rc_ctx->info.fetch_cms_time == 0) && SECUREC_LIKELY(remain_wait_time >= 0)) {
         cm_sleep(RC_DSS_STATUS_CHECK_SLEEP_MS);
         remain_wait_time -= RC_DSS_STATUS_CHECK_SLEEP_MS;
-        dss_check_elapsed += RC_DSS_STATUS_CHECK_SLEEP_MS;
-        if (dss_check_elapsed >= RC_DSS_STATUS_CHECK_INTERVAL_MS) {
-            RcCheckDssStatus();
-            if (rc_is_dss_lost()) {
-                return;
-            }
-            dss_check_elapsed = 0;
+        RcCheckDssStatus();
+        if (rc_is_dss_lost()) {
+            return;
         }
     }
 }
@@ -1200,6 +1201,10 @@ bool32 rc_detect_reform_triggered(void)
 void rc_reform_trigger_proc(thread_t *thread)
 {
     while (!thread->closed) {
+        // Include paths that continue before rc_wait_cms_notify().
+        if (RC_REFORM_IN_PROGRESS) {
+            cm_sleep(RC_CMS_REFORM_POLL_INTERVAL_MS);
+        }
         RcCheckDssStatus();
         if (rc_is_dss_lost()) {
             cm_sleep(RC_DSS_STATUS_CHECK_SLEEP_MS);
