@@ -327,6 +327,7 @@ install_path = paths.r_install_path
 data_path    = paths.d_data_path
 log_file     = paths.log_file
 log_dir      = paths.log_dir
+log_root     = os.path.join(ograc_home, "log")
 cfg_dir      = paths.ograc_cfg_dir
 
 backup_dir   = os.path.join(paths.backup_dir, "files", "ograc")
@@ -863,6 +864,7 @@ def _set_user_env(user):
             f'export PATH="{install_path}/bin":$PATH',
             f'export LD_LIBRARY_PATH="{install_path}/lib":"{install_path}/add-ons":$LD_LIBRARY_PATH',
             f'export OGDB_DATA="{data_path}"',
+            f'export OGRAC_LOG="{log_root}"',
         ]
         with open(profile, "a") as f:
             for line in env_lines:
@@ -870,6 +872,7 @@ def _set_user_env(user):
 
     os.environ["OGDB_HOME"] = install_path
     os.environ["OGDB_DATA"] = data_path
+    os.environ["OGRAC_LOG"] = log_root
     os.environ["PATH"] = f"{install_path}/bin:{os.environ.get('PATH', '')}"
     lib_path = f"{install_path}/lib:{install_path}/add-ons"
     os.environ["LD_LIBRARY_PATH"] = f"{lib_path}:{os.environ.get('LD_LIBRARY_PATH', '')}"
@@ -1467,7 +1470,7 @@ def action_uninstall():
     user_home = pwd.getpwnam(user).pw_dir
     profile = os.path.join(user_home, ".bashrc")
     if os.path.isfile(profile):
-        for pattern in ("OGDB_HOME", "OGDB_DATA", "OGRACLOG"):
+        for pattern in ("OGDB_HOME", "OGDB_DATA", "OGRACLOG", "OGRAC_LOG"):
             _exec(f'sed -i "/^export {pattern}=/d" {profile}')
 
     data_log = os.path.join(d_data, "log")
