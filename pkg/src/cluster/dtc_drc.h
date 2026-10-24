@@ -760,6 +760,8 @@ void drc_unlock_remaster_part(uint16 part_id);
 typedef void (*drc_send_txn_msg)(knl_session_t *session, xid_t *xid, knl_scn_t scn, uint32 dst_inst, uint32 cmd);
 void drc_enqueue_txn(xid_t *xid, uint8 ins_id);
 void drc_release_txn(knl_session_t *session, xid_t *xid, knl_scn_t scn, drc_send_txn_msg func);
+bool32 drc_local_txn_ensure(xid_t *xid);
+bool32 drc_local_txn_ensure(xid_t *xid);
 bool32 drc_local_txn_wait(xid_t *xid);
 void drc_local_txn_awake(xid_t *xid);
 void drc_local_txn_recyle(xid_t *xid);

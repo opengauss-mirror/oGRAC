@@ -3894,7 +3894,7 @@ void drc_release_txn(knl_session_t *session, xid_t *xid, knl_scn_t scn, drc_send
     return;
 }
 
-bool32 drc_local_txn_wait(xid_t *xid)
+bool32 drc_local_txn_ensure(xid_t *xid)
 {
     drc_res_bucket_t *bucket;
     drc_res_ctx_t *ogx = DRC_RES_CTX;
@@ -3907,13 +3907,33 @@ bool32 drc_local_txn_wait(xid_t *xid)
     if (NULL == txn_res) {
         txn_res = drc_create_txn_res(xid, DRC_RES_LOCAL_TXN_TYPE);
         if (NULL == txn_res) {
-            OG_LOG_RUN_ERR("[DRC][drc_local_txn_wait]create txn res failed!");
-            knl_panic(0);
+            OG_LOG_RUN_ERR("[DRC][drc_local_txn_ensure]create txn res failed!");
             cm_spin_unlock(&bucket->lock);
             return OG_FALSE;
         }
     }
-    // set instance id map
+    cm_spin_unlock(&bucket->lock);
+    return OG_TRUE;
+}
+
+bool32 drc_local_txn_wait(xid_t *xid)
+{
+    drc_res_bucket_t *bucket;
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    drc_txn_res_t *txn_res;
+
+    if (!drc_local_txn_ensure(xid)) {
+        knl_panic(0);
+        return OG_FALSE;
+    }
+
+    bucket = drc_get_res_map_bucket(&ogx->local_txn_map, (char *)xid, sizeof(xid_t));
+    cm_spin_lock(&bucket->lock, NULL);
+    txn_res = (drc_txn_res_t *)drc_res_map_lookup(&ogx->local_txn_map, bucket, (char *)xid);
+    if (NULL == txn_res) {
+        cm_spin_unlock(&bucket->lock);
+        return OG_FALSE;
+    }
     cm_spin_unlock(&bucket->lock);
 
     return cm_wait_cond(&txn_res->cond, TX_WAIT_INTERVEL);

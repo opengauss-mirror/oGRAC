@@ -21,17 +21,26 @@
 #include "cm_atomic.h"
 #include "knl_tran.h"
 typedef struct st_remote_sga remote_sga_t;
+typedef void (*dtc_txn_hot_send_awake_t)(knl_session_t *session, xid_t *xid, knl_scn_t scn, uint32 dst_inst,
+    uint32 cmd);
 
 #define DTC_TXN_HOT_MAGIC 0x544E4832U
-#define DTC_TXN_HOT_LAYOUT_VER 3U
+#define DTC_TXN_HOT_LAYOUT_VER 4U
 #define DTC_TXN_HOT_MAX_RETRY 32U
 
+/*
+ * Phase-C wait meta lives in the former padding of each hot slot:
+ * - wait_mask: bit i set => instance i enrolled as waiter (UB visible)
+ * - wake_seq: bumped on END publish so waiters can detect kick without MES WAIT_TXN
+ */
 typedef struct st_dtc_txn_hot {
     atomic_t seq;
     atomic_t scn;
     atomic_t pack;
     atomic_t end_lsn;
-    uint8 padding[32];
+    atomic_t wait_mask;
+    atomic32_t wake_seq;
+    uint8 padding[20];
 } dtc_txn_hot_t;
 
 typedef struct st_dtc_txn_hot_hdr {
@@ -55,7 +64,9 @@ typedef enum en_dtc_txn_hot_stat_type {
     DTC_TXN_HOT_STAT_SNAPSHOT_HOT,
     DTC_TXN_HOT_STAT_SNAPSHOT_REMOTE,
     DTC_TXN_HOT_STAT_INFO_RESOLVE_FAIL,
-    DTC_TXN_HOT_STAT_WAIT_END, /* dls_wait_txn skipped MES WAIT_TXN via hot END */
+    DTC_TXN_HOT_STAT_WAIT_END,         /* first hot read already END */
+    DTC_TXN_HOT_STAT_WAIT_UB_WAKE,     /* ended after UB enroll / local sleep / kick */
+    DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK,/* hot unusable / reform -> MES WAIT_TXN */
     DTC_TXN_HOT_STAT_CEIL
 } dtc_txn_hot_stat_type_t;
 
@@ -66,7 +77,16 @@ typedef struct st_dtc_txn_hot_stat {
     uint64 snapshot_remote;
     uint64 info_resolve_fail;
     uint64 wait_end;
+    uint64 wait_ub_wake;
+    uint64 wait_mes_fallback;
 } dtc_txn_hot_stat_t;
+
+/* Result of one Phase-C wait attempt (no MES WAIT_TXN inside). */
+typedef enum en_dtc_txn_hot_ub_wait_result {
+    DTC_TXN_HOT_UB_ENDED = 0,    /* txn END observed, skip MES */
+    DTC_TXN_HOT_UB_PENDING = 1,  /* still ACTIVE; caller should retry UB path */
+    DTC_TXN_HOT_UB_FALLBACK = 2  /* must use MES WAIT_TXN */
+} dtc_txn_hot_ub_wait_result_t;
 
 status_t dtc_txn_hot_region_init(remote_sga_t *remote_sga);
 uint64 dtc_txn_hot_pool_layout_end(const remote_sga_t *sga, uint32 undo_segments, uint64 tran_buf_size);
@@ -80,5 +100,18 @@ status_t dtc_get_txn_snapshot_from_hot(knl_session_t *session, xmap_t xmap, uint
 bool32 dtc_txn_hot_enabled(knl_session_t *session);
 void dtc_txn_hot_stat_inc(dtc_txn_hot_stat_type_t type);
 void dtc_txn_hot_stat_get(dtc_txn_hot_stat_t *stat);
+
+/*
+ * Phase-C: enroll on owner wait_mask, sleep on local cond (AWAKE via kick or timeout),
+ * re-read hot. Does not send MES WAIT_TXN.
+ */
+dtc_txn_hot_ub_wait_result_t dtc_txn_hot_ub_wait(knl_session_t *session, xid_t xid, uint8 owner);
+
+/*
+ * Owner side: after END published, take wait_mask and MES AWAKE enrolled instances.
+ * send_func is typically dls_send_txn_msg with MES_CMD_AWAKE_TXN.
+ */
+void dtc_txn_hot_kick_ub_waiters(knl_session_t *session, xid_t *xid, knl_scn_t scn,
+    dtc_txn_hot_send_awake_t send_func);
 
 #endif
