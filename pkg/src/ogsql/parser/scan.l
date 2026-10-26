@@ -127,9 +127,9 @@ do {                                                                            
 } while (0)
 
 #define startlit()  ( yyextra->literallen = 0 )
-static void addlit(char *ytext, int yleng, core_yyscan_t yyscanner);
-static void addlitchar(unsigned char ychar, core_yyscan_t yyscanner);
-static char *litbufdup(core_yyscan_t yyscanner);
+static status_t addlit(char *ytext, int yleng, core_yyscan_t yyscanner);
+static status_t addlitchar(unsigned char ychar, core_yyscan_t yyscanner);
+static status_t litbufdup(core_yyscan_t yyscanner, char **result);
 static status_t litbuf_udeescape(unsigned char escape, core_yyscan_t yyscanner, char **res);
 static unsigned char unescape_single_char(unsigned char c, core_yyscan_t yyscanner);
 static int process_integer_literal(const char *token, YYSTYPE *lval, core_yyscan_t yyscanner);
@@ -164,6 +164,13 @@ static inline bool32 comment_delimiter_escaped(const char *delimiter, const char
 do {                                    \
     scanner_yyerror(msg, yyscanner);    \
     return LEX_ERROR_TOKEN;             \
+} while (0)
+
+#define LEX_RETURN_IFERR(func)          \
+do {                                    \
+    if ((func) != OG_SUCCESS) {          \
+        return LEX_ERROR_TOKEN;          \
+    }                                   \
 } while (0)
 
 /*
@@ -490,8 +497,8 @@ other            .
                     if (yyextra->include_ora_comment)
                     {
                         SET_YYLLOC();
-                        addlit(yytext, yyleng, yyscanner);
-                        yylval->str = litbufdup(yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
+                        LEX_RETURN_IFERR(litbufdup(yyscanner, &yylval->str));
                         return COMMENTSTRING;
                     }
                     /* ignore */
@@ -507,7 +514,7 @@ other            .
                     if (COMMENT_NOT_IGNORED())
                     {
                         startlit();
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                     }
         }
 
@@ -520,7 +527,7 @@ other            .
                     }
                     if (COMMENT_NOT_IGNORED())
                     {
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                     }
         }
 
@@ -535,10 +542,10 @@ other            .
                     }
                     if (COMMENT_NOT_IGNORED())
                     {
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                         if (!delimiter_escaped)
                         {
-                            yylval->str = litbufdup(yyscanner);
+                            LEX_RETURN_IFERR(litbufdup(yyscanner, &yylval->str));
                             yyleng = yyextra->literallen;
                             yyextra->is_hint_str = false;
                             return COMMENTSTRING;
@@ -549,21 +556,21 @@ other            .
 <xc>{xcinside}    {
                     if (COMMENT_NOT_IGNORED())
                     {
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                     }
         }
 
 <xc>{op_chars}    {
                     if (COMMENT_NOT_IGNORED())
                     {
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                     }
         }
 
 <xc>\*+        {
                     if (COMMENT_NOT_IGNORED())
                     {
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                     }
         }
 
@@ -625,7 +632,7 @@ other            .
                      * check that the data remains valid if it might have been
                      * made invalid by unescaping any chars.
                      */
-                    yylval->str = litbufdup(yyscanner);
+                    LEX_RETURN_IFERR(litbufdup(yyscanner, &yylval->str));
                     yyleng = yyextra->literallen + 2;
                     yyextra->is_hint_str = false;
                     return SCONST;
@@ -651,13 +658,13 @@ other            .
                     return SCONST;
         }
 <xq,xe,xus>{xqdouble} {
-                    addlitchar('\'', yyscanner);
+                    LEX_RETURN_IFERR(addlitchar('\'', yyscanner));
                 }
 <xq,xus>{xqinside}  {
-                    addlit(yytext, yyleng, yyscanner);
+                    LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                 }
 <xe>{xeinside}  {
-                    addlit(yytext, yyleng, yyscanner);
+                    LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                 }
 <xe>{xeunicode} {
                     uint32 c = strtoul(yytext+2, NULL, 16);
@@ -669,9 +676,7 @@ other            .
                     } else if (is_utf16_surrogate_second(c)) {
                         yyerror("invalid Unicode surrogate pair");
                     } else {
-                        if (addunicode(c, yyscanner) != OG_SUCCESS) {
-                            yyerror("invalid Unicode escape value");
-                        }
+                        LEX_RETURN_IFERR(addunicode(c, yyscanner));
                     }
                 }
 <xeu>{xeunicode} {
@@ -682,9 +687,7 @@ other            .
 
                     c = surrogate_pair_to_codepoint(yyextra->utf16_first_part, c);
 
-                    if (addunicode(c, yyscanner) != OG_SUCCESS) {
-                        yyerror("invalid Unicode escape value");
-                    }
+                    LEX_RETURN_IFERR(addunicode(c, yyscanner));
 
                     BEGIN(xe);
                 }
@@ -694,20 +697,19 @@ other            .
 <xe,xeu>{xeunicodefail}    {
                 }
 <xe>{xeescape}  {
-                    addlitchar(unescape_single_char(yytext[1], yyscanner),
-                               yyscanner);
+                    LEX_RETURN_IFERR(addlitchar(unescape_single_char(yytext[1], yyscanner), yyscanner));
                 }
 <xe>{xeoctesc}  {
                     unsigned char c = strtoul(yytext+1, NULL, 8);
 
-                    addlitchar(c, yyscanner);
+                    LEX_RETURN_IFERR(addlitchar(c, yyscanner));
                     if (c == '\0' || IS_HIGHBIT_SET(c))
                         yyextra->saw_non_ascii = true;
                 }
 <xe>{xehexesc}  {
                     unsigned char c = strtoul(yytext+2, NULL, 16);
 
-                    addlitchar(c, yyscanner);
+                    LEX_RETURN_IFERR(addlitchar(c, yyscanner));
                     if (c == '\0' || IS_HIGHBIT_SET(c))
                         yyextra->saw_non_ascii = true;
                 }
@@ -716,12 +718,12 @@ other            .
                 }
 <xe>.            {
                     /* This is only needed for \ just before EOF */
-                    addlitchar(yytext[0], yyscanner);
+                    LEX_RETURN_IFERR(addlitchar(yytext[0], yyscanner));
                 }
 <xq,xe,xus><<EOF>>        { yyerror("unterminated quoted string"); return 0;}
 
 <xh>{xhinside}  {
-                    addlit(yytext, yyleng, yyscanner);
+                    LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                 }
 <xh>{quotecontinue} {
                         /* ignore */
@@ -730,13 +732,13 @@ other            .
                 SET_YYLLOC();
                 BEGIN(xh);
                 startlit();
-                addlit(yytext, yyleng, yyscanner);
+                LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
             }
 <xh>{quotestop} |
 <xh>{quotefail} {
                     BEGIN(INITIAL);
-                    addlitchar('\'', yyscanner);
-                    yylval->str = litbufdup(yyscanner);
+                    LEX_RETURN_IFERR(addlitchar('\'', yyscanner));
+                    LEX_RETURN_IFERR(litbufdup(yyscanner, &yylval->str));
                     yyextra->is_hint_str = false;
                     return XCONST;
                 }
@@ -761,7 +763,7 @@ other            .
                         /* dolqstart is owned by stmt/pl memory context. */
                         yyextra->dolqstart = NULL;
                         BEGIN(INITIAL);
-                        yylval->str = litbufdup(yyscanner);
+                        LEX_RETURN_IFERR(litbufdup(yyscanner, &yylval->str));
                         yyextra->is_hint_str = false;
                         return SCONST;
                     }
@@ -772,19 +774,19 @@ other            .
                          * the $... part to the output, but put back the final
                          * $ for rescanning.  Consider $delim$...$junk$delim$
                          */
-                        addlit(yytext, yyleng-1, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng-1, yyscanner));
                         yyless(yyleng-1);
                     }
                 }
 <xdolq>{dolqinside} {
-                    addlit(yytext, yyleng, yyscanner);
+                    LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                 }
 <xdolq>{dolqfailed} {
-                    addlit(yytext, yyleng, yyscanner);
+                    LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                 }
 <xdolq>.        {
                     /* This is only needed for $ inside the quoted text */
-                    addlitchar(yytext[0], yyscanner);
+                    LEX_RETURN_IFERR(addlitchar(yytext[0], yyscanner));
                 }
 <xdolq><<EOF>>    { yyerror("unterminated dollar-quoted string"); return 0;}
 
@@ -813,7 +815,7 @@ other            .
                         yyerror("identifier is too long");
                         return 0;
                     }
-                    ident = litbufdup(yyscanner);
+                    LEX_RETURN_IFERR(litbufdup(yyscanner, &ident));
                     yylval->str = ident;
                     yyleng = yyextra->literallen + 2;
                     yyextra->ident_quoted = true;
@@ -871,20 +873,21 @@ other            .
                     yyerror("identifier is too long");
                     return 0;
                 }
-                char *ident = litbufdup(yyscanner);
+                char *ident = NULL;
+                LEX_RETURN_IFERR(litbufdup(yyscanner, &ident));
                 yylval->str = ident;
                 yyextra->ident_quoted = true;
                 yyextra->is_hint_str = false;
                 return IDENT;
             }
 <xd,xui>{xddouble}    {
-                    addlitchar('"', yyscanner);
+                    LEX_RETURN_IFERR(addlitchar('"', yyscanner));
                 }
 <xd,xui>{xdinside}    {
-                    addlit(yytext, yyleng, yyscanner);
+                    LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                 }
 <xbq>{xbqinside}    {
-                        addlit(yytext, yyleng, yyscanner);
+                        LEX_RETURN_IFERR(addlit(yytext, yyleng, yyscanner));
                     }
 <xd,xui><<EOF>>        { yyerror("unterminated quoted identifier"); return 0;}
 
@@ -1139,30 +1142,22 @@ other            .
                 }
 {decimalf}      {
                     SET_YYLLOC();
-                    if (process_binary_float_double(yytext, yyleng, yyscanner, yylval) != OG_SUCCESS) {
-                        yyerror("number overflow");
-                    }
+                    LEX_RETURN_IFERR(process_binary_float_double(yytext, yyleng, yyscanner, yylval));
                     return FCONST_F;
                 }
 {realf}         {
                     SET_YYLLOC();
-                    if (process_binary_float_double(yytext, yyleng, yyscanner, yylval) != OG_SUCCESS) {
-                        yyerror("number overflow");
-                    }
+                    LEX_RETURN_IFERR(process_binary_float_double(yytext, yyleng, yyscanner, yylval));
                     return FCONST_F;
                 }
 {decimald}      {
                     SET_YYLLOC();
-                    if (process_binary_float_double(yytext, yyleng, yyscanner, yylval) != OG_SUCCESS) {
-                        yyerror("number overflow");
-                    }
+                    LEX_RETURN_IFERR(process_binary_float_double(yytext, yyleng, yyscanner, yylval));
                     return FCONST_D;
                 }
 {reald}         {
                     SET_YYLLOC();
-                    if (process_binary_float_double(yytext, yyleng, yyscanner, yylval) != OG_SUCCESS) {
-                        yyerror("number overflow");
-                    }
+                    LEX_RETURN_IFERR(process_binary_float_double(yytext, yyleng, yyscanner, yylval));
                     return FCONST_D;
                 }
 {real}            {
@@ -1623,61 +1618,51 @@ scanner_finish(core_yyscan_t yyscanner)
 }
 /*$$exclude in dialect end*/
 
-static void
+static status_t
 addlit(char *ytext, int yleng, core_yyscan_t yyscanner)
 {
-    /* enlarge buffer if needed */
-    if ((yyextra->literallen + yleng) >= yyextra->literalalloc)
-    {
-        do
-        {
-            yyextra->literalalloc *= 2;
-        } while ((yyextra->literallen + yleng) >= yyextra->literalalloc);
+    uint64 required = (uint64)yyextra->literallen + yleng + 1;
+    if (required > yyextra->literalalloc) {
+        sql_context_t *context = yyextra->stmt->context;
+        uint32 page_size = context->ctrl.memory->pool->page_size;
+        if (required > page_size) {
+            OG_THROW_ERROR(ERR_ALLOC_MEMORY, required, "scanner literal buffer");
+            return OG_ERROR;
+        }
 
-        /*when yytext is larger than 512M, its double will exceed 1G, so we use repalloc_huge */
-        yyextra->literalbuf = (char *) core_yyrealloc(yyextra->literalbuf,
-                                                      yyextra->literalalloc,
-                                                      yyscanner);
+        /* Literal storage needs no Flex header and must fit in one context page. */
+        uint32 alloc_size = (uint32)MIN(MAX((uint64)yyextra->literalalloc * 2, required), page_size);
+        char *newbuf = NULL;
+        OG_RETURN_IFERR(sql_alloc_mem(context, alloc_size, (void **)&newbuf));
+        MEMS_RETURN_IFERR(memcpy_s(newbuf, alloc_size, yyextra->literalbuf, yyextra->literallen));
+        yyextra->literalbuf = newbuf;
+        yyextra->literalalloc = (int)alloc_size;
     }
-    /* append new data */
-    memcpy(yyextra->literalbuf + yyextra->literallen, ytext, yleng);
+    MEMS_RETURN_IFERR(memcpy_s(yyextra->literalbuf + yyextra->literallen,
+        yyextra->literalalloc - yyextra->literallen, ytext, yleng));
     yyextra->literallen += yleng;
+    return OG_SUCCESS;
 }
 
 
-static void
+static status_t
 addlitchar(unsigned char ychar, core_yyscan_t yyscanner)
 {
-    /* enlarge buffer if needed */
-    if ((yyextra->literallen + 1) >= yyextra->literalalloc)
-    {
-        yyextra->literalalloc *= 2;
-        yyextra->literalbuf = (char *) core_yyrealloc(yyextra->literalbuf,
-                                                      yyextra->literalalloc,
-                                                      yyscanner);
-    }
-    /* append new data */
-    yyextra->literalbuf[yyextra->literallen] = ychar;
-    yyextra->literallen += 1;
+    return addlit((char *)&ychar, 1, yyscanner);
 }
 
 /*
  * Create a palloc'd copy of literalbuf, adding a trailing null.
  */
-static char *
-litbufdup(core_yyscan_t yyscanner)
+static status_t
+litbufdup(core_yyscan_t yyscanner, char **result)
 {
     int            llen = yyextra->literallen;
-    char       *newm;
 
-    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-        llen + 1, (void **)&newm) != OG_SUCCESS) {
-        return NULL;
-    }
-    errno_t ret = memcpy_s(newm, llen + 1, yyextra->literalbuf, llen);
-    knl_securec_check(ret);
-    newm[llen] = '\0';
-    return newm;
+    OG_RETURN_IFERR(sql_alloc_mem(yyextra->stmt->context, llen + 1, (void **)result));
+    MEMS_RETURN_IFERR(memcpy_s(*result, llen + 1, yyextra->literalbuf, llen));
+    (*result)[llen] = '\0';
+    return OG_SUCCESS;
 }
 
 static int
@@ -1708,9 +1693,11 @@ process_binary_float_double(char *token, int len, core_yyscan_t yyscanner, YYSTY
 {
     yyextra->is_hint_str = false;
     startlit();
-    addlit(token, len-1, yyscanner);
-    char *val = litbufdup(yyscanner);
+    OG_RETURN_IFERR(addlit(token, len-1, yyscanner));
+    char *val = NULL;
+    OG_RETURN_IFERR(litbufdup(yyscanner, &val));
     if (handle_float_overflow(val, yyscanner, &val) != OG_SUCCESS) {
+        scanner_yyerror("number overflow", yyscanner);
         return OG_ERROR;
     }
     lval->str = val;
@@ -1811,6 +1798,7 @@ static status_t addunicode(uint32 c, core_yyscan_t yyscanner)
     char buf[8];
 
     if (c == 0 || c > 0x10FFFF)  {
+        scanner_yyerror("invalid Unicode escape value", yyscanner);
         return OG_ERROR;
     }
     if (c > 0x7F)
@@ -1818,8 +1806,7 @@ static status_t addunicode(uint32 c, core_yyscan_t yyscanner)
         yyextra->saw_non_ascii = true;
     }
     unicode_to_utf8(c, (unsigned char *) buf);
-    addlit(buf, pg_mblen(buf), yyscanner);
-    return OG_SUCCESS;
+    return addlit(buf, pg_mblen(buf), yyscanner);
 }
 
 static status_t litbuf_udeescape(unsigned char escape, core_yyscan_t yyscanner, char **res)
