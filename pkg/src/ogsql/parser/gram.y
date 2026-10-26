@@ -95,6 +95,7 @@ typedef struct st_pl_bison_trigger_events {
 
 static void base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner,
                          const char *msg);
+static status_t bison_init_rank_sort_items(sql_stmt_t *stmt, expr_node_t *node);
 static status_t column_list_to_column_pairs(sql_stmt_t *stmt, galist_t *colname_list, galist_t **pairs);
 static status_t make_type_word(core_yyscan_t yyscanner, type_word_t **type, char *str,
     galist_t *typemode, source_location_t loc);
@@ -6167,6 +6168,8 @@ func_expr: func_application within_group_clause over_clause
                     expr_tree_t *expr = $1;
                     expr_node_t *node = expr->root;
                     node->sort_items = $2;
+                    BISON_ABORT_IFERR(bison_init_rank_sort_items(
+                        og_yyget_extra(yyscanner)->core_yy_extra.stmt, node));
                     if (sql_create_winsort_node_bison(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         expr, node, $3, @3.loc) != OG_SUCCESS) {
                         parser_yyerror("create window sort node failed");
@@ -14114,6 +14117,7 @@ index_column:
                     knl_index_col_def_t *col_def = NULL;
                     text_t expr_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    BISON_ABORT_IFERR(bison_init_rank_sort_items(stmt, $1->root));
                     if (sql_alloc_mem(stmt->context, sizeof(knl_index_col_def_t), (void **)&col_def) != OG_SUCCESS) {
                         parser_yyerror("alloc memory failed");
                     }
@@ -18255,6 +18259,19 @@ static status_t bison_json_column_error(core_yyscan_t yyscanner, lex_location_t 
     bison_json_column_advance_loc(remaining.str, prefix.str + prefix.len - 1, &loc);
     OG_SRC_THROW_ERROR(loc, ERR_SQL_SYNTAX_ERROR, message);
     return OG_ERROR;
+}
+
+static status_t bison_init_rank_sort_items(sql_stmt_t *stmt, expr_node_t *node)
+{
+    /* Preserve UDF resolution; built-in rank verification rejects the empty sort list. */
+    if (node->type == EXPR_NODE_FUNC && node->word.func.user.len == 0 && node->word.func.pack.len == 0 &&
+        node->argument != NULL && node->sort_items == NULL &&
+        (cm_text_str_equal_ins(&node->word.func.name.value, "RANK") ||
+        cm_text_str_equal_ins(&node->word.func.name.value, "DENSE_RANK") ||
+        cm_text_str_equal_ins(&node->word.func.name.value, "CUME_DIST"))) {
+        return sql_create_list(stmt, &node->sort_items);
+    }
+    return OG_SUCCESS;
 }
 
 /*$$exclude in dialect begin*/
