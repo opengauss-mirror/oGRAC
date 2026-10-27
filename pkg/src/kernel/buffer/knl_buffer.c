@@ -1232,7 +1232,7 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
     }
 
     if (item != NULL) {
-        item->ref_num++;
+        (void)cm_atomic32_fetch_inc(&item->ref_num);
         buf_latch_ctrl(session, bucket, item, mode);
         buf_set_ctrl_options(session, set, item, options);
         buf_update_ctrl_touch_nr(session, item, options);
@@ -1258,7 +1258,7 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
     cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_ctrl_t *temp = buf_find_from_bucket(bucket, page_id);
     if (SECUREC_UNLIKELY(temp != NULL)) {
-        temp->ref_num++;
+        (void)cm_atomic32_fetch_inc(&temp->ref_num);
         buf_latch_ctrl(session, bucket, temp, mode);
         buf_set_ctrl_options(session, set, temp, options);
         knl_panic_log(IS_SAME_PAGID(page_id, temp->page_id), "the page_id and temp's page_id are not same, "
@@ -1274,7 +1274,7 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
         return temp;
     }
 
-    item->ref_num = 1;
+    cm_atomic32_set(&item->ref_num, 1);
     item->page_id = page_id;
     item->bucket_id = hash_id;
     item->buf_pool_id = buf_pool_id;
@@ -1335,7 +1335,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
     item = buf_find_from_bucket(bucket, page_id);
     if (item != NULL) {
         if ((item->load_status == (uint8)BUF_LOAD_FAILED) && (!DB_IS_CLUSTER(session))) {
-            item->ref_num++;
+            (void)cm_atomic32_fetch_inc(&item->ref_num);
             buf_latch_ctrl(session, bucket, item, mode);
             /* page maybe has been loaded by others after latching */
             if (item->load_status == (uint8)BUF_NEED_LOAD) {
@@ -1375,7 +1375,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
     buf_ctrl_t *temp = buf_find_from_bucket(bucket, page_id);
     if (SECUREC_UNLIKELY(temp != NULL)) {
         if ((temp->load_status == (uint8)BUF_LOAD_FAILED) && (!DB_IS_CLUSTER(session))) {
-            temp->ref_num++;
+            (void)cm_atomic32_fetch_inc(&temp->ref_num);
             buf_latch_ctrl(session, bucket, temp, mode);
 
             cm_spin_lock(&set->scan_list.lock, &session->stat->spin_stat.stat_buffer);
@@ -1408,7 +1408,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
         }
     }
 
-    item->ref_num = 1;
+    cm_atomic32_set(&item->ref_num, 1);
     item->page_id = page_id;
     item->bucket_id = hash_id;
     item->buf_pool_id = buf_pool_id;

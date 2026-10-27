@@ -27,6 +27,7 @@
 
 #include "cm_defs.h"
 #include "cm_hash.h"
+#include "cm_atomic.h"
 #include "knl_common.h"
 #include "knl_interface.h"
 #include "knl_log.h"
@@ -50,7 +51,7 @@ extern "C" {
 
 #define RD_ENTER_PAGE_MASK        (~(ENTER_PAGE_PINNED | ENTER_PAGE_NO_READ | ENTER_PAGE_TRY | ENTER_PAGE_RESIDENT))
 #define BUF_IS_RESIDENT(ctrl)     ((ctrl)->is_resident)
-#define BUF_IN_USE(ctrl)          ((ctrl)->ref_num > 0)
+#define BUF_IN_USE(ctrl)          (cm_atomic32_get(&(ctrl)->ref_num) > 0)
 #define BUF_IS_HOT(ctrl)          ((ctrl)->touch_number >= BUF_TCH_AGE)
 #define BUF_IN_USE_IS_RECYCLABLE(ctrl) \
     ((ctrl)->is_pinned == 0 && (ctrl)->is_dirty == 0 && (ctrl)->is_remote_dirty == 0 && \
@@ -180,7 +181,7 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 remote_access;  // remote access statistics
     volatile uint8 transfer_status;   // page transfer status, used only in TDC
 
-    volatile uint16 ref_num;
+    atomic32_t ref_num;
     volatile uint16 touch_number;   // touch number for LRU
 
     page_id_t page_id;
