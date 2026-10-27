@@ -15320,6 +15320,9 @@ pl_program_body_end:
                         $$ = yylloc.loc;
                     }
                     while (tok != YYEOF) {
+                        if (tok == LEX_ERROR_TOKEN) {
+                            YYABORT;
+                        }
                         tok = YYLEX;
                     }
                     if ($$.line != 0) {
@@ -15353,10 +15356,17 @@ pl_language_c_invalid_tail:
             error
                 {
                     source_location_t error_loc = yylloc.loc;
-                    if (yychar != YYEMPTY) {
+                    int tok = yychar;
+                    if (tok == YYEMPTY) {
+                        tok = YYLEX;
+                    } else {
                         yyclearin;
                     }
-                    while (YYLEX != YYEOF) {
+                    while (tok != YYEOF) {
+                        if (tok == LEX_ERROR_TOKEN) {
+                            YYABORT;
+                        }
+                        tok = YYLEX;
                     }
                     cm_reset_error();
                     $$ = pl_bison_make_invalid_language_def(yyscanner, error_loc);
@@ -15788,6 +15798,9 @@ subprogram_body: %prec PL_RAW_BODY {
                 }
 
                 while (tok != YYEOF) {
+                    if (tok == LEX_ERROR_TOKEN) {
+                        YYABORT;
+                    }
                     if (tok == '/' && pl_bison_is_body_terminator_slash(
                         og_yyget_extra(yyscanner)->core_yy_extra.scanbuf,
                         og_yyget_extra(yyscanner)->core_yy_extra.scanbuflen, yylloc.offset)) {
