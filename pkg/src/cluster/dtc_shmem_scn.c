@@ -18,7 +18,8 @@
  *
  * Multi-node SCN slots live in global remote SGA (st_remote_sga):
  *   data | dist_que | dist_lck | node_flush_lsn | shmem_scn(64B-aligned) | txn_hot...
- * GET reads local slot; SET/INC fan-out raise to peer slots.
+ * GET reads the local slot. SET fan-out raises peers to the caller's value.
+ * INC raises the local slot to the max peer slot, then adds 1 and fan-out.
  *
  * IDENTIFICATION
  * src/cluster/dtc_shmem_scn.c
@@ -313,6 +314,47 @@ void shmem_scn_fanout_raise(uint64 scn)
     }
 }
 
+static uint64 shmem_scn_read_mapped(uint32 node_id)
+{
+    shmem_scn_mgr_t *mgr = shmem_scn_mgr();
+    shmem_scn_slot_t *slot;
+
+    if (node_id >= OG_MAX_INSTANCES || mgr->map_success[node_id] != OG_TRUE || mgr->map_addr[node_id] == NULL) {
+        return 0;
+    }
+    slot = (shmem_scn_slot_t *)mgr->map_addr[node_id];
+    return ub_atomic_read_u64(&slot->value);
+}
+
+void shmem_scn_absorb_peers(void)
+{
+    uint32 self_id;
+    uint32 node_count;
+    uint32 i;
+    uint64 peer_max = 0;
+
+    if (!shmem_scn_enabled() || g_instance == NULL || g_ub_global_scn == NULL) {
+        return;
+    }
+
+    self_id = g_instance->kernel.id;
+    node_count = shmem_scn_node_count();
+    for (i = 0; i < node_count; i++) {
+        uint64 peer_scn;
+
+        if (i == self_id) {
+            continue;
+        }
+        peer_scn = shmem_scn_read_mapped(i);
+        if (peer_scn > peer_max) {
+            peer_max = peer_scn;
+        }
+    }
+    if (peer_max != 0) {
+        ub_atomic_raise_u64(g_ub_global_scn, peer_max);
+    }
+}
+
 void shmem_scn_bind(void)
 {
     shmem_scn_mgr_t *mgr = shmem_scn_mgr();
@@ -378,6 +420,10 @@ static void shmem_scn_try_map_peers(void)
 void shmem_scn_fanout_raise(uint64 scn)
 {
     (void)scn;
+}
+
+void shmem_scn_absorb_peers(void)
+{
 }
 #endif
 

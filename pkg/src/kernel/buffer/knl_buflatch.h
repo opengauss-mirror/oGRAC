@@ -80,7 +80,7 @@ static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf
     buf_latch_t *latch = &ctrl->latch;
 
     /* Fast path: already exclusively latched by current session (bucket held by caller). */
-    if (latch->stat == LATCH_STATUS_X && latch->sid == session->id) {
+    if (session->kernel->attr.enable_ubsmem && latch->stat == LATCH_STATUS_X && latch->sid == session->id) {
         cm_spin_unlock(&bucket->lock);
         return;
     }

@@ -64,6 +64,15 @@ status_t shmem_scn_ensure_ready(void);
 bool32 shmem_scn_ready(void);
 bool32 shmem_scn_need_broadcast(void);
 void shmem_scn_fanout_raise(uint64 scn);
+/* Raise the local SCN slot to the max of mapped peer slots. Does not fan back out. */
+void shmem_scn_absorb_peers(void);
+/* Read peer node's SCN slot from remote SGA (maps if needed). 0 if unavailable. */
+knl_scn_t shmem_scn_read_node(uint32 node_id);
+/*
+ * Raise local SCN from peer's shared-memory slot; fallback_scn used if peer unread
+ * or smaller (e.g. ack->scn). No peer fan-out.
+ */
+void shmem_scn_raise_local_from_node(knl_session_t *session, uint32 node_id, knl_scn_t fallback_scn);
 
 #ifdef __cplusplus
 }

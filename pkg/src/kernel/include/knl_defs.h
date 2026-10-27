@@ -69,9 +69,11 @@ typedef uint64 knl_scn_t;
 /*
  * Multi-slot SCN over UB shm: each node owns a slot in its remote SGA.
  * g_ub_global_scn points at the local slot — GET reads local only.
- * SET/INC update local then fan-out raise to peer slots (remote write).
+ * SET writes the caller's value, then fan-out raises peer slots.
+ * INC first raises the local slot to the max peer slot, then adds 1 and fan-out.
  * NULL means fall back to kernel->scn.
  */
+void shmem_scn_absorb_peers(void);
 #ifndef WIN32
 extern volatile uint64 *g_ub_global_scn;
 void shmem_scn_fanout_raise(uint64 scn);
@@ -122,6 +124,8 @@ static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
     if (ub_scn == NULL) {
         return KNL_INC_SCN(p_scn);
     }
+    /* max(local, peers) is installed in the local slot, then +1. */
+    shmem_scn_absorb_peers();
     val = (knl_scn_t)ub_atomic_add_fetch_u64(ub_scn, 1);
     shmem_scn_fanout_raise((uint64)val);
     return val;
