@@ -1267,6 +1267,7 @@ status_t df_get_free_extent(knl_session_t *session, datafile_t *df, page_id_t st
     uint16 bit_id = 0;
     uint16 extent_bit = 0;
     uint16 bit_len = 0;
+    bool32 is_swap = IS_SWAP_SPACE(KNL_GET_SPACE(session, df->space_id));
 
     if (IS_INVALID_PAGID(start)) {
         start.file = df->ctrl->id;
@@ -1274,24 +1275,36 @@ status_t df_get_free_extent(knl_session_t *session, datafile_t *df, page_id_t st
     }
 
     /* find map that this page belong to */
-    df_locate_map_by_pageid(session, df->map_head, start, &map_group, &map_id, &bit_id);
+    if (is_swap) {
+        df_locate_swap_map_pageid(session, df->map_head, start, &map_group, &map_id, &bit_id);
+    } else {
+        df_locate_map_by_pageid(session, df->map_head, start, &map_group, &map_id, &bit_id);
+    }
     map_page_id.file = map_group.first_map.file;
     map_page_id.page = map_group.first_map.page + map_id;
     map_page_id.aligned = 0;
 
-    buf_enter_page(session, map_page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL);
+    if (is_swap) {
+        /* Swap bitmaps are memory-only and must not enter the ordinary buffer read path. */
+        buf_enter_temp_page(session, map_page_id, LATCH_MODE_S, ENTER_PAGE_RESIDENT);
+    } else {
+        buf_enter_page(session, map_page_id, LATCH_MODE_S, ENTER_PAGE_NORMAL);
+    }
     map_page = (df_map_page_t *)CURR_PAGE(session);
-    if (df_get_next_free_extent(session, df, map_page, bit_id, &extent_bit, &bit_len, is_last) != OG_SUCCESS) {
+    status_t status = df_get_next_free_extent(session, df, map_page, bit_id, &extent_bit, &bit_len, is_last);
+    if (status != OG_SUCCESS) {
         *extent = 0;
         *page_count = 0;
-        buf_leave_page(session, OG_FALSE);
-        return OG_ERROR;
     } else {
         *extent = map_page->first_page.page + extent_bit * df->map_head->bit_unit;
         *page_count = bit_len * df->map_head->bit_unit;
-        buf_leave_page(session, OG_FALSE);
-        return OG_SUCCESS;
     }
+    if (is_swap) {
+        buf_leave_temp_page(session);
+    } else {
+        buf_leave_page(session, OG_FALSE);
+    }
+    return status;
 }
 
 void spc_block_datafile(datafile_t *df, uint32 section_id, uint64 start, uint64 end)

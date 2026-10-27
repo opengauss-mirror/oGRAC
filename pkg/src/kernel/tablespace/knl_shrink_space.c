@@ -746,9 +746,7 @@ status_t spc_shrink_space(knl_session_t *session, space_t *space, knl_shrink_def
     }
 
     if (IS_SWAP_SPACE(space)) {
-        if (spc_shrink_temp_space(session, space, shrink) != OG_SUCCESS) {
-            return OG_ERROR;
-        }
+        return spc_shrink_temp_space(session, space, shrink);
     }
 
     if (spc_shrink_space_prepare(session, space) != OG_SUCCESS) {
