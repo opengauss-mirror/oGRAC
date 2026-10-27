@@ -6,6 +6,7 @@ import grp
 import json
 import os
 import pwd
+import re
 import shlex
 import shutil
 import sys
@@ -25,6 +26,7 @@ from utils import (
     read_version, CommandError,
 )
 from config_validation_runner import validate_config_params_or_raise
+from shared_disk_check import SharedDiskCheckError, run_shared_disk_check
 
 LOG = get_logger("deploy")
 
@@ -45,6 +47,13 @@ UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 POST_UPGRADE_ORDER = ["og_om", "ograc_exporter", "cms", "ograc"]
 ROLLBACK_ORDER = ["cms", "ograc", "og_om", "ograc_exporter"]
 INIT_CONTAINER_ORDER = ["cms", "ograc"]
+
+# Set to 1/true/yes to keep the half-installed state of a failed install for debugging.
+INSTALL_ROLLBACK_DISABLE_ENV = "OGRAC_INSTALL_NO_ROLLBACK"
+# Accounts created by pre_install (so a failed-install rollback never deletes pre-existing ones).
+CREATED_ACCOUNTS_FILE = ".deploy_created_accounts.json"
+# Env vars that cms/dss/ograc installers export into the service user's .bashrc.
+PROFILE_ENV_VARS = ("CMS_HOME", "GCC_HOME", "DSS_HOME", "OGDB_HOME", "OGDB_DATA", "OGRACLOG")
 
 
 class OgracDeploy:
@@ -237,6 +246,24 @@ class OgracDeploy:
 
         return 0
 
+    def _check_shared_disks(self):
+        """pre_install (DSS mode): every configured LUN must resolve to a usable block device.
+
+        Runs after the deploy user exists and before any module touches the disks,
+        so a wrong symlink fails here instead of inside dd / dsscmd cv / gcc -reset.
+        """
+        if self.deploy_mode != "dss" or self.ograc_in_container != "0":
+            return 0
+        LOG.info("[Check Item]-[shared disk]: begin")
+        try:
+            run_shared_disk_check(self.deploy.raw_params, self.ograc_user, LOG)
+        except SharedDiskCheckError as error:
+            LOG.error(str(error))
+            LOG.info("[Check Item]-[shared disk]: result: False")
+            return 1
+        LOG.info("[Check Item]-[shared disk]: result: True")
+        return 0
+
     def _prompt_sys_password_and_write_file(self):
         if not sys.stdin.isatty():
             LOG.error("password set error, please run sh appctl.sh install config_params_lun.json")
@@ -316,6 +343,8 @@ class OgracDeploy:
         self._reload_config()
 
         self._init_user_and_group()
+        if self._check_shared_disks():
+            return 1
         self._correct_files_mod()
 
         for module in PRE_INSTALL_ORDER:
@@ -332,19 +361,13 @@ class OgracDeploy:
         LOG.info("Begin install, install_type=%s", install_type)
 
         self._reload_config()
+        if not self._check_pre_install_done():
+            return 1
         config_install_type = self.deploy.get("install_type", "override")
         mes_ssl_switch = self.deploy.mes_ssl_switch
 
-        if config_install_type == "override":
-            self._create_common_dirs()
-            self._mount_fs()
-            if mes_ssl_switch:
-                self._copy_certificate()
-
-        self._install_ograc_package()
-        self._copy_resources()
-        self._fix_common_permissions()
-
+        # Ask for the password before touching the system: a typo fails fast
+        # and leaves nothing to roll back.
         sys_password_file = None
         if "ograc" in INSTALL_ORDER and sys.stdin.isatty():
             sys_password_file = self._prompt_sys_password_and_write_file()
@@ -352,13 +375,31 @@ class OgracDeploy:
                 os.environ["OGRAC_SYS_PASSWORD_FILE"] = sys_password_file
 
         try:
+            if config_install_type == "override":
+                self._create_common_dirs()
+                self._mount_fs()
+                if mes_ssl_switch:
+                    self._copy_certificate()
+
+            # rpm installs ship the image already; the package flow must have the tarball.
+            if not os.path.isfile(self.paths.rpm_flag) and self._install_ograc_package() != 0:
+                raise RuntimeError("oGRAC package (repo/ograc-*.tar.gz) not found")
+            self._copy_resources()
+            self._fix_common_permissions()
+
             for module in INSTALL_ORDER:
                 LOG.info("Installing %s", module)
                 ret = self._call_module(module, "install")
                 if ret != 0:
-                    LOG.error("Install %s failed", module)
-                    return 1
+                    raise RuntimeError(f"install {module} failed (ret={ret})")
                 LOG.info("Install %s success", module)
+
+            self._config_security_limits()
+            self._show_version()
+        except Exception as err:
+            LOG.error("Install failed: %s", err)
+            self._rollback_failed_install(err, config_install_type)
+            return 1
         finally:
             if sys_password_file and os.path.isfile(sys_password_file):
                 try:
@@ -367,11 +408,266 @@ class OgracDeploy:
                     pass
             os.environ.pop("OGRAC_SYS_PASSWORD_FILE", None)
 
-        self._config_security_limits()
-        self._show_version()
-
         LOG.info("install completed successfully")
         return 0
+
+    def _check_pre_install_done(self):
+        """install relies on the accounts created by pre_install; fail fast with a hint otherwise."""
+        missing = [u for u in (self.ograc_user, self.ogmgr_user) if not self._user_exists(u)]
+        if missing:
+            LOG.error("User(s) %s not found, run 'appctl.sh pre_install' before 'appctl.sh install'",
+                      ", ".join(missing))
+            return False
+        return True
+
+    def _rollback_failed_install(self, error, install_type):
+        """Best-effort cleanup after a failed install.
+
+        Brings the node back to the state before pre_install (no service users,
+        no ograc_home, no local data, shared storage re-initialised) so that
+        'pre_install' + 'install' can simply be re-run once the cause is fixed.
+        Steps are independent: a failing step is logged and the rest still run.
+        The original install error stays the reported reason.
+        """
+        if os.environ.get(INSTALL_ROLLBACK_DISABLE_ENV, "").lower() in ("1", "true", "yes"):
+            LOG.warning("%s is set, keep the failed state for debugging (no rollback)",
+                        INSTALL_ROLLBACK_DISABLE_ENV)
+            return
+        if install_type != "override":
+            LOG.warning("install_type=%s, skip rollback to keep reserved data; "
+                        "clean up with 'appctl.sh uninstall' manually", install_type)
+            return
+        if os.path.isfile(self.paths.rpm_flag):
+            LOG.warning("Installed by rpm, skip rollback")
+            return
+
+        LOG.error("Begin rollback of failed install")
+        state = {"backup_dir": None}
+
+        def _backup_logs():
+            state["backup_dir"] = self._backup_failed_install_logs()
+
+        steps = [
+            ("backup failed logs", _backup_logs),
+            ("stop processes and clean ipc", lambda: self._cleanup_instance_ipc(force=True)),
+            ("reset shared storage", self._reset_shared_storage),
+            ("unmount file systems", self._umount_fs),
+            ("remove local data", self._remove_local_data),
+            ("clear security limits", self._clear_security_limits),
+            ("remove users and groups", self._remove_deploy_accounts),
+            ("remove instance home", lambda: self._remove_instance_home(sync=True)),
+        ]
+        failed = []
+        for name, step in steps:
+            LOG.info("Rollback: %s", name)
+            try:
+                step()
+            except Exception as step_err:
+                failed.append(f"{name}: {step_err}")
+                LOG.error("Rollback step '%s' failed: %s", name, step_err)
+
+        # ograc_home is gone; recreate the deploy log dir so appctl.sh can still
+        # append its final status line and the next run logs into a fresh file.
+        ensure_dir(self.paths.deploy_log_dir, mode=0o750)
+        self._write_rollback_summary(state["backup_dir"], error, failed)
+        if failed:
+            LOG.error("Rollback finished with %d failed step(s): %s",
+                      len(failed), "; ".join(failed))
+        else:
+            LOG.error("Rollback finished, node is clean")
+        LOG.error("Install failed: %s. Logs of the failed install saved to %s. "
+                  "Fix the problem, then re-run 'appctl.sh pre_install' and 'appctl.sh install'",
+                  error, state["backup_dir"] or "<log backup failed>")
+
+    def _backup_failed_install_logs(self):
+        """Copy logs/configs of the failed install next to ograc_home before it is removed."""
+        home = os.path.realpath(self.paths.ograc_home)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        backup_dir = os.path.join(
+            os.path.dirname(home), f"{os.path.basename(home)}_install_failed_{stamp}")
+        ensure_dir(backup_dir, mode=0o700)
+        for rel in ("log", "config", os.path.join("cms", "cfg"),
+                    os.path.join("dss", "cfg"), os.path.join("ograc", "cfg")):
+            src = os.path.join(home, rel)
+            if os.path.exists(src):
+                copy_tree(src, os.path.join(backup_dir, rel))
+        deploy_param = os.path.join(os.path.dirname(CUR_DIR), "config", "deploy_param.json")
+        if os.path.isfile(deploy_param):
+            copy_tree(deploy_param, os.path.join(backup_dir, "deploy_param.json"))
+        LOG.info("Failed install logs saved to %s", backup_dir)
+        return backup_dir
+
+    @staticmethod
+    def _write_rollback_summary(backup_dir, error, failed):
+        if not backup_dir or not os.path.isdir(backup_dir):
+            return
+        lines = [
+            f"time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"install error: {error}",
+            f"rollback result: {'ok' if not failed else 'partial'}",
+        ]
+        lines.extend(f"failed step: {item}" for item in failed)
+        try:
+            with open(os.path.join(backup_dir, "install_failed_summary.txt"),
+                      "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError as err:
+            LOG.warning("Failed to write rollback summary: %s", err)
+
+    def _reset_shared_storage(self):
+        """Re-initialise the shared GCC / DSS volumes that node0 formats during install.
+
+        Mirrors what cms (_prepare_gcc_device, gcc -reset) and dss (prepare_dss_disk)
+        do at install time, so a re-install starts from blank shared storage.
+        Only node0 ever formats shared storage, so other nodes skip this.
+        """
+        if self.ograc_in_container != "0" or str(self.node_id) != "0":
+            LOG.info("Not node0 on host, skip shared storage reset")
+            return
+        if self.deploy_mode == "dss":
+            self._zero_volume(self.deploy.get("gcc_home", ""), "bs=1M count=1024", "GCC")
+            for vg in self.deploy.get("dss_vg_list", "").split(";"):
+                self._zero_volume(vg.strip(), "bs=2048 count=1000", "DSS VG")
+        elif self.deploy_mode == "file":
+            share_fs = self.deploy.storage_share_fs
+            if not share_fs:
+                return
+            share_path = self.paths.share_path(share_fs)
+            ret, _, _ = exec_popen(f"timeout 10 ls {shlex.quote(share_path)}")
+            if ret != 0:
+                LOG.warning("Share path %s not accessible, skip GCC reset", share_path)
+                return
+            gcc_home = os.path.join(share_path, "gcc_home")
+            versions = os.path.join(share_path, "versions.yml")
+            run_cmd(f"rm -rf {shlex.quote(gcc_home)}* {shlex.quote(versions)}",
+                    f"failed to remove {gcc_home}")
+            archive_fs = self.deploy.storage_archive_fs
+            if archive_fs:
+                safe_remove(os.path.join(self.paths.archive_path(archive_fs), "gcc_backup"))
+            LOG.info("Removed GCC data under %s", share_path)
+        else:
+            LOG.info("deploy_mode=%s, no shared storage reset needed", self.deploy_mode)
+
+    @staticmethod
+    def _zero_volume(path, dd_opts, label):
+        if not path:
+            return
+        if not os.path.exists(path) or os.path.isdir(path):
+            LOG.warning("%s %s does not exist or is a directory, skip zeroing", label, path)
+            return
+        LOG.info("Zeroing %s %s", label, path)
+        run_cmd(f"dd if=/dev/zero of={shlex.quote(path)} {dd_opts} conv=notrunc",
+                f"failed to zero {label} {path}", timeout=600)
+
+    def _remove_local_data(self):
+        """Remove node-local data created by install (data_root/local/ograc)."""
+        safe_remove(os.path.join(self.paths.data_local, "ograc"))
+
+    def _remove_deploy_accounts(self):
+        """Delete the users/groups created by pre_install.
+
+        Accounts that existed before pre_install are kept; only the env lines
+        written by the installers are removed from their .bashrc.
+        """
+        record = self._load_created_accounts()
+        for user in (self.ograc_user, self.ogmgr_user):
+            if not self._user_exists(user):
+                continue
+            if user in record["users"]:
+                ret, stdout, stderr = exec_popen(f"userdel -rf {user}")
+                if ret != 0:
+                    # Keep the next pre_install runnable even if the account survives:
+                    # cms refuses to pre_install while CMS_HOME is still exported.
+                    LOG.warning("userdel %s failed: %s, cleaning its env instead",
+                                user, stderr or stdout)
+                    self._clean_user_profile_env(user)
+                else:
+                    LOG.info("Removed user %s", user)
+            else:
+                LOG.warning("User %s existed before pre_install, keep it and only clean its env",
+                            user)
+                self._clean_user_profile_env(user)
+        for group in (self.ograc_common_group, self.ograc_group):
+            if group in record["groups"] and self._group_exists(group):
+                ret, stdout, stderr = exec_popen(f"groupdel -f {group}")
+                if ret != 0:
+                    LOG.warning("groupdel %s failed: %s", group, stderr or stdout)
+                else:
+                    LOG.info("Removed group %s", group)
+        self._save_created_accounts({
+            "users": [u for u in record["users"] if self._user_exists(u)],
+            "groups": [g for g in record["groups"] if self._group_exists(g)],
+        })
+
+    def _clean_user_profile_env(self, user):
+        """Drop the export lines that cms/dss/ograc installers add to ~user/.bashrc."""
+        try:
+            home = pwd.getpwnam(user).pw_dir
+        except KeyError:
+            return
+        profile = os.path.join(home, ".bashrc")
+        if not os.path.isfile(profile):
+            return
+        ograc_home = self.paths.ograc_home
+        var_pattern = re.compile(r"^\s*export\s+(" + "|".join(PROFILE_ENV_VARS) + r")=")
+        try:
+            with open(profile, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            kept = [
+                line for line in lines
+                if not (var_pattern.match(line)
+                        or (line.lstrip().startswith("export ") and ograc_home in line))
+            ]
+            if kept != lines:
+                with open(profile, "w", encoding="utf-8") as f:
+                    f.writelines(kept)
+                LOG.info("Removed %d env line(s) from %s", len(lines) - len(kept), profile)
+        except OSError as err:
+            LOG.warning("Failed to clean %s: %s", profile, err)
+
+    @staticmethod
+    def _user_exists(user):
+        try:
+            pwd.getpwnam(user)
+            return True
+        except KeyError:
+            return False
+
+    @staticmethod
+    def _group_exists(group):
+        try:
+            grp.getgrnam(group)
+            return True
+        except KeyError:
+            return False
+
+    @staticmethod
+    def _created_accounts_file():
+        return os.path.join(os.path.dirname(CUR_DIR), "config", CREATED_ACCOUNTS_FILE)
+
+    def _load_created_accounts(self):
+        path = self._created_accounts_file()
+        if not os.path.isfile(path):
+            return {"users": [], "groups": []}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {"users": list(data.get("users", [])), "groups": list(data.get("groups", []))}
+        except (OSError, ValueError) as err:
+            LOG.warning("Failed to read %s: %s", path, err)
+            return {"users": [], "groups": []}
+
+    def _save_created_accounts(self, record):
+        path = self._created_accounts_file()
+        if not record["users"] and not record["groups"]:
+            safe_remove(path)
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+        except OSError as err:
+            LOG.warning("Failed to write %s: %s", path, err)
 
     def start(self, start_mode=""):
         LOG.info("Begin start")
@@ -604,10 +900,16 @@ class OgracDeploy:
         common_group = self.ograc_common_group
         ogmgr = self.ogmgr_user
 
-        self._ensure_group(svc_group)
-        self._ensure_group(common_group)
-        self._ensure_user(svc_user, svc_group, f"/home/{svc_user}")
-        self._ensure_user(ogmgr, svc_group, f"/home/{ogmgr}")
+        created_groups = [g for g in (svc_group, common_group) if self._ensure_group(g)]
+        created_users = [
+            u for u, home in ((svc_user, f"/home/{svc_user}"), (ogmgr, f"/home/{ogmgr}"))
+            if self._ensure_user(u, svc_group, home)
+        ]
+        # Remembered so that a failed-install rollback only deletes what we created.
+        record = self._load_created_accounts()
+        record["users"] = sorted(set(record["users"]) | set(created_users))
+        record["groups"] = sorted(set(record["groups"]) | set(created_groups))
+        self._save_created_accounts(record)
 
         exec_popen(f"usermod -a -G {common_group} {svc_user}")
         exec_popen(f"usermod -a -G {common_group} {ogmgr}")
@@ -624,24 +926,28 @@ class OgracDeploy:
 
     @staticmethod
     def _ensure_group(name):
+        """Create the group if missing; return True when it was created here."""
         ret, _, _ = exec_popen(f"getent group {name}")
         if ret == 0:
-            return
+            return False
         ret, stdout, stderr = exec_popen(f"groupadd {name}")
         if ret != 0:
             LOG.error("groupadd %s failed: %s %s", name, stdout, stderr)
             raise RuntimeError(f"groupadd {name} failed: {stderr}")
+        return True
 
     @staticmethod
     def _ensure_user(name, group, home):
+        """Create the user if missing; return True when it was created here."""
         ret, _, _ = exec_popen(f"id {name}")
         if ret == 0:
-            return
+            return False
         ret, stdout, stderr = exec_popen(
             f"useradd {name} -g {group} -m -d {home} -s /sbin/nologin")
         if ret != 0:
             LOG.error("useradd %s failed: %s %s", name, stdout, stderr)
             raise RuntimeError(f"useradd {name} failed: {stderr}")
+        return True
 
     @staticmethod
     def _append_user_to_existing_group(user, group):
@@ -1402,7 +1708,14 @@ echo "Product Version : {version}"
         exec_popen("systemctl daemon-reload")
         self._remove_instance_home()
 
-    def _remove_instance_home(self):
+    def _remove_instance_home(self, sync=False):
+        """Remove ograc_home.
+
+        Removal is scheduled in a detached process by default because uninstall
+        usually runs from scripts living inside ograc_home. With sync=True (used by
+        the failed-install rollback, which runs from the install package) the
+        directory is removed immediately unless this code itself lives inside it.
+        """
         real_home = os.path.realpath(self.paths.ograc_home)
         if not os.path.isdir(real_home):
             return
@@ -1424,6 +1737,14 @@ echo "Product Version : {version}"
             return
 
         quoted_home = shlex.quote(real_home)
+        running_inside = os.path.realpath(CUR_DIR).startswith(real_home + os.sep)
+        if sync and not running_inside:
+            ret, stdout, stderr = exec_popen(f"rm -rf -- {quoted_home}")
+            if ret != 0:
+                raise RuntimeError(f"failed to remove {real_home}: {stderr or stdout}")
+            LOG.info("Removed current instance ograc_home: %s", real_home)
+            return
+
         remover_cmd = f"sleep 1; rm -rf -- {quoted_home}"
         try:
             with open(os.devnull, "wb") as devnull:

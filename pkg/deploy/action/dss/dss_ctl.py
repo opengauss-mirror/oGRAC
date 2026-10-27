@@ -16,9 +16,13 @@ import time
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.insert(0, CUR_DIR)
+ACTION_ROOT = os.path.dirname(CUR_DIR)
+if ACTION_ROOT not in sys.path:
+    sys.path.append(ACTION_ROOT)
 
 from config import get_config, VG_CONFIG, INST_CONFIG
 from log_config import get_logger
+from shared_disk_check import assert_block_device
 
 LOG = get_logger()
 
@@ -211,6 +215,15 @@ class DssCtl:
             LOG.info(f"No need to init lun for node [{self.node_id}]")
             return
         LOG.info("Start to init lun")
+        # Validate every volume before the first dd so a bad vg2 does not
+        # leave vg1 half-initialized. This runs as the deploy user, so
+        # os.access() reflects the real permission dd will get.
+        for key, value in VG_CONFIG.items():
+            device = assert_block_device(value, f"dss_vg_list.{key}")
+            if not os.access(value, os.R_OK | os.W_OK):
+                raise RuntimeError(
+                    f"Init lun failed: no read/write permission on {key} device {value} -> {device}, "
+                    "set OWNER/GROUP/MODE for the device in a udev rule")
         for key, value in VG_CONFIG.items():
             cmd = f"dd if=/dev/zero of={value} bs=2048 count=1000 conv=notrunc"
             ret, stdout, stderr = exec_popen(cmd, timeout=self.init_disk_timeout)

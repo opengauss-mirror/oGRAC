@@ -20,6 +20,7 @@ if CUR_DIR not in sys.path:
 from log_config import get_logger
 from config import get_config, get_module_config
 from config_param_validator import ConfigParamValidationError, validate_config_params_file
+from shared_disk_check import validate_disk_params
 from kernel_param_utils import (
     is_generated_kernel_parameter,
     iter_normalized_kernel_parameters,
@@ -615,6 +616,13 @@ class CheckInstallConfig(CheckBase):
                 ping_check_element.discard(k)
             for k in ('share_logic_ip', 'metadata_logic_ip'):
                 ping_check_element.discard(k)
+            # gcc_home / dss_vg_list are the LUNs that will be dd'ed later:
+            # absolute paths, vg1~vg3 required, only vg4 allowed in addition.
+            disk_errors = validate_disk_params(install_config_params)
+            if disk_errors:
+                for message in disk_errors:
+                    LOG.error(message)
+                return False
 
         max_arch = install_config_params.get('MAX_ARCH_FILES_SIZE', "")
         if not max_arch:

@@ -24,6 +24,7 @@ from utils import (
     read_version, get_version_major,
 )
 from config_validation_runner import validate_config_params_or_raise
+from shared_disk_check import assert_block_device
 
 LOGGER = get_logger()
 
@@ -280,6 +281,9 @@ class CmsDeploy:
         if not gcc_home:
             return
         if self.deploy_mode == "dss":
+            # dd as root would happily create a regular file if the symlink is
+            # broken, so refuse anything that is not a real block device.
+            assert_block_device(gcc_home, "gcc_home")
             node_id = str(self.deploy.node_id)
             LOGGER.info("Preparing GCC device %s as root on node %s", gcc_home, node_id)
             if node_id == "0":
