@@ -3604,7 +3604,178 @@ PL/SQL procedure successfully completed.
 SQL> set serveroutput off;
 
 OFF
-SQL>
+SQL> 
+SQL> -- OPEN FOR static SQL referencing procedure parameters (issue #397).
+SQL> drop table if exists bison_pl_openfor_t;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_openfor_log;
+
+Succeed.
+
+SQL> create table bison_pl_openfor_t(id int, sal int);
+
+Succeed.
+
+SQL> create table bison_pl_openfor_log(id int, sal int, scaled int);
+
+Succeed.
+
+SQL> insert into bison_pl_openfor_t values(1, 100);
+
+1 rows affected.
+
+SQL> insert into bison_pl_openfor_t values(2, 200);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> 
+SQL> drop procedure if exists bison_pl_openfor_param;
+
+Succeed.
+
+SQL> create or replace procedure bison_pl_openfor_param(f1 in int) as
+  2     v_refcur2 sys_refcursor;
+  3     v_id int;
+  4     v_sal int;
+  5     v_scaled int;
+  6 begin
+  7     open v_refcur2 for select id, sal, f1 * sal as scaled from bison_pl_openfor_t where sal > f1;
+  8     loop
+  9         fetch v_refcur2 into v_id, v_sal, v_scaled;
+ 10         exit when v_refcur2%notfound;
+ 11         insert into bison_pl_openfor_log values(v_id, v_sal, v_scaled);
+ 12     end loop;
+ 13     close v_refcur2;
+ 14 end;
+ 15 /
+
+Succeed.
+
+SQL> call bison_pl_openfor_param(150);
+
+PL/SQL procedure successfully completed.
+
+SQL> select * from bison_pl_openfor_log order by id;
+
+ID           SAL          SCALED      
+------------ ------------ ------------
+2            200          30000      
+
+1 rows fetched.
+
+SQL> drop procedure if exists bison_pl_openfor_param;
+
+Succeed.
+
+SQL> 
+SQL> -- procedure parameter in plain static DML (SELECT INTO / UPDATE WHERE).
+SQL> drop procedure if exists bison_pl_static_param;
+
+Succeed.
+
+SQL> create or replace procedure bison_pl_static_param(p_id in int) as
+  2     v_sal int;
+  3 begin
+  4     select sal into v_sal from bison_pl_openfor_t where id = p_id;
+  5     update bison_pl_openfor_t set sal = v_sal where id = p_id;
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> call bison_pl_static_param(1);
+
+PL/SQL procedure successfully completed.
+
+SQL> select sal from bison_pl_openfor_t where id = 1;
+
+SAL         
+------------
+100         
+
+1 rows fetched.
+
+SQL> 
+SQL> -- procedure parameter in OPEN FOR cursor consumed via dbe_sql.return_cursor (issue #397).
+SQL> drop procedure if exists bison_pl_retcur_param;
+
+Succeed.
+
+SQL> create or replace procedure bison_pl_retcur_param(f1 in int) as
+  2     v_refcur sys_refcursor;
+  3 begin
+  4     open v_refcur for select id, sal, f1 * sal as scaled
+  5         from bison_pl_openfor_t where sal > f1 order by id;
+  6     dbe_sql.return_cursor(v_refcur);
+  7 end;
+  8 /
+
+Succeed.
+
+SQL> call bison_pl_retcur_param(150);
+
+PL/SQL procedure successfully completed.
+
+ResultSet #1
+
+ID           SAL          SCALED              
+------------ ------------ --------------------
+2            200          30000               
+
+1 rows fetched.
+
+SQL> drop procedure if exists bison_pl_retcur_param;
+
+Succeed.
+
+SQL> 
+SQL> -- procedure parameter only in WHERE clause of a cursor returned via dbe_sql.return_cursor (issue #397).
+SQL> drop procedure if exists bison_pl_retcur_where;
+
+Succeed.
+
+SQL> create or replace procedure bison_pl_retcur_where(f1 in int) as
+  2     v_refcur sys_refcursor;
+  3 begin
+  4     open v_refcur for select sal from bison_pl_openfor_t where sal > f1 order by id;
+  5     dbe_sql.return_cursor(v_refcur);
+  6 end;
+  7 /
+
+Succeed.
+
+SQL> call bison_pl_retcur_where(150);
+
+PL/SQL procedure successfully completed.
+
+ResultSet #1
+
+SAL         
+------------
+200         
+
+1 rows fetched.
+
+SQL> drop procedure if exists bison_pl_retcur_where;
+
+Succeed.
+
+SQL> 
+SQL> drop table if exists bison_pl_openfor_log;
+
+Succeed.
+
+SQL> drop table if exists bison_pl_openfor_t;
+
+Succeed.
+
+SQL> 
 SQL> drop trigger if exists bison_pl_stmt_trg;
 
 Succeed.

@@ -3820,6 +3820,22 @@ static status_t sql_try_create_pl_columnref_expr(sql_stmt_t *stmt, expr_tree_t *
         OG_RETURN_IFERR(plc_bison_build_var_address(stmt, decl, node, ss_start, ss_end));
     } else {
         OG_RETURN_IFERR(plc_word2var(stmt, &word, node));
+        if (decl != NULL && node->type != EXPR_NODE_V_ADDR && (decl->type & PLV_COMPLEX_VARIANT) == 0) {
+            /* Complex variants (record fields, collection attributes/methods, etc.) legitimately
+             * resolve to non-address nodes that the PL layer evaluates itself; only a plain
+             * scalar decl that cannot be bound as a static SQL input is refused here, like the
+             * native parser does, instead of silently treating it as a column. */
+            if (var_type == PLC_BLOCK_VAR) {
+                /* A label-qualified variant resolved to a decl: bind it as a static SQL input
+                 * like the native parser does, instead of leaving it as a column. */
+                OG_RETURN_IFERR(plc_bison_build_var_address(stmt, decl, node,
+                    (int32)OG_INVALID_ID32, (int32)OG_INVALID_ID32));
+            } else if (((pl_compiler_t *)stmt->pl_compiler)->current_input != NULL) {
+                OG_SRC_THROW_ERROR_EX(arg->loc, ERR_PL_SYNTAX_ERROR_FMT, "identifier \'%s\' must be declared",
+                    arg->val);
+                return OG_ERROR;
+            }
+        }
     }
     OG_RETURN_IFERR(sql_try_convert_static_pl_var_to_param(stmt, node));
     APPEND_CHAIN(&((*expr)->chain), node);
@@ -3891,6 +3907,13 @@ status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const c
             if (decl != NULL) {
                 OG_RETURN_IFERR(plc_bison_build_var_address(stmt, decl, node,
                     (int32)OG_INVALID_ID32, (int32)OG_INVALID_ID32));
+                /*
+                 * The name resolves to a PL decl inside static SQL, so it must be bound as an
+                 * input parameter like the primary columnref path and the native parser do;
+                 * otherwise it silently degrades to a column and fails at execution with
+                 * "invalid column name".
+                 */
+                OG_RETURN_IFERR(sql_try_convert_static_pl_var_to_param(stmt, node));
             }
         }
     } else {
