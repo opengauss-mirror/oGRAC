@@ -32,6 +32,8 @@ extern "C" {
 #endif
 
 status_t sql_parse_table(sql_stmt_t *stmt, sql_table_t *table, word_t *word);
+status_t sql_verify_table_version(sql_stmt_t *stmt, sql_snapshot_type_t type, expr_tree_t *expr,
+    source_location_t error_loc);
 status_t sql_parse_query_tables(sql_stmt_t *stmt, sql_query_t *sql_query, word_t *word);
 status_t sql_parse_join_entry(sql_stmt_t *stmt, sql_query_t *query, word_t *word);
 status_t sql_generate_join_node(sql_stmt_t *stmt, sql_join_chain_t *join_chain, sql_join_type_t join_type,

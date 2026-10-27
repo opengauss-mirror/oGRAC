@@ -546,4 +546,60 @@ create index native_desc_idx1 on native_desc_idx_t(a desc);
 create index native_desc_idx2 on native_desc_idx_t(a desc); --error
 drop table if exists native_desc_idx_t;
 
+-- Table snapshot syntax.
+alter system set use_bison_parser = true;
+drop table if exists bison_snapshot_probe purge;
+create table bison_snapshot_probe (snap_key int);
+insert into bison_snapshot_probe values (1);
+commit;
+select snap_key from bison_snapshot_probe as of timestamp(systimestamp);
+-- The saved SCN must return the old value after a committed update.
+declare
+    saved_scn bigint;
+    old_key int;
+    alias_name varchar(16);
+    alias_sum int := 0;
+begin
+    select current_scn into saved_scn from sys.dv_database;
+    update bison_snapshot_probe set snap_key = 2;
+    commit;
+    execute immediate 'select snap_key from bison_snapshot_probe as of scn :snap' into old_key using saved_scn;
+    insert into bison_snapshot_probe values (old_key);
+    execute immediate 'select saved_rows.snap_key from (bison_snapshot_probe as of scn :snap) saved_rows' into old_key using saved_scn;
+    insert into bison_snapshot_probe values (old_key);
+    execute immediate 'select "Saved Rows".snap_key from ((bison_snapshot_probe as of scn :snap)) "Saved Rows"' into old_key using saved_scn;
+    insert into bison_snapshot_probe values (old_key);
+    for i in 1..8 loop
+        alias_name := case i when 1 then 'day' when 2 then 'year' when 3 then 'over' when 4 then 'within'
+            when 5 then 'precision' when 6 then 'signed' when 7 then 'unsigned' else 'varying' end;
+        execute immediate 'select snap_key from bison_snapshot_probe as of scn :snap ' || alias_name
+            into old_key using saved_scn;
+        alias_sum := alias_sum + old_key;
+    end loop;
+    insert into bison_snapshot_probe values (alias_sum);
+end;
+/
+select snap_key from bison_snapshot_probe order by snap_key;
+select snap_key from bison_snapshot_probe as of timestamp 123; --error
+select snap_key from bison_snapshot_probe as of scn sysdate; --error
+select snap_key from bison_snapshot_probe as of timestamp (systimestamp) day; --error
+select snap_key from bison_snapshot_probe as of timestamp (systimestamp) year; --error
+select snap_key from (bison_snapshot_probe as of timestamp(systimestamp) inner_snap) outer_snap; --error
+select snap_key from (bison_snapshot_probe as of timestamp(systimestamp)) as outer_snap; --error
+drop table bison_snapshot_probe purge;
+
+-- Value-based partition selection must retain the snapshot clause.
+drop table if exists bison_snapshot_parts purge;
+create table bison_snapshot_parts (part_key int, sub_key int)
+partition by range(part_key) subpartition by range(sub_key) (
+    partition p_low values less than(10) (
+        subpartition sp_low values less than(10), subpartition sp_high values less than(maxvalue)),
+    partition p_high values less than(maxvalue) (subpartition sp_other values less than(maxvalue))
+);
+insert into bison_snapshot_parts values (1,1), (1,11), (11,1);
+commit;
+select part_key, sub_key from bison_snapshot_parts as of timestamp(systimestamp) partition for(1) day order by sub_key;
+select part_key, sub_key from bison_snapshot_parts as of timestamp(systimestamp) subpartition for(1,1) over;
+drop table bison_snapshot_parts purge;
+
 alter system set use_bison_parser = false;

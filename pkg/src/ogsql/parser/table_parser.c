@@ -1214,7 +1214,8 @@ status_t sql_create_query_table(sql_stmt_t *stmt, sql_array_t *tables, sql_join_
     }
 }
 
-static status_t sql_verify_table_version(sql_stmt_t *stmt, sql_table_snapshot_t *version, word_t *word)
+status_t sql_verify_table_version(sql_stmt_t *stmt, sql_snapshot_type_t type, expr_tree_t *expr,
+    source_location_t error_loc)
 {
     sql_verifier_t verf = { 0 };
     og_type_t expr_type;
@@ -1226,21 +1227,21 @@ static status_t sql_verify_table_version(sql_stmt_t *stmt, sql_table_snapshot_t 
         SQL_EXCL_JOIN | SQL_EXCL_ROWNUM | SQL_EXCL_ROWID | SQL_EXCL_DEFAULT | SQL_EXCL_ROWSCN | SQL_EXCL_WIN_SORT |
         SQL_EXCL_GROUPING | SQL_EXCL_ROWNODEID;
 
-    if (sql_verify_expr(&verf, (expr_tree_t *)version->expr) != OG_SUCCESS) {
+    if (sql_verify_expr(&verf, expr) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
-    expr_type = TREE_DATATYPE((expr_tree_t *)version->expr);
-    node_type = TREE_EXPR_TYPE((expr_tree_t *)version->expr);
-    if (version->type == SCN_VERSION) {
+    expr_type = TREE_DATATYPE(expr);
+    node_type = TREE_EXPR_TYPE(expr);
+    if (type == SCN_VERSION) {
         if (!OG_IS_WEAK_NUMERIC_TYPE(expr_type) && node_type != EXPR_NODE_PARAM) {
-            cm_try_set_error_loc(word->text.loc);
+            cm_try_set_error_loc(error_loc);
             OG_SET_ERROR_MISMATCH(OG_TYPE_BIGINT, expr_type);
             return OG_ERROR;
         }
     } else {
         if (!OG_IS_DATETIME_TYPE(expr_type)) {
-            cm_try_set_error_loc(word->text.loc);
+            cm_try_set_error_loc(error_loc);
             OG_SET_ERROR_MISMATCH(OG_TYPE_TIMESTAMP, expr_type);
             return OG_ERROR;
         }
@@ -1292,7 +1293,7 @@ static status_t sql_try_parse_table_version(sql_stmt_t *stmt, sql_table_snapshot
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(sql_verify_table_version(stmt, version, word));
+    OG_RETURN_IFERR(sql_verify_table_version(stmt, version->type, (expr_tree_t *)version->expr, word->text.loc));
 
     lex->flags = flags;
     return OG_SUCCESS;

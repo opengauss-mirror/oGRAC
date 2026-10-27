@@ -1398,10 +1398,145 @@ SQL> drop table if exists native_desc_idx_t;
 Succeed.
 
 SQL> 
+SQL> -- Table snapshot syntax.
+SQL> alter system set use_bison_parser = true;
+
+Succeed.
+
+SQL> drop table if exists bison_snapshot_probe purge;
+
+Succeed.
+
+SQL> create table bison_snapshot_probe (snap_key int);
+
+Succeed.
+
+SQL> insert into bison_snapshot_probe values (1);
+
+1 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> select snap_key from bison_snapshot_probe as of timestamp(systimestamp);
+
+SNAP_KEY    
+------------
+1           
+
+1 rows fetched.
+
+SQL> -- The saved SCN must return the old value after a committed update.
+SQL> declare
+  2     saved_scn bigint;
+  3     old_key int;
+  4     alias_name varchar(16);
+  5     alias_sum int := 0;
+  6 begin
+  7     select current_scn into saved_scn from sys.dv_database;
+  8     update bison_snapshot_probe set snap_key = 2;
+  9     commit;
+ 10     execute immediate 'select snap_key from bison_snapshot_probe as of scn :snap' into old_key using saved_scn;
+ 11     insert into bison_snapshot_probe values (old_key);
+ 12     execute immediate 'select saved_rows.snap_key from (bison_snapshot_probe as of scn :snap) saved_rows' into old_key using saved_scn;
+ 13     insert into bison_snapshot_probe values (old_key);
+ 14     execute immediate 'select "Saved Rows".snap_key from ((bison_snapshot_probe as of scn :snap)) "Saved Rows"' into old_key using saved_scn;
+ 15     insert into bison_snapshot_probe values (old_key);
+ 16     for i in 1..8 loop
+ 17         alias_name := case i when 1 then 'day' when 2 then 'year' when 3 then 'over' when 4 then 'within'
+ 18             when 5 then 'precision' when 6 then 'signed' when 7 then 'unsigned' else 'varying' end;
+ 19         execute immediate 'select snap_key from bison_snapshot_probe as of scn :snap ' || alias_name
+ 20             into old_key using saved_scn;
+ 21         alias_sum := alias_sum + old_key;
+ 22     end loop;
+ 23     insert into bison_snapshot_probe values (alias_sum);
+ 24 end;
+ 25 /
+
+PL/SQL procedure successfully completed.
+
+SQL> select snap_key from bison_snapshot_probe order by snap_key;
+
+SNAP_KEY    
+------------
+1           
+1           
+1           
+2           
+8           
+
+5 rows fetched.
+
+SQL> select snap_key from bison_snapshot_probe as of timestamp 123; --error
+
+OG-00606, Inconsistent datatypes, expected TIMESTAMP - got BINARY_INTEGER
+SQL> select snap_key from bison_snapshot_probe as of scn sysdate; --error
+
+OG-00606, Inconsistent datatypes, expected BINARY_BIGINT - got DATE
+SQL> select snap_key from bison_snapshot_probe as of timestamp (systimestamp) day; --error
+
+OG-00601, [1:74]Sql syntax error: invalid interval expression
+SQL> select snap_key from bison_snapshot_probe as of timestamp (systimestamp) year; --error
+
+OG-00601, [1:74]Sql syntax error: invalid interval expression
+SQL> select snap_key from (bison_snapshot_probe as of timestamp(systimestamp) inner_snap) outer_snap; --error
+
+OG-00601, [1:96]Sql syntax error: invalid table alias
+SQL> select snap_key from (bison_snapshot_probe as of timestamp(systimestamp)) as outer_snap; --error
+
+OG-00601, [1:75]Sql syntax error: syntax error
+SQL> drop table bison_snapshot_probe purge;
+
+Succeed.
+
+SQL> 
+SQL> -- Value-based partition selection must retain the snapshot clause.
+SQL> drop table if exists bison_snapshot_parts purge;
+
+Succeed.
+
+SQL> create table bison_snapshot_parts (part_key int, sub_key int)
+  2 partition by range(part_key) subpartition by range(sub_key) (
+  3     partition p_low values less than(10) (
+  4         subpartition sp_low values less than(10), subpartition sp_high values less than(maxvalue)),
+  5     partition p_high values less than(maxvalue) (subpartition sp_other values less than(maxvalue))
+  6 );
+
+Succeed.
+
+SQL> insert into bison_snapshot_parts values (1,1), (1,11), (11,1);
+
+3 rows affected.
+
+SQL> commit;
+
+Succeed.
+
+SQL> select part_key, sub_key from bison_snapshot_parts as of timestamp(systimestamp) partition for(1) day order by sub_key;
+
+PART_KEY     SUB_KEY     
+------------ ------------
+1            1           
+1            11          
+
+2 rows fetched.
+
+SQL> select part_key, sub_key from bison_snapshot_parts as of timestamp(systimestamp) subpartition for(1,1) over;
+
+PART_KEY     SUB_KEY     
+------------ ------------
+1            1           
+
+1 rows fetched.
+
+SQL> drop table bison_snapshot_parts purge;
+
+Succeed.
+
+SQL> 
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
 
 SQL> 
-
-

@@ -89,6 +89,11 @@ typedef struct st_base_yy_raw_parse_state {
     bool32 pl_object_name_sensitive;
 
     base_yy_alter_system_value_mode_t alter_system_value_mode;
+
+    /* Distinguish a grouped expression's closing token from function/type parentheses. */
+    int last_grouped_expr_close_offset;
+    int last_returned_token_offset;
+    int prev_returned_token_offset;
 } base_yy_raw_parse_state_t;
 
 /**
