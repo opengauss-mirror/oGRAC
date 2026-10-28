@@ -60,14 +60,6 @@ static bool32 buf_rbp_post_recovery_check_enabled(knl_session_t *session)
     return OG_TRUE;
 }
 
-static void buf_init_list(buf_set_t *set)
-{
-    for (uint32 i = 0; i < LRU_LIST_TYPE_COUNT; i++) {
-        set->list[i] = g_init_list_t;
-        set->list[i].type = i;
-    }
-}
-
 static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 
 status_t buf_init(knl_session_t *session)
@@ -533,6 +525,27 @@ static inline bool32 buf_can_expire(buf_ctrl_t *ctrl, buf_expire_type_t expire_t
         return BUF_CAN_EXPIRE_PAGE(ctrl);
     } else if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_CACHE)) {
         return BUF_CAN_EXPIRE_CACHE(ctrl);
+    }
+    return OG_FALSE;
+}
+
+/* Expiry decision for a global buffer pool (shmem) ctrl: refresh the local counters from the
+ * shared metadata first. Taken from the UB branch's follow-up commit (dad68af), which this
+ * cherry-pick depends on. */
+static bool32 buf_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_type)
+{
+    // TOODO: This should be an atomic load from shmem with UB API
+    remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
+    uint16 ref_num = shmem_meta->ref_num;
+    uint16 touch_num = shmem_meta->touch_number;
+    ctrl->ref_num = ref_num;
+    ctrl->touch_number = touch_num;
+    if (expire_type == BUF_EVICT) {
+        return !(ref_num > 0) && !(touch_num >= MAX_TOUCH_NUM);
+    } else if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_PAGE)) {
+        // TOODO
+    } else if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_CACHE)) {
+        // TOODO
     }
     return OG_FALSE;
 }
