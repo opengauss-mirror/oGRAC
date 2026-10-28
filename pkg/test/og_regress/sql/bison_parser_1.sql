@@ -1630,4 +1630,19 @@ select 1 as database_alive from sys_dummy;
 -- Accept integral decimal numeric modifiers.
 SELECT CAST(12 AS NUMBER2(10,0.00)), CAST(12.34 AS NUMBER2(10,1.00)) FROM SYS_DUMMY;
 
+ALTER SYSTEM SET use_bison_parser = TRUE;
+DROP TABLE IF EXISTS repro_unpivot PURGE;
+CREATE TABLE repro_unpivot(a INT, b INT);
+INSERT INTO repro_unpivot VALUES (1, 2);
+SELECT u.* FROM repro_unpivot UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+SELECT u.* FROM (SELECT a, b FROM repro_unpivot) UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+SELECT u.* FROM (repro_unpivot) UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+DROP TABLE repro_unpivot PURGE;
+DROP TABLE IF EXISTS repro_unpivot_part PURGE;
+CREATE TABLE repro_unpivot_part(a INT, b INT) PARTITION BY RANGE(a) (PARTITION p1 VALUES LESS THAN(2), PARTITION p2 VALUES LESS THAN(MAXVALUE));
+INSERT INTO repro_unpivot_part VALUES (1, 2), (3, 4);
+SELECT u.* FROM repro_unpivot_part PARTITION(p1) UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+SELECT u.* FROM (repro_unpivot_part PARTITION(p1) UNPIVOT(v FOR k IN (a, b)) u) ORDER BY k;
+SELECT p.* FROM repro_unpivot_part PARTITION(p1) PIVOT(SUM(b) FOR a IN (1 AS a1, 3 AS a3)) p;
+DROP TABLE repro_unpivot_part PURGE;
 alter system set use_bison_parser = false;
