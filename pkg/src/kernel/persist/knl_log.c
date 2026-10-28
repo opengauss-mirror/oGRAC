@@ -1070,7 +1070,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     log_stat(ogx, batch->space_size);
 
     /* node_flush_lsn is not maintained in no-CMS mode, skip updating */
-    if (!DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
+    if (session->kernel->attr.enable_ubsmem && !DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
         remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
         drc_set_node_flush_lsn(rsga, ogx->flushed_lsn);
     }
@@ -1227,7 +1227,7 @@ void log_set_page_lsn(knl_session_t *session, uint64 lsn, uint64 lfn)
         ctrl->lastest_lfn = lfn;
 
         DB_SET_LSN(ctrl->page->lsn, lsn);
-        if (ctrl->shmem_page_meta != NULL) {
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
             ctrl->shmem_page_meta->xlog_owner_node = session->kernel->id;
             remote_page_info_set_timeline_id(ctrl->shmem_page_meta,
                 session->kernel->db.ctrl.core.instance_timeline_id[session->kernel->id]);

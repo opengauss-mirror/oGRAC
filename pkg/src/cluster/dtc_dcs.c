@@ -1748,7 +1748,7 @@ static inline void dcs_send_error_msg(knl_session_t *session, msg_page_req_t *pa
     }
 }
 
-static status_t dcs_prep_page_req(knl_session_t *session, drc_req_owner_result_t *result, drc_req_info_t *req_info,
+static status_t dcs_prep_gbp_page_req(knl_session_t *session, drc_req_owner_result_t *result, drc_req_info_t *req_info,
                                   page_id_t page_id, msg_page_req_t *page_req)
 {
     page_req->req_mode = req_info->req_mode;
@@ -2445,7 +2445,7 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
             bool32 owner_is_master = (DCS_SELF_INSTID(session) == result.curr_owner_id) ? OG_TRUE : OG_FALSE;
 
             // prep step: Simple prep step to extract all field we need and wrap it in a page_req
-            ret = dcs_prep_page_req(session, &result, &req_info, page_id, &page_req);
+            ret = dcs_prep_gbp_page_req(session, &result, &req_info, page_id, &page_req);
             if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
                 knl_end_session_wait(session, DCS_REQ_MASTER4PAGE_1WAY);
                 OG_LOG_RUN_ERR("[DCS-GBP][%u-%u] release gbp alloc after prep page req failed, sid=%u",

@@ -1474,10 +1474,12 @@ static void buf_latch_ctrl(knl_session_t *session, buf_bucket_t *bucket, buf_ctr
 
         /*
          * With X latch already held, no other session can be loading this ctrl.
-         * NEED_LOAD left after a failed GBP migrate (unlatch without LOAD_FAILED)
-         * would otherwise spin forever in READ_BY_OTHER_SESSION.
+         * A failed GBP migrate may leave NEED_LOAD without LOAD_FAILED and would
+         * otherwise spin forever in READ_BY_OTHER_SESSION. Only the GBP path may
+         * leave this state; non-UB keeps the original wait behavior.
          */
-        if (mode == LATCH_MODE_X && ctrl->load_status == (uint8)BUF_NEED_LOAD) {
+        if (session->kernel->attr.enable_ubsmem && mode == LATCH_MODE_X &&
+            ctrl->load_status == (uint8)BUF_NEED_LOAD) {
             break;
         }
 

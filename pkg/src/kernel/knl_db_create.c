@@ -183,8 +183,10 @@ static void dbc_ctrl_file_init(knl_session_t *session, knl_database_def_t *def)
     db_get_ogracd_version(&(db->ctrl.core.version));
     db->ctrl.core.version.inner = CORE_VERSION_INNER;
     db->ctrl.core.sysdata_version = CORE_SYSDATA_VERSION;
-    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
-        db->ctrl.core.instance_timeline_id[i] = 1;
+    if (kernel->attr.enable_ubsmem) {
+        for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+            db->ctrl.core.instance_timeline_id[i] = 1;
+        }
     }
 }
 
