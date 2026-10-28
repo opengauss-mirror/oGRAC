@@ -1805,7 +1805,7 @@ static status_t ckpt_prepare_normal(knl_session_t *session, ckpt_context_t *ogx,
     buf_ctrl_t *to_flush_ctrl = NULL;
     uint32 count;
     ckpt_group_t *group = &ogx->group[ogx->wid];
-    bool32 need_remote_clean;
+    bool32 need_remote_clean = OG_FALSE;
 
     ogx->stat.ckpt_total_neighbors_times++;
     ogx->stat.ckpt_curr_neighbors_times++;
