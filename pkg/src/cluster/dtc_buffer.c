@@ -371,7 +371,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
     session->curr_page_ctrl = ctrl;
     session->stat->buffer_gets++;
 
-    if (ra->mode == LATCH_MODE_X && ctrl->shmem_page_meta != NULL &&
+    if (session->kernel->attr.enable_ubsmem && ra->mode == LATCH_MODE_X && ctrl->shmem_page_meta != NULL &&
         ctrl->shmem_page_meta->xlog_owner_node != DCS_SELF_INSTID(session) && ctrl->page->lsn != 0) {
         status_t wait_ret = dtc_wait_peer_flush_lsn(session, ctrl);
         if (wait_ret != OG_SUCCESS) {

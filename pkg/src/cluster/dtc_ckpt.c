@@ -527,11 +527,11 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
     page_id_t page_id;
     uint8 action;
     uint64 clean_lsn;
-    uint64 gbp_ckpt_lsn;
-    uint64 gbp_claimed_state;
-    uint64 gbp_old_state;
+    uint64 gbp_ckpt_lsn = 0;
+    uint64 gbp_claimed_state = 0;
+    uint64 gbp_old_state = 0;
     bool32 latched;
-    ckpt_gbp_prepare_result_t gbp_result;
+    ckpt_gbp_prepare_result_t gbp_result = CKPT_GBP_PREPARE_FLUSHABLE;
     errno_t ret;
     uint32 count;
 
@@ -595,29 +595,31 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
             continue;
         }
 
-        gbp_result = ckpt_gbp_prepare_flush(session, ogx, ctrl, &gbp_ckpt_lsn, &gbp_claimed_state,
-            &gbp_old_state);
-        if (gbp_result == CKPT_GBP_PREPARE_RETRY) {
-            i--;
-            buf_unlatch_page(session, ctrl);
-            SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
-            count--;
-            continue;
-        }
-        if (gbp_result == CKPT_GBP_PREPARE_SKIP) {
-            buf_unlatch_page(session, ctrl);
-            if (!dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session), page_id,
-                gbp_ckpt_lsn)) {
+        if (session->kernel->attr.enable_ubsmem) {
+            gbp_result = ckpt_gbp_prepare_flush(session, ogx, ctrl, &gbp_ckpt_lsn, &gbp_claimed_state,
+                &gbp_old_state);
+            if (gbp_result == CKPT_GBP_PREPARE_RETRY) {
                 i--;
+                buf_unlatch_page(session, ctrl);
                 SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
                 count--;
+                continue;
             }
-            continue;
-        }
-        if (gbp_result == CKPT_GBP_PREPARE_ERROR) {
-            buf_unlatch_page(session, ctrl);
-            cm_spin_unlock(&group->lock);
-            return OG_ERROR;
+            if (gbp_result == CKPT_GBP_PREPARE_SKIP) {
+                buf_unlatch_page(session, ctrl);
+                if (!dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session), page_id,
+                    gbp_ckpt_lsn)) {
+                    i--;
+                    SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
+                    count--;
+                }
+                continue;
+            }
+            if (gbp_result == CKPT_GBP_PREPARE_ERROR) {
+                buf_unlatch_page(session, ctrl);
+                cm_spin_unlock(&group->lock);
+                return OG_ERROR;
+            }
         }
 
         if (clean_lsn > ctrl->page->lsn && g_rc_ctx->status >= REFORM_RECOVER_DONE) {
