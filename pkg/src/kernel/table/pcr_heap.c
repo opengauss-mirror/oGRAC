@@ -30,8 +30,13 @@
 #include "dc_part.h"
 #include "pcr_heap_scan.h"
 #include "cm_io_record.h"
+#include "knl_buffer.h"
+#include "knl_tran.h"
+#include "knl_cluster_module.h"
+#include "dtc_context.h"
 
 #define MAX_ITL_UNDO_SIZE             sizeof(pcrh_undo_itl_t)  // sizeof(pcrh_poly_undo_itl_t)
+
 #define PCRH_INSERT_UNDO_COUNT        2 // itl undo and insert undo
 
 /*

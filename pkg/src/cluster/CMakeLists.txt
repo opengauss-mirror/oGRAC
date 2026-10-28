@@ -9,6 +9,7 @@ include_directories(
 )
 
 aux_source_directory(. CLUSTER_SRC)
+
 link_directories(${OGRACDB_LIB} "${OGRACDB_LIBRARY}/protobuf/lib")
 # generate static library
 add_library(ogcluster STATIC ${CLUSTER_SRC})

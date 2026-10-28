@@ -26,7 +26,7 @@
 #ifndef DTC_CONTEXT_H
 #define DTC_CONTEXT_H
 
-//MES = Message Exchange service
+// MES = Message Exchange service
 
 #include "knl_session.h"
 #include "knl_context.h"
@@ -60,10 +60,14 @@ typedef struct st_dtc_profile {
     uint32 ogstore_max_open_files;
     bool32 enable_rmo_cr;
     uint32 remote_access_limit;
-    uint32 gdv_sql_sess_tmout; // seconds
+    uint32 gdv_sql_sess_tmout;  // seconds
     double ckpt_notify_task_ratio;
     double clean_edp_task_ratio;
     double txn_info_task_ratio;
+    uint32 remote_buf_pool_num;
+    uint64 remote_data_buf_size;
+    uint64 remote_data_buf_part_size;
+    uint64 remote_data_buf_part_align_size;
 } dtc_profile_t;
 
 typedef struct st_dtc_instance {
@@ -79,9 +83,9 @@ typedef struct st_dtc_instance {
 typedef void (*dtc_message_proc_t)(void *session, mes_message_t *message);
 
 typedef struct st_dtc_processor {
-    dtc_message_proc_t  proc;
-    bool32              is_enqueue;
-    char                name[OG_MAX_NAME_LEN];
+    dtc_message_proc_t proc;
+    bool32 is_enqueue;
+    char name[OG_MAX_NAME_LEN];
 } dtc_processor_t;
 
 extern dtc_processor_t g_processors[];
@@ -95,6 +99,5 @@ extern dtc_instance_t *g_dtc;
 #ifdef __cplusplus
 }
 #endif
-
 
 #endif

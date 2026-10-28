@@ -124,6 +124,7 @@ typedef enum en_buf_load_status {
     BUF_NEED_LOAD = 0x00,
     BUF_IS_LOADED = 0x01,
     BUF_LOAD_FAILED = 0x02,
+    BUF_NEED_LOAD_FROM_GBP = 0x03,
 } buf_load_status_t;
 
 typedef struct st_buf_latch {
@@ -148,6 +149,10 @@ typedef enum st_buf_transfer_status {
 struct st_buf_rbp_ctrl;
 struct st_rbp_queue_item;
 
+// Forward declare it. The full declaration is in dtc_remote_buffer.h
+typedef struct st_remote_page_info remote_page_info_t;
+typedef struct st_remote_buf_context remote_buf_context_t;
+
 #ifdef WIN32
 typedef struct st_buf_ctrl
 #else
@@ -171,22 +176,29 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     volatile uint8 buf_pool_id;
     volatile uint8 in_ckpt;
     volatile uint8 lock_mode;  // used only in DTC, 0: Null, 1: Shared lock, 2: Exclusive lock
+    volatile uint8 gbp_lock_mode;
+    volatile uint16 gbp_lock_count; /* outstanding GBP locks on this page (multi-session S) */
+    volatile uint8 gbp_store_pending; /* leave(changed) raised writeWaiters, cleared after store commit */
+    volatile uint8 gbp_reload_in_progress; /* GBP->LBP reload in progress, readers must wait */
+    volatile uint16 gbp_reload_sid; /* session id that owns reload, OG_INVALID_ID16 if none */
+    volatile uint32 gbp_reload_generation; /* incremented after each successful GBP reload */
 
     volatile uint8 is_edp;  // used only in DTC, 0: no, 1: yes, this page is old version, can be discard only after
-                            // latest version in other instance is cleaned
+                            // latest version in other instance is cleaned. Not dirty, but stale.
     volatile uint64 edp_map;          // used only in DTC, history dirty page map, dcs use it to recovery or CR read
     volatile bool8 in_recovery;
     volatile bool8 need_flush;
-    volatile bool8 force_request;  // force to request page from remote
-    volatile uint8 remote_access;  // remote access statistics
-    volatile uint8 transfer_status;   // page transfer status, used only in TDC
+                            // latest version in other instance is cleaned. Not dirty, but stale.
+    volatile bool8 force_request;    // force to request page from remote
+    volatile uint8 remote_access;    // remote access statistics
+    volatile uint8 transfer_status;  // page transfer status, used only in TDC
 
     atomic32_t ref_num;
     volatile uint16 touch_number;   // touch number for LRU
 
     page_id_t page_id;
-    date_t access_time;             // last access time
-    date_t ckpt_enque_time;         // time when page was last added to checkpoint queue
+    date_t access_time;  // last access time
+    date_t ckpt_enque_time;
 
     uint32 curr_node_idx;
     log_point_t trunc_point;
@@ -194,7 +206,17 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
 
     volatile uint8 is_fixed;  // true means this control has been fixed according to buf res after recovery
                               // reset to 0 when get page ownership
-    uint8 align[7];
+    uint8 align[1];
+    uint8 consecutive_read_count;
+    uint8 consecutive_same_writer_count;
+    bool32 is_hot;
+
+    date_t consecutive_read_start_time;
+    date_t consecutive_same_writer_start_time;
+    remote_page_info_t *shmem_page_meta;  // points to the metadata of a compound page in shared memory
+    page_head_t *shmem_page_addr;
+    bool32 is_in_gbp;
+
     struct st_buf_ctrl *ckpt_prev;
     struct st_buf_ctrl *ckpt_next;
     struct st_buf_ctrl *prev;       // for LRU queue or free control list
@@ -384,12 +406,17 @@ status_t buf_init(knl_session_t *session);
 uint32 buf_expire_cache(knl_session_t *session, buf_set_t *set);
 void buf_expire_page(knl_session_t *session, page_id_t page_id);
 buf_ctrl_t *buf_find_by_pageid(knl_session_t *session, page_id_t page_id);
-buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options);
+buf_ctrl_t *buf_find_shmem_by_pageid(knl_session_t *session, page_id_t page_id);
+buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options,
+                           bool32 in_shmem);
 buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options,
-                               buf_add_pos_t add_pos);
+                               buf_add_pos_t add_pos, bool32 in_shmem);
 buf_ctrl_t *buf_alloc_compress(knl_session_t *session, page_id_t wanted_page, latch_mode_t mode, uint32 options);
 buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page, latch_mode_t mode, uint32 options,
                                    buf_add_pos_t add_pos);
+/** Evict a page from shmem: invalidate metadata, remove from hash, and demote in LRU. */
+status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
+                         bool32 list_locked);
 void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos);
 void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl);
 void buf_balance_set_list(buf_set_t *set);
@@ -402,6 +429,7 @@ status_t pcb_get_buf(knl_session_t *session, pcb_assist_t *pcb_assist);
 void pcb_release_buf(knl_session_t *session, pcb_assist_t *pcb_assist);
 status_t pcb_init_ctx(knl_session_t *session);
 status_t buf_invalidate_page(knl_session_t *session, page_id_t page_id);
+EXTER_ATTACK status_t buf_claim_shmem_ctrl2hot(knl_session_t *session, page_id_t page_id, uint64 req_version);
 EXTER_ATTACK status_t buf_invalidate_page_with_version(knl_session_t *session, page_id_t page_id, uint64 req_version);
 EXTER_ATTACK status_t buf_invalidate_page_owner(knl_session_t *session, page_id_t page_id, uint64 req_version);
 bool32 buf_clean_edp(knl_session_t *session, edp_page_info_t page);
@@ -415,6 +443,7 @@ void buf_lru_append_list(buf_lru_list_t *target, buf_lru_list_t *source);
 void buf_lru_add_tail(buf_lru_list_t *list, buf_ctrl_t *ctrl);
 void buf_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl);
 void buf_lru_remove_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl);
+buf_bucket_t *buf_find_bucket_in_remote_ctx(knl_session_t *session, page_id_t page_id, remote_buf_context_t *ctx);
 
 #ifdef __cplusplus
 }

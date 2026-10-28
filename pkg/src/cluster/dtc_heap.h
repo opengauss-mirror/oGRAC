@@ -26,10 +26,10 @@
 #define __DTC_HEAP_H__
 #include "pcr_heap.h"
 
-status_t dtc_heap_prefetch_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn,
-                                   char *page_buf, bool8 *fb_buf);
+status_t dtc_heap_prefetch_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn, char *page_buf,
+                                   bool8 *fb_buf);
 status_t dtc_heap_enter_cr_page(knl_session_t *session, knl_cursor_t *cursor, knl_scn_t query_scn, rowid_t rowid);
-status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cursor,
-                                        heap_page_t *page, bool32 *is_found);
+status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *page,
+                                        bool32 *is_found);
 
 #endif

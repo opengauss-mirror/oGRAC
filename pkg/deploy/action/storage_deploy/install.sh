@@ -197,6 +197,10 @@ function initUserAndGroup() {
     usermod -a -G ogracgroup ograc
     usermod -a -G ogracgroup ogmgruser
     usermod -a -G ${deploy_group} ograc
+    # ubsmd group only exists where the UB SDK is installed, UB support is optional
+    if getent group ubsmd > /dev/null 2>&1; then
+        usermod -a -G ubsmd ograc
+    fi
     config_sudo
 }
 

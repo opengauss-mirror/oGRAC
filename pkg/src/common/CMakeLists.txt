@@ -19,6 +19,7 @@ add_compile_definitions(WSEC_ERR_CODE_BASE=0x10000000)
 add_compile_definitions(WSEC_DEBUG)
 add_compile_definitions(WSEC_TRACE_MEMORY)
 add_compile_definitions(WSEC_COMPILE_MIP_OTHER)
+
 option(USE_FUZZASAN OFF)
 if (USE_FUZZASAN)
     add_compile_options(-fsanitize-coverage=trace-pc)

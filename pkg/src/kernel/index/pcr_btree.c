@@ -2745,7 +2745,6 @@ static void pcrb_split_page(knl_session_t *session, knl_cursor_t *cursor, pcrb_k
     knl_securec_check(err);
     pcrb_validate_page(session, &src_page->head, btree->index);
     buf_leave_page(session, OG_TRUE);  // src_page
-
     bt_all_page(session, btree, &alloc_assist);
     page_id_t alloced_page = alloc_assist.new_pageid;
     CM_ABORT(IS_SAME_PAGID(alloced_id, alloced_page),

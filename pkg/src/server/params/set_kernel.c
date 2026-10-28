@@ -30,6 +30,7 @@
 #include "srv_param_common.h"
 #include "cm_io_record.h"
 #include "cm_log.h"
+#include "cm_ub_sdk.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -447,6 +448,21 @@ status_t sql_notify_als_delay_cleanout(void *se, void *item, char *value)
 status_t sql_verify_als_cr_pool_size(void *se, void *lex, void *def)
 {
     return sql_verify_pool_size(lex, def, OG_MIN_CR_POOL_SIZE, OG_MAX_SGA_BUF_SIZE);
+}
+
+status_t sql_verify_als_ub_page_hot_threshold(void *se, void *lex, void *def)
+{
+    uint32 value;
+    if (sql_verify_uint32(lex, def, &value) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (value > OG_MAX_UB_PAGE_HOT_THRESHOLD || value < 1) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "CR_POOL_COUNT", (int64)1, (int64)OG_MAX_UB_PAGE_HOT_THRESHOLD);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
 }
 
 status_t sql_verify_als_cr_pool_count(void *se, void *lex, void *def)
@@ -1935,6 +1951,49 @@ status_t sql_verify_als_max_rm_count(void *se, void *lex, void *def)
     return OG_SUCCESS;
 }
 
+status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def)
+{
+    uint32 num = 0;
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        cm_reset_error();
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_ASHRINK_WAIT_TIME");
+        return OG_ERROR;
+    }
+
+    if (num < OG_MIN_UB_PAGE_HOT_TIMEOUT) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_ASHRINK_WAIT_TIME", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
+        return OG_ERROR;
+    }
+
+    if (num > OG_MAX_UB_PAGE_HOT_TIMEOUT) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_ASHRINK_WAIT_TIME", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_ub_page_hot_timeout(void *se, void *item, char *value)
+{
+    uint32 num = 0;
+    if (cm_str2uint32(value, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (num < OG_MIN_UB_PAGE_HOT_TIMEOUT) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_ASHRINK_WAIT_TIME", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
+        return OG_ERROR;
+    }
+
+    if (num > OG_MAX_UB_PAGE_HOT_TIMEOUT) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_ASHRINK_WAIT_TIME", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
+        return OG_ERROR;
+    }
+
+    g_instance->kernel.attr.ashrink_wait_time = num;
+    return OG_SUCCESS;
+}
+
 status_t sql_verify_als_ashrink_wait_time(void *se, void *lex, void *def)
 {
     uint32 num = 0;
@@ -2027,6 +2086,28 @@ status_t sql_notify_als_shrink_wait_recycled_pages(void *se, void *item, char *v
 status_t sql_notify_als_temptable_support_batch(void *se, void *item, char *value)
 {
     g_instance->kernel.attr.temptable_support_batch = (bool32)value[0];
+    return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char *value)
+{
+    if (cm_ub_sdk_ready() == OG_TRUE) {
+        g_instance->kernel.attr.enable_remote_distribute_lock = (bool32)value[0];
+    } else {
+        g_instance->kernel.attr.enable_remote_distribute_lock = OG_FALSE;
+        OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_REMOTE_DISTRIBUTE_LOCK ignored: UB shared memory library is not loaded");
+    }
+    return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value)
+{
+    if (cm_ub_sdk_ready() == OG_TRUE) {
+        g_instance->kernel.attr.enable_ubsmem = (bool32)value[0];
+    } else {
+        g_instance->kernel.attr.enable_ubsmem = OG_FALSE;
+        OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_UBSMEM ignored: UB shared memory library is not loaded");
+    }
     return sql_notify_als_bool(se, item, value);
 }
 

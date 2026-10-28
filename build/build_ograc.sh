@@ -52,6 +52,7 @@ function usage() {
   echo "Usage: ${0##*/} {debug|release} [--incremental] [--with-dss] [--third-party-path <path>] [--without-deps]"
   echo "  --incremental is supported for debug builds only."
   echo "  With --with-dss, it reuses DSS artifacts from a previous full debug --with-dss build."
+  echo "  atomic_lock=1."
 }
 
 function buildKernelPackage() {

@@ -29,13 +29,17 @@
 #include "dtc_dcs.h"
 #include "dtc_context.h"
 #include "dtc_trace.h"
+#include "dtc_database.h"
+#include "dtc_remote_buffer.h"
 #include "knl_datafile.h"
 #include "knl_buflatch.h"
 #include "knl_rbp.h"
+#include "cm_ubs_mem.h"
+#include "dtc_remote_lock.h"
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
-    *ctrl = buf_alloc_ctrl(session, ra->page_id, ra->mode, ra->options);
+    *ctrl = buf_alloc_ctrl(session, ra->page_id, ra->mode, ra->options, OG_FALSE);
     if (SECUREC_UNLIKELY(*ctrl == NULL)) {
         knl_panic(ra->options & ENTER_PAGE_TRY);
         session->curr_page = NULL;
@@ -141,9 +145,11 @@ static status_t dtc_buf_try_prefetch(knl_session_t *session, buf_read_assist_t *
     return OG_SUCCESS;
 }
 
-static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl, knl_buf_wait_t
-    *temp_stat)
+static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl,
+                               knl_buf_wait_t *temp_stat)
 {
+    bool32 gbp_held = OG_FALSE;
+
     BUF_UNPROTECT_PAGE(ctrl->page);
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
         bool32 try_load = OG_TRUE;
@@ -156,8 +162,8 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         }
         if (try_load && dtc_buf_try_prefetch(session, ra, ctrl) != OG_SUCCESS) {
             session->curr_page_ctrl = ctrl;
-            OG_LOG_RUN_ERR("[DTC_BNUFFER][%u-%u][dtc buf try prefetch] failed, read num:%u",
-                ctrl->page_id.file, ctrl->page_id.page, ra->read_num);
+            OG_LOG_RUN_ERR("[DTC_BNUFFER][%u-%u][dtc buf try prefetch] failed, read num:%u", ctrl->page_id.file,
+                           ctrl->page_id.page, ra->read_num);
             return OG_ERROR;
         }
         if (ra->options & ENTER_PAGE_NO_READ) {
@@ -168,7 +174,53 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             }
         }
     } else {
+        /* case enter
+         * 1.lbp page transfer to gbp
+         * 2.lock mode upgrade: for example, S latch lock at last time, now this session fetch X lock
+         * 3.always fetch this page in this node
+         */
+        bool32 is_load_from_gbp = false;
+        status_t ret;
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            ret = dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
+            }
+            gbp_held = OG_TRUE;
+            // OG_LOG_DEBUG_INF("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u,"
+            //                "is_load_from_gbp: %d, mode: %u", ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
+            //                (unsigned int)ra->options, is_load_from_gbp, ctrl->gbp_lock_mode);
+
+            if (!is_load_from_gbp && !CHECK_PAGE_PCN(ctrl->page)) {
+                OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] page pcn still mismatch after check page, head pcn:%u, tail pcn:%u",
+                    ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->page->pcn,
+                    (uint32)PAGE_TAIL(ctrl->page)->pcn);
+                if (gbp_held) {
+                    (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
+                }
+                OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
+                buf_unlatch(session, ctrl, OG_TRUE);
+                return OG_ERROR;
+            }
+        }
+
+        if (session->kernel->attr.enable_ubsmem &&
+            (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp)) {
+            ret = dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to load page from gbp.",
+                               ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
+            }
+        }
+
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
+            OG_LOG_RUN_WAR("[DTC-BUFFER][%u-%u] page is mismatch",
+                               ctrl->page_id.file, ctrl->page_id.page);
+            if (session->kernel->attr.enable_ubsmem && gbp_held) {
+                (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
+            }
             OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
             buf_unlatch(session, ctrl, OG_TRUE);
             return OG_ERROR;
@@ -217,13 +269,16 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
     //    stats_buf_record(session, &temp_stat, ctrl);
     buf_push_page(session, ctrl, ra->mode);
+    if (session->kernel->attr.enable_ubsmem && gbp_held) {
+        session->page_stack.gbp_lock_modes[session->page_stack.depth - 1] = (uint8)ra->mode;
+    }
     buf_log_enter_page(session, ctrl, ra->mode, ra->options);
-    
-    if (DTC_BUF_PREFETCH_EXTENT(ra->read_num) &&
-        session->kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
+
+    if (DTC_BUF_PREFETCH_EXTENT(ra->read_num) && session->kernel->attr.enable_asynch &&
+        !session->kernel->attr.enable_dss) {
         if (buf_try_prefetch_next_ext(session, ctrl) != OG_SUCCESS) {
-            OG_LOG_RUN_WAR("failed to prefetch next extent file : %u , page: %llu",
-                           (uint32)ctrl->page_id.file, (uint64)ctrl->page_id.page);
+            OG_LOG_RUN_WAR("failed to prefetch next extent file : %u , page: %llu", (uint32)ctrl->page_id.file,
+                           (uint64)ctrl->page_id.page);
         }
     }
 
@@ -232,6 +287,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
 // unit: ms
 #define DCS_LOG_LIMIT_INTERVAL (500)
+
 status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
 {
     buf_ctrl_t *ctrl = NULL;
@@ -244,8 +300,8 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         if (!dtc_dcs_readable(session, ra->page_id)) {
             if (last_time + DCS_LOG_LIMIT_INTERVAL * MICROSECS_PER_MILLISEC <= KNL_NOW(session)) {
                 last_time = KNL_NOW(session);
-                OG_LOG_DEBUG_ERR("[DCS][%u-%u] dcs not readable, session is hanging.",
-                    ra->page_id.file, ra->page_id.page);
+                OG_LOG_DEBUG_ERR("[DCS][%u-%u] dcs not readable, session is hanging.", ra->page_id.file,
+                                 ra->page_id.page);
             }
             cm_sleep(DCS_RESEND_MSG_INTERVAL);
             continue;
@@ -256,11 +312,21 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         }
 
         if (dtc_buf_try_local(session, ra, ctrl)) {
+            if (session->kernel->attr.enable_ubsmem && ctrl->is_in_gbp == OG_TRUE &&
+                ctrl->shmem_page_meta == NULL) {
+                OG_LOG_RUN_INF("[DTC-GBP_BUF][%u-%u] page is in gbp, but remote address is null in local node.",
+                    ra->page_id.file, ra->page_id.page);
+            }
             break;
         }
 
         if (dtc_buf_give_up_try(session, ra, ctrl)) {
             return OG_SUCCESS;
+        }
+
+        // lock mode uncampatiable
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            break;
         }
 
         if (dtc_buf_try_remote(session, ra, ctrl)) {
@@ -405,8 +471,7 @@ bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id)
         return OG_FALSE;
     }
 
-    if (is_df_ctrl_lock(session, lock_id))
-    {
+    if (is_df_ctrl_lock(session, lock_id)) {
         return OG_TRUE;
     }
 
@@ -416,4 +481,49 @@ bool32 dtc_dls_readable(knl_session_t *session, drid_t *lock_id)
     }
     bool32 lock_need_recover = dtc_lock_in_rcy_space_set(uid);
     return !lock_need_recover;
+}
+
+bool32 update_consecutive_same_writer_stat(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    // This function should be called when this remote page is locked
+    // TOODO: use shmem API to load the last writer's node id and page_id from shared_mem
+    uint8 last_writer = ctrl->shmem_page_meta->claimed_owner;
+    // we need to check page_id to make sure this page hasn't been evicted already
+    uint16 raw_remote_file_id = ctrl->shmem_page_meta->file_id;
+    uint32 raw_remote_page_id = ctrl->shmem_page_meta->page_id;
+    uint16 raw_local_file_id = ctrl->page_id.file;
+    uint32 raw_local_page_id = ctrl->page_id.page;
+
+    if (DCS_SELF_INSTID(session) == last_writer && raw_remote_file_id == raw_local_file_id &&
+        raw_remote_page_id == raw_local_page_id) {
+        ctrl->consecutive_same_writer_count++;
+        if (ctrl->consecutive_same_writer_count == SAME_WRITER_COUNT_TRIGGER) {
+            return (KNL_NOW(session) - ctrl->consecutive_same_writer_start_time) > SAME_WRITER_THRESHOLD;
+        }
+    } else {
+        ctrl->consecutive_same_writer_start_time = KNL_NOW(session);
+        ctrl->consecutive_same_writer_count = 0;
+    }
+    return false;
+}
+bool32 update_consecutive_read_stat(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    // TOODO: use UB API to load the lsn and page_id from remote
+    uint16 raw_remote_file_id = ctrl->shmem_page_meta->file_id;
+    uint32 raw_remote_page_id = ctrl->shmem_page_meta->page_id;
+    uint16 raw_local_file_id = ctrl->page_id.file;
+    uint32 raw_local_page_id = ctrl->page_id.page;
+    // we need to check page_id to make sure this page hasn't been evicted already
+    uint64 remote_head_lsn = ctrl->shmem_page_meta->head_lsn;
+    if (remote_head_lsn == ctrl->page->lsn && raw_remote_file_id == raw_local_file_id &&
+        raw_remote_page_id == raw_local_page_id) {
+        ctrl->consecutive_read_count++;
+        if (ctrl->consecutive_read_count == READ_COUNT_TRIGGER) {
+            return (KNL_NOW(session) - ctrl->consecutive_read_start_time) > READ_THRESHOLD;
+        }
+    } else {
+        ctrl->consecutive_read_count = 0;
+        ctrl->consecutive_read_start_time = KNL_NOW(session);
+    }
+    return false;
 }

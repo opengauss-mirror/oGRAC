@@ -38,7 +38,6 @@
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define BUF_PAGE_COST_WITH_RBP (BUF_PAGE_COST + sizeof(buf_rbp_ctrl_t))
 
-static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 uint32 g_cks_level;
 uint32 g_page_protect_check = 0;
 
@@ -60,6 +59,28 @@ static bool32 buf_rbp_post_recovery_check_enabled(knl_session_t *session)
 
     return OG_TRUE;
 }
+#include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
+
+#define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
+#define GBP_COMPOUND_SLOT_SIZE (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64))
+#define MAX_TOUCH_NUM 3
+
+uint32 g_cks_level;
+
+static const remote_page_info_t g_invalid_shmem_page_metadata = {
+    .lock_ptr = OG_INVALID_ID64,
+    .head_lsn = 0,
+    .page_id = OG_INVALID_ID32,
+    .file_id = OG_INVALID_ID16,
+    .claimed_owner = OG_INVALID_ID8,
+    .touch_number = OG_INVALID_ID16,
+    .ref_num = OG_INVALID_ID16,
+    .xlog_owner_node = OG_INVALID_ID16,
+    .xlog_owner_node_timeline_id = { OG_INVALID_ID8, OG_INVALID_ID8, OG_INVALID_ID8, OG_INVALID_ID8, OG_INVALID_ID8,
+                             OG_INVALID_ID8 },
+};
+
 
 static void buf_init_list(buf_set_t *set)
 {
@@ -68,6 +89,8 @@ static void buf_init_list(buf_set_t *set)
         set->list[i].type = i;
     }
 }
+
+static buf_ctrl_t g_init_buf_ctrl = { .bucket_id = OG_INVALID_ID32 };
 
 status_t buf_init(knl_session_t *session)
 {
@@ -107,7 +130,7 @@ status_t buf_init(knl_session_t *session)
     if (kernel->attr.enable_asynch && !session->kernel->attr.enable_dss) {
         return buf_aio_init(session);
     }
-    
+
     cm_init_thread_lock(&ogx->buf_mutex);
 
     return OG_SUCCESS;
@@ -431,7 +454,9 @@ static void buf_check_rbp_queue_gap(knl_session_t *session, buf_ctrl_t *item)
 {
     if (item->rbp_ctrl->is_rbpdirty) {
         if (item->bucket_id != OG_INVALID_ID32) {
-            buf_latch_x(session, item, OG_TRUE);
+            buf_set_t *set = &session->kernel->buf_ctx.buf_set[item->buf_pool_id];
+            buf_bucket_t *bucket = BUF_GET_BUCKET(set, item->bucket_id);
+            buf_latch_x(session, bucket, item, OG_TRUE);
             /*
              * Prefer snapshot detach before this ctrl is reused.  If memory is
              * unavailable, the detach helper drops the queue item and forces a
@@ -532,6 +557,27 @@ static inline bool32 buf_can_expire(buf_ctrl_t *ctrl, buf_expire_type_t expire_t
         return BUF_CAN_EXPIRE_PAGE(ctrl);
     } else if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_CACHE)) {
         return BUF_CAN_EXPIRE_CACHE(ctrl);
+    }
+    return OG_FALSE;
+}
+
+/* Expiry decision for a global buffer pool (shmem) ctrl: refresh the local counters from the
+ * shared metadata first. Taken from the UB branch's follow-up commit (dad68af), which this
+ * cherry-pick depends on. */
+static bool32 buf_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_type)
+{
+    // TOODO: This should be an atomic load from shmem with UB API
+    remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
+    uint16 ref_num = shmem_meta->ref_num;
+    uint16 touch_num = shmem_meta->touch_number;
+    ctrl->ref_num = ref_num;
+    ctrl->touch_number = touch_num;
+    if (expire_type == BUF_EVICT) {
+        return !(ref_num > 0) && !(touch_num >= MAX_TOUCH_NUM);
+    } else if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_PAGE)) {
+        // TOODO
+    } else if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_CACHE)) {
+        // TOODO
     }
     return OG_FALSE;
 }
@@ -734,6 +780,30 @@ static uint32 buf_expire_normal(knl_session_t *session, buf_set_t *set, buf_ctrl
 
     return 1; // successful number
 }
+static uint32 buf_expire_normal_shmem(knl_session_t *session, buf_set_t *set, buf_ctrl_t *ctrl,
+                                      buf_expire_type_t expire_type)
+{
+    remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
+    if (!buf_can_expire_shmem(ctrl, expire_type)) {
+        // TOODO: this should be an atomic UB store
+        shmem_meta->touch_number = ctrl->touch_number / BUF_AGE_DECREASE_FACTOR;
+        return 0;  // fail
+    }
+
+    buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
+    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    // Check again
+    if (!buf_can_expire_shmem(ctrl, expire_type)) {
+        cm_spin_unlock(&bucket->lock);
+        return 0;  // fail
+    }
+    cm_spin_unlock(&bucket->lock);
+    if (SECUREC_UNLIKELY(expire_type == BUF_EXPIRE_PAGE)) {
+        ctrl->is_resident = 0;
+    }
+    return 1;  // successful number
+}
+
 
 uint32 buf_expire_cache(knl_session_t *session, buf_set_t *set)
 {
@@ -913,6 +983,80 @@ static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_
     cm_release_cond(&set->set_cond);
 }
 
+status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
+                         bool32 list_locked)
+{
+    // retreive shmem set from global buffer context
+    remote_buf_context_t *shmem_ctx = DRC_GBP_BUF_CTX;
+
+    uint32 hash_val = buf_page_hash_value(shmem_ctrl->page_id);
+    uint32 buf_pool_id = buf_get_pool_id_by_hash(hash_val, shmem_ctx->buf_set_count);
+    buf_set_t *shmem_set = &shmem_ctx->buf_set[buf_pool_id];
+
+    if (shmem_ctrl->shmem_page_meta == NULL) {
+        OG_LOG_RUN_ERR("[BUF] shmem_page_meta is NULL");
+        return OG_ERROR;
+    }
+
+    uint64 lock_ptr = shmem_ctrl->shmem_page_meta->lock_ptr;
+
+    // Acquire global lock
+    status_t ret = drc_gbp_distribute_lock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
+    if (ret != OG_SUCCESS) {
+        return ret;
+    }
+
+    // TOODO UB API? to copy from remote addr
+    errno_t err = memcpy_s(out_shmem_page_meta, sizeof(remote_page_info_t), shmem_ctrl->shmem_page_meta,
+                           sizeof(remote_page_info_t));
+    knl_securec_check(err);
+
+    // Invalidate the 256-bit shmem metadata from the buffer ctrl
+    err = memcpy_s(shmem_ctrl->shmem_page_meta, sizeof(remote_page_info_t), &g_invalid_shmem_page_metadata,
+                   sizeof(remote_page_info_t));
+    knl_securec_check(err);
+
+    // Release and free global lock
+    ret = drc_gbp_distribute_unlock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
+    if (ret != OG_SUCCESS) {
+        return ret;
+    }
+
+    buf_lru_list_t *curr_list = &shmem_set->list[shmem_ctrl->list_id];
+
+    // Remove from shmem hash bucket so future lookups won't find this page in shmem
+    if (shmem_ctrl->bucket_id == OG_INVALID_ID32) {
+        return OG_ERROR;
+    }
+
+    buf_bucket_t *bucket = BUF_GET_BUCKET(shmem_set, shmem_ctrl->bucket_id);
+    if (bucket == NULL) {
+        return OG_ERROR;
+    }
+
+    shmem_ctrl->bucket_id = OG_INVALID_ID32;
+    shmem_ctrl->load_status = (uint8)BUF_NEED_LOAD;
+    shmem_ctrl->lock_mode = DRC_LOCK_NULL;
+    shmem_ctrl->is_hot = OG_FALSE;
+
+    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    buf_remove_from_bucket(bucket, shmem_ctrl);
+    cm_spin_unlock(&bucket->lock);
+
+    // Keep ctrl in shmem LRU, but move it to the tail.
+    // If the caller already holds the list lock, do not take it again.
+    if (!list_locked) {
+    cm_spin_lock(&curr_list->lock, &session->stat->spin_stat.stat_buffer);
+    }
+    buf_lru_remove_ctrl(curr_list, shmem_ctrl);
+    buf_lru_add_tail(curr_list, shmem_ctrl);
+    if (!list_locked) {
+    cm_spin_unlock(&curr_list->lock);
+    }
+
+    return OG_SUCCESS;
+}
+
 /*
  * search a single LRU to reclaim a ctrl for use. strategy:
  * 1.if exceed searching threshold, waiting for cleaning up dirty page.
@@ -923,6 +1067,7 @@ static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_
 static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_list_t *list)
 {
     buf_ctrl_t *shift = NULL;
+    // Get the maximum number of pages we are allowed to scan to avoid CPU spikes
     uint32 threshold = BUF_LRU_SEARCH_THRESHOLD(set, session);
     uint32 step = 0;
     buf_lru_list_t dirty_list = g_init_list_t;
@@ -930,6 +1075,7 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
     uint32 expired_num;
 
     cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
+    // Start searching from the tail (the "coldest" end) of the LRU list
     buf_ctrl_t *item = list->lru_last;
 
     while (item != NULL) {
@@ -943,7 +1089,10 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
             /* The page has been invalided, so directly reuse it */
             break;
         }
-
+        /* * STEP 2: Try to evict the page.
+         * Logic differs slightly for compressed vs. normal pages.
+         * 'buf_expire' checks if the page is pinned or in use.
+         */
         if (BUF_IS_COMPRESS(item)) {
             expired_num = buf_expire_compress(session, set, list, item, BUF_EVICT);
         } else {
@@ -951,20 +1100,28 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
         }
         step++;
         if (expired_num != 0) {
-            break; // We evict a page to reuse.
+            // Success! We found a page that was successfully evicted/flushed.
+            break;  // We evict a page to reuse.
         }
 
-        /* Doing necessary shifing work for the un-evicted page */
+        /* * STEP 3: Maintenance of non-evictable pages.
+         * If we couldn't reuse 'item', we analyze why and move it so it doesn't
+         * block the tail of the LRU.
+         */
         shift = item;
         item = item->prev;
         if (buf_is_cold_dirty_general(session, shift)) {
-            /* move cold dirty page to write list. */
+            /* * If the page is "cold" (not used recently) but "dirty" (modified),
+             * we can't reuse it yet. Move it to the 'write_list' so the
+             * background writer can flush it to disk.
+             */
             buf_lru_remove_ctrl(list, shift);
             shift->list_id = LRU_LIST_TEMP;
             buf_lru_add_tail(&dirty_list, shift);
         } else if (!buf_can_evict_general(session, shift)) {
-            /* move the currently un-evicted page to the main head,
-             * to avoid meet it again for the next try.
+            /* * If the page is currently pinned (being read/written) or "hot",
+             * move it toward the head (hot end) of the list. This "recycles"
+             * the position so we don't keep hitting this busy page.
              */
             buf_lru_shift_ctrl(list, shift);
         }
@@ -986,12 +1143,109 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
 
     buf_lru_adjust_old_len(list);
     cm_spin_unlock(&list->lock);
+    // Batch add any dirty pages found during the scan to the global write list
     buf_lru_append_list(&set->write_list, &dirty_list);
 
+    /* * CLUSTER LOGIC: In a distributed DB, if we recycle a page we "own",
+     * we must notify the Distributed Resource Management (DRC) that we
+     * no longer hold this cached copy.
+     */
     if (DB_IS_CLUSTER(session) && (item != NULL) && DCS_BUF_CTRL_IS_OWNER(session, item)) {
         drc_buf_res_try_recycle(session, item->page_id);
     }
 
+    return item;
+}
+
+// Only master can prepare a slot for a page so that this page can be promoted to hot. All hot pages in the shmem of
+// this node belongs to this node. Therefore, this function is only called by master. Evicted page's master must be this
+// node
+/*
+ * Reclaim a ctrl from the global buffer pool (GBP) so it can hold a page loaded from shared memory.
+ * Only reached when the UB scenario is enabled (attr.enable_ubsmem).
+ */
+static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_set, buf_lru_list_t *list)
+{
+    buf_ctrl_t *shift = NULL;
+    uint32 threshold = BUF_LRU_SEARCH_THRESHOLD(shmem_set, session);
+    uint32 step = 0;
+    uint32 expired_num;
+
+    cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
+    buf_ctrl_t *item = list->lru_last;
+
+    // Find one victim.
+    while (item != NULL) {
+        step++;
+        // For pages in shmem, write_list.count always == 0
+        if (step > threshold) {
+            item = NULL;
+            break;
+        }
+        if (item->bucket_id == OG_INVALID_ID32) {
+            /* The page has been invalided, so directly reuse it */
+            break;
+        }
+        if (item->is_hot == OG_FALSE) {
+            // Ctrl is marked as cold, which means the correspond page is demoted to cold recently by
+            // drc_invalidate_shmem_page call, so directly reuse it
+            break;
+        }
+        if (BUF_IS_COMPRESS(item)) {
+            // TOODO: We don't consider the compressed situation in shmem for now
+        } else {
+            expired_num = buf_expire_normal_shmem(session, shmem_set, item, BUF_EVICT);
+        }
+        if (expired_num != 0) {
+            // Success! We found a page that was successfully evicted/flushed.
+            break;  // We evict a page to reuse.
+        }
+        shift = item;
+        item = item->prev;
+        // We can't move a page in shared_mem to write_list cause gbp is not responsible for treating dirty page.
+        // So when fail to evict it, we always move it to be beginning of the list.
+        buf_lru_shift_ctrl(list, shift);
+    }  // while ends here
+
+    if (item == NULL) {
+        cm_spin_unlock(&list->lock);
+        return NULL;
+    }
+
+    // Now we find the item to reuse, lock the global metadata first before we invalidate the shmem page to avoid
+    // anybody else using it
+    remote_page_info_t *shmem_meta = item->shmem_page_meta;
+    uint64 lock_ptr = shmem_meta->lock_ptr;
+    status_t ret;
+
+    do {
+        ret = drc_gbp_distribute_lock(session, lock_ptr, item->page_id, LATCH_MODE_X);
+        if (ret != OG_SUCCESS) {
+            cm_sleep(1);  // sleep 1 ms to avoid busy spinning
+        }
+    } while (ret != OG_SUCCESS);
+
+    // Now we find the item to reuse, we call drc_invalidate_shmem_page_by_ctrl to invalidate the shmem and demote the
+    // page to cold. The caller already holds the LRU list lock, so the invalidate path must not re-lock it.
+    if (DB_IS_CLUSTER(session) && (item != NULL) && item->is_hot == OG_TRUE) {
+        // Master mark it in its own DRC, global meta data will also be cleaned
+        drc_invalidate_shmem_page_by_ctrl(session, item, OG_TRUE);
+    }
+
+    // 9. Update LRU metadata (like list length) and unlock.
+    buf_lru_remove_ctrl(list, item);
+    item->list_id = list->type;
+    session->stat->buffer_recycle_step += step;
+    buf_lru_adjust_old_len(list);
+    cm_spin_unlock(&list->lock);
+
+    // Release and free global lock
+    ret = drc_gbp_distribute_unlock(session, lock_ptr, item->page_id, LATCH_MODE_X);
+    item->gbp_lock_mode = DRC_LOCK_NULL;
+    item->gbp_lock_count = 0;
+    item->gbp_store_pending = 0;
+
+    // Return the free block to the caller.
     return item;
 }
 
@@ -1026,6 +1280,35 @@ static buf_ctrl_t *buf_alloc_hwm(knl_session_t *session, buf_set_t *set)
     return ctrl;
 }
 
+static inline void buf_bind_compound_shmem_slot(buf_set_t *shmem_set, buf_ctrl_t *ctrl, uint32 id)
+{
+    char *slot_base = (char *)shmem_set->page_buf + (uint64)id * GBP_COMPOUND_SLOT_SIZE;
+
+    ctrl->shmem_page_meta = (remote_page_info_t *)slot_base;  // if your metadata type differs, adjust this cast
+    ctrl->shmem_page_addr = (page_head_t *)(slot_base + sizeof(remote_page_info_t));
+    ctrl->page = ctrl->shmem_page_addr;  // make normal buffer code operate on shared-memory page bytes
+}
+
+static buf_ctrl_t *buf_alloc_hwm_shmem(knl_session_t *session, buf_set_t *shmem_set)
+{
+    if (shmem_set->hwm >= shmem_set->capacity) {
+        return NULL;
+    }
+    cm_spin_lock(&shmem_set->lock, &session->stat->spin_stat.stat_buffer);
+    if (SECUREC_UNLIKELY(shmem_set->hwm >= shmem_set->capacity)) {
+        cm_spin_unlock(&shmem_set->lock);
+        return NULL;
+    }
+    uint32 id = shmem_set->hwm++;
+    buf_ctrl_t *ctrl = &shmem_set->ctrls[id];
+    cm_spin_unlock(&shmem_set->lock);
+
+    *ctrl = g_init_buf_ctrl;
+
+    buf_bind_compound_shmem_slot(shmem_set, ctrl, id);
+    return ctrl;
+}
+
 /*
  * method to alloc ctrl:
  * 1.allocate ctrl from hwm first
@@ -1033,6 +1316,7 @@ static buf_ctrl_t *buf_alloc_hwm(knl_session_t *session, buf_set_t *set)
  * 3.recycle ctrl from MAIN list.
  * 4.trigger page clean to release dirty page.
  */
+
 static void buf_get_ctrl(knl_session_t *session, buf_set_t *set, uint32 options, buf_ctrl_t **ctrl)
 {
     buf_ctrl_t *item = NULL;
@@ -1073,13 +1357,56 @@ static void buf_get_ctrl(knl_session_t *session, buf_set_t *set, uint32 options,
     *ctrl = item;
 }
 
+static inline void buf_bind_ctrl_shmem_after_init(buf_set_t *set, buf_ctrl_t *ctrl)
+{
+    uint32 id = (uint32)(ctrl - set->ctrls);
+    CM_ASSERT(id < set->capacity);
+    buf_bind_compound_shmem_slot(set, ctrl, id);
+}
+
+static void buf_get_ctrl_shmem(knl_session_t *session, buf_set_t *shmem_set, uint32 options, buf_ctrl_t **ctrl)
+{
+    buf_ctrl_t *item = NULL;
+    uint32 timeout_ms = session->kernel->attr.page_clean_wait_timeout;
+    item = buf_alloc_hwm_shmem(session, shmem_set);
+    if (item != NULL) {
+        buf_init_ctrl(session, shmem_set, item, OG_TRUE, options);
+        /* Must re-bind after buf_init_ctrl() resets the ctrl */
+        buf_bind_ctrl_shmem_after_init(shmem_set, item);
+        item->is_hot = OG_TRUE;
+        *ctrl = item;
+        return;
+    }
+    while (item == NULL) {
+        item = buf_recycle_shmem(session, shmem_set, &shmem_set->scan_list);
+        if (item == NULL && !(options & ENTER_PAGE_SEQUENTIAL)) {
+            item = buf_recycle_shmem(session, shmem_set, &shmem_set->main_list);
+        }
+        if (item == NULL) {
+            if (timeout_ms == 0) {
+                knl_wait_for_tick(session);
+            } else {
+                (void)cm_wait_cond(&shmem_set->set_cond, timeout_ms);
+            }
+            session->stat->buffer_recycle_wait++;
+        } else {
+            session->stat->buffer_recycle_cnt++;
+        }
+    }
+    buf_init_ctrl(session, shmem_set, item, OG_FALSE, options);
+    /* Must re-bind after buf_init_ctrl() resets the ctrl */
+    buf_bind_ctrl_shmem_after_init(shmem_set, item);
+    item->is_hot = OG_TRUE;
+    *ctrl = item;
+}
+
 static void buf_latch_get_latch(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, latch_mode_t mode)
 {
     uint32 times = 0;
     bool32 lock_needed = OG_FALSE;
 
     if (mode != LATCH_MODE_X) {
-        buf_latch_s(session, ctrl, (mode == LATCH_MODE_FORCE_S), lock_needed);
+        buf_latch_s(session, bucket, ctrl, (mode == LATCH_MODE_FORCE_S), lock_needed);
         return;
     }
 
@@ -1101,10 +1428,10 @@ static void buf_latch_get_latch(knl_session_t *session, buf_bucket_t *bucket, bu
             }
         }
 
-        buf_latch_x(session, ctrl, lock_needed);
+        buf_latch_x(session, bucket, ctrl, lock_needed);
         if (ctrl->is_readonly && ctrl->latch.xsid != session->id) {
-            buf_unlatch(session, ctrl, OG_FALSE);
-            lock_needed = OG_TRUE; // always need lock after latched on time since bucket is released.
+            buf_unlatch_w_bucket(session, ctrl, bucket, OG_FALSE);
+            lock_needed = OG_TRUE;  // always need lock after latched on time since bucket is released.
             continue;
         }
 
@@ -1124,7 +1451,7 @@ static void buf_latch_ctrl(knl_session_t *session, buf_bucket_t *bucket, buf_ctr
     while (ctrl->load_status != (uint8)BUF_IS_LOADED) {
         if (ctrl->load_status == (uint8)BUF_LOAD_FAILED) {
             if (mode == LATCH_MODE_X) {
-                // no need for cocurrent contrl with x lock.
+                // no need for concurrent control with x lock.
                 ctrl->load_status = (uint8)BUF_NEED_LOAD;
                 break;
             }
@@ -1201,15 +1528,18 @@ static inline void buf_update_ctrl_touch_nr(knl_session_t *session, buf_ctrl_t *
     }
 }
 
-buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options)
+buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options,
+                           bool32 in_shmem)
 {
     uint32 hash_val = buf_page_hash_value(page_id);
-    uint32 buf_pool_id = buf_get_pool_id_by_hash(hash_val, session->kernel->buf_ctx.buf_set_count);
-    buf_set_t *set = &session->kernel->buf_ctx.buf_set[buf_pool_id];
+    uint32 buf_set_count = in_shmem ? DRC_GBP_BUF_CTX->buf_set_count : session->kernel->buf_ctx.buf_set_count;
+    uint32 buf_pool_id = buf_get_pool_id_by_hash(hash_val, buf_set_count);
+    buf_set_t *set = in_shmem ? &DRC_GBP_BUF_CTX->buf_set[buf_pool_id] : &session->kernel->buf_ctx.buf_set[buf_pool_id];
+
     datafile_t *df = DATAFILE_GET(session, page_id.file);
     buf_ctrl_t *item = NULL;
 
-    if (SECUREC_UNLIKELY(df->in_memory)) {
+    if (!in_shmem && SECUREC_UNLIKELY(df->in_memory)) {
         item = (buf_ctrl_t *)(df->addr + page_id.page * sizeof(buf_ctrl_t));
         if (!item->is_pinned) {
             item->is_pinned = 1;
@@ -1248,7 +1578,11 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
     cm_spin_unlock(&bucket->lock);
 
     knl_begin_session_wait(session, BUFFER_POOL_ALLOC, OG_FALSE);
-    buf_get_ctrl(session, set, options, &item);
+    if (in_shmem) {
+        buf_get_ctrl_shmem(session, set, options, &item);
+    } else {
+        buf_get_ctrl(session, set, options, &item);
+    }
     knl_end_session_wait(session, BUFFER_POOL_ALLOC);
 
     /*
@@ -1283,9 +1617,9 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
 
     /* latch the ctrl directly causing no concurrent operations on it */
     if (mode != LATCH_MODE_X) {
-        buf_latch_s(session, item, (mode == LATCH_MODE_FORCE_S), OG_FALSE);
+        buf_latch_s(session, bucket, item, (mode == LATCH_MODE_FORCE_S), OG_FALSE);
     } else {
-        buf_latch_x(session, item, OG_FALSE);
+        buf_latch_x(session, bucket, item, OG_FALSE);
         item->latch.xsid = session->id;
     }
 
@@ -1311,11 +1645,13 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
  * otherwise, latch the page and return
  */
 buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode_t mode, uint32 options,
-                               buf_add_pos_t add_pos)
+                               buf_add_pos_t add_pos, bool32 in_shmem)
 {
     uint32 hash_val = buf_page_hash_value(page_id);
-    uint32 buf_pool_id = buf_get_pool_id_by_hash(hash_val, session->kernel->buf_ctx.buf_set_count);
-    buf_set_t *set = &session->kernel->buf_ctx.buf_set[buf_pool_id];
+    uint32 buf_set_count = in_shmem ? DRC_GBP_BUF_CTX->buf_set_count : session->kernel->buf_ctx.buf_set_count;
+    uint32 buf_pool_id = buf_get_pool_id_by_hash(hash_val, buf_set_count);
+    buf_set_t *set = in_shmem ? &DRC_GBP_BUF_CTX->buf_set[buf_pool_id] : &session->kernel->buf_ctx.buf_set[buf_pool_id];
+
     datafile_t *df = DATAFILE_GET(session, page_id.file);
     buf_ctrl_t *item = NULL;
 
@@ -1347,7 +1683,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
                     item->page_id.file, item->page_id.page, item->page->type, item->buf_pool_id, buf_pool_id);
                 return item;
             } else {
-                buf_unlatch(session, item, OG_TRUE);
+                buf_unlatch_w_bucket(session, item, bucket, OG_TRUE);
                 return NULL;
             }
         } else {
@@ -1364,7 +1700,11 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
     cm_spin_unlock(&bucket->lock);
 
     knl_begin_session_wait(session, BUFFER_POOL_ALLOC, OG_FALSE);
-    buf_get_ctrl(session, set, options, &item);
+    if (in_shmem) {
+        buf_get_ctrl_shmem(session, set, options, &item);
+    } else {
+        buf_get_ctrl(session, set, options, &item);
+    }
     knl_end_session_wait(session, BUFFER_POOL_ALLOC);
 
     /*
@@ -1392,7 +1732,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
                     temp->page_id.file, temp->page_id.page, temp->page->type, temp->buf_pool_id, buf_pool_id);
                 return temp;
             } else {
-                buf_unlatch(session, temp, OG_TRUE);
+                buf_unlatch_w_bucket(session, temp, bucket, OG_TRUE);
                 return NULL;
             }
         } else {
@@ -1417,9 +1757,9 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
 
     /* latch the ctrl directly causing no concurrent operations on it */
     if (mode != LATCH_MODE_X) {
-        buf_latch_s(session, item, (mode == LATCH_MODE_FORCE_S), OG_FALSE);
+        buf_latch_s(session, bucket, item, (mode == LATCH_MODE_FORCE_S), OG_FALSE);
     } else {
-        buf_latch_x(session, item, OG_FALSE);
+        buf_latch_x(session, bucket, item, OG_FALSE);
         item->latch.xsid = session->id;
     }
 
@@ -1499,7 +1839,7 @@ static void buf_alloc_member(knl_session_t *session, buf_ctrl_t *head_ctrl, page
             real_options = options;
         }
 
-        buf_ctrl_t *member_ctrl = buf_alloc_ctrl(session, member_page, real_mode, real_options);
+        buf_ctrl_t *member_ctrl = buf_alloc_ctrl(session, member_page, real_mode, real_options, OG_FALSE);
         knl_panic(member_ctrl != NULL);
         knl_panic(member_ctrl->load_status == BUF_NEED_LOAD);
 
@@ -1528,7 +1868,7 @@ buf_ctrl_t *buf_alloc_compress(knl_session_t *session, page_id_t wanted_page, la
     buf_add_pos_t add_pos = (options & ENTER_PAGE_RESIDENT) ? BUF_ADD_HOT : BUF_ADD_OLD;
 
     while (OG_TRUE) {
-        ctrl = buf_alloc_ctrl(session, wanted_page, mode, options);
+        ctrl = buf_alloc_ctrl(session, wanted_page, mode, options, OG_FALSE);
         if (ctrl == NULL) {
             // options with ENTER_PAGE_TRY
             return NULL;
@@ -1550,7 +1890,7 @@ buf_ctrl_t *buf_alloc_compress(knl_session_t *session, page_id_t wanted_page, la
         buf_unlatch(session, ctrl, OG_TRUE);
 
         // Use buf_try_alloc_ctrl instead of buf_alloc_member to avoid deadlock.
-        ctrl = buf_try_alloc_ctrl(session, head_page, LATCH_MODE_S, ENTER_PAGE_NORMAL, add_pos);
+        ctrl = buf_try_alloc_ctrl(session, head_page, LATCH_MODE_S, ENTER_PAGE_NORMAL, add_pos, OG_FALSE);
         if (ctrl != NULL) {
             knl_panic(ctrl->load_status == BUF_NEED_LOAD);
             break; // Get head with need_load status
@@ -1573,7 +1913,7 @@ buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page
     buf_ctrl_t *ctrl = NULL;
     page_id_t head_page = page_first_group_id(session, wanted_page);
 
-    ctrl  = buf_try_alloc_ctrl(session, wanted_page, mode, options, add_pos);
+    ctrl  = buf_try_alloc_ctrl(session, wanted_page, mode, options, add_pos, OG_FALSE);
     if (ctrl == NULL) {
         return NULL;
     }
@@ -1581,7 +1921,7 @@ buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page
     if (wanted_page.page != head_page.page) {
         ctrl->load_status = (uint8)BUF_LOAD_FAILED; // so it can be latched again.
         buf_unlatch(session, ctrl, OG_TRUE);
-        ctrl = buf_try_alloc_ctrl(session, head_page, LATCH_MODE_S, ENTER_PAGE_NORMAL, add_pos);
+        ctrl = buf_try_alloc_ctrl(session, head_page, LATCH_MODE_S, ENTER_PAGE_NORMAL, add_pos, OG_FALSE);
         if (ctrl == NULL) {
             return NULL;
         }
@@ -1605,6 +1945,30 @@ buf_ctrl_t *buf_find_by_pageid(knl_session_t *session, page_id_t page_id)
     buf_set_t *set = &session->kernel->buf_ctx.buf_set[buf_pool_id];
     uint32 hash_id = buf_get_bucket_id_by_hash(hash_val, set->bucket_num);
     bucket = BUF_GET_BUCKET(set, hash_id);
+
+    cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    ctrl = buf_find_from_bucket(bucket, page_id);
+    cm_spin_unlock(&bucket->lock);
+
+    return ctrl;
+}
+
+buf_bucket_t *buf_find_bucket_in_remote_ctx(knl_session_t *session, page_id_t page_id, remote_buf_context_t *ctx)
+{
+    buf_bucket_t *bucket = NULL;
+    uint32 hash_val = buf_page_hash_value(page_id);
+    uint32 buf_pool_id = buf_get_pool_id_by_hash(hash_val, ctx->buf_set_count);
+    buf_set_t *set = &ctx->buf_set[buf_pool_id];
+    uint32 hash_id = buf_get_bucket_id_by_hash(hash_val, set->bucket_num);
+    bucket = BUF_GET_BUCKET(set, hash_id);
+    return bucket;
+}
+
+/** Finds a shmem buffer control by page id in the shmem buffer context. */
+buf_ctrl_t *buf_find_shmem_by_pageid(knl_session_t *session, page_id_t page_id)
+{
+    buf_ctrl_t *ctrl = NULL;
+    buf_bucket_t *bucket = buf_find_bucket_in_remote_ctx(session, page_id, DRC_GBP_BUF_CTX);
 
     cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     ctrl = buf_find_from_bucket(bucket, page_id);
@@ -1966,6 +2330,21 @@ status_t buf_check_page_version(knl_session_t *session, buf_ctrl_t *ctrl)
  * as new page from RBP. But resident pages is used as memery when read it, not through buf_enter_page.So we should let
  * resident page use buf_check_page_version at least once, to ensure this page can be updated by RBP.
  */
+static bool32 buf_session_gbp_x_covers_s(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (ctrl == NULL || ctrl->shmem_page_meta == NULL || !session->kernel->attr.enable_ubsmem) {
+        return OG_FALSE;
+    }
+
+    for (uint32 i = 0; i < session->page_stack.depth; i++) {
+        if (session->page_stack.pages[i] == ctrl &&
+            session->page_stack.gbp_lock_modes[i] == LATCH_MODE_X) {
+            return OG_TRUE;
+        }
+    }
+    return OG_FALSE;
+}
+
 bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id)
 {
     /*
@@ -1976,12 +2355,30 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
 
         cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
         buf_ctrl_t *ctrl = buf_find_from_bucket(bucket, page_id);
+        /*
+         * ctrl->lock_mode of page in gbp is must NULL, there is indicated that newest page is in local buffer,
+         * and others node no write at the same time(ctrl->transfer_status != BUF_TRANS_REL_OWNER), so we must
+         * read page for gbp because newest gbp page is in remote shmemory.
+         */
         if ((ctrl != NULL) &&
-            dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
-            (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
+                dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
+                (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
+            cm_spin_unlock(&bucket->lock);
+            return OG_TRUE;
+        }
+
+        if (session->kernel->attr.enable_ubsmem && ctrl != NULL && ctrl->shmem_page_meta != NULL &&
+            ctrl->transfer_status != BUF_TRANS_REL_OWNER) {
+            if (buf_session_gbp_x_covers_s(session, ctrl)) {
                 cm_spin_unlock(&bucket->lock);
                 return OG_TRUE;
+            }
+            if (dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
+                cm_spin_unlock(&bucket->lock);
+                return OG_TRUE;
+            }
         }
+
         cm_spin_unlock(&bucket->lock);
 
         uint32 depth = session->page_stack.depth;
@@ -2051,9 +2448,19 @@ bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *b
         if (ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, page_id) &&
             dcs_local_page_usable(session, ctrl, LATCH_MODE_S) &&
             (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
-                if (IS_SAME_PAGID(ctrl->page_id, page_id)) {
-                    return OG_TRUE;
-                }
+            if (IS_SAME_PAGID(ctrl->page_id, page_id)) {
+                return OG_TRUE;
+            }
+        }
+
+        if (session->kernel->attr.enable_ubsmem && ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, page_id) &&
+            ctrl->shmem_page_meta != NULL && ctrl->transfer_status != BUF_TRANS_REL_OWNER) {
+            if (buf_session_gbp_x_covers_s(session, ctrl)) {
+                return OG_TRUE;
+            }
+            if (dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
+                return OG_TRUE;
+            }
         }
     }
 
@@ -2217,3 +2624,4 @@ buf_bucket_t *buf_find_bucket(knl_session_t *session, page_id_t page_id)
     bucket = BUF_GET_BUCKET(set, hash_id);
     return bucket;
 }
+

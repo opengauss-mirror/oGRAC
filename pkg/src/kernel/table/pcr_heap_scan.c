@@ -1069,6 +1069,7 @@ status_t pcrh_chk_visible_with_undo_ss(knl_session_t *session, cr_cursor_t *curs
         }
 
         undo_page_t *ud_page = (undo_page_t *)CURR_PAGE(session);
+
         if (ud_page == NULL) {
             /* only in remote visible check, force the requester to do local read */
             cursor->local_cr = OG_TRUE;

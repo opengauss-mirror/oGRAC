@@ -594,6 +594,11 @@ typedef enum en_cs_distribute_type {
 #define OG_MIN_INDEX_CACHE_SIZE (int64)16384
 #define OG_MIN_AUTOEXTEND_SIZE (int64)1
 #define OG_MAX_ALIGN_SIZE_4K (uint64) SIZE_K(4)
+#define OG_MAX_ALIGN_SIZE_128M (uint64) SIZE_M(128)
+static inline uint64 align_to_128m(uint64 size)
+{
+    return (size + OG_MAX_ALIGN_SIZE_128M - 1) & ~(OG_MAX_ALIGN_SIZE_128M - 1);
+}
 #define OG_MAX_SGA_BUF_SIZE SIZE_T(32)
 
 #define OG_MIN_KERNEL_RESERVE_SIZE (uint32) SIZE_K(256)
@@ -619,6 +624,12 @@ typedef enum en_cs_distribute_type {
 #define OG_MAX_INDEX_FORCE_RECYCLE (uint32)172800    /* MAXIMUM 48 hours */
 #define OG_MAX_INDEX_RECYCLE_REUSE (uint32)172800000 /* MAXIMUM 48 hours */
 #define OG_MAX_INDEX_REBUILD_STORAGE (uint32)172800  /* MAXIMUM 48 hours */
+
+// for ub
+#define OG_MIN_UB_PAGE_HOT_THRESHOLD (int32)1
+#define OG_MAX_UB_PAGE_HOT_THRESHOLD (uint32)10000
+#define OG_MIN_UB_PAGE_HOT_TIMEOUT (uint32)1                // seconds
+#define OG_MAX_UB_PAGE_HOT_TIMEOUT (uint32)1000             // seconds
 
 /* time */
 #define OG_MONTH_PER_YEAR 12
