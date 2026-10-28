@@ -5394,6 +5394,16 @@ DATABASE_ALIVE
 1 rows fetched.
 
 SQL> 
+SQL> -- Accept integral decimal numeric modifiers.
+SQL> SELECT CAST(12 AS NUMBER2(10,0.00)), CAST(12.34 AS NUMBER2(10,1.00)) FROM SYS_DUMMY;
+
+CAST(12 AS NUMBER2(10,0.00))             CAST(12.34 AS NUMBER2(10,1.00))
+---------------------------------------- ----------------------------------------
+12                                       12.3
+
+1 rows fetched.
+
+SQL>
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
