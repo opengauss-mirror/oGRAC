@@ -144,6 +144,8 @@ static status_t dtc_buf_try_prefetch(knl_session_t *session, buf_read_assist_t *
 static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl, knl_buf_wait_t
     *temp_stat)
 {
+    bool32 gbp_held = OG_FALSE;
+
     BUF_UNPROTECT_PAGE(ctrl->page);
     if (ctrl->load_status == (uint8)BUF_NEED_LOAD) {
         bool32 try_load = OG_TRUE;
@@ -168,7 +170,52 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             }
         }
     } else {
+        /* case enter
+         * 1.lbp page transfer to gbp
+         * 2.lock mode upgrade: for example, S latch lock at last time, now this session fetch X lock
+         * 3.always fetch this page in this node
+         */
+        bool32 is_load_from_gbp = false;
+        status_t ret;
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            ret = dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
+            }
+            gbp_held = OG_TRUE;
+            // OG_LOG_DEBUG_INF("[DTC_GBP_BUF][%u-%u][buf try from gbp] read num:%u, options: %u,"
+            //                "is_load_from_gbp: %d, mode: %u", ctrl->page_id.file, ctrl->page_id.page, ra->read_num,
+            //                (unsigned int)ra->options, is_load_from_gbp, ctrl->gbp_lock_mode);
+
+            if (!is_load_from_gbp && !CHECK_PAGE_PCN(ctrl->page)) {
+                OG_LOG_RUN_ERR("[DTC-GBP-COPY][%u-%u] page pcn still mismatch after check page, head pcn:%u, tail pcn:%u",
+                    ctrl->page_id.file, ctrl->page_id.page, (uint32)ctrl->page->pcn,
+                    (uint32)PAGE_TAIL(ctrl->page)->pcn);
+                if (gbp_held) {
+                    (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
+                }
+                OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
+                buf_unlatch(session, ctrl, OG_TRUE);
+                return OG_ERROR;
+            }
+        }
+
+        if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp) {
+            ret = dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
+            if (ret != OG_SUCCESS) {
+                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to load page from gbp.",
+                               ctrl->page_id.file, ctrl->page_id.page);
+                return ret;
+            }
+        }
+
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
+            OG_LOG_RUN_WAR("[DTC-BUFFER][%u-%u] page is mismatch",
+                               ctrl->page_id.file, ctrl->page_id.page);
+            if (gbp_held) {
+                (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
+            }
             OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
             buf_unlatch(session, ctrl, OG_TRUE);
             return OG_ERROR;
@@ -217,6 +264,9 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
     //    stats_buf_record(session, &temp_stat, ctrl);
     buf_push_page(session, ctrl, ra->mode);
+    if (gbp_held) {
+        session->page_stack.gbp_lock_modes[session->page_stack.depth - 1] = (uint8)ra->mode;
+    }
     buf_log_enter_page(session, ctrl, ra->mode, ra->options);
     
     if (DTC_BUF_PREFETCH_EXTENT(ra->read_num) &&

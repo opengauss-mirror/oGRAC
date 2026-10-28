@@ -27,6 +27,9 @@
 #include "cs_pipe.h"
 #include "cm_signal.h"
 #include "cm_ubs_mem.h"
+#include "cm_ub_sdk.h"
+#include "cm_system.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +60,10 @@ static void cm_log_for_ubsm(int level, const char *msg)
 
 status_t ub_init_ubsm_mem(void)
 {
+    if (cm_ub_sdk_load() != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("UB shared memory library is not available, UB support disabled");
+        return OG_ERROR;
+    }
     OG_LOG_RUN_INF("ubsm_mem init start.");
     ubsmem_options_t ubsmem_options;
     int ret = ubsmem_init_attributes(&ubsmem_options);
@@ -157,3 +164,4 @@ status_t ub_delete_shm(uint32 host_id)
 #ifdef __cplusplus
 }
 #endif
+

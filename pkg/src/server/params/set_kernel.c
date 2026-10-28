@@ -30,6 +30,7 @@
 #include "srv_param_common.h"
 #include "cm_io_record.h"
 #include "cm_log.h"
+#include "cm_ub_sdk.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -2028,6 +2029,28 @@ status_t sql_notify_als_temptable_support_batch(void *se, void *item, char *valu
 {
     g_instance->kernel.attr.temptable_support_batch = (bool32)value[0];
     return sql_notify_als_bool(se, item, value);
+}
+
+status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char *value)
+{
+    if (cm_ub_sdk_ready() == OG_TRUE) {
+        g_instance->kernel.attr.enable_remote_distribute_lock = (bool32)value[0];
+    } else {
+        g_instance->kernel.attr.enable_remote_distribute_lock = OG_FALSE;
+        OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_REMOTE_DISTRIBUTE_LOCK ignored: UB shared memory library is not loaded");
+    }
+    return sql_notify_als_bool(se, item, value);   
+}
+
+status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value)
+{
+    if (cm_ub_sdk_ready() == OG_TRUE) {
+        g_instance->kernel.attr.enable_ubsmem = (bool32)value[0];
+    } else {
+        g_instance->kernel.attr.enable_ubsmem = OG_FALSE;
+        OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_UBSMEM ignored: UB shared memory library is not loaded");
+    }
+    return sql_notify_als_bool(se, item, value);   
 }
 
 status_t sql_verify_als_small_table_sampling_threshold(void *se, void *lex, void *def)

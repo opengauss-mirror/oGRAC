@@ -216,6 +216,86 @@ static status_t dcs_claim_ownership_l(knl_session_t *session, page_id_t page_id,
     return dcs_claim_ownership_internal(session, &claim_info, req_version);
 }
 
+static inline void dcs_get_page_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, drc_lock_mode_e req_mode)
+{
+    ctrl->load_status = (uint8)BUF_NEED_LOAD_FROM_GBP;
+
+    if (ctrl->is_edp) {
+        /* the clean edp msg may not be processed. */
+        knl_panic(ctrl && ctrl->is_dirty && ctrl->is_edp && !ctrl->is_readonly);
+        dcs_buf_clean_ctrl_edp(session, ctrl, OG_TRUE);
+        DTC_DCS_DEBUG_INF("[DCS-GBP]edp page[%u-%u] (lsn:%lld) is ok", ctrl->page_id.file, ctrl->page_id.page,
+                          ctrl->page->lsn);
+    }
+
+    ctrl->lock_mode = req_mode;
+    ctrl->is_fixed = 0;
+    ctrl->force_request = 0;
+    ctrl->transfer_status = BUF_TRANS_NONE;
+    DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][dcs get page from gbp] success", ctrl->page_id.file, ctrl->page_id.page);
+}
+
+/**
+ * This is the couterpart function for dcs_handle_page_from_owner.
+ * Instead of sending the 8kb page from owner to requester. A address in shared memory of master is sent back.
+ * handle gbp from owner's ack
+ */
+static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ctrl, mes_message_t *msg,
+                                          drc_lock_mode_e mode)
+{
+    msg_ask_page_ack_t *ack = (msg_ask_page_ack_t *)(msg->buffer);
+
+    knl_panic(ack->head.cmd == MES_CMD_PAGE_READY);
+    knl_panic(DCS_BUF_CTRL_NOT_OWNER(session, ctrl));
+
+    /* --- Compute local pointers from (gbp_owner_id + offsets), no ubsm_shmem_map() --- */
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+    uint8 gbp_owner = ack->gbp_owner_id;
+
+    /* Ensure the gbp_owner's UBSM segment is mapped on this requester node */
+    if (rsga->map_success[gbp_owner] != OG_TRUE) {
+        (void)dtc_mmap_remote_data_buf(rsga, gbp_owner);
+        if (rsga->map_success[gbp_owner] != OG_TRUE) {
+            OG_LOG_RUN_ERR("[DCS][%u-%u] handle gbp failed: remote buf not mapped for gbp_owner=%u", ctrl->page_id.file,
+                           ctrl->page_id.page, gbp_owner);
+            ctrl->lock_mode = DRC_LOCK_NULL;
+            ctrl->load_status = BUF_LOAD_FAILED;
+            return OG_ERROR;
+        }
+    }
+
+    uint64 alloc = rsga->remote_buf_alloc_size;
+    uint64 page_sz = DEFAULT_PAGE_SIZE(session);
+    /* Strong bounds checks */
+    if (ack->shmem_page_meta_off > alloc - page_sz) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] invalid gbp offsets: owner=%u meta_off=%llu alloc=%llu", ctrl->page_id.file,
+                       ctrl->page_id.page, gbp_owner, ack->shmem_page_meta_off, alloc);
+        ctrl->lock_mode = DRC_LOCK_NULL;
+        ctrl->load_status = BUF_LOAD_FAILED;
+        return OG_ERROR;
+    }
+
+    char *base = rsga->remote_buf_addr[gbp_owner];
+    page_head_t *shmem_page_addr = (page_head_t *)(base + ack->shmem_page_meta_off + sizeof(remote_page_info_t));
+    remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
+
+    ctrl->shmem_page_addr = shmem_page_addr;
+    ctrl->shmem_page_meta = shmem_page_meta;
+    dcs_get_page_from_gbp(session, ctrl, mode);
+
+    DTC_DCS_DEBUG_INF(
+        "[DCS][%u-%u][%s]: handle shmem addr from Master, lock mode=%u, edp=%d, src_id=%u, src_sid=%u, dest_id=%u,"
+        "dest_sid=%u, mode=%u, dirty=%u, remote dirty=%u, remote remote diry=%u, page pcn=%d, page lsn=%llu,"
+        "sync lsn=%llu, sync scn=%llu, page_type=%u, load_status=%d",
+        ctrl->page_id.file, ctrl->page_id.page, MES_CMD2NAME(msg->head->cmd), ctrl->lock_mode, ctrl->is_edp,
+        msg->head->src_inst, msg->head->src_sid, msg->head->dst_inst, msg->head->dst_sid, mode, ctrl->is_dirty,
+        ctrl->is_remote_dirty, DCS_ACK_PG_IS_REMOTE_DIRTY(msg), ctrl->page->pcn, ctrl->page->lsn, ack->lsn, ack->scn,
+        ((heap_page_t *)ctrl->page)->head.type, ctrl->load_status);
+
+    return OG_SUCCESS;
+}
+
+
 static void dcs_handle_page_from_owner(knl_session_t *session, buf_ctrl_t *ctrl, mes_message_t *msg,
                                        drc_lock_mode_e mode)
 {
@@ -442,6 +522,100 @@ static inline status_t dcs_handle_ack_already_owner(knl_session_t *session, uint
 
     return OG_SUCCESS;
 }
+static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uint32 master_id, mes_message_t *msg,
+                                                     buf_ctrl_t *ctrl, drc_lock_mode_e lock_mode)
+{
+    msg_ask_page_ack_t *ack = (msg_ask_page_ack_t *)(msg->buffer);
+    page_id_t page_id = ctrl->page_id;
+    if (DRC_STOP_DCS_IO_FOR_REFORMING(ack->req_version, session, page_id)) {
+        // master inst down
+        OG_LOG_RUN_ERR("[DCS][%u-%u]reforming, handle ack page ready failed, masterId=%u,"
+                       "req_version=%llu, cur_version=%llu",
+                       page_id.file, page_id.page, master_id, ack->req_version, DRC_GET_CURR_REFORM_VERSION);
+        return OG_ERROR;
+    }
+
+    uint8 flags = msg->head->flags;
+    knl_panic(ack->head.cmd == MES_CMD_MASTER_ACK_ALREADY_IN_GBP);
+    knl_panic(DCS_BUF_CTRL_NOT_OWNER(session, ctrl));
+
+    bool32 is_gbp = ((msg->head->flags & MES_FLAG_MOVED_TO_GBP) != 0);
+
+    if (!is_gbp) {
+        DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][%s]: need load, and clean edp, dirty=%u", ctrl->page_id.file,
+                          ctrl->page_id.page, MES_CMD2NAME(msg->head->cmd), ctrl->is_dirty);
+    }
+
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+    uint8 gbp_owner = ack->gbp_owner_id;
+    char *base = NULL;
+    uint64 alloc;
+    uint64 page_sz;
+
+    if (rsga->map_success[gbp_owner] != OG_TRUE) {
+        (void)dtc_mmap_remote_data_buf(rsga, gbp_owner);
+        if (rsga->map_success[gbp_owner] != OG_TRUE) {
+            OG_LOG_RUN_ERR("[DCS][%u-%u] handle ack already in gbp failed: remote buf not mapped for gbp_owner=%u",
+                page_id.file, page_id.page, gbp_owner);
+            ctrl->lock_mode = DRC_LOCK_NULL;
+            ctrl->load_status = BUF_LOAD_FAILED;
+            return OG_ERROR;
+        }
+    }
+
+    base = rsga->remote_buf_addr[gbp_owner];
+    alloc = rsga->remote_buf_alloc_size;
+    page_sz = DEFAULT_PAGE_SIZE(session);
+    if (base == NULL || ack->shmem_page_meta_off > alloc - page_sz) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] invalid gbp shmem addr: owner=%u base=%p meta_off=%llu alloc=%llu",
+            page_id.file, page_id.page, gbp_owner, base, ack->shmem_page_meta_off, alloc);
+        ctrl->lock_mode = DRC_LOCK_NULL;
+        ctrl->load_status = BUF_LOAD_FAILED;
+        return OG_ERROR;
+    }
+
+    ctrl->load_status = (uint8)BUF_NEED_LOAD_FROM_GBP;
+    ctrl->shmem_page_addr = (page_head_t *)(base + ack->shmem_page_meta_off + sizeof(remote_page_info_t));
+    ctrl->shmem_page_meta = (remote_page_info_t *)(base + ack->shmem_page_meta_off);
+
+    if (ack->gbp_owner_id != ctrl->shmem_page_meta->claimed_owner) {
+        OG_LOG_RUN_ERR("[DCS-GBP][%u-%u]: ack->gbp_owner_id %d, ctrl->shmem_page_meta->claimed_owner %d, meta addr:%p",
+            page_id.file, page_id.page, ack->gbp_owner_id, ctrl->shmem_page_meta->claimed_owner,
+            ctrl->shmem_page_meta);
+        return OG_ERROR;
+    }
+
+    if ((flags & MES_FLAG_NEED_LOAD) && ctrl->is_edp) { /* clean edp msg may come later. */
+        DTC_DCS_DEBUG_INF("[DCS][%u-%u][%s]: need load, and clean edp, dirty=%u", ctrl->page_id.file,
+                          ctrl->page_id.page, MES_CMD2NAME(msg->head->cmd), ctrl->is_dirty);
+        dcs_buf_clean_ctrl_edp(session, ctrl, OG_TRUE);
+    }
+
+    knl_panic(lock_mode == ack->mode);
+    ctrl->lock_mode = lock_mode;
+    ctrl->is_fixed = 0;
+    if (ctrl->lock_mode == DRC_LOCK_EXCLUSIVE) {
+        ctrl->is_edp = 0;
+        ctrl->is_remote_dirty = DCS_ACK_PG_IS_DIRTY(msg) || DCS_ACK_PG_IS_REMOTE_DIRTY(msg);
+    } else {
+        ctrl->is_remote_dirty = 0;
+    }
+
+    ctrl->force_request = 0;
+    CM_MFENCE;
+
+    DTC_DCS_DEBUG_INF(
+        "[DCS-GBP][%u-%u][%s]: handle page from gbp owner, lock mode=%u, edp=%d, src_id=%u, src_sid=%u, dest_id=%u, "
+        "dest_sid=%u, mode=%u, dirty=%u, remote dirty=%u, remote remote diry=%u, page pcn=%d, page lsn=%llu, "
+        "sync lsn=%llu, sync scn=%llu, page_type=%u, load_status=%d",
+        ctrl->page_id.file, ctrl->page_id.page, MES_CMD2NAME(msg->head->cmd), ctrl->lock_mode, ctrl->is_edp,
+        msg->head->src_inst, msg->head->src_sid, msg->head->dst_inst, msg->head->dst_sid, lock_mode, ctrl->is_dirty,
+        ctrl->is_remote_dirty, DCS_ACK_PG_IS_REMOTE_DIRTY(msg), ctrl->page->pcn, ctrl->page->lsn, ack->lsn, ack->scn,
+        ((heap_page_t *)ctrl->page)->head.type, ctrl->load_status);
+
+    return OG_SUCCESS;
+}
+
 
 static inline status_t dcs_handle_ack_page_ready(knl_session_t *session, uint32 master_id, mes_message_t *msg,
                                                  buf_ctrl_t *ctrl, drc_lock_mode_e lock_mode)
@@ -460,6 +634,16 @@ static inline status_t dcs_handle_ack_page_ready(knl_session_t *session, uint32 
     uint8 ack_mode = ((msg_ask_page_ack_t *)(msg->buffer))->mode;
     knl_panic(mode <= ack_mode);
     mode = ack_mode;
+    bool32 is_gbp = ((msg->head->flags & MES_FLAG_MOVED_TO_GBP) != 0);
+    // if we recieved remote address from the msg, then go to the remote session
+    if (is_gbp) {
+        if (dcs_handle_ack_already_in_gbp(session, master_id, msg, ctrl, mode) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[DCS] handle page from shmem failed.");
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
+
     dcs_handle_page_from_owner(session, ctrl, msg, mode);
 
     if (master_id != DCS_SELF_INSTID(session)) {
@@ -503,6 +687,10 @@ static status_t dcs_handle_ask_master_ack(knl_session_t *session, uint8 master_i
 
         case MES_CMD_ERROR_MSG:
             ret = OG_ERROR;
+            break;
+
+        case MES_CMD_MASTER_ACK_ALREADY_IN_GBP:
+            ret = dcs_handle_ack_already_in_gbp(session, master_id, &msg, ctrl, mode);
             break;
 
         default:
@@ -927,6 +1115,325 @@ status_t static inline dcs_owner_transfer_page(knl_session_t *session, uint8 own
     return ret;
 }
 
+static inline void dcs_prepare_page_ready_gbp_ack(knl_session_t *session, uint8 master_id, msg_page_req_t *page_req,
+                                                  msg_ask_page_ack_t *ask_page)
+{
+    mes_message_head_t req_head;
+    uint16 size = (uint16)sizeof(msg_ask_page_ack_t);
+
+    req_head.src_inst = master_id;
+    req_head.dst_inst = DCS_SELF_INSTID(session);
+    req_head.src_sid = page_req->head.src_sid;
+    req_head.rsn = page_req->head.rsn;
+    mes_init_ack_head(&req_head, &ask_page->head, MES_CMD_PAGE_READY_GBP, size, DCS_SELF_SID(session));
+
+    ask_page->lsn = 0;
+    ask_page->scn = 0;
+    ask_page->mode = page_req->req_mode;
+    ask_page->head.flags = MES_FLAG_MOVED_TO_GBP;
+    ask_page->req_version = page_req->req_version;
+    ask_page->gbp_owner_id = page_req->gbp_owner_id;
+    ask_page->shmem_page_meta_off = page_req->shmem_page_meta_off;
+}
+
+/*
+ * owner move local page to gbp shmem_page_addr
+ * This function is called by owner, we don't need to pass owner_id into it anymore. Instead, master's id, i.e. the
+ * destination of this transfer needs to be provided
+ */
+static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_id, msg_page_req_t *page_req,
+                                           msg_ask_page_ack_t *ask_page)
+{
+    buf_ctrl_t *ctrl = NULL;
+    status_t ret;
+    bool32 skip_check = page_req->is_retry; /* retry to ask owner for page. It's safe to resend page as the claimed
+                                               owner is not changed. */
+
+    if (page_req->page_id.file >= INVALID_FILE_ID ||
+        (page_req->req_mode != DRC_LOCK_EXCLUSIVE && page_req->req_mode != DRC_LOCK_SHARE) ||
+        (page_req->action != DRC_RES_INVALID_ACTION && page_req->action != DRC_RES_SHARE_ACTION &&
+         page_req->action != DRC_RES_EXCLUSIVE_ACTION)) {
+        OG_LOG_RUN_ERR("invalid page_id [%u-%u] or req mode %u or action %d", page_req->page_id.file,
+                       page_req->page_id.page, page_req->req_mode, page_req->action);
+        // Careful, with this page_req, error_msg is sent to master, not requester!
+        mes_send_error_msg(&page_req->head);
+        return OG_ERROR;
+    }
+
+    if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req->req_version, session, page_req->page_id)) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u]: reforming, owner transfer page failed, req_version=%llu, cur_version=%llu",
+                       page_req->page_id.file, page_req->page_id.page, page_req->req_version,
+                       DRC_GET_CURR_REFORM_VERSION);
+        mes_send_error_msg(&page_req->head);
+        return OG_ERROR;
+    }
+    // Owner tries to load page to local buffer pool if load is needed. This normally should not happen.
+    bool32 need_load = OG_FALSE;
+    ret = dcs_read_local_page4transfer(session, page_req, &ctrl, &need_load);
+    if (ret == OG_ERROR) {
+        mes_send_error_msg(&page_req->head);
+        return ret;
+    }
+
+    if (!ctrl || need_load) {
+        // this really shouldn't happen since the page should be recently hot
+        // Owner should never tell master to load from disks to its GBP by itself!
+        mes_send_error_msg(&page_req->head);
+        return OG_ERROR;
+    } else {
+        if (page_req->action != DRC_RES_INVALID_ACTION && ctrl->is_edp) {
+            dcs_clean_local_ctrl(session, ctrl, page_req->action, OG_INVALID_ID64);
+        }
+        DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][3-1.owner transfer to gbp]: ctrl=%p need_load=%u lock_mode=%u "
+                          "req_mode=%u req_version=%llu dirty=%u marked=%u readonly=%u gbp_owner=%u meta_off=%llu",
+                          page_req->page_id.file, page_req->page_id.page, (void *)ctrl, need_load, ctrl->lock_mode,
+                          page_req->req_mode, page_req->req_version, ctrl->is_dirty, ctrl->is_marked, ctrl->is_readonly,
+                          page_req->gbp_owner_id, page_req->shmem_page_meta_off);
+        // Handle lock upgrades: requester has Share, wants Exclusive
+        if ((page_req->curr_mode == DRC_LOCK_SHARE) && (page_req->req_mode == DRC_LOCK_EXCLUSIVE)) {
+            if (ctrl->lock_mode != DRC_LOCK_SHARE && !skip_check) {
+                OG_LOG_RUN_ERR("[DCS][%u-%u]: owner transfer page failed, invalid lock_mode(%u)",
+                               page_req->page_id.file, page_req->page_id.page, ctrl->lock_mode);
+                mes_send_error_msg(&page_req->head);
+                dcs_leave_page(session);
+                return OG_ERROR;
+            }
+            // In our case, the copy needs to be done anyway, there's no possibility of only sending a ack without 8kb
+            // page.
+        }
+        if (page_req->lsn > ctrl->page->lsn) {
+            OG_LOG_RUN_ERR(
+                "[DCS][%u-%u]: owner transfer page failed, invalid page_req->lsn(%llu), ctrl->page->lsn(%llu)",
+                page_req->page_id.file, page_req->page_id.page, page_req->lsn, ctrl->page->lsn);
+            mes_send_error_msg(&page_req->head);
+            dcs_leave_page(session);
+            return OG_ERROR;
+        }
+    }
+
+    dcs_prepare_page_ready_gbp_ack(session, master_id, page_req, ask_page);
+
+    // Comparing with the old function, we should never ask master to load it from disk to gbp
+    knl_panic(ctrl != NULL);
+    knl_panic(!ctrl->is_readonly);
+    if (ctrl->is_dirty || ctrl->is_marked) {
+        knl_begin_session_wait(session, DCS_TRANSFER_PAGE_FLUSHLOG, OG_TRUE);
+        if (OGRAC_NEED_FLUSH_LOG(session, ctrl)) {
+            if (log_flush(session, NULL, NULL, NULL, NULL) != OG_SUCCESS) {
+                CM_ABORT(0, "[DTC DCS][%u-%u]: ABORT INFO: flush redo log failed", page_req->page_id.file,
+                         page_req->page_id.page);
+            }
+        }
+        knl_end_session_wait(session, DCS_TRANSFER_PAGE_FLUSHLOG);
+    }
+
+    ask_page->lsn = DB_CURR_LSN(session);
+    ask_page->scn = DB_CURR_SCN(session);
+    if (ctrl->is_dirty) {
+        ask_page->head.flags |= MES_FLAG_DIRTY_PAGE;
+    }
+
+    if (ctrl->is_remote_dirty) {
+        ask_page->head.flags |= MES_FLAG_REMOTE_DIRTY_PAGE;
+    }
+
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+    uint8 gbp_owner = page_req->gbp_owner_id;
+
+    /* sanity check: GBP ctrl owner should always be the Master */
+    knl_panic(gbp_owner == master_id);
+    uint64 alloc = rsga->remote_buf_alloc_size;
+
+    uint64 meta_sz = sizeof(remote_page_info_t);
+    if (page_req->shmem_page_meta_off > alloc - meta_sz) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] invalid gbp offsets: meta_off=%llu alloc=%llu", page_req->page_id.file,
+                       page_req->page_id.page, page_req->shmem_page_meta_off, alloc);
+        mes_send_error_msg(&page_req->head);
+        dcs_leave_page(session);
+        return OG_ERROR;
+    }
+
+    uint8 *base = (uint8 *)rsga->remote_buf_addr[gbp_owner];
+    remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + page_req->shmem_page_meta_off);
+    page_head_t *shmem_page_addr = (page_head_t *)(base + page_req->shmem_page_meta_off + sizeof(remote_page_info_t));
+    // Acquire global lock
+    uint64 lock_ptr = shmem_page_meta->lock_ptr;
+
+    knl_panic(page_req->req_mode == DRC_LOCK_EXCLUSIVE);
+    knl_panic(!ctrl->is_marked && !ctrl->is_readonly);
+
+    OG_LOG_DEBUG_INF("[DCS-GBP][%u-%u]: Acquire exclusive lock before write", page_req->page_id.file,
+                     page_req->page_id.page);
+    ret = drc_gbp_distribute_lock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_DEBUG_ERR("[DCS][%u-%u]: Failed to acquire global lock for page transfer, offset=%llu",
+                         page_req->page_id.file, page_req->page_id.page, lock_ptr);
+
+        mes_send_error_msg(&page_req->head);
+        dcs_leave_page(session);
+        return ret;
+    }
+
+    remote_page_info_t master_shmem_page_meta;
+    master_shmem_page_meta.lock_ptr = lock_ptr;
+    master_shmem_page_meta.file_id = page_req->page_id.file;
+    master_shmem_page_meta.page_id = page_req->page_id.page;
+    master_shmem_page_meta.head_lsn = ctrl->page->lsn;
+    master_shmem_page_meta.xlog_owner_node = page_req->head.dst_inst;
+    master_shmem_page_meta.xlog_owner_node_timeline_id[0] = page_req->head.src_inst;
+    master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
+
+    char *page_tail_lsn_addr = (char *)shmem_page_meta + OFFSET_TAIL_LSN;
+    uint64 page_tail_lsn = ctrl->page->lsn;
+
+    errno_t err = memcpy_s(shmem_page_meta, sizeof(remote_page_info_t), &master_shmem_page_meta,
+                           sizeof(remote_page_info_t));
+    knl_securec_check(err);
+
+    err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
+    knl_securec_check(err);
+
+    // tail lsn
+    err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
+    knl_securec_check(err);
+
+    // Release global Lock
+    OG_LOG_DEBUG_INF("[DCS-GBP][%u-%u]: Releasing exclusive lock after write", page_req->page_id.file,
+                     page_req->page_id.page);
+    drc_gbp_distribute_unlock(session, lock_ptr, page_req->page_id, LATCH_MODE_X);
+
+    if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req->req_version, session, page_req->page_id)) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u]: reforming, owner transfer page failed, req_version=%llu, cur_version=%llu",
+                       page_req->page_id.file, page_req->page_id.page, page_req->req_version,
+                       DRC_GET_CURR_REFORM_VERSION);
+        ctrl->transfer_status = BUF_TRANS_NONE;
+        dcs_leave_page(session);
+        mes_send_error_msg(&page_req->head);
+        return OG_ERROR;
+    }
+
+    if (DCS_BUF_CTRL_IS_OWNER(session, ctrl)) {
+        // after the lbp-->gbp transfer is done, the local copy the this node(owner) should be invalidated
+        // TOODO: problem here: What if this page is dirty? Do we manually trigger a flush for it?
+        ctrl->lock_mode = DRC_LOCK_NULL;
+        ctrl->load_status = BUF_LOAD_FAILED;
+        if (ctrl->is_dirty) {
+            ctrl->is_edp = OG_TRUE;
+            ctrl->edp_scn = DB_CURR_SCN(session);
+        }
+        ctrl->is_remote_dirty = 0;
+    }
+
+    if (ret != OG_SUCCESS && ctrl->transfer_status == BUF_TRANS_REL_OWNER) {
+        ctrl->transfer_status = BUF_TRANS_NONE;
+    }
+
+    ctrl->is_in_gbp = OG_TRUE;
+    DTC_DCS_DEBUG(
+        ret,
+        "[DCS-GBP][%u-%u][%s]: 3-2.after owner transfer page to gbp, status=(%d), dest_id=%u, dest_sid=%u, mode=%u, "
+        "ctrl_dirty=%u, remote dirty=%u, ctrl_lock_mode=%u, ctrl_is_edp=%u, page pcn=%d, page_lsn=%llu, sync lsn=%llu,"
+        "sync scn=%llu, page_type=%u, page req mode=%d, flag=%d, retry=%d, req rsn=%u, gbp_lock_mode = %u.",
+        page_req->page_id.file, page_req->page_id.page, MES_CMD2NAME(ask_page->head.cmd), OG_SUCCESS,
+        ask_page->head.dst_inst, ask_page->head.dst_sid, page_req->req_mode, ctrl->is_dirty, ctrl->is_remote_dirty,
+        ctrl->lock_mode, ctrl->is_edp, ctrl->page->pcn, ctrl->page->lsn, ask_page->lsn, ask_page->scn,
+        ((heap_page_t *)session->curr_page)->head.type, page_req->req_mode, 0, skip_check, ask_page->head.rsn,
+        ctrl->gbp_lock_mode);
+
+    dcs_leave_page(session);
+    return OG_SUCCESS;
+}
+
+
+static status_t dcs_owner_send_page_ready_gbp_ack(knl_session_t *session, msg_page_req_t *page_req,
+                                                  msg_ask_page_ack_t *ask_page)
+{
+    status_t ret;
+
+    knl_begin_session_wait(session, DCS_TRANSFER_SHMEM_ADDR, OG_TRUE);
+    SYNC_POINT_GLOBAL_START(OGRAC_DCS_TRANSFER_BEFORE_SEND_ABORT, NULL, 0);
+    SYNC_POINT_GLOBAL_END;
+
+    if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req->req_version, session, page_req->page_id)) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u]: reforming, owner transfer page failed, req_version=%llu, cur_version=%llu",
+                       page_req->page_id.file, page_req->page_id.page, page_req->req_version,
+                       DRC_GET_CURR_REFORM_VERSION);
+        knl_end_session_wait(session, DCS_TRANSFER_SHMEM_ADDR);
+        mes_send_error_msg(&page_req->head);
+        return OG_ERROR;
+    }
+
+    ret = dcs_send_data_retry((void *)ask_page);
+    if (ret == OG_SUCCESS) {
+        SYNC_POINT_GLOBAL_START(OGRAC_DCS_TRANSFER_AFTER_SEND_ABORT, NULL, 0);
+        SYNC_POINT_GLOBAL_END;
+    }
+    knl_end_session_wait(session, DCS_TRANSFER_SHMEM_ADDR);
+    return ret;
+}
+
+/**
+ * This function is intented to use when Master and Owner are different Node.
+ * It encapsulates the entire flow of owner transferring page to GBP and sending ack back to master with GBP offsets.
+ * Owner transfer page to master by copying page to gbp and send ack with gbp offsets to master
+ */
+
+static status_t dcs_owner_transfer_page_to_gbp(knl_session_t *session, uint8 master_id, msg_page_req_t *page_req)
+{
+    msg_ask_page_ack_t ask_page;
+    status_t ret = dcs_owner_copy_page_to_gbp(session, master_id, page_req, &ask_page);
+    if (ret != OG_SUCCESS) {
+        return ret;
+    }
+    return dcs_owner_send_page_ready_gbp_ack(session, page_req, &ask_page);
+}
+
+static status_t dcs_send_requester_gbp_addr(knl_session_t *session, msg_page_req_t *page_req,
+                                            msg_ask_page_ack_t *ask_page)
+{
+    status_t ret;
+    uint16 size = (uint16)sizeof(msg_ask_page_ack_t);
+
+    /* Compute pointers to GBP meta/page using gbp_owner_id + offsets */
+    uint8 gbp_owner = page_req->gbp_owner_id;
+
+    if (gbp_owner >= OG_MAX_INSTANCES) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] invalid gbp_owner_id=%u", page_req->page_id.file, page_req->page_id.page,
+                       gbp_owner);
+        mes_send_error_msg(&page_req->head);
+        return OG_ERROR;
+    }
+
+    /* Fill ack for requester: offsets + gbp_owner_id */
+    ask_page->req_version = page_req->req_version;
+    ask_page->mode = page_req->req_mode;
+
+    mes_init_ack_head(&page_req->head, &ask_page->head, MES_CMD_MASTER_ACK_ALREADY_IN_GBP, size, DCS_SELF_SID(session));
+    /* Mark as GBP so receiver dispatches to dcs_handle_gbp_from_owner() */
+    ask_page->head.flags |= MES_FLAG_MOVED_TO_GBP;
+
+    knl_begin_session_wait(session, DCS_TRANSFER_SHMEM_ADDR, OG_TRUE);
+
+    SYNC_POINT_GLOBAL_START(OGRAC_DCS_TRANSFER_BEFORE_SEND_ABORT, NULL, 0);
+    SYNC_POINT_GLOBAL_END;
+
+    ret = dcs_send_data_retry((void *)ask_page);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DCS] failed to send ack with GBP offsets");
+        knl_end_session_wait(session, DCS_TRANSFER_SHMEM_ADDR);
+        return OG_ERROR;
+    }
+    DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][%s]: dest_id=%u, dest_sid=%u, mode=%u, gbp_owner=%u, meta_off=%llu",
+                      page_req->page_id.file, page_req->page_id.page, MES_CMD2NAME(ask_page->head.cmd),
+                      page_req->head.src_inst, page_req->head.src_sid, page_req->req_mode, ask_page->gbp_owner_id,
+                      ask_page->shmem_page_meta_off);
+
+    SYNC_POINT_GLOBAL_START(OGRAC_DCS_TRANSFER_AFTER_SEND_ABORT, NULL, 0);
+    SYNC_POINT_GLOBAL_END;
+    knl_end_session_wait(session, DCS_TRANSFER_SHMEM_ADDR);
+    return OG_SUCCESS;
+}
+
 static inline status_t dcs_notify_owner_for_page_r(knl_session_t *session, uint8 owner_id, msg_page_req_t *page_req)
 {
     status_t ret;
@@ -980,6 +1487,83 @@ static inline status_t dcs_notify_owner_for_page_r(knl_session_t *session, uint8
                    page_req->req_mode);
     return OG_ERROR;
 }
+
+/**
+ * This function is called by master, it notifies owner to send this page to gbp. It will not involve the requester.
+ * Note This function should recv page_req created by Master with src_id = Master and dst_id = Owner,
+ * it should be separeated from the page_req from Requester.
+ * If owner_id == master_id, it means master is also the owner,
+ * we can directly transfer page to gbp without sending message to owner and recieve result directly.
+ * Otherwise, we need to send message to owner to ask owner transfer page to gbp. And wait for an ack Msg to return
+ */
+static status_t dcs_notify_owner_for_page_to_gbp(knl_session_t *session, uint8 owner_id, msg_page_req_t *page_req,
+                                                 bool32 *owner_is_master, msg_ask_page_ack_t *ack_from_owner_l)
+{
+    status_t ret;
+    msg_page_req_t page_req_to_owner = *page_req;
+
+    // Scenario1: this instance(master) is owner, transfer local page.
+    if (*owner_is_master) {
+        OG_LOG_DEBUG_INF("[DCS][%u-%u][2.Before owner transfer to gbp]: master is owner, transfer local page,"
+                       "master=%u owner=%u req_mode=%u curr_mode=%u req_version=%llu"
+                       "is_retry=%u gbp_owner=%u meta_off=%llu action=%d",
+                       page_req_to_owner.page_id.file, page_req_to_owner.page_id.page, page_req_to_owner.head.src_inst,
+                       owner_id, page_req_to_owner.req_mode, page_req_to_owner.curr_mode, page_req_to_owner.req_version,
+                       page_req_to_owner.is_retry, page_req_to_owner.gbp_owner_id,
+                       page_req_to_owner.shmem_page_meta_off, page_req_to_owner.action);
+
+        ret = dcs_owner_copy_page_to_gbp(session, DCS_SELF_INSTID(session), &page_req_to_owner, ack_from_owner_l);
+        if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+            OG_LOG_RUN_ERR("[DCS-GBP][%u-%u][owner transfer page to GBP]: failed,"
+                           "dest_id=%u, dest_sid=%u, dest_rsn=%u, mode=%u",
+                           page_req_to_owner.page_id.file, page_req_to_owner.page_id.page,
+                           page_req_to_owner.head.src_inst, page_req_to_owner.head.src_sid, page_req_to_owner.head.rsn,
+                           page_req_to_owner.req_mode);
+        }
+        return ret;
+    } else {
+        /** Scenario2: this instance(master) is NOT owner
+         * This part is similar to the old dcs_notify_owner_for_page_r. But instead of sending page to requester, owner
+         * sends page to master's shared_mem So instead of comparing owner_id with req_id, we compare owner_id with
+         * master_id(this instance)
+         */
+        if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req->req_version, session, page_req->page_id)) {
+            OG_LOG_RUN_ERR("[DCS][%u-%u]: doing remaster", page_req->page_id.file, page_req->page_id.page);
+            return OG_ERROR;
+        }
+        DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][2.ask owner to gbp]: master=%u owner=%u"
+                          "req_mode=%u curr_mode=%u req_version=%llu is_retry=%u gbp_owner=%u meta_off=%llu action=%d",
+                          page_req_to_owner.page_id.file, page_req_to_owner.page_id.page,
+                          page_req_to_owner.head.src_inst, owner_id, page_req_to_owner.req_mode,
+                          page_req_to_owner.curr_mode, page_req_to_owner.req_version, page_req_to_owner.is_retry,
+                          page_req_to_owner.gbp_owner_id, page_req_to_owner.shmem_page_meta_off,
+                          page_req_to_owner.action);
+        mes_init_send_head(&page_req_to_owner.head, MES_CMD_ASK_OWNER_TO_GBP, sizeof(msg_page_req_t), OG_INVALID_ID32,
+                           DCS_SELF_INSTID(session), owner_id, DCS_SELF_SID(session), OG_INVALID_ID16);
+
+        SYNC_POINT_GLOBAL_START(OGRAC_DCS_NOTIFY_OWNER_SEND_FAIL, &ret, OG_ERROR);
+        ret = dcs_send_data_retry(&page_req_to_owner);
+        SYNC_POINT_GLOBAL_END;
+        if (ret == OG_SUCCESS) {
+            DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][%s]: dest_id=%u, dest_sid=%u, mode=%u", page_req_to_owner.page_id.file,
+                              page_req_to_owner.page_id.page, MES_CMD2NAME(page_req_to_owner.head.cmd),
+                              page_req_to_owner.head.dst_inst, page_req_to_owner.head.dst_sid,
+                              page_req_to_owner.req_mode);
+            SYNC_POINT_GLOBAL_START(OGRAC_DCS_NOTIFY_OWNER_SUCC_ABORT, NULL, 0);
+            SYNC_POINT_GLOBAL_END;
+            return OG_SUCCESS;
+        }
+        OG_LOG_RUN_ERR("[DCS][%u-%u][%s]: dcs_notify_owner_for_page_to_gbp failed, dest_id=%u, dest_sid=%u, mode=%u",
+                       page_req_to_owner.page_id.file, page_req_to_owner.page_id.page,
+                       MES_CMD2NAME(page_req_to_owner.head.cmd), page_req_to_owner.head.dst_inst,
+                       page_req_to_owner.head.dst_sid, page_req_to_owner.req_mode);
+        return OG_ERROR;
+    }
+    // key change to old function: in the old function, after this movement, requester(owner) will be notified. This
+    // logic is now moved to dcs_send_requester_shmem
+    return ret;
+}
+
 
 static status_t dcs_notify_owner_for_page(knl_session_t *session, uint8 owner_id, msg_page_req_t *page_req)
 {
@@ -1070,6 +1654,169 @@ static inline void dcs_send_error_msg(knl_session_t *session, msg_page_req_t *pa
     }
 }
 
+static status_t dcs_prep_page_req(knl_session_t *session, drc_req_owner_result_t *result, drc_req_info_t *req_info,
+                                  page_id_t page_id, msg_page_req_t *page_req)
+{
+    page_req->req_mode = req_info->req_mode;
+    page_req->curr_mode = req_info->curr_mode;
+    page_req->page_id = page_id;
+    page_req->lsn = req_info->lsn;
+    page_req->req_version = req_info->req_version;
+    page_req->action = result->action;
+    page_req->is_retry = result->is_retry;
+    // GBP slot is on master (this function runs on master instance)
+    page_req->gbp_owner_id = DCS_SELF_INSTID(session);
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+
+    char *base = rsga->remote_buf_addr[DCS_SELF_INSTID(session)];
+    /* Validate pointers from gbp_buf_ctrl */
+    if (result->gbp_buf_ctrl == NULL || result->gbp_buf_ctrl->shmem_page_addr == NULL ||
+        result->gbp_buf_ctrl->shmem_page_meta == NULL) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] prep page req failed: gbp_buf_ctrl or shmem ptrs are NULL", page_id.file,
+                       page_id.page);
+        return OG_ERROR;
+    }
+
+    char *p_page = (char *)result->gbp_buf_ctrl->shmem_page_addr;
+    char *p_meta = (char *)result->gbp_buf_ctrl->shmem_page_meta;
+
+    uint64 page_off64 = p_page - base;
+    uint64 meta_off64 = p_meta - base;
+
+    /* Must fit into uint32 offsets */
+    if (page_off64 > UINT32_MAX || meta_off64 > UINT32_MAX) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] prep page req failed: offset overflow for uint32: page_off=%llu meta_off=%llu",
+                       page_id.file, page_id.page, (unsigned long long)page_off64, (unsigned long long)meta_off64);
+        return OG_ERROR;
+    }
+    page_req->shmem_page_meta_off = meta_off64;
+    return OG_SUCCESS;
+}
+
+
+static void dcs_process_claim_page2hot_req(knl_session_t *session, msg_page_req_t *page_req,
+                                           msg_ask_page_ack_t *ack_msg_from_owner)
+{
+    uint64 req_version = page_req->req_version;
+    DTC_DCS_DEBUG_INF("[DCS][%u-%u][%s] 5.Start Claim Page to Hot:"
+                      "src_id=%u, src_sid=%u, dest_id=%u, dest_sid=%u, req mode=%d",
+                      page_req->page_id.file, page_req->page_id.page, MES_CMD2NAME(page_req->head.cmd),
+                      page_req->head.src_inst, page_req->head.src_sid, page_req->head.dst_inst, page_req->head.dst_sid,
+                      page_req->req_mode);
+
+    if (DRC_STOP_DCS_IO_FOR_REFORMING(req_version, session, page_req->page_id)) {
+        DTC_DCS_DEBUG_ERR("[DCS][%u-%u]: reforming, claim hot failed, req_version=%llu, cur_version=%llu",
+                          page_req->page_id.file, page_req->page_id.page, req_version, DRC_GET_CURR_REFORM_VERSION);
+        return;
+    }
+    /* Build claim_info using GBP meta locator (owner + offset) */
+    claim_info_t claim_info;
+    claim_info.new_id = page_req->head.src_inst;
+    claim_info.inst_sid = page_req->head.src_sid;
+    claim_info.page_id = page_req->page_id;
+    claim_info.has_edp = OG_FALSE;
+    claim_info.mode = page_req->req_mode;
+    claim_info.lsn = ack_msg_from_owner->lsn;
+    claim_info.gbp_owner_id = ack_msg_from_owner->gbp_owner_id;
+    claim_info.shmem_page_meta_off = ack_msg_from_owner->shmem_page_meta_off;
+
+    drc_claim_page_to_hot(session, &claim_info, req_version);
+}
+
+
+static inline void dcs_init_requester_ack_from_owner_ack(const msg_ask_page_ack_t *ack_msg_from_owner,
+                                                         msg_ask_page_ack_t *ack_to_requester)
+{
+    ack_to_requester->req_version = ack_msg_from_owner->req_version;
+    ack_to_requester->mode = ack_msg_from_owner->mode;
+    ack_to_requester->gbp_owner_id = ack_msg_from_owner->gbp_owner_id;
+    ack_to_requester->shmem_page_meta_off = ack_msg_from_owner->shmem_page_meta_off;
+    ack_to_requester->head.flags = ack_msg_from_owner->head.flags;
+    ack_to_requester->lsn = ack_msg_from_owner->lsn;
+    ack_to_requester->scn = ack_msg_from_owner->scn;
+
+    DTC_DCS_DEBUG_INF("[DCS][Dst:%u-%u][init ack for requester from owner ack]:"
+                   "mode=%u, gbp_owner_id=%u, shmem_page_meta_off=%llu, flags=%u, lsn=%lld, scn=%lld",
+                   ack_msg_from_owner->head.dst_inst, ack_msg_from_owner->head.dst_sid, ack_to_requester->mode,
+                   ack_to_requester->gbp_owner_id, ack_to_requester->shmem_page_meta_off, ack_to_requester->head.flags,
+                   ack_to_requester->lsn, ack_to_requester->scn);
+}
+
+static status_t dcs_master_handle_page_ready_in_gbp(knl_session_t *session, msg_page_req_t *page_req,
+                                                    msg_ask_page_ack_t *ack_msg_from_owner,
+                                                    msg_ask_page_ack_t *ack_to_requester)
+{
+    DTC_DCS_DEBUG_INF("[DCS-LBP-TO-GBP][%u-%u]: 4.ownerismaster, handle page ready in gbp, start claim page is hot.",
+                   page_req->page_id.file, page_req->page_id.page);
+
+    dcs_process_claim_page2hot_req(session, page_req, ack_msg_from_owner);
+
+    ack_to_requester->req_version = ack_msg_from_owner->req_version;
+    ack_to_requester->mode = ack_msg_from_owner->mode;
+    ack_to_requester->gbp_owner_id = ack_msg_from_owner->gbp_owner_id;
+    ack_to_requester->shmem_page_meta_off = ack_msg_from_owner->shmem_page_meta_off;
+    ack_to_requester->head.flags = ack_msg_from_owner->head.flags;
+    ack_to_requester->lsn = ack_msg_from_owner->lsn;
+    ack_to_requester->scn = ack_msg_from_owner->scn;
+
+    DTC_DCS_DEBUG_INF("[DCS-LBP-TO-GBP][Dst:%u-%u][init ack for requester from owner ack]:"
+                   "mode=%u, gbp_owner_id=%u, shmem_page_meta_off=%llu, flags=%u, lsn=%lld, scn=%lld",
+                   ack_msg_from_owner->head.dst_inst, ack_msg_from_owner->head.dst_sid, ack_to_requester->mode,
+                   ack_to_requester->gbp_owner_id, ack_to_requester->shmem_page_meta_off, ack_to_requester->head.flags,
+                   ack_to_requester->lsn, ack_to_requester->scn);
+
+    return OG_SUCCESS;
+}
+
+// This function is called by Master after it receives the page ack msg from owner, it waits for the ack from owner and
+// then reply to requester with shmem addr if needed note the difference between this function and
+// dcs_handle_ack_page_ready.
+static status_t dcs_master_handle_ack_page_ready_in_gbp(knl_session_t *session, uint8 owner_id,
+                                                        msg_page_req_t *page_req, msg_ask_page_ack_t *ack_to_requester)
+{
+    mes_message_t msg;
+    status_t ret = mes_recv(session->id, &msg, OG_TRUE, mes_get_current_rsn(session->id), DCS_WAIT_MSG_TIMEOUT);
+    if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u][wait for owner ack]: timeout, timeout=%u ms", page_req->page_id.file,
+                       page_req->page_id.page, DCS_WAIT_MSG_TIMEOUT);
+        return OG_ERROR;
+    }
+    SYNC_POINT_GLOBAL_START(OGRAC_DCS_ASK_OWNER_ACK_SUCC_ABORT, NULL, 0);  // we prob need this new sync point msg here
+                                                                           // ? Place holder for now
+    SYNC_POINT_GLOBAL_END;
+    DTC_DCS_DEBUG_INF("[DCS][%u-%u][%s]: src_id=%u, dest_id=%u, flag=%u", page_req->page_id.file,
+                      page_req->page_id.page, MES_CMD2NAME(msg.head->cmd), msg.head->src_inst, msg.head->dst_inst,
+                      msg.head->flags);
+
+    if (msg.head->cmd != MES_CMD_PAGE_READY_GBP) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u][wait for owner ack]: Error", page_req->page_id.file, page_req->page_id.page);
+        mes_release_message_buf(msg.buffer);
+        knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+        return OG_ERROR;
+    }
+
+    msg_ask_page_ack_t *ack_msg_from_owner = (msg_ask_page_ack_t *)(msg.buffer);
+    uint8 ack_mode = ack_msg_from_owner->mode;
+    knl_panic(page_req->req_mode <= ack_mode);
+
+    // sanity checks
+    if (ack_msg_from_owner->req_version != page_req->req_version) {
+        OG_LOG_RUN_ERR("[DCS][%u-%u] owner ack req_version mismatch: ack=%llu req=%llu", page_req->page_id.file,
+                       page_req->page_id.page, ack_msg_from_owner->req_version, page_req->req_version);
+        mes_release_message_buf(msg.buffer);
+        return OG_ERROR;
+    }
+
+    dcs_process_claim_page2hot_req(session, page_req, ack_msg_from_owner);
+
+    dcs_init_requester_ack_from_owner_ack(ack_msg_from_owner, ack_to_requester);
+
+    mes_release_message_buf(msg.buffer);
+
+    return OG_SUCCESS;
+}
+
+
 void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
 {
     drc_req_owner_result_t result;
@@ -1089,6 +1836,19 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
     }
 
     page_id_t page_id = page_req.page_id;
+    status_t ret = OG_FALSE;
+    if (page_req.gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
+        ret = drc_invalidate_shmem_page(session, page_req.page_id);
+        if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+            OG_LOG_RUN_ERR(
+                "[DCS][%u-%u] failed to invalidate shmem page when processing gbp to lbp req, req_version=%llu,"
+                "cur_version=%llu",
+                page_req.page_id.file, page_req.page_id.page, page_req.req_version, DRC_GET_CURR_REFORM_VERSION);
+            mes_send_error_msg(&page_req.head);
+            return;
+        }
+    }
+
     if (DRC_STOP_DCS_IO_FOR_REFORMING(page_req.req_version, session, page_id)) {
         OG_LOG_RUN_ERR("[DCS][%u-%u]reforming, ask master failed, req_version=%llu, cur_version=%llu", page_id.file,
                        page_id.page, page_req.req_version, DRC_GET_CURR_REFORM_VERSION);
@@ -1157,6 +1917,53 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             (void)dcs_notify_owner_for_page(session, result.curr_owner_id, &page_req);
             break;
 
+        case DRC_REQ_OWNER_IN_GBP:
+            dcs_send_requester_get_page_from_gbp(session, &page_req, &result);
+            break;
+
+        case DRC_REQ_OWNER_CONVERTING_TO_GBP: {
+            msg_ask_page_ack_t ack_to_requester;
+            msg_ask_page_ack_t ack_from_owner_l;
+            bool32 owner_is_master = (DCS_SELF_INSTID(session) == result.curr_owner_id) ? OG_TRUE : OG_FALSE;
+            remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+
+            // GBP lives on master (this function runs on master), so gbp_owner_id is self
+            page_req.gbp_owner_id = DCS_SELF_INSTID(session);
+            /* Validate gbp_buf_ctrl pointers */
+            if (result.gbp_buf_ctrl == NULL) {
+                OG_LOG_RUN_ERR("[DCS][%u-%u] gbp_buf_ctrl pointers are NULL", page_req.page_id.file,
+                               page_req.page_id.page);
+                break;
+            }
+
+            char *base = rsga->remote_buf_addr[page_req.gbp_owner_id];
+            // IMPORTANT: result.gbp_buf_ctrl->shmem_page_* must point inside base region
+            page_req.shmem_page_meta_off = (char *)result.gbp_buf_ctrl->shmem_page_meta - base;
+
+            // First step: This step only involves master and owner. Master ask owner to send the page to GBP
+            knl_begin_session_wait(session, DCS_REQ_OWNER4PAGE_GBP, OG_TRUE);
+            ret = dcs_notify_owner_for_page_to_gbp(session, result.curr_owner_id, &page_req, &owner_is_master,
+                                                   &ack_from_owner_l);
+            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+                // error handle logic
+                knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+                // release gdb_buf_ctrl latch, if no release, next transfer will be blocked in buf_alloc_ctrl
+                remote_buf_unlatch(session, result.gbp_buf_ctrl, OG_TRUE);
+                break;
+            }
+
+            // Second step: This step notify requester that the page is in gbp now.
+            if (owner_is_master) {
+                ret = dcs_master_handle_page_ready_in_gbp(session, &page_req, &ack_from_owner_l, &ack_to_requester);
+            } else {
+                ret = dcs_master_handle_ack_page_ready_in_gbp(session, result.curr_owner_id, &page_req,
+                                                              &ack_to_requester);
+            }
+
+            knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+            dcs_send_requester_gbp_addr(session, &page_req, &ack_to_requester);
+            break;
+        }
         default:
             OG_LOG_RUN_ERR("[DCS][%u-%u] unexpected owner request result, type=%u", page_req.page_id.file,
                            page_req.page_id.page, result.type);
@@ -1301,6 +2108,35 @@ void dcs_process_ask_owner_for_page(void *sess, mes_message_t *receive_msg)
     }
 }
 
+void dcs_process_ask_owner_for_page_to_gbp(void *sess, mes_message_t *receive_msg)
+{
+    knl_session_t *session = (knl_session_t *)sess;
+    if (sizeof(msg_page_req_t) != receive_msg->head->size) {
+        OG_LOG_RUN_ERR("process ask owner to gbp for page to gbp msg is invalid, msg size %u.",
+                       receive_msg->head->size);
+        mes_release_message_buf(receive_msg->buffer);
+        return;
+    }
+    msg_page_req_t page_req = *(msg_page_req_t *)(receive_msg->buffer);
+    mes_release_message_buf(receive_msg->buffer);
+    /** A key change to the old function:
+     * The second parameter for this function is master_id, not owner_id. Please notice that the
+     * MES_CMD_ASK_OWNER_TO_GBP's src is master!
+     */
+    DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][process ask owner to gbp] start, owner_id=%u, req_id=%u, req_sid=%u, "
+                       "req_rsn=%u, mode=%u, lsn=%llu",
+                       page_req.page_id.file, page_req.page_id.page, DCS_SELF_INSTID(session), page_req.head.src_inst,
+                       page_req.head.src_sid, page_req.head.rsn, page_req.req_mode, page_req.lsn);
+    status_t ret = dcs_owner_transfer_page_to_gbp(session, page_req.head.src_inst, &page_req);
+    if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+        OG_LOG_RUN_ERR("[DCS-GBP][%u-%u][process ask owner to gbp] failed, owner_id=%u, req_id=%u, req_sid=%u, "
+                       "req_rsn=%u, mode=%u, lsn=%llu",
+                       page_req.page_id.file, page_req.page_id.page, DCS_SELF_INSTID(session), page_req.head.src_inst,
+                       page_req.head.src_sid, page_req.head.rsn, page_req.req_mode, page_req.lsn);
+    }
+}
+
+
 status_t inline dcs_try_notify_owner_for_page(knl_session_t *session, cvt_info_t *cvt_info)
 {
     if (!DCS_INSTID_VALID(cvt_info->req_id)) {
@@ -1408,6 +2244,18 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
 {
     uint64 req_version = DRC_GET_CURR_REFORM_VERSION;
     page_id_t page_id = ctrl->page_id;
+
+    status_t ret = OG_ERROR;
+
+    if (gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
+        ret = drc_invalidate_shmem_page(session, page_id);
+        if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+            OG_LOG_RUN_ERR("[DCS][%u-%u]failed to invalidate shmem page for gbp to lbp, page_id=%u-%u", page_id.file,
+                           page_id.page, page_id.file, page_id.page);
+            return OG_ERROR;
+        }
+    }
+
     uint8 req_id = DCS_SELF_INSTID(session);
     drc_req_owner_result_t result;
 
@@ -1482,6 +2330,69 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
             knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE);
             return ret;
         }
+
+        case DRC_REQ_OWNER_CONVERTING_TO_GBP: {
+            drc_lock_mode_e mode;
+            msg_page_req_t page_req = { 0 };
+            mes_message_t msg;
+            msg_ask_page_ack_t ack_to_requester;
+            msg_ask_page_ack_t ack_from_owner_l;
+            bool32 owner_is_master = (DCS_SELF_INSTID(session) == result.curr_owner_id) ? OG_TRUE : OG_FALSE;
+
+            // prep step: Simple prep step to extract all field we need and wrap it in a page_req
+            ret = dcs_prep_page_req(session, &result, &req_info, page_id, &page_req);
+            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+                knl_end_session_wait(session, DCS_REQ_MASTER4PAGE_1WAY);
+                return ret;
+            }
+
+            // First step: This step only involves master and owner. Master ask owner to send the page to GBP
+            knl_begin_session_wait(session, DCS_REQ_OWNER4PAGE_GBP, OG_TRUE);
+            ret = dcs_notify_owner_for_page_to_gbp(session, result.curr_owner_id, &page_req, &owner_is_master,
+                                                   &ack_from_owner_l);
+            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+                // error handle logic here
+                knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+                // release gdb_buf_ctrl latch, if no release, next transfer will be blocked in buf_alloc_ctrl
+                remote_buf_unlatch(session, result.gbp_buf_ctrl, OG_TRUE);
+                return ret;
+            }
+
+            // Second step: This step notify requester that the page is in gbp now.
+            if (owner_is_master) {
+                // if this is true then requester, owner and master are all the same instance. Should this happen?
+                ret = dcs_master_handle_page_ready_in_gbp(session, &page_req, &ack_from_owner_l, &ack_to_requester);
+            } else {
+                ret = dcs_master_handle_ack_page_ready_in_gbp(session, result.curr_owner_id, &page_req,
+                                                              &ack_to_requester);
+            }
+
+            knl_end_session_wait(session, DCS_REQ_OWNER4PAGE_GBP);
+            if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
+                return ret;
+            }
+            ack_to_requester.head.cmd = MES_CMD_PAGE_READY;  // MES_CMD_PAGE_READY is correct here, because we are
+                                                             // sending this ack to requester from Master. So PAGE_READY
+                                                             // is expected
+            mode = ack_to_requester.mode;
+            msg.head = &ack_to_requester.head;
+            msg.buffer = (char *)&ack_to_requester;
+            // IMPORTANT: dcs_handle_gbp_from_owner must use gbp_owner_id + offsets now
+            ret = dcs_handle_gbp_from_owner(session, ctrl, &msg, mode);
+            // do NOT mes_release_message_buf() because msg.buffer points to stack
+            return ret;
+        }
+        case DRC_REQ_OWNER_IN_GBP:
+            ctrl->shmem_page_addr = result.shmem_page_addr;
+            ctrl->shmem_page_meta = (remote_page_info_t *)((char *)result.shmem_page_addr - sizeof(remote_page_info_t));
+            dcs_get_page_from_gbp(session, ctrl, result.req_mode);
+            knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE);
+
+            DTC_DCS_DEBUG_INF("[DCS-GBP][%u-%u][ask master local for hot page]: , src_id=%u, dest_id=%u, "
+                              "req_mode=%u, ctrl_lock_mode=%u",
+                              page_id.file, page_id.page, DCS_SELF_INSTID(session), DCS_SELF_INSTID(session),
+                              result.req_mode, ctrl->lock_mode);
+            return OG_SUCCESS;
 
         default: {
             knl_end_session_wait(session, DCS_REQ_MASTER4PAGE_1WAY);

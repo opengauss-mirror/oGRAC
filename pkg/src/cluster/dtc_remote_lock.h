@@ -28,15 +28,44 @@
 
 #include "knl_session.h"
 #include "dtc_remote_buffer.h"
-#include "ub_dist_comm_queue.h"
-#include "ub_dist_lock.h"
+#include "cm_ub_sdk.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+status_t drc_gbp_distribute_lock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode);
+status_t drc_gbp_distribute_lock_for_store(knl_session_t *session, uint64 lock_ptr, page_id_t page_id);
+status_t drc_gbp_distribute_lock_reenter(knl_session_t *session, uint64 lock_ptr, page_id_t page_id);
+void drc_gbp_begin_page_store(knl_session_t *session, uint64 lock_ptr);
+void drc_gbp_end_page_store(knl_session_t *session, uint64 lock_ptr);
+status_t drc_gbp_distribute_unlock(knl_session_t *session, uint64 lock_ptr, page_id_t page_id, latch_mode_t mode);
+
+void ub_rw_lock_set_readonly(ub_rw_lock_t *lock, bool32 readonly, const char *phase);
+bool32 ub_rw_lock_get_readonly(ub_rw_lock_t *lock);
+void ub_rw_lock_begin_page_store(ub_rw_lock_t *lock);
+void ub_rw_lock_end_page_store(ub_rw_lock_t *lock);
+ub_lock_result_t ub_rw_lock_x_lock_for_store(ub_rw_lock_t *lock, const ub_location_t *location);
+ub_lock_result_t ub_rw_lock_x_lock_reenter(ub_rw_lock_t *lock, const ub_location_t *location);
+ub_lock_result_t ub_rw_lock_s_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy,
+    const ub_location_t *location);
+ub_lock_result_t ub_rw_lock_s_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy,
+    const ub_location_t *location);
+ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy,
+    const ub_location_t *location);
+ub_lock_result_t ub_rw_lock_x_unlock(ub_rw_lock_t *lock, const ub_lock_policy_t *policy,
+    const ub_location_t *location);
+void ub_rw_lock_create(ub_rw_lock_t *lock, const ub_lock_config_t *config, const ub_location_t *location);
+void ub_rw_lock_free(ub_rw_lock_t *lock, const ub_location_t *location);
+uint64 ub_rw_lock_get_owner_node(ub_rw_lock_t *lock);
+int32 ub_rw_lock_get_state(ub_rw_lock_t *lock);
+bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid);
+
+void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
+    int32 *write_waiters, int32 *owner_tid, int32 *readonly);
+    
 status_t init_lock_comm_queue();
-void drc_init_remote_lock(ub_rw_lock_t **ub_lock);
+void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
 
 #ifdef __cplusplus
 }

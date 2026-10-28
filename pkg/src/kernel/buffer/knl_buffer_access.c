@@ -1987,6 +1987,7 @@ static inline void buf_calc_checksum(knl_session_t *session, buf_ctrl_t *ctrl)
 void buf_leave_page(knl_session_t *session, bool32 changed)
 {
     buf_ctrl_t *ctrl = buf_curr_page(session);
+    remote_page_info_t *shmem_page_meta = NULL;
 
     if (SECUREC_UNLIKELY(ctrl == NULL)) {
         buf_pop_page(session);
@@ -2002,7 +2003,9 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
 #ifdef LOG_DIAG
     buf_validate_page(session, ctrl, changed);
 #endif
-
+    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+        shmem_page_meta = ctrl->shmem_page_meta;
+    }
     if (changed && !PAGE_IS_HARD_DAMAGE_ZERO(ctrl->page)) {
         knl_panic_log(PAGE_SIZE(*ctrl->page) != 0, "the page size is abnormal, panic info: page %u-%u type %u size %u",
                       ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type, PAGE_SIZE(*ctrl->page));
@@ -2050,6 +2053,19 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
             }
         }
 
+        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            if (!ctrl->gbp_store_pending) {
+                drc_gbp_begin_page_store(session, shmem_page_meta->lock_ptr);
+                ctrl->gbp_store_pending = 1;
+            } else {
+                ub_rw_lock_set_readonly((ub_rw_lock_t *)(uintptr_t)shmem_page_meta->lock_ptr, OG_TRUE,
+                    "leave_reenter_fence");
+            }
+
+            OG_LOG_DEBUG_INF("[GBP-BUF][%u-%u]begin page store fence, gbp_lock %d", ctrl->page_id.file,
+                           ctrl->page_id.page, ctrl->gbp_lock_mode);
+        }
+
         if (SECUREC_UNLIKELY(DB_NOT_READY(session))) {
             buf_calc_checksum(session, ctrl);
         }
@@ -2058,6 +2074,35 @@ void buf_leave_page(knl_session_t *session, bool32 changed)
     }
 
     buf_log_leave_page(session, ctrl, changed);
+
+    /*
+     * Scheme B: release GBP lock before local latch (reverse of enter: latch then GBP).
+     * Use per-session page_stack gbp_lock_modes so multi-session S locks on shared ctrl
+     * do not clear gbp_lock_mode for other holders.
+     * Write path re-acquires GBP X lock at commit in log_set_page_lsn.
+     */
+    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+        uint32 stack_idx = session->page_stack.depth - 1;
+        uint8 gbp_lock_mode = session->page_stack.gbp_lock_modes[stack_idx];
+
+        if (gbp_lock_mode != DRC_LOCK_NULL) {
+            if (dtc_buf_gbp_should_unlock_on_leave(session, ctrl, stack_idx, (latch_mode_t)gbp_lock_mode)) {
+                status_t ret = dtc_buf_gbp_unhold(session, ctrl, (latch_mode_t)gbp_lock_mode);
+                if (ret != OG_SUCCESS) {
+                    OG_LOG_RUN_ERR("[GBP-LEAVE-BUF][%u-%u] failed to unlock shmem page, gbp_lock %d",
+                        ctrl->page_id.file, ctrl->page_id.page, gbp_lock_mode);
+                } else {
+                    // OG_LOG_DEBUG_INF("[GBP-LEAVE-BUF][%u-%u] unlock shmem page, gbp_lock %d, shared_count: %u, "
+                    //     "gbp_count: %u", ctrl->page_id.file, ctrl->page_id.page, gbp_lock_mode,
+                    //     ctrl->latch.shared_count, ctrl->gbp_lock_count);
+                }
+            } else {
+                OG_LOG_DEBUG_INF("[GBP-LEAVE-BUF][%u-%u]skip gbp unlock on X reenter, gbp_lock %d, depth: %u",
+                    ctrl->page_id.file, ctrl->page_id.page, gbp_lock_mode, stack_idx);
+            }
+            session->page_stack.gbp_lock_modes[stack_idx] = DRC_LOCK_NULL;
+        }
+    }
     buf_unlatch(session, ctrl, OG_TRUE);
     buf_pop_page(session);
 }

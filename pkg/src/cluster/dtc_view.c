@@ -1208,7 +1208,175 @@ static status_t dtc_view_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cursor
 
     return OG_SUCCESS;
 }
+
+static status_t dtc_view_gbp_buffer_ctrl_fetch(knl_handle_t se, knl_cursor_t *cursor)
+{
+    knl_session_t *session = (knl_session_t *)se;
+    gbp_buf_ctrl_scan_t *scan = (gbp_buf_ctrl_scan_t *)cursor->page_buf;
+    remote_buf_context_t *gbp = DRC_GBP_BUF_CTX;
+    row_assist_t ra;
+    char addr[ADDR_LEN];
+    uint32 id = (uint32)cursor->rowid.vmid;
+
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    while (scan->buf_set_id < gbp->buf_set_count) {
+        buf_set_t *set = &gbp->buf_set[scan->buf_set_id];
+        for (; scan->ctrl_id < set->hwm; scan->ctrl_id++) {
+            buf_ctrl_t *ctrl = &set->ctrls[scan->ctrl_id];
+            uint32 slot_idx = scan->ctrl_id;
+
+            if (ctrl->page == NULL || ctrl->load_status != (uint8)BUF_IS_LOADED) {
+                continue;
+            }
+
+            scan->ctrl_id++;
+            row_init(&ra, (char *)cursor->row, OG_MAX_ROW_SIZE, GBP_BUFFER_CTRL_COLS);
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)id));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)scan->buf_set_id));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)slot_idx));
+
+            uint32 ts_num = 0;
+            if (ctrl->page_id.file < OG_MAX_DATA_FILES) {
+                ts_num = session->kernel->db.datafiles[ctrl->page_id.file].space_id;
+            }
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ts_num));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->page_id.file));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->page_id.page));
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl->shmem_page_meta));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", (uint64)ctrl->page));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+            PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", ctrl->shmem_page_meta->lock_ptr));
+            OG_RETURN_IFERR(row_put_str(&ra, addr));
+
+            uint32 gbp_owner = 255;
+            uint64 meta_head_lsn = 0;
+            if (ctrl->shmem_page_meta != NULL) {
+                gbp_owner = (uint32)ctrl->shmem_page_meta->claimed_owner;
+                meta_head_lsn = ctrl->shmem_page_meta->head_lsn;
+            }
+
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)gbp_owner));
+            OG_RETURN_IFERR(row_put_int64(&ra, (int64)meta_head_lsn));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->ref_num));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->touch_number));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->load_status));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->is_dirty));
+            OG_RETURN_IFERR(row_put_int32(&ra, (int32)ctrl->lock_mode));
+
+            cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+            cursor->rowid.vmid++;
+            return OG_SUCCESS;
+        }
+        scan->ctrl_id = 0;
+        scan->buf_set_id++;
+    }
+
+    cursor->eof = OG_TRUE;
+    return OG_SUCCESS;
+}
+
+static void dtc_view_gbp_lock_info_mode_str(char *buf, uint32 cap, int32 st, int32 wr_wait)
+{
+    if (st == 0) {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "%s", wr_wait > 0 ? "FREE_WRWAIT" : "FREE"));
+    } else if (st == INT32_MIN) {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "EXCLUSIVE"));
+    } else if (st > 0) {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "%s", wr_wait > 0 ? "SHARED_WRWAIT" : "SHARED"));
+    } else {
+        PRTS_RETVOID_IFERR(snprintf_s(buf, cap, cap - 1, "UNKNOWN"));
+    }
+}
+
+static status_t dtc_view_gbp_lock_info_fetch(knl_handle_t se, knl_cursor_t *cursor)
+{
+    knl_session_t *session = (knl_session_t *)se;
+    gbp_buf_ctrl_scan_t *scan = (gbp_buf_ctrl_scan_t *)cursor->page_buf;
+    remote_buf_context_t *gbp = DRC_GBP_BUF_CTX;
+    remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+    row_assist_t ra;
+    char addr[ADDR_LEN];
+    char mode_str[GBP_LOCK_INFO_MODE_LEN];
+    uint32 id = (uint32)cursor->rowid.vmid;
+    uint32 node_id = (uint32)g_instance->kernel.id;
+
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem ||
+        !session->kernel->attr.enable_remote_distribute_lock) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    if (node_id >= OG_MAX_INSTANCES || rsga->remote_buf_addr[node_id] == NULL) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+
+    while (scan->buf_set_id < gbp->buf_set_count) {
+        buf_set_t *set = &gbp->buf_set[scan->buf_set_id];
+        if (scan->ctrl_id >= set->capacity) {
+            scan->ctrl_id = 0;
+            scan->buf_set_id++;
+            continue;
+        }
+
+        uint32 pool = scan->buf_set_id;
+        uint32 slot = scan->ctrl_id;
+        scan->ctrl_id++;
+
+        uint32 per_page = sizeof(remote_page_info_t) + session->kernel->attr.page_size + sizeof(uint64);
+        remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(set->page_buf + (uint64)slot * (uint64)per_page);
+        uint64 lock_addr = shmem_page_meta->lock_ptr;
+        if (lock_addr == 0) {
+            continue;
+        }
+
+        int32 state = 0;
+        int32 x_owner = 0;
+        int32 wr_wait = 0;
+        int32 owner_tid = 0;
+        int32 readonly = 0;
+        drc_gbp_lock_info_debug_snapshot(lock_addr, &state, &x_owner, &wr_wait, &owner_tid, &readonly);
+        dtc_view_gbp_lock_info_mode_str(mode_str, GBP_LOCK_INFO_MODE_LEN, state, wr_wait);
+
+        uint32 ts_num = 0;
+        if (shmem_page_meta->file_id < OG_MAX_DATA_FILES) {
+            ts_num = session->kernel->db.datafiles[shmem_page_meta->file_id].space_id;
+        }
+
+        row_init(&ra, (char *)cursor->row, OG_MAX_ROW_SIZE, GBP_LOCK_INFO_COLS);
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)id));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)pool));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)slot));
+        PRTS_RETURN_IFERR(sprintf_s(addr, ADDR_LEN, "%llx", lock_addr));
+        OG_RETURN_IFERR(row_put_str(&ra, addr));
+        OG_RETURN_IFERR(row_put_int32(&ra, state));
+        OG_RETURN_IFERR(row_put_int32(&ra, x_owner));
+        OG_RETURN_IFERR(row_put_int32(&ra, wr_wait));
+        OG_RETURN_IFERR(row_put_str(&ra, mode_str));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->file_id));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->page_id));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)ts_num));
+        OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->claimed_owner));
+        OG_RETURN_IFERR(row_put_int32(&ra, owner_tid));
+        OG_RETURN_IFERR(row_put_int32(&ra, readonly));
+
+        cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+        cursor->rowid.vmid++;
+        return OG_SUCCESS;
+    }
+
+    cursor->eof = OG_TRUE;
+    return OG_SUCCESS;
+}
 /*
+
 Describtion of DTC view structure
 */
 

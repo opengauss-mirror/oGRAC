@@ -122,6 +122,8 @@ static status_t dtc_register_proc(void)
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_TRY_ASK_MASTER_ACK, mes_process_msg_ack, OG_FALSE, "try ask master ack"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_ASK_OWNER, dcs_process_ask_owner_for_page, OG_TRUE, "ask owner"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_ASK_OWNER_TO_GBP, dcs_process_ask_owner_for_page_to_gbp, OG_TRUE,
+                                             "ask owner move page to GBP"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_PAGE_READY, mes_process_msg_ack, OG_FALSE, "owner ack page ready"));
     knl_securec_check(
@@ -392,8 +394,10 @@ static status_t dtc_register_proc(void)
     knl_securec_check(dtc_register_proc_func(MES_CMD_VERIFY_REMASTER_PARAM, drc_process_remaster_param_verify,
                                              OG_FALSE, "drc verify remaster params"));
 
-    knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMOTE_BUF_MMAP, drc_process_remote_buf_mmap,
-                                             OG_FALSE, "REMOTE BUF MAP broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_BROADCAST_REMOTE_BUF_MMAP, drc_process_remote_buf_mmap, OG_FALSE,
+                                             "REMOTE BUF MAP broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_ALREADY_IN_GBP, mes_process_msg_ack, OG_FALSE,
+                                             "notify requester get page from gbp"));
 
     for (uint32 i = 0; i < MES_CMD_CEIL; i++) {
         mes_set_msg_enqueue(i, g_processors[i].is_enqueue);
@@ -556,7 +560,9 @@ status_t dtc_startup(void)
     g_dtc->profile.node_count = kernel->db.ctrl.core.node_count;
 
     if (ub_init_ubsm_mem() != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("failed to init ubsm_mem");
+        OG_LOG_RUN_WAR("UB shared memory is unavailable, _ENABLE_UBSMEM disabled for this instance");
+        kernel->attr.enable_ubsmem = OG_FALSE;
+        kernel->attr.enable_remote_distribute_lock = OG_FALSE;
     }
 
     if (drc_init() != OG_SUCCESS) {
