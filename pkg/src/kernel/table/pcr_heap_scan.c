@@ -1052,7 +1052,7 @@ static status_t pcrh_chk_visible_with_udrow(knl_session_t *session, cr_cursor_t 
  * @param kernel session, kernel cursor, CR page, itl, is_found(output)
  */
 status_t pcrh_chk_visible_with_undo_ss(knl_session_t *session, cr_cursor_t *cursor, heap_page_t *cr_page,
-                                      bool32 check_restart, bool32 *is_found, bool32 is_no_same_inst)
+                                      bool32 check_restart, bool32 *is_found)
 {
     pcr_itl_t *itl = cursor->itl;
     itl->is_hist = OG_TRUE;
@@ -1073,22 +1073,12 @@ status_t pcrh_chk_visible_with_undo_ss(knl_session_t *session, cr_cursor_t *curs
         if (ud_page == NULL) {
             /* only in remote visible check, force the requester to do local read */
             cursor->local_cr = OG_TRUE;
-            pcrh_log_local_cr_set(session, cursor, "chk_visible_ss_no_undo");
             return OG_SUCCESS;
         }
-
-        // if (is_no_same_inst) {
-        //     page_id_t ud_pagid = ud_page != NULL ? AS_PAGID(ud_page->head.id) : INVALID_PAGID;
-        //     page_id_t undo_pagid = PAGID_U2N(itl->undo_page);
-        //     OG_LOG_RUN_WAR("[DTC-BUFFER][%u-%u] page is %u-%u",
-        //                        ud_pagid.file, ud_pagid.page, undo_pagid.file, ud_undo_pagid.page);    
-        // }
 
         if (itl->undo_slot >= ud_page->rows) {
             buf_leave_page(session, OG_FALSE);
             tx_record_sql(session);
-            pcrh_log_undo_snapshot_err(session, cursor, cr_page, itl, ud_page, cursor->query_scn,
-                (uint32)check_restart, "chk_visible_ss");
             OG_LOG_RUN_ERR("snapshot too old, detail: snapshot slot %u, undo rows %u, "
                 "query scn %llu, check_restart %u", (uint32)itl->undo_slot,
                 (uint32)ud_page->rows, cursor->query_scn, (uint32)check_restart);
@@ -1100,8 +1090,6 @@ status_t pcrh_chk_visible_with_undo_ss(knl_session_t *session, cr_cursor_t *curs
         if (itl->xid.value != ud_row->xid.value) {
             buf_leave_page(session, OG_FALSE);
             tx_record_sql(session);
-            pcrh_log_undo_snapshot_err(session, cursor, cr_page, itl, ud_page, cursor->query_scn,
-                (uint32)check_restart, "chk_visible_ss_xid");
             OG_LOG_RUN_ERR("snapshot too old, detail: snapshot xid %llu, undo row xid %llu, "
                 "query scn %llu, check_restart %u", itl->xid.value, ud_row->xid.value,
                 cursor->query_scn, (uint32)check_restart);
@@ -1158,7 +1146,7 @@ status_t pcrh_chk_curr_visible(knl_session_t *session, cr_cursor_t *cursor, heap
             session->wxid.value = OG_INVALID_ID64;
         }
 
-        if (pcrh_chk_visible_with_undo_ss(session, cursor, cr_page, check_restart, is_found, false) != OG_SUCCESS) {
+        if (pcrh_chk_visible_with_undo_ss(session, cursor, cr_page, check_restart, is_found) != OG_SUCCESS) {
             return OG_ERROR;
         }
 

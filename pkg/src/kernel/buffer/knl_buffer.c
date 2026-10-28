@@ -582,7 +582,6 @@ static bool32 buf_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_ty
     return OG_FALSE;
 }
 
-
 void buf_verify_page_on_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_head_t *page, const char *reason)
 {
     page_id_t page_id = (ctrl != NULL) ? ctrl->page_id : AS_PAGID(page->id);
@@ -1161,6 +1160,10 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
 // Only master can prepare a slot for a page so that this page can be promoted to hot. All hot pages in the shmem of
 // this node belongs to this node. Therefore, this function is only called by master. Evicted page's master must be this
 // node
+/*
+ * Reclaim a ctrl from the global buffer pool (GBP) so it can hold a page loaded from shared memory.
+ * Only reached when the UB scenario is enabled (attr.enable_ubsmem).
+ */
 static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_set, buf_lru_list_t *list)
 {
     buf_ctrl_t *shift = NULL;
@@ -1396,7 +1399,6 @@ static void buf_get_ctrl_shmem(knl_session_t *session, buf_set_t *shmem_set, uin
     item->is_hot = OG_TRUE;
     *ctrl = item;
 }
-
 
 static void buf_latch_get_latch(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, latch_mode_t mode)
 {
@@ -2359,31 +2361,20 @@ bool32 buf_check_resident_page_version(knl_session_t *session, page_id_t page_id
          * read page for gbp because newest gbp page is in remote shmemory.
          */
         if ((ctrl != NULL) &&
-            dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
-            (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
-                cm_spin_unlock(&bucket->lock);
-                return OG_TRUE;
-            }
-            if (dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
-                cm_spin_unlock(&bucket->lock);
-                // OG_LOG_DEBUG_INF("[GBP-INDEX-BUFFER][%u-%u] session owns store fence, skip version lock",
-                //     page_id.file, page_id.page);
-                return OG_TRUE;
-            }
+                dcs_local_page_usable(session, (buf_ctrl_t *)ctrl, LATCH_MODE_S) &&
+                (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
+            cm_spin_unlock(&bucket->lock);
+            return OG_TRUE;
         }
 
-        if (ctrl != NULL && ctrl->shmem_page_meta != NULL &&
+        if (session->kernel->attr.enable_ubsmem && ctrl != NULL && ctrl->shmem_page_meta != NULL &&
             ctrl->transfer_status != BUF_TRANS_REL_OWNER) {
             if (buf_session_gbp_x_covers_s(session, ctrl)) {
                 cm_spin_unlock(&bucket->lock);
-                // OG_LOG_DEBUG_INF("[GBP-INDEX-BUFFER][%u-%u] session GBP X covers S, skip version lock",
-                //     page_id.file, page_id.page);
                 return OG_TRUE;
             }
             if (dtc_buf_session_owns_gbp_store_fence(session, ctrl)) {
                 cm_spin_unlock(&bucket->lock);
-                // OG_LOG_DEBUG_INF("[GBP-INDEX-BUFFER][%u-%u] session owns store fence, skip version lock",
-                //     page_id.file, page_id.page);
                 return OG_TRUE;
             }
         }
@@ -2455,10 +2446,15 @@ bool32 buf_check_resident_page_version_with_ctrl(knl_session_t *session, void *b
     if (DB_IS_CLUSTER(session)) {
         buf_ctrl_t *ctrl = (buf_ctrl_t *)buf_ctrl;
         if (ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, page_id) &&
+            dcs_local_page_usable(session, ctrl, LATCH_MODE_S) &&
             (ctrl->transfer_status != BUF_TRANS_REL_OWNER)) {
-            if (dcs_local_page_usable(session, ctrl, LATCH_MODE_S)) {
+            if (IS_SAME_PAGID(ctrl->page_id, page_id)) {
                 return OG_TRUE;
             }
+        }
+
+        if (session->kernel->attr.enable_ubsmem && ctrl != NULL && IS_SAME_PAGID(ctrl->page_id, page_id) &&
+            ctrl->shmem_page_meta != NULL && ctrl->transfer_status != BUF_TRANS_REL_OWNER) {
             if (buf_session_gbp_x_covers_s(session, ctrl)) {
                 return OG_TRUE;
             }
@@ -2628,3 +2624,4 @@ buf_bucket_t *buf_find_bucket(knl_session_t *session, page_id_t page_id)
     bucket = BUF_GET_BUCKET(set, hash_id);
     return bucket;
 }
+

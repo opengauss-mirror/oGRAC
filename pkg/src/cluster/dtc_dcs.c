@@ -297,7 +297,6 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
     return OG_SUCCESS;
 }
 
-
 static void dcs_handle_page_from_owner(knl_session_t *session, buf_ctrl_t *ctrl, mes_message_t *msg,
                                        drc_lock_mode_e mode)
 {
@@ -552,7 +551,7 @@ static inline status_t dcs_handle_ack_already_owner(knl_session_t *session, uint
     DTC_DCS_DEBUG_INF("[DCS][%u-%u][%s]: already owner, src_id=%u, dest_id=%u, ctrl_dirty=%u, "
         "ctrl_lock_mode=%u, ctrl_is_edp=%u", ctrl->page_id.file, ctrl->page_id.page, MES_CMD2NAME(msg->head->cmd),
         msg->head->src_inst, msg->head->dst_inst, ctrl->is_dirty, ctrl->lock_mode, ctrl->is_edp);
-   
+
     if (master_id != DCS_SELF_INSTID(session)) {
         (void)dcs_claim_ownership_r(session, master_id, ctrl->page_id, OG_FALSE, ack->req_mode,
                                     dtc_get_ctrl_latest_lsn(ctrl), ack->req_version);
@@ -677,15 +676,13 @@ static inline status_t dcs_handle_ack_page_ready(knl_session_t *session, uint32 
     mode = ack_mode;
     bool32 is_gbp = ((msg->head->flags & MES_FLAG_MOVED_TO_GBP) != 0);
     // if we recieved remote address from the msg, then go to the remote session
-    if (is_gbp) {
+    if (session->kernel->attr.enable_ubsmem && is_gbp) {
         if (dcs_handle_ack_already_in_gbp(session, master_id, msg, ctrl, mode) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[DCS] handle page from shmem failed.");
             return OG_ERROR;
         }
         return OG_SUCCESS;
     }
-
-    dcs_handle_page_from_owner(session, ctrl, msg, mode);
 
     dcs_handle_page_from_owner(session, ctrl, msg, mode);
     if (master_id != DCS_SELF_INSTID(session)) {
@@ -1418,7 +1415,6 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     return OG_SUCCESS;
 }
 
-
 static status_t dcs_owner_send_page_ready_gbp_ack(knl_session_t *session, msg_page_req_t *page_req,
                                                   msg_ask_page_ack_t *ask_page)
 {
@@ -1638,7 +1634,6 @@ static status_t dcs_notify_owner_for_page_to_gbp(knl_session_t *session, uint8 o
     return ret;
 }
 
-
 static status_t dcs_notify_owner_for_page(knl_session_t *session, uint8 owner_id, msg_page_req_t *page_req)
 {
     if ((DCS_SELF_INSTID(session) == owner_id) && (owner_id != page_req->head.src_inst)) {
@@ -1795,7 +1790,6 @@ static status_t dcs_prep_page_req(knl_session_t *session, drc_req_owner_result_t
     return OG_SUCCESS;
 }
 
-
 static void dcs_process_claim_page2hot_req(knl_session_t *session, msg_page_req_t *page_req,
                                            msg_ask_page_ack_t *ack_msg_from_owner)
 {
@@ -1824,7 +1818,6 @@ static void dcs_process_claim_page2hot_req(knl_session_t *session, msg_page_req_
 
     drc_claim_page_to_hot(session, &claim_info, req_version);
 }
-
 
 static inline void dcs_init_requester_ack_from_owner_ack(const msg_ask_page_ack_t *ack_msg_from_owner,
                                                          msg_ask_page_ack_t *ack_to_requester)
@@ -1918,7 +1911,6 @@ static status_t dcs_master_handle_ack_page_ready_in_gbp(knl_session_t *session, 
     return OG_SUCCESS;
 }
 
-
 void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
 {
     drc_req_owner_result_t result;
@@ -1939,7 +1931,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
 
     page_id_t page_id = page_req.page_id;
     status_t ret = OG_FALSE;
-    if (page_req.gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
+    if (session->kernel->attr.enable_ubsmem && page_req.gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
         ret = drc_invalidate_shmem_page(session, page_req.page_id);
         if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
             OG_LOG_RUN_ERR(
@@ -2238,7 +2230,6 @@ void dcs_process_ask_owner_for_page_to_gbp(void *sess, mes_message_t *receive_ms
     }
 }
 
-
 status_t inline dcs_try_notify_owner_for_page(knl_session_t *session, cvt_info_t *cvt_info)
 {
     if (!DCS_INSTID_VALID(cvt_info->req_id)) {
@@ -2350,7 +2341,7 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
 
     status_t ret = OG_ERROR;
 
-    if (gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
+    if (session->kernel->attr.enable_ubsmem && gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
         ret = drc_invalidate_shmem_page(session, page_id);
         if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
             OG_LOG_RUN_ERR("[DCS][%u-%u]failed to invalidate shmem page for gbp to lbp, page_id=%u-%u", page_id.file,
@@ -4314,7 +4305,7 @@ static status_t dcs_heap_check_visible(knl_session_t *session, msg_cr_check_t *c
 
         inst_id = xid_get_inst_id(session, cr_cursor.itl->xid);
         if (inst_id == session->kernel->id && !cr_cursor.local_cr) {
-            if (pcrh_chk_visible_with_undo_ss(session, &cr_cursor, page, OG_FALSE, &is_found, false) != OG_SUCCESS) {
+            if (pcrh_chk_visible_with_undo_ss(session, &cr_cursor, page, OG_FALSE, &is_found) != OG_SUCCESS) {
                 return OG_ERROR;
             }
 

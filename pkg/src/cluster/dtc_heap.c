@@ -52,12 +52,10 @@ static status_t dtc_heap_construct_cr_page(knl_session_t *session, cr_cursor_t *
 
         inst_id = xid_get_inst_id(session, cursor->itl->xid);
         if (inst_id == session->kernel->id || cursor->local_cr) {
-            //pcrh_log_cr_route_decision(session, cursor, "heap_construct", OG_TRUE);
             if (pcrh_reorganize_with_ud_list(session, cursor, page, fb_buf) != OG_SUCCESS) {
                 return OG_ERROR;
             }
         } else {
-            //pcrh_log_cr_route_decision(session, cursor, "heap_construct", OG_FALSE);
             if (dcs_heap_request_cr_page(session, cursor, (char *)page, inst_id) != OG_SUCCESS) {
                 return OG_ERROR;
             }
@@ -77,7 +75,6 @@ status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cur
     if (g_dtc->profile.enable_rmo_cr) {
         /* in RMO mode, we force to check current visible in local */
         cursor->local_cr = OG_TRUE;
-        //pcrh_log_local_cr_set(session, cursor, "check_curr_visible_rmo");
     }
 
     for (;;) {
@@ -91,11 +88,7 @@ status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cur
 
         inst_id = xid_get_inst_id(session, cursor->itl->xid);
         if (inst_id == session->kernel->id || cursor->local_cr) {
-            bool32 is_no_same_inst = (inst_id != session->kernel->id);
-            if (is_no_same_inst) {
-                //pcrh_log_cr_route_decision(session, cursor, "check_curr_visible", OG_TRUE);
-            }
-            if (pcrh_chk_visible_with_undo_ss(session, cursor, page, OG_FALSE, is_found, is_no_same_inst) != OG_SUCCESS) {
+            if (pcrh_chk_visible_with_undo_ss(session, cursor, page, OG_FALSE, is_found) != OG_SUCCESS) {
                 return OG_ERROR;
             }
 
@@ -103,7 +96,6 @@ status_t dtc_heap_check_current_visible(knl_session_t *session, cr_cursor_t *cur
                 return OG_SUCCESS;
             }
         } else {
-            //pcrh_log_cr_route_decision(session, cursor, "check_curr_visible_remote", OG_FALSE);
             if (dcs_check_current_visible(session, cursor, (char *)page, inst_id, is_found) != OG_SUCCESS) {
                 return OG_ERROR;
             }

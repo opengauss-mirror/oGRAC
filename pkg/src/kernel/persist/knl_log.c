@@ -42,7 +42,6 @@
 #include "dtc_database.h"
 #include "dtc_context.h"
 #include "dtc_recovery.h"
-#include "dtc_remote_buffer.h"
 #include "dtc_remote_lock.h"
 
 extern bool32 g_crc_verify;
@@ -1135,11 +1134,6 @@ static void log_reset_readonly(knl_session_t *session, buf_ctrl_t *ctrl)
 #endif
 
     ctrl->is_readonly = 0;
-
-    if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-        // OG_LOG_DEBUG_INF("[GBP-BUF][%u-%u]clean readonly true, gbp_lock %d", ctrl->page_id.file,
-        //                ctrl->page_id.page, ctrl->gbp_lock_mode);
-    }
 }
 
 static inline void log_calc_checksum(knl_session_t *session, page_head_t *page, uint32 checksum_level)

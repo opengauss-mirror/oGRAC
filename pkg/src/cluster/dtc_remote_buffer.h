@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd. All rights reserved.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -95,7 +95,6 @@ typedef enum buffer_type {
     LOCK_QUEUE,
 } buffer_type_t;
 
-#define GET_PAGE_ADDR_IN_GBP(addr) ((addr) + sizeof(remote_page_info_t))
 #define OFFSET_PAGE_ID offsetof(remote_page_info_t, page_id)
 #define OFFSET_HEAD_LSN offsetof(remote_page_info_t, head_lsn)
 #define OFFSET_TAIL_LSN sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size

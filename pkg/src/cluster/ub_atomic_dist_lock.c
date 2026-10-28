@@ -413,7 +413,7 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
     uint32 times = 0;
     uint32_t spinCount = 0;
     uint64_t oldw = atomic_load_explicit(&lock->lock_word, memory_order_acquire);
-    
+
     int32 cur_state;
     uint8 cur_node_id;
     int32 cur_tid;

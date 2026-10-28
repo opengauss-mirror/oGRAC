@@ -30,7 +30,6 @@
 #include "cm_ub_sdk.h"
 #include "cm_system.h"
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -76,13 +75,13 @@ status_t ub_init_ubsm_mem(void)
         OG_LOG_RUN_ERR("ubsmem_initialize failed. error:%d", ret);
         return ret;
     }
-    
+
     ret = ubsmem_set_extern_logger(cm_log_for_ubsm);
     if (ret != UBSM_OK) {
         OG_LOG_RUN_ERR("ubsmem_set_extern_logger failed. error:%d", ret);
         return ret;
     }
-    
+
     OG_LOG_RUN_INF("ubsm_mem init success.");
     return OG_SUCCESS;
 }
@@ -219,7 +218,7 @@ status_t ub_delete_shm(uint32 host_id)
 }
 
 #endif // win32
- 
+
 #ifdef __cplusplus
 }
 #endif

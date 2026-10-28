@@ -43,7 +43,8 @@ static inline void buf_stat_page_inc(knl_session_t *session, uint32 count)
 }
 
 /* buffer latch interface */
-static inline void buf_latch_ix2x(knl_session_t *session, buf_latch_t *latch, spinlock_t *lock, wait_event_t event)
+static inline void buf_latch_ix2x(knl_session_t *session, buf_latch_t *latch, spinlock_t *lock,
+    wait_event_t event)
 {
     uint32 count = 0;
 
@@ -72,7 +73,8 @@ static inline void buf_latch_ix2x(knl_session_t *session, buf_latch_t *latch, sp
     } while (1);
 }
 
-static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, bool32 lock_needed)
+static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl,
+    bool32 lock_needed)
 {
     uint32 count = 0;
     buf_latch_t *latch = &ctrl->latch;
@@ -118,7 +120,8 @@ static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf
     } while (1);
 }
 
-static inline void buf_latch_s(knl_session_t *session, buf_bucket_t *bucket, buf_ctrl_t *ctrl, bool32 is_force,
+static inline void buf_latch_s(knl_session_t *session, buf_bucket_t *bucket,
+    buf_ctrl_t *ctrl, bool32 is_force,
                         bool32 lock_needed)
 {
     uint32 count = 0;
@@ -243,8 +246,7 @@ static inline void buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, bool32 
 }
 
 // unlatch with bucket from param, for case where shmem buffer may present
-static inline __attribute__((unused)) void buf_unlatch_w_bucket(
-    knl_session_t *session, buf_ctrl_t *ctrl, buf_bucket_t *bucket, bool32 release)
+static inline void buf_unlatch_w_bucket(knl_session_t *session, buf_ctrl_t *ctrl, buf_bucket_t *bucket, bool32 release)
 {
     buf_latch_t *latch;
     latch = &ctrl->latch;

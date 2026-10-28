@@ -35,7 +35,6 @@
 #include "dtc_database.h"
 #include "knl_rbp.h"
 #include "dtc_remote_lock.h"
-#include "dtc_remote_buffer.h"
 
 static inline void buf_free_iocb(knl_aio_iocbs_t *buf_iocbs, buf_iocb_t *buf_iocb);
 

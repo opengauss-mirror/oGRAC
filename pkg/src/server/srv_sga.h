@@ -71,7 +71,6 @@ typedef struct st_sga {
     mem_pool_t buddy_pool;
 } sga_t;
 
-
 static inline uint64 srv_calc_buf_size(uint64 size)
 {
     uint64 align_size = CM_CALC_ALIGN(size + SGA_BARRIER_SIZE, OG_MAX_ALIGN_SIZE_4K);

@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd. All rights reserved.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -154,8 +154,16 @@ typedef enum en_drc_res_action {
 } drc_res_action_e;
 
 // Statistics for checking if this page becomes hot
-#define DRC_PAGE_HOT_THRESHOLD(session) session->kernel->attr.ub_page_hot_threshold
-#define DRC_PAGE_HOT_TIMEOUT(session) session->kernel->attr.ub_page_hot_timeout
+static inline uint32 drc_page_hot_threshold(knl_session_t *session)
+{
+    return session->kernel->attr.ub_page_hot_threshold;
+}
+
+static inline uint32 drc_page_hot_timeout(knl_session_t *session)
+{
+    return session->kernel->attr.ub_page_hot_timeout;
+}
+
 typedef struct st_page_hot_stat {
     date_t start_time;
     uint32 owner_changed_number;  // how many times has the owner been changed since start time

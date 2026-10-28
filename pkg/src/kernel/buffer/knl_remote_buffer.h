@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------------
  *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
+ * Copyright (c) 2024 Huawei Technologies Co., Ltd. All rights reserved.
  *
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -59,7 +59,6 @@ static inline void remote_buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, 
 
     cm_spin_unlock(&bucket->lock);
 }
-
 
 #ifdef __cplusplus
 }

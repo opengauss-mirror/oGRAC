@@ -205,7 +205,8 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
             }
         }
 
-        if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp) {
+        if (session->kernel->attr.enable_ubsmem &&
+            (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP || is_load_from_gbp)) {
             ret = dtc_buf_try_load_from_gbp(session, ctrl, ra->mode);
             if (ret != OG_SUCCESS) {
                 OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to load page from gbp.",
@@ -217,7 +218,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         if (!buf_check_loaded_page_checksum(session, ctrl, ra->mode, ra->options)) {
             OG_LOG_RUN_WAR("[DTC-BUFFER][%u-%u] page is mismatch",
                                ctrl->page_id.file, ctrl->page_id.page);
-            if (gbp_held) {
+            if (session->kernel->attr.enable_ubsmem && gbp_held) {
                 (void)dtc_buf_gbp_unhold(session, ctrl, ra->mode);
             }
             OG_THROW_ERROR(ERR_PAGE_CORRUPTED, ctrl->page_id.file, ctrl->page_id.page);
@@ -268,7 +269,7 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
 
     //    stats_buf_record(session, &temp_stat, ctrl);
     buf_push_page(session, ctrl, ra->mode);
-    if (gbp_held) {
+    if (session->kernel->attr.enable_ubsmem && gbp_held) {
         session->page_stack.gbp_lock_modes[session->page_stack.depth - 1] = (uint8)ra->mode;
     }
     buf_log_enter_page(session, ctrl, ra->mode, ra->options);
@@ -311,17 +312,15 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
         }
 
         if (dtc_buf_try_local(session, ra, ctrl)) {
-            if (ctrl->is_in_gbp == OG_TRUE && ctrl->shmem_page_meta == NULL) {
+            if (session->kernel->attr.enable_ubsmem && ctrl->is_in_gbp == OG_TRUE &&
+                ctrl->shmem_page_meta == NULL) {
                 OG_LOG_RUN_INF("[DTC-GBP_BUF][%u-%u] page is in gbp, but remote address is null in local node.",
                     ra->page_id.file, ra->page_id.page);
             }
             break;
         }
-        
+
         if (dtc_buf_give_up_try(session, ra, ctrl)) {
-            // if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-            //     OG_LOG_RUN_INF("[DTC-GBP_BUF][%u-%u] dtc_buf_give_up_try", ra->page_id.file, ra->page_id.page);
-            // }
             return OG_SUCCESS;
         }
 

@@ -37,7 +37,6 @@
 #include "dtc_drc.h"
 #include "dtc_view.h"
 #include "knl_common.h"
-#include "dtc_remote_buffer.h"
 #include "dtc_remote_lock.h"
 
 dtc_view_mes_stat_t g_mes_stat_array[OG_MAX_INSTANCES];

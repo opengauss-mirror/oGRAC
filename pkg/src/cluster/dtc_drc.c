@@ -717,10 +717,6 @@ status_t drc_get_page_owner_id(knl_session_t *session, page_id_t pagid, uint8 *i
         *id = OG_INVALID_ID8;
         return OG_ERROR;
     }
-    // if (buf_res->page_hot_stat.is_in_gbp == OG_TRUE) {
-    //     OG_LOG_RUN_INF("[%u-%u] page_id drc_get_page_owner_id, owner_id: %d",
-    //         pagid.file, pagid.page, buf_res->claimed_owner);
-    // }
     if ((buf_res->claimed_owner == OG_INVALID_ID8) && (g_rc_ctx->status >= REFORM_RECOVER_DONE)) {
         knl_panic(!OGRAC_PARTIAL_RECOVER_SESSION(session));
         drc_clean_buf_res(buf_res);
@@ -1148,7 +1144,6 @@ static void drc_claim_new_page_hot_gbp(knl_session_t *session, claim_info_t *cla
     }
 }
 
-
 static void drc_claim_new_page_owner(knl_session_t *session, claim_info_t *claim_info, drc_buf_res_t *buf_res)
 {
     page_id_t pagid = claim_info->page_id;
@@ -1270,7 +1265,6 @@ static void drc_send_convert_waiter_error(drc_req_info_t *req)
     mes_send_error_msg(&req_head);
 }
 
-
 static void drc_notify_waiter_check_gbp(knl_session_t *session, drc_req_info_t *req, claim_info_t *claim_info,
                                         page_id_t page_id)
 {
@@ -1303,7 +1297,6 @@ static void drc_notify_waiter_check_gbp(knl_session_t *session, drc_req_info_t *
     }
 }
 
-
 static void drc_notify_convert_waiter(knl_session_t *session, drc_req_info_t *req, claim_info_t *claim_info,
                                       page_id_t page_id)
 {
@@ -1316,7 +1309,6 @@ static void drc_notify_convert_waiter(knl_session_t *session, drc_req_info_t *re
 
     drc_notify_waiter_check_gbp(session, req, claim_info, page_id);
 }
-
 
 static inline void drc_init_page_converting(drc_buf_res_t *buf_res)
 {
@@ -1412,7 +1404,6 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
 
     return OG_SUCCESS;
 }
-
 
 static uint32 drc_convert_next_request(knl_session_t *session, drc_buf_res_t *buf_res, cvt_info_t *cvt_info)
 {
@@ -2010,13 +2001,13 @@ allocated:
         }
     }
 
-    if (can_cvt && ret == OG_SUCCESS && req_info->req_mode == DRC_LOCK_EXCLUSIVE
-        && result->type != DRC_REQ_OWNER_ALREADY_OWNER) {
+    if (can_cvt && session->kernel->attr.enable_ubsmem && ret == OG_SUCCESS &&
+        req_info->req_mode == DRC_LOCK_EXCLUSIVE && result->type != DRC_REQ_OWNER_ALREADY_OWNER) {
         // Successfuly made an ownership conversion for a cold page
         buf_res->page_hot_stat.owner_changed_number++;
         // TOODO: What is a 1 "unit time"
-        if (KNL_NOW(session) - buf_res->page_hot_stat.start_time > DRC_PAGE_HOT_TIMEOUT(session)) {
-            result->gbp_action = buf_res->page_hot_stat.owner_changed_number > DRC_PAGE_HOT_THRESHOLD(session)
+        if (KNL_NOW(session) - buf_res->page_hot_stat.start_time > drc_page_hot_timeout(session)) {
+            result->gbp_action = buf_res->page_hot_stat.owner_changed_number > drc_page_hot_threshold(session)
                                      ? DRC_NEED_MOVE_TO_GBP
                                      : DRC_NEED_NO_MOVE;
             // reset stats when unit time is reached
@@ -2205,7 +2196,6 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
     cm_spin_unlock(&bucket->lock);
     cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
 }
-
 
 void drc_claim_page_owner(knl_session_t *session, claim_info_t *claim_info, cvt_info_t *cvt_info, uint64 req_version)
 {
@@ -7996,7 +7986,6 @@ status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t page_id)
 
     return drc_invalidate_shmem_page_by_ctrl(session, shmem_ctrl, OG_FALSE);
 }
-
 
 status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked)
 {

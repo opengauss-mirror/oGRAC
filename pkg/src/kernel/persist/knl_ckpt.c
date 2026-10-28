@@ -50,7 +50,6 @@
 #include "dtc_ckpt.h"
 #include "knl_rbp.h"
 #include "knl_ckpt.h"
-#include "dtc_remote_buffer.h"
 
 #define NEED_SYNC_LOG_INFO(ogx) ((ogx)->timed_task != CKPT_MODE_IDLE || (ogx)->trigger_task == CKPT_TRIGGER_FULL)
 

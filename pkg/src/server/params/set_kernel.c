@@ -2097,7 +2097,7 @@ status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char
         g_instance->kernel.attr.enable_remote_distribute_lock = OG_FALSE;
         OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_REMOTE_DISTRIBUTE_LOCK ignored: UB shared memory library is not loaded");
     }
-    return sql_notify_als_bool(se, item, value);   
+    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value)
@@ -2108,7 +2108,7 @@ status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value)
         g_instance->kernel.attr.enable_ubsmem = OG_FALSE;
         OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_UBSMEM ignored: UB shared memory library is not loaded");
     }
-    return sql_notify_als_bool(se, item, value);   
+    return sql_notify_als_bool(se, item, value);
 }
 
 status_t sql_verify_als_small_table_sampling_threshold(void *se, void *lex, void *def)

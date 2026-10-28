@@ -84,7 +84,7 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 {
     int ret = OG_ERROR;
     void *start = (void *)(node_id == 0 ? DRC_BASE_ADDR_0 : DRC_BASE_ADDR_1);
-    remote_sga->remote_total_pool_size = ALIGN_TO_128M(DRC_SHM_SIZE);
+    remote_sga->remote_total_pool_size = align_to_128m(DRC_SHM_SIZE);
     char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
     struct passwd *pwd;
     pwd = getpwuid(getuid());
@@ -118,7 +118,7 @@ status_t dtc_mmap_remote_data_buf(remote_sga_t *remote_sga, uint32 node_id)
 static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
 {
     uint32 node_id = g_instance->kernel.id;
-    remote_sga->remote_total_pool_size = ALIGN_TO_128M(DRC_SHM_SIZE);
+    remote_sga->remote_total_pool_size = align_to_128m(DRC_SHM_SIZE);
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
 
@@ -600,7 +600,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
             KNL_MAX_PAGE_STACK_DEPTH);
         did_s_upgrade = (s_upgraded_count > 0);
     }
-    
+
     // The same session reenter witch s lock. if like that Conditionallockbufferforcleanup in pg.
     skip_shmem_s_lock = (bool32)(mode == LATCH_MODE_S && dtc_buf_session_owns_gbp_store_fence(session, ctrl));
     if (skip_shmem_s_lock) {
@@ -718,7 +718,7 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
         ctrl->page_id.file, ctrl->page_id.page, remote_head_lsn, ctrl->page->lsn, mode,
         skip_shmem_s_lock, *is_load, readonly, (int32)ctrl->gbp_reload_in_progress,
         ctrl->gbp_reload_generation, (int32)cm_get_current_thread_id());
-    
+
     if (!(mode == LATCH_MODE_X && x_already_held) && !skip_shmem_s_lock) {
         dtc_buf_gbp_hold(ctrl, mode);
     }
@@ -795,7 +795,6 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     // OG_LOG_DEBUG_INF("[DTC_HEAP_COPY_GBP] page[%u-%u], oid: %d, page addr: %p, page_lsn %llu, page addr by meta: %p, "
     //                "meta addr: %p.", AS_PAGID(heap_page->head.id).file, AS_PAGID(heap_page->head.id).page,
     //                heap_page->oid, ctrl->shmem_page_addr, heap_page->head.lsn,
-    //                GET_PAGE_ADDR_IN_GBP((char *)shmem_page_meta), shmem_page_meta);
 
     // check page identifier of remote buf meta with remote page
     if (shmem_page_meta->file_id != AS_PAGID(heap_page->head.id).file ||
@@ -849,7 +848,6 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
         ctrl->page_id.file, ctrl->page_id.page, ctrl->gbp_reload_generation,
         (int32)cm_get_current_thread_id());
     // if (((heap_page_t *)ctrl->page)->head.type == PAGE_TYPE_PCRH_DATA) {
-    //     pcrh_log_itls_diag(session, (heap_page_t *)ctrl->page, ctrl->page_id, "gbp_reload_ok");
     // }
 
     return OG_SUCCESS;
@@ -903,6 +901,6 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     OG_LOG_DEBUG_INF("[OG_LOG_DEBUG_INF][%u-%u]: Success to copy page to gbp, current page lsn: %llu, "
         "remote page lsn head: %llu, remote page lsn tail: %llu", ctrl->page_id.file, ctrl->page_id.page,
         ctrl_page_lsn, remote_head_lsn, remote_tail_lsn);
-    
+
     return OG_SUCCESS;
 }

@@ -392,9 +392,9 @@ static status_t dtc_register_proc(void)
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_TIME_BROADCAST, dtc_process_time_broadcast, OG_FALSE, "TIME broadcast"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_SET_INCREMENT_UNBLOCK, dtc_bak_process_set_inc_unblock, OG_TRUE,
-                                             "set bak increment unblock"));
+        "set bak increment unblock"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_SET_INCREMENT_UNBLOCK_ACK, mes_process_msg_ack, OG_FALSE,
-                                             "set bak increment unblock ack"));
+        "set bak increment unblock ack"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_VERIFY_REMASTER_PARAM, drc_process_remaster_param_verify, OG_FALSE,
                                              "drc verify remaster params"));
 
@@ -471,12 +471,10 @@ static void dtc_set_mes_buffer_pool(mes_profile_t *profile)
     profile->buffer_pool_attr.pool_count = DTC_BUFFER_POOL_NUM;
 
     mes_buffer_attr_t buf_pool_attr[MES_MAX_BUFFER_STEP_NUM] = {
-        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_FIRST_BUFFER_LENGTH, buffer_count * DTC_FIRST_BUFFER_MULTIPLE },  // 64B buffer
-        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_SECOND_BUFFER_LENGTH, buffer_count * DTC_SECOND_BUFFER_MULTIPLE },  // 128B
-                                                                                                            // buffer
-        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_THIRD_BUFFER_LENGTH, buffer_count },                               // 32K buffer
-        { DTC_MSG_BUFFER_QUEUE_NUM, DTC_FOURTH_BUFFER_LENGTH, buffer_count * DTC_FOURTH_BUFFER_MULTIPLE }  // 128K
-                                                                                                           // buffer
+        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_FIRST_BUFFER_LENGTH, buffer_count * DTC_FIRST_BUFFER_MULTIPLE}, // 64B buffer
+        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_SECOND_BUFFER_LENGTH, buffer_count * DTC_SECOND_BUFFER_MULTIPLE}, // 128B buffer
+        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_THIRD_BUFFER_LENGTH, buffer_count}, // 32K buffer
+        {DTC_MSG_BUFFER_QUEUE_NUM, DTC_FOURTH_BUFFER_LENGTH, buffer_count * DTC_FOURTH_BUFFER_MULTIPLE} // 128K buffer
     };
 
     for (uint32 pool_idx = 0; pool_idx < profile->buffer_pool_attr.pool_count; pool_idx++) {
@@ -565,7 +563,7 @@ status_t dtc_startup(void)
     g_dtc->profile.inst_id = kernel->dtc_attr.inst_id;
     g_dtc->profile.node_count = kernel->db.ctrl.core.node_count;
 
-    if (ub_init_ubsm_mem() != OG_SUCCESS) {
+    if (kernel->attr.enable_ubsmem && ub_init_ubsm_mem() != OG_SUCCESS) {
         OG_LOG_RUN_WAR("UB shared memory is unavailable, _ENABLE_UBSMEM disabled for this instance");
         kernel->attr.enable_ubsmem = OG_FALSE;
         kernel->attr.enable_remote_distribute_lock = OG_FALSE;
@@ -689,7 +687,8 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
 
     drc_res_ctx_t *ogx = DRC_RES_CTX;
 
-    if (drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
+    if (session->kernel->attr.enable_ubsmem &&
+        drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("failed to deinit ubsm_mem");
     }
     free_dtc_rc();

@@ -20,9 +20,6 @@ add_compile_definitions(WSEC_DEBUG)
 add_compile_definitions(WSEC_TRACE_MEMORY)
 add_compile_definitions(WSEC_COMPILE_MIP_OTHER)
 
-# If build in docker container
-# add_compile_definitions(IN_CONTAINER)
-
 option(USE_FUZZASAN OFF)
 if (USE_FUZZASAN)
     add_compile_options(-fsanitize-coverage=trace-pc)

@@ -515,14 +515,12 @@ status_t pcrh_reorganize_with_ud_list(knl_session_t *session, cr_cursor_t *curso
         if (ud_page == NULL) {
             /* only in remote CR request, force the requester to do local read */
             cursor->local_cr = OG_TRUE;
-            pcrh_log_local_cr_set(session, cursor, "reorganize_ud_no_undo");
             return OG_SUCCESS;
         }
 
         if (itl->undo_slot >= ud_page->rows) {
             buf_leave_page(session, OG_FALSE);
             tx_record_sql(session);
-            //pcrh_log_undo_snapshot_err(session, cursor, cr_page, itl, ud_page, cursor->query_scn, 0, "reorganize_ud");
             OG_LOG_RUN_ERR("snapshot too old, detail: snapshot slot %u, undo rows %u, query scn %llu",
                            (uint32)itl->undo_slot, (uint32)ud_page->rows, cursor->query_scn);
             OG_THROW_ERROR(ERR_SNAPSHOT_TOO_OLD);
@@ -534,7 +532,6 @@ status_t pcrh_reorganize_with_ud_list(knl_session_t *session, cr_cursor_t *curso
         if (itl->xid.value != ud_row->xid.value) {
             buf_leave_page(session, OG_FALSE);
             tx_record_sql(session);
-            // pcrh_log_undo_snapshot_err(session, cursor, cr_page, itl, ud_page, cursor->query_scn, 0, "reorganize_ud_xid");
             OG_LOG_RUN_ERR("snapshot too old, detail: snapshot xid %llu, undo row xid %llu, query scn %llu",
                            itl->xid.value, ud_row->xid.value, cursor->query_scn);
             OG_THROW_ERROR(ERR_SNAPSHOT_TOO_OLD);
