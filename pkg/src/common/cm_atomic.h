@@ -732,11 +732,9 @@ static inline void ub_atomic_write_u32(volatile uint32* ptr, uint32 val)
 static inline uint32 ub_atomic_exchange_u32(volatile uint32* ptr, uint32 newval)
 {
     uint32 old;
-    while (true) {
+    do {
         old = ub_atomic_read_u32(ptr);
-        if (ub_atomic_compare_exchange_u32(ptr, &old, newval))
-            break;
-    }
+    } while (!ub_atomic_compare_exchange_u32(ptr, &old, newval));
     return old;
 }
 
@@ -826,11 +824,9 @@ static inline void ub_atomic_write_u64(volatile uint64* ptr, uint64 val)
 static inline uint64 ub_atomic_exchange_u64(volatile uint64* ptr, uint64 newval)
 {
     uint64 old;
-    while (true) {
+    do {
         old = ub_atomic_read_u64(ptr);
-        if (ub_atomic_compare_exchange_u64(ptr, &old, newval))
-            break;
-    }
+    } while (!ub_atomic_compare_exchange_u64(ptr, &old, newval));
     return old;
 }
 
@@ -926,24 +922,24 @@ static inline status_t cm_ub_update_scn(uint64_t *addr, uint64_t candidate)
         return OG_ERROR;
     }
 
-
     if ((uintptr_t)addr % sizeof(uint64_t) != 0) {
         return OG_ERROR;
     }
 
-    for (;;) {
-        uint64_t curr = 0;
+    uint64_t curr = 0;
+    while (curr < candidate) {
         if (cm_ub_get_scn(addr, &curr) != OG_SUCCESS) {
             return OG_ERROR;
         }
         if (curr >= candidate) {
-            return OG_SUCCESS;
+            break;
         }
         uint64 exp = (uint64)curr;
         if (ub_atomic_compare_exchange_u64((volatile uint64 *)(void *)addr, &exp, (uint64)candidate)) {
             return OG_SUCCESS;
         }
     }
+    return OG_SUCCESS;
 }
 
 #endif /* #ifndef WIN32: ub_atomic_* + cm_ub_* */

@@ -260,7 +260,8 @@ typedef struct st_trig_name_list {
 #define DB_SET_CURR_SCN(session, scn) KNL_SET_UB_SCN(DB_CURR_SCN_PTR(session), (scn))
 #define DB_INC_CURR_SCN(session) KNL_INC_UB_SCN(DB_CURR_SCN_PTR(session))
 #define DB_CURR_SCN_KERNEL(kernel) KNL_GET_UB_SCN(&((kernel)->scn))
-#define DB_NOW_TO_SCN(session) (MAX(DB_CURR_SCN(session), KNL_GET_SCN(&(((knl_session_t *)(session))->kernel->attr.timer->now_scn))))
+#define DB_NOW_TO_SCN(session) \
+    (MAX(DB_CURR_SCN(session), KNL_GET_SCN(&(((knl_session_t *)(session))->kernel->attr.timer->now_scn))))
 #define DB_DEFER_RECYLE_TIME(session) ((session)->kernel->attr.index_defer_recycle_time)
 
 knl_scn_t db_inc_scn(knl_session_t *session);
