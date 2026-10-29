@@ -764,7 +764,6 @@ knl_scn_t tx_inc_scn(knl_session_t *session, uint32 seg_id, txn_t *txn, knl_scn_
     undo_context_t *ogx = &session->kernel->undo_ctx;
     tx_area_t *area = &session->kernel->tran_ctx;
     knl_scn_t scn;
-    // knl_scn_t global_scn;
     timeval_t now;
     time_t init_time;
     uint64 seq = 1;

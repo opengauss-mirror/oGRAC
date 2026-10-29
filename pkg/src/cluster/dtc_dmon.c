@@ -118,7 +118,7 @@ void dmon_close(void)
         ogx->session = NULL;
     }
 }
-// TODO: 是否需要保留
+
 void dtc_process_scn_req(void *sess, mes_message_t *msg)
 {
     mes_scn_bcast_t bcast;
