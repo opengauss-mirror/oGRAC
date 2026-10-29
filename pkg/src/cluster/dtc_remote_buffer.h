@@ -28,6 +28,7 @@
 
 #include "cm_defs.h"
 #include "cm_atomic.h"
+#include <limits.h>
 #include "dtc_drc_util.h"
 #include "knl_session.h"
 #include "knl_context.h"
@@ -234,22 +235,18 @@ status_t gbp_page_from_meta_local(remote_page_info_t *meta, page_head_t **page_o
 static inline void remote_page_info_set_timeline_id(remote_page_info_t *info, uint64 timeline_id)
 {
     timeline_id &= 0xFFFFFFFFFFFFULL;
-    info->xlog_owner_node_timeline_id[0] = (uint8)(timeline_id);
-    info->xlog_owner_node_timeline_id[1] = (uint8)(timeline_id >> 8);
-    info->xlog_owner_node_timeline_id[2] = (uint8)(timeline_id >> 16);
-    info->xlog_owner_node_timeline_id[3] = (uint8)(timeline_id >> 24);
-    info->xlog_owner_node_timeline_id[4] = (uint8)(timeline_id >> 32);
-    info->xlog_owner_node_timeline_id[5] = (uint8)(timeline_id >> 40);
+    for (uint32 i = 0; i < sizeof(info->xlog_owner_node_timeline_id); i++) {
+        info->xlog_owner_node_timeline_id[i] = (uint8)(timeline_id >> (i * CHAR_BIT));
+    }
 }
 
 static inline uint64 remote_page_info_get_timeline_id(const remote_page_info_t *info)
 {
-    return ((uint64)info->xlog_owner_node_timeline_id[0]) |
-           ((uint64)info->xlog_owner_node_timeline_id[1] << 8) |
-           ((uint64)info->xlog_owner_node_timeline_id[2] << 16) |
-           ((uint64)info->xlog_owner_node_timeline_id[3] << 24) |
-           ((uint64)info->xlog_owner_node_timeline_id[4] << 32) |
-           ((uint64)info->xlog_owner_node_timeline_id[5] << 40);
+    uint64 timeline_id = 0;
+    for (uint32 i = 0; i < sizeof(info->xlog_owner_node_timeline_id); i++) {
+        timeline_id |= ((uint64)info->xlog_owner_node_timeline_id[i]) << (i * CHAR_BIT);
+    }
+    return timeline_id;
 }
 
 static inline void drc_set_node_timeline_id(remote_sga_t *rsga, uint64 timeline_id)
