@@ -34,6 +34,8 @@
 #include "dtc_recovery.h"
 #include "dtc_database.h"
 #include "knl_rbp.h"
+#include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define BUF_PAGE_COST_WITH_RBP (BUF_PAGE_COST + sizeof(buf_rbp_ctrl_t))
@@ -59,18 +61,13 @@ static bool32 buf_rbp_post_recovery_check_enabled(knl_session_t *session)
 
     return OG_TRUE;
 }
-#include "dtc_remote_lock.h"
-#include "dtc_remote_buffer.h"
 
-#define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
-#define GBP_COMPOUND_SLOT_SIZE (sizeof(remote_page_info_t) + g_dtc->kernel->attr.page_size + sizeof(uint64))
 #define MAX_TOUCH_NUM 3
-
-uint32 g_cks_level;
 
 static const remote_page_info_t g_invalid_shmem_page_metadata = {
     .lock_ptr = OG_INVALID_ID64,
     .head_lsn = 0,
+    .ckpt_flush_state = 0,
     .page_id = OG_INVALID_ID32,
     .file_id = OG_INVALID_ID16,
     .claimed_owner = OG_INVALID_ID8,
@@ -110,6 +107,7 @@ status_t buf_init(knl_session_t *session)
         /* set->size <= 32T, BUF_PAGE_COST >= 8360, set->capacity cannot overflow */
         set->capacity = (uint32)(set->size / (KNL_RBP_ENABLE(kernel) ? BUF_PAGE_COST_WITH_RBP : BUF_PAGE_COST));
         set->hwm = 0;
+        set->meta_buf = NULL;
         set->page_buf = set->addr;
         offset = (uint64)DEFAULT_PAGE_SIZE(session) * set->capacity;
         set->ctrls = (buf_ctrl_t *)(set->addr + offset);
@@ -1282,11 +1280,11 @@ static buf_ctrl_t *buf_alloc_hwm(knl_session_t *session, buf_set_t *set)
 
 static inline void buf_bind_compound_shmem_slot(buf_set_t *shmem_set, buf_ctrl_t *ctrl, uint32 id)
 {
-    char *slot_base = (char *)shmem_set->page_buf + (uint64)id * GBP_COMPOUND_SLOT_SIZE;
+    uint32 page_size = g_dtc->kernel->attr.page_size;
 
-    ctrl->shmem_page_meta = (remote_page_info_t *)slot_base;  // if your metadata type differs, adjust this cast
-    ctrl->shmem_page_addr = (page_head_t *)(slot_base + sizeof(remote_page_info_t));
-    ctrl->page = ctrl->shmem_page_addr;  // make normal buffer code operate on shared-memory page bytes
+    ctrl->shmem_page_meta = gbp_meta_at(shmem_set, id);
+    ctrl->shmem_page_addr = gbp_page_at(shmem_set, id, page_size);
+    ctrl->page = ctrl->shmem_page_addr;
 }
 
 static buf_ctrl_t *buf_alloc_hwm_shmem(knl_session_t *session, buf_set_t *shmem_set)
@@ -1469,6 +1467,17 @@ static void buf_latch_ctrl(knl_session_t *session, buf_bucket_t *bucket, buf_ctr
             ctrl->load_status = (uint8)BUF_NEED_LOAD;
             cm_spin_unlock(&bucket->lock);
             ctrl->remote_access = 0;
+            break;
+        }
+
+        /*
+         * With X latch already held, no other session can be loading this ctrl.
+         * A failed GBP migrate may leave NEED_LOAD without LOAD_FAILED and would
+         * otherwise spin forever in READ_BY_OTHER_SESSION. Only the GBP path may
+         * leave this state; non-UB keeps the original wait behavior.
+         */
+        if (session->kernel->attr.enable_ubsmem && mode == LATCH_MODE_X &&
+            ctrl->load_status == (uint8)BUF_NEED_LOAD) {
             break;
         }
 

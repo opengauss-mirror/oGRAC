@@ -131,6 +131,7 @@ status_t sql_notify_json_dyn_buf_size(void *se, void *item, char *value);
 status_t sql_verify_als_interconnect_port(void *se, void *lex, void *def);
 status_t sql_verify_als_interconnect_type(void *se, void *lex, void *def);
 status_t sql_verify_als_remote_access_limit(void *se, void *lex, void *def);
+status_t sql_verify_als_remote_sga_size(void *se, void *lex, void *def);
 status_t sql_verify_als_deadlock_detect_interval(void *se, void *lex, void *def);
 status_t sql_verify_als_auto_undo_retention(void *se, void *lex, void *def);
 

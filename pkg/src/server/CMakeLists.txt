@@ -43,7 +43,7 @@ if (USE_FUZZASAN)
     target_link_libraries(ogracd PRIVATE
                           -Wl,--start-group
                           ogserver ogracsql ogkernel ogmes ogprotocol ogcommon ogclient
-                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4 Secodefuzz
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4 numa Secodefuzz
                           -Wl,--end-group)
 else ()
     add_definitions(-DBUILD_SRV_MAIN)
@@ -51,12 +51,12 @@ else ()
     target_link_libraries(ogracd PRIVATE
                           -Wl,--start-group
                           ogserver ogracsql ogkernel ogmes ogprotocol ogcommon ogclient
-                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4 numa
                           -Wl,--end-group)         
     target_link_libraries(oGRAC PRIVATE
                           -Wl,--start-group
                           ogserver ogracsql ogkernel ogmes ogprotocol ogcommon ogclient
-                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4 numa
                           -Wl,--end-group)
 endif(USE_FUZZASAN)
 target_compile_definitions(ogracd PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})

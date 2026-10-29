@@ -202,7 +202,7 @@ config_item_t g_parameters[] = {
       sql_notify_als_bool, NULL },
     { "_UB_PAGE_HOT_THRESHOLD", OG_TRUE, ATTR_NONE, "100", NULL, NULL, "-", "[1,10000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_THRESHOLD, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_threshold,
-      NULL, NULL, NULL },
+      sql_notify_als_ub_page_hot_threshold, NULL, NULL },
     { "_UB_PAGE_HOT_TIMEOUT", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", "[1,1000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_TIMEOUT, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_timeout,
       sql_notify_als_ub_page_hot_timeout, NULL, NULL },
@@ -1129,6 +1129,8 @@ config_item_t g_parameters[] = {
       PARAM_DTC_REMOTE_DATA_BUF_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_data_buffer_size, NULL, NULL, NULL },
     { "DTC_REMOTE_BUF_POOL_NUM", OG_TRUE, ATTR_NONE, "1", NULL, NULL, "-", "[1, 128]", "OG_TYPE_INTEGER", NULL,
       PARAM_DTC_REMOTE_BUF_POOL_NUM, EFFECT_REBOOT, CFG_INS, sql_verify_als_buf_pool_num, NULL, NULL, NULL },
+    { "DTC_REMOTE_SGA_SIZE", OG_TRUE, ATTR_NONE, "8G", NULL, NULL, "-", "[512M, 32T]", "OG_TYPE_INTEGER", NULL,
+      PARAM_DTC_REMOTE_SGA_SIZE, EFFECT_REBOOT, CFG_INS, sql_verify_als_remote_sga_size, NULL, NULL, NULL },
     { "CPU_GROUP_INFO", OG_TRUE, ATTR_NONE, "0", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL, PARAM_CPU_GROUP_INFO,
       EFFECT_REBOOT, CFG_INS, sql_verify_als_cpu_inf_str, NULL, NULL, NULL },
 
@@ -1260,6 +1262,9 @@ config_item_t g_parameters[] = {
     { "ENABLE_PARA_LOG_DFX", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM_ENABLE_PARA_LOG_DFX, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_para_log_dfx,
       sql_notify_als_bool, NULL },
+    { "PEER_FLUSH_LSN_TIMEOUT_MS", OG_TRUE, ATTR_NONE, "5000", NULL, NULL, "-", "[1,4294967295]", "OG_TYPE_INTEGER", NULL,
+      PARAM_PEER_FLUSH_LSN_TIMEOUT_MS, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_peer_flush_lsn_timeout_ms,
+      sql_notify_als_peer_flush_lsn_timeout_ms, NULL, NULL },
 };
 
 void srv_get_config_info(config_item_t **params, uint32 *count)

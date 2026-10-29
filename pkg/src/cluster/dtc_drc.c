@@ -46,6 +46,7 @@
 #include <unistd.h>
 #endif
 #include "dtc_remote_lock.h"
+#include "dtc_remote_buffer.h"
 
 extern bool32 g_enable_fdsa;
 drc_res_ctx_t g_drc_res_ctx;  // need to put it to global DTC instance structure later
@@ -1086,7 +1087,7 @@ static void drc_claim_new_page_hot_gbp(knl_session_t *session, claim_info_t *cla
     uint8 cur_owner = buf_res->claimed_owner;
     drc_req_info_t *converting_req = &(buf_res->converting.req_info);
 
-    OG_LOG_RUN_INF("[DRC-GBP][%u-%u][claim new page hot]: 5-2.current owner=%u, req_mode=%u, claim_mode=%u, "
+    OG_LOG_DEBUG_INF("[DRC-GBP][%u-%u][claim new page hot]: 5-2.current owner=%u, req_mode=%u, claim_mode=%u, "
         "master_id=%u", pagid.file, pagid.page, cur_owner, converting_req->req_mode, claim_info->mode, master_id);
 
     knl_panic(converting_req->req_mode == claim_info->mode);
@@ -1337,7 +1338,7 @@ static status_t drc_clear_converting_q(knl_session_t *session, claim_info_t *cla
 
     /* bounds part of offset-validity */
     uint64 meta_off = claim_info->shmem_page_meta_off;
-    if (meta_off + g_dtc->kernel->attr.page_size > rsga->remote_buf_alloc_size) {
+    if (meta_off + GBP_META_SIZE > rsga->remote_buf_alloc_size) {
         OG_LOG_RUN_ERR("[DRC][%u-%u] offset out of bounds, meta_off=%llu", page_id.file, page_id.page, meta_off);
         return OG_ERROR;
     }
@@ -1682,6 +1683,9 @@ status_t drc_request_page_owner(knl_session_t *session, page_id_t pagid, drc_req
     result->action = DRC_RES_INVALID_ACTION;
     result->is_retry = OG_FALSE;
     result->req_mode = req_info->req_mode;
+    result->gbp_action = DRC_NEED_NO_MOVE;
+    result->gbp_buf_ctrl = NULL;
+    result->shmem_page_addr = NULL;
     req_info->req_owner_result = DRC_REQ_OWNER_WAITING;
 
     if (req_info->inst_id >= OG_MAX_INSTANCES || IS_INVALID_PAGID(pagid)) {
@@ -2138,8 +2142,14 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
     }
 
     char *base = rsga->remote_buf_addr[gbp_owner];
-    page_head_t *shmem_page_addr = (page_head_t *)(base + claim_info->shmem_page_meta_off + sizeof(remote_page_info_t));
-    remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(base + claim_info->shmem_page_meta_off);
+    remote_page_info_t *shmem_page_meta = NULL;
+    page_head_t *shmem_page_addr = NULL;
+    if (gbp_resolve_from_meta_off(base, claim_info->shmem_page_meta_off, &shmem_page_meta, &shmem_page_addr) !=
+        OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[DRC][%u-%u] claim hot failed: resolve meta_off=%llu", page_id.file, page_id.page,
+                       (unsigned long long)claim_info->shmem_page_meta_off);
+        return;
+    }
     uint64 lock_ptr = shmem_page_meta->lock_ptr;
     drc_gbp_distribute_lock(session, lock_ptr, page_id, LATCH_MODE_X);
 

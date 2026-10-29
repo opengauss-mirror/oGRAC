@@ -83,6 +83,7 @@
 #include "dtc_database.h"
 #include "dtc_backup.h"
 #include "dtc_dcs.h"
+#include "dtc_remote_buffer.h"
 #include "srv_param_common.h"
 #ifdef __cplusplus
 extern "C" {
@@ -247,6 +248,11 @@ const wait_event_desc_t g_wait_event_desc[] = {
     { "broadcast btree root page", "", "Cluster" },
     { "ckpt disable wait", "", "Commit" },
     { "log write reserve space", "", "Commit" },
+    { "dtc: wait peer flush lsn", "", "Cluster" },
+    { "dcs: gbp transfer", "", "Cluster" },
+    { "dtc: gbp check local page", "", "Cluster" },
+    { "dtc: gbp try load from gbp", "", "Cluster" },
+    { "ckpt: gbp prepare flush", "", "Cluster" },
 };
 
 #ifdef WIN32
@@ -746,6 +752,54 @@ static inline void knl_init_session_stat(knl_session_t *session)
     session->stat->dcs_buffer_sends = 0;
     session->stat->dcs_cr_gets = 0;
     session->stat->dcs_cr_sends = 0;
+    session->stat->ub_cold_old_route_count = 0; // UB-stats
+    session->stat->ub_cold_old_route_time = 0; // UB-stats
+    session->stat->ub_hot_first_copy_count = 0; // UB-stats
+    session->stat->ub_hot_first_copy_time = 0; // UB-stats
+    session->stat->ub_hot_validated_hit_count = 0; // UB-stats
+    session->stat->ub_hot_validated_hit_time = 0; // UB-stats
+    session->stat->ub_cold_promote_count = 0; // UB-stats
+    session->stat->ub_cold_promote_time = 0; // UB-stats
+    session->stat->ub_hot_refresh_count = 0; // UB-stats
+    session->stat->ub_hot_refresh_time = 0; // UB-stats
+    session->stat->ub_load_from_disk_count = 0; // UB-stats
+    session->stat->ub_load_from_disk_time = 0; // UB-stats
+    session->stat->ub_local_hit_count = 0; // UB-stats
+    session->stat->ub_local_hit_time = 0; // UB-stats
+    session->stat->ub_vhit_gbp_lock_s_count = 0; // UB-stats
+    session->stat->ub_vhit_gbp_lock_s_time = 0; // UB-stats
+    session->stat->ub_vhit_gbp_lock_x_count = 0; // UB-stats
+    session->stat->ub_vhit_gbp_lock_x_time = 0; // UB-stats
+    session->stat->ub_vhit_reload_wait_count = 0; // UB-stats
+    session->stat->ub_vhit_reload_wait_time = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_s_count = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_s_time = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_x_count = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_x_time = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_x_home_node0_count = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_x_home_node1_count = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_s_home_node0_count = 0; // UB-stats
+    session->stat->ub_refresh_gbp_lock_s_home_node1_count = 0; // UB-stats
+    session->stat->ub_refresh_reload_wait_count = 0; // UB-stats
+    session->stat->ub_refresh_reload_wait_time = 0; // UB-stats
+    session->stat->ub_refresh_readonly_wait_count = 0; // UB-stats
+    session->stat->ub_refresh_readonly_wait_time = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_wait_reload_count = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_wait_reload_time = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_buf_count = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_buf_time = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_local_count = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_local_time = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_remote_count = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_copy_remote_time = 0; // UB-stats
+    session->stat->ub_store_to_gbp_copy_meta_count = 0; // UB-stats
+    session->stat->ub_store_to_gbp_copy_meta_time = 0; // UB-stats
+    session->stat->ub_store_to_gbp_copy_page_count = 0; // UB-stats
+    session->stat->ub_store_to_gbp_copy_page_time = 0; // UB-stats
+    session->stat->ub_store_to_gbp_copy_tail_lsn_count = 0; // UB-stats
+    session->stat->ub_store_to_gbp_copy_tail_lsn_time = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_readonly_wait_count = 0; // UB-stats
+    session->stat->ub_reload_from_gbp_readonly_wait_time = 0; // UB-stats
     session->stat->cr_reads = 0;
     session->stat->dcs_cr_reads = 0;
     session->stat->dcs_net_time = 0;
@@ -934,6 +988,9 @@ void knl_init_session(knl_handle_t kernel, knl_handle_t knl_session, uint32 uid,
     session->log_diag = OG_FALSE;
     session->user_locked_ddl = OG_FALSE;
     session->user_locked_lst = NULL;
+    session->gbp_copy_temp = NULL;
+    session->gbp_copy_temp_size = 0;
+    session->gbp_copy_temp_phys_numa = -1;
 #ifdef LOG_DIAG
     for (uint32 i = 0; i < KNL_MAX_ATOMIC_PAGES; i++) {
         session->log_diag_page[i] = (char *)malloc(ogx->attr.page_size);
@@ -980,6 +1037,8 @@ void knl_destroy_session(knl_handle_t kernel, uint32 sid)
     if (session == NULL) {
         return;
     }
+
+    dtc_buf_free_gbp_copy_temp(session);
 
 #ifdef LOG_DIAG
     for (uint32 i = 0; i < KNL_MAX_ATOMIC_PAGES; i++) {

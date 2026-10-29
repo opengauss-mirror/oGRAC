@@ -164,6 +164,8 @@ knl_column_t g_gbp_lock_info_cols[] = {
     { 11, "GBP_OWNER", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
     { 12, "THREAD_ID", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
     { 13, "READONLY", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 14, "READONLY_OWNER_NODE", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 15, "READONLY_OWNER_TID", 0, 0, OG_TYPE_INTEGER, sizeof(int32), 0, 0, OG_FALSE, 0, { 0 } },
 };
 
 #define MAX_MES_TYPE_LEN 5
@@ -1400,8 +1402,12 @@ static status_t dtc_view_gbp_lock_info_fetch(knl_handle_t se, knl_cursor_t *curs
         uint32 slot = scan->ctrl_id;
         scan->ctrl_id++;
 
-        uint32 per_page = sizeof(remote_page_info_t) + session->kernel->attr.page_size + sizeof(uint64);
-        remote_page_info_t *shmem_page_meta = (remote_page_info_t *)(set->page_buf + (uint64)slot * (uint64)per_page);
+        uint32 page_size = session->kernel->attr.page_size;
+        remote_page_info_t *shmem_page_meta = gbp_meta_at(set, slot);
+        if (set->meta_buf == NULL) {
+            continue;
+        }
+        (void)page_size;
         uint64 lock_addr = shmem_page_meta->lock_ptr;
         if (lock_addr == 0) {
             continue;
@@ -1412,7 +1418,10 @@ static status_t dtc_view_gbp_lock_info_fetch(knl_handle_t se, knl_cursor_t *curs
         int32 wr_wait = 0;
         int32 owner_tid = 0;
         int32 readonly = 0;
-        drc_gbp_lock_info_debug_snapshot(lock_addr, &state, &x_owner, &wr_wait, &owner_tid, &readonly);
+        int32 readonly_owner_node = 0;
+        int32 readonly_owner_tid = 0;
+        drc_gbp_lock_info_debug_snapshot(lock_addr, &state, &x_owner, &wr_wait, &owner_tid, &readonly,
+            &readonly_owner_node, &readonly_owner_tid);
         dtc_view_gbp_lock_info_mode_str(mode_str, GBP_LOCK_INFO_MODE_LEN, state, wr_wait);
 
         uint32 ts_num = 0;
@@ -1436,6 +1445,8 @@ static status_t dtc_view_gbp_lock_info_fetch(knl_handle_t se, knl_cursor_t *curs
         OG_RETURN_IFERR(row_put_int32(&ra, (int32)shmem_page_meta->claimed_owner));
         OG_RETURN_IFERR(row_put_int32(&ra, owner_tid));
         OG_RETURN_IFERR(row_put_int32(&ra, readonly));
+        OG_RETURN_IFERR(row_put_int32(&ra, readonly_owner_node));
+        OG_RETURN_IFERR(row_put_int32(&ra, readonly_owner_tid));
 
         cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
         cursor->rowid.vmid++;

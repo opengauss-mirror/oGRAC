@@ -527,7 +527,11 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
     page_id_t page_id;
     uint8 action;
     uint64 clean_lsn;
+    uint64 gbp_ckpt_lsn = 0;
+    uint64 gbp_claimed_state = 0;
+    uint64 gbp_old_state = 0;
     bool32 latched;
+    ckpt_gbp_prepare_result_t gbp_result = CKPT_GBP_PREPARE_FLUSHABLE;
     errno_t ret;
     uint32 count;
 
@@ -591,6 +595,35 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
             continue;
         }
 
+        if (session->kernel->attr.enable_ubsmem) {
+            knl_begin_session_wait(session, CKPT_GBP_PREPARE_FLUSH, OG_TRUE);
+            gbp_result = ckpt_gbp_prepare_flush(session, ogx, ctrl, &gbp_ckpt_lsn, &gbp_claimed_state,
+                &gbp_old_state);
+            knl_end_session_wait(session, CKPT_GBP_PREPARE_FLUSH);
+            if (gbp_result == CKPT_GBP_PREPARE_RETRY) {
+                i--;
+                buf_unlatch_page(session, ctrl);
+                SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
+                count--;
+                continue;
+            }
+            if (gbp_result == CKPT_GBP_PREPARE_SKIP) {
+                buf_unlatch_page(session, ctrl);
+                if (!dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session), page_id,
+                    gbp_ckpt_lsn)) {
+                    i--;
+                    SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
+                    count--;
+                }
+                continue;
+            }
+            if (gbp_result == CKPT_GBP_PREPARE_ERROR) {
+                buf_unlatch_page(session, ctrl);
+                cm_spin_unlock(&group->lock);
+                return OG_ERROR;
+            }
+        }
+
         if (clean_lsn > ctrl->page->lsn && g_rc_ctx->status >= REFORM_RECOVER_DONE) {
             buf_unlatch_page(session, ctrl);
             OG_LOG_RUN_ERR(
@@ -643,6 +676,12 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
         w_group->items[w_group->count].ctrl = ctrl;
         w_group->items[w_group->count].buf_id = w_group->count;
         w_group->items[w_group->count].need_punch = OG_FALSE;
+        w_group->items[w_group->count].gbp_ckpt_mark = (bool8)(gbp_result == CKPT_GBP_PREPARE_CLAIMED);
+        w_group->items[w_group->count].gbp_ckpt_lsn = gbp_ckpt_lsn;
+        w_group->items[w_group->count].gbp_claimed_state = gbp_claimed_state;
+        w_group->items[w_group->count].gbp_old_state = gbp_old_state;
+        w_group->items[w_group->count].reserved[0] = 0;
+        w_group->items[w_group->count].reserved[1] = 0;
 
         if (ckpt_encrypt(session, ogx, w_group) != OG_SUCCESS) {
             cm_spin_unlock(&group->lock);

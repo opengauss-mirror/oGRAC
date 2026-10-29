@@ -721,6 +721,19 @@ status_t db_mount(knl_session_t *session)
     }
 
     if (DB_ATTR_CLUSTER(session)) {
+        if (kernel->attr.enable_ubsmem) {
+            uint32 self_id = kernel->dtc_attr.inst_id;
+            uint64 old_timeline_id = db->ctrl.core.instance_timeline_id[self_id];
+            if (old_timeline_id == 0) {
+                db->ctrl.core.instance_timeline_id[self_id] = 1;
+            } else {
+                db->ctrl.core.instance_timeline_id[self_id] = old_timeline_id + 1;
+            }
+            if (db_save_core_ctrl(session) != OG_SUCCESS) {
+                CM_ABORT(0, "[DB] ABORT INFO: failed to save timeline id");
+            }
+        }
+
         if (dtc_startup() != OG_SUCCESS) {
             cm_spin_unlock(&kernel->lock);
             return OG_ERROR;
@@ -1077,6 +1090,9 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
     }
 
     if (session->kernel->attr.enable_ubsmem) {
+        uint64 my_timeline_id = session->kernel->db.ctrl.core.instance_timeline_id[g_rc_ctx->self_id];
+        drc_set_node_timeline_id(&DRC_RES_CTX->remote_sga, my_timeline_id);
+
         if (!rc_is_master()) {
             // self map remote shared buffer of other nodes
             drc_res_ctx_t *ogx = DRC_RES_CTX;
@@ -1107,9 +1123,8 @@ static status_t db_mount_to_recovery(knl_session_t *session, db_open_opt_t *opti
             broadcast_remote_buf_allocated();
         }
 
-        if (session->kernel->attr.enable_remote_distribute_lock) {
-            init_lock_comm_queue();
-        }
+        // compile option decide atomic or distributed
+        init_lock_comm_queue();
     }
 
     if (log_check_asn(session, options->ignore_logs) != OG_SUCCESS) {

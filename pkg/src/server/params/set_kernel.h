@@ -183,6 +183,7 @@ status_t sql_notify_als_temptable_support_batch(void *se, void *item, char *valu
 status_t sql_notify_als_enable_remote_distribute_lock(void *se, void *item, char *value);
 status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value);
 status_t sql_verify_als_ub_page_hot_threshold(void *se, void *lex, void *def);
+status_t sql_notify_als_ub_page_hot_threshold(void *se, void *item, char *value);
 status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def);
 status_t sql_notify_als_ub_page_hot_timeout(void *se, void *item, char *value);
 status_t sql_notify_als_small_table_sampling_threshold(void *se, void *item, char *value);
@@ -209,6 +210,7 @@ status_t sql_notify_als_private_row_locks(void *se, void *item, char *value);
 status_t sql_notify_als_private_key_locks(void *se, void *item, char *value);
 status_t sql_notify_als_page_clean_wait_timeout(void *se, void *item, char *value);
 status_t sql_notify_als_ckpt_wait_timeout(void *se, void *item, char *value);
+status_t sql_notify_als_peer_flush_lsn_timeout_ms(void *se, void *item, char *value);
 status_t sql_notify_password_verify(void *se, void *item, char *value);
 status_t sql_notify_ograc_stats(void *se, void *item, char *value);
 status_t sql_notify_event_tracking_stats(void *se, void *item, char *value);

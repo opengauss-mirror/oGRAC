@@ -458,10 +458,26 @@ status_t sql_verify_als_ub_page_hot_threshold(void *se, void *lex, void *def)
     }
 
     if (value > OG_MAX_UB_PAGE_HOT_THRESHOLD || value < 1) {
-        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "CR_POOL_COUNT", (int64)1, (int64)OG_MAX_UB_PAGE_HOT_THRESHOLD);
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_UB_PAGE_HOT_THRESHOLD", (int64)1, (int64)OG_MAX_UB_PAGE_HOT_THRESHOLD);
         return OG_ERROR;
     }
 
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_ub_page_hot_threshold(void *se, void *item, char *value)
+{
+    uint32 num = 0;
+
+    OG_RETURN_IFERR(cm_str2uint32(value, &num));
+
+    if (num < OG_MIN_UB_PAGE_HOT_THRESHOLD || num > OG_MAX_UB_PAGE_HOT_THRESHOLD) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_UB_PAGE_HOT_THRESHOLD", (int64)OG_MIN_UB_PAGE_HOT_THRESHOLD,
+            (int64)OG_MAX_UB_PAGE_HOT_THRESHOLD);
+        return OG_ERROR;
+    }
+
+    g_instance->kernel.attr.ub_page_hot_threshold = num;
     return OG_SUCCESS;
 }
 
@@ -1956,17 +1972,17 @@ status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def)
     uint32 num = 0;
     if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
         cm_reset_error();
-        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_ASHRINK_WAIT_TIME");
+        OG_THROW_ERROR(ERR_INVALID_PARAMETER, "_UB_PAGE_HOT_TIMEOUT");
         return OG_ERROR;
     }
 
     if (num < OG_MIN_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_ASHRINK_WAIT_TIME", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
     if (num > OG_MAX_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_ASHRINK_WAIT_TIME", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
@@ -1976,21 +1992,20 @@ status_t sql_verify_als_ub_page_hot_timeout(void *se, void *lex, void *def)
 status_t sql_notify_als_ub_page_hot_timeout(void *se, void *item, char *value)
 {
     uint32 num = 0;
-    if (cm_str2uint32(value, &num) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
+
+    OG_RETURN_IFERR(cm_str2uint32(value, &num));
 
     if (num < OG_MIN_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_ASHRINK_WAIT_TIME", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MIN_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
     if (num > OG_MAX_UB_PAGE_HOT_TIMEOUT) {
-        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_ASHRINK_WAIT_TIME", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_UB_PAGE_HOT_TIMEOUT", (int64)OG_MAX_UB_PAGE_HOT_TIMEOUT);
         return OG_ERROR;
     }
 
-    g_instance->kernel.attr.ashrink_wait_time = num;
+    g_instance->kernel.attr.ub_page_hot_timeout = num;
     return OG_SUCCESS;
 }
 
@@ -2370,6 +2385,14 @@ status_t sql_notify_als_ckpt_wait_timeout(void *se, void *item, char *value)
     uint32 timeout = 0;
     OG_RETURN_IFERR(cm_str2uint32(value, &timeout));
     g_instance->kernel.attr.ckpt_timed_task_delay = (uint32)timeout;
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_peer_flush_lsn_timeout_ms(void *se, void *item, char *value)
+{
+    uint32 timeout = 0;
+    OG_RETURN_IFERR(cm_str2uint32(value, &timeout));
+    g_instance->kernel.attr.peer_flush_lsn_timeout_ms = (uint32)timeout;
     return OG_SUCCESS;
 }
 

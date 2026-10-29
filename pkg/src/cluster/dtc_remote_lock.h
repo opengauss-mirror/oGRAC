@@ -61,9 +61,18 @@ uint64 ub_rw_lock_get_owner_node(ub_rw_lock_t *lock);
 int32 ub_rw_lock_get_state(ub_rw_lock_t *lock);
 bool32 ub_rw_lock_is_x_held_by_current_thread(ub_rw_lock_t *lock, uint8_t node_id, int32_t tid);
 
-void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
-    int32 *write_waiters, int32 *owner_tid, int32 *readonly);
+/* GBP lock home node by lock_ptr address (DRC_BASE_ADDR_0/1). */
+uint8 drc_gbp_lock_home_node(uint64 lock_ptr);
+void drc_gbp_lock_lat_record(bool32 is_x, uint64 time_us);
+void drc_gbp_lock_lat_percentile(bool32 is_x, uint64 *p80_us, uint64 *p90_us, uint64 *p80_count, uint64 *p90_count);
+/* Overall path latency: hot refresh / hot validated hit. */
+void drc_ub_path_lat_record(bool32 is_hot_refresh, uint64 time_us);
+void drc_ub_path_lat_percentile(bool32 is_hot_refresh, uint64 *p80_us, uint64 *p90_us, uint64 *p80_count,
+    uint64 *p90_count);
 
+void drc_gbp_lock_info_debug_snapshot(uint64 lock_ptr, int32 *atomic_state, int32 *x_owner_node,
+    int32 *write_waiters, int32 *owner_tid, int32 *readonly, int32 *readonly_owner_node,
+    int32 *readonly_owner_tid);
 status_t init_lock_comm_queue();
 void drc_init_remote_lock(ub_rw_lock_t **ub_lock, ub_lock_config_t *config, ub_location_t *creator);
 

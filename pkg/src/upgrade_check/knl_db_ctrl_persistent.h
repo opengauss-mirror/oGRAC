@@ -89,12 +89,12 @@ typedef struct st_core_ctrl {
     log_point_t lrep_point;   // log point when logic replication is turned on.
     uint32 max_column_count;  // column count: 1024, 2048,3072, 4096
     bool32 open_inconsistency;
-    uint32 charset_id; // database charset :0 - UTF8,1 - GBK
+    uint32 charset_id;  // database charset :0 - UTF8,1 - GBK
 
-    uint32 dw_file_id; // dw file id
+    uint32 dw_file_id;  // dw file id
     uint32 dw_area_pages;
-    
-    uint32 system_space; // space id
+
+    uint32 system_space;  // space id
     uint32 sysaux_space;
     uint32 user_space;
     uint32 temp_undo_space;
@@ -107,6 +107,8 @@ typedef struct st_core_ctrl {
     uint64 ddl_pitr_lsn;
     bool32 inc_backup_block;
     char dbcompatibility;
+    char unused[3];
+    uint64 instance_timeline_id[OG_MAX_INSTANCES];  // instance timeline id for each node
 
     /*
      * Parallel log flush is fixed at CREATE DATABASE time: logfile ctrl->group_id is only ever
@@ -118,7 +120,7 @@ typedef struct st_core_ctrl {
     uint8 para_log_mode;   // PARA_LOG_DB_MODE_*
     uint8 para_log_groups; // lane group count the database was created with
 
-    char reserved[2029];                          // reserved bytes for nonclustered database
+    char reserved[1514];                          // reserved bytes for nonclustered database
     bool32 clustered;                             // is clustered database?
     uint32 node_count;                            // instance nodes
     uint32 max_nodes;                             // max instance nodes number
