@@ -1657,8 +1657,8 @@ status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bo
         def->create_as_select = OG_TRUE;
     }
 
-    // Process table attributes
-    if (table_attrs != NULL) {
+    // Apply defaults even when no table attributes are specified; external tables skip them.
+    if (extern_def == NULL) {
         OG_RETURN_IFERR(og_parse_table_attrs(stmt, def, table_attrs));
     }
 

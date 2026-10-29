@@ -1107,7 +1107,7 @@ status_t og_parse_table_attrs(sql_stmt_t *stmt, knl_table_def_t *table_def, gali
     table_def->pctfree = OG_INVALID_ID32;
     table_def->csf = OG_INVALID_ID8;
 
-    for (uint32 i = 0; i < table_attrs->count; i++) {
+    for (uint32 i = 0; table_attrs != NULL && i < table_attrs->count; i++) {
         attr = (table_attr_t *)cm_galist_get(table_attrs, i);
         
         switch (attr->type) {
