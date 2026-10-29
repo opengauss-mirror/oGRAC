@@ -23,7 +23,8 @@ C02
 SQL> 
 SQL> /* bare close: nothing follows the closing mark
   2    note */
-SQL> select 3 as c03 from sys.sys_dummy;
+  3 select 3 as c03
+  4 from sys.sys_dummy;
 
 C03         
 ------------
@@ -34,11 +35,11 @@ C03
 SQL> 
 SQL> /* header comment
   2    ahead of a procedure block */
-SQL> create or replace procedure p_comment_close as
-  2 begin
-  3     null;
-  4 end;
-  5 /
+  3 create or replace procedure p_comment_close as
+  4 begin
+  5     null;
+  6 end;
+  7 /
 
 Succeed.
 

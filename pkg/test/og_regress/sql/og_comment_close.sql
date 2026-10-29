@@ -7,7 +7,8 @@ select 1 as c01 from sys.sys_dummy;
 
 /* bare close: nothing follows the closing mark
    note */
-select 3 as c03 from sys.sys_dummy;
+select 3 as c03
+from sys.sys_dummy;
 
 /* header comment
    ahead of a procedure block */

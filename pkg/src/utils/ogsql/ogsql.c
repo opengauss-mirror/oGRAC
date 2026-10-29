@@ -4965,8 +4965,9 @@ static bool32 OgsqlMultilineRenderFramePop(uint32 *rows, uint32 *historyLen, boo
 
 static uint32 ogsql_get_next_multiline_line_no(uint32 flag)
 {
-    uint32 next_line_no = (flag == OGSQL_BLOCK_TAG || flag == OGSQL_COMMENT_TAG) ?
-        OGSQL_FIRST_BLOCK_LINE_NO : OGSQL_FIRST_MULTI_LINE_NO;
+    uint32 next_line_no = (flag == OGSQL_BLOCK_TAG || flag == OGSQL_COMMENT_TAG || flag == OGSQL_COMMENT_END_TAG)
+                              ? OGSQL_FIRST_BLOCK_LINE_NO
+                              : OGSQL_FIRST_MULTI_LINE_NO;
 
     for (uint32 i = 0; i < g_sql_text.len; i++) {
         if (g_sql_text.str[i] == '\n') {
@@ -4998,7 +4999,7 @@ static void ogsql_prepare_rollback_line(uint32 flag, OgsqlRollbackLineT *lineInf
     lineInfo->lineStart = 0;
     lineInfo->copyLen = 0;
     lineInfo->stripTrailingLineBreak = OG_FALSE;
-    lineInfo->keepLineBreak = (flag == OGSQL_BLOCK_TAG || flag == OGSQL_COMMENT_TAG);
+    lineInfo->keepLineBreak = (flag == OGSQL_BLOCK_TAG || flag == OGSQL_COMMENT_TAG || flag == OGSQL_COMMENT_END_TAG);
     lineInfo->trailingLineBreak = (g_sql_text.str[lineInfo->lineEnd - 1] == '\n') ? OG_TRUE : OG_FALSE;
     if (lineInfo->trailingLineBreak && lineInfo->keepLineBreak) {
         lineInfo->stripTrailingLineBreak = OG_TRUE;
@@ -5083,6 +5084,9 @@ static void ogsql_rollback_multiline_input(uint32 *flag, uint32 *line_no, char *
     }
 
     OgsqlRefreshMultilineState();
+    if (*flag == OGSQL_COMMENT_END_TAG && g_in_comment_count > 0) {
+        *flag = OGSQL_COMMENT_TAG;
+    }
     *line_no = ogsql_get_next_multiline_line_no(*flag);
 }
 
@@ -5118,7 +5122,7 @@ static void OgsqlRunHandleReadlineAbort(OgsqlReadlineAbortCtxT *ctx)
     if (ctx == NULL) {
         return;
     }
-    if (*ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
+    if (*ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG | OGSQL_COMMENT_END_TAG)) {
         ogsql_rollback_multiline_input(ctx->flag, ctx->lineNo, ctx->cmdBuf, ctx->inputMaxLen, ctx->preloadLen,
             ctx->pendingHistory);
         if (*ctx->flag == OGSQL_SINGLE_TAG) {
@@ -5160,11 +5164,12 @@ static void OgsqlRunClearHistory(void)
 
 static void OgsqlRunPreparePrompt(OgsqlRunCtxT *ctx)
 {
-    ctx->welcomeWidth = ogsql_print_welcome(ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG),
-        ctx->lineNo);
+    ctx->welcomeWidth =
+        ogsql_print_welcome(ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG | OGSQL_COMMENT_END_TAG),
+                            ctx->lineNo);
     if (ctx->welcomeWidth == 0) {
         ctx->welcomeBuf[0] = '\0';
-    } else if (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
+    } else if (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG | OGSQL_COMMENT_END_TAG)) {
         (void)snprintf_s(ctx->welcomeBuf, sizeof(ctx->welcomeBuf), sizeof(ctx->welcomeBuf) - 1, "%3u ",
             ctx->lineNo);
     } else {
@@ -5193,12 +5198,24 @@ static bool32 OgsqlRunReadLine(OgsqlRunCtxT *ctx)
         }
         OgsqlLineEditStateT editState = { ctx->cmdBuf, inputMaxLen, 0, 0, 0, 0, 0, NULL };
         OgsqlRenderCtxT renderCtx = OgsqlMakeRenderCtx(ctx->welcomeBuf, ctx->welcomeWidth, 0, NULL);
-        OgsqlReadlineCtxT readlineCtx = { &ctx->histCount, &ctx->listNum,
-            (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) != 0, ctx->preloadLen,
-            g_sql_text.str, g_sql_text.len, &ctx->bracketedPasteActive, &ctx->abortLine, &ctx->acceptedInputLen,
-            &ctx->acceptedRenderRows, g_cmd_defs, OGSQL_CMD_COUNT, ctx,
-            OgsqlMultilineHistorySnapshotSave, OgsqlMultilineHistorySnapshotRestore, &ctx->historyBrowsing,
-            &ctx->historySelected };
+        OgsqlReadlineCtxT readlineCtx = { &ctx->histCount,
+                                          &ctx->listNum,
+                                          (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG |
+                                                        OGSQL_COMMENT_END_TAG)) != 0,
+                                          ctx->preloadLen,
+                                          g_sql_text.str,
+                                          g_sql_text.len,
+                                          &ctx->bracketedPasteActive,
+                                          &ctx->abortLine,
+                                          &ctx->acceptedInputLen,
+                                          &ctx->acceptedRenderRows,
+                                          g_cmd_defs,
+                                          OGSQL_CMD_COUNT,
+                                          ctx,
+                                          OgsqlMultilineHistorySnapshotSave,
+                                          OgsqlMultilineHistorySnapshotRestore,
+                                          &ctx->historyBrowsing,
+                                          &ctx->historySelected };
         OgsqlReadlineResultT readlineResult = ogsql_line_editor_read(&editState, &renderCtx, &readlineCtx);
         if (readlineResult == OGSQL_READLINE_RESULT_STOP) {
             return OG_FALSE;
@@ -5277,8 +5294,20 @@ static bool32 OgsqlRunSkipInvalidOrEmpty(OgsqlRunCtxT *ctx)
 
 static bool32 OgsqlRunDetectCommandMode(OgsqlRunCtxT *ctx)
 {
-    if (ctx->flag != OGSQL_SINGLE_TAG) {
+    bool32 commentClosed = (ctx->flag == OGSQL_COMMENT_END_TAG);
+    uint32 savedLineNo = ctx->lineNo;
+    text_t trimmedLine;
+
+    if (ctx->flag != OGSQL_SINGLE_TAG && !commentClosed) {
         return OG_FALSE;
+    }
+    if (commentClosed) {
+        trimmedLine = ctx->line;
+        cm_trim_text(&trimmedLine);
+        if (CM_IS_EMPTY(&trimmedLine)) {
+            return OG_FALSE;
+        }
+        ctx->flag = OGSQL_SINGLE_TAG;
     }
     ogsql_if_multi_line(&ctx->line, &ctx->flag);
     if (ctx->flag == OGSQL_EMPTY_TAG) {
@@ -5292,7 +5321,7 @@ static bool32 OgsqlRunDetectCommandMode(OgsqlRunCtxT *ctx)
         ogsql_if_block(&ctx->line, &ctx->flag);
     }
     if (ctx->flag & (OGSQL_BLOCK_TAG | OGSQL_MULTI_TAG | OGSQL_COMMENT_TAG)) {
-        ctx->lineNo = OGSQL_FIRST_BLOCK_LINE_NO;
+        ctx->lineNo = commentClosed ? savedLineNo : OGSQL_FIRST_BLOCK_LINE_NO;
     }
     return OG_FALSE;
 }
@@ -5339,9 +5368,8 @@ static void OgsqlRunProcessComment(OgsqlRunCtxT *ctx)
 {
     /* One scan decides both whether the comment closes on this line and where to split: endPos is
        the offset of the '/' in the closing mark, or -1 when it does not close here. The line up to
-       the mark is comment text and is appended untouched; only the remainder is parsed. A bare
-       close (nothing after the mark) keeps single-line handling so the next statement's
-       block/command detection is unaffected. */
+       the mark is comment text and is appended untouched; only the remainder is parsed. A cross-line
+       bare close keeps the pending input aggregated; the next line still gets fresh mode detection. */
     int32 endPos = OgsqlCommentEndPos(&ctx->line);
     if (endPos < 0) {
         (void)ogsql_concat(&ctx->line);
@@ -5353,10 +5381,15 @@ static void OgsqlRunProcessComment(OgsqlRunCtxT *ctx)
     text_t restTrimmed = rest;
     cm_trim_text(&restTrimmed);
     if (restTrimmed.len == 0) {
-        /* bare close: only whitespace follows the mark; append the whole line as before and keep
-           single-line handling so the next line's block/command detection is unaffected */
+        /* A same-line comment remains independent. After a cross-line bare close, keep the input
+           aggregated and re-run command detection on the next non-empty line. */
         (void)ogsql_concat(&ctx->line);
-        ctx->flag = OGSQL_SINGLE_TAG;
+        if (ctx->lineNo == OGSQL_FIRST_BLOCK_LINE_NO) {
+            ctx->flag = OGSQL_SINGLE_TAG;
+            return;
+        }
+        ctx->flag = OGSQL_COMMENT_END_TAG;
+        ctx->lineNo++;
         return;
     }
     /* The remainder is a fresh virtual line: run the same mode detection a freshly read line
@@ -5396,6 +5429,9 @@ static void OgsqlRunProcessLine(OgsqlRunCtxT *ctx)
         (void)ogsql_process_cmd(&ctx->line);
     } else if (ctx->flag == OGSQL_COMMENT_TAG) {
         OgsqlRunProcessComment(ctx);
+    } else if (ctx->flag == OGSQL_COMMENT_END_TAG) {
+        (void)ogsql_concat(&ctx->line);
+        ctx->lineNo++;
     } else if (ctx->flag == OGSQL_BLOCK_TAG) {
         OgsqlRunProcessBlock(ctx);
     } else {
