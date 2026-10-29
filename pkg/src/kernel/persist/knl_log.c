@@ -1417,7 +1417,6 @@ status_t tx_scn_broadcast(knl_session_t *session)
         status_t ret;
         mes_init_send_head(&new_bcast.head, NEW_MES_CMD_TXN_SCN_BROADCAST, sizeof(new_mes_scn_bcast_t), OG_INVALID_ID32,
             session->kernel->id, OG_INVALID_ID8, session->id, OG_INVALID_ID16);
-        // new_bcast.scn = KNL_GET_SCN(&session->kernel->scn);
         new_bcast.scn = DB_CURR_SCN(session);
 
         uint64 alive_bitmap = get_alive_bitmap_by_reform_info(&(remaster_mngr->reform_info));
@@ -1439,7 +1438,6 @@ status_t tx_scn_broadcast(knl_session_t *session)
 
     mes_init_send_head(&bcast.head, MES_CMD_TXN_SCN_BROADCAST, sizeof(mes_scn_bcast_t), OG_INVALID_ID32,
         session->kernel->id, OG_INVALID_ID8, session->id, OG_INVALID_ID16);
-    // bcast.scn = KNL_GET_SCN(&session->kernel->scn);
     bcast.scn = DB_CURR_SCN(session);
 
     uint64 alive_bitmap = get_alive_bitmap_by_reform_info(&(remaster_mngr->reform_info));

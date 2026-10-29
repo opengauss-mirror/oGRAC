@@ -615,7 +615,7 @@ status_t dtc_startup(void)
         return OG_ERROR;
     }
 
-    if (shmem_scn_sync_to_ub() != OG_SUCCESS) {
+    if (g_instance->kernel.attr.enable_ubsmem && shmem_scn_sync_to_ub() != OG_SUCCESS) {
         OG_LOG_RUN_WAR("[SHMEM-SCN] sync to UB deferred at startup, will retry at db open");
     }
 

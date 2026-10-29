@@ -852,10 +852,14 @@ static void tx_end(knl_session_t *session, bool32 is_commit, knl_scn_t xa_scn, b
     tx_end_stat(session, txn, tx_item);
 
     /* from now on, we are entering transaction end progress */
-    cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
-    tx_item->in_progress = OG_TRUE;
-    dtc_txn_hot_publish_item_locked(session, tx_item, txn, 0);
-    cm_spin_unlock(&tx_item->lock);
+    if (session->kernel->attr.enable_ubsmem) {
+        cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
+        tx_item->in_progress = OG_TRUE;
+        dtc_txn_hot_publish_item_locked(session, tx_item, txn, 0);
+        cm_spin_unlock(&tx_item->lock);
+    } else {
+        tx_item->in_progress = OG_TRUE;
+    }
 
     if (session->kernel->attr.serialized_commit) {
         cm_spin_lock(&area->seri_lock, &session->stat->spin_stat.stat_seri_commit);
@@ -908,10 +912,14 @@ static void tx_end(knl_session_t *session, bool32 is_commit, knl_scn_t xa_scn, b
         cm_spin_unlock(&area->seri_lock);
     }
 
-    cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
-    tx_item->in_progress = OG_FALSE;
-    dtc_txn_hot_publish_item_locked(session, tx_item, txn, session->curr_lsn);
-    cm_spin_unlock(&tx_item->lock);
+    if (session->kernel->attr.enable_ubsmem) {
+        cm_spin_lock(&tx_item->lock, &session->stat->spin_stat.stat_txn);
+        tx_item->in_progress = OG_FALSE;
+        dtc_txn_hot_publish_item_locked(session, tx_item, txn, session->curr_lsn);
+        cm_spin_unlock(&tx_item->lock);
+    } else {
+        tx_item->in_progress = OG_FALSE;
+    }
     // cm_release_cond(&rm->cond);
     dls_release_txn(session, rm);
 }
