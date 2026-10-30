@@ -24,6 +24,7 @@
  */
 #include "knl_xact_module.h"
 #include "knl_xa.h"
+#include "dtc_txn_hot.h"
 #include "knl_tran.h"
 #include "knl_lob.h"
 #include "rcr_btree.h"
@@ -739,6 +740,7 @@ static void xa_commit_phase1(knl_session_t *session, knl_scn_t phase1_scn)
     buf_leave_page(session, OG_TRUE);
 
     log_atomic_op_end(session);
+    dtc_txn_hot_publish_item(session, tx_item, txn, session->curr_lsn);
 
     if (session->kernel->attr.serialized_commit) {
         cm_spin_unlock(&area->seri_lock);
@@ -847,6 +849,7 @@ static void xa_rollback_phase2(knl_session_t *session)
         buf_leave_page(session, OG_TRUE);
 
         log_atomic_op_end(session);
+        dtc_txn_hot_publish_item(session, tx_item, txn, session->curr_lsn);
         log_commit(session);
     }
 

@@ -6922,13 +6922,8 @@ void dtc_update_standby_cluster_scn(knl_session_t *session, uint32 idx)
         return;
     }
     batch_scn = has_batch ? g_replay_paral_mgr.batch_scn[idx] : batch_scn;
-    OG_LOG_DEBUG_INF("update scn, old scn %llu, new scn %llu", session->kernel->scn, batch_scn);
-    if (batch_scn > session->kernel->scn) {
-        KNL_SET_SCN(&session->kernel->scn, batch_scn);
-        if (session->kernel->attr.enable_boc) {
-            tx_scn_broadcast(session);
-        }
-    }
+    OG_LOG_DEBUG_INF("update scn, old scn %llu, new scn %llu", DB_CURR_SCN(session), batch_scn);
+    DB_SET_CURR_SCN(session, batch_scn);
 
     log_context_t *ogx = &session->kernel->redo_ctx;
     log_point_t curr_point = dtc_get_ctrl(session, g_replay_paral_mgr.node_id[idx])->rcy_point;
@@ -9937,7 +9932,7 @@ static status_t dtc_rcy_init_rcynode(knl_session_t *session, instance_list_t *re
     rcy_node = &dtc_rcy->rcy_nodes[idx];
     dtc_init_node(rcy_node, rcy_log_point, ctrl, node_id);
 
-    dtc_update_scn(session, ctrl->scn);
+    DB_SET_CURR_SCN(session, ctrl->scn);
     dtc_update_lsn(session, ctrl->lsn);
 
     if (is_dbstor && session->kernel->db.recover_for_restore) {

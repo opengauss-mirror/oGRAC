@@ -457,8 +457,8 @@ ub_lock_result_t ub_rw_lock_x_lock(ub_rw_lock_t *lock, const ub_lock_policy_t *p
 
             times++;
             if (SECUREC_UNLIKELY(times > OG_SPIN_COUNT)) {
-                cm_sleep(100);
                 times = 0;
+                cm_spin_sleep();
             }
         }
 

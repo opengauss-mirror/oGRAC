@@ -1269,7 +1269,7 @@ void dtc_bak_scn_broadcast(knl_session_t *session)
 
     mes_init_send_head(&bcast.head, MES_CMD_SCN_BROADCAST, sizeof(mes_scn_bcast_t), OG_INVALID_ID32,
                        g_dtc->profile.inst_id, OG_INVALID_ID8, session->id, OG_INVALID_ID16);
-    bcast.scn = KNL_GET_SCN(&g_dtc->kernel->scn);
+    bcast.scn = DB_CURR_SCN(session);
     bcast.min_scn = KNL_GET_SCN(&g_dtc->kernel->local_min_scn);
     bcast.lsn = cm_atomic_get(&g_dtc->kernel->lsn);
 
@@ -1811,7 +1811,7 @@ static status_t dtc_rst_amend_ctrlinfo(knl_session_t *session, uint32 last_asn, 
     dtc_get_ctrl(session, inst_id)->lrp_point = ctrlinfo->dtc_lrp_point[inst_id];
     OG_LOG_RUN_INF("[DTC RST] save ctrlinfo, the node is %u, lrp_lsn is %llu ", inst_id,
                    ctrlinfo->dtc_lrp_point[inst_id].lsn);
-    session->kernel->scn = ctrlinfo->scn;
+    DB_SET_CURR_SCN(session, ctrlinfo->scn);
     if (dtc_save_ctrl(session, inst_id) != OG_SUCCESS) {
         CM_ABORT(0, "[BACKUP] ABORT INFO: save core control file failed when restore log files");
     }

@@ -2732,7 +2732,9 @@ static status_t vw_database_fetch(knl_handle_t session, knl_cursor_t *cursor)
     OG_RETURN_IFERR(row_put_int32(&row, (int32)(db->ctrl.core.open_count)));
     (void)row_put_date(&row, (int64)cm_time2date(db->ctrl.core.init_time));
 
-    OG_RETURN_IFERR(row_put_int64(&row, (int64)(sess->kernel->scn)));
+    //OG_RETURN_IFERR(row_put_int64(&row, (int64)(sess->kernel->scn)));
+    OG_RETURN_IFERR(row_put_int64(&row, (int64)DB_CURR_SCN(sess)));
+
     OG_RETURN_IFERR(vw_database_fetch_row(session, &row, db));
 
     char *page_buf = (char *)cm_push(sess->stack, (uint32)OG_DFLT_CTRL_BLOCK_SIZE + (uint32)OG_MAX_ALIGN_SIZE_4K);
@@ -3830,7 +3832,7 @@ static status_t vw_instance_fetch(knl_handle_t se, knl_cursor_t *cursor)
     (void)row_put_int32(&row, (int32)g_instance->id);
     (void)row_put_str(&row, kernel->instance_name);
     vw_row_set_database_state(&row, db->status);
-    (void)row_put_int64(&row, (int64)kernel->scn);
+    (void)row_put_int64(&row, (int64)DB_NOW_TO_SCN(session));
     vw_row_set_shutdown_phase(&row, g_instance->shutdown_ctx.phase);
     (void)row_put_int64(&row, (int64)kernel->db_startup_time);
     (void)row_put_str(&row, cm_sys_host_name());
@@ -7028,6 +7030,7 @@ knl_dynview_t g_dynamic_views[] = {
     { DYN_VIEW_DTC_MES_CHANNEL_STAT, vw_describe_dtc },
     { DYN_VIEW_DTC_NODE_INFO, vw_describe_dtc },
     { DYN_VIEW_DTC_MES_TASK_QUEUE, vw_describe_dtc },
+    { DYN_VIEW_DTC_TXN_HOT_STAT, vw_describe_dtc },
     { DYN_VIEW_BUFFER_ACCESS_STATS, vw_describe_local },
     { DYN_VIEW_BUFFER_RECYCLE_STATS, vw_describe_local },
     // ===Global dynamic view  for DTC end===

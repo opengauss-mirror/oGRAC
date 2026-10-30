@@ -36,6 +36,7 @@
 #include "dtc_drc_stat.h"
 #include "dtc_buffer.h"
 #include "dtc_remote_buffer.h"
+#include "dtc_shmem_scn.h"
 #include "dtc_remote_lock.h"
 
 #ifdef __cplusplus
@@ -407,6 +408,7 @@ typedef struct st_drc_res_ctx {
     drc_deposit_map_t drc_deposit_map[OG_MAX_INSTANCES];
     remote_buf_context_t buf_ctx;
     remote_sga_t remote_sga;
+    shmem_scn_mgr_t shmem_scn_mgr;
 } drc_res_ctx_t;
 
 typedef struct st_cvt_info {

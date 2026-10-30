@@ -44,6 +44,7 @@
 #include "dtc_context.h"
 #include "dtc_recovery.h"
 #include "dtc_remote_lock.h"
+#include "dtc_shmem_scn.h"
 
 extern bool32 g_crc_verify;
 
@@ -1358,7 +1359,9 @@ void tx_process_scn_broadcast(void *sess, mes_message_t *msg)
         OG_LOG_RUN_ERR("Do not process scn broadcast, because src_inst is invalid: %u", msg->head->src_inst);
         return;
     }
-    dtc_update_scn(session, latest_scn);
+    if (shmem_scn_need_broadcast()) {
+        DB_SET_CURR_SCN(session, latest_scn);
+    }
     mes_init_ack_head(msg->head, &ack_head, MES_CMD_BROADCAST_ACK, sizeof(mes_message_head_t), session->id);
     ack_head.status = OG_SUCCESS;
     drc_mes_send_data_with_retry((const char*)&ack_head, BROADCAST_SCN_WAIT_INTERVEL,
@@ -1382,7 +1385,9 @@ void new_tx_process_scn_broadcast(void *sess, mes_message_t *msg)
         OG_LOG_RUN_ERR("Do not process scn broadcast, because src_inst is invalid: %u", msg->head->src_inst);
         return;
     }
-    dtc_update_scn(session, latest_scn);
+    if (shmem_scn_need_broadcast()) {
+        DB_SET_CURR_SCN(session, latest_scn);
+    }
     mes_init_ack_head(msg->head, &ack_head, MES_CMD_BROADCAST_ACK, sizeof(mes_message_head_t), session->id);
     ack_head.status = OG_SUCCESS;
     drc_mes_send_data_with_retry((const char*)&ack_head, BROADCAST_SCN_WAIT_INTERVEL,
@@ -1412,8 +1417,8 @@ status_t tx_scn_broadcast(knl_session_t *session)
         status_t ret;
         mes_init_send_head(&new_bcast.head, NEW_MES_CMD_TXN_SCN_BROADCAST, sizeof(new_mes_scn_bcast_t), OG_INVALID_ID32,
             session->kernel->id, OG_INVALID_ID8, session->id, OG_INVALID_ID16);
-        new_bcast.scn = KNL_GET_SCN(&session->kernel->scn);
-        
+        new_bcast.scn = DB_CURR_SCN(session);
+
         uint64 alive_bitmap = get_alive_bitmap_by_reform_info(&(remaster_mngr->reform_info));
         rc_bitmap64_clear(&alive_bitmap, session->kernel->id);
         OG_LOG_DEBUG_INF("tx scn broadcast, latest scn: %llu, alive_bitmap: %llu", new_bcast.scn, alive_bitmap);
@@ -1433,7 +1438,7 @@ status_t tx_scn_broadcast(knl_session_t *session)
 
     mes_init_send_head(&bcast.head, MES_CMD_TXN_SCN_BROADCAST, sizeof(mes_scn_bcast_t), OG_INVALID_ID32,
         session->kernel->id, OG_INVALID_ID8, session->id, OG_INVALID_ID16);
-    bcast.scn = KNL_GET_SCN(&session->kernel->scn);
+    bcast.scn = DB_CURR_SCN(session);
 
     uint64 alive_bitmap = get_alive_bitmap_by_reform_info(&(remaster_mngr->reform_info));
     rc_bitmap64_clear(&alive_bitmap, session->kernel->id);
@@ -1470,7 +1475,7 @@ static status_t log_commit_flush(knl_session_t *session)
     }
     uint64 flushed_lfn = ogx->flushed_lfn;
     cm_spin_unlock(&ogx->commit_lock);
-    if (session->kernel->attr.enable_boc) {
+    if (session->kernel->attr.enable_boc && shmem_scn_need_broadcast()) {
         tx_scn_broadcast(session);
     }
     log_wake_up_waiter(session, ogx);

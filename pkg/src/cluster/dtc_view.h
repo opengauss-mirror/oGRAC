@@ -155,6 +155,22 @@ typedef struct st_dtc_view_node_info_ack {
     dtc_view_node_info_t node_info;
 } dtc_view_node_info_ack_t;
 
+typedef struct st_dtc_view_txn_hot_stat {
+    uint8 inst_id;
+    bool8 non_empty;
+    uint8 reserved[2];
+    uint64 info_hot;
+    uint64 info_remote;
+    uint64 snapshot_hot;
+    uint64 snapshot_remote;
+    uint64 info_resolve_fail;
+} dtc_view_txn_hot_stat_t;
+
+typedef struct st_dtc_view_txn_hot_stat_ack {
+    mes_message_head_t head;
+    dtc_view_txn_hot_stat_t txn_hot_stat;
+} dtc_view_txn_hot_stat_ack_t;
+
 typedef struct st_dtc_view_mes_task_queue {
     mes_task_queue_t mes_task_queue[OG_DTC_MAX_TASK_NUM];
 } dtc_view_mes_task_queue_t;

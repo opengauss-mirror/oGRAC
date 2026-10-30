@@ -38,11 +38,13 @@
 #include "dtc_view.h"
 #include "knl_common.h"
 #include "dtc_remote_lock.h"
+#include "dtc_txn_hot.h"
 
 dtc_view_mes_stat_t g_mes_stat_array[OG_MAX_INSTANCES];
 dtc_view_mes_elapsed_t g_mes_elapsed_array[OG_MAX_INSTANCES];
 dtc_view_mes_queue_t g_mes_queue_array[OG_MAX_INSTANCES];
 dtc_view_node_info_t g_node_info_array[OG_MAX_INSTANCES];
+dtc_view_txn_hot_stat_t g_txn_hot_stat_array[OG_MAX_INSTANCES];
 dtc_view_mes_task_queue_t g_mes_task_queue_array;
 dtc_view_mes_channel_stat_t g_mes_channel_stat_array;
 
@@ -242,6 +244,15 @@ knl_column_t g_node_info_cols[] = {
     { 4, "CHANNEL_NUM", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
     { 5, "POOL_SIZE", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
 };
+
+knl_column_t g_txn_hot_stat_cols[] = {
+    { 0, "INST_ID", 0, 0, OG_TYPE_INTEGER, sizeof(uint32), 0, 0, OG_FALSE, 0, { 0 } },
+    { 1, "INFO_HOT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 2, "INFO_REMOTE", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 3, "SNAPSHOT_HOT", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 4, "SNAPSHOT_REMOTE", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+    { 5, "INFO_RESOLVE_FAIL", 0, 0, OG_TYPE_BIGINT, sizeof(uint64), 0, 0, OG_FALSE, 0, { 0 } },
+};
 // COL_CNT of View
 #define CONVERTING_PAGE_CNT_COLS (ELEMENT_COUNT(g_converting_page_cnt_cols))
 #define BUFFER_CTRL_COLS (ELEMENT_COUNT(g_buffer_ctrl_cols))
@@ -251,6 +262,7 @@ knl_column_t g_node_info_cols[] = {
 #define MES_ELAPSED_COLS (ELEMENT_COUNT(g_mes_elapsed_cols))
 #define MES_QUEUE_COLS (ELEMENT_COUNT(g_mes_queue_cols))
 #define NODE_INFO_COLS (ELEMENT_COUNT(g_node_info_cols))
+#define TXN_HOT_STAT_COLS (ELEMENT_COUNT(g_txn_hot_stat_cols))
 #define MES_TASK_QUEUE_COLS (ELEMENT_COUNT(g_mes_task_queue_cols))
 #define MES_CHANNEL_STAT_COLS (ELEMENT_COUNT(g_mes_channel_stat_cols))
 
@@ -593,6 +605,56 @@ static void dtc_view_node_info_ack(knl_session_t *session, mes_message_t *receiv
     OG_LOG_RUN_INF("mes_send_dtc_view_node_info_ack success\n");
 }
 
+static void dtc_view_txn_hot_stat_fill(dtc_view_txn_hot_stat_t *item, uint8 inst_id)
+{
+    dtc_txn_hot_stat_t stat;
+
+    item->inst_id = inst_id;
+    dtc_txn_hot_stat_get(&stat);
+    item->info_hot = stat.info_hot;
+    item->info_remote = stat.info_remote;
+    item->snapshot_hot = stat.snapshot_hot;
+    item->snapshot_remote = stat.snapshot_remote;
+    item->info_resolve_fail = stat.info_resolve_fail;
+    item->non_empty = OG_TRUE;
+}
+
+static status_t dtc_view_txn_hot_stat_req(knl_session_t *knl_session, dtc_view_txn_hot_stat_t *txn_hot_stat,
+    uint8 src_id, uint8 dest_id)
+{
+    if (src_id == dest_id) {
+        dtc_view_txn_hot_stat_fill(txn_hot_stat, src_id);
+        return OG_SUCCESS;
+    }
+
+    mes_message_t msg;
+    dtc_view_txn_hot_stat_ack_t *txn_hot_stat_ack;
+    status_t ret = dtc_view_req_view(knl_session, src_id, dest_id, &msg, DYN_VIEW_DTC_TXN_HOT_STAT);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("get txn hot stat view req failed");
+        return ret;
+    }
+    txn_hot_stat_ack = (dtc_view_txn_hot_stat_ack_t *)msg.buffer;
+    *txn_hot_stat = txn_hot_stat_ack->txn_hot_stat;
+    mes_release_message_buf(msg.buffer);
+    return OG_SUCCESS;
+}
+
+static void dtc_view_txn_hot_stat_ack(knl_session_t *session, mes_message_t *receive_msg)
+{
+    dtc_view_txn_hot_stat_ack_t view_ack;
+
+    (void)session;
+    dtc_view_txn_hot_stat_fill(&view_ack.txn_hot_stat, g_dtc->profile.inst_id);
+    mes_init_ack_head(receive_msg->head, &view_ack.head, MES_CMD_DTC_VIEW_INFO_ACK, sizeof(view_ack), OG_INVALID_ID16);
+    mes_release_message_buf(receive_msg->buffer);
+    if (mes_send_data((void *)&view_ack) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("mes_send_dtc_view_txn_hot_stat_ack fail");
+        return;
+    }
+    OG_LOG_RUN_INF("mes_send_dtc_view_txn_hot_stat_ack success");
+}
+
 static status_t dtc_view_get_converting_page_cnt_req(knl_session_t *knl_session,
                                                      dtc_view_converting_page_cnt_t *page_count, uint8 src_id,
                                                      uint8 dest_id)
@@ -702,6 +764,23 @@ static status_t dtc_view_mes_elapsed_open(knl_handle_t session, knl_cursor_t *cu
     for (int loop = 0; loop < g_dtc->profile.node_count; loop++) {
         if (loop == src_inst || mes_is_inst_connect(loop)) {
             dtc_view_mes_elapsed_req(session, &g_mes_elapsed_array[loop], src_inst, loop);
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t dtc_view_txn_hot_stat_open(knl_handle_t session, knl_cursor_t *cursor)
+{
+    status_t ret = dtc_view_open(session, cursor);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("txn hot stat view open failed");
+        return ret;
+    }
+    MEMS_RETURN_IFERR(memset_s(g_txn_hot_stat_array, sizeof(g_txn_hot_stat_array), 0, sizeof(g_txn_hot_stat_array)));
+    uint8 src_inst = g_dtc->profile.inst_id;
+    for (int loop = 0; loop < g_dtc->profile.node_count; loop++) {
+        if (loop == src_inst || mes_is_inst_connect(loop)) {
+            dtc_view_txn_hot_stat_req(session, &g_txn_hot_stat_array[loop], src_inst, loop);
         }
     }
     return OG_SUCCESS;
@@ -1011,6 +1090,35 @@ static status_t dtc_view_mes_elapsed_fetch(knl_handle_t se, knl_cursor_t *cursor
     dtc_view_get_elapsed_item(&ra, item, MAX_MES_TIME_LEN, node, key, MES_TIME_TEST_BROADCAST_AND_WAIT);
     dtc_view_get_elapsed_item(&ra, item, MAX_MES_TIME_LEN, node, key, MES_TIME_TEST_MULTICAST);
     dtc_view_get_elapsed_item(&ra, item, MAX_MES_TIME_LEN, node, key, MES_TIME_TEST_MULTICAST_AND_WAIT);
+    cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
+    id++;
+    cursor->rowid.vmid = id;
+    return OG_SUCCESS;
+}
+
+static status_t dtc_view_txn_hot_stat_fetch(knl_handle_t se, knl_cursor_t *cursor)
+{
+    row_assist_t ra;
+    uint32 id = cursor->rowid.vmid;
+
+    if (id >= OG_MAX_INSTANCES) {
+        cursor->eof = OG_TRUE;
+        return OG_SUCCESS;
+    }
+    while (!g_txn_hot_stat_array[id].non_empty) {
+        id++;
+        if (id >= OG_MAX_INSTANCES) {
+            cursor->eof = OG_TRUE;
+            return OG_SUCCESS;
+        }
+    }
+    row_init(&ra, (char *)cursor->row, OG_MAX_ROW_SIZE, TXN_HOT_STAT_COLS);
+    OG_RETURN_IFERR(row_put_uint32(&ra, (uint32)g_txn_hot_stat_array[id].inst_id));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].info_hot));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].info_remote));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].snapshot_hot));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].snapshot_remote));
+    OG_RETURN_IFERR(row_put_int64(&ra, (int64)g_txn_hot_stat_array[id].info_resolve_fail));
     cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
     id++;
     cursor->rowid.vmid = id;
@@ -1507,6 +1615,10 @@ VW_DECL dtc_view_mes_task_queue = { "SYS",
                                     g_mes_task_queue_cols,
                                     dtc_view_mes_task_queue_open,
                                     dtc_view_mes_task_queue_fetch };
+VW_DECL dtc_view_txn_hot_stat = {
+    "SYS", "TXN_HOT_STAT", TXN_HOT_STAT_COLS, g_txn_hot_stat_cols, dtc_view_txn_hot_stat_open,
+    dtc_view_txn_hot_stat_fetch
+};
 
 dynview_desc_t *vw_describe_dtc(uint32 id)
 {
@@ -1531,6 +1643,8 @@ dynview_desc_t *vw_describe_dtc(uint32 id)
             return &dtc_view_node_info;
         case DYN_VIEW_DTC_MES_TASK_QUEUE:
             return &dtc_view_mes_task_queue;
+        case DYN_VIEW_DTC_TXN_HOT_STAT:
+            return &dtc_view_txn_hot_stat;
         default:
             return NULL;
     }
@@ -1626,6 +1740,9 @@ void dtc_view_process_get_view_info(void *sess, mes_message_t *receive_msg)
             break;
         case DYN_VIEW_DTC_NODE_INFO:
             dtc_view_node_info_ack(session, receive_msg);
+            break;
+        case DYN_VIEW_DTC_TXN_HOT_STAT:
+            dtc_view_txn_hot_stat_ack(session, receive_msg);
             break;
         default:
             dtc_view_wrong_id_ack(session, receive_msg);

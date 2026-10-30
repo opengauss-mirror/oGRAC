@@ -1914,7 +1914,7 @@ status_t dls_request_txn_msg(knl_session_t *session, xid_t *xid, uint8 dst_inst,
     ret = *(status_t *)(recv_msg.buffer + sizeof(mes_message_head_t));
     if (ret == DLS_REMOTE_TXN_END) {
         knl_scn_t scn = *(knl_scn_t *)(recv_msg.buffer + sizeof(mes_message_head_t) + sizeof(status_t));
-        dtc_update_scn(session, scn);
+        DB_SET_CURR_SCN(session, scn);
     }
     mes_release_message_buf(recv_msg.buffer);
     return ret;
@@ -2029,7 +2029,7 @@ static void dls_process_txn_awake(knl_session_t *session, mes_message_t *receive
     knl_scn_t scn = *(knl_scn_t *)(receive_msg->buffer + sizeof(mes_message_head_t) + sizeof(xid_t));
 
     drc_local_txn_awake(xid);
-    dtc_update_scn(session, scn);
+    DB_SET_CURR_SCN(session, scn);
     DTC_DLS_DEBUG_INF("[DLS] process wake up txn %llu scn %llu from instance %u", xid->value, scn,
                       receive_msg->head->src_inst);
     mes_release_message_buf(receive_msg->buffer);

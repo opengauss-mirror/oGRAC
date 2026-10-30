@@ -292,7 +292,6 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
     dcs_get_page_from_gbp(session, ctrl, mode);
-
     session->ub_page_req_kind = (uint8)UB_PAGE_REQ_COLD_PROMOTE; // UB-stats
 
     DTC_DCS_DEBUG_INF(
@@ -355,7 +354,7 @@ static void dcs_handle_page_from_owner(knl_session_t *session, buf_ctrl_t *ctrl,
     }
 
     if (ack->scn != 0) {
-        dtc_update_scn(session, ack->scn);
+        DB_SET_CURR_SCN(session, ack->scn);
     }
 
     if ((flags & MES_FLAG_NEED_LOAD) && ctrl->is_edp) { /* clean edp msg may come later. */
@@ -501,7 +500,7 @@ static inline status_t dcs_handle_ack_need_load(knl_session_t *session, mes_mess
 
     // load page from disk, need to sync scn/lsn with master
     dtc_update_lsn(session, ack->master_lsn);
-    dtc_update_scn(session, ack->scn);
+    DB_SET_CURR_SCN(session, ack->scn);
 
     dcs_set_ctrl4granted(session, ctrl);
 
@@ -649,6 +648,10 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
             page_id.file, page_id.page, ack->gbp_owner_id, ctrl->shmem_page_meta->claimed_owner,
             ctrl->shmem_page_meta);
         return OG_ERROR;
+    }
+
+    if (ack->scn != 0) {
+        DB_SET_CURR_SCN(session, ack->scn);
     }
 
     if ((flags & MES_FLAG_NEED_LOAD) && ctrl->is_edp) { /* clean edp msg may come later. */
@@ -1392,24 +1395,14 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     remote_page_info_set_timeline_id(&master_shmem_page_meta, dst_timeline_id);
     master_shmem_page_meta.claimed_owner = master_id;  // This node, i.e. the owner;
 
-    date_t copy_start = cm_monotonic_now(); // UB-stats
     errno_t err = memcpy_s(shmem_page_meta, offsetof(remote_page_info_t, ckpt_flush_state), &master_shmem_page_meta,
                            offsetof(remote_page_info_t, ckpt_flush_state));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_META,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
-    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(shmem_page_addr, DEFAULT_PAGE_SIZE(session), ctrl->page, DEFAULT_PAGE_SIZE(session));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_PAGE,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
-    // tail lsn
-    copy_start = cm_monotonic_now(); // UB-stats
     err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
-    dtc_buf_stat_gbp_store_copy(session, UB_GBP_STORE_COPY_TAIL_LSN,
-        (uint64)(cm_monotonic_now() - copy_start)); // UB-stats
     knl_securec_check(err);
 
     // Release global Lock
@@ -2815,7 +2808,7 @@ void dcs_process_recycle_owner(void *sess, mes_message_t *receive_msg)
 
     if (req->head.src_inst != DCS_SELF_INSTID(session)) {
         dtc_update_lsn(session, req->owner_lsn);
-        dtc_update_scn(session, req->owner_scn);
+        DB_SET_CURR_SCN(session, req->owner_scn);
     }
 
     for (uint32 i = 0; i < RECYCLE_PAGE_NUM; i++) {
@@ -3434,7 +3427,7 @@ void dcs_process_ddl_broadcast(void *sess, mes_message_t *msg)
             verify_offset);
         return;
     }
-    dtc_update_scn(session, lamport_scn);
+    DB_SET_CURR_SCN(session, lamport_scn);
 
     SYNC_POINT_GLOBAL_START(OGRAC_SYNC_DDL_BEFORE_BCAST_ABORT, NULL, 0);
     SYNC_POINT_GLOBAL_END;
@@ -4116,7 +4109,7 @@ static status_t dcs_process_heap_pcr_construct(knl_session_t *session, msg_pcr_r
     buf_leave_page(session, OG_FALSE);
 
     /* sync scn before construct CR page */
-    dtc_update_scn(session, request->query_scn);
+    DB_SET_CURR_SCN(session, request->query_scn);
 
     if (dcs_heap_construct_cr_page(session, new_req) != OG_SUCCESS) {
         cm_pop(session->stack);

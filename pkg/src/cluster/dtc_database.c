@@ -267,7 +267,6 @@ status_t dtc_read_core_ctrl(knl_session_t *session, ctrl_page_t *page)
 void dtc_update_scn(knl_session_t *session, knl_scn_t lamport_scn)
 {
     tx_area_t *area = &session->kernel->tran_ctx;
-
     if (DB_CURR_SCN(session) >= lamport_scn) {
         return;
     }
@@ -278,7 +277,7 @@ void dtc_update_scn(knl_session_t *session, knl_scn_t lamport_scn)
         return;
     }
 
-    KNL_SET_SCN(&session->kernel->scn, lamport_scn);
+    DB_SET_CURR_SCN(session, lamport_scn);
     cm_spin_unlock(&area->scn_lock);
 }
 

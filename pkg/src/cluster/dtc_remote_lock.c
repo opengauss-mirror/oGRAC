@@ -25,12 +25,13 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <limits.h>
-#include <stdlib.h>
 #include "dtc_drc.h"
 #include "dtc_dcs.h"
 #include "knl_session.h"
 #include "dtc_remote_lock.h"
 #include "cm_spinlock.h"
+#include "srv_instance.h"
+#include "cm_atomic.h"
 
 void ub_rw_lock_debug_read(const ub_rw_lock_t *lock, int32 *atomic_state, int32 *x_owner_node,
     int32 *write_waiters, int32 *owner_tid, int32 *readonly, int32 *readonly_owner_node,

@@ -48,6 +48,7 @@
 #include "cs_ub.h"
 #include "cm_ubs_mem.h"
 #include "dtc_remote_buffer.h"
+#include "dtc_shmem_scn.h"
 
 #define DTC_BUFFER_POOL_NUM (4)
 #define DTC_MSG_BUFFER_QUEUE_NUM (8)
@@ -614,6 +615,10 @@ status_t dtc_startup(void)
         return OG_ERROR;
     }
 
+    if (g_instance->kernel.attr.enable_ubsmem && shmem_scn_sync_to_ub() != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("[SHMEM-SCN] sync to UB deferred at startup, will retry at db open");
+    }
+
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
     return OG_SUCCESS;
 }
@@ -643,6 +648,10 @@ static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
         }
         remote_sga->map_success[i] = OG_FALSE;
         remote_sga->remote_buf_addr[i] = NULL;
+        if (g_instance->kernel.attr.enable_ubsmem &&
+            (i == DRC_RES_CTX->shmem_scn_mgr.owner_id || i == shmem_scn_get_owner_id())) {
+            shmem_scn_invalidate_cache();
+        }
         OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
     }
 

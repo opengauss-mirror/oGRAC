@@ -150,6 +150,7 @@ typedef enum en_dynview_id {
     DYN_VIEW_DTC_MES_CHANNEL_STAT,
     DYN_VIEW_DTC_NODE_INFO,
     DYN_VIEW_DTC_MES_TASK_QUEUE,
+    DYN_VIEW_DTC_TXN_HOT_STAT,
     // Global view dynamic ID for DTC end
     DYN_VIEW_IO_STAT_RECORD,
     DYN_VIEW_REFORM_STAT,

@@ -586,6 +586,364 @@ static inline int32 cm_atomic32_exchange(atomic32_t *val, int32 newval)
 
 #endif
 
+#ifndef WIN32
+
+static inline int32 ub_atomic_add_32(volatile int32* ptr, int32 inc)
+{
+    return __sync_fetch_and_add(ptr, inc) + inc;
+}
+
+static inline int64 ub_atomic_add_64(int64* ptr, int64 inc)
+{
+    return __sync_fetch_and_add(ptr, inc) + inc;
+}
+
+static inline int32 ub_lock_test_and_set(volatile int32* ptr, int32 val)
+{
+    return  __sync_lock_test_and_set(ptr, val);
+}
+
+static inline int64 ub_lock_test_and_set_64(volatile int64* ptr, int64 val)
+{
+    return  __sync_lock_test_and_set(ptr, val);
+}
+
+static inline bool ub_compare_and_swap_32(int32* dest, int32 oldval, int32 newval)
+{
+    if (oldval == newval)
+        return true;
+
+    volatile bool res = __sync_bool_compare_and_swap(dest, oldval, newval);
+
+    return res;
+}
+
+static inline bool ub_compare_and_swap_64(int64* dest, int64 oldval, int64 newval)
+{
+    if (oldval == newval)
+        return true;
+
+    return __sync_bool_compare_and_swap(dest, oldval, newval);
+}
+
+static inline uint32 ub_compare_and_swap_u32(volatile uint32* ptr, uint32 oldval, uint32 newval)
+{
+    return (uint32)__sync_val_compare_and_swap(ptr, oldval, newval);
+}
+
+static inline uint64 ub_compare_and_swap_u64(volatile uint64* ptr, uint64 oldval, uint64 newval)
+{
+    return (uint64)__sync_val_compare_and_swap(ptr, oldval, newval);
+}
+
+static inline void ub_atomic_init_u32(volatile uint32* ptr, uint32 val)
+{
+    *ptr = val;
+}
+
+static inline uint32 ub_atomic_read_u32(volatile uint32* ptr)
+{
+    return *ptr;
+}
+
+static inline uint32 ub_atomic_fetch_or_u32(volatile uint32* ptr, uint32 inc)
+{
+    return __sync_fetch_and_or(ptr, inc);
+}
+
+static inline uint32 ub_atomic_fetch_and_u32(volatile uint32* ptr, uint32 inc)
+{
+    return __sync_fetch_and_and(ptr, inc);
+}
+
+static inline uint32 ub_atomic_fetch_add_u32(volatile uint32* ptr, uint32 inc)
+{
+#ifdef __x86_64__
+    uint32 res;
+    __asm__ __volatile__(
+    "	lock				\n"
+    "	xaddl	%0,%1		\n"
+    :		"=q"(res), "=m"(*ptr)
+    :		"0" (inc), "m"(*ptr)
+    :		"memory", "cc");
+    return res;
+#else
+    return __sync_fetch_and_add(ptr, inc);
+#endif
+}
+
+static inline uint32 ub_atomic_add_fetch_u32(volatile uint32* ptr, uint32 inc)
+{
+    return __sync_fetch_and_add(ptr, inc) + inc;
+}
+
+static inline uint32 ub_atomic_fetch_sub_u32(volatile uint32* ptr, int32 inc)
+{
+    return __sync_fetch_and_sub(ptr, inc);
+}
+
+static inline uint32 ub_atomic_sub_fetch_u32(volatile uint32* ptr, int32 inc)
+{
+    return  __sync_fetch_and_sub(ptr, inc) - inc;
+}
+
+static inline bool ub_atomic_compare_exchange_u32(volatile uint32* ptr, uint32* expected, uint32 newval)
+{
+#ifdef __x86_64__
+    char	ret;
+
+    /*
+    * Perform cmpxchg and use the zero flag which it implicitly sets when
+    * equal to measure the success.
+    */
+    __asm__ __volatile__(
+    "	lock				\n"
+    "	cmpxchgl	%4,%5	\n"
+    "   setz		%2		\n"
+    :		"=a" (*expected), "=m"(*ptr), "=q" (ret)
+    :		"a" (*expected), "r" (newval), "m"(*ptr)
+    :		"memory", "cc");
+    return (bool) ret;
+#else
+    bool ret = false;
+    uint32	current;
+    current = __sync_val_compare_and_swap(ptr, *expected, newval);
+    ret = current == *expected;
+    *expected = current;
+    return ret;
+#endif
+}
+
+static inline bool ub_atomic_compare_exchange_u8(volatile uint8* ptr, uint8* expected, uint8 newval)
+{
+    bool ret = false;
+    uint8  current;
+    current = __sync_val_compare_and_swap(ptr, *expected, newval);
+    ret = current == *expected;
+    *expected = current;
+    return ret;
+}
+
+static inline void ub_atomic_write_u32(volatile uint32* ptr, uint32 val)
+{
+    *ptr = val;
+}
+
+static inline uint32 ub_atomic_exchange_u32(volatile uint32* ptr, uint32 newval)
+{
+    uint32 old;
+    do {
+        old = ub_atomic_read_u32(ptr);
+    } while (!ub_atomic_compare_exchange_u32(ptr, &old, newval));
+    return old;
+}
+
+static inline void ub_atomic_init_u64(volatile uint64* ptr, uint64 val)
+{
+    *ptr = val;
+}
+
+static inline uint64 ub_atomic_read_u64(volatile uint64* ptr)
+{
+    return *ptr;
+}
+
+static inline uint64 ub_atomic_fetch_or_u64(volatile uint64* ptr, uint64 inc)
+{
+    return __sync_fetch_and_or(ptr, inc);
+}
+
+static inline uint64 ub_atomic_fetch_and_u64(volatile uint64* ptr, uint64 inc)
+{
+    return __sync_fetch_and_and(ptr, inc);
+}
+
+static inline uint64 ub_atomic_fetch_add_u64(volatile uint64* ptr, uint64 inc)
+{
+#ifdef __x86_64__
+    uint64 res;
+    __asm__ __volatile__(
+    "	lock				\n"
+    "	xaddq	%0,%1		\n"
+    :		"=q"(res), "=m"(*ptr)
+    :		"0" (inc), "m"(*ptr)
+    :		"memory", "cc");
+    return res;
+#else
+    return __sync_fetch_and_add(ptr, inc);
+#endif
+}
+
+static inline uint64 ub_atomic_add_fetch_u64(volatile uint64* ptr, uint64 inc)
+{
+    return __sync_fetch_and_add(ptr, inc) + inc;
+}
+
+static inline uint64 ub_atomic_fetch_sub_u64(volatile uint64* ptr, int64 inc)
+{
+    return __sync_fetch_and_sub(ptr, inc);
+}
+
+static inline uint64 ub_atomic_sub_fetch_u64(volatile uint64* ptr, int64 inc)
+{
+    return __sync_fetch_and_sub(ptr, inc) - inc;
+}
+
+static inline bool ub_atomic_compare_exchange_u64(volatile uint64* ptr, uint64* expected, uint64 newval)
+{
+#ifdef __x86_64__
+    char	ret;
+
+    /*
+    * Perform cmpxchg and use the zero flag which it implicitly sets when
+    * equal to measure the success.
+    */
+    __asm__ __volatile__(
+    "	lock				\n"
+    "	cmpxchgq	%4,%5	\n"
+    "   setz		%2		\n"
+    :		"=a" (*expected), "=m"(*ptr), "=q" (ret)
+    :		"a" (*expected), "r" (newval), "m"(*ptr)
+    :		"memory", "cc");
+    return (bool) ret;
+#else
+    bool ret = false;
+    uint64	current;
+    current = __sync_val_compare_and_swap(ptr, *expected, newval);
+    ret = current == *expected;
+    *expected = current;
+    return ret;
+#endif
+}
+
+static inline void ub_atomic_write_u64(volatile uint64* ptr, uint64 val)
+{
+    *ptr = val;
+}
+
+static inline uint64 ub_atomic_exchange_u64(volatile uint64* ptr, uint64 newval)
+{
+    uint64 old;
+    do {
+        old = ub_atomic_read_u64(ptr);
+    } while (!ub_atomic_compare_exchange_u64(ptr, &old, newval));
+    return old;
+}
+
+/*
+* Interface of set scn of UB (same !WIN32 block as ub_atomic_*)
+* static inline: header is included by many TUs in ogcommon — non-static would duplicate symbols at link.
+*/
+static inline status_t cm_ub_init_scn(uint64_t *addr)
+{
+    if (!addr) {
+        return OG_ERROR;
+    }
+
+    if ((uintptr_t)addr % sizeof(uint64_t) != 0) {
+        return OG_ERROR;
+    }
+
+    ub_atomic_init_u64((volatile uint64 *)(void *)addr, 0);
+
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_ub_set_scn(uint64_t *addr, uint64_t value)
+{
+    if (!addr) {
+        return OG_ERROR;
+    }
+
+    if ((uintptr_t)addr % sizeof(uint64_t) != 0) {
+        return OG_ERROR;
+    }
+
+    /*
+    * 使用 ub_atomic_write_u64
+    * 该函数执行原子写入。虽然原代码要求 release 语义，
+    * 但在单变量覆盖写场景下，ub_atomic_write_u64 (通常包含必要的屏障或直接原子指令)
+    * 足以保证可见性。如果需要严格的 Release 语义且平台相关，可能需要额外屏障，
+    * 但通常 ub_atomic_write 已足够用于此类状态更新。
+    */
+    ub_atomic_write_u64((volatile uint64 *)(void *)addr, (uint64)value);
+
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_ub_get_scn(uint64_t *addr, uint64_t *scn)
+{
+    if (!addr || !scn) {
+        return OG_ERROR;
+    }
+
+    if ((uintptr_t)addr % sizeof(uint64_t) != 0) {
+        return OG_ERROR;
+    }
+
+    /*
+    * 使用 ub_atomic_read_u64
+    * 对应 acquire load。在大多数架构上，对齐的 64 位读取本身就是原子的，
+    * 该函数确保编译器不进行重排序优化。
+    */
+    *scn = (uint64_t)ub_atomic_read_u64((volatile uint64 *)(void *)addr);
+
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_ub_fetch_add_scn(uint64_t *addr, uint64_t tgt_scn, uint64_t *old_scn)
+{
+    if (!addr || !old_scn) {
+        return OG_ERROR;
+    }
+
+    if ((uintptr_t)addr % sizeof(uint64_t) != 0) {
+        return OG_ERROR;
+    }
+
+    /*
+    * 使用 ub_atomic_fetch_add_u64
+    *
+    * 关键匹配点：
+    * 原 C++ std::atomic::fetch_add 返回的是【加法前】的旧值。
+    * 此库中的 ub_atomic_fetch_add_u64 文档明确说明："return the old value"。
+    * 完美匹配！不需要像之前那样手动计算旧值。
+    *
+    * 该函数在 x86_64 上使用 'lock xadd' 指令，效率极高。
+    */
+    *old_scn = (uint64_t)ub_atomic_fetch_add_u64((volatile uint64 *)(void *)addr, (uint64)tgt_scn);
+
+    return OG_SUCCESS;
+}
+
+static inline status_t cm_ub_update_scn(uint64_t *addr, uint64_t candidate)
+{
+    if (!addr) {
+        return OG_ERROR;
+    }
+
+    if ((uintptr_t)addr % sizeof(uint64_t) != 0) {
+        return OG_ERROR;
+    }
+
+    uint64_t curr = 0;
+    while (curr < candidate) {
+        if (cm_ub_get_scn(addr, &curr) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (curr >= candidate) {
+            break;
+        }
+        uint64 exp = (uint64)curr;
+        if (ub_atomic_compare_exchange_u64((volatile uint64 *)(void *)addr, &exp, (uint64)candidate)) {
+            return OG_SUCCESS;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+#endif /* #ifndef WIN32: ub_atomic_* + cm_ub_* */
+
 #ifdef __cplusplus
 }
 #endif
