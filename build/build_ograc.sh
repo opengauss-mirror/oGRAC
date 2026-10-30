@@ -17,6 +17,7 @@ INCREMENTAL_BUILD="FALSE"
 THIRD_PARTY_PATH=""
 OGRAC_IMAGE="${OGDB_CODE_PATH}/image"
 WITHOUT_DEPS_ARG=""
+ATOMIC_LOCK_ARG=""
 
 mkdir -p ${TMP_PKG_PATH}
 
@@ -49,14 +50,14 @@ function buildDssPackage() {
 }
 
 function usage() {
-  echo "Usage: ${0##*/} {debug|release} [--incremental] [--with-dss] [--third-party-path <path>] [--without-deps]"
+  echo "Usage: ${0##*/} {debug|release} [--incremental] [--with-dss] [--third-party-path <path>] [--without-deps] [atomic_lock=1]"
   echo "  --incremental is supported for debug builds only."
   echo "  With --with-dss, it reuses DSS artifacts from a previous full debug --with-dss build."
-  echo "  atomic_lock=1."
+  echo "  atomic_lock=1 enables USE_ATOMIC_LOCK for kernel build."
 }
 
 function buildKernelPackage() {
-  THIRD_PARTY_PATH="${THIRD_PARTY_PATH}" sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" ${WITHOUT_DEPS_ARG}
+  THIRD_PARTY_PATH="${THIRD_PARTY_PATH}" sh "${CURRENT_PATH}"/Makefile.sh "${OG_BUILD_TYPE}" ${WITHOUT_DEPS_ARG} ${ATOMIC_LOCK_ARG}
 }
 
 function newPackageTarget() {
@@ -217,6 +218,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --without-deps)
       WITHOUT_DEPS_ARG="--without-deps"
+      shift
+      ;;
+    atomic_lock=1)
+      ATOMIC_LOCK_ARG="atomic_lock=1"
       shift
       ;;
     -h | --help)

@@ -469,9 +469,10 @@ typedef struct st_knl_session {
     struct st_buf_ctrl *dirty_pages[KNL_MAX_ATOMIC_PAGES];
     struct st_buf_ctrl *changed_pages[KNL_MAX_ATOMIC_PAGES];  // all dirty pages affected by atomic operation
 
-    uint8 rbp_queue_index; // which gbp queue to push gbp_dirty_pages, only gbp bg session's gbp_queue_index > 0
+    uint8 rbp_queue_index; // which rbp queue to push rbp_dirty_pages, only rbp bg session's rbp_queue_index > 0
+    uint32 raft_check_log_size;
     uint32 rbp_dirty_count;
-    struct st_buf_ctrl *rbp_dirty_pages[KNL_MAX_ATOMIC_PAGES];  // dirty pages that not flush to GBP if use gbp
+    struct st_buf_ctrl *rbp_dirty_pages[KNL_MAX_ATOMIC_PAGES];  // dirty pages that not flush to RBP if use rbp
     char *gbp_copy_temp;           // NUMA-bound temp page for GBP -> local copy, reused per session
     uint32 gbp_copy_temp_size;
     int gbp_copy_temp_phys_numa;
