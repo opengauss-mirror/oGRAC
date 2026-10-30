@@ -103,6 +103,7 @@ static ub_sdk_api_t g_ub_sdk = {0};
 typedef struct st_ub_sdk_symbol {
     const char *name;
     void **slot;
+    bool32 optional; /* a miss is tolerated: the wrapper returns UBSM_ERR_UNIMPL instead */
 } ub_sdk_symbol_t;
 
 bool32 cm_ub_sdk_ready(void)
@@ -163,8 +164,8 @@ status_t cm_ub_sdk_load(void)
         { "ubsmem_shmem_unlock", (void **)&g_ub_sdk.shmem_unlock },
         { "ubsmem_shmem_list_lookup", (void **)&g_ub_sdk.shmem_list_lookup },
         { "ubsmem_shmem_lookup", (void **)&g_ub_sdk.shmem_lookup },
-        { "ubsmem_shmem_attach", (void **)&g_ub_sdk.shmem_attach },
-        { "ubsmem_shmem_detach", (void **)&g_ub_sdk.shmem_detach },
+        { "ubsmem_shmem_attach", (void **)&g_ub_sdk.shmem_attach, OG_TRUE },
+        { "ubsmem_shmem_detach", (void **)&g_ub_sdk.shmem_detach, OG_TRUE },
         { "ubsmem_lease_malloc", (void **)&g_ub_sdk.lease_malloc },
         { "ubsmem_lease_free", (void **)&g_ub_sdk.lease_free },
         { "ubsmem_lookup_cluster_statistic", (void **)&g_ub_sdk.lookup_cluster_statistic },
@@ -176,6 +177,11 @@ status_t cm_ub_sdk_load(void)
     for (size_t i = 0; i < num; i++) {
         *(symbols[i].slot) = dlsym(handle, symbols[i].name);
         if (*(symbols[i].slot) == NULL) {
+            if (symbols[i].optional == OG_TRUE) {
+                OG_LOG_RUN_INF("[UB] optional symbol %s is absent from %s, calls to it report unimplemented",
+                               symbols[i].name, path);
+                continue;
+            }
             OG_LOG_RUN_ERR("[UB] resolve %s in %s failed, UB support stays disabled", symbols[i].name, path);
             cm_ub_sdk_unload();
             return OG_ERROR;
@@ -188,6 +194,9 @@ status_t cm_ub_sdk_load(void)
 }
 
 #define UB_SDK_CALL(fn, ...) ((g_ub_sdk.ready == OG_TRUE) ? (g_ub_sdk.fn(__VA_ARGS__)) : UBSM_ERR_UNIMPL)
+/* optional entry points may be absent from the SDK: never call through a NULL slot */
+#define UB_SDK_CALL_OPTIONAL(fn, ...) \
+    (((g_ub_sdk.ready == OG_TRUE) && (g_ub_sdk.fn != NULL)) ? (g_ub_sdk.fn(__VA_ARGS__)) : UBSM_ERR_UNIMPL)
 
 int ubsmem_init_attributes(ubsmem_options_t *opts)
 {
@@ -286,12 +295,12 @@ int ubsmem_shmem_lookup(const char *name, ubsmem_shmem_info_t *shm_info)
 
 int ubsmem_shmem_attach(const char *name)
 {
-    return UB_SDK_CALL(shmem_attach, name);
+    return UB_SDK_CALL_OPTIONAL(shmem_attach, name);
 }
 
 int ubsmem_shmem_detach(const char *name)
 {
-    return UB_SDK_CALL(shmem_detach, name);
+    return UB_SDK_CALL_OPTIONAL(shmem_detach, name);
 }
 
 int ubsmem_lease_malloc(const char *region_name, size_t size, ubsmem_distance_t mem_distance, uint64_t flags,
