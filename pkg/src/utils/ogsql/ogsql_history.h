@@ -27,9 +27,13 @@
 extern "C" {
 #endif
 
+#define OGSQL_PENDING_HISTORY_BUF_SIZE (2 * OGSQL_HISTORY_BUF_SIZE)
+
 typedef struct OgsqlPendingHistoryT {
-    char buf[OGSQL_HISTORY_BUF_SIZE];
+    char buf[OGSQL_PENDING_HISTORY_BUF_SIZE];
     uint32 len;
+    uint32 splitLen;
+    uint32 splitWidth;
     bool32 overflow;
 } OgsqlPendingHistoryT;
 
@@ -52,6 +56,7 @@ bool32 ogsql_history_find_ranked(int histCount, const char *query, uint32 queryL
 void ogsql_history_pending_reset(OgsqlPendingHistoryT *pending);
 void ogsql_history_pending_append(OgsqlPendingHistoryT *pending, const char *line, uint32 lineLen);
 void ogsql_history_pending_restore(OgsqlPendingHistoryT *pending, uint32 len, bool32 overflow);
+void ogsql_history_pending_split(OgsqlPendingHistoryT *pending, uint32 prefixWidth);
 void ogsql_history_pending_commit(OgsqlPendingHistoryT *pending, int *histCount, uint32 displayWidth);
 
 #ifdef __cplusplus

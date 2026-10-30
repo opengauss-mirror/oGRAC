@@ -554,26 +554,48 @@ void ogsql_history_pending_reset(OgsqlPendingHistoryT *pending)
     }
     OGSQL_CHECK_MEMS_SECURE(memset_s(pending->buf, sizeof(pending->buf), 0, sizeof(pending->buf)));
     pending->len = 0;
+    pending->splitLen = 0;
+    pending->splitWidth = 0;
     pending->overflow = OG_FALSE;
+}
+
+void ogsql_history_pending_split(OgsqlPendingHistoryT *pending, uint32 prefixWidth)
+{
+    if (pending == NULL || pending->len == 0 || pending->splitLen > 0 || pending->overflow == OG_TRUE) {
+        return;
+    }
+    pending->splitLen = pending->len;
+    pending->splitWidth = prefixWidth;
 }
 
 void ogsql_history_pending_append(OgsqlPendingHistoryT *pending, const char *line, uint32 lineLen)
 {
     uint32 historyTextLimit;
+    uint32 segmentStart;
+    uint32 segmentLen;
     uint32 separatorLen;
+    uint32 bufferSeparatorLen;
     errno_t rc;
 
     if (pending == NULL || line == NULL || pending->overflow == OG_TRUE) {
         return;
     }
     historyTextLimit = ogsql_history_text_limit();
-    separatorLen = (pending->len > 0) ? 1 : 0;
-    if (pending->len > historyTextLimit || separatorLen > historyTextLimit - pending->len ||
-        lineLen > historyTextLimit - pending->len - separatorLen) {
+    segmentStart = (pending->splitLen > 0) ? pending->splitLen + 1 : 0;
+    segmentLen = (pending->len > segmentStart) ? pending->len - segmentStart : 0;
+    separatorLen = (segmentLen > 0) ? 1 : 0;
+    if (segmentLen > historyTextLimit || separatorLen > historyTextLimit - segmentLen ||
+        lineLen > historyTextLimit - segmentLen - separatorLen) {
         pending->overflow = OG_TRUE;
         return;
     }
-    if (separatorLen > 0) {
+    bufferSeparatorLen = (pending->len > 0) ? 1 : 0;
+    if (bufferSeparatorLen > sizeof(pending->buf) - pending->len ||
+        lineLen > sizeof(pending->buf) - pending->len - bufferSeparatorLen) {
+        pending->overflow = OG_TRUE;
+        return;
+    }
+    if (bufferSeparatorLen > 0) {
         pending->buf[pending->len++] = '\n';
     }
     if (lineLen > 0) {
@@ -601,21 +623,40 @@ void ogsql_history_pending_restore(OgsqlPendingHistoryT *pending, uint32 len, bo
     }
     pending->len = len;
     pending->buf[len] = '\0';
+    if (pending->splitLen > len) {
+        pending->splitLen = 0;
+        pending->splitWidth = 0;
+    }
     pending->overflow = overflow;
 }
 
 void ogsql_history_pending_commit(OgsqlPendingHistoryT *pending, int *histCount, uint32 displayWidth)
 {
     OgsqlHistoryInputT state;
+    uint32 historyTextLimit;
+    uint32 suffixLen;
+    bool32 pushed = OG_FALSE;
 
     if (pending == NULL) {
         return;
     }
-    if (pending->len > 0 && pending->overflow != OG_TRUE) {
-        state = (OgsqlHistoryInputT){ pending->buf, pending->len, displayWidth };
-        if (OgsqlHistoryPush(&state, histCount) == OG_TRUE) {
-            (void)ogsql_history_save();
+    historyTextLimit = ogsql_history_text_limit();
+    if (pending->splitLen > 0 && (pending->len > historyTextLimit || pending->overflow == OG_TRUE)) {
+        state = (OgsqlHistoryInputT){ pending->buf, pending->splitLen, pending->splitWidth };
+        pushed = (OgsqlHistoryPush(&state, histCount) == OG_TRUE) || pushed;
+        if (pending->overflow != OG_TRUE && pending->len > pending->splitLen + 1) {
+            suffixLen = pending->len - pending->splitLen - 1;
+            state = (OgsqlHistoryInputT){ pending->buf + pending->splitLen + 1, suffixLen,
+                                          displayWidth >= pending->splitWidth ? displayWidth - pending->splitWidth
+                                                                              : 0 };
+            pushed = (OgsqlHistoryPush(&state, histCount) == OG_TRUE) || pushed;
         }
+    } else if (pending->len > 0 && pending->overflow != OG_TRUE) {
+        state = (OgsqlHistoryInputT){ pending->buf, pending->len, displayWidth };
+        pushed = (OgsqlHistoryPush(&state, histCount) == OG_TRUE) || pushed;
+    }
+    if (pushed == OG_TRUE) {
+        (void)ogsql_history_save();
     }
     ogsql_history_pending_reset(pending);
 }

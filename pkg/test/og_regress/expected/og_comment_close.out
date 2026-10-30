@@ -103,5 +103,43 @@ C07
 1 rows fetched.
 
 SQL> 
+SQL> /* bare close then a line comment
+  2    note */
+  3 -- continuation
+  4 select 8 as c08 from sys.sys_dummy;
+
+C08         
+------------
+8           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* bare close then a same-line comment
+  2    note */
+  3 /* another */
+SQL> select 9 as c09 from sys.sys_dummy;
+
+C09         
+------------
+9           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* bare close then a client command
+  2    note */
+  3 SET HISTORY ON
+
+ON
+SQL> select 10 as c10 from sys.sys_dummy;
+
+C10         
+------------
+10          
+
+1 rows fetched.
+
+SQL> 
 
 
