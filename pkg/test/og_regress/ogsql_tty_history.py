@@ -18,6 +18,7 @@ from __future__ import annotations
 import errno
 import os
 import pwd
+import re
 import select
 import shlex
 import signal
@@ -242,6 +243,17 @@ def test_exit_saves_comment(ogsql: str, home: Path) -> None:
     assert any(b"saved" in record for record in history_records(home))
 
 
+def test_multiline_string(ogsql: str, home: Path) -> None:
+    # Given a string with an empty line; When SQL executes; Then its original length is preserved.
+    with TtySession(ogsql, home) as session:
+        enable_history(session)
+        session.line("select length('a", b"  2 ")
+        session.line("", b"  3 ")
+        output = session.line("b') from sys_dummy;")
+        assert re.search(rb"\r?\n4\s+\r?\n", output) is not None
+        session.finish()
+
+
 def test_overflow_keeps_sql(ogsql: str, home: Path) -> None:
     # Given a near-limit comment; When SQL crosses the limit; Then both slots remain recallable.
     with TtySession(ogsql, home) as session:
@@ -271,6 +283,7 @@ def main() -> int:
         ("single_command", test_single_command),
         ("rollback", test_rollback),
         ("exit_saves_comment", test_exit_saves_comment),
+        ("multiline_string", test_multiline_string),
         ("overflow_keeps_sql", test_overflow_keeps_sql),
     )
     failures = 0

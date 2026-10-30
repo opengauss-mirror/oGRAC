@@ -2741,7 +2741,7 @@ static inline status_t ogsql_concat_appendlf(text_t *line)
         return OG_ERROR;
     }
 
-    if (!CM_IS_EMPTY(&g_sql_text) && g_sql_text.str[g_sql_text.len - 1] != '\n') {
+    if (!CM_IS_EMPTY(&g_sql_text)) {
         CM_TEXT_APPEND(&g_sql_text, '\n');
     }
 

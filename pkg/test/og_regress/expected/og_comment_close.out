@@ -141,5 +141,16 @@ C10
 1 rows fetched.
 
 SQL> 
+SQL> select length('a
+  2 
+  3 b') as c11 from sys.sys_dummy;
+
+C11                 
+--------------------
+4                   
+
+1 rows fetched.
+
+SQL> 
 
 

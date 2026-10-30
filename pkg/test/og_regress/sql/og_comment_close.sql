@@ -54,3 +54,7 @@ select 9 as c09 from sys.sys_dummy;
    note */
 SET HISTORY ON
 select 10 as c10 from sys.sys_dummy;
+
+select length('a
+
+b') as c11 from sys.sys_dummy;
