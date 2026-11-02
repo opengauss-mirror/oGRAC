@@ -1627,4 +1627,7 @@ select cast('2024-02-29 23:59:59.999999 +08:00' as timestamp with time zone) fro
 select extract(year from '99991231235959') from sys_dummy;
 select 1 as database_alive from sys_dummy;
 
+-- Accept integral decimal numeric modifiers.
+SELECT CAST(12 AS NUMBER2(10,0.00)), CAST(12.34 AS NUMBER2(10,1.00)) FROM SYS_DUMMY;
+
 alter system set use_bison_parser = false;

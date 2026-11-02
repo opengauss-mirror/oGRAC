@@ -285,7 +285,22 @@ static status_t sql_parse_size_bison(type_word_t *type_word, uint16 max_size, bo
 static status_t sql_get_precision_typemode(expr_node_t *expr_node, int32 *precision)
 {
     if (expr_node->type == EXPR_NODE_CONST) {
-        *precision *= expr_node->value.v_int;
+        int32 modifier;
+        if (expr_node->value.type == OG_TYPE_INTEGER) {
+            modifier = expr_node->value.v_int;
+        } else if (OG_IS_NUMBER_TYPE(expr_node->value.type)) {
+            if (!cm_dec_is_integer(&expr_node->value.v_dec)) {
+                return OG_ERROR;
+            }
+            OG_RETURN_IFERR(cm_dec_to_int32(&expr_node->value.v_dec, &modifier, ROUND_TRUNC));
+        } else {
+            return OG_ERROR;
+        }
+        int64 value = (int64)*precision * modifier;
+        if (value < OG_MIN_INT32 || value > OG_MAX_INT32) {
+            return OG_ERROR;
+        }
+        *precision = (int32)value;
         return OG_SUCCESS;
     } else if (expr_node->type == EXPR_NODE_NEGATIVE) {
         *precision *= -1;
