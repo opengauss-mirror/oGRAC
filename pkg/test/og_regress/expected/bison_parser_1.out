@@ -5404,6 +5404,95 @@ CAST(12 AS NUMBER2(10,0.00))             CAST(12.34 AS NUMBER2(10,1.00))
 1 rows fetched.
 
 SQL>
+SQL> ALTER SYSTEM SET use_bison_parser = TRUE;
+
+Succeed.
+
+SQL> DROP TABLE IF EXISTS repro_unpivot PURGE;
+
+Succeed.
+
+SQL> CREATE TABLE repro_unpivot(a INT, b INT);
+
+Succeed.
+
+SQL> INSERT INTO repro_unpivot VALUES (1, 2);
+
+1 rows affected.
+
+SQL> SELECT u.* FROM repro_unpivot UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+
+K V
+- ------------
+A 1
+B 2
+
+2 rows fetched.
+
+SQL> SELECT u.* FROM (SELECT a, b FROM repro_unpivot) UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+
+K V
+- ------------
+A 1
+B 2
+
+2 rows fetched.
+
+SQL> SELECT u.* FROM (repro_unpivot) UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+
+K V
+- ------------
+A 1
+B 2
+
+2 rows fetched.
+
+SQL> DROP TABLE repro_unpivot PURGE;
+
+Succeed.
+
+SQL> DROP TABLE IF EXISTS repro_unpivot_part PURGE;
+
+Succeed.
+
+SQL> CREATE TABLE repro_unpivot_part(a INT, b INT) PARTITION BY RANGE(a) (PARTITION p1 VALUES LESS THAN(2), PARTITION p2 VALUES LESS THAN(MAXVALUE));
+
+Succeed.
+
+SQL> INSERT INTO repro_unpivot_part VALUES (1, 2), (3, 4);
+
+2 rows affected.
+
+SQL> SELECT u.* FROM repro_unpivot_part PARTITION(p1) UNPIVOT(v FOR k IN (a, b)) u ORDER BY k;
+
+K V
+- ------------
+A 1
+B 2
+
+2 rows fetched.
+
+SQL> SELECT u.* FROM (repro_unpivot_part PARTITION(p1) UNPIVOT(v FOR k IN (a, b)) u) ORDER BY k;
+
+K V
+- ------------
+A 1
+B 2
+
+2 rows fetched.
+
+SQL> SELECT p.* FROM repro_unpivot_part PARTITION(p1) PIVOT(SUM(b) FOR a IN (1 AS a1, 3 AS a3)) p;
+
+A1                   A3
+-------------------- --------------------
+2
+
+1 rows fetched.
+
+SQL> DROP TABLE repro_unpivot_part PURGE;
+
+Succeed.
+
 SQL> alter system set use_bison_parser = false;
 
 Succeed.

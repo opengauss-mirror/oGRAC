@@ -338,7 +338,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
                expr_or_implicit_row json_array_args json_array_arg_item json_object_args json_object_arg_item
                pl_call_expr
 %type <table>  insert_target qualified_name delete_target_name delete_target_base relation_expr table_func json_table
-%type <table>  snapshot_relation snapshot_table
+%type <table>  snapshot_relation snapshot_table table_source pivot_table
 %type <str> opt_snapshot_alias
 %type <keyword> snapshot_alias_keyword
 %type <boolean> snapshot_partition_for
@@ -691,6 +691,8 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %left        '(' ')'
 %left        TYPECAST KEY
 %right       UMINUS
+/* Consume a table's PIVOT/UNPIVOT before reducing its FROM entry. */
+%precedence  PIVOT_TOK UNPIVOT_TOK UNPIVOT_INC UNPIVOT_EXC
 %left        '.'
 /*
  * These might seem to be low-precedence, but actually they are not part
@@ -4013,6 +4015,86 @@ from_list:
         ;
 
 /*
+ * Keep bare relations in table_ref so AS aliases and AS OF share their prefix.
+ * Other sources are built before applying PIVOT/UNPIVOT and the result alias.
+ */
+table_source:
+            '(' relation_expr ')'
+                {
+                    $$ = $2;
+                }
+            | '(' '(' relation_expr ')' ')'
+                {
+                    $$ = $3;
+                }
+            | select_with_parens %prec UMINUS
+                {
+                    sql_table_t *table = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
+                    text_t curr_schema;
+                    cm_str2text(stmt->session->curr_schema, &curr_schema);
+                    table->user.value = curr_schema;
+                    table->user.loc = @1.loc;
+                    table->type = SUBSELECT_AS_TABLE;
+                    table->select_ctx = $1;
+                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
+                    $$ = table;
+                }
+            | relation_expr PARTITION '(' ColId ')'
+                {
+                    sql_table_t *table = $1;
+                    table->part_info.is_subpart = OG_FALSE;
+                    table->part_info.type = SPECIFY_PART_NAME;
+                    table->part_info.part_name.str = $4;
+                    table->part_info.part_name.len = strlen($4);
+                    $$ = table;
+                }
+            | relation_expr SUBPARTITION '(' ColId ')'
+                {
+                    sql_table_t *table = $1;
+                    table->part_info.is_subpart = OG_TRUE;
+                    table->part_info.type = SPECIFY_PART_NAME;
+                    table->part_info.part_name.str = $4;
+                    table->part_info.part_name.len = strlen($4);
+                    $$ = table;
+                }
+            | relation_expr PARTITION_FOR '(' expr_list_with_select ')'
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    sql_table_t *table = $1;
+                    table->part_info.is_subpart = OG_FALSE;
+                    table->part_info.type = SPECIFY_PART_VALUE;
+                    BISON_ABORT_IFERR(convert_expr_tree_to_galist(stmt, $4, &table->part_info.values));
+                    $$ = table;
+                }
+            | relation_expr SUBPARTITION_FOR '(' expr_list_with_select ')'
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    sql_table_t *table = $1;
+                    table->part_info.is_subpart = OG_TRUE;
+                    table->part_info.type = SPECIFY_PART_VALUE;
+                    BISON_ABORT_IFERR(convert_expr_tree_to_galist(stmt, $4, &table->part_info.values));
+                    $$ = table;
+                }
+        ;
+
+pivot_table:
+            relation_expr pivot_clause_list %prec UMINUS
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    BISON_ABORT_IFERR(bison_apply_table_pivot(stmt, $1, $2));
+                    $$ = $1;
+                }
+            | table_source pivot_clause_list %prec UMINUS
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    BISON_ABORT_IFERR(bison_apply_table_pivot(stmt, $1, $2));
+                    $$ = $1;
+                }
+        ;
+
+/*
  * table_ref is where an alias clause can be attached.
  */
 table_ref:
@@ -4098,68 +4180,48 @@ table_ref:
                     }
                     $$ = join_node;
                 }
-            | '(' relation_expr ')'
+            | pivot_table %prec UMINUS
                 {
-                    sql_table_t *table = $2;
-                    sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $1, NULL, NULL, NULL, &$$));
                 }
-            | '(' '(' relation_expr ')' ')'
+            | pivot_table alias_clause
                 {
-                    sql_table_t *table = $3;
-                    sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
+                    $1->alias.value.str = $2;
+                    $1->alias.value.len = strlen($2);
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $1, NULL, NULL, NULL, &$$));
                 }
-            | '(' relation_expr pivot_clause_list ')'
+            | table_source %prec UMINUS
                 {
-                    sql_table_t *table = $2;
-                    sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (bison_apply_table_pivot(stmt, table, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse pivot table failed.");
-                    }
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $1, NULL, NULL, NULL, &$$));
                 }
-            | '(' relation_expr pivot_clause_list ')' alias_clause
+            | table_source alias_clause
                 {
-                    sql_table_t *table = $2;
-                    sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (bison_apply_table_pivot(stmt, table, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse pivot table failed.");
-                    }
-                    table->alias.value.str = $5;
-                    table->alias.value.len = strlen($5);
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
+                    $1->alias.value.str = $2;
+                    $1->alias.value.len = strlen($2);
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $1, NULL, NULL, NULL, &$$));
                 }
-            | '(' relation_expr pivot_clause_list alias_clause ')'
+            | '(' pivot_table ')'
                 {
-                    sql_table_t *table = $2;
-                    sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (bison_apply_table_pivot(stmt, table, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse pivot table failed.");
-                    }
-                    table->alias.value.str = $4;
-                    table->alias.value.len = strlen($4);
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $2, NULL, NULL, NULL, &$$));
+                }
+            | '(' pivot_table ')' alias_clause
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    $2->alias.value.str = $4;
+                    $2->alias.value.len = strlen($4);
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $2, NULL, NULL, NULL, &$$));
+                }
+            | '(' pivot_table alias_clause ')'
+                {
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    $2->alias.value.str = $3;
+                    $2->alias.value.len = strlen($3);
+                    BISON_ABORT_IFERR(sql_create_join_node(stmt, JOIN_TYPE_NONE, $2, NULL, NULL, NULL, &$$));
                 }
             | '(' relation_expr alias_clause ')'
                 {
@@ -4187,186 +4249,14 @@ table_ref:
                     }
                     $$ = join_node;
                 }
-            | relation_expr PARTITION '(' ColId ')'
-                {
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_FALSE;
-                    table->part_info.type = SPECIFY_PART_NAME;
-                    table->part_info.part_name.str = $4;
-                    table->part_info.part_name.len = strlen($4);
-
-                    sql_join_node_t *join_node = NULL;
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr PARTITION '(' ColId ')' alias_clause
-                {
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_FALSE;
-                    table->part_info.type = SPECIFY_PART_NAME;
-                    table->part_info.part_name.str = $4;
-                    table->part_info.part_name.len = strlen($4);
-                    table->alias.value.str = $6;
-                    table->alias.value.len = strlen($6);
-
-                    sql_join_node_t *join_node = NULL;
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr SUBPARTITION '(' ColId ')'
-                {
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_TRUE;
-                    table->part_info.type = SPECIFY_PART_NAME;
-                    table->part_info.part_name.str = $4;
-                    table->part_info.part_name.len = strlen($4);
-
-                    sql_join_node_t *join_node = NULL;
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr SUBPARTITION '(' ColId ')' alias_clause
-                {
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_TRUE;
-                    table->part_info.type = SPECIFY_PART_NAME;
-                    table->part_info.part_name.str = $4;
-                    table->part_info.part_name.len = strlen($4);
-                    table->alias.value.str = $6;
-                    table->alias.value.len = strlen($6);
-
-                    sql_join_node_t *join_node = NULL;
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr PARTITION_FOR '(' expr_list_with_select ')'
-                {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_FALSE;
-                    table->part_info.type = SPECIFY_PART_VALUE;
-                    convert_expr_tree_to_galist(stmt, $4, &table->part_info.values);
-
-                    sql_join_node_t *join_node = NULL;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr PARTITION_FOR '(' expr_list_with_select ')' alias_clause
-                {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_FALSE;
-                    table->part_info.type = SPECIFY_PART_VALUE;
-                    convert_expr_tree_to_galist(stmt, $4, &table->part_info.values);
-                    table->alias.value.str = $6;
-                    table->alias.value.len = strlen($6);
-
-                    sql_join_node_t *join_node = NULL;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr SUBPARTITION_FOR '(' expr_list_with_select ')'
-                {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_TRUE;
-                    table->part_info.type = SPECIFY_PART_VALUE;
-                    convert_expr_tree_to_galist(stmt, $4, &table->part_info.values);
-
-                    sql_join_node_t *join_node = NULL;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | relation_expr SUBPARTITION_FOR '(' expr_list_with_select ')' alias_clause
-                {
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    sql_table_t *table = $1;
-                    table->part_info.is_subpart = OG_TRUE;
-                    table->part_info.type = SPECIFY_PART_VALUE;
-                    convert_expr_tree_to_galist(stmt, $4, &table->part_info.values);
-                    table->alias.value.str = $6;
-                    table->alias.value.len = strlen($6);
-
-                    sql_join_node_t *join_node = NULL;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
             | joined_table
                 {
                     $$ = $1;
                 }
-            | select_with_parens                %prec UMINUS
+            | '(' table_source alias_clause ')'
                 {
-                    sql_table_t *table = NULL;
+                    sql_table_t *table = $2;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
-                    text_t curr_schema;
-                    cm_str2text(stmt->session->curr_schema, &curr_schema);
-                    table->user.value = curr_schema;
-                    table->user.loc = @1.loc;
-                    table->type = SUBSELECT_AS_TABLE;
-                    table->select_ctx = $1;
-                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
-
-                    sql_join_node_t *join_node = NULL;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | select_with_parens alias_clause
-                {
-                    sql_table_t *table = NULL;
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
-                    text_t curr_schema;
-                    cm_str2text(stmt->session->curr_schema, &curr_schema);
-                    table->user.value = curr_schema;
-                    table->user.loc = @1.loc;
-                    table->type = SUBSELECT_AS_TABLE;
-                    table->select_ctx = $1;
-                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
-                    table->alias.value.str = $2;
-                    table->alias.value.len = strlen($2);
-
-                    sql_join_node_t *join_node = NULL;
-                    if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
-                    }
-                    $$ = join_node;
-                }
-            | '(' select_with_parens alias_clause ')'
-                {
-                    sql_table_t *table = NULL;
-                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
-                    text_t curr_schema;
-                    cm_str2text(stmt->session->curr_schema, &curr_schema);
-                    table->user.value = curr_schema;
-                    table->user.loc = @2.loc;
-                    table->type = SUBSELECT_AS_TABLE;
-                    table->select_ctx = $2;
-                    bison_set_select_type(table->select_ctx, SELECT_AS_TABLE);
                     table->alias.value.str = $3;
                     table->alias.value.len = strlen($3);
 
