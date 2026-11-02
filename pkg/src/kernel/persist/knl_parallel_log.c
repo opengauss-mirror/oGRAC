@@ -30,6 +30,8 @@
 #include "srv_instance.h"
 #include "cm_futex.h"
 #include "dtc_database.h"
+#include "dtc_drc.h"
+#include "dtc_remote_buffer.h"
 #include "knl_ctrl_restore.h"
 #include "knl_ckpt.h"
 #include "cm_memory.h"
@@ -1984,6 +1986,18 @@ static void para_log_note_flushed_curr(knl_session_t *session, uint64 batch_max_
     para_log_atomic_max_u64((volatile uint64 *)&session->kernel->redo_ctx.flushed_lfn, batch_max_curr);
     prefix_scn = db_next_scn(session);
     para_log_atomic_max_u64((volatile uint64 *)&session->kernel->redo_ctx.curr_scn, (uint64)prefix_scn);
+
+    /*
+     * ENABLE_PARA_LOG_FLUSH path: publish node_flush_lsn for peer HOT CR wait.
+     * Serial log_flush() never runs when para flush is on, so this must live here.
+     * Use monotonic max: multiple lgwr threads may advance concurrently.
+     */
+    if (!DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
+        remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+        if (rsga->node_flush_lsn != NULL) {
+            para_log_atomic_max_u64((volatile uint64 *)rsga->node_flush_lsn, batch_max_curr);
+        }
+    }
 }
 
 static bool32 para_log_file_status_idle(const log_file_t *file)
@@ -2286,19 +2300,23 @@ static void para_log_snap_copied_lrc(knl_session_t *session)
         groups = KNL_PARA_LOG_MAX_GROUPS;
     }
 
+    /*
+     * Relaxed loads so the per-lane misses overlap. reserved_lrc is only a flush watermark;
+     * durability is the acquire of last_flushed_lrc in para_log_commit_lrc_ready. The release
+     * stores in para_log_write are sequenced-before this snapshot on the same thread.
+     */
     for (g = 0; g < groups; g++) {
         para_log_context_t *peer = session->kernel->para_log_ctx[g];
         int32 next_lrc;
-        int32 flushed_lrc;
 
         if (peer == NULL || g == own) {
             session->commit_copied_lrc[g] = -1;
             continue;
         }
 
-        flushed_lrc = para_log_lrc_load_acquire(&peer->last_flushed_lrc);
-        next_lrc = para_log_lrc_load_acquire(&peer->reserved_lrc);
+        next_lrc = para_log_lrc_load_relaxed(&peer->reserved_lrc);
         if (next_lrc == 0) {
+            int32 flushed_lrc = para_log_lrc_load_relaxed(&peer->last_flushed_lrc);
             session->commit_copied_lrc[g] = (flushed_lrc < 0) ? -1 : 0x7FFFFFFF;
             continue;
         }
@@ -2620,6 +2638,12 @@ status_t para_log_commit_flush(knl_session_t *session)
     ogx = session->kernel->para_log_ctx[wal_group];
     knl_panic_log(ogx != NULL, "para log context is not initialized");
 
+    /* Once per para_log_write. Refreshing inside the wait would chase new reservations. */
+    if (!session->commit_copied_lrc_valid) {
+        para_log_snap_copied_lrc(session);
+        session->commit_copied_lrc_valid = OG_TRUE;
+    }
+
     knl_begin_session_wait(session, LOG_FILE_SYNC, OG_TRUE);
     wait_begin = cm_now();
 
@@ -2661,9 +2685,9 @@ status_t para_log_commit_flush(knl_session_t *session)
         (void)cm_futex_wait_value(&lag_ogx->lrc_wake_seq, seq, PARA_LOG_COMMIT_WAIT_SLICE_MS);
     }
 
-            if (session->kernel->attr.enable_boc) {
-                tx_scn_broadcast(session);
-            }
+    if (session->kernel->attr.enable_boc && shmem_scn_need_broadcast()) {
+        tx_scn_broadcast(session);
+    }
     knl_end_session_wait(session, LOG_FILE_SYNC);
     return OG_SUCCESS;
 }
@@ -2950,6 +2974,7 @@ void para_log_write(knl_session_t *session, uint32 total_size, log_group_t *grou
     session->curr_lrc = curr_lrc;
     session->commit_wal_group = ogx->thread_idx;
     group->lsn = session->curr_lsn;
+    session->commit_copied_lrc_valid = OG_FALSE;
     para_log_stamp_group_file(group, para_log_checked_file(ogx, ogx->curr_file));
 
     if (session->rm->need_copy_logic_log) {
@@ -2982,7 +3007,6 @@ void para_log_write(knl_session_t *session, uint32 total_size, log_group_t *grou
     para_log_u64_store_release(&status_entry_ptr->curr_lsn, session->curr_lsn);
     /* release: WAL copy and end_log_pos/lsn precede COPIED. Does not rely on volatile for ordering of plain writes. */
     para_log_status_store_release(status_entry_ptr, RD_COPIED);
-    para_log_snap_copied_lrc(session);
     ogx->dfx.write_cnt++;
     ogx->dfx.write_bytes += disk_size;
     OG_LOG_DEBUG_INF("[PARA LOG] write group=%u sid=%u lrc=%d curr_lsn=%llu size=%u pos=%llu..%llu",
@@ -4404,6 +4428,11 @@ status_t para_log_rcy_apply_reset(knl_session_t *session, uint8 node_id, uint64 
 
         cm_atomic_set((atomic_t *)&ogx->flushed_lsn, (int64)recovered_end);
         cm_atomic_set((atomic_t *)&ogx->flushed_lfn, (int64)recovered_end);
+        /* keep peer HOT wait baseline in sync after para recovery reset */
+        if (!DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
+            remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+            drc_set_node_flush_lsn(rsga, recovered_end);
+        }
 
         ogx->curr_point.asn = 0;
         ogx->curr_point.block_id = 0;

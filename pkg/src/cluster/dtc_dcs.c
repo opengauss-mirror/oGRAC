@@ -292,6 +292,10 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
     dcs_get_page_from_gbp(session, ctrl, mode);
+
+    if (ack->scn != 0) {
+        DB_RAISE_LOCAL_SCN(session, ack->scn);
+    }
     session->ub_page_req_kind = (uint8)UB_PAGE_REQ_COLD_PROMOTE; // UB-stats
 
     DTC_DCS_DEBUG_INF(
@@ -651,7 +655,7 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
     }
 
     if (ack->scn != 0) {
-        DB_SET_CURR_SCN(session, ack->scn);
+        DB_RAISE_LOCAL_SCN(session, ack->scn);
     }
 
     if ((flags & MES_FLAG_NEED_LOAD) && ctrl->is_edp) { /* clean edp msg may come later. */

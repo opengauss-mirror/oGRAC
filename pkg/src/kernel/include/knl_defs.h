@@ -66,15 +66,96 @@ typedef uint64 knl_scn_t;
 #define KNL_INC_SCN(p_scn)      (knl_scn_t)(++(*(p_scn)))
 #endif
 
-/* Forward declarations for global SCN functions to avoid circular dependency */
-knl_scn_t shmem_scn_read_atomic(atomic_t *local_scn);
-knl_scn_t shmem_scn_add_atomic(atomic_t *local_scn);
-void shmem_scn_update_max_atomic(atomic_t *local_scn, knl_scn_t scn);
+/*
+ * Multi-slot SCN over UB shm: each node owns a slot in its remote SGA.
+ * g_ub_global_scn points at the local slot — GET reads local only.
+ * SET/INC update local then fan-out raise to peer slots (remote write).
+ * NULL means fall back to kernel->scn.
+ */
+#ifndef WIN32
+extern volatile uint64 *g_ub_global_scn;
+void shmem_scn_fanout_raise(uint64 scn);
 
-/* local_scn: kernel->scn; used when UB disabled or slot not bound; ignored when UB slot is bound */
-#define KNL_GET_UB_SCN(local_scn) shmem_scn_read_atomic(local_scn)
-#define KNL_SET_UB_SCN(local_scn, scn) shmem_scn_update_max_atomic(local_scn, scn)
-#define KNL_INC_UB_SCN(local_scn) shmem_scn_add_atomic(local_scn)
+static inline knl_scn_t knl_get_ub_scn(atomic_t *p_scn)
+{
+    volatile uint64 *ub_scn = g_ub_global_scn;
+
+    if (ub_scn == NULL) {
+        return KNL_GET_SCN(p_scn);
+    }
+    return (knl_scn_t)ub_atomic_read_u64(ub_scn);
+}
+
+static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    volatile uint64 *ub_scn = g_ub_global_scn;
+
+    if (ub_scn != NULL) {
+        ub_atomic_raise_u64(ub_scn, (uint64)scn);
+        shmem_scn_fanout_raise((uint64)scn);
+        return;
+    }
+    if (scn > KNL_GET_SCN(p_scn)) {
+        KNL_SET_SCN(p_scn, scn);
+    }
+}
+
+/* Raise local SCN only: UB slot without peer fan-out, or kernel->scn if UB not ready. */
+static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    volatile uint64 *ub_scn = g_ub_global_scn;
+
+    if (ub_scn != NULL) {
+        ub_atomic_raise_u64(ub_scn, (uint64)scn);
+        return;
+    }
+    if (scn > KNL_GET_SCN(p_scn)) {
+        KNL_SET_SCN(p_scn, scn);
+    }
+}
+
+static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
+{
+    volatile uint64 *ub_scn = g_ub_global_scn;
+    knl_scn_t val;
+
+    if (ub_scn == NULL) {
+        return KNL_INC_SCN(p_scn);
+    }
+    val = (knl_scn_t)ub_atomic_add_fetch_u64(ub_scn, 1);
+    shmem_scn_fanout_raise((uint64)val);
+    return val;
+}
+#else
+static inline knl_scn_t knl_get_ub_scn(atomic_t *p_scn)
+{
+    return KNL_GET_SCN(p_scn);
+}
+
+static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    if (scn > KNL_GET_SCN(p_scn)) {
+        KNL_SET_SCN(p_scn, scn);
+    }
+}
+
+static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    if (scn > KNL_GET_SCN(p_scn)) {
+        KNL_SET_SCN(p_scn, scn);
+    }
+}
+
+static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
+{
+    return KNL_INC_SCN(p_scn);
+}
+#endif
+
+#define KNL_GET_UB_SCN(p_scn) knl_get_ub_scn(p_scn)
+#define KNL_SET_UB_SCN(p_scn, scn) knl_set_ub_scn(p_scn, scn)
+#define KNL_RAISE_LOCAL_UB_SCN(p_scn, scn) knl_raise_local_ub_scn(p_scn, scn)
+#define KNL_INC_UB_SCN(p_scn) knl_inc_ub_scn(p_scn)
 
 // gen scn with given seq
 #define KNL_TIMESEQ_TO_SCN(time_val, init_time, seq) OG_TIMESEQ_TO_SCN(time_val, init_time, seq)

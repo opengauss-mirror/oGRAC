@@ -32,6 +32,7 @@
 #include "dtc_trace.h"
 #include "dtc_dcs.h"
 #include "dtc_dc.h"
+#include "dtc_txn_hot.h"
 #include "knl_table.h"
 
 #ifdef __cplusplus
@@ -2071,6 +2072,26 @@ bool32 dls_wait_txn(knl_session_t *session, uint16 rmid)
 
     inst_id = xid_get_inst_id(session, session->wxid);
     DTC_DLS_DEBUG_INF("[DLS] wait txn %llu from instance %u", session->wxid.value, inst_id);
+
+    /*
+     * Phase-C: enroll on owner UB wait_mask + sleep local cond; owner kicks via
+     * MES AWAKE on END. Avoids MES WAIT_TXN/ACK RTT while ACTIVE. MES WAIT_TXN
+     * remains fallback when hot/UB path is unusable.
+     */
+    if (dtc_txn_hot_enabled(session)) {
+        dtc_txn_hot_ub_wait_result_t ub_ret = dtc_txn_hot_ub_wait(session, session->wxid, inst_id);
+
+        if (ub_ret == DTC_TXN_HOT_UB_ENDED) {
+            DTC_DLS_DEBUG_INF("[DLS] wait txn %llu ended via txn_hot UB path", session->wxid.value);
+            return OG_TRUE;
+        }
+        if (ub_ret == DTC_TXN_HOT_UB_PENDING) {
+            /* still ACTIVE; stay on UB path (no MES WAIT_TXN tax) */
+            return OG_FALSE;
+        }
+        /* FALLBACK -> MES below */
+    }
+
     // send message to owner (check txn status and record in wait hash queue)
     ret = dls_request_txn_msg(session, (xid_t *)(&session->wxid), inst_id, MES_CMD_WAIT_TXN);
     if (ret == DLS_REMOTE_TXN_END) {
@@ -2106,6 +2127,8 @@ void dls_release_txn(knl_session_t *session, knl_rm_t *rm)
     // remote
     if (DB_ATTR_CLUSTER(session)) {
         drc_release_txn(session, (xid_t *)(&rm->xid), rm->txn->scn, dls_send_txn_msg);
+        /* Phase-C: wake waiters that enrolled on UB wait_mask (no MES WAIT_TXN). */
+        dtc_txn_hot_kick_ub_waiters(session, (xid_t *)(&rm->xid), rm->txn->scn, dls_send_txn_msg);
     }
     return;
 }

@@ -113,6 +113,12 @@ static inline int32 para_log_lrc_load_acquire(const atomic32_t *val)
     return __atomic_load_n(val, __ATOMIC_ACQUIRE);
 }
 
+/* Watermark only. Acquire would serialize the per-lane remote misses in the commit snapshot. */
+static inline int32 para_log_lrc_load_relaxed(const atomic32_t *val)
+{
+    return __atomic_load_n(val, __ATOMIC_RELAXED);
+}
+
 static inline void para_log_lrc_store_release(atomic32_t *val, int32 value)
 {
     __atomic_store_n(val, value, __ATOMIC_RELEASE);

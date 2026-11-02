@@ -16,6 +16,7 @@
  *
  * dtc_shmem_scn.h
  *
+ * SCN slot in global remote SGA (st_remote_sga). Each slot is 64-byte aligned.
  *
  * IDENTIFICATION
  * src/cluster/dtc_shmem_scn.h
@@ -25,13 +26,18 @@
 #ifndef DTC_SHMEM_SCN_H
 #define DTC_SHMEM_SCN_H
 
+#include "cm_defs.h"
 #include "knl_session.h"
-#include "dtc_remote_buffer.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifndef SHMEM_SCN_SIZE
+#define SHMEM_SCN_SIZE (64)
+#endif
+
+/* 64B slot: value + owner + pad, placed in remote SGA after node_flush_lsn. */
 typedef struct st_shmem_scn_slot {
     volatile uint64 value;
     volatile uint32 owner_node;
@@ -39,13 +45,16 @@ typedef struct st_shmem_scn_slot {
 } shmem_scn_slot_t;
 
 typedef struct st_shmem_scn_mgr {
-    shmem_scn_slot_t *global_scn_slot;  /* cached slot on reformer UB, set after mmap bind */
-    uint32 owner_id;                    /* cached reformer node id */
+    shmem_scn_slot_t *global_scn_slot; /* local node SCN slot; GET reads this only */
+    uint32 owner_id;                   /* self node id after local bind */
+    char *map_addr[OG_MAX_INSTANCES];  /* per-node SCN slot addrs (inside remote SGA) */
+    bool32 map_success[OG_MAX_INSTANCES];
 } shmem_scn_mgr_t;
 
 uint32 shmem_scn_get_owner_id(void);
 bool32 shmem_scn_is_owner(void);
-void shmem_scn_init(void);
+status_t shmem_scn_init(void);
+void shmem_scn_cleanup(void);
 void shmem_scn_bind(void);
 void shmem_scn_invalidate_cache(void);
 status_t shmem_scn_rebind_if_needed(void);
@@ -54,9 +63,7 @@ status_t shmem_scn_sync_to_ub(void);
 status_t shmem_scn_ensure_ready(void);
 bool32 shmem_scn_ready(void);
 bool32 shmem_scn_need_broadcast(void);
-knl_scn_t shmem_scn_read_atomic(atomic_t *local_scn);
-knl_scn_t shmem_scn_add_atomic(atomic_t *local_scn);
-void shmem_scn_update_max_atomic(atomic_t *local_scn, knl_scn_t scn);
+void shmem_scn_fanout_raise(uint64 scn);
 
 #ifdef __cplusplus
 }

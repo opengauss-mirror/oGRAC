@@ -959,6 +959,7 @@ void knl_init_session(knl_handle_t kernel, knl_handle_t knl_session, uint32 uid,
     session->log_progress = LOG_COMPLETED;
     session->curr_lrc = -1;
     session->commit_wal_group = 0;
+    session->commit_copied_lrc_valid = OG_FALSE;
     ret = memset_sp(session->commit_copied_lrc, sizeof(session->commit_copied_lrc), 0xFF,
                     sizeof(session->commit_copied_lrc));
     knl_securec_check(ret);

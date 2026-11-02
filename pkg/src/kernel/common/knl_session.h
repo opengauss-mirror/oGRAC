@@ -460,6 +460,7 @@ typedef struct st_knl_session {
     bool8 thread_shared; // if curr session will be thread shared
     bool8 atomic_op;
     bool8 log_diag;
+    bool8 commit_copied_lrc_valid; /* commit_copied_lrc matches the latest para_log_write */
 #ifdef LOG_DIAG
     char *log_diag_page[KNL_MAX_ATOMIC_PAGES];
 #endif

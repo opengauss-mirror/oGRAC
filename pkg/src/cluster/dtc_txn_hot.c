@@ -6,8 +6,13 @@
 #include "dtc_shmem_scn.h"
 #include "knl_database.h"
 #include "rc_reform.h"
+#include "mes_func.h"
 
 #define DTC_TXN_HOT_WAIT_FLUSH_INTERVAL 1  /* unit: ms */
+
+/* txn_hot_offset is 64B aligned; header and slot must each be exactly one cache line */
+CM_STATIC_ASSERT(sizeof(dtc_txn_hot_t) == 64);
+CM_STATIC_ASSERT(sizeof(dtc_txn_hot_hdr_t) == 64);
 
 typedef struct st_dtc_txn_hot_stat_internal {
     atomic_t info_hot;
@@ -15,6 +20,9 @@ typedef struct st_dtc_txn_hot_stat_internal {
     atomic_t snapshot_hot;
     atomic_t snapshot_remote;
     atomic_t info_resolve_fail;
+    atomic_t wait_end;
+    atomic_t wait_ub_wake;
+    atomic_t wait_mes_fallback;
 } dtc_txn_hot_stat_internal_t;
 
 static dtc_txn_hot_stat_internal_t g_dtc_txn_hot_stat;
@@ -37,6 +45,15 @@ void dtc_txn_hot_stat_inc(dtc_txn_hot_stat_type_t type)
         case DTC_TXN_HOT_STAT_INFO_RESOLVE_FAIL:
             (void)cm_atomic_inc(&g_dtc_txn_hot_stat.info_resolve_fail);
             break;
+        case DTC_TXN_HOT_STAT_WAIT_END:
+            (void)cm_atomic_inc(&g_dtc_txn_hot_stat.wait_end);
+            break;
+        case DTC_TXN_HOT_STAT_WAIT_UB_WAKE:
+            (void)cm_atomic_inc(&g_dtc_txn_hot_stat.wait_ub_wake);
+            break;
+        case DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK:
+            (void)cm_atomic_inc(&g_dtc_txn_hot_stat.wait_mes_fallback);
+            break;
         default:
             break;
     }
@@ -52,6 +69,9 @@ void dtc_txn_hot_stat_get(dtc_txn_hot_stat_t *stat)
     stat->snapshot_hot = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.snapshot_hot);
     stat->snapshot_remote = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.snapshot_remote);
     stat->info_resolve_fail = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.info_resolve_fail);
+    stat->wait_end = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.wait_end);
+    stat->wait_ub_wake = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.wait_ub_wake);
+    stat->wait_mes_fallback = (uint64)cm_atomic_get(&g_dtc_txn_hot_stat.wait_mes_fallback);
 }
 
 static inline dtc_txn_hot_hdr_t *hot_hdr(remote_sga_t *sga, uint32 inst)
@@ -107,6 +127,33 @@ static inline uint64 hot_pack(uint32 xnum, uint16 rmid, uint8 status, uint8 prog
     return (uint64)xnum | ((uint64)rmid << 32) | ((uint64)status << 48) | ((uint64)progress << 56);
 }
 
+static inline void hot_wait_mask_or(atomic_t *mask, uint64 bit)
+{
+    int64 old_v;
+    int64 new_v;
+
+    do {
+        old_v = cm_atomic_get(mask);
+        new_v = old_v | (int64)bit;
+        if (old_v == new_v) {
+            return;
+        }
+    } while (!cm_atomic_cas(mask, old_v, new_v));
+}
+
+static inline int64 hot_wait_mask_xchg0(atomic_t *mask)
+{
+    int64 old_v;
+
+    do {
+        old_v = cm_atomic_get(mask);
+        if (old_v == 0) {
+            return 0;
+        }
+    } while (!cm_atomic_cas(mask, old_v, 0));
+    return old_v;
+}
+
 static void hot_publish_locked(dtc_txn_hot_t *slot, txn_t *txn, tx_item_t *item, uint64 end_lsn)
 {
     uint64 slot_end_lsn;
@@ -124,6 +171,13 @@ static void hot_publish_locked(dtc_txn_hot_t *slot, txn_t *txn, tx_item_t *item,
     (void)cm_atomic_set(&slot->scn, (int64)txn->scn);
     (void)cm_atomic_set(&slot->pack, (int64)hot_pack(txn->xnum, item->rmid, txn->status, item->in_progress));
     (void)cm_atomic_set(&slot->end_lsn, (int64)slot_end_lsn);
+    if (txn->status == (uint8)XACT_BEGIN) {
+        /* slot reuse: drop stale waiters */
+        (void)cm_atomic_set(&slot->wait_mask, 0);
+    } else if (txn->status == (uint8)XACT_END) {
+        /* kick generation for Phase-C waiters (MES AWAKE follows in kick_ub_waiters) */
+        (void)cm_atomic32_inc(&slot->wake_seq);
+    }
     CM_MFENCE;
     (void)cm_atomic_inc(&slot->seq);
 }
@@ -195,7 +249,7 @@ static uint64 hot_region_size_bytes(uint32 undo_segments, uint64 tran_buf_size)
 
 uint64 dtc_txn_hot_pool_layout_end(const remote_sga_t *sga, uint32 undo_segments, uint64 tran_buf_size)
 {
-    uint64 layout_end = drc_get_shmem_scn_offset(sga) + SHMEM_SCN_SIZE;
+    uint64 layout_end = drc_get_shmem_scn_offset(sga) + DRC_SHMEM_SCN_SIZE;
     uint64 hot_size = hot_region_size_bytes(undo_segments, tran_buf_size);
 
     if (hot_size == 0) {
@@ -322,7 +376,7 @@ status_t dtc_txn_hot_region_init(remote_sga_t *sga)
     uint64 size = hot_region_size_bytes(segs, g_instance->kernel.attr.tran_buf_size);
     dtc_txn_hot_hdr_t *h;
     if (sga == NULL || sga->remote_buf_addr[self] == NULL || segs == 0 || cap == 0 || cap * segs != total_cap) return OG_ERROR;
-    sga->txn_hot_offset = CM_CALC_ALIGN(drc_get_shmem_scn_offset(sga) + SHMEM_SCN_SIZE, 64);
+    sga->txn_hot_offset = CM_CALC_ALIGN(drc_get_shmem_scn_offset(sga) + DRC_SHMEM_SCN_SIZE, 64);
     if (sga->txn_hot_offset + size > sga->remote_total_pool_size) return OG_ERROR;
     h = hot_hdr(sga, self);
     knl_reset_large_memory((char *)h, size);
@@ -432,4 +486,149 @@ status_t dtc_get_txn_info_from_hot(knl_session_t *session, bool32 is_scan, xid_t
     }
     dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_INFO_HOT);
     return OG_SUCCESS;
+}
+
+static dtc_txn_hot_t *hot_slot_by_xid(knl_session_t *session, xid_t xid, uint8 owner)
+{
+    remote_sga_t *sga = &DRC_RES_CTX->remote_sga;
+    dtc_txn_hot_hdr_t *h;
+    tx_id_t id;
+
+    if (!dtc_txn_hot_enabled(session) || owner >= OG_MAX_INSTANCES) {
+        return NULL;
+    }
+    (void)shmem_scn_rebind_if_needed();
+    if (!sga->map_success[owner] && dtc_mmap_remote_data_buf(sga, owner) != OG_SUCCESS) {
+        return NULL;
+    }
+    h = hot_hdr(sga, owner);
+    id = tx_xmap_get_txid(session, xid.xmap);
+    if (!hot_header_valid(session, sga, h) || id.seg_id >= h->undo_segments ||
+        id.item_id >= h->capacity_per_seg) {
+        return NULL;
+    }
+    return hot_slot(sga, owner, id.seg_id * h->capacity_per_seg + id.item_id);
+}
+
+static bool32 hot_try_observe_end(knl_session_t *session, xid_t xid, uint8 owner, bool32 count_info_hot)
+{
+    txn_info_t info;
+
+    if (dtc_get_txn_info_from_hot(session, OG_FALSE, xid, owner, &info) != OG_SUCCESS) {
+        return OG_FALSE;
+    }
+    if (info.status != (uint8)XACT_END) {
+        return OG_FALSE;
+    }
+    (void)count_info_hot; /* info_hot already counted inside get_txn_info_from_hot */
+    return OG_TRUE;
+}
+
+/*
+ * Phase-C waiter: enroll on owner wait_mask, sleep on local cond (kicked by MES AWAKE
+ * from kick_ub_waiters, or TX_WAIT_INTERVEL timeout), then re-read hot.
+ * Does not send MES WAIT_TXN / wait for TXN_ACK.
+ */
+dtc_txn_hot_ub_wait_result_t dtc_txn_hot_ub_wait(knl_session_t *session, xid_t xid, uint8 owner)
+{
+    dtc_txn_hot_t *slot;
+    uint64 my_bit;
+    int32 seq0;
+    uint8 self;
+
+    if (!dtc_txn_hot_enabled(session) || owner >= OG_MAX_INSTANCES || RC_REFORM_IN_PROGRESS) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK);
+        return DTC_TXN_HOT_UB_FALLBACK;
+    }
+
+    if (hot_try_observe_end(session, xid, owner, OG_TRUE)) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_END);
+        return DTC_TXN_HOT_UB_ENDED;
+    }
+
+    slot = hot_slot_by_xid(session, xid, owner);
+    if (slot == NULL) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK);
+        return DTC_TXN_HOT_UB_FALLBACK;
+    }
+
+    self = (uint8)session->kernel->id;
+    if (self >= OG_MAX_INSTANCES) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK);
+        return DTC_TXN_HOT_UB_FALLBACK;
+    }
+    my_bit = 1ULL << self;
+
+    /* Ensure local wait object exists before enroll (avoid lost AWAKE). */
+    if (!drc_local_txn_ensure(&xid)) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK);
+        return DTC_TXN_HOT_UB_FALLBACK;
+    }
+
+    seq0 = cm_atomic32_get(&slot->wake_seq);
+    hot_wait_mask_or(&slot->wait_mask, my_bit);
+    CM_MFENCE;
+
+    /* Lost-wakeup / already-ended checks after enroll. */
+    if (hot_try_observe_end(session, xid, owner, OG_TRUE)) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_UB_WAKE);
+        return DTC_TXN_HOT_UB_ENDED;
+    }
+    if (cm_atomic32_get(&slot->wake_seq) != seq0) {
+        if (hot_try_observe_end(session, xid, owner, OG_TRUE)) {
+            dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_UB_WAKE);
+            return DTC_TXN_HOT_UB_ENDED;
+        }
+    }
+
+    if (RC_REFORM_IN_PROGRESS) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK);
+        return DTC_TXN_HOT_UB_FALLBACK;
+    }
+
+    (void)drc_local_txn_wait(&xid);
+
+    if (hot_try_observe_end(session, xid, owner, OG_TRUE)) {
+        dtc_txn_hot_stat_inc(DTC_TXN_HOT_STAT_WAIT_UB_WAKE);
+        return DTC_TXN_HOT_UB_ENDED;
+    }
+
+    /* Still ACTIVE: stay on UB path (caller retries). No MES tax. */
+    return DTC_TXN_HOT_UB_PENDING;
+}
+
+void dtc_txn_hot_kick_ub_waiters(knl_session_t *session, xid_t *xid, knl_scn_t scn,
+    dtc_txn_hot_send_awake_t send_func)
+{
+    dtc_txn_hot_t *slot;
+    int64 mask;
+    uint8 i;
+
+    if (session == NULL || xid == NULL || send_func == NULL || !dtc_txn_hot_enabled(session)) {
+        return;
+    }
+    if (xid_get_inst_id(session, *xid) != session->kernel->id) {
+        return;
+    }
+
+    slot = hot_slot_by_xid(session, *xid, (uint8)session->kernel->id);
+    if (slot == NULL) {
+        return;
+    }
+
+    /* wake_seq already bumped in hot_publish_locked on END; take enrolled mask. */
+    mask = hot_wait_mask_xchg0(&slot->wait_mask);
+    if (mask == 0) {
+        return;
+    }
+
+    for (i = 0; i < OG_MAX_INSTANCES; i++) {
+        if (((uint64)mask & (1ULL << i)) == 0) {
+            continue;
+        }
+        if (i == session->kernel->id) {
+            continue;
+        }
+        send_func(session, xid, scn, i, MES_CMD_AWAKE_TXN);
+    }
 }

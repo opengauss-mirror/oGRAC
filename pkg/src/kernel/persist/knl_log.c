@@ -601,6 +601,20 @@ status_t log_flush_to_disk(knl_session_t *session, log_context_t *ogx, log_batch
     return OG_SUCCESS;
 }
 
+/*
+ * Slot clear publishes the redo just copied into the public buffer.
+ * Acquire loads of buf->value pair with it: value 0 means those bytes are visible.
+ */
+static inline void log_release_buf_slot(log_buffer_t *buf, uint8 slot)
+{
+    cm_atomic_store_release_u8(&buf->slots[slot], 0);
+}
+
+static inline uint64 log_acquire_buf_value(log_buffer_t *buf)
+{
+    return cm_atomic_barrier_read(&buf->value);
+}
+
 static inline void log_assemble_buffer(log_context_t *ogx, log_buffer_t *buf, uint64 *max_lsn)
 {
     log_part_t part;
@@ -807,13 +821,13 @@ static log_batch_t *log_assemble_batch(knl_session_t *session, log_context_t *og
                 continue;
             }
 
-            if (buf->value != 0) {
+            if (log_acquire_buf_value(buf) != 0) {
                 skip_count++;
                 continue;
             }
 
             cm_spin_lock(&buf->lock, &session->stat->spin_stat.stat_redo_buf);
-            if (buf->value != 0) {
+            if (log_acquire_buf_value(buf) != 0) {
                 cm_spin_unlock(&buf->lock);
                 skip_count++;
                 continue;
@@ -874,7 +888,7 @@ bool32 log_need_flush(knl_session_t *session)
     for (uint32 i = 0; i < ogx->buf_count; i++) {
         log_buffer_t *buf = &ogx->bufs[i].members[wid];
 
-        if (buf->value != 0) {
+        if (log_acquire_buf_value(buf) != 0) {
             return OG_TRUE;
         }
 
@@ -1070,7 +1084,11 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     ogx->curr_scn = batch->scn;
     log_stat(ogx, batch->space_size);
 
-    /* node_flush_lsn is not maintained in no-CMS mode, skip updating */
+    /*
+     * Serial flush (!ENABLE_PARA_LOG_FLUSH): publish node_flush_lsn for peer HOT wait.
+     * Parallel path publishes in para_log_note_flushed_curr when ENABLE_PARA_LOG_FLUSH is on.
+     * Not maintained in no-CMS mode.
+     */
     if (session->kernel->attr.enable_ubsmem && !DB_CLUSTER_NO_CMS && DB_IS_CLUSTER(session)) {
         remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
         drc_set_node_flush_lsn(rsga, ogx->flushed_lsn);
@@ -1706,8 +1724,7 @@ static void log_write(knl_session_t *session)
     cm_spin_unlock(&buf->lock);
 
     log_copy(session, buf, start_pos);
-    CM_MFENCE;
-    buf->slots[cur_slot] = 0;
+    log_release_buf_slot(buf, cur_slot);
 }
 
 static bool32 log_can_recycle(knl_session_t *session, log_file_t *file, arch_log_id_t *last_arch_log)

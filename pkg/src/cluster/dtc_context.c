@@ -575,6 +575,11 @@ status_t dtc_startup(void)
         return OG_ERROR;
     }
 
+    if (shmem_scn_init() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[SHMEM-SCN] init failed.");
+        return OG_ERROR;
+    }
+
     if (dtc_register_proc() != OG_SUCCESS) {
         OG_LOG_RUN_ERR("dtc_register_proc_func failed.");
         return OG_ERROR;
@@ -648,10 +653,6 @@ static int drc_unmap_shm(remote_sga_t *remote_sga, uint32 inst_count)
         }
         remote_sga->map_success[i] = OG_FALSE;
         remote_sga->remote_buf_addr[i] = NULL;
-        if (g_instance->kernel.attr.enable_ubsmem &&
-            (i == DRC_RES_CTX->shmem_scn_mgr.owner_id || i == shmem_scn_get_owner_id())) {
-            shmem_scn_invalidate_cache();
-        }
         OG_LOG_RUN_INF("Successfully unmap data buffer %s.", data_buf_name);
     }
 
@@ -696,6 +697,7 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
 
     drc_res_ctx_t *ogx = DRC_RES_CTX;
 
+    shmem_scn_cleanup();
     if (session->kernel->attr.enable_ubsmem &&
         drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("failed to deinit ubsm_mem");

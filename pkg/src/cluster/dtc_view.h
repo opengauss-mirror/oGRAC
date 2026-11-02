@@ -164,6 +164,9 @@ typedef struct st_dtc_view_txn_hot_stat {
     uint64 snapshot_hot;
     uint64 snapshot_remote;
     uint64 info_resolve_fail;
+    uint64 wait_end;
+    uint64 wait_ub_wake;
+    uint64 wait_mes_fallback;
 } dtc_view_txn_hot_stat_t;
 
 typedef struct st_dtc_view_txn_hot_stat_ack {
