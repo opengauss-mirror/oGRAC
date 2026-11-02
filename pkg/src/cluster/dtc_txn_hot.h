@@ -66,7 +66,7 @@ typedef enum en_dtc_txn_hot_stat_type {
     DTC_TXN_HOT_STAT_INFO_RESOLVE_FAIL,
     DTC_TXN_HOT_STAT_WAIT_END,         /* first hot read already END */
     DTC_TXN_HOT_STAT_WAIT_UB_WAKE,     /* ended after UB enroll / local sleep / kick */
-    DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK,/* hot unusable / reform -> MES WAIT_TXN */
+    DTC_TXN_HOT_STAT_WAIT_MES_FALLBACK, /* hot unusable / reform -> MES WAIT_TXN */
     DTC_TXN_HOT_STAT_CEIL
 } dtc_txn_hot_stat_type_t;
 
