@@ -5631,6 +5631,27 @@ func_application: func_name '(' ')'
                         }
                         $$ = expr;
                     }
+                | VALUES '(' func_arg_list ')'
+                    {
+                        galist_t *name_list = NULL;
+                        if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
+                            parser_yyerror("create function name list failed.");
+                        }
+                        expr_tree_t *name = NULL;
+                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &name, "VALUES", @1.loc) != OG_SUCCESS) {
+                            parser_yyerror("init const expr failed");
+                        }
+                        if (cm_galist_insert(name_list, name) != OG_SUCCESS) {
+                            parser_yyerror("insert function list failed.");
+                        }
+                        expr_tree_t *expr = NULL;
+                        if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &expr, name_list, $3, @1.loc) != OG_SUCCESS) {
+                            parser_yyerror("init function call expr failed");
+                        }
+                        $$ = expr;
+                    }
                 | func_name '(' a_expr ignore_nulls ')'
                     {
                         if ($1->count != 1) {

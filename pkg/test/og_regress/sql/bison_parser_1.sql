@@ -55,6 +55,31 @@ create table bison_t1 (a int primary key, b int);
 insert into bison_t1 values (1,1);
 insert into bison_t1 values (1,2) on duplicate key update b = 2;
 
+-- values() is the incoming column in ON DUPLICATE KEY UPDATE.
+-- Reuse bison_t1's primary key; a new key would shift later _PK_SYS_ names.
+drop table if exists bison_values_fn_src2;
+drop table if exists bison_values_fn_src;
+create table bison_values_fn_src(id int, c_num int);
+create table bison_values_fn_src2(id int, c_num int);
+insert into bison_values_fn_src values (1, 30);
+insert into bison_values_fn_src2 values (1, 99);
+insert /*+partition_parallel(partition,4,2)*/ into bison_t1(a, b)
+select t1.id, t1.c_num from (select * from bison_values_fn_src where id = 1) t1
+join bison_values_fn_src2 t2 on t1.id = t2.id
+on duplicate key update b = values(b);
+select a, b from bison_t1;
+update bison_t1 set b = 2 where a = 1;
+insert into bison_t1(a, b)
+select t1.id, t1.c_num from (select * from bison_values_fn_src where id = 1) t1
+join bison_values_fn_src2 t2 on t1.id = t2.id
+on duplicate key update b = b;
+select a, b from bison_t1;
+insert into bison_t1 values (2, 8);
+select a, b from bison_t1 order by a;
+insert into bison_t1(a, b) select 1, 1 from sys_dummy on duplicate key update b = values(1); --error
+drop table bison_values_fn_src2;
+drop table bison_values_fn_src;
+
 drop table bison_t1;
 create table bison_t1 (a int primary key, b int, c int);
 insert into bison_t1 values (1,1,1);
@@ -1645,4 +1670,11 @@ SELECT u.* FROM repro_unpivot_part PARTITION(p1) UNPIVOT(v FOR k IN (a, b)) u OR
 SELECT u.* FROM (repro_unpivot_part PARTITION(p1) UNPIVOT(v FOR k IN (a, b)) u) ORDER BY k;
 SELECT p.* FROM repro_unpivot_part PARTITION(p1) PIVOT(SUM(b) FOR a IN (1 AS a1, 3 AS a3)) p;
 DROP TABLE repro_unpivot_part PURGE;
+-- PARTITION ... VALUES stays a values clause.
+drop table if exists bison_values_fn_part;
+create table bison_values_fn_part(id int, c int) partition by list(c) (partition p1 values (1), partition p2 values (2));
+insert into bison_values_fn_part values (1, 1);
+select id, c from bison_values_fn_part;
+drop table bison_values_fn_part;
+
 alter system set use_bison_parser = false;

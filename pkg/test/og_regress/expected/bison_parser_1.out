@@ -193,6 +193,91 @@ SQL> insert into bison_t1 values (1,2) on duplicate key update b = 2;
 2 rows affected.
 
 SQL> 
+SQL> -- values() is the incoming column in ON DUPLICATE KEY UPDATE.
+SQL> -- Reuse bison_t1's primary key; a new key would shift later _PK_SYS_ names.
+SQL> drop table if exists bison_values_fn_src2;
+
+Succeed.
+
+SQL> drop table if exists bison_values_fn_src;
+
+Succeed.
+
+SQL> create table bison_values_fn_src(id int, c_num int);
+
+Succeed.
+
+SQL> create table bison_values_fn_src2(id int, c_num int);
+
+Succeed.
+
+SQL> insert into bison_values_fn_src values (1, 30);
+
+1 rows affected.
+
+SQL> insert into bison_values_fn_src2 values (1, 99);
+
+1 rows affected.
+
+SQL> insert /*+partition_parallel(partition,4,2)*/ into bison_t1(a, b)
+  2 select t1.id, t1.c_num from (select * from bison_values_fn_src where id = 1) t1
+  3 join bison_values_fn_src2 t2 on t1.id = t2.id
+  4 on duplicate key update b = values(b);
+
+2 rows affected.
+
+SQL> select a, b from bison_t1;
+
+A            B           
+------------ ------------
+1            30          
+
+1 rows fetched.
+
+SQL> update bison_t1 set b = 2 where a = 1;
+
+1 rows affected.
+
+SQL> insert into bison_t1(a, b)
+  2 select t1.id, t1.c_num from (select * from bison_values_fn_src where id = 1) t1
+  3 join bison_values_fn_src2 t2 on t1.id = t2.id
+  4 on duplicate key update b = b;
+
+2 rows affected.
+
+SQL> select a, b from bison_t1;
+
+A            B           
+------------ ------------
+1            2           
+
+1 rows fetched.
+
+SQL> insert into bison_t1 values (2, 8);
+
+1 rows affected.
+
+SQL> select a, b from bison_t1 order by a;
+
+A            B           
+------------ ------------
+1            2           
+2            8           
+
+2 rows fetched.
+
+SQL> insert into bison_t1(a, b) select 1, 1 from sys_dummy on duplicate key update b = values(1); --error
+
+OG-00601, [1:83]Sql syntax error: function VALUES argument invalid
+SQL> drop table bison_values_fn_src2;
+
+Succeed.
+
+SQL> drop table bison_values_fn_src;
+
+Succeed.
+
+SQL> 
 SQL> drop table bison_t1;
 
 Succeed.
@@ -5493,6 +5578,32 @@ SQL> DROP TABLE repro_unpivot_part PURGE;
 
 Succeed.
 
+SQL> -- PARTITION ... VALUES stays a values clause.
+SQL> drop table if exists bison_values_fn_part;
+
+Succeed.
+
+SQL> create table bison_values_fn_part(id int, c int) partition by list(c) (partition p1 values (1), partition p2 values (2));
+
+Succeed.
+
+SQL> insert into bison_values_fn_part values (1, 1);
+
+1 rows affected.
+
+SQL> select id, c from bison_values_fn_part;
+
+ID           C           
+------------ ------------
+1            1           
+
+1 rows fetched.
+
+SQL> drop table bison_values_fn_part;
+
+Succeed.
+
+SQL> 
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
