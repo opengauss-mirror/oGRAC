@@ -479,6 +479,61 @@ void pcrh_reset_self_changed(knl_session_t *session, heap_page_t *page, uint8 it
     }
 }
 
+static bool32 pcrh_ub_scn_bound(void)
+{
+#ifndef WIN32
+    return (g_ub_global_scn != NULL);
+#else
+    return OG_FALSE;
+#endif
+}
+
+/*
+ * Column bytes follow row_head_t. itl_id and lock flags live in the header and change on every lock.
+ * Only two normal images of the same slot are comparable. A link stub is a rowid, and the cursor
+ * then holds the migrated row; their sizes differ by structure, not by a committed column change.
+ */
+static bool32 pcrh_ub_cols_differ(knl_cursor_t *cursor, row_head_t *page_row)
+{
+    uint32 cur_size;
+    uint32 page_size;
+    uint32 head_size;
+
+    if (!pcrh_ub_scn_bound() || cursor->row == NULL || page_row == NULL || cursor->row == page_row) {
+        return OG_FALSE;
+    }
+    if (cursor->row->is_link || cursor->row->is_migr || page_row->is_link || page_row->is_migr ||
+        cursor->chain_count > 0) {
+        return OG_FALSE;
+    }
+    cur_size = cursor->row->size;
+    page_size = page_row->size;
+    head_size = (uint32)sizeof(row_head_t);
+    if (cur_size < head_size || page_size < head_size) {
+        return OG_FALSE;
+    }
+    if (cur_size != page_size) {
+        return OG_TRUE;
+    }
+    if (cur_size == head_size) {
+        return OG_FALSE;
+    }
+    return (memcmp((char *)cursor->row + head_size, (char *)page_row + head_size, cur_size - head_size) != 0) ?
+        OG_TRUE :
+        OG_FALSE;
+}
+
+/* Catch the local slot up to this commit so the lock re-read keeps the current row. */
+static void pcrh_raise_local_to_txn_scn(knl_session_t *session, knl_scn_t txn_scn)
+{
+    if (!pcrh_ub_scn_bound()) {
+        return;
+    }
+    if (DB_CURR_SCN(session) < txn_scn) {
+        DB_RAISE_LOCAL_SCN(session, txn_scn);
+    }
+}
+
 /*
  * PCR check locking row
  * 1. If there's active transaction on current row, try re-read the latest version later,
@@ -572,8 +627,13 @@ static status_t pcrh_check_lock_row(knl_session_t *session, knl_cursor_t *cursor
         return OG_SUCCESS;
     }
 
-    /* row is changed, need re-read */
-    if (cursor->scn < txn_info.scn) {
+    /*
+     * SCN behind the commit: re-read. With UB slots bound, a statement can also hold an undone
+     * image whose cursor scn is already >= txn_scn; column mismatch forces the same re-read.
+     * Raise the local slot to txn_scn first when it is still behind that commit.
+     */
+    if (cursor->scn < txn_info.scn || pcrh_ub_cols_differ(cursor, row)) {
+        pcrh_raise_local_to_txn_scn(session, txn_info.scn);
         *status = ROW_IS_CHANGED;
         return OG_SUCCESS;
     }
@@ -829,8 +889,8 @@ status_t pcrh_lock_row(knl_session_t *session, knl_cursor_t *cursor, bool32 *is_
         }
 
         /* try read the latest committed row version */
-        if (pcrh_read_by_given_rowid(session, cursor, DB_CURR_SCN(session),
-                               ISOLATION_CURR_COMMITTED, &is_found) != OG_SUCCESS) {
+        knl_scn_t reread_scn = DB_CURR_SCN(session);
+        if (pcrh_read_by_given_rowid(session, cursor, reread_scn, ISOLATION_CURR_COMMITTED, &is_found) != OG_SUCCESS) {
             pcrh_record_lock_info(session, begin_time);
             return OG_ERROR;
         }

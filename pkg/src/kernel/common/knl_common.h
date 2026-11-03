@@ -287,6 +287,12 @@ static inline knl_scn_t knl_inc_scn(atomic_t *local_scn, time_t init_time, timev
     knl_scn_t curr_scn;
     timeval_t db_time;
 
+    /*
+     * Merge peer slots into the local slot before comparing the local clock.
+     * knl_inc_ub_scn absorbs again, then allocates max(local, peers) + 1.
+     */
+    shmem_scn_absorb_peers();
+
     if (p_now->tv_sec < init_time) {
         return KNL_INC_UB_SCN(local_scn);
     }
