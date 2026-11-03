@@ -5604,6 +5604,60 @@ SQL> drop table bison_values_fn_part;
 Succeed.
 
 SQL> 
+SQL> -- LIMIT offset, row_count is the MySQL comma form.
+SQL> select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 5, 10;
+
+N           
+------------
+6           
+7           
+8           
+9           
+10          
+11          
+12          
+13          
+14          
+15          
+
+10 rows fetched.
+
+SQL> select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 10 offset 5;
+
+N           
+------------
+6           
+7           
+8           
+9           
+10          
+11          
+12          
+13          
+14          
+15          
+
+10 rows fetched.
+
+SQL> select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 10, 0;
+
+N           
+------------
+
+0 rows fetched.
+
+SQL> select count(*) from (
+  2     select t1.n from (select level as n from sys_dummy connect by level <= 30) t1
+  3     join (select level as n from sys_dummy connect by level <= 30) t2 on t1.n = t2.n
+  4     limit 5, 10);
+
+COUNT(*)            
+--------------------
+10                  
+
+1 rows fetched.
+
+SQL> 
 SQL> alter system set use_bison_parser = false;
 
 Succeed.

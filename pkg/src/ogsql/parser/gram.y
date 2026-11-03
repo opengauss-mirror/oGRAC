@@ -5855,13 +5855,14 @@ limit_clause:
                 }
             | LIMIT a_expr ',' a_expr
                 {
+                    /* MySQL LIMIT offset, row_count. Same assignment as the native parser. */
                     limit_item_t *limit_item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(limit_item_t), (void **)&limit_item) != OG_SUCCESS) {
                         parser_yyerror("alloc mem failed");
                     }
-                    limit_item->count = (void*)$2;
-                    limit_item->offset = (void*)$4;
+                    limit_item->offset = (void*)$2;
+                    limit_item->count = (void*)$4;
                     if (sql_verify_limit_offset(stmt, limit_item)) {
                         parser_yyerror("verify limit clause failed");
                     }
