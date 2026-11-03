@@ -67,8 +67,8 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------
 | Id | Operation             | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT      |       |                   | 29   | 2    | 0         |       |        |
-| 1  |     TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 29   | 2    | 0         |       |        |
+| 0  | SELECT STATEMENT      |       |                   | 27   | 2    | 0         |       |        |
+| 1  |     TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 27   | 2    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -86,11 +86,11 @@ EXPLAIN PLAN OUTPUT
 -----------------------------------------------------------------------------------------------------------
 | Id | Operation                 | Owner | Name                | Rows | Cost | StartCost | Bytes | Remark |
 -----------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT          |       |                     | 96   | 57   | 19        |       |        |
-| 1  |   QUERY SORT ORDER BY     |       |                     | 96   | 57   | 19        |       |        |
-| 2  |     HASH JOIN OUTER(R)    |       |                     | 96   | 22   | 18        |       |        |
-| 3  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC S | 96   | 3    | 0         |       |        |
-| 4  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
+| 0  | SELECT STATEMENT          |       |                     | 88   | 53   | 18        |       |        |
+| 1  |   QUERY SORT ORDER BY     |       |                     | 88   | 53   | 18        |       |        |
+| 2  |     HASH JOIN OUTER(R)    |       |                     | 88   | 21   | 17        |       |        |
+| 3  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC S | 88   | 3    | 0         |       |        |
+| 4  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_DST D | 265  | 4    | 0         |       |        |
 -----------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -110,7 +110,7 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------
 | 0  | SELECT STATEMENT          |       |                   | 0    | 0    | 0         |       |        |
 | 1  |     SUBSELECT             | SYS   | Q                 | 0    | 0    | 0         |       |        |
-| 2  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 96   | 3    | 0         |       |        |
+| 2  |         TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 88   | 3    | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -130,8 +130,8 @@ EXPLAIN PLAN OUTPUT
 ----------------------------------------------------------------------------------------------------------
 | 0  | INSERT STATEMENT           |       |                   | 0    | 0    | 0         |       |        |
 | 1  |   LOAD TABLE CONVENTIONAL  | SYS   | BISON_EXPLAIN_DST | 0    | 0    | 0         |       |        |
-| 2  |     SUBSELECT              |       |                   | 288  | 4    | 0         |       |        |
-| 3  |         TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC | 288  | 4    | 0         |       |        |
+| 2  |     SUBSELECT              |       |                   | 265  | 4    | 0         |       |        |
+| 3  |         TABLE ACCESS FULL  | SYS   | BISON_EXPLAIN_SRC | 265  | 4    | 0         |       |        |
 ----------------------------------------------------------------------------------------------------------
 
 8 rows fetched.
@@ -161,7 +161,7 @@ EXPLAIN PLAN OUTPUT
 | 0  | UPDATE STATEMENT        |       |                   | 1    | 2    | 0         |       |        |
 | 1  |   KERNEL FILTER         |       |                   | 1    | 2    | 0         |       |        |
 | 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 1    | 2    | 0         |       |        |
-| 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 288  | 4    | 0         |       |        |
+| 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 265  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -194,9 +194,9 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name              | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------
-| 0  | DELETE STATEMENT        |       |                   | 0    | 5    | 0         |       |        |
-| 1  |   KERNEL FILTER         |       |                   | 288  | 5    | 0         |       |        |
-| 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 288  | 5    | 0         |       |        |
+| 0  | DELETE STATEMENT        |       |                   | 0    | 4    | 0         |       |        |
+| 1  |   KERNEL FILTER         |       |                   | 265  | 4    | 0         |       |        |
+| 2  |     TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_DST | 265  | 4    | 0         |       |        |
 | 3  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC | 1    | 2    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
@@ -233,15 +233,15 @@ EXPLAIN PLAN OUTPUT
 -------------------------------------------------------------------------------------------------------------
 | Id | Operation                   | Owner | Name                | Rows | Cost | StartCost | Bytes | Remark |
 -------------------------------------------------------------------------------------------------------------
-| 0  | MERGE STATEMENT(HASH JOIN)  |       |                     | 576  | 9    | 0         |       |        |
-| 1  |   USING TABLE               |       |                     | 288  | 4    | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   | S                   | 288  | 4    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC   | 288  | 4    | 0         |       |        |
-| 4  |   MERGE TABLE               |       |                     | 288  | 5    | 0         |       |        |
-| 5  |       TABLE ACCESS FULL     | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
-| 6  |   ON CONDITION              |       |                     | 288  | 5    | 0         |       |        |
-| 7  |     INSERT STATEMENT        |       |                     | 288  | 5    | 0         |       |        |
-| 8  |     UPDATE STATEMENT        |       |                     | 288  | 5    | 0         |       |        |
+| 0  | MERGE STATEMENT(HASH JOIN)  |       |                     | 530  | 9    | 0         |       |        |
+| 1  |   USING TABLE               |       |                     | 265  | 4    | 0         |       |        |
+| 2  |       SUBSELECT             | SYS   | S                   | 265  | 4    | 0         |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC   | 265  | 4    | 0         |       |        |
+| 4  |   MERGE TABLE               |       |                     | 265  | 4    | 0         |       |        |
+| 5  |       TABLE ACCESS FULL     | SYS   | BISON_EXPLAIN_DST D | 265  | 4    | 0         |       |        |
+| 6  |   ON CONDITION              |       |                     | 265  | 4    | 0         |       |        |
+| 7  |     INSERT STATEMENT        |       |                     | 265  | 4    | 0         |       |        |
+| 8  |     UPDATE STATEMENT        |       |                     | 265  | 4    | 0         |       |        |
 -------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
@@ -261,15 +261,15 @@ EXPLAIN PLAN OUTPUT
 ---------------------------------------------------------------------------------------------------------------
 | Id | Operation                     | Owner | Name                | Rows | Cost | StartCost | Bytes | Remark |
 ---------------------------------------------------------------------------------------------------------------
-| 0  | MERGE STATEMENT(NESTED LOOPS) |       |                     | 289  | 7    | 0         |       |        |
+| 0  | MERGE STATEMENT(NESTED LOOPS) |       |                     | 266  | 7    | 0         |       |        |
 | 1  |   USING TABLE                 |       |                     | 1    | 2    | 0         |       |        |
 | 2  |       SUBSELECT               | SYS   | S                   | 1    | 2    | 0         |       |        |
 | 3  |           TABLE ACCESS FULL   | SYS   | BISON_EXPLAIN_SRC   | 1    | 2    | 0         |       |        |
-| 4  |   MERGE TABLE                 |       |                     | 288  | 5    | 0         |       |        |
-| 5  |       TABLE ACCESS FULL       | SYS   | BISON_EXPLAIN_DST D | 288  | 5    | 0         |       |        |
-| 6  |   ON CONDITION                |       |                     | 288  | 5    | 0         |       |        |
-| 7  |     FILTER                    |       |                     | 288  | 5    | 0         |       |        |
-| 8  |       INSERT STATEMENT        |       |                     | 288  | 5    | 0         |       |        |
+| 4  |   MERGE TABLE                 |       |                     | 265  | 4    | 0         |       |        |
+| 5  |       TABLE ACCESS FULL       | SYS   | BISON_EXPLAIN_DST D | 265  | 4    | 0         |       |        |
+| 6  |   ON CONDITION                |       |                     | 265  | 4    | 0         |       |        |
+| 7  |     FILTER                    |       |                     | 265  | 4    | 0         |       |        |
+| 8  |       INSERT STATEMENT        |       |                     | 265  | 4    | 0         |       |        |
 | 9  |           TABLE ACCESS FULL   | SYS   | SYS_DUMMY           | 744  | 10   | 0         |       |        |
 | 10 |     UPDATE STATEMENT          |       |                     | 744  | 10   | 0         |       |        |
 ---------------------------------------------------------------------------------------------------------------
@@ -316,9 +316,9 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------------
 | Id | Operation               | Owner | Name               | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------
-| 0  | CREATE TABLE STATEMENT  |       |                    | 96   | 3    | 0         |       |        |
-| 1  |   LOAD AS SELECT        | SYS   | BISON_EXPLAIN_CTAS | 96   | 3    | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC  | 96   | 3    | 0         |       |        |
+| 0  | CREATE TABLE STATEMENT  |       |                    | 88   | 3    | 0         |       |        |
+| 1  |   LOAD AS SELECT        | SYS   | BISON_EXPLAIN_CTAS | 88   | 3    | 0         |       |        |
+| 2  |       TABLE ACCESS FULL | SYS   | BISON_EXPLAIN_SRC  | 88   | 3    | 0         |       |        |
 --------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
