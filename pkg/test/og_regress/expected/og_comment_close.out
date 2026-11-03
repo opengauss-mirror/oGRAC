@@ -23,7 +23,8 @@ C02
 SQL> 
 SQL> /* bare close: nothing follows the closing mark
   2    note */
-SQL> select 3 as c03 from sys.sys_dummy;
+  3 select 3 as c03
+  4 from sys.sys_dummy;
 
 C03         
 ------------
@@ -34,11 +35,11 @@ C03
 SQL> 
 SQL> /* header comment
   2    ahead of a procedure block */
-SQL> create or replace procedure p_comment_close as
-  2 begin
-  3     null;
-  4 end;
-  5 /
+  3 create or replace procedure p_comment_close as
+  4 begin
+  5     null;
+  6 end;
+  7 /
 
 Succeed.
 
@@ -98,6 +99,55 @@ SQL> /* exit word in the comment tail
 C07         
 ------------
 7           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* bare close then a line comment
+  2    note */
+  3 -- continuation
+  4 select 8 as c08 from sys.sys_dummy;
+
+C08         
+------------
+8           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* bare close then a same-line comment
+  2    note */
+  3 /* another */
+SQL> select 9 as c09 from sys.sys_dummy;
+
+C09         
+------------
+9           
+
+1 rows fetched.
+
+SQL> 
+SQL> /* bare close then a client command
+  2    note */
+  3 SET HISTORY ON
+
+ON
+SQL> select 10 as c10 from sys.sys_dummy;
+
+C10         
+------------
+10          
+
+1 rows fetched.
+
+SQL> 
+SQL> select length('a
+  2 
+  3 b') as c11 from sys.sys_dummy;
+
+C11                 
+--------------------
+4                   
 
 1 rows fetched.
 

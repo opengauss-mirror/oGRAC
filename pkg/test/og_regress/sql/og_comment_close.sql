@@ -7,7 +7,8 @@ select 1 as c01 from sys.sys_dummy;
 
 /* bare close: nothing follows the closing mark
    note */
-select 3 as c03 from sys.sys_dummy;
+select 3 as c03
+from sys.sys_dummy;
 
 /* header comment
    ahead of a procedure block */
@@ -38,3 +39,22 @@ select 5 as c05 from sys.sys_dummy;
 
 /* exit word in the comment tail
 exit */ select 7 as c07 from sys.sys_dummy;
+
+/* bare close then a line comment
+   note */
+-- continuation
+select 8 as c08 from sys.sys_dummy;
+
+/* bare close then a same-line comment
+   note */
+/* another */
+select 9 as c09 from sys.sys_dummy;
+
+/* bare close then a client command
+   note */
+SET HISTORY ON
+select 10 as c10 from sys.sys_dummy;
+
+select length('a
+
+b') as c11 from sys.sys_dummy;
