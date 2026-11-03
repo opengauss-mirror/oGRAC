@@ -1677,4 +1677,13 @@ insert into bison_values_fn_part values (1, 1);
 select id, c from bison_values_fn_part;
 drop table bison_values_fn_part;
 
+-- LIMIT offset, row_count is the MySQL comma form.
+select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 5, 10;
+select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 10 offset 5;
+select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 10, 0;
+select count(*) from (
+    select t1.n from (select level as n from sys_dummy connect by level <= 30) t1
+    join (select level as n from sys_dummy connect by level <= 30) t2 on t1.n = t2.n
+    limit 5, 10);
+
 alter system set use_bison_parser = false;
