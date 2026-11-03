@@ -5603,6 +5603,7 @@ SQL> drop table bison_values_fn_part;
 
 Succeed.
 
+SQL> 
 SQL> -- LIMIT offset, row_count is the MySQL comma form.
 SQL> select n from (select level as n from sys_dummy connect by level <= 20) t order by n limit 5, 10;
 
