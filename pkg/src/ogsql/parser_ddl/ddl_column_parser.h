@@ -157,6 +157,8 @@ typedef struct {
 
 typedef struct {
     char *col_name;
+    source_location_t loc;
+    bool32 has_datatype;
     type_word_t *type;
     galist_t *column_attrs;
 } parse_column_t;
@@ -190,6 +192,7 @@ status_t sql_parse_altable_column_rename(sql_stmt_t *stmt, lex_t *lex, knl_altab
 status_t sql_parse_column_defs(sql_stmt_t *stmt, lex_t *lex, knl_table_def_t *def, bool32 *expect_as);
 status_t sql_check_duplicate_column_name(galist_t *columns, const text_t *name);
 status_t og_parse_column_defs(sql_stmt_t *stmt, knl_table_def_t *def, bool32 *expect_as, galist_t *table_elements);
+status_t og_verify_create_table_columns(sql_stmt_t *stmt, knl_table_def_t *def, galist_t *table_elements);
 
 #ifdef __cplusplus
 }

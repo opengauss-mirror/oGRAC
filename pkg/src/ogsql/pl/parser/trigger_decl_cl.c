@@ -31,6 +31,7 @@
 #include "pl_base.h"
 #include "pl_udt.h"
 #include "base_compiler.h"
+#include "scanner.h"
 
 #define PLC_TRIG_QUOTE_ESCAPE_LEN 2
 #define PLC_TRIG_COMMENT_DELIM_LEN 2
@@ -636,7 +637,7 @@ static status_t plc_rewrite_one_trigger_variant(pl_compiler_t *compiler, text_t 
 }
 
 status_t plc_rewrite_trigger_variants(pl_compiler_t *compiler, text_t *src, text_t *rewritten,
-    source_location_t loc, plc_trigger_rewrite_mode_t mode)
+    source_location_t loc, plc_trigger_rewrite_mode_t mode, bison_source_map_t *source_map)
 {
     uint32 pos = 0;
     uint32 segment_start = 0;
@@ -678,8 +679,18 @@ status_t plc_rewrite_trigger_variants(pl_compiler_t *compiler, text_t *src, text
         }
 
         if (plc_trigger_make_word(src, pos, cur_loc, &word, &end_pos) == OG_SUCCESS) {
+            bison_source_edit_t *edit = NULL;
             OG_RETURN_IFERR(plc_trigger_concat_range(rewritten, compiler->convert_buf_size, src, segment_start, pos));
+            if (source_map != NULL) {
+                OG_RETURN_IFERR(cm_galist_new(&source_map->edits, sizeof(bison_source_edit_t), (void **)&edit));
+                edit->generated_start = rewritten->len;
+                edit->source_start = pos;
+                edit->source_end = end_pos;
+            }
             OG_RETURN_IFERR(plc_rewrite_one_trigger_variant(compiler, rewritten, &word, mode));
+            if (edit != NULL) {
+                edit->generated_end = rewritten->len;
+            }
             while (pos < end_pos) {
                 plc_trigger_advance_loc(&cur_loc, src->str[pos++]);
             }

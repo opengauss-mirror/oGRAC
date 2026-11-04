@@ -56,6 +56,168 @@
 extern "C" {
 #endif
 
+static __thread bison_source_scope_t *g_bison_source_scope = NULL;
+static __thread core_yyscan_t g_bison_alloc_scanner = NULL;
+
+core_yyscan_t bison_parser_set_alloc_scanner(core_yyscan_t scanner)
+{
+    core_yyscan_t previous = g_bison_alloc_scanner;
+    g_bison_alloc_scanner = scanner;
+    return previous;
+}
+
+void *bison_parser_alloc(size_t bytes)
+{
+    CM_ASSERT(g_bison_alloc_scanner != NULL);
+    return core_yyalloc(bytes, g_bison_alloc_scanner);
+}
+
+void bison_parser_free(void *ptr)
+{
+    core_yyfree(ptr, g_bison_alloc_scanner);
+}
+
+void bison_source_map_init(bison_source_map_t *map, sql_stmt_t *stmt, const text_t *source,
+    source_location_t fallback)
+{
+    text_t original = *source;
+    *map = (bison_source_map_t){ 0 };
+    map->source = original;
+    map->origin.line = fallback.line == 0 ? 1 : fallback.line;
+    map->origin.column = fallback.column == 0 ? 1 : fallback.column;
+    map->body_len = original.len;
+    map->cached_line = map->origin.line;
+    map->cached_column = map->origin.column;
+    cm_galist_init(&map->edits, stmt, sql_stack_alloc);
+
+    for (bison_source_scope_t *scope = g_bison_source_scope; scope != NULL; scope = scope->previous) {
+        uintptr_t start = (uintptr_t)scope->text.str;
+        uintptr_t source_start = (uintptr_t)original.str;
+        if (scope->stmt != stmt || scope->map == map || original.str == NULL || source_start < start ||
+            source_start - start > scope->text.len || original.len > scope->text.len - (source_start - start)) {
+            continue;
+        }
+        map->parent = scope->map;
+        map->parent_offset = (uint32)(source_start - start);
+        return;
+    }
+    map->multi_line = original.str != NULL && (memchr(original.str, '\n', original.len) != NULL ||
+        memchr(original.str, '\r', original.len) != NULL);
+}
+
+void bison_source_scope_enter(bison_source_scope_t *scope, sql_stmt_t *stmt, const text_t *generated,
+    bison_source_map_t *map)
+{
+    scope->previous = g_bison_source_scope;
+    scope->stmt = stmt;
+    scope->text = *generated;
+    scope->map = map;
+    g_bison_source_scope = scope;
+}
+
+void bison_source_scope_leave(bison_source_scope_t *scope)
+{
+    CM_ASSERT(g_bison_source_scope == scope);
+    g_bison_source_scope = scope->previous;
+}
+
+static uint32 bison_source_original_offset(bison_source_map_t *map, uint32 generated_offset)
+{
+    uint32 offset = generated_offset <= map->prefix_len ? 0 : generated_offset - map->prefix_len;
+    offset = MIN(offset, map->body_len);
+    if (offset < map->last_generated_offset) {
+        while (map->edit_index > 0) {
+            bison_source_edit_t *edit = (bison_source_edit_t *)cm_galist_get(&map->edits, map->edit_index - 1);
+            if (edit->generated_end <= offset) {
+                break;
+            }
+            map->edit_index--;
+        }
+        map->edit_generated_offset = 0;
+        map->edit_source_offset = 0;
+        if (map->edit_index > 0) {
+            bison_source_edit_t *edit = (bison_source_edit_t *)cm_galist_get(&map->edits, map->edit_index - 1);
+            map->edit_generated_offset = edit->generated_end;
+            map->edit_source_offset = edit->source_end;
+        }
+    }
+    map->last_generated_offset = offset;
+
+    for (; map->edit_index < map->edits.count; map->edit_index++) {
+        bison_source_edit_t *edit = (bison_source_edit_t *)cm_galist_get(&map->edits, map->edit_index);
+        if (edit == NULL || edit->generated_start < map->edit_generated_offset ||
+            edit->generated_end < edit->generated_start || edit->generated_end > map->body_len ||
+            edit->source_start < map->edit_source_offset || edit->source_end < edit->source_start ||
+            edit->source_end > map->source.len || offset < edit->generated_start) {
+            break;
+        }
+        if (offset < edit->generated_end) {
+            return edit->source_start;
+        }
+        map->edit_generated_offset = edit->generated_end;
+        map->edit_source_offset = edit->source_end;
+    }
+    uint64 source_offset = (uint64)map->edit_source_offset + offset - map->edit_generated_offset;
+    return (uint32)MIN(source_offset, map->source.len);
+}
+
+/* Count CRLF at LF, and a standalone CR at CR. This also preserves offsets inside CRLF. */
+static inline bool32 bison_source_is_newline(const text_t *source, uint32 offset)
+{
+    return source->str[offset] == '\n' || (source->str[offset] == '\r' &&
+        (offset + 1 == source->len || source->str[offset + 1] != '\n'));
+}
+
+static void bison_source_rewind(bison_source_map_t *map, uint32 offset)
+{
+    bool32 crossed_line = OG_FALSE;
+    for (uint32 pos = map->cached_offset; pos > offset; pos--) {
+        if (bison_source_is_newline(&map->source, pos - 1)) {
+            map->cached_line--;
+            crossed_line = OG_TRUE;
+        }
+    }
+    if (!crossed_line) {
+        map->cached_column -= map->cached_offset - offset;
+    } else {
+        uint32 line_start = offset;
+        while (line_start > 0 && !bison_source_is_newline(&map->source, line_start - 1)) {
+            line_start--;
+        }
+        map->cached_column = (uint64)(offset - line_start) + (line_start == 0 ? map->origin.column : 1);
+    }
+    map->cached_offset = offset;
+}
+
+source_location_t bison_source_map_location(bison_source_map_t *map, uint32 generated_offset)
+{
+    uint32 offset = bison_source_original_offset(map, generated_offset);
+    if (map->parent != NULL) {
+        return bison_source_map_location(map->parent, map->parent_offset + offset);
+    }
+
+    if (!map->multi_line) {
+        map->cached_line = map->origin.line;
+        map->cached_column = (uint64)map->origin.column + offset;
+    } else {
+        if (offset < map->cached_offset) {
+            bison_source_rewind(map, offset);
+        }
+        for (; map->cached_offset < offset; map->cached_offset++) {
+            if (bison_source_is_newline(&map->source, map->cached_offset)) {
+                map->cached_line++;
+                map->cached_column = 1;
+            } else {
+                map->cached_column++;
+            }
+        }
+    }
+    source_location_t loc;
+    loc.line = (uint16)MIN(map->cached_line, OG_MAX_UINT16);
+    loc.column = (uint16)MIN(map->cached_column, OG_MAX_UINT16);
+    return loc;
+}
+
 status_t sql_create_list(sql_stmt_t *stmt, galist_t **list)
 {
     if (sql_alloc_mem(stmt->context, sizeof(galist_t), (void **)list) != OG_SUCCESS) {
@@ -343,6 +505,17 @@ static int base_yylex_filtered(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yys
         return BISON_PL_SOURCE;
     }
         
+    if (state->pl_object_name_suffix == PL_NAME_SUFFIX_AFTER_FORCE) {
+        /* FORCE closes TYPE's name/options without requiring another token.
+         * Prepare CREATE before even a lexical failure in the body/header. */
+        state->pl_object_name_mode = OG_FALSE;
+        state->pl_object_name_part_complete = OG_FALSE;
+        state->pl_object_name_suffix = PL_NAME_SUFFIX_NONE;
+        llocp->offset += (int)(sizeof("FORCE") - 1);
+        llocp->loc = bison_source_map_location(&yyextra->core_yy_extra.source_map, (uint32)llocp->offset);
+        return BISON_PL_NAME_END;
+    }
+
     /* Get next token --- we might already have it */
     if (yyextra->lookahead_len != 0) {
         cur_from_lookahead = OG_TRUE;
@@ -374,8 +547,58 @@ static int base_yylex_filtered(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yys
             cur_raw_token_end);
     }
     if (state->pl_object_name_mode) {
+        if (cur_token == LEX_ERROR_TOKEN || yyextra->core_yy_extra.lex_failed) {
+            bool32 name_complete = state->pl_object_name_part_complete;
+            yyextra->core_yy_extra.lex_failed = OG_TRUE;
+            state->pl_object_name_mode = OG_FALSE;
+            state->pl_object_name_part_complete = OG_FALSE;
+            state->pl_object_name_suffix = PL_NAME_SUFFIX_NONE;
+            /* Keep the lexer failure sticky, but let an already complete name
+             * prepare the INVALID-object path before the next request fails. */
+            return name_complete ? BISON_PL_NAME_END : cur_token;
+        }
+        if (state->pl_object_name_part_complete) {
+            if (cur_token == FOR && (state->pl_object_name_suffix == PL_NAME_SUFFIX_TRIGGER_FOR ||
+                state->pl_object_name_suffix == PL_NAME_SUFFIX_TRIGGER_HEADER)) {
+                /* FOR EACH ROW has a fixed end; an incomplete clause must fail
+                 * before a trigger descriptor can be prepared. */
+                state->pl_object_name_mode = OG_FALSE;
+                state->pl_object_name_part_complete = OG_FALSE;
+                state->pl_object_name_suffix = PL_NAME_SUFFIX_NONE;
+                return cur_token;
+            }
+            if (cur_token == FORCE && state->pl_object_name_suffix == PL_NAME_SUFFIX_FORCE) {
+                /* TYPE's optional FORCE belongs before the CREATE boundary. */
+                state->pl_object_name_suffix = PL_NAME_SUFFIX_AFTER_FORCE;
+                return cur_token;
+            }
+            state->pl_object_name_part_complete = OG_FALSE;
+            if (cur_token != '.' || state->pl_object_name_suffix == PL_NAME_SUFFIX_TRIGGER_HEADER) {
+                /* A zero-width boundary lets CREATE preparation reduce before
+                 * LAC examines the header. Replay its untouched token through
+                 * the usual filter after leaving this mode. */
+                CM_ASSERT(*lookahead_len < MAX_LOOKAHEAD_LEN);
+                struct base_yy_lookahead *pending = &lookaheads[(*lookahead_len)++];
+                pending->token = cur_token;
+                pending->yylval = lvalp->core_yystype;
+                pending->yylloc = *llocp;
+                pending->yyleng = cur_token == 0 ? 0 :
+                    (!cur_from_lookahead && cur_raw_token_end >= llocp->offset ?
+                        cur_raw_token_end - llocp->offset : cur_yyleng);
+                pending->prev_hold_char_loc = llocp->offset + pending->yyleng;
+                pending->prev_hold_char = scanbuf[pending->prev_hold_char_loc];
+                state->pl_object_name_mode = OG_FALSE;
+                state->pl_object_name_suffix = PL_NAME_SUFFIX_NONE;
+                return BISON_PL_NAME_END;
+            }
+        }
         return cur_token;
     }
+
+    /* Folded tokens start at their first word, even though lookahead advances
+     * the core scanner. Keep the token's byte offset and mapped location together. */
+    int first_token = cur_token;
+    YYLTYPE first_token_loc = *llocp;
 
     /* Do we need to look ahead for a possible multiword token? */
     switch (cur_token) {
@@ -1028,13 +1251,26 @@ static int base_yylex_filtered(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yys
         default:
             break;
     }
+    if (cur_token != first_token) {
+        *llocp = first_token_loc;
+    }
     return cur_token;
 }
 
 int base_yylex_common(YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner, core_yylex_func yylex_func_hook)
 {
+    core_yy_extra_type *core_extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    if (core_extra->lex_failed) {
+        return LEX_ERROR_TOKEN;
+    }
     int token = base_yylex_filtered(lvalp, llocp, yyscanner, yylex_func_hook);
-    if (token > 0 && token != LEX_ERROR_TOKEN) {
+    /* A completed PL name boundary preserves CREATE preparation; it neither
+     * clears nor consumes the sticky lexical error returned on the next call. */
+    if (token == LEX_ERROR_TOKEN || (core_extra->lex_failed && token != BISON_PL_NAME_END)) {
+        core_extra->lex_failed = OG_TRUE;
+        return LEX_ERROR_TOKEN;
+    }
+    if (token > 0 && token != BISON_PL_NAME_END) {
         base_yy_raw_parse_state_t *state = &og_yyget_extra(yyscanner)->raw_parse;
         state->prev_returned_token_offset = state->last_returned_token_offset;
         state->last_returned_token_offset = llocp->offset;
@@ -1071,6 +1307,8 @@ static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_
     state->pending_pl_source = pl_source;
     state->pl_object_name_end = -1;
     state->pl_object_name_mode = OG_FALSE;
+    state->pl_object_name_part_complete = OG_FALSE;
+    state->pl_object_name_suffix = PL_NAME_SUFFIX_NONE;
     state->pl_object_name_sensitive = OG_FALSE;
     state->alter_system_value_mode = ALTER_SYSTEM_VALUE_CAPTURE_NONE;
     state->last_grouped_expr_close_offset = -1;
@@ -1104,14 +1342,16 @@ static status_t a_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     a_parser_init(&yyextra);
 
     /* Parse! */
+    core_yyscan_t previous_scanner = bison_parser_set_alloc_scanner(yyscanner);
     yyresult = a_base_yyparse(yyscanner);
+    (void)bison_parser_set_alloc_scanner(previous_scanner);
 
     /* Clean up (release memory) */
     a_scanner_finish(yyscanner);
     stmt->parser_text = parser_text_bak;
     stmt->parser_text_valid = parser_text_valid_bak;
 
-    if (SECUREC_UNLIKELY(yyresult)) { /* error */
+    if (SECUREC_UNLIKELY(yyresult || yyextra.core_yy_extra.lex_failed)) { /* error */
         CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
@@ -1148,14 +1388,16 @@ static status_t b_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     b_parser_init(&yyextra);
 
     /* Parse! */
+    core_yyscan_t previous_scanner = bison_parser_set_alloc_scanner(yyscanner);
     yyresult = b_base_yyparse(yyscanner);
+    (void)bison_parser_set_alloc_scanner(previous_scanner);
 
     /* Clean up (release memory) */
     b_scanner_finish(yyscanner);
     stmt->parser_text = parser_text_bak;
     stmt->parser_text_valid = parser_text_valid_bak;
 
-    if (SECUREC_UNLIKELY(yyresult)) { /* error */
+    if (SECUREC_UNLIKELY(yyresult || yyextra.core_yy_extra.lex_failed)) { /* error */
         CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
@@ -1192,14 +1434,16 @@ static status_t c_format_raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **co
     c_parser_init(&yyextra);
 
     /* Parse! */
+    core_yyscan_t previous_scanner = bison_parser_set_alloc_scanner(yyscanner);
     yyresult = c_base_yyparse(yyscanner);
+    (void)bison_parser_set_alloc_scanner(previous_scanner);
 
     /* Clean up (release memory) */
     c_scanner_finish(yyscanner);
     stmt->parser_text = parser_text_bak;
     stmt->parser_text_valid = parser_text_valid_bak;
 
-    if (SECUREC_UNLIKELY(yyresult)) { /* error */
+    if (SECUREC_UNLIKELY(yyresult || yyextra.core_yy_extra.lex_failed)) { /* error */
         CM_RESTORE_STACK(stmt->session->stack);
         return OG_ERROR;
     }
@@ -1214,8 +1458,13 @@ static status_t raw_parser_internal(sql_stmt_t *stmt, sql_text_t *sql, void **co
 {
     sql_text_t parser_text_bak = stmt->parser_text;
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
+    bison_source_map_t source_map;
+    bison_source_scope_t source_scope;
     status_t status;
 
+    /* PL object source is also sliced from the immutable input, not scanbuf. */
+    bison_source_map_init(&source_map, stmt, &sql->value, sql->loc);
+    bison_source_scope_enter(&source_scope, stmt, &sql->value, &source_map);
     stmt->parser_text = *sql;
     stmt->parser_text_valid = OG_TRUE;
 
@@ -1229,6 +1478,7 @@ static status_t raw_parser_internal(sql_stmt_t *stmt, sql_text_t *sql, void **co
         status = a_format_raw_parser(stmt, sql, context, pl_source);
     }
 
+    bison_source_scope_leave(&source_scope);
     stmt->parser_text = parser_text_bak;
     stmt->parser_text_valid = parser_text_valid_bak;
     return status;

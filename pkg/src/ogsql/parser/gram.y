@@ -1,6 +1,7 @@
 %{
 #include "gramparse.h"
 #include "bison_gram_common.h"
+#include "bison_syntax_error.h"
 #include "table_parser.h"
 #include "expr_parser.h"
 #include "ogsql_hint_parser.h"
@@ -28,12 +29,14 @@
 #include "cm_utils.h"
 #include "decl.h"
 
+/* Report a new grammar diagnosis; existing errors must not suppress this path. */
 #define parser_yyerror(msg)             \
 do {                                    \
     scanner_yyerror(msg, yyscanner);    \
     YYABORT;                            \
 } while (0)
 
+/* Preserve a callee's diagnosis; its semantic error need not belong to the last lookahead token. */
 #define parser_abort_or_yyerror(msg)    \
 do {                                    \
     if (cm_get_error_code() != 0) {     \
@@ -48,11 +51,11 @@ do {                                                                            
     if (SECUREC_UNLIKELY(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context == NULL)) {    \
         if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,   \
             len, (void **)&dest) != OG_SUCCESS) {                                   \
-            parser_yyerror("alloc mem failed ");                                    \
+            parser_abort_or_yyerror("alloc mem failed ");                                    \
         }                                                                           \
     } else if (pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context,            \
         len, (void **)&dest) != OG_SUCCESS) {                                   \
-        parser_yyerror("alloc mem failed ");                                    \
+        parser_abort_or_yyerror("alloc mem failed ");                                    \
     }                                                                           \
     errno_t ret = memcpy_s(dest, len, src, len - 1);                            \
     knl_securec_check(ret);                                                     \
@@ -154,7 +157,7 @@ static status_t pl_compile_stored_body_source(core_yyscan_t yyscanner, text_t *b
     source_location_t loc, bool32 has_program_body);
 static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
     pl_bison_trigger_def_t *trigger_def);
-static void pl_bison_begin_object_name(core_yyscan_t yyscanner);
+static void pl_bison_begin_object_name(core_yyscan_t yyscanner, base_yy_pl_name_suffix_t suffix);
 static bool32 pl_bison_is_identifier_char(char ch);
 static status_t pl_bison_raw_quoted_name_end(const char *source, size_t source_len, size_t quote_offset,
     char quote, size_t *end_offset);
@@ -210,6 +213,8 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 }
 
 %define api.pure
+%define parse.error custom
+%define parse.lac full
 %expect 0
 %name-prefix "base_yy"
 %locations
@@ -435,7 +440,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
             subpartitions_num partitions_num external_table func_arg_with_default func_arg
 %type <keyword> unreserved_keyword
 %type <keyword> col_name_keyword reserved_keyword case_bad_expr_start case_bad_cond_keyword
-%type <str> ColId type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
+%type <str> ColId pl_object_name_part type_function_name alias_without_as target_alias_keyword param_name hint_string character character_national charset_collate_name opt_purge_partition
             opt_separator substr_func extract_arg alias_clause ColLabel UserId database_name plain_database_name user_password
             altsession_set_key alter_system_param_name alter_session_extra_token
             case_invalid_word
@@ -451,6 +456,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %type <limit_item> opt_limit limit_clause offset_clause select_limit
 %type <alter_idx_act> alter_index_action
 %type <text> subprogram_body pl_as_is_body pl_type_body pl_trigger_block opt_dump_to_file
+%type <text> pl_program_source
 %type <program_body> pl_program_body pl_program_body_complete
 %type <language_def> pl_language_c_tail pl_language_c_invalid_tail
 %type <source_loc> pl_program_body_end
@@ -462,6 +468,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 
 %token            LEX_ERROR_TOKEN
 %token            BISON_PL_SOURCE
+%token            BISON_PL_NAME_END
 %token            TYPECAST ORA_JOINOP DOT_DOT COLON_EQUALS PARA_EQUALS SET_IDENT_SESSION SET_IDENT_GLOBAL NULLS_FIRST NULLS_LAST
 %token <sys_param_value> ALTER_SYSTEM_VALUE
 %token <str>      SIZE_B SIZE_KB SIZE_MB SIZE_GB SIZE_TB SIZE_PB SIZE_EB
@@ -804,13 +811,13 @@ InternalReparseStmt:
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                 if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                    parser_yyerror("create default expr list failed.");
+                    parser_abort_or_yyerror("create default expr list failed.");
                 }
                 if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                    parser_yyerror("insert default expr failed.");
+                    parser_abort_or_yyerror("insert default expr failed.");
                 }
                 if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                    parser_yyerror("insert default update expr failed.");
+                    parser_abort_or_yyerror("insert default update expr failed.");
                 }
                 $$ = list;
             }
@@ -830,7 +837,7 @@ pl_call_expr:
                 expr_tree_t *expr = NULL;
                 if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $1, NULL, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init procedure call expr failed");
+                    parser_abort_or_yyerror("init procedure call expr failed");
                 }
                 $$ = expr;
             }
@@ -839,7 +846,7 @@ pl_call_expr:
                 expr_tree_t *expr = NULL;
                 if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $1, $3, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init procedure call expr failed");
+                    parser_abort_or_yyerror("init procedure call expr failed");
                 }
                 $$ = expr;
             }
@@ -1011,7 +1018,7 @@ InsertStmt:
             insert_context->select_ctx = $6;
             insert_context->select_ctx->type = SELECT_AS_VALUES;
             if (sql_create_list(stmt, &insert_context->pairs) != OG_SUCCESS) {
-                parser_yyerror("create column pairs failed.");
+                parser_abort_or_yyerror("create column pairs failed.");
             }
             if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
@@ -1034,7 +1041,7 @@ InsertStmt:
             insert_context->flags |= INSERT_COLS_SPECIFIED;
             insert_context->table = $5;
             if (column_list_to_column_pairs(stmt, $7, &insert_context->pairs)) {
-                parser_yyerror("create column pairs failed.");
+                parser_abort_or_yyerror("create column pairs failed.");
             }
             insert_context->select_ctx = $9;
             insert_context->select_ctx->type = SELECT_AS_VALUES;
@@ -1061,7 +1068,7 @@ InsertStmt:
             insert_context->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_context->pairs, 0))->exprs->count;
             insert_context->update_ctx = $7;
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
-                parser_yyerror("put table into update_ctx failed.");
+                parser_abort_or_yyerror("put table into update_ctx failed.");
             }
             if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
@@ -1107,7 +1114,7 @@ InsertStmt:
             insert_context->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_context->pairs, 0))->exprs->count;
             insert_context->update_ctx = $10;
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
-                parser_yyerror("put table into update_ctx failed.");
+                parser_abort_or_yyerror("put table into update_ctx failed.");
             }
             if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
@@ -1147,11 +1154,11 @@ InsertStmt:
             insert_context->select_ctx = $6;
             insert_context->select_ctx->type = SELECT_AS_VALUES;
             if (sql_create_list(stmt, &insert_context->pairs) != OG_SUCCESS) {
-                parser_yyerror("create column pairs failed.");
+                parser_abort_or_yyerror("create column pairs failed.");
             }
             insert_context->update_ctx = $7;
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
-                parser_yyerror("put table into update_ctx failed.");
+                parser_abort_or_yyerror("put table into update_ctx failed.");
             }
             if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
@@ -1175,13 +1182,13 @@ InsertStmt:
             insert_context->flags |= INSERT_COLS_SPECIFIED;
             insert_context->table = $5;
             if (column_list_to_column_pairs(stmt, $7, &insert_context->pairs)) {
-                parser_yyerror("create column pairs failed.");
+                parser_abort_or_yyerror("create column pairs failed.");
             }
             insert_context->select_ctx = $9;
             insert_context->select_ctx->type = SELECT_AS_VALUES;
             insert_context->update_ctx = $10;
             if (sql_array_put(&insert_context->update_ctx->query->tables, insert_context->table) != OG_SUCCESS) {
-                parser_yyerror("put table into update_ctx failed.");
+                parser_abort_or_yyerror("put table into update_ctx failed.");
             }
             if (bison_current_pending_ssa(yyscanner)->count > 0) {
                 sql_create_array(stmt->context, &insert_context->ssa, "SUB-SELECT", OG_MAX_SUBSELECT_EXPRS);
@@ -1213,7 +1220,7 @@ upsert_clause:
             BISON_ABORT_IFERR(sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                 sizeof(sql_update_t), (void **)&update_context));
             if (sql_init_update(og_yyget_extra(yyscanner)->core_yy_extra.stmt, update_context) != OG_SUCCESS) {
-                parser_yyerror("init sql_update_t failed.");
+                parser_abort_or_yyerror("init sql_update_t failed.");
             }
             BISON_ABORT_IFERR(cm_galist_copy(update_context->pairs, $5));
             $$ = update_context;
@@ -1235,7 +1242,7 @@ set_clause:
             {
                 galist_t *list = NULL;
                 if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                    parser_yyerror("create column pair list failed.");
+                    parser_abort_or_yyerror("create column pair list failed.");
                 }
                 BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                 $$ = list;
@@ -1248,7 +1255,7 @@ single_set_clause:
                 {
                     column_value_pair_t *pair = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(column_value_pair_t), (void **)&pair)) {
-                        parser_yyerror("init column pair failed");
+                        parser_abort_or_yyerror("init column pair failed");
                     }
                     pair->column_expr = $1;
                     BISON_ABORT_IFERR(sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
@@ -1268,11 +1275,11 @@ multiple_set_clause:
                     bison_set_select_type(select_ctx, SELECT_AS_MULTI_VARIANT);
                     if (sql_create_select_expr(stmt, &expr, select_ctx, bison_current_pending_ssa(yyscanner),
                         @6.loc) != OG_SUCCESS) {
-                        parser_yyerror("init select expr failed");
+                        parser_abort_or_yyerror("init select expr failed");
                     }
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column pair list failed.");
+                        parser_abort_or_yyerror("create column pair list failed.");
                     }
                     column_value_pair_t *pair = $2;
                     BISON_ABORT_IFERR(sql_create_list(stmt, &pair->exprs));
@@ -1307,7 +1314,7 @@ set_target_list:
             {
                 column_value_pair_t *pair = NULL;
                 if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(column_value_pair_t), (void **)&pair)) {
-                    parser_yyerror("init column pair failed");
+                    parser_abort_or_yyerror("init column pair failed");
                 }
                 pair->column_expr = $1;
                 $$ = pair;
@@ -1330,10 +1337,10 @@ all_insert_into_list:
         {
             galist_t *list = NULL;
             if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                parser_yyerror("create all_insert_into list failed.");
+                parser_abort_or_yyerror("create all_insert_into list failed.");
             }
             if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                parser_yyerror("insert all_insert_into list failed.");
+                parser_abort_or_yyerror("insert all_insert_into list failed.");
             }
             $$ = list;
         }
@@ -1341,7 +1348,7 @@ all_insert_into_list:
         {
             galist_t *list = $1;
             if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                parser_yyerror("insert all_insert_into list failed.");
+                parser_abort_or_yyerror("insert all_insert_into list failed.");
             }
             $$ = list;
         }
@@ -1353,7 +1360,7 @@ all_insert_into:
         {
             insert_all_t *into_item = NULL;
             if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(insert_all_t), (void **)&into_item)) {
-                parser_yyerror("init insert_all_t failed");
+                parser_abort_or_yyerror("init insert_all_t failed");
             }
             into_item->table = $2;
             into_item->pairs = $3;
@@ -1364,7 +1371,7 @@ all_insert_into:
         {
             insert_all_t *into_item = NULL;
             if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(insert_all_t), (void **)&into_item)) {
-                parser_yyerror("init insert_all_t failed");
+                parser_abort_or_yyerror("init insert_all_t failed");
             }
             into_item->flags |= INSERT_COLS_SPECIFIED;
             into_item->table = $2;
@@ -1414,25 +1421,25 @@ insert_column_item:
                     column_parse_info *column = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(column_parse_info), (void **)&column) != OG_SUCCESS) {
-                        parser_yyerror("init list failed");
+                        parser_abort_or_yyerror("init list failed");
                     }
                     if ($2 == NULL) {
                         if (sql_bison_copy_cstr_if_present(stmt, $1, &column->col_name) != OG_SUCCESS) {
-                            parser_yyerror("copy column name failed");
+                            parser_abort_or_yyerror("copy column name failed");
                         }
                     } else {
                         galist_t *list = $2;
                         switch (list->count) {
                             case 1:
                                 if (sql_bison_copy_cstr_if_present(stmt, $1, &column->table) != OG_SUCCESS) {
-                                    parser_yyerror("copy column table name failed");
+                                    parser_abort_or_yyerror("copy column table name failed");
                                 }
 
                                 column->col_name = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
                                 break;
                             case 2:
                                 if (sql_bison_copy_cstr_if_present(stmt, $1, &column->owner) != OG_SUCCESS) {
-                                    parser_yyerror("copy column owner name failed");
+                                    parser_abort_or_yyerror("copy column owner name failed");
                                 }
 
                                 column->table = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
@@ -1455,7 +1462,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $2, @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1464,7 +1471,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
                         "DELETE", @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1473,7 +1480,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
                         "EXISTS", @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1482,7 +1489,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
                         "LIMIT", @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1491,7 +1498,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
                         "PRIOR", @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1499,7 +1506,7 @@ indirection_el:
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, "ROWID", @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1507,7 +1514,7 @@ indirection_el:
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, "ROWSCN", @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init const expr failed");
+                        parser_abort_or_yyerror("init const expr failed");
                     }
                     $$ = expr;
                 }
@@ -1515,7 +1522,7 @@ indirection_el:
                 {
                     expr_tree_t *expr = NULL;
                     if (sql_create_star_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, @1) != OG_SUCCESS) {
-                        parser_yyerror("init expr failed");
+                        parser_abort_or_yyerror("init expr failed");
                     }
                     $$ = expr;
                 }
@@ -1524,7 +1531,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_indices_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
                         $2, OG_INVALID_ID32, @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init array indices failed");
+                        parser_abort_or_yyerror("init array indices failed");
                     }
                     $$ = expr;
                 }
@@ -1533,7 +1540,7 @@ indirection_el:
                     expr_tree_t *expr = NULL;
                     if (sql_create_indices_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr,
                         $2, $4, @2.loc) != OG_SUCCESS) {
-                        parser_yyerror("init array indices failed");
+                        parser_abort_or_yyerror("init array indices failed");
                     }
                     $$ = expr;
                 }
@@ -1561,7 +1568,7 @@ opt_indirection:
                 galist_t *list = $1;
                 if (list == NULL) {
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("init list failed");
+                        parser_abort_or_yyerror("init list failed");
                     }
                 }
                 BISON_ABORT_IFERR(cm_galist_insert(list, $2));
@@ -1576,6 +1583,8 @@ qualified_name:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     BISON_ABORT_IFERR(sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table));
                     table->user.implicit = OG_TRUE;
+                    table->user.loc = @1.loc;
+                    table->name.loc = @1.loc;
                     table->name.value.str = $1;
                     table->name.value.len = strlen($1);
                     text_t user_name = { stmt->session->curr_schema, (uint32)strlen(stmt->session->curr_schema) };
@@ -1584,7 +1593,7 @@ qualified_name:
                     }
 
                     if (sql_copy_name(stmt->context, &user_name, (text_t *)&table->user) != OG_SUCCESS) {
-                        parser_yyerror("copy user name failed.");
+                        parser_abort_or_yyerror("copy user name failed.");
                     }
 
                     bool32 is_withas_table = OG_FALSE;
@@ -1607,6 +1616,8 @@ qualified_name:
                     switch (list->count)
                     {
                         case 1:
+                            table->user.loc = @1.loc;
+                            table->name.loc = ((expr_tree_t*)cm_galist_get(list, 0))->root->loc;
                             table->user.value.str = $1;
                             table->user.value.len = strlen($1);
                             table->name.value = ((expr_tree_t*)cm_galist_get(list, 0))->root->value.v_text;
@@ -1724,7 +1735,7 @@ ctext_expr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, RES_WORD_DEFAULT, OG_FALSE, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init DEFAULT reserved expr failed");
+                        parser_abort_or_yyerror("init DEFAULT reserved expr failed");
                     }
                     $$ = expr;
                 }
@@ -1742,10 +1753,10 @@ expr_list:  a_expr
                 {
                     galist_t* e_list = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &e_list) != OG_SUCCESS) {
-                        parser_yyerror("create expr list failed.");
+                        parser_abort_or_yyerror("create expr list failed.");
                     }
                     if (cm_galist_insert(e_list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert expr list failed.");
+                        parser_abort_or_yyerror("insert expr list failed.");
                     }
                     $$ = e_list;
                 }
@@ -1753,7 +1764,7 @@ expr_list:  a_expr
                 {
                     galist_t* e_list = $1;
                     if (cm_galist_insert(e_list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert expr list failed.");
+                        parser_abort_or_yyerror("insert expr list failed.");
                     }
                     $$ = e_list;
                 }
@@ -1775,10 +1786,10 @@ cte_list:
                 {
                     galist_t* cte_list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &cte_list) != OG_SUCCESS) {
-                        parser_yyerror("create expr list failed.");
+                        parser_abort_or_yyerror("create expr list failed.");
                     }
                     if (cm_galist_insert(cte_list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert cte list failed.");
+                        parser_abort_or_yyerror("insert cte list failed.");
                     }
                     $$ = cte_list;
                 }
@@ -1793,7 +1804,7 @@ cte_list:
                     galist_t* cte_list = $1;
                     sql_withas_factor_t *factor = $4;
                     if (cm_galist_insert(cte_list, factor) != OG_SUCCESS) {
-                        parser_yyerror("insert cte list failed.");
+                        parser_abort_or_yyerror("insert cte list failed.");
                     }
                     $$ = cte_list;
                 }
@@ -1842,7 +1853,7 @@ select_no_parens:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
-                        parser_yyerror("create withass failed");
+                        parser_abort_or_yyerror("create withass failed");
                     }
 
                     for (uint32 i = 0; i < $1->count; i++) {
@@ -1863,7 +1874,7 @@ select_no_parens:
                         sort_items = &select_ctx->sort_items;
                     }
                     if (cm_galist_copy(*sort_items, $2) != OG_SUCCESS) {
-                        parser_yyerror("parse order by failed");
+                        parser_abort_or_yyerror("parse order by failed");
                     }
                     $$ = select_ctx;
                 }
@@ -1880,7 +1891,7 @@ select_no_parens:
                         limit = &select_ctx->limit;
                     }
                     if ($2 && cm_galist_copy(*sort_items, $2) != OG_SUCCESS) {
-                        parser_yyerror("parse order by failed");
+                        parser_abort_or_yyerror("parse order by failed");
                     }
                     if ($3) {
                         limit->count = $3->count;
@@ -1904,7 +1915,7 @@ select_no_parens:
                         limit = &select_ctx->limit;
                     }
                     if ($2 && cm_galist_copy(*sort_items, $2) != OG_SUCCESS) {
-                        parser_yyerror("parse order by failed");
+                        parser_abort_or_yyerror("parse order by failed");
                     }
                     limit->count = $3->count;
                     limit->offset = $3->offset;
@@ -1940,7 +1951,7 @@ select_no_parens:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
-                        parser_yyerror("create withass failed");
+                        parser_abort_or_yyerror("create withass failed");
                     }
 
                     for (uint32 i = 0; i < $1->count; i++) {
@@ -1957,7 +1968,7 @@ select_no_parens:
                         sort_items = &select_ctx->sort_items;
                     }
                     if (cm_galist_copy(*sort_items, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse order by failed");
+                        parser_abort_or_yyerror("parse order by failed");
                     }
                     $$ = select_ctx;
                 }
@@ -1967,7 +1978,7 @@ select_no_parens:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
-                        parser_yyerror("create withass failed");
+                        parser_abort_or_yyerror("create withass failed");
                     }
 
                     for (uint32 i = 0; i < $1->count; i++) {
@@ -1987,7 +1998,7 @@ select_no_parens:
                         limit = &select_ctx->limit;
                     }
                     if ($3 && cm_galist_copy(*sort_items, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse order by failed");
+                        parser_abort_or_yyerror("parse order by failed");
                     }
                     if ($4) {
                         limit->count = $4->count;
@@ -2004,7 +2015,7 @@ select_no_parens:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
-                        parser_yyerror("create withass failed");
+                        parser_abort_or_yyerror("create withass failed");
                     }
 
                     for (uint32 i = 0; i < $1->count; i++) {
@@ -2024,7 +2035,7 @@ select_no_parens:
                         limit = &select_ctx->limit;
                     }
                     if ($3 && cm_galist_copy(*sort_items, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse order by failed");
+                        parser_abort_or_yyerror("parse order by failed");
                     }
                     limit->count = $4->count;
                     limit->offset = $4->offset;
@@ -2046,10 +2057,10 @@ columnref_list:
                 {
                     galist_t* e_list = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &e_list) != OG_SUCCESS) {
-                        parser_yyerror("create columnref list failed.");
+                        parser_abort_or_yyerror("create columnref list failed.");
                     }
                     if (cm_galist_insert(e_list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert columnref list failed.");
+                        parser_abort_or_yyerror("insert columnref list failed.");
                     }
                     $$ = e_list;
                 }
@@ -2057,7 +2068,7 @@ columnref_list:
                 {
                     galist_t* e_list = $1;
                     if (cm_galist_insert(e_list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert columnref list failed.");
+                        parser_abort_or_yyerror("insert columnref list failed.");
                     }
                     $$ = e_list;
                 }
@@ -2074,7 +2085,7 @@ for_locking_clause:
                     for_update_clause *for_update = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(for_update_clause), (void **)&for_update) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     for_update->for_update_cols = $3;
                     for_update->for_update_params.type = ROWMARK_WAIT_SECOND;
@@ -2086,7 +2097,7 @@ for_locking_clause:
                     for_update_clause *for_update = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(for_update_clause), (void **)&for_update) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     for_update->for_update_cols = $3;
                     for_update->for_update_params.type = $4;
@@ -2119,10 +2130,10 @@ pivot_in_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -2130,7 +2141,7 @@ pivot_in_list:
                 {
                     galist_t* list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert target list failed.");
+                        parser_abort_or_yyerror("insert target list failed.");
                     }
                     $$ = list;
                 }
@@ -2152,7 +2163,7 @@ pivot_in_item_list:
 
                     (sql_expr_list_last(pivot_expr->expr))->next = $3->expr;
                     if (cm_text_copy(&tmp_alias, OG_MAX_NAME_LEN, &pivot_expr->alias) != OG_SUCCESS) {
-                        parser_yyerror("cm_text_copy failed");
+                        parser_abort_or_yyerror("cm_text_copy failed");
                     }
                     char *pos = tmp_alias.str + tmp_alias.len;
                     if (tmp_alias.len != 0 && tmp_alias.len < OG_MAX_NAME_LEN) {
@@ -2170,7 +2181,7 @@ pivot_in_item_list:
                         tmp_alias.len = MIN(tmp_alias.len + to_be_added.len, OG_MAX_NAME_LEN);
                     }
                     if (sql_copy_text(stmt->context, &tmp_alias, &pivot_expr->alias) != OG_SUCCESS) {
-                        parser_yyerror("sql_copy_text failed");
+                        parser_abort_or_yyerror("sql_copy_text failed");
                     }
                     $$ = pivot_expr;
                 }
@@ -2182,7 +2193,7 @@ pivot_in_item:
                 expr_with_alias *pivot_expr = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(expr_with_alias), (void **)&pivot_expr) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 pivot_expr->expr = $1;
                 pivot_expr->alias.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @1.offset;
@@ -2200,7 +2211,7 @@ pivot_in_list_element:
                     alias.len = strlen($5);
 
                     if (sql_copy_name(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, &alias, &pivot_expr->alias) != OG_SUCCESS) {
-                        parser_yyerror("sql_copy_name failed");
+                        parser_abort_or_yyerror("sql_copy_name failed");
                     }
                     $$ = pivot_expr;
                 }
@@ -2212,7 +2223,7 @@ pivot_in_list_element:
                     alias.len = strlen($4);
 
                     if (sql_copy_name(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, &alias, &pivot_expr->alias) != OG_SUCCESS) {
-                        parser_yyerror("sql_copy_name failed");
+                        parser_abort_or_yyerror("sql_copy_name failed");
                     }
                     $$ = pivot_expr;
                 }
@@ -2227,10 +2238,10 @@ unpivot_in_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -2238,7 +2249,7 @@ unpivot_in_list:
                 {
                     galist_t* list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert target list failed.");
+                        parser_abort_or_yyerror("insert target list failed.");
                     }
                     $$ = list;
                 }
@@ -2249,7 +2260,7 @@ unpivot_in_list_element:
                     expr_with_as_expr *unpivot_expr_with_as = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(expr_with_as_expr), (void **)&unpivot_expr_with_as) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     unpivot_expr_with_as->expr_alias = $2;
@@ -2261,7 +2272,7 @@ unpivot_in_list_element:
                     expr_with_as_expr *unpivot_expr_with_as = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(expr_with_as_expr), (void **)&unpivot_expr_with_as) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     unpivot_expr_with_as->expr_alias = $2;
@@ -2273,7 +2284,7 @@ unpivot_in_list_element:
                     expr_with_as_expr *unpivot_expr_with_as = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(expr_with_as_expr), (void **)&unpivot_expr_with_as) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     unpivot_expr_with_as->expr_alias = $2;
@@ -2284,7 +2295,7 @@ unpivot_in_list_element:
                     expr_with_as_expr *unpivot_expr_with_as = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(expr_with_as_expr), (void **)&unpivot_expr_with_as) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     unpivot_expr_with_as->expr_alias = $1;
@@ -2296,7 +2307,7 @@ unpivot_in_list_element:
                     expr_with_as_expr *unpivot_expr_with_as = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(expr_with_as_expr), (void **)&unpivot_expr_with_as) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     unpivot_expr_with_as->expr_alias = $1;
@@ -2310,17 +2321,17 @@ pivot_clause:
                     pivot_items_t *pivot_items = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pivot_items_t), (void **)&pivot_items) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (sql_create_pivot_items(stmt, &pivot_items, @1.loc, PIVOT_TYPE) != OG_SUCCESS) {
-                        parser_yyerror("init pivot failed");
+                        parser_abort_or_yyerror("init pivot failed");
                     }
                     if (sql_parse_pivot_aggr_list($2, &pivot_items->aggr_expr, pivot_items->aggr_alias, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse pivot aggr list failed");
+                        parser_abort_or_yyerror("parse pivot aggr list failed");
                     }
                     pivot_items->for_expr = $4;
                     if (sql_parse_pivot_aggr_list($7, &pivot_items->in_expr, pivot_items->alias, OG_TRUE) != OG_SUCCESS) {
-                        parser_yyerror("parse pivot in list failed");
+                        parser_abort_or_yyerror("parse pivot in list failed");
                     }
                     $$ = pivot_items;
                 }
@@ -2329,17 +2340,17 @@ pivot_clause:
                     pivot_items_t *pivot_items = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pivot_items_t), (void **)&pivot_items) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (sql_create_pivot_items(stmt, &pivot_items, @1.loc, PIVOT_TYPE) != OG_SUCCESS) {
-                        parser_yyerror("init pivot failed");
+                        parser_abort_or_yyerror("init pivot failed");
                     }
                     if (sql_parse_pivot_aggr_list($2, &pivot_items->aggr_expr, pivot_items->aggr_alias, OG_FALSE)  != OG_SUCCESS) {
-                        parser_yyerror("parse pivot aggr list failed");
+                        parser_abort_or_yyerror("parse pivot aggr list failed");
                     }
                     pivot_items->for_expr = $5;
                     if (sql_parse_pivot_in_list(pivot_items, $9) != OG_SUCCESS) {
-                        parser_yyerror("parse pivot in list failed");
+                        parser_abort_or_yyerror("parse pivot in list failed");
                     }
                     $$ = pivot_items;
                 }
@@ -2348,24 +2359,24 @@ pivot_clause:
                     pivot_items_t *pivot_items = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pivot_items_t), (void **)&pivot_items) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (sql_create_pivot_items(stmt, &pivot_items, @1.loc, UNPIVOT_TYPE) != OG_SUCCESS) {
-                        parser_yyerror("init unpivot failed");
+                        parser_abort_or_yyerror("init unpivot failed");
                     }
 
                     pivot_items->include_nulls = $1;
 
                     if (sql_parse_unpivot_data_rs(stmt, pivot_items->unpivot_data_rs, $2) != OG_SUCCESS) {
-                        parser_yyerror("parse unpivot unpivot_data_rs failed");
+                        parser_abort_or_yyerror("parse unpivot unpivot_data_rs failed");
                     }
 
                     if (sql_parse_unpivot_data_rs(stmt, pivot_items->unpivot_alias_rs, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse unpivot unpivot_alias_rs failed");
+                        parser_abort_or_yyerror("parse unpivot unpivot_alias_rs failed");
                     }
 
                     if (sql_parse_unpivot_in_list(stmt, pivot_items, $7) != OG_SUCCESS) {
-                        parser_yyerror("parse unpivot in list failed");
+                        parser_abort_or_yyerror("parse unpivot in list failed");
                     }
                     $$ = pivot_items;
                 }
@@ -2387,7 +2398,7 @@ pivot_clause_list:
                 {
                     galist_t *pivot_list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &pivot_list) != OG_SUCCESS) {
-                        parser_yyerror("create expr list failed.");
+                        parser_abort_or_yyerror("create expr list failed.");
                     }
                     BISON_ABORT_IFERR(cm_galist_insert(pivot_list, $1));
                     $$ = pivot_list;
@@ -2410,10 +2421,10 @@ expr_or_implicit_row_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -2421,7 +2432,7 @@ expr_or_implicit_row_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -2437,10 +2448,10 @@ cube_clause:
                 {
                     galist_t *group_sets = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (sql_extract_group_cube(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $3, group_sets) != OG_SUCCESS) {
-                        parser_yyerror("extract group cube failed.");
+                        parser_abort_or_yyerror("extract group cube failed.");
                     }
                     $$ = group_sets;
                 }
@@ -2451,10 +2462,10 @@ rollup_clause:
                 {
                     galist_t *group_sets = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (sql_extract_group_rollup(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $3, group_sets) != OG_SUCCESS) {
-                        parser_yyerror("extract group cube failed.");
+                        parser_abort_or_yyerror("extract group cube failed.");
                     }
                     $$ = group_sets;
                 }
@@ -2468,16 +2479,16 @@ group_sets_item:
                     group_set_t *group_set = NULL;
 
                     if (sql_create_list(stmt, &group_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_new(group_sets, sizeof(group_set_t), (void **)&group_set) != OG_SUCCESS) {
-                        parser_yyerror("new group_set_t failed.");
+                        parser_abort_or_yyerror("new group_set_t failed.");
                     }
                     if (sql_create_list(stmt, &group_set->items) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(group_set->items, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = group_sets;
                 }
@@ -2488,14 +2499,14 @@ group_sets_item:
                     group_set_t *group_set = NULL;
 
                     if (sql_create_list(stmt, &group_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_new(group_sets, sizeof(group_set_t), (void **)&group_set) != OG_SUCCESS) {
-                        parser_yyerror("new group_set_t failed.");
+                        parser_abort_or_yyerror("new group_set_t failed.");
                     }
                     group_set->items = $2;
                     if (cm_galist_insert(group_set->items, $4) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = group_sets;
                 }
@@ -2508,13 +2519,13 @@ group_sets_item:
                     group_set_t *group_set = NULL;
 
                     if (sql_create_list(stmt, &group_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_new(group_sets, sizeof(group_set_t), (void **)&group_set) != OG_SUCCESS) {
-                        parser_yyerror("new group_set_t failed.");
+                        parser_abort_or_yyerror("new group_set_t failed.");
                     }
                     if (sql_create_list(stmt, &group_set->items) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     $$ = group_sets;
                 }
@@ -2526,7 +2537,7 @@ group_sets_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_copy(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("copy list failed");
+                        parser_abort_or_yyerror("copy list failed");
                     }
                     $$ = list;
                 }
@@ -2551,16 +2562,16 @@ group_by_list:
                     galist_t *group_sets = NULL;
                     group_set_t *group_set = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_new(group_sets, sizeof(group_set_t), (void **)&group_set) != OG_SUCCESS) {
-                        parser_yyerror("new group_set_t failed.");
+                        parser_abort_or_yyerror("new group_set_t failed.");
                     }
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &group_set->items) != OG_SUCCESS) {
-                        parser_yyerror("create group_set items failed.");
+                        parser_abort_or_yyerror("create group_set items failed.");
                     }
                     if (cm_galist_insert(group_set->items, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = group_sets;
                 }
@@ -2576,7 +2587,7 @@ group_by_list:
                     for (uint32 i = 0; i < group_sets->count; i++) {
                         group_set = (group_set_t *)cm_galist_get(group_sets, i);
                         if (cm_galist_insert(group_set->items, $3) != OG_SUCCESS) {
-                            parser_yyerror("insert group_sets failed.");
+                            parser_abort_or_yyerror("insert group_sets failed.");
                         }
                     }
                     $$ = group_sets;
@@ -2589,13 +2600,13 @@ group_by_list:
                     group_set_t *group_set = NULL;
 
                     if (sql_create_temp_list(stmt, &new_grp_sets) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
 
                     for (uint32 i = 0; i < $3->count; i++) {
                         group_set = (group_set_t *)cm_galist_get($3, i);
                         if (sql_cartesin_one_group_set(stmt, group_sets, group_set, new_grp_sets) != OG_SUCCESS) {
-                            parser_yyerror("cartesin group set failed.");
+                            parser_abort_or_yyerror("cartesin group set failed.");
                         }
                     }
                     $$ = new_grp_sets;
@@ -2618,7 +2629,7 @@ select_scope:
                 {
                     $$ = bison_push_pending_ssa(yyscanner);
                     if ($$ == NULL) {
-                        parser_yyerror("create pending subselect scope failed");
+                        parser_abort_or_yyerror("create pending subselect scope failed");
                     }
                 }
         ;
@@ -2631,7 +2642,7 @@ simple_select:
                 sql_select_t *select_ctx = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_build_select_context(stmt, &select_ctx, $6, $7, @1.loc, @7.loc) != OG_SUCCESS) {
-                    parser_yyerror("build select context failed");
+                    parser_abort_or_yyerror("build select context failed");
                 }
                 if ($3) {
                     og_get_hint_info(stmt, $3, &select_ctx->first_query->hint_info);
@@ -2640,7 +2651,7 @@ simple_select:
                 select_ctx->first_query->has_distinct = $5;
 
                 if (sql_parse_pivot_clause_list(stmt, select_ctx->first_query, $8) != OG_SUCCESS) {
-                    parser_yyerror("create pivot subselect failed");
+                    parser_abort_or_yyerror("create pivot subselect failed");
                 }
 
                 select_ctx->first_query->cond = $9;
@@ -2651,7 +2662,7 @@ simple_select:
                     select_ctx->first_query->connect_by_nocycle = $10->connect_by_nocycle;
                 }
                 if ($11 && cm_galist_copy(select_ctx->first_query->group_sets, $11) != OG_SUCCESS) {
-                    parser_yyerror("parse group by failed");
+                    parser_abort_or_yyerror("parse group by failed");
                 }
                 select_ctx->first_query->having_cond = $12;
                 if ($13) {
@@ -2664,7 +2675,7 @@ simple_select:
                     BISON_ABORT_IFERR(cm_galist_copy(select_ctx->first_query->sort_items, $13));
                 }
                 if (attach_pending_subselects_to_query(select_ctx->first_query, $2) != OG_SUCCESS) {
-                    parser_yyerror("attach subselects failed");
+                    parser_abort_or_yyerror("attach subselects failed");
                 }
                 bison_pop_pending_ssa(yyscanner);
                 $$ = select_ctx;
@@ -2674,7 +2685,7 @@ simple_select:
                 sql_select_t *select_ctx = NULL;
                 if (sql_build_set_select_context(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &select_ctx,
                     $1, $4, $3 ? SELECT_NODE_UNION_ALL : SELECT_NODE_UNION) != OG_SUCCESS) {
-                    parser_yyerror("build set query failed");
+                    parser_abort_or_yyerror("build set query failed");
                 }
                 $$ = select_ctx;
             }
@@ -2683,7 +2694,7 @@ simple_select:
                 sql_select_t *select_ctx = NULL;
                 if (sql_build_set_select_context(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &select_ctx,
                     $1, $4, $3 ? SELECT_NODE_INTERSECT_ALL : SELECT_NODE_INTERSECT) != OG_SUCCESS) {
-                    parser_yyerror("build set query failed");
+                    parser_abort_or_yyerror("build set query failed");
                 }
                 $$ = select_ctx;
             }
@@ -2692,7 +2703,7 @@ simple_select:
                 sql_select_t *select_ctx = NULL;
                 if (sql_build_set_select_context(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &select_ctx,
                     $1, $4, $3 ? SELECT_NODE_EXCEPT_ALL : SELECT_NODE_EXCEPT) != OG_SUCCESS) {
-                    parser_yyerror("build set query failed");
+                    parser_abort_or_yyerror("build set query failed");
                 }
                 $$ = select_ctx;
             }
@@ -2701,7 +2712,7 @@ simple_select:
                 sql_select_t *select_ctx = NULL;
                 if (sql_build_set_select_context(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &select_ctx,
                     $1, $3, SELECT_NODE_MINUS) != OG_SUCCESS) {
-                    parser_yyerror("build set query failed");
+                    parser_abort_or_yyerror("build set query failed");
                 }
                 $$ = select_ctx;
             }
@@ -2733,7 +2744,7 @@ start_with_clause:
                 {
                     swcb_clause *swcb = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(swcb_clause), (void **)&swcb) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     swcb->start_with_cond = $2;
                     swcb->connect_by_cond = $5;
@@ -2744,7 +2755,7 @@ start_with_clause:
                 {
                     swcb_clause *swcb = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(swcb_clause), (void **)&swcb) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     swcb->start_with_cond = $5;
                     swcb->connect_by_cond = $3;
@@ -2755,7 +2766,7 @@ start_with_clause:
                 {
                     swcb_clause *swcb = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(swcb_clause), (void **)&swcb) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     swcb->connect_by_cond = $3;
                     swcb->connect_by_nocycle = $2;
@@ -2772,7 +2783,7 @@ cond_tree_expr:     cond_node
                         cond_tree_t *cond = NULL;
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         if (sql_create_cond_tree(stmt->context, &cond) != OG_SUCCESS) {
-                            parser_yyerror("alloc cond tree failed");
+                            parser_abort_or_yyerror("alloc cond tree failed");
                         }
                         sql_add_cond_node(cond, $1);
                         $$ = cond;
@@ -2784,7 +2795,7 @@ cond_node:
             {
                 cond_node_t *node = NULL;
                 if (sql_expr_tree_to_cond_node(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $1, &node) != OG_SUCCESS) {
-                    parser_yyerror("transform expr tree to cond node failed");
+                    parser_abort_or_yyerror("transform expr tree to cond node failed");
                 }
                 $$ = node;
             }
@@ -2796,7 +2807,7 @@ cond_node:
             {
                 cond_node_t *node = $2;
                 if (sql_conver_not_node(og_yyget_extra(yyscanner)->core_yy_extra.stmt, node) != OG_SUCCESS) {
-                    parser_yyerror("convert not cond failed");
+                    parser_abort_or_yyerror("convert not cond failed");
                 }
                 $$ = node;
             }
@@ -2805,7 +2816,7 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_AND;
                 node->left = $1;
@@ -2817,7 +2828,7 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_OR;
                 node->left = $1;
@@ -2829,11 +2840,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_EQUAL;
                 node->cmp->left = $1;
@@ -2847,11 +2858,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_GREAT;
                 node->cmp->left = $1;
@@ -2865,11 +2876,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_LESS;
                 node->cmp->left = $1;
@@ -2883,11 +2894,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 if (strcmp($2, "<>") == 0) {
                     node->cmp->type = CMP_TYPE_NOT_EQUAL;
@@ -2943,17 +2954,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = $3 ? CMP_TYPE_EQUAL_ANY : CMP_TYPE_EQUAL_ALL;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -2964,11 +2975,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = $3 ? CMP_TYPE_EQUAL_ANY : CMP_TYPE_EQUAL_ALL;
                 node->cmp->left = $1;
@@ -2982,17 +2993,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = $3 ? CMP_TYPE_GREAT_ANY : CMP_TYPE_GREAT_ALL;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3003,11 +3014,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = $3 ? CMP_TYPE_GREAT_ANY : CMP_TYPE_GREAT_ALL;
                 node->cmp->left = $1;
@@ -3021,17 +3032,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = $3 ? CMP_TYPE_LESS_ANY : CMP_TYPE_LESS_ALL;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3042,11 +3053,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = $3 ? CMP_TYPE_LESS_ANY : CMP_TYPE_LESS_ALL;
                 node->cmp->left = $1;
@@ -3060,11 +3071,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 if (strcmp($2, "<>") == 0) {
                     node->cmp->type = $3 ? CMP_TYPE_NOT_EQUAL_ANY : CMP_TYPE_NOT_EQUAL_ALL;
@@ -3079,7 +3090,7 @@ cond_node:
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3090,11 +3101,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 if (strcmp($2, "<>") == 0) {
                     node->cmp->type = $3 ? CMP_TYPE_NOT_EQUAL_ANY : CMP_TYPE_NOT_EQUAL_ALL;
@@ -3117,17 +3128,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IN;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $3, bison_current_pending_ssa(yyscanner),
                     @3.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3146,11 +3157,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IN;
                 node->cmp->left = $1;
@@ -3164,17 +3175,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IN;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $3, bison_current_pending_ssa(yyscanner),
                     @3.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3185,11 +3196,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IN;
                 node->cmp->left = $1;
@@ -3205,17 +3216,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_IN;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3234,11 +3245,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_IN;
                 node->cmp->left = $1;
@@ -3252,17 +3263,17 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_IN;
                 node->cmp->left = $1;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $4, bison_current_pending_ssa(yyscanner),
                     @4.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
@@ -3273,11 +3284,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_IN;
                 node->cmp->left = $1;
@@ -3293,11 +3304,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IS_NULL;
                 node->cmp->left = $1;
@@ -3309,11 +3320,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IS_NOT_NULL;
                 node->cmp->left = $1;
@@ -3325,11 +3336,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IS_JSON;
                 node->cmp->left = $1;
@@ -3341,11 +3352,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_IS_NOT_JSON;
                 node->cmp->left = $1;
@@ -3357,11 +3368,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_LIKE;
                 node->cmp->left = $1;
@@ -3376,11 +3387,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_LIKE;
                 node->cmp->left = $1;
@@ -3395,11 +3406,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_REGEXP;
                 node->cmp->left = $1;
@@ -3413,11 +3424,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_REGEXP;
                 node->cmp->left = $1;
@@ -3431,11 +3442,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_BETWEEN;
                 node->cmp->left = $1;
@@ -3450,11 +3461,11 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_NOT_BETWEEN;
                 node->cmp->left = $1;
@@ -3469,16 +3480,16 @@ cond_node:
                 cond_node_t *node = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_yyerror("alloc cond node failed");
+                    parser_abort_or_yyerror("alloc cond node failed");
                 }
                 node->type = COND_NODE_COMPARE;
                 if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_yyerror("alloc cmp node failed");
+                    parser_abort_or_yyerror("alloc cmp node failed");
                 }
                 node->cmp->type = CMP_TYPE_EXISTS;
                 if (sql_create_select_expr(stmt, &node->cmp->right, $2, bison_current_pending_ssa(yyscanner),
                     @2.loc) != OG_SUCCESS) {
-                    parser_yyerror("init select expr failed");
+                    parser_abort_or_yyerror("init select expr failed");
                 }
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_LIST);
                 $$ = node;
@@ -3563,7 +3574,7 @@ expr_list_with_select_rows:
             {
                 galist_t *list = NULL;
                 if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                    parser_yyerror("create expr list failed.");
+                    parser_abort_or_yyerror("create expr list failed.");
                 }
                 BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                 $$ = list;
@@ -3609,12 +3620,12 @@ opt_escape:
                 expr_tree_t *escape_expr = NULL;
                 if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &escape_expr, $2, @2.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 variant_t *escape_var = &escape_expr->root->value;
                 char escape_char;
                 if (lex_check_asciichar(&escape_var->v_text, &(@2.loc), &escape_char, OG_FALSE) != OG_SUCCESS) {
-                    parser_yyerror("invalid escape character");
+                    parser_abort_or_yyerror("invalid escape character");
                 }
                 escape_var->v_text.str[0] = escape_char;
                 escape_var->v_text.len = 1;
@@ -3626,7 +3637,7 @@ opt_escape:
                 expr_tree_t *expr = NULL;
                 if (sql_create_paramref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $2, @2) != OG_SUCCESS) {
-                    parser_yyerror("init paramref expr failed");
+                    parser_abort_or_yyerror("init paramref expr failed");
                 }
                 $$ = expr;
             }
@@ -3646,7 +3657,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                 sql_delete_t *delete_ctx = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(sql_delete_t), (void **)&delete_ctx) != OG_SUCCESS) {
-                    parser_yyerror("alloc delete context failed");
+                    parser_abort_or_yyerror("alloc delete context failed");
                 }
                 if ($2) {
                     og_get_hint_info(stmt, $2, &delete_ctx->hint_info);
@@ -3686,7 +3697,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                 if (bison_current_pending_ssa(yyscanner)->count > 0) {
                     if (attach_pending_subselects_to_query(delete_ctx->query,
                         bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
-                        parser_yyerror("attach subselects failed");
+                        parser_abort_or_yyerror("attach subselects failed");
                     }
                 }
 
@@ -3709,7 +3720,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
 
                 delete_ctx->ret_columns = $9;
                 if (sql_set_table_qb_name(stmt, delete_ctx->query) != OG_SUCCESS) {
-                    parser_yyerror("sql_set_table_qb_name failed ");
+                    parser_abort_or_yyerror("sql_set_table_qb_name failed ");
                 }
                 $$ = delete_ctx;
             }
@@ -3718,7 +3729,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                 sql_delete_t *delete_ctx = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(sql_delete_t), (void **)&delete_ctx) != OG_SUCCESS) {
-                    parser_yyerror("alloc delete context failed");
+                    parser_abort_or_yyerror("alloc delete context failed");
                 }
                 if ($2) {
                     og_get_hint_info(stmt, $2, &delete_ctx->hint_info);
@@ -3758,7 +3769,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
                 if (bison_current_pending_ssa(yyscanner)->count > 0) {
                     if (attach_pending_subselects_to_query(delete_ctx->query,
                         bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
-                        parser_yyerror("attach subselects failed");
+                        parser_abort_or_yyerror("attach subselects failed");
                     }
                 }
 
@@ -3781,7 +3792,7 @@ DeleteStmt: DELETE_P hint_string FROM delete_target_list using_clause where_clau
 
                 delete_ctx->ret_columns = $8;
                 if (sql_set_table_qb_name(stmt, delete_ctx->query) != OG_SUCCESS) {
-                    parser_yyerror("sql_set_table_qb_name failed ");
+                    parser_abort_or_yyerror("sql_set_table_qb_name failed ");
                 }
                 $$ = delete_ctx;
             }
@@ -3792,7 +3803,7 @@ delete_target_list:
         {
             galist_t *list = NULL;
             if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                parser_yyerror("create delete objects failed");
+                parser_abort_or_yyerror("create delete objects failed");
             }
             BISON_ABORT_IFERR(cm_galist_insert(list, $1));
             $$ = list;
@@ -3890,10 +3901,10 @@ target_list:
                 {
                     galist_t* t_list = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &t_list) != OG_SUCCESS) {
-                        parser_yyerror("create target list failed.");
+                        parser_abort_or_yyerror("create target list failed.");
                     }
                     if (cm_galist_insert(t_list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert target list failed.");
+                        parser_abort_or_yyerror("insert target list failed.");
                     }
                     $$ = t_list;
                 }
@@ -3901,7 +3912,7 @@ target_list:
                 {
                     galist_t* t_list = $1;
                     if (cm_galist_insert(t_list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert target list failed.");
+                        parser_abort_or_yyerror("insert target list failed.");
                     }
                     $$ = t_list;
                 }
@@ -3912,7 +3923,7 @@ target_el:  a_expr AS ColLabel
                 query_column_t *query_column = NULL;
                 if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &query_column, $1, $3, strlen($3), false) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
+                    parser_abort_or_yyerror("create target entry failed.");
                 }
                 $$ = query_column;
             }
@@ -3921,7 +3932,7 @@ target_el:  a_expr AS ColLabel
                 query_column_t *query_column = NULL;
                 if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &query_column, $1, $2, strlen($2), false) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
+                    parser_abort_or_yyerror("create target entry failed.");
                 }
                 $$ = query_column;
             }
@@ -3930,7 +3941,7 @@ target_el:  a_expr AS ColLabel
                 query_column_t *query_column = NULL;
                 if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &query_column, $1, $2, strlen($2), false) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
+                    parser_abort_or_yyerror("create target entry failed.");
                 }
                 $$ = query_column;
             }
@@ -3941,7 +3952,7 @@ target_el:  a_expr AS ColLabel
                 if (sql_create_target_entry(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &query_column, $1, og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @1.offset,
                     alias_len, true) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
+                    parser_abort_or_yyerror("create target entry failed.");
                 }
                 $$ = query_column;
             }
@@ -3951,10 +3962,10 @@ target_el:  a_expr AS ColLabel
                 query_column_t *query_column = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_create_star_expr(stmt, &expr, @1) != OG_SUCCESS) {
-                    parser_yyerror("create star expr failed.");
+                    parser_abort_or_yyerror("create star expr failed.");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(query_column_t), (void **)&query_column) != OG_SUCCESS) {
-                    parser_yyerror("create target entry failed.");
+                    parser_abort_or_yyerror("create target entry failed.");
                 }
                 query_column->expr = expr;
                 $$ = query_column;
@@ -4008,7 +4019,7 @@ from_list:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_COMMA, NULL, NULL, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4163,7 +4174,7 @@ table_ref:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4176,7 +4187,7 @@ table_ref:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4232,7 +4243,7 @@ table_ref:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4245,7 +4256,7 @@ table_ref:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4262,7 +4273,7 @@ table_ref:
 
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4272,7 +4283,7 @@ table_ref:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4284,7 +4295,7 @@ table_ref:
                     table->alias.value.len = strlen($2);
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4294,7 +4305,7 @@ table_ref:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4306,7 +4317,7 @@ table_ref:
                     table->alias.value.len = strlen($2);
                     sql_join_node_t *join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 } 
@@ -4320,7 +4331,7 @@ table_func:  TABLE_P '(' func_name '(' expr_list_with_select ')' ')'
                 galist_t *func_name = $3;
                 var_word_t word;
                 if (sql_expr_list_as_func(stmt, func_name, &word) != OG_SUCCESS) {
-                    parser_yyerror("parse function name failed.");
+                    parser_abort_or_yyerror("parse function name failed.");
                 }
                 table->func.user = word.func.user.value;
                 table->func.package = word.func.pack.value;
@@ -4350,7 +4361,7 @@ table_func:  TABLE_P '(' func_name '(' expr_list_with_select ')' ')'
 
                 table->func.args = $5;
                 if (sql_parse_table_cast_type(stmt, &table->func.args->next, $7->str, @7.loc) != OG_SUCCESS) {
-                    parser_yyerror("parse type name failed.");
+                    parser_abort_or_yyerror("parse type name failed.");
                 }
                 table->user.value.str = stmt->session->curr_schema;
                 table->user.value.len = (uint32)strlen(stmt->session->curr_schema);
@@ -4456,13 +4467,13 @@ json_column:
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 column_parse_info *column_info = $1;
@@ -4496,13 +4507,13 @@ json_column:
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 column_parse_info *column_info = $1;
@@ -4533,21 +4544,21 @@ json_column:
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&func_node->argument->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 func_node->argument->root->value.type = OG_TYPE_INTEGER;
                 func_node->argument->root->value.v_int = 0;
                 func_node->argument->root->value.is_null = OG_FALSE;
                 func_node->argument->root->type = EXPR_NODE_CONST;
                 if (sql_create_expr(stmt, &func_node->argument->next) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context,
                     sizeof(expr_node_t), (void **)&new_col->expr->root->argument->next->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 expr_node_t *path_node = new_col->expr->root->argument->next->root;
                 path_node->type = EXPR_NODE_CONST;
@@ -4570,13 +4581,13 @@ json_column:
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 column_parse_info *column_info = $1;
@@ -4606,20 +4617,20 @@ json_column:
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_CLOB;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&func_node->argument->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 func_node->argument->root->value.type = OG_TYPE_INTEGER;
                 func_node->argument->root->value.v_int = 0;
                 func_node->argument->root->value.is_null = OG_FALSE;
                 func_node->argument->root->type = EXPR_NODE_CONST;
                 if (sql_create_expr(stmt, &func_node->argument->next) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root->argument->next->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 expr_node_t *path_node = new_col->expr->root->argument->next->root;
                 path_node->type = EXPR_NODE_CONST;
@@ -4642,13 +4653,13 @@ json_column:
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 column_parse_info *column_info = $1;
@@ -4678,20 +4689,20 @@ json_column:
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_JSONB;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&func_node->argument->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 func_node->argument->root->value.type = OG_TYPE_INTEGER;
                 func_node->argument->root->value.v_int = 0;
                 func_node->argument->root->value.is_null = OG_FALSE;
                 func_node->argument->root->type = EXPR_NODE_CONST;
                 if (sql_create_expr(stmt, &func_node->argument->next) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root->argument->next->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 expr_node_t *path_node = new_col->expr->root->argument->next->root;
                 path_node->type = EXPR_NODE_CONST;
@@ -4714,13 +4725,13 @@ json_column:
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 column_parse_info *column_info = $1;
@@ -4751,20 +4762,20 @@ json_column:
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&func_node->argument->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 func_node->argument->root->value.type = OG_TYPE_INTEGER;
                 func_node->argument->root->value.v_int = 0;
                 func_node->argument->root->value.is_null = OG_FALSE;
                 func_node->argument->root->type = EXPR_NODE_CONST;
                 if (sql_create_expr(stmt, &func_node->argument->next) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root->argument->next->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 expr_node_t *path_node = new_col->expr->root->argument->next->root;
                 path_node->type = EXPR_NODE_CONST;
@@ -4787,13 +4798,13 @@ json_column:
                 rs_column_t *new_col = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(rs_column_t), (void **)&new_col) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_create_expr(stmt, &new_col->expr) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 column_parse_info *column_info = $1;
@@ -4827,20 +4838,20 @@ json_column:
                 func_node->json_func_attr.ids |= JSON_FUNC_ATT_RETURNING_VARCHAR2;
 
                 if (sql_create_expr(stmt, &func_node->argument) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&func_node->argument->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 func_node->argument->root->value.type = OG_TYPE_INTEGER;
                 func_node->argument->root->value.v_int = 0;
                 func_node->argument->root->value.is_null = OG_FALSE;
                 func_node->argument->root->type = EXPR_NODE_CONST;
                 if (sql_create_expr(stmt, &func_node->argument->next) != OG_SUCCESS) {
-                    parser_yyerror("create expr failed");
+                    parser_abort_or_yyerror("create expr failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(expr_node_t), (void **)&new_col->expr->root->argument->next->root) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 expr_node_t *path_node = new_col->expr->root->argument->next->root;
                 path_node->type = EXPR_NODE_CONST;
@@ -4864,7 +4875,7 @@ json_column_list:
             {
                 galist_t *list = NULL;
                 if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                    parser_yyerror("create column pair list failed.");
+                    parser_abort_or_yyerror("create column pair list failed.");
                 }
                 BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                 $$ = list;
@@ -4887,10 +4898,10 @@ json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_on_erro
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 
                 if (sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(json_table_info_t), (void **)&table->json_table_info) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 sql_init_json_table_info(stmt, table->json_table_info);
 
@@ -4928,10 +4939,10 @@ json_table: jsonb_table '(' expr_with_select format_json ',' SCONST json_on_erro
                 sql_table_t *table = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(sql_table_t), (void **)&table) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 if (sql_alloc_mem(stmt->context, sizeof(json_table_info_t), (void **)&table->json_table_info) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 sql_init_json_table_info(stmt, table->json_table_info);
 
@@ -4986,7 +4997,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_CROSS, NULL, NULL, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -4995,7 +5006,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, $2, NULL, $6, $1, $4, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5004,7 +5015,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, $2, NULL, $6, $1, $4, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5013,7 +5024,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, $5, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5022,7 +5033,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, NULL, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5031,7 +5042,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, $5, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5040,7 +5051,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, $5, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5049,7 +5060,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, NULL, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5058,7 +5069,7 @@ joined_table:
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_join_node(stmt, JOIN_TYPE_INNER, NULL, NULL, $1, $3, &join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     $$ = join_node;
                 }
@@ -5158,7 +5169,7 @@ case_expr:      CASE a_expr when_expr_clause_list case_default END_P
                         expr_tree_t *expr = NULL;
                         if (sql_create_case_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $2, $3, $4, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("create case when expr failed.");
+                            parser_abort_or_yyerror("create case when expr failed.");
                         }
                         $$ = expr;
                     }
@@ -5167,7 +5178,7 @@ case_expr:      CASE a_expr when_expr_clause_list case_default END_P
                         expr_tree_t *expr = NULL;
                         if (sql_create_case_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, NULL, $2, $3, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("create case when expr failed.");
+                            parser_abort_or_yyerror("create case when expr failed.");
                         }
                         $$ = expr;
                     }
@@ -5188,10 +5199,10 @@ when_cond_clause_list:
                 {
                     galist_t *case_pairs = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &case_pairs) != OG_SUCCESS) {
-                        parser_yyerror("create case pair list failed.");
+                        parser_abort_or_yyerror("create case pair list failed.");
                     }
                     if (cm_galist_insert(case_pairs, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert case pair failed.");
+                        parser_abort_or_yyerror("insert case pair failed.");
                     }
                     $$ = case_pairs;
                 }
@@ -5199,7 +5210,7 @@ when_cond_clause_list:
                 {
                     galist_t *case_pairs = $1;
                     if (cm_galist_insert(case_pairs, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert case pair failed.");
+                        parser_abort_or_yyerror("insert case pair failed.");
                     }
                     $$ = case_pairs;
                 }
@@ -5211,7 +5222,7 @@ when_cond_clause:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     case_pair_t *case_pair = NULL;
                     if (sql_alloc_mem(stmt->context, sizeof(case_pair_t), (void **)&case_pair) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     case_pair->when_cond = $2;
                     case_pair->value = $4;
@@ -5241,10 +5252,10 @@ when_expr_clause_list:
                 {
                     galist_t *case_pairs = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &case_pairs) != OG_SUCCESS) {
-                        parser_yyerror("create case pair list failed.");
+                        parser_abort_or_yyerror("create case pair list failed.");
                     }
                     if (cm_galist_insert(case_pairs, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert case pair failed.");
+                        parser_abort_or_yyerror("insert case pair failed.");
                     }
                     $$ = case_pairs;
                 }
@@ -5252,7 +5263,7 @@ when_expr_clause_list:
                 {
                     galist_t *case_pairs = $1;
                     if (cm_galist_insert(case_pairs, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert case pair failed.");
+                        parser_abort_or_yyerror("insert case pair failed.");
                     }
                     $$ = case_pairs;
                 }
@@ -5264,7 +5275,7 @@ when_expr_clause:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     case_pair_t *case_pair = NULL;
                     if (sql_alloc_mem(stmt->context, sizeof(case_pair_t), (void **)&case_pair) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     case_pair->when_expr = $2;
                     case_pair->value = $4;
@@ -5349,7 +5360,7 @@ a_expr:     c_expr    { $$ = $1; }
                 expr_tree_t *expr = NULL;
                 if (sql_create_cast_convert_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $1, $3, "cast", @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create cast func expr failed");
+                    parser_abort_or_yyerror("create cast func expr failed");
                 }
                 $$ = expr;
             }
@@ -5362,7 +5373,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_negative_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2->root, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create negative expr failed");
+                    parser_abort_or_yyerror("create negative expr failed");
                 }
                 $$ = expr;
             }
@@ -5377,7 +5388,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_ADD, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5385,7 +5396,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_SUB, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5393,7 +5404,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_MUL, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5401,7 +5412,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_DIV, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5416,7 +5427,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_BITOR, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5424,7 +5435,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_CAT, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5432,7 +5443,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_BITAND, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5440,7 +5451,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_BITXOR, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5448,7 +5459,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_LSHIFT, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5456,7 +5467,7 @@ a_expr:     c_expr    { $$ = $1; }
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_oper_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1->root, $3->root, EXPR_NODE_RSHIFT, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("create operator expr failed");
+                    parser_abort_or_yyerror("create operator expr failed");
                 }
                 $$ = expr;
             }
@@ -5477,7 +5488,7 @@ c_expr:     columnref       { $$ = $1; }
                     expr_tree_t *expr = NULL;
                     if (sql_create_paramref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $1, @1) != OG_SUCCESS) {
-                        parser_yyerror("init paramref expr failed");
+                        parser_abort_or_yyerror("init paramref expr failed");
                     }
                     $$ = expr;
                 }
@@ -5495,7 +5506,7 @@ c_expr:     columnref       { $$ = $1; }
                     bison_set_select_type(select_ctx, SELECT_AS_VARIANT);
                     if (sql_create_select_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, select_ctx,
                         bison_current_pending_ssa(yyscanner), @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init select expr failed");
+                        parser_abort_or_yyerror("init select expr failed");
                     }
                     $$ = expr;
                 }
@@ -5504,7 +5515,7 @@ c_expr:     columnref       { $$ = $1; }
                     expr_tree_t *expr = NULL;
                     if (sql_create_prior_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $2->root, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init prior expr failed");
+                        parser_abort_or_yyerror("init prior expr failed");
                     }
                     $$ = expr;
                 }
@@ -5522,7 +5533,7 @@ c_expr:     columnref       { $$ = $1; }
                     expr_tree_t *expr = NULL;
                     if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, RES_WORD_LEVEL, OG_FALSE, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init LEVEL reserved expr failed");
+                        parser_abort_or_yyerror("init LEVEL reserved expr failed");
                     }
                     $$ = expr;
                 }
@@ -5531,7 +5542,7 @@ c_expr:     columnref       { $$ = $1; }
                     expr_tree_t *expr = NULL;
                     if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create array expr failed");
+                        parser_abort_or_yyerror("create array expr failed");
                     }
                     $$ = expr;
                 }
@@ -5540,7 +5551,7 @@ c_expr:     columnref       { $$ = $1; }
                     expr_tree_t *expr = NULL;
                     if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create array expr failed");
+                        parser_abort_or_yyerror("create array expr failed");
                     }
                     $$ = expr;
                 }
@@ -5554,7 +5565,7 @@ hierarchical_unary_expr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_paramref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $1, @1) != OG_SUCCESS) {
-                        parser_yyerror("init paramref expr failed");
+                        parser_abort_or_yyerror("init paramref expr failed");
                     }
                     $$ = expr;
                 }
@@ -5568,7 +5579,7 @@ hierarchical_unary_expr:
                     bison_set_select_type(select_ctx, SELECT_AS_VARIANT);
                     if (sql_create_select_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, select_ctx,
                         bison_current_pending_ssa(yyscanner), @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init select expr failed");
+                        parser_abort_or_yyerror("init select expr failed");
                     }
                     $$ = expr;
                 }
@@ -5577,7 +5588,7 @@ hierarchical_unary_expr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, RES_WORD_LEVEL, OG_FALSE, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init LEVEL reserved expr failed");
+                        parser_abort_or_yyerror("init LEVEL reserved expr failed");
                     }
                     $$ = expr;
                 }
@@ -5586,7 +5597,7 @@ hierarchical_unary_expr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create array expr failed");
+                        parser_abort_or_yyerror("create array expr failed");
                     }
                     $$ = expr;
                 }
@@ -5595,7 +5606,7 @@ hierarchical_unary_expr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_array_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create array expr failed");
+                        parser_abort_or_yyerror("create array expr failed");
                     }
                     $$ = expr;
                 }
@@ -5606,7 +5617,7 @@ func_application: func_name '(' ')'
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, NULL, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         $$ = expr;
                     }
@@ -5614,20 +5625,20 @@ func_application: func_name '(' ')'
                     {
                         galist_t *name_list = NULL;
                         if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
-                            parser_yyerror("create function name list failed.");
+                            parser_abort_or_yyerror("create function name list failed.");
                         }
                         expr_tree_t *name = NULL;
                         if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &name, "CHAR", @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init const expr failed");
+                            parser_abort_or_yyerror("init const expr failed");
                         }
                         if (cm_galist_insert(name_list, name) != OG_SUCCESS) {
-                            parser_yyerror("insert function list failed.");
+                            parser_abort_or_yyerror("insert function list failed.");
                         }
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, name_list, $3, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         $$ = expr;
                     }
@@ -5645,7 +5656,7 @@ func_application: func_name '(' ')'
                         }
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, $3, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         expr->root->ignore_nulls = $4;
                         $$ = expr;
@@ -5655,7 +5666,7 @@ func_application: func_name '(' ')'
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, $3, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         $$ = expr;
                     }
@@ -5665,7 +5676,7 @@ func_application: func_name '(' ')'
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, $4, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         $$ = expr;
                     }
@@ -5674,7 +5685,7 @@ func_application: func_name '(' ')'
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, $4, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         expr->root->dis_info.need_distinct = OG_TRUE;
                         $$ = expr;
@@ -5684,12 +5695,12 @@ func_application: func_name '(' ')'
                         expr_tree_t *star_expr = NULL;
                         if (sql_create_expr_tree(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &star_expr, OG_TYPE_UNKNOWN,
                             EXPR_NODE_STAR, @3.loc) != OG_SUCCESS) {
-                            parser_yyerror("init star expr failed");
+                            parser_abort_or_yyerror("init star expr failed");
                         }
                         expr_tree_t *expr = NULL;
                         if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, star_expr, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init function call expr failed");
+                            parser_abort_or_yyerror("init function call expr failed");
                         }
                         $$ = expr;
                     }
@@ -5776,10 +5787,10 @@ sortby_list:
                 {
                     galist_t *sort_items = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &sort_items) != OG_SUCCESS) {
-                        parser_yyerror("create sort item list failed.");
+                        parser_abort_or_yyerror("create sort item list failed.");
                     }
                     if (cm_galist_insert(sort_items, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert sort item list failed.");
+                        parser_abort_or_yyerror("insert sort item list failed.");
                     }
                     $$ = sort_items;
                 }
@@ -5787,7 +5798,7 @@ sortby_list:
                 {
                     galist_t *sort_items = $1;
                     if (cm_galist_insert(sort_items, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert sort item list failed.");
+                        parser_abort_or_yyerror("insert sort item list failed.");
                     }
                     $$ = sort_items;
                 }
@@ -5798,7 +5809,7 @@ sortby: a_expr opt_asc_desc opt_nulls_order
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 sort_item_t *sort_item = NULL;
                 if (sql_alloc_mem(stmt->context, sizeof(sort_item_t), (void **)&sort_item) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 sort_item->expr = $1;
                 sort_item->direction = $2;
@@ -5823,12 +5834,12 @@ limit_clause:
                     limit_item_t *limit_item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(limit_item_t), (void **)&limit_item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     limit_item->count = (void*)$2;
                     limit_item->offset = (void*)$4;
                     if (sql_verify_limit_offset(stmt, limit_item)) {
-                        parser_yyerror("verify limit clause failed");
+                        parser_abort_or_yyerror("verify limit clause failed");
                     }
                     $$ = limit_item;
                 }
@@ -5837,12 +5848,12 @@ limit_clause:
                     limit_item_t *limit_item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(limit_item_t), (void **)&limit_item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     limit_item->count = (void*)$2;
                     limit_item->offset = (void*)$4;
                     if (sql_verify_limit_offset(stmt, limit_item)) {
-                        parser_yyerror("verify limit clause failed");
+                        parser_abort_or_yyerror("verify limit clause failed");
                     }
                     $$ = limit_item;
                 }
@@ -5851,11 +5862,11 @@ limit_clause:
                     limit_item_t *limit_item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(limit_item_t), (void **)&limit_item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     limit_item->count = (void*)$2;
                     if (sql_verify_limit_offset(stmt, limit_item)) {
-                        parser_yyerror("verify limit clause failed");
+                        parser_abort_or_yyerror("verify limit clause failed");
                     }
                     $$ = limit_item;
                 }
@@ -5867,12 +5878,12 @@ offset_clause:
                     limit_item_t *limit_item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(limit_item_t), (void **)&limit_item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     limit_item->count = (void*)$4;
                     limit_item->offset = (void*)$2;
                     if (sql_verify_limit_offset(stmt, limit_item)) {
-                        parser_yyerror("verify limit clause failed");
+                        parser_abort_or_yyerror("verify limit clause failed");
                     }
                     $$ = limit_item;
                 }
@@ -5881,11 +5892,11 @@ offset_clause:
                     limit_item_t *limit_item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(limit_item_t), (void **)&limit_item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     limit_item->offset = (void*)$2;
                     if (sql_verify_limit_offset(stmt, limit_item)) {
-                        parser_yyerror("verify limit clause failed");
+                        parser_abort_or_yyerror("verify limit clause failed");
                     }
                     $$ = limit_item;
                 }
@@ -5921,7 +5932,7 @@ window_specification: '(' opt_partition_clause
                     winsort_args_t *winsort_args = NULL;
                     if (sql_build_winsort_node_bison(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &winsort_args,
                         $2, $3, $4, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create window sort node failed");
+                        parser_abort_or_yyerror("create window sort node failed");
                     }
                     $$ = winsort_args;
                 }
@@ -5966,7 +5977,7 @@ frame_extent: frame_bound
                     windowing_args_t *windowing_args = NULL;
                     if (sql_create_windowing_arg(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &windowing_args, $1, NULL) != OG_SUCCESS) {
-                        parser_yyerror("create window arg node failed");
+                        parser_abort_or_yyerror("create window arg node failed");
                     }
                     $$ = windowing_args;
                 }
@@ -5975,7 +5986,7 @@ frame_extent: frame_bound
                     windowing_args_t *windowing_args = NULL;
                     if (sql_create_windowing_arg(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &windowing_args, $2, $4) != OG_SUCCESS) {
-                        parser_yyerror("create window arg node failed");
+                        parser_abort_or_yyerror("create window arg node failed");
                     }
                     $$ = windowing_args;
                 }
@@ -5992,7 +6003,7 @@ frame_bound:
                     windowing_border_t *windowing_border = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(windowing_border_t), (void **)&windowing_border) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     windowing_border->expr = NULL;
                     windowing_border->border_type = WB_TYPE_UNBOUNDED_PRECED;
@@ -6003,7 +6014,7 @@ frame_bound:
                     windowing_border_t *windowing_border = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(windowing_border_t), (void **)&windowing_border) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     windowing_border->expr = NULL;
                     windowing_border->border_type = WB_TYPE_UNBOUNDED_FOLLOW;
@@ -6014,7 +6025,7 @@ frame_bound:
                     windowing_border_t *windowing_border = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(windowing_border_t), (void **)&windowing_border) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     windowing_border->expr = NULL;
                     windowing_border->border_type = WB_TYPE_CURRENT_ROW;
@@ -6025,7 +6036,7 @@ frame_bound:
                     windowing_border_t *windowing_border = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(windowing_border_t), (void **)&windowing_border) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     windowing_border->expr = $1;
                     windowing_border->border_type = WB_TYPE_VALUE_PRECED;
@@ -6036,7 +6047,7 @@ frame_bound:
                     windowing_border_t *windowing_border = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(windowing_border_t), (void **)&windowing_border) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     windowing_border->expr = $1;
                     windowing_border->border_type = WB_TYPE_VALUE_FOLLOW;
@@ -6062,7 +6073,7 @@ func_expr: func_application within_group_clause over_clause
                         og_yyget_extra(yyscanner)->core_yy_extra.stmt, node));
                     if (sql_create_winsort_node_bison(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         expr, node, $3, @3.loc) != OG_SUCCESS) {
-                        parser_yyerror("create window sort node failed");
+                        parser_abort_or_yyerror("create window sort node failed");
                     }
                     $$ = expr;
                 }
@@ -6079,7 +6090,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_cast_convert_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $5, "cast", @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create cast func expr failed");
+                        parser_abort_or_yyerror("create cast func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6088,7 +6099,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_cast_convert_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $6, "cast", @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create cast func expr failed");
+                        parser_abort_or_yyerror("create cast func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6097,7 +6108,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_cast_convert_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $5, "convert", @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create convert func expr failed");
+                        parser_abort_or_yyerror("create convert func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6106,7 +6117,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_cast_convert_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $6, "convert", @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create convert func expr failed");
+                        parser_abort_or_yyerror("create convert func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6115,7 +6126,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_if_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $5, $7, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create if func expr failed");
+                        parser_abort_or_yyerror("create if func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6124,7 +6135,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_lnnvl_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create lnnvl func expr failed");
+                        parser_abort_or_yyerror("create lnnvl func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6133,7 +6144,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_trim_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $5, FUNC_BOTH, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create trim func expr failed");
+                        parser_abort_or_yyerror("create trim func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6142,7 +6153,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_trim_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $5, FUNC_LTRIM, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create trim func expr failed");
+                        parser_abort_or_yyerror("create trim func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6151,7 +6162,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_trim_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $5, FUNC_RTRIM, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create trim func expr failed");
+                        parser_abort_or_yyerror("create trim func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6160,7 +6171,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_trim_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, FUNC_BOTH, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create trim func expr failed");
+                        parser_abort_or_yyerror("create trim func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6169,7 +6180,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_groupconcat_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $4, $5, $6, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create group_concat func expr failed");
+                        parser_abort_or_yyerror("create group_concat func expr failed");
                     }
                     expr->root->dis_info.need_distinct = OG_TRUE;
                     $$ = expr;
@@ -6179,7 +6190,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_groupconcat_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $4, $5, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create group_concat func expr failed");
+                        parser_abort_or_yyerror("create group_concat func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6188,7 +6199,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_substr_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $1, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create substr func expr failed");
+                        parser_abort_or_yyerror("create substr func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6197,7 +6208,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_substr_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, $1, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create substr func expr failed");
+                        parser_abort_or_yyerror("create substr func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6206,7 +6217,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_extract_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create substr func expr failed");
+                        parser_abort_or_yyerror("create substr func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6219,7 +6230,7 @@ func_expr_common_subexpr:
                     attr.return_size = $5.return_size;
                     attr.ignore_returning = OG_FALSE;
                     if (sql_create_json_func_expr(stmt, &expr, $3, "json_array", attr, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create json_object func expr failed");
+                        parser_abort_or_yyerror("create json_object func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6232,7 +6243,7 @@ func_expr_common_subexpr:
                     attr.return_size = $5.return_size;
                     attr.ignore_returning = OG_FALSE;
                     if (sql_create_json_func_expr(stmt, &expr, $3, "json_object", attr, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create json_object func expr failed");
+                        parser_abort_or_yyerror("create json_object func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6242,7 +6253,7 @@ func_expr_common_subexpr:
                     $3->next = $5;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_json_func_expr(stmt, &expr, $3, $1, $6, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create json func expr failed");
+                        parser_abort_or_yyerror("create json func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6251,7 +6262,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_json_func_expr(stmt, &expr, $3, $1, $4, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("create json_set/jsonb_set func expr failed");
+                        parser_abort_or_yyerror("create json_set/jsonb_set func expr failed");
                     }
                     $$ = expr;
                 }
@@ -6260,7 +6271,7 @@ func_expr_common_subexpr:
                     expr_tree_t *expr = NULL;
                     if (sql_create_reserved_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $1, OG_FALSE, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init function call expr failed");
+                        parser_abort_or_yyerror("init function call expr failed");
                     }
                     $$ = expr;
                 }
@@ -6508,7 +6519,7 @@ extract_list:
                     extract_list_t *extract_list = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(extract_list_t), (void **)&extract_list) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     extract_list->arg = $3;
                     extract_list->extract_type = $1;
@@ -6563,7 +6574,7 @@ trim_list:  a_expr FROM a_expr
                 trim_list_t *trim = NULL;
                 if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                     sizeof(trim_list_t), (void **)&trim) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 trim->first_expr = $1;
                 trim->second_expr = $3;
@@ -6575,7 +6586,7 @@ trim_list:  a_expr FROM a_expr
                 trim_list_t *trim = NULL;
                 if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                     sizeof(trim_list_t), (void **)&trim) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 trim->first_expr = $1;
                 $$ = trim;
@@ -6585,7 +6596,7 @@ trim_list:  a_expr FROM a_expr
                 trim_list_t *trim = NULL;
                 if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                     sizeof(trim_list_t), (void **)&trim) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
                 trim->first_expr = $1;
                 trim->second_expr = $3;
@@ -6607,7 +6618,7 @@ columnref:  ColId opt_orajoin
                     expr_tree_t *expr = NULL;
                     if (sql_create_columnref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $1, NULL, $2 ? EXPR_NODE_JOIN : EXPR_NODE_COLUMN, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init columnref expr failed");
+                        parser_abort_or_yyerror("init columnref expr failed");
                     }
                     $$ = expr;
                 }
@@ -6616,7 +6627,7 @@ columnref:  ColId opt_orajoin
                     expr_tree_t *expr = NULL;
                     if (sql_create_columnref_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                         &expr, $1, $2, $3 ? EXPR_NODE_JOIN : EXPR_NODE_COLUMN, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("init columnref expr failed");
+                        parser_abort_or_yyerror("init columnref expr failed");
                     }
                     $$ = expr;
                 }
@@ -6647,15 +6658,15 @@ opt_array_bounds:
                 {
                     galist_t *opt_array_bounds = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &opt_array_bounds) != OG_SUCCESS) {
-                        parser_yyerror("create array bounds list failed.");
+                        parser_abort_or_yyerror("create array bounds list failed.");
                     }
                     int *ival = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(int), (void **)&ival) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     *ival = -1;
                     if (cm_galist_insert(opt_array_bounds, ival) != OG_SUCCESS) {
-                        parser_yyerror("insert array bounds list failed.");
+                        parser_abort_or_yyerror("insert array bounds list failed.");
                     }
                     $$ = opt_array_bounds;
                 }
@@ -6663,15 +6674,15 @@ opt_array_bounds:
                 {
                     galist_t *opt_array_bounds = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &opt_array_bounds) != OG_SUCCESS) {
-                        parser_yyerror("create array bounds list failed.");
+                        parser_abort_or_yyerror("create array bounds list failed.");
                     }
                     int *ival = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(int), (void **)&ival) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     *ival = $2;
                     if (cm_galist_insert(opt_array_bounds, ival) != OG_SUCCESS) {
-                        parser_yyerror("insert array bounds list failed.");
+                        parser_abort_or_yyerror("insert array bounds list failed.");
                     }
                     $$ = opt_array_bounds;
                 }
@@ -6699,10 +6710,10 @@ GenericType:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
-                        parser_yyerror("preserve type name failed");
+                        parser_abort_or_yyerror("preserve type name failed");
                     }
                     $$ = type;
                 }
@@ -6728,7 +6739,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "bigint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6740,7 +6751,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "binary_double", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6748,7 +6759,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "binary_float", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6756,7 +6767,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "real", $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6764,7 +6775,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "float", $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6772,7 +6783,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "double", $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6780,7 +6791,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "decimal", $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6788,7 +6799,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "number", $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6796,7 +6807,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "numeric", $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6804,7 +6815,7 @@ Numeric:     NoSignedInteger
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "boolean", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6814,7 +6825,7 @@ NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "int", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6822,7 +6833,7 @@ NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "int", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6830,7 +6841,7 @@ NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "smallint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6838,7 +6849,7 @@ NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "binary_integer", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6846,7 +6857,7 @@ NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "tinyint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6854,7 +6865,7 @@ NoSignedInteger:  INT_P %prec TYPE_NAME_END
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "binary_bigint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6864,7 +6875,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "int" : "uint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6872,7 +6883,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "int" : "uint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6880,7 +6891,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "smallint" : "usmallint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6888,7 +6899,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "binary_integer" : "binary_uint32", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6896,7 +6907,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "tinyint" : "utinyint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6904,7 +6915,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "binary_bigint" : "ubigint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6912,7 +6923,7 @@ SignedInteger:  INT_P opt_signed
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $2 ? "bigint" : "ubigint", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6952,11 +6963,11 @@ CharacterWithLength:  character '(' ICONST opt_charbyte ')'
                 {
                     galist_t *list = NULL;
                     if (make_type_modifiers(yyscanner, &list, $3, @3.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type modifiers failed");
+                        parser_abort_or_yyerror("make type modifiers failed");
                     }
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, list, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->is_char = $4;
                     $$ = type;
@@ -6965,11 +6976,11 @@ CharacterWithLength:  character '(' ICONST opt_charbyte ')'
                 {
                     galist_t *list = NULL;
                     if (make_type_modifiers(yyscanner, &list, $3, @3.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type modifiers failed");
+                        parser_abort_or_yyerror("make type modifiers failed");
                     }
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, list, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6979,7 +6990,7 @@ CharacterWithoutLength:     character
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6987,7 +6998,7 @@ CharacterWithoutLength:     character
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -6995,7 +7006,7 @@ CharacterWithoutLength:     character
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "rowid", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -7062,11 +7073,11 @@ ConstDatetime:
                 {
                     galist_t *list = NULL;
                     if (make_type_modifiers(yyscanner, &list, $3, @3.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type modifiers failed");
+                        parser_abort_or_yyerror("make type modifiers failed");
                     }
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "timestamp", list, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->timezone = $5;
                     $$ = type;
@@ -7075,7 +7086,7 @@ ConstDatetime:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "timestamp", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->timezone = $2;
                     $$ = type;
@@ -7087,7 +7098,7 @@ ConstInterval:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "interval year to month", $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -7095,7 +7106,7 @@ ConstInterval:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "interval day to second", $3, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->second_typemde = $6;
                     $$ = type;
@@ -7115,7 +7126,7 @@ JsonType:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, "json", NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     $$ = type;
                 }
@@ -7167,15 +7178,15 @@ func_name:      type_function_name
                     {
                         galist_t *name_list = NULL;
                         if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
-                            parser_yyerror("create function name list failed.");
+                            parser_abort_or_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
                         if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init const expr failed");
+                            parser_abort_or_yyerror("init const expr failed");
                         }
                         if (cm_galist_insert(name_list, expr) != OG_SUCCESS) {
-                            parser_yyerror("insert function list failed.");
+                            parser_abort_or_yyerror("insert function list failed.");
                         }
                         $$ = name_list;
                     }
@@ -7183,18 +7194,18 @@ func_name:      type_function_name
                     {
                         galist_t *name_list = NULL;
                         if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
-                            parser_yyerror("create function name list failed.");
+                            parser_abort_or_yyerror("create function name list failed.");
                         }
                         expr_tree_t *expr = NULL;
                         if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                             &expr, $1, @1.loc) != OG_SUCCESS) {
-                            parser_yyerror("init const expr failed");
+                            parser_abort_or_yyerror("init const expr failed");
                         }
                         if (cm_galist_insert(name_list, expr) != OG_SUCCESS) {
-                            parser_yyerror("insert function list failed.");
+                            parser_abort_or_yyerror("insert function list failed.");
                         }
                         if (cm_galist_copy(name_list, $2)  != OG_SUCCESS) {
-                            parser_yyerror("copy function list  failed.");
+                            parser_abort_or_yyerror("copy function list  failed.");
                         }
                         $$ = name_list;
                     }
@@ -7204,7 +7215,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_int_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7212,7 +7223,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_bigint_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7220,7 +7231,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_float_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7228,7 +7239,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_binary_float_double_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7236,7 +7247,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_binary_float_double_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7245,7 +7256,7 @@ AexprConst: ICONST
                 expr_tree_t *expr = NULL;
                 if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7254,7 +7265,7 @@ AexprConst: ICONST
                 expr_tree_t *expr = NULL;
                 if (sql_create_datetime_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $2, DTYP_DATE, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init date expr failed");
+                    parser_abort_or_yyerror("init date expr failed");
                 }
                 $$ = expr;
             }
@@ -7263,7 +7274,7 @@ AexprConst: ICONST
                 expr_tree_t *expr = NULL;
                 if (sql_create_datetime_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $2, DTYP_TIMESTAMP, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init timestamp expr failed");
+                    parser_abort_or_yyerror("init timestamp expr failed");
                 }
                 $$ = expr;
             }
@@ -7273,7 +7284,7 @@ AexprConst: ICONST
                 expr_tree_t *expr = NULL;
                 if (sql_create_scanned_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
                     &expr, $2, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7281,7 +7292,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_hex_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $1, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init hex const expr failed");
+                    parser_abort_or_yyerror("init hex const expr failed");
                 }
                 $$ = expr;
             }
@@ -7289,7 +7300,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_bool_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, OG_TRUE, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7297,7 +7308,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_bool_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, OG_FALSE, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7305,7 +7316,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_null_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init const expr failed");
+                    parser_abort_or_yyerror("init const expr failed");
                 }
                 $$ = expr;
             }
@@ -7313,7 +7324,7 @@ AexprConst: ICONST
             {
                 expr_tree_t *expr = NULL;
                 if (sql_create_interval_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &expr, $2, $3, @1.loc) != OG_SUCCESS) {
-                    parser_yyerror("init interval expr failed");
+                    parser_abort_or_yyerror("init interval expr failed");
                 }
                 $$ = expr;
             }
@@ -7345,7 +7356,7 @@ interval_type:
                     info.fmt = get_interval_unit($1);
                     if ($2 != NULL && $2->count > 0) {
                         if (sql_parse_datetime_precision_bison($2, @1.loc, &prec, ITVL_DEFAULT_YEAR_PREC, ITVL_MIN_YEAR_PREC, ITVL_MAX_YEAR_PREC, "YEAR") != OG_SUCCESS) {
-                            parser_yyerror("invalid year precision");
+                            parser_abort_or_yyerror("invalid year precision");
                         }
                     }
                     if ($3 != IUO_MAX) {
@@ -7368,7 +7379,7 @@ interval_type:
                     if ($2 != NULL && $2->count > 0) {
                         if (sql_parse_datetime_precision_bison($2, @1.loc, &prec, ITVL_DEFAULT_DAY_PREC, ITVL_MIN_DAY_PREC,
                             ITVL_MAX_DAY_PREC, ds_unit_to_str($1)) != OG_SUCCESS) {
-                            parser_yyerror("invalid day precision");
+                            parser_abort_or_yyerror("invalid day precision");
                         }
                     }
                     info.type.day_prec = (uint8)prec;
@@ -7387,7 +7398,7 @@ interval_type:
                     if ($2 != NULL && $2->count > 0) {
                         if (sql_parse_datetime_precision_bison($2, @1.loc, &day_prec, ITVL_DEFAULT_DAY_PREC, ITVL_MIN_DAY_PREC,
                             ITVL_MAX_DAY_PREC, ds_unit_to_str($1)) != OG_SUCCESS) {
-                            parser_yyerror("invalid day precision");
+                            parser_abort_or_yyerror("invalid day precision");
                         }
                     }
                     info.type.day_prec = (uint8)day_prec;
@@ -7405,13 +7416,13 @@ interval_type:
                     if ($2 != NULL && $2->count > 0) {
                         if (sql_parse_datetime_precision_bison($2, @1.loc, &day_prec, ITVL_DEFAULT_DAY_PREC, ITVL_MIN_DAY_PREC,
                             ITVL_MAX_DAY_PREC, ds_unit_to_str($1)) != OG_SUCCESS) {
-                            parser_yyerror("invalid day precision");
+                            parser_abort_or_yyerror("invalid day precision");
                         }
                     }
                     if ($5 != NULL && $5->count > 0) {
                         if (sql_parse_datetime_precision_bison($5, @4.loc, &frac_prec, ITVL_DEFAULT_SECOND_PREC, ITVL_MIN_SECOND_PREC,
                             ITVL_MAX_SECOND_PREC, "fractional second") != OG_SUCCESS) {
-                            parser_yyerror("invalid second precision");
+                            parser_abort_or_yyerror("invalid second precision");
                         }
                     }
                     info.type.day_prec = (uint8)day_prec;
@@ -7428,7 +7439,7 @@ interval_type:
                     info.fmt = IU_SECOND;
                     if ($2 != NULL && $2->count > 0) {
                         if (sql_parse_second_precision_bison($2, @1.loc, &lead_prec, &frac_prec) != OG_SUCCESS) {
-                            parser_yyerror("invalid second precision");
+                            parser_abort_or_yyerror("invalid second precision");
                         }
                     }
                     info.type.day_prec = (uint8)lead_prec;
@@ -7442,10 +7453,10 @@ UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return
                 sql_update_t *update_context = NULL;
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                 if (sql_alloc_mem(stmt->context, sizeof(sql_update_t), (void **)&update_context)) {
-                    parser_yyerror("alloc mem failed.");
+                    parser_abort_or_yyerror("alloc mem failed.");
                 }
                 if (sql_init_update(og_yyget_extra(yyscanner)->core_yy_extra.stmt, update_context) != OG_SUCCESS) {
-                    parser_yyerror("init sql_update_t failed.");
+                    parser_abort_or_yyerror("init sql_update_t failed.");
                 }
                 if ($2) {
                     og_get_hint_info(stmt, $2, &update_context->hint_info);
@@ -7463,7 +7474,7 @@ UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return
                 if (bison_current_pending_ssa(yyscanner)->count > 0) {
                     if (attach_pending_subselects_to_query(update_context->query,
                         bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
-                        parser_yyerror("attach subselects failed");
+                        parser_abort_or_yyerror("attach subselects failed");
                     }
                 }
 
@@ -7471,7 +7482,7 @@ UpdateStmt: UPDATE hint_string from_list SET set_clause_list where_clause return
                 update_context->query->cond = $6;
                 update_context->ret_columns = $7;
                 if (sql_set_table_qb_name(stmt, update_context->query) != OG_SUCCESS) {
-                    parser_yyerror("sql_set_table_qb_name failed ");
+                    parser_abort_or_yyerror("sql_set_table_qb_name failed ");
                 }
                 $$ = update_context;
             }
@@ -7513,10 +7524,10 @@ merge_update:
                 {
                     sql_update_t *update_context = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(sql_update_t), (void **)&update_context) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_update(og_yyget_extra(yyscanner)->core_yy_extra.stmt, update_context) != OG_SUCCESS) {
-                        parser_yyerror("init sql_update_t failed.");
+                        parser_abort_or_yyerror("init sql_update_t failed.");
                     }
                     BISON_ABORT_IFERR(cm_galist_copy(update_context->pairs, $3));
                     $$ = update_context;
@@ -7529,10 +7540,10 @@ merge_insert:
                     sql_insert_t *insert_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_insert(stmt, insert_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init insert context failed ");
+                        parser_abort_or_yyerror("init insert context failed ");
                     }
                     insert_ctx->flags |= INSERT_COLS_SPECIFIED;
                     insert_ctx->pairs = $5;
@@ -7555,10 +7566,10 @@ merge_insert:
                     sql_insert_t *insert_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_insert_t), (void **)&insert_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_insert(stmt, insert_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init insert context failed ");
+                        parser_abort_or_yyerror("init insert context failed ");
                     }
                     insert_ctx->pairs = $2;
                     insert_ctx->pairs_count = ((column_value_pair_t*)cm_galist_get(insert_ctx->pairs, 0))->exprs->count;
@@ -7577,7 +7588,7 @@ merge_when_list:
                 {
                     merge_when_clause *merge_when = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(merge_when_clause), (void **)&merge_when) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     merge_when->update_ctx = $1;
                     merge_when->update_filter_cond = $2;
@@ -7589,7 +7600,7 @@ merge_when_list:
                 {
                     merge_when_clause *merge_when = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(merge_when_clause), (void **)&merge_when) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     merge_when->update_ctx = $3;
                     merge_when->update_filter_cond = $4;
@@ -7601,7 +7612,7 @@ merge_when_list:
                 {
                     merge_when_clause *merge_when = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(merge_when_clause), (void **)&merge_when) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     merge_when->insert_ctx = $1;
                     merge_when->insert_filter_cond = $2;
@@ -7611,7 +7622,7 @@ merge_when_list:
                 {
                     merge_when_clause *merge_when = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(merge_when_clause), (void **)&merge_when) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     merge_when->update_ctx = $1;
                     merge_when->update_filter_cond = $2;
@@ -7628,10 +7639,10 @@ MergeStmt:
                     sql_merge_t *merge_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_merge_t), (void **)&merge_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_merge(stmt, merge_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init merge context failed ");
+                        parser_abort_or_yyerror("init merge context failed ");
                     }
                     if ($2) {
                         og_get_hint_info(stmt, $2, &merge_ctx->hint_info);
@@ -7639,11 +7650,11 @@ MergeStmt:
                     sql_table_t *merge_into_table = $4;
                     merge_into_table->id = 0;
                     if (sql_array_put(&merge_ctx->query->tables, merge_into_table) != OG_SUCCESS) {
-                        parser_yyerror("put table into merge_ctx failed ");
+                        parser_abort_or_yyerror("put table into merge_ctx failed ");
                     }
                     sql_join_node_t *merge_into_join_node = NULL;
                     if (sql_create_join_node(stmt, JOIN_TYPE_NONE, merge_into_table, NULL, NULL, NULL, &merge_into_join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     sql_join_node_t *merge_using_join_node = $6;
                     if (merge_using_join_node->type != JOIN_TYPE_NONE) {
@@ -7652,11 +7663,11 @@ MergeStmt:
                     sql_table_t *merge_using_table = (sql_table_t*)sql_array_get(&merge_using_join_node->tables, 0);
                     merge_using_table->id = 1;
                     if (sql_array_put(&merge_ctx->query->tables, merge_using_table) != OG_SUCCESS) {
-                        parser_yyerror("put table into merge_ctx failed ");
+                        parser_abort_or_yyerror("put table into merge_ctx failed ");
                     }
                     if (sql_create_join_node(stmt, JOIN_TYPE_COMMA, NULL, NULL, merge_into_join_node, merge_using_join_node,
                         &merge_ctx->query->join_assist.join_node) != OG_SUCCESS) {
-                        parser_yyerror("create join node failed.");
+                        parser_abort_or_yyerror("create join node failed.");
                     }
                     merge_ctx->query->cond = $9;
                     merge_ctx->insert_ctx = $11->insert_ctx;
@@ -7668,17 +7679,17 @@ MergeStmt:
                     }
                     if (merge_ctx->update_ctx) {
                         if (sql_array_put(&merge_ctx->update_ctx->query->tables, merge_into_table) != OG_SUCCESS) {
-                            parser_yyerror("put table failed.");
+                            parser_abort_or_yyerror("put table failed.");
                         }
                     }
                     if (bison_current_pending_ssa(yyscanner)->count > 0) {
                         if (attach_pending_subselects_to_query(merge_ctx->query,
                             bison_current_pending_ssa(yyscanner)) != OG_SUCCESS) {
-                            parser_yyerror("attach subselects failed");
+                            parser_abort_or_yyerror("attach subselects failed");
                         }
                     }
                     if (sql_set_table_qb_name(stmt, merge_ctx->query) != OG_SUCCESS) {
-                        parser_yyerror("sql_set_table_qb_name failed ");
+                        parser_abort_or_yyerror("sql_set_table_qb_name failed ");
                     }
                     $$ = merge_ctx;
                 }
@@ -7690,10 +7701,10 @@ ReplaceStmt:
                     sql_replace_t *replace_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_replace_t), (void **)&replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_replace(stmt, replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init replace context failed ");
+                        parser_abort_or_yyerror("init replace context failed ");
                     }
                     sql_insert_t *insert_ctx = &(replace_ctx->insert_ctx);
                     if ($2) {
@@ -7734,10 +7745,10 @@ ReplaceStmt:
                     sql_replace_t *replace_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_replace_t), (void **)&replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_replace(stmt, replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init replace context failed ");
+                        parser_abort_or_yyerror("init replace context failed ");
                     }
                     sql_insert_t *insert_ctx = &(replace_ctx->insert_ctx);
                     if ($2) {
@@ -7746,7 +7757,7 @@ ReplaceStmt:
                     insert_ctx->table = $4;
                     insert_ctx->flags |= INSERT_COLS_SPECIFIED;
                     if (column_list_to_column_pairs(stmt, $6, &insert_ctx->pairs)) {
-                        parser_yyerror("create column pairs failed.");
+                        parser_abort_or_yyerror("create column pairs failed.");
                     }
                     insert_ctx->select_ctx = $8;
                     insert_ctx->select_ctx->type = SELECT_AS_VALUES;
@@ -7762,10 +7773,10 @@ ReplaceStmt:
                     sql_replace_t *replace_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_replace_t), (void **)&replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_replace(stmt, replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init replace context failed ");
+                        parser_abort_or_yyerror("init replace context failed ");
                     }
                     sql_insert_t *insert_ctx = &(replace_ctx->insert_ctx);
                     if ($2) {
@@ -7786,10 +7797,10 @@ ReplaceStmt:
                     sql_replace_t *replace_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_replace_t), (void **)&replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_replace(stmt, replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init replace context failed ");
+                        parser_abort_or_yyerror("init replace context failed ");
                     }
                     sql_insert_t *insert_ctx = &(replace_ctx->insert_ctx);
                     if ($2) {
@@ -7810,10 +7821,10 @@ ReplaceStmt:
                     sql_replace_t *replace_ctx = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(sql_replace_t), (void **)&replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if (sql_init_replace(stmt, replace_ctx) != OG_SUCCESS) {
-                        parser_yyerror("init replace context failed ");
+                        parser_abort_or_yyerror("init replace context failed ");
                     }
                     sql_insert_t *insert_ctx = &(replace_ctx->insert_ctx);
                     if ($2) {
@@ -7851,7 +7862,7 @@ replace_set_clause_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column pair list failed.");
+                        parser_abort_or_yyerror("create column pair list failed.");
                     }
                     BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
@@ -7909,43 +7920,56 @@ any_name:
                 {
                     name_with_owner *ret = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(name_with_owner), (void **)&ret) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed.");
+                        parser_abort_or_yyerror("alloc mem failed.");
                     }
                     ret->owner.str = NULL;
                     ret->owner.len = 0;
                     ret->name.str = $1;
                     ret->name.len = strlen($1);
+                    ret->loc = @1.loc;
                     $$ = ret;
                 }
             | ColId '.' ColId
                 {
                     name_with_owner *ret = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(name_with_owner), (void **)&ret) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed.");
+                        parser_abort_or_yyerror("alloc mem failed.");
                     }
                     ret->owner.str = $1;
                     ret->owner.len = strlen($1);
                     ret->name.str = $3;
                     ret->name.len = strlen($3);
+                    ret->loc = @1.loc;
                     $$ = ret;
                 }
         ;
 
-pl_object_name:
+/* Complete each component before requesting the next token. The lexer emits a
+ * boundary marker before the header, so LAC cannot skip CREATE preparation on
+ * an invalid header. Qualification remains part of the name grammar. */
+pl_object_name_part:
             ColId
+                {
+                    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_part_complete = OG_TRUE;
+                    $$ = $1;
+                }
+        ;
+
+pl_object_name:
+            pl_object_name_part
                 {
                     if (pl_bison_make_object_name(yyscanner, NULL, $1, -1, @1.offset, @1.loc, &$$) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare PLSQL object name failed");
                     }
                 }
-            | ColId '.' ColId
+            | pl_object_name_part '.' pl_object_name_part
                 {
                     if (pl_bison_make_object_name(yyscanner, $1, $3, @1.offset, @3.offset, @1.loc,
                         &$$) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare qualified PLSQL object name failed");
                     }
                 }
-            | ColId '.' ColId '.' pl_extra_object_name_parts
+            | pl_object_name_part '.' pl_object_name_part '.' pl_extra_object_name_parts
                 {
                     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
                     int object_name_end = extra->raw_parse.pl_object_name_end;
@@ -7959,7 +7983,7 @@ pl_object_name:
         ;
 
 pl_extra_object_name_parts:
-            ColId
+            pl_object_name_part
                 {
                     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
                     if (pl_bison_object_name_end(yyscanner, @1.offset,
@@ -7968,7 +7992,7 @@ pl_extra_object_name_parts:
                     }
                     $$ = 3;
                 }
-            | pl_extra_object_name_parts '.' ColId
+            | pl_extra_object_name_parts '.' pl_object_name_part
                 {
                     base_yy_extra_type *extra = og_yyget_extra(yyscanner);
                     if ($1 >= MAX_EXTRA_TEXTS) {
@@ -7984,16 +8008,22 @@ pl_extra_object_name_parts:
         ;
 
 pl_trigger_table_name:
-            ColId
+            pl_object_name_part
                 {
                     if (pl_bison_make_raw_object_name(yyscanner, NULL, $1, -1, @1.offset, &$$) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare trigger table name failed");
                     }
                 }
-            | ColId '.' ColId
+            | pl_object_name_part '.' pl_object_name_part
                 {
                     if (pl_bison_make_raw_object_name(yyscanner, $1, $3, @1.offset, @3.offset, &$$) != OG_SUCCESS) {
                         parser_abort_or_yyerror("prepare qualified trigger table name failed");
+                    }
+                    /* A trigger table has at most two name components. A
+                     * following dot belongs to the invalid body/header. */
+                    base_yy_raw_parse_state_t *state = &og_yyget_extra(yyscanner)->raw_parse;
+                    if (state->pl_object_name_mode) {
+                        state->pl_object_name_suffix = PL_NAME_SUFFIX_TRIGGER_HEADER;
                     }
                 }
         ;
@@ -8006,7 +8036,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     def->temp = $2;
                     def->owner = $5->owner;
@@ -8020,7 +8050,10 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     def->purge = $7;
                     if (!$4) {
                         if (knl_open_dc_with_public(&stmt->session->knl_session, &def->owner, OG_TRUE, &def->name, &dc) != OG_SUCCESS) {
-                            parser_yyerror("The table does not exist");
+                            if (cm_get_error_code() == ERR_TABLE_OR_VIEW_NOT_EXIST) {
+                                cm_try_set_error_loc($5->loc);
+                            }
+                            parser_abort_or_yyerror("The table does not exist");
                         }
                         knl_close_dc(&dc);
                     } else {
@@ -8034,7 +8067,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_INDEX;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if ($3) {
                         def->options |= DROP_IF_EXISTS;
@@ -8062,7 +8095,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_SEQUENCE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if ($3) {
                         def->options |= DROP_IF_EXISTS;
@@ -8083,7 +8116,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                         parser_yyerror("incorrect tablespace name");
                     }
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_space_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->obj_name = $3->name;
                     def->options |= $4;
@@ -8097,7 +8130,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_VIEW;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     def->owner = $4->owner;
                     def->name = $4->name;
@@ -8109,7 +8142,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     }
                     if (!$3) {
                         if (knl_open_dc_with_public(&stmt->session->knl_session, &def->owner, OG_TRUE, &def->name, &dc) != OG_SUCCESS) {
-                            parser_yyerror("The view does not exist");
+                            parser_abort_or_yyerror("The view does not exist");
                         }
                         knl_close_dc(&dc);
                     } else {
@@ -8124,7 +8157,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_USER;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_user_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     if ($3) {
                         def->options |= DROP_IF_EXISTS;
@@ -8134,7 +8167,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     }
                     cm_str2text($4, &user);
                     if (sql_copy_prefix_tenant(stmt, (text_t *)&user, &def->owner, sql_copy_name) != OG_SUCCESS) {
-                        parser_yyerror("copy prefix tenant failed");
+                        parser_abort_or_yyerror("copy prefix tenant failed");
                     }
                     def->purge = $5;
                     $$ = def;
@@ -8146,7 +8179,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_TENANT;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_tenant_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     CM_MAGIC_SET(def, knl_drop_tenant_t);
                     if ($3) {
@@ -8158,7 +8191,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     }
                     cm_str2text($4, &tenant);
                     if (sql_copy_name(stmt->context, &tenant, &def->name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed");
+                        parser_abort_or_yyerror("copy name failed");
                     }
                     if ($5) {
                         def->options |= DROP_CASCADE_CONS;
@@ -8172,7 +8205,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_SYNONYM;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($4) {
                         def->options |= DROP_IF_EXISTS;
@@ -8183,15 +8216,15 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                                 parser_yyerror("owner of object should be public");
                             }
                             if (sql_copy_name(stmt->context, &public_user, &def->owner) != OG_SUCCESS) {
-                                parser_yyerror("copy name failed");
+                                parser_abort_or_yyerror("copy name failed");
                             }
                         } else if (sql_copy_prefix_tenant(stmt, &($5->owner), &def->owner, sql_copy_name) != OG_SUCCESS) {
-                            parser_yyerror("copy name failed");
+                            parser_abort_or_yyerror("copy name failed");
                         }
                         def->name = $5->name;
                     } else {
                         if ($2 && sql_copy_text(stmt->context, &public_user, &def->owner) != OG_SUCCESS) {
-                            parser_yyerror("copy name failed");
+                            parser_abort_or_yyerror("copy name failed");
                         } else if (!$2) {
                             cm_str2text(stmt->session->curr_schema, &def->owner);
                         }
@@ -8209,11 +8242,11 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_ROLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cm_str2text($3, &user);
                     if (sql_copy_name(stmt->context, &user, &def->name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed");
+                        parser_abort_or_yyerror("copy name failed");
                     }
                     $$ = def;
                 }
@@ -8227,7 +8260,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_PROFILE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->name.str = $3;
                     def->name.len = strlen($3);
@@ -8242,7 +8275,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_DIRECTORY;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->name.str = $3;
                     def->name.len = strlen($3);
@@ -8253,7 +8286,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_FUNC;
                     drop_def->type = PL_FUNCTION;
@@ -8273,7 +8306,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def)) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_PROC;
                     drop_def->type = PL_PROCEDURE;
@@ -8293,7 +8326,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def)) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_TRIG;
                     drop_def->type = PL_PROCEDURE;
@@ -8313,7 +8346,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def)) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_PACK_SPEC;
                     drop_def->type = PL_PACKAGE_SPEC;
@@ -8333,7 +8366,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def)) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_PACK_BODY;
                     drop_def->type = PL_PACKAGE_BODY;
@@ -8353,7 +8386,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def)) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_TYPE_SPEC;
                     drop_def->type = PL_TYPE_SPEC;
@@ -8376,7 +8409,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     pl_drop_def_t *drop_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(pl_drop_def_t), (void **)&drop_def)) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     stmt->context->type = OGSQL_TYPE_DROP_TYPE_BODY;
                     drop_def->type = PL_TYPE_BODY;
@@ -8406,7 +8439,7 @@ DropStmt:   DROP opt_temporary TABLE_P opt_if_exists any_name opt_drop_behavior 
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_DROP_LIBRARY;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_drop_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($3) {
                         def->options |= DROP_IF_EXISTS;
@@ -8431,7 +8464,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_SWITCHLOG;
@@ -8449,7 +8482,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->is_coord_conn = IS_COORD_CONN(stmt->session);
@@ -8475,7 +8508,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     BISON_MEM_STRDUP(sys_def->value, $6);
@@ -8495,7 +8528,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_STOP_REPLICA;
@@ -8513,7 +8546,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     name_with_owner *name_owner = $6;
@@ -8527,16 +8560,16 @@ AlterSystemStmt:
                     }
 
                     if (sql_copy_prefix_tenant(stmt, &owner_name, &object_name, sql_copy_name) != OG_SUCCESS) {
-                        parser_yyerror("copy prefix tenant failed");
+                        parser_abort_or_yyerror("copy prefix tenant failed");
                     }
                     if (cm_text2str(&object_name, sys_def->param, OG_NAME_BUFFER_SIZE) != OG_SUCCESS) {
-                        parser_yyerror("copy user name failed");
+                        parser_abort_or_yyerror("copy user name failed");
                     }
                     if (sql_copy_name(stmt->context, &name_owner->name, &object_name) != OG_SUCCESS) {
-                        parser_yyerror("copy object name failed");
+                        parser_abort_or_yyerror("copy object name failed");
                     }
                     if (cm_text2str(&object_name, sys_def->value, OG_PARAM_BUFFER_SIZE) != OG_SUCCESS) {
-                        parser_yyerror("copy object name failed");
+                        parser_abort_or_yyerror("copy object name failed");
                     }
 
                     sys_def->action = ALTER_SYS_LOAD_DC;
@@ -8554,7 +8587,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_INIT_ENTRY;
@@ -8572,7 +8605,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_FLUSH_BUFFER;
@@ -8590,7 +8623,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_FLUSH_SQLPOOL;
@@ -8608,7 +8641,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_RECYCLE_SHAREDPOOL;
@@ -8627,7 +8660,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_DUMP_PAGE;
@@ -8658,7 +8691,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_DUMP_CTRLPAGE;
@@ -8687,7 +8720,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_DUMP_DC;
@@ -8704,14 +8737,14 @@ AlterSystemStmt:
 
                     if (sql_copy_prefix_tenant(stmt, &owner_name, &sys_def->dump_info.user_name,
                         sql_copy_name) != OG_SUCCESS) {
-                        parser_yyerror("copy prefix tenant failed");
+                        parser_abort_or_yyerror("copy prefix tenant failed");
                     }
                     if (sql_copy_name(stmt->context, &name_owner->name, &sys_def->dump_info.table_name)
                         != OG_SUCCESS) {
-                        parser_yyerror("copy table name failed");
+                        parser_abort_or_yyerror("copy table name failed");
                     }
                     if (sql_check_dump_priv(stmt, sys_def) != OG_SUCCESS) {
-                        parser_yyerror("check dump priv failed");
+                        parser_abort_or_yyerror("check dump priv failed");
                     }
 
                     if ($7 != NULL && $7->len > 0) {
@@ -8739,7 +8772,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_DUMP_DC;
@@ -8749,10 +8782,10 @@ AlterSystemStmt:
                     cm_str2text($6, &text);
                     if (sql_copy_prefix_tenant(stmt, &text, &sys_def->dump_info.user_name, sql_copy_name)
                         != OG_SUCCESS) {
-                        parser_yyerror("copy prefix tenant failed");
+                        parser_abort_or_yyerror("copy prefix tenant failed");
                     }
                     if (sql_check_dump_priv(stmt, sys_def) != OG_SUCCESS) {
-                        parser_yyerror("check dump priv failed");
+                        parser_abort_or_yyerror("check dump priv failed");
                     }
 
                     if ($7 != NULL && $7->len > 0) {
@@ -8781,12 +8814,12 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     cm_str2text($5, &sid_str);
                     if (sql_parse_sid_serial_bison(&sid_str, @5.loc, &sys_def->session_id, &sys_def->serial_id, &sys_def->node_id) != OG_SUCCESS) {
-                        parser_yyerror("parse sid serial failed");
+                        parser_abort_or_yyerror("parse sid serial failed");
                     }
 
                     sys_def->action = ALTER_SYS_KILL_SESSION;
@@ -8809,7 +8842,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_RESET_STATISTIC;
@@ -8827,7 +8860,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_CHECKPOINT;
@@ -8846,7 +8879,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->is_coord_conn = IS_COORD_CONN(stmt->session);
@@ -8873,7 +8906,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     BISON_MEM_STRDUP(sys_def->value, $6);
@@ -8892,7 +8925,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_STOP_REPLICA;
@@ -8910,7 +8943,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_RELOAD_HBA;
@@ -8928,7 +8961,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_RELOAD_PBL;
@@ -8946,7 +8979,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_REFRESH_SYSDBA;
@@ -8965,7 +8998,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cm_str2text($6, &hba_text);
                     if (hba_text.len > HBA_MAX_LINE_SIZE) {
@@ -8973,7 +9006,10 @@ AlterSystemStmt:
                         YYABORT;
                     }
                     if (cm_check_hba_entry_legality($6) != OG_SUCCESS) {
-                        parser_yyerror("check hba entry legality failed");
+                        if (cm_get_error_code() == ERR_INVALID_HBA_ITEM) {
+                            cm_try_set_error_loc(@6.loc);
+                        }
+                        parser_abort_or_yyerror("check hba entry legality failed");
                     }
                     errno_t ret = memcpy_s(sys_def->hba_node, HBA_MAX_LINE_SIZE, $6, hba_text.len);
                     knl_securec_check(ret);
@@ -8994,7 +9030,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     BISON_MEM_STRDUP(sys_def->value, $5);
@@ -9015,7 +9051,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     cm_str2text($6, &hba_text);
@@ -9024,7 +9060,10 @@ AlterSystemStmt:
                         YYABORT;
                     }
                     if (cm_check_hba_entry_legality($6) != OG_SUCCESS) {
-                        parser_yyerror("check hba entry legality failed");
+                        if (cm_get_error_code() == ERR_INVALID_HBA_ITEM) {
+                            cm_try_set_error_loc(@6.loc);
+                        }
+                        parser_abort_or_yyerror("check hba entry legality failed");
                     }
                     errno_t ret = memcpy_s(sys_def->hba_node, HBA_MAX_LINE_SIZE, $6, hba_text.len);
                     knl_securec_check(ret);
@@ -9045,7 +9084,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     BISON_MEM_STRDUP(sys_def->value, $5);
@@ -9065,7 +9104,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     BISON_MEM_STRDUP(sys_def->param, $5);
@@ -9089,7 +9128,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_STOP_BUILD;
@@ -9107,7 +9146,7 @@ AlterSystemStmt:
                     stmt->context->type = OGSQL_TYPE_ALTER_SYSTEM;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_alter_sys_def_t), (void **)&sys_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     sys_def->action = ALTER_SYS_REPAIR_CATALOG;
@@ -9138,7 +9177,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_SET;
@@ -9157,7 +9196,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_DISABLE;
@@ -9175,7 +9214,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_DISABLE;
@@ -9193,7 +9232,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_DISABLE;
@@ -9211,7 +9250,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_DISABLE;
@@ -9229,7 +9268,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_ENABLE;
@@ -9247,7 +9286,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_ENABLE;
@@ -9265,7 +9304,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_ENABLE;
@@ -9283,7 +9322,7 @@ AlterSessionStmtValid:
                     stmt->context->type = OGSQL_TYPE_ALTER_SESSION;
 
                     if (sql_alloc_mem(stmt->context, sizeof(alter_session_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     def->action = ALTSES_ENABLE;
@@ -9369,7 +9408,7 @@ opt_dump_to_file:
                     text_t *text_ptr = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
                         sizeof(text_t), (void **)&text_ptr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     text_ptr->str = tmp;
                     text_ptr->len = strlen(tmp);
@@ -9455,7 +9494,7 @@ TruncateStmt: TRUNCATE TABLE_P any_name opt_truncate_options
                         stmt->context->type = OGSQL_TYPE_TRUNCATE_TABLE;
 
                         if (sql_alloc_mem(stmt->context, sizeof(knl_trunc_def_t), (void **)&def) != OG_SUCCESS) {
-                            parser_yyerror("alloc mem failed");
+                            parser_abort_or_yyerror("alloc mem failed");
                         }
                         def->owner = $3->owner;
                         def->name = $3->name;
@@ -9463,7 +9502,7 @@ TruncateStmt: TRUNCATE TABLE_P any_name opt_truncate_options
                             cm_str2text(stmt->session->curr_schema, &def->owner);
                         }
                         if (knl_open_dc_with_public(&stmt->session->knl_session, &def->owner, OG_TRUE, &def->name, &dc) != OG_SUCCESS) {
-                            parser_yyerror("The table does not exist");
+                            parser_abort_or_yyerror("The table does not exist");
                         }
                         knl_close_dc(&dc);
                         def->option = $4;
@@ -9484,7 +9523,7 @@ FlashStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_FLASHBACK_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_flashback_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9498,7 +9537,7 @@ FlashStmt:
                         SQL_EXCL_JOIN | SQL_EXCL_ROWNUM | SQL_EXCL_ROWID | SQL_EXCL_DEFAULT | SQL_EXCL_ROWSCN | SQL_EXCL_WIN_SORT |
                         SQL_EXCL_ROWNODEID;
                     if (sql_verify_expr(&verf, def->expr) != OG_SUCCESS) {
-                        parser_yyerror("verify expr failed");
+                        parser_abort_or_yyerror("verify expr failed");
                     }
                     if (!OG_IS_WEAK_NUMERIC_TYPE(TREE_DATATYPE((expr_tree_t *)def->expr))) {
                         parser_yyerror("scn expr mismatch");
@@ -9513,7 +9552,7 @@ FlashStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_FLASHBACK_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_flashback_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9527,7 +9566,7 @@ FlashStmt:
                         SQL_EXCL_JOIN | SQL_EXCL_ROWNUM | SQL_EXCL_ROWID | SQL_EXCL_DEFAULT | SQL_EXCL_ROWSCN | SQL_EXCL_WIN_SORT |
                         SQL_EXCL_ROWNODEID;
                     if (sql_verify_expr(&verf, def->expr) != OG_SUCCESS) {
-                        parser_yyerror("verify expr failed");
+                        parser_abort_or_yyerror("verify expr failed");
                     }
                     if (!OG_IS_DATETIME_TYPE(TREE_DATATYPE((expr_tree_t *)def->expr))) {
                         parser_yyerror("timestamp expr mismatch");
@@ -9541,7 +9580,7 @@ FlashStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_FLASHBACK_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_flashback_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9557,7 +9596,7 @@ FlashStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_FLASHBACK_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_flashback_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9575,7 +9614,7 @@ FlashStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_FLASHBACK_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_flashback_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9592,7 +9631,7 @@ FlashStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_FLASHBACK_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_flashback_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9614,7 +9653,7 @@ CommentStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_COMMENT;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_comment_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     text_t owner = $4->owner;
                     text_t name = $4->name;
@@ -9624,7 +9663,7 @@ CommentStmt:
                     }
                     if (sql_bison_copy_text_if_present(stmt, &owner, &def->owner) != OG_SUCCESS ||
                         sql_bison_copy_text_if_present(stmt, &name, &def->name) != OG_SUCCESS) {
-                        parser_yyerror("copy comment object name failed");
+                        parser_abort_or_yyerror("copy comment object name failed");
                     }
                     if (strlen($6) != 0) {
                         if (strlen($6) > DDL_MAX_COMMENT_LEN) {
@@ -9633,7 +9672,7 @@ CommentStmt:
                         text_t comment;
                         cm_str2text($6, &comment);
                         if (sql_copy_text(stmt->context, &comment, &def->comment) != OG_SUCCESS) {
-                            parser_yyerror("copy comment text failed");
+                            parser_abort_or_yyerror("copy comment text failed");
                         }
                     } else {
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
@@ -9650,7 +9689,7 @@ CommentStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_COMMENT;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_comment_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     text_t owner = $4->owner;
                     text_t name = $4->table;
@@ -9662,7 +9701,7 @@ CommentStmt:
                     if (sql_bison_copy_text_if_present(stmt, &owner, &def->owner) != OG_SUCCESS ||
                         sql_bison_copy_text_if_present(stmt, &name, &def->name) != OG_SUCCESS ||
                         sql_bison_copy_text_if_present(stmt, &column, &def->column) != OG_SUCCESS) {
-                        parser_yyerror("copy comment object name failed");
+                        parser_abort_or_yyerror("copy comment object name failed");
                     }
                     if (strlen($6) != 0) {
                         if (strlen($6) > DDL_MAX_COMMENT_LEN) {
@@ -9671,7 +9710,7 @@ CommentStmt:
                         text_t comment;
                         cm_str2text($6, &comment);
                         if (sql_copy_text(stmt->context, &comment, &def->comment) != OG_SUCCESS) {
-                            parser_yyerror("copy comment text failed");
+                            parser_abort_or_yyerror("copy comment text failed");
                         }
                     } else {
                         def->comment.str = (g_instance->sql.enable_empty_string_null == OG_TRUE) ? NULL : "";
@@ -9691,7 +9730,7 @@ AnalyzeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_ANALYSE_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_analyze_tab_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9706,7 +9745,7 @@ AnalyzeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_ANALYSE_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_analyze_tab_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9722,7 +9761,7 @@ AnalyzeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_ANALYSE_TABLE;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_analyze_tab_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9744,7 +9783,7 @@ AnalyzeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_ANALYZE_INDEX;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_analyze_index_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9759,7 +9798,7 @@ AnalyzeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     stmt->context->type = OGSQL_TYPE_ANALYZE_INDEX;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_analyze_index_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->owner = $3->owner;
                     def->name = $3->name;
@@ -9782,7 +9821,7 @@ createdb_user_name:
                     char *origin_name = og_yyget_extra(yyscanner)->core_yy_extra.origin_str;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_user_token), (void **)&user) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     user->name = $1;
                     user->display_name = origin_name != NULL ? origin_name : $1;
@@ -9797,7 +9836,7 @@ createdb_user_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_USER_OPT;
                     opt->user.user_name = $2->name;
@@ -9818,13 +9857,13 @@ files:
                     raw.str = $1;
                     raw.len = strlen($1);
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create controlfile list failed.");
+                        parser_abort_or_yyerror("create controlfile list failed.");
                     }
                     if (cm_galist_new(list, sizeof(text_t), (pointer_t *)&file_name) != OG_SUCCESS) {
-                        parser_yyerror("new controlfile failed.");
+                        parser_abort_or_yyerror("new controlfile failed.");
                     }
                     if (sql_copy_file_name(stmt->context, (text_t *)&raw, file_name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     $$ = list;
                 }
@@ -9837,10 +9876,10 @@ files:
                     raw.str = $3;
                     raw.len = strlen($3);
                     if (cm_galist_new(list, sizeof(text_t), (pointer_t *)&file_name) != OG_SUCCESS) {
-                        parser_yyerror("new controlfile failed.");
+                        parser_abort_or_yyerror("new controlfile failed.");
                     }
                     if (sql_copy_file_name(stmt->context, (text_t *)&raw, file_name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     $$ = list;
                 }
@@ -9852,7 +9891,7 @@ createdb_controlfile_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_CONTROLFILE_OPT;
                     opt->list = $3;
@@ -9866,7 +9905,7 @@ createdb_charset_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_CHARSET_OPT;
                     opt->charset = $3;
@@ -9883,7 +9922,7 @@ num_size:
             {
                 int64 res = 0;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 $$ = res;
             }
@@ -9892,7 +9931,7 @@ num_size:
                 int64 res = 0;
                 int64 unit = 10;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 if (res > (OG_MAX_INT64 >> unit)) {
                     parser_yyerror("int64 overflow");
@@ -9905,7 +9944,7 @@ num_size:
                 int64 res = 0;
                 int64 unit = 20;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 if (res > (OG_MAX_INT64 >> unit)) {
                     parser_yyerror("int64 overflow");
@@ -9918,7 +9957,7 @@ num_size:
                 int64 res = 0;
                 int64 unit = 30;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 if (res > (OG_MAX_INT64 >> unit)) {
                     parser_yyerror("int64 overflow");
@@ -9931,7 +9970,7 @@ num_size:
                 int64 res = 0;
                 int64 unit = 40;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 if (res > (OG_MAX_INT64 >> unit)) {
                     parser_yyerror("int64 overflow");
@@ -9944,7 +9983,7 @@ num_size:
                 int64 res = 0;
                 int64 unit = 50;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 if (res > (OG_MAX_INT64 >> unit)) {
                     parser_yyerror("int64 overflow");
@@ -9957,7 +9996,7 @@ num_size:
                 int64 res = 0;
                 int64 unit = 60;
                 if (strGetInt64($1, &res) != OG_SUCCESS) {
-                    parser_yyerror("get int64 failed");
+                    parser_abort_or_yyerror("get int64 failed");
                 }
                 if (res > (OG_MAX_INT64 >> unit)) {
                     parser_yyerror("int64 overflow");
@@ -9984,11 +10023,11 @@ logfile:
                     knl_device_def_t *log_file = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_device_def_t), (void **)&log_file) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     const text_t name = { $1, strlen($1) };
                     if (sql_copy_file_name(stmt->context, (text_t *)&name, &log_file->name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     log_file->size = $3;
                     log_file->block_size = $4;
@@ -10005,10 +10044,10 @@ logfiles:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create logfile list failed.");
+                        parser_abort_or_yyerror("create logfile list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert logfile failed.");
+                        parser_abort_or_yyerror("insert logfile failed.");
                     }
                     $$ = list;
                 }
@@ -10016,7 +10055,7 @@ logfiles:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert logfile failed.");
+                        parser_abort_or_yyerror("insert logfile failed.");
                     }
                     $$ = list;
                 }
@@ -10028,7 +10067,7 @@ createdb_archivelog_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_ARCHIVELOG_OPT;
                     opt->archivelog_enable = true;
@@ -10039,7 +10078,7 @@ createdb_archivelog_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_ARCHIVELOG_OPT;
                     opt->archivelog_enable = false;
@@ -10082,11 +10121,11 @@ datafile:
                     int64 max_filesize = (int64)g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_device_def_t), (void **)&dev_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed.");
+                        parser_abort_or_yyerror("alloc mem failed.");
                     }
                     const text_t name = { $1, strlen($1) };
                     if (sql_copy_file_name(stmt->context, (text_t *)&name, &dev_def->name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     dev_def->size = $3;
                     if (dev_def->size < OG_MIN_USER_DATAFILE_SIZE || dev_def->size > max_filesize) {
@@ -10100,11 +10139,11 @@ datafile:
                     int64 max_filesize = (int64)g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_device_def_t), (void **)&dev_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed.");
+                        parser_abort_or_yyerror("alloc mem failed.");
                     }
                     const text_t name = { $1, strlen($1) };
                     if (sql_copy_file_name(stmt->context, (text_t *)&name, &dev_def->name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     dev_def->size = $3;
                     if (dev_def->size < OG_MIN_USER_DATAFILE_SIZE || dev_def->size > max_filesize) {
@@ -10119,11 +10158,11 @@ datafile:
                     int64 max_filesize = (int64)g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_device_def_t), (void **)&dev_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed.");
+                        parser_abort_or_yyerror("alloc mem failed.");
                     }
                     const text_t name = { $1, strlen($1) };
                     if (sql_copy_file_name(stmt->context, (text_t *)&name, &dev_def->name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     dev_def->size = $3;
                     if (dev_def->size < OG_MIN_USER_DATAFILE_SIZE || dev_def->size > max_filesize) {
@@ -10148,10 +10187,10 @@ datafiles:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create datafile list failed.");
+                        parser_abort_or_yyerror("create datafile list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert datafile failed.");
+                        parser_abort_or_yyerror("insert datafile failed.");
                     }
                     $$ = list;
                 }
@@ -10159,7 +10198,7 @@ datafiles:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert datafile failed.");
+                        parser_abort_or_yyerror("insert datafile failed.");
                     }
                     $$ = list;
                 }
@@ -10176,7 +10215,7 @@ instance_node_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_INSTANCE_NODE_UNDO_OPT;
                     opt->space.datafiles = $4;
@@ -10188,7 +10227,7 @@ instance_node_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_INSTANCE_NODE_LOGFILE_OPT;
                     opt->list = $3;
@@ -10199,7 +10238,7 @@ instance_node_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_INSTANCE_NODE_TEMPORARY_OPT;
                     opt->space.datafiles = $4;
@@ -10211,7 +10250,7 @@ instance_node_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_INSTANCE_NODE_NOLOGGING_OPT;
                     opt->space.datafiles = $5;
@@ -10225,10 +10264,10 @@ instance_node_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create opt list failed.");
+                        parser_abort_or_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -10236,7 +10275,7 @@ instance_node_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -10248,7 +10287,7 @@ instance_node:
                     createdb_instance_node *node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_instance_node), (void **)&node) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed.");
+                        parser_abort_or_yyerror("alloc mem failed.");
                     }
                     node->id = $2;
                     node->loc = @2.loc;
@@ -10262,10 +10301,10 @@ instance_nodes:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create opt list failed.");
+                        parser_abort_or_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert instance node failed.");
+                        parser_abort_or_yyerror("insert instance node failed.");
                     }
                     $$ = list;
                 }
@@ -10273,7 +10312,7 @@ instance_nodes:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert instance node failed.");
+                        parser_abort_or_yyerror("insert instance node failed.");
                     }
                     $$ = list;
                 }
@@ -10285,7 +10324,7 @@ createdb_instance_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_INSTANCE_OPT;
                     opt->list = $2;
@@ -10299,7 +10338,7 @@ createdb_nologging_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_NOLOGGING_UNDO_OPT;
                     opt->space.datafiles = $5;
@@ -10311,7 +10350,7 @@ createdb_nologging_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_NOLOGGING_OPT;
                     opt->space.datafiles = $4;
@@ -10326,7 +10365,7 @@ createdb_system_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_SYSTEM_OPT;
                     opt->space.datafiles = $4;
@@ -10341,7 +10380,7 @@ createdb_sysaux_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_SYSAUX_OPT;
                     opt->space.datafiles = $4;
@@ -10356,7 +10395,7 @@ createdb_default_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_DEFAULT_OPT;
                     opt->space.datafiles = $4;
@@ -10371,7 +10410,7 @@ createdb_maxinstance_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_MAXINSTANCE_OPT;
                     opt->max_instance = $2;
@@ -10393,7 +10432,7 @@ createdb_compatibility_opt:
                     createdb_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(createdb_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEDB_DBCOMPATIBILITY_OPT;
                     opt->dbcompatibility = compatibility[0];
@@ -10420,10 +10459,10 @@ createdb_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create opt list failed.");
+                        parser_abort_or_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -10431,7 +10470,7 @@ createdb_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -10474,7 +10513,7 @@ CreateUserStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_user(stmt, &def, $3, $6, @6.loc, $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse create user failed");
+                        parser_abort_or_yyerror("parse create user failed");
                     }
                     $$ = def;
                 }
@@ -10487,7 +10526,7 @@ AlterUserStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_alter_user(stmt, &def, $3, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse alter user failed");
+                        parser_abort_or_yyerror("parse alter user failed");
                     }
                     $$ = def;
                 }
@@ -10500,7 +10539,7 @@ CreateRoleStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_role(stmt, &def, $3, $6, @6.loc, $7) != OG_SUCCESS) {
-                        parser_yyerror("parse create role failed");
+                        parser_abort_or_yyerror("parse create role failed");
                     }
                     $$ = def;
                 }
@@ -10510,7 +10549,7 @@ CreateRoleStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_role(stmt, &def, $3, NULL, @4.loc, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse create role failed");
+                        parser_abort_or_yyerror("parse create role failed");
                     }
                     $$ = def;
                 }
@@ -10523,7 +10562,7 @@ CreateTenantStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_create_tenant(stmt, &def, $3, $6, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse create tenant failed");
+                        parser_abort_or_yyerror("parse create tenant failed");
                     }
                     $$ = def;
                 }
@@ -10536,7 +10575,7 @@ AlterTenantStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_alter_tenant(stmt, &def, $3, ALTER_TENANT_TYPE_ADD_SPACE, $7, NULL) != OG_SUCCESS) {
-                        parser_yyerror("parse alter tenant failed");
+                        parser_abort_or_yyerror("parse alter tenant failed");
                     }
                     $$ = def;
                 }
@@ -10547,7 +10586,7 @@ AlterTenantStmt:
 
                     if (og_parse_alter_tenant(stmt, &def, $3, ALTER_TENANT_TYPE_MODEIFY_DEFAULT, NULL, $6) !=
                         OG_SUCCESS) {
-                        parser_yyerror("parse alter tenant failed");
+                        parser_abort_or_yyerror("parse alter tenant failed");
                     }
                     $$ = def;
                 }
@@ -10579,7 +10618,7 @@ alter_index_action:
  	                alter_index_action_t *alter_idx_act = NULL;
  	                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
  	                if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
- 	                    parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
  	                }
  	                alter_idx_act->type = ALINDEX_TYPE_UNUSABLE;
  	                $$ = alter_idx_act;
@@ -10589,7 +10628,7 @@ alter_index_action:
  	                alter_index_action_t *alter_idx_act = NULL;
  	                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
  	                if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
- 	                    parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
  	                }
  	                alter_idx_act->type = ALINDEX_TYPE_COALESCE;
  	                $$ = alter_idx_act;
@@ -10599,7 +10638,7 @@ alter_index_action:
  	                alter_index_action_t *alter_idx_act = NULL;
  	                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
  	                if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
- 	                    parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
  	                }
  	                alter_idx_act->type = ALINDEX_TYPE_INITRANS;
  	                alter_idx_act->idx_def.initrans = $2;
@@ -10610,7 +10649,7 @@ alter_index_action:
  	                alter_index_action_t *alter_idx_act = NULL;
  	                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
  	                if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
- 	                    parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
  	                }
  	                alter_idx_act->type = ALINDEX_TYPE_RENAME;
  	                alter_idx_act->user = $3->owner;
@@ -10622,7 +10661,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_REBUILD;
                     $$ = alter_idx_act;
@@ -10632,7 +10671,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_REBUILD_PART;
                     alter_idx_act->rebuild.part_name[0].str = $3;
@@ -10645,7 +10684,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_REBUILD_SUBPART;
                     alter_idx_act->rebuild.part_name[0].str = $3;
@@ -10658,7 +10697,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_MODIFY_PART;
                     alter_idx_act->mod_idxpart.part_name.str = $3;
@@ -10671,7 +10710,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_MODIFY_PART;
                     alter_idx_act->mod_idxpart.part_name.str = $3;
@@ -10684,7 +10723,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_MODIFY_PART;
                     alter_idx_act->mod_idxpart.part_name.str = $3;
@@ -10697,7 +10736,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_MODIFY_SUBPART;
                     alter_idx_act->mod_idxpart.part_name.str = $3;
@@ -10710,7 +10749,7 @@ alter_index_action:
                     alter_index_action_t *alter_idx_act = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(alter_index_action_t), (void **)&alter_idx_act) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
                     }
                     alter_idx_act->type = ALINDEX_TYPE_MODIFY_SUBPART;
                     alter_idx_act->mod_idxpart.part_name.str = $3;
@@ -10731,7 +10770,7 @@ AlterIndexStmt:
  	                stmt->context->type = OGSQL_TYPE_ALTER_INDEX;
  	 
  	                if (sql_alloc_mem(stmt->context, sizeof(knl_alindex_def_t), (void **)&def) != OG_SUCCESS) {
- 	                    parser_yyerror("alloc mem failed ");
+                        parser_abort_or_yyerror("alloc mem failed ");
  	                }
  	                def->user = $3->owner;
  	                def->name = $3->name;
@@ -10740,14 +10779,14 @@ AlterIndexStmt:
  	                }
  	                if (knl_get_table_of_index(&stmt->session->knl_session, &def->user, &def->name, &table) != OG_SUCCESS) {
  	                    sql_check_user_priv(stmt, &def->user);
- 	                    parser_yyerror("get_table_of_index failed ");
+                        parser_abort_or_yyerror("get_table_of_index failed ");
  	                }
  	                if (sql_regist_ddl_table(stmt, &def->user, &table)) {
- 	                    parser_yyerror("regist_ddl_table failed ");
+                        parser_abort_or_yyerror("regist_ddl_table failed ");
  	                }
  	 
  	                if (process_alter_index_action(stmt, $4, def) != OG_SUCCESS) {
- 	                    parser_yyerror("process_alter_index_action failed ");
+                        parser_abort_or_yyerror("process_alter_index_action failed ");
  	                }
  	                $$ = def;
  	            }
@@ -10760,7 +10799,7 @@ ddl_passthrough_tail:
                 int tok = YYLEX;
                 while (tok != YYEOF) {
                     if (tok == LEX_ERROR_TOKEN) {
-                        parser_yyerror("lex error");
+                        parser_abort_or_yyerror("lex error");
                     }
                     tok = YYLEX;
                 }
@@ -10809,7 +10848,7 @@ CreateTablespaceStmt:
                     
                     if (og_parse_create_space(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &def, $2, $4, size,
                         $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse create tablespace failed.");
+                        parser_abort_or_yyerror("parse create tablespace failed.");
                     }
                     $$ = def;
                 }
@@ -10819,7 +10858,7 @@ CreateTablespaceStmt:
 
                     if (og_parse_create_space(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &def, $2, $4, 0,
                         $6, $7) != OG_SUCCESS) {
-                        parser_yyerror("parse create tablespace failed.");
+                        parser_abort_or_yyerror("parse create tablespace failed.");
                     }
                     $$ = def;
                 }
@@ -10845,7 +10884,7 @@ AlterTablespaceStmt:
                     knl_altspace_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_alter_tablespace(stmt, &def, (bool32)$3, $4, $5, $6) != OG_SUCCESS) {
-                        parser_yyerror("parse alter tablespace failed");
+                        parser_abort_or_yyerror("parse alter tablespace failed");
                     }
                     $$ = def;
                 }
@@ -10857,7 +10896,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_ADD_DATAFILE_OPT;
                     opt->datafiles = $3;
@@ -10868,7 +10907,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_DROP_DATAFILE_OPT;
                     opt->datafiles = $3;
@@ -10879,7 +10918,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_AUTOEXTEND_OFF_OPT;
                     $$ = opt;
@@ -10890,7 +10929,7 @@ alterts_opt:
                     int64 max_filesize = (int64)g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_AUTOEXTEND_ON_OPT;
                     opt->autoextend.next_size = $3;
@@ -10908,7 +10947,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_AUTOOFFLINE_OPT;
                     opt->on_off = $2;
@@ -10919,7 +10958,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_RENAME_OPT;
                     opt->new_name = $3;
@@ -10930,7 +10969,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_RENAME_DATAFILE_OPT;
                     opt->rename_datafiles.old_files = $3;
@@ -10942,7 +10981,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_OFFLINE_DATAFILE_OPT;
                     opt->datafiles = $3;
@@ -10953,7 +10992,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_AUTOPURGE_OPT;
                     opt->on_off = $2;
@@ -10965,7 +11004,7 @@ alterts_opt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     int64 max_size = (int64)OG_MAX_SPACE_FILES * g_instance->kernel.attr.page_size * OG_MAX_DATAFILE_PAGES;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_SHRINK_SPACE_OPT;
                     opt->size = $4;
@@ -10979,7 +11018,7 @@ alterts_opt:
                     alterts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(alterts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("Memory allocation failed for alterts_opt");
+                        parser_abort_or_yyerror("Memory allocation failed for alterts_opt");
                     }
                     opt->type = ALTERTS_PUNCH_OPT;
                     opt->size = $2;
@@ -11012,7 +11051,7 @@ CreateIndexStmt:
                     knl_index_def_t *def = NULL;
                     if (og_parse_create_index(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &def, $5,
                         $7, $9, $11) != OG_SUCCESS) {
-                        parser_yyerror("parse create index failed");
+                        parser_abort_or_yyerror("parse create index failed");
                     }
                     def->unique = $2;
                     if ($4) {
@@ -11031,7 +11070,7 @@ CreateIndexClusterStmt:
                     knl_index_def_t *index_def = NULL;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_indexes_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     def->index_count = 0;
                     stmt->context->type = OGSQL_TYPE_CREATE_INDEXES;
@@ -11053,10 +11092,10 @@ index_cluster_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
 
                     $$ = list;
@@ -11065,7 +11104,7 @@ index_cluster_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
 
                     $$ = list;
@@ -11079,7 +11118,7 @@ index_cluster_item:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_index(stmt, &def, $3, $5, $7, $9) != OG_SUCCESS) {
-                        parser_yyerror("parse create index failed");
+                        parser_abort_or_yyerror("parse create index failed");
                     }
                     
                     def->unique = $1;
@@ -11094,7 +11133,7 @@ CreateSequenceStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_sequence(stmt, &def, $3, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse create sequence failed");
+                        parser_abort_or_yyerror("parse create sequence failed");
                     }
                     $$ = def;
                 }
@@ -11107,7 +11146,7 @@ AlterSequenceStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_alter_sequence(stmt, &def, $3, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse alter sequence failed");
+                        parser_abort_or_yyerror("parse alter sequence failed");
                     }
                     $$ = def;
                 }
@@ -11128,10 +11167,10 @@ createseq_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create seq opt list failed.");
+                        parser_abort_or_yyerror("create seq opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert seq opt failed.");
+                        parser_abort_or_yyerror("insert seq opt failed.");
                     }
                     $$ = list;
                 }
@@ -11139,7 +11178,7 @@ createseq_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert seq opt failed.");
+                        parser_abort_or_yyerror("insert seq opt failed.");
                     }
                     $$ = list;
                 }
@@ -11150,10 +11189,10 @@ alterseq_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create alter seq opt list failed.");
+                        parser_abort_or_yyerror("create alter seq opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert alter seq opt failed.");
+                        parser_abort_or_yyerror("insert alter seq opt failed.");
                     }
                     $$ = list;
                 }
@@ -11161,7 +11200,7 @@ alterseq_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert alter seq opt failed.");
+                        parser_abort_or_yyerror("insert alter seq opt failed.");
                     }
                     $$ = list;
                 }
@@ -11174,9 +11213,10 @@ alterseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_RESTART_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11195,7 +11235,7 @@ BigintOnly:
                 {
                     int64 res = 0;
                     if (strGetPureInt64($1, &res) != OG_SUCCESS) {
-                        parser_yyerror("get int64 failed");
+                        parser_abort_or_yyerror("get int64 failed");
                     }
                     $$ = res;
                 }
@@ -11203,7 +11243,7 @@ BigintOnly:
                 {
                     int64 res = 0;
                     if (strGetPureInt64($2, &res) != OG_SUCCESS) {
-                        parser_yyerror("get int64 failed");
+                        parser_abort_or_yyerror("get int64 failed");
                     }
                     $$ = + res;
                 }
@@ -11211,7 +11251,7 @@ BigintOnly:
                 {
                     int64 res = 0;
                     if (strGetPureInt64($2, &res) != OG_SUCCESS) {
-                        parser_yyerror("get int64 failed");
+                        parser_abort_or_yyerror("get int64 failed");
                     }
                     $$ = - res;
                 }
@@ -11226,7 +11266,7 @@ Uint64Only:
                 {
                     uint64 res = 0;
                     if (cm_str2uint64($1, &res) != OG_SUCCESS) {
-                        parser_yyerror("invalid uint64");
+                        parser_abort_or_yyerror("invalid uint64");
                     }
                     $$ = res;
                 }
@@ -11234,7 +11274,7 @@ Uint64Only:
                 {
                     uint64 res = 0;
                     if (cm_str2uint64($2, &res) != OG_SUCCESS) {
-                        parser_yyerror("invalid uint64");
+                        parser_abort_or_yyerror("invalid uint64");
                     }
                     $$ = res;
                 }
@@ -11262,9 +11302,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_INCREMENT_OPT;
+                    opt->loc = @1.loc;
                     opt->value = $3;
                     $$ = opt;
                 }
@@ -11273,9 +11314,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_MINVALUE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = $2;
                     $$ = opt;
                 }
@@ -11284,9 +11326,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_NOMINVALUE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11295,9 +11338,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_MAXVALUE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = $2;
                     $$ = opt;
                 }
@@ -11306,9 +11350,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_NOMAXVALUE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11317,9 +11362,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_START_OPT;
+                    opt->loc = @1.loc;
                     opt->value = $2;
                     $$ = opt;
                 }
@@ -11328,9 +11374,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_CACHE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = $2;
                     $$ = opt;
                 }
@@ -11339,9 +11386,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_NOCACHE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11350,9 +11398,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_CYCLE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11361,9 +11410,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_NOCYCLE_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11372,9 +11422,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_ORDER_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11383,9 +11434,10 @@ createseq_opt:
                     createseq_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createseq_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATESEQ_NOORDER_OPT;
+                    opt->loc = @1.loc;
                     opt->value = 0;
                     $$ = opt;
                 }
@@ -11396,7 +11448,7 @@ view_column_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create view column list failed.");
+                        parser_abort_or_yyerror("create view column list failed.");
                     }
                     BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
@@ -11419,7 +11471,7 @@ CreateViewStmt:
                     src_sql.len = og_yyget_extra(yyscanner)->core_yy_extra.scanbuflen;
 
                     if (og_parse_create_view(stmt, &def, $5, $6, $2, $3, $7, $9, &src_sql, @9.offset) != OG_SUCCESS) {
-                        parser_yyerror("parse create view failed");
+                        parser_abort_or_yyerror("parse create view failed");
                     }
                     $$ = def;
                 }
@@ -11450,7 +11502,7 @@ CreateSynonymStmt:
                     }
                     
                     if (og_parse_create_synonym(stmt, &def, $5, $7, flags) != OG_SUCCESS) {
-                        parser_yyerror("parse create synonym failed");
+                        parser_abort_or_yyerror("parse create synonym failed");
                     }
                     $$ = def;
                 }
@@ -11463,7 +11515,7 @@ CreateProfileStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_profile(stmt, &def, $4, $2, $6) != OG_SUCCESS) {
-                        parser_yyerror("parse create profile failed");
+                        parser_abort_or_yyerror("parse create profile failed");
                     }
                     $$ = def;
                 }
@@ -11476,7 +11528,7 @@ AlterProfileStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_alter_profile(stmt, &def, $3, $5) != OG_SUCCESS) {
-                        parser_yyerror("parse alter profile failed");
+                        parser_abort_or_yyerror("parse alter profile failed");
                     }
                     $$ = def;
                 }
@@ -11487,10 +11539,10 @@ profile_limit_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create profile limit list failed.");
+                        parser_abort_or_yyerror("create profile limit list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert profile limit item failed.");
+                        parser_abort_or_yyerror("insert profile limit item failed.");
                     }
                     $$ = list;
                 }
@@ -11498,7 +11550,7 @@ profile_limit_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert profile limit item failed.");
+                        parser_abort_or_yyerror("insert profile limit item failed.");
                     }
                     $$ = list;
                 }
@@ -11510,9 +11562,10 @@ profile_limit_item:
                     profile_limit_item_t *item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(profile_limit_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     item->param_type = $1;
+                    item->loc = @1.loc;
                     item->value = $2;
                     $$ = item;
                 }
@@ -11524,7 +11577,7 @@ profile_limit_value:
                     profile_limit_value_t *val = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(profile_limit_value_t), (void **)&val) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     val->type = VALUE_DEFAULT;
                     $$ = val;
@@ -11534,7 +11587,7 @@ profile_limit_value:
                     profile_limit_value_t *val = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(profile_limit_value_t), (void **)&val) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     expr_tree_t *expr = $1;
                     if (expr->root->type == EXPR_NODE_COLUMN &&
@@ -11568,7 +11621,7 @@ GrantStmt:
                     knl_grant_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_SYS_PRIV, $2, OBJ_TYPE_INVALID, NULL, $4, $5) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11577,7 +11630,7 @@ GrantStmt:
                     knl_grant_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, $4, $5, $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11588,7 +11641,7 @@ GrantStmt:
                     galist_t *list = NULL;
                     if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
                         og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $4, $5, $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11599,7 +11652,7 @@ GrantStmt:
                     galist_t *list = NULL;
                     if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
                         og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $5, $6, $8, $9) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11608,7 +11661,7 @@ GrantStmt:
                     knl_grant_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11619,7 +11672,7 @@ GrantStmt:
                     galist_t *list = NULL;
                     if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
                         og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11630,7 +11683,7 @@ GrantStmt:
                     galist_t *list = NULL;
                     if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
                         og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $5, $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11646,20 +11699,20 @@ GrantStmt:
                     cm_trim_text(&priv_name);
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create privilege list failed.");
+                        parser_abort_or_yyerror("create privilege list failed.");
                     }
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = $2;
                     priv_def->priv_type = PRIV_TYPE_OBJ_PRIV;
                     priv_def->start_loc = @2.loc;
 
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_DIRECTORY, $3, $5, $6) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11675,20 +11728,20 @@ GrantStmt:
                     cm_trim_text(&priv_name);
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create privilege list failed.");
+                        parser_abort_or_yyerror("create privilege list failed.");
                     }
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = $2;
                     priv_def->priv_type = PRIV_TYPE_USER_PRIV;
                     priv_def->start_loc = @2.loc;
 
                     if (og_parse_grant(stmt, &def, PRIV_TYPE_USER_PRIV, list, OBJ_TYPE_USER, $5, $7, false) != OG_SUCCESS) {
-                        parser_yyerror("parse grant failed");
+                        parser_abort_or_yyerror("parse grant failed");
                     }
                     $$ = def;
                 }
@@ -11723,13 +11776,13 @@ sys_priv_list:
                     }
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create privilege list failed.");
+                        parser_abort_or_yyerror("create privilege list failed.");
                     }
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = priv_id;
                     priv_def->priv_type = priv_type;
@@ -11764,14 +11817,14 @@ sys_priv_list:
                     }
 
                     if (sql_check_privs_duplicated(list, &priv_name, priv_type) != OG_SUCCESS) {
-                        parser_yyerror("duplicate privilege listed");
+                        parser_abort_or_yyerror("duplicate privilege listed");
                     }
 
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = priv_id;
                     priv_def->priv_type = priv_type;
@@ -11790,13 +11843,13 @@ obj_priv_list:
                     sql_bison_privilege_text(yyscanner, @1.offset, OG_TRUE, &priv_name);
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create privilege list failed.");
+                        parser_abort_or_yyerror("create privilege list failed.");
                     }
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = $1;
                     priv_def->priv_type = PRIV_TYPE_OBJ_PRIV;
@@ -11812,14 +11865,14 @@ obj_priv_list:
                     sql_bison_privilege_text(yyscanner, @3.offset, OG_TRUE, &priv_name);
 
                     if (sql_check_privs_duplicated(list, &priv_name, $3) != OG_SUCCESS) {
-                        parser_yyerror("duplicate privilege listed");
+                        parser_abort_or_yyerror("duplicate privilege listed");
                     }
 
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = $3;
                     priv_def->priv_type = PRIV_TYPE_OBJ_PRIV;
@@ -11972,7 +12025,7 @@ RevokeStmt:
                     knl_revoke_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_revoke(stmt, &def, PRIV_TYPE_SYS_PRIV, $2, OBJ_TYPE_INVALID, NULL, $4, false) != OG_SUCCESS) {
-                        parser_yyerror("parse revoke failed");
+                        parser_abort_or_yyerror("parse revoke failed");
                     }
                     $$ = def;
                 }
@@ -11981,7 +12034,7 @@ RevokeStmt:
                     knl_revoke_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, $4, $5, $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse revoke failed");
+                        parser_abort_or_yyerror("parse revoke failed");
                     }
                     $$ = def;
                 }
@@ -11990,7 +12043,7 @@ RevokeStmt:
                     knl_revoke_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
-                        parser_yyerror("parse revoke failed");
+                        parser_abort_or_yyerror("parse revoke failed");
                     }
                     $$ = def;
                 }
@@ -12006,20 +12059,20 @@ RevokeStmt:
                     cm_trim_text(&priv_name);
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create privilege list failed.");
+                        parser_abort_or_yyerror("create privilege list failed.");
                     }
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = $2;
                     priv_def->priv_type = PRIV_TYPE_OBJ_PRIV;
                     priv_def->start_loc = @2.loc;
 
                     if (og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_DIRECTORY, $3, $5, $6) != OG_SUCCESS) {
-                        parser_yyerror("parse revoke failed");
+                        parser_abort_or_yyerror("parse revoke failed");
                     }
                     $$ = def;
                 }
@@ -12035,20 +12088,20 @@ RevokeStmt:
                     cm_trim_text(&priv_name);
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create privilege list failed.");
+                        parser_abort_or_yyerror("create privilege list failed.");
                     }
                     if (cm_galist_new(list, sizeof(knl_priv_def_t), (pointer_t *)&priv_def) != OG_SUCCESS) {
-                        parser_yyerror("new priv_def failed.");
+                        parser_abort_or_yyerror("new priv_def failed.");
                     }
                     if (sql_copy_name(stmt->context, &priv_name, &priv_def->priv_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed.");
+                        parser_abort_or_yyerror("copy name failed.");
                     }
                     priv_def->priv_id = $2;
                     priv_def->priv_type = PRIV_TYPE_USER_PRIV;
                     priv_def->start_loc = @2.loc;
 
                     if (og_parse_revoke(stmt, &def, PRIV_TYPE_USER_PRIV, list, OBJ_TYPE_USER, $5, $7, $8) != OG_SUCCESS) {
-                        parser_yyerror("parse revoke failed");
+                        parser_abort_or_yyerror("parse revoke failed");
                     }
                     $$ = def;
                 }
@@ -12060,10 +12113,10 @@ revokee_list:
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create revokee list failed.");
+                        parser_abort_or_yyerror("create revokee list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert revokee list failed.");
+                        parser_abort_or_yyerror("insert revokee list failed.");
                     }
                     $$ = list;
                 }
@@ -12071,7 +12124,7 @@ revokee_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert revokee list failed.");
+                        parser_abort_or_yyerror("insert revokee list failed.");
                     }
                     $$ = list;
                 }
@@ -12092,7 +12145,7 @@ PurgeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     purge_type_t ptype = ($4 != NULL) ? PURGE_PART : PURGE_TABLE;
                     if (og_parse_purge(stmt, &def, ptype, $3, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12101,7 +12154,7 @@ PurgeStmt:
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_purge(stmt, &def, PURGE_TABLE_OBJECT, NULL, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12110,7 +12163,7 @@ PurgeStmt:
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_purge(stmt, &def, PURGE_INDEX, $3, NULL) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12119,7 +12172,7 @@ PurgeStmt:
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_purge(stmt, &def, PURGE_INDEX_OBJECT, NULL, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12128,7 +12181,7 @@ PurgeStmt:
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_purge(stmt, &def, PURGE_PART_OBJECT, NULL, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12137,7 +12190,7 @@ PurgeStmt:
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_purge(stmt, &def, PURGE_TABLESPACE, NULL, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12146,7 +12199,7 @@ PurgeStmt:
                     knl_purge_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_purge(stmt, &def, PURGE_RECYCLEBIN, NULL, NULL) != OG_SUCCESS) {
-                        parser_yyerror("parse purge failed");
+                        parser_abort_or_yyerror("parse purge failed");
                     }
                     $$ = def;
                 }
@@ -12163,10 +12216,10 @@ grantee_list:
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create grantee list failed.");
+                        parser_abort_or_yyerror("create grantee list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert grantee list failed.");
+                        parser_abort_or_yyerror("insert grantee list failed.");
                     }
                     $$ = list;
                 }
@@ -12174,7 +12227,7 @@ grantee_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert grantee list failed.");
+                        parser_abort_or_yyerror("insert grantee list failed.");
                     }
                     $$ = list;
                 }
@@ -12207,7 +12260,7 @@ CreateDirectoryStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     
                     if (og_parse_create_directory(stmt, &def, $4, $6, $2) != OG_SUCCESS) {
-                        parser_yyerror("parse create directory failed");
+                        parser_abort_or_yyerror("parse create directory failed");
                     }
                     $$ = def;
                 }
@@ -12220,7 +12273,10 @@ CreateLibraryStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_create_library(stmt, &def, $4, $6, $2) != OG_SUCCESS) {
-                        parser_yyerror("parse create library failed");
+                        if (cm_get_error_code() == ERR_FILE_NOT_EXIST) {
+                            cm_try_set_error_loc(@6.loc);
+                        }
+                        parser_abort_or_yyerror("parse create library failed");
                     }
                     $$ = def;
                 }
@@ -12238,7 +12294,7 @@ CreateCtrlfileStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_create_ctrlfile(stmt, &def, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse create ctrlfile failed");
+                        parser_abort_or_yyerror("parse create ctrlfile failed");
                     }
                     $$ = def;
                 }
@@ -12254,10 +12310,10 @@ ctrlfile_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create ctrlfile opt list failed.");
+                        parser_abort_or_yyerror("create ctrlfile opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert ctrlfile opt failed.");
+                        parser_abort_or_yyerror("insert ctrlfile opt failed.");
                     }
                     $$ = list;
                 }
@@ -12265,7 +12321,7 @@ ctrlfile_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert ctrlfile opt failed.");
+                        parser_abort_or_yyerror("insert ctrlfile opt failed.");
                     }
                     $$ = list;
                 }
@@ -12277,7 +12333,7 @@ ctrlfile_opt:
                     ctrlfile_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(ctrlfile_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CTRLFILE_LOGFILE_OPT;
                     opt->file_list = $2;
@@ -12288,7 +12344,7 @@ ctrlfile_opt:
                     ctrlfile_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(ctrlfile_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CTRLFILE_DATAFILE_OPT;
                     opt->file_list = $2;
@@ -12299,7 +12355,7 @@ ctrlfile_opt:
                     ctrlfile_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(ctrlfile_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CTRLFILE_CHARSET_OPT;
                     opt->charset = $2;
@@ -12310,7 +12366,7 @@ ctrlfile_opt:
                     ctrlfile_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(ctrlfile_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CTRLFILE_ARCHIVELOG_OPT;
                     $$ = opt;
@@ -12320,7 +12376,7 @@ ctrlfile_opt:
                     ctrlfile_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(ctrlfile_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CTRLFILE_NOARCHIVELOG_OPT;
                     $$ = opt;
@@ -12339,10 +12395,10 @@ ctrlfile_files:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create ctrlfile list failed.");
+                        parser_abort_or_yyerror("create ctrlfile list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert ctrlfile file failed.");
+                        parser_abort_or_yyerror("insert ctrlfile file failed.");
                     }
                     $$ = list;
                 }
@@ -12350,7 +12406,7 @@ ctrlfile_files:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert ctrlfile file failed.");
+                        parser_abort_or_yyerror("insert ctrlfile file failed.");
                     }
                     $$ = list;
                 }
@@ -12362,11 +12418,11 @@ ctrlfile_file:
                     knl_device_def_t *file = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_device_def_t), (void **)&file) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     const text_t name = { $1, strlen($1) };
                     if (sql_copy_file_name(stmt->context, (text_t *)&name, &file->name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed.");
+                        parser_abort_or_yyerror("copy file name failed.");
                     }
                     $$ = file;
                 }
@@ -12392,9 +12448,11 @@ CreateTableStmt:
                     if (is_global && !is_temp) {
                         parser_yyerror("TEMPORARY expected");
                     }
-                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, $5, $7, $8, NULL) !=
+                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, $5, $7, $8, NULL,
+                        bison_source_map_location(&og_yyget_extra(yyscanner)->core_yy_extra.source_map,
+                            (uint32)og_yyget_extra(yyscanner)->core_yy_extra.scanbuflen)) !=
                         OG_SUCCESS) {
-                        parser_yyerror("parse create table failed");
+                        parser_abort_or_yyerror("parse create table failed");
                     }
                     $$ = def;
                 }
@@ -12408,9 +12466,11 @@ CreateTableStmt:
                     if (is_global && !is_temp) {
                         parser_yyerror("TEMPORARY expected");
                     }
-                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, NULL, $4, $6, NULL) !=
+                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, NULL, $4, $6, NULL,
+                        bison_source_map_location(&og_yyget_extra(yyscanner)->core_yy_extra.source_map,
+                            (uint32)og_yyget_extra(yyscanner)->core_yy_extra.scanbuflen)) !=
                         OG_SUCCESS) {
-                        parser_yyerror("parse create table failed");
+                        parser_abort_or_yyerror("parse create table failed");
                     }
                     $$ = def;
                 }
@@ -12424,9 +12484,11 @@ CreateTableStmt:
                     if (is_global && !is_temp) {
                         parser_yyerror("TEMPORARY expected");
                     }
-                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, $5, NULL, NULL, $7) !=
+                    if (og_parse_create_table(stmt, &def, is_temp, is_global, $2, $3, $5, NULL, NULL, $7,
+                        bison_source_map_location(&og_yyget_extra(yyscanner)->core_yy_extra.source_map,
+                            (uint32)og_yyget_extra(yyscanner)->core_yy_extra.scanbuflen)) !=
                         OG_SUCCESS) {
-                        parser_yyerror("parse create table failed");
+                        parser_abort_or_yyerror("parse create table failed");
                     }
                     $$ = def;
                 }
@@ -12438,7 +12500,7 @@ external_table:
                     knl_ext_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_organization(stmt, &def, $7, $9, NULL, NULL) != OG_SUCCESS) {
-                        parser_yyerror("parse organizatioon failed");
+                        parser_abort_or_yyerror("parse organizatioon failed");
                     }
                     $$ = def;
                 }
@@ -12449,7 +12511,7 @@ external_table:
                     knl_ext_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_organization(stmt, &def, $7, $21, $14, $18) != OG_SUCCESS) {
-                        parser_yyerror("parse organizatioon failed");
+                        parser_abort_or_yyerror("parse organizatioon failed");
                     }
                     $$ = def;
                 }
@@ -12484,10 +12546,10 @@ OptTableElementList:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create table column list failed.");
+                        parser_abort_or_yyerror("create table column list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert table column item failed.");
+                        parser_abort_or_yyerror("insert table column item failed.");
                     }
                     $$ = list;
                 }
@@ -12495,7 +12557,7 @@ OptTableElementList:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert table column item failed.");
+                        parser_abort_or_yyerror("insert table column item failed.");
                     }
                     $$ = list;
                 }
@@ -12507,7 +12569,7 @@ TableElement:
                     parse_table_element_t *element = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parse_table_element_t), (void **)&element) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     element->is_constraint = OG_FALSE;
                     element->col = $1;
@@ -12518,7 +12580,7 @@ TableElement:
                     parse_table_element_t *element = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parse_table_element_t), (void **)&element) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     element->is_constraint = OG_TRUE;
                     element->cons = $1;
@@ -12532,9 +12594,11 @@ columnDef:
                     parse_column_t *col = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(parse_column_t), (void **)&col) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     col->col_name = $1;
+                    col->loc = @1.loc;
+                    col->has_datatype = OG_FALSE;
                     col->type = $2;
                     col->column_attrs = $3;
                     $$ = col;
@@ -12556,10 +12620,10 @@ column_attrs:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column attr list failed.");
+                        parser_abort_or_yyerror("create column attr list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert column attr failed.");
+                        parser_abort_or_yyerror("insert column attr failed.");
                     }
                     $$ = list;
                 }
@@ -12567,7 +12631,7 @@ column_attrs:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert column attr failed.");
+                        parser_abort_or_yyerror("insert column attr failed.");
                     }
                     $$ = list;
                 }
@@ -12589,7 +12653,7 @@ column_attr:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_DEFAULT;
                     attr->default_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @2.offset;
@@ -12603,7 +12667,7 @@ column_attr:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_COMMENT;
                     attr->comment = $2;
@@ -12614,7 +12678,7 @@ column_attr:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_AUTO_INCREMENT;
                     $$ = attr;
@@ -12624,7 +12688,7 @@ column_attr:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_COLLATE;
                     attr->collate = $3;
@@ -12648,7 +12712,7 @@ column_attr_cons:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_PRIMARY;
                     $$ = attr;
@@ -12658,7 +12722,7 @@ column_attr_cons:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_UNIQUE;
                     $$ = attr;
@@ -12668,7 +12732,7 @@ column_attr_cons:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_REFERENCES;
                     attr->ref = $2;
@@ -12682,14 +12746,14 @@ column_attr_cons:
                     text_t check_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_CHECK;
                     check_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @3.offset;
                     check_text.len = @4.offset - @3.offset;
                     cm_trim_text(&check_text);
                     if (sql_copy_text(stmt->context, &check_text, &attr->check_text)) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     attr->cond = $3;
                     $$ = attr;
@@ -12699,7 +12763,7 @@ column_attr_cons:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_NOT_NULL;
                     $$ = attr;
@@ -12709,7 +12773,7 @@ column_attr_cons:
                     column_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(column_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = COL_ATTR_NULL;
                     $$ = attr;
@@ -12743,14 +12807,14 @@ opt_constraint_states:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_USING_INDEX;
                     state->index_opts = $4;
 
                     galist_t *list = $1;
                     if (cm_galist_insert(list, state) != OG_SUCCESS) {
-                        parser_yyerror("insert constraint states list failed.");
+                        parser_abort_or_yyerror("insert constraint states list failed.");
                     }
                     $$ = list;
                 }
@@ -12759,17 +12823,17 @@ opt_constraint_states:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_USING_INDEX;
                     state->index_opts = $3;
 
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create constraint states list failed.");
+                        parser_abort_or_yyerror("create constraint states list failed.");
                     }
                     if (cm_galist_insert(list, state) != OG_SUCCESS) {
-                        parser_yyerror("insert constraint states list failed.");
+                        parser_abort_or_yyerror("insert constraint states list failed.");
                     }
                     $$ = list;
                 }
@@ -12780,10 +12844,10 @@ constraint_states:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create constraint states list failed.");
+                        parser_abort_or_yyerror("create constraint states list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert constraint states list failed.");
+                        parser_abort_or_yyerror("insert constraint states list failed.");
                     }
                     $$ = list;
                 }
@@ -12791,7 +12855,7 @@ constraint_states:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert constraint states list failed.");
+                        parser_abort_or_yyerror("insert constraint states list failed.");
                     }
                     $$ = list;
                 }
@@ -12803,7 +12867,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_ENABLE;
                     $$ = state;
@@ -12813,7 +12877,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_DISABLE;
                     $$ = state;
@@ -12823,7 +12887,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_NOT_DEFEREABLE;
                     $$ = state;
@@ -12833,7 +12897,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_DEFEREABLE;
                     $$ = state;
@@ -12843,7 +12907,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_INITIALLY_IMMEDIATE;
                     $$ = state;
@@ -12853,7 +12917,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_INITIALLY_DEFERRED;
                     $$ = state;
@@ -12863,7 +12927,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_RELY;
                     $$ = state;
@@ -12873,7 +12937,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_NO_RELY;
                     $$ = state;
@@ -12883,7 +12947,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_VALIDATE;
                     $$ = state;
@@ -12893,7 +12957,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_NO_VALIDATE;
                     $$ = state;
@@ -12903,7 +12967,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_PARALLEL;
                     if ($2 <= 0 || $2 > OG_MAX_INDEX_PARALLELISM) {
@@ -12917,7 +12981,7 @@ constraint_state:
                     constraint_state *state = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(constraint_state),
                         (void **)&state) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     state->type = CONS_STATE_REVERSE;
                     $$ = state;
@@ -12930,7 +12994,7 @@ ConstraintElem:
                     parse_constraint_t *cons = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(parse_constraint_t),
                         (void **)&cons) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_PRIMARY;
                     cons->name = NULL;
@@ -12943,7 +13007,7 @@ ConstraintElem:
                     parse_constraint_t *cons = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(parse_constraint_t),
                         (void **)&cons) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_UNIQUE;
                     cons->name = NULL;
@@ -12956,7 +13020,7 @@ ConstraintElem:
                     parse_constraint_t *cons = NULL;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(parse_constraint_t),
                         (void **)&cons) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_REFERENCE;
                     cons->name = NULL;
@@ -12972,7 +13036,7 @@ ConstraintElem:
                     text_t check_text;
                     if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, sizeof(parse_constraint_t),
                         (void **)&cons) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cons->type = CONS_TYPE_CHECK;
                     cons->name = NULL;
@@ -12980,7 +13044,7 @@ ConstraintElem:
                     check_text.len = @4.offset - @3.offset;
                     cm_trim_text(&check_text);
                     if (sql_copy_text(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, &check_text, &cons->check_text)) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     cons->cond = $3;
                     $$ = cons;
@@ -12998,7 +13062,7 @@ table_column_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column list failed");
+                        parser_abort_or_yyerror("create column list failed");
                     }
                     BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
@@ -13018,7 +13082,7 @@ table_column:
                     knl_index_col_def_t *col_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_index_col_def_t), (void **)&col_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc memory failed");
+                        parser_abort_or_yyerror("alloc memory failed");
                     }
                     col_def->is_func = OG_FALSE;
                     col_def->func_expr = NULL;
@@ -13034,10 +13098,10 @@ column_name_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column name list failed.");
+                        parser_abort_or_yyerror("create column name list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert column name failed.");
+                        parser_abort_or_yyerror("insert column name failed.");
                     }
                     $$ = list;
                 }
@@ -13045,7 +13109,7 @@ column_name_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert column name failed.");
+                        parser_abort_or_yyerror("insert column name failed.");
                     }
                     $$ = list;
                 }
@@ -13061,10 +13125,10 @@ table_attrs:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create table attr list failed.");
+                        parser_abort_or_yyerror("create table attr list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert table attr failed.");
+                        parser_abort_or_yyerror("insert table attr failed.");
                     }
                     $$ = list;
                 }
@@ -13072,7 +13136,7 @@ table_attrs:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert table attr failed.");
+                        parser_abort_or_yyerror("insert table attr failed.");
                     }
                     $$ = list;
                 }
@@ -13084,7 +13148,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_TABLESPACE;
                     attr->str_value = $2;
@@ -13095,7 +13159,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_INITRANS;
                     if ($2 <= 0 || $2 > OG_MAX_TRANS) {
@@ -13109,7 +13173,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_MAXTRANS;
                     if ($2 <= 0 || $2 > OG_MAX_TRANS) {
@@ -13123,7 +13187,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_PCTFREE;
                     if ($2 < 0 || $2 > 80) {
@@ -13137,7 +13201,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_CRMODE;
                     attr->int_value = $2;
@@ -13148,7 +13212,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_FORMAT;
                     attr->bool_value = $2;
@@ -13159,7 +13223,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_SYSTEM;
                     if ($2 <= 0 || $2 >= OG_EX_SYSID_END || ($2 >= OG_RESERVED_SYSID && $2 < OG_EX_SYSID_START)) {
@@ -13173,7 +13237,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_STORAGE;
                     attr->storage_def = $3;
@@ -13184,7 +13248,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_LOB;
                     attr->lob_columns = $3;
@@ -13197,7 +13261,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_ON_COMMIT;
                     attr->int_value = $3;
@@ -13208,7 +13272,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_APPENDONLY;
                     attr->bool_value = $2;
@@ -13219,7 +13283,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_PARTITION;
                     attr->partition = (parser_table_part*)$1;
@@ -13230,7 +13294,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_AUTO_INCREMENT;
                     attr->int64_value = $3;
@@ -13241,7 +13305,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_CHARSET;
                     attr->str_value = $4;
@@ -13252,7 +13316,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_COLLATE;
                     attr->str_value = $4;
@@ -13263,7 +13327,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_CACHE;
                     $$ = attr;
@@ -13273,7 +13337,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_NO_CACHE;
                     $$ = attr;
@@ -13283,7 +13347,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_LOGGING;
                     $$ = attr;
@@ -13293,7 +13357,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_NO_LOGGING;
                     $$ = attr;
@@ -13303,7 +13367,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_COMPRESS;
                     attr->int_value = $2;
@@ -13314,7 +13378,7 @@ table_attr:
                     table_attr_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(table_attr_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = TABLE_ATTR_NO_COMPRESS;
                     $$ = attr;
@@ -13334,7 +13398,7 @@ range_partitioning_clause:
                     parser_table_part *part = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parser_table_part), (void **)&part) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     part->part_type = PART_TYPE_RANGE;
                     part->column_list = $5;
@@ -13356,10 +13420,10 @@ range_partition_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13367,7 +13431,7 @@ range_partition_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13381,13 +13445,13 @@ range_partition_item:
                     text_t expr_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     expr_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
                     expr_text.len = @8.offset - @7.offset;
                     cm_trim_text(&expr_text);
                     if (sql_copy_text(stmt->context, &expr_text, &item->hiboundval) != OG_SUCCESS) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     item->name = $2;
                     item->boundaries = $7;
@@ -13402,10 +13466,10 @@ range_partition_boundary_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13413,7 +13477,7 @@ range_partition_boundary_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13425,7 +13489,7 @@ opt_subpartition_clause:
                     subpart_clause_t *subpart_clause = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(subpart_clause_t), (void **)&subpart_clause) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     subpart_clause->is_store_in = OG_TRUE;
                     subpart_clause->subpart_store_in = $1;
@@ -13436,7 +13500,7 @@ opt_subpartition_clause:
                     subpart_clause_t *subpart_clause = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(subpart_clause_t), (void **)&subpart_clause) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     subpart_clause->is_store_in = OG_FALSE;
                     subpart_clause->subparts = $2;
@@ -13447,7 +13511,7 @@ opt_subpartition_clause:
                     subpart_clause_t *subpart_clause = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(subpart_clause_t), (void **)&subpart_clause) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     subpart_clause->is_store_in = OG_FALSE;
                     subpart_clause->subparts = $2;
@@ -13458,7 +13522,7 @@ opt_subpartition_clause:
                     subpart_clause_t *subpart_clause = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(subpart_clause_t), (void **)&subpart_clause) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     subpart_clause->is_store_in = OG_FALSE;
                     subpart_clause->subparts = $2;
@@ -13475,10 +13539,10 @@ range_subpartition_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13486,7 +13550,7 @@ range_subpartition_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13499,13 +13563,13 @@ range_subpartition_item:
                     text_t expr_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     expr_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @7.offset;
                     expr_text.len = @8.offset - @7.offset;
                     cm_trim_text(&expr_text);
                     if (sql_copy_text(stmt->context, &expr_text, &item->hiboundval) != OG_SUCCESS) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     item->name = $2;
                     item->boundaries = $7;
@@ -13519,10 +13583,10 @@ list_subpartition_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13530,7 +13594,7 @@ list_subpartition_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13543,13 +13607,13 @@ list_subpartition_item:
                     text_t expr_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     expr_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @5.offset;
                     expr_text.len = @6.offset - @5.offset;
                     cm_trim_text(&expr_text);
                     if (sql_copy_text(stmt->context, &expr_text, &item->hiboundval) != OG_SUCCESS) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     item->name = $2;
                     item->boundaries = $5;
@@ -13563,10 +13627,10 @@ hash_subpartition_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13574,7 +13638,7 @@ hash_subpartition_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13586,7 +13650,7 @@ hash_subpartition_item:
                     part_item_t *item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     item->name = $2;
                     item->tablespace = $3;
@@ -13601,7 +13665,7 @@ list_partitioning_clause:
                     parser_table_part *part = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parser_table_part), (void **)&part) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     part->part_type = PART_TYPE_LIST;
                     part->column_list = $5;
@@ -13622,10 +13686,10 @@ list_partition_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13633,7 +13697,7 @@ list_partition_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13647,13 +13711,13 @@ list_partition_item:
                     text_t expr_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     expr_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @5.offset;
                     expr_text.len = @6.offset - @5.offset;
                     cm_trim_text(&expr_text);
                     if (sql_copy_text(stmt->context, &expr_text, &item->hiboundval) != OG_SUCCESS) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     item->name = $2;
                     item->boundaries = $5;
@@ -13675,7 +13739,7 @@ hash_partitioning_clause:
                     parser_table_part *part = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parser_table_part), (void **)&part) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     part->part_type = PART_TYPE_HASH;
                     part->column_list = $5;
@@ -13695,7 +13759,7 @@ hash_partitioning_clause:
                     parser_table_part *part = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parser_table_part), (void **)&part) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     part->part_type = PART_TYPE_HASH;
                     part->column_list = $5;
@@ -13716,10 +13780,10 @@ hash_partition_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13727,7 +13791,7 @@ hash_partition_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed.");
+                        parser_abort_or_yyerror("insert list failed.");
                     }
                     $$ = list;
                 }
@@ -13739,7 +13803,7 @@ hash_partition_item:
                     part_item_t *item = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_item_t), (void **)&item) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     item->name = $2;
                     item->opts = $3;
@@ -13755,13 +13819,13 @@ opt_interval_partition_clause:
                     text_t expr_text;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parser_interval_part), (void **)&interval) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     expr_text.str = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @3.offset;
                     expr_text.len = @4.offset - @3.offset;
                     cm_trim_text(&expr_text);
                     if (sql_copy_text(stmt->context, &expr_text, &interval->interval_text) != OG_SUCCESS) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     interval->expr = $3;
                     interval->tablespaces = $5;
@@ -13780,10 +13844,10 @@ tablespaceList:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create tablespace list failed.");
+                        parser_abort_or_yyerror("create tablespace list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert tablespace failed.");
+                        parser_abort_or_yyerror("insert tablespace failed.");
                     }
                     $$ = list;
                 }
@@ -13791,7 +13855,7 @@ tablespaceList:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert tablespace failed.");
+                        parser_abort_or_yyerror("insert tablespace failed.");
                     }
                     $$ = list;
                 }
@@ -13807,7 +13871,7 @@ subpartitioning_clause:
                     parser_table_subpart *subpart = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(parser_table_subpart), (void **)&subpart) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     subpart->part_type = $3;
                     subpart->column_list = $5;
@@ -13828,7 +13892,7 @@ partitions_num:
                     part_store_in_clause *store_in = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_store_in_clause), (void **)&store_in) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     store_in->num = $2;
                     store_in->tablespaces = $3;
@@ -13847,7 +13911,7 @@ subpartitions_num:
                     part_store_in_clause *store_in = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(part_store_in_clause), (void **)&store_in) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     store_in->num = $2;
                     store_in->tablespaces = $3;
@@ -13875,10 +13939,10 @@ lob_store_params:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create lob store param list failed.");
+                        parser_abort_or_yyerror("create lob store param list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert lob store param failed.");
+                        parser_abort_or_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13886,7 +13950,7 @@ lob_store_params:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert lob store param failed.");
+                        parser_abort_or_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13894,7 +13958,7 @@ lob_store_params:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert lob store param failed.");
+                        parser_abort_or_yyerror("insert lob store param failed.");
                     }
                     $$ = list;
                 }
@@ -13906,7 +13970,7 @@ lob_store_param:
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_TABLESPACE;
                     attr->str_value = $2;
@@ -13917,7 +13981,7 @@ lob_store_param:
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_STORAGE_IN_ROW;
                     attr->bool_value = OG_TRUE;
@@ -13928,7 +13992,7 @@ lob_store_param:
                     lob_store_param_t *attr = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(lob_store_param_t), (void **)&attr) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     attr->type = LOB_STORE_PARAM_STORAGE_IN_ROW;
                     attr->bool_value = OG_FALSE;
@@ -13971,7 +14035,7 @@ index_column_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create column list failed");
+                        parser_abort_or_yyerror("create column list failed");
                     }
                     BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
@@ -13991,7 +14055,7 @@ index_column:
                     knl_index_col_def_t *col_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_index_col_def_t), (void **)&col_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc memory failed");
+                        parser_abort_or_yyerror("alloc memory failed");
                     }
                     col_def->is_func = OG_FALSE;
                     col_def->func_expr = NULL;
@@ -14009,7 +14073,7 @@ index_column:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     BISON_ABORT_IFERR(bison_init_rank_sort_items(stmt, $1->root));
                     if (sql_alloc_mem(stmt->context, sizeof(knl_index_col_def_t), (void **)&col_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc memory failed");
+                        parser_abort_or_yyerror("alloc memory failed");
                     }
                     col_def->is_func = OG_TRUE;
                     col_def->func_expr = $1;
@@ -14019,7 +14083,7 @@ index_column:
                     expr_text.len = @2.offset == @1.offset ? yylloc.offset - @1.offset : @2.offset - @1.offset;
                     cm_trim_text(&expr_text);
                     if (sql_copy_text(stmt->context, &expr_text, &col_def->func_text) != OG_SUCCESS) {
-                        parser_yyerror("copy text failed");
+                        parser_abort_or_yyerror("copy text failed");
                     }
                     col_def->mode = $2;
                     $$ = col_def;
@@ -14038,7 +14102,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_TABLESPACE;
                     opt->name = $2;
@@ -14049,7 +14113,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_TRANS) {
                         parser_yyerror("initrans must between 1 and 255 ");
@@ -14063,7 +14127,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_LOCAL;
                     opt->list = $2;
@@ -14074,7 +14138,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($2 > OG_PCT_FREE_MAX) {
                         parser_yyerror("pctfree must between 0 and 80 ");
@@ -14088,7 +14152,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_CRMODE;
                     opt->cr_mode = (uint8)$2;
@@ -14099,7 +14163,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_ONLINE;
                     $$ = opt;
@@ -14109,7 +14173,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_INDEX_PARALLELISM) {
                         parser_yyerror("parallelism must between 1 and 48 ");
@@ -14123,7 +14187,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_REVERSE;
                     $$ = opt;
@@ -14133,7 +14197,7 @@ createidx_opt:
                     createidx_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createidx_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATEIDX_OPT_NOLOGGING;
                     $$ = opt;
@@ -14155,10 +14219,10 @@ partition_index_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create part_parse_info list failed.");
+                        parser_abort_or_yyerror("create part_parse_info list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert part_parse_info list failed.");
+                        parser_abort_or_yyerror("insert part_parse_info list failed.");
                     }
                     $$ = list;
                 }
@@ -14166,7 +14230,7 @@ partition_index_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert part_parse_info list failed.");
+                        parser_abort_or_yyerror("insert part_parse_info list failed.");
                     }
                     $$ = list;
                 }
@@ -14178,7 +14242,7 @@ partition_index_item:
                     index_partition_parse_info *part_parse_info = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_parse_info), (void **)&part_parse_info) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     part_parse_info->name = $2;
                     part_parse_info->opts = $3;
@@ -14197,10 +14261,10 @@ part_options:
                 {
                     galist_t* list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create part option list failed.");
+                        parser_abort_or_yyerror("create part option list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert part option list failed.");
+                        parser_abort_or_yyerror("insert part option list failed.");
                     }
                     $$ = list;
                 }
@@ -14208,7 +14272,7 @@ part_options:
                 {
                     galist_t* list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert part option list failed.");
+                        parser_abort_or_yyerror("insert part option list failed.");
                     }
                     $$ = list;
                 }
@@ -14220,9 +14284,10 @@ part_option:
                     index_partition_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = INDEX_PARTITION_OPT_TABLESPACE;
+                    opt->loc = @1.loc;
                     opt->name = $2;
                     $$ = opt;
                 }
@@ -14231,12 +14296,13 @@ part_option:
                     index_partition_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($2 <= 0 || $2 > OG_MAX_TRANS) {
                         parser_yyerror("initrans must between 1 and 255 ");
                     }
                     opt->type = INDEX_PARTITION_OPT_INITRANS;
+                    opt->loc = @1.loc;
                     opt->size = $2;
                     $$ = opt;
                 }
@@ -14245,12 +14311,13 @@ part_option:
                     index_partition_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if ($2 > OG_PCT_FREE_MAX) {
                         parser_yyerror("pctfree must between 0 and 80 ");
                     }
                     opt->type = INDEX_PARTITION_OPT_PCTFREE;
+                    opt->loc = @1.loc;
                     opt->size = $2;
                     $$ = opt;
                 }
@@ -14259,9 +14326,10 @@ part_option:
                     index_partition_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = INDEX_PARTITION_OPT_STORAGE;
+                    opt->loc = @1.loc;
                     opt->storage_def = $3;
                     $$ = opt;
                 }
@@ -14270,9 +14338,10 @@ part_option:
                     index_partition_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = INDEX_PARTITION_OPT_COMPRESS;
+                    opt->loc = @1.loc;
                     opt->compress_type = $2;
                     $$ = opt;
                 }
@@ -14281,9 +14350,10 @@ part_option:
                     index_partition_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(index_partition_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = INDEX_PARTITION_OPT_FORMAT;
+                    opt->loc = @1.loc;
                     opt->csf = $2;
                     $$ = opt;
                 }
@@ -14295,7 +14365,7 @@ storage_opts:
                     knl_storage_def_t *storage_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(knl_storage_def_t), (void **)&storage_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     switch ($1->type) {
                         case STORAGE_OPT_INITIAL:
@@ -14347,7 +14417,7 @@ storage_opt:
                     storage_opt_t *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(storage_opt_t), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = STORAGE_OPT_INITIAL;
                     opt->size = $2;
@@ -14361,7 +14431,7 @@ storage_opt:
                     storage_opt_t *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(storage_opt_t), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = STORAGE_OPT_NEXT;
                     opt->size = $2;
@@ -14372,7 +14442,7 @@ storage_opt:
                     storage_opt_t *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(storage_opt_t), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = STORAGE_OPT_MAXSIZE;
                     opt->size = OG_INVALID_INT64;
@@ -14383,7 +14453,7 @@ storage_opt:
                     storage_opt_t *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(storage_opt_t), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = STORAGE_OPT_MAXSIZE;
                     opt->size = $2;
@@ -14415,10 +14485,10 @@ subpartition_index_list:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create subpartition list failed.");
+                        parser_abort_or_yyerror("create subpartition list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert subpartition list failed.");
+                        parser_abort_or_yyerror("insert subpartition list failed.");
                     }
                     $$ = list;
                 }
@@ -14426,7 +14496,7 @@ subpartition_index_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert subpartition list failed.");
+                        parser_abort_or_yyerror("insert subpartition list failed.");
                     }
                     $$ = list;
                 }
@@ -14438,7 +14508,7 @@ subpartition_index_item:
                     knl_part_def_t *subpart_def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_part_def_t), (void **)&subpart_def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     subpart_def->name.str = $2;
                     subpart_def->name.len = strlen($2);
@@ -14465,10 +14535,10 @@ createidx_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create opt list failed.");
+                        parser_abort_or_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -14476,7 +14546,7 @@ createidx_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -14488,9 +14558,10 @@ createts_opt:
                     createts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATETS_ALL_OPT;
+                    opt->loc = @1.loc;
                     $$ = opt;
                 }
             | NOLOGGING
@@ -14498,9 +14569,10 @@ createts_opt:
                     createts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATETS_NOLOGGING_OPT;
+                    opt->loc = @1.loc;
                     $$ = opt;
                 }
             | ENCRYPTION
@@ -14512,9 +14584,10 @@ createts_opt:
                     createts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATETS_AUTOOFFLINE_OPT;
+                    opt->loc = @1.loc;
                     opt->val = $2;
                     $$ = opt;
                 }
@@ -14523,9 +14596,10 @@ createts_opt:
                     createts_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(createts_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = CREATETS_EXTENT_OPT;
+                    opt->loc = @1.loc;
                     $$ = opt;
                 }
         ;
@@ -14535,10 +14609,10 @@ createts_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create opt list failed.");
+                        parser_abort_or_yyerror("create opt list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -14546,7 +14620,7 @@ createts_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert opt failed.");
+                        parser_abort_or_yyerror("insert opt failed.");
                     }
                     $$ = list;
                 }
@@ -14596,10 +14670,10 @@ user_option_list:
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create user option list failed.");
+                        parser_abort_or_yyerror("create user option list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert user option failed.");
+                        parser_abort_or_yyerror("insert user option failed.");
                     }
                     $$ = list;
                 }
@@ -14607,7 +14681,7 @@ user_option_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert user option failed.");
+                        parser_abort_or_yyerror("insert user option failed.");
                     }
                     $$ = list;
                 }
@@ -14619,10 +14693,10 @@ alter_user_options:
                     galist_t *list = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create alter user option list failed.");
+                        parser_abort_or_yyerror("create alter user option list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert alter user option failed.");
+                        parser_abort_or_yyerror("insert alter user option failed.");
                     }
                     $$ = list;
                 }
@@ -14630,7 +14704,7 @@ alter_user_options:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert alter user option failed.");
+                        parser_abort_or_yyerror("insert alter user option failed.");
                     }
                     $$ = list;
                 }
@@ -14643,10 +14717,10 @@ tablespace_name_list:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create tablespace name list failed.");
+                        parser_abort_or_yyerror("create tablespace name list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed");
+                        parser_abort_or_yyerror("insert list failed");
                     }
                     $$ = list;
                 }
@@ -14654,7 +14728,7 @@ tablespace_name_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed");
+                        parser_abort_or_yyerror("insert list failed");
                     }
 
                     $$ = list;
@@ -14677,7 +14751,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_DEFAULT_TABLESPACE;
                     option->value = $3;
@@ -14688,7 +14762,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_TEMPORARY_TABLESPACE;
                     option->value = $3;
@@ -14699,7 +14773,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_PASSWORD_EXPIRE;
                     $$ = option;
@@ -14709,7 +14783,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_ACCOUNT_LOCK;
                     $$ = option;
@@ -14719,7 +14793,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_ACCOUNT_UNLOCK;
                     $$ = option;
@@ -14729,7 +14803,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     if (strcmp($2, "DEFAULT") == 0) {
                         option->type = USER_OPTION_PROFILE_DEFAULT;
@@ -14744,7 +14818,7 @@ user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc user option failed");
+                        parser_abort_or_yyerror("alloc user option failed");
                     }
                     option->type = USER_OPTION_PERMANENT;
                     $$ = option;
@@ -14757,7 +14831,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     option->type = USER_OPTION_IDENTIFIED;
                     option->value = $3;
@@ -14770,7 +14844,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     option->type = USER_OPTION_DEFAULT_TABLESPACE;
                     option->value = $3;
@@ -14781,7 +14855,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     option->type = USER_OPTION_TEMPORARY_TABLESPACE;
                     option->value = $3;
@@ -14792,7 +14866,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     option->type = USER_OPTION_PASSWORD_EXPIRE;
                     $$ = option;
@@ -14802,7 +14876,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     option->type = USER_OPTION_ACCOUNT_LOCK;
                     $$ = option;
@@ -14812,7 +14886,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     option->type = USER_OPTION_ACCOUNT_UNLOCK;
                     $$ = option;
@@ -14822,7 +14896,7 @@ alter_user_option:
                     user_option_t *option = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(user_option_t), (void **)&option) != OG_SUCCESS) {
-                        parser_yyerror("alloc alter user option failed");
+                        parser_abort_or_yyerror("alloc alter user option failed");
                     }
                     if (strcmp($2, "DEFAULT") == 0) {
                         option->type = USER_OPTION_PROFILE_DEFAULT;
@@ -14874,14 +14948,14 @@ attrs:      '.' ColId
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (sql_create_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_new(list, sizeof(type_name_part_t), (pointer_t *)&part) != OG_SUCCESS) {
-                        parser_yyerror("init element failed.");
+                        parser_abort_or_yyerror("init element failed.");
                     }
                     if (pl_bison_make_object_name_part(yyscanner, $2, @2.offset, &part->value,
                         &part->sensitive, NULL) != OG_SUCCESS) {
-                        parser_yyerror("prepare qualified type name failed.");
+                        parser_abort_or_yyerror("prepare qualified type name failed.");
                     }
                     $$ = list;
                 }
@@ -14890,11 +14964,11 @@ attrs:      '.' ColId
                     galist_t *list = $1;
                     type_name_part_t *part = NULL;
                     if (cm_galist_new(list, sizeof(type_name_part_t), (pointer_t *)&part) != OG_SUCCESS) {
-                        parser_yyerror("init element failed.");
+                        parser_abort_or_yyerror("init element failed.");
                     }
                     if (pl_bison_make_object_name_part(yyscanner, $3, @3.offset, &part->value,
                         &part->sensitive, NULL) != OG_SUCCESS) {
-                        parser_yyerror("prepare qualified type name failed.");
+                        parser_abort_or_yyerror("prepare qualified type name failed.");
                     }
                     $$ = list;
                 }
@@ -14906,11 +14980,11 @@ func_type:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make qualified type failed");
+                        parser_abort_or_yyerror("make qualified type failed");
                     }
                     type->is_name_typemode = OG_TRUE;
                     if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
-                        parser_yyerror("preserve qualified type name failed");
+                        parser_abort_or_yyerror("preserve qualified type name failed");
                     }
                     $$ = type;
                 }
@@ -14918,13 +14992,13 @@ func_type:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
                     if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
-                        parser_yyerror("preserve qualified ROWTYPE name failed");
+                        parser_abort_or_yyerror("preserve qualified ROWTYPE name failed");
                     }
                     $$ = type;
                 }
@@ -14932,13 +15006,13 @@ func_type:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_FALSE;
                     type->pl_rowtype = OG_TRUE;
                     if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
-                        parser_yyerror("preserve ROWTYPE name failed");
+                        parser_abort_or_yyerror("preserve ROWTYPE name failed");
                     }
                     $$ = type;
                 }
@@ -14946,13 +15020,13 @@ func_type:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, $2, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->is_name_typemode = OG_TRUE;
                     type->pl_type = OG_TRUE;
                     type->pl_rowtype = OG_FALSE;
                     if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
-                        parser_yyerror("preserve qualified TYPE name failed");
+                        parser_abort_or_yyerror("preserve qualified TYPE name failed");
                     }
                     $$ = type;
                 }
@@ -14960,13 +15034,13 @@ func_type:
                 {
                     type_word_t *type = NULL;
                     if (make_type_word(yyscanner, &type, $1, NULL, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("make type failed");
+                        parser_abort_or_yyerror("make type failed");
                     }
                     type->is_name_typemode = OG_FALSE;
                     type->pl_type = OG_TRUE;
                     type->pl_rowtype = OG_FALSE;
                     if (pl_bison_preserve_type_name(yyscanner, type, @1.offset) != OG_SUCCESS) {
-                        parser_yyerror("preserve TYPE name failed");
+                        parser_abort_or_yyerror("preserve TYPE name failed");
                     }
                     $$ = type;
                 }
@@ -14982,7 +15056,7 @@ func_arg:
                         YYABORT;
                     }
                     if (pl_alloc_mem(stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     param->name = $1;
                     param->drct = PLV_DIR_IN;
@@ -14998,7 +15072,7 @@ func_arg:
                         YYABORT;
                     }
                     if (pl_alloc_mem(stmt->pl_context, sizeof(func_parameter), (void**)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     param->name = $1;
                     param->drct = $2;
@@ -15014,10 +15088,10 @@ func_args_with_defaults_list:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed.");
+                        parser_abort_or_yyerror("create list failed.");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed");
+                        parser_abort_or_yyerror("insert list failed");
                     }
                     $$ = list;
                 }
@@ -15025,7 +15099,7 @@ func_args_with_defaults_list:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $3) != OG_SUCCESS) {
-                        parser_yyerror("insert list failed");
+                        parser_abort_or_yyerror("insert list failed");
                     }
                     $$ = list;
                 }
@@ -15066,7 +15140,7 @@ PlAnonymousStmt:
                 {
                     text_t *body = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc);
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile anonymous PL block failed");
+                        parser_abort_or_yyerror("compile anonymous PL block failed");
                     }
                     $$ = NULL;
                 }
@@ -15074,7 +15148,7 @@ PlAnonymousStmt:
                 {
                     text_t *body = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc);
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile anonymous PL block failed");
+                        parser_abort_or_yyerror("compile anonymous PL block failed");
                     }
                     $$ = NULL;
                 }
@@ -15082,7 +15156,7 @@ PlAnonymousStmt:
                 {
                     text_t *body = pl_prepend_body_start(yyscanner, $2, @1.offset, @1.loc);
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile anonymous PL block failed");
+                        parser_abort_or_yyerror("compile anonymous PL block failed");
                     }
                     $$ = NULL;
                 }
@@ -15093,7 +15167,7 @@ PlAnonymousStmt:
                         parser_abort_or_yyerror("wrap CALL statement failed");
                     }
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile CALL statement failed");
+                        parser_abort_or_yyerror("compile CALL statement failed");
                     }
                     $$ = NULL;
                 }
@@ -15104,7 +15178,7 @@ PlAnonymousStmt:
                         parser_abort_or_yyerror("wrap EXEC statement failed");
                     }
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile EXEC statement failed");
+                        parser_abort_or_yyerror("compile EXEC statement failed");
                     }
                     $$ = NULL;
                 }
@@ -15116,7 +15190,7 @@ PlAnonymousStmt:
                         parser_abort_or_yyerror("wrap EXECUTE IMMEDIATE statement failed");
                     }
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile EXECUTE IMMEDIATE statement failed");
+                        parser_abort_or_yyerror("compile EXECUTE IMMEDIATE statement failed");
                     }
                     $$ = NULL;
                 }
@@ -15127,7 +15201,7 @@ PlAnonymousStmt:
                         parser_abort_or_yyerror("wrap EXECUTE statement failed");
                     }
                     if (pl_compile_anonymous_body(yyscanner, body) != OG_SUCCESS) {
-                        parser_yyerror("compile EXECUTE statement failed");
+                        parser_abort_or_yyerror("compile EXECUTE statement failed");
                     }
                     $$ = NULL;
                 }
@@ -15138,14 +15212,14 @@ pl_as_is_body:
         ;
 
 pl_program_body:
-            subprogram_body
+            pl_program_source
                 {
                     $$ = pl_bison_make_program_body(yyscanner, $1, NULL);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("prepare PL body failed");
                     }
                 }
-            | LANGUAGE ColId subprogram_body
+            | LANGUAGE ColId pl_program_source
                 {
                     text_t *body = pl_prepend_body_start(yyscanner, $3, @1.offset, @1.loc);
                     pl_bison_language_def_t *language = NULL;
@@ -15177,6 +15251,41 @@ pl_program_body:
                         parser_abort_or_yyerror("prepare LANGUAGE body failed");
                     }
                 }
+        ;
+
+/* The source reader below consumes the remaining body outside the LR machine.
+ * Expose its first token so LAC can choose a PL body versus LANGUAGE C. */
+pl_program_source:
+            subprogram_body                              { $$ = $1; }
+            | pl_program_source_start subprogram_body
+                {
+                    sql_text_t *body = (sql_text_t *)$2;
+                    char *start = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + @1.offset;
+                    body->value.len += (uint32)(body->value.str - start);
+                    body->value.str = start;
+                    body->loc = @1.loc;
+                    $$ = (text_t *)body;
+                }
+        ;
+
+pl_program_source_start:
+            IDENT
+            | unreserved_keyword
+            | col_name_keyword
+            | reserved_keyword
+            | OPER_LSHIFT
+            | Op
+            | ICONST
+            | I64CONST
+            | FCONST
+            | FCONST_F
+            | FCONST_D
+            | SCONST
+            | XCONST
+            | PARAM
+            | '('
+            | '+'
+            | '-'
         ;
 
 pl_program_body_complete:
@@ -15304,10 +15413,14 @@ pl_type_body:
         ;
 
 pl_trigger_header:
-            trigger_timing trigger_event_list ON pl_trigger_table_name opt_trigger_for_each_row
+            trigger_timing trigger_event_list ON
+                {
+                    pl_bison_begin_object_name(yyscanner, PL_NAME_SUFFIX_TRIGGER_FOR);
+                }
+            pl_trigger_table_name opt_trigger_for_each_row
                 {
                     pl_bison_trigger_def_t *trigger_def = pl_bison_make_trigger_def(yyscanner, (trigger_type_t)$1,
-                        (pl_bison_trigger_events_t *)$2, $4, $5, NULL, @1.loc, @4.loc, yylloc.loc);
+                        (pl_bison_trigger_events_t *)$2, $5, $6, NULL, @1.loc, @5.loc, yylloc.loc);
                     if (trigger_def == NULL) {
                         parser_abort_or_yyerror("parse trigger definition failed");
                     }
@@ -15378,14 +15491,14 @@ trigger_column_list:
                 {
                     galist_t *columns = NULL;
                     if (pl_bison_append_trigger_column(yyscanner, &columns, $1, @1.offset, @1.loc) != OG_SUCCESS) {
-                        parser_yyerror("parse trigger update column failed");
+                        parser_abort_or_yyerror("parse trigger update column failed");
                     }
                     $$ = columns;
                 }
             | trigger_column_list ',' ColId
                 {
                     if (pl_bison_append_trigger_column(yyscanner, &$1, $3, @3.offset, @3.loc) != OG_SUCCESS) {
-                        parser_yyerror("parse trigger update column failed");
+                        parser_abort_or_yyerror("parse trigger update column failed");
                     }
                     $$ = $1;
                 }
@@ -15393,7 +15506,7 @@ trigger_column_list:
 
 opt_trigger_for_each_row:
             FOR EACH ROW                                { $$ = OG_TRUE; }
-            | /* EMPTY */                               { $$ = OG_FALSE; }
+            | BISON_PL_NAME_END                          { $$ = OG_FALSE; }
         ;
 
 pl_trigger_block:
@@ -15412,7 +15525,7 @@ compileFunctionSource:
                     }
 
                     if (pl_bison_compile_function_source(stmt, $1, $3, $5->body, $5->language) != OG_SUCCESS) {
-                        parser_yyerror("compile function failed");
+                        parser_abort_or_yyerror("compile function failed");
                     }
 
                     $$ = NULL;
@@ -15429,7 +15542,7 @@ compileProcedureSource:
                     }
 
                     if (pl_bison_compile_procedure_source(stmt, $1, $4->body, $4->language) != OG_SUCCESS) {
-                        parser_yyerror("compile procedure failed");
+                        parser_abort_or_yyerror("compile procedure failed");
                     }
 
                     $$ = NULL;
@@ -15443,7 +15556,7 @@ compileProcedureSource:
                     }
 
                     if (pl_bison_compile_procedure_source(stmt, NULL, $4->body, $4->language) != OG_SUCCESS) {
-                        parser_yyerror("compile procedure failed");
+                        parser_abort_or_yyerror("compile procedure failed");
                     }
 
                     $$ = NULL;
@@ -15454,7 +15567,7 @@ compileStoredBodySource:
             as_is subprogram_body
                 {
                     if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_TRUE) != OG_SUCCESS) {
-                        parser_yyerror("compile stored PL source failed");
+                        parser_abort_or_yyerror("compile stored PL source failed");
                     }
 
                     $$ = NULL;
@@ -15462,7 +15575,7 @@ compileStoredBodySource:
             | UNDER subprogram_body
                 {
                     if (pl_compile_stored_body_source(yyscanner, $2, @1.offset, @1.loc, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("compile stored PL source failed");
+                        parser_abort_or_yyerror("compile stored PL source failed");
                     }
 
                     $$ = NULL;
@@ -15471,7 +15584,7 @@ compileStoredBodySource:
                 {
                     if (pl_compile_stored_trigger_body_source(yyscanner,
                         (pl_bison_trigger_def_t *)$1) != OG_SUCCESS) {
-                        parser_yyerror("compile stored PL source failed");
+                        parser_abort_or_yyerror("compile stored PL source failed");
                     }
 
                     $$ = NULL;
@@ -15481,9 +15594,9 @@ compileStoredBodySource:
 CreateProcedureStmt:
             CREATE opt_or_replace PROCEDURE
             {
-                pl_bison_begin_object_name(yyscanner);
+                pl_bison_begin_object_name(yyscanner, PL_NAME_SUFFIX_NONE);
             }
-            opt_if_not_exists pl_object_name
+            opt_if_not_exists pl_object_name BISON_PL_NAME_END
             {
                 if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_PROCEDURE, OG_FALSE,
                     og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
@@ -15494,15 +15607,15 @@ CreateProcedureStmt:
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    int source_offset = ($8 != NULL) ? @8.offset : ($9 ? @9.offset : @10.offset);
+                    int source_offset = ($9 != NULL) ? @9.offset : ($10 ? @10.offset : @11.offset);
 
                     if (pl_bison_finish_create_source(yyscanner, source_offset, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("record procedure source failed");
+                        parser_abort_or_yyerror("record procedure source failed");
                     }
 
-                    if (pl_bison_parse_create_procedure(stmt, $8, $11->body, &storage_source,
-                        $11->language) != OG_SUCCESS) {
-                        parser_yyerror("parse create procedure failed");
+                    if (pl_bison_parse_create_procedure(stmt, $9, $12->body, &storage_source,
+                        $12->language) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse create procedure failed");
                     }
 
                     $$ = NULL;
@@ -15512,9 +15625,9 @@ CreateProcedureStmt:
 CreateFunctionStmt:
             CREATE opt_or_replace FUNCTION
             {
-                pl_bison_begin_object_name(yyscanner);
+                pl_bison_begin_object_name(yyscanner, PL_NAME_SUFFIX_NONE);
             }
-            opt_if_not_exists pl_object_name
+            opt_if_not_exists pl_object_name BISON_PL_NAME_END
             {
                 if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_FUNCTION, OG_FALSE,
                     og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
@@ -15526,15 +15639,15 @@ CreateFunctionStmt:
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
-                    int source_offset = ($8 == NULL) ? @9.offset : @8.offset;
+                    int source_offset = ($9 == NULL) ? @10.offset : @9.offset;
 
                     if (pl_bison_finish_create_source(yyscanner, source_offset, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("record function source failed");
+                        parser_abort_or_yyerror("record function source failed");
                     }
 
-                    if (pl_bison_parse_create_function(stmt, $8, $10, $12->body, &storage_source,
-                        $12->language) != OG_SUCCESS) {
-                        parser_yyerror("parse create function failed");
+                    if (pl_bison_parse_create_function(stmt, $9, $11, $13->body, &storage_source,
+                        $13->language) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse create function failed");
                     }
 
                     $$ = NULL;
@@ -15544,9 +15657,9 @@ CreateFunctionStmt:
 CreatePackageStmt:
             CREATE opt_or_replace PACKAGE
             {
-                pl_bison_begin_object_name(yyscanner);
+                pl_bison_begin_object_name(yyscanner, PL_NAME_SUFFIX_NONE);
             }
-            opt_package_body opt_if_not_exists pl_object_name
+            opt_package_body opt_if_not_exists pl_object_name BISON_PL_NAME_END
             {
                 uint32 type = $5 ? PL_PACKAGE_BODY : PL_PACKAGE_SPEC;
                 if (pl_bison_prepare_create_source(yyscanner, $2, $6, $7, type, OG_FALSE,
@@ -15559,12 +15672,12 @@ CreatePackageStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
 
-                    if (pl_bison_finish_create_source(yyscanner, @9.offset, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("record package source failed");
+                    if (pl_bison_finish_create_source(yyscanner, @10.offset, &storage_source) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("record package source failed");
                     }
 
-                    if (pl_bison_parse_create_package(stmt, $9, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("parse create package failed");
+                    if (pl_bison_parse_create_package(stmt, $10, &storage_source) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse create package failed");
                     }
 
                     $$ = NULL;
@@ -15574,9 +15687,9 @@ CreatePackageStmt:
 CreateTypeStmt:
             CREATE opt_or_replace TYPE_P
             {
-                pl_bison_begin_object_name(yyscanner);
+                pl_bison_begin_object_name(yyscanner, PL_NAME_SUFFIX_FORCE);
             }
-            opt_type_body opt_if_not_exists pl_object_name opt_type_force
+            opt_type_body opt_if_not_exists pl_object_name opt_type_force BISON_PL_NAME_END
             {
                 uint32 type = $5 ? PL_TYPE_BODY : PL_TYPE_SPEC;
                 int source_offset = $8 ? @8.offset + (int)(sizeof("FORCE") - 1) :
@@ -15591,12 +15704,12 @@ CreateTypeStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     text_t storage_source;
 
-                    if (pl_bison_finish_create_source(yyscanner, @10.offset, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("record type source failed");
+                    if (pl_bison_finish_create_source(yyscanner, @11.offset, &storage_source) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("record type source failed");
                     }
 
-                    if (pl_bison_parse_create_type(stmt, $10, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("parse create type failed");
+                    if (pl_bison_parse_create_type(stmt, $11, &storage_source) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse create type failed");
                     }
 
                     $$ = NULL;
@@ -15606,9 +15719,9 @@ CreateTypeStmt:
 CreateTriggerStmt:
             CREATE opt_or_replace TRIGGER
             {
-                pl_bison_begin_object_name(yyscanner);
+                pl_bison_begin_object_name(yyscanner, PL_NAME_SUFFIX_NONE);
             }
-            opt_if_not_exists pl_object_name
+            opt_if_not_exists pl_object_name BISON_PL_NAME_END
             {
                 if (pl_bison_prepare_create_source(yyscanner, $2, $5, $6, PL_TRIGGER, OG_FALSE,
                     og_yyget_extra(yyscanner)->raw_parse.pl_object_name_end) != OG_SUCCESS) {
@@ -15618,24 +15731,24 @@ CreateTriggerStmt:
             pl_trigger_header
             {
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                if (pl_bison_prepare_trigger_desc(stmt, (pl_bison_trigger_def_t *)$8) != OG_SUCCESS) {
+                if (pl_bison_prepare_trigger_desc(stmt, (pl_bison_trigger_def_t *)$9) != OG_SUCCESS) {
                     parser_abort_or_yyerror("prepare trigger definition failed");
                 }
             }
             pl_trigger_block
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                    pl_bison_trigger_def_t *trigger_def = (pl_bison_trigger_def_t *)$8;
+                    pl_bison_trigger_def_t *trigger_def = (pl_bison_trigger_def_t *)$9;
                     text_t storage_source;
-                    trigger_def->body = $10;
-                    trigger_def->action_loc = @10.loc;
+                    trigger_def->body = $11;
+                    trigger_def->action_loc = @11.loc;
 
-                    if (pl_bison_finish_create_source(yyscanner, @8.offset, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("record trigger source failed");
+                    if (pl_bison_finish_create_source(yyscanner, @9.offset, &storage_source) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("record trigger source failed");
                     }
 
                     if (pl_bison_parse_create_trigger(stmt, trigger_def, &storage_source) != OG_SUCCESS) {
-                        parser_yyerror("parse create trigger failed");
+                        parser_abort_or_yyerror("parse create trigger failed");
                     }
 
                     $$ = NULL;
@@ -15649,7 +15762,7 @@ AlterTriggerStmt:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                     if (og_parse_alter_trigger(stmt, &def, $3, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse alter trigger failed");
+                        parser_abort_or_yyerror("parse alter trigger failed");
                     }
                     $$ = def;
                 }
@@ -15684,7 +15797,7 @@ subprogram_body: %prec PL_RAW_BODY {
                 sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
 
                 if (sql_stack_alloc(stmt, sizeof(sql_text_t), (void**)&body_src) != OG_SUCCESS) {
-                    parser_yyerror("alloc mem failed");
+                    parser_abort_or_yyerror("alloc mem failed");
                 }
 
                 while (tok != YYEOF) {
@@ -15717,7 +15830,7 @@ XID:
                     cm_str2text($1, &xid_src);
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_parse_gtid(stmt, &xid_src) != OG_SUCCESS) {
-                        parser_yyerror("invalid XID");
+                        parser_abort_or_yyerror("invalid XID");
                     }
                     $$ = stmt->context->entry;
                 }
@@ -15731,11 +15844,11 @@ LTID:
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     cm_str2text($1, &ltid_src);
                     if (sql_alloc_mem(stmt->context, sizeof(knl_xid_t), (void **)&xid) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (sql_parse_ltid(&ltid_src, xid) != OG_SUCCESS) {
          ///////////////////               cm_try_set_error_loc(word->text.loc);
-                        parser_yyerror("invalid LTID");
+                        parser_abort_or_yyerror("invalid LTID");
                     }
                     $$ = xid;
                 }
@@ -15756,10 +15869,10 @@ backup_opts:
                 {
                     galist_t *list = NULL;
                     if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (cm_galist_insert(list, $1) != OG_SUCCESS) {
-                        parser_yyerror("insert backup opt failed");
+                        parser_abort_or_yyerror("insert backup opt failed");
                     }
                     $$ = list;
                 }
@@ -15767,7 +15880,7 @@ backup_opts:
                 {
                     galist_t *list = $1;
                     if (cm_galist_insert(list, $2) != OG_SUCCESS) {
-                        parser_yyerror("insert backup opt failed");
+                        parser_abort_or_yyerror("insert backup opt failed");
                     }
                     $$ = list;
                 }
@@ -15793,7 +15906,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_FORMAT_OPT;
                     opt->loc = @2.loc;
@@ -15805,7 +15918,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_AS_OPT;
                     opt->compress_algo = $2;
@@ -15818,7 +15931,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_TAG_OPT;
                     opt->loc = @2.loc;
@@ -15830,7 +15943,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_BUFFER_OPT;
                     opt->size = $3;
@@ -15842,7 +15955,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_FULL_OPT;
                     opt->loc = @1.loc;
@@ -15853,7 +15966,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_INCREMENTAL_OPT;
                     opt->incremental_level = $3;
@@ -15865,7 +15978,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_INCREMENTAL_NO_LEVEL_OPT;
                     opt->loc = @1.loc;
@@ -15876,7 +15989,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_COMPRESS_OPT;
                     opt->compress_algo = $2;
@@ -15889,7 +16002,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_PARALLELISM_OPT;
                     opt->parallelism = $2;
@@ -15901,7 +16014,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_SECTION_OPT;
                     opt->size = $3;
@@ -15913,7 +16026,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_EXCLUDE_OPT;
                     opt->space_list = $4;
@@ -15925,7 +16038,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_PASSWORD_OPT;
                     opt->passwd = $2;
@@ -15937,7 +16050,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_COPY_OPT;
                     opt->space_list = $4;
@@ -15949,7 +16062,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_PREPARE_OPT;
                     opt->loc = @1.loc;
@@ -15960,7 +16073,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_FINISH_OPT;
                     opt->scn = $3;
@@ -15972,7 +16085,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_CUMULATIVE_OPT;
                     opt->loc = @1.loc;
@@ -15983,7 +16096,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_SKIP_BADBLOCK_OPT;
                     opt->loc = @1.loc;
@@ -15994,7 +16107,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_DISCONNET_OPT;
                     opt->loc = @1.loc;
@@ -16005,7 +16118,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_TABLESPACE_OPT;
                     opt->loc = @2.loc;
@@ -16017,7 +16130,7 @@ backup_opt:
                     backup_opt *opt = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_stack_alloc(stmt, sizeof(backup_opt), (void **)&opt) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     opt->type = BACKUP_REPAIR_OPT;
                     opt->loc = @3.loc;
@@ -16087,14 +16200,14 @@ TransactionStmt:
                     
                     text_t *name = NULL;
                     if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     text_t src;
                     cm_str2text($4, &src);
 
                     if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
-                        parser_yyerror("copy object name failed");
+                        parser_abort_or_yyerror("copy object name failed");
                     }
                     $$ = name;
                 }
@@ -16107,14 +16220,14 @@ TransactionStmt:
                     
                     text_t *name = NULL;
                     if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     text_t src;
                     cm_str2text($5, &src);
 
                     if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
-                        parser_yyerror("copy object name failed");
+                        parser_abort_or_yyerror("copy object name failed");
                     }
                     $$ = name;
                 }
@@ -16139,14 +16252,14 @@ TransactionStmt:
 
                     text_t *name = NULL;
                     if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     text_t src;
                     cm_str2text($2, &src);
 
                     if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
-                        parser_yyerror("copy object name failed");
+                        parser_abort_or_yyerror("copy object name failed");
                     }
                     $$ = name;
                 }
@@ -16158,14 +16271,14 @@ TransactionStmt:
 
                     text_t *name = NULL;
                     if (sql_alloc_mem(stmt->context, sizeof(text_t), (void **)&name) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
 
                     text_t src;
                     cm_str2text($3, &src);
 
                     if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &src, name) != OG_SUCCESS) {
-                        parser_yyerror("copy object name failed");
+                        parser_abort_or_yyerror("copy object name failed");
                     }
                     $$ = name;
                 }
@@ -16177,7 +16290,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_SET_TRANS;
 
                     if (sql_alloc_mem(stmt->context, sizeof(isolation_level_t), (void **)&isolevel) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     *isolevel = ISOLATION_SERIALIZABLE;
                     $$ = isolevel;
@@ -16190,7 +16303,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_SET_TRANS;
 
                     if (sql_alloc_mem(stmt->context, sizeof(isolation_level_t), (void **)&isolevel) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     *isolevel = ISOLATION_READ_COMMITTED;
                     $$ = isolevel;
@@ -16203,7 +16316,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_SET_TRANS;
 
                     if (sql_alloc_mem(stmt->context, sizeof(isolation_level_t), (void **)&isolevel) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     *isolevel = ISOLATION_CURR_COMMITTED;
                     $$ = isolevel;
@@ -16215,7 +16328,7 @@ TransactionStmt:
 
                     stmt->context->type = OGSQL_TYPE_BACKUP;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16224,19 +16337,19 @@ TransactionStmt:
                     param->finish_scn = OG_INVALID_ID64;
                     
                     if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     param->target_info.target = TARGET_ARCHIVE;
                     param->type = BACKUP_MODE_ARCHIVELOG;
                     param->target_info.backup_arch_mode = ARCHIVELOG_ALL;
                     if (og_parse_backup_archivelog(stmt, param, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse backup archivelog failed");
+                        parser_abort_or_yyerror("parse backup archivelog failed");
                     }
                     if (sql_check_backup_param(stmt, param) != OG_SUCCESS) {
-                        parser_yyerror("parse check backup param failed");
+                        parser_abort_or_yyerror("parse check backup param failed");
                     }
                     $$ = param;
                 }
@@ -16247,7 +16360,7 @@ TransactionStmt:
 
                     stmt->context->type = OGSQL_TYPE_BACKUP;
                     if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16256,10 +16369,10 @@ TransactionStmt:
                     param->finish_scn = OG_INVALID_ID64;
                     
                     if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     param->target_info.target = TARGET_ARCHIVE;
                     param->type = BACKUP_MODE_ARCHIVELOG;
@@ -16267,10 +16380,10 @@ TransactionStmt:
                     param->target_info.backup_begin_asn = $5;
 
                     if (og_parse_backup_archivelog(stmt, param, $6) != OG_SUCCESS) {
-                        parser_yyerror("parse backup archivelog failed");
+                        parser_abort_or_yyerror("parse backup archivelog failed");
                     }
                     if (sql_check_backup_param(stmt, param) != OG_SUCCESS) {
-                        parser_yyerror("parse check backup param failed");
+                        parser_abort_or_yyerror("parse check backup param failed");
                     }
                     $$ = param;
                 }
@@ -16282,7 +16395,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_BACKUP;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16290,10 +16403,10 @@ TransactionStmt:
                     param->finish_scn = OG_INVALID_ID64;
                     param->type = BACKUP_MODE_INVALID;
                     if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     param->force_cancel = OG_TRUE;
                     $$ = param;
@@ -16306,7 +16419,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_BACKUP;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_backup_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_backup_t), 0, sizeof(knl_backup_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16314,16 +16427,16 @@ TransactionStmt:
                     param->finish_scn = OG_INVALID_ID64;
                     param->type = BACKUP_MODE_INVALID;
                     if (sql_create_list(stmt, &param->exclude_spcs) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (sql_create_list(stmt, &param->target_info.target_list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (og_parse_backup_database(stmt, param, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse backup database failed");
+                        parser_abort_or_yyerror("parse backup database failed");
                     }
                     if (sql_check_backup_param(stmt, param) != OG_SUCCESS) {
-                        parser_yyerror("parse check backup param failed");
+                        parser_abort_or_yyerror("parse check backup param failed");
                     }
                     $$ = param;
                 }
@@ -16335,18 +16448,18 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
                     }
 
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
 
                     if (og_parse_restore(stmt, param, $5, @4.loc) != OG_SUCCESS) {
-                        parser_yyerror("parse restore failed");
+                        parser_abort_or_yyerror("parse restore failed");
                     }
                     $$ = param;
                 }
@@ -16362,18 +16475,18 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
                     }
                     
                     if (sql_parse_restore_blockrecover_bison(stmt, $4, $6, param) != OG_SUCCESS) {
-                        parser_yyerror("parse restore blockrecover failed");
+                        parser_abort_or_yyerror("parse restore blockrecover failed");
                     }
 
                     if (sql_parse_restore_from_bison(stmt, $8, @8.loc, param, OG_TRUE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     $$ = param;
                 }
@@ -16389,18 +16502,18 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
                     }
                     
                     if (sql_parse_restore_blockrecover_bison(stmt, $4, $6, param) != OG_SUCCESS) {
-                        parser_yyerror("parse restore blockrecover failed");
+                        parser_abort_or_yyerror("parse restore blockrecover failed");
                     }
 
                     if (sql_parse_restore_from_bison(stmt, $8, @8.loc, param, OG_TRUE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     param->lfn = $11;
                     $$ = param;
@@ -16417,7 +16530,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16427,12 +16540,12 @@ TransactionStmt:
                     text_t file_name;
                     cm_str2text($4, &file_name);
                     if (sql_copy_file_name(stmt->context, &file_name, &param->file_repair_name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed");
+                        parser_abort_or_yyerror("copy file name failed");
                     }
                     param->file_repair = OG_INVALID_FILEID;
 
                     if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     param->buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
                     $$ = param;
@@ -16449,7 +16562,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16464,7 +16577,7 @@ TransactionStmt:
                     param->file_repair = $4;
 
                     if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     if ($7->type != BACKUP_BUFFER_OPT) {
                         parser_yyerror("buffer expected but unknown restore option");
@@ -16484,7 +16597,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16499,7 +16612,7 @@ TransactionStmt:
                     param->file_repair = $4;
 
                     if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     param->buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
                     $$ = param;
@@ -16516,7 +16629,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16526,12 +16639,12 @@ TransactionStmt:
                     text_t file_name;
                     cm_str2text($4, &file_name);
                     if (sql_copy_file_name(stmt->context, &file_name, &param->file_repair_name) != OG_SUCCESS) {
-                        parser_yyerror("copy file name failed");
+                        parser_abort_or_yyerror("copy file name failed");
                     }
                     param->file_repair = OG_INVALID_FILEID;
 
                     if (sql_parse_restore_from_bison(stmt, $6, @6.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     if ($7->type != BACKUP_BUFFER_OPT) {
                         parser_yyerror("buffer expected but unknown restore option");
@@ -16547,7 +16660,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16556,7 +16669,7 @@ TransactionStmt:
                     param->file_type = RESTORE_ARCHFILE;
 
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     param->buffer_size = (uint32)stmt->session->knl_session.kernel->attr.backup_buf_size;
                     $$ = param;
@@ -16569,7 +16682,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16578,7 +16691,7 @@ TransactionStmt:
                     param->file_type = RESTORE_ARCHFILE;
 
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     if ($5->type != BACKUP_BUFFER_OPT) {
                         parser_yyerror("buffer expected but unknown restore option");
@@ -16594,7 +16707,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16603,10 +16716,10 @@ TransactionStmt:
                     param->file_type = RESTORE_FLUSHPAGE;
 
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     if (og_parse_restore(stmt, param, $5, @4.loc) != OG_SUCCESS) {
-                        parser_yyerror("parse restore failed");
+                        parser_abort_or_yyerror("parse restore failed");
                     }
                     $$ = param;
                 }
@@ -16618,7 +16731,7 @@ TransactionStmt:
                     stmt->context->type = OGSQL_TYPE_RESTORE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_restore_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_restore_t), 0, sizeof(knl_restore_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16627,10 +16740,10 @@ TransactionStmt:
                     param->file_type = RESTORE_COPYCTRL;
 
                     if (sql_parse_restore_from_bison(stmt, $4, @4.loc, param, OG_FALSE) != OG_SUCCESS) {
-                        parser_yyerror("parse restore from failed");
+                        parser_abort_or_yyerror("parse restore from failed");
                     }
                     if (og_parse_restore(stmt, param, $5, @4.loc) != OG_SUCCESS) {
-                        parser_yyerror("parse restore failed");
+                        parser_abort_or_yyerror("parse restore failed");
                     }
                     $$ = param;
                 }
@@ -16645,7 +16758,7 @@ RecoverStmt:
                     stmt->context->type = OGSQL_TYPE_RECOVER;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16665,7 +16778,7 @@ RecoverStmt:
                     stmt->context->type = OGSQL_TYPE_RECOVER;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16677,7 +16790,7 @@ RecoverStmt:
                     text_t until_time;
                     cm_str2text($5, &until_time);
                     if (cm_text2date(&until_time, &fmt_text, &date) != OG_SUCCESS) {
-                        parser_yyerror("invalid date format");
+                        parser_abort_or_yyerror("invalid date format");
                     }
 
                     cm_date2timeval(date, &param->time);
@@ -16692,7 +16805,7 @@ RecoverStmt:
                     stmt->context->type = OGSQL_TYPE_RECOVER;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16711,7 +16824,7 @@ RecoverStmt:
                     stmt->context->type = OGSQL_TYPE_RECOVER;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_recover_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_recover_t), 0, sizeof(knl_recover_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16732,7 +16845,7 @@ OgracStmt:
                     stmt->context->type = OGSQL_TYPE_OGRAC;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_ograc_recover_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_ograc_recover_t), 0, sizeof(knl_ograc_recover_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16770,7 +16883,7 @@ ShutdownStmt:
                     stmt->context->type = OGSQL_TYPE_SHUTDOWN;
 
                     if (sql_alloc_mem(stmt->context, sizeof(shutdown_context_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(shutdown_context_t), 0, sizeof(shutdown_context_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16788,7 +16901,7 @@ ShutdownStmt:
                     stmt->context->type = OGSQL_TYPE_SHUTDOWN;
 
                     if (sql_alloc_mem(stmt->context, sizeof(shutdown_context_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(shutdown_context_t), 0, sizeof(shutdown_context_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16806,7 +16919,7 @@ ShutdownStmt:
                     stmt->context->type = OGSQL_TYPE_SHUTDOWN;
 
                     if (sql_alloc_mem(stmt->context, sizeof(shutdown_context_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(shutdown_context_t), 0, sizeof(shutdown_context_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16827,7 +16940,7 @@ BuildStmt:
                     stmt->context->type = OGSQL_TYPE_BUILD;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16836,7 +16949,7 @@ BuildStmt:
                     param->build_type = BUILD_AUTO;
 
                     if (og_parse_build(stmt, param, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse build database failed");
+                        parser_abort_or_yyerror("parse build database failed");
                     }
 
                     $$ = param;
@@ -16849,7 +16962,7 @@ BuildStmt:
                     stmt->context->type = OGSQL_TYPE_BUILD;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16858,7 +16971,7 @@ BuildStmt:
                     param->build_type = BUILD_CASCADED_STANDBY;
 
                     if (og_parse_build(stmt, param, $5) != OG_SUCCESS) {
-                        parser_yyerror("parse build database failed");
+                        parser_abort_or_yyerror("parse build database failed");
                     }
 
                     $$ = param;
@@ -16871,7 +16984,7 @@ BuildStmt:
                     stmt->context->type = OGSQL_TYPE_BUILD;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16880,7 +16993,7 @@ BuildStmt:
                     param->build_type = BUILD_STANDBY;
 
                     if (og_parse_build(stmt, param, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse build database failed");
+                        parser_abort_or_yyerror("parse build database failed");
                     }
 
                     $$ = param;
@@ -16893,7 +17006,7 @@ BuildStmt:
                     stmt->context->type = OGSQL_TYPE_BUILD;
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_build_def_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_build_def_t), 0, sizeof(knl_build_def_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16903,7 +17016,7 @@ BuildStmt:
                     param->param_ctrl.is_repair = OG_TRUE;
 
                     if (og_parse_build(stmt, param, $4) != OG_SUCCESS) {
-                        parser_yyerror("parse build database failed");
+                        parser_abort_or_yyerror("parse build database failed");
                     }
 
                     $$ = param;
@@ -16951,7 +17064,7 @@ ValidateStmt:
                     }
 
                     if (sql_alloc_mem(stmt->context, sizeof(knl_validate_t), (void **)&param) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(param, sizeof(knl_validate_t), 0, sizeof(knl_validate_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -16985,7 +17098,7 @@ SyncPointStmt:
                     stmt->context->type = OGSQL_TYPE_SYNCPOINT;
 
                     if (sql_alloc_mem(stmt->context, sizeof(syncpoint_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(def, sizeof(syncpoint_def_t), 0, sizeof(syncpoint_def_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -17007,7 +17120,7 @@ SyncPointStmt:
                     stmt->context->type = OGSQL_TYPE_SYNCPOINT;
 
                     if (sql_alloc_mem(stmt->context, sizeof(syncpoint_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     if (memset_s(def, sizeof(syncpoint_def_t), 0, sizeof(syncpoint_def_t)) != EOK) {
                         parser_yyerror("memset failed");
@@ -17017,7 +17130,7 @@ SyncPointStmt:
                     cm_str2text($2, &syncpoint_name);
                     if (sql_copy_object_name(stmt->context, WORD_TYPE_VARIANT, &syncpoint_name,
                         &def->syncpoint_name) != OG_SUCCESS) {
-                        parser_yyerror("copy name failed");
+                        parser_abort_or_yyerror("copy name failed");
                     }
 
                     $$ = def;
@@ -17038,12 +17151,12 @@ LockTableStmt:
                     stmt->context->type = OGSQL_TYPE_LOCK_TABLE;
 
                     if (sql_alloc_mem(stmt->context, sizeof(lock_tables_def_t), (void **)&def) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     cm_galist_init(&def->tables, stmt->context, sql_alloc_mem);
 
                     if (sql_parse_table_defs_bison(stmt, def, $3) != OG_SUCCESS) {
-                        parser_yyerror("parse create lock table failed");
+                        parser_abort_or_yyerror("parse create lock table failed");
                     }
                     def->lock_mode = $5;
                     def->wait_time = $7;
@@ -17078,17 +17191,17 @@ any_name_list:
                     lock_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(lock_table_t), (void **)&table) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     table->name = $1->name;
                     table->schema = $1->owner;
                     
                     galist_t *list = NULL;
                     if (sql_create_temp_list(stmt, &list) != OG_SUCCESS) {
-                        parser_yyerror("create list failed");
+                        parser_abort_or_yyerror("create list failed");
                     }
                     if (cm_galist_insert(list, table) != OG_SUCCESS) {
-                        parser_yyerror("insert any_name opt failed");
+                        parser_abort_or_yyerror("insert any_name opt failed");
                     }
                     $$ = list;
                 }
@@ -17097,13 +17210,13 @@ any_name_list:
                     lock_table_t *table = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (sql_alloc_mem(stmt->context, sizeof(lock_table_t), (void **)&table) != OG_SUCCESS) {
-                        parser_yyerror("alloc mem failed");
+                        parser_abort_or_yyerror("alloc mem failed");
                     }
                     table->name = $3->name;
                     table->schema = $3->owner;
 
                     if (cm_galist_insert($1, table) != OG_SUCCESS) {
-                        parser_yyerror("insert any_name opt failed");
+                        parser_abort_or_yyerror("insert any_name opt failed");
                     }
                     $$ = $1;
                 }
@@ -18097,9 +18210,103 @@ reserved_keyword:
 
 %%
 
+static const bison_keyword_name_t g_sql_bison_diag_keywords[] = {
+#define OG_KEYWORD(kwname, value, category) {#value, kwname},
+#include "kwlist.h"
+#undef OG_KEYWORD
+};
+
+/*
+ * Grammar actions must abort on semantic failure (YYABORT or BISON_ABORT_IFERR).
+ * Continuing after reporting an error may let this callback overwrite it.
+ * cm_get_error_code() reads thread-local state, not a per-parse failure flag;
+ * using it as a guard could suppress a new diagnostic. Fatal scanner errors
+ * are tracked separately by lex_failed.
+ */
+static int yyreport_syntax_error(const yypcontext_t *ctx, core_yyscan_t yyscanner)
+{
+    if (og_yyget_extra(yyscanner)->core_yy_extra.lex_failed) {
+        return 0;
+    }
+
+    yysymbol_kind_t expected_tokens[BISON_DIAG_MAX_EXPECTED + 1];
+    int token_count = yypcontext_expected_tokens(ctx, expected_tokens, ELEMENT_COUNT(expected_tokens));
+    if (token_count < 0) {
+        /* The Bison 3.6.4 caller recognizes 2 as memory exhaustion. */
+        return 2;
+    }
+
+    char unexpected_label[BISON_DIAG_TOKEN_SIZE];
+    const char *unexpected = NULL;
+    yysymbol_kind_t unexpected_token = yypcontext_token(ctx);
+    if (unexpected_token != YYSYMBOL_YYEMPTY &&
+        bison_diag_token_label(yysymbol_name(unexpected_token), g_sql_bison_diag_keywords,
+            ELEMENT_COUNT(g_sql_bison_diag_keywords), unexpected_label)) {
+        unexpected = unexpected_label;
+    }
+
+    /* A fragment's CHECK wrapper can contribute the failing closing ')'.
+     * Report the end of the original fragment, not that generated delimiter.
+     * Traverse only identity maps; edited bodies need their own offset mapping. */
+    const core_yy_extra_type *extra = &og_yyget_extra(yyscanner)->core_yy_extra;
+    const lex_location_t *location = yypcontext_location(ctx);
+    if (location->offset >= 0 && (size_t)location->offset < extra->scanbuflen) {
+        uint64 offset = (uint32)location->offset;
+        uint64 input_end = extra->scanbuflen;
+        for (const bison_source_map_t *map = &extra->source_map; map != NULL; map = map->parent) {
+            if (map->prefix_len != 0) {
+                if (offset >= (uint64)map->prefix_len + map->body_len && offset < input_end) {
+                    unexpected = "end of input";
+                }
+                break;
+            }
+            if (map->edits.count != 0 || map->body_len != map->source.len || offset > map->body_len) {
+                break;
+            }
+            offset += map->parent_offset;
+            input_end = (uint64)map->parent_offset + map->source.len;
+        }
+    }
+
+    char expected_labels[BISON_DIAG_MAX_EXPECTED + 1][BISON_DIAG_TOKEN_SIZE];
+    const char *expected[BISON_DIAG_MAX_EXPECTED];
+    uint32 expected_count = 0;
+    for (int i = 0; i < token_count; i++) {
+        if (!bison_diag_token_label(yysymbol_name(expected_tokens[i]), g_sql_bison_diag_keywords,
+            ELEMENT_COUNT(g_sql_bison_diag_keywords), expected_labels[expected_count])) {
+            continue;
+        }
+        bool32 duplicate = OG_FALSE;
+        for (uint32 j = 0; j < expected_count; j++) {
+            if (strcmp(expected[j], expected_labels[expected_count]) == 0) {
+                duplicate = OG_TRUE;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        if (expected_count == BISON_DIAG_MAX_EXPECTED) {
+            expected_count = 0;
+            break;
+        }
+        expected[expected_count] = expected_labels[expected_count];
+        expected_count++;
+    }
+
+    char message[BISON_DIAG_MESSAGE_SIZE];
+    bison_diag_message(message, unexpected, expected, expected_count);
+    scanner_syntax_error(message, yypcontext_location(ctx), yyscanner);
+    return 0;
+}
+
 static void
 base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner, const char *msg)
 {
+    /* YYMALLOC can have already reported the allocation failure. */
+    if (strcmp(msg, "memory exhausted") == 0 && cm_get_error_code() != 0) {
+        return;
+    }
     scanner_yyerror(msg, yyscanner);
 }
 
@@ -19145,9 +19352,12 @@ static status_t pl_compile_stored_trigger_body_source(core_yyscan_t yyscanner,
         og_yyget_extra(yyscanner)->core_yy_extra.stmt, trigger_def);
 }
 
-static void pl_bison_begin_object_name(core_yyscan_t yyscanner)
+static void pl_bison_begin_object_name(core_yyscan_t yyscanner, base_yy_pl_name_suffix_t suffix)
 {
-    og_yyget_extra(yyscanner)->raw_parse.pl_object_name_mode = OG_TRUE;
+    base_yy_raw_parse_state_t *state = &og_yyget_extra(yyscanner)->raw_parse;
+    state->pl_object_name_mode = OG_TRUE;
+    state->pl_object_name_part_complete = OG_FALSE;
+    state->pl_object_name_suffix = suffix;
 }
 
 static bool32 pl_bison_is_identifier_char(char ch)
@@ -19361,6 +19571,8 @@ static status_t pl_bison_make_raw_object_name(core_yyscan_t yyscanner, char *own
     bool32 ignored_sensitive;
 
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(name_with_owner), (void **)object_name));
+    (*object_name)->loc = bison_source_map_location(&og_yyget_extra(yyscanner)->core_yy_extra.source_map,
+        (uint32)(owner == NULL ? name_offset : owner_offset));
     if (owner == NULL) {
         (*object_name)->owner = CM_NULL_TEXT;
     } else {
@@ -19379,10 +19591,11 @@ static status_t pl_bison_make_object_name(core_yyscan_t yyscanner, char *owner, 
     sql_stmt_t *stmt = extra->core_yy_extra.stmt;
     bool32 ignored_sensitive;
 
-    state->pl_object_name_mode = OG_FALSE;
     OG_RETURN_IFERR(pl_bison_validate_object_name(yyscanner, owner == NULL ? name_offset : owner_offset, loc));
 
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, sizeof(name_with_owner), (void **)object_name));
+    (*object_name)->loc = bison_source_map_location(&og_yyget_extra(yyscanner)->core_yy_extra.source_map,
+        (uint32)(owner == NULL ? name_offset : owner_offset));
     if (owner == NULL) {
         (*object_name)->owner = CM_NULL_TEXT;
     } else {

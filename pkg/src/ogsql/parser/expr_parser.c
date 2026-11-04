@@ -2269,10 +2269,6 @@ static status_t sql_convert_static_pl_param_bison(sql_stmt_t *stmt, expr_node_t 
     uint32 param_id = stmt->context->params->count;
     int64 parent_offset = (int64)stmt->text_shift - parent_stmt->text_shift + source_offset;
 
-    word->loc.line += stmt->parser_text.loc.line - 1;
-    if (node->loc.line == 1) {
-        word->loc.column += stmt->parser_text.loc.column - 1;
-    }
     node->loc = word->loc;
     if (parent_stmt->context->type != OGSQL_TYPE_ANONYMOUS_BLOCK) {
         OG_SRC_THROW_ERROR(word->loc, ERR_PL_PARAM_USE);
@@ -3480,6 +3476,9 @@ status_t sql_create_hex_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, const c
 
     // convert hex string to binary using existing function
     if (sql_word2hexadecimal(stmt, &word, node) != OG_SUCCESS) {
+        if (cm_get_error_code() == ERR_TEXT_FORMAT_ERROR) {
+            cm_try_set_error_loc(loc);
+        }
         return OG_ERROR;
     }
     APPEND_CHAIN(&((*expr)->chain), node);
@@ -3625,14 +3624,23 @@ status_t sql_create_interval_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, co
     node->value.is_null = OG_FALSE;
     node->typmod = info.type;
 
-    OG_RETURN_IFERR(cm_text2intvl_detail(&itvl_text, info.type.datatype, &interval_detail, info.fmt));
+    if (cm_text2intvl_detail(&itvl_text, info.type.datatype, &interval_detail, info.fmt) != OG_SUCCESS) {
+        cm_try_set_error_loc(loc);
+        return OG_ERROR;
+    }
 
     if (info.type.datatype == OG_TYPE_INTERVAL_YM) {
-        OG_RETURN_IFERR(cm_encode_yminterval(&interval_detail, &node->value.v_itvl_ym));
-        OG_RETURN_IFERR(cm_adjust_yminterval(&node->value.v_itvl_ym, info.type.year_prec));
+        if (cm_encode_yminterval(&interval_detail, &node->value.v_itvl_ym) != OG_SUCCESS ||
+            cm_adjust_yminterval(&node->value.v_itvl_ym, info.type.year_prec) != OG_SUCCESS) {
+            cm_try_set_error_loc(loc);
+            return OG_ERROR;
+        }
     } else {
-        OG_RETURN_IFERR(cm_encode_dsinterval(&interval_detail, &node->value.v_itvl_ds));
-        OG_RETURN_IFERR(cm_adjust_dsinterval(&node->value.v_itvl_ds, info.type.day_prec, info.type.frac_prec));
+        if (cm_encode_dsinterval(&interval_detail, &node->value.v_itvl_ds) != OG_SUCCESS ||
+            cm_adjust_dsinterval(&node->value.v_itvl_ds, info.type.day_prec, info.type.frac_prec) != OG_SUCCESS) {
+            cm_try_set_error_loc(loc);
+            return OG_ERROR;
+        }
     }
 
     APPEND_CHAIN(&((*expr)->chain), node);
@@ -4095,7 +4103,7 @@ status_t sql_parse_datatype_typemode_bison(char *user, type_word_t *type, typmod
     /* array size is useless in this case */
     v_type->is_array = type->is_array;
     if (type->is_array && !cm_datatype_arrayable(v_type->datatype)) {
-        OG_THROW_ERROR(ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(v_type->datatype));
+        OG_SRC_THROW_ERROR(type->loc, ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(v_type->datatype));
         return OG_ERROR;
     }
     return OG_SUCCESS;

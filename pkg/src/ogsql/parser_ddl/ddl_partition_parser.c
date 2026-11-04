@@ -2565,7 +2565,7 @@ status_t og_parse_partition_attrs(knl_part_def_t *def, galist_t *opts)
                 return OG_ERROR;
             case INDEX_PARTITION_OPT_FORMAT:
                 if (!def->support_csf) {
-                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "unexpected text format clause.");
+                    OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "unexpected text format clause.");
                     return OG_ERROR;
                 }
                 def->is_csf = opt->csf;

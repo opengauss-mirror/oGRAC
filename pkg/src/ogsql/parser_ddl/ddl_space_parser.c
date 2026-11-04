@@ -1195,7 +1195,7 @@ static status_t og_parse_space_attr(knl_space_def_t *def, galist_t *ts_opts)
         switch (opt->type) {
             case CREATETS_ALL_OPT:
                 if ((def->type & SPACE_TYPE_TEMP) || parsed_all) {
-                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but all found");
+                    OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "key word expected but all found");
                     return OG_ERROR;
                 }
                 def->in_memory = OG_TRUE;
@@ -1203,7 +1203,7 @@ static status_t og_parse_space_attr(knl_space_def_t *def, galist_t *ts_opts)
                 break;
             case CREATETS_NOLOGGING_OPT:
                 if (def->in_memory || parsed_nologging) {
-                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but nologging found");
+                    OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "key word expected but nologging found");
                     return OG_ERROR;
                 }
                 def->type |= SPACE_TYPE_TEMP;
@@ -1211,7 +1211,7 @@ static status_t og_parse_space_attr(knl_space_def_t *def, galist_t *ts_opts)
                 break;
             case CREATETS_AUTOOFFLINE_OPT:
                 if (parsed_offline) {
-                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but autooffline found");
+                    OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "key word expected but autooffline found");
                     return OG_ERROR;
                 }
                 def->autooffline = opt->val;
@@ -1219,11 +1219,11 @@ static status_t og_parse_space_attr(knl_space_def_t *def, galist_t *ts_opts)
                 break;
             case CREATETS_EXTENT_OPT:
                 if (parsed_extent) {
-                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "key word expected but extent found");
+                    OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "key word expected but extent found");
                     return OG_ERROR;
                 }
                 if (def->extent_size != 0) {
-                    OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid extent clause");
+                    OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid extent clause");
                     return OG_ERROR;
                 }
                 def->autoallocate = OG_TRUE;
@@ -1232,7 +1232,7 @@ static status_t og_parse_space_attr(knl_space_def_t *def, galist_t *ts_opts)
                 parsed_extent = OG_TRUE;
                 break;
             default:
-                OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid option");
+                OG_SRC_THROW_ERROR_EX(opt->loc, ERR_SQL_SYNTAX_ERROR, "invalid option");
                 return OG_ERROR;
         }
     }

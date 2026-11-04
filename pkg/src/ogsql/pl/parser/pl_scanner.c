@@ -115,6 +115,7 @@ typedef struct {
     TokenAuxData pushback_auxdata[MAX_PUSHBACKS];
     TokenAuxData last_token;
     bool8 lookup_variables;
+    bool8 lex_failed;
 } plsql_yy_extra_type;
 
 static inline plsql_yy_extra_type *plsql_yyget_extra(core_yyscan_t yyscanner)
@@ -127,6 +128,12 @@ void plsql_set_identifier_lookup(core_yyscan_t yyscanner, bool32 lookup_variable
     plsql_yyget_extra(yyscanner)->lookup_variables = (bool8)lookup_variables;
 }
 
+bool32 plsql_scanner_failed(core_yyscan_t yyscanner)
+{
+    plsql_yy_extra_type *yyextra = plsql_yyget_extra(yyscanner);
+    return yyextra->lex_failed || yyextra->base_yy_extra.core_yy_extra.lex_failed;
+}
+
 static void push_back_token(plsql_yy_extra_type *yyextra, int token, TokenAuxData* auxdata);
 
 status_t pl_parser(sql_stmt_t *stmt, text_t *src)
@@ -135,6 +142,8 @@ status_t pl_parser(sql_stmt_t *stmt, text_t *src)
     plsql_yy_extra_type yyextra;
     int parse_rc;
     sql_text_t sql_text = { 0 };
+    bison_source_map_t source_map;
+    bison_source_scope_t source_scope;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     sql_text_t parser_text_bak = stmt->parser_text;
     bool32 parser_text_valid_bak = stmt->parser_text_valid;
@@ -151,22 +160,29 @@ status_t pl_parser(sql_stmt_t *stmt, text_t *src)
     if (compiler != NULL) {
         sql_text.loc = compiler->line_loc;
     }
+    bison_source_map_init(&source_map, stmt, src, sql_text.loc);
+    sql_text.loc = bison_source_map_location(&source_map, 0);
     sql_text.implicit = OG_FALSE;
 
+    bison_source_scope_enter(&source_scope, stmt, src, &source_map);
     yyscanner = scanner_init(&sql_text, &yyextra.base_yy_extra.core_yy_extra, &ReservedPLKeywords,
         ReservedPLKeywordTokens, stmt);
     if (SECUREC_UNLIKELY(yyscanner == NULL)) {
+        bison_source_scope_leave(&source_scope);
         stmt->parser_text = parser_text_bak;
         stmt->parser_text_valid = parser_text_valid_bak;
         return OG_ERROR;
     }
 
+    core_yyscan_t previous_scanner = bison_parser_set_alloc_scanner(yyscanner);
     parse_rc = plsql_yyparse(yyscanner);
+    (void)bison_parser_set_alloc_scanner(previous_scanner);
 
     scanner_finish(yyscanner);
+    bison_source_scope_leave(&source_scope);
     stmt->parser_text = parser_text_bak;
     stmt->parser_text_valid = parser_text_valid_bak;
-    if (parse_rc != 0) {
+    if (parse_rc != 0 || yyextra.lex_failed || yyextra.base_yy_extra.core_yy_extra.lex_failed) {
         return OG_ERROR;
     }
 
@@ -181,6 +197,10 @@ static int internal_yylex(TokenAuxData* auxdata, core_yyscan_t yyscanner)
     errno_t rc = memset_s(auxdata, sizeof(TokenAuxData), 0, sizeof(TokenAuxData));
     knl_securec_check(rc);
 
+    if (plsql_scanner_failed(yyscanner)) {
+        *auxdata = yyextra->last_token;
+        return LEX_ERROR_TOKEN;
+    }
     if (yyextra->num_pushbacks > 0) {
         yyextra->num_pushbacks--;
         token = yyextra->pushback_token[yyextra->num_pushbacks];
@@ -189,6 +209,10 @@ static int internal_yylex(TokenAuxData* auxdata, core_yyscan_t yyscanner)
         token = core_yylex(&auxdata->lval.core_yystype, &auxdata->lloc, yyscanner);
         auxdata->leng = ct_yyget_leng(yyscanner);
         auxdata->ident_quoted = og_yyget_extra(yyscanner)->core_yy_extra.ident_quoted;
+        /* SQL and PL generated token numbers are different. */
+        if (yyextra->base_yy_extra.core_yy_extra.lex_failed) {
+            return LEX_ERROR_TOKEN;
+        }
     }
 
     return token;
@@ -240,7 +264,7 @@ static status_t alloc_var_addr_expr(sql_stmt_t *stmt, plv_decl_t *decl, expr_nod
     return OG_SUCCESS;
 }
 
-static status_t parse_var_ident(sql_stmt_t *stmt, char *ident, expr_node_t **out_expr)
+static status_t parse_var_ident(sql_stmt_t *stmt, char *ident, expr_node_t **out_expr, bool32 *matched)
 {
     text_t name;
     cm_str2text(ident, &name);
@@ -252,6 +276,7 @@ static status_t parse_var_ident(sql_stmt_t *stmt, char *ident, expr_node_t **out
     char name_buf[OG_NAME_BUFFER_SIZE];
     plc_var_type_t type;
 
+    *matched = OG_FALSE;
     PLC_INIT_VARIANT_NAME(&variant_name, block_name_buf, name_buf, OG_FALSE, types);
     type = PLC_NORMAL_VAR;
     variant_name.block_name.len = 0;
@@ -262,9 +287,10 @@ static status_t parse_var_ident(sql_stmt_t *stmt, char *ident, expr_node_t **out
     }
 
     if (decl == NULL) {
-        return OG_ERROR;
+        return OG_SUCCESS;
     }
     OG_RETURN_IFERR(alloc_var_addr_expr(stmt, decl, out_expr));
+    *matched = OG_TRUE;
     return OG_SUCCESS;
 }
 
@@ -279,6 +305,7 @@ static status_t parse_trigger_var_word(sql_stmt_t *stmt, word_t *word, expr_node
         OG_RETURN_IFERR(plc_add_trigger_decl(compiler, 0, word, PLV_VAR, &decl));
     }
     if (decl == NULL) {
+        OG_SRC_THROW_ERROR(word->loc, ERR_UNDEFINED_SYMBOL_FMT, W2S(word));
         return OG_ERROR;
     }
     OG_RETURN_IFERR(alloc_var_addr_expr(stmt, decl, out_expr));
@@ -332,15 +359,11 @@ static status_t plsql_copy_token_word(sql_stmt_t *stmt, TokenAuxData *auxdata, c
     char *token_text = og_yyget_extra(yyscanner)->core_yy_extra.scanbuf + auxdata->lloc.offset;
     uint32 token_len = (uint32)auxdata->leng;
     char *ident = NULL;
-    errno_t ret;
 
     if (sql_stack_alloc(stmt, token_len + 1, (void **)&ident) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    ret = memcpy_s(ident, token_len + 1, token_text, token_len);
-    if (ret != EOK) {
-        return OG_ERROR;
-    }
+    MEMS_RETURN_IFERR(memcpy_s(ident, token_len + 1, token_text, token_len));
     ident[token_len] = '\0';
 
     auxdata->lval.word.ident = ident;
@@ -417,12 +440,18 @@ static status_t plsql_try_read_trigger_var(sql_stmt_t *stmt, TokenAuxData *param
     }
 
     dot_token = internal_yylex(&dot_aux, yyscanner);
+    if (dot_token == LEX_ERROR_TOKEN) {
+        return OG_ERROR;
+    }
     if (dot_token != '.') {
         push_back_token(yyextra, dot_token, &dot_aux);
         return OG_SUCCESS;
     }
 
     ident_token = internal_yylex(&ident_aux, yyscanner);
+    if (ident_token == LEX_ERROR_TOKEN) {
+        return OG_ERROR;
+    }
     if (ident_token != IDENT) {
         push_back_token(yyextra, ident_token, &ident_aux);
         push_back_token(yyextra, dot_token, &dot_aux);
@@ -452,20 +481,25 @@ int plsql_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
     int token;
     TokenAuxData aux;
     int kwnum;
+    bool32 matched = OG_FALSE;
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
     plsql_yy_extra_type *yyextra = plsql_yyget_extra(yyscanner);
 
     token = internal_yylex(&aux, yyscanner);
-    token = plsql_remap_core_token(&aux, yyscanner, token);
+    if (token != LEX_ERROR_TOKEN) {
+        token = plsql_remap_core_token(&aux, yyscanner, token);
+    }
     if (token == PARAM) {
-        bool32 matched = OG_FALSE;
         if (plsql_try_read_trigger_var(stmt, &aux, yyscanner, &matched, &aux.lval.node) != OG_SUCCESS) {
             token = LEX_ERROR_TOKEN;
         } else if (matched) {
             token = T_DATUM;
         }
     } else if (token == IDENT) {
-        if (yyextra->lookup_variables && parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+        if (yyextra->lookup_variables &&
+            parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node, &matched) != OG_SUCCESS) {
+            token = LEX_ERROR_TOKEN;
+        } else if (matched) {
             token = T_DATUM;
         } else if ((kwnum = ScanKeywordLookup(aux.lval.word.ident, &UnreservedPLKeywords)) >= 0) {
             aux.lval.keyword = GetScanKeyword(kwnum, &UnreservedPLKeywords);
@@ -474,7 +508,7 @@ int plsql_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
             aux.lval.word.quoted = aux.ident_quoted;
             token = T_WORD;
         }
-    } else if (plsql_is_identifier_like_token(&aux, yyscanner)) {
+    } else if (token != LEX_ERROR_TOKEN && plsql_is_identifier_like_token(&aux, yyscanner)) {
         /*
          * The shared SQL scanner can still return core SQL keyword tokens for
          * datatype names such as BINARY_INTEGER.  Those token numbers are not
@@ -485,7 +519,9 @@ int plsql_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
         if (plsql_copy_token_word(stmt, &aux, yyscanner) != OG_SUCCESS) {
             token = LEX_ERROR_TOKEN;
         } else if (yyextra->lookup_variables &&
-            parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node) == OG_SUCCESS) {
+            parse_var_ident(stmt, aux.lval.word.ident, &aux.lval.node, &matched) != OG_SUCCESS) {
+            token = LEX_ERROR_TOKEN;
+        } else if (matched) {
             token = T_DATUM;
         } else if (plsql_match_reserved_keyword(&aux, &token)) {
             /* token set by plsql_match_reserved_keyword */
@@ -499,6 +535,9 @@ int plsql_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
     *lvalp = aux.lval;
     *llocp = aux.lloc;
     yyextra->last_token = aux;
+    if (token == LEX_ERROR_TOKEN) {
+        yyextra->lex_failed = OG_TRUE;
+    }
     return token;
 }
 
@@ -525,6 +564,8 @@ static void push_back_token(plsql_yy_extra_type *yyextra, int token, TokenAuxDat
     if (yyextra->num_pushbacks >= MAX_PUSHBACKS) {
         OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "too many tokens %d pushed back, max push back token is: %d",
             yyextra->num_pushbacks, MAX_PUSHBACKS);
+        yyextra->lex_failed = OG_TRUE;
+        return;
     }
     yyextra->pushback_token[yyextra->num_pushbacks] = token;
     yyextra->pushback_auxdata[yyextra->num_pushbacks] = *auxdata;

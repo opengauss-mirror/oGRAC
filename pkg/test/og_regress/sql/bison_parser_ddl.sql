@@ -318,11 +318,28 @@ invalid_header as object(id int);
 select object_name, object_type, status
 from my_objects
 where object_name = 'BISON_DDL_252_INVALID_TYPE';
+-- LAC must also preserve deferred compilation when FORCE is absent.
+create or replace type bison_ddl_252_invalid_type
+invalid_header as object(id int);
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_INVALID_TYPE';
 create or replace type bison_ddl_252_invalid_type force as object(id int);
 /
 select object_name, object_type, status
 from my_objects
 where object_name = 'BISON_DDL_252_INVALID_TYPE';
+
+-- An invalid body still leaves an INVALID trigger without FOR EACH ROW.
+create trigger bison_ddl_252_lac_trig
+before insert on bison_ddl_tab
+select 1 from sys_dummy;
+/
+select object_name, object_type, status
+from my_objects
+where object_name = 'BISON_DDL_252_LAC_TRIG';
+drop trigger bison_ddl_252_lac_trig;
 
 create trigger bison_ddl_252_trig
 before insert on bison_ddl_tab
@@ -622,5 +639,100 @@ drop table if exists bison_ddl_part_tab;
 drop table if exists bison_ddl_tab_renamed;
 drop table if exists "BisonDdl252QuotedTab";
 drop table if exists bison_ddl_tab;
+
+-- Semantic diagnostics retain the source token across delayed DDL checks.
+drop table sys.bison_diag_loc_missing;
+create or replace view bison_diag_loc_view as
+select a from sys.bison_diag_loc_missing;
+create table bison_diag_loc_rowid(
+    "ROWID" int);
+create table bison_diag_loc_array(c1
+    clob[5]);
+create sequence bison_diag_loc_seq increment by -1 cycle;
+create sequence bison_diag_loc_seq minvalue 1 nominvalue cycle;
+create table bison_diag_loc_ctas(a, b int) as select 1, 'd';
+create table bison_diag_loc_ctas as select 1 a, 'd';
+create table bison_diag_loc_ctas(a nosuchtype, b int) as select 1, 2;
+create table bison_diag_loc_ctas(primary key(a)) as select 1;
+create table bison_diag_loc_ctas(
+    a int, b default 'c');
+select '中文', interval '2022' year from sys_dummy;
+select
+    X'5734567' from sys_dummy;
+select interval '22' year, X'5734' from sys_dummy;
+
+-- Review regressions: delayed semantic errors keep their own anchors.
+create sequence bison_diag_loc_seq nominvalue minvalue 1 cycle;
+create sequence bison_diag_loc_seq maxvalue 9 nomaxvalue cycle;
+create sequence bison_diag_loc_seq cache 4 nocache cycle;
+create sequence bison_diag_loc_seq cache 4 nocache minvalue 1 nominvalue cycle;
+create sequence bison_diag_loc_seq minvalue 1 minvalue 2;
+alter sequence bison_diag_loc_seq nomaxvalue maxvalue 9;
+create table bison_diag_loc_ctas(a, b) as select 1;
+create table bison_diag_loc_ctas(a) as select 1, 2;
+create table bison_diag_loc_ctas(a int, b int) as select 1;
+create table bison_diag_loc_ctas(a,
+    b) as
+select 1;
+create table bison_diag_loc_ctas(a) as select * from (select 1 x, 2 y);
+
+-- LAC must hand literal, parameter and parenthesis starts to the PL compiler.
+create or replace procedure bison_diag_first_token as 1;
+/
+create or replace procedure bison_diag_first_token as 2147483648;
+/
+create or replace procedure bison_diag_first_token as 1.2;
+/
+create or replace procedure bison_diag_first_token as 1.2f;
+/
+create or replace procedure bison_diag_first_token as 1.2d;
+/
+create or replace procedure bison_diag_first_token as 'x';
+/
+create or replace procedure bison_diag_first_token as X'11';
+/
+create or replace procedure bison_diag_first_token as (1);
+/
+create or replace procedure bison_diag_first_token as :x;
+/
+create or replace procedure bison_diag_first_token as -1;
+/
+create or replace procedure bison_diag_first_token as +1;
+/
+create or replace function bison_diag_first_func return int as 'x';
+/
+create or replace function bison_diag_first_func return int as (1);
+/
+select object_name, status from sys.db_objects
+where owner = 'SYS' and object_name in ('BISON_DIAG_FIRST_TOKEN', 'BISON_DIAG_FIRST_FUNC')
+order by object_name;
+create or replace procedure bison_diag_first_token as begin null; end;
+/
+call bison_diag_first_token();
+create or replace function bison_diag_first_func return int as begin return 7; end;
+/
+select bison_diag_first_func() from sys_dummy;
+drop procedure bison_diag_first_token;
+drop function bison_diag_first_func;
+
+-- Build newline bytes on the server; the client must not normalize this SQL.
+declare
+    v number;
+begin
+    execute immediate 'select 1 -- comment' || chr(10) || 'from from sys_dummy' into v;
+end;
+/
+declare
+    v number;
+begin
+    execute immediate 'select 1 -- comment' || chr(13) || 'from from sys_dummy' into v;
+end;
+/
+declare
+    v number;
+begin
+    execute immediate 'select 1 -- comment' || chr(13) || chr(10) || 'from from sys_dummy' into v;
+end;
+/
 
 alter system set use_bison_parser = false;

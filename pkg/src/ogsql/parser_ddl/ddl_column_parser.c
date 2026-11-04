@@ -1315,7 +1315,7 @@ static status_t og_try_parse_column_datatype(sql_stmt_t *stmt, knl_column_def_t 
 
     column->typmod.is_array = type->is_array;
     if (type->is_array && !cm_datatype_arrayable(column->typmod.datatype)) {
-        OG_THROW_ERROR(ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(column->typmod.datatype));
+        OG_SRC_THROW_ERROR(type->loc, ERR_DATATYPE_NOT_SUPPORT_ARRAY, get_datatype_name_str(column->typmod.datatype));
         return OG_ERROR;
     }
 
@@ -1596,7 +1596,7 @@ static status_t og_parse_column(sql_stmt_t *stmt, knl_table_def_t *def, parse_co
     name.len = strlen(parse_column->col_name);
 
     if (sql_check_col_name(&name) != OG_SUCCESS) {
-        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid column name '%s'", T2S(&name));
+        OG_SRC_THROW_ERROR_EX(parse_column->loc, ERR_SQL_SYNTAX_ERROR, "invalid column name '%s'", T2S(&name));
         return OG_ERROR;
     }
 
@@ -1613,6 +1613,7 @@ static status_t og_parse_column(sql_stmt_t *stmt, knl_table_def_t *def, parse_co
         OG_RETURN_IFERR(og_try_parse_column_datatype(stmt, column, parse_column->type, &found));
     }
 
+    parse_column->has_datatype = found;
     if (!found) {
         *expect_as = OG_TRUE;
         column->datatype = OG_TYPE_UNKNOWN;
@@ -1739,4 +1740,48 @@ status_t og_parse_column_defs(sql_stmt_t *stmt, knl_table_def_t *def, bool32 *ex
         }
     }
     return OG_SUCCESS;
+}
+
+/* Keep the shared verifier's error and ordering. Only Bison retains these source
+ * anchors; do not attach the scanner's current lookahead to a semantic error. */
+status_t og_verify_create_table_columns(sql_stmt_t *stmt, knl_table_def_t *def, galist_t *table_elements)
+{
+    sql_select_t *select_ctx = (stmt == NULL || stmt->context == NULL) ? NULL :
+        (sql_select_t *)stmt->context->supplement;
+    /* Check before the shared verifier dereferences the SELECT result columns. */
+    if (def == NULL || select_ctx == NULL || select_ctx->first_query == NULL ||
+        select_ctx->first_query->rs_columns == NULL) {
+        if (cm_get_error_code() == 0) {
+            OG_THROW_ERROR(ERR_ASSERT_ERROR, "valid Bison CTAS column verification context");
+        }
+        return OG_ERROR;
+    }
+
+    bool32 has_columns = (def->columns.count != 0);
+    status_t status = sql_verify_columns(stmt, def);
+    if (status == OG_SUCCESS || cm_get_error_code() != ERR_SQL_SYNTAX_ERROR) {
+        return status;
+    }
+
+    galist_t *rs_columns = select_ctx->first_query->rs_columns;
+    if (!has_columns) {
+        /* The verifier appends one definition per accepted result column. */
+        if (def->columns.count < rs_columns->count) {
+            rs_column_t *column = (rs_column_t *)cm_galist_get(rs_columns, def->columns.count);
+            if (column->type == RS_COL_CALC && column->expr != NULL && column->expr->root != NULL) {
+                cm_try_set_error_loc(column->expr->root->loc);
+            }
+        }
+    } else if (def->columns.count != rs_columns->count) {
+        cm_try_set_error_loc(select_ctx->first_query->loc);
+    } else if (table_elements != NULL) {
+        for (uint32 i = 0; i < table_elements->count; i++) {
+            parse_table_element_t *element = (parse_table_element_t *)cm_galist_get(table_elements, i);
+            if (!element->is_constraint && element->col->has_datatype) {
+                cm_try_set_error_loc(element->col->type->loc);
+                break;
+            }
+        }
+    }
+    return status;
 }

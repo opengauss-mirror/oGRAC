@@ -1964,7 +1964,7 @@ static status_t og_apply_profile_limits(sql_stmt_t *stmt, knl_profile_def_t *pro
     for (uint32 i = 0; i < limit_list->count; i++) {
         item = (profile_limit_item_t *)cm_galist_get(limit_list, i);
         if (OG_BIT_TEST(profile_def->mask, OG_GET_MASK(item->param_type))) {
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "keyword cannot appear more than once");
+            OG_SRC_THROW_ERROR_EX(item->loc, ERR_SQL_SYNTAX_ERROR, "keyword cannot appear more than once");
             return OG_ERROR;
         }
         OG_BIT_SET(profile_def->mask, OG_GET_MASK(item->param_type));

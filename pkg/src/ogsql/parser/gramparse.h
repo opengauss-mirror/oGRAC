@@ -73,6 +73,14 @@ typedef enum en_base_yy_alter_system_value_mode {
     ALTER_SYSTEM_VALUE_CAPTURE_TO_END
 } base_yy_alter_system_value_mode_t;
 
+typedef enum en_base_yy_pl_name_suffix {
+    PL_NAME_SUFFIX_NONE = 0,
+    PL_NAME_SUFFIX_FORCE,
+    PL_NAME_SUFFIX_AFTER_FORCE,
+    PL_NAME_SUFFIX_TRIGGER_FOR,
+    PL_NAME_SUFFIX_TRIGGER_HEADER
+} base_yy_pl_name_suffix_t;
+
 /**
  * Temporary state shared by grammar actions and base_yylex() during one raw
  * parse. The state owns no memory and is discarded with base_yy_extra_type.
@@ -86,6 +94,8 @@ typedef struct st_base_yy_raw_parse_state {
 
     int pl_object_name_end;
     bool32 pl_object_name_mode;
+    bool32 pl_object_name_part_complete;
+    base_yy_pl_name_suffix_t pl_object_name_suffix;
     bool32 pl_object_name_sensitive;
 
     base_yy_alter_system_value_mode_t alter_system_value_mode;

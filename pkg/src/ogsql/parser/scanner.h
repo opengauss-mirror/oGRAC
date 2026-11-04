@@ -43,14 +43,55 @@ typedef struct st_lex_locataion {
 } lex_location_t;
 
 /*
- * We track token locations in terms of byte offsets from the start of the
- * source string, not the column number/line number representation that
- * bison uses by default.  Also, to minimize overhead we track only one
- * location (usually the first token location) for each construct, not
- * the beginning and ending locations as bison does by default.  It's
- * therefore sufficient to make YYLTYPE an int.
+ * offset always indexes the current scanner input, including internal grammar
+ * prefixes. loc identifies the corresponding byte in the user's source. Keep
+ * both together when propagating the first-token location of a construct.
  */
 #define YYLTYPE lex_location_t
+
+typedef struct st_bison_source_edit {
+    /* Half-open body offsets, excluding the map's synthetic prefix. */
+    uint32 generated_start;
+    uint32 generated_end;
+    uint32 source_start;
+    uint32 source_end;
+} bison_source_edit_t;
+
+/* Borrowed source text and ordered replacement ranges, private to Bison.
+ * The source and parent maps must outlive every scope referring to this map.
+ */
+typedef struct st_bison_source_map {
+    text_t source;
+    source_location_t origin;
+    struct st_bison_source_map *parent;
+    uint32 parent_offset;
+    uint32 prefix_len;
+    uint32 body_len; /* Generated body length; source.len remains the original length. */
+    galist_t edits;
+
+    uint32 edit_index;
+    uint32 edit_generated_offset;
+    uint32 edit_source_offset;
+    uint32 last_generated_offset;
+    uint32 cached_offset;
+    uint64 cached_line;
+    uint64 cached_column;
+    bool8 multi_line;
+} bison_source_map_t;
+
+typedef struct st_bison_source_scope {
+    struct st_bison_source_scope *previous;
+    sql_stmt_t *stmt;
+    text_t text;
+    bison_source_map_t *map;
+} bison_source_scope_t;
+
+void bison_source_map_init(bison_source_map_t *map, sql_stmt_t *stmt, const text_t *source,
+    source_location_t fallback);
+void bison_source_scope_enter(bison_source_scope_t *scope, sql_stmt_t *stmt, const text_t *generated,
+    bison_source_map_t *map);
+void bison_source_scope_leave(bison_source_scope_t *scope);
+source_location_t bison_source_map_location(bison_source_map_t *map, uint32 generated_offset);
 
 #define DELIMITER_LENGTH 16
 
@@ -82,6 +123,10 @@ typedef struct core_yy_extra_type {
     char* scanbuf;
     size_t scanbuflen;
     bool8 scanbuf_malloced;
+    /* A fatal lexer diagnostic has already been reported for this scan. */
+    bool32 lex_failed;
+    bison_source_map_t source_map;
+    bison_source_scope_t source_scope;
 
     sql_array_t ssa; /* for sub-selects */
     sql_stmt_t *stmt;
@@ -131,7 +176,6 @@ typedef struct core_yy_extra_type {
     bool8 is_delimiter_name;
     bool8 is_last_colon;
     bool8 is_proc_end;
-    bool8 multi_line_sql;
 } core_yy_extra_type;
 
 typedef struct column_parse_info {
@@ -161,6 +205,7 @@ typedef struct merge_when_clause {
 typedef struct name_with_owner {
     text_t owner;
     text_t name;
+    source_location_t loc;
 } name_with_owner;
 
 typedef enum createdb_opt_type {
@@ -230,6 +275,7 @@ typedef enum createts_opt_type {
 typedef struct createts_opt {
     createts_opt_type type;
     bool val;
+    source_location_t loc;
 } createts_opt;
 
 typedef enum storage_opt_type {
@@ -262,6 +308,7 @@ typedef enum createseq_opt_type {
 typedef struct createseq_opt {
     createseq_opt_type type;
     int64 value;
+    source_location_t loc;
 } createseq_opt;
 
 typedef enum ctrlfile_opt_type {
@@ -337,6 +384,7 @@ typedef struct profile_limit_value {
 typedef struct profile_limit_item {
     resource_param_t param_type;
     profile_limit_value_t *value;
+    source_location_t loc;
 } profile_limit_item_t;
 
 /*
@@ -379,12 +427,19 @@ extern void scanner_finish(core_yyscan_t yyscanner);
 extern int core_yylex(core_YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner);
 extern int scanner_errposition(int location, core_yyscan_t yyscanner);
 extern void scanner_yyerror(const char* message, core_yyscan_t yyscanner);
+extern void scanner_syntax_error(const char *message, const lex_location_t *location, core_yyscan_t yyscanner);
 extern void addErrorList(const char* message, int lines);
 extern int ct_yyget_leng(core_yyscan_t yyscanner);
 extern int ct_yyget_raw_token_end(core_yyscan_t yyscanner);
 extern void *core_yyalloc(size_t bytes, core_yyscan_t yyscanner);
 extern void *core_yyrealloc(void *ptr, size_t bytes, core_yyscan_t yyscanner);
 extern void core_yyfree(void *ptr, core_yyscan_t yyscanner);
+
+/* LAC allocation helpers have no parse parameters. Restore this thread-local
+ * scanner after each nested yyparse so allocations retain the caller's context. */
+extern core_yyscan_t bison_parser_set_alloc_scanner(core_yyscan_t scanner);
+extern void *bison_parser_alloc(size_t bytes);
+extern void bison_parser_free(void *ptr);
 
 typedef int (*coreYYlexFunc)(core_YYSTYPE* lvalp, YYLTYPE* llocp, core_yyscan_t yyscanner);
 

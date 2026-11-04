@@ -1,3 +1,8 @@
+# custom syntax reports require Bison 3.6; use the validated 3.6.4 minimum.
+# Prefer the generator installed by prepare; an explicit/cache selection wins.
+find_program(BISON_EXECUTABLE NAMES bison HINTS /usr/local/bin)
+find_package(BISON 3.6.4 REQUIRED)
+
 include_directories(
 	"${OGRACDB_SRC}/cluster"
 	"${OGRACDB_SRC}/rc"
@@ -63,7 +68,7 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.h
-    COMMAND bison -d -o gram.c gram.y
+    COMMAND "${BISON_EXECUTABLE}" -d -o gram.c gram.y
     COMMAND sed -i "s/YY_NULL nullptr/YY_NULL 0/g" gram.c
     COMMAND sed -i "s/\# define YYINITDEPTH .*/\# define YYINITDEPTH 1000/g" gram.c
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/scan.l
@@ -85,7 +90,7 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.h
-    COMMAND bison -d -o hint_gram.c hint_gram.y
+    COMMAND "${BISON_EXECUTABLE}" -d -o hint_gram.c hint_gram.y
     COMMAND sed -i "s/YY_NULL nullptr/YY_NULL 0/g" hint_gram.c
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.l
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_gram.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/hint_scan.l
@@ -113,7 +118,7 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/pl/parser/pl_gram.c ${CMAKE_CURRENT_SOURCE_DIR}/pl/parser/pl_gram.h
-    COMMAND bison -d -o pl_gram.c pl_gram.y
+    COMMAND "${BISON_EXECUTABLE}" -d -o pl_gram.c pl_gram.y
     COMMAND sed -i "s/YY_NULL nullptr/YY_NULL 0/g" pl_gram.c
     COMMAND sed -i "s/\# define YYINITDEPTH .*/\# define YYINITDEPTH 1000/g" pl_gram.c
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/pl/parser/pl_gram.y
@@ -169,7 +174,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.h
-    COMMAND bison -d -o ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.y
+    COMMAND "${BISON_EXECUTABLE}" -d -o ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.y
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/scan-backend.l
 	MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/gram-backend.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser/scan-backend.l
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_a/backend_parser
@@ -223,7 +228,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.h
-    COMMAND bison -d -o ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.y
+    COMMAND "${BISON_EXECUTABLE}" -d -o ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.y
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/scan-backend.l
 	MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/gram-backend.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser/scan-backend.l
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_b/backend_parser
@@ -276,7 +281,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.h
-    COMMAND bison -d -o ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.y
+    COMMAND "${BISON_EXECUTABLE}" -d -o ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.c ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.y
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/scan-backend.l
 	MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/gram-backend.y ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser/scan-backend.l
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parser/dialect_c/backend_parser

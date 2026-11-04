@@ -70,12 +70,7 @@ const uint16 ScanKeywordTokens[] = {
  */
 #define YY_EXTRA_TYPE core_yy_extra_type *
 
-#define YY_USER_INIT        \
-do {                        \
-    yylloc->loc.column = 1; \
-    yylloc->loc.line = 1;   \
-    yylloc->offset = 0;     \
-} while (0)
+#define YY_USER_INIT update_current_location(yyextra, yylloc, 0)
 
 /*
  * Each call to yylex must set yylloc to the location of the found token
@@ -84,30 +79,25 @@ do {                        \
  * this should be done in the first such rule, else yylloc will point
  * into the middle of the token.
  */
-#define SET_YYLLOC()  update_current_location(yytext, yyextra->scanbuf, yylloc, yyextra->multi_line_sql)
+#define SET_YYLLOC() update_current_location(yyextra, yylloc, yytext - yyextra->scanbuf)
 
 #define COMMENT_NOT_IGNORED()  (yyextra->is_hint_str || yyextra->include_ora_comment)
 #define COMMENT_DELIMITER_ESCAPED() comment_delimiter_escaped(yytext, yyextra->scanbuf)
 /*
  * Advance yylloc by the given number of bytes.
  */
-#define ADVANCE_YYLLOC(delta)       \
-do {                                \
-    yylloc->loc.column += (delta);  \
-    yylloc->offset += (delta);      \
-} while (0)
+#define ADVANCE_YYLLOC(delta) \
+    update_current_location(yyextra, yylloc, (int64)yylloc->offset + (delta))
 
 #define FLEX_MEM_STRDUP(dest, src)                                              \
 do {                                                                            \
     size_t len = strlen(src) + 1;                                               \
     if (SECUREC_UNLIKELY(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context == NULL)) {    \
-        if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,   \
-            len, (void **)&dest) != OG_SUCCESS) {                                   \
-            yyerror("alloc mem failed ");                                           \
-        }                                                                           \
-    } else if (pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context,            \
-        len, (void **)&dest) != OG_SUCCESS) {                                   \
-        yyerror("alloc mem failed ");                                           \
+        LEX_RETURN_IFERR(sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, \
+            len, (void **)&dest));                                               \
+    } else {                                                                    \
+        LEX_RETURN_IFERR(pl_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_context, \
+            len, (void **)&dest));                                               \
     }                                                                           \
     errno_t ret = memcpy_s(dest, len, src, len - 1);                            \
     knl_securec_check(ret);                                                     \
@@ -117,10 +107,8 @@ do {                                                                            
 #define FLEX_STACK_STRDUP(dest, src)                                            \
 do {                                                                            \
     size_t len = strlen(src) + 1;                                               \
-    if (sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt,          \
-        len, (void **)&dest) != OG_SUCCESS) {                                   \
-        yyerror("alloc mem failed ");                                           \
-    }                                                                           \
+    LEX_RETURN_IFERR(sql_stack_alloc(og_yyget_extra(yyscanner)->core_yy_extra.stmt, \
+        len, (void **)&dest));                                                   \
     errno_t ret = memcpy_s(dest, len, src, len - 1);                            \
     knl_securec_check(ret);                                                     \
     dest[len - 1] = '\0';                                                       \
@@ -141,7 +129,7 @@ static unsigned char* unicode_to_utf8(uint32 c, unsigned char* utf8string);
 static status_t addunicode(uint32 c, yyscan_t yyscanner);
 static int pg_mblen(const char* mbstr);
 status_t handle_float_overflow(char *token, core_yyscan_t yyscanner, char **result);
-static void update_current_location(char *cur_pos, char *origin_str, lex_location_t *loc, bool8 multi_line_sql);
+static void update_current_location(core_yy_extra_type *extra, lex_location_t *loc, int64 offset);
 static void flex_alloc_mem(void *context, yy_size_t size, void **buf);
 static bool32 need_ignore_for_func(sql_stmt_t *stmt, char* ident, int len);
 static inline bool32 comment_delimiter_escaped(const char *delimiter, const char *scanbuf)
@@ -163,12 +151,14 @@ static inline bool32 comment_delimiter_escaped(const char *delimiter, const char
 #define yyerror(msg)                    \
 do {                                    \
     scanner_yyerror(msg, yyscanner);    \
+    yyextra->lex_failed = OG_TRUE;      \
     return LEX_ERROR_TOKEN;             \
 } while (0)
 
 #define LEX_RETURN_IFERR(func)          \
 do {                                    \
     if ((func) != OG_SUCCESS) {          \
+        yyextra->lex_failed = OG_TRUE;   \
         return LEX_ERROR_TOKEN;          \
     }                                   \
 } while (0)
@@ -1169,6 +1159,7 @@ other            .
 {realbadexp}      {
                     SET_YYLLOC();
                     OG_SRC_THROW_ERROR(yylloc->loc, ERR_INVALID_NUMBER, "");
+                    yyextra->lex_failed = OG_TRUE;
                     return LEX_ERROR_TOKEN;
                 }
 {realfail1}        {
@@ -1433,16 +1424,13 @@ static const char *scanner_case_bad_word(text_t *word)
     return NULL;
 }
 
-static bool32 scanner_try_report_case_end_extra(const char *message, core_yyscan_t yyscanner)
+static bool32 scanner_try_report_case_end_extra(const lex_location_t *location, core_yyscan_t yyscanner)
 {
     text_t curr_word;
     text_t prev_word;
     const char *bad_word = NULL;
 
-    if (message == NULL || strcmp(message, "syntax error") != 0) {
-        return OG_FALSE;
-    }
-    if (!scanner_token_text(yyscanner, yylloc->offset, &curr_word)) {
+    if (!scanner_token_text(yyscanner, location->offset, &curr_word)) {
         return OG_FALSE;
     }
 
@@ -1451,14 +1439,22 @@ static bool32 scanner_try_report_case_end_extra(const char *message, core_yyscan
         return OG_FALSE;
     }
 
-    if (!scanner_prev_word(yyscanner, yylloc->offset, &prev_word) ||
+    if (!scanner_prev_word(yyscanner, location->offset, &prev_word) ||
         !cm_text_str_equal_ins(&prev_word, "END") ||
-        !scanner_has_case_word_before(yyscanner, yylloc->offset)) {
+        !scanner_has_case_word_before(yyscanner, location->offset)) {
         return OG_FALSE;
     }
 
-    OG_SRC_THROW_ERROR_EX(yylloc->loc, ERR_SQL_SYNTAX_ERROR, "the word \"%s\" is not correct", bad_word);
+    OG_SRC_THROW_ERROR_EX(location->loc, ERR_SQL_SYNTAX_ERROR, "the word \"%s\" is not correct", bad_word);
     return OG_TRUE;
+}
+
+void scanner_syntax_error(const char *message, const lex_location_t *location, core_yyscan_t yyscanner)
+{
+    if (yyextra->lex_failed || scanner_try_report_case_end_extra(location, yyscanner)) {
+        return;
+    }
+    OG_SRC_THROW_ERROR(location->loc, ERR_SQL_SYNTAX_ERROR, message);
 }
 
 /*
@@ -1476,7 +1472,12 @@ static bool32 scanner_try_report_case_end_extra(const char *message, core_yyscan
 void
 scanner_yyerror(const char *message, core_yyscan_t yyscanner)
 {
-    if (scanner_try_report_case_end_extra(message, yyscanner)) {
+    /* Bison may reject LEX_ERROR_TOKEN after the lexer has reported the cause. */
+    if (yyextra->lex_failed) {
+        return;
+    }
+    if (strcmp(message, "syntax error") == 0) {
+        scanner_syntax_error(message, yylloc, yyscanner);
         return;
     }
     OG_SRC_THROW_ERROR(yylloc->loc, ERR_SQL_SYNTAX_ERROR, message);
@@ -1519,6 +1520,12 @@ scanner_init(const sql_text_t *sql,
     const char *str = sql->str;
     yyscan_t    scanner;
 
+    if (slen > OG_MAX_INT32) {
+        OG_THROW_ERROR(ERR_SQL_TOO_LONG, sql->len);
+        return NULL;
+    }
+    bison_source_map_init(&yyext->source_map, stmt, &sql->value, sql->loc);
+
     if (ct_yylex_init(&scanner, stmt) != 0) {
         return NULL;
     }
@@ -1544,6 +1551,7 @@ scanner_init(const sql_text_t *sql,
      */
     size_t scanbuf_size = slen + 2;
     yyext->scanbuf_malloced = false;
+    yyext->lex_failed = OG_FALSE;
     if (scanbuf_size > stmt->context->ctrl.memory->pool->page_size) {
         yyext->scanbuf = (char *)malloc(scanbuf_size);
         if (yyext->scanbuf == NULL) {
@@ -1597,7 +1605,8 @@ scanner_init(const sql_text_t *sql,
     yyext->is_delimiter_name = false;
     yyext->is_last_colon = false;
     yyext->is_proc_end = false;
-    yyext->multi_line_sql = strchr(str, '\n') != NULL;
+    text_t source_alias = { .str = yyext->scanbuf, .len = (uint32)slen };
+    bison_source_scope_enter(&yyext->source_scope, stmt, &source_alias, &yyext->source_map);
 
     return scanner;
 }
@@ -1610,6 +1619,7 @@ void
 scanner_finish(core_yyscan_t yyscanner)
 {
     core_yy_extra_type *yyext = &og_yyget_extra(yyscanner)->core_yy_extra;
+    bison_source_scope_leave(&yyext->source_scope);
     if (yyext->scanbuf_malloced) {
         free(yyext->scanbuf);
         yyext->scanbuf = NULL;
@@ -2069,36 +2079,13 @@ int ct_yyget_raw_token_end(core_yyscan_t yyscanner)
 }
 /*$$exclude in dialect end*/
 
-static void update_current_location(char *cur_pos, char *origin_str, lex_location_t *loc, bool8 multi_line_sql)
+static void update_current_location(core_yy_extra_type *extra, lex_location_t *loc, int64 offset)
 {
-    loc->offset = cur_pos - origin_str;
-    /* quick check, origin string don't have '\n', so line num always 1, just need to update column num */
-    if (!multi_line_sql) {
-        loc->loc.line = 1;
-        loc->loc.column = loc->offset + 1;
-        return;
-    }
-
-    /* reset location, maybe we have better way to use last loction to speed calculate... */
-    loc->loc.line = 1;
-    loc->loc.column = 1;
-    /* calculate current line and column num */
-    while (origin_str < cur_pos) {
-        if (*origin_str == '\n') {
-            loc->loc.line++;
-            loc->loc.column = 1;
-        } else {
-            loc->loc.column++;
-        }
-        origin_str++;
-    }
-
-    /* end of new line: 'insert into\n;' */
-    if (*origin_str == '\0') {
-        loc->loc.line++;
-        loc->loc.column = 1;
-    }
-    return;
+    /* Keep the local offset usable for slicing, including at EOF. */
+    offset = MAX(offset, 0);
+    offset = MIN((uint64)offset, extra->scanbuflen);
+    loc->offset = (int)offset;
+    loc->loc = bison_source_map_location(&extra->source_map, (uint32)offset);
 }
 
 static bool32 need_ignore_for_func(sql_stmt_t *stmt, char* ident, int len)

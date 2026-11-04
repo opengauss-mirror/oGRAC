@@ -12,6 +12,12 @@ core_yyscan_t c_scanner_init(const sql_text_t *sql,
     const char *str = sql->str;
     yyscan_t    scanner;
 
+    if (slen > OG_MAX_INT32) {
+        OG_THROW_ERROR(ERR_SQL_TOO_LONG, sql->len);
+        return NULL;
+    }
+    bison_source_map_init(&yyext->source_map, stmt, &sql->value, sql->loc);
+
     if (ct_yylex_init(&scanner, stmt) != 0) {
         return NULL;
     }
@@ -37,6 +43,7 @@ core_yyscan_t c_scanner_init(const sql_text_t *sql,
      */
     size_t scanbuf_size = slen + SCANBUF_EXTRA_SIZE;
     yyext->scanbuf_malloced = false;
+    yyext->lex_failed = OG_FALSE;
     if (scanbuf_size > stmt->context->ctrl.memory->pool->page_size) {
         yyext->scanbuf = (char *)malloc(scanbuf_size);
         if (yyext->scanbuf == NULL) {
@@ -91,7 +98,8 @@ core_yyscan_t c_scanner_init(const sql_text_t *sql,
     yyext->is_delimiter_name = false;
     yyext->is_last_colon = false;
     yyext->is_proc_end = false;
-    yyext->multi_line_sql = strchr(str, '\n') != NULL;
+    text_t source_alias = { .str = yyext->scanbuf, .len = (uint32)slen };
+    bison_source_scope_enter(&yyext->source_scope, stmt, &source_alias, &yyext->source_map);
 
     return scanner;
 }

@@ -635,7 +635,7 @@ SQL> create or replace procedure bison_ddl_252_proc(p_id int) authid definer as
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_PROC) terminated with compiling errors
-[1:65] PLC-00601 Sql syntax error: syntax error
+[1:65] PLC-00601 Sql syntax error: CURRENT_USER expected but DEFINER found
 
 
 SQL> create or replace function bison_ddl_252_result_func(p_id int)
@@ -649,7 +649,7 @@ SQL> create or replace function bison_ddl_252_result_func(p_id int)
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_RESULT_FUNC) terminated with compiling errors
-[2:12] PLC-00601 Sql syntax error: syntax error
+[2:12] PLC-00601 Sql syntax error: unexpected identifier
 
 
 SQL> create or replace function bison_ddl_252_parallel_func(p_id int) return int parallel_enable
@@ -662,7 +662,7 @@ SQL> create or replace function bison_ddl_252_parallel_func(p_id int) return int
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_PARALLEL_FUNC) terminated with compiling errors
-[1:77] PLC-00601 Sql syntax error: syntax error
+[1:77] PLC-00601 Sql syntax error: unexpected PARALLEL_ENABLE
 
 
 SQL> select object_name, object_type, status
@@ -724,7 +724,7 @@ SQL> create package bison_ddl_252_invalid_pkg invalid_header as
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_INVALID_PKG) terminated with compiling errors
-[1:42] PLC-00601 Sql syntax error: syntax error
+[1:42] PLC-00601 Sql syntax error: AS or IS expected but identifier found
 
 
 SQL> select object_name, object_type, status
@@ -803,7 +803,28 @@ SQL> create type bison_ddl_252_invalid_type force
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_INVALID_TYPE) terminated with compiling errors
-[2:1] PLC-00601 Sql syntax error: syntax error
+[2:1] PLC-00601 Sql syntax error: AS or IS or UNDER expected but identifier found
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_INVALID_TYPE';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_INVALID_TYPE                                       TYPE SPEC          INVALID
+
+1 rows fetched.
+
+SQL> -- LAC must also preserve deferred compilation when FORCE is absent.
+SQL> create or replace type bison_ddl_252_invalid_type
+  2 invalid_header as object(id int);
+  3 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_INVALID_TYPE) terminated with compiling errors
+[2:1] PLC-00601 Sql syntax error: AS or IS or UNDER expected but identifier found
 
 
 SQL> select object_name, object_type, status
@@ -832,6 +853,33 @@ BISON_DDL_252_INVALID_TYPE                                       TYPE SPEC      
 1 rows fetched.
 
 SQL> 
+SQL> -- An invalid body still leaves an INVALID trigger without FOR EACH ROW.
+SQL> create trigger bison_ddl_252_lac_trig
+  2 before insert on bison_ddl_tab
+  3 select 1 from sys_dummy;
+  4 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DDL_252_LAC_TRIG) terminated with compiling errors
+[3:1] PLC-00601 Sql syntax error: BEGIN or DECLARE expected but SELECT found
+
+
+SQL> select object_name, object_type, status
+  2 from my_objects
+  3 where object_name = 'BISON_DDL_252_LAC_TRIG';
+
+OBJECT_NAME                                                      OBJECT_TYPE        STATUS
+---------------------------------------------------------------- ------------------ -------
+BISON_DDL_252_LAC_TRIG                                           TRIGGER            INVALID
+
+1 rows fetched.
+
+SQL> drop trigger bison_ddl_252_lac_trig;
+
+Succeed.
+
+SQL>
 SQL> create trigger bison_ddl_252_trig
   2 before insert on bison_ddl_tab
   3 begin
@@ -851,7 +899,7 @@ SQL> create or replace trigger bison_ddl_252_trig
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_TRIG) terminated with compiling errors
-[1:40] PLC-00601 Sql syntax error: syntax error
+[4:34] PLC-00601 Sql syntax error: unexpected ':='
 
 
 SQL> select object_name, object_type, status
@@ -903,7 +951,7 @@ SQL> create procedure sys."BISON_DDL_252_QUOTED_PROC" select
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_DDL_252_QUOTED_PROC) terminated with compiling errors
-[1:50] PLC-00601 Sql syntax error: syntax error
+[1:50] PLC-00601 Sql syntax error: AS or AUTHID or IS or '(' expected but SELECT found
 
 
 SQL> select object_name, object_type, status
@@ -1000,11 +1048,11 @@ SQL> -- Errors before a complete object name stay hard errors.
 SQL> create procedure () as begin null; end;
   2 /
 
-OG-00601, [1:18]Sql syntax error: syntax error
+OG-00601, [1:18]Sql syntax error: unexpected '('
 SQL> create procedure sys.() as begin null; end;
   2 /
 
-OG-00601, [1:22]Sql syntax error: syntax error
+OG-00601, [1:22]Sql syntax error: unexpected '('
 SQL> 
 SQL> create package bison_ddl_pkg as
   2     procedure p;
@@ -1549,6 +1597,289 @@ SQL> drop table if exists bison_ddl_tab;
 Succeed.
 
 SQL> 
+SQL> -- Semantic diagnostics retain the source token across delayed DDL checks.
+SQL> drop table sys.bison_diag_loc_missing;
+
+OG-00843, [1:12]The table or view SYS.BISON_DIAG_LOC_MISSING does not exist.
+SQL> create or replace view bison_diag_loc_view as
+  2 select a from sys.bison_diag_loc_missing;
+
+OG-00843, [2:15]The table or view SYS.BISON_DIAG_LOC_MISSING does not exist.
+SQL> create table bison_diag_loc_rowid(
+  2     "ROWID" int);
+
+OG-00601, [2:1]Sql syntax error: invalid column name 'ROWID'
+SQL> create table bison_diag_loc_array(c1
+  2     clob[5]);
+
+OG-01365, [2:1]Datatype CLOB does not support array type
+SQL> create sequence bison_diag_loc_seq increment by -1 cycle;
+
+OG-00601, [1:52]Sql syntax error: descending sequences that CYCLE must specify MINVALUE
+SQL> create sequence bison_diag_loc_seq minvalue 1 nominvalue cycle;
+
+OG-00601, [1:47]Sql syntax error: duplicate or conflicting MINVAL/NOMINVAL specifications
+SQL> create table bison_diag_loc_ctas(a, b int) as select 1, 'd';
+
+OG-00601, [1:39]Sql syntax error: may not specify column datatypes in CREATE TABLE
+SQL> create table bison_diag_loc_ctas as select 1 a, 'd';
+
+OG-00601, [1:49]Sql syntax error: must name expression with a column alias
+SQL> create table bison_diag_loc_ctas(a nosuchtype, b int) as select 1, 2;
+
+OG-00601, [1:50]Sql syntax error: may not specify column datatypes in CREATE TABLE
+SQL> create table bison_diag_loc_ctas(primary key(a)) as select 1;
+
+OG-00601, [1:60]Sql syntax error: must name expression with a column alias
+SQL> create table bison_diag_loc_ctas(
+  2     a int, b default 'c');
+
+OG-00601, [2:22]Sql syntax error: As-select clause expected
+SQL> select '中文', interval '2022' year from sys_dummy;
+
+OG-00674, [1:18]YEAR field exceeds the specified precision (2)
+SQL> select
+  2     X'5734567' from sys_dummy;
+
+OG-00105, [2:1]Invalid format of hex
+SQL> select interval '22' year, X'5734' from sys_dummy;
+
+INTERVAL '22' YEAR X'5734'
+------------------ ----------------------------------------------------------------
++22-00             W4
+
+1 rows fetched.
+
+SQL>
+SQL> -- Review regressions: delayed semantic errors keep their own anchors.
+SQL> create sequence bison_diag_loc_seq nominvalue minvalue 1 cycle;
+
+OG-00601, [1:47]Sql syntax error: duplicate or conflicting MINVAL/NOMINVAL specifications
+SQL> create sequence bison_diag_loc_seq maxvalue 9 nomaxvalue cycle;
+
+OG-00601, [1:47]Sql syntax error: duplicate or conflicting MAX/NOMAXVAL specifications
+SQL> create sequence bison_diag_loc_seq cache 4 nocache cycle;
+
+OG-00601, [1:44]Sql syntax error: duplicate or conflicting CACHE/NOCACHE specifications
+SQL> create sequence bison_diag_loc_seq cache 4 nocache minvalue 1 nominvalue cycle;
+
+OG-00601, [1:63]Sql syntax error: duplicate or conflicting MINVAL/NOMINVAL specifications
+SQL> create sequence bison_diag_loc_seq minvalue 1 minvalue 2;
+
+OG-00601, [1:47]Sql syntax error: duplicate MINVALUE specifications
+SQL> alter sequence bison_diag_loc_seq nomaxvalue maxvalue 9;
+
+OG-00601, [1:46]Sql syntax error: duplicate or conflicting MAX/NOMAXVAL specifications
+SQL> create table bison_diag_loc_ctas(a, b) as select 1;
+
+OG-00601, [1:43]Sql syntax error: number of defined columns mismatch that in select clause
+SQL> create table bison_diag_loc_ctas(a) as select 1, 2;
+
+OG-00601, [1:40]Sql syntax error: number of defined columns mismatch that in select clause
+SQL> create table bison_diag_loc_ctas(a int, b int) as select 1;
+
+OG-00601, [1:51]Sql syntax error: number of defined columns mismatch that in select clause
+SQL> create table bison_diag_loc_ctas(a,
+  2     b) as
+  3 select 1;
+
+OG-00601, [3:1]Sql syntax error: number of defined columns mismatch that in select clause
+SQL> create table bison_diag_loc_ctas(a) as select * from (select 1 x, 2 y);
+
+OG-00601, [1:40]Sql syntax error: number of defined columns mismatch that in select clause
+SQL>
+SQL> -- LAC must hand literal, parameter and parenthesis starts to the PL compiler.
+SQL> create or replace procedure bison_diag_first_token as 1;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected number
+
+
+SQL> create or replace procedure bison_diag_first_token as 2147483648;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected number
+
+
+SQL> create or replace procedure bison_diag_first_token as 1.2;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected number
+
+
+SQL> create or replace procedure bison_diag_first_token as 1.2f;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected number
+
+
+SQL> create or replace procedure bison_diag_first_token as 1.2d;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected number
+
+
+SQL> create or replace procedure bison_diag_first_token as 'x';
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected string
+
+
+SQL> create or replace procedure bison_diag_first_token as X'11';
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:60] PLC-00601 Sql syntax error: unexpected ';'
+
+
+SQL> create or replace procedure bison_diag_first_token as (1);
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected '('
+
+
+SQL> create or replace procedure bison_diag_first_token as :x;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected parameter
+
+
+SQL> create or replace procedure bison_diag_first_token as -1;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected '-'
+
+
+SQL> create or replace procedure bison_diag_first_token as +1;
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_TOKEN) terminated with compiling errors
+[1:55] PLC-00601 Sql syntax error: unexpected '+'
+
+
+SQL> create or replace function bison_diag_first_func return int as 'x';
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_FUNC) terminated with compiling errors
+[1:64] PLC-00601 Sql syntax error: unexpected string
+
+
+SQL> create or replace function bison_diag_first_func return int as (1);
+  2 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_FIRST_FUNC) terminated with compiling errors
+[1:64] PLC-00601 Sql syntax error: unexpected '('
+
+
+SQL> select object_name, status from sys.db_objects
+  2 where owner = 'SYS' and object_name in ('BISON_DIAG_FIRST_TOKEN', 'BISON_DIAG_FIRST_FUNC')
+  3 order by object_name;
+
+OBJECT_NAME                                                      STATUS
+---------------------------------------------------------------- -------
+BISON_DIAG_FIRST_FUNC                                            INVALID
+BISON_DIAG_FIRST_TOKEN                                           INVALID
+
+2 rows fetched.
+
+SQL> create or replace procedure bison_diag_first_token as begin null; end;
+  2 /
+
+Succeed.
+
+SQL> call bison_diag_first_token();
+
+PL/SQL procedure successfully completed.
+
+SQL> create or replace function bison_diag_first_func return int as begin return 7; end;
+  2 /
+
+Succeed.
+
+SQL> select bison_diag_first_func() from sys_dummy;
+
+BISON_DIAG_FIRST_FUNC()
+-----------------------
+7
+
+1 rows fetched.
+
+SQL> drop procedure bison_diag_first_token;
+
+Succeed.
+
+SQL> drop function bison_diag_first_func;
+
+Succeed.
+
+SQL>
+SQL> -- Build newline bytes on the server; the client must not normalize this SQL.
+SQL> declare
+  2     v number;
+  3 begin
+  4     execute immediate 'select 1 -- comment' || chr(10) || 'from from sys_dummy' into v;
+  5 end;
+  6 /
+
+OG-00932, [4:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:6] OG-00601, Sql syntax error: unexpected FROM
+
+SQL> declare
+  2     v number;
+  3 begin
+  4     execute immediate 'select 1 -- comment' || chr(13) || 'from from sys_dummy' into v;
+  5 end;
+  6 /
+
+OG-00932, [4:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:6] OG-00601, Sql syntax error: unexpected FROM
+
+SQL> declare
+  2     v number;
+  3 begin
+  4     execute immediate 'select 1 -- comment' || chr(13) || chr(10) || 'from from sys_dummy' into v;
+  5 end;
+  6 /
+
+OG-00932, [4:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:6] OG-00601, Sql syntax error: unexpected FROM
+
+SQL>
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
