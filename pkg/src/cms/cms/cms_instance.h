@@ -36,6 +36,7 @@
 #include "cms_interface.h"
 #include "cms_gcc.h"
 #include "cms_detect_error.h"
+#include "cms_xalarm.h"
 #include "cm_sync.h"
 
 #ifdef __cplusplus
@@ -83,6 +84,7 @@ typedef struct st_cms_instance {
     thread_t                detect_disk_error_thread;
     thread_t                judge_disk_error_thread;
     thread_t                disk_usage_thread;
+    thread_t                xalarm_event_thread;
     socket_t                uds_server;
     cms_que_t               recv_que;
     cms_que_t               send_que;
@@ -123,6 +125,7 @@ void    cms_do_try_master(void);
 void cms_shutdown(void);
 status_t cms_create_aync_write_thread(void);
 status_t cms_broadcast_srv_msg(cms_packet_head_t* msg);
+void cms_broadcast_srv_msg_best_effort(cms_packet_head_t* msg);
 status_t cms_init_dbs_client(char* cfg_name, dbs_init_mode init_mode);
 status_t cms_lock_server(void);
 status_t cms_force_unlock_server(void);

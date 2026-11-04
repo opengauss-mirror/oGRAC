@@ -386,6 +386,7 @@ func_test()
 prepare_bazel_dependency()
 {
     echo "prepare_bazel_dependency"
+    bash "${OGRACDB_BUILD}/gen_syssentry_bazelrc.sh"
     func_prepare_dependency
 
     if [[ ! -d "${OGRACDB_HOME}"/add-ons ]]; then
@@ -840,6 +841,9 @@ main()
         shift
     }
     done
+
+    echo "xalarm compile opts by OS: distro=${OS_DISTRO_NAME} arch=$(uname -m) xalarmd=${ENABLE_XALARMD} xalarm_report_len=${ENABLE_XALARM_REPORT_EVENT_LEN}"
+    COMPILE_OPTS="${COMPILE_OPTS} -DENABLE_XALARMD=${ENABLE_XALARMD} -DENABLE_XALARM_REPORT_EVENT_LEN=${ENABLE_XALARM_REPORT_EVENT_LEN}"
 
     case "${arg1}" in
     'all')

@@ -1,0 +1,13 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["detect_syssentry.sh"])
+
+config_setting(
+    name = "syssentry_legacy",
+    values = {"define": "ENABLE_XALARMD=legacy"},
+)
+
+config_setting(
+    name = "syssentry_sp4",
+    values = {"define": "ENABLE_XALARMD=sp4"},
+)

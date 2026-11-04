@@ -295,3 +295,24 @@ void try_cms_kick_node(uint32 node_id, uint32 res_id, iofence_type_t iofence_typ
 
     try_cms_file_kick_node(node_id, res_id, iofence_type);
 }
+
+status_t cms_kick_node_best_effort(uint32 node_id)
+{
+    status_t ret;
+
+    if (cm_dbs_is_enable_dbs() == OG_TRUE) {
+        ret = cms_kick_node_by_ns(CMS_RES_TYPE_DB, node_id, IOFENCE_BY_XALARM);
+    } else if (g_cms_param->gcc_type == CMS_DEV_TYPE_SD || g_cms_param->gcc_type == CMS_DEV_TYPE_LUN) {
+        ret = cm_dss_iof_kick_by_inst_id(node_id);
+    } else {
+        ret = cm_file_iof_kick_by_inst_id(node_id);
+    }
+
+    if (ret != OG_SUCCESS) {
+        CMS_LOG_WAR("best effort iofence kick failed, node_id %u, ret %d", node_id, ret);
+        return OG_ERROR;
+    }
+
+    CMS_LOG_INF("best effort iofence kick succ, node_id %u", node_id);
+    return OG_SUCCESS;
+}

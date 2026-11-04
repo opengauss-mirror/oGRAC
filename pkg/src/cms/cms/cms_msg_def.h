@@ -32,6 +32,7 @@
 #include "cms_client.h"
 #include "cms_disk_lock.h"
 #include "cm_defs.h"
+#include "cms_xalarm.h"
 
 // Message definition of the CMS server
 // server msg type
@@ -68,8 +69,10 @@ typedef enum en_cms_msg_type {
     CMS_MSG_REQ_UPGRADE_LOCAL_VERSION,
     CMS_MSG_RES_UPGRADE_LOCAL_VERSION,
     CMS_MSG_REQ_STAT_CHG,
+    CMS_MSG_REQ_XALARM_REPORT,
+    CMS_MSG_RES_XALARM_REPORT,
 #ifdef DB_DEBUG_VERSION
-    CMS_MSG_REQ_STAT_CHG_NEW
+    CMS_MSG_REQ_STAT_CHG_NEW,
 #endif
 } cms_msg_type_t;
 
@@ -295,6 +298,16 @@ typedef struct st_cms_msg_res_iof_kick_t {
     status_t result;
     char info[CMS_INFO_BUFFER_SIZE];
 } cms_msg_res_iof_kick_t;
+
+typedef struct st_cms_msg_req_xalarm_report {
+    cms_packet_head_t head;
+    cms_xalarm_alarm_report_t alarm;
+} cms_msg_req_xalarm_report_t;
+
+typedef struct st_cms_msg_res_xalarm_report {
+    cms_packet_head_t head;
+    status_t result;
+} cms_msg_res_xalarm_report_t;
 
 // Message definition of the CMS tool client
 // tool msg type

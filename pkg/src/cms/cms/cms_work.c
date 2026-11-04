@@ -3401,6 +3401,37 @@ static void cms_proc_msg_res_write_protect_switch(cms_packet_head_t* msg)
     CMS_LOG_INF("end cms process write protect switch res, result %d, info %s", res->result, res->info);
 }
 
+static void cms_proc_msg_res_xalarm_notify(cms_packet_head_t *msg)
+{
+    CMS_LOG_INF("begin cms process xalarm notify res");
+    if (sizeof(cms_cli_msg_res_xalarm_notify_t) > msg->msg_size) {
+        CMS_LOG_ERR("proc xalarm notify res msg size %u is invalid.", msg->msg_size);
+        return;
+    }
+    cms_cli_msg_res_xalarm_notify_t *res = malloc(sizeof(cms_cli_msg_res_xalarm_notify_t));
+    if (res == NULL) {
+        OG_LOG_RUN_ERR("malloc failed, size %d", (int32)sizeof(cms_cli_msg_res_xalarm_notify_t));
+        return;
+    }
+
+    errno_t err = memcpy_s(res, sizeof(cms_cli_msg_res_xalarm_notify_t), msg, msg->msg_size);
+    if (err != EOK) {
+        OG_LOG_RUN_ERR("memcpy_s failed, err %d, errno %d, msg type %u, msg size %u, msg seq %llu, "
+            "msg src seq %llu", err, errno, msg->msg_type, msg->msg_size, msg->msg_seq, msg->src_msg_seq);
+        CM_FREE_PTR(res);
+        return;
+    }
+
+    status_t ret = cms_uds_srv_wakeup_sender(&res->head);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("can't find wait sender, msg type %u, msg size %u, msg seq %llu, msg src seq %llu",
+            res->head.msg_type, res->head.msg_size, res->head.msg_seq, res->head.src_msg_seq);
+        CM_FREE_PTR(res);
+        return;
+    }
+    CMS_LOG_INF("end cms process xalarm notify res, result %d", res->result);
+}
+
 #ifdef DB_DEBUG_VERSION
 void cms_reply_msg_res_enable_inject(cms_packet_head_t *req_msg, status_t ret)
 {
@@ -4126,6 +4157,9 @@ void cms_proc_msg(cms_packet_head_t* msg)
         case CMS_MSG_REQ_IOF_KICK:
             cms_proc_msg_req_iof_kick(msg);
             break;
+        case CMS_MSG_REQ_XALARM_REPORT:
+            cms_proc_msg_req_xalarm_report(msg);
+            break;
         case CMS_MSG_REQ_UPGRADE_LOCAL_VERSION:
             cms_proc_msg_req_upgrade_local_version(msg);
             break;
@@ -4236,6 +4270,9 @@ void cms_hb_timer_entry(thread_t* thread)
 static void cms_stat_chg_restart_res(cms_res_t res, cms_res_stat_t stat, date_t now_time)
 {
     if (cms_rbps_res_is_disabled(res.name, res.type)) {
+        return;
+    }
+    if (cms_stat_is_local_powering_off()) {
         return;
     }
 
@@ -4394,6 +4431,9 @@ void cms_uds_proc_cli_msg(cms_packet_head_t* msg)
         case CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH:
             cms_proc_msg_res_write_protect_switch(msg);
             break;
+        case CMS_CLI_MSG_RES_XALARM_NOTIFY:
+            cms_proc_msg_res_xalarm_notify(msg);
+            break;
         default:
             CMS_LOG_ERR("unknown msg_type:%d", msg->msg_type);
     }
@@ -4504,7 +4544,8 @@ static void cms_uds_proc_tool_gcc_res_msg(cms_packet_head_t* msg)
 void cms_uds_proc_msg(cms_packet_head_t* msg)
 {
     if ((msg->msg_type >= CMS_CLI_MSG_REQ_CONNECT && msg->msg_type <= CMS_CLI_MSG_RES_IOF_KICK) ||
-        msg->msg_type == CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH) {
+        msg->msg_type == CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH ||
+        msg->msg_type == CMS_CLI_MSG_RES_XALARM_NOTIFY) {
         cms_uds_proc_cli_msg(msg);
         return;
     } else if (msg->msg_type >= CMS_TOOL_MSG_REQ_ADD_NODE && msg->msg_type <= CMS_TOOL_MSG_RES_DEL_RES) {

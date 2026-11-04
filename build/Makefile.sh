@@ -400,6 +400,7 @@ func_test()
 prepare_bazel_dependency()
 {
     echo "prepare_bazel_dependency"
+    bash "${CURRENT_PATH}/gen_syssentry_bazelrc.sh"
     func_prepare_dependency
 
     if [[ ! -d "${OGRACDB_HOME}"/add-ons ]]; then
@@ -559,7 +560,8 @@ func_check_incremental_debug()
     for expected in CMAKE_BUILD_TYPE:Debug USE32BIT:OFF \
         CMS_UT_TEST:OFF USE_CBOTEST:OFF USE_PROTECT_BUF:OFF USE_OGRACD_CN:OFF \
         USE_TEST_MEM:OFF USE_CRC:OFF USE_LCOV:OFF USE_LLT:OFF USE_ASAN:OFF \
-        USE_TSAN:OFF USE_FUZZASAN:OFF USE_OSS_BUILD:OFF; do
+        USE_TSAN:OFF USE_FUZZASAN:OFF USE_OSS_BUILD:OFF ENABLE_XALARMD:${ENABLE_XALARMD} \
+        ENABLE_XALARM_REPORT_EVENT_LEN:${ENABLE_XALARM_REPORT_EVENT_LEN}; do
         key=${expected%%:*}
         expected_value=${expected#*:}
         value=$(func_cache_value "${key}")
@@ -998,6 +1000,9 @@ main()
         shift
     }
     done
+
+    echo "xalarm compile opts by OS: distro=${OS_DISTRO_NAME} arch=$(uname -m) xalarmd=${ENABLE_XALARMD} xalarm_report_len=${ENABLE_XALARM_REPORT_EVENT_LEN}"
+    COMPILE_OPTS="${COMPILE_OPTS} -DENABLE_XALARMD=${ENABLE_XALARMD} -DENABLE_XALARM_REPORT_EVENT_LEN=${ENABLE_XALARM_REPORT_EVENT_LEN}"
 
     if [[ "${arg1}" != "check-incremental-debug" ]] &&
        [[ "${arg1}" != "incremental-package-debug" ]]; then

@@ -1,3 +1,6 @@
+# SysSentry: run build/gen_syssentry_bazelrc.sh on the build host (same rules as CMake/Makefile).
+try-import %workspace%/build/syssentry.auto.bazelrc
+
 # 去掉bazel默认的编译参数
 build --features=-opt --features=-default_compile_flags
 build --features=-supports_start_end_lib          # arm环境使用bfd链接器，要关闭此特性

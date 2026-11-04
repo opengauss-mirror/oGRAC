@@ -1,0 +1,2 @@
+# Run build/gen_syssentry_bazelrc.sh on the build host to match CMake/Makefile SysSentry detection.
+# SysSentry off until regenerated.

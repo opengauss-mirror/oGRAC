@@ -64,6 +64,8 @@ enum cms_cli_msg_type_t {
     CMS_CLI_MSG_RES_IOF_KICK,
     CMS_CLI_MSG_REQ_WRITE_PROTECT_SWITCH, // write protect switch: recv->send
     CMS_CLI_MSG_RES_WRITE_PROTECT_SWITCH,
+    CMS_CLI_MSG_REQ_XALARM_NOTIFY,  // xalarm notify local DB: send->recv
+    CMS_CLI_MSG_RES_XALARM_NOTIFY,
 };
 
 typedef enum EnCmsWriteProtectAction {
@@ -279,4 +281,17 @@ typedef struct st_cms_cli_msg_res_upgrade_t {
     cms_packet_head_t       head;
     status_t                result;
 }cms_cli_msg_res_upgrade_t;
+
+typedef struct st_cms_cli_msg_req_xalarm_notify_t {
+    cms_packet_head_t   head;
+    uint32              alarm_id;
+    uint32              alarm_node_id;
+    uint32              cna;
+    uint32              source_node_id;
+} cms_cli_msg_req_xalarm_notify_t;
+
+typedef struct st_cms_cli_msg_res_xalarm_notify_t {
+    cms_packet_head_t   head;
+    status_t            result;
+} cms_cli_msg_res_xalarm_notify_t;
 #endif
