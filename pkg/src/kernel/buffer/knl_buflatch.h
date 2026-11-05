@@ -79,14 +79,14 @@ static inline void buf_latch_x(knl_session_t *session, buf_bucket_t *bucket, buf
     uint32 count = 0;
     buf_latch_t *latch = &ctrl->latch;
 
-    /* Fast path: already exclusively latched by current session (bucket held by caller). */
+    if (lock_needed) {
+        cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
+    }
+
+    /* Check shared-memory re-entry while holding the bucket lock. */
     if (session->kernel->attr.enable_ubsmem && latch->stat == LATCH_STATUS_X && latch->sid == session->id) {
         cm_spin_unlock(&bucket->lock);
         return;
-    }
-
-    if (lock_needed) {
-        cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     }
 
     wait_event_t event = ctrl->transfer_status == BUF_TRANS_TRY_REMOTE ? GC_BUFFER_BUSY : BUFFER_BUSY_WAIT;
