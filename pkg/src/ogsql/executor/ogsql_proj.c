@@ -398,9 +398,55 @@ status_t sql_get_rs_value(sql_stmt_t *stmt, sql_cursor_t *cursor, uint32 id, var
     return status;
 }
 
+/*
+ * Outer reference is one element of an array column projected by the child.
+ * Fetch that element from the child column. The whole-array path copies the array onto
+ * 128KB VM pages and keeps them on the statement exec list until sql_send_row. HASH GROUP
+ * and CUBE hold every input row until grouping finishes, so each small array keeps one or
+ * two full pages. sql_get_element_from_knl_lob releases its private copy before returning.
+ *
+ * A redacted column is excluded. Its policy replaces the whole column value, and the
+ * original path applies the subscript to that masked array. Fetching the element first
+ * lets the policy overwrite the result and skips that subscript.
+ */
+static bool32 sql_can_fetch_child_array_element(sql_cursor_t *cursor, uint16 col, var_column_t *v_col)
+{
+    rs_column_t *rs_col = NULL;
+
+    if (!VAR_COL_IS_ARRAY_ELEMENT(v_col) || cursor->eof || cursor->columns == NULL || col >= cursor->columns->count) {
+        return OG_FALSE;
+    }
+
+    rs_col = (rs_column_t *)cm_galist_get(cursor->columns, col);
+    return (bool32)(rs_col->type == RS_COL_COLUMN && rs_col->v_col.is_array && !rs_col->v_col.is_ddm_col &&
+        VAR_COL_IS_ARRAY_ALL(&rs_col->v_col));
+}
+
+static status_t sql_fetch_child_array_element(sql_stmt_t *stmt, sql_cursor_t *cursor, uint16 col, var_column_t *v_col,
+    variant_t *value)
+{
+    rs_column_t *rs_col = (rs_column_t *)cm_galist_get(cursor->columns, col);
+    var_column_t elem_col = rs_col->v_col;
+    status_t status;
+
+    elem_col.ss_start = v_col->ss_start;
+    elem_col.ss_end = v_col->ss_end;
+    elem_col.datatype = v_col->datatype;
+
+    OG_RETURN_IFERR(SQL_CURSOR_PUSH(stmt, cursor));
+    status = sql_get_table_value(stmt, &elem_col, value);
+    SQL_CURSOR_POP(stmt);
+    return status;
+}
+
 status_t sql_get_col_rs_value(sql_stmt_t *stmt, sql_cursor_t *cursor, uint16 col, var_column_t *v_col, variant_t *value)
 {
     variant_t tmp_var;
+    sql_cursor_t *proj_cursor = sql_get_proj_cursor(cursor);
+
+    if (sql_can_fetch_child_array_element(proj_cursor, col, v_col)) {
+        return sql_fetch_child_array_element(stmt, proj_cursor, col, v_col, value);
+    }
 
     if (sql_get_rs_value(stmt, cursor, col, value) != OG_SUCCESS) {
         return OG_ERROR;
